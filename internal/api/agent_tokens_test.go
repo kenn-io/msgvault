@@ -191,6 +191,39 @@ func TestAgentTokenIssueRequiresOwnerKey(t *testing.T) {
 	})
 }
 
+func TestIssueAgentTokenCanonicalizesLegacyGmailSourceType(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	reg := agentgrant.NewRegistry()
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{
+			Server: config.ServerConfig{APIKey: agentTokenTestAPIKey, AgentAccess: true},
+		},
+		Store:     &stubSourceStore{src: &store.Source{ID: 1, SourceType: "", Identifier: "legacy@example.com"}},
+		Logger:    testLogger(),
+		Scheduler: newMockScheduler(),
+	})
+	srv.agentGrants = reg
+
+	body, err := json.Marshal(agentTokenIssueRequest{
+		Label:       "legacy-gmail-agent",
+		Permissions: []string{string(agentgrant.PermissionDraftCreate)},
+		SourceIDs:   []int64{1},
+	})
+	requirements.NoError(err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, req)
+
+	requirements.Equal(http.StatusCreated, response.Code, response.Body.String())
+	var issued agentTokenIssueResponse
+	requirements.NoError(json.NewDecoder(response.Body).Decode(&issued))
+	requirements.Len(issued.Sources, 1)
+	assertions.Equal("gmail", issued.Sources[0].Type)
+}
+
 func TestIssueAgentTokenUsesEffectiveRequestOrigin(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

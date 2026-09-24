@@ -1498,7 +1498,7 @@ func (s *Store) getLastSuccessfulSync(sourceID int64, syncType string, filterByT
 // Source represents a Gmail account or other message source.
 type Source struct {
 	ID           int64
-	SourceType   string // "gmail" or "imap"
+	SourceType   string // Raw provider type; empty is the legacy Gmail spelling.
 	Identifier   string // email address or IMAP identifier URL
 	DisplayName  sql.NullString
 	GoogleUserID sql.NullString

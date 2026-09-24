@@ -162,7 +162,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		}
 		sources = append(sources, agentgrant.SourceRef{
 			ID:         src.ID,
-			Type:       src.SourceType,
+			Type:       store.EffectiveSourceType(src.SourceType),
 			Identifier: src.Identifier,
 		})
 	}

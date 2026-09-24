@@ -32,7 +32,7 @@ const (
 // authorizeGmailDraft applies the daemon-start policy snapshot. Reads from
 // the archive and owner-only send-as listing do not use this write grant.
 func authorizeGmailDraft(policy []config.GmailDraftSource, sourceID int64, sourceType string) error {
-	if sourceType != "gmail" {
+	if store.EffectiveSourceType(sourceType) != "gmail" {
 		return draftReplyError("draft_disabled", fmt.Errorf("source %d is a %q source, not gmail", sourceID, sourceType))
 	}
 	for _, grant := range policy {
@@ -1198,7 +1198,7 @@ func (a *storeAPIAdapter) runCLIDraftSendAs(ctx context.Context, req api.CLIRunR
 	if err != nil {
 		return err
 	}
-	source, err := sourceops.ResolveExactOne(a.store, sourceops.Selector{Account: account, SourceType: "gmail"})
+	source, err := sourceops.ResolveEffectiveExactOne(a.store, sourceops.Selector{Account: account, SourceType: "gmail"})
 	if err != nil {
 		return draftReplyError("invalid_source", err)
 	}

@@ -200,7 +200,7 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 		return draftReplyError("invalid_reply_metadata", errors.New("composed reply has no usable Message-ID"))
 	}
 	messageIDValue = "<" + messageIDValue + ">"
-	if target.source.SourceType == "gmail" {
+	if store.EffectiveSourceType(target.source.SourceType) == "gmail" {
 		return a.runGmailReplyDraft(ctx, intent, target, reply, messageIDValue, emit)
 	}
 
@@ -285,7 +285,9 @@ func authorizeDelegatedDraftSource(grant *agentgrant.Grant, source *store.Source
 	if grant == nil {
 		return nil
 	}
-	ref := agentgrant.SourceRef{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}
+	ref := agentgrant.SourceRef{
+		ID: source.ID, Type: store.EffectiveSourceType(source.SourceType), Identifier: source.Identifier,
+	}
 	if !grant.Allows(agentgrant.PermissionDraftCreate, ref) {
 		return draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
 	}
@@ -314,9 +316,10 @@ func (a *storeAPIAdapter) resolveDraftReplyTarget(ctx context.Context, intent dr
 		return draftReplyTarget{}, err
 	}
 	var mailbox string
-	switch source.SourceType {
+	sourceType := store.EffectiveSourceType(source.SourceType)
+	switch sourceType {
 	case "imap":
-		mailbox, err = authorizeIMAPDraft(a.draftPolicy, source.ID, source.SourceType)
+		mailbox, err = authorizeIMAPDraft(a.draftPolicy, source.ID, sourceType)
 		if err != nil {
 			return draftReplyTarget{}, err
 		}
@@ -331,7 +334,7 @@ func (a *storeAPIAdapter) resolveDraftReplyTarget(ctx context.Context, intent dr
 			return draftReplyTarget{}, draftReplyError("invalid_source", fmt.Errorf("source %d sync config identifier does not match the source", source.ID))
 		}
 	case "gmail":
-		if err := authorizeGmailDraft(a.gmailDraftPolicy, source.ID, source.SourceType); err != nil {
+		if err := authorizeGmailDraft(a.gmailDraftPolicy, source.ID, sourceType); err != nil {
 			return draftReplyTarget{}, err
 		}
 	default:

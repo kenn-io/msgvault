@@ -98,6 +98,45 @@ func TestResolveExactOneTypeFilterStillRejectsSameTypeDisplayCollision(t *testin
 	assert.ErrorContains(err, "ambiguous")
 }
 
+func TestResolveEffectiveExactOneMatchesLegacyGmailWithoutBroadeningExactSelectors(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := storetest.New(t)
+	_, err := f.Store.GetOrCreateSource("", "draft@example.com")
+	require.NoError(err)
+	legacy, err := sourceops.ResolveEffectiveExactOne(f.Store, sourceops.Selector{
+		Account: "draft@example.com", SourceType: "gmail",
+	})
+	require.NoError(err)
+	assert.Empty(legacy.SourceType)
+
+	explicit, err := f.Store.GetOrCreateSource("gmail", "draft@example.com")
+	require.NoError(err)
+	_, err = f.Store.GetOrCreateSource("imap", "imap@example.com")
+	require.NoError(err)
+
+	exact, err := sourceops.ResolveExactOne(f.Store, sourceops.Selector{
+		Account: "draft@example.com", SourceType: "gmail",
+	})
+	require.NoError(err)
+	assert.Equal(explicit.ID, exact.ID)
+
+	_, err = sourceops.ResolveEffectiveExactOne(f.Store, sourceops.Selector{
+		Account: "draft@example.com", SourceType: "gmail",
+	})
+	require.Error(err)
+	assert.Equal(opserr.KindInvalid, opserr.KindOf(err))
+	require.ErrorContains(err, "ambiguous")
+
+	got, err := sourceops.ResolveEffectiveExactOne(f.Store, sourceops.Selector{
+		Account: "imap@example.com", SourceType: "gmail",
+	})
+	require.Error(err)
+	assert.Nil(got)
+	assert.Equal(opserr.KindNotFound, opserr.KindOf(err))
+}
+
 func TestResolveAccountFamilyExpandsRelatedCalendars(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

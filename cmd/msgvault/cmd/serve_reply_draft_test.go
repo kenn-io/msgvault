@@ -82,6 +82,47 @@ func TestConfirmedSourceIdentityRejectsMismatch(t *testing.T) {
 	assert.True(t, hasConfirmedSourceIdentity(identities, "USER@example.com"))
 }
 
+func TestLegacyGmailSourceUsesDraftRouteAndSendAsResolver(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	_, err := fixture.store.DB().Exec(
+		fixture.store.Rebind(`UPDATE sources SET source_type = ? WHERE id = ?`),
+		"", fixture.source.ID,
+	)
+	requirements.NoError(err)
+	fixture.source.SourceType = ""
+
+	events, err := fixture.create(t, "legacy body", true)
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	var created gmailDraftReplyOutput
+	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &created))
+	assertions.Equal(gmailDraftStatusCreated, created.Status)
+
+	sendAsEvents := make([]api.CLIRunEvent, 0, 1)
+	requirements.NoError(fixture.adapter.runCLIDraftSendAs(t.Context(), api.CLIRunRequest{
+		Args: []string{api.CLIRunDraftSendAsCommand, fixture.source.Identifier, "--json"},
+	}, func(event api.CLIRunEvent) error {
+		sendAsEvents = append(sendAsEvents, event)
+		return nil
+	}))
+	requirements.Len(sendAsEvents, 1)
+
+	grant := &agentgrant.Grant{
+		ID:          "legacy-gmail-grant",
+		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+		Sources: []agentgrant.SourceRef{{
+			ID: fixture.source.ID, Type: "gmail", Identifier: fixture.source.Identifier,
+		}},
+	}
+	target, err := fixture.adapter.resolveDraftReplyTarget(t.Context(), draftReplyIntent{
+		MessageID: fixture.parentID, From: fixture.source.Identifier, Body: "delegated legacy body",
+	}, grant)
+	requirements.NoError(err)
+	assertions.Equal(fixture.source.ID, target.source.ID)
+}
+
 // draftReplyFixture is one archived IMAP parent message on a source backed by
 // an in-memory IMAP server that advertises UIDPLUS.
 type draftReplyFixture struct {

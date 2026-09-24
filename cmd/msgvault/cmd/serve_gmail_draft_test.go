@@ -17,6 +17,7 @@ func TestAuthorizeGmailDraftRequiresEnabledSourcePolicy(t *testing.T) {
 	requirements.ErrorContains(authorizeGmailDraft(nil, 42, "gmail"), "draft_disabled")
 	requirements.ErrorContains(authorizeGmailDraft([]config.GmailDraftSource{{SourceID: 42}}, 42, "gmail"), "draft_disabled")
 	requirements.NoError(authorizeGmailDraft([]config.GmailDraftSource{{SourceID: 42, Enabled: true}}, 42, "gmail"))
+	requirements.NoError(authorizeGmailDraft([]config.GmailDraftSource{{SourceID: 42, Enabled: true}}, 42, ""))
 	requirements.ErrorContains(authorizeGmailDraft([]config.GmailDraftSource{{SourceID: 42, Enabled: true}}, 42, "imap"), "draft_disabled")
 }
 

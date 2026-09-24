@@ -80,7 +80,7 @@ func (s *Store) PersistGmailDraftContext(
 			}
 			return fmt.Errorf("read Gmail draft source: %w", err)
 		}
-		if sourceType != "gmail" {
+		if EffectiveSourceType(sourceType) != "gmail" {
 			return errors.New("invalid_source")
 		}
 		var existingID int64

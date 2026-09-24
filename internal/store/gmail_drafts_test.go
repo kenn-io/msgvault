@@ -101,6 +101,32 @@ func TestManagedGmailDraftLifecycleAndRetention(t *testing.T) {
 	assert.Equal(int64(1), plan.SourceDeleted)
 }
 
+func TestPersistGmailDraftAcceptsLegacyGmailSourceType(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("", "legacy-draft@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "legacy-thread", "Legacy draft")
+	require.NoError(err)
+	participants := []store.ParticipantPersistData{
+		{EmailAddress: source.Identifier, Domain: "example.com"},
+		{EmailAddress: "recipient@example.com", Domain: "example.com"},
+	}
+	receipt := store.GmailDraftReceipt{
+		SourceID: source.ID, GmailDraftID: "legacy-gmail-draft",
+		GmailMessageID: "legacy-gmail-message", ThreadID: "legacy-thread",
+	}
+	draft, err := st.PersistGmailDraftContext(t.Context(), receipt, participants,
+		gmailTestBuild(source.ID, conversationID, receipt, []byte("legacy body")))
+	require.NoError(err)
+	assert.Equal(int64(1), draft.Revision)
+
+	stored, err := st.GetSourceByID(source.ID)
+	require.NoError(err)
+	assert.Empty(stored.SourceType)
+}
+
 func TestGmailDraftAdoptObservationReusesOrInsertsMessage(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

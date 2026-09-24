@@ -252,7 +252,7 @@ func defersAuthoritativeLabelReconciliation(client gmail.API) bool {
 func (s *Syncer) defersAuthoritativeLabelReconciliation() bool {
 	// Only an unlimited run can publish the deferred mailbox snapshot. Limited
 	// runs must reconcile each processed message before returning.
-	if s.opts.SourceType != sourceTypeIMAP || s.opts.Limit > 0 || !s.labelsSnapshotComplete() {
+	if store.EffectiveSourceType(s.opts.SourceType) != sourceTypeIMAP || s.opts.Limit > 0 || !s.labelsSnapshotComplete() {
 		return false
 	}
 	return defersAuthoritativeLabelReconciliation(s.client)
@@ -314,7 +314,7 @@ func (s *Syncer) completeSyncAndRunHook(
 	source *store.Source,
 	mailboxChanged bool,
 ) error {
-	publishSourceCursor := source.SourceType != sourceTypeGmail ||
+	publishSourceCursor := store.EffectiveSourceType(source.SourceType) != sourceTypeGmail ||
 		(s.opts.Query == "" && s.opts.Limit == 0)
 	if err := s.completeSyncWithoutHook(
 		ctx, syncID, source.ID, historyID, publishSourceCursor,
@@ -461,7 +461,7 @@ func (s *Syncer) fullCheckpointMatchesRequest(
 	// Only a new default Gmail traversal opts in to those checkpoints; filtered
 	// and limited requests still require an exact fingerprint. Remove this
 	// fallback when the minimum supported archive version is newer than v0.19.3.
-	return (s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail) &&
+	return store.EffectiveSourceType(s.opts.SourceType) == sourceTypeGmail &&
 		s.opts.Query == "" && s.opts.Limit == 0
 }
 
@@ -618,7 +618,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	// old composite key and guarded row survive the run untouched, so ordinary
 	// messages (and later pages) keep flowing while the next attempt
 	// rediscovers the candidate through the retained key.
-	if s.opts.SourceType == sourceTypeIMAP {
+	if store.EffectiveSourceType(s.opts.SourceType) == sourceTypeIMAP {
 		if provider, ok := s.client.(messageRelocationTargetProvider); ok {
 			var forcedIDs, ordinaryIDs []string
 			targets := make(map[string]gmail.MessageRelocationTarget)
@@ -691,7 +691,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	// the newly committed archive identities.
 	lookupMessageIDs := append([]string(nil), messageIDs...)
 	aliases := make(map[string]string)
-	if s.opts.SourceType == sourceTypeIMAP {
+	if store.EffectiveSourceType(s.opts.SourceType) == sourceTypeIMAP {
 		if aliaser, ok := s.client.(sourceMessageAliaser); ok {
 			for _, sourceMessageID := range messageIDs {
 				canonicalSourceMessageID, exists := aliaser.CanonicalSourceMessageID(sourceMessageID)
@@ -795,7 +795,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 
 			existing := existingMap[sourceMessageID]
 			labelIDs := labelIDsFor(labelResult.LabelIDs, labelMap)
-			if s.opts.SourceType == sourceTypeIMAP {
+			if store.EffectiveSourceType(s.opts.SourceType) == sourceTypeIMAP {
 				matcher, ok := s.client.(fetchedSourceMessageMatcher)
 				if !ok {
 					err := errors.New(
@@ -1122,10 +1122,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 
 // Full performs a full synchronization.
 func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSummary, err error) {
-	sourceType := s.opts.SourceType
-	if sourceType == "" {
-		sourceType = sourceTypeGmail
-	}
+	sourceType := store.EffectiveSourceType(s.opts.SourceType)
 	source, err := s.store.GetOrCreateSource(sourceType, email)
 	if err != nil {
 		return nil, fmt.Errorf("get/create source: %w", err)
@@ -1145,11 +1142,8 @@ func (s *Syncer) FullWithFinalizer(
 		return nil, errors.New("full sync: persisted source is required")
 	}
 	resolvedSource := *source
-	sourceType := resolvedSource.SourceType
-	if sourceType == "" {
-		sourceType = sourceTypeGmail
-		resolvedSource.SourceType = sourceType
-	}
+	sourceType := store.EffectiveSourceType(resolvedSource.SourceType)
+	resolvedSource.SourceType = sourceType
 	return s.runWithSyncExecution(ctx, resolvedSource.ID, func(execution *store.SyncExecution) (*gmail.SyncSummary, error) {
 		if sourceType == sourceTypeGmail && !s.opts.NoResume && s.opts.Query == "" && s.opts.Limit == 0 {
 			prior, priorErr := s.store.GetLatestCheckpointedSync(resolvedSource.ID)
@@ -1203,7 +1197,7 @@ func (s *Syncer) RecoverExpiredHistory(
 	if source == nil {
 		return nil, errors.New("recover expired history: no source provided")
 	}
-	if source.SourceType != sourceTypeGmail {
+	if store.EffectiveSourceType(source.SourceType) != sourceTypeGmail {
 		return nil, fmt.Errorf("recover expired history: source %d is %s, not gmail", source.ID, source.SourceType)
 	}
 	if err := s.validateHistoryRecoveryOptions(); err != nil {
@@ -1681,7 +1675,7 @@ func (s *Syncer) prepareMessage(
 	// ThreadID is just the composite message ID. Derive a thread
 	// key from MIME threading headers to group related messages
 	// into conversations.
-	if s.opts.SourceType == sourceTypeIMAP {
+	if store.EffectiveSourceType(s.opts.SourceType) == sourceTypeIMAP {
 		if derived := deriveThreadKey(parsed); derived != "" {
 			threadID = derived
 		}
@@ -1767,7 +1761,7 @@ func (s *Syncer) prepareMessage(
 	}
 
 	var metadata *sql.NullString
-	if origin := s.imapContentOrigin(raw.ID); s.opts.SourceType == sourceTypeIMAP && origin != "" {
+	if origin := s.imapContentOrigin(raw.ID); store.EffectiveSourceType(s.opts.SourceType) == sourceTypeIMAP && origin != "" {
 		encoded, err := json.Marshal(imapMessageMetadata{ContentOrigin: origin}, json.Deterministic(true))
 		if err != nil {
 			return nil, fmt.Errorf("encode IMAP content origin: %w", err)
@@ -1794,7 +1788,7 @@ func (s *Syncer) prepareMessage(
 }
 
 func (s *Syncer) isGmailChat(labelIDs []string) bool {
-	if s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail {
+	if store.EffectiveSourceType(s.opts.SourceType) != sourceTypeGmail {
 		return false
 	}
 	return slices.Contains(labelIDs, labelIDChat)
@@ -1928,7 +1922,7 @@ func (s *Syncer) ingestMessage(
 	// Validate the archived composite ID before replacing it regardless of
 	// snapshot completeness. Completeness controls only whether reconciled
 	// labels replace the stored memberships or merge with them.
-	if s.opts.SourceType == sourceTypeIMAP &&
+	if store.EffectiveSourceType(s.opts.SourceType) == sourceTypeIMAP &&
 		data.message.RFC822MessageID.Valid {
 		existingID, err := s.store.GetMessageIDByRFC822ID(
 			sourceID, data.message.RFC822MessageID.String)

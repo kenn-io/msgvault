@@ -60,6 +60,29 @@ func ResolveExactOne(st Store, selector Selector) (*store.Source, error) {
 	}
 }
 
+// ResolveEffectiveExactOne resolves exactly one source using effective source
+// types. It is for compatibility-aware callers such as Gmail draft send-as;
+// existing selectors keep their literal type matching through ResolveExactOne.
+func ResolveEffectiveExactOne(st Store, selector Selector) (*store.Source, error) {
+	input, source, err := resolveSelector(st, selector)
+	if err != nil || source != nil {
+		return source, err
+	}
+
+	sources, err := lookupTokenEffective(st, input, selector.SourceType)
+	if err != nil {
+		return nil, err
+	}
+	switch len(sources) {
+	case 0:
+		return nil, sourceNotFound(input)
+	case 1:
+		return sources[0], nil
+	default:
+		return nil, ambiguous(input, sources)
+	}
+}
+
 // ResolveAccountFamily resolves one primary account source and its related
 // Google Calendar sources. An explicit source ID always remains exact.
 func ResolveAccountFamily(st Store, selector Selector) (Selection, error) {
@@ -171,6 +194,23 @@ func lookupToken(st Store, input, sourceType string) ([]*store.Source, error) {
 	filtered := sources[:0]
 	for _, source := range sources {
 		if source.SourceType == sourceType {
+			filtered = append(filtered, source)
+		}
+	}
+	return uniqueSources(filtered), nil
+}
+
+func lookupTokenEffective(st Store, input, sourceType string) ([]*store.Source, error) {
+	sources, err := st.GetSourcesByIdentifierOrDisplayName(input)
+	if err != nil {
+		return nil, opserr.Internal(fmt.Errorf("resolve source token: %w", err))
+	}
+	if sourceType == "" {
+		return uniqueSources(sources), nil
+	}
+	filtered := sources[:0]
+	for _, source := range sources {
+		if store.EffectiveSourceType(source.SourceType) == sourceType {
 			filtered = append(filtered, source)
 		}
 	}
