@@ -2637,7 +2637,7 @@ msgvault serve
 
 ## setup
 
-Run the first-run setup wizard for OAuth and optional remote deployment.
+Run the first-run setup wizard. It writes `config.toml`, optionally stores a Google OAuth credential (needed only for Gmail and Google Calendar; press Enter to skip), and optionally configures a remote deployment.
 
 ```bash
 msgvault setup
@@ -2646,7 +2646,7 @@ msgvault setup
 If configured for a remote server, this command generates `<MSGVAULT_HOME>/nas-bundle` with:
 
 - `config.toml` ready for container deployment
-- `client_secret.json`
+- `client_secret.json`, if a Google OAuth credential is configured
 - `docker-compose.yml`
 
 The wizard also stores remote URL/API key in `remote` config block so `export-token` can use it without extra flags.

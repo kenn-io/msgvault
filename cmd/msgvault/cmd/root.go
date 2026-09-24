@@ -406,7 +406,7 @@ func oauthSetupHint() string {
 		configPath = cfg.ConfigFilePath()
 	}
 	hint := fmt.Sprintf(`
-To use msgvault, you need a Google Cloud OAuth credential:
+Gmail and Google Calendar need a Google Cloud OAuth credential:
   1. Follow the setup guide: https://msgvault.io/guides/oauth-setup/
   2. Download the client_secret.json file
   3. Create or edit %s:

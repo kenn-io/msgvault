@@ -1,13 +1,18 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 func TestCreateNASBundle(t *testing.T) {
@@ -84,6 +89,53 @@ func TestCreateNASBundle_NoSecrets(t *testing.T) {
 	// client_secret.json should NOT exist (no source path given)
 	_, err = os.Stat(filepath.Join(bundleDir, "client_secret.json"))
 	assert.True(os.IsNotExist(err), "client_secret.json should not exist when no secrets path given")
+
+	// config.toml must not point at a credential the bundle does not hold
+	cfgData, err := os.ReadFile(filepath.Join(bundleDir, "config.toml"))
+	require.NoError(err, "read config.toml")
+	assert.NotContains(string(cfgData), "[oauth]")
+}
+
+// runSetupForTest runs the wizard against a fresh home directory with
+// the given answers on stdin and returns the home directory and output.
+func runSetupForTest(t *testing.T, answers string) (string, string) {
+	t.Helper()
+	home := t.TempDir()
+	c := config.NewDefaultConfig()
+	c.HomeDir = home
+	c.Data.DataDir = home
+	withTestConfig(t, c)
+
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetIn(strings.NewReader(answers))
+	cmd.SetOut(&out)
+	require.NoError(t, runSetup(cmd, nil))
+	return home, out.String()
+}
+
+func TestSetupWithoutGoogleCredentials(t *testing.T) {
+	// Enter at the credential prompt, then "n" for the remote server.
+	home, out := runSetupForTest(t, "\nn\n")
+
+	assert.NotContains(t, out, "add-account")
+	assert.Contains(t, out, "add-imap")
+	_, err := os.Stat(filepath.Join(home, "nas-bundle"))
+	assert.True(t, os.IsNotExist(err), "no NAS bundle without a remote")
+}
+
+func TestSetupWithGoogleCredentialsPrintsGmailSteps(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	secretsPath := filepath.Join(t.TempDir(), "client_secret.json")
+	require.NoError(os.WriteFile(secretsPath, []byte(`{"installed":{}}`), 0600))
+
+	home, out := runSetupForTest(t, secretsPath+"\nn\n")
+
+	assert.Contains(out, "add-account")
+	data, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	require.NoError(err, "setup should save config.toml")
+	assert.Contains(string(data), "client_secret.json")
 }
 
 func TestCreateNASBundle_CopiesSecrets(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -22,9 +21,10 @@ var setupCmd = &cobra.Command{
 	Long: `Interactive setup wizard to configure msgvault for first use.
 
 This command helps you:
-  1. Locate or configure Google OAuth credentials
-  2. Create the config.toml file
-  3. Optionally configure a remote NAS server for token export
+  1. Optionally configure Google OAuth credentials (Gmail and Google
+     Calendar only; press Enter to skip)
+  2. Optionally configure a remote NAS server for token export
+  3. Create the config.toml file
 
 Run this once after installing msgvault to get started quickly. Then run
 "msgvault setup providers" to turn on search, attachment, and people lanes
@@ -42,7 +42,7 @@ func init() {
 }
 
 func runSetup(cmd *cobra.Command, args []string) error {
-	reader := bufio.NewReader(os.Stdin)
+	reader := bufio.NewReader(cmd.InOrStdin())
 
 	fmt.Println("Welcome to msgvault setup!")
 	fmt.Println()
@@ -85,29 +85,37 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nConfiguration saved to %s\n", cfg.ConfigFilePath())
 	}
 
-	// Print next steps
-	fmt.Println()
-	fmt.Println("Setup complete! Next steps:")
-	fmt.Println()
-	fmt.Println("  1. Add a Gmail account:")
-	fmt.Println("     msgvault add-account you@gmail.com")
-	fmt.Println()
-	fmt.Println("  2. Sync your emails:")
-	fmt.Println("     msgvault sync-full you@gmail.com")
-	fmt.Println()
-	if remoteURL != "" {
-		fmt.Println("  3. Export token to your NAS (after add-account):")
-		fmt.Println("     msgvault export-token you@gmail.com")
-		fmt.Println()
-	}
-	fmt.Println("For more help: msgvault --help")
-
+	printSetupNextSteps(cmd.OutOrStdout(), cfg.OAuth.HasAnyConfig(), remoteURL != "")
 	return nil
 }
 
+func printSetupNextSteps(w io.Writer, hasGoogle, hasRemote bool) {
+	var b strings.Builder
+	b.WriteString("\nSetup complete! Next steps:\n\n")
+	if hasGoogle {
+		b.WriteString("  1. Add a Gmail account:\n")
+		b.WriteString("     msgvault add-account you@gmail.com\n\n")
+		b.WriteString("  2. Sync your emails:\n")
+		b.WriteString("     msgvault sync-full you@gmail.com\n\n")
+		if hasRemote {
+			b.WriteString("  3. Export token to your NAS (after add-account):\n")
+			b.WriteString("     msgvault export-token you@gmail.com\n\n")
+		}
+	} else {
+		b.WriteString("  Add a source, for example:\n")
+		b.WriteString("     msgvault add-imap --host imap.example.com --username you@example.com\n")
+		b.WriteString("     msgvault add-o365 you@example.com\n")
+		b.WriteString("     msgvault import-mbox you@example.com /path/to/export.mbox\n\n")
+		b.WriteString("  Gmail needs a Google OAuth credential: run msgvault setup again when you have one.\n")
+		b.WriteString("  Setup guide: https://msgvault.io/docs/setup/\n\n")
+	}
+	b.WriteString("For more help: msgvault --help\n")
+	_, _ = io.WriteString(w, b.String())
+}
+
 func setupOAuthSecrets(reader *bufio.Reader) (string, error) {
-	fmt.Println("Step 1: OAuth Credentials")
-	fmt.Println("--------------------------")
+	fmt.Println("Step 1: Google OAuth Credentials (Optional)")
+	fmt.Println("--------------------------------------------")
 
 	// Check if already configured
 	if cfg.OAuth.ClientSecrets != "" {
@@ -118,7 +126,8 @@ func setupOAuthSecrets(reader *bufio.Reader) (string, error) {
 	}
 
 	fmt.Println()
-	fmt.Println("You need a Google Cloud OAuth credential (client_secret.json).")
+	fmt.Println("Gmail and Google Calendar need a Google Cloud OAuth credential")
+	fmt.Println("(client_secret.json). Other sources do not. Press Enter to skip.")
 	fmt.Println()
 	fmt.Println("To get one:")
 	fmt.Println("  1. Go to https://console.cloud.google.com/apis/credentials")
@@ -132,7 +141,8 @@ func setupOAuthSecrets(reader *bufio.Reader) (string, error) {
 	path = strings.TrimSpace(path)
 
 	if path == "" {
-		return "", errors.New("OAuth credentials path is required")
+		fmt.Println("Skipping Google OAuth credentials.")
+		return "", nil
 	}
 
 	// Expand ~ in path
@@ -250,15 +260,16 @@ func createNASBundle(bundleDir, apiKey, oauthSecretsPath string, port int) error
 	}
 
 	// Create NAS config.toml
+	oauthBlock := ""
+	if oauthSecretsPath != "" {
+		oauthBlock = "[oauth]\nclient_secrets = \"/data/client_secret.json\"\n\n"
+	}
 	nasConfig := fmt.Sprintf(`[server]
 bind_addr = "0.0.0.0"
 api_port = 8080
 api_key = %q
 
-[oauth]
-client_secrets = "/data/client_secret.json"
-
-[sync]
+%s[sync]
 rate_limit_qps = 5
 
 # Accounts will be added automatically when you export tokens.
@@ -267,7 +278,7 @@ rate_limit_qps = 5
 # email = "you@gmail.com"
 # schedule = "0 2 * * *"
 # enabled = true
-`, apiKey)
+`, apiKey, oauthBlock)
 
 	configPath := filepath.Join(bundleDir, "config.toml")
 	if err := os.WriteFile(configPath, []byte(nasConfig), 0600); err != nil {
