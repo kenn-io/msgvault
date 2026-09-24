@@ -245,7 +245,7 @@ func resolveRepairMessageSource(
 	if len(targets) != 1 {
 		return nil, fmt.Errorf("repair message reference %q is ambiguous across %d archive rows", reference, len(targets))
 	}
-	if targets[0].SourceType != sourceTypeGmail {
+	if store.EffectiveSourceType(targets[0].SourceType) != sourceTypeGmail {
 		return nil, fmt.Errorf("repair message source %d is %s, not gmail", targets[0].SourceID, targets[0].SourceType)
 	}
 	return st.GetSourceByIDContext(ctx, targets[0].SourceID)

@@ -46,6 +46,26 @@ func TestRepairMessageResolvesExactTargetAndSourceScope(t *testing.T) {
 	assert.NotEqual(internalB, result.InternalID)
 }
 
+func TestRepairMessageAcceptsLegacyGmailSource(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSource(t)
+	internalID := seedRepairRow(t, env.Store, source.ID, "legacy-gmail", "thread", "stored")
+	_, err := env.Store.DB().Exec(env.Store.Rebind(
+		`UPDATE sources SET source_type = '' WHERE id = ?`), source.ID)
+	requirements.NoError(err)
+	env.Mock.Messages["legacy-gmail"] = repairRaw("legacy-gmail", "thread", "repaired", "repaired body", nil)
+
+	result, err := env.Syncer.RepairMessage(t.Context(), RepairRequest{
+		Reference: "legacy-gmail", SourceID: source.ID,
+	})
+	requirements.NoError(err)
+	assertions.Equal(internalID, result.InternalID)
+	assertions.Equal(source.ID, result.SourceID)
+	assertions.Equal("repaired", result.Subject)
+}
+
 func TestRepairMessageLeavesSentAttributionToIdentityDiscovery(t *testing.T) {
 	require := require.New(t)
 	env := newTestEnv(t)

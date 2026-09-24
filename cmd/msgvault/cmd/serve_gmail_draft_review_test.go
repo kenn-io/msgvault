@@ -302,6 +302,78 @@ func TestGmailDraftCreateAndSendAsUseLocalBehavior(t *testing.T) {
 	assert.True(sendAs.Entries[0].ConfirmedIdentity)
 }
 
+func TestGmailDraftDelegatedGrantDisambiguatesLegacySibling(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	const identifier = "owner@example.test"
+	args := func(f gmailDraftTestFixture) []string {
+		return []string{api.CLIRunDraftReplyCommand, strconv.FormatInt(f.parentID, 10),
+			"--from", identifier, "--body", "delegated body"}
+	}
+	run := func(t *testing.T, f gmailDraftTestFixture, grant *agentgrant.Grant) error {
+		t.Helper()
+		return f.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
+			Args: args(f), Grant: grant,
+		}, func(api.CLIRunEvent) error { return nil })
+	}
+
+	t.Run("ambiguous sibling is denied", func(t *testing.T) {
+		f := newSQLiteGmailDraftTestFixture(t)
+		_, err := f.store.DB().Exec(f.store.Rebind(
+			`UPDATE sources SET source_type = '' WHERE id = ?`), f.source.ID)
+		requirements.NoError(err)
+		sibling, err := f.store.GetOrCreateSource(sourceTypeGmail, f.source.Identifier)
+		requirements.NoError(err)
+		grant := &agentgrant.Grant{
+			ID: "sibling-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+			Sources: []agentgrant.SourceRef{{ID: sibling.ID, Type: sourceTypeGmail, Identifier: identifier}},
+		}
+
+		err = run(t, f, grant)
+		requirements.Error(err)
+		assertions.Equal("not_permitted", err.Error())
+		assertions.Zero(f.client.createCalls)
+	})
+
+	t.Run("exact source ID is accepted", func(t *testing.T) {
+		f := newSQLiteGmailDraftTestFixture(t)
+		_, err := f.store.DB().Exec(f.store.Rebind(
+			`UPDATE sources SET source_type = '' WHERE id = ?`), f.source.ID)
+		requirements.NoError(err)
+		grant := &agentgrant.Grant{
+			ID: "exact-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+			Sources: []agentgrant.SourceRef{{ID: f.source.ID, Type: sourceTypeGmail, Identifier: identifier}},
+		}
+
+		requirements.NoError(run(t, f, grant))
+		assertions.Equal(1, f.client.createCalls)
+	})
+
+	t.Run("unique replacement tuple remains portable", func(t *testing.T) {
+		f := newSQLiteGmailDraftTestFixture(t)
+		grant := &agentgrant.Grant{
+			ID: "replacement-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+			Sources: []agentgrant.SourceRef{{ID: f.source.ID + 999, Type: sourceTypeGmail, Identifier: identifier}},
+		}
+
+		requirements.NoError(run(t, f, grant))
+		assertions.Equal(1, f.client.createCalls)
+	})
+
+	t.Run("same ID with wrong tuple is denied", func(t *testing.T) {
+		f := newSQLiteGmailDraftTestFixture(t)
+		grant := &agentgrant.Grant{
+			ID: "wrong-tuple-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+			Sources: []agentgrant.SourceRef{{ID: f.source.ID, Type: sourceTypeGmail, Identifier: "other@example.test"}},
+		}
+
+		err := run(t, f, grant)
+		requirements.Error(err)
+		assertions.Equal("not_permitted", err.Error())
+		assertions.Zero(f.client.createCalls)
+	})
+}
+
 func TestGmailDraftSendAsFailureIsReportedLocally(t *testing.T) {
 	fixture := newGmailDraftTestFixture(t)
 	fixture.client.sendAsErr = errors.New("send-as unavailable")

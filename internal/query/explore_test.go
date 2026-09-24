@@ -173,6 +173,42 @@ func TestExploreMessageTypeEmailIncludesLegacyRows(t *testing.T) {
 	assert.ElementsMatch([]int64{sms}, anchorIDs(smsFast))
 }
 
+func TestExploreDeletionEligibilityIncludesLegacyGmailSource(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	explicitSourceID := b.AddSourceWithType("explicit@example.invalid", "gmail")
+	legacySourceID := b.AddSourceWithType("legacy@example.invalid", "")
+	b.sources[len(b.sources)-1].LegacyEmptySourceType = true
+	imapSourceID := b.AddSourceWithType("other@example.invalid", "imap")
+	liveExplicitID := b.AddMessage(MessageOpt{SourceID: explicitSourceID, MessageType: "email"})
+	liveLegacyID := b.AddMessage(MessageOpt{SourceID: legacySourceID, MessageType: "email"})
+	b.AddMessage(MessageOpt{SourceID: imapSourceID, MessageType: "email"})
+	b.AddMessage(MessageOpt{SourceID: legacySourceID, MessageType: "google_chat", ConversationType: "chat"})
+	deletedAt := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	b.AddMessage(MessageOpt{SourceID: legacySourceID, MessageType: "email", DeletedFromSourceAt: &deletedAt})
+	missingProviderID := b.AddMessage(MessageOpt{SourceID: legacySourceID, MessageType: "email"})
+	b.messages[len(b.messages)-1].SourceMessageID = ""
+
+	engine := b.BuildEngine()
+	fast, legacy := runExploreBothPaths(t, engine, ExploreRequest{
+		Context: Context{Deletion: DeletionActive}, Page: PageSpec{Limit: 50},
+	})
+	requirements.Equal(legacy, fast)
+	stats, err := engine.ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+		IncludeDeletableMessageIDs: true,
+	})
+	requirements.NoError(err)
+	assertions.Equal(int64(2), stats.DeletableCount)
+	assertions.ElementsMatch([]int64{liveExplicitID, liveLegacyID}, stats.DeletableMessageIDs)
+	assertions.NotContains(stats.DeletableMessageIDs, missingProviderID)
+	for _, row := range fast.Rows {
+		if row.AnchorMessageID != nil && *row.AnchorMessageID == liveLegacyID {
+			assertions.Empty(row.SourceType, "Explore must preserve the legacy raw source type")
+		}
+	}
+}
+
 func TestExploreCoverageStreamsExactLiveMessagesInOneScan(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

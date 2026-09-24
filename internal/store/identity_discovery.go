@@ -232,7 +232,7 @@ func (s *Store) scanIdentityObservationsContext(
 		           JOIN labels l ON l.id = ml.label_id
 		           WHERE ml.message_id = m.id
 		             AND l.source_id = m.source_id
-		             AND src.source_type = 'gmail'
+		             AND src.source_type IN ('', 'gmail')
 		             AND l.source_label_id = 'SENT'
 		       ) AS has_sent_label
 		FROM messages m

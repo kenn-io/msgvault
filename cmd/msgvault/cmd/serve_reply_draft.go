@@ -281,7 +281,7 @@ func (a *storeAPIAdapter) refreshDraftCache(ctx context.Context, source *store.S
 // draft creation on the given source. Returns nil when grant is nil (owner
 // path). The check runs before authorizeIMAPDraft so an out-of-scope source
 // never discloses whether drafting is enabled.
-func authorizeDelegatedDraftSource(grant *agentgrant.Grant, source *store.Source) error {
+func (a *storeAPIAdapter) authorizeDelegatedDraftSource(grant *agentgrant.Grant, source *store.Source) error {
 	if grant == nil {
 		return nil
 	}
@@ -291,7 +291,32 @@ func authorizeDelegatedDraftSource(grant *agentgrant.Grant, source *store.Source
 	if !grant.Allows(agentgrant.PermissionDraftCreate, ref) {
 		return draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
 	}
-	return nil
+	if ref.Type != sourceTypeGmail {
+		return nil
+	}
+	for _, granted := range grant.Sources {
+		if granted.ID != source.ID {
+			continue
+		}
+		if granted.Type == ref.Type && granted.Identifier == ref.Identifier {
+			return nil
+		}
+		return draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
+	}
+	sources, err := a.store.GetSourcesByIdentifier(source.Identifier)
+	if err != nil {
+		return draftReplyNotPermitted(fmt.Errorf("resolve source %d for grant %s: %w", source.ID, grant.ID, err))
+	}
+	var matches []*store.Source
+	for _, candidate := range sources {
+		if store.EffectiveSourceType(candidate.SourceType) == ref.Type && candidate.Identifier == ref.Identifier {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) == 1 && matches[0].ID == source.ID {
+		return nil
+	}
+	return draftReplyNotPermitted(fmt.Errorf("source %d is not uniquely identified in grant %s", source.ID, grant.ID))
 }
 
 // resolveDraftReplyTarget loads the parent, checks the operator grant, and
@@ -312,7 +337,7 @@ func (a *storeAPIAdapter) resolveDraftReplyTarget(ctx context.Context, intent dr
 		}
 		return draftReplyTarget{}, draftReplyError("invalid_source", fmt.Errorf("load source %d: %w", parent.SourceID, err))
 	}
-	if err := authorizeDelegatedDraftSource(grant, source); err != nil {
+	if err := a.authorizeDelegatedDraftSource(grant, source); err != nil {
 		return draftReplyTarget{}, err
 	}
 	var mailbox string

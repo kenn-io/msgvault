@@ -157,7 +157,7 @@ func (s *Store) classifyLegacyGmailChats(ctx context.Context, tx *loggedTx) erro
 			JOIN sources source ON source.id = label.source_id
 			JOIN message_labels ml ON ml.label_id = label.id
 			JOIN messages m ON m.id = ml.message_id AND m.source_id = source.id
-			WHERE source.source_type = 'gmail'
+			WHERE source.source_type IN ('', 'gmail')
 			  AND label.source_label_id = 'CHAT'
 			  AND m.message_type = 'email'
 		  )
@@ -176,7 +176,7 @@ func (s *Store) classifyLegacyGmailChats(ctx context.Context, tx *loggedTx) erro
 			JOIN message_labels ml ON ml.label_id = label.id
 			JOIN messages candidate ON candidate.id = ml.message_id
 				AND candidate.source_id = source.id
-			WHERE source.source_type = 'gmail'
+			WHERE source.source_type IN ('', 'gmail')
 			  AND label.source_label_id = 'CHAT'
 		  )
 	`, MessageTypeGoogleChat); err != nil {

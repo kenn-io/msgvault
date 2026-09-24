@@ -48,6 +48,28 @@ func TestAuditGmailMessagesReportsCrossedFieldsAndInconclusiveRaw(t *testing.T) 
 	assert.Equal(AuditInconclusive, byID[badID].Fields[AuditFieldRawMIME])
 }
 
+func TestAuditGmailMessagesIncludesLegacyGmailSource(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSource(t)
+	id := seedRepairRow(t, env.Store, source.ID, "legacy-gmail", "thread", "stored")
+	_, err := env.Store.DB().Exec(env.Store.Rebind(
+		`UPDATE sources SET source_type = '' WHERE id = ?`), source.ID)
+	requirements.NoError(err)
+	requirements.NoError(env.Store.UpsertMessageRaw(id, testemail.NewMessage().
+		From("other@example.com").To("different@example.com").
+		Subject("other").Header("Message-ID", "<other@example.com>").Body("other body").Bytes()))
+
+	results := collectAudit(t, env.Syncer, source.ID)
+	requirements.Len(results, 1)
+	assertions.Equal(id, results[0].InternalID)
+	assertions.Equal(AuditMismatch, results[0].Status)
+	allResults := collectAudit(t, env.Syncer, 0)
+	requirements.Len(allResults, 1)
+	assertions.Equal(id, allResults[0].InternalID)
+}
+
 func TestAuditGmailMessagesTreatsParsedEmptyFieldsAsAuthoritative(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

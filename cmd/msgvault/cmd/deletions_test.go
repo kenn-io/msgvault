@@ -818,7 +818,7 @@ func TestPlanCLIDeleteStagedLegacyGmailCollisionFromSelectionThroughExecution(t 
 	})
 	require.NoError(err)
 
-	engine := query.NewSQLiteEngine(st.DB())
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
 	targets, err := engine.GetDeletionTargetsByFilter(context.Background(), query.MessageFilter{
 		MessageType: "email", SourceIDs: []int64{legacy.ID},
 	})
