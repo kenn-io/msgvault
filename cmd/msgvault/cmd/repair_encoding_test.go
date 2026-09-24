@@ -131,6 +131,41 @@ func TestRepairEncoding_NoScanErrors(t *testing.T) {
 	assert.Zero(t, stats.skippedRows, "skippedRows should be 0 for valid data")
 }
 
+func TestRepairMessageFields_RepairsInvalidRFC822MessageID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t,
+		"inserts invalid UTF-8 bytes into a TEXT column; PostgreSQL rejects them")
+	st := testutil.NewTestStore(t)
+	db := st.DB()
+
+	_, err := db.Exec(`INSERT INTO sources
+		(id, source_type, identifier, created_at, updated_at)
+		VALUES (1, 'test', 'test@example.com', datetime('now'), datetime('now'))`)
+	require.NoError(err, "insert source")
+	_, err = db.Exec(`INSERT INTO conversations
+		(id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
+		VALUES (1, 1, 'conv-1', 'email_thread', 'title', datetime('now'), datetime('now'))`)
+	require.NoError(err, "insert conversation")
+	_, err = db.Exec(`INSERT INTO messages
+		(id, conversation_id, source_id, source_message_id, rfc822_message_id,
+		 message_type, sent_at, size_estimate)
+		VALUES (1, 1, 1, 'source-1', ?, 'email', datetime('now'), 1000)`,
+		"broken-\xff@example.test")
+	require.NoError(err, "insert message with invalid Message-ID")
+
+	stats := &repairStats{}
+	reembedNeededIDs, err := repairMessageFields(st, stats)
+	require.NoError(err, "repair message fields")
+
+	var got string
+	require.NoError(db.QueryRow(`SELECT rfc822_message_id FROM messages WHERE id = 1`).Scan(&got),
+		"read repaired Message-ID")
+	assert.Equal("broken-\uFFFD@example.test", got)
+	assert.Equal(1, stats.messageIDs)
+	assert.Empty(reembedNeededIDs, "Message-ID does not feed the message embedder")
+}
+
 // TestRepairMessageFields_ReturnsReembedNeededIDs guards the re-embedding
 // hook: when any field that feeds the embedder (subject, body_text,
 // body_html) is repaired, the affected message id must appear in the

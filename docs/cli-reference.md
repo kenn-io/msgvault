@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-25"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -3112,6 +3112,7 @@ and [backup](usage/backup.md) before applying.
 Fix UTF-8 encoding issues in existing messages through the configured remote
 server or local daemon. The command streams the daemon's stdout/stderr back to
 the terminal, and the daemon serializes the repair with other archive mutations.
+It repairs RFC 822 Message-ID values as well as message text fields.
 
 ```bash
 msgvault repair-encoding

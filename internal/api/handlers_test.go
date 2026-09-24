@@ -5755,6 +5755,28 @@ func TestHandleFastSearch(t *testing.T) {
 	assert.Len(resp.Messages, 1, "messages count")
 }
 
+func TestHandleFastSearchReportsCacheEncodingError(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	engine := &querytest.MockEngine{
+		SearchFastWithStatsFunc: func(context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int) (*query.SearchFastResult, error) {
+			return nil, fmt.Errorf("materialize search matches: %s", `Invalid Input Error: Invalid string encoding found in Parquet file "x.parquet": value "a\xF0" is not valid UTF8!`)
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fast?q=invoice", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusInternalServerError, w.Code)
+	var got ErrorResponse
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal("cache_encoding_error", got.Error)
+	assert.Contains(got.Message, "msgvault repair-encoding")
+	assert.Contains(got.Message, "msgvault build-cache --full-rebuild")
+}
+
 func TestHandleFastSearchForwardsSourceIDs(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

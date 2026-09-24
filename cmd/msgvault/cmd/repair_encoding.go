@@ -25,6 +25,7 @@ var repairEncodingCmd = &cobra.Command{
 	Long: `Scan for messages with invalid UTF-8 and repair them.
 
 This command repairs invalid UTF-8 in:
+- RFC 822 Message-ID values
 - Subject
 - Body text
 - Body HTML
@@ -37,6 +38,9 @@ For each invalid field, it:
 1. Re-parses the raw MIME data to extract text with proper charset handling
 2. If re-parsing fails, attempts charset detection (Windows-1252, Latin-1, etc.)
 3. As a last resort, replaces invalid bytes with the replacement character
+
+RFC 822 Message-ID values are identifiers, so invalid bytes are replaced
+without charset decoding.
 
 This is useful after a sync that may have produced invalid UTF-8 due to
 charset detection issues in the MIME parser.`,
@@ -177,6 +181,7 @@ func repairResetEmbeddings(ctx context.Context, s *store.Store, reembedNeededIDs
 
 // repairStats tracks repair statistics.
 type repairStats struct {
+	messageIDs    int
 	subjects      int
 	bodyTexts     int
 	bodyHTMLs     int
@@ -225,7 +230,7 @@ func repairEncoding(s *store.Store) (reembedNeededIDs []int64, err error) {
 	}
 
 	// Summary
-	total := stats.subjects + stats.bodyTexts + stats.bodyHTMLs + stats.snippets +
+	total := stats.messageIDs + stats.subjects + stats.bodyTexts + stats.bodyHTMLs + stats.snippets +
 		stats.displayNames + stats.labels + stats.filenames + stats.convTitles +
 		stats.convSourceIDs + stats.convPreviews + stats.emailAddrs + stats.domains
 	if total == 0 {
@@ -234,6 +239,9 @@ func repairEncoding(s *store.Store) (reembedNeededIDs []int64, err error) {
 	}
 
 	fmt.Println("\n=== Repair Summary ===")
+	if stats.messageIDs > 0 {
+		fmt.Printf("  Message IDs:   %d\n", stats.messageIDs)
+	}
 	if stats.subjects > 0 {
 		fmt.Printf("  Subjects:      %d\n", stats.subjects)
 	}
@@ -284,7 +292,8 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 
 	// Query all messages with their raw data
 	rows, err := db.Query(`
-		SELECT m.id, m.message_type, m.subject, mb.body_text, mb.body_html, m.snippet,
+		SELECT m.id, m.message_type, m.subject, m.rfc822_message_id,
+		       mb.body_text, mb.body_html, m.snippet,
 		       mr.raw_data, mr.compression
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
@@ -296,8 +305,8 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 	defer func() { _ = rows.Close() }()
 
 	type messageRepair struct {
-		id                                       int64
-		newSubject, newBody, newHTML, newSnippet sql.NullString
+		id                                                     int64
+		newMessageID, newSubject, newBody, newHTML, newSnippet sql.NullString
 	}
 
 	const batchSize = 1000
@@ -323,6 +332,10 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 			if r.newSubject.Valid {
 				msgUpdates = append(msgUpdates, "subject = ?")
 				msgArgs = append(msgArgs, r.newSubject.String)
+			}
+			if r.newMessageID.Valid {
+				msgUpdates = append(msgUpdates, "rfc822_message_id = ?")
+				msgArgs = append(msgArgs, r.newMessageID.String)
 			}
 			if r.newSnippet.Valid {
 				msgUpdates = append(msgUpdates, "snippet = ?")
@@ -384,11 +397,11 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 	for rows.Next() {
 		var id int64
 		var messageType string
-		var subject, bodyText, bodyHTML, snippet sql.NullString
+		var subject, messageID, bodyText, bodyHTML, snippet sql.NullString
 		var rawData []byte
 		var compression sql.NullString
 
-		if err := rows.Scan(&id, &messageType, &subject, &bodyText, &bodyHTML, &snippet, &rawData, &compression); err != nil {
+		if err := rows.Scan(&id, &messageType, &subject, &messageID, &bodyText, &bodyHTML, &snippet, &rawData, &compression); err != nil {
 			logger.Warn("skipping message row with scan error", "error", err)
 			stats.skippedRows++
 			continue
@@ -404,6 +417,19 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 		repair.id = id
 		var parsed *mime.Message
 		needsRepair := false
+
+		// Message-ID is identifier data rather than display text. Do not run it
+		// through the MIME charset decoder: an invalid header byte can become a
+		// different, apparently valid identifier. Preserve the existing bytes
+		// and replace only invalid sequences.
+		if messageID.Valid && !utf8.ValidString(messageID.String) {
+			repair.newMessageID = sql.NullString{
+				String: textutil.SanitizeUTF8(messageID.String),
+				Valid:  true,
+			}
+			needsRepair = true
+			stats.messageIDs++
+		}
 
 		// Subject
 		if subject.Valid && !utf8.ValidString(subject.String) {

@@ -930,6 +930,46 @@ func TestConversationTitleDriftDetectedAndRepairedByDerivedRefresh(t *testing.T)
 	assertions.Equal("Updated cache title", title)
 }
 
+func TestCSVInvalidConversationTitleKeepsIncrementalCacheFresh(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	_, err = db.Exec(`UPDATE conversations SET title = CAST(X'4261642080' AS TEXT) WHERE id = 102`)
+	require.NoError(err)
+	require.NoError(db.Close())
+
+	_, err = buildCache(dbPath, analyticsDir, true)
+	require.NoError(err)
+	fresh := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.False(fresh.NeedsBuild, "unchanged invalid title must match the published snapshot: %s", fresh.Reason)
+
+	db, err = sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	_, err = db.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, sent_at)
+		VALUES (99, 102, 1, 'msg99', '2026-09-23 10:00:00')`)
+	require.NoError(err)
+	require.NoError(db.Close())
+	appendState := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(appendState.HasNew)
+	assert.False(appendState.HasConversationTypeDrift, "unchanged title must not look like metadata drift")
+	assert.False(appendState.FullRebuild, "new messages alone remain eligible for incremental export")
+
+	db, err = sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	_, err = db.Exec(`UPDATE conversations SET title = 'Changed title' WHERE id = 102`)
+	require.NoError(err)
+	require.NoError(db.Close())
+	changed := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(changed.NeedsBuild)
+	assert.True(changed.HasConversationTypeDrift, "a real title change must still be detected")
+	assert.True(changed.FullRebuild, "metadata drift with a new message requires rewriting committed rows")
+}
+
 func TestFullBuildForcedWhenTypeDriftCoincidesWithNewMessages(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

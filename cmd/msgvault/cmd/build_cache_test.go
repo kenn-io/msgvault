@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"os/exec"
@@ -24,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 func TestDaemonBuildCacheChildUsesQuietConsolePolicy(t *testing.T) {
@@ -2283,73 +2285,426 @@ func TestBuildCache_UTF8Handling(t *testing.T) {
 	assert.Equal("Test émoji 🎉 and unicode", subject, "unicode should be preserved")
 }
 
-func TestBuildCacheCSVInvalidUTF8ExplainsRepairPath(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
-	tmpDir := setupTestSQLite(t)
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(err)
-	_, err = db.Exec(`UPDATE attachments SET filename = CAST(X'80' AS TEXT) WHERE id = 1`)
-	require.NoError(err)
-	require.NoError(db.Close())
-
-	_, err = buildCache(dbPath, filepath.Join(tmpDir, "analytics"), true)
-	require.Error(err)
-	assert.Contains(err.Error(), "msgvault repair-encoding")
-	assert.Contains(err.Error(), "not a msgvault option")
+func TestBuildCacheCSVInvalidUTF8IsRepairedWithWarning(t *testing.T) {
+	for _, tc := range []struct{ name, setup, check string }{
+		{"attachment filename", `UPDATE attachments SET filename = CAST(X'80' AS TEXT) WHERE id = 1`, "SELECT filename FROM read_parquet('%s/attachments/*.parquet') WHERE attachment_id = 1"},
+		{"source message ID", `UPDATE messages SET source_message_id = CAST(X'80' AS TEXT) WHERE id = 1`, "SELECT source_message_id FROM read_parquet('%s/messages/**/*.parquet', hive_partitioning=true) WHERE id = 1"},
+		{"row past CSV sample", `INSERT INTO messages (source_id, source_message_id, sent_at)
+   WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM seq WHERE i < 30000)
+   SELECT 1, 'bulk-' || i, datetime('2024-04-01', '+' || i || ' minutes') FROM seq;
+   UPDATE messages SET subject = CAST(X'80' AS TEXT) WHERE id = (SELECT MAX(id) FROM messages)`,
+			"SELECT subject FROM read_parquet('%s/messages/**/*.parquet', hive_partitioning=true) ORDER BY id DESC LIMIT 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+			tmpDir := setupTestSQLite(t)
+			dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
+			db, err := sql.Open("sqlite3", dbPath)
+			require.NoError(err)
+			_, err = db.Exec(tc.setup)
+			require.NoError(err)
+			require.NoError(db.Close())
+			var buildErr error
+			stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(dbPath, analyticsDir, true) })
+			require.NoError(buildErr)
+			assert.Contains(stderr, "msgvault repair-encoding")
+			duckDB, err := sql.Open("duckdb", "")
+			require.NoError(err)
+			defer func() { _ = duckDB.Close() }()
+			var got string
+			require.NoError(duckDB.QueryRow(fmt.Sprintf(tc.check, filepath.ToSlash(analyticsDir))).Scan(&got))
+			assert.Equal("�", got)
+		})
+	}
 }
 
-func TestBuildCacheCSVInvalidUTF8InUnrepairedFieldScopesGuidance(t *testing.T) {
+func TestBuildCacheSQLiteScannerInvalidUTF8KeepsFastSearchWorking(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+	oldGOOS := cacheSnapshotGOOS
+	cacheSnapshotGOOS = "linux"
+	t.Cleanup(func() { cacheSnapshotGOOS = oldGOOS })
+	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "")
+	probe, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	requireSQLiteScanner(t, probe)
+	require.NoError(probe.Close())
 	tmpDir := setupTestSQLite(t)
-	dbPath := filepath.Join(tmpDir, "test.db")
-
+	dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`UPDATE messages SET source_message_id = CAST(X'80' AS TEXT) WHERE id = 1`)
+	_, err = db.Exec(`UPDATE messages SET snippet = CAST(X'43616c656e6461723a206c756e636820f09f' AS TEXT) WHERE id = 1`)
 	require.NoError(err)
 	require.NoError(db.Close())
-
-	_, err = buildCache(dbPath, filepath.Join(tmpDir, "analytics"), true)
-	require.Error(err)
-	assert.Contains(err.Error(), "msgvault repair-encoding")
-	assert.Contains(err.Error(), "common archived text fields")
-	assert.Contains(err.Error(), "if the cache rebuild still fails")
-	assert.Contains(err.Error(), "messages")
+	var buildErr error
+	stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(dbPath, analyticsDir, true) })
+	require.NoError(buildErr)
+	assert.NotContains(stderr, "using CSV fallback")
+	assert.Contains(stderr, "msgvault repair-encoding")
+	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(err)
+	defer func() { _ = engine.Close() }()
+	q := search.Parse("from:alice@example.com")
+	result, err := engine.SearchFastWithStats(context.Background(), q, "from:alice@example.com", query.MessageFilter{}, query.ViewSenders, 50, 0)
+	require.NoError(err)
+	var snippet string
+	for _, m := range result.Messages {
+		if m.ID == 1 {
+			snippet = m.Snippet
+		}
+	}
+	assert.Equal("Calendar: lunch ��", snippet)
 }
 
-// TestBuildCacheCSVInvalidUTF8PastSampleExplainsRepairPath covers the case
-// where DuckDB's CSV sniffer does not reach the invalid row, so the error
-// surfaces during the Parquet export instead of view creation.
-func TestBuildCacheCSVInvalidUTF8PastSampleExplainsRepairPath(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
-	tmpDir := setupTestSQLite(t)
-	dbPath := filepath.Join(tmpDir, "test.db")
+func TestBuildCacheInvalidUTF8IdentityKeysNeverMatch(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		forceCSV bool
+	}{
+		{name: "sqlite scanner"},
+		{name: "CSV fallback", forceCSV: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			oldGOOS := cacheSnapshotGOOS
+			cacheSnapshotGOOS = "linux"
+			t.Cleanup(func() { cacheSnapshotGOOS = oldGOOS })
+			if tc.forceCSV {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+			} else {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "")
+				probe, err := sql.Open("duckdb", "")
+				require.NoError(err)
+				requireSQLiteScanner(t, probe)
+				require.NoError(probe.Close())
+			}
 
+			tmpDir := setupTestSQLite(t)
+			dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
+			db, err := sql.Open("sqlite3", dbPath)
+			require.NoError(err)
+
+			// Byte-identical invalid keys plus distinct invalid bytes that a
+			// U+FFFD repair would collapse onto one key: neither may attribute.
+			for _, address := range []string{
+				"envelope\x80@example.com", "primary\x80@example.com",
+				"identifier\x80@example.com", "handle\x80",
+				"a\x80@example.com",
+			} {
+				_, err = db.Exec(`INSERT INTO account_identities (source_id, address) VALUES (1, CAST(? AS TEXT))`, []byte(address))
+				require.NoError(err)
+			}
+			_, err = db.Exec(`UPDATE message_recipients SET email_address = CAST(? AS TEXT)
+			WHERE message_id = 1 AND recipient_type = 'from'`, []byte("envelope\x80@example.com"))
+			require.NoError(err)
+			// a\x81 and a\x80 sanitize to the same U+FFFD string; the
+			// envelope-equality path must not match them.
+			_, err = db.Exec(`UPDATE message_recipients SET email_address = CAST(? AS TEXT)
+			WHERE message_id = 2 AND recipient_type = 'from'`, []byte("a\x81@example.com"))
+			require.NoError(err)
+			_, err = db.Exec(`UPDATE participants SET email_address = CAST(? AS TEXT) WHERE id = 4`, []byte("primary\x80@example.com"))
+			require.NoError(err)
+			_, err = db.Exec(`UPDATE participants SET email_address = '' WHERE id = 2`)
+			require.NoError(err)
+			_, err = db.Exec(`UPDATE participant_identifiers SET identifier_value = CAST(? AS TEXT)
+			WHERE participant_id = 2`, []byte("identifier\x80@example.com"))
+			require.NoError(err)
+			_, err = db.Exec(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value)
+			VALUES (3, 'handle', CAST(? AS TEXT))`, []byte("handle\x80"))
+			require.NoError(err)
+			// Distinct invalid bytes against the a\x80 identity exercise the
+			// primary-email and non-email identifier paths.
+			_, err = db.Exec(`INSERT INTO participants (id, email_address, domain)
+			VALUES (5, CAST(? AS TEXT), 'example.com')`, []byte("a\x81@example.com"))
+			require.NoError(err)
+			_, err = db.Exec(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value)
+			VALUES (5, 'handle', CAST(? AS TEXT))`, []byte("a\x81@example.com"))
+			require.NoError(err)
+			_, err = db.Exec(`UPDATE messages SET sender_id = CASE id WHEN 3 THEN 3 WHEN 4 THEN 4 WHEN 5 THEN 2 END
+			WHERE id IN (3, 4, 5)`)
+			require.NoError(err)
+			// Reviewer scenario: the From envelope exists but its bytes are
+			// invalid, while the sender participant carries a VALID primary
+			// address that byte-equals a valid account identity. The recorded
+			// envelope is authoritative, so the participant fallback must not
+			// reclassify the message as sent by the owner.
+			_, err = db.Exec(`INSERT INTO participants (id, email_address, domain)
+			VALUES (6, 'owner@example.com', 'example.com')`)
+			require.NoError(err)
+			_, err = db.Exec(`INSERT INTO account_identities (source_id, address) VALUES (1, 'owner@example.com')`)
+			require.NoError(err)
+			_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, sender_id)
+			VALUES (6, 1, 'msg6', 101, 'Damaged envelope', 'Preview 6', '2024-03-05 09:00:00', 400, 6)`)
+			require.NoError(err)
+			_, err = db.Exec(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES
+			(6, 6, 'from', 'Owner Account', CAST(? AS TEXT))`, []byte("owner-damaged\x80@example.com"))
+			require.NoError(err)
+			// Control: the same sender without any recorded envelope still
+			// attributes through the participant fallback with valid keys.
+			_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, sender_id)
+			VALUES (7, 1, 'msg7', 101, 'No envelope', 'Preview 7', '2024-03-06 09:00:00', 400, 6)`)
+			require.NoError(err)
+			_, err = db.Exec(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
+			(7, 6, 'from', 'Owner Account')`)
+			require.NoError(err)
+			require.NoError(db.Close())
+
+			_, err = buildCache(dbPath, analyticsDir, true)
+			require.NoError(err)
+
+			duckDB, err := sql.Open("duckdb", "")
+			require.NoError(err)
+			defer func() { _ = duckDB.Close() }()
+			rows, err := duckDB.Query(`SELECT id, is_from_me, owner_participant_id
+				FROM read_parquet(?, hive_partitioning=true) ORDER BY id`, filepath.Join(analyticsDir, "messages", "**", "*.parquet"))
+			require.NoError(err)
+			defer func() { _ = rows.Close() }()
+			type attribution struct {
+				fromMe bool
+				owner  sql.NullInt64
+			}
+			got := make(map[int]attribution)
+			for rows.Next() {
+				var id int
+				var a attribution
+				require.NoError(rows.Scan(&id, &a.fromMe, &a.owner))
+				got[id] = a
+			}
+			require.NoError(rows.Err())
+			// The fixture messages carry no source_is_from_me and default
+			// is_from_me to false, so attribution can only come from the
+			// invalid keys above. owner_participant_id still follows the
+			// export's COALESCE fallback: sender_id first, else the single
+			// from-recipient.
+			assert.Equal(attribution{false, sql.NullInt64{Int64: 1, Valid: true}}, got[1], "invalid envelope key never matches")
+			assert.Equal(attribution{false, sql.NullInt64{Int64: 1, Valid: true}}, got[2], "distinct invalid envelope bytes never match")
+			assert.Equal(attribution{false, sql.NullInt64{Int64: 3, Valid: true}}, got[3], "invalid non-email identifier key never matches")
+			assert.Equal(attribution{false, sql.NullInt64{Int64: 4, Valid: true}}, got[4], "invalid primary email key never matches")
+			assert.Equal(attribution{false, sql.NullInt64{Int64: 2, Valid: true}}, got[5], "invalid email identifier key never matches")
+			assert.Equal(attribution{false, sql.NullInt64{Int64: 6, Valid: true}}, got[6],
+				"a present-but-invalid envelope is authoritative: the participant fallback must not attribute the owner's address")
+			assert.Equal(attribution{true, sql.NullInt64{Int64: 6, Valid: true}}, got[7],
+				"an absent envelope with valid keys still attributes via the participant fallback")
+
+			// The damaged from-row exports no address at all: substituting the
+			// participant's current address would mis-attribute the message.
+			var resolvedAddr, envelopeAddr sql.NullString
+			err = duckDB.QueryRow(`SELECT email_address, envelope_address FROM read_parquet(?)
+				WHERE message_id = 6 AND recipient_type = 'from'`,
+				filepath.Join(analyticsDir, "message_recipients", "*.parquet")).Scan(&resolvedAddr, &envelopeAddr)
+			require.NoError(err)
+			assert.False(resolvedAddr.Valid, "a present-but-invalid envelope must not resolve to the participant address")
+			assert.False(envelopeAddr.Valid, "a present-but-invalid envelope exports NULL")
+
+			ownerRows, err := duckDB.Query(`SELECT participant_id FROM read_parquet(?) WHERE source_id = 1 ORDER BY participant_id`,
+				filepath.Join(analyticsDir, "owner_participants", "*.parquet"))
+			require.NoError(err)
+			defer func() { _ = ownerRows.Close() }()
+			var owners []int64
+			for ownerRows.Next() {
+				var id int64
+				require.NoError(ownerRows.Scan(&id))
+				owners = append(owners, id)
+			}
+			require.NoError(ownerRows.Err())
+			assert.Equal([]int64{6}, owners,
+				"only the valid identity's participant is an owner candidate; invalid identity keys never populate owner_participants")
+		})
+	}
+}
+
+func TestBuildCacheCountsOnlyRepairedExportValues(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		forceCSV bool
+	}{
+		{name: "sqlite scanner"},
+		{name: "CSV fallback", forceCSV: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			oldGOOS := cacheSnapshotGOOS
+			cacheSnapshotGOOS = "linux"
+			t.Cleanup(func() { cacheSnapshotGOOS = oldGOOS })
+			if tc.forceCSV {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+			} else {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "")
+				probe, err := sql.Open("duckdb", "")
+				require.NoError(err)
+				requireSQLiteScanner(t, probe)
+				require.NoError(probe.Close())
+			}
+
+			tmpDir := setupTestSQLite(t)
+			dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
+			db, err := sql.Open("sqlite3", dbPath)
+			require.NoError(err)
+			_, err = db.Exec(`INSERT INTO participants (id, email_address, domain, display_name)
+				VALUES (6, CAST(? AS TEXT), 'example.com', CAST(? AS TEXT))`,
+				[]byte("primary\x80@example.com"), []byte("Display\x80Name"))
+			require.NoError(err)
+			_, err = db.Exec(`UPDATE messages SET sender_id = 6 WHERE id = 4`)
+			require.NoError(err)
+			_, err = db.Exec(`INSERT INTO account_identities (source_id, address) VALUES (1, ?), (1, CAST(? AS TEXT))`,
+				"primary�@example.com", []byte("unmatched\x80@example.com"))
+			require.NoError(err)
+			require.NoError(db.Close())
+
+			var buildErr error
+			stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(dbPath, analyticsDir, true) })
+			require.NoError(buildErr)
+			assert.Contains(stderr, "Warning: 1 invalid UTF-8 repair(s) applied while building the analytics cache",
+				"only the repaired display value is counted; invalid identity keys and repeated comparisons must not add to it")
+
+			duckDB, err := sql.Open("duckdb", "")
+			require.NoError(err)
+			defer func() { _ = duckDB.Close() }()
+			var fromMe bool
+			err = duckDB.QueryRow(`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = 4`,
+				filepath.Join(analyticsDir, "messages", "**", "*.parquet")).Scan(&fromMe)
+			require.NoError(err)
+			assert.False(fromMe, "a sanitized-literal identity must not match an invalid participant email")
+			var emailAddress, displayName string
+			err = duckDB.QueryRow(`SELECT email_address, display_name FROM read_parquet(?) WHERE id = 6`,
+				filepath.Join(analyticsDir, "participants", "*.parquet")).Scan(&emailAddress, &displayName)
+			require.NoError(err)
+			assert.Empty(emailAddress, "invalid identity text exports as unknown, not as a repair")
+			assert.Equal("Display\uFFFDName", displayName, "invalid display text is repaired")
+		})
+	}
+}
+
+func corruptEveryExportedTextColumn(t *testing.T, dbPath string) {
+	t.Helper()
 	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(err)
-	_, err = db.Exec(`
-		INSERT INTO messages (source_id, source_message_id, sent_at)
-		WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM seq WHERE i < 30000)
-		SELECT 1, 'bulk-' || i, datetime('2024-04-01', '+' || i || ' minutes') FROM seq;
-	`)
-	require.NoError(err)
-	_, err = db.Exec(`UPDATE messages SET subject = CAST(X'80' AS TEXT) WHERE id = (SELECT MAX(id) FROM messages)`)
-	require.NoError(err)
-	require.NoError(db.Close())
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	bad := func(col string) string {
+		return col + " = CAST(CAST(COALESCE(" + col + ", '') AS BLOB) || X'80' AS TEXT)"
+	}
+	// Identity keys are corrupted too: on both snapshot paths they export as
+	// NULL (or '' where the schema forbids NULL) instead of being repaired,
+	// so no cached string may be invalid UTF-8 regardless.
+	stmts := []string{
+		`UPDATE messages SET ` + bad("source_message_id") + `, ` + bad("rfc822_message_id") + `, ` + bad("subject") + `, ` + bad("snippet") + `, ` + bad("list_id") + ` WHERE id = 5`,
+		`UPDATE message_recipients SET ` + bad("display_name") + `, ` + bad("recipient_type") + `, ` + bad("email_address") + ` WHERE message_id = 1 AND recipient_type = 'from'`,
+		`UPDATE attachments SET ` + bad("filename") + `, ` + bad("mime_type") + ` WHERE id = 1`,
+		`UPDATE participants SET ` + bad("email_address") + `, ` + bad("domain") + `, ` + bad("display_name") + `, ` + bad("phone_number") + ` WHERE id = 4`,
+		`UPDATE participant_identifiers SET ` + bad("identifier_type") + `, ` + bad("identifier_value") + `, ` + bad("display_value") + ` WHERE participant_id = 2`,
+		`UPDATE labels SET ` + bad("name") + ` WHERE id = 2`,
+		`UPDATE sources SET ` + bad("identifier") + ` WHERE id = 1`,
+		`UPDATE conversations SET ` + bad("source_conversation_id") + `, ` + bad("title") + ` WHERE id = 101`,
+		`INSERT INTO persons (id, vcard_uid, display_name) VALUES (1, 'uid-utf8', CAST(X'426f6280' AS TEXT))`,
+		`INSERT INTO person_participants (person_id, participant_id) VALUES (1, 2)`,
+	}
+	for _, stmt := range stmts {
+		_, err := db.Exec(stmt)
+		require.NoError(t, err, stmt)
+	}
+}
 
-	_, err = buildCache(dbPath, filepath.Join(tmpDir, "analytics"), true)
-	require.Error(err)
-	assert.Contains(err.Error(), "export messages")
-	assert.Contains(err.Error(), "msgvault repair-encoding")
-	assert.Contains(err.Error(), "not a msgvault option")
+func requireEveryCachedStringDecodes(t *testing.T, analyticsDir string) {
+	t.Helper()
+	duckDB, err := sql.Open("duckdb", "")
+	require.NoError(t, err)
+	defer func() { _ = duckDB.Close() }()
+	dirs, err := os.ReadDir(analyticsDir)
+	require.NoError(t, err)
+	checked := 0
+	for _, dir := range dirs {
+		if !dir.IsDir() {
+			continue
+		}
+		root := filepath.Join(analyticsDir, dir.Name())
+		hasParquet := false
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && strings.HasSuffix(path, ".parquet") {
+				hasParquet = true
+				return fs.SkipAll
+			}
+			return nil
+		})
+		if !hasParquet {
+			continue
+		}
+		glob := filepath.ToSlash(filepath.Join(root, "**", "*.parquet"))
+		source := fmt.Sprintf("read_parquet('%s', hive_partitioning=true, union_by_name=true)", glob)
+		cols := func() []string {
+			rows, err := duckDB.Query("SELECT column_name FROM (DESCRIBE SELECT * FROM " + source + ") WHERE column_type = 'VARCHAR'")
+			require.NoError(t, err, dir.Name())
+			defer func() { require.NoError(t, rows.Close()) }()
+			var cols []string
+			for rows.Next() {
+				var c string
+				require.NoError(t, rows.Scan(&c))
+				cols = append(cols, c)
+			}
+			require.NoError(t, rows.Err())
+			return cols
+		}()
+		for _, c := range cols {
+			var n sql.NullInt64
+			require.NoError(t, duckDB.QueryRow(fmt.Sprintf(`SELECT max(length("%s")) FROM %s`, c, source)).Scan(&n), "%s.%s must decode", dir.Name(), c)
+			checked++
+		}
+	}
+	require.Positive(t, checked)
+}
+
+func TestBuildCacheExportsValidUTF8InEveryTextColumn(t *testing.T) {
+	for _, tc := range []struct{ name, forceCSV string }{{"sqlite scanner", ""}, {"CSV fallback", "1"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			oldGOOS := cacheSnapshotGOOS
+			cacheSnapshotGOOS = "linux"
+			t.Cleanup(func() { cacheSnapshotGOOS = oldGOOS })
+			t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", tc.forceCSV)
+			if tc.forceCSV == "" {
+				probe, err := sql.Open("duckdb", "")
+				require.NoError(err)
+				requireSQLiteScanner(t, probe)
+				require.NoError(probe.Close())
+			}
+			tmpDir := setupTestSQLite(t)
+			dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
+			corruptEveryExportedTextColumn(t, dbPath)
+			var buildErr error
+			stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(dbPath, analyticsDir, true) })
+			require.NoError(buildErr)
+			assert.Contains(stderr, "invalid UTF-8")
+			assert.Contains(stderr, "msgvault repair-encoding")
+			requireEveryCachedStringDecodes(t, analyticsDir)
+			if tc.forceCSV != "" {
+				duckDB, err := sql.Open("duckdb", "")
+				require.NoError(err)
+				defer func() { _ = duckDB.Close() }()
+				// Identity columns export unknown rather than repaired: NULL
+				// where the column allows it, '' where the schema keeps its
+				// no-NULL contract.
+				for _, check := range []struct {
+					dataset, column, where string
+					want                   sql.NullString
+				}{
+					{"participants", "email_address", "id = 4", sql.NullString{String: "", Valid: true}},
+					{"participant_identifiers", "identifier_type", "participant_id = 2", sql.NullString{String: "", Valid: true}},
+					{"participant_identifiers", "identifier_value", "participant_id = 2", sql.NullString{String: "", Valid: true}},
+					{"message_recipients", "envelope_address", "message_id = 1 AND participant_id = 1", sql.NullString{}},
+				} {
+					var got sql.NullString
+					path := filepath.ToSlash(filepath.Join(analyticsDir, check.dataset, "*.parquet"))
+					err := duckDB.QueryRow(fmt.Sprintf("SELECT %s FROM read_parquet('%s') WHERE %s", check.column, path, check.where)).Scan(&got)
+					require.NoError(err)
+					assert.Equal(check.want, got)
+				}
+			}
+		})
+	}
 }
 
 func TestBuildCacheExportsAttachmentMetadataForRawQuery(t *testing.T) {
@@ -2506,7 +2861,7 @@ func TestCSVFallbackPath(t *testing.T) {
 
 	for _, tbl := range tables {
 		csvPath := filepath.Join(csvDir, tbl.name+".csv")
-		if err := exportToCSV(sqliteDB, tbl.query, csvPath); err != nil {
+		if err := exportToCSV(sqliteDB, tbl.query, csvPath, &cacheTextRepairs{}, nil); err != nil {
 			_ = sqliteDB.Close()
 			require.NoError(err, "exportToCSV %s", tbl.name)
 		}

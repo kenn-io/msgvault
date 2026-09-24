@@ -4,6 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"unicode/utf8"
+
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // ConversationParticipantRows is the streaming subset of sql.Rows needed to
@@ -76,7 +79,8 @@ func FingerprintConversationTypes(rows ConversationParticipantRows) (string, err
 // FingerprintConversationMetadata hashes ordered
 // (conversation_id, type, title) rows. Length-prefixing both strings keeps the
 // variable-width values unambiguous, including when either contains a value
-// that could otherwise act as a separator.
+// that could otherwise act as a separator. Normalize invalid UTF-8 before
+// hashing so raw SQLite rows and repaired cache snapshots agree.
 func FingerprintConversationMetadata(rows ConversationParticipantRows) (string, error) {
 	hash := sha256.New()
 	var encoded [16]byte
@@ -91,6 +95,12 @@ func FingerprintConversationMetadata(rows ConversationParticipantRows) (string, 
 				"fingerprint conversation metadata: negative ID %d",
 				conversationID,
 			)
+		}
+		if !utf8.ValidString(conversationType) {
+			conversationType = textutil.SanitizeUTF8(conversationType)
+		}
+		if !utf8.ValidString(title) {
+			title = textutil.SanitizeUTF8(title)
 		}
 		binary.BigEndian.PutUint64(encoded[:8], uint64(conversationID))
 		binary.BigEndian.PutUint64(encoded[8:], uint64(len(conversationType)))

@@ -122,12 +122,17 @@ func refreshDerivedDatasetsOnly(
 		return nil, fmt.Errorf("open bounded DuckDB for derived refresh: %w", err)
 	}
 	defer func() { _ = duckDB.Close() }()
+	textRepairs := &cacheTextRepairs{}
+	if err := registerCacheTextFunctions(ctx, duckDB, textRepairs); err != nil {
+		return nil, err
+	}
 
 	sourceSnapshot, err := openCacheSourceSnapshot(duckDB, dbPath)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = sourceSnapshot.Close() }()
+	sourceSnapshot.textRepairs = textRepairs
 	if err := sourceSnapshot.PrepareDatasets(
 		tableMessages,
 		tableConversations,
@@ -270,6 +275,7 @@ func refreshDerivedDatasetsOnly(
 	if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
 		return nil, err
 	}
+	reportCacheTextRepairs(os.Stderr, textRepairs)
 	return &buildResult{OutputDir: analyticsDir, IdentityOnly: true}, nil
 }
 
@@ -304,9 +310,9 @@ func fingerprintConversationParticipantsFromSnapshot(
 // fingerprintConversationTypesFromSnapshot mirrors
 // sourceConversationTypesFingerprint over the export snapshot, so the stamp
 // written at publish time describes exactly the type/title metadata the staged
-// datasets baked. The normalizations match the staleness query (and the CSV
-// snapshot view), not the exported Parquet values; fingerprints only compare
-// against each other.
+// datasets baked. The query applies the same NULL defaults as the staleness
+// query. FingerprintConversationMetadata repairs invalid UTF-8 on both paths
+// before hashing.
 func fingerprintConversationTypesFromSnapshot(
 	ctx context.Context,
 	db sqlRunner,
