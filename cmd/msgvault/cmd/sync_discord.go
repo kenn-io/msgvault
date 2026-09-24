@@ -49,6 +49,7 @@ guild failure does not prevent later guilds from running.`,
 	}
 	cmd.Flags().BoolVar(&opts.Full, "full", false, "ignore stored cursors and re-fetch all available history")
 	cmd.Flags().StringVar(&opts.After, "after", "", "exclusive lower bound (YYYY-MM-DD or RFC3339)")
+	addManualSyncCacheFlags(cmd)
 	return cmd
 }
 

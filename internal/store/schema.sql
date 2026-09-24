@@ -1616,6 +1616,131 @@ CREATE TABLE IF NOT EXISTS message_labels (
     PRIMARY KEY (message_id, label_id)
 );
 
+-- Durable cache repair boundary. Triggers write in the same transaction as
+-- each child-row mutation, so a failed or interrupted cache publication can
+-- replay every change after the last committed sequence.
+CREATE TABLE IF NOT EXISTS cache_related_change_journal (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    dataset TEXT NOT NULL,
+    message_id INTEGER NOT NULL
+);
+
+-- Revisions caused solely by related-row edits can be repaired from the
+-- child-row journal. Every other derived revision still requires a full build.
+CREATE TABLE IF NOT EXISTS cache_related_revision_journal (
+    revision INTEGER PRIMARY KEY
+);
+
+-- A label definition can change without touching any message_labels row.
+-- Message ID zero denotes a dataset-wide change for cache invalidation.
+CREATE TRIGGER IF NOT EXISTS trg_cache_label_definitions_insert
+AFTER INSERT ON labels FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('labels', 0);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_label_definitions_update
+AFTER UPDATE ON labels FOR EACH ROW
+WHEN OLD.name IS NOT NEW.name BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('labels', 0);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_label_definitions_delete
+AFTER DELETE ON labels FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('labels', 0);
+END;
+
+-- Child edits that also change baked message facts require a message rebuild.
+CREATE TRIGGER IF NOT EXISTS trg_cache_message_facts_update
+AFTER UPDATE OF sender_id, is_from_me,
+    has_attachments, attachment_count ON messages FOR EACH ROW
+WHEN OLD.sender_id IS NOT NEW.sender_id OR OLD.is_from_me IS NOT NEW.is_from_me
+    OR OLD.has_attachments IS NOT NEW.has_attachments
+    OR OLD.attachment_count IS NOT NEW.attachment_count BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('message_facts', NEW.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_cache_recipients_insert
+AFTER INSERT ON message_recipients FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('message_recipients', NEW.message_id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_recipients_update
+AFTER UPDATE ON message_recipients FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('message_recipients', OLD.message_id);
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    SELECT 'message_recipients', NEW.message_id
+    WHERE NEW.message_id <> OLD.message_id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_recipients_delete
+AFTER DELETE ON message_recipients FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('message_recipients', OLD.message_id);
+END;
+
+-- A From row can change owner_participant_id or is_from_me baked into messages
+-- Parquet. Its edits therefore require a message rebuild, even when a plain
+-- recipient change could be repaired from the child-row journal alone.
+CREATE TRIGGER IF NOT EXISTS trg_cache_from_facts_insert
+AFTER INSERT ON message_recipients FOR EACH ROW
+WHEN NEW.recipient_type = 'from' BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('message_facts', NEW.message_id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_from_facts_update
+AFTER UPDATE OF message_id, participant_id, recipient_type, email_address
+ON message_recipients FOR EACH ROW
+WHEN OLD.recipient_type = 'from' OR NEW.recipient_type = 'from' BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('message_facts', OLD.message_id);
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    SELECT 'message_facts', NEW.message_id
+    WHERE NEW.message_id <> OLD.message_id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_from_facts_delete
+AFTER DELETE ON message_recipients FOR EACH ROW
+WHEN OLD.recipient_type = 'from' BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('message_facts', OLD.message_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_cache_labels_insert
+AFTER INSERT ON message_labels FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('message_labels', NEW.message_id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_labels_update
+AFTER UPDATE ON message_labels FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('message_labels', OLD.message_id);
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    SELECT 'message_labels', NEW.message_id
+    WHERE NEW.message_id <> OLD.message_id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_labels_delete
+AFTER DELETE ON message_labels FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('message_labels', OLD.message_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_cache_attachments_insert
+AFTER INSERT ON attachments FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('attachments', NEW.message_id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_attachments_update
+AFTER UPDATE ON attachments FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('attachments', OLD.message_id);
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    SELECT 'attachments', NEW.message_id
+    WHERE NEW.message_id <> OLD.message_id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_attachments_delete
+AFTER DELETE ON attachments FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id)
+    VALUES ('attachments', OLD.message_id);
+END;
+
 -- ============================================================================
 -- RAW DATA STORAGE
 -- ============================================================================

@@ -596,6 +596,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		},
 		RefreshCache: refreshCacheAfterWrite,
 	}).WithLogger(logger)
+	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
 		draftPolicy:            snapshotIMAPDraftPolicy(cfg),
@@ -603,6 +604,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
 		analyticsDir:           cfg.AnalyticsDir(),
+		cacheJobs:              cacheJobs,
 		personEnrichmentConfig: cfg.People.Enrichment,
 		lookupEnv:              personEnrichmentEnvironmentLookup(cfg),
 	}
@@ -621,18 +623,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 			return runDaemonSQLQuery(ctx, cfg, s, apiServer.QueryEngineForRequest(ctx), sql)
 		},
-		ShutdownToken:                 ownership.shutdownToken,
-		ShutdownFunc:                  cancel,
-		Scheduler:                     schedAdapter,
-		CardDAV:                       cardDAVController,
-		Logger:                        logger,
-		DaemonVersion:                 Version,
-		AnalyticsMode:                 analyticsMode,
-		AnalyticsInitializationActive: analyticsAsync,
-		IdleTracker:                   idleTracker,
-		OperationGate:                 operationGate,
-		OperationHistoryReader:        storeAdapter,
-		BlobStore:                     blobStore,
+		SQLQueryRunnerWithOptions: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
+			if apiServer == nil {
+				return nil, nil, errors.New("daemon API server unavailable")
+			}
+			return runDaemonSQLQueryWithJobs(requestCtx, cfg, s, apiServer.QueryEngineForRequest(requestCtx), sql, fresh, cacheJobs)
+		},
+		AllowSQLQueryDuringAnalyticsInitialization: true,
+		CacheBuildStatusReader:                     cacheJobs.status,
+		ShutdownToken:                              ownership.shutdownToken,
+		ShutdownFunc:                               cancel,
+		Scheduler:                                  schedAdapter,
+		CardDAV:                                    cardDAVController,
+		Logger:                                     logger,
+		DaemonVersion:                              Version,
+		AnalyticsMode:                              analyticsMode,
+		AnalyticsInitializationActive:              analyticsAsync,
+		IdleTracker:                                idleTracker,
+		OperationGate:                              operationGate,
+		OperationHistoryReader:                     storeAdapter,
+		BlobStore:                                  blobStore,
 	}
 	applyServerRuntimeConfig(&apiOpts, cfg)
 	if cfg.Vector.AnyLaneEnabled() {
@@ -741,6 +751,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
 	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, sched, operationGate)
+	if !cacheJobs.waitContext(shutdownCtx) {
+		logger.Warn("analytics cache build did not stop within the shutdown drain timeout")
+		shutdownErr = errors.Join(shutdownErr, errors.New("analytics cache build did not stop during shutdown"))
+	}
 	if shutdownErr == nil {
 		resourceCleanupSafe = true
 	}
@@ -987,10 +1001,20 @@ func runDaemonSQLQuery(
 
 	dbPath := c.DatabaseDSN()
 	analyticsDir := c.AnalyticsDir()
-	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	staleness, err := cacheNeedsBuildForQuery(ctx, dbPath, analyticsDir)
+	if err != nil {
+		return nil, fmt.Errorf("inspect analytics cache: %w", err)
+	}
+	if staleness.NeedsBuild && staleness.HasUsablePublication {
+		if _, deferBuild := scheduledCacheBuildDelay(staleness, c.Analytics.MinRebuildInterval, time.Now()); deferBuild {
+			if querier, ok := engine.(query.SQLQuerier); ok {
+				return queryCommittedSQL(ctx, querier, sqlStr, staleness)
+			}
+		}
+	}
 	if !store.IsPostgresURL(dbPath) && !staleness.NeedsBuild {
 		if querier, ok := engine.(query.SQLQuerier); ok {
-			return querier.QuerySQL(ctx, sqlStr)
+			return queryCommittedSQL(ctx, querier, sqlStr, staleness)
 		}
 	}
 
@@ -1008,8 +1032,140 @@ func runDaemonSQLQuery(
 		return nil, fmt.Errorf("open DuckDB query engine: %w", err)
 	}
 	defer func() { _ = duckEngine.Close() }()
+	staleness, err = cacheNeedsBuildForQuery(ctx, dbPath, analyticsDir)
+	if err != nil {
+		return nil, fmt.Errorf("inspect rebuilt analytics cache: %w", err)
+	}
+	return queryCommittedSQL(ctx, duckEngine, sqlStr, staleness)
+}
 
-	return duckEngine.QuerySQL(ctx, sqlStr)
+// runDaemonSQLQueryWithJobs serves raw SQL over committed Parquet while refresh
+// work runs in the daemon's background job registry. Analytics.Engine selects
+// the engine for aggregate views, not this DuckDB-only raw SQL endpoint. The
+// request never waits for a cache builder; a fresh request or unusable
+// publication receives a job ID instead.
+func runDaemonSQLQueryWithJobs(
+	ctx context.Context, c *config.Config, s *store.Store, engine query.Engine,
+	sqlStr string, fresh bool, jobs *cacheBuildJobs,
+) (*query.QueryResult, *api.CacheBuildAccepted, error) {
+	if jobs == nil || c == nil || s == nil {
+		return nil, nil, errors.New("daemon cache refresh unavailable")
+	}
+	if err := query.EnsureReadOnly(sqlStr); err != nil {
+		return nil, nil, err
+	}
+	if s.IsPostgreSQL() {
+		result, err := runDaemonSQLQuery(ctx, c, s, engine, sqlStr)
+		return result, nil, err
+	}
+	staleness, err := cacheNeedsBuildForServing(ctx, c.DatabaseDSN(), c.AnalyticsDir())
+	if err != nil {
+		return nil, nil, fmt.Errorf("inspect analytics cache: %w", err)
+	}
+	if fresh && !staleness.NeedsBuild {
+		job, err := jobs.accept(buildCacheModeAuto)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
+		}
+		return nil, &api.CacheBuildAccepted{
+			Status: job.Status, JobID: job.JobID, Cache: cacheFreshnessFromStaleness(staleness),
+		}, nil
+	}
+	if staleness.NeedsBuild {
+		if !fresh && !c.Analytics.AutoBuildCache {
+			if !staleness.HasUsablePublication {
+				return nil, nil, api.ErrSQLQueryEngineUnavailable
+			}
+		} else if fresh || !staleness.HasUsablePublication {
+			job, err := jobs.accept(buildCacheModeAuto)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
+			}
+			return nil, &api.CacheBuildAccepted{
+				Status: job.Status, JobID: job.JobID, Cache: cacheFreshnessFromStaleness(staleness),
+			}, nil
+		}
+		if c.Analytics.AutoBuildCache {
+			if _, deferBuild := scheduledCacheBuildDelay(staleness, c.Analytics.MinRebuildInterval, time.Now()); !deferBuild {
+				if _, err := jobs.accept(buildCacheModeScheduledAuto); err != nil {
+					return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
+				}
+			}
+		}
+	} else if c.Analytics.AutoBuildCache && staleness.HasUsablePublication {
+		if err := jobs.verifyWhenDue(staleness.PublishedAt, c.Analytics.MinRebuildInterval, time.Now()); err != nil {
+			return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
+		}
+	}
+	// Only a DuckDB engine can query the committed Parquet views. A temporary
+	// SQLite fallback may also expose SQL in the future, but it has no cache
+	// views and must not become the target for this path.
+	querier, ok := engine.(*query.DuckDBEngine)
+	if !ok {
+		duckEngine, err := openDaemonDuckDBEngine(c, s)
+		if err != nil {
+			if errors.Is(err, query.ErrCacheUnavailable) {
+				return acceptUnavailableCacheQuery(c, jobs, fresh)
+			}
+			return nil, nil, fmt.Errorf("open DuckDB query engine: %w", err)
+		}
+		defer func() { _ = duckEngine.Close() }()
+		querier = duckEngine
+	}
+	result, err := queryCommittedSQL(ctx, querier, sqlStr, staleness)
+	if err != nil {
+		if errors.Is(err, query.ErrCacheUnavailable) {
+			return acceptUnavailableCacheQuery(c, jobs, fresh)
+		}
+		return nil, nil, err
+	}
+	if result.Cache != nil {
+		result.Cache.Building = jobs.active()
+	}
+	return result, nil, nil
+}
+
+func acceptUnavailableCacheQuery(
+	c *config.Config, jobs *cacheBuildJobs, fresh bool,
+) (*query.QueryResult, *api.CacheBuildAccepted, error) {
+	if !fresh && !c.Analytics.AutoBuildCache {
+		return nil, nil, api.ErrSQLQueryEngineUnavailable
+	}
+	job, err := jobs.accept(buildCacheModeAuto)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
+	}
+	return nil, &api.CacheBuildAccepted{Status: job.Status, JobID: job.JobID}, nil
+}
+
+func cacheFreshnessFromStaleness(staleness cacheStaleness) *query.CacheFreshness {
+	if !staleness.HasUsablePublication {
+		return nil
+	}
+	return &query.CacheFreshness{
+		Generation: staleness.Generation, PublishedAt: staleness.PublishedAt,
+		StaleReason: staleness.Reason, PendingAdditions: staleness.PendingAdditions, Building: true,
+	}
+}
+
+func queryCommittedSQL(
+	ctx context.Context, querier query.SQLQuerier, sqlStr string, staleness cacheStaleness,
+) (*query.QueryResult, error) {
+	result, err := querier.QuerySQL(ctx, sqlStr)
+	if err != nil || result == nil || result.Cache == nil {
+		return result, err
+	}
+	if result.Cache.Generation != staleness.Generation ||
+		!result.Cache.PublishedAt.Equal(staleness.PublishedAt) {
+		// A publication may have landed between the staleness probe and the
+		// engine's read lock. Keep the engine's actual generation metadata.
+		return result, nil
+	}
+	if staleness.NeedsBuild {
+		result.Cache.StaleReason = staleness.Reason
+		result.Cache.PendingAdditions = staleness.PendingAdditions
+	}
+	return result, nil
 }
 
 // openDaemonAnalyticsEngine picks the daemon's analytics engine once at
@@ -1245,6 +1401,7 @@ type storeAPIAdapter struct {
 	// analyticsDir is the daemon's Parquet analytics cache directory, used
 	// to read the revision committed by the derived-refresh child.
 	analyticsDir           string
+	cacheJobs              *cacheBuildJobs
 	personEnrichmentConfig personenrichment.Config
 	lookupEnv              personenrichment.CredentialLookup
 }
@@ -1619,15 +1776,17 @@ func (a *storeAPIAdapter) runCLISyncOperationWithRunner(
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}
-	if req.OperationID == "" {
-		return err
+	if req.OperationID != "" {
+		status := "done"
+		if err != nil {
+			status = "failed"
+		}
+		if finishErr := a.store.FinishSyncOperation(req.OperationID, status); finishErr != nil {
+			return errors.Join(err, fmt.Errorf("finish sync operation: %w", finishErr))
+		}
 	}
-	status := "done"
-	if err != nil {
-		status = "failed"
-	}
-	if finishErr := a.store.FinishSyncOperation(req.OperationID, status); finishErr != nil {
-		return errors.Join(err, fmt.Errorf("finish sync operation: %w", finishErr))
+	if queueErr := a.queueCacheRefreshAfterManualSync(req.BuildCache, req.NoBuildCache); queueErr != nil {
+		err = errors.Join(err, queueErr)
 	}
 	return err
 }
@@ -1674,6 +1833,12 @@ func emitFolderArgs(args []string, flag string, values []string) []string {
 func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 	if req.Full {
 		args := []string{"sync-full"}
+		if req.BuildCache {
+			args = append(args, "--build-cache")
+		}
+		if req.NoBuildCache {
+			args = append(args, "--no-build-cache")
+		}
 		if req.SourceIDSet {
 			args = append(args, "--source-id", strconv.FormatInt(req.SourceID, 10))
 		}
@@ -1703,6 +1868,12 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 		return args
 	}
 	args := []string{syncIncrementalCmd.Name()}
+	if req.BuildCache {
+		args = append(args, "--build-cache")
+	}
+	if req.NoBuildCache {
+		args = append(args, "--no-build-cache")
+	}
 	if req.SourceIDSet {
 		args = append(args, "--source-id", strconv.FormatInt(req.SourceID, 10))
 	}
@@ -1829,7 +2000,13 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	req api.CLIRunRequest,
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
-) error {
+) (runErr error) {
+	if manualSyncCLICommand(req.Args) {
+		defer func() {
+			force, skip := manualSyncCacheFlagValues(req.Args)
+			runErr = errors.Join(runErr, a.queueCacheRefreshAfterManualSync(force, skip))
+		}()
+	}
 	emitSubprocess := func(stream, data string) error {
 		if emit == nil {
 			return nil

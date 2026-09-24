@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-09-24"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -29,12 +29,15 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.27.0**.
+it is separate from the binary release version. The current schema is **2.28.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
 Schema 2.27.0 adds deterministic meeting context export, archived action-item
 listing, and duration metrics with exact direct or Explore scope.
+
+Schema 2.28.0 adds analytics query freshness metadata, accepted background
+cache-build jobs, and job status lookup.
 
 Schema 2.26.0 adds optional `web_url` metadata to message result schemas. The
 URL opens that message in the selected daemon's browser interface.
@@ -249,6 +252,31 @@ importer. Leave `noresume` false when you want to reuse available progress.
 There is no dedicated cancellation endpoint for these jobs.
 
 ## API Endpoints
+
+### Query the analytics cache {#post-apiv1query}
+
+**Endpoint:** `POST /api/v1/query`
+
+Send one read-only SQL statement as `{"sql":"SELECT 1"}`. Set `fresh` to
+`true` in the JSON body or as `?fresh=true` to request a background cache
+refresh. Conflicting body and query values are rejected.
+This endpoint always queries published Parquet through DuckDB. The
+`[analytics].engine` setting selects the engine for aggregate views; it does
+not change this raw SQL endpoint.
+
+A `200` response contains `columns`, `rows`, and `row_count`. When the result
+uses a committed Parquet publication, `cache` includes `generation` and
+`published_at`, plus `stale_reason`, `pending_additions`, or `building` when
+applicable. A usable stale publication remains queryable during
+`min_rebuild_interval` and while a refresh runs.
+
+When rows require a new publication, the endpoint returns `202` with `job_id`
+and `status` instead of holding the request open. Poll
+`GET /api/v1/cache-builds/{job_id}` for `queued`, `running`, `published`, or
+`failed`; retry the SQL query after publication. The job status belongs to the
+running daemon and is not retained across daemon restarts.
+
+---
 
 ### Curated person network {#get-apiv1peopleidnetwork}
 

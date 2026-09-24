@@ -41,7 +41,7 @@ func defaultDiscordCommandDeps() discordCommandDeps {
 		},
 		attachmentsDir:       func() string { return cfg.AttachmentsDir() },
 		databaseDSN:          func() string { return cfg.DatabaseDSN() },
-		rebuildCache:         rebuildCacheAfterWrite,
+		rebuildCache:         rebuildCacheAfterManualSync,
 		postSourceMigrations: runPostSourceCreateMigrations,
 		registerGuild:        registerDiscordGuild,
 	}

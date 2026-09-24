@@ -2794,7 +2794,7 @@ func (s *Store) AddMessageLabels(messageID int64, labelIDs []int64) error {
 		if !changed {
 			return nil
 		}
-		return s.bumpDerivedDataRevision(tx)
+		return s.bumpDerivedDataRevision(tx, true)
 	})
 }
 

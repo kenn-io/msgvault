@@ -46,7 +46,7 @@ var (
 
 func init() {
 	rootCmd.AddCommand(newAddCalendarCmd())
-	rootCmd.AddCommand(newSyncCalendarCmd())
+	rootCmd.AddCommand(addManualSyncCacheFlags(newSyncCalendarCmd()))
 }
 
 func interactiveStdin() bool {
@@ -490,7 +490,7 @@ func newSyncCalendarLocalCmd() *cobra.Command {
 			}
 			fmt.Printf("Calendar sync complete: %d calendar(s), %d event(s) added, %d cancelled\n",
 				res.CalendarsSynced, res.EventsAdded, res.EventsCancelled)
-			return rebuildCacheAfterWrite(cfg.DatabaseDSN())
+			return rebuildCacheAfterManualSync(cfg.DatabaseDSN())
 		},
 	}
 	cmd.Flags().StringVar(&calSyncOAuthApp, "oauth-app", "", "named OAuth app to use")
