@@ -529,9 +529,10 @@ func reconcileDuplicateOccurrences(
 			break
 		}
 	}
-	// Phase 2 claims rows with one possible archived occurrence, unless another
-	// row also needs that occurrence exclusively. A wildcard row must not block
-	// a forced match: removing it can leave the wildcard with one match too.
+	// Phase 2 claims rows with one possible archived occurrence. Identical rows
+	// share a candidate in CSV order; different evidence competing for the same
+	// occurrence stays unresolved. Each claim can leave a wildcard row with one
+	// match too.
 	for {
 		soleRows := make(map[int]int)
 		for rowIndex := range plans {
@@ -548,8 +549,10 @@ func reconcileDuplicateOccurrences(
 				match, matches = index, matches+1
 			}
 			if matches == 1 {
-				if _, contested := soleRows[match]; contested {
-					soleRows[match] = -1
+				if previous, contested := soleRows[match]; contested {
+					if previous >= 0 && currentFingerprints[rowIndex] != currentFingerprints[previous] {
+						soleRows[match] = -1
+					}
 				} else {
 					soleRows[match] = rowIndex
 				}

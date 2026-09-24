@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -641,6 +642,72 @@ func TestImporterWildcardDuplicatePreservesForcedMatch(t *testing.T) {
 	wildcardID := findArchivedEvidence(t, updated, "", "").messageID
 	assert.Equal(readID, wildcardID)
 	assert.Equal(1, messageLabelCount(t, st, wildcardID, labelID))
+}
+
+func TestImporterCompetingDuplicateRows(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		identical     bool
+		wildcardFirst bool
+	}{
+		{name: "identical rows", identical: true},
+		{name: "wildcard first", identical: true, wildcardFirst: true},
+		{name: "conflicting evidence"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			delivered := []string{"Alice", "2024-06-01 12:00:00", "2024-06-01 12:00:05", "", "iMessage", "Outgoing", "", "", "Delivered", "", "", "ping", "", ""}
+			read := []string{"Alice", "2024-06-01 12:00:00", "", "2024-06-01 12:00:10", "iMessage", "Outgoing", "", "", "Read", "", "", "ping", "", ""}
+			exportDir := newTestExport(t, [][]string{delivered, read})
+			importer := NewImporter(st, Options{Owner: "+15550000001", Timezone: "UTC"})
+			_, err := importer.ImportPath(t.Context(), exportDir)
+			require.NoError(err)
+			source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+			require.NoError(err)
+			archived := archivedDuplicateEvidence(t, st, source.ID)
+			require.Len(archived, 2)
+			labelID, err := st.EnsureLabel(source.ID, "saved-message", "Saved message", "user")
+			require.NoError(err)
+			_, err = st.ReconcileMessageLabels(archived[1].messageID, []int64{labelID}, false)
+			require.NoError(err)
+
+			// Neither competitor is exact; both can match only the delivered
+			// occurrence. The wildcard can match either archived occurrence.
+			delivered[8] = ""
+			competitor := slices.Clone(delivered)
+			if !tt.identical {
+				competitor[2], competitor[8] = "", "Delivered"
+			}
+			read[3], read[8] = "", ""
+			rows := [][]string{delivered, competitor, read}
+			if tt.wildcardFirst {
+				rows = [][]string{read, delivered, competitor}
+			}
+			writeTestCSV(t, filepath.Join(exportDir, "csv", "messages.csv"), rows)
+			_, err = importer.ImportPath(t.Context(), exportDir)
+			require.NoError(err)
+			updated := archivedDuplicateEvidence(t, st, source.ID)
+			if tt.identical {
+				require.Len(updated, 3, "reuse both archived messages and add only the surplus copy")
+				assert.Equal(archived[0].messageID, updated[0].messageID)
+				assert.Empty(updated[0].status, "the first archived message was updated")
+				assert.Equal("2024-06-01 12:00:05", updated[0].deliveredDate)
+				wildcard := findArchivedEvidence(t, updated, "", "")
+				assert.Equal(archived[1].messageID, wildcard.messageID)
+				assert.Equal(1, messageLabelCount(t, st, wildcard.messageID, labelID))
+			} else {
+				assert.Len(updated, 5, "different evidence must not arbitrarily claim the same archived message")
+				assert.Equal(archived[0], updated[0])
+				assert.Equal(archived[1], updated[1])
+			}
+			_, err = importer.ImportPath(t.Context(), exportDir)
+			require.NoError(err)
+			assert.Equal(archivedSourceMessageIDs(updated), sourceMessageIDs(t, st, source.ID),
+				"rerunning the export must keep the same messages")
+		})
+	}
 }
 
 // One physical row re-exported with the same instant in iMazing's other
