@@ -326,6 +326,7 @@ type deleteStagedPlanOptions struct {
 	SourceIDSet              bool
 	ResolvedSourceType       string
 	ResolvedSourceIdentifier string
+	sourceCatalog            deletion.SourceCatalog
 	RemoteDeleteEnabled      bool
 }
 
@@ -558,6 +559,13 @@ func filterDeleteStagedManifests(manifests []*deletion.Manifest, opts deleteStag
 			matches = manifest.Version == 2 && manifest.Source != nil &&
 				manifest.Source.Type == opts.ResolvedSourceType &&
 				manifest.Source.Identifier == opts.ResolvedSourceIdentifier
+			if matches && opts.sourceCatalog != nil {
+				source, err := deletion.ResolveSourceReference(opts.sourceCatalog, *manifest.Source)
+				if err != nil {
+					return nil, fmt.Errorf("resolve batch %s source: %w", manifest.ID, err)
+				}
+				matches = source.ID == opts.SourceID
+			}
 			if manifest.Version == 1 {
 				legacyAccount := strings.TrimSpace(manifest.Filters.Account)
 				matches = legacyAccount == "" || legacyAccount == opts.ResolvedSourceIdentifier
@@ -712,10 +720,13 @@ func resolveDeleteStagedTargetWithSourceID(
 			if selectErr != nil {
 				return deleteStagedTarget{}, selectErr
 			}
-			if store.EffectiveSourceType(selected.SourceType) != store.EffectiveSourceType(durable.Type) || selected.Identifier != durable.Identifier {
+			if selected.ID != source.ID ||
+				store.EffectiveSourceType(selected.SourceType) != store.EffectiveSourceType(durable.Type) ||
+				selected.Identifier != durable.Identifier {
 				return deleteStagedTarget{}, newDeleteStagedUsageError(fmt.Errorf(
-					"requested source ID resolves to %s/%s, which does not match manifest source %s/%s",
-					selected.SourceType, selected.Identifier, durable.Type, durable.Identifier))
+					"requested source ID resolves to %s/%s (source %d), which does not match manifest source %s/%s (source %d)",
+					selected.SourceType, selected.Identifier, selected.ID,
+					durable.Type, durable.Identifier, source.ID))
 			}
 		}
 		if strings.TrimSpace(requestedAccount) != "" {
@@ -1372,6 +1383,7 @@ func planCLIDeleteStaged(
 		SourceIDSet:              resolvedSource != nil,
 		ResolvedSourceType:       resolvedSourceType,
 		ResolvedSourceIdentifier: resolvedSourceIdentifier,
+		sourceCatalog:            st,
 		RemoteDeleteEnabled:      req.RemoteDeleteEnabled,
 	})
 	if err != nil {

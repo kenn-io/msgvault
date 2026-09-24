@@ -17,6 +17,8 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -742,6 +744,103 @@ func TestPlanCLIDeleteStagedResolvesDisplayNameBeforeFiltering(t *testing.T) {
 	assert.Equal([]string{manifest.ID}, got.PlannedBatchIDs)
 	require.NotNil(got.ResolvedSourceID)
 	assert.Equal(source.ID, *got.ResolvedSourceID)
+}
+
+func TestPlanCLIDeleteStagedLegacyGmailCollisionFromSelectionThroughExecution(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+
+	st := testutil.NewTestStore(t)
+	const identifier = "shared@example.invalid"
+	legacy, err := st.GetOrCreateSource("", identifier)
+	require.NoError(err)
+	explicit, err := st.GetOrCreateSource(sourceTypeGmail, identifier)
+	require.NoError(err)
+	legacyConversation, err := st.EnsureConversation(legacy.ID, "legacy-thread", "Legacy")
+	require.NoError(err)
+	explicitConversation, err := st.EnsureConversation(explicit.ID, "explicit-thread", "Explicit")
+	require.NoError(err)
+	const providerID = "duplicate-provider-id"
+	_, err = st.UpsertMessage(&store.Message{
+		ConversationID: legacyConversation, SourceID: legacy.ID,
+		SourceMessageID: providerID, MessageType: "email",
+	})
+	require.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{
+		ConversationID: explicitConversation, SourceID: explicit.ID,
+		SourceMessageID: providerID, MessageType: "email",
+	})
+	require.NoError(err)
+
+	engine := query.NewSQLiteEngine(st.DB())
+	targets, err := engine.GetDeletionTargetsByFilter(context.Background(), query.MessageFilter{
+		MessageType: "email", SourceIDs: []int64{legacy.ID},
+	})
+	require.NoError(err)
+	require.Len(targets, 1)
+	assert.Equal(legacy.ID, targets[0].SourceID)
+	assert.Equal(sourceTypeGmail, targets[0].SourceType)
+	assert.Equal(identifier, targets[0].SourceIdentifier)
+	assert.Equal(providerID, targets[0].SourceMessageID)
+
+	sourceRef, err := deletion.SourceReferenceForTargets(targets)
+	require.NoError(err)
+	legacyManifest := deletion.NewManifestForSource(
+		"legacy Gmail selection", deletion.SourceMessageIDs(targets), sourceRef,
+	)
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	require.NoError(mgr.SaveManifest(legacyManifest))
+	explicitManifest := deletion.NewManifestForSource(
+		"explicit Gmail sibling", []string{providerID}, deletion.SourceReference{
+			ID: explicit.ID, Type: sourceTypeGmail, Identifier: identifier,
+		},
+	)
+	require.NoError(mgr.SaveManifest(explicitManifest))
+
+	persisted, _, err := mgr.GetManifest(legacyManifest.ID)
+	require.NoError(err)
+	require.Equal(legacyManifest.Source, persisted.Source)
+	legacyID := legacy.ID
+	plan, err := planCLIDeleteStaged(context.Background(), st, api.CLIDeleteStagedPlanRequest{
+		SourceID: &legacyID, Yes: true,
+	})
+	require.NoError(err)
+	assert.Equal([]string{legacyManifest.ID}, plan.PlannedBatchIDs)
+	assert.NotContains(plan.PlannedBatchIDs, explicitManifest.ID)
+
+	_, err = planCLIDeleteStaged(context.Background(), st, api.CLIDeleteStagedPlanRequest{
+		BatchID: explicitManifest.ID, SourceID: &legacyID, Yes: true,
+	})
+	require.ErrorContains(err, "does not match the requested source")
+	_, err = resolveDeleteStagedTargetWithSourceID(
+		st, []*deletion.Manifest{explicitManifest}, "", legacy.ID, true,
+	)
+	require.ErrorContains(err, "does not match manifest source")
+
+	target, err := resolveDeleteStagedTargetWithSourceID(
+		st, []*deletion.Manifest{persisted}, "", legacy.ID, true,
+	)
+	require.NoError(err)
+	assert.Equal(legacy.ID, target.Source.ID)
+	mockAPI := gmail.NewDeletionMockAPI()
+	executor := deletion.NewExecutor(mgr, st, mockAPI)
+	require.NoError(executor.Execute(context.Background(), legacyManifest.ID, deletion.DefaultExecuteOptions()))
+	assert.Equal([]string{providerID}, mockAPI.TrashCalls)
+
+	var legacyDeleted, explicitDeleted int64
+	var sourceType string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT (SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NOT NULL),
+		       (SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NOT NULL),
+		       (SELECT source_type FROM sources WHERE id = ?)`),
+		legacy.ID, providerID, explicit.ID, providerID, legacy.ID,
+	).Scan(&legacyDeleted, &explicitDeleted, &sourceType))
+	assert.Equal(int64(1), legacyDeleted)
+	assert.Equal(int64(0), explicitDeleted)
+	assert.Empty(sourceType)
 }
 
 func TestPlanCLIDeleteStagedEscalatesLegacyGmailTokenForPermanentDelete(t *testing.T) {
