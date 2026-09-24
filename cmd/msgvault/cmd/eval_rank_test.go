@@ -47,9 +47,9 @@ func (b *saturatingFusingBackend) ActiveGeneration(context.Context) (vector.Gene
 
 func (b *saturatingFusingBackend) FusedSearch(
 	context.Context, vector.FusedRequest,
-) ([]vector.FusedHit, bool, error) {
+) ([]vector.FusedHit, vector.SearchMetadata, error) {
 	b.fusedCalls++
-	return b.hits, b.saturated, nil
+	return b.hits, vector.SearchMetadata{PoolSaturated: b.saturated}, nil
 }
 
 // stubEmbedder returns a fixed query vector; the fake backend never looks at

@@ -7389,6 +7389,7 @@ func TestHandleSimilarSearch_HydrationContextErrorReturns503(t *testing.T) {
 // silently drop the field for false values — clients that read
 // "pool not saturated" as a positive signal would break.
 func TestHandleSearch_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	store := &mockStore{}
 	backend := &fakeVectorBackend{
@@ -7419,7 +7420,12 @@ func TestHandleSearch_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &raw), "decode raw")
 	val, exists := raw["pool_saturated"]
 	require.True(exists, "pool_saturated key missing from successful response; want present (raw=%s)", w.Body.String())
-	assert.Equal(t, "false", string(val), "pool_saturated")
+	assert.Equal("false", string(val), "pool_saturated")
+	var timings map[string]int64
+	require.NoError(json.Unmarshal(raw["timings"], &timings), "decode timings")
+	assert.Contains(timings, "query_embedding_ms")
+	assert.Contains(timings, "retrieval_ms")
+	assert.Contains(timings, "hydration_ms")
 }
 
 // mapKeys returns the keys of a map[string]interface{} for use in

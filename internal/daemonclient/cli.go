@@ -199,11 +199,20 @@ type CLIHybridSearchRequest struct {
 type CLIHybridSearch struct {
 	Results          []CLIHybridSearchResult
 	Generation       CLIHybridGeneration
+	TookMS           int64
+	Timings          CLIHybridSearchTimings
 	PoolSaturated    bool
+	Accelerator      string
 	ReturnedCount    int
 	ScopeLabel       string
 	ScopeSourceCount int
 	HasMore          bool
+}
+
+type CLIHybridSearchTimings struct {
+	QueryEmbeddingMS int64 `json:"query_embedding_ms"`
+	RetrievalMS      int64 `json:"retrieval_ms"`
+	HydrationMS      int64 `json:"hydration_ms"`
 }
 
 type CLIHybridGeneration struct {

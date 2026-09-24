@@ -176,6 +176,10 @@ var settingsMetadata = map[string]settingMetadata{
 	"vector.search.k_per_signal":         {"Candidates per signal", "Results each signal contributes before merging.", "ranking"},
 	"vector.search.subject_boost":        {"Subject boost", "Extra weight for matches in the subject line.", "ranking"},
 	"vector.search.max_page_size_hybrid": {"Maximum hybrid page size", "Largest page a hybrid search returns.", "ranking"},
+	"vector.search.sqlite_accelerator":   {"SQLite search accelerator", "Use the SQLite approximate index when it is ready, or always scan exact vectors.", "ranking"},
+	"vector.search.ann_nprobe":           {"ANN probe count", "SQLite index partitions searched for each semantic query.", "ranking"},
+	"vector.search.ann_oversample":       {"ANN oversampling", "Extra approximate candidates reranked with exact vector distance.", "ranking"},
+	"vector.search.ann_threads":          {"ANN build threads", "Maximum native worker threads used while optimizing a SQLite index.", "ranking"},
 
 	"vector.preprocess.strip_quotes":        {"Strip quoted replies", "Remove quoted earlier messages before embedding.", "preprocess"},
 	"vector.preprocess.strip_signatures":    {"Strip signatures", "Remove detected signatures before embedding.", "preprocess"},
@@ -270,6 +274,9 @@ var settingsValidation = map[string]SettingValidation{
 	"vector.search.k_per_signal":          atLeast(1),
 	"vector.search.subject_boost":         atLeast(0),
 	"vector.search.max_page_size_hybrid":  withOff(atLeast(1), "No limit", strconv.Itoa(vector.DefaultMaxPageSizeHybrid)),
+	"vector.search.ann_nprobe":            numberRange(1, 65_536),
+	"vector.search.ann_oversample":        numberRange(1, 128),
+	"vector.search.ann_threads":           numberRange(1, vector.MaxANNThreads),
 
 	"beeper.schedule": cronValidation(false),
 	"slack.schedule":  cronValidation(false),

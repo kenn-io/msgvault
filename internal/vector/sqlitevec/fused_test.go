@@ -48,6 +48,86 @@ func TestFusedSearch_BothSignalsContribute(t *testing.T) {
 	assert.Falsef(math.IsNaN(hits[0].VectorScore), "top hit VectorScore should not be NaN: %+v", hits[0])
 }
 
+func TestFusedSearch_ReadyAcceleratorFusesBothSignals(t *testing.T) {
+	b, ctx := newFusedBackendForTest(t)
+	generationID := seedAndEmbed(t, b, map[int64][]float32{
+		1: unitVec(768, 0),
+		2: unitVec(768, 1),
+		3: unitVec(768, 2),
+	})
+	installReadyFlatAccelerator(t, b, generationID, 768)
+	require.NoError(t, b.ActivateGeneration(ctx, generationID, true))
+
+	hits, metadata, err := b.FusedSearch(ctx, vector.FusedRequest{
+		FTSTerms: []string{"meeting"}, QueryVec: unitVec(768, 1),
+		Generation: generationID, KPerSignal: 2, Limit: 5, RRFK: 60,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, hits)
+	assert.Equal(t, int64(2), hits[0].MessageID)
+	assert.False(t, math.IsNaN(hits[0].BM25Score))
+	assert.False(t, math.IsNaN(hits[0].VectorScore))
+	assert.True(t, metadata.PoolSaturated, "the vector K+1 probe should report the capped pool")
+	assert.Equal(t, acceleratorKind, metadata.Accelerator)
+}
+
+func TestFusedSearch_ReadyAcceleratorReportsUnderfilledWorkCeiling(t *testing.T) {
+	b, ctx := newFusedBackendForTest(t)
+	vectors := make(map[int64][]float32, 80)
+	for i := range 80 {
+		vectors[int64(i+1)] = []float32{1, float32(i) / 100, 0, 0}
+	}
+	generationID := seedAndEmbed(t, b, vectors)
+	installReadyFlatAccelerator(t, b, generationID, 4)
+	b.annWorkCeiling = 32
+	_, err := b.mainDB.Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id <= 40`)
+	require.NoError(t, err)
+
+	hits, metadata, err := b.FusedSearch(ctx, vector.FusedRequest{
+		QueryVec: unitVec(4, 0), Generation: generationID,
+		KPerSignal: 5, Limit: 5, RRFK: 60,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, hits)
+	assert.True(t, metadata.PoolSaturated)
+}
+
+func TestFusedSearchReportsExactRetrievalPaths(t *testing.T) {
+	for _, path := range []string{"exact", "exact-filter", "exact-fallback"} {
+		t.Run(path, func(t *testing.T) {
+			b, ctx := newFusedBackendForTest(t)
+			gen := seedAndEmbed(t, b, map[int64][]float32{
+				1: unitVec(4, 0), 2: unitVec(4, 1), 3: unitVec(4, 2),
+			})
+			req := vector.FusedRequest{
+				FTSTerms: []string{"meeting"}, QueryVec: unitVec(4, 1),
+				Generation: gen, KPerSignal: 2, Limit: 5, RRFK: 60,
+			}
+			if path != "exact" {
+				installReadyFlatAccelerator(t, b, gen, 4)
+			}
+			if path == "exact-filter" {
+				req.Filter.MessageIDs = []int64{1, 2, 3}
+			}
+			if path == "exact-fallback" {
+				_, err := b.db.Exec(`DROP TABLE ` + acceleratorTableName(gen))
+				require.NoError(t, err)
+				_, err = b.db.Exec(`CREATE TABLE ` + acceleratorTableName(gen) + ` (embedding BLOB)`)
+				require.NoError(t, err)
+			}
+
+			hits, metadata, err := b.FusedSearch(ctx, req)
+			require.NoError(t, err)
+			require.NotEmpty(t, hits)
+			assert.Equal(t, int64(2), hits[0].MessageID)
+			assert.False(t, math.IsNaN(hits[0].BM25Score))
+			assert.False(t, math.IsNaN(hits[0].VectorScore))
+			assert.Equal(t, path, metadata.Accelerator)
+			assert.True(t, metadata.PoolSaturated)
+		})
+	}
+}
+
 func TestFusedSearch_FTSOnly_VectorScoreIsNaN(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -173,9 +253,9 @@ func TestFusedSearch_AnnSaturation_VectorOnly(t *testing.T) {
 		Limit:      10,
 		RRFK:       60,
 	}
-	hits, saturated, err := b.FusedSearch(ctx, req)
+	hits, metadata, err := b.FusedSearch(ctx, req)
 	require.NoError(t, err, "FusedSearch")
-	assert.Truef(t, saturated, "saturated for ANN pool of 5 with KPerSignal=2 should be true (hits=%d)", len(hits))
+	assert.Truef(t, metadata.PoolSaturated, "saturated for ANN pool of 5 with KPerSignal=2 should be true (hits=%d)", len(hits))
 }
 
 // TestFusedSearch_AnnSaturation_BelowCap is the counter-test for
@@ -196,9 +276,9 @@ func TestFusedSearch_AnnSaturation_BelowCap(t *testing.T) {
 		Limit:      10,
 		RRFK:       60,
 	}
-	_, saturated, err := b.FusedSearch(ctx, req)
+	_, metadata, err := b.FusedSearch(ctx, req)
 	require.NoError(t, err, "FusedSearch")
-	assert.False(t, saturated, "saturated for ANN pool of 2 with KPerSignal=5 should be false")
+	assert.False(t, metadata.PoolSaturated, "saturated for ANN pool of 2 with KPerSignal=5 should be false")
 }
 
 func TestFusedSearch_NoSignals_Errors(t *testing.T) {
@@ -967,7 +1047,7 @@ func TestFusedSearch_EmptyFilteredSetReportsNotSaturated(t *testing.T) {
 	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	yes := true
-	hits, saturated, err := b.FusedSearch(ctx, vector.FusedRequest{
+	hits, metadata, err := b.FusedSearch(ctx, vector.FusedRequest{
 		QueryVec:   unitVec(768, 0),
 		Generation: gid,
 		FTSTerms:   []string{"report"},
@@ -976,7 +1056,7 @@ func TestFusedSearch_EmptyFilteredSetReportsNotSaturated(t *testing.T) {
 	})
 	require.NoError(err, "FusedSearch")
 	require.Emptyf(hits, "want empty (filter excludes everything); got %+v", hits)
-	assert.False(t, saturated, "saturation requires overflow, which is impossible when no rows pass the filter")
+	assert.False(t, metadata.PoolSaturated, "saturation requires overflow, which is impossible when no rows pass the filter")
 }
 
 // TestFusedSearch_SubjectBoostOverFetchesBeyondLimit regresses the

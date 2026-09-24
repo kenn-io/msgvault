@@ -32,12 +32,16 @@ func Available() bool { return false }
 // can reference sqlitevec.Options without a compile error; the struct is
 // never populated at runtime when the PG code path is taken.
 type Options struct {
-	Path       string
-	MainPath   string
-	Dimension  int
-	MainDB     *sql.DB
-	BuildScope vector.BuildScope
-	ReadOnly   bool
+	Path            string
+	MainPath        string
+	Dimension       int
+	MainDB          *sql.DB
+	BuildScope      vector.BuildScope
+	ReadOnly        bool
+	ANNWorkCeiling  int
+	ANNOversample   int
+	ANNNProbe       int
+	AcceleratorMode string
 }
 
 // Backend is the stub backend type for builds without sqlite_vec.
@@ -96,6 +100,11 @@ func (b *Backend) Upsert(_ context.Context, _ vector.GenerationID, _ []vector.Ch
 // Search is a stub that always returns ErrNotBuilt.
 func (b *Backend) Search(_ context.Context, _ vector.GenerationID, _ []float32, _ int, _ vector.Filter) ([]vector.Hit, error) {
 	return nil, ErrNotBuilt
+}
+
+// SearchWithMetadata is a stub that always returns ErrNotBuilt.
+func (b *Backend) SearchWithMetadata(_ context.Context, _ vector.GenerationID, _ []float32, _ int, _ vector.Filter) ([]vector.Hit, vector.SearchMetadata, error) {
+	return nil, vector.SearchMetadata{}, ErrNotBuilt
 }
 
 // Delete is a stub that always returns ErrNotBuilt.

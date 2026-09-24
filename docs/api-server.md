@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-09-24"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -29,9 +29,14 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.28.0**.
+it is separate from the binary release version. The current schema is **2.29.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.29.0 adds `took_ms` and a required `timings` breakdown
+(`query_embedding_ms`, `retrieval_ms`, and `hydration_ms`) to vector and hybrid
+`/api/v1/search` responses. SQLite responses also include an `accelerator`
+field identifying the retrieval path.
 
 Schema 2.27.0 adds deterministic meeting context export, archived action-item
 listing, and duration metrics with exact direct or Explore scope.
@@ -1406,6 +1411,7 @@ query string can also carry `message_type:` / `message_type=` operators inside
       "state": "active"
     },
   "took_ms": 84,
+  "timings": {"query_embedding_ms": 12, "retrieval_ms": 41, "hydration_ms": 31},
   "results": [
     {
       "id": 12345,
@@ -1426,11 +1432,18 @@ query string can also carry `message_type:` / `message_type=` operators inside
 Vector and hybrid responses expose `returned` instead of `total`
 (ANN search does not have a meaningful total count), add a
 `generation` sub-object naming the index generation that answered
-the query, and include `took_ms`. The top-level `results` array
+the query, and include `took_ms` plus a `timings` breakdown
+(`query_embedding_ms`, `retrieval_ms`, and `hydration_ms`). The top-level `results` array
 replaces `messages`. `pool_saturated` is true when a vector or BM25
 candidate pool hit its configured cap (or pure vector search returned
 as many hits as requested), hinting that increasing the limit or
 narrowing the query may expose more relevant results.
+
+SQLite responses include `accelerator`: `vec1_ivf_opq` for approximate retrieval,
+`exact-filter` for an exhaustive search of a small filtered population, `exact`
+for exhaustive retrieval, or `exact-fallback` when an accelerator error caused
+an exhaustive retry. Accelerator errors are also logged as warnings. Requests
+larger than the accelerator's candidate ceiling use exact retrieval.
 
 When `explain=1`, each element of `results` carries an extra `score`
 object exposing the fused-score components:

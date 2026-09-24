@@ -393,6 +393,81 @@ func waitForParkedContext(t *testing.T, parked <-chan struct{}, work string) {
 	}
 }
 
+func TestServerEmbeddingsOptimizeHoldsOperationGateUntilRunnerReturns(t *testing.T) {
+	for _, ending := range []string{"complete", "cancel"} {
+		t.Run(ending, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				gate := NewSerialOperationGate()
+				requestCtx, cancelRequest := context.WithCancel(t.Context())
+				defer cancelRequest()
+				cleanupCtx, finishCleanup := context.WithCancel(t.Context())
+				defer finishCleanup()
+				commandFinished := make(chan struct{})
+				started := make(chan []string, 1)
+				srv := NewServerWithOptions(ServerOptions{
+					Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+					Store: &mockStore{runFunc: func(ctx context.Context, req CLIRunRequest, _ func(CLIRunEvent) error) error {
+						started <- req.Args
+						select {
+						case <-commandFinished:
+						case <-ctx.Done():
+						}
+						// The subprocess boundary returns only after worker cleanup.
+						<-cleanupCtx.Done()
+						return ctx.Err()
+					}},
+					Logger:        testLogger(),
+					OperationGate: gate,
+				})
+				defer func() {
+					cancelRequest()
+					finishCleanup()
+					synctest.Wait()
+					require.NoError(t, srv.Shutdown(context.Background()))
+				}()
+				req := httptest.NewRequestWithContext(requestCtx, http.MethodPost, "/api/v1/cli/run",
+					strings.NewReader(`{"args":["embeddings","optimize"]}`))
+				req.Header.Set("Content-Type", "application/json")
+				response := httptest.NewRecorder()
+				requestDone := make(chan struct{})
+				go func() {
+					srv.Router().ServeHTTP(response, req)
+					close(requestDone)
+				}()
+				synctest.Wait()
+				require.Len(t, started, 1, "optimize reaches the subprocess runner")
+				assert.Equal(t, []string{"embeddings", "optimize"}, <-started)
+
+				backgroundCtx, cancelBackground := context.WithCancel(t.Context())
+				defer cancelBackground()
+				backgroundStarted := make(chan bool, 1)
+				go func() {
+					release, ok := gate.BeginWorkContext(backgroundCtx)
+					defer release()
+					backgroundStarted <- ok
+				}()
+				synctest.Wait()
+				assert.Empty(t, backgroundStarted, "background embedding work waits during optimize")
+
+				if ending == "cancel" {
+					cancelRequest()
+				} else {
+					close(commandFinished)
+				}
+				synctest.Wait()
+				assert.Empty(t, backgroundStarted, "the gate stays held until the runner finishes cleanup")
+
+				finishCleanup()
+				synctest.Wait()
+				require.Len(t, backgroundStarted, 1, "runner return releases background work")
+				assert.True(t, <-backgroundStarted)
+				<-requestDone
+				assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			})
+		})
+	}
+}
+
 func TestServerBackgroundOperationGateStopsWhenContextCancelsBehindRequest(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -1594,6 +1594,11 @@ func cliRunCommandAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
+	// Internal subprocess commands are callable only by their owning public
+	// command on the daemon host, never through the generic HTTP runner.
+	if len(args) > 1 && strings.HasPrefix(args[1], "__") {
+		return false
+	}
 	if IsCLIRunDraftReply(args) {
 		return len(args) >= 2
 	}

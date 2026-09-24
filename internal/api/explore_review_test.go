@@ -540,10 +540,10 @@ type fakeFusingBackend struct {
 	fusedLast  *vector.FusedRequest
 }
 
-func (f *fakeFusingBackend) FusedSearch(_ context.Context, req vector.FusedRequest) ([]vector.FusedHit, bool, error) {
+func (f *fakeFusingBackend) FusedSearch(_ context.Context, req vector.FusedRequest) ([]vector.FusedHit, vector.SearchMetadata, error) {
 	f.fusedCalls++
 	f.fusedLast = &req
-	return f.fusedHits, false, nil
+	return f.fusedHits, vector.SearchMetadata{}, nil
 }
 
 func TestExploreHybridLowercasesSubjectTermsForBoost(t *testing.T) {

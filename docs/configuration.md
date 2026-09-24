@@ -1065,6 +1065,14 @@ Hybrid ranking parameters applied at query time.
 | `k_per_signal` | `100` | Candidate pool size drawn from each signal (BM25 or vector) before fusion. |
 | `subject_boost` | `2.0` | Multiplier applied when a query term matches a message's subject line. |
 | `max_page_size_hybrid` | `50` | Hard cap on `page_size` for vector/hybrid responses. Set to `0` to disable clamping. |
+| `sqlite_accelerator` | `auto` | Use a ready SQLite approximate index. Set to `exact` to keep exhaustive vector search. PostgreSQL ignores this setting. |
+| `ann_nprobe` | `8` | SQLite index partitions searched per query. Higher values trade latency for recall. |
+| `ann_oversample` | `8` | Approximate candidates requested per result before exact reranking. Range: 1–128. |
+| `ann_threads` | CPU count, max `128` | Native worker threads used by `msgvault embeddings optimize`. Range: 1–128. |
+
+Accelerator tuning does not change the embedding generation fingerprint. It
+changes how stored vectors are searched or optimized, not how text is sent to
+the embedding provider.
 
 #### `[vector.embed.scope]`
 

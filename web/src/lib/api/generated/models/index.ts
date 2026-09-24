@@ -337,6 +337,7 @@ export * from "./hybridGenerationSummary";
 export * from "./hybridSearchItem";
 export * from "./hybridSearchMatch";
 export * from "./hybridSearchResponse";
+export * from "./hybridSearchTimings";
 export * from "./identityConfirmationOutcome";
 export * from "./identityLinkRequest";
 export * from "./identityLinkResponse";

@@ -583,11 +583,14 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
 		}
 		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
-			Path:       vecPath,
-			MainPath:   mainPath,
-			Dimension:  vecCfg.Embeddings.Dimension,
-			MainDB:     mainDB,
-			BuildScope: vecCfg.Embed.Scope.BuildScope(),
+			Path:            vecPath,
+			MainPath:        mainPath,
+			Dimension:       vecCfg.Embeddings.Dimension,
+			MainDB:          mainDB,
+			BuildScope:      vecCfg.Embed.Scope.BuildScope(),
+			ANNOversample:   vecCfg.Search.ANNOversample,
+			ANNNProbe:       vecCfg.Search.ANNNProbe,
+			AcceleratorMode: vecCfg.Search.SQLiteAccelerator,
 			// Honor the read-only signal on SQLite too: when mainDB is a
 			// query-only handle (MCP), skip the embed_gen upgrade backfill,
 			// which would write through it. Migrate still runs (vectors.db

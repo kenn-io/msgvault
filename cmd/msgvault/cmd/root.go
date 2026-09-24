@@ -226,6 +226,7 @@ in a single binary.`,
 func skipsConfigLoad(cmd *cobra.Command) bool {
 	switch cmd.Name() {
 	case "version", "update", "quickstart", "openapi", "completion",
+		embeddingsOptimizeWorkerName,
 		cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
 		return true
 	}

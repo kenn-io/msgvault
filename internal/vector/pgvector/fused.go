@@ -45,31 +45,31 @@ func postgresFTSRankExpression(vectorExpr, queryArg string) string {
 // 'simple' text-search configuration matches what
 // FTSUpsert/FTSBackfillBatchSQL in internal/store/dialect_pg.go writes
 // into search_fts, so query-time tokens line up with stored tokens (no
-// English stemming on either side). The returned saturated flag is true
+// English stemming on either side). The returned PoolSaturated flag is true
 // when either per-signal pool produced more than KPerSignal candidates —
 // the pool was capped and downstream callers should consider raising
 // KPerSignal or narrowing the query.
-func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]vector.FusedHit, bool, error) {
+func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]vector.FusedHit, vector.SearchMetadata, error) {
 	if err := vector.ValidateFilter(req.Filter); err != nil {
-		return nil, false, err
+		return nil, vector.SearchMetadata{}, err
 	}
 	useFTS := len(req.FTSTerms) > 0
 	useANN := req.QueryVec != nil
 	if !useFTS && !useANN {
-		return nil, false, errors.New("FusedSearch: neither vector nor FTS query provided")
+		return nil, vector.SearchMetadata{}, errors.New("FusedSearch: neither vector nor FTS query provided")
 	}
 
 	var dim int
 	err := b.db.QueryRowContext(ctx,
 		`SELECT dimension FROM index_generations WHERE id = $1`, int64(req.Generation)).Scan(&dim)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, false, fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, req.Generation)
+		return nil, vector.SearchMetadata{}, fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, req.Generation)
 	}
 	if err != nil {
-		return nil, false, fmt.Errorf("lookup generation %d: %w", req.Generation, err)
+		return nil, vector.SearchMetadata{}, fmt.Errorf("lookup generation %d: %w", req.Generation, err)
 	}
 	if useANN && len(req.QueryVec) != dim {
-		return nil, false, fmt.Errorf("%w: query has %d dims, gen has %d",
+		return nil, vector.SearchMetadata{}, fmt.Errorf("%w: query has %d dims, gen has %d",
 			vector.ErrDimensionMismatch, len(req.QueryVec), dim)
 	}
 
@@ -97,10 +97,10 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	var chunkCeiling, filteredCeiling int
 	if useANN {
 		if chunkCeiling, err = b.chunkCount(ctx, req.Generation); err != nil {
-			return nil, false, err
+			return nil, vector.SearchMetadata{}, err
 		}
 		if filteredCeiling, err = b.filteredChunkMessageCount(ctx, req.Generation, req.Filter); err != nil {
-			return nil, false, err
+			return nil, vector.SearchMetadata{}, err
 		}
 	}
 
@@ -364,7 +364,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 		}
 		hits, ftsPoolSize, annPoolSize, err = runFused(innerChunks)
 		if err != nil {
-			return nil, false, err
+			return nil, vector.SearchMetadata{}, err
 		}
 		if !useANN ||
 			annPoolSize >= kPlus1 ||
@@ -390,7 +390,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 	}
 
 	saturated := ftsPoolSize > req.KPerSignal || annPoolSize > req.KPerSignal
-	return hits, saturated, nil
+	return hits, vector.SearchMetadata{PoolSaturated: saturated}, nil
 }
 
 // filteredChunkMessageCount returns the number of distinct messages that

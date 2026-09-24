@@ -1478,7 +1478,7 @@ func (i *armIndex) Search(ctx context.Context, query []float32, k int) ([]string
 }
 
 func (i *armIndex) FusedSearch(ctx context.Context, query []float32, terms []string, k int) ([]string, bool, error) {
-	hits, saturated, err := i.backend.FusedSearch(ctx, vector.FusedRequest{
+	hits, metadata, err := i.backend.FusedSearch(ctx, vector.FusedRequest{
 		FTSTerms: terms, QueryVec: query, Generation: i.generation,
 		KPerSignal: 100, Limit: k, RRFK: 60, SubjectBoost: 2,
 	})
@@ -1493,7 +1493,7 @@ func (i *armIndex) FusedSearch(ctx context.Context, query []float32, terms []str
 		}
 		result = append(result, id)
 	}
-	return result, saturated, nil
+	return result, metadata.PoolSaturated, nil
 }
 
 func (i *armIndex) ExactTopK(ctx context.Context, query []float32, distance string, k int) ([]string, error) {

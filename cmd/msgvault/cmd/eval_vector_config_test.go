@@ -14,6 +14,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
@@ -130,4 +131,62 @@ func TestAttachVector_RejectsContextualModelMismatch(t *testing.T) {
 	_, err := ev.attachVector(context.Background(), f.Store)
 	require.Error(err)
 	assert.Contains(err.Error(), "voyage-large-4")
+}
+
+func TestAttachVector_HonorsSQLiteAcceleratorMode(t *testing.T) {
+	req := require.New(t)
+	ctx := t.Context()
+	dataDir := t.TempDir()
+	s := seedRankingDivergenceArchiveIn(t, dataDir)
+	_, endpoint := embedTestServer(t, `{"data":[{"index":0,"embedding":[1,0,0,0]}]}`)
+	c := evalVectorConfig(t, vector.APIFormatOpenAI, "test-model")
+	c.Data.DataDir = dataDir
+	c.Vector.Embeddings.Endpoint = endpoint
+	c.Vector.Embeddings.Dimension = 4
+	withTestConfig(t, c)
+	seedActiveGeneration(t, dataDir, c.DatabaseDSN(), s.DB(), c.Vector)
+
+	vectorPath := filepath.Join(dataDir, "vectors.db")
+	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{Path: vectorPath, Dimension: 4})
+	req.NoError(err)
+	t.Cleanup(func() { _ = backend.Close() })
+	gen, err := backend.ActiveGeneration(ctx)
+	req.NoError(err)
+	// Training needs 512 vectors; distinct chunks keep the archive fixture small.
+	chunks := make([]vector.Chunk, 512)
+	for i := range chunks {
+		chunks[i] = vector.Chunk{
+			MessageID: 1, ChunkIndex: i, Vector: []float32{float32(i % 17), 1, 2, 3},
+		}
+	}
+	req.NoError(backend.Upsert(ctx, gen.ID, chunks))
+	plan, err := backend.PrepareAccelerator(ctx, gen.ID, sqlitevec.OptimizeOptions{Threads: 1})
+	req.NoError(err)
+	req.True(plan.Applicable, plan.Reason)
+	req.NoError(sqlitevec.RunAcceleratorWorker(ctx, vectorPath, gen.ID, 1))
+	_, err = backend.PublishAccelerator(ctx, gen.ID)
+	req.NoError(err)
+	req.NoError(backend.Close())
+
+	for _, tc := range []struct {
+		mode, wantPath string
+	}{
+		{"auto", "vec1_ivf_opq"},
+		{"exact", "exact"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			require := require.New(t)
+			c.Vector.Search.SQLiteAccelerator = tc.mode
+			ev := &evaluator{ctx: ctx, diag: &runDiagnostics{}}
+			cleanup, err := ev.attachVector(ctx, s)
+			require.NoError(err)
+			defer cleanup()
+			hits, meta, err := ev.heng.Search(ctx, hybrid.SearchRequest{
+				Mode: hybrid.ModeVector, FreeText: "lease renewal", Limit: 1,
+			})
+			require.NoError(err)
+			require.Len(hits, 1)
+			assert.Equal(t, tc.wantPath, meta.Accelerator)
+		})
+	}
 }

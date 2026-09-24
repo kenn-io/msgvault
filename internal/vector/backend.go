@@ -395,6 +395,27 @@ type Backend interface {
 	Close() error
 }
 
+// SearchMetadata reports bounded-search behavior that cannot be inferred from
+// result length. Exact backends may omit this optional capability.
+type SearchMetadata struct {
+	PoolSaturated bool
+	// Accelerator identifies the SQLite retrieval path: vec1_ivf_opq,
+	// exact-filter, exact, or exact-fallback. Other backends leave it empty.
+	Accelerator string
+}
+
+// MetadataSearchingBackend is an optional search capability for backends with
+// explicit candidate work ceilings.
+type MetadataSearchingBackend interface {
+	SearchWithMetadata(
+		ctx context.Context,
+		gen GenerationID,
+		queryVec []float32,
+		k int,
+		filter Filter,
+	) ([]Hit, SearchMetadata, error)
+}
+
 // FilteredCoverageBackend is the optional exact-coverage capability used by
 // analytical search. The caller resolves the canonical filtered population in
 // DuckDB; the vector backend intersects that population with one generation.
@@ -417,21 +438,22 @@ type OrphanEmbeddingPruner interface {
 const FilteredCoverageBatchSize = 256
 
 // FusingBackend is an optional capability implemented by backends that
-// can fuse FTS5 + ANN in a single SQL query. The hybrid engine checks
+// can fuse FTS + vector results. The hybrid engine checks
 // for this via type assertion.
 //
-// FusedSearch returns the RRF-ordered hits, a saturation flag, and
-// any error. saturated is true when either the BM25 or the ANN
+// FusedSearch returns the RRF-ordered hits, search metadata, and
+// any error. PoolSaturated is true when either the BM25 or the ANN
 // per-signal pool produced MORE THAN KPerSignal candidates — each pool
 // is over-fetched by one probe row (cap KPerSignal+1) and that probe
 // slot filled, so the final result set may have truncated
 // potentially-relevant hits. (The over-fetch/probe is the implementation's
-// chosen way to detect the cap; both concrete backends use it.) Callers
-// surface this to clients as pool_saturated so the user can raise
+// chosen way to detect the cap; both concrete backends use it.) Bounded
+// ANN search also sets it when its work ceiling leaves the pool underfilled.
+// Callers surface this to clients as pool_saturated so the user can raise
 // KPerSignal or narrow the query.
 type FusingBackend interface {
 	Backend
-	FusedSearch(ctx context.Context, req FusedRequest) (hits []FusedHit, saturated bool, err error)
+	FusedSearch(ctx context.Context, req FusedRequest) (hits []FusedHit, metadata SearchMetadata, err error)
 }
 
 // FusedRequest is the parameter bundle for a single-query fused hybrid search.

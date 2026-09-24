@@ -145,6 +145,38 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	}, gotHTTPOpts)
 }
 
+func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
+	assert := assert.New(t)
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/search", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"query":"semantic terms",
+			"mode":"hybrid",
+			"returned":0,
+			"pool_saturated":false,
+			"accelerator":"vec1_ivf_opq",
+			"has_more":false,
+			"generation":{"id":7,"model":"fake","dimension":4,"fingerprint":"fake:4","state":"active"},
+			"took_ms":12,
+			"timings":{"query_embedding_ms":2,"retrieval_ms":7,"hydration_ms":3},
+			"results":[]
+		}`))
+	})
+
+	result, err := (daemonMCPHybridSearcher{client: client}).SearchHybrid(t.Context(), mcpserver.HybridSearchRequest{
+		Query: "semantic terms", Mode: "hybrid", Limit: 10,
+	})
+	require.NoError(t, err)
+	assert.Equal(int64(12), result.TookMS)
+	assert.Equal("vec1_ivf_opq", result.Accelerator)
+	assert.Equal(mcpserver.HybridSearchTimings{
+		QueryEmbeddingMS: 2,
+		RetrievalMS:      7,
+		HydrationMS:      3,
+	}, result.Timings)
+}
+
 func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 	withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},

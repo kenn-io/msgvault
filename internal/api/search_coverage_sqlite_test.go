@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -17,8 +18,31 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
+
+func TestHandleSearchReportsAcceleratorPath(t *testing.T) {
+	vectorCfg := vector.Config{
+		Enabled:    true,
+		Embeddings: vector.EmbeddingsConfig{Model: "test-model", Dimension: 2, MaxInputChars: 1000},
+	}
+	backend := newRealCoverageBackend(t, vectorCfg, "active-matching")
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{
+		ExpectedFingerprint: vectorCfg.GenerationFingerprint(),
+	})
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}, Vector: vectorCfg},
+		Store:  &mockStore{}, HybridEngine: engine, Backend: backend,
+		VectorCfg: vectorCfg, VectorStatus: VectorStatusReady, Logger: testLogger(),
+	})
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=vector", nil))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var body hybridSearchResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	assert.Equal(t, "exact", body.Accelerator)
+}
 
 func TestSearchCoverageRealGenerationStateMatrix(t *testing.T) {
 	vectorCfg := vector.Config{

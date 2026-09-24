@@ -320,7 +320,10 @@ import (
 // bump): meeting import and every existing route retain their behavior.
 // 2.28.0 adds optional text_enabled and visual_enabled facts to authenticated
 // vector health. Existing health and search routes keep their behavior.
-const APISchemaVersion = "2.28.0"
+// 2.29.0 adds required took_ms and timings fields to vector and hybrid
+// /api/v1/search responses. timings reports query embedding, retrieval, and
+// hydration latency. Additive (minor bump): existing search fields are unchanged.
+const APISchemaVersion = "2.29.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

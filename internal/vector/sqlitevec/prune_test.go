@@ -51,6 +51,8 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 		{MessageID: 2, ChunkIndex: 0, Vector: unitVec(5, 0)},
 		{MessageID: 3, ChunkIndex: 0, Vector: unitVec(5, 1)},
 	}))
+	activeAccelerator := installReadyFlatAccelerator(t, backend, active, 4)
+	buildingAccelerator := installReadyFlatAccelerator(t, backend, building, 5)
 
 	_, err = mainDB.Exec(`
 		UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = 2;
@@ -71,6 +73,11 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 	assert.Equal(t, int64(2), vectors4, "active generation vec0 rows")
 	assert.Equal(t, int64(1), vectors5, "building generation vec0 rows")
 	assert.Equal(t, embeddings, vectors4+vectors5, "metadata and vec0 rows stay aligned")
+	for tableName, want := range map[string]int64{activeAccelerator: 2, buildingAccelerator: 1} {
+		var acceleratorRows int64
+		require.NoError(t, backend.db.QueryRow(`SELECT COUNT(*) FROM `+tableName).Scan(&acceleratorRows))
+		assert.Equal(t, want, acceleratorRows, "accelerator rows in %s", tableName)
+	}
 
 	for _, generation := range []vector.GenerationID{active, building} {
 		var messageCount int64
@@ -78,6 +85,11 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 			`SELECT message_count FROM index_generations WHERE id = ?`, generation,
 		).Scan(&messageCount))
 		assert.Equal(t, int64(1), messageCount, "generation %d message_count", generation)
+		_, ready, readyErr := backend.readyAccelerator(t.Context(), generation, map[vector.GenerationID]int{
+			active: 4, building: 5,
+		}[generation])
+		require.NoError(t, readyErr)
+		assert.True(t, ready, "generation %d accelerator remains ready", generation)
 	}
 
 	pruned, err = pruner.PruneOrphanEmbeddings(t.Context())

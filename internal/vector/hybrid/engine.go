@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 	"unicode"
 
 	"go.kenn.io/msgvault/internal/query"
@@ -42,10 +43,15 @@ type SearchRequest struct {
 type ResultMeta struct {
 	Generation    vector.Generation
 	PoolSaturated bool
+	Accelerator   string
 	ReturnedCount int
 	// QueryVector is the embedding of FreeText used for this search.
 	// Callers use it to score within-message chunks without re-embedding.
 	QueryVector []float32
+	// QueryEmbeddingDuration and RetrievalDuration are bounded phase timings
+	// for structured diagnostics; they contain no query or vector data.
+	QueryEmbeddingDuration time.Duration
+	RetrievalDuration      time.Duration
 }
 
 // EmbeddingClient embeds free-text queries. The engine uses it once per
@@ -179,7 +185,9 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 		return nil, ResultMeta{}, errors.New("empty query")
 	}
 
+	embeddingStarted := time.Now()
 	queryVec, err := e.client.EmbedQuery(ctx, req.FreeText)
+	embeddingDuration := time.Since(embeddingStarted)
 	if err != nil {
 		// Surface deadline-exceeded distinctly so HTTP/MCP can map it
 		// to a transient 503 instead of a generic 500. The handler
@@ -193,16 +201,27 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 		return nil, ResultMeta{}, fmt.Errorf("embed query: %w", err)
 	}
 	if req.Mode == ModeVector {
-		hits, err := e.backend.Search(ctx, active.ID, queryVec, req.Limit, req.Filter)
+		retrievalStarted := time.Now()
+		var hits []vector.Hit
+		var searchMeta vector.SearchMetadata
+		if backend, ok := e.backend.(vector.MetadataSearchingBackend); ok {
+			hits, searchMeta, err = backend.SearchWithMetadata(ctx, active.ID, queryVec, req.Limit, req.Filter)
+		} else {
+			hits, err = e.backend.Search(ctx, active.ID, queryVec, req.Limit, req.Filter)
+			searchMeta.PoolSaturated = len(hits) >= req.Limit
+		}
 		if err != nil {
 			return nil, ResultMeta{}, fmt.Errorf("vector search: %w", err)
 		}
 		fused := vectorHitsToFused(hits)
 		return fused, ResultMeta{
-			Generation:    active,
-			ReturnedCount: len(fused),
-			PoolSaturated: len(fused) >= req.Limit,
-			QueryVector:   queryVec,
+			Generation:             active,
+			ReturnedCount:          len(fused),
+			PoolSaturated:          searchMeta.PoolSaturated,
+			Accelerator:            searchMeta.Accelerator,
+			QueryVector:            queryVec,
+			QueryEmbeddingDuration: embeddingDuration,
+			RetrievalDuration:      time.Since(retrievalStarted),
 		}, nil
 	}
 
@@ -240,15 +259,19 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 		SubjectTerms: req.SubjectTerms,
 		Filter:       req.Filter,
 	}
-	hits, saturated, err := fb.FusedSearch(ctx, fReq)
+	retrievalStarted := time.Now()
+	hits, searchMeta, err := fb.FusedSearch(ctx, fReq)
 	if err != nil {
 		return nil, ResultMeta{}, fmt.Errorf("fused search: %w", err)
 	}
 	return hits, ResultMeta{
-		Generation:    active,
-		ReturnedCount: len(hits),
-		PoolSaturated: saturated,
-		QueryVector:   queryVec,
+		Generation:             active,
+		ReturnedCount:          len(hits),
+		PoolSaturated:          searchMeta.PoolSaturated,
+		Accelerator:            searchMeta.Accelerator,
+		QueryVector:            queryVec,
+		QueryEmbeddingDuration: embeddingDuration,
+		RetrievalDuration:      time.Since(retrievalStarted),
 	}, nil
 }
 

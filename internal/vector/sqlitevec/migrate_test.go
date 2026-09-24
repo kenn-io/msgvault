@@ -25,7 +25,7 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 
 	for _, tbl := range []string{
 		"index_generations", "embeddings", "embed_runs",
-		"embed_watermark", "vectors_vec_d768", "schema_version",
+		"embed_watermark", "vectors_vec_d768", "vector_accelerators", "schema_version",
 	} {
 		var name string
 		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE name = ?`, tbl).Scan(&name)
@@ -34,6 +34,73 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 
 	// Idempotent: running again must not error.
 	require.NoError(t, Migrate(ctx, db, 768), "second migrate")
+}
+
+func TestMigrate_EmbeddingTriggersMaintainCountAndRevision(t *testing.T) {
+	db := openTestDB(t, filepath.Join(t.TempDir(), "vectors.db"))
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	require.NoError(t, Migrate(t.Context(), db, 4))
+
+	result, err := db.Exec(`INSERT INTO index_generations
+		(model, dimension, fingerprint, started_at, state)
+		VALUES ('model', 4, 'fingerprint', 1, 'active')`)
+	require.NoError(t, err)
+	generationID, err := result.LastInsertId()
+	require.NoError(t, err)
+
+	_, err = db.Exec(`INSERT INTO embeddings
+		(generation_id, message_id, chunk_index, embedded_at, source_char_len)
+		VALUES (?, 10, 0, 1, 4), (?, 10, 1, 1, 4)`, generationID, generationID)
+	require.NoError(t, err)
+	assertGenerationVectorState(t, db, generationID, 2, 2)
+
+	_, err = db.Exec(`UPDATE embeddings SET message_id = 11
+		WHERE generation_id = ? AND chunk_index = 1`, generationID)
+	require.NoError(t, err)
+	assertGenerationVectorState(t, db, generationID, 2, 3)
+
+	_, err = db.Exec(`DELETE FROM embeddings
+		WHERE generation_id = ? AND chunk_index = 0`, generationID)
+	require.NoError(t, err)
+	assertGenerationVectorState(t, db, generationID, 1, 4)
+}
+
+func TestMigrateAcceleratorMetadataRollsBackFailedBackfill(t *testing.T) {
+	db := openTestDB(t, filepath.Join(t.TempDir(), "vectors.db"))
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err := db.Exec(`CREATE TABLE index_generations (
+		id INTEGER PRIMARY KEY,
+		model TEXT NOT NULL,
+		dimension INTEGER NOT NULL,
+		fingerprint TEXT NOT NULL,
+		started_at INTEGER NOT NULL,
+		state TEXT NOT NULL,
+		message_count INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE embeddings (unexpected_column INTEGER)`)
+	require.NoError(t, err)
+
+	err = migrateAcceleratorMetadata(t.Context(), db)
+	require.ErrorContains(t, err, "initialize generation embedding counts")
+	hasCount, err := columnExists(t.Context(), db, "index_generations", "embedding_count")
+	require.NoError(t, err)
+	hasRevision, err := columnExists(t.Context(), db, "index_generations", "vector_revision")
+	require.NoError(t, err)
+	assert.False(t, hasCount, "failed backfill must roll back the count column")
+	assert.False(t, hasRevision, "failed backfill must roll back the revision column")
+}
+
+func assertGenerationVectorState(
+	t *testing.T,
+	db *sql.DB,
+	generationID, wantCount, wantRevision int64,
+) {
+	t.Helper()
+	var count, revision int64
+	require.NoError(t, db.QueryRow(`SELECT embedding_count, vector_revision
+		FROM index_generations WHERE id = ?`, generationID).Scan(&count, &revision))
+	assert.Equal(t, wantCount, count)
+	assert.Equal(t, wantRevision, revision)
 }
 
 // TestMigrate_LegacyToChunked builds a pre-chunking vectors.db
@@ -135,6 +202,7 @@ func TestMigrate_LegacyToChunked(t *testing.T) {
 
 	// Run the migration.
 	require.NoError(Migrate(ctx, db, 768), "Migrate")
+	assertGenerationVectorState(t, db, 1, 2, 0)
 
 	// embeddings now has the chunked-layout columns, and the legacy
 	// rows survived as chunk_index=0 with embedding_id == old message_id.

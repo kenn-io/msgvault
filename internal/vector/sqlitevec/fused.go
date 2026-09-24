@@ -21,7 +21,96 @@ import (
 // Compile-time check that *Backend satisfies vector.FusingBackend.
 var _ vector.FusingBackend = (*Backend)(nil)
 
-// FusedSearch runs the single-query hybrid CTE (spec §5.3) by opening a
+// FusedSearch uses the bounded accelerator path when a ready Vec1 index is
+// available, otherwise it retains the exact fused query.
+func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]vector.FusedHit, vector.SearchMetadata, error) {
+	metadata := vector.SearchMetadata{}
+	if len(req.QueryVec) > 0 {
+		vectorHits, searchMeta, err := b.searchAccelerator(
+			ctx, req.Generation, req.QueryVec, req.KPerSignal+1, req.Filter,
+		)
+		if err != nil {
+			return nil, vector.SearchMetadata{}, err
+		}
+		metadata = searchMeta
+		if metadata.Accelerator == acceleratorKind || metadata.Accelerator == "exact-filter" {
+			return b.fuseAcceleratedSignals(ctx, req, vectorHits, metadata)
+		}
+		if metadata.Accelerator == "" {
+			metadata.Accelerator = "exact"
+		}
+	}
+	hits, saturated, err := b.fusedSearchExact(ctx, req)
+	metadata.PoolSaturated = saturated
+	return hits, metadata, err
+}
+
+func (b *Backend) fuseAcceleratedSignals(
+	ctx context.Context,
+	req vector.FusedRequest,
+	vectorHits []vector.Hit,
+	metadata vector.SearchMetadata,
+) ([]vector.FusedHit, vector.SearchMetadata, error) {
+	poolLimit := max(req.KPerSignal, 0)
+	vectorSaturated := metadata.PoolSaturated || len(vectorHits) > poolLimit
+	if len(vectorHits) > poolLimit {
+		vectorHits = vectorHits[:poolLimit]
+	}
+
+	var bm25Hits []vector.FusedHit
+	bm25Saturated := false
+	if len(req.FTSTerms) > 0 {
+		bm25Request := req
+		bm25Request.QueryVec = nil
+		bm25Request.Limit = poolLimit
+		bm25Request.SubjectBoost = 1
+		bm25Request.SubjectTerms = nil
+		var err error
+		bm25Hits, bm25Saturated, err = b.fusedSearchExact(ctx, bm25Request)
+		if err != nil {
+			return nil, vector.SearchMetadata{}, err
+		}
+	}
+
+	byMessage := make(map[int64]vector.FusedHit, len(bm25Hits)+len(vectorHits))
+	for _, hit := range bm25Hits {
+		hit.VectorScore = math.NaN()
+		byMessage[hit.MessageID] = hit
+	}
+	for i, vectorHit := range vectorHits {
+		hit, exists := byMessage[vectorHit.MessageID]
+		if !exists {
+			hit = vector.FusedHit{
+				MessageID: vectorHit.MessageID,
+				BM25Score: math.NaN(),
+				RRFScore:  0,
+			}
+		}
+		hit.VectorScore = vectorHit.Score
+		hit.RRFScore += 1.0 / float64(req.RRFK+i+1)
+		byMessage[hit.MessageID] = hit
+	}
+	hits := make([]vector.FusedHit, 0, len(byMessage))
+	for _, hit := range byMessage {
+		hits = append(hits, hit)
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].RRFScore != hits[j].RRFScore {
+			return hits[i].RRFScore > hits[j].RRFScore
+		}
+		return hits[i].MessageID < hits[j].MessageID
+	})
+	if req.SubjectBoost > 1 && len(req.SubjectTerms) > 0 {
+		b.applySubjectBoost(ctx, hits, req.SubjectTerms, req.SubjectBoost)
+	}
+	if len(hits) > req.Limit {
+		hits = hits[:req.Limit]
+	}
+	metadata.PoolSaturated = bm25Saturated || vectorSaturated
+	return hits, metadata, nil
+}
+
+// fusedSearchExact runs the single-query hybrid CTE (spec §5.3) by opening a
 // fresh connection to the main msgvault.db with vectors.db ATTACHed.
 // Filters resolve at the Go layer.
 //
@@ -30,7 +119,7 @@ var _ vector.FusingBackend = (*Backend)(nil)
 // (BM25 via LIMIT KPerSignal+1, ANN via k=KPerSignal+1) and trimmed to
 // KPerSignal before fusion. The extra "probe" row exists only so the
 // outer query can report whether the pool was full on either side.
-func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]vector.FusedHit, bool, error) {
+func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest) ([]vector.FusedHit, bool, error) {
 	if err := vector.ValidateFilter(req.Filter); err != nil {
 		return nil, false, err
 	}

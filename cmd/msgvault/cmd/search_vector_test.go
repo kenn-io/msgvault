@@ -52,6 +52,11 @@ func TestSearchCmd_VectorModeUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testin
 
 	assert.Equal(1, int(requests.Load()), "search endpoint calls")
 	assert.Contains(out, `"returned_count": 1`, "returned_count")
+	assert.Contains(out, `"took_ms": 12`, "total timing")
+	assert.Contains(out, `"query_embedding_ms": 2`, "query embedding timing")
+	assert.Contains(out, `"retrieval_ms": 7`, "retrieval timing")
+	assert.Contains(out, `"accelerator": "vec1_ivf_opq"`, "accelerator path")
+	assert.Contains(out, `"hydration_ms": 3`, "hydration timing")
 	assert.Contains(out, `"from_email": "alice@example.com"`, "from_email")
 	assert.Contains(out, `"boosted": true`, "boosted")
 	assert.Contains(out, srv.URL+"/messages/42", "browser URL")
@@ -81,6 +86,7 @@ func TestSearchCmd_VectorModeCollectionUsesLocalDaemonHTTPAndPreservesBanner(t *
 	root.AddCommand(searchCmd)
 	root.SetArgs([]string{
 		"search", "--mode", "vector",
+		"--explain",
 		"--collection", "Important",
 		"lunch",
 	})
@@ -93,6 +99,8 @@ func TestSearchCmd_VectorModeCollectionUsesLocalDaemonHTTPAndPreservesBanner(t *
 	assert.Equal(1, int(requests.Load()), "search endpoint calls")
 	assert.Contains(out, "Lunch *", "boosted marker")
 	assert.Contains(out, `Showing 1 result (generation #7 active, fingerprint="fake:4")`, "summary")
+	assert.Contains(out, "Timings: total=12ms query_embedding=2ms retrieval=7ms hydration=3ms", "timings")
+	assert.Contains(out, "Accelerator: vec1_ivf_opq", "accelerator path")
 	assert.Contains(errOut, `Searching collection "Important" (2 accounts)`, "collection banner")
 }
 
@@ -149,6 +157,7 @@ func TestSearchCmd_HybridModeUsesConfiguredRemoteHTTP(t *testing.T) {
 	assert.Equal(1, int(requests.Load()), "search endpoint calls")
 	assert.Contains(out, `"bm25_score": 1.25`, "bm25_score")
 	assert.Contains(out, `"vector_score": 0.9`, "vector_score")
+	assert.Contains(out, `"accelerator": "vec1_ivf_opq"`, "accelerator path")
 }
 
 func vectorSearchHTTPDaemon(
@@ -201,8 +210,15 @@ func writeVectorSearchResponse(
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")
 	err := json.NewEncoder(w).Encode(map[string]any{
-		"returned":           1,
-		"pool_saturated":     false,
+		"returned":       1,
+		"pool_saturated": false,
+		"accelerator":    "vec1_ivf_opq",
+		"took_ms":        12,
+		"timings": map[string]any{
+			"query_embedding_ms": 2,
+			"retrieval_ms":       7,
+			"hydration_ms":       3,
+		},
 		"scope_label":        scopeLabel,
 		"scope_source_count": scopeSourceCount,
 		"generation": map[string]any{

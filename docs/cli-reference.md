@@ -2348,6 +2348,8 @@ msgvault embeddings <subcommand> [flags]
 | `build` | Build or update the index. Incremental by default; `--full-rebuild` starts a new generation. |
 | `resume` | Continue scan-and-fill embedding for the building or active generation. Incremental by default; `--backstop` also scans below the watermark. |
 | `list` | List index generations with their state, model, dimension, and pending count. |
+| `optimize [generation-id]` | Build or resume the local SQLite search accelerator, or remove it with `--drop`. |
+| `prune` | Remove embeddings for hard-deleted messages. |
 | `activate <generation-id>` | Activate a completed building generation, retiring the current active one. |
 | `retire <generation-id>` | Retire a generation. |
 | `prune` | Remove embeddings whose messages were hard-deleted. |
@@ -2395,7 +2397,36 @@ msgvault embeddings resume --backstop
 msgvault embeddings list
 ```
 
-Print one row per index generation: ID, state (`building`, `active`, or `retired`), model, dimension, embedded message count, pending count, fingerprint, and the start, completion, and activation timestamps.
+Print one row per index generation: ID, generation state, model, dimension,
+coverage, accelerator state and row count, accelerator timestamps and last
+error, fingerprint, and generation timestamps.
+
+### embeddings optimize
+
+```bash
+msgvault embeddings optimize [generation-id] [--drop]
+```
+
+Build or resume the SQLite approximate-search accelerator from vectors already
+stored for a generation. The active generation is used when the ID is omitted.
+The command never calls the embedding provider. It is safe to interrupt and
+rerun; the accelerator is not used for search until verification and atomic
+publication complete. The daemon's operation gate pauses scheduled embedding
+and other gated writes until the command finishes. Searches remain available.
+PostgreSQL does not need this command.
+
+Use `--drop` to remove the accelerator and its build state, including for a
+retired generation. Exact vectors remain intact. Freed database pages become
+reusable; the database file does not shrink. Re-run optimization after substantial
+archive growth to retrain its fixed bucket count.
+
+### embeddings prune
+
+```bash
+msgvault embeddings prune
+```
+
+Remove stored message embeddings whose source messages were hard-deleted.
 
 ### embeddings activate
 

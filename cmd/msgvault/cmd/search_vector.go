@@ -79,6 +79,7 @@ func outputHybridResultsTable(resp *daemonclient.CLIHybridSearch, explain bool) 
 		fmt.Println("No messages found.")
 		fmt.Printf("\nGeneration #%d (%s, fingerprint=%q)\n",
 			resp.Generation.ID, resp.Generation.State, resp.Generation.Fingerprint)
+		outputHybridTimings(resp, explain)
 		return nil
 	}
 
@@ -113,7 +114,19 @@ func outputHybridResultsTable(resp *daemonclient.CLIHybridSearch, explain bool) 
 	}
 	fmt.Printf("\n%s (generation #%d %s, fingerprint=%q)\n",
 		formatShowingResults(len(resp.Results)), resp.Generation.ID, resp.Generation.State, resp.Generation.Fingerprint)
+	outputHybridTimings(resp, explain)
 	return nil
+}
+
+func outputHybridTimings(resp *daemonclient.CLIHybridSearch, explain bool) {
+	if !explain {
+		return
+	}
+	if resp.Accelerator != "" {
+		fmt.Printf("Accelerator: %s\n", resp.Accelerator)
+	}
+	fmt.Printf("Timings: total=%dms query_embedding=%dms retrieval=%dms hydration=%dms\n",
+		resp.TookMS, resp.Timings.QueryEmbeddingMS, resp.Timings.RetrievalMS, resp.Timings.HydrationMS)
 }
 
 func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool) error {
@@ -140,7 +153,7 @@ func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool) e
 		}
 		rows[i] = row
 	}
-	return printJSON(map[string]any{
+	output := map[string]any{
 		"generation": map[string]any{
 			"id":          resp.Generation.ID,
 			"model":       resp.Generation.Model,
@@ -150,8 +163,14 @@ func outputHybridResultsJSON(resp *daemonclient.CLIHybridSearch, explain bool) e
 		},
 		"pool_saturated": resp.PoolSaturated,
 		"returned_count": resp.ReturnedCount,
+		"took_ms":        resp.TookMS,
+		"timings":        resp.Timings,
 		"results":        rows,
-	})
+	}
+	if resp.Accelerator != "" {
+		output["accelerator"] = resp.Accelerator
+	}
+	return printJSON(output)
 }
 
 func formatOptionalScorePtr(v *float64) string {

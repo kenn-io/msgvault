@@ -5,6 +5,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"io"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -62,6 +63,78 @@ func TestRunEmbeddingsPruneRemovesOrphansWithoutEmbeddingCalls(t *testing.T) {
 	stats, err := reopened.Stats(t.Context(), generation)
 	require.NoError(t, err)
 	assert.Zero(t, stats.EmbeddingCount)
+}
+
+func TestRunEmbeddingsOptimizeBuildsFromStoredVectorsWithoutProvider(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "msgvault.db")
+	vectorPath := filepath.Join(dir, "vectors.db")
+	c := config.NewDefaultConfig()
+	c.HomeDir = dir
+	c.Data.DataDir = dir
+	c.Vector.Enabled = true
+	c.Vector.DBPath = vectorPath
+	c.Vector.Embeddings.Model = "test-model"
+	c.Vector.Embeddings.Dimension = 4
+	c.Vector.Search.ANNThreads = 1
+	withTestConfig(t, c)
+
+	mainStore, err := store.Open(mainPath)
+	require.NoError(t, err)
+	require.NoError(t, mainStore.InitSchema())
+	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
+	})
+	require.NoError(t, err)
+	generation, err := backend.CreateGeneration(t.Context(), "test-model", 4, "test:4")
+	require.NoError(t, err)
+	chunks := make([]vector.Chunk, 512)
+	for i := range chunks {
+		chunks[i] = vector.Chunk{MessageID: int64(i + 1), Vector: []float32{float32(i % 17), 1, 2, 3}}
+	}
+	require.NoError(t, backend.Upsert(t.Context(), generation, chunks))
+	require.NoError(t, backend.Close())
+	require.NoError(t, mainStore.Close())
+
+	originalWorker := runAcceleratorWorkerSubprocess
+	runAcceleratorWorkerSubprocess = func(
+		ctx context.Context, _ string, databasePath string, generationID vector.GenerationID, threads int, _ io.Writer,
+	) error {
+		return sqlitevec.RunAcceleratorWorker(context.WithoutCancel(ctx), databasePath, generationID, threads)
+	}
+	t.Cleanup(func() { runAcceleratorWorkerSubprocess = originalWorker })
+
+	var stdout, stderr bytes.Buffer
+	command := &cobra.Command{Use: "optimize"}
+	command.Flags().Bool("drop", false, "")
+	command.SetContext(t.Context())
+	command.SetOut(&stdout)
+	command.SetErr(&stderr)
+	require.NoError(t, runEmbeddingsOptimize(command, []string{strconv.FormatInt(int64(generation), 10)}))
+	assert.Contains(t, stdout.String(), "accelerator ready (512 vectors)")
+	assert.Contains(t, stderr.String(), "Training accelerator")
+
+	reopened, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: vectorPath, Dimension: 4})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	status, err := reopened.Accelerator(t.Context(), generation)
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	assert.Equal(t, sqlitevec.AcceleratorReady, status.State)
+	assert.Equal(t, int64(512), status.IndexedCount)
+	assert.NotNil(t, status.CompletedAt)
+
+	require.NoError(t, reopened.RetireGeneration(t.Context(), generation, false))
+	require.NoError(t, command.Flags().Set("drop", "true"))
+	stdout.Reset()
+	require.NoError(t, runEmbeddingsOptimize(command, []string{strconv.FormatInt(int64(generation), 10)}))
+	assert.Contains(t, stdout.String(), "accelerator dropped")
+	status, err = reopened.Accelerator(t.Context(), generation)
+	require.NoError(t, err)
+	assert.Nil(t, status)
+	stats, err := reopened.Stats(t.Context(), generation)
+	require.NoError(t, err)
+	assert.Equal(t, int64(512), stats.EmbeddingCount)
 }
 
 type convergenceProgressPublisher struct {

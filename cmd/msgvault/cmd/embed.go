@@ -20,7 +20,10 @@ var (
 	embeddingsActivateYes       bool
 )
 
-const embeddingsCommandName = "embeddings"
+const (
+	embeddingsCommandName        = "embeddings"
+	embeddingsOptimizeWorkerName = "__optimize-worker"
+)
 
 var embeddingsCmd = &cobra.Command{
 	Use:   embeddingsCommandName,
@@ -172,6 +175,9 @@ func init() {
 	embeddingsCmd.AddCommand(embeddingsRetireCmd)
 	embeddingsCmd.AddCommand(embeddingsActivateCmd)
 	embeddingsCmd.AddCommand(embeddingsPruneCmd)
+	embeddingsOptimizeCmd.Flags().Bool("drop", false, "Remove the accelerator while keeping exact vectors")
+	embeddingsCmd.AddCommand(embeddingsOptimizeCmd)
+	embeddingsCmd.AddCommand(embeddingsOptimizeWorkerCmd)
 	rootCmd.AddCommand(embeddingsCmd)
 	rootCmd.AddCommand(embedCmd)
 }

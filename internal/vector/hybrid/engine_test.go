@@ -32,6 +32,23 @@ type fakeEmbedder struct {
 	queryCalls []string
 }
 
+type metadataSearchBackend struct {
+	vector.Backend
+
+	hits []vector.Hit
+	meta vector.SearchMetadata
+}
+
+func (b metadataSearchBackend) SearchWithMetadata(
+	_ context.Context,
+	_ vector.GenerationID,
+	_ []float32,
+	_ int,
+	_ vector.Filter,
+) ([]vector.Hit, vector.SearchMetadata, error) {
+	return b.hits, b.meta, nil
+}
+
 func (f *fakeEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, error) {
 	f.queryCalls = append(f.queryCalls, text)
 	v := make([]float32, f.dim)
@@ -161,6 +178,7 @@ func TestEngine_Hybrid_HappyPath(t *testing.T) {
 	assert.Equal(int64(1), results[0].MessageID, "top")
 	assert.Equal(f.GenID, meta.Generation.ID, "meta.Generation.ID")
 	assert.Equal(len(results), meta.ReturnedCount)
+	assert.Equal("exact", meta.Accelerator)
 }
 
 func TestEngine_SearchUsesEmbedQuery(t *testing.T) {
@@ -178,6 +196,24 @@ func TestEngine_SearchUsesEmbedQuery(t *testing.T) {
 	_, err = f.Engine.EmbedQuery(ctx, "score this")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"find this", "score this"}, client.queryCalls)
+}
+
+func TestEngine_VectorPoolSaturationComesFromBackendMetadata(t *testing.T) {
+	f := newEngineFixture(t)
+	f.Engine.backend = metadataSearchBackend{
+		Backend: f.Backend,
+		hits:    []vector.Hit{{MessageID: 1, Score: 0.9, Rank: 1}},
+		meta:    vector.SearchMetadata{PoolSaturated: true, Accelerator: "vec1_ivf_opq"},
+	}
+
+	results, meta, err := f.Engine.Search(t.Context(), SearchRequest{
+		Mode: ModeVector, FreeText: "meeting", Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.True(t, meta.PoolSaturated,
+		"an underfilled result can still be saturated when the backend hit its bounded work ceiling")
+	assert.Equal(t, "vec1_ivf_opq", meta.Accelerator)
 }
 
 func TestEngine_ScopedIndexRequiresMatchingMessageTypeFilter(t *testing.T) {

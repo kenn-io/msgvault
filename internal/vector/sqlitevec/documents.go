@@ -78,6 +78,10 @@ func (b *Backend) PublishScopes(ctx context.Context, gen vector.GenerationID, sc
 	if state == vector.GenerationRetired {
 		return fmt.Errorf("%w: %d", vector.ErrGenerationRetired, gen)
 	}
+	accelerator, err := b.readyAcceleratorForWrite(ctx, tx, gen, dim)
+	if err != nil {
+		return err
+	}
 	for _, scope := range validated {
 		for _, chunk := range scope.publication.Chunks {
 			if len(chunk.Vector) != dim {
@@ -105,7 +109,7 @@ func (b *Backend) PublishScopes(ctx context.Context, gen vector.GenerationID, sc
 			}
 			continue
 		}
-		if err := b.publishSQLiteScope(ctx, tx, gen, dim, scope, now); err != nil {
+		if err := b.publishSQLiteScope(ctx, tx, gen, dim, scope, now, accelerator); err != nil {
 			return err
 		}
 	}
@@ -117,6 +121,9 @@ func (b *Backend) PublishScopes(ctx context.Context, gen vector.GenerationID, sc
 		   )
 		 WHERE id = ?`, int64(gen), int64(gen)); err != nil {
 			return fmt.Errorf("refresh generation message count: %w", err)
+		}
+		if err := syncReadyAccelerator(ctx, tx, accelerator); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -146,7 +153,7 @@ func claimSQLiteScopeSequence(
 }
 
 func (b *Backend) publishSQLiteScope(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, dim int,
-	scope validatedSQLiteScopePublication, now int64) error {
+	scope validatedSQLiteScopePublication, now int64, accelerator *AcceleratorStatus) error {
 	publication := scope.publication
 	ownedIDs, err := sqliteOwnedMembersForPublication(ctx, tx, gen, publication.ScopeKey, scope.desiredKeys)
 	if err != nil {
@@ -167,7 +174,7 @@ func (b *Backend) publishSQLiteScope(ctx context.Context, tx *sql.Tx, gen vector
 		delete(ownedIDs, messageID)
 	}
 	ids := sortedDocumentIDs(ownedIDs)
-	if err := deleteForMessageIDs(ctx, tx, VectorTableName(dim), gen, ids); err != nil {
+	if err := deleteForMessageIDs(ctx, tx, VectorTableName(dim), acceleratorTable(accelerator), gen, ids); err != nil {
 		return fmt.Errorf("clear replaced document vectors: %w", err)
 	}
 
@@ -231,7 +238,7 @@ func (b *Backend) publishSQLiteScope(ctx context.Context, tx *sql.Tx, gen vector
 		}
 	}
 
-	return sqliteInsertDocumentChunks(ctx, tx, gen, dim, publication.Chunks, now)
+	return insertMessageChunks(ctx, tx, gen, dim, publication.Chunks, now, accelerator)
 }
 
 func validateDocumentPublication(
@@ -435,45 +442,6 @@ func sortedDocumentIDs(ids map[int64]struct{}) []int64 {
 	}
 	slices.Sort(out)
 	return out
-}
-
-func sqliteInsertDocumentChunks(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, dim int, chunks []vector.Chunk, now int64) error {
-	if len(chunks) == 0 {
-		return nil
-	}
-	embedStmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO embeddings
-			(generation_id, message_id, chunk_index, embedded_at, source_char_len,
-			 chunk_char_start, chunk_char_end, source_basis, truncated)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		RETURNING embedding_id`)
-	if err != nil {
-		return fmt.Errorf("prepare document embedding insert: %w", err)
-	}
-	defer func() { _ = embedStmt.Close() }()
-	vecStmt, err := tx.PrepareContext(ctx, fmt.Sprintf(
-		`INSERT INTO %s (generation_id, embedding_id, embedding) VALUES (?, ?, ?)`, VectorTableName(dim)))
-	if err != nil {
-		return fmt.Errorf("prepare document vector insert: %w", err)
-	}
-	defer func() { _ = vecStmt.Close() }()
-	for _, chunk := range chunks {
-		truncated := 0
-		if chunk.Truncated {
-			truncated = 1
-		}
-		var embeddingID int64
-		if err := embedStmt.QueryRowContext(ctx,
-			int64(gen), chunk.MessageID, chunk.ChunkIndex, now, chunk.SourceCharLen,
-			chunk.ChunkCharStart, chunk.ChunkCharEnd, int(chunk.SourceBasis), truncated,
-		).Scan(&embeddingID); err != nil {
-			return fmt.Errorf("insert document embedding (msg %d chunk %d): %w", chunk.MessageID, chunk.ChunkIndex, err)
-		}
-		if _, err := vecStmt.ExecContext(ctx, int64(gen), embeddingID, float32SliceBlob(chunk.Vector)); err != nil {
-			return fmt.Errorf("insert document vector (msg %d chunk %d): %w", chunk.MessageID, chunk.ChunkIndex, err)
-		}
-	}
-	return nil
 }
 
 func (b *Backend) GetDocument(ctx context.Context, gen vector.GenerationID, key string) (vector.DocumentRecord, error) {
