@@ -1,0 +1,34 @@
+{
+  "request": {
+    "state": {
+      "query": "synthetic question",
+      "candidate": "synthetic candidate"
+    },
+    "model": "jev-1.13.0",
+    "questions": {
+      "matches": {
+        "type": "noul",
+        "instructions": "Could `candidate` be the best answer to `query`?",
+        "criteria": {
+          "true": "The candidate contains the specific information needed to answer the query.",
+          "false": "The candidate is only topically similar or does not contain the needed evidence."
+        }
+      }
+    }
+  },
+  "status": 200,
+  "content_type": "application/json",
+  "response": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "matches": {
+        "type": "noul",
+        "noul": 0.15
+      }
+    },
+    "usage": {
+      "input_tokens": 342,
+      "output_tokens": 20
+    }
+  }
+}

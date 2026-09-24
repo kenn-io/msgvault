@@ -24,8 +24,17 @@ import "fmt"
 // over-fetch raw hits, collapse, and only then TruncateKeys to the depth the
 // user asked for.
 func DedupeKeys(keys []string) []string {
+	unique, _ := DedupeRanked(keys)
+	return unique
+}
+
+// DedupeRanked collapses keys and returns the source index of each kept key.
+// The source index identifies the message that represented that key at its
+// best rank, so reranking can fetch its text without resolving the key again.
+func DedupeRanked(keys []string) ([]string, []int) {
 	seen := make(map[string]struct{}, len(keys))
 	out := make([]string, 0, len(keys))
+	indices := make([]int, 0, len(keys))
 	for i, k := range keys {
 		if k == "" {
 			// A hit with no id for this doc-key can never be judged
@@ -40,6 +49,7 @@ func DedupeKeys(keys []string) []string {
 			// while still resolving to non-relevant, exactly like any other
 			// hit no qrels row names.
 			out = append(out, fmt.Sprintf("\x00unscorable:%d", i))
+			indices = append(indices, i)
 			continue
 		}
 		if _, dup := seen[k]; dup {
@@ -47,8 +57,9 @@ func DedupeKeys(keys []string) []string {
 		}
 		seen[k] = struct{}{}
 		out = append(out, k)
+		indices = append(indices, i)
 	}
-	return out
+	return out, indices
 }
 
 // TruncateKeys cuts an already-collapsed ranked list to at most n keys. It is

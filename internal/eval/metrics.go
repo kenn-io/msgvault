@@ -78,6 +78,8 @@ type Scores struct {
 	P      float64 // precision@Cutoffs.P
 	NDCG   float64 // normalized DCG@Cutoffs.NDCG (binary gains)
 	Recall float64 // recall@Cutoffs.Recall
+	Hit1   float64 // whether any relevant document appears at rank 1
+	Hit10  float64 // whether any relevant document appears at the effective hit depth
 	// MAP is average precision (the "AP" that MAP averages) and MRR the
 	// reciprocal rank of the first relevant hit. Neither takes a cutoff, but
 	// both are bounded by one all the same: they are computed over the ranking
@@ -98,9 +100,33 @@ func Evaluate(ranked []string, rel map[string]struct{}, c Cutoffs) Scores {
 		P:      PrecisionAt(ranked, rel, c.P),
 		NDCG:   NDCGAt(ranked, rel, c.NDCG),
 		Recall: RecallAt(ranked, rel, c.Recall),
+		Hit1:   HitAt(ranked, rel, 1),
+		Hit10:  HitAt(ranked, rel, min(10, HitDepth(c))),
 		MAP:    AveragePrecision(ranked, rel),
 		MRR:    ReciprocalRank(ranked, rel),
 	}
+}
+
+// HitDepth returns the retrieval depth used when labeling Hit@k metrics.
+func HitDepth(c Cutoffs) int {
+	if c.Depth > 0 {
+		return c.Depth
+	}
+	return max(standardDepth, c.P, c.NDCG, c.Recall)
+}
+
+const standardDepth = 100
+
+// HitAt reports whether the ranking contains a relevant document in its
+// first k positions.
+func HitAt(ranked []string, rel map[string]struct{}, k int) float64 {
+	if k <= 0 {
+		return 0
+	}
+	if hitsInTopK(ranked, rel, k) > 0 {
+		return 1
+	}
+	return 0
 }
 
 func isRel(rel map[string]struct{}, d string) bool {
@@ -194,6 +220,8 @@ type Aggregate struct {
 	sumP      float64
 	sumNDCG   float64
 	sumRecall float64
+	sumHit1   float64
+	sumHit10  float64
 	sumMAP    float64
 	sumMRR    float64
 }
@@ -204,6 +232,8 @@ func (a *Aggregate) Add(s Scores) {
 	a.sumP += s.P
 	a.sumNDCG += s.NDCG
 	a.sumRecall += s.Recall
+	a.sumHit1 += s.Hit1
+	a.sumHit10 += s.Hit10
 	a.sumMAP += s.MAP
 	a.sumMRR += s.MRR
 }
@@ -218,6 +248,8 @@ func (a *Aggregate) Mean() Scores {
 		P:      a.sumP / n,
 		NDCG:   a.sumNDCG / n,
 		Recall: a.sumRecall / n,
+		Hit1:   a.sumHit1 / n,
+		Hit10:  a.sumHit10 / n,
 		MAP:    a.sumMAP / n,
 		MRR:    a.sumMRR / n,
 	}

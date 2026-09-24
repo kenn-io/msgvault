@@ -5,9 +5,11 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,7 +26,9 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/rerank"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
@@ -136,6 +140,12 @@ func init() {
 	evalCmd.Flags().StringVar(&evalDocKey, "doc-key", "message", "Which id qrels reference: "+docKeyNames(newDocKeyRegistry()))
 	evalCmd.Flags().IntVarP(&evalLimit, "limit", "n", 100, "Distinct documents retrieved per query")
 	evalCmd.Flags().BoolVar(&evalJSON, flagJSON, false, "Output as JSON")
+	evalCmd.Flags().StringVar(&evalRerankJev, "rerank-jev", "", "Opt in to TypeSafe Jev reranking; sends the query and bounded message text (per-candidate,batched)")
+	evalCmd.Flags().IntVar(&evalRerankTop, "rerank-top", 30, "Maximum messages to send to Jev per retrieved ranking")
+	evalCmd.Flags().IntVar(&evalRerankMaxRequests, "rerank-max-requests", 1000, "Maximum TypeSafe requests for this eval invocation")
+	evalCmd.Flags().Float64Var(&evalRerankCostStopUSD, "rerank-cost-stop-usd", 0, "Required local Jev cost stop in USD when reranking is enabled")
+	evalCmd.Flags().Float64Var(&evalRerankInputUSDPerM, "rerank-input-usd-per-million", 0, "Required Jev input price in USD per million tokens")
+	evalCmd.Flags().Float64Var(&evalRerankOutputUSDPerM, "rerank-output-usd-per-million", 0, "Required Jev output price in USD per million tokens")
 	_ = evalCmd.MarkFlagRequired("qrels")
 	_ = evalCmd.MarkFlagRequired("topics")
 }
@@ -417,14 +427,17 @@ type ftsSearcher interface {
 // evaluator bundles the engines and config needed to turn a query string into
 // a ranked list of document ids for a given search mode.
 type evaluator struct {
-	ctx   context.Context
-	fts   ftsSearcher
-	qeng  query.Engine
-	heng  *hybrid.Engine
-	key   docKeySpec
-	limit int
-	prov  eval.RunConfig
-	diag  *runDiagnostics
+	ctx         context.Context
+	fts         ftsSearcher
+	qeng        query.Engine
+	heng        *hybrid.Engine
+	key         docKeySpec
+	limit       int
+	prov        eval.RunConfig
+	diag        *runDiagnostics
+	captureHits bool
+	lastHits    map[string]evalHit
+	preprocess  embed.PreprocessConfig
 }
 
 // fetchResult is one attempt at pulling raw hits out of a search engine.
@@ -432,6 +445,9 @@ type fetchResult struct {
 	// keys are the doc keys in the engine's rank order, before collapsing;
 	// duplicates and empty strings are expected and handled by the caller.
 	keys []string
+	// hits is aligned with keys and carries the source message for each
+	// key. It is used only by the opt-in rerank arm.
+	hits []evalHit
 	// raw is how many hits the engine returned. It is the count *before* key
 	// extraction, so "the engine gave back fewer than we asked for" — the
 	// signal that a deeper fetch cannot help — stays accurate even when some
@@ -465,7 +481,7 @@ func (e *evaluator) rankedKeys(fetch func(n int) (fetchResult, error)) ([]string
 		if err != nil {
 			return nil, err
 		}
-		deduped := eval.DedupeKeys(res.keys)
+		deduped, sourceIndices := eval.DedupeRanked(res.keys)
 		filled := len(deduped) >= e.limit
 		// The engine came back short. Why it came back short decides both
 		// whether to retry and what to report, and the hit count alone cannot
@@ -494,7 +510,17 @@ func (e *evaluator) rankedKeys(fetch func(n int) (fetchResult, error)) ([]string
 			default:
 				e.diag.DepthShortfalls++
 			}
-			return eval.TruncateKeys(deduped, e.limit), nil
+			keys := eval.TruncateKeys(deduped, e.limit)
+			if e.captureHits {
+				e.lastHits = make(map[string]evalHit, len(keys))
+				for i, key := range keys {
+					if i >= len(sourceIndices) || sourceIndices[i] >= len(res.hits) {
+						continue
+					}
+					e.lastHits[key] = res.hits[sourceIndices[i]]
+				}
+			}
+			return keys, nil
 		}
 	}
 	// Unreachable: OverFetchPlan is never empty and the loop always returns on
@@ -511,12 +537,14 @@ func (e *evaluator) rankedFTS(q *search.Query) ([]string, error) {
 			return fetchResult{}, err
 		}
 		keys := make([]string, 0, len(res))
+		hits := make([]evalHit, 0, len(res))
 		for _, m := range res {
 			keys = append(keys, e.key.extract(hitFromAPIMessage(m)))
+			hits = append(hits, hitFromAPIMessage(m))
 		}
 		// The store path pages a single ranked list, so a short page means
 		// the corpus ran out — there is no candidate pool to saturate.
-		return fetchResult{keys: keys, raw: len(res)}, nil
+		return fetchResult{keys: keys, hits: hits, raw: len(res)}, nil
 	})
 }
 
@@ -572,6 +600,7 @@ func (e *evaluator) rankedVector(mode, qstr string, q *search.Query) ([]string, 
 		// exists to surface.
 		out := fetchResult{
 			keys: make([]string, 0, len(hits)),
+			hits: make([]evalHit, 0, len(hits)),
 			raw:  len(hits),
 			// Carry the engine's own account of why it stopped. Without
 			// it, a fused query that ran out of candidate pool is
@@ -586,6 +615,7 @@ func (e *evaluator) rankedVector(mode, qstr string, q *search.Query) ([]string, 
 				continue
 			}
 			out.keys = append(out.keys, e.key.extract(hitFromSummary(m)))
+			out.hits = append(out.hits, hitFromSummary(m))
 		}
 		return out, nil
 	})
@@ -644,7 +674,11 @@ func parseTopic(t eval.Topic, diag *runDiagnostics) (*search.Query, bool) {
 	return q, true
 }
 
-func runEval(cmd *cobra.Command, _ []string) error {
+func runEval(cmd *cobra.Command, args []string) error {
+	return runEvalWithRerankerFactory(cmd, args, newEvalJevReranker)
+}
+
+func runEvalWithRerankerFactory(cmd *cobra.Command, _ []string, makeReranker evalRerankerFactory) error {
 	registry := newDocKeyRegistry()
 	keySpec, ok := registry[evalDocKey]
 	if !ok {
@@ -660,7 +694,17 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return usageErr(cmd, err)
 	}
+	rerankOptions, err := readEvalRerankOptions(cmd)
+	if err != nil {
+		return usageErr(cmd, err)
+	}
 	cutoffs := eval.CutoffsForDepth(evalLimit)
+	ctx := cmd.Context()
+	if len(rerankOptions.Shapes) > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, typesafeRunTimeout)
+		defer cancel()
+	}
 
 	diag := &runDiagnostics{}
 	qrels, qrelsStats, err := eval.LoadQrels(evalQrels)
@@ -688,6 +732,18 @@ func runEval(cmd *cobra.Command, _ []string) error {
 			"\"<qid>\\t<query text>\" — spaces where tabs are expected is the usual cause",
 			evalTopics, topicsStats)
 	}
+	if len(rerankOptions.Shapes) > 0 {
+		judgedTopics := 0
+		for _, topic := range topics {
+			if qrels.HasJudgments(topic.ID) {
+				judgedTopics++
+			}
+		}
+		if err := validateJevRequestEstimate(judgedTopics, len(modes), rerankOptions.Shapes,
+			rerankOptions.Top, rerankOptions.MaxRequests); err != nil {
+			return usageErr(cmd, err)
+		}
+	}
 	// Warn on stderr so --json output stays machine-readable.
 	for _, l := range []struct {
 		kind  string
@@ -698,8 +754,6 @@ func runEval(cmd *cobra.Command, _ []string) error {
 				l.kind, l.stats.Path, l.stats)
 		}
 	}
-
-	ctx := cmd.Context()
 
 	// Store + query engine: serves FTS search and the rowid -> source-id
 	// mapping for vector/hybrid hits. Opening it also runs the schema
@@ -736,11 +790,13 @@ func runEval(cmd *cobra.Command, _ []string) error {
 		// The store serves --modes fts through the same relevance-ranked
 		// path /api/v1/search?mode=fts uses; the query engine serves the
 		// rowid -> source-id hydration the vector/hybrid path needs.
-		fts:   s,
-		qeng:  query.NewEngine(s.DB(), s.IsPostgreSQL()),
-		key:   keySpec,
-		limit: evalLimit,
-		diag:  diag,
+		fts:         s,
+		qeng:        query.NewEngine(s.DB(), s.IsPostgreSQL()),
+		key:         keySpec,
+		limit:       evalLimit,
+		diag:        diag,
+		captureHits: len(rerankOptions.Shapes) > 0,
+		preprocess:  rerankOptions.Preprocess,
 	}
 
 	if needVec {
@@ -749,6 +805,24 @@ func runEval(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		defer cleanup()
+	}
+	var rerankReport *evalRerankReport
+	var rerankScorers map[string]rerank.Reranker
+	var rerankBudgetState *rerankBudget
+	if len(rerankOptions.Shapes) > 0 {
+		rerankReport = newEvalRerankReport(rerankOptions)
+		rerankBudgetState = &rerankBudget{
+			maxRequests: rerankOptions.MaxRequests, stopUSD: rerankOptions.CostStopUSD,
+			inputUSDPerM: rerankOptions.InputUSDPerM, outputUSDPerM: rerankOptions.OutputUSDPerM,
+		}
+		rerankScorers = make(map[string]rerank.Reranker, len(rerankOptions.Shapes))
+		for _, shape := range rerankOptions.Shapes {
+			scorer, createErr := makeReranker(shape, rerankOptions.APIKey, rerankBudgetState)
+			if createErr != nil {
+				return createErr
+			}
+			rerankScorers[shape] = scorer
+		}
 	}
 
 	// Record corpus size regardless of mode: recall numbers are unreadable
@@ -771,6 +845,8 @@ func runEval(cmd *cobra.Command, _ []string) error {
 	catAggs := make(map[string]map[string]*eval.Aggregate, len(modes))
 	catCounts := map[string]int{}
 	scored := 0
+	var runErr error
+	rerankStopped := false
 	for _, t := range topics {
 		if !qrels.HasJudgments(t.ID) {
 			// This qrels file says nothing at all about the topic, so there is
@@ -795,6 +871,7 @@ func runEval(cmd *cobra.Command, _ []string) error {
 		anyMode := false
 		for _, m := range modes {
 			start := time.Now()
+			ev.lastHits = nil
 			ranked, err := ev.ranked(m, t.Query, q)
 			elapsed := time.Since(start)
 			if err != nil {
@@ -808,8 +885,8 @@ func runEval(cmd *cobra.Command, _ []string) error {
 				return fmt.Errorf("topic %s, mode %s: %w", t.ID, m, err)
 			}
 			lats[m].Add(elapsed)
-			s := eval.Evaluate(ranked, rel, cutoffs)
-			aggs[m].Add(s)
+			score := eval.Evaluate(ranked, rel, cutoffs)
+			aggs[m].Add(score)
 			if t.Category != "" {
 				if catAggs[m] == nil {
 					catAggs[m] = map[string]*eval.Aggregate{}
@@ -817,9 +894,64 @@ func runEval(cmd *cobra.Command, _ []string) error {
 				if catAggs[m][t.Category] == nil {
 					catAggs[m][t.Category] = &eval.Aggregate{}
 				}
-				catAggs[m][t.Category].Add(s)
+				catAggs[m][t.Category].Add(score)
 			}
 			anyMode = true
+			if rerankReport != nil && !rerankStopped {
+				prepStart := time.Now()
+				var texts []string
+				if len(ranked) >= 2 && rerankOptions.Top >= 2 {
+					texts, err = prepareEvalCandidates(ctx, s, ranked, ev.lastHits, ev.preprocess, rerankOptions.Top)
+					if err != nil {
+						rerankReport.Complete = false
+						rerankReport.Failure = "candidate preparation failed"
+						for _, pendingShape := range rerankOptions.Shapes {
+							pending := rerankReport.arm(m, pendingShape)
+							pending.Status = "failed"
+							pending.Complete = false
+							pending.Error = "candidate preparation failed"
+						}
+						runErr = fmt.Errorf("topic %s, mode %s: candidate preparation failed", t.ID, m)
+						rerankStopped = true
+					}
+				}
+				if !rerankStopped {
+					prepElapsed := time.Since(prepStart)
+					for _, shape := range rerankOptions.Shapes {
+						arm := rerankReport.arm(m, shape)
+						providerStart := time.Now()
+						shapeCtx, shapeCancel := context.WithTimeout(ctx, typesafeRequestTimeout)
+						reranked, result, rerankErr := rerankEvalKeys(shapeCtx, rerankScorers[shape], t.Query, ranked, texts)
+						shapeCancel()
+						if rerankErr != nil {
+							arm.addUsage(result.Usage, rerankOptions.InputUSDPerM, rerankOptions.OutputUSDPerM)
+							failure := safeRerankFailure(rerankErr)
+							arm.Status = "failed"
+							arm.Complete = false
+							arm.Error = failure
+							rerankReport.Complete = false
+							rerankReport.Failure = failure
+							runErr = fmt.Errorf("topic %s, mode %s, shape %s: %s", t.ID, m, shape, failure)
+							rerankStopped = true
+							rerankBudgetState.fail()
+							break
+						}
+						latency := elapsed + prepElapsed + time.Since(providerStart)
+						if len(ranked) < 2 {
+							latency = elapsed
+						}
+						if len(texts) < 2 {
+							zero := int64(0)
+							result.Usage.InputTokens = &zero
+							result.Usage.OutputTokens = &zero
+							result.Usage.Requests = 0
+							result.Usage.Complete = true
+						}
+						arm.addUsage(result.Usage, rerankOptions.InputUSDPerM, rerankOptions.OutputUSDPerM)
+						arm.addQuality(reranked, rel, cutoffs, latency)
+					}
+				}
+			}
 		}
 		if !anyMode {
 			continue // no mode could score this topic
@@ -828,6 +960,30 @@ func runEval(cmd *cobra.Command, _ []string) error {
 			catCounts[t.Category]++
 		}
 		scored++
+	}
+	if rerankReport != nil {
+		for _, mode := range modes {
+			for _, shape := range rerankOptions.Shapes {
+				if rerankReport.Results[mode] == nil || rerankReport.Results[mode][shape] == nil {
+					rerankReport.Complete = false
+					if rerankReport.Results[mode] == nil {
+						rerankReport.Results[mode] = make(map[string]*evalRerankArm)
+					}
+					input, output := int64(0), int64(0)
+					rerankReport.Results[mode][shape] = &evalRerankArm{
+						Status: "unrun", UsageComplete: true, InputTokens: &input, OutputTokens: &output,
+						CostUSD: new(0.0),
+					}
+					continue
+				}
+				arm := rerankReport.Results[mode][shape]
+				if arm.Status != "failed" && (arm.Agg == nil || arm.Agg.N != aggs[mode].N) {
+					arm.Status = "incomplete"
+					arm.Complete = false
+					rerankReport.Complete = false
+				}
+			}
+		}
 	}
 	diag.scored = scored
 	if scored == 0 {
@@ -844,13 +1000,18 @@ func runEval(cmd *cobra.Command, _ []string) error {
 
 	report := evalReport{
 		modes: modes, aggs: aggs, lats: lats, catAggs: catAggs, catCounts: catCounts,
-		prov: ev.prov, topics: scored, cutoffs: cutoffs, diag: diag,
+		prov: ev.prov, topics: scored, cutoffs: cutoffs, diag: diag, rerank: rerankReport,
 	}
 	if evalJSON {
-		return report.json()
+		if reportErr := report.json(cmd.OutOrStdout()); reportErr != nil {
+			return reportErr
+		}
+	} else {
+		if reportErr := report.table(cmd.OutOrStdout()); reportErr != nil {
+			return reportErr
+		}
 	}
-	report.table()
-	return nil
+	return runErr
 }
 
 // parseEvalModes splits and validates the --modes flag, keeping each mode once
@@ -970,6 +1131,7 @@ func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (f
 	if err := vecCfg.Validate(); err != nil {
 		return nil, fmt.Errorf("vector/hybrid modes need a valid [vector] config: %w", err)
 	}
+	e.preprocess = embeddingPreprocessConfig(vecCfg)
 
 	// Select the query client by api_format, exactly as the serve path does,
 	// and before anything is opened. A run scored with the OpenAI-compatible
@@ -1342,6 +1504,7 @@ type evalReport struct {
 	topics    int
 	cutoffs   eval.Cutoffs
 	diag      *runDiagnostics
+	rerank    *evalRerankReport
 }
 
 // metricHeaders names the metric columns at the depths this run actually used,
@@ -1354,7 +1517,7 @@ type evalReport struct {
 // retrieved deeper, which is the same mislabeling the clamped headers exist to
 // prevent. If the depth is somehow unknown there is nothing to qualify them
 // with, so they stay bare rather than claiming a depth of zero.
-func (r evalReport) metricHeaders() (p, ndcg, recall, mapAt, mrr string) {
+func (r evalReport) metricHeaders() (p, ndcg, recall, hit1, hit10, mapAt, mrr string) {
 	mapAt, mrr = "MAP", "MRR"
 	if r.cutoffs.Depth > 0 {
 		mapAt = fmt.Sprintf("MAP@%d", r.cutoffs.Depth)
@@ -1363,20 +1526,27 @@ func (r evalReport) metricHeaders() (p, ndcg, recall, mapAt, mrr string) {
 	return fmt.Sprintf("P@%d", r.cutoffs.P),
 		fmt.Sprintf("nDCG@%d", r.cutoffs.NDCG),
 		fmt.Sprintf("R@%d", r.cutoffs.Recall),
+		"Hit@1", fmt.Sprintf("Hit@%d", min(10, eval.HitDepth(r.cutoffs))),
 		mapAt, mrr
 }
 
-func (r evalReport) table() {
-	fmt.Printf("Evaluated %d topics (doc-key=%s, n=%d)\n", r.topics, evalDocKey, evalLimit)
+func (r evalReport) table(w io.Writer) error {
+	if _, err := fmt.Fprintf(w, "Evaluated %d topics (doc-key=%s, n=%d)\n", r.topics, evalDocKey, evalLimit); err != nil {
+		return fmt.Errorf("write eval report: %w", err)
+	}
 	if !r.cutoffs.IsStandard() {
-		fmt.Printf("Metric depths are clamped to -n: the standard P@%d/nDCG@%d/R@%d need -n %d or more.\n",
+		if _, err := fmt.Fprintf(w, "Metric depths are clamped to -n: the standard P@%d/nDCG@%d/R@%d need -n %d or more.\n",
 			eval.StandardCutoffs.P, eval.StandardCutoffs.NDCG, eval.StandardCutoffs.Recall,
-			eval.StandardCutoffs.Recall)
+			eval.StandardCutoffs.Recall); err != nil {
+			return fmt.Errorf("write eval report: %w", err)
+		}
 	}
 
 	// Provenance first: a score is not interpretable without it.
-	fmt.Printf("\nRun configuration\n")
-	pw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(w, "\nRun configuration"); err != nil {
+		return fmt.Errorf("write eval report: %w", err)
+	}
+	pw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintf(pw, "  topics\t%s\n", r.prov.TopicsPath)
 	_, _ = fmt.Fprintf(pw, "  qrels\t%s\n", r.prov.QrelsPath)
 	_, _ = fmt.Fprintf(pw, "  corpus\t%d live messages, %d conversations\n",
@@ -1399,37 +1569,45 @@ func (r evalReport) table() {
 	} else {
 		_, _ = fmt.Fprintf(pw, "  vector index\t(not used; --modes fts only)\n")
 	}
-	_ = pw.Flush()
+	if err := pw.Flush(); err != nil {
+		return fmt.Errorf("write eval report: %w", err)
+	}
 
-	pCol, ndcgCol, rCol, mapCol, mrrCol := r.metricHeaders()
-	fmt.Printf("\n")
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	pCol, ndcgCol, rCol, hit1Col, hit10Col, mapCol, mrrCol := r.metricHeaders()
+	if _, err := fmt.Fprintln(w, ""); err != nil {
+		return fmt.Errorf("write eval report: %w", err)
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	// "topics" is per mode, not per run: a mode that cannot answer some topic
 	// (a filter-only query has nothing to embed) scores fewer of them, and the
 	// means are only comparable if the denominators are visible.
-	header := []string{"MODE", "topics", pCol, ndcgCol, rCol, mapCol, mrrCol, "med ms", "p95 ms"}
-	_, _ = fmt.Fprintln(w, strings.Join(header, "\t"))
+	header := []string{"MODE", "topics", pCol, ndcgCol, rCol, hit1Col, hit10Col, mapCol, mrrCol, "med ms", "p95 ms"}
+	_, _ = fmt.Fprintln(tw, strings.Join(header, "\t"))
 	rule := make([]string, len(header))
 	for i, h := range header {
 		rule[i] = strings.Repeat("─", len([]rune(h)))
 	}
-	_, _ = fmt.Fprintln(w, strings.Join(rule, "\t"))
+	_, _ = fmt.Fprintln(tw, strings.Join(rule, "\t"))
 	for _, m := range r.modes {
 		s := r.aggs[m].Mean()
 		l := r.lats[m].Summary()
-		_, _ = fmt.Fprintf(w, "%s\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.1f\t%.1f\n",
-			m, r.aggs[m].N, s.P, s.NDCG, s.Recall, s.MAP, s.MRR, l.MedianMS, l.P95MS)
+		_, _ = fmt.Fprintf(tw, "%s\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.1f\t%.1f\n",
+			m, r.aggs[m].N, s.P, s.NDCG, s.Recall, s.Hit1, s.Hit10, s.MAP, s.MRR, l.MedianMS, l.P95MS)
 	}
-	_ = w.Flush()
+	if err := tw.Flush(); err != nil {
+		return fmt.Errorf("write eval report: %w", err)
+	}
 
 	// Per-category breakdown, only when the topics file carries labels.
 	// Latency is tracked per mode, not per category, so those columns are
 	// omitted here.
 	if len(r.catCounts) > 0 {
-		fmt.Printf("\nBy query category\n")
-		cw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintf(cw, "MODE\tCATEGORY\ttopics\t%s\t%s\t%s\t%s\t%s\n",
-			pCol, ndcgCol, rCol, mapCol, mrrCol)
+		if _, err := fmt.Fprintln(w, "\nBy query category"); err != nil {
+			return fmt.Errorf("write eval report: %w", err)
+		}
+		cw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintf(cw, "MODE\tCATEGORY\ttopics\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			pCol, ndcgCol, rCol, hit1Col, hit10Col, mapCol, mrrCol)
 		for _, m := range r.modes {
 			for _, c := range sortedCategories(r.catCounts) {
 				agg := r.catAggs[m][c]
@@ -1437,27 +1615,40 @@ func (r evalReport) table() {
 					continue
 				}
 				s := agg.Mean()
-				_, _ = fmt.Fprintf(cw, "%s\t%s\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\n",
-					m, c, agg.N, s.P, s.NDCG, s.Recall, s.MAP, s.MRR)
+				_, _ = fmt.Fprintf(cw, "%s\t%s\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\n",
+					m, c, agg.N, s.P, s.NDCG, s.Recall, s.Hit1, s.Hit10, s.MAP, s.MRR)
 			}
 		}
-		_ = cw.Flush()
+		if err := cw.Flush(); err != nil {
+			return fmt.Errorf("write eval report: %w", err)
+		}
 	}
 
 	if notes := r.diag.notes(); len(notes) > 0 {
-		fmt.Printf("\nDiagnostics\n")
+		if _, err := fmt.Fprintln(w, "\nDiagnostics"); err != nil {
+			return fmt.Errorf("write eval report: %w", err)
+		}
 		for _, n := range notes {
-			fmt.Printf("  - %s\n", n)
+			if _, err := fmt.Fprintf(w, "  - %s\n", n); err != nil {
+				return fmt.Errorf("write eval report: %w", err)
+			}
 		}
 	}
+	if r.rerank != nil {
+		if err := r.rerank.table(w, r.cutoffs); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (r evalReport) json() error {
-	pCol, ndcgCol, rCol, mapCol, mrrCol := r.metricHeaders()
+func (r evalReport) json(w io.Writer) error {
+	pCol, ndcgCol, rCol, hit1Col, hit10Col, mapCol, mrrCol := r.metricHeaders()
 	metricsOf := func(a *eval.Aggregate) map[string]any {
 		s := a.Mean()
 		return map[string]any{
-			pCol: s.P, ndcgCol: s.NDCG, rCol: s.Recall, mapCol: s.MAP, mrrCol: s.MRR,
+			pCol: s.P, ndcgCol: s.NDCG, rCol: s.Recall, hit1Col: s.Hit1, hit10Col: s.Hit10,
+			mapCol: s.MAP, mrrCol: s.MRR,
 		}
 	}
 	results := make(map[string]any, len(r.modes))
@@ -1487,6 +1678,9 @@ func (r evalReport) json() error {
 			"precision": r.cutoffs.P, "ndcg": r.cutoffs.NDCG, "recall": r.cutoffs.Recall,
 			"map": r.cutoffs.Depth, "mrr": r.cutoffs.Depth,
 		},
+		"hit_cutoffs": map[string]int{
+			"hit1": 1, "hit10": min(10, eval.HitDepth(r.cutoffs)),
+		},
 		"modes":       r.modes,
 		"run_config":  r.prov,
 		"results":     results,
@@ -1495,5 +1689,13 @@ func (r evalReport) json() error {
 	if len(r.catCounts) > 0 {
 		out["topic_categories"] = r.catCounts
 	}
-	return printJSON(out)
+	if r.rerank != nil {
+		out["rerank_results"] = r.rerank.json(r.cutoffs)
+	}
+	return printJSONTo(w, out)
+}
+
+func printJSONTo(w io.Writer, value any) error {
+	encoder := jsontext.NewEncoder(w, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
+	return json.MarshalEncode(encoder, value, json.Deterministic(true))
 }
