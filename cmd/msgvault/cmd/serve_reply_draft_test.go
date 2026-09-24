@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"time"
 
 	emersionimap "github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -170,6 +173,191 @@ func (f draftReplyFixture) grantedAdapter() *storeAPIAdapter {
 			return execution.Release()
 		},
 	}
+}
+
+func fetchDraftMailboxMessage(
+	t *testing.T,
+	config *imaplib.Config,
+	receipt store.IMAPDraftReceipt,
+) ([]emersionimap.Flag, []byte) {
+	t.Helper()
+	requirements := require.New(t)
+	client, err := imapclient.DialInsecure(config.Addr(), nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	requirements.NoError(client.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+	_, err = client.Select(receipt.Mailbox, nil).Wait()
+	requirements.NoError(err)
+	section := &emersionimap.FetchItemBodySection{}
+	uidSet := emersionimap.UIDSetNum(emersionimap.UID(receipt.UID))
+	fetched, err := client.Fetch(uidSet, &emersionimap.FetchOptions{
+		UID: true, Flags: true, BodySection: []*emersionimap.FetchItemBodySection{section},
+	}).Collect()
+	requirements.NoError(err)
+	requirements.Len(fetched, 1)
+	requirements.Equal(emersionimap.UID(receipt.UID), fetched[0].UID)
+	return fetched[0].Flags, fetched[0].FindBodySection(section)
+}
+
+func TestDraftReplyOfflineParentWithLiveDestination(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := newDraftReplyFixture(t)
+
+	parentSource, err := fixture.store.GetOrCreateSource("mbox", "imported-parent@example.test")
+	requirements.NoError(err)
+	conversationID, err := fixture.store.EnsureConversation(parentSource.ID, "offline-thread", "Imported question")
+	requirements.NoError(err)
+	senderID, err := fixture.store.EnsureParticipant("sender@example.test", "Sender", "example.test")
+	requirements.NoError(err)
+	ownerID, err := fixture.store.EnsureParticipant(testutil.IMAPTestUsername, "", "example.test")
+	requirements.NoError(err)
+	parentRaw := []byte("From: Sender <sender@example.test>\r\n" +
+		"To: " + testutil.IMAPTestUsername + "\r\n" +
+		"Subject: Imported question\r\n" +
+		"Message-ID: <offline-parent@example.test>\r\n\r\n" +
+		"Imported body\r\n")
+	parentID, err := fixture.store.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: parentSource.ID, SourceMessageID: "mbox|offline-parent",
+			RFC822MessageID: sql.NullString{String: "offline-parent@example.test", Valid: true},
+			ConversationID:  conversationID, MessageType: store.MessageTypeEmail,
+			SenderID:     sql.NullInt64{Int64: senderID, Valid: true},
+			Subject:      sql.NullString{String: "Imported question", Valid: true},
+			SizeEstimate: int64(len(parentRaw)),
+		},
+		BodyText: sql.NullString{String: "Imported body", Valid: true},
+		RawMIME:  parentRaw,
+		Recipients: []store.RecipientSet{
+			{Type: "from", ParticipantIDs: []int64{senderID}, EmailAddresses: []string{"sender@example.test"}},
+			{Type: "to", ParticipantIDs: []int64{ownerID}, EmailAddresses: []string{testutil.IMAPTestUsername}},
+		},
+	})
+	requirements.NoError(err)
+	fixture.parentID = parentID
+
+	adapter := fixture.grantedAdapter()
+	providerCalls := 0
+	clientFactory := adapter.draftClientFactory
+	adapter.draftClientFactory = func(ctx context.Context, source *store.Source) (*imaplib.Client, error) {
+		providerCalls++
+		return clientFactory(ctx, source)
+	}
+
+	events, err := fixture.run(t, adapter, "--body", "reply body")
+	requirements.Error(err)
+	assertions.Empty(events)
+	assertions.Equal("invalid_source", err.Error())
+	assertions.Zero(providerCalls)
+
+	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{
+			HomeDir: t.TempDir(),
+			Server:  config.ServerConfig{APIKey: "owner-test-key", AgentAccess: true},
+		},
+		Store:  adapter,
+		Logger: slog.New(slog.DiscardHandler),
+	}).Router())
+	t.Cleanup(server.Close)
+
+	issue := func(sourceIDs ...int64) string {
+		senderSelections := map[string][]string{}
+		for _, sourceID := range sourceIDs {
+			if sourceID == fixture.source.ID {
+				senderSelections[strconv.FormatInt(sourceID, 10)] = []string{testutil.IMAPTestUsername}
+			}
+		}
+		body, err := json.Marshal(map[string]any{
+			"label": "offline-reply-agent", "permissions": []string{"draft.create"},
+			"source_ids": sourceIDs, "sender_selections": senderSelections,
+		})
+		requirements.NoError(err)
+		request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
+		requirements.NoError(err)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Api-Key", "owner-test-key")
+		response, err := http.DefaultClient.Do(request)
+		requirements.NoError(err)
+		defer func() { _ = response.Body.Close() }()
+		requirements.Equal(http.StatusCreated, response.StatusCode)
+		var issued agentTokenIssueFixture
+		requirements.NoError(json.NewDecoder(response.Body).Decode(&issued))
+		return issued.Secret
+	}
+	run := func(secret string) []api.CLIRunEvent {
+		args := []string{
+			"draft-reply", strconv.FormatInt(parentID, 10),
+			"--source-id", strconv.FormatInt(fixture.source.ID, 10),
+			"--from", testutil.IMAPTestUsername, "--body", "reply body", "--json",
+		}
+		body, err := json.Marshal(map[string]any{"args": args})
+		requirements.NoError(err)
+		request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
+		requirements.NoError(err)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Msgvault-Agent-Token", secret)
+		response, err := http.DefaultClient.Do(request)
+		requirements.NoError(err)
+		defer func() { _ = response.Body.Close() }()
+		requirements.Equal(http.StatusOK, response.StatusCode)
+		var events []api.CLIRunEvent
+		scanner := bufio.NewScanner(response.Body)
+		for scanner.Scan() {
+			var event api.CLIRunEvent
+			requirements.NoError(json.Unmarshal(scanner.Bytes(), &event))
+			events = append(events, event)
+		}
+		requirements.NoError(scanner.Err())
+		return events
+	}
+	events = run(issue(parentSource.ID, fixture.source.ID))
+	requirements.Len(events, 2)
+	var result draftReplyOutput
+	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &result))
+	assertions.Equal(cliStreamStdout, events[0].Type)
+	assertions.Equal("complete", events[1].Type)
+	assertions.Equal(draftReplyStatusCreated, result.Status)
+	assertions.Equal(fixture.source.ID, result.SourceID)
+	assertions.Equal("Drafts", result.Mailbox)
+	assertions.NotZero(result.UID)
+	assertions.NotZero(result.UIDValidity)
+	assertions.Equal(int64(1), result.Revision)
+	assertions.Equal(1, providerCalls)
+
+	draft, err := fixture.store.GetIMAPDraft(result.DraftID)
+	requirements.NoError(err)
+	assertions.Equal(result.MessageID, draft.CurrentMessageID)
+	assertions.Equal(result.UID, draft.CurrentReceipt.UID)
+	assertions.Equal(fixture.source.ID, draft.CurrentReceipt.SourceID)
+
+	message, err := fixture.store.GetMessage(result.MessageID)
+	requirements.NoError(err)
+	assertions.Equal(fixture.source.ID, message.SourceID)
+	assertions.Equal(
+		"draft-reply-"+strconv.FormatInt(parentSource.ID, 10)+"-"+
+			strconv.FormatInt(fixture.source.ID, 10)+"-offline-thread",
+		message.SourceConversationID,
+	)
+	replyTo, err := fixture.store.GetMessageReplyToMessageIDContext(t.Context(), result.MessageID)
+	requirements.NoError(err)
+	requirements.True(replyTo.Valid)
+	assertions.Equal(parentID, replyTo.Int64)
+
+	storedRaw, err := fixture.store.GetMessageRaw(result.MessageID)
+	requirements.NoError(err)
+	assertions.Contains(string(storedRaw), "In-Reply-To: <offline-parent@example.test>")
+	assertions.Contains(string(storedRaw), "References: <offline-parent@example.test>")
+	flags, fetchedRaw := fetchDraftMailboxMessage(t, fixture.config, draft.CurrentReceipt)
+	assertions.Contains(flags, emersionimap.FlagDraft)
+	assertions.Equal(storedRaw, fetchedRaw)
+
+	for _, scope := range [][]int64{{fixture.source.ID}, {parentSource.ID}} {
+		events = run(issue(scope...))
+		requirements.Len(events, 1)
+		assertions.Equal("error", events[0].Type)
+		assertions.Equal("not_permitted", events[0].Error)
+	}
+	assertions.Equal(1, providerCalls, "both source grants must be checked before provider work")
 }
 
 func (f draftReplyFixture) run(t *testing.T, adapter *storeAPIAdapter, flags ...string) ([]api.CLIRunEvent, error) {
