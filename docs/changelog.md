@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-09-24"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -13,6 +13,7 @@ All notable changes to msgvault, grouped by release.
   when launchd, systemd, or Docker runs `msgvault serve`. CLI, TUI, and MCP
   commands then use the running daemon and fail instead of starting their own.
   See [configuration](configuration.md).
+- Beeper, Slack, and Teams imports record body bytes plus reported attachment bytes as a size estimate. Earlier rows retain their recorded size until reimported.
 
 ### Meeting context and follow-ups
 
