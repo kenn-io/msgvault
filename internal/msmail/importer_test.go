@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/msgraph"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -32,6 +33,8 @@ type fakeGraph struct {
 	folder   map[string]string // message ID -> folder ID; absent when deleted
 	log      []change          // one entry per change
 	expired  map[string]bool   // folder IDs whose next delta answers 410
+	gone     map[string]bool   // folder IDs whose every delta answers 410
+	version  map[string]int    // message ID -> content version
 	throttle bool              // answer the next $value with 429 once
 	pageSize int
 	stopAt   int // fail the delta page at this skip offset, when non-zero
@@ -45,7 +48,7 @@ type change struct{ id, from string }
 
 func newFakeGraph(t *testing.T) *fakeGraph {
 	t.Helper()
-	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, pageSize: 2}
+	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, pageSize: 2}
 	f.folders = []string{"inbox", "archive"}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -66,9 +69,10 @@ func (f *fakeGraph) remove(id string) {
 	delete(f.folder, id)
 }
 
-func raw(id string) string {
+func raw(id string, version int) string {
 	return "From: a@example.com\r\nTo: me@example.com\r\nSubject: " + id +
-		"\r\nMessage-ID: <" + id + "@example.com>\r\nDate: Mon, 1 Jan 2024 10:00:00 +0000\r\n\r\nbody " + id + "\r\n"
+		"\r\nMessage-ID: <" + id + "@example.com>\r\nDate: Mon, 1 Jan 2024 10:00:00 +0000\r\n\r\nbody " + id +
+		" v" + strconv.Itoa(version) + "\r\n"
 }
 
 func (f *fakeGraph) writeJSON(w http.ResponseWriter, v any) {
@@ -92,7 +96,7 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 		f.delta(w, strings.Split(p, "/")[3], q)
 	case strings.HasPrefix(p, "/me/mailFolders/"):
 		id := strings.TrimPrefix(p, "/me/mailFolders/")
-		if id == "inbox" || id == "archive" {
+		if slices.Contains(f.folders, id) {
 			f.writeJSON(w, map[string]any{"id": id})
 			return
 		}
@@ -114,7 +118,7 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "gone", http.StatusNotFound)
 			return
 		}
-		_, _ = w.Write([]byte(raw(id))) //nolint:gosec // local test server returns fixture MIME
+		_, _ = w.Write([]byte(raw(id, f.version[id]))) //nolint:gosec // local test server returns fixture MIME
 	case strings.HasPrefix(p, "/me/messages/"):
 		id := strings.TrimPrefix(p, "/me/messages/")
 		folder, ok := f.folder[id]
@@ -138,6 +142,10 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 	}
 	link := func(kind string, vals ...string) string {
 		return f.srv.URL + "/me/mailFolders/" + folder + "/messages/delta?" + kind + "&" + strings.Join(vals, "&")
+	}
+	if f.gone[folder] {
+		http.Error(w, `{"error":{"code":"syncStateNotFound"}}`, http.StatusGone)
+		return
 	}
 	if tok := get("token"); tok != "" {
 		if f.expired[folder] {
@@ -327,4 +335,123 @@ func TestImportExpiredTokenWalksAgain(t *testing.T) {
 	assert.EqualValues(1, f.mimeCalls.Load())
 	assert.EqualValues(1, f.walkStarts.Load(), "inbox walks again")
 	assert.Equal(map[string]string{"m1": "Inbox", "m2": "Inbox", "m3": "Inbox"}, state(t, st))
+}
+
+// snippets returns message ID -> snippet, the stored body start.
+func snippets(t *testing.T, st *store.Store) map[string]string {
+	t.Helper()
+	rows, err := st.DB().Query(`SELECT source_message_id, COALESCE(snippet, '') FROM messages`)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, snippet string
+		require.NoError(t, rows.Scan(&id, &snippet))
+		out[id] = snippet
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+// A draft keeps its ID while it is edited, so a changed draft is stored again.
+// A changed message in any other folder is not downloaded again.
+func TestImportRefetchesEditedDraft(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.folders = append(f.folders, "drafts")
+	f.put("d1", "drafts")
+	f.put("m1", "inbox")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+
+	f.version["d1"], f.version["m1"] = 1, 1
+	f.put("d1", "drafts")
+	f.put("m1", "inbox")
+	f.mimeCalls.Store(0)
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.EqualValues(1, f.mimeCalls.Load(), "only the draft is downloaded again")
+	got := snippets(t, st)
+	assert.Equal("body d1 v1", got["d1"])
+	assert.Equal("body m1 v0", got["m1"])
+}
+
+// A message deleted while no cursor covered its folder is marked deleted when
+// the walk after an expired cursor does not return it.
+func TestImportExpiredTokenReconcilesMissedDelete(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.put("m1", "inbox")
+	f.put("m2", "inbox")
+	f.put("m3", "inbox")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+
+	f.remove("m2")         // purged during the gap
+	f.put("m3", "archive") // moved during the gap
+	f.expired["inbox"] = true
+	f.expired["archive"] = true
+	sum, err := f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(map[string]string{"m1": "Inbox", "m2": "deleted", "m3": "Archive"}, state(t, st))
+	assert.Equal(1, sum.Deleted)
+}
+
+// A message restored from Recoverable Items loses its deletion mark.
+func TestImportRestoredMessageClearsDeletion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.put("m1", "inbox")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+
+	f.put("m1", "deletions")
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	require.Equal(map[string]string{"m1": "deleted"}, state(t, st))
+
+	f.put("m1", "inbox")
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(map[string]string{"m1": "Inbox"}, state(t, st))
+}
+
+// A folder that answers 410 even to a fresh walk fails the sync instead of
+// walking again forever.
+func TestImportRepeatedGoneFails(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.gone["inbox"] = true
+	_, err := f.sync(t, st)
+	require.ErrorIs(t, err, msgraph.ErrGone)
+}
+
+// A message that fails to store stops the sync before its page cursor is
+// saved, so the next sync stores it.
+func TestImportStoreFailureDoesNotAdvanceCursor(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses a SQLite trigger to fail one insert")
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.put("m1", "inbox")
+	f.put("m2", "inbox")
+	_, err := st.DB().Exec(`CREATE TRIGGER fail_m2 BEFORE INSERT ON messages
+		WHEN NEW.source_message_id = 'm2' BEGIN SELECT RAISE(ABORT, 'boom'); END`)
+	require.NoError(err)
+
+	_, err = f.sync(t, st)
+	require.Error(err)
+
+	_, err = st.DB().Exec(`DROP TRIGGER fail_m2`)
+	require.NoError(err)
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(map[string]string{"m1": "Inbox", "m2": "Inbox"}, state(t, st))
 }

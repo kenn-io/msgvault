@@ -106,23 +106,32 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		sum.Folders++
 		s.progressf("Folder %s", f.Path)
 		link := cursors[f.ID]
+		// seen collects the IDs of a walk that starts in this run, so that
+		// archived messages it does not return can be looked up at its end.
+		var seen map[string]bool
 		if link == "" {
-			link = DeltaStartURL(f.ID)
+			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		}
+		restarted := false
 		for {
 			page, perr := c.DeltaPage(ctx, link)
-			if errors.Is(perr, msgraph.ErrGone) {
+			if errors.Is(perr, msgraph.ErrGone) && !restarted {
 				// The token expired. Walk the folder again; messages already
 				// in the vault are not downloaded again.
 				log.Info("delta token expired, walking folder again", "folder", f.Path)
-				link = DeltaStartURL(f.ID)
+				link, seen, restarted = DeltaStartURL(f.ID), map[string]bool{}, true
 				continue
 			}
 			if perr != nil {
 				return sum, fmt.Errorf("folder %s: %w", f.Path, perr)
 			}
-			if err = s.applyPage(ctx, s.labels[f.ID], page.Value); err != nil {
+			if err = s.applyPage(ctx, f.ID, page.Value, seen); err != nil {
 				return sum, fmt.Errorf("folder %s: %w", f.Path, err)
+			}
+			if page.NextLink == "" && seen != nil {
+				if err = s.reconcileWalk(ctx, s.labels[f.ID], seen); err != nil {
+					return sum, fmt.Errorf("folder %s: %w", f.Path, err)
+				}
 			}
 			if page.NextLink != "" {
 				link = page.NextLink
@@ -171,6 +180,10 @@ type syncer struct {
 	sum      *Summary
 	labels   map[string]int64 // Graph folder ID -> label ID
 
+	// drafts is the Drafts folder. A draft keeps its ID while it is edited,
+	// so a known draft is downloaded again when delta reports it.
+	drafts string
+
 	// deletions is the hidden Recoverable Items folder. A permanent delete
 	// (Shift+Delete, or emptying Deleted Items) moves a message there.
 	deletions string
@@ -195,6 +208,9 @@ func (s *syncer) ensureLabels(ctx context.Context, folders []Folder) (map[string
 			return nil, fmt.Errorf("look up folder %s: %w", name, err)
 		}
 		system[id] = role
+		if name == "drafts" {
+			s.drafts = id
+		}
 	}
 	id, err := s.c.WellKnownFolderID(ctx, "recoverableitemsdeletions")
 	if err != nil && !errors.Is(err, msgraph.ErrNotFound) {
@@ -212,12 +228,14 @@ func (s *syncer) ensureLabels(ctx context.Context, folders []Folder) (map[string
 	return s.st.EnsureLabelsBatch(s.sourceID, infos)
 }
 
-// applyPage stores one delta page for the folder that has label folderLabel.
-// New messages are downloaded. Known messages get the folder as their only
-// label, because a mail item is in exactly one folder. Removed messages are
-// looked up: a message that Graph still finds in a mail folder moved, and one
-// it cannot find, or finds in Recoverable Items, is marked deleted.
-func (s *syncer) applyPage(ctx context.Context, folderLabel int64, items []DeltaMessage) error {
+// applyPage stores one delta page for a folder. New messages are downloaded.
+// Known messages get the folder as their only label, because a mail item is
+// in exactly one folder, and lose any deletion mark, because the mailbox has
+// them again. Known drafts are downloaded again, since their content can
+// change. Removed messages are looked up with relocate. When seen is not nil,
+// it collects the IDs of live messages.
+func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMessage, seen map[string]bool) error {
+	folderLabel := s.labels[folderID]
 	var live []DeltaMessage
 	var liveIDs, removedIDs []string
 	for _, m := range items {
@@ -227,6 +245,9 @@ func (s *syncer) applyPage(ctx context.Context, folderLabel int64, items []Delta
 		}
 		live = append(live, m)
 		liveIDs = append(liveIDs, m.ID)
+		if seen != nil {
+			seen[m.ID] = true
+		}
 	}
 
 	known, err := s.st.MessageExistsBatch(s.sourceID, append(liveIDs, removedIDs...))
@@ -235,24 +256,69 @@ func (s *syncer) applyPage(ctx context.Context, folderLabel int64, items []Delta
 	}
 	var todo []DeltaMessage
 	for _, m := range live {
-		if id, ok := known[m.ID]; ok {
-			if err := s.setFolder(id, folderLabel); err != nil {
+		id, ok := known[m.ID]
+		if ok {
+			if err := s.st.ClearMessageDeletedFromSource(s.sourceID, m.ID); err != nil {
 				return err
 			}
+		}
+		if !ok || (s.drafts != "" && folderID == s.drafts) {
+			todo = append(todo, m)
 			continue
 		}
-		todo = append(todo, m)
+		if err := s.setFolder(id, folderLabel); err != nil {
+			return err
+		}
 	}
 	if err := s.download(ctx, folderLabel, todo); err != nil {
 		return err
 	}
 
-	var gone []string
+	removed := map[string]int64{}
 	for _, id := range removedIDs {
-		msgID, ok := known[id]
-		if !ok {
-			continue
+		if msgID, ok := known[id]; ok {
+			removed[id] = msgID
 		}
+	}
+	return s.relocate(ctx, removed)
+}
+
+// reconcileWalk looks up the archived messages of a folder that a complete
+// walk did not return. They left the folder while no delta cursor covered it,
+// for example after the cursor expired.
+func (s *syncer) reconcileWalk(ctx context.Context, folderLabel int64, seen map[string]bool) error {
+	rows, err := s.st.DB().QueryContext(ctx, s.st.Rebind(`
+		SELECT m.source_message_id, m.id FROM messages m
+		JOIN message_labels ml ON ml.message_id = m.id
+		WHERE m.source_id = ? AND ml.label_id = ? AND m.deleted_from_source_at IS NULL`),
+		s.sourceID, folderLabel)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	missing := map[string]int64{}
+	for rows.Next() {
+		var sourceMsgID string
+		var id int64
+		if err := rows.Scan(&sourceMsgID, &id); err != nil {
+			return err
+		}
+		if !seen[sourceMsgID] {
+			missing[sourceMsgID] = id
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return s.relocate(ctx, missing)
+}
+
+// relocate finds where known messages went: source message ID -> message ID.
+// A message that Graph still finds in a mail folder moved, and one it cannot
+// find, or finds in Recoverable Items, is marked deleted.
+func (s *syncer) relocate(ctx context.Context, msgs map[string]int64) error {
+	var gone []string
+	for id, msgID := range msgs {
 		parent, err := s.c.ParentFolderID(ctx, id)
 		if errors.Is(err, msgraph.ErrNotFound) || (err == nil && s.deletions != "" && parent == s.deletions) {
 			gone = append(gone, id)
@@ -298,6 +364,8 @@ func (s *syncer) download(ctx context.Context, folderLabel int64, msgs []DeltaMe
 	if len(msgs) == 0 {
 		return nil
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	g, gctx := errgroup.WithContext(ctx)
 	jobs := make(chan DeltaMessage)
 	results := make(chan fetched, fetchWorkers)
@@ -337,17 +405,26 @@ func (s *syncer) download(ctx context.Context, folderLabel int64, msgs []DeltaMe
 		close(results)
 	}()
 
+	// A message that fails to store stops the page, so the cursor does not
+	// move past it; the next sync retries the page. Results are drained so
+	// the workers can exit.
+	var storeErr error
 	for r := range results {
+		if storeErr != nil {
+			continue
+		}
 		sum := sha256.Sum256(r.raw)
 		if err := importer.IngestRawMessage(ctx, s.st, s.sourceID, s.opts.Email, s.opts.AttachmentsDir,
 			[]int64{folderLabel}, r.msg.ID, hex.EncodeToString(sum[:]), r.raw, r.msg.ReceivedDateTime, s.log); err != nil {
-			// ponytail: a message that fails to parse or store is counted and
-			// skipped; it is retried only when its folder is walked again.
-			s.log.Warn("store message", "id", r.msg.ID, "error", err)
+			storeErr = fmt.Errorf("store message %s: %w", r.msg.ID, err)
 			s.sum.Errors++
+			cancel()
 			continue
 		}
 		s.sum.Added++
+	}
+	if storeErr != nil {
+		return storeErr
 	}
 	if fetchErr != nil {
 		return fmt.Errorf("download messages: %w", fetchErr)
