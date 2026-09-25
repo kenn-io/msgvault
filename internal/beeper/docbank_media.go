@@ -322,7 +322,10 @@ func (w *MediaSubmitter) mappingForCandidate(
 	if candidate.SourceType != "beeper" {
 		eligible, definitive, err := w.probeStoredMedia(ctx, candidate)
 		if err != nil {
-			return store.BeeperMediaMapping{}, err
+			if ctx.Err() != nil {
+				return store.BeeperMediaMapping{}, ctx.Err()
+			}
+			eligible, definitive = true, false
 		}
 		if definitive && !eligible {
 			return fallbackMediaMappingCode(w.destination, candidate, archiveUID, errBeeperMediaUnsupported.Error()), nil
@@ -380,7 +383,13 @@ func (w *MediaSubmitter) probeStoredMedia(
 	if ctx.Err() != nil {
 		return false, false, ctx.Err()
 	}
-	if drainErr != nil || closeErr != nil || size != candidate.ByteLength || int64(n)+remaining != size {
+	if drainErr != nil {
+		return true, false, drainErr
+	}
+	if closeErr != nil {
+		return true, false, closeErr
+	}
+	if size != candidate.ByteLength || int64(n)+remaining != size {
 		return true, false, nil
 	}
 	return false, true, nil
@@ -425,7 +434,7 @@ func (w *MediaSubmitter) describeCandidate(
 	if rawErr != nil && !beeperMediaRawGap(rawErr) {
 		return MediaDescriptor{}, "", rawErr
 	}
-	descriptor, transcript, err := describeStoredMedia(candidate, archiveUID, raw)
+	descriptor, err := describeStoredMedia(candidate, archiveUID, raw)
 	rawHash := hashBytes(raw)
 	if rawErr != nil {
 		rawHash = hashBytes(nil)
@@ -434,18 +443,18 @@ func (w *MediaSubmitter) describeCandidate(
 		return MediaDescriptor{RawHash: rawHash}, "", err
 	}
 	descriptor.RawHash = rawHash
-	return configureMediaProcessing(descriptor, transcript, w.asrProfile), transcript, nil
+	return configureMediaProcessing(descriptor, "", w.asrProfile), "", nil
 }
 
 func describeStoredMedia(
 	candidate store.BeeperMediaCandidate, archiveUID string, raw []byte,
-) (MediaDescriptor, string, error) {
+) (MediaDescriptor, error) {
 	part := candidate.SourcePartKey
 	if part == "" {
 		part = candidate.SourceAttachmentID
 	}
 	if part == "" {
-		return MediaDescriptor{}, "", errBeeperMediaPartMissing
+		return MediaDescriptor{}, errBeeperMediaPartMissing
 	}
 	filename, requestMIME := selectedMediaMetadata(candidate.Filename, candidate.MIMEType)
 	var message docbankmedia.Timestamp
@@ -470,7 +479,7 @@ func describeStoredMedia(
 		Filename: filename, MIMEType: requestMIME,
 	}
 	descriptor.Occurrence.Revision = mediaRevision(descriptor)
-	return descriptor, "", nil
+	return descriptor, nil
 }
 
 func configureMediaProcessing(descriptor MediaDescriptor, transcript, asrProfile string) MediaDescriptor {

@@ -857,7 +857,7 @@ upload_consent = true             # allow archive audio to leave msgvault
 | `url` | — | Docbank base URL: HTTPS, or HTTP on a loopback address. User info, query strings and fragments are rejected |
 | `api_key_env` | — | Name of the daemon environment variable that holds the Docbank API key. It is read for each request and sent as `X-Api-Key` |
 | `upload_consent` | `false` | Allow stored audio and explicit source transcripts to be sent to `url`. Without it the job only records local state |
-| `asr_profile` | — | Optional Docbank processing profile for stored audio without usable source text. An empty value retains audio without requesting processing |
+| `asr_profile` | — | Optional Docbank processing profile for stored audio without usable source text. An empty value retains audio without requesting processing. Msgvault rejects `supplied-transcript`, which Docbank reserves for supplied transcript input. |
 
 The daemon reads these settings at startup, so restart it after a change. A new
 `url` starts a separate delivery record; earlier rows stay. Disabling the route

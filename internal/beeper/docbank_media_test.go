@@ -1359,7 +1359,6 @@ func TestStoredMediaSharedLifecycle(t *testing.T) {
 	docbank.mu.Lock()
 	assert.Len(docbank.uploads, 2)
 	assert.Len(docbank.processOps, 1)
-	requests := docbank.requests
 	docbank.mu.Unlock()
 
 	var donorType, donorMessage string
@@ -1397,7 +1396,7 @@ func TestStoredMediaSharedLifecycle(t *testing.T) {
 	runPasses(t, submitter, 1)
 	assert.Equal("done", deliveryRows(t, world.st, "destination-shared")[0].Phase)
 	docbank.mu.Lock()
-	requests = docbank.requests
+	requests := docbank.requests
 	docbank.mu.Unlock()
 
 	// A repeated complete backfill finds nothing to change or send.

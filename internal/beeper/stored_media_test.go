@@ -360,7 +360,7 @@ func TestStoredMediaProfileReplay(t *testing.T) {
 	require.Len(deliveries, 1)
 	assert.Equal("done", deliveries[0].Phase)
 	docbank.mu.Lock()
-	assert.Equal(firstRequests+1, len(docbank.processRequests))
+	assert.Len(docbank.processRequests, firstRequests+1)
 	assert.Equal("configured-asr", docbank.processRequests[len(docbank.processRequests)-1].Profile)
 	docbank.mu.Unlock()
 }
@@ -475,7 +475,7 @@ func TestStoredMediaStartedReceiptIdentityMismatch(t *testing.T) {
 	assert.Equal("blocked", ended[0].Phase)
 	assert.Equal("destination_mismatch", ended[0].ErrorCode)
 	docbank.mu.Lock()
-	assert.Equal(processes, len(docbank.processOps))
+	assert.Len(docbank.processOps, processes)
 	docbank.mu.Unlock()
 }
 

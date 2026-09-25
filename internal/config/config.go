@@ -126,6 +126,13 @@ type DocbankIntegrationConfig struct {
 	ASRProfile    string `toml:"asr_profile"`
 }
 
+func (d DocbankIntegrationConfig) validate() error {
+	if strings.TrimSpace(d.ASRProfile) == "supplied-transcript" {
+		return errors.New(`integrations.docbank.asr_profile: "supplied-transcript" is reserved for supplied transcript input`)
+	}
+	return nil
+}
+
 // TaskIntegrationConfig configures a provider-neutral compatible task daemon.
 type TaskIntegrationConfig struct {
 	Enabled        bool   `toml:"enabled"`
@@ -989,6 +996,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.Integrations.Tasks.ApplyDefaults()
 	if err := cfg.Integrations.Tasks.Validate(); err != nil {
+		return nil, err
+	}
+	if err := cfg.Integrations.Docbank.validate(); err != nil {
 		return nil, err
 	}
 	cfg.Activity.ApplyDefaults()
