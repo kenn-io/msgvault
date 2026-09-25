@@ -254,7 +254,7 @@ func (s *syncer) applyPage(ctx context.Context, folderLabel int64, items []Delta
 			continue
 		}
 		parent, err := s.c.ParentFolderID(ctx, id)
-		if errors.Is(err, msgraph.ErrNotFound) || (err == nil && parent == s.deletions) {
+		if errors.Is(err, msgraph.ErrNotFound) || (err == nil && s.deletions != "" && parent == s.deletions) {
 			gone = append(gone, id)
 			continue
 		}
