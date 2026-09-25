@@ -466,6 +466,12 @@ func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, st
 	if readOnlyPostRouteRequest(r) {
 		return false, "", nil
 	}
+	// Provider handlers take the gate only for their local mutations. Device
+	// authorization and synthetic network checks must not block archive work.
+	if r.Method == http.MethodPost && (r.URL.Path == "/api/v1/settings/people-inference/codex/login" ||
+		(strings.HasPrefix(r.URL.Path, "/api/v1/settings/people-inference/providers/") && strings.HasSuffix(r.URL.Path, "/check"))) {
+		return false, "", nil
+	}
 	if r.URL.Path == "/api/v1/cli/repair-message" {
 		label, skip, err := cliRepairMessageGateDecision(r)
 		if err != nil {

@@ -67,7 +67,6 @@ func TestTUICodexAdapterUsesGeneratedLoginAndProfileRoutes(t *testing.T) {
 
 	login, err := backend.StartCodexLogin(context.Background(), "codex-custom")
 	require.NoError(err)
-	assert.Equal("session-1", login.DraftID)
 	assert.Equal("session-1", login.SessionID)
 	assert.Equal("https://example.test/device", login.URL)
 	assert.Equal("ABCD-EFGH", login.Code)
@@ -132,7 +131,7 @@ func TestTUICodexProfileSaveReportsConfigConflict(t *testing.T) {
 	assert.Equal(tui.SettingsConflictConfig, conflict.Scope)
 }
 
-func TestTUIPeopleInferenceBackendUsesGeneratedStatusAndPresetRoutes(t *testing.T) {
+func TestTUIPeopleInferenceBackendUsesGeneratedStatusRoute(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	var calls []string
@@ -143,20 +142,6 @@ func TestTUIPeopleInferenceBackendUsesGeneratedStatusAndPresetRoutes(t *testing.
 		case "GET /api/v1/settings/people-inference":
 			w.Header().Set("ETag", `"config-1"`)
 			_, _ = io.WriteString(w, `{"profiles":[],"configured_name":"old","configured_fingerprint":"fp-configured","running_name":"old","running_fingerprint":"fp-running","configured_enabled":true,"running_enabled":true,"pending_restart":false}`)
-		case "PUT /api/v1/settings/people-inference/providers/router-primary":
-			assert.Equal(`"config-1"`, r.Header.Get("If-Match"))
-			var body map[string]any
-			if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
-				http.Error(w, "invalid request", http.StatusBadRequest)
-				return
-			}
-			assert.Equal("openrouter", body["preset_id"])
-			assert.Equal("example/model", body["model"])
-			assert.Equal(false, body["allow_sensitive"])
-			assert.NotContains(body, "endpoint")
-			assert.NotContains(body, "key")
-			w.Header().Set("ETag", `"config-2"`)
-			_, _ = io.WriteString(w, `{"profiles":[],"configured_name":"old","running_name":"old","pending_restart":true}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -174,18 +159,7 @@ func TestTUIPeopleInferenceBackendUsesGeneratedStatusAndPresetRoutes(t *testing.
 	assert.True(status.RunningEnabled)
 	assert.False(status.PendingRestart)
 
-	status, err = backend.CreatePeopleInferencePreset(context.Background(), "router-primary", tui.PeopleInferencePresetRequest{
-		PresetID: "openrouter", Model: "example/model", RetentionPosture: "zero_retention",
-		TrainingPosture: "no_training", AllowedSources: []string{"conversation_text"}, SourceSince: "2025-01-01",
-		AllowSensitive: false,
-	})
-	require.NoError(err)
-	assert.True(status.PendingRestart)
-	assert.Equal([]string{
-		"GET /api/v1/settings/people-inference",
-		"GET /api/v1/settings/people-inference",
-		"PUT /api/v1/settings/people-inference/providers/router-primary",
-	}, calls)
+	assert.Equal([]string{"GET /api/v1/settings/people-inference"}, calls)
 }
 
 func TestTUIPeopleInferenceBackendCheckUsesExactProfile(t *testing.T) {
@@ -520,8 +494,8 @@ func TestTUIPeopleInferenceBackendCheckAndConsentConflicts(t *testing.T) {
 		{name: "consent config conflict", operation: "consent", status: 412, body: `{"error":"settings_conflict"}`, conflict: true},
 		{name: "consent changed disclosure", operation: "consent", status: 409, body: `{"error":"consent_disclosure_changed"}`, want: "disclosure changed"},
 		{name: "consent check missing", operation: "consent", status: 409, body: `{"error":"check_required"}`, want: "synthetic check"},
-		{name: "check daemon error", operation: "check", status: 500, body: `{"error":"settings_read_failed"}`, want: "500"},
-		{name: "consent daemon error", operation: "consent", status: 500, body: `{"error":"settings_read_failed"}`, want: "500"},
+		{name: "check daemon error", operation: "check", status: 500, body: `{"error":"settings_read_failed","message":"people inference configuration is unavailable"}`, want: "500"},
+		{name: "consent daemon error", operation: "consent", status: 500, body: `{"error":"settings_read_failed","message":"people inference configuration is unavailable"}`, want: "500"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -590,33 +564,6 @@ func TestTUIPeopleInferenceBackendSelectPreservesConfigConflict(t *testing.T) {
 	assert.Equal(tui.SettingsConflictConfig, conflict.Scope)
 }
 
-func TestTUIPeopleInferenceBackendCreatePreservesConfigConflict(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet {
-			w.Header().Set("ETag", `"config-old"`)
-			_, _ = io.WriteString(w, `{"profiles":[]}`)
-			return
-		}
-		assert.Equal(`"config-old"`, r.Header.Get("If-Match"))
-		w.WriteHeader(http.StatusPreconditionFailed)
-		_, _ = io.WriteString(w, `{}`)
-	}))
-	t.Cleanup(server.Close)
-	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
-
-	_, err := backend.CreatePeopleInferencePreset(context.Background(), "router", tui.PeopleInferencePresetRequest{
-		PresetID: "openrouter", Model: "example/model", RetentionPosture: "zero_retention",
-		TrainingPosture: "no_training", AllowedSources: []string{"conversation_text"}, SourceSince: "2025-01-01",
-	})
-	var conflict *tui.SettingsConflictError
-	require.ErrorAs(err, &conflict)
-	assert.Equal(tui.SettingsConflictConfig, conflict.Scope)
-}
-
 func TestTUIPeopleInferenceBackendSelectReportsDaemonGate(t *testing.T) {
 	for _, test := range []struct {
 		code string
@@ -650,7 +597,7 @@ func TestTUIPeopleInferenceBackendSelectReportsDaemonGate(t *testing.T) {
 }
 
 func TestTUIPeopleInferenceBackendRejectsServerFailure(t *testing.T) {
-	for _, operation := range []string{"status", "create", "select"} {
+	for _, operation := range []string{"status", "select"} {
 		t.Run(operation, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -663,7 +610,7 @@ func TestTUIPeopleInferenceBackendRejectsServerFailure(t *testing.T) {
 					return
 				}
 				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = io.WriteString(w, `{"error":"settings_read_failed"}`)
+				_, _ = io.WriteString(w, `{"error":"settings_read_failed","message":"people inference configuration is unavailable"}`)
 			}))
 			t.Cleanup(server.Close)
 			backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
@@ -671,121 +618,41 @@ func TestTUIPeopleInferenceBackendRejectsServerFailure(t *testing.T) {
 			switch operation {
 			case "status":
 				_, err = backend.LoadPeopleInferenceStatus(context.Background())
-			case "create":
-				_, err = backend.CreatePeopleInferencePreset(context.Background(), "router", tui.PeopleInferencePresetRequest{
-					PresetID: "openrouter", Model: "example/model", RetentionPosture: "zero_retention",
-					TrainingPosture: "no_training", AllowedSources: []string{"conversation_text"}, SourceSince: "2025-01-01",
-				})
 			case "select":
 				err = backend.SelectCodexProfile(context.Background(), "codex-profile")
 			}
 			require.Error(err)
 			assert.Contains(err.Error(), "500")
+			assert.Contains(err.Error(), "people inference configuration is unavailable")
 		})
 	}
 }
 
-func TestTUIPeopleInferenceBackendKeyWriteUsesProfileCredentialRevision(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	const secret = "synthetic-key-value"
-	var calls []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls = append(calls, r.Method+" "+r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method + " " + r.URL.Path {
-		case "GET /api/v1/settings/people-inference":
-			w.Header().Set("ETag", `"config-not-a-credential-revision"`)
-			_, _ = io.WriteString(w, `{"profiles":[{"name":"router","credential_source":"stored","preset_id":"openrouter","credential_revision":"credential-rev-1"}],"pending_restart":false}`)
-		case "PUT /api/v1/settings/people-inference/providers/router/key":
-			assert.Equal("credential-rev-1", r.Header.Get("If-Match"))
-			var body map[string]any
-			if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
-				http.Error(w, "invalid request", http.StatusBadRequest)
-				return
-			}
-			assert.Equal(map[string]any{"value": secret}, body)
-			_, _ = io.WriteString(w, `{"profiles":[{"name":"router","credential_source":"stored","credential_configured":true,"credential_revision":"credential-rev-2"}],"pending_restart":false}`)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
-
-	status, err := backend.SetPeopleInferenceKey(context.Background(), "router", secret)
-	require.NoError(err)
-	assert.False(status.PendingRestart)
-	assert.Equal([]string{
-		"GET /api/v1/settings/people-inference",
-		"PUT /api/v1/settings/people-inference/providers/router/key",
-	}, calls)
+func TestTUICodexAdapterReportsLoginFailure(t *testing.T) {
+	for _, state := range []string{"failed", "cancelled"} {
+		t.Run(state, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"state":"`+state+`"}`)
+			}))
+			t.Cleanup(server.Close)
+			backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
+			poll, err := backend.PollCodexLogin(t.Context(), "session-1")
+			require.ErrorContains(t, err, state)
+			assert.True(t, poll.Failed)
+		})
+	}
 }
 
-func TestTUIPeopleInferenceBackendKeyConflictUsesPeopleCredentialScope(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	const secret = "synthetic-key-value"
+func TestTUICodexAdapterStopsPollingMissingSession(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet {
-			w.Header().Set("ETag", `"config-1"`)
-			_, _ = io.WriteString(w, `{"profiles":[{"name":"router","credential_source":"stored","preset_id":"openrouter","credential_revision":"credential-rev-1"}]}`)
-			return
-		}
-		assert.Equal("credential-rev-1", r.Header.Get("If-Match"))
-		w.WriteHeader(http.StatusPreconditionFailed)
-		_, _ = io.WriteString(w, `{"error":"credential_conflict"}`)
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":"codex_login_not_found","message":"Codex device login was not found"}`)
 	}))
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
-
-	_, err := backend.SetPeopleInferenceKey(context.Background(), "router", secret)
-	var conflict *tui.SettingsConflictError
-	require.ErrorAs(err, &conflict)
-	assert.Equal(tui.SettingsConflictPeopleCredentials, conflict.Scope)
-	assert.NotContains(err.Error(), secret)
-}
-
-func TestTUIPeopleInferenceBackendKeyWriteRequiresProfileRevision(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	var calls []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls = append(calls, r.Method+" "+r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", `"config-revision-only"`)
-		_, _ = io.WriteString(w, `{"profiles":[{"name":"router","credential_source":"stored","preset_id":"openrouter"}]}`)
-	}))
-	t.Cleanup(server.Close)
-	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
-
-	_, err := backend.SetPeopleInferenceKey(context.Background(), "router", "synthetic-key-value")
-	require.Error(err)
-	assert.Contains(err.Error(), "credential revision")
-	assert.Equal([]string{"GET /api/v1/settings/people-inference"}, calls)
-}
-
-func TestTUIPeopleInferenceBackendKeyWriteReportsChangedDestination(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"profiles":[{"name":"router","credential_source":"stored","preset_id":"openrouter","credential_revision":"credential-rev-1"}]}`)
-			return
-		}
-		w.WriteHeader(http.StatusConflict)
-		_, _ = io.WriteString(w, `{"error":"provider_binding_changed"}`)
-	}))
-	t.Cleanup(server.Close)
-	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
-
-	_, err := backend.SetPeopleInferenceKey(context.Background(), "router", "synthetic-key-value")
-	require.Error(err)
-	assert.Equal("provider destination changed; reload settings", err.Error())
+	poll, err := backend.PollCodexLogin(t.Context(), "session-1")
+	require.ErrorContains(t, err, "Codex device login was not found")
+	assert.True(t, poll.Failed)
 }

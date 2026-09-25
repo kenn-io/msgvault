@@ -5,8 +5,6 @@ const previewURL = `http://127.0.0.1:${previewPort}`;
 
 export default defineConfig({
   testDir: './tests',
-  // The people sweep component fixture runs against its own Vite server.
-  testIgnore: /people-inference-viewport\.spec\.ts$/,
   reporter: [
     ['list'],
     ['html', { open: 'never', outputFolder: 'playwright-report' }]

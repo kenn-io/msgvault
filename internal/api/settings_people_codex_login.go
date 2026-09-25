@@ -19,6 +19,10 @@ func (s *Server) codexLoginManager() (*peopleCodexLogins, error) {
 		if s.peopleCodexLogins != nil {
 			return
 		}
+		if !peoplesweep.CodexReleaseAvailable() {
+			s.peopleCodexLoginInitErr = errors.New("codex sign-in is unavailable until an inference build is approved")
+			return
+		}
 		if s.cfg == nil {
 			s.peopleCodexLoginInitErr = errors.New("people provider configuration is unavailable")
 			return
@@ -131,10 +135,26 @@ func (s *Server) handleStartPeopleCodexLogin(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	draft, err := logins.Start(owner, request.Name, func() error {
+		if s.operationGate != nil {
+			done, ok := beginGateWorkBounded(r.Context(), s.operationGate, "Codex enrollment")
+			if !ok {
+				return errors.New("archive is busy")
+			}
+			defer done()
+		}
+		_, configured, err := s.readPersistedSettings()
+		if err != nil {
+			return err
+		}
+		if _, exists := configured.People.Sweep.Providers[request.Name]; exists {
+			return personenrollment.ErrProfileExists
+		}
 		return s.revokePriorCodexEnrollmentAuthority(r.Context())
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, personenrollment.ErrProfileExists):
+			writeError(w, http.StatusConflict, "provider_exists", "People inference provider already exists; enrollment requires a new profile name")
 		case errors.Is(err, errPeopleCodexLoginBusy), errors.Is(err, peoplesweep.ErrEnrollmentDraftActive):
 			writeError(w, http.StatusConflict, "codex_login_active", "A Codex device login is already active")
 		case errors.Is(err, peoplesweep.ErrEnrollmentDraftInvalid):

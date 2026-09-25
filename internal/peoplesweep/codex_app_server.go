@@ -396,15 +396,6 @@ func (t *CodexAppServerDriver) GeneratePrepared(
 		return response, err
 	}
 	response.CandidateJSON = append(jsontext.Value(nil), final...)
-	if t.authHome != "" {
-		owned, ok := process.(*codexOwnedProcess)
-		if !ok {
-			return response, ErrCodexAuthRefreshUnsafe
-		}
-		if err := owned.allowRefreshCommit(); err != nil {
-			return response, err
-		}
-	}
 	return response, nil
 }
 
@@ -611,9 +602,8 @@ func validateCodexFinal(request StructuredRequest, final jsontext.Value) error {
 
 // StartDeviceLogin keeps the app-server session alive until the device-code
 // flow completes. present receives only the bounded public ceremony fields.
-// This general driver method does not persist the resulting auth.json: the
-// disposable work root is removed on return. Enrollment uses its dedicated
-// client to capture the credential before cleanup.
+// New credentials require the dedicated enrollment client. When credentials
+// were staged from authHome, cleanup permits only a refresh for the same account.
 func (t *CodexAppServerDriver) StartDeviceLogin(
 	ctx context.Context, present func(DeviceLogin) error,
 ) (retErr error) {
@@ -934,6 +924,11 @@ func finishCodexProcess(
 			return errors.New("remove codex app-server work root")
 		}
 	}
+	for _, authErr := range []error{ErrCodexAuthAccountChanged, ErrCodexAuthSourceChanged, ErrCodexAuthRefreshUnsafe} {
+		if errors.Is(waitErr, authErr) {
+			return authErr
+		}
+	}
 	if forceKill {
 		if waitAbandoned {
 			return errors.New("codex app-server process termination failed")
@@ -945,14 +940,6 @@ func finishCodexProcess(
 	}
 	if waitAbandoned {
 		return errors.New("codex app-server process termination failed")
-	}
-	for _, authErr := range []error{ErrCodexAuthAccountChanged, ErrCodexAuthSourceChanged, ErrCodexAuthRefreshUnsafe} {
-		if errors.Is(waitErr, authErr) {
-			return authErr
-		}
-	}
-	if owned, ok := process.(*codexOwnedProcess); ok && owned.refreshSkipped() {
-		return ErrCodexAuthRefreshUnsafe
 	}
 	if waitErr != nil && !killSucceeded {
 		return errors.New("codex app-server process failed")

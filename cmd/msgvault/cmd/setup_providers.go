@@ -1012,6 +1012,9 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	if err != nil {
 		return err
 	}
+	if options.providerID != "" && loaded.People.Sweep.Enabled {
+		return errors.New("people sweep is already enabled; use person provider add and person provider use to change providers")
+	}
 	// Read saved assertions before config defaults turn an absent document
 	// posture into "unknown". Only the corresponding explicit flag replaces
 	// an existing assertion; inference still uses its own command defaults.

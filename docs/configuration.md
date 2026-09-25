@@ -58,8 +58,10 @@ values remain in effect. Provider keys alone do not enable processing.
 
 People sweeps use one named protocol profile at a time. A profile records the
 exact endpoint, model, wire protocol, negotiated output mode, privacy posture,
-and source scope. It is configuration, not a provider preset. Msgvault never
-changes the active profile or switches providers automatically.
+and source scope. Built-in OpenAI, OpenRouter, and Venice presets bind the
+protocol, endpoint, and authentication scheme; you still choose the model and
+privacy policy. Msgvault never changes the active profile or switches providers
+automatically.
 
 ```toml
 [people.sweep]
@@ -98,7 +100,8 @@ Codex app-server profiles section below. Onboarding negotiates and saves
 also save either `max_completion_tokens` or `max_tokens`; the other protocols
 use their defined token-limit field.
 
-These are examples of protocol profiles, not built-in presets:
+Other providers use explicit protocol profiles; OpenRouter, Venice, and OpenAI
+also have built-in presets:
 
 | Example profile | Protocol | Typical profile choice |
 |---|---|---|
@@ -121,7 +124,8 @@ their provider terms.
 Credentials are not stored in this TOML. `credential = "stored"` keeps a
 profile-specific secret under the private tokens directory and is supported
 on Linux and macOS only; `credential = "env"` stores only the selected
-environment-variable name and works everywhere.
+environment-variable name and works everywhere. Environment-variable names are
+host-only settings: configure them through the CLI or TOML, not the Web UI.
 `credential = "none"` is restricted to credentialless local or Codex paths.
 Changing a credential value does not change the profile fingerprint, but
 changing its source or reference does.
@@ -149,7 +153,7 @@ same provider and schedule, with separate enrollment and interval controls.
 | Key                      | Default      | Description                                                                                                                                                                                        |
 | ------------------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `enabled`                | `false`      | Run the scheduled people sweep with the selected provider.                                                                                                                                         |
-| `provider`               | `default`    | Name of a table under `[people.sweep.providers]`. The initial profile has an OpenAI endpoint but no model; it is not a usable, consented provider. Setup creates and selects `openai` or `ollama`. |
+| `provider`               | `default`    | Name of a table under `[people.sweep.providers]`. The initial profile has an OpenAI endpoint but no model; it is not a usable, consented provider. Setup can explicitly select `openai`, `openrouter`, or `venice`, or configure local `ollama`. |
 | `schedule`               | `15 2 * * *` | Daily at 02:15 in the daemon's time zone. An omitted or empty value receives this default; use `enabled = false` to disable the sweep.                                                             |
 | `work_batch_size`        | `25`         | Tracked people considered in one worker batch.                                                                                                                                                     |
 | `historical_message_cap` | `2000`       | Maximum archived messages considered when finding context for each profile field.                                                                                                                  |
@@ -158,12 +162,14 @@ same provider and schedule, with separate enrollment and interval controls.
 | `evidence_max_items`     | `200`        | Item limit for an evidence packet.                                                                                                                                                                 |
 | `backstop_interval`      | `24h`        | Interval before checking tracked people for changes missed by incremental work.                                                                                                                    |
 
-`setup providers --allow-sensitive` uses `gpt-5.6-luna` with `medium` reasoning
-when an OpenAI key is present, or the configured local Ollama chat model
-otherwise. It preserves an existing active profile and never switches after a
-request failure. Without `--allow-sensitive`, setup leaves inference pending:
-the same profile flag controls both sensitive archive evidence and sensitive
-attribute targets.
+Hosted people inference requires an explicit `setup providers --provider
+<openai|openrouter|venice> --model <model>` choice, a credential source, and
+explicit retention, training, and sensitive-content decisions. An
+`OPENAI_API_KEY` alone configures only eligible embedding lanes. With no OpenAI
+key or explicit provider choice, setup can offer the configured loopback Ollama
+chat model when `--allow-sensitive` is supplied. An enabled sweep is preserved;
+`--provider` then fails with instructions to use `person provider add` and
+`person provider use`. See [setup flags](cli-reference.md#setup-providers).
 
 ### `[people.sweep.budgets]`
 
@@ -231,7 +237,11 @@ The `codex_app_server` protocol is not usable in this release. Its transport
 stays unavailable until the executable isolation gate releases a verified
 build, and until then every Codex operation fails closed with
 `codex app-server isolation is not released`. The profile shape is documented
-here so the configuration is ready when the gate ships.
+here so the configuration is ready when the gate ships. Codex sign-in and
+model routes return HTTP 503 before changing credentials or consent. The
+terminal-only [`person provider enroll-codex`](cli-reference.md#person-provider-enroll-codex)
+command creates a new profile through the daemon; host-side `person provider
+login` reauthenticates the selected existing Codex profile. Both remain gated.
 
 `codex_app_server` profiles are also the one protocol `person provider add`
 cannot create: generic onboarding negotiates HTTP capabilities through an

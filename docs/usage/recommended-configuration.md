@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-09-25"
 title: Recommended Configuration
 description: Set up optional search and people features from your available provider keys, then check what still needs attention.
 ---
@@ -16,11 +16,13 @@ vectors, or people sweeps. Each has its own readiness and consent checks.
 ```bash
 export VOYAGE_API_KEY="..."      # text, people, and visual search
 export MISTRAL_API_KEY="..."     # document attachments
-export OPENAI_API_KEY="..."      # people sweep (and text search when no Voyage key)
+export OPENAI_API_KEY="..."      # text search when no Voyage key
 
 msgvault setup providers --dry-run   # show the plan and each provider disclosure
 msgvault setup providers             # answer once per provider, write config.toml
-msgvault setup providers --allow-sensitive # opt into sensitive evidence for the people sweep
+msgvault setup providers --provider openai --model <model> \
+  --credential-env OPENAI_API_KEY --retention-posture <assertion> \
+  --training-posture <assertion> --allow-sensitive # explicit people inference choice
 msgvault setup status                # what is on, what is off, and why
 ```
 
@@ -48,7 +50,7 @@ conversation briefs.
 | --------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `VOYAGE_API_KEY`                        | text search, semantic people search, visual attachments (after the probe)       | `voyage-context-4` (1024), `voyage-multimodal-3.5` (1024)                           | Beeper chats use conversation windows; meetings use speaker turns. Other messages share the generation as individual documents.                                                        |
 | `MISTRAL_API_KEY`                       | document extraction and lexical search; document vectors when a text lane is on | `mistral-ocr-4-0`, EU region                                                        | Uploads are manual-only and need the probe manifest plus `documents consent-mistral --yes`.                                                                                            |
-| `OPENAI_API_KEY`                        | people sweep with `--allow-sensitive`; text search only when no Voyage key      | `gpt-5.6-luna` at `medium` reasoning; `text-embedding-3-small` (1536)               | The OpenAI text path gives per-message vectors: no conversation-window context and no visual lane, both are Voyage-only endpoints.                                                     |
+| `OPENAI_API_KEY`                        | text search only when no Voyage key      | `text-embedding-3-small` (1536)               | The OpenAI text path gives per-message vectors: no conversation-window context and no visual lane, both are Voyage-only endpoints.                                                     |
 | no key for the feature being configured | loopback Ollama at `[chat].server` when reachable                               | `nomic-embed-text` (768); the `[chat].model` for the sweep with `--allow-sensitive` | Text uses Ollama only without Voyage or OpenAI keys. Inference uses it without an OpenAI key, even when Voyage or Mistral is configured. The required model must already be installed. |
 
 These are setup choices, not runtime failover. Adding a Voyage key does not
@@ -61,8 +63,9 @@ when the selected API or local model is not the one you want.
 
 ## The file setup writes
 
-With a Voyage key, a Mistral key, and an OpenAI key present and
-`--allow-sensitive` supplied, successful setup produces the configuration below.
+With Voyage, Mistral, and OpenAI keys present, the explicit OpenAI setup command
+above produces the configuration below when `<model>` is `gpt-5.6-luna` and both
+privacy assertions are `provider-declared`.
 The example assumes SQLite, no probe manifests yet, and a people-provider check
 that negotiates native JSON output. The saved output mode and token-limit field
 come from that check. Comments and sections you already have are preserved.
@@ -107,6 +110,7 @@ enabled = true
 provider = "openai"
 
 [people.sweep.providers.openai]
+preset_id = "openai"
 protocol = "openai_chat"
 endpoint = "https://api.openai.com/v1"
 model = "gpt-5.6-luna"
@@ -115,7 +119,6 @@ credential = "env"
 credential_env = "OPENAI_API_KEY"
 output_mode = "native_json_schema"
 token_limit_parameter = "max_completion_tokens"
-reasoning_effort = "medium"
 retention_posture = "provider-declared"
 training_posture = "provider-declared"
 allowed_sources = ["conversation_text", "meeting_text", "document_text"]
@@ -200,14 +203,14 @@ consent separately and lists each missing consent command.
 The sweep maintains profile facts from archive evidence for people you track
 (`msgvault person track <person-id>`). Deterministic contact state (last
 contacted, cadence, inferred channel) refreshes hourly for everyone through
-`[activity]` and needs no model. Setup onboards the `openai` profile through
-`person provider add` (a synthetic check request is sent), records consent, and
-selects it. The default sweep schedule is daily at `02:15` in the daemon's time
+`[activity]` and needs no model. With `--provider openai`, setup onboards the
+`openai` profile through `person provider add` (a synthetic check request is
+sent), records consent, and selects it. The default sweep schedule is daily at `02:15` in the daemon's time
 zone. Setup preserves any saved sweep schedule. `allow_sensitive = true` is
 required for real sweeps because every archive evidence packet is marked
-sensitive. Setup sets it only when you pass `--allow-sensitive`; without that
-flag it leaves the sweep unconfigured. The same flag permits inference of
-sensitive attributes; there is no separate setup flag for allowing private
+sensitive. Hosted setup requires an explicit `--allow-sensitive=true|false`
+decision; `false` allows setup and synthetic checks but cannot run real sweeps.
+The same flag permits inference of sensitive attributes; there is no separate setup flag for allowing private
 source text while excluding sensitive targets. With no OpenAI key, setup offers
 a loopback Ollama profile on `[chat].model`.
 
@@ -315,10 +318,11 @@ hosts over HTTPS and loopback servers. Other hosted endpoints are custom:
 configure their people-search and document-vector lanes explicitly, then review
 the separate consent commands for the new data they will receive.
 
-The people sweep stays pending without `--allow-sensitive`, even with `--yes`.
-The flag permits sending sensitive archive excerpts to the inference provider
-and inferring sensitive personal attributes. The plan describes this policy in
-both human and JSON output.
+Local people-sweep setup stays pending without `--allow-sensitive`, even with
+`--yes`. Hosted setup also requires an explicit preset, model, credential source,
+and retention and training assertions. The sensitive-content flag permits
+sending archive excerpts to the provider and inferring sensitive personal
+attributes. The plan describes this policy in both human and JSON output.
 
 ## Reading the status report
 

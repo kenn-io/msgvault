@@ -8076,8 +8076,6 @@ components:
             type: string
           minItems: 1
           type: array
-        credential_env:
-          type: string
         model:
           minLength: 1
           type: string

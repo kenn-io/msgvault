@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/tui"
 )
 
@@ -35,6 +36,9 @@ type codexEnrollOptions struct {
 func defaultCodexEnrollDeps() codexEnrollDeps {
 	return codexEnrollDeps{
 		openBackend: func(ctx context.Context) (tui.PeopleInferenceBackend, func(), error) {
+			if !peoplesweep.CodexReleaseAvailable() {
+				return nil, nil, peoplesweep.ErrCodexIsolationUnreleased
+			}
 			client, _, err := OpenHTTPStore(ctx)
 			if err != nil {
 				return nil, nil, err

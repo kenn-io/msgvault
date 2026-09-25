@@ -227,10 +227,12 @@ func (s *Service) RemoveProfile(
 			return Selection{}, errors.New("people provider credential store is unavailable")
 		}
 		guard, err = credentials.PreflightDelete(name)
-		if err != nil {
+		if err != nil && !errors.Is(err, peoplesweep.ErrCredentialNotFound) {
 			return Selection{}, err
 		}
-		defer func() { retErr = errors.Join(retErr, guard.Close()) }()
+		if guard != nil {
+			defer func() { retErr = errors.Join(retErr, guard.Close()) }()
+		}
 	}
 	revocations, ok := s.store.(RevocationStore)
 	if !ok {

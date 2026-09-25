@@ -7,7 +7,6 @@ export interface PeopleInferencePresetCreateRequest {
   allow_sensitive: boolean;
   /** @minItems 1 */
   allowed_sources: string[];
-  credential_env?: string;
   /** @minLength 1 */
   model: string;
   preset_id: PeopleInferencePresetCreateRequestPresetId;

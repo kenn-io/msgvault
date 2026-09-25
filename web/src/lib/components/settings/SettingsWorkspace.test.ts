@@ -49,11 +49,11 @@ const initialSettings = {
 afterEach(() => vi.useRealTimers());
 
 describe('SettingsWorkspace', () => {
-  it('creates an environment-backed HTTP profile and waits for daemon credential status before checking', async () => {
+  it('reads a host-configured environment profile and waits for daemon credentials before checking', async () => {
     const requests: Request[] = [];
-    let created = false;
+    const created = true;
     let configured = false;
-    let revision = 1;
+    const revision = 1;
     const status = () => Response.json({
       profiles: created ? [{
         name: 'from-env', preset_id: 'openrouter', protocol: 'openai-chat', model: 'model-one',
@@ -71,11 +71,6 @@ describe('SettingsWorkspace', () => {
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/settings') return settingsResponse(initialSettings, '"settings-a"');
       if (request.method === 'GET' && path === '/api/v1/settings/people-inference') return status();
-      if (request.method === 'PUT' && path.endsWith('/providers/from-env')) {
-        created = true;
-        revision += 1;
-        return status();
-      }
       if (request.method === 'POST' && path.endsWith('/providers/from-env/check')) {
         return Response.json({ ok: true, fingerprint: 'env-fingerprint', model: 'model-one', usage: {} });
       }
@@ -84,22 +79,6 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
     await openSettingsCategory('People sweep');
     await screen.findByRole('heading', { name: 'Add a profile' });
-    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'openrouter' } });
-    await fireEvent.input(screen.getByLabelText('Profile name'), { target: { value: 'from-env' } });
-    await fireEvent.input(screen.getByLabelText('Model ID'), { target: { value: 'model-one' } });
-    await fireEvent.click(screen.getByLabelText('Environment variable on daemon host'));
-    expect(screen.queryByLabelText('API key')).toBeNull();
-    await fireEvent.input(screen.getByLabelText('Environment variable'), { target: { value: 'PEOPLE_API_KEY' } });
-    await fireEvent.click(screen.getByLabelText('Conversation text'));
-    await fireEvent.input(screen.getByLabelText(/^Archive data since/), { target: { value: '2025-01-01' } });
-    await fireEvent.input(screen.getByLabelText('Retention statement'), { target: { value: 'Operator assertion: no retention' } });
-    await fireEvent.input(screen.getByLabelText('Training statement'), { target: { value: 'Operator assertion: no training' } });
-    await fireEvent.click(screen.getByLabelText('Exclude sensitive content'));
-    const profileForm = screen.getByRole('heading', { name: 'Add a profile' }).closest('form')!;
-    expect(profileForm.checkValidity()).toBe(true);
-    await fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
-    await waitFor(() => expect(requests.map((request) => `${request.method} ${new URL(request.url).pathname}`))
-      .toContain('PUT /api/v1/settings/people-inference/providers/from-env'));
     expect(await screen.findByText('Set PEOPLE_API_KEY on daemon host')).toBeDefined();
     expect(screen.queryByLabelText('Replacement API key')).toBeNull();
     expect((screen.getByRole('button', { name: 'Check provider' }) as HTMLButtonElement).disabled).toBe(true);
@@ -109,127 +88,8 @@ describe('SettingsWorkspace', () => {
     expect(await screen.findByText('Environment PEOPLE_API_KEY ready')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
     expect(await screen.findByText('Retention: Operator assertion: no retention')).toBeDefined();
-    const create = requests.find((request) => request.method === 'PUT' && request.url.endsWith('/providers/from-env'))!;
-    expect(create.headers.get('If-Match')).toBe('"env-config-1"');
-    await expect(create.clone().json()).resolves.toEqual({
-      preset_id: 'openrouter', model: 'model-one', credential_env: 'PEOPLE_API_KEY',
-      allowed_sources: ['conversation_text'], source_since: '2025-01-01', allow_sensitive: false,
-      retention_posture: 'Operator assertion: no retention', training_posture: 'Operator assertion: no training',
-    });
     expect(requests.some((request) => request.method === 'PUT' && request.url.endsWith('/key'))).toBe(false);
     expect(document.body.textContent).not.toContain('synthetic-secret');
-  }, 15000);
-
-  it('refreshes a Codex profile 412 without losing login or policy, then checks, consents, and selects it', async () => {
-    const requests: Request[] = [];
-    let created = false;
-    let checked = false;
-    let consented = false;
-    let selected = false;
-    let revision = 1;
-    let profileWrites = 0;
-    const status = () => Response.json({
-      profiles: created ? [{
-        name: 'subscription', protocol: 'codex_app_server', model: 'codex-model',
-        credential_source: 'none', credential_configured: true,
-        checked, consent_active: consented, fingerprint: 'codex-fingerprint', selected,
-        output_mode: 'native_json_schema', endpoint: '', allowed_sources: ['conversation_text'],
-        source_since: '2025-01-01', allow_sensitive: true,
-        retention_posture: 'Operator assertion: no retention',
-        training_posture: 'Operator assertion: no training',
-      }] : [], configured_enabled: selected, configured_name: selected ? 'subscription' : undefined,
-      running_enabled: false, pending_restart: created,
-    }, { headers: { ETag: `"codex-config-${revision}"` } });
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input as Request;
-      requests.push(request);
-      const path = new URL(request.url).pathname;
-      if (path === '/api/v1/settings') return settingsResponse(initialSettings, '"settings-a"');
-      if (request.method === 'GET' && path === '/api/v1/settings/people-inference') return status();
-      if (request.method === 'POST' && path.endsWith('/codex/login')) return Response.json({
-        session_id: 'session-1', verification_url: 'https://example.test/device',
-        user_code: 'ABCD-EFGH', local_deadline: '2026-09-23T10:00:00Z',
-      });
-      if (request.method === 'GET' && path.endsWith('/codex/login/session-1')) return Response.json({ state: 'complete' });
-      if (request.method === 'GET' && path.endsWith('/codex/login/session-1/models')) return Response.json({
-        models: [{ id: 'codex-model', display_name: 'Codex model',
-          default_reasoning_effort: 'medium', supported_efforts: ['low', 'medium'] }],
-      });
-      if (request.method === 'PUT' && path.endsWith('/codex/login/session-1/profile')) {
-        profileWrites += 1;
-        if (profileWrites === 1) {
-          revision = 2;
-          return Response.json({ message: 'Config changed' }, { status: 412 });
-        }
-        created = true;
-        revision += 1;
-        return status();
-      }
-      if (request.method === 'POST' && path.endsWith('/providers/subscription/check')) {
-        checked = true;
-        return Response.json({ ok: true, fingerprint: 'codex-fingerprint', model: 'codex-model', usage: {} });
-      }
-      if (request.method === 'POST' && path.endsWith('/providers/subscription/consent')) {
-        consented = true;
-        revision += 1;
-        return status();
-      }
-      if (request.method === 'POST' && path.endsWith('/people-inference/select')) {
-        selected = true;
-        revision += 1;
-        return status();
-      }
-      throw new Error(`Unexpected request: ${request.method} ${path}`);
-    });
-    render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
-    await openSettingsCategory('People sweep');
-    await screen.findByRole('heading', { name: 'Add a profile' });
-    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'codex' } });
-    await fireEvent.input(screen.getByLabelText('Profile name'), { target: { value: 'subscription' } });
-    await fireEvent.click(screen.getByLabelText('Conversation text'));
-    await fireEvent.input(screen.getByLabelText(/^Archive data since/), { target: { value: '2025-01-01' } });
-    await fireEvent.input(screen.getByLabelText('Retention statement'), { target: { value: 'Operator assertion: no retention' } });
-    await fireEvent.input(screen.getByLabelText('Training statement'), { target: { value: 'Operator assertion: no training' } });
-    await fireEvent.click(screen.getByLabelText('Allow sensitive content'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Sign in with Codex' }));
-    expect(await screen.findByText('ABCD-EFGH')).toBeDefined();
-    expect(screen.getByText('https://example.test/device')).toBeDefined();
-    await screen.findByLabelText('Reasoning effort');
-    await fireEvent.change(screen.getByLabelText('Reasoning effort'), { target: { value: 'low' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create Codex profile' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('Reload and review your changes');
-    expect(screen.getByText('ABCD-EFGH')).toBeDefined();
-    expect((screen.getByLabelText('Profile name') as HTMLInputElement).value).toBe('subscription');
-    expect((screen.getByLabelText('Reasoning effort') as HTMLSelectElement).value).toBe('low');
-    expect((screen.getByLabelText('Retention statement') as HTMLInputElement).value).toBe('Operator assertion: no retention');
-    const reload = screen.getByRole('button', { name: 'Reload people sweep settings' }) as HTMLButtonElement;
-    expect(reload.disabled).toBe(false);
-    await fireEvent.click(reload);
-    expect(await screen.findByText('ABCD-EFGH')).toBeDefined();
-    expect((screen.getByLabelText('Profile name') as HTMLInputElement).value).toBe('subscription');
-    expect((screen.getByLabelText('Reasoning effort') as HTMLSelectElement).value).toBe('low');
-    expect((screen.getByLabelText('Retention statement') as HTMLInputElement).value).toBe('Operator assertion: no retention');
-    await fireEvent.click(screen.getByRole('button', { name: 'Create Codex profile' }));
-    expect(await screen.findByText('Signed in')).toBeDefined();
-    await waitFor(() => expect(screen.queryByText('ABCD-EFGH')).toBeNull());
-    await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
-    expect(await screen.findByText('Retention: Operator assertion: no retention')).toBeDefined();
-    await fireEvent.click(screen.getByLabelText('I confirm this exact disclosure'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Grant consent' }));
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Select and enable' }) as HTMLButtonElement).disabled).toBe(false));
-    await fireEvent.click(screen.getByRole('button', { name: 'Select and enable' }));
-    expect(await screen.findByText(/Restart the daemon to use the saved/)).toBeDefined();
-    const profileWrite = requests.filter((item) => item.method === 'PUT' && item.url.endsWith('/codex/login/session-1/profile'));
-    expect(profileWrite.map((request) => request.headers.get('If-Match'))).toEqual(['"codex-config-1"', '"codex-config-2"']);
-    await expect(profileWrite[1]!.clone().json()).resolves.toEqual({
-      model: 'codex-model', reasoning_effort: 'low', allowed_sources: ['conversation_text'],
-      source_since: '2025-01-01', allow_sensitive: true,
-      retention_posture: 'Operator assertion: no retention',
-      training_posture: 'Operator assertion: no training',
-    });
-    expect(requests.find((item) => item.url.endsWith('/providers/subscription/check'))?.headers.get('If-Match')).toBe('"codex-config-3"');
-    expect(requests.find((item) => item.url.endsWith('/providers/subscription/consent'))?.headers.get('If-Match')).toBe('"codex-config-3"');
-    expect(requests.find((item) => item.url.endsWith('/people-inference/select'))?.headers.get('If-Match')).toBe('"codex-config-4"');
   }, 15000);
 
   it('shows a failed people settings read without an actionable setup form', async () => {
@@ -298,7 +158,7 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
     await openSettingsCategory('People sweep');
     await screen.findByRole('heading', { name: 'Add a profile' });
-    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'openrouter' } });
+    await chooseSelectOption(screen.getByRole('combobox', { name: 'Provider: OpenAI Platform' }), 'OpenRouter');
     await fireEvent.input(screen.getByLabelText('Profile name'), { target: { value: 'routed' } });
     await fireEvent.input(screen.getByLabelText('Model ID'), { target: { value: 'model-one' } });
     await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'synthetic-secret' } });
@@ -309,6 +169,7 @@ describe('SettingsWorkspace', () => {
     await fireEvent.click(screen.getByLabelText('Allow sensitive content'));
     await fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
     expect(await screen.findByText('Stored key')).toBeDefined();
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Check provider' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Check provider' }));
     expect(await screen.findByText('Retention: No retention')).toBeDefined();
     await fireEvent.click(screen.getByLabelText('I confirm this exact disclosure'));
@@ -328,7 +189,7 @@ describe('SettingsWorkspace', () => {
     expect(requests.find((item) => item.url.endsWith('/people-inference/select'))?.headers.get('If-Match')).toBe('"config-3"');
   }, 15000);
 
-  it('opens server-backed people sweep setup with Codex and environment credential choices', async () => {
+  it('opens server-backed people sweep setup with supported provider presets', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
@@ -353,8 +214,8 @@ describe('SettingsWorkspace', () => {
     await openSettingsCategory('People sweep');
     expect(await screen.findByRole('heading', { name: 'People sweep' })).toBeDefined();
     expect(await screen.findByText('Stored key')).toBeDefined();
-    expect(screen.getByRole('option', { name: 'Codex subscription' })).toBeDefined();
-    expect(screen.getByLabelText('Environment variable on daemon host')).toBeDefined();
+    await fireEvent.click(screen.getByRole('combobox', { name: /^Provider:/ }));
+    expect(screen.getAllByRole('option').map((option) => option.textContent?.trim())).toEqual(['OpenAI Platform', 'OpenRouter', 'Venice']);
     expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname === '/api/v1/settings/people-inference')).toBe(true);
   });
 

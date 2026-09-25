@@ -28,14 +28,16 @@ type PeopleInferenceBackend interface {
 }
 
 type CodexDeviceLogin struct {
-	DraftID   string
 	SessionID string
 	URL       string
 	Code      string
 	Deadline  time.Time
 }
 
-type CodexLoginPoll struct{ Complete bool }
+type CodexLoginPoll struct {
+	Complete bool
+	Failed   bool
+}
 
 type CodexModelChoice struct {
 	ID                     string
@@ -69,20 +71,6 @@ type PeopleInferenceStatus struct {
 	RunningFingerprint    string
 	RunningEnabled        bool
 	PendingRestart        bool
-}
-
-// PeopleInferencePresetRequest contains policy fields for a vendor-bound
-// profile. A key and endpoint are deliberately absent: the daemon binds the
-// destination before a separate credential write is allowed.
-type PeopleInferencePresetRequest struct {
-	PresetID         string
-	Model            string
-	RetentionPosture string
-	TrainingPosture  string
-	AllowedSources   []string
-	SourceSince      string
-	SourceUntil      string
-	AllowSensitive   bool
 }
 
 type codexSettingsState struct {
@@ -251,7 +239,7 @@ func (m Model) handleCodexSettingsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	case "m":
 		if s.stage == "authenticated" || (s.stage == "models" && len(s.models) == 0) {
 			return m, func() tea.Msg {
-				models, err := backend.ListCodexModels(ctx, s.login.DraftID)
+				models, err := backend.ListCodexModels(ctx, s.login.SessionID)
 				return codexModelsLoadedMsg{models: models, err: err, requestID: id}
 			}
 		}
@@ -281,7 +269,7 @@ func (m Model) handleCodexSettingsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			request.ReasoningEffort = model.ReasoningEfforts[s.effortCursor]
 			s.stage, s.message = "saving", ""
 			return m, func() tea.Msg {
-				profile, err := backend.SaveCodexProfile(ctx, s.login.DraftID, request)
+				profile, err := backend.SaveCodexProfile(ctx, s.login.SessionID, request)
 				return codexProfileSavedMsg{profile: profile, err: err, requestID: id}
 			}
 		}
@@ -452,16 +440,20 @@ func (m Model) handleCodexSettingsMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if v.err != nil {
 			s.message = v.err.Error()
-			return m, nil
+			if v.poll.Failed {
+				s.stage = "error"
+				return m, nil
+			}
+			return m, codexPollTick(s.requestID)
 		}
 		s.message = ""
 		if v.poll.Complete {
 			s.stage = "authenticated"
 			backend := m.peopleInferenceBackend()
-			draft := s.login.DraftID
+			session := s.login.SessionID
 			ctx := s.ctx
 			return m, func() tea.Msg {
-				models, err := backend.ListCodexModels(ctx, draft)
+				models, err := backend.ListCodexModels(ctx, session)
 				return codexModelsLoadedMsg{models: models, err: err, requestID: requestID}
 			}
 		}

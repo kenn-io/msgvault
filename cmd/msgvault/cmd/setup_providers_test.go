@@ -33,7 +33,7 @@ const setupProvidersTestKey = "setup-providers-test-key"
 
 func explicitOpenAISetupFlags() []string {
 	return []string{
-		"--provider", "openai", "--model", setupInferenceModel,
+		"--provider", "openai", "--model", "gpt-5.6-luna",
 		"--credential-env", setupOpenAIKeyEnv,
 		"--retention-posture", setupPostureDeclared,
 		"--training-posture", setupPostureDeclared,
@@ -662,7 +662,7 @@ func TestSetupProvidersRequiresExplicitSensitiveDecision(t *testing.T) {
 	output, err := fixture.run(t, append([]string{"providers", "--yes", "--json"}, explicitOpenAISetupFlags()...)...)
 	require.ErrorContains(err, "--allow-sensitive")
 	assert.False(fixture.load(t).People.Sweep.Enabled)
-	assert.NotContains(fixture.load(t).People.Sweep.Providers, setupInferenceProfile)
+	assert.NotContains(fixture.load(t).People.Sweep.Providers, "openai")
 	assert.Zero(fixture.checker.calls.Load())
 	assert.Contains(output, "--allow-sensitive")
 
@@ -1074,11 +1074,11 @@ func TestSetupProvidersExplicitOpenAIOnboardsInference(t *testing.T) {
 
 	sweep := loaded.People.Sweep
 	require.True(sweep.Enabled)
-	assert.Equal(setupInferenceProfile, sweep.Provider.Name)
-	profile := sweep.Providers[setupInferenceProfile]
+	assert.Equal("openai", sweep.Provider.Name)
+	profile := sweep.Providers["openai"]
 	assert.Equal(peoplesweep.ProtocolOpenAIChat, profile.Protocol)
 	assert.Equal(setupOpenAIEndpoint, profile.Endpoint)
-	assert.Equal(setupInferenceModel, profile.Model)
+	assert.Equal("gpt-5.6-luna", profile.Model)
 	assert.Equal("openai", profile.PresetID)
 	assert.Empty(profile.ReasoningEffort)
 	assert.Equal(peoplesweep.CredentialEnv, profile.Credential)
@@ -1110,7 +1110,7 @@ func TestSetupProvidersExplicitOpenAIOnboardsInference(t *testing.T) {
 	inference := findLane(t, report, lanePeopleInference)
 	assert.Equal(laneStateOn, inference.State)
 	assert.Equal(consentActive, inference.Consent)
-	assert.Equal(setupInferenceModel, inference.Model)
+	assert.Equal("gpt-5.6-luna", inference.Model)
 }
 
 func TestSetupProvidersSelectsExplicitHTTPPresets(t *testing.T) {
@@ -1152,7 +1152,7 @@ func TestSetupProvidersDoesNotInferPeopleProviderFromEmbeddingKey(t *testing.T) 
 	loaded := fixture.load(t)
 	assert.True(loaded.Vector.Enabled)
 	assert.False(loaded.People.Sweep.Enabled)
-	assert.NotContains(loaded.People.Sweep.Providers, setupInferenceProfile)
+	assert.NotContains(loaded.People.Sweep.Providers, "openai")
 	status, err := fixture.run(t, "status", "--json")
 	require.NoError(err, status)
 	var report laneReport
@@ -1404,7 +1404,7 @@ func TestSetupProvidersDeclinedDocumentsUpdateDependentLanes(t *testing.T) {
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 			fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
 			fixture.tty = true
-			profileName := setupInferenceProfile
+			profileName := "openai"
 			if local {
 				fixture.ollama = ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text:latest", "gpt-oss-128k:latest"}}
 				fixture.input = strings.NewReader("n\n")
@@ -1688,4 +1688,21 @@ func findLane(t *testing.T, report laneReport, lane string) laneStatus {
 	}
 	require.Failf("lane missing", "lane %q not in report", lane)
 	return laneStatus{}
+}
+
+func TestSetupProvidersRejectsExplicitProviderWhenSweepEnabled(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	fixture.env[setupOpenAIKeyEnv] = setupProvidersTestKey
+	args := append([]string{"providers", "--yes", "--allow-sensitive"}, explicitOpenAISetupFlags()...)
+	_, err := fixture.run(t, args...)
+	require.NoError(err)
+	before, err := os.ReadFile(fixture.path)
+	require.NoError(err)
+	_, err = fixture.run(t, "providers", "--provider", "venice", "--model", "venice/model", "--credential-env", "VENICE_KEY", "--retention-posture", "operator_asserted", "--training-posture", "operator_asserted", "--allow-sensitive", "--yes")
+	require.ErrorContains(err, "people sweep is already enabled")
+	after, err := os.ReadFile(fixture.path)
+	require.NoError(err)
+	assert.Equal(before, after)
 }

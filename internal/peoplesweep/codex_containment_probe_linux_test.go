@@ -309,7 +309,6 @@ func TestCodexPinnedArtifactRefreshCopyBack(t *testing.T) {
 			requireChecks.NoError(client.Notify(ctx, "initialized", nil))
 			result := codexRunContainmentProbe(ctx, t, client, "copy", "/work/refresh.json", "/work/.codex/auth.json")
 			assertChecks.Equal("ALLOWED", strings.TrimSpace(result.Stdout))
-			requireChecks.NoError(owned.allowRefreshCommit())
 			err = finishCodexProcess(ctx, process, client, false)
 			if tc.wantChanged {
 				requireChecks.ErrorIs(err, ErrCodexAuthAccountChanged)

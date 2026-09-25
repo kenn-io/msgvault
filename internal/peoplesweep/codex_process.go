@@ -37,17 +37,15 @@ var ErrCodexProxyUnreleased = errors.New("codex service proxy is not released")
 type codexOwnedProcess struct {
 	RPCProcess
 
-	workRoot         string
-	cleanupMu        sync.Mutex
-	cleaned          bool
-	removeRoot       func(string) error
-	proxy            CodexProxySession
-	cleanupErr       error
-	refreshCommit    func() error
-	commitAuth       bool
-	refreshCommitted bool
-	childExited      chan struct{}
-	childExitOnce    sync.Once
+	workRoot      string
+	cleanupMu     sync.Mutex
+	cleaned       bool
+	removeRoot    func(string) error
+	proxy         CodexProxySession
+	cleanupErr    error
+	refreshCommit func() error
+	childExited   chan struct{}
+	childExitOnce sync.Once
 }
 
 func (p *codexOwnedProcess) Wait() error {
@@ -57,33 +55,13 @@ func (p *codexOwnedProcess) Wait() error {
 	}
 	var refreshErr error
 	p.cleanupMu.Lock()
-	if processErr == nil && !p.cleaned && p.commitAuth && p.refreshCommit != nil {
+	// Authentication refresh is independent of the operation's result. Copy
+	// back only after the child has exited, including a nonzero or killed exit.
+	if !p.cleaned && p.refreshCommit != nil {
 		refreshErr = p.refreshCommit()
-		p.refreshCommitted = refreshErr == nil
 	}
 	p.cleanupMu.Unlock()
 	return errors.Join(processErr, refreshErr, p.cleanup())
-}
-
-func (p *codexOwnedProcess) refreshSkipped() bool {
-	p.cleanupMu.Lock()
-	defer p.cleanupMu.Unlock()
-	return p.commitAuth && !p.refreshCommitted
-}
-
-func (p *codexOwnedProcess) allowRefreshCommit() error {
-	p.cleanupMu.Lock()
-	defer p.cleanupMu.Unlock()
-	if p.cleaned || p.refreshCommit == nil {
-		return ErrCodexAuthRefreshUnsafe
-	}
-	p.commitAuth = true
-	return nil
-}
-
-func (p *codexOwnedProcess) Kill() error {
-	processErr := p.RPCProcess.Kill()
-	return errors.Join(processErr, p.cleanup())
 }
 
 func (p *codexOwnedProcess) cleanup() error {

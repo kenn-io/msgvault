@@ -7306,7 +7306,6 @@ func (p PeopleInferenceKeyWriteRequest) Validate() error {
 type PeopleInferencePresetCreateRequest struct {
 	AllowSensitive   bool                                       `json:"allow_sensitive"`
 	AllowedSources   []string                                   `json:"allowed_sources" validate:"required"`
-	CredentialEnv    *string                                    `json:"credential_env,omitzero"`
 	Model            string                                     `json:"model" validate:"required,min=1"`
 	PresetID         PeopleInferencePresetCreateRequestPresetID `json:"preset_id" validate:"required"`
 	RetentionPosture string                                     `json:"retention_posture" validate:"required,min=1"`

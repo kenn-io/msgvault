@@ -90,7 +90,7 @@ func TestSettingsCodexJourneyRequiresCheckAndConsent(t *testing.T) {
 	require := require.New(t)
 	backend := &fakePeopleInferenceBackend{
 		loads: []SettingsSnapshot{settingsFixture()},
-		login: CodexDeviceLogin{DraftID: "draft-1", SessionID: "session-1", URL: "https://example.test/device", Code: "ABCD-EFGH", Deadline: time.Date(2026, 9, 23, 12, 5, 0, 0, time.UTC)},
+		login: CodexDeviceLogin{SessionID: "session-1", URL: "https://example.test/device", Code: "ABCD-EFGH", Deadline: time.Date(2026, 9, 23, 12, 5, 0, 0, time.UTC)},
 		models: []CodexModelChoice{
 			{ID: "codex-model-a", DefaultReasoningEffort: "medium", ReasoningEfforts: []string{"low", "medium"}},
 			{ID: "codex-model-b", DefaultReasoningEffort: "medium", ReasoningEfforts: []string{"medium", "high"}},
@@ -124,7 +124,7 @@ func TestSettingsCodexJourneyRequiresCheckAndConsent(t *testing.T) {
 	model, save := sendKey(t, model, keyEnter())
 	require.NotNil(save)
 	model = sendSettingsMsg(t, model, save())
-	assert.Equal("draft-1", backend.savedDraft)
+	assert.Equal("session-1", backend.savedDraft)
 	assert.Equal(CodexProfileRequest{
 		Name: "codex-profile", Model: "codex-model-b", ReasoningEffort: "high",
 		AllowedSources: []string{"conversation_text"}, SourceSince: "2025-01-01", AllowSensitive: false,
@@ -188,7 +188,7 @@ func TestSettingsCodexLoginWaitDoesNotBlockEscape(t *testing.T) {
 	select {
 	case <-backend.started:
 	case <-time.After(3 * time.Second):
-		t.Fatal("login command did not start")
+		require.FailNow("login command did not start")
 	}
 	model, cancel := sendKey(t, model, keyEsc())
 	assert.Nil(cancel)
@@ -196,7 +196,7 @@ func TestSettingsCodexLoginWaitDoesNotBlockEscape(t *testing.T) {
 	select {
 	case <-backend.startExited:
 	case <-time.After(3 * time.Second):
-		t.Fatal("login command did not stop after Escape")
+		require.FailNow("login command did not stop after Escape")
 	}
 }
 
@@ -206,7 +206,7 @@ func TestSettingsCodexEmptyModelListCanRetry(t *testing.T) {
 
 	backend := &fakePeopleInferenceBackend{
 		loads: []SettingsSnapshot{settingsFixture()},
-		login: CodexDeviceLogin{DraftID: "draft-empty", SessionID: "session-empty"},
+		login: CodexDeviceLogin{SessionID: "session-empty"},
 		poll:  CodexLoginPoll{Complete: true},
 	}
 	model := loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend)
@@ -229,7 +229,7 @@ func TestSettingsCodexPollFailureCanRetryPendingLogin(t *testing.T) {
 	require := require.New(t)
 	backend := &fakePeopleInferenceBackend{
 		loads: []SettingsSnapshot{settingsFixture()},
-		login: CodexDeviceLogin{DraftID: "draft-retry", SessionID: "session-retry",
+		login: CodexDeviceLogin{SessionID: "session-retry",
 			URL: "https://example.test/device", Code: "RETRY-CODE"},
 		models: []CodexModelChoice{{ID: "codex-model-a", DefaultReasoningEffort: "medium", ReasoningEfforts: []string{"medium"}}},
 	}
@@ -242,7 +242,9 @@ func TestSettingsCodexPollFailureCanRetryPendingLogin(t *testing.T) {
 	backend.pollErr = errors.New("temporary gateway timeout")
 	model, poll := sendKey(t, model, key('r'))
 	require.NotNil(poll)
-	model = sendSettingsMsg(t, model, poll())
+	updated, nextPoll := model.Update(poll())
+	model = asModel(t, updated)
+	require.NotNil(nextPoll)
 	view := stripANSI(model.renderView())
 	require.Contains(view, "https://example.test/device")
 	assert.Contains(view, "RETRY-CODE")
@@ -252,7 +254,7 @@ func TestSettingsCodexPollFailureCanRetryPendingLogin(t *testing.T) {
 	backend.pollErr = nil
 	model, retry := sendKey(t, model, key('r'))
 	require.NotNil(retry)
-	updated, nextPoll := model.Update(retry())
+	updated, nextPoll = model.Update(retry())
 	model = asModel(t, updated)
 	assert.Equal("session-retry", backend.polledSession)
 	require.NotNil(nextPoll)
@@ -276,7 +278,7 @@ func TestSettingsCodexEscapeCancelsInFlightPoll(t *testing.T) {
 
 	backend := &fakePeopleInferenceBackend{
 		loads:       []SettingsSnapshot{settingsFixture()},
-		login:       CodexDeviceLogin{DraftID: "draft-poll", SessionID: "session-poll"},
+		login:       CodexDeviceLogin{SessionID: "session-poll"},
 		pollStarted: make(chan struct{}),
 		pollExited:  make(chan struct{}),
 	}
@@ -290,7 +292,7 @@ func TestSettingsCodexEscapeCancelsInFlightPoll(t *testing.T) {
 	select {
 	case <-backend.pollStarted:
 	case <-time.After(3 * time.Second):
-		t.Fatal("poll command did not start")
+		require.FailNow("poll command did not start")
 	}
 	model, cancel := sendKey(t, model, keyEsc())
 	require.NotNil(cancel)
@@ -298,7 +300,7 @@ func TestSettingsCodexEscapeCancelsInFlightPoll(t *testing.T) {
 	select {
 	case <-backend.pollExited:
 	case <-time.After(3 * time.Second):
-		t.Fatal("poll command did not stop after Escape")
+		require.FailNow("poll command did not stop after Escape")
 	}
 	assert.False(model.settings.codex.active)
 }
@@ -306,7 +308,7 @@ func TestSettingsCodexEscapeCancelsInFlightPoll(t *testing.T) {
 func TestSettingsCodexEscapeCancelsAndIgnoresLateLogin(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{settingsFixture()}, login: CodexDeviceLogin{DraftID: "draft-2", SessionID: "session-2"}}
+	backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{settingsFixture()}, login: CodexDeviceLogin{SessionID: "session-2"}}
 	model := loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend)
 	model.settingsBackend = backend
 	model, start := startConfiguredCodex(t, model)
@@ -330,7 +332,7 @@ func TestSettingsCodexNarrowViewAndCtrlCCancel(t *testing.T) {
 
 	assert := assert.New(t)
 	longURL := "https://example.test/device/" + strings.Repeat("a", 60)
-	backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{settingsFixture()}, login: CodexDeviceLogin{DraftID: "draft-3", SessionID: "session-3", URL: longURL, Code: "ABCD-EFGH"}}
+	backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{settingsFixture()}, login: CodexDeviceLogin{SessionID: "session-3", URL: longURL, Code: "ABCD-EFGH"}}
 	model := loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend)
 	model.settingsBackend = backend
 	model = resizeModel(t, model, 42, 20)
@@ -428,4 +430,25 @@ func (b *fakePeopleInferenceBackend) SelectCodexProfile(_ context.Context, profi
 }
 func (b *fakePeopleInferenceBackend) LoadPeopleInferenceStatus(context.Context) (PeopleInferenceStatus, error) {
 	return b.status, nil
+}
+
+func TestSettingsCodexTerminalFailureStopsPolling(t *testing.T) {
+	assert := assert.New(t)
+	backend := &fakePeopleInferenceBackend{
+		loads:   []SettingsSnapshot{settingsFixture()},
+		login:   CodexDeviceLogin{SessionID: "session-1"},
+		poll:    CodexLoginPoll{Failed: true},
+		pollErr: errors.New("codex device login was cancelled"),
+	}
+	model := loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend)
+	model.settingsBackend = backend
+	model, start := startConfiguredCodex(t, model)
+	model = sendSettingsMsg(t, model, start())
+	model, poll := sendKey(t, model, key('r'))
+	updated, next := model.Update(poll())
+	model = asModel(t, updated)
+	assert.Nil(next)
+	assert.Contains(stripANSI(model.renderView()), "Sign-in failed")
+	assert.Contains(stripANSI(model.renderView()), "was cancelled")
+	assert.NotContains(stripANSI(model.renderView()), "Waiting for sign-in")
 }

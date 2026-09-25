@@ -65,7 +65,6 @@ type PeopleInferenceSelectionRequest struct {
 type PeopleInferencePresetCreateRequest struct {
 	PresetID         string   `json:"preset_id" enum:"openai,openrouter,venice"`
 	Model            string   `json:"model" minLength:"1"`
-	CredentialEnv    string   `json:"credential_env,omitempty"`
 	RetentionPosture string   `json:"retention_posture" minLength:"1"`
 	TrainingPosture  string   `json:"training_posture" minLength:"1"`
 	AllowedSources   []string `json:"allowed_sources" minItems:"1"`
@@ -425,10 +424,6 @@ func (s *Server) handleCreatePeopleInferencePreset(w http.ResponseWriter, r *htt
 		return
 	}
 	provider.RetentionPosture = request.RetentionPosture
-	if request.CredentialEnv != "" {
-		provider.Credential = peoplesweep.CredentialEnv
-		provider.CredentialEnv = request.CredentialEnv
-	}
 	provider.TrainingPosture = request.TrainingPosture
 	provider.SourceSince = request.SourceSince
 	provider.SourceUntil = request.SourceUntil
@@ -483,12 +478,8 @@ func (s *Server) handlePutPeopleInferenceKey(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid_credential", "An API key is required")
 		return
 	}
-	if _, err := target.store.RevokePersonInferenceConsent(r.Context(), target.fingerprint, "web"); err != nil {
-		writeError(w, http.StatusInternalServerError, "consent_revoke_failed", "Could not revoke prior provider consent")
-		return
-	}
-	if _, err := target.store.InvalidatePersonInferenceCheck(r.Context(), target.fingerprint); err != nil {
-		writeError(w, http.StatusInternalServerError, "check_invalidation_failed", "Could not invalidate prior provider check")
+	if err := target.revokeAuthority(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "authority_revoke_failed", "Could not revoke prior provider consent and check")
 		return
 	}
 	if _, err := target.credentials.SaveIfRevision(target.name, peoplesweep.NewCredential(peoplesweep.AuthBearer, request.Value), ifMatch); err != nil {
@@ -523,12 +514,8 @@ func (s *Server) handleDeletePeopleInferenceKey(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	if _, err := target.store.RevokePersonInferenceConsent(r.Context(), target.fingerprint, "web"); err != nil {
-		writeError(w, http.StatusInternalServerError, "consent_revoke_failed", "Could not revoke prior provider consent")
-		return
-	}
-	if _, err := target.store.InvalidatePersonInferenceCheck(r.Context(), target.fingerprint); err != nil {
-		writeError(w, http.StatusInternalServerError, "check_invalidation_failed", "Could not invalidate prior provider check")
+	if err := target.revokeAuthority(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "authority_revoke_failed", "Could not revoke prior provider consent and check")
 		return
 	}
 	if _, err := target.credentials.DeleteIfRevision(target.name, ifMatch); err != nil {
@@ -558,10 +545,24 @@ func (s *Server) handleDeletePeopleInferenceKey(w http.ResponseWriter, r *http.R
 }
 
 type peopleInferenceKeyTarget struct {
-	name        string
-	fingerprint string
-	store       peopleInferenceCredentialAuthorityStore
-	credentials *peoplesweep.FileCredentialStore
+	name         string
+	fingerprints []string
+	store        peopleInferenceCredentialAuthorityStore
+	credentials  *peoplesweep.FileCredentialStore
+}
+
+// A saved policy may differ from the daemon's policy while restart is pending.
+// Both use the same profile key, so replacing it invalidates both authorities.
+func (target peopleInferenceKeyTarget) revokeAuthority(ctx context.Context) error {
+	for _, fingerprint := range target.fingerprints {
+		if _, err := target.store.RevokePersonInferenceConsent(ctx, fingerprint, "web"); err != nil {
+			return err
+		}
+		if _, err := target.store.InvalidatePersonInferenceCheck(ctx, fingerprint); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // peopleInferenceKeyTarget validates the trusted destination and revision
@@ -616,7 +617,18 @@ func (s *Server) peopleInferenceKeyTarget(
 		writeError(w, http.StatusNotFound, "credential_not_found", "No stored people provider credential was found")
 		return peopleInferenceKeyTarget{}, false
 	}
-	return peopleInferenceKeyTarget{name: name, fingerprint: profile.Fingerprint, store: st, credentials: credentials}, true
+	fingerprints := []string{profile.Fingerprint}
+	if s.cfg.People.Sweep.Enabled && s.cfg.People.Sweep.Provider.Name == name {
+		running, err := s.cfg.People.Sweep.Profile()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "running_provider_invalid", "Running people provider policy is invalid")
+			return peopleInferenceKeyTarget{}, false
+		}
+		if running.Fingerprint != profile.Fingerprint {
+			fingerprints = append(fingerprints, running.Fingerprint)
+		}
+	}
+	return peopleInferenceKeyTarget{name: name, fingerprints: fingerprints, store: st, credentials: credentials}, true
 }
 
 func (s *Server) peopleInferenceProfileForRequest(
@@ -660,6 +672,10 @@ func (s *Server) handleCheckPeopleInferenceProvider(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
+	if profile.Protocol == peoplesweep.ProtocolCodexAppServer && !peoplesweep.CodexReleaseAvailable() {
+		writeError(w, http.StatusServiceUnavailable, "codex_unavailable", "Codex inference is unavailable until an inference build is approved")
+		return
+	}
 	st, ok := s.store.(peopleInferenceCheckStore)
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "people_inference_unavailable", "People inference store is unavailable")
@@ -676,8 +692,16 @@ func (s *Server) handleCheckPeopleInferenceProvider(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusServiceUnavailable, "provider_unavailable", "People inference provider is unavailable")
 		return
 	}
-	resolver := peoplesweep.NewCredentialResolver(
-		peoplesweep.NewFileCredentialStore(configured.TokensDir()), os.LookupEnv)
+	credentials := peoplesweep.NewFileCredentialStore(configured.TokensDir())
+	var credentialRevision string
+	if selected.Providers[selected.Provider.Name].Credential == peoplesweep.CredentialStored {
+		credentialRevision, _, err = credentials.Revision(selected.Provider.Name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "credential_store_unavailable", "People provider credential store is unavailable")
+			return
+		}
+	}
+	resolver := peoplesweep.NewCredentialResolver(credentials, os.LookupEnv)
 	runner, err := peoplesweep.NewRunner(selected, st, registry, resolver)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "provider_unavailable", "People inference provider is unavailable")
@@ -691,6 +715,29 @@ func (s *Server) handleCheckPeopleInferenceProvider(w http.ResponseWriter, r *ht
 	if !peoplesweep.DriverVersionMatches(profile.DriverVersion, response.ProviderVersion) {
 		writeError(w, http.StatusBadGateway, "provider_check_failed", "Synthetic provider check returned the wrong driver")
 		return
+	}
+	if s.operationGate != nil {
+		done, ok := beginGateWorkBounded(r.Context(), s.operationGate, "people provider check")
+		if !ok {
+			writeOperationGateBusy(w, r, s.operationGate)
+			return
+		}
+		defer done()
+	}
+	// The policy or key may have changed while the provider was responding.
+	if _, _, _, _, ok := s.peopleInferenceProfileForRequest(w, r, ifMatch); !ok {
+		return
+	}
+	if credentialRevision != "" {
+		current, _, err := credentials.Revision(selected.Provider.Name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "credential_store_unavailable", "People provider credential store is unavailable")
+			return
+		}
+		if current != credentialRevision {
+			writeError(w, http.StatusConflict, "credential_conflict", "People provider credential changed during the check; retry")
+			return
+		}
 	}
 	if _, err := st.EnsurePersonInferenceProfile(r.Context(), profile); err != nil {
 		writeError(w, http.StatusInternalServerError, "provider_check_store_failed", "Could not record provider check")

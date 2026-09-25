@@ -38,104 +38,23 @@ type countingExitCodexProcess struct {
 	kills atomic.Int64
 }
 
-type killedExitCodexProcess struct {
-	finishedCodexProcess
-
-	killed chan struct{}
-	kills  atomic.Int64
-}
-
-type failedExitCodexProcess struct {
-	countingExitCodexProcess
-}
-
-func (*failedExitCodexProcess) Wait() error { return errors.New("synthetic nonzero exit") }
-
-func (p *killedExitCodexProcess) Wait() error {
-	<-p.killed
-	return errors.New("synthetic killed exit")
-}
-
-func (p *killedExitCodexProcess) Kill() error {
-	p.kills.Add(1)
-	close(p.killed)
-	return nil
-}
-
-func TestCodexKilledAfterExitGraceRejectsSkippedAuthRefresh(t *testing.T) {
-	assertChecks := assert.New(t)
-	requireChecks := require.New(t)
-	workRoot := t.TempDir()
-	child := &killedExitCodexProcess{killed: make(chan struct{})}
-	child.finishedCodexProcess = finishedCodexProcess{
-		stdin:  discardCodexWriteCloser{Writer: io.Discard},
-		stdout: io.NopCloser(bytes.NewReader(nil)), stderr: io.NopCloser(bytes.NewReader(nil)),
-	}
-	var commits atomic.Int64
-	process := &codexOwnedProcess{
-		RPCProcess: child, workRoot: workRoot, childExited: make(chan struct{}), commitAuth: true,
-		refreshCommit: func() error { commits.Add(1); return nil },
-	}
-	client := &CodexRPCClient{Process: process}
-	requireChecks.NoError(client.initialize())
-
-	err := finishCodexProcess(t.Context(), process, client, false)
-	requireChecks.ErrorIs(err, ErrCodexAuthRefreshUnsafe)
-	assertChecks.Equal(int64(1), child.kills.Load())
-	assertChecks.Zero(commits.Load())
-	assertChecks.NoDirExists(workRoot)
-}
-
-func TestCodexNaturalNonzeroExitRejectsSkippedAuthRefresh(t *testing.T) {
-	assertChecks := assert.New(t)
-	requireChecks := require.New(t)
-	workRoot := t.TempDir()
-	child := &failedExitCodexProcess{}
-	child.finishedCodexProcess = finishedCodexProcess{
-		stdin:  discardCodexWriteCloser{Writer: io.Discard},
-		stdout: io.NopCloser(bytes.NewReader(nil)), stderr: io.NopCloser(bytes.NewReader(nil)),
-	}
-	var commits atomic.Int64
-	process := &codexOwnedProcess{
-		RPCProcess: child, workRoot: workRoot, childExited: make(chan struct{}), commitAuth: true,
-		refreshCommit: func() error { commits.Add(1); return nil },
-	}
-	client := &CodexRPCClient{Process: process}
-	requireChecks.NoError(client.initialize())
-
-	err := finishCodexProcess(t.Context(), process, client, false)
-	requireChecks.ErrorIs(err, ErrCodexAuthRefreshUnsafe)
-	assertChecks.Zero(child.kills.Load())
-	assertChecks.Zero(commits.Load())
-	assertChecks.NoDirExists(workRoot)
-}
-
-func TestCodexKilledInferenceRejectsSkippedAuthRefresh(t *testing.T) {
-	assertChecks := assert.New(t)
-	requireChecks := require.New(t)
-	workRoot := t.TempDir()
-	child := finishedCodexProcess{
-		stdin:  discardCodexWriteCloser{Writer: io.Discard},
-		stdout: io.NopCloser(bytes.NewReader(nil)), stderr: io.NopCloser(bytes.NewReader(nil)),
-	}
-	var commits atomic.Int64
-	process := &codexOwnedProcess{
-		RPCProcess: child, workRoot: workRoot, childExited: make(chan struct{}), commitAuth: true,
-		refreshCommit: func() error { commits.Add(1); return nil },
-	}
-	client := &CodexRPCClient{Process: process}
-	requireChecks.NoError(client.initialize())
-	requireChecks.NoError(process.Kill())
-
-	err := finishCodexProcess(t.Context(), process, client, false)
-	requireChecks.ErrorIs(err, ErrCodexAuthRefreshUnsafe)
-	assertChecks.Zero(commits.Load())
-	assertChecks.NoDirExists(workRoot)
-}
-
 func (p *countingExitCodexProcess) Kill() error {
 	p.kills.Add(1)
 	return nil
+}
+
+func TestCodexForcedCleanupReportsAuthRefreshFailure(t *testing.T) {
+	process := &codexOwnedProcess{
+		RPCProcess: finishedCodexProcess{
+			stdin:  discardCodexWriteCloser{Writer: io.Discard},
+			stdout: io.NopCloser(bytes.NewReader(nil)), stderr: io.NopCloser(bytes.NewReader(nil)),
+		},
+		workRoot:      t.TempDir(),
+		refreshCommit: func() error { return ErrCodexAuthAccountChanged },
+	}
+	client := &CodexRPCClient{Process: process}
+	require.NoError(t, client.initialize())
+	require.ErrorIs(t, finishCodexProcess(t.Context(), process, client, true), ErrCodexAuthAccountChanged)
 }
 
 func TestCodexCleanExitWaitsForAuthCommitBeforeRemovingWorkRoot(t *testing.T) {
@@ -148,7 +67,7 @@ func TestCodexCleanExitWaitsForAuthCommitBeforeRemovingWorkRoot(t *testing.T) {
 		stdout: io.NopCloser(bytes.NewReader(nil)), stderr: io.NopCloser(bytes.NewReader(nil)),
 	}
 	process := &codexOwnedProcess{
-		RPCProcess: child, workRoot: workRoot, childExited: make(chan struct{}), commitAuth: true,
+		RPCProcess: child, workRoot: workRoot, childExited: make(chan struct{}),
 		refreshCommit: func() error {
 			time.Sleep(150 * time.Millisecond)
 			return nil

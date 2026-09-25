@@ -2,6 +2,8 @@ package personenrollment
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,6 +14,58 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestServiceRemoveStoredProfileCredentials(t *testing.T) {
+	if !peoplesweep.StoredCredentialsSupported() {
+		t.Skip("stored credentials require Unix permissions")
+	}
+	for _, state := range []string{"never saved", "already cleared", "missing lock marker"} {
+		t.Run(state, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			configured := config.NewDefaultConfig()
+			configured.HomeDir = t.TempDir()
+			configured.Data.DataDir = configured.HomeDir
+			require.NoError(configured.Save())
+			service := NewService(configured.ConfigFilePath(), testutil.NewTestStore(t))
+			before, err := config.ReadConfigFile(configured.ConfigFilePath())
+			require.NoError(err)
+			provider, err := peoplesweep.PresetProviderConfig("openai", "example-model")
+			require.NoError(err)
+			provider.RetentionPosture = "operator-confirmed"
+			provider.TrainingPosture = "operator-confirmed"
+			provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceConversationText}
+			provider.SourceSince = "2025-01-01"
+			created, err := service.CreateProfile(before.ETag, "remote", provider)
+			require.NoError(err)
+			credentials := peoplesweep.NewFileCredentialStore(configured.TokensDir())
+			if state != "never saved" {
+				require.NoError(os.MkdirAll(configured.TokensDir(), 0o700))
+				require.NoError(credentials.Save("remote", peoplesweep.NewCredential(peoplesweep.AuthBearer, "synthetic-key")))
+				if state == "already cleared" {
+					guard, err := credentials.PreflightDelete("remote")
+					require.NoError(err)
+					require.NoError(credentials.Delete("remote", guard))
+					require.NoError(guard.Close())
+				} else {
+					require.NoError(os.Remove(filepath.Join(configured.TokensDir(), "people-providers", ".credentials.lock")))
+				}
+			}
+			_, err = service.RemoveProfile(t.Context(), created.ETag, "remote", "test", credentials)
+			if state == "missing lock marker" {
+				require.Error(err)
+				after, err := config.ReadConfigFile(configured.ConfigFilePath())
+				require.NoError(err)
+				assert.Equal(created.ETag, after.ETag)
+				return
+			}
+			require.NoError(err)
+			after, err := config.Load(configured.ConfigFilePath(), "")
+			require.NoError(err)
+			assert.NotContains(after.People.Sweep.Providers, "remote")
+		})
+	}
+}
 
 func TestServiceCreatesProfileWithoutSelectionAndRequiresCheckAndConsent(t *testing.T) {
 	assert := assert.New(t)

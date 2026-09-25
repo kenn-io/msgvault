@@ -287,6 +287,9 @@ func defaultPersonProviderCommandDeps(contexts ...context.Context) personProvide
 			)
 		},
 		newCodexClient: func(config peoplesweep.Config) (personProviderCodexClient, error) {
+			if !peoplesweep.CodexReleaseAvailable() {
+				return nil, peoplesweep.ErrCodexIsolationUnreleased
+			}
 			_, provider, err := config.ActiveProviderConfig()
 			if err != nil {
 				return nil, err

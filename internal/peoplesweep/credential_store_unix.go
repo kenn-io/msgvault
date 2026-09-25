@@ -391,6 +391,9 @@ func (s *FileCredentialStore) openExistingCredentialDelete(
 	}()
 	target.tokensFD, retErr = unix.Open(s.tokensDir,
 		unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if errors.Is(retErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("%w for profile %q: %w", ErrCredentialNotFound, profileName, retErr)
+	}
 	if retErr != nil {
 		return nil, fmt.Errorf("open existing people provider tokens directory without following symlinks: %w", retErr)
 	}
@@ -404,6 +407,9 @@ func (s *FileCredentialStore) openExistingCredentialDelete(
 
 	target.rootFD, retErr = unix.Openat(target.tokensFD, credentialNamespace,
 		unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if errors.Is(retErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("%w for profile %q: %w", ErrCredentialNotFound, profileName, retErr)
+	}
 	if retErr != nil {
 		return nil, fmt.Errorf("open existing people provider credential directory without following symlinks: %w", retErr)
 	}

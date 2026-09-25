@@ -88,7 +88,7 @@ export GOLANGCI_LINT_CACHE
 # serialize one another while duplicate runners in one worktree can wait.
 GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 
-.PHONY: build build-release install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-test-people-inference-viewport web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build: web-embed
@@ -330,9 +330,6 @@ web-test:
 web-test-browser: build
 	cd web && bun run test:browser
 
-web-test-people-inference-viewport:
-	cd web && bun run test:people-inference-viewport
-
 # Browser gates use the same digest-pinned Playwright environment as CI.
 # Build the real daemon and embedded UI before Playwright test timeouts start.
 web-e2e: build
@@ -537,7 +534,6 @@ help:
 	@echo "  web-check      - Check browser types and generated API artifacts"
 	@echo "  web-test       - Run browser application unit tests"
 	@echo "  web-test-browser - Run browser application Playwright tests"
-	@echo "  web-test-people-inference-viewport - Run the test-only people sweep viewport fixture"
 	@echo "  web-build      - Build the browser application"
 	@echo "  web-embed      - Build, stage, and validate browser assets for Go embedding"
 	@echo "  web-assets-check - Validate the release asset graph and run the validator's tests"

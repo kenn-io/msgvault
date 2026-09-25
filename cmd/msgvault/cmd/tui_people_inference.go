@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/tui"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -24,103 +25,10 @@ func (b *tuiDaemonSettingsBackend) LoadPeopleInferenceStatus(ctx context.Context
 	}
 	response, err := client.GetSettingsPeopleInferenceWithResponse(ctx)
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return tui.PeopleInferenceStatus{}, peopleInferenceHTTPError("load people inference status", status, err)
+		return tui.PeopleInferenceStatus{}, peopleInferenceHTTPError("load people inference status", response, err)
 	}
 	if response.JSON200 == nil {
 		return tui.PeopleInferenceStatus{}, errors.New("load people inference status: empty response")
-	}
-	return tuiPeopleInferenceStatus(response.JSON200), nil
-}
-
-func (b *tuiDaemonSettingsBackend) CreatePeopleInferencePreset(
-	ctx context.Context, name string, request tui.PeopleInferencePresetRequest,
-) (tui.PeopleInferenceStatus, error) {
-	client, err := b.peopleInferenceClient()
-	if err != nil {
-		return tui.PeopleInferenceStatus{}, err
-	}
-	etag, err := b.peopleInferenceETag(ctx, client)
-	if err != nil {
-		return tui.PeopleInferenceStatus{}, err
-	}
-	body := generated.PeopleInferencePresetCreateRequest{
-		PresetID:         generated.PeopleInferencePresetCreateRequestPresetID(request.PresetID),
-		Model:            request.Model,
-		RetentionPosture: request.RetentionPosture,
-		TrainingPosture:  request.TrainingPosture,
-		AllowedSources:   request.AllowedSources,
-		SourceSince:      request.SourceSince,
-		AllowSensitive:   request.AllowSensitive,
-	}
-	if request.SourceUntil != "" {
-		body.SourceUntil = &request.SourceUntil
-	}
-	response, err := client.PutSettingsPeopleInferencePresetWithResponse(ctx,
-		&generated.PutSettingsPeopleInferencePresetRequestOptions{
-			PathParams: &generated.PutSettingsPeopleInferencePresetPath{Name: name},
-			Header:     &generated.PutSettingsPeopleInferencePresetHeaders{IfMatch: etag},
-			Body:       &body,
-		})
-	if response != nil && response.StatusCode == http.StatusPreconditionFailed {
-		return tui.PeopleInferenceStatus{}, &tui.SettingsConflictError{Scope: tui.SettingsConflictConfig,
-			Err: peopleInferenceHTTPError("create people inference preset", response.StatusCode, err)}
-	}
-	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return tui.PeopleInferenceStatus{}, peopleInferenceHTTPError("create people inference preset", status, err)
-	}
-	if response.JSON200 == nil {
-		return tui.PeopleInferenceStatus{}, errors.New("create people inference preset: empty response")
-	}
-	return tuiPeopleInferenceStatus(response.JSON200), nil
-}
-
-// SetPeopleInferenceKey writes one API key after reading that profile's own
-// credential revision. The settings config ETag is never a credential CAS.
-func (b *tuiDaemonSettingsBackend) SetPeopleInferenceKey(
-	ctx context.Context, name, value string,
-) (tui.PeopleInferenceStatus, error) {
-	if value == "" {
-		return tui.PeopleInferenceStatus{}, errors.New("people inference API key is required")
-	}
-	client, err := b.peopleInferenceClient()
-	if err != nil {
-		return tui.PeopleInferenceStatus{}, err
-	}
-	revision, err := b.peopleInferenceCredentialRevision(ctx, client, name)
-	if err != nil {
-		return tui.PeopleInferenceStatus{}, err
-	}
-	response, err := client.PutSettingsPeopleInferenceKeyWithResponse(ctx,
-		&generated.PutSettingsPeopleInferenceKeyRequestOptions{
-			PathParams: &generated.PutSettingsPeopleInferenceKeyPath{Name: name},
-			Header:     &generated.PutSettingsPeopleInferenceKeyHeaders{IfMatch: revision},
-			Body:       &generated.PeopleInferenceKeyWriteRequest{Value: value},
-		})
-	if response != nil && response.StatusCode == http.StatusPreconditionFailed {
-		return tui.PeopleInferenceStatus{}, &tui.SettingsConflictError{Scope: tui.SettingsConflictPeopleCredentials,
-			Err: peopleInferenceHTTPError("set people inference key", response.StatusCode, err)}
-	}
-	if response != nil && response.StatusCode == http.StatusConflict && response.JSON409 != nil &&
-		response.JSON409.ErrorData == "provider_binding_changed" {
-		return tui.PeopleInferenceStatus{}, errors.New("provider destination changed; reload settings")
-	}
-	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return tui.PeopleInferenceStatus{}, peopleInferenceHTTPError("set people inference key", status, err)
-	}
-	if response.JSON200 == nil {
-		return tui.PeopleInferenceStatus{}, errors.New("set people inference key: empty response")
 	}
 	return tuiPeopleInferenceStatus(response.JSON200), nil
 }
@@ -143,14 +51,10 @@ func (b *tuiDaemonSettingsBackend) CheckCodexProfile(
 		})
 	if response != nil && response.StatusCode == http.StatusPreconditionFailed {
 		return tui.PeopleInferenceDisclosure{}, &tui.SettingsConflictError{Scope: tui.SettingsConflictConfig,
-			Err: peopleInferenceHTTPError("check people inference profile", response.StatusCode, err)}
+			Err: peopleInferenceHTTPError("check people inference profile", response, err)}
 	}
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return tui.PeopleInferenceDisclosure{}, peopleInferenceHTTPError("check people inference profile", status, err)
+		return tui.PeopleInferenceDisclosure{}, peopleInferenceHTTPError("check people inference profile", response, err)
 	}
 	if response.JSON200 == nil || !response.JSON200.Ok || response.JSON200.Fingerprint == "" {
 		return tui.PeopleInferenceDisclosure{}, errors.New("check people inference profile: no successful check was returned")
@@ -195,7 +99,7 @@ func (b *tuiDaemonSettingsBackend) ConsentCodexProfile(
 		})
 	if response != nil && response.StatusCode == http.StatusPreconditionFailed {
 		return &tui.SettingsConflictError{Scope: tui.SettingsConflictConfig,
-			Err: peopleInferenceHTTPError("consent to people inference profile", response.StatusCode, err)}
+			Err: peopleInferenceHTTPError("consent to people inference profile", response, err)}
 	}
 	if response != nil && response.StatusCode == http.StatusConflict && response.JSON409 != nil {
 		switch response.JSON409.ErrorData {
@@ -206,11 +110,7 @@ func (b *tuiDaemonSettingsBackend) ConsentCodexProfile(
 		}
 	}
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return peopleInferenceHTTPError("consent to people inference profile", status, err)
+		return peopleInferenceHTTPError("consent to people inference profile", response, err)
 	}
 	if response.JSON200 == nil {
 		return errors.New("consent to people inference profile: empty response")
@@ -247,14 +147,10 @@ func (b *tuiDaemonSettingsBackend) RevokePeopleInferenceConsent(
 		})
 	if response != nil && response.StatusCode == http.StatusPreconditionFailed {
 		return tui.PeopleInferenceStatus{}, &tui.SettingsConflictError{Scope: tui.SettingsConflictConfig,
-			Err: peopleInferenceHTTPError("revoke people inference consent", response.StatusCode, err)}
+			Err: peopleInferenceHTTPError("revoke people inference consent", response, err)}
 	}
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return tui.PeopleInferenceStatus{}, peopleInferenceHTTPError("revoke people inference consent", status, err)
+		return tui.PeopleInferenceStatus{}, peopleInferenceHTTPError("revoke people inference consent", response, err)
 	}
 	if response.JSON200 == nil {
 		return tui.PeopleInferenceStatus{}, errors.New("revoke people inference consent: empty response")
@@ -290,14 +186,10 @@ func (b *tuiDaemonSettingsBackend) DisablePeopleInference(
 		})
 	if response != nil && response.StatusCode == http.StatusPreconditionFailed {
 		return tui.PeopleInferenceStatus{}, &tui.SettingsConflictError{Scope: tui.SettingsConflictConfig,
-			Err: peopleInferenceHTTPError("disable people inference", response.StatusCode, err)}
+			Err: peopleInferenceHTTPError("disable people inference", response, err)}
 	}
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return tui.PeopleInferenceStatus{}, peopleInferenceHTTPError("disable people inference", status, err)
+		return tui.PeopleInferenceStatus{}, peopleInferenceHTTPError("disable people inference", response, err)
 	}
 	if response.JSON200 == nil || response.JSON200.ConfiguredEnabled {
 		return tui.PeopleInferenceStatus{}, errors.New("disable people inference: disabled status was not returned")
@@ -329,18 +221,14 @@ func (b *tuiDaemonSettingsBackend) RemovePeopleInferenceProfile(
 		})
 	if response != nil && response.StatusCode == http.StatusPreconditionFailed {
 		return tui.PeopleInferenceStatus{}, &tui.SettingsConflictError{Scope: tui.SettingsConflictConfig,
-			Err: peopleInferenceHTTPError("remove people inference profile", response.StatusCode, err)}
+			Err: peopleInferenceHTTPError("remove people inference profile", response, err)}
 	}
 	if response != nil && response.StatusCode == http.StatusConflict && response.JSON409 != nil &&
 		response.JSON409.ErrorData == "provider_in_use" {
 		return tui.PeopleInferenceStatus{}, errors.New("disable people inference or configure another profile before removing")
 	}
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return tui.PeopleInferenceStatus{}, peopleInferenceHTTPError("remove people inference profile", status, err)
+		return tui.PeopleInferenceStatus{}, peopleInferenceHTTPError("remove people inference profile", response, err)
 	}
 	if response.JSON200 == nil {
 		return tui.PeopleInferenceStatus{}, errors.New("remove people inference profile: empty response")
@@ -369,7 +257,7 @@ func (b *tuiDaemonSettingsBackend) SelectCodexProfile(ctx context.Context, name 
 		})
 	if response != nil && response.StatusCode == http.StatusPreconditionFailed {
 		return &tui.SettingsConflictError{Scope: tui.SettingsConflictConfig,
-			Err: peopleInferenceHTTPError("select people inference profile", response.StatusCode, err)}
+			Err: peopleInferenceHTTPError("select people inference profile", response, err)}
 	}
 	if response != nil && response.StatusCode == http.StatusConflict && response.JSON409 != nil {
 		switch response.JSON409.ErrorData {
@@ -380,11 +268,7 @@ func (b *tuiDaemonSettingsBackend) SelectCodexProfile(ctx context.Context, name 
 		}
 	}
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return peopleInferenceHTTPError("select people inference profile", status, err)
+		return peopleInferenceHTTPError("select people inference profile", response, err)
 	}
 	return nil
 }
@@ -399,11 +283,7 @@ func (b *tuiDaemonSettingsBackend) peopleInferenceClient() (*apiclient.Client, e
 func (b *tuiDaemonSettingsBackend) peopleInferenceETag(ctx context.Context, client *apiclient.Client) (string, error) {
 	response, err := client.GetSettingsPeopleInferenceWithResponse(ctx)
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return "", peopleInferenceHTTPError("load people inference config revision", status, err)
+		return "", peopleInferenceHTTPError("load people inference config revision", response, err)
 	}
 	if response.Headers200 == nil || response.Headers200.ETag == "" {
 		return "", errors.New("people inference status returned no config ETag")
@@ -431,11 +311,7 @@ func (b *tuiDaemonSettingsBackend) peopleInferenceSettingsSnapshot(
 ) (*generated.PeopleInferenceSettingsResponse, string, error) {
 	response, err := client.GetSettingsPeopleInferenceWithResponse(ctx)
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return nil, "", peopleInferenceHTTPError("load people inference status", status, err)
+		return nil, "", peopleInferenceHTTPError("load people inference status", response, err)
 	}
 	if response.JSON200 == nil || response.Headers200 == nil || response.Headers200.ETag == "" {
 		return nil, "", errors.New("people inference status returned no body or config ETag")
@@ -471,43 +347,8 @@ func peopleInferenceDisclosureText(profile generated.PeopleInferenceProfileSetti
 	return strings.Join(lines, "\n")
 }
 
-func (b *tuiDaemonSettingsBackend) peopleInferenceCredentialRevision(
-	ctx context.Context, client *apiclient.Client, name string,
-) (string, error) {
-	response, err := client.GetSettingsPeopleInferenceWithResponse(ctx)
-	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return "", peopleInferenceHTTPError("load people provider credential revision", status, err)
-	}
-	if response.JSON200 == nil {
-		return "", errors.New("load people provider credential revision: empty response")
-	}
-	for _, profile := range response.JSON200.Profiles {
-		if profile.Name != name {
-			continue
-		}
-		if profile.CredentialSource != "stored" || profile.PresetID == nil || *profile.PresetID == "" {
-			return "", errors.New("people inference profile has no stored preset key")
-		}
-		if profile.CredentialRevision == nil || *profile.CredentialRevision == "" {
-			return "", errors.New("people inference profile returned no credential revision")
-		}
-		return *profile.CredentialRevision, nil
-	}
-	return "", errors.New("people inference profile was not found")
-}
-
-func peopleInferenceHTTPError(operation string, status int, err error) error {
-	if err != nil {
-		return fmt.Errorf("%s: %w", operation, err)
-	}
-	if status == 0 {
-		return fmt.Errorf("%s: empty response", operation)
-	}
-	return fmt.Errorf("%s: daemon returned HTTP %d", operation, status)
+func peopleInferenceHTTPError(operation string, response any, err error) error {
+	return fmt.Errorf("%s: %w", operation, daemonclient.APIResponseError(response, err))
 }
 
 func tuiPeopleInferenceStatus(response *generated.PeopleInferenceSettingsResponse) tui.PeopleInferenceStatus {

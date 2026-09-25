@@ -411,41 +411,126 @@ func syntheticCodexAuth(user, workspace, refresh string) []byte {
 }
 
 func TestCodexInferenceCopiesBackRefreshForSameAccount(t *testing.T) {
-	assertChecks := assert.New(t)
-	requireChecks := require.New(t)
+	for _, tc := range []struct {
+		name      string
+		final     string
+		kill      bool
+		exitError bool
+		wantError bool
+	}{
+		{name: "success", final: `{"claims":[]}`},
+		{name: "invalid output", final: `{"wrong":true}`, wantError: true},
+		{name: "killed after grace", final: `{"claims":[]}`, kill: true},
+		{name: "nonzero exit", final: `{"claims":[]}`, exitError: true, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertChecks := assert.New(t)
+			requireChecks := require.New(t)
+			if runtime.GOOS == "windows" {
+				t.Skip("codex auth home permission gates require Unix permission bits")
+			}
+			authHome := t.TempDir()
+			requireChecks.NoError(os.Chmod(authHome, 0o700))
+			initial := syntheticCodexAuth("user-one", "workspace-one", "old-refresh")
+			refreshed := syntheticCodexAuth("user-one", "workspace-one", "new-refresh")
+			requireChecks.NoError(os.WriteFile(filepath.Join(authHome, "auth.json"), initial, 0o600))
+			var workRoot string
+			base := successfulCodexScript(t, &codexTranscript{}, "gpt-test", []string{"high"}, nil, tc.final)
+			killed := make(chan struct{})
+			starter := &recordingCodexStarter{t: t, inspect: func(dir string) { workRoot = dir }, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
+				func(reader *bufio.Reader, stdout, stderr io.Writer) error {
+					if err := os.WriteFile(filepath.Join(workRoot, ".codex", "auth.json"), refreshed, 0o600); err != nil {
+						return err
+					}
+					if err := base(reader, stdout, stderr); err != nil {
+						return err
+					}
+					if tc.kill {
+						<-killed
+					}
+					if tc.kill || tc.exitError {
+						return errors.New("synthetic process failure")
+					}
+					return nil
+				},
+			}}
+			starter.configureProcess = func(process *pipeRPCProcess) { process.onKill = func() { close(killed) } }
+			driver, err := peoplesweep.NewCodexAppServerDriverWithAuthHome(codexTestConfig(), starter, &recordingCodexGate{}, authHome)
+			requireChecks.NoError(err)
+			profile := codexTestProfile(t)
+			prepared, err := driver.Prepare(profile, codexTestRequest())
+			requireChecks.NoError(err)
+			response, err := driver.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
+			if tc.wantError {
+				requireChecks.Error(err)
+				assertChecks.Empty(response.CandidateJSON)
+			} else {
+				requireChecks.NoError(err)
+				assertChecks.JSONEq(`{"claims":[]}`, string(response.CandidateJSON))
+			}
+			contents, err := os.ReadFile(filepath.Join(authHome, "auth.json"))
+			requireChecks.NoError(err)
+			assertChecks.Equal(sha256.Sum256(refreshed), sha256.Sum256(contents))
+			info, err := os.Lstat(filepath.Join(authHome, "auth.json"))
+			requireChecks.NoError(err)
+			assertChecks.Equal(os.FileMode(0o600), info.Mode().Perm())
+			assertChecks.NoDirExists(workRoot)
+		})
+	}
+}
+
+func TestCodexModelListingCopiesBackRefresh(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("codex auth home permission gates require Unix permission bits")
 	}
 	authHome := t.TempDir()
-	requireChecks.NoError(os.Chmod(authHome, 0o700))
-	initial := syntheticCodexAuth("user-one", "workspace-one", "old-refresh")
+	require.NoError(os.Chmod(authHome, 0o700))
+	require.NoError(os.WriteFile(filepath.Join(authHome, "auth.json"), syntheticCodexAuth("user-one", "workspace-one", "old-refresh"), 0o600))
 	refreshed := syntheticCodexAuth("user-one", "workspace-one", "new-refresh")
-	requireChecks.NoError(os.WriteFile(filepath.Join(authHome, "auth.json"), initial, 0o600))
 	var workRoot string
-	base := successfulCodexScript(t, &codexTranscript{}, "gpt-test", []string{"high"}, nil, `{"claims":[]}`)
 	starter := &recordingCodexStarter{t: t, inspect: func(dir string) { workRoot = dir }, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
-		func(reader *bufio.Reader, stdout, stderr io.Writer) error {
-			if err := base(reader, stdout, stderr); err != nil {
-				return err
+		func(reader *bufio.Reader, stdout, _ io.Writer) error {
+			for _, method := range []string{"initialize", "initialized", "model/list"} {
+				line, err := reader.ReadBytes('\n')
+				if err != nil {
+					return fmt.Errorf("read model-list request: %w", err)
+				}
+				var request struct {
+					ID     int64  `json:"id"`
+					Method string `json:"method"`
+				}
+				if err := json.Unmarshal(line, &request); err != nil {
+					return err
+				}
+				if request.Method != method {
+					return fmt.Errorf("expected %s, got %s", method, request.Method)
+				}
+				if method == "initialized" {
+					continue
+				}
+				result := map[string]any{}
+				if method == "model/list" {
+					if err := os.WriteFile(filepath.Join(workRoot, ".codex", "auth.json"), refreshed, 0o600); err != nil {
+						return err
+					}
+					result["data"] = []any{}
+				}
+				if err := writeRPCFrame(stdout, map[string]any{"id": request.ID, "result": result}); err != nil {
+					return err
+				}
 			}
-			return os.WriteFile(filepath.Join(workRoot, ".codex", "auth.json"), refreshed, 0o600)
+			return nil
 		},
 	}}
 	driver, err := peoplesweep.NewCodexAppServerDriverWithAuthHome(codexTestConfig(), starter, &recordingCodexGate{}, authHome)
-	requireChecks.NoError(err)
-	profile := codexTestProfile(t)
-	prepared, err := driver.Prepare(profile, codexTestRequest())
-	requireChecks.NoError(err)
-	response, err := driver.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
-	requireChecks.NoError(err)
-	assertChecks.JSONEq(`{"claims":[]}`, string(response.CandidateJSON))
+	require.NoError(err)
+	_, err = driver.ListModels(t.Context())
+	require.NoError(err)
 	contents, err := os.ReadFile(filepath.Join(authHome, "auth.json"))
-	requireChecks.NoError(err)
-	assertChecks.Equal(sha256.Sum256(refreshed), sha256.Sum256(contents))
-	info, err := os.Lstat(filepath.Join(authHome, "auth.json"))
-	requireChecks.NoError(err)
-	assertChecks.Equal(os.FileMode(0o600), info.Mode().Perm())
-	assertChecks.NoDirExists(workRoot)
+	require.NoError(err)
+	assert.Equal(refreshed, contents)
 }
 
 func TestCodexInferenceRejectsChangedAccountDuringRefresh(t *testing.T) {

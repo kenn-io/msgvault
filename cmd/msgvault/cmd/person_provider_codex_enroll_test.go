@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/tui"
 )
 
@@ -212,4 +213,14 @@ func TestChooseCodexEnrollmentModelPromptsForAvailableChoice(t *testing.T) {
 	assert.Equal("low", effort)
 	assert.Contains(output.String(), "gpt-test")
 	assert.Contains(output.String(), "low, medium")
+}
+
+func TestCodexProductionClientsRefuseUnreleasedBuild(t *testing.T) {
+	if peoplesweep.CodexReleaseAvailable() {
+		t.Skip("Codex release has been approved")
+	}
+	_, err := defaultPersonProviderCommandDeps().newCodexClient(peoplesweep.Config{})
+	require.ErrorIs(t, err, peoplesweep.ErrCodexIsolationUnreleased)
+	_, _, err = defaultCodexEnrollDeps().openBackend(t.Context())
+	require.ErrorIs(t, err, peoplesweep.ErrCodexIsolationUnreleased)
 }

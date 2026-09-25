@@ -47,25 +47,22 @@ const (
 
 	// Recommended provider defaults. These are the values setup writes when
 	// nothing is configured; every one of them remains settable per lane.
-	setupVoyageKeyEnv       = "VOYAGE_API_KEY" // #nosec G101 -- environment variable name, not a credential.
-	setupOpenAIKeyEnv       = "OPENAI_API_KEY" // #nosec G101 -- environment variable name, not a credential.
-	setupVoyageEndpoint     = "https://api.voyageai.com/v1"
-	setupVoyageTextModel    = "voyage-context-4"
-	setupVoyageTextDim      = 1024
-	setupOpenAIEndpoint     = "https://api.openai.com/v1"
-	setupOpenAITextModel    = "text-embedding-3-small"
-	setupOpenAITextDim      = 1536
-	setupOllamaTextModel    = "nomic-embed-text"
-	setupOllamaTextDim      = 768
-	setupOllamaDocPrefix    = "search_document: "
-	setupOllamaQueryPrefix  = "search_query: "
-	setupOllamaMaxInput     = 2000
-	setupEmbedCron          = "*/15 * * * *"
-	setupInferenceModel     = "gpt-5.6-luna"
-	setupInferenceReasoning = "medium"
-	setupInferenceProfile   = "openai"
-	setupOllamaProfile      = "ollama"
-	setupPostureDeclared    = "provider-declared"
+	setupVoyageKeyEnv      = "VOYAGE_API_KEY" // #nosec G101 -- environment variable name, not a credential.
+	setupOpenAIKeyEnv      = "OPENAI_API_KEY" // #nosec G101 -- environment variable name, not a credential.
+	setupVoyageEndpoint    = "https://api.voyageai.com/v1"
+	setupVoyageTextModel   = "voyage-context-4"
+	setupVoyageTextDim     = 1024
+	setupOpenAIEndpoint    = "https://api.openai.com/v1"
+	setupOpenAITextModel   = "text-embedding-3-small"
+	setupOpenAITextDim     = 1536
+	setupOllamaTextModel   = "nomic-embed-text"
+	setupOllamaTextDim     = 768
+	setupOllamaDocPrefix   = "search_document: "
+	setupOllamaQueryPrefix = "search_query: "
+	setupOllamaMaxInput    = 2000
+	setupEmbedCron         = "*/15 * * * *"
+	setupOllamaProfile     = "ollama"
+	setupPostureDeclared   = "provider-declared"
 
 	setupVoyageManifestName  = "voyage-capabilities.json"
 	setupMistralManifestName = "mistral-capabilities.json"

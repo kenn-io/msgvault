@@ -264,7 +264,7 @@ func TestPeopleCodexLoginRevokesPriorAccountAuthorityBeforeDeviceFlow(t *testing
 		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
 		SourceSince:    "2025-01-01", RequestTimeout: time.Minute,
 	}
-	_, err = personenrollment.NewService(path, st).CreateProfile(before.ETag, "subscription", provider)
+	created, err := personenrollment.NewService(path, st).CreateProfile(before.ETag, "subscription", provider)
 	require.NoError(err)
 	configured, err := config.Load(path, "")
 	require.NoError(err)
@@ -282,7 +282,23 @@ func TestPeopleCodexLoginRevokesPriorAccountAuthorityBeforeDeviceFlow(t *testing
 	}))
 	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "test")
 	require.NoError(err)
+	if !peoplesweep.CodexReleaseAvailable() {
+		check := performSettingsRequest(t, srv, http.MethodPost,
+			peopleInferenceSettingsPath+"/providers/subscription/check", nil, created.ETag, "")
+		assert.Equal(http.StatusServiceUnavailable, check.Code, check.Body.String())
+		login := performSettingsRequest(t, srv, http.MethodPost,
+			peopleInferenceSettingsPath+"/codex/login", []byte(`{"name":"replacement"}`), "", "")
+		assert.Equal(http.StatusServiceUnavailable, login.Code, login.Body.String())
+		consented, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
+		require.NoError(err)
+		assert.True(consented)
+		// The remaining protocol test injects a client without launching Codex.
+		srv = NewServer(srv.cfg, st, nil, srv.logger)
+	}
 	srv.peopleCodexLogins = newPeopleCodexLogins(completedCodexLoginClient{}, time.Now)
+	duplicate := performSettingsRequest(t, srv, http.MethodPost,
+		peopleInferenceSettingsPath+"/codex/login", []byte(`{"name":"subscription"}`), "", "")
+	assert.Equal(http.StatusConflict, duplicate.Code, duplicate.Body.String())
 	invalid := performSettingsRequest(t, srv, http.MethodPost,
 		peopleInferenceSettingsPath+"/codex/login", []byte(`{"name":"bad name"}`), "", "")
 	assert.Equal(http.StatusBadRequest, invalid.Code)
@@ -300,21 +316,31 @@ func TestPeopleCodexLoginRevokesPriorAccountAuthorityBeforeDeviceFlow(t *testing
 	assert.False(checked)
 }
 
-func TestPeopleCodexLoginManagerUsesPrivateDaemonAuthHome(t *testing.T) {
+func TestPeopleCodexLoginUnavailableLeavesCredentialsAndConfigUntouched(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	if runtime.GOOS != "linux" {
-		t.Skip("Codex enrollment launcher is Linux-only")
+	if peoplesweep.CodexReleaseAvailable() {
+		t.Skip("this build has an approved Codex release")
 	}
-	srv, _ := newSettingsTestServer(t, "")
-	manager, err := srv.codexLoginManager()
+	srv, path := newSettingsTestServer(t, "")
+	before, err := config.ReadConfigFile(path)
 	require.NoError(err)
-	require.NotNil(manager)
+	for _, request := range []struct{ method, path, body string }{
+		{http.MethodPost, "/codex/login", `{"name":"subscription"}`},
+		{http.MethodGet, "/codex/login/example", ""},
+		{http.MethodDelete, "/codex/login/example", ""},
+		{http.MethodGet, "/codex/login/example/models", ""},
+		{http.MethodPut, "/codex/login/example/profile", `{}`},
+	} {
+		response := performSettingsRequest(t, srv, request.method, peopleInferenceSettingsPath+request.path,
+			[]byte(request.body), before.ETag, "")
+		assert.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+		assert.Contains(response.Body.String(), "codex_unavailable")
+	}
 	authHome := filepath.Join(srv.cfg.TokensDir(), "people-codex")
-	info, err := os.Lstat(authHome)
+	_, err = os.Lstat(authHome)
+	require.ErrorIs(err, os.ErrNotExist)
+	after, err := config.ReadConfigFile(path)
 	require.NoError(err)
-	assert.True(info.IsDir())
-	assert.Equal(os.FileMode(0o700), info.Mode().Perm())
-	_, err = os.Lstat(filepath.Join(authHome, "auth.json"))
-	assert.ErrorIs(err, os.ErrNotExist)
+	assert.Equal(before.ETag, after.ETag)
 }

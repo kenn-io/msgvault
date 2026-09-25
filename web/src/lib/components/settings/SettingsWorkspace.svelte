@@ -48,7 +48,6 @@
   import type { CardDAVSettingsRequest, SettingsNavigationTarget } from '../../carddav/navigation';
   import CardDAVSettingsWorkspace from './CardDAVSettingsWorkspace.svelte';
   import PeopleInferenceSettings from './PeopleInferenceSettings.svelte';
-  import { PeopleInferenceHTTPPort } from '../../settings/people-inference-http-port';
   import CronField from './CronField.svelte';
   import PersonEnrichmentProviderCard from './PersonEnrichmentProviderCard.svelte';
   import PersonEnrichmentProviderCreator from './PersonEnrichmentProviderCreator.svelte';
@@ -107,7 +106,6 @@
   let root = $state<HTMLElement>();
   let consumedCategoryRequestKey: number | undefined;
   let focusedNavigationSettingKey: string | undefined;
-  const peopleInferencePort = $derived(new PeopleInferenceHTTPPort(client));
   const settingsGroups = $derived(groupSettings(settings, groups));
   const categories: SettingsCategory[] = $derived([
     ...settingsGroups.map((group) => ({ id: group.id, label: group.label })),
@@ -643,7 +641,7 @@
             onSettingsRefresh={() => loadSettings(true)}
           />
         {:else if activeId === 'people'}
-          <PeopleInferenceSettings port={peopleInferencePort} />
+          <PeopleInferenceSettings {client} />
         {:else}
           {#each settingsGroups.filter((candidate) => candidate.id === activeId) as group (group.id)}
             {@const posture = restartPosture(group.settings)}

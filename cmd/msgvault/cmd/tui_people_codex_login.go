@@ -22,11 +22,7 @@ func (b *tuiDaemonSettingsBackend) StartCodexLogin(ctx context.Context, name str
 			Body: &generated.PeopleCodexLoginRequest{Name: name},
 		})
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return tui.CodexDeviceLogin{}, peopleInferenceHTTPError("start Codex device login", status, err)
+		return tui.CodexDeviceLogin{}, peopleInferenceHTTPError("start Codex device login", response, err)
 	}
 	if response.JSON200 == nil || response.JSON200.SessionID == "" ||
 		response.JSON200.VerificationURL == "" || response.JSON200.UserCode == "" ||
@@ -34,8 +30,8 @@ func (b *tuiDaemonSettingsBackend) StartCodexLogin(ctx context.Context, name str
 		return tui.CodexDeviceLogin{}, errors.New("start Codex device login: incomplete response")
 	}
 	return tui.CodexDeviceLogin{
-		DraftID: response.JSON200.SessionID, SessionID: response.JSON200.SessionID,
-		URL: response.JSON200.VerificationURL, Code: response.JSON200.UserCode,
+		SessionID: response.JSON200.SessionID,
+		URL:       response.JSON200.VerificationURL, Code: response.JSON200.UserCode,
 		Deadline: response.JSON200.LocalDeadline,
 	}, nil
 }
@@ -50,11 +46,8 @@ func (b *tuiDaemonSettingsBackend) PollCodexLogin(ctx context.Context, session s
 			PathParams: &generated.GetSettingsPeopleCodexLoginPath{ID: session},
 		})
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return tui.CodexLoginPoll{}, peopleInferenceHTTPError("poll Codex device login", status, err)
+		return tui.CodexLoginPoll{Failed: response != nil && response.StatusCode == http.StatusNotFound},
+			peopleInferenceHTTPError("poll Codex device login", response, err)
 	}
 	if response.JSON200 == nil {
 		return tui.CodexLoginPoll{}, errors.New("poll Codex device login: empty response")
@@ -65,11 +58,11 @@ func (b *tuiDaemonSettingsBackend) PollCodexLogin(ctx context.Context, session s
 	case "pending":
 		return tui.CodexLoginPoll{}, nil
 	case "failed":
-		return tui.CodexLoginPoll{}, errors.New("codex device login failed")
+		return tui.CodexLoginPoll{Failed: true}, errors.New("codex device login failed")
 	case "cancelled":
-		return tui.CodexLoginPoll{}, errors.New("codex device login was cancelled")
+		return tui.CodexLoginPoll{Failed: true}, errors.New("codex device login was cancelled")
 	default:
-		return tui.CodexLoginPoll{}, errors.New("codex device login returned an unknown state")
+		return tui.CodexLoginPoll{Failed: true}, errors.New("codex device login returned an unknown state")
 	}
 }
 
@@ -83,11 +76,7 @@ func (b *tuiDaemonSettingsBackend) CancelCodexLogin(ctx context.Context, session
 			PathParams: &generated.CancelSettingsPeopleCodexLoginPath{ID: session},
 		})
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return peopleInferenceHTTPError("cancel Codex device login", status, err)
+		return peopleInferenceHTTPError("cancel Codex device login", response, err)
 	}
 	if response.JSON200 == nil || response.JSON200.State != "cancelled" {
 		return errors.New("cancel Codex device login: cancellation was not confirmed")
@@ -105,11 +94,7 @@ func (b *tuiDaemonSettingsBackend) ListCodexModels(ctx context.Context, session 
 			PathParams: &generated.GetSettingsPeopleCodexModelsPath{ID: session},
 		})
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return nil, peopleInferenceHTTPError("list Codex models", status, err)
+		return nil, peopleInferenceHTTPError("list Codex models", response, err)
 	}
 	if response.JSON200 == nil {
 		return nil, errors.New("list Codex models: empty response")
@@ -154,14 +139,10 @@ func (b *tuiDaemonSettingsBackend) SaveCodexProfile(
 		})
 	if response != nil && response.StatusCode == http.StatusPreconditionFailed {
 		return "", &tui.SettingsConflictError{Scope: tui.SettingsConflictConfig,
-			Err: peopleInferenceHTTPError("save Codex profile", response.StatusCode, err)}
+			Err: peopleInferenceHTTPError("save Codex profile", response, err)}
 	}
 	if err != nil || response == nil || response.StatusCode != http.StatusOK {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		return "", peopleInferenceHTTPError("save Codex profile", status, err)
+		return "", peopleInferenceHTTPError("save Codex profile", response, err)
 	}
 	if response.JSON200 == nil {
 		return "", errors.New("save Codex profile: empty response")

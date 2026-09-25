@@ -2228,6 +2228,64 @@ JSON contains a `people` array and optional `next_cursor`. Each person retains t
 
 ---
 
+## person provider add
+
+Create and synthetically check a named people inference profile. Select a
+built-in preset to bind its protocol, endpoint, and authentication scheme:
+
+```bash
+msgvault person provider add primary --provider openrouter --model <model> \
+  --credential-env OPENROUTER_API_KEY --retention-posture <assertion> \
+  --training-posture <assertion> --source conversation_text \
+  --source-since 2026-01-01 --allow-sensitive=true --yes
+msgvault person provider consent primary --yes
+msgvault person provider use primary
+```
+
+`--provider` accepts `openai`, `openrouter`, or `venice` and requires an explicit
+model and privacy policy. It cannot be combined with `--custom` or
+`--accept-catalog-prices`; conflicting protocol, endpoint, or auth overrides
+are rejected. `--credential-env` reads only the named host variable. Alternatively,
+`--api-key-stdin` reads a key from standard input, or an interactive terminal
+prompts for it. A successful synthetic check does not grant consent or select
+the profile. See [profile automation](usage/people-automation.md) for custom
+protocol profiles and policy fields.
+
+## person provider enroll-codex
+
+Create, check, consent to, and select a new Codex profile through the daemon.
+**Codex enrollment is unavailable in this release:** no Codex build is approved.
+The daemon returns HTTP 503 before changing credentials or consent. This command
+requires a terminal and never starts a noninteractive device login.
+
+```bash
+msgvault person provider enroll-codex <new-name> \
+  --retention-posture <assertion> --training-posture <assertion> \
+  --source conversation_text --source-since 2026-01-01 --allow-sensitive=true
+```
+
+The gated flow prints a verification URL, user code, and local deadline, waits
+for sign-in, then prompts for an available model and reasoning effort. Existing
+profile names are rejected. After saving, a synthetic check and separate
+consent are required before selection. Declining consent leaves the saved
+profile unselected. Restart the daemon when the reported running profile differs.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--model` | prompt | Codex model ID available to the signed-in account |
+| `--reasoning-effort` | prompt | Supported effort for the chosen model |
+| `--retention-posture`, `--training-posture` | required | Explicit operator assertions |
+| `--source` | required | Repeatable: `conversation_text`, `meeting_text`, or `document_text` |
+| `--source-since` | required | Earliest disclosed date, `YYYY-MM-DD` |
+| `--source-until` | absent | Latest disclosed date, on or after `--source-since` |
+| `--allow-sensitive` | explicit decision required | `true` permits archive evidence; `false` permits only synthetic checks |
+| `--yes` | `false` | Confirm the displayed check disclosure and select the profile without a consent prompt |
+
+Host-side `person provider login` reauthenticates the selected existing Codex
+profile; `person provider models` lists its models and reasoning efforts. Both
+accept `--json` and remain unavailable behind the same release gate. See
+[Codex configuration](configuration.md#codex-app-server-profiles).
+
 ## person provider status
 
 Show the exact people inference provider policy and its check and consent state.
@@ -2967,9 +3025,11 @@ Configure optional search and people features from the available API keys. The
 command reads `VOYAGE_API_KEY`, `OPENAI_API_KEY`, and the document provider's
 configured key variable (default `MISTRAL_API_KEY`). For an unset text feature,
 it chooses Voyage contextual embeddings, then OpenAI embeddings, then an
-available loopback Ollama model at `[chat].server`. For inference, it chooses
-OpenAI, then the configured local Ollama chat model. These are setup choices;
-the running daemon does not fall back to another provider after a failure.
+available loopback Ollama model at `[chat].server`. Hosted people inference
+requires an explicit `--provider` and `--model`; an OpenAI key alone does not
+select it. Without an OpenAI key or explicit provider choice, setup can offer
+the configured local Ollama chat model. The running daemon does not fall back
+to another provider after a failure.
 
 Setup prints a plan, asks once per hosted provider, writes `config.toml`, and
 prints the remaining commands. It onboards a new people-sweep provider through
@@ -2978,10 +3038,14 @@ consents remain separate. Visual search needs a valid probe manifest before
 setup enables it; document extraction remains manual. See
 [Recommended Configuration](usage/recommended-configuration.md).
 
-The people sweep stays pending unless `--allow-sensitive` is supplied. This
-permits sending sensitive archive excerpts to its inference provider and
-inferring sensitive personal attributes. `--yes` alone does not grant this
-permission. Vector lanes also stay pending when the binary lacks the backend
+Local people-sweep setup stays pending unless `--allow-sensitive` is supplied.
+An explicit `--provider` requires `--allow-sensitive=true|false` and explicit
+`--retention-posture` and `--training-posture` assertions. Only `true` permits
+sending sensitive archive excerpts and inferring sensitive personal attributes;
+`false` permits the synthetic check but real sweeps cannot process evidence.
+`--yes` alone does not grant this permission. If a sweep is already enabled,
+`--provider` is rejected; use `person provider add` and `person provider use`
+to choose another profile. Vector lanes also stay pending when the binary lacks the backend
 required by the configured database; setup prints rebuild guidance.
 
 Saved retention and training postures on disabled lanes are preserved unless
@@ -3006,6 +3070,10 @@ msgvault setup providers --yes --document-retention zdr --document-training opte
 
 | Flag                   | Default             | Description                                                                                                                                                                                                       |
 | ---------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--provider` | absent | Explicit people inference preset: `openai`, `openrouter`, or `venice`; requires model and privacy decisions |
+| `--model` | absent | Required model ID for the selected preset |
+| `--credential-env` | absent | Host environment-variable name for the preset key; mutually exclusive with `--api-key-stdin` |
+| `--api-key-stdin` | `false` | Read the preset API key from standard input; otherwise a terminal can prompt for it |
 | `--yes`                | `false`             | Accept every provider disclosure without prompting. Required to apply a plan with hosted-provider prompts when stdin is not a terminal or `--json` is used. It does not grant the separate sensitive-data opt-in. |
 | `--allow-sensitive`    | `false`             | Allow the people sweep to send sensitive archive excerpts and infer sensitive personal attributes                                                                                                                 |
 | `--dry-run`            | `false`             | Print the plan, the disclosures, and the current lane report without writing                                                                                                                                      |
