@@ -1498,13 +1498,15 @@ func TestCLIRequestDurationPolicy(t *testing.T) {
 				tt.configure(srv, req)
 			}
 
-			handler.ServeHTTP(httptest.NewRecorder(), req)
-			err := <-handlerResult
-			if tt.wantTimeout {
-				assert.ErrorIs(t, err, context.DeadlineExceeded)
-			} else {
-				assert.NoError(t, err)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				handler.ServeHTTP(httptest.NewRecorder(), req)
+				err := <-handlerResult
+				if tt.wantTimeout {
+					assert.ErrorIs(t, err, context.DeadlineExceeded)
+				} else {
+					assert.NoError(t, err)
+				}
+			})
 		})
 	}
 }
