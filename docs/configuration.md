@@ -836,10 +836,11 @@ max_media_mb = 250                # per-attachment download cap (MiB)
 
 #### Send stored audio to Docbank
 
-The daemon can send stored WAV and MP3 audio from captured messaging sources
-to a separately running Docbank media service. The service needs Docbank's
-media HTTP routes. See [Send audio to Docbank](/docs/usage/beeper/#send-audio-to-docbank)
-for the capture and processing rules.
+The daemon can send stored WAV and MP3 audio from any captured source, including
+messaging and email imports, to a separately running Docbank media service. The
+service needs Docbank's media HTTP routes. See
+[Send audio to Docbank](/docs/usage/beeper/#send-audio-to-docbank) for the
+capture and processing rules.
 
 ```toml
 [integrations.docbank]

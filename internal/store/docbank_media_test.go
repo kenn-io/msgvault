@@ -70,6 +70,7 @@ func (a beeperAudio) mapping(destination, revision, processingKey string) store.
 		RawHash: hex.EncodeToString(rawDigest[:]), TranscriptSHA256: transcript,
 		OccurrenceJSON: `{"ref":"msgvault:` + a.sourceMessageID + `","revision":"` + revision + `"}`,
 		Filename:       "voice.wav", MIMEType: "audio/wav", ProcessingKey: processingKey,
+		ProcessingProvider: "beeper", ProcessingProfile: "supplied-transcript",
 	}
 }
 
@@ -699,6 +700,45 @@ func TestBeeperMediaDiscovery(t *testing.T) {
 	changes, err = f.Store.ListAttachmentChanges(t.Context(), store.BeeperMediaAttachmentConsumerKey, 100)
 	require.NoError(err)
 	assert.Empty(changes)
+}
+
+func TestBeeperMediaCandidateAttachmentStates(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newBeeperMediaFixture(t)
+	gmail, err := f.Store.GetOrCreateSource("gmail", "rod@example.com")
+	require.NoError(err)
+	gmailConversation, err := f.Store.EnsureConversation(gmail.ID, "gmail-thread", "Thread")
+	require.NoError(err)
+	states := []string{"", "stored", "pending", "failed", "skipped"}
+	want := make(map[int64]string)
+	for i, state := range states {
+		audio := addBeeperAudio(t, f.Store, gmail.ID, gmailConversation,
+			fmt.Sprintf("gmail-%s-%d", state, i), fmt.Sprintf("%064x", i+1))
+		if state == "" {
+			_, err = f.Store.DB().Exec(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`, audio.attachmentID)
+		} else {
+			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = ? WHERE id = ?`),
+				state, audio.attachmentID)
+		}
+		require.NoError(err)
+		if state == "" || state == "stored" {
+			want[audio.attachmentID] = state
+		}
+	}
+	beeperAudio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "beeper-empty-state", strings.Repeat("a", 64))
+	_, err = f.Store.DB().Exec(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`, beeperAudio.attachmentID)
+	require.NoError(err)
+
+	candidates, err := f.Store.ListBeeperMediaCandidates(t.Context(), 0, 10)
+	require.NoError(err)
+	require.Len(candidates, len(want))
+	for _, candidate := range candidates {
+		assert.Equal("gmail", candidate.SourceType)
+		assert.Equal(want[candidate.AttachmentID], candidate.AttachmentState)
+		delete(want, candidate.AttachmentID)
+	}
+	assert.Empty(want)
 }
 
 func TestBeeperMediaSchemaReopen(t *testing.T) {

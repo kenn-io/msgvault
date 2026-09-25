@@ -19,6 +19,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/kit/pack"
 
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/docbankmedia"
@@ -318,6 +319,15 @@ func (w *MediaSubmitter) replayJournal(ctx context.Context, archiveUID string) (
 func (w *MediaSubmitter) mappingForCandidate(
 	ctx context.Context, archiveUID string, candidate store.BeeperMediaCandidate,
 ) (store.BeeperMediaMapping, error) {
+	if candidate.SourceType != "beeper" {
+		eligible, definitive, err := w.probeStoredMedia(ctx, candidate)
+		if err != nil {
+			return store.BeeperMediaMapping{}, err
+		}
+		if definitive && !eligible {
+			return fallbackMediaMappingCode(w.destination, candidate, archiveUID, errBeeperMediaUnsupported.Error()), nil
+		}
+	}
 	descriptor, _, err := w.describeCandidate(ctx, archiveUID, candidate)
 	if err != nil {
 		if !isBeeperMediaGap(err) {
@@ -326,6 +336,47 @@ func (w *MediaSubmitter) mappingForCandidate(
 		return fallbackMediaMapping(w.destination, candidate, archiveUID, err), nil
 	}
 	return descriptorMapping(w.destination, candidate, descriptor), nil
+}
+
+// probeStoredMedia reads only enough CAS bytes to reject known non-audio rows.
+func (w *MediaSubmitter) probeStoredMedia(
+	ctx context.Context, candidate store.BeeperMediaCandidate,
+) (eligible, definitive bool, err error) {
+	if candidate.ByteLength < 4 || candidate.ByteLength > beeperMediaSourceLimit {
+		return false, true, nil
+	}
+	if w.blobs == nil {
+		return true, false, nil
+	}
+	reader, size, err := w.blobs.OpenStream(ctx, candidate.ContentHash)
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, false, ctx.Err()
+		}
+		return true, false, nil
+	}
+	var header [12]byte
+	n, readErr := io.ReadFull(reader, header[:])
+	closeErr := reader.Close()
+	if ctx.Err() != nil {
+		return false, false, ctx.Err()
+	}
+	if (readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF)) ||
+		(closeErr != nil && !errors.Is(closeErr, pack.ErrVerificationIncomplete)) || size != candidate.ByteLength {
+		return true, false, nil
+	}
+	return supportedStoredMediaHeader(header[:n]), true, nil
+}
+
+func supportedStoredMediaHeader(header []byte) bool {
+	if len(header) >= 12 && string(header[:4]) == "RIFF" && string(header[8:12]) == "WAVE" {
+		return true
+	}
+	if len(header) >= 10 && string(header[:3]) == "ID3" {
+		return true
+	}
+	return len(header) >= 4 && header[0] == 0xff && header[1]&0xe0 == 0xe0 &&
+		header[1]&0x18 != 0x08 && header[1]&0x06 != 0 && header[2]&0xf0 != 0 && header[2]&0xf0 != 0xf0
 }
 
 func beeperMediaRawGap(err error) bool {
@@ -368,17 +419,6 @@ func (w *MediaSubmitter) describeCandidate(
 	return configureMediaProcessing(descriptor, transcript, w.asrProfile), transcript, nil
 }
 
-type storedTranscriptMetadata struct {
-	Provider  string `json:"provider"`
-	Text      string `json:"text"`
-	Language  string `json:"language"`
-	Truncated bool   `json:"truncated"`
-}
-
-type storedAttachmentMetadata struct {
-	SourceTranscript *storedTranscriptMetadata `json:"source_transcript"`
-}
-
 func describeStoredMedia(
 	candidate store.BeeperMediaCandidate, archiveUID string, raw []byte,
 ) (MediaDescriptor, string, error) {
@@ -390,10 +430,6 @@ func describeStoredMedia(
 		return MediaDescriptor{}, "", errBeeperMediaPartMissing
 	}
 	filename, requestMIME := selectedMediaMetadata(candidate.Filename, candidate.MIMEType)
-	transcript, language, err := storedSourceTranscript(candidate.AttachmentMetadata, candidate.SourceType)
-	if err != nil {
-		return MediaDescriptor{}, "", err
-	}
 	var message docbankmedia.Timestamp
 	if len(raw) > 0 {
 		var envelope struct {
@@ -413,38 +449,10 @@ func describeStoredMedia(
 		SourceConversationID: candidate.SourceConversationID, SourceMessageID: candidate.SourceMessageID,
 		SourceAttachmentID: candidate.SourceAttachmentID, SourcePartKey: part,
 		SourceSHA256: candidate.ContentHash, ByteLength: candidate.ByteLength,
-		TranscriptSHA256: transcriptHash(transcript), Language: language,
 		Filename: filename, MIMEType: requestMIME,
 	}
 	descriptor.Occurrence.Revision = mediaRevision(descriptor)
-	return descriptor, transcript, nil
-}
-
-func storedSourceTranscript(rawMetadata, sourceType string) (string, string, error) {
-	if strings.TrimSpace(rawMetadata) == "" {
-		return "", "", nil
-	}
-	var metadata storedAttachmentMetadata
-	if err := json.Unmarshal([]byte(rawMetadata), &metadata); err != nil {
-		if strings.Contains(rawMetadata, `"source_transcript"`) {
-			return "", "", errBeeperMediaTranscriptInvalid
-		}
-		return "", "", nil
-	}
-	if metadata.SourceTranscript == nil {
-		return "", "", nil
-	}
-	transcript := metadata.SourceTranscript
-	if !strings.EqualFold(strings.TrimSpace(transcript.Provider), strings.TrimSpace(sourceType)) {
-		return "", "", nil
-	}
-	if transcript.Truncated || !utf8.ValidString(transcript.Text) {
-		return "", "", errBeeperMediaTranscriptInvalid
-	}
-	if len(transcript.Text) > beeperMediaTranscriptLimit {
-		return "", "", errBeeperMediaTranscriptTooLarge
-	}
-	return transcript.Text, strings.TrimSpace(transcript.Language), nil
+	return descriptor, "", nil
 }
 
 func transcriptHash(transcript string) string {
@@ -1051,15 +1059,6 @@ func (w *MediaSubmitter) status(ctx, actionCtx context.Context, operation store.
 		own.OperationID != operation.OperationID {
 		return w.finishOperation(ctx, operation, store.BeeperMediaResult{ErrorCode: "destination_mismatch"})
 	}
-	if operation.OccurrenceRef == "" || operation.Revision == "" {
-		return w.finishOperation(ctx, operation, store.BeeperMediaResult{ErrorCode: "destination_mismatch"})
-	}
-	live, err := w.store.IsBeeperMediaOccurrenceLive(ctx, operation.DestinationKey,
-		operation.OccurrenceRef, operation.Revision)
-	if err != nil {
-		return err
-	}
-	_ = live
 	result := store.BeeperMediaResult{OperationState: own.OperationState, CoverageState: own.CoverageState}
 	switch {
 	case own.OperationState == "failed" || own.OperationState == "cancelled":
@@ -1082,7 +1081,7 @@ func (w *MediaSubmitter) ownProcessingReceipt(
 	if source.OperationID != operation.OperationID {
 		profile := strings.TrimSpace(operation.ProcessingProfile)
 		if profile == "" {
-			profile = "supplied-transcript"
+			return docbankmedia.Receipt{}, errors.New("stored media processing profile is missing")
 		}
 		return w.client.Process(ctx, operation.DocbankSourceID, operation.OperationID, docbankmedia.Processing{
 			Profile: profile, SuppliedInputID: operation.SuppliedInputID,

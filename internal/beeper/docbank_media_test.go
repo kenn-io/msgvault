@@ -80,7 +80,9 @@ func importVoiceChat(t *testing.T, specs ...voiceSpec) *mediaWorld {
 		})
 		f.setAsset(spec.asset, spec.data)
 	}
-	ch.LastActivity = ch.Msgs[len(ch.Msgs)-1].Timestamp
+	if len(ch.Msgs) > 0 {
+		ch.LastActivity = ch.Msgs[len(ch.Msgs)-1].Timestamp
+	}
 	f.addChat(ch)
 	imp, st, done := newTestImporter(t, f)
 	t.Cleanup(done)
@@ -109,14 +111,14 @@ func runPasses(t *testing.T, submitter *MediaSubmitter, passes int) {
 }
 
 type occurrenceRow struct {
-	Ref, Revision, State, OperationID, ErrorCode, SourceID, SourceVersionID string
-	ContentVersionID, OccurrenceID, Coverage, ProcessingKey, MessageID      string
+	Ref, Revision, State, OperationID, ErrorCode, SourceID, SourceVersionID, SourceType string
+	ContentVersionID, OccurrenceID, Coverage, ProcessingKey, MessageID                  string
 }
 
 func occurrenceRows(t *testing.T, st *store.Store, destination string) []occurrenceRow {
 	t.Helper()
 	rows, err := st.DB().Query(st.Rebind(`
-		SELECT occurrence_ref, revision, retention_state, retention_operation_id, error_code,
+		SELECT occurrence_ref, revision, retention_state, retention_operation_id, error_code, source_type,
 		       source_id, source_version_id, content_version_id, occurrence_id, coverage_state,
 		       processing_key, source_message_id
 		FROM beeper_media_occurrences WHERE destination_key = ?
@@ -126,7 +128,7 @@ func occurrenceRows(t *testing.T, st *store.Store, destination string) []occurre
 	var result []occurrenceRow
 	for rows.Next() {
 		var row occurrenceRow
-		require.NoError(t, rows.Scan(&row.Ref, &row.Revision, &row.State, &row.OperationID, &row.ErrorCode,
+		require.NoError(t, rows.Scan(&row.Ref, &row.Revision, &row.State, &row.OperationID, &row.ErrorCode, &row.SourceType,
 			&row.SourceID, &row.SourceVersionID, &row.ContentVersionID, &row.OccurrenceID, &row.Coverage,
 			&row.ProcessingKey, &row.MessageID))
 		result = append(result, row)
@@ -1328,34 +1330,78 @@ func TestStoredMediaSharedLifecycle(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	wav := syntheticWAV(800, 7)
-	world := importVoiceChat(t,
-		voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1", mime: "audio/wav",
-			fileName: "voice.wav", transcript: "shared words", data: wav},
-		voiceSpec{id: "voice2", asset: "mxc://beeper.local/voice2", mime: "audio/wav",
-			fileName: "voice.wav", transcript: "shared words", data: wav})
+	world := importVoiceChat(t)
+	addStoredMediaSource(t, world, "gmail", "rod@example.com", "mail-audio", wav,
+		"meeting.wav", "audio/wav", "", store.AttachmentRoleStandalone, "", nil,
+		"mail:attachment:1", "mime:1.2")
+	addStoredMediaSource(t, world, "whatsapp", "+15555550101", "whatsapp-audio", wav,
+		"voice.wav", "audio/wav", "", store.AttachmentRoleStandalone, "", nil,
+		"whatsapp:media", "whatsapp:media")
 	docbank := newFakeDocbank(t)
+	docbank.coverage = "pending"
 	server := httptest.NewServer(docbank)
 	defer server.Close()
-	submitter := world.submitter(t, server, "destination-shared")
-	runPasses(t, submitter, 6)
+	submitter := world.submitter(t, server, "destination-shared").WithASRProfile("shared-asr")
+	runPasses(t, submitter, 3)
 
 	rows := occurrenceRows(t, world.st, "destination-shared")
 	require.Len(rows, 2)
+	assert.Equal("gmail", rows[0].SourceType)
+	assert.Equal("whatsapp", rows[1].SourceType)
 	assert.NotEqual(rows[0].Ref, rows[1].Ref)
 	assert.NotEqual(rows[0].OccurrenceID, rows[1].OccurrenceID)
 	assert.Equal(rows[0].SourceID, rows[1].SourceID)
 	assert.Equal(rows[0].ContentVersionID, rows[1].ContentVersionID)
 	assert.Equal(rows[0].ProcessingKey, rows[1].ProcessingKey)
-	require.Len(deliveryRows(t, world.st, "destination-shared"), 1)
+	deliveries := deliveryRows(t, world.st, "destination-shared")
+	require.Len(deliveries, 1)
+	assert.Equal("observing", deliveries[0].Phase)
 	docbank.mu.Lock()
 	assert.Len(docbank.uploads, 2)
-	assert.Len(docbank.artifactOps, 1)
 	assert.Len(docbank.processOps, 1)
 	requests := docbank.requests
 	docbank.mu.Unlock()
 
+	var donorType, donorMessage string
+	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
+		SELECT s.source_type, m.source_message_id
+		FROM beeper_media_occurrences o
+		JOIN messages m ON m.id = o.message_id
+		JOIN sources s ON s.id = m.source_id
+		WHERE o.destination_key = ? AND o.occurrence_id = ?`),
+		"destination-shared", deliveries[0].Donor).Scan(&donorType, &donorMessage))
+	_, err := world.st.DB().Exec(world.st.Rebind(`
+		UPDATE messages SET deleted_at = ?
+		WHERE source_message_id = ? AND source_id = (SELECT id FROM sources WHERE source_type = ? AND identifier = ?)`),
+		time.Now().UTC(), donorMessage, donorType, map[string]string{
+			"gmail": "rod@example.com", "whatsapp": "+15555550101",
+		}[donorType])
+	require.NoError(err)
+	require.NoError(world.st.RevokeStaleBeeperMediaMappings(t.Context(), "destination-shared"))
+	states := make(map[string]string, len(rows))
+	for _, row := range occurrenceRows(t, world.st, "destination-shared") {
+		states[row.SourceType] = row.State
+	}
+	assert.Equal("revoked", states[donorType])
+	otherType := "gmail"
+	if donorType == otherType {
+		otherType = "whatsapp"
+	}
+	assert.Equal("retained", states[otherType])
+	docbank.mu.Lock()
+	docbank.coverage = "transcribed"
+	docbank.mu.Unlock()
+	_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries
+		SET next_action_at = '2000-01-01 00:00:00.000' WHERE destination_key = ?`), "destination-shared")
+	require.NoError(err)
+	runPasses(t, submitter, 1)
+	assert.Equal("done", deliveryRows(t, world.st, "destination-shared")[0].Phase)
+	docbank.mu.Lock()
+	requests = docbank.requests
+	docbank.mu.Unlock()
+
 	// A repeated complete backfill finds nothing to change or send.
-	_, err := world.st.DB().Exec(`UPDATE beeper_media_occurrences SET updated_at = '2001-02-03 04:05:06'`)
+	_, err = world.st.DB().Exec(`UPDATE beeper_media_occurrences SET updated_at = '2001-02-03 04:05:06'`)
 	require.NoError(err)
 	_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET updated_at = '2001-02-03 04:05:06'`)
 	require.NoError(err)
@@ -1420,7 +1466,7 @@ func TestBeeperMediaEligibility(t *testing.T) {
 	assert.Equal("beeper", messageType)
 }
 
-func TestStoredMediaAdmissionGaps(t *testing.T) {
+func TestBeeperMediaAdmissionGaps(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t,

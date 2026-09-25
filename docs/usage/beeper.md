@@ -181,12 +181,12 @@ GROUP BY is_share;
 
 ## Send audio to Docbank
 
-The daemon can copy stored audio from captured messaging sources to a
-separately running Docbank media service. Docbank keeps the recording and
-msgvault records which Docbank source and occurrence belong to each live
-message. Beeper's complete attachment transcript is imported as supplied
-evidence. Other source transcripts are used only when the attachment metadata
-explicitly identifies the source and text. Configure the destination in
+The daemon can copy stored audio from any captured source, including messaging
+and email importers, to a separately running Docbank media service. Docbank
+keeps the recording and msgvault records which Docbank source and occurrence
+belong to each live message. Beeper's complete attachment transcript is
+imported as supplied evidence. Other sources use a configured ASR profile or
+remain unprocessed. Configure the destination in
 [`[integrations.docbank]`](/docs/configuration/#send-stored-audio-to-docbank).
 
 What you need:
@@ -205,21 +205,23 @@ What you need:
   codec, so OGG/Opus, M4A and other formats stay local with the
   `unsupported_media` code. msgvault never converts audio or runs speech
   recognition.
-- The route consumes stored attachment rows from Beeper, WhatsApp, Messenger,
-  SyncTech MMS, Slack, Discord, Google Voice and future importers. An importer
-  must have captured the bytes and a stable part identity first; this route
-  never downloads missing media or invents a placeholder hash.
+- The route consumes WAV or MP3 bytes from every captured source, including
+  Beeper, messaging providers, email importers and future providers. An
+  importer must have captured the bytes and a stable part identity first; this
+  route never downloads missing media or invents a placeholder hash.
 
 What happens:
 
 - Voice notes and ordinary audio qualify when they are stored, standalone
   Beeper attachments. Other captured sources qualify when their stored row has
-  a stable source part and standalone or unknown role. Previews, stickers and
-  other known inline roles are skipped.
+  a stable source part, standalone or unknown role, and WAV or MP3 bytes.
+  Previews, stickers, other known inline roles and readable non-audio files
+  stay local.
 - msgvault reads Beeper's complete transcript from the archived raw message,
-  not the 32 KiB metadata copy. For other sources it accepts only explicit,
-  complete `source_transcript` attachment metadata from the same provider. It
-  never turns authored message text or a caption URL into transcript evidence.
+  not the 32 KiB metadata copy. Other sources have no generic transcript
+  metadata contract, so they use only the configured ASR profile or remain
+  unprocessed. Authored message text and caption URLs are never transcript
+  evidence.
 - Audio without source text is retained and uses the configured ASR profile
   when one is set. With an empty profile it remains `unprocessed`.
 - The job backfills existing audio in pages of up to 100 attachments. After
