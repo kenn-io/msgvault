@@ -265,7 +265,7 @@ func TestStoredMediaRealWhatsAppImportWithoutRemoteRoute(t *testing.T) {
 }
 
 func TestStoredMediaUnavailableCASTries(t *testing.T) {
-	for _, mode := range []string{"missing", "corrupt"} {
+	for _, mode := range []string{"missing", "corrupt", "corrupt-header"} {
 		t.Run(mode, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -279,7 +279,11 @@ func TestStoredMediaUnavailableCASTries(t *testing.T) {
 				require.NoError(os.Remove(path))
 			} else {
 				corrupt := append([]byte(nil), wav...)
-				corrupt[len(corrupt)-1] ^= 1
+				if mode == "corrupt-header" {
+					corrupt[0] ^= 1
+				} else {
+					corrupt[len(corrupt)-1] ^= 1
+				}
 				require.NoError(os.WriteFile(path, corrupt, 0o600))
 			}
 			docbank := newFakeDocbank(t)

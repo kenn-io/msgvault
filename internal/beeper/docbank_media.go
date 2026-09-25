@@ -338,7 +338,7 @@ func (w *MediaSubmitter) mappingForCandidate(
 	return descriptorMapping(w.destination, candidate, descriptor), nil
 }
 
-// probeStoredMedia reads only enough CAS bytes to reject known non-audio rows.
+// probeStoredMedia rejects non-audio rows only after verifying their CAS bytes.
 func (w *MediaSubmitter) probeStoredMedia(
 	ctx context.Context, candidate store.BeeperMediaCandidate,
 ) (eligible, definitive bool, err error) {
@@ -357,15 +357,33 @@ func (w *MediaSubmitter) probeStoredMedia(
 	}
 	var header [12]byte
 	n, readErr := io.ReadFull(reader, header[:])
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		_ = reader.Close()
+		if ctx.Err() != nil {
+			return false, false, ctx.Err()
+		}
+		return true, false, nil
+	}
+	eligible = supportedStoredMediaHeader(header[:n])
+	if eligible {
+		closeErr := reader.Close()
+		if ctx.Err() != nil {
+			return false, false, ctx.Err()
+		}
+		if (closeErr != nil && !errors.Is(closeErr, pack.ErrVerificationIncomplete)) || size != candidate.ByteLength {
+			return true, false, nil
+		}
+		return true, true, nil
+	}
+	remaining, drainErr := io.Copy(io.Discard, reader)
 	closeErr := reader.Close()
 	if ctx.Err() != nil {
 		return false, false, ctx.Err()
 	}
-	if (readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF)) ||
-		(closeErr != nil && !errors.Is(closeErr, pack.ErrVerificationIncomplete)) || size != candidate.ByteLength {
+	if drainErr != nil || closeErr != nil || size != candidate.ByteLength || int64(n)+remaining != size {
 		return true, false, nil
 	}
-	return supportedStoredMediaHeader(header[:n]), true, nil
+	return false, true, nil
 }
 
 func supportedStoredMediaHeader(header []byte) bool {
