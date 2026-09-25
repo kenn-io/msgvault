@@ -291,6 +291,7 @@ Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAu
 | Flag | Default | Description |
 |---|---|---|
 | `--tenant` | `common` | Azure AD tenant ID (restricts which accounts can authorize) |
+| `--headless` | `false` | Sign in with a device code instead of a local browser |
 | `--no-default-identity` | `false` | Do not auto-confirm the email address as this account's "me" identity |
 
 After adding the account, sync it with `msgvault sync-full`.
@@ -315,6 +316,7 @@ the Microsoft IMAP token used by `add-o365`. Requires `[microsoft].client_id` in
 | Flag | Default | Description |
 |---|---|---|
 | `--tenant` | `common` | Azure AD tenant ID to use for authorization |
+| `--headless` | `false` | Sign in with a device code instead of a local browser |
 | `--no-default-identity` | `false` | Do not auto-confirm the email address as this source's "me" identity |
 
 After adding the account, sync it with `msgvault sync-teams`.

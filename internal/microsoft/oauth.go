@@ -115,6 +115,10 @@ type Manager struct {
 	redirectURI string
 	tokensDir   string
 	logger      *slog.Logger
+	// deviceCode selects the device-code flow instead of the browser flow.
+	deviceCode bool
+	// authorityURL overrides the Microsoft identity host for testing.
+	authorityURL string
 
 	// browserFlowFn overrides browserFlow for testing. Returns (token, nonce, error).
 	browserFlowFn func(ctx context.Context, email string, scopes []string) (*oauth2.Token, string, error)
@@ -138,16 +142,28 @@ func NewManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.
 	}
 }
 
+// UseDeviceCode makes Authorize sign in with a device code: the user opens a
+// Microsoft URL on any device and enters a code, so no local browser or
+// localhost callback is needed.
+func (m *Manager) UseDeviceCode() {
+	m.deviceCode = true
+}
+
 func (m *Manager) oauthConfig(scopes []string) *oauth2.Config {
 	return m.oauthConfigWithTenant(m.tenantID, scopes)
 }
 
 func (m *Manager) oauthConfigWithTenant(tenantID string, scopes []string) *oauth2.Config {
+	authority := "https://login.microsoftonline.com"
+	if m.authorityURL != "" {
+		authority = m.authorityURL
+	}
 	return &oauth2.Config{
 		ClientID: m.clientID,
 		Endpoint: oauth2.Endpoint{
-			AuthURL:  fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/authorize", tenantID),
-			TokenURL: fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/token", tenantID),
+			AuthURL:       fmt.Sprintf("%s/%s/oauth2/v2.0/authorize", authority, tenantID),
+			TokenURL:      fmt.Sprintf("%s/%s/oauth2/v2.0/token", authority, tenantID),
+			DeviceAuthURL: fmt.Sprintf("%s/%s/oauth2/v2.0/devicecode", authority, tenantID),
 		},
 		RedirectURL: m.redirectURI,
 		Scopes:      scopes,
@@ -198,12 +214,36 @@ func (m *Manager) Authorize(ctx context.Context, email string) error {
 	return m.saveToken(email, token, scopes, tenantID)
 }
 
-// doBrowserFlow dispatches to browserFlowFn (test hook) or the real browserFlow.
+// doBrowserFlow dispatches to browserFlowFn (test hook), the device-code flow,
+// or the real browserFlow.
 func (m *Manager) doBrowserFlow(ctx context.Context, email string, scopes []string) (*oauth2.Token, string, error) {
 	if m.browserFlowFn != nil {
 		return m.browserFlowFn(ctx, email, scopes)
 	}
+	if m.deviceCode {
+		return m.deviceFlow(ctx, scopes)
+	}
 	return m.browserFlow(ctx, email, scopes)
+}
+
+// deviceFlow runs the OAuth device authorization grant (RFC 8628). It returns
+// an empty nonce: the device flow sends none, so the ID token carries none.
+func (m *Manager) deviceFlow(ctx context.Context, scopes []string) (*oauth2.Token, string, error) {
+	cfg := m.oauthConfig(scopes)
+	da, err := cfg.DeviceAuth(ctx)
+	if err != nil {
+		return nil, "", fmt.Errorf("request device code: %w", err)
+	}
+	fmt.Printf("To sign in, open %s on any device and enter the code %s\n", da.VerificationURI, da.UserCode)
+	fmt.Printf("Waiting for authorization...\n\n")
+	token, err := cfg.DeviceAccessToken(ctx, da)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return nil, "", errors.New("the device code expired before sign-in finished; run the command again")
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("device code authorization: %w", err)
+	}
+	return token, "", nil
 }
 
 // tokenRefreshTimeout bounds how long a single token refresh HTTP request

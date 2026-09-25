@@ -58,8 +58,10 @@ type GraphManager struct {
 	redirectURI string
 	tokensDir   string
 	logger      *slog.Logger
+	deviceCode  bool
 
 	// Test hooks, mirrored onto the internal delegate. See Manager.
+	authorityURL    string
 	browserFlowFn   func(ctx context.Context, email string, scopes []string) (*oauth2.Token, string, error)
 	verifyIDTokenFn func(ctx context.Context, rawIDToken string) (*idTokenClaims, error)
 }
@@ -82,6 +84,12 @@ func NewGraphManager(clientID, tenantID, redirectURI, tokensDir string, logger *
 	}
 }
 
+// UseDeviceCode makes Authorize sign in with a device code. See
+// Manager.UseDeviceCode.
+func (m *GraphManager) UseDeviceCode() {
+	m.deviceCode = true
+}
+
 // delegate builds an internal *Manager used only for its reusable browser-flow
 // and ID-token verification logic. Token storage is handled by GraphManager
 // itself (with the teams_ prefix), so the delegate's tokensDir is irrelevant.
@@ -92,6 +100,8 @@ func (m *GraphManager) delegate() *Manager {
 		redirectURI:     m.redirectURI,
 		tokensDir:       m.tokensDir,
 		logger:          m.logger,
+		deviceCode:      m.deviceCode,
+		authorityURL:    m.authorityURL,
 		browserFlowFn:   m.browserFlowFn,
 		verifyIDTokenFn: m.verifyIDTokenFn,
 	}

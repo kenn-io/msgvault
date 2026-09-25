@@ -11,6 +11,7 @@ import (
 )
 
 var (
+	o365Headless             bool
 	o365TenantID             string
 	noDefaultIdentityAddO365 bool
 )
@@ -47,6 +48,9 @@ func preflightAddO365Authorize(cmd *cobra.Command, email string) error {
 		cfg.TokensDir(),
 		logger,
 	)
+	if o365Headless {
+		msMgr.UseDeviceCode()
+	}
 	fmt.Printf("Authorizing %s with Microsoft...\n", email)
 	if err := msMgr.Authorize(cmd.Context(), email); err != nil {
 		return fmt.Errorf("authorization failed: %w", err)
@@ -63,7 +67,8 @@ func newAddO365LocalCmd() *cobra.Command {
 		Short: "Add a Microsoft 365 account via OAuth",
 		Long: `Add a Microsoft 365 / Outlook.com email account using OAuth2 authentication.
 
-This opens a browser for Microsoft authorization, then configures IMAP access
+This opens a browser for Microsoft authorization (or, with --headless, prints a
+device code to enter on any device), then configures IMAP access
 to outlook.office365.com automatically using the XOAUTH2 SASL mechanism.
 
 Requires a [microsoft] section in config.toml with your Azure AD app's client_id.
@@ -71,6 +76,7 @@ See the docs for Azure AD app registration setup.
 
 Examples:
   msgvault add-o365 user@outlook.com
+  msgvault add-o365 user@outlook.com --headless
   msgvault add-o365 user@company.com --tenant my-tenant-id`,
 		Args: cobra.ExactArgs(1),
 		RunE: runAddO365Local,
@@ -78,6 +84,8 @@ Examples:
 	cmd.Flags().StringVar(&o365TenantID, "tenant", "",
 		"Azure AD tenant ID (default: \"common\" for multi-tenant)")
 	cmd.Flags().BoolVar(&noDefaultIdentityAddO365, "no-default-identity", false, noDefaultIdentityHelp)
+	cmd.Flags().BoolVar(&o365Headless, "headless", false,
+		"Sign in with a device code instead of a local browser")
 	registerOAuthPreflightedFlag(cmd)
 	return cmd
 }
@@ -96,6 +104,9 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 		cfg.TokensDir(),
 		logger,
 	)
+	if o365Headless {
+		msMgr.UseDeviceCode()
+	}
 
 	preflighted, err := oauthPreflighted(cmd)
 	if err != nil {
