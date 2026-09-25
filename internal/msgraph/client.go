@@ -74,6 +74,7 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 	if err != nil {
 		return nil, err
 	}
+	var lastErr error
 	for attempt := range maxRetries {
 		if err := c.limiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("wait for graph rate limit: %w", err)
@@ -93,7 +94,14 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 		}
 		resp, err := c.http.Do(req)
 		if err != nil {
-			return nil, err
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			lastErr = err
+			if err := sleepCtx(ctx, httpretry.RetryAfter("", attempt, maxRetryAfter)); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		if resp.StatusCode == http.StatusOK && maxBytes > 0 && resp.ContentLength > maxBytes {
 			_ = resp.Body.Close()
@@ -106,7 +114,12 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 		body, readErr := io.ReadAll(reader)
 		closeErr := resp.Body.Close()
 		if readErr != nil {
-			return nil, fmt.Errorf("graph GET %s: read body: %w", reqURL, readErr)
+			// A connection that breaks mid-body is transient, like a 5xx.
+			lastErr = fmt.Errorf("graph GET %s: read body: %w", reqURL, readErr)
+			if err := sleepCtx(ctx, httpretry.RetryAfter("", attempt, maxRetryAfter)); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		if closeErr != nil {
 			return nil, fmt.Errorf("graph GET %s: close body: %w", reqURL, closeErr)
@@ -122,20 +135,27 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 		case resp.StatusCode == http.StatusGone || strings.Contains(string(body), "syncStateNotFound"):
 			return nil, fmt.Errorf("graph GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), ErrGone)
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-			wait := httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, maxRetryAfter)
-			timer := time.NewTimer(wait)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return nil, ctx.Err()
-			case <-timer.C:
+			lastErr = fmt.Errorf("graph GET %s: status %d", reqURL, resp.StatusCode)
+			if err := sleepCtx(ctx, httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, maxRetryAfter)); err != nil {
+				return nil, err
 			}
 			continue
 		default:
 			return nil, fmt.Errorf("graph GET %s: status %d: %s", reqURL, resp.StatusCode, string(body))
 		}
 	}
-	return nil, fmt.Errorf("graph GET %s: exhausted %d retries", reqURL, maxRetries)
+	return nil, fmt.Errorf("graph GET %s: exhausted %d retries: %w", reqURL, maxRetries, lastErr)
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (c *Client) resolveRequestURL(rawURL string) (string, error) {
