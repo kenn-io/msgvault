@@ -170,6 +170,10 @@ type syncer struct {
 	sourceID int64
 	sum      *Summary
 	labels   map[string]int64 // Graph folder ID -> label ID
+
+	// deletions is the hidden Recoverable Items folder. A permanent delete
+	// (Shift+Delete, or emptying Deleted Items) moves a message there.
+	deletions string
 }
 
 func (s *syncer) progressf(format string, args ...any) {
@@ -192,6 +196,11 @@ func (s *syncer) ensureLabels(ctx context.Context, folders []Folder) (map[string
 		}
 		system[id] = role
 	}
+	id, err := s.c.WellKnownFolderID(ctx, "recoverableitemsdeletions")
+	if err != nil && !errors.Is(err, msgraph.ErrNotFound) {
+		return nil, fmt.Errorf("look up folder recoverableitemsdeletions: %w", err)
+	}
+	s.deletions = id
 	infos := make(map[string]store.LabelInfo, len(folders))
 	for _, f := range folders {
 		info := store.LabelInfo{Name: f.Path, Type: "user"}
@@ -206,8 +215,8 @@ func (s *syncer) ensureLabels(ctx context.Context, folders []Folder) (map[string
 // applyPage stores one delta page for the folder that has label folderLabel.
 // New messages are downloaded. Known messages get the folder as their only
 // label, because a mail item is in exactly one folder. Removed messages are
-// looked up: a message that Graph still finds moved, and one it cannot find
-// is marked deleted.
+// looked up: a message that Graph still finds in a mail folder moved, and one
+// it cannot find, or finds in Recoverable Items, is marked deleted.
 func (s *syncer) applyPage(ctx context.Context, folderLabel int64, items []DeltaMessage) error {
 	var live []DeltaMessage
 	var liveIDs, removedIDs []string
@@ -245,7 +254,7 @@ func (s *syncer) applyPage(ctx context.Context, folderLabel int64, items []Delta
 			continue
 		}
 		parent, err := s.c.ParentFolderID(ctx, id)
-		if errors.Is(err, msgraph.ErrNotFound) {
+		if errors.Is(err, msgraph.ErrNotFound) || (err == nil && parent == s.deletions) {
 			gone = append(gone, id)
 			continue
 		}

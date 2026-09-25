@@ -96,6 +96,10 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 			f.writeJSON(w, map[string]any{"id": id})
 			return
 		}
+		if id == "recoverableitemsdeletions" {
+			f.writeJSON(w, map[string]any{"id": "deletions"})
+			return
+		}
 		http.Error(w, `{"error":{"code":"ErrorFolderNotFound"}}`, http.StatusNotFound)
 	case strings.HasPrefix(p, "/me/messages/") && strings.HasSuffix(p, "/$value"):
 		f.mimeCalls.Add(1)
@@ -265,17 +269,18 @@ func TestImportMoveAndDelete(t *testing.T) {
 	_, err := f.sync(t, st)
 	require.NoError(err)
 
-	f.put("m1", "archive") // move
-	f.remove("m2")         // hard delete
-	f.put("m5", "inbox")   // new
+	f.put("m1", "archive")   // move
+	f.remove("m2")           // purged
+	f.put("m3", "deletions") // Shift+Delete: hidden Recoverable Items
+	f.put("m5", "inbox")     // new
 	f.mimeCalls.Store(0)
 
 	sum, err := f.sync(t, st)
 	require.NoError(err)
-	assert.Equal(map[string]string{"m1": "Archive", "m2": "deleted", "m3": "Inbox", "m5": "Inbox"}, state(t, st))
+	assert.Equal(map[string]string{"m1": "Archive", "m2": "deleted", "m3": "deleted", "m5": "Inbox"}, state(t, st))
 	assert.Equal(1, sum.Added)
 	assert.Equal(1, sum.Moved)
-	assert.Equal(1, sum.Deleted)
+	assert.Equal(2, sum.Deleted)
 	assert.EqualValues(1, f.mimeCalls.Load())
 }
 
