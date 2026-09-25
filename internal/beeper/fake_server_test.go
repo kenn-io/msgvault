@@ -93,6 +93,9 @@ type fakeBeeper struct {
 	failChatGets map[string]bool
 	chats        []*fakeChat
 	assets       map[string][]byte // asset URL (mxc://...) -> bytes served by /v1/assets/serve
+	// assetErrors makes /v1/assets/serve answer with the given status and
+	// body for the listed asset URLs.
+	assetErrors map[string]fakeAssetError
 	// failMessageGets makes GET /v1/chats/{id}/messages/{mid} answer 400
 	// (a non-retryable transient error) for the listed message IDs.
 	failMessageGets map[string]bool
@@ -128,6 +131,21 @@ func (f *fakeBeeper) setMessageGetFailure(id string, fail bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failMessageGets[id] = fail
+}
+
+type fakeAssetError struct {
+	status int
+	body   string
+}
+
+// setAssetError makes /v1/assets/serve fail for url with status and body.
+func (f *fakeBeeper) setAssetError(url string, status int, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.assetErrors == nil {
+		f.assetErrors = map[string]fakeAssetError{}
+	}
+	f.assetErrors[url] = fakeAssetError{status: status, body: body}
 }
 
 // setAsset makes an asset URL downloadable via /v1/assets/serve.
@@ -274,6 +292,10 @@ func (f *fakeBeeper) server() *httptest.Server {
 func (f *fakeBeeper) writeAsset(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if failure, failing := f.assetErrors[r.URL.Query().Get("url")]; failing {
+		http.Error(w, failure.body, failure.status)
+		return
+	}
 	data, ok := f.assets[r.URL.Query().Get("url")]
 	if !ok {
 		http.Error(w, `{"error":"asset not found"}`, http.StatusNotFound)

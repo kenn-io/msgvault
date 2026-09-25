@@ -93,6 +93,7 @@ func TestRetryEligible(t *testing.T) {
 		{state: StateFailed, want: true},
 		{state: StateSkipped, want: false},
 		{state: StateStored, want: false},
+		{state: StateUnavailable, want: false},
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, RetryEligible(tt.state), string(tt.state))
