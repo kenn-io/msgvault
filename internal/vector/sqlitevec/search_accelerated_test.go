@@ -145,7 +145,14 @@ func TestAcceleratedSearchUsesExactPathForBoundedStructuredPopulation(t *testing
 	)
 	require.NoError(t, err)
 
-	assert.Equal(t, exactHits, acceleratedHits)
+	require.Len(t, exactHits, 10)
+	require.Len(t, acceleratedHits, len(exactHits))
+	for i := range exactHits {
+		assert.Equal(t, exactHits[i].MessageID, acceleratedHits[i].MessageID)
+		assert.Equal(t, exactHits[i].Rank, acceleratedHits[i].Rank)
+		// Vec1 and sqlite-vec round L2 distances differently.
+		assert.InDelta(t, exactHits[i].Score, acceleratedHits[i].Score, 0.0001)
+	}
 	assert.Equal(t, "exact-filter", metadata.Accelerator)
 }
 
