@@ -716,7 +716,7 @@ func TestBeeperMediaCandidateAttachmentStates(t *testing.T) {
 		audio := addBeeperAudio(t, f.Store, gmail.ID, gmailConversation,
 			fmt.Sprintf("gmail-%s-%d", state, i), fmt.Sprintf("%064x", i+1))
 		if state == "" {
-			_, err = f.Store.DB().Exec(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`, audio.attachmentID)
+			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`), audio.attachmentID)
 		} else {
 			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = ? WHERE id = ?`),
 				state, audio.attachmentID)
@@ -726,8 +726,11 @@ func TestBeeperMediaCandidateAttachmentStates(t *testing.T) {
 			want[audio.attachmentID] = state
 		}
 	}
+	zeroBytes := addBeeperAudio(t, f.Store, gmail.ID, gmailConversation, "gmail-zero-bytes", fmt.Sprintf("%064x", 9))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET size = 0 WHERE id = ?`), zeroBytes.attachmentID)
+	require.NoError(err)
 	beeperAudio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "beeper-empty-state", strings.Repeat("a", 64))
-	_, err = f.Store.DB().Exec(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`, beeperAudio.attachmentID)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`), beeperAudio.attachmentID)
 	require.NoError(err)
 
 	candidates, err := f.Store.ListBeeperMediaCandidates(t.Context(), 0, 10)

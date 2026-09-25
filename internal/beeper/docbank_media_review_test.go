@@ -42,19 +42,134 @@ func processDeliveryIdentities(t *testing.T, st *store.Store, destination string
 	return result
 }
 
+func nextPendingProcess(t *testing.T, worker *MediaSubmitter, destination string) store.BeeperMediaOperation {
+	t.Helper()
+	for range 8 {
+		operation, ok, err := worker.store.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
+		require.NoError(t, err)
+		if ok && operation.Kind == store.BeeperMediaOperationProcess {
+			return operation
+		}
+		_, err = worker.RunBatch(t.Context())
+		require.NoError(t, err)
+	}
+	t.Fatalf("pending media process was not ready")
+	return store.BeeperMediaOperation{}
+}
+
 func preparePendingProcess(t *testing.T, worker *MediaSubmitter, destination string) store.BeeperMediaOperation {
 	t.Helper()
-	runPasses(t, worker, 2)
-	operation, ok, err := worker.store.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
+	operation := nextPendingProcess(t, worker, destination)
+	mappings, err := worker.liveMappings(t.Context(), operation.ProcessingKey, 1)
 	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, store.BeeperMediaOperationProcess, operation.Kind)
+	require.Len(t, mappings, 1)
+	operation.VaultUID = mappings[0].VaultUID
+	operation.DocbankSourceID = mappings[0].DocbankSourceID
+	operation.SourceVersionID = mappings[0].SourceVersionID
+	operation.ContentVersionID = mappings[0].ContentVersionID
+	operation.DocbankOccurrenceID = mappings[0].DocbankOccurrenceID
 	operation.FrozenRequestJSON = mustJSON(docbankmedia.Processing{
-		Profile: "supplied-transcript", SuppliedInputID: operation.SuppliedInputID,
+		Profile: operation.ProcessingProfile, SuppliedInputID: operation.SuppliedInputID,
 	})
 	prepared, err := worker.prepareOperation(t.Context(), operation)
 	require.NoError(t, err)
 	return prepared
+}
+
+func TestStoredMediaProfileChangeRecoversPreparedProcessReceipt(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "profile-crash", asset: "mxc://beeper.local/profile-crash",
+		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 72)})
+	docbank := newFakeDocbank(t)
+	docbank.coverage = "pending"
+	server := newTestDocbankServer(t, docbank)
+	defer server.Close()
+	destination := "stored-profile-crash"
+	oldWorker := world.submitter(t, server, destination).WithASRProfile("old-asr")
+	prepared := preparePendingProcess(t, oldWorker, destination)
+	oldKey := prepared.ProcessingKey
+	processing := docbankmedia.Processing{Profile: prepared.ProcessingProfile,
+		SuppliedInputID: prepared.SuppliedInputID}
+	firstReceipt, err := oldWorker.client.Process(t.Context(), prepared.DocbankSourceID,
+		prepared.OperationID, processing)
+	require.NoError(err)
+	require.NotEmpty(firstReceipt.JobID)
+
+	archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	candidates, err := world.st.ListBeeperMediaCandidates(t.Context(), 0, 10)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	updatedWorker := world.submitter(t, server, destination).WithASRProfile("new-asr")
+	_, err = updatedWorker.reconcileCandidate(t.Context(), archiveUID, candidates[0])
+	require.NoError(err)
+	newKey := processingKeyForDestination(t, world.st, destination, "new-asr")
+	assert.NotEqual(oldKey, newKey)
+	_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries
+		SET next_action_at = ? WHERE destination_key = ? AND processing_key = ?`),
+		time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), destination, oldKey)
+	require.NoError(err)
+
+	replay, ok, err := world.st.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
+	require.NoError(err)
+	require.True(ok)
+	assert.Equal(store.BeeperMediaOperationProcess, replay.Kind)
+	assert.True(replay.PreparedReplay)
+	assert.Equal(oldKey, replay.ProcessingKey)
+	assert.Equal(prepared.OperationID, replay.OperationID)
+	assert.Equal(prepared.FrozenRequestJSON, replay.FrozenRequestJSON)
+	require.NoError(updatedWorker.process(t.Context(), t.Context(), archiveUID, replay))
+
+	deliveries := processDeliveryIdentities(t, world.st, destination)
+	assert.Equal("observing", findProcessDelivery(t, deliveries, oldKey).phase)
+	assert.Equal("pending-process", findProcessDelivery(t, deliveries, newKey).phase)
+	assert.Empty(findProcessDelivery(t, deliveries, newKey).operationID)
+	var processingOperationID, jobID string
+	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`SELECT processing_operation_id, job_id
+		FROM beeper_media_deliveries WHERE destination_key = ? AND processing_key = ?`), destination, oldKey).
+		Scan(&processingOperationID, &jobID))
+	assert.Equal(prepared.OperationID, processingOperationID)
+	assert.Equal(firstReceipt.JobID, jobID)
+	docbank.mu.Lock()
+	assert.Equal([]string{prepared.OperationID}, docbank.processOps)
+	assert.Equal(1, docbank.replays)
+	docbank.mu.Unlock()
+}
+
+func TestStoredMediaProfileChangeRetiresUnpreparedProcess(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "profile-unprepared", asset: "mxc://beeper.local/profile-unprepared",
+		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 73)})
+	docbank := newFakeDocbank(t)
+	server := newTestDocbankServer(t, docbank)
+	defer server.Close()
+	destination := "stored-profile-unprepared"
+	oldWorker := world.submitter(t, server, destination).WithASRProfile("old-asr")
+	operation := nextPendingProcess(t, oldWorker, destination)
+	require.Empty(operation.OperationID)
+	require.Empty(operation.FrozenRequestJSON)
+	archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	candidates, err := world.st.ListBeeperMediaCandidates(t.Context(), 0, 10)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	updatedWorker := world.submitter(t, server, destination).WithASRProfile("new-asr")
+	_, err = updatedWorker.reconcileCandidate(t.Context(), archiveUID, candidates[0])
+	require.NoError(err)
+	newKey := processingKeyForDestination(t, world.st, destination, "new-asr")
+	identities := processDeliveryIdentities(t, world.st, destination)
+	assert.Equal("blocked", findProcessDelivery(t, identities, operation.ProcessingKey).phase)
+	assert.Equal("processing_key_changed", findProcessDelivery(t, identities, operation.ProcessingKey).errorCode)
+	assert.Equal("pending-process", findProcessDelivery(t, identities, newKey).phase)
+	next, ok, err := world.st.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
+	require.NoError(err)
+	require.True(ok)
+	assert.Equal(store.BeeperMediaOperationProcess, next.Kind)
+	assert.Equal(newKey, next.ProcessingKey)
+	assert.Equal("new-asr", next.ProcessingProfile)
+	docbank.mu.Lock()
+	assert.Empty(docbank.processOps)
+	docbank.mu.Unlock()
 }
 
 func TestBeeperMediaDailyRescan(t *testing.T) {

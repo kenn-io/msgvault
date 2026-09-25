@@ -455,13 +455,6 @@ func describeStoredMedia(
 	return descriptor, "", nil
 }
 
-func transcriptHash(transcript string) string {
-	if transcript == "" {
-		return ""
-	}
-	return hashBytes([]byte(transcript))
-}
-
 func configureMediaProcessing(descriptor MediaDescriptor, transcript, asrProfile string) MediaDescriptor {
 	descriptor.ProcessingKey = ""
 	descriptor.ProcessingProfile = ""
@@ -916,6 +909,14 @@ func (w *MediaSubmitter) artifact(
 func (w *MediaSubmitter) process(
 	ctx, actionCtx context.Context, archiveUID string, operation store.BeeperMediaOperation,
 ) error {
+	if operation.PreparedReplay && operation.OperationID != "" && operation.FrozenRequestJSON != "" {
+		// A saved request may have reached Docbank before its receipt was committed.
+		var processing docbankmedia.Processing
+		if err := json.Unmarshal([]byte(operation.FrozenRequestJSON), &processing); err != nil {
+			return fmt.Errorf("decode saved beeper processing request: %w", err)
+		}
+		return w.sendProcessing(ctx, actionCtx, operation, operation.VaultUID, processing)
+	}
 	mappings, err := w.liveMappings(ctx, operation.ProcessingKey, 1)
 	if err != nil {
 		return err
@@ -1006,6 +1007,13 @@ func (w *MediaSubmitter) process(
 	if err := json.Unmarshal([]byte(prepared.FrozenRequestJSON), &processing); err != nil {
 		return fmt.Errorf("decode saved beeper processing request: %w", err)
 	}
+	return w.sendProcessing(ctx, actionCtx, prepared, vaultUID, processing)
+}
+
+func (w *MediaSubmitter) sendProcessing(
+	ctx, actionCtx context.Context, prepared store.BeeperMediaOperation,
+	vaultUID string, processing docbankmedia.Processing,
+) error {
 	receipt, err := w.client.Process(actionCtx, prepared.DocbankSourceID, prepared.OperationID, processing)
 	if err != nil {
 		return w.finishClientError(ctx, actionCtx, prepared, err)

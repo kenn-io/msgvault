@@ -110,6 +110,42 @@ func TestStoredMediaProviderMatrix(t *testing.T) {
 	assert.Contains(profiles, "configured-asr")
 }
 
+func TestStoredMediaEmptySlackExportDoesNotBlockLaterAudio(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t)
+	source, err := world.st.GetOrCreateSource("slack", "T01:EMPTY")
+	require.NoError(err)
+	conversation, err := world.st.EnsureConversation(source.ID, "slack-thread", "Thread")
+	require.NoError(err)
+	message, err := world.st.UpsertMessage(&store.Message{
+		ConversationID: conversation, SourceID: source.ID, SourceMessageID: "empty-first", MessageType: "slack",
+	})
+	require.NoError(err)
+	empty := &mime.Attachment{Filename: "empty.wav", ContentType: "audio/wav", Content: []byte{}}
+	storagePath, err := export.StoreAttachmentFileIncludingEmpty(world.dir, empty)
+	require.NoError(err)
+	require.NotEmpty(storagePath)
+	require.NoError(world.st.UpsertAttachmentRecord(t.Context(), message, store.AttachmentWrite{
+		Filename: empty.Filename, MIMEType: empty.ContentType, StoragePath: storagePath,
+		ContentHash: empty.ContentHash, SourceAttachmentID: "slack:empty", SourcePartKey: "slack:empty",
+		MediaType: "audio", Role: store.AttachmentRoleStandalone,
+		RoleSource: store.AttachmentRoleSourceProviderExplicit, State: attachmentpolicy.StateStored,
+	}))
+	addStoredMediaSource(t, world, "slack", "T01:EMPTY", "valid-after-empty", syntheticWAV(800, 71),
+		"voice.wav", "audio/wav", "audio", store.AttachmentRoleStandalone, attachmentpolicy.StateStored, nil,
+		"slack:valid", "slack:valid")
+	docbank := newFakeDocbank(t)
+	server := newTestDocbankServer(t, docbank)
+	defer server.Close()
+	worker := world.submitter(t, server, "stored-empty-slack").WithASRProfile("configured-asr")
+	result, err := worker.RunBatch(t.Context())
+	require.NoError(err)
+	assert.Equal(1, result.Examined)
+	rows := occurrenceRows(t, world.st, "stored-empty-slack")
+	require.Len(rows, 1)
+	assert.Equal("valid-after-empty", rows[0].MessageID)
+}
+
 func TestStoredMediaEmailFallback(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -304,7 +340,7 @@ func TestStoredMediaProfileReplay(t *testing.T) {
 	require.Len(rows, 1)
 	assert.NotEqual(rows[0].Ref, deliveries[0].Donor)
 	var profile string
-	require.NoError(world.st.DB().QueryRow(`SELECT profile FROM beeper_media_deliveries WHERE destination_key = ?`,
+	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`SELECT profile FROM beeper_media_deliveries WHERE destination_key = ?`),
 		"stored-profile-replay").Scan(&profile))
 	assert.Equal("configured-asr", profile)
 
@@ -358,8 +394,8 @@ func TestStoredMediaProfileChangeStartedJob(t *testing.T) {
 	require.NoError(err)
 	newKey := processingKeyForDestination(t, world.st, destination, "new-asr")
 	assert.NotEqual(oldKey, newKey)
-	_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'
-		WHERE destination_key = ? AND processing_key = ?`, destination, oldKey)
+	_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'
+		WHERE destination_key = ? AND processing_key = ?`), destination, oldKey)
 	require.NoError(err)
 	docbank.mu.Lock()
 	docbank.coverage = "transcribed"
@@ -408,15 +444,15 @@ func TestStoredMediaStartedReceiptIdentityMismatch(t *testing.T) {
 		{column: "source_version_id", value: "wrong-source-version"},
 		{column: "content_version_id", value: "wrong-content-version"},
 	} {
-		_, err := world.st.DB().Exec("UPDATE beeper_media_deliveries SET "+mismatch.column+" = ?, next_action_at = '2000-01-01 00:00:00.000' WHERE destination_key = ?",
+		_, err := world.st.DB().Exec(world.st.Rebind("UPDATE beeper_media_deliveries SET "+mismatch.column+" = ?, next_action_at = '2000-01-01 00:00:00.000' WHERE destination_key = ?"),
 			mismatch.value, destination)
 		require.NoError(err)
 		_, ready, err := world.st.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
 		require.NoError(err)
 		assert.False(ready, mismatch.column)
-		_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries
+		_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries
 			SET source_id = ?, source_version_id = ?, content_version_id = ?, next_action_at = '2000-01-01 00:00:00.000'
-			WHERE destination_key = ?`, started[0].SourceID, started[0].SourceVersionID,
+			WHERE destination_key = ?`), started[0].SourceID, started[0].SourceVersionID,
 			started[0].ContentVersionID, destination)
 		require.NoError(err)
 	}
@@ -426,8 +462,8 @@ func TestStoredMediaStartedReceiptIdentityMismatch(t *testing.T) {
 	docbank.coverage = "transcribed"
 	processes := len(docbank.processOps)
 	docbank.mu.Unlock()
-	_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'
-		WHERE destination_key = ?`, destination)
+	_, err := world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'
+		WHERE destination_key = ?`), destination)
 	require.NoError(err)
 	runPasses(t, worker, 1)
 	ended := deliveryRows(t, world.st, destination)
@@ -442,7 +478,7 @@ func TestStoredMediaStartedReceiptIdentityMismatch(t *testing.T) {
 func processingKeyForDestination(t *testing.T, st *store.Store, destination, profile string) string {
 	t.Helper()
 	var key string
-	require.NoError(t, st.DB().QueryRow(`SELECT processing_key FROM beeper_media_deliveries
-		WHERE destination_key = ? AND profile = ?`, destination, profile).Scan(&key))
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT processing_key FROM beeper_media_deliveries
+		WHERE destination_key = ? AND profile = ?`), destination, profile).Scan(&key))
 	return key
 }

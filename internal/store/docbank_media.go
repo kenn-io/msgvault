@@ -56,6 +56,7 @@ const (
 // beeperMediaEligible is the shared provider, capture and role predicate. It
 // assumes the aliases a (attachments), m (messages) and src (sources).
 const beeperMediaEligible = `length(COALESCE(a.content_hash, '')) = 64
+	  AND COALESCE(a.size, 0) > 0
 	  AND COALESCE(a.storage_path, '') <> ''
 	  AND COALESCE(NULLIF(a.source_part_key, ''), a.source_attachment_id, '') <> ''
 	  AND COALESCE(src.source_type, '') <> ''
@@ -160,6 +161,7 @@ type BeeperMediaMapping struct {
 // FrozenRequestJSON holds the saved nonsecret request for replay.
 type BeeperMediaOperation struct {
 	Kind                string
+	PreparedReplay      bool
 	DestinationKey      string
 	OccurrenceRef       string
 	Revision            string
@@ -354,7 +356,11 @@ func (s *Store) ReconcileBeeperMediaMapping(ctx context.Context, mapping BeeperM
 				SET phase = 'blocked', next_action_at = NULL, error_code = 'processing_key_changed',
 				    updated_at = `+s.dialect.Now()+`
 				WHERE destination_key = ? AND processing_key = ?
-				  AND phase IN ('pending-artifact', 'pending-process') AND COALESCE(job_id, '') = ''`,
+				  AND COALESCE(job_id, '') = ''
+				  AND (phase = 'pending-artifact' OR (phase = 'pending-process' AND
+				       (COALESCE(pending_operation_id, '') = '' OR COALESCE(frozen_request_json, '') = '' OR
+				        COALESCE(source_id, '') = '' OR COALESCE(source_version_id, '') = '' OR
+				        COALESCE(content_version_id, '') = '' OR COALESCE(donor_occurrence_id, '') = '')))`,
 					mapping.DestinationKey, previousProcessingKey); err != nil {
 					return fmt.Errorf("retire changed beeper media processing state: %w", err)
 				}
@@ -659,9 +665,16 @@ func (s *Store) NextBeeperMediaOperation(
 
 	var delivery BeeperMediaOperation
 	var phase, pendingID, processingID, frozen, provider, profile string
+	var preparedReplay int
 	var deliveryNext sql.NullTime
 	deliveryErr := s.db.QueryRowContext(ctx, s.Rebind(`
-		SELECT d.phase, d.destination_key, d.processing_key, COALESCE(d.pending_operation_id, ''),
+		SELECT d.phase,
+		       CASE WHEN d.phase = 'pending-process' AND COALESCE(d.pending_operation_id, '') <> ''
+		              AND COALESCE(d.frozen_request_json, '') <> '' AND NOT EXISTS (
+				SELECT 1 FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
+				  AND o.destination_key = d.destination_key AND o.processing_key = d.processing_key
+				  AND o.retention_state = 'retained') THEN 1 ELSE 0 END,
+		       d.destination_key, d.processing_key, COALESCE(d.pending_operation_id, ''),
 		       d.processing_operation_id, d.source_sha256, d.byte_length, d.transcript_sha256,
 		       d.language, d.source_id, d.source_version_id, d.content_version_id,
 		       d.donor_occurrence_id, d.supplied_input_id, d.job_id,
@@ -687,6 +700,17 @@ func (s *Store) NextBeeperMediaOperation(
 				SELECT 1 FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
 				  AND o.destination_key = d.destination_key AND o.processing_key = d.processing_key
 				  AND o.retention_state = 'retained'))
+			OR (d.phase = 'pending-process' AND COALESCE(d.pending_operation_id, '') <> ''
+			    AND COALESCE(d.frozen_request_json, '') <> '' AND COALESCE(d.source_id, '') <> ''
+			    AND COALESCE(d.source_version_id, '') <> '' AND COALESCE(d.content_version_id, '') <> ''
+			    AND d.donor_occurrence_id <> ''
+			    AND EXISTS (
+				SELECT 1 FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
+				  AND o.destination_key = d.destination_key AND o.occurrence_id = d.donor_occurrence_id
+				  AND o.source_id = d.source_id AND o.source_version_id = d.source_version_id
+				  AND o.content_version_id = d.content_version_id AND o.source_sha256 = d.source_sha256
+				  AND o.byte_length = d.byte_length AND o.vault_uid <> ''
+				  AND o.retention_state = 'retained'))
 			OR (d.phase = 'observing' AND d.job_id <> '' AND d.donor_occurrence_id <> '' AND EXISTS (
 				SELECT 1 FROM beeper_media_occurrences o
 				WHERE o.destination_key = d.destination_key AND o.occurrence_id = d.donor_occurrence_id
@@ -697,7 +721,7 @@ func (s *Store) NextBeeperMediaOperation(
 		  )
 		ORDER BY d.next_action_at, d.processing_key
 		LIMIT 1`), destination, s.dialect.TimestampParam(now)).Scan(
-		&phase, &delivery.DestinationKey, &delivery.ProcessingKey, &pendingID, &processingID,
+		&phase, &preparedReplay, &delivery.DestinationKey, &delivery.ProcessingKey, &pendingID, &processingID,
 		&delivery.SourceSHA256, &delivery.ByteLength, &delivery.TranscriptSHA256, &delivery.Language,
 		&delivery.DocbankSourceID, &delivery.SourceVersionID, &delivery.ContentVersionID,
 		&delivery.DocbankOccurrenceID, &delivery.SuppliedInputID, &delivery.JobID, &frozen,
@@ -706,6 +730,7 @@ func (s *Store) NextBeeperMediaOperation(
 		return BeeperMediaOperation{}, false, fmt.Errorf("select beeper media processing operation: %w", deliveryErr)
 	}
 	delivery.NextActionAt = nullTimeValue(deliveryNext)
+	delivery.PreparedReplay = preparedReplay != 0
 	delivery.FrozenRequestJSON = frozen
 	delivery.ProcessingProvider, delivery.ProcessingProfile = provider, profile
 	switch phase {
