@@ -21,10 +21,10 @@ import (
 // SourceType is the sources.source_type value for a Graph mail account.
 const SourceType = "msmail"
 
-// rewalkPrefix marks a saved nextLink of a walk after an expired cursor. Such
-// a walk must finish in one run, because its end looks up the messages it did
-// not return.
-const rewalkPrefix = "rewalk:"
+// walkPrefix marks the saved nextLink of a walk. A walk must finish in one
+// run, because its end looks up the archived messages it did not return, so
+// an interrupted walk starts over. Known messages are not downloaded again.
+const walkPrefix = "walk:"
 
 // fetchWorkers is the number of parallel $value downloads. Microsoft documents
 // four concurrent requests per mailbox as the limit.
@@ -121,11 +121,8 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		switch {
 		case link == "":
 			link, seen = DeltaStartURL(f.ID), map[string]bool{}
-		case strings.HasPrefix(link, rewalkPrefix):
-			// A walk after an expired cursor was interrupted. Its seen set
-			// is lost, so walk the folder again from the start. Known
-			// messages are not downloaded again.
-			link, seen, restarted = DeltaStartURL(f.ID), map[string]bool{}, true
+		case strings.HasPrefix(link, walkPrefix):
+			link, seen = DeltaStartURL(f.ID), map[string]bool{}
 		}
 		for {
 			page, perr := c.DeltaPage(ctx, link)
@@ -153,8 +150,8 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 				link = page.DeltaLink
 			}
 			cursors[f.ID] = link
-			if restarted && page.NextLink != "" {
-				cursors[f.ID] = rewalkPrefix + link
+			if seen != nil && page.NextLink != "" {
+				cursors[f.ID] = walkPrefix + link
 			}
 			if err = st.UpdateSyncCheckpoint(syncID, checkpoint()); err != nil {
 				return sum, err
@@ -306,6 +303,30 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 	return s.relocate(ctx, removed)
 }
 
+// attachmentsStored reports whether every attachment part key of a new MIME
+// has a row. A part without a key cannot be checked, so it counts as missing.
+func (s *syncer) attachmentsStored(ctx context.Context, messageID int64, keys []string) (bool, error) {
+	distinct := map[string]bool{}
+	for _, k := range keys {
+		if k == "" {
+			return false, nil
+		}
+		distinct[k] = true
+	}
+	if len(distinct) == 0 {
+		return true, nil
+	}
+	args := []any{messageID}
+	for k := range distinct {
+		args = append(args, k)
+	}
+	var n int
+	err := s.st.DB().QueryRowContext(ctx, s.st.Rebind(`
+		SELECT COUNT(DISTINCT source_part_key) FROM attachments
+		WHERE message_id = ? AND source_part_key IN (?`+strings.Repeat(`, ?`, len(distinct)-1)+`)`), args...).Scan(&n)
+	return n == len(distinct), err
+}
+
 // reconcileWalk looks up the archived messages of a folder that a complete
 // walk did not return. They left the folder while no delta cursor covered it,
 // for example after the cursor expired.
@@ -455,7 +476,15 @@ func (s *syncer) download(ctx context.Context, folderLabel int64, msgs []DeltaMe
 		for _, a := range parsed.Attachments {
 			keep = append(keep, a.PartKey)
 		}
-		if err := s.st.DeleteMIMEAttachmentsExceptContext(ctx, r.msg.archiveID, keep); err != nil {
+		complete, err := s.attachmentsStored(ctx, r.msg.archiveID, keep)
+		if err == nil && complete {
+			err = s.st.DeleteMIMEAttachmentsExceptContext(ctx, r.msg.archiveID, keep)
+		} else if err == nil {
+			// ponytail: an attachment of the new MIME has no row, so the old
+			// rows stay; they are dropped when a later refresh stores all.
+			s.log.Warn("keep old attachments: new MIME not fully stored", "id", r.msg.ID)
+		}
+		if err != nil {
 			storeErr = fmt.Errorf("drop old attachments of message %s: %w", r.msg.ID, err)
 			cancel()
 			continue

@@ -39,6 +39,7 @@ type fakeGraph struct {
 	version map[string]int    // message ID -> content version
 
 	withAttachment map[string]bool // message IDs whose MIME carries a file
+	shifted        map[string]bool // message IDs whose file moves to another part
 	attachDir      string          // attachments directory; a fresh one when empty
 	throttle       bool            // answer the next $value with 429 once
 	pageSize       int
@@ -53,7 +54,7 @@ type change struct{ id, from string }
 
 func newFakeGraph(t *testing.T) *fakeGraph {
 	t.Helper()
-	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, pageSize: 2}
+	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, pageSize: 2}
 	f.folders = []string{"inbox", "archive"}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -80,11 +81,17 @@ func raw(id string, version int) string {
 		" v" + strconv.Itoa(version) + "\r\n"
 }
 
-func rawWithAttachment(id string) string {
+// rawWithAttachment carries one file. When shifted, a second text part comes
+// first, so the file gets another MIME part key.
+func rawWithAttachment(id string, shifted bool) string {
+	extra := ""
+	if shifted {
+		extra = "--b\r\nContent-Type: text/plain\r\n\r\nnote\r\n"
+	}
 	return "From: a@example.com\r\nTo: me@example.com\r\nSubject: " + id +
 		"\r\nMessage-ID: <" + id + "@example.com>\r\nDate: Mon, 1 Jan 2024 10:00:00 +0000\r\n" +
 		"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n" +
-		"--b\r\nContent-Type: text/plain\r\n\r\nbody " + id + "\r\n" +
+		"--b\r\nContent-Type: text/plain\r\n\r\nbody " + id + "\r\n" + extra +
 		"--b\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=a.bin\r\n" +
 		"Content-Transfer-Encoding: base64\r\n\r\naGVsbG8=\r\n--b--\r\n"
 }
@@ -134,7 +141,7 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		body := raw(id, f.version[id])
 		if f.withAttachment[id] {
-			body = rawWithAttachment(id)
+			body = rawWithAttachment(id, f.shifted[id])
 		}
 		_, _ = w.Write([]byte(body)) //nolint:gosec // local test server returns fixture MIME
 	case strings.HasPrefix(p, "/me/messages/"):
@@ -332,7 +339,7 @@ func TestImportResumesFromCheckpoint(t *testing.T) {
 	sum, err := f.sync(t, st)
 	require.NoError(err)
 	assert.Equal(1, sum.Added)
-	assert.EqualValues(1, f.walkStarts.Load(), "only archive starts a walk; inbox resumes at the saved nextLink")
+	assert.EqualValues(2, f.walkStarts.Load(), "inbox starts its interrupted walk over; archive starts its first")
 	assert.Len(state(t, st), 5)
 }
 
@@ -556,6 +563,7 @@ func TestImportRefreshKeepsAttachmentWhenWriteFails(t *testing.T) {
 	blocker := filepath.Join(t.TempDir(), "file")
 	require.NoError(os.WriteFile(blocker, nil, 0o600))
 	f.attachDir = filepath.Join(blocker, "attachments") // cannot be created
+	f.shifted["m1"] = true                              // the file gets a new part key
 	f.put("m1", "inbox")
 	_, err = f.sync(t, st)
 	require.NoError(err)
