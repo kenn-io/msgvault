@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/importer"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/msgraph"
 	"go.kenn.io/msgvault/internal/store"
 	"golang.org/x/sync/errgroup"
@@ -18,6 +20,11 @@ import (
 
 // SourceType is the sources.source_type value for a Graph mail account.
 const SourceType = "msmail"
+
+// rewalkPrefix marks a saved nextLink of a walk after an expired cursor. Such
+// a walk must finish in one run, because its end looks up the messages it did
+// not return.
+const rewalkPrefix = "rewalk:"
 
 // fetchWorkers is the number of parallel $value downloads. Microsoft documents
 // four concurrent requests per mailbox as the limit.
@@ -110,10 +117,16 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		// seen collects the IDs of a walk that starts in this run, so that
 		// archived messages it does not return can be looked up at its end.
 		var seen map[string]bool
-		if link == "" {
-			link, seen = DeltaStartURL(f.ID), map[string]bool{}
-		}
 		restarted := false
+		switch {
+		case link == "":
+			link, seen = DeltaStartURL(f.ID), map[string]bool{}
+		case strings.HasPrefix(link, rewalkPrefix):
+			// A walk after an expired cursor was interrupted. Its seen set
+			// is lost, so walk the folder again from the start. Known
+			// messages are not downloaded again.
+			link, seen, restarted = DeltaStartURL(f.ID), map[string]bool{}, true
+		}
 		for {
 			page, perr := c.DeltaPage(ctx, link)
 			if errors.Is(perr, msgraph.ErrGone) && !restarted {
@@ -140,6 +153,9 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 				link = page.DeltaLink
 			}
 			cursors[f.ID] = link
+			if restarted && page.NextLink != "" {
+				cursors[f.ID] = rewalkPrefix + link
+			}
 			if err = st.UpdateSyncCheckpoint(syncID, checkpoint()); err != nil {
 				return sum, err
 			}
@@ -420,15 +436,6 @@ func (s *syncer) download(ctx context.Context, folderLabel int64, msgs []DeltaMe
 		if storeErr != nil {
 			continue
 		}
-		if r.msg.archiveID != 0 {
-			// The new MIME replaces the old one, so drop the attachment rows
-			// of the old MIME first.
-			if err := s.st.DeleteKeyedAttachmentsExceptContext(ctx, r.msg.archiveID, "mime:", ""); err != nil {
-				storeErr = fmt.Errorf("clear attachments of message %s: %w", r.msg.ID, err)
-				cancel()
-				continue
-			}
-		}
 		sum := sha256.Sum256(r.raw)
 		if err := importer.IngestRawMessage(ctx, s.st, s.sourceID, s.opts.Email, s.opts.AttachmentsDir,
 			[]int64{folderLabel}, r.msg.ID, hex.EncodeToString(sum[:]), r.raw, r.msg.ReceivedDateTime, s.log); err != nil {
@@ -439,6 +446,18 @@ func (s *syncer) download(ctx context.Context, folderLabel int64, msgs []DeltaMe
 		}
 		if r.msg.archiveID == 0 {
 			s.sum.Added++
+			continue
+		}
+		// The new MIME replaces the old one. Its attachment rows are written,
+		// so drop the rows of parts that the new MIME no longer has.
+		parsed, _ := mime.ParseWithRecovery(r.raw, "")
+		keep := make([]string, 0, len(parsed.Attachments))
+		for _, a := range parsed.Attachments {
+			keep = append(keep, a.PartKey)
+		}
+		if err := s.st.DeleteMIMEAttachmentsExceptContext(ctx, r.msg.archiveID, keep); err != nil {
+			storeErr = fmt.Errorf("drop old attachments of message %s: %w", r.msg.ID, err)
+			cancel()
 			continue
 		}
 		if err := s.st.RecomputeMessageAttachmentStats(r.msg.archiveID); err != nil {

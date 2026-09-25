@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,6 +39,7 @@ type fakeGraph struct {
 	version map[string]int    // message ID -> content version
 
 	withAttachment map[string]bool // message IDs whose MIME carries a file
+	attachDir      string          // attachments directory; a fresh one when empty
 	throttle       bool            // answer the next $value with 429 once
 	pageSize       int
 	stopAt         int // fail the delta page at this skip offset, when non-zero
@@ -224,7 +227,11 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 func (f *fakeGraph) sync(t *testing.T, st *store.Store) (*Summary, error) {
 	t.Helper()
 	c := NewClient(f.srv.URL, func(context.Context) (string, error) { return "tok", nil }, 1000)
-	return Import(context.Background(), st, c, Options{Email: "me@example.com", AttachmentsDir: f.t.TempDir()}, slog.Default())
+	dir := f.attachDir
+	if dir == "" {
+		dir = f.t.TempDir()
+	}
+	return Import(context.Background(), st, c, Options{Email: "me@example.com", AttachmentsDir: dir}, slog.Default())
 }
 
 // state returns message ID -> "folder label name" or "deleted".
@@ -506,4 +513,51 @@ func TestImportStoreFailureDoesNotAdvanceCursor(t *testing.T) {
 	_, err = f.sync(t, st)
 	require.NoError(err)
 	assert.Equal(map[string]string{"m1": "Inbox", "m2": "Inbox"}, state(t, st))
+}
+
+// A walk after an expired cursor that is interrupted starts over on the next
+// sync, so its end still finds the messages that left during the gap.
+func TestImportInterruptedRewalkStartsOver(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	for i := range 5 {
+		f.put(fmt.Sprintf("m%d", i), "inbox")
+	}
+	_, err := f.sync(t, st)
+	require.NoError(err)
+
+	f.remove("m0") // purged during the gap
+	f.expired["inbox"] = true
+	f.stopAt = 2 // the second page of the walk fails
+	_, err = f.sync(t, st)
+	require.Error(err)
+
+	f.walkStarts.Store(0)
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.EqualValues(1, f.walkStarts.Load(), "inbox walks again from the start")
+	assert.Equal("deleted", state(t, st)["m0"])
+}
+
+// When the attachment of a refreshed message cannot be written, the row of
+// the old MIME stays.
+func TestImportRefreshKeepsAttachmentWhenWriteFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.withAttachment["m1"] = true
+	f.put("m1", "inbox")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+
+	blocker := filepath.Join(t.TempDir(), "file")
+	require.NoError(os.WriteFile(blocker, nil, 0o600))
+	f.attachDir = filepath.Join(blocker, "attachments") // cannot be created
+	f.put("m1", "inbox")
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.Equal([2]int{1, 1}, attachments(t, st, "m1"))
 }

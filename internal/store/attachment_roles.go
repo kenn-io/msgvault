@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
@@ -270,6 +271,27 @@ func (s *Store) DeleteKeyedAttachmentsExceptContext(
 			  AND SUBSTR(source_part_key, 1, LENGTH(?)) = ?
 			  AND (? = '' OR source_part_key <> ?)
 		`, messageID, sourcePartKeyPrefix, sourcePartKeyPrefix, keepSourcePartKey, keepSourcePartKey)
+		return err
+	})
+}
+
+// DeleteMIMEAttachmentsExceptContext removes the MIME-owned attachment rows of
+// a message whose source part key is not in keep. A connector that stores a
+// newer MIME for the same message calls it after the new rows are written, so
+// a failed write never loses the old rows.
+func (s *Store) DeleteMIMEAttachmentsExceptContext(
+	ctx context.Context, messageID int64, keep []string,
+) error {
+	query := `DELETE FROM attachments WHERE message_id = ? AND source_attachment_id IS NULL`
+	args := []any{messageID}
+	if len(keep) > 0 {
+		query += ` AND COALESCE(source_part_key, '') NOT IN (?` + strings.Repeat(`, ?`, len(keep)-1) + `)`
+		for _, k := range keep {
+			args = append(args, k)
+		}
+	}
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		_, err := q.Exec(query, args...)
 		return err
 	})
 }
