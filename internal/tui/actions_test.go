@@ -210,10 +210,15 @@ func TestStageForDeletion_FromMessageSelection(t *testing.T) {
 	manifest := env.StageForDeletion(stageArgs{
 		selection: testutil.MakeSet[int64](10, 30),
 		view:      query.ViewSenders,
-		messages:  messages,
+		accounts: []query.AccountInfo{{
+			ID: 1, SourceType: "", Identifier: "legacy@example.invalid",
+		}},
+		messages: messages,
 	})
 
 	assert.ElementsMatch(t, []string{"gid_a", "gid_c"}, manifest.GmailIDs)
+	require.NotNil(t, manifest.Source)
+	assert.Equal(t, "gmail", manifest.Source.Type, "legacy account uses an effective deletion source type")
 }
 
 func TestStageForDeletion_MessageSelectionRespectsSourceScope(t *testing.T) {

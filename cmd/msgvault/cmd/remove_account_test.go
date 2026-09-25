@@ -1203,6 +1203,112 @@ func TestRemoveAccountCmd_MixedGmailSourcesPreserveEquivalentGrant(t *testing.T)
 	assert.Zero(revokeTransport.calls.Load(), "equivalent legacy Gmail source must prevent remote revoke")
 }
 
+func TestRemoveAccountCmd_SharedTokenFileSurvivesSameIdentifierGmailSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
+
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	legacy, err := s.GetOrCreateSource("", "shared@example.com")
+	require.NoError(err, "create legacy Gmail source")
+	explicit, err := s.GetOrCreateSource(sourceTypeGmail, legacy.Identifier)
+	require.NoError(err, "create explicit Gmail source")
+	require.NoError(s.Close())
+
+	tokenPath := oauth.TokenFilePath(tokensDir, legacy.Identifier)
+	require.NoError(os.WriteFile(tokenPath,
+		[]byte(`{"access_token":"shared","token_type":"Bearer","client_id":"client-a"}`), 0600),
+		"write shared token")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	savedClient := http.DefaultClient
+	revokeTransport := &removeAccountRevokeTransport{}
+	http.DefaultClient = &http.Client{Transport: revokeTransport}
+	t.Cleanup(func() { http.DefaultClient = savedClient })
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "--source-id", strconv.FormatInt(explicit.ID, 10), "--yes"})
+	require.NoError(root.Execute(), "remove-account")
+
+	s, err = store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err, "reopen store")
+	defer func() { _ = s.Close() }()
+	_, err = s.GetSourceByID(explicit.ID)
+	require.ErrorIs(err, store.ErrSourceNotFound, "selected explicit source should be removed")
+	remaining, err := s.GetSourceByID(legacy.ID)
+	require.NoError(err, "remaining legacy source should stay")
+	assert.Empty(remaining.SourceType, "remaining source keeps its raw legacy type")
+
+	_, err = os.Stat(tokenPath)
+	require.NoError(err, "remaining legacy source must retain its shared token file")
+	assert.Zero(revokeTransport.calls.Load(), "remaining legacy source must prevent remote revoke")
+}
+
+func TestTokenFileUsedByRemainingSourceFindsSharedFilesystemObject(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tokensDir := t.TempDir()
+	selectedPath := oauth.TokenFilePath(tokensDir, "selected@example.com")
+	remainingPath := oauth.TokenFilePath(tokensDir, "remaining@example.com")
+	require.NotEqual(selectedPath, remainingPath, "source identifiers use distinct paths")
+	require.NoError(os.WriteFile(selectedPath, []byte("token"), 0600), "write selected token")
+	if err := os.Link(selectedPath, remainingPath); err != nil {
+		t.Skipf("hard links are unavailable: %v", err)
+	}
+
+	assert.True(tokenFileUsedByRemainingSource(
+		tokensDir, "selected@example.com", []string{"remaining@example.com"},
+	))
+}
+
+func TestGmailCredentialRetention(t *testing.T) {
+	tests := []struct {
+		name                  string
+		enumerationFailed     bool
+		sharedTokenFile       bool
+		equivalentGrant       bool
+		wantPreserveTokenFile bool
+		wantGrantInUse        bool
+	}{
+		{
+			name:                  "enumeration failure",
+			enumerationFailed:     true,
+			wantPreserveTokenFile: true,
+			wantGrantInUse:        true,
+		},
+		{
+			name:                  "shared token file",
+			sharedTokenFile:       true,
+			wantPreserveTokenFile: true,
+			wantGrantInUse:        true,
+		},
+		{
+			name:            "equivalent grant on distinct file",
+			equivalentGrant: true,
+			wantGrantInUse:  true,
+		},
+		{
+			name: "last source",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			preserveTokenFile, grantInUse := gmailCredentialRetention(
+				tt.enumerationFailed, tt.sharedTokenFile, tt.equivalentGrant,
+			)
+			assert.Equal(t, tt.wantPreserveTokenFile, preserveTokenFile)
+			assert.Equal(t, tt.wantGrantInUse, grantInUse)
+		})
+	}
+}
+
 func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()

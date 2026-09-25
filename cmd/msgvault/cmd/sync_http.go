@@ -10,6 +10,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/store"
 	"golang.org/x/oauth2"
 )
 
@@ -133,7 +134,7 @@ func buildSyncPreflight(st *daemonclient.Client, info HTTPStoreInfo) preflightCo
 			}
 			gmail := make([]preflightAccount, 0, len(accounts))
 			for _, a := range accounts {
-				if a.Type != sourceTypeGmail {
+				if store.EffectiveSourceType(a.Type) != sourceTypeGmail {
 					continue
 				}
 				gmail = append(gmail, preflightAccount{

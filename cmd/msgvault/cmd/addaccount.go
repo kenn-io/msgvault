@@ -380,7 +380,7 @@ func lookupGmailAccountBinding(ctx context.Context, email string) (sql.NullStrin
 		return sql.NullString{}, false, fmt.Errorf("look up existing source: %w", err)
 	}
 	for _, account := range accounts {
-		if account.Type == sourceTypeGmail && account.Email == email {
+		if store.EffectiveSourceType(account.Type) == sourceTypeGmail && account.Email == email {
 			return sql.NullString{String: account.OAuthApp, Valid: account.OAuthApp != ""}, true, nil
 		}
 	}

@@ -10,7 +10,7 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func TestCLIAccountsFromGeneratedEffectiveSourceType(t *testing.T) {
+func TestCLIAccountsFromGeneratedPreservesRawSourceType(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	lastSync := time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC)
@@ -33,7 +33,7 @@ func TestCLIAccountsFromGeneratedEffectiveSourceType(t *testing.T) {
 	})
 
 	require.Len(accounts, 3)
-	assert.Equal("gmail", accounts[0].Type, "legacy source type")
+	assert.Empty(accounts[0].Type, "legacy source type")
 	assert.Equal("gmail", accounts[1].Type, "explicit Gmail source type")
 	assert.Equal("imap", accounts[2].Type, "named source type")
 	assert.Equal(int64(7), accounts[0].ID)
