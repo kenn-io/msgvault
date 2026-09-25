@@ -161,11 +161,11 @@ func TestCalendarAddOAuthAppDecisionFallsBackToGmailBinding(t *testing.T) {
 	require := require.New(t)
 
 	st := newCalendarDecisionStore(t)
-	src, err := st.GetOrCreateSource(sourceTypeGmail, "User@Acme.com")
+	src, err := st.GetOrCreateSource("", "User@example.com")
 	require.NoError(err)
 	require.NoError(st.UpdateSourceOAuthApp(src.ID, sql.NullString{String: "acme", Valid: true}))
 
-	decision, err := calendarAddOAuthAppDecision(st, "user@acme.com", "", false)
+	decision, err := calendarAddOAuthAppDecision(st, "user@example.com", "", false)
 	require.NoError(err)
 
 	assert.Equal("acme", decision.OAuthApp)
@@ -270,11 +270,11 @@ func TestCalendarSyncOAuthAppDecisionFallsBackToGmailBinding(t *testing.T) {
 	require := require.New(t)
 
 	st := newCalendarDecisionStore(t)
-	src, err := st.GetOrCreateSource(sourceTypeGmail, "User@Acme.com")
+	src, err := st.GetOrCreateSource("", "User@example.com")
 	require.NoError(err)
 	require.NoError(st.UpdateSourceOAuthApp(src.ID, sql.NullString{String: "acme", Valid: true}))
 
-	decision, err := calendarSyncOAuthAppDecision(st, "user@acme.com", nil, "", false)
+	decision, err := calendarSyncOAuthAppDecision(st, "user@example.com", nil, "", false)
 	require.NoError(err)
 
 	assert.Equal("acme", decision.OAuthApp)

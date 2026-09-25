@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +59,29 @@ func TestFindGmailSource(t *testing.T) {
 	require.NoError(err, "findGmailSource")
 	require.NotNil(src, "expected non-nil with gmail source")
 	assert.Equal(legacy.ID, src.ID, "legacy source remains the first match")
+}
+
+func TestLookupGmailAccountBindingLegacyGmailUsesNamedOAuthApp(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/cli/accounts" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"accounts":[{"id":7,"email":"legacy@example.com","type":"","display_name":"Legacy","oauth_app":"named-app","message_count":0,"source_deleted_count":0,"last_sync":"2024-01-02T03:04:05Z"}]}`))
+	}))
+	t.Cleanup(server.Close)
+	withStoreResolverConfig(t, &config.Config{
+		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+	})
+
+	app, exists, err := lookupGmailAccountBinding(context.Background(), "legacy@example.com")
+	require.NoError(err)
+	assert.True(exists, "legacy response should count as an existing Gmail source")
+	assert.Equal("named-app", app.String)
+	assert.True(app.Valid)
 }
 
 func TestSelectAddAccountGmailSource(t *testing.T) {

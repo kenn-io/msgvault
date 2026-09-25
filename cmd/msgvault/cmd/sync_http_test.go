@@ -15,8 +15,50 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	extOAuth2 "golang.org/x/oauth2"
 )
+
+func TestBuildSyncPreflightLegacyGmailAccountReauthorizes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	savedCfg := cfg
+	cfg = &config.Config{}
+	t.Cleanup(func() { cfg = savedCfg })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/cli/accounts" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"accounts":[{"id":7,"email":"legacy@example.com","type":"","display_name":"Legacy","oauth_app":"named-app","message_count":0,"source_deleted_count":0,"last_sync":"2024-01-02T03:04:05Z"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(err, "create daemon client")
+	t.Cleanup(func() { _ = client.Close() })
+
+	preflight := buildSyncPreflight(client, HTTPStoreInfo{Kind: HTTPStoreLocalDaemon})
+	accounts, err := preflight.ListGmailAccounts(context.Background())
+	require.NoError(err, "list Gmail accounts")
+	require.Len(accounts, 1)
+	assert.Equal("named-app", accounts[0].OAuthApp, "legacy account keeps its named OAuth app")
+
+	manager := newExpiredPreflightManager()
+	preflight.Local = true
+	preflight.Interactive = true
+	preflight.OAuthConfigured = true
+	preflight.ServiceAccountKey = func(string) string { return "" }
+	preflight.ManagerFor = func(appName string) (preflightReauthManager, error) {
+		assert.Equal("named-app", appName, "preflight must select the stored OAuth app")
+		return manager, nil
+	}
+
+	require.NoError(preflightReauth(context.Background(), preflight, "legacy@example.com", 0))
+	assert.Equal(1, manager.authorizeCount, "expired legacy Gmail token should reauthorize once")
+}
 
 func TestSyncUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	assert := assert.New(t)

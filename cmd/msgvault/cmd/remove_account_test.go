@@ -1114,6 +1114,95 @@ func TestRemoveAccountCmd_GmailRemovesToken(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "token file should be removed for gmail source")
 }
 
+func TestRemoveAccountCmd_LegacyGmailRemovesToken(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
+
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	source, err := s.GetOrCreateSource("", "legacy@example.com")
+	require.NoError(err, "create legacy Gmail source")
+	require.NoError(s.Close())
+
+	tokenPath := oauth.TokenFilePath(tokensDir, source.Identifier)
+	require.NoError(os.WriteFile(tokenPath, []byte(`{"access_token":"legacy","token_type":"Bearer"}`), 0600), "write token")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "--source-id", strconv.FormatInt(source.ID, 10), "--yes"})
+
+	require.NoError(root.Execute(), "remove-account")
+	_, err = os.Stat(tokenPath)
+	assert.True(os.IsNotExist(err), "token file should be removed for legacy Gmail source")
+}
+
+type removeAccountRevokeTransport struct {
+	calls atomic.Int32
+}
+
+func (tr *removeAccountRevokeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	tr.calls.Add(1)
+	if req.URL.String() != "https://oauth2.googleapis.com/revoke" {
+		return nil, fmt.Errorf("unexpected OAuth request: %s", req.URL)
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       http.NoBody,
+		Request:    req,
+	}, nil
+}
+
+func TestRemoveAccountCmd_MixedGmailSourcesPreserveEquivalentGrant(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
+
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	legacy, err := s.GetOrCreateSource("", "user.name@gmail.com")
+	require.NoError(err, "create legacy Gmail source")
+	explicit, err := s.GetOrCreateSource(sourceTypeGmail, "username@gmail.com")
+	require.NoError(err, "create explicit Gmail source")
+	require.NoError(s.Close())
+
+	token := []byte(`{"access_token":"shared","token_type":"Bearer","client_id":"client-a"}`)
+	legacyTokenPath := oauth.TokenFilePath(tokensDir, legacy.Identifier)
+	explicitTokenPath := oauth.TokenFilePath(tokensDir, explicit.Identifier)
+	require.NoError(os.WriteFile(legacyTokenPath, token, 0600), "write legacy token")
+	require.NoError(os.WriteFile(explicitTokenPath, token, 0600), "write explicit token")
+
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	savedClient := http.DefaultClient
+	revokeTransport := &removeAccountRevokeTransport{}
+	http.DefaultClient = &http.Client{Transport: revokeTransport}
+	t.Cleanup(func() { http.DefaultClient = savedClient })
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "--source-id", strconv.FormatInt(explicit.ID, 10), "--yes"})
+
+	require.NoError(root.Execute(), "remove-account")
+	_, err = os.Stat(explicitTokenPath)
+	assert.True(os.IsNotExist(err), "removed explicit token should be deleted")
+	_, err = os.Stat(legacyTokenPath)
+	require.NoError(err, "equivalent token for remaining legacy Gmail source should stay")
+	assert.Zero(revokeTransport.calls.Load(), "equivalent legacy Gmail source must prevent remote revoke")
+}
+
 func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()

@@ -287,11 +287,14 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	// Remove credentials for the source type.
-	switch source.SourceType {
+	switch store.EffectiveSourceType(source.SourceType) {
 	case sourceTypeGmail:
-		remaining, listErr := s.ListSources(sourceTypeGmail)
+		remaining, listErr := s.ListSources("")
 		remainingEmails := make([]string, 0, len(remaining))
 		for _, remainingSource := range remaining {
+			if store.EffectiveSourceType(remainingSource.SourceType) != sourceTypeGmail {
+				continue
+			}
 			remainingEmails = append(remainingEmails, remainingSource.Identifier)
 		}
 		grantInUse := listErr != nil || oauth.EquivalentStoredGrantInUse(

@@ -468,7 +468,7 @@ func cliAccountsFromGenerated(resp *generated.ListCLIAccountsResponse) []CLIAcco
 		out[i] = CLIAccount{
 			ID:                 account.ID,
 			Email:              account.Email,
-			Type:               account.Type,
+			Type:               store.EffectiveSourceType(account.Type),
 			DisplayName:        account.DisplayName,
 			OAuthApp:           stringValue(account.OauthApp),
 			MessageCount:       account.MessageCount,
