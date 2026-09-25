@@ -96,6 +96,7 @@ func taskLinkServerWithStore(t *testing.T, messageStore MessageStore, logger *sl
 }
 
 func TestCreateTaskForEmailDerivesStableServerIdempotency(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	ops := &fakeTaskLinkOperations{}
@@ -124,6 +125,7 @@ func TestCreateTaskForEmailDerivesStableServerIdempotency(t *testing.T) {
 }
 
 func TestCreateTaskRequiresBrowserRequestID(t *testing.T) {
+	t.Parallel()
 	srv := taskLinkServer(t, "email", &fakeTaskLinkOperations{})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages/42/tasks", bytes.NewReader([]byte(`{"title":"Follow up","added_at":"2026-07-19T01:02:03Z"}`)))
 	req.Header.Set("Content-Type", "application/json")
@@ -134,6 +136,7 @@ func TestCreateTaskRequiresBrowserRequestID(t *testing.T) {
 }
 
 func TestCreateTaskOpenAPIRequiresBrowserRequestID(t *testing.T) {
+	t.Parallel()
 	doc := OpenAPIDocument()
 	operation := doc.Paths["/api/v1/messages/{id}/tasks"].Post
 	require.NotNil(t, operation)
@@ -147,6 +150,7 @@ func TestCreateTaskOpenAPIRequiresBrowserRequestID(t *testing.T) {
 }
 
 func TestCreateTaskRejectsOversizedAndTrailingJSONBodies(t *testing.T) {
+	t.Parallel()
 	srv := taskLinkServer(t, "email", &fakeTaskLinkOperations{})
 	for _, tc := range []struct {
 		name string
@@ -169,6 +173,7 @@ func TestCreateTaskRejectsOversizedAndTrailingJSONBodies(t *testing.T) {
 }
 
 func TestTaskLinkAPIsTreatLegacyBlankMessageTypeAsEmail(t *testing.T) {
+	t.Parallel()
 	srv := taskLinkServer(t, "", &fakeTaskLinkOperations{})
 	for _, tc := range []struct {
 		method, path, body string
@@ -189,6 +194,7 @@ func TestTaskLinkAPIsTreatLegacyBlankMessageTypeAsEmail(t *testing.T) {
 }
 
 func TestTaskMessageLookupErrorClassification(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		storeErr  error
@@ -231,6 +237,7 @@ func TestTaskMessageLookupErrorClassification(t *testing.T) {
 }
 
 func TestTaskLinkAPIsRejectNonEmailConcreteRows(t *testing.T) {
+	t.Parallel()
 	srv := taskLinkServer(t, "imessage", &fakeTaskLinkOperations{})
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/messages/42/tasks"},
@@ -248,6 +255,7 @@ func TestTaskLinkAPIsRejectNonEmailConcreteRows(t *testing.T) {
 }
 
 func TestTaskLookupAlwaysReturnsIndexAuthorityFields(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	now := time.Date(2026, 7, 19, 1, 0, 0, 0, time.UTC)
 	ops := &fakeTaskLinkOperations{lookup: tasklinks.LookupResult{IndexStatus: tasklinks.IndexStatus{
@@ -278,6 +286,7 @@ func TestTaskLookupAlwaysReturnsIndexAuthorityFields(t *testing.T) {
 }
 
 func TestTaskLookupDisclosesExactSanitizedOutboundMetadata(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	identity := tasklinks.MessageIdentity{
 		ArchiveUID: "  archive\x00-" + strings.Repeat("a", tasklinks.MaxSnapshotFieldBytes),
@@ -307,6 +316,7 @@ func TestTaskLookupDisclosesExactSanitizedOutboundMetadata(t *testing.T) {
 }
 
 func TestTaskSearchReturnsConfiguredProjectResults(t *testing.T) {
+	t.Parallel()
 	ops := &fakeTaskLinkOperations{search: []tasklinks.TaskSummary{{ID: "task-1", Title: "Synthetic result", Revision: "r1"}}}
 	srv := taskLinkServer(t, "email", ops)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations/tasks/search?q=Synthetic", nil)
@@ -320,6 +330,7 @@ func TestTaskSearchReturnsConfiguredProjectResults(t *testing.T) {
 }
 
 func TestTaskLinkSecondConflictIsSurfaced(t *testing.T) {
+	t.Parallel()
 	ops := &fakeTaskLinkOperations{err: taskclient.ErrConflict}
 	srv := taskLinkServer(t, "email", ops)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages/42/tasks", bytes.NewReader([]byte(`{"task_id":"task-1","added_at":"2026-07-19T01:02:03Z"}`)))
@@ -332,6 +343,7 @@ func TestTaskLinkSecondConflictIsSurfaced(t *testing.T) {
 }
 
 func TestTaskLinkRequestRejectedIsSurfacedAsClientError(t *testing.T) {
+	t.Parallel()
 	ops := &fakeTaskLinkOperations{err: taskclient.ErrRequestRejected}
 	srv := taskLinkServer(t, "email", ops)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages/42/tasks", bytes.NewReader([]byte(`{"task_id":"task-1","added_at":"2026-07-19T01:02:03Z"}`)))

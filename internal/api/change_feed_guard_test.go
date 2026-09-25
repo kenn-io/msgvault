@@ -51,6 +51,7 @@ func requestChangeFeed(
 }
 
 func TestChangeFeedGuard_KeylessBrowserOrigin(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		origin     string
@@ -86,6 +87,7 @@ func TestChangeFeedGuard_KeylessBrowserOrigin(t *testing.T) {
 }
 
 func TestChangeFeedGuard_APIKeyAllowsCrossOrigin(t *testing.T) {
+	t.Parallel()
 	const apiKey = "change-feed-test-key"
 	srv, lister := newChangeFeedGuardTestServer(t, apiKey)
 
@@ -96,6 +98,7 @@ func TestChangeFeedGuard_APIKeyAllowsCrossOrigin(t *testing.T) {
 }
 
 func TestChangeFeedGuard_LoopbackCannotBypassRateLimit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, lister := newChangeFeedGuardTestServer(t, "")

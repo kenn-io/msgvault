@@ -25,6 +25,7 @@ import (
 )
 
 func TestArchivedRemoteImagesRenderOfflineAndAreMessageScoped(t *testing.T) {
+	t.Parallel()
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	cfg := config.NewDefaultConfig()

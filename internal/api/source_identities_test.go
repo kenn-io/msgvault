@@ -51,6 +51,7 @@ func newSourceIdentityAPIFixture(t *testing.T) sourceIdentityAPIFixture {
 }
 
 func TestSourceIdentitiesListsOnlyRequestedSource(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	fixture := newSourceIdentityAPIFixture(t)
@@ -84,6 +85,7 @@ func TestSourceIdentitiesListsOnlyRequestedSource(t *testing.T) {
 }
 
 func TestSourceIdentitiesReturnsStableEmptyArray(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	fixture := newSourceIdentityAPIFixture(t)
@@ -100,6 +102,7 @@ func TestSourceIdentitiesReturnsStableEmptyArray(t *testing.T) {
 }
 
 func TestSourceIdentitiesRejectsInvalidAndUnknownSourceIDs(t *testing.T) {
+	t.Parallel()
 	fixture := newSourceIdentityAPIFixture(t)
 	tests := []struct {
 		name       string
@@ -128,6 +131,7 @@ func TestSourceIdentitiesRejectsInvalidAndUnknownSourceIDs(t *testing.T) {
 }
 
 func TestSourceIdentitiesOpenAPIContract(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	for _, document := range []struct {

@@ -69,6 +69,7 @@ func (c *diagnosticRawBatchClient) GetMessagesRawBatchWithErrors(context.Context
 }
 
 func TestGetMessagesRawBatchWithDiagnosticsUsesMissingRawForLegacyNil(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	client := &legacyRawBatchClient{
@@ -88,6 +89,7 @@ func TestGetMessagesRawBatchWithDiagnosticsUsesMissingRawForLegacyNil(t *testing
 }
 
 func TestGetMessagesRawBatchWithDiagnosticsPreservesClientError(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	errFetch := errors.New("fetch failed")

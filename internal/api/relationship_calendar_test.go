@@ -43,6 +43,7 @@ func (e *relationshipCalendarAPIEngine) RelationshipCalendar(
 }
 
 func TestRelationshipCalendarResolvesAliasAndReturnsTypedCalendar(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	engine := &relationshipCalendarAPIEngine{
@@ -72,6 +73,7 @@ func TestRelationshipCalendarResolvesAliasAndReturnsTypedCalendar(t *testing.T) 
 }
 
 func TestRelationshipCalendarMatchesPublishedPeopleTemperatureEndToEnd(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	now := time.Date(2026, time.January, 10, 12, 0, 0, 0, time.UTC)
@@ -110,6 +112,7 @@ func TestRelationshipCalendarMatchesPublishedPeopleTemperatureEndToEnd(t *testin
 }
 
 func TestRelationshipCalendarReturnsStableInputAndPersonErrors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		path       string
@@ -146,6 +149,7 @@ func TestRelationshipCalendarReturnsStableInputAndPersonErrors(t *testing.T) {
 }
 
 func TestRelationshipCalendarReportsAnalyticsUnavailable(t *testing.T) {
+	t.Parallel()
 	response := postExploreJSON(t,
 		newTestServerWithEngine(t, &querytest.MockEngine{}),
 		"/api/v1/relationships/7/calendar", `{"year":2026,"timezone":"UTC"}`)
@@ -153,6 +157,7 @@ func TestRelationshipCalendarReportsAnalyticsUnavailable(t *testing.T) {
 }
 
 func TestRelationshipCalendarReportsCacheReadiness(t *testing.T) {
+	t.Parallel()
 	engine := &relationshipCalendarAPIEngine{
 		MockEngine: &querytest.MockEngine{},
 		calendarErr: &query.CacheUnavailableError{
@@ -168,6 +173,7 @@ func TestRelationshipCalendarReportsCacheReadiness(t *testing.T) {
 }
 
 func TestRelationshipCalendarRequestRejectsTrailingJSON(t *testing.T) {
+	t.Parallel()
 	engine := &relationshipCalendarAPIEngine{MockEngine: &querytest.MockEngine{}}
 	response := postExploreJSON(t, newTestServerWithEngine(t, engine),
 		"/api/v1/relationships/7/calendar", `{"year":2026} {}`)
@@ -175,6 +181,7 @@ func TestRelationshipCalendarRequestRejectsTrailingJSON(t *testing.T) {
 }
 
 func TestRelationshipCalendarOpenAPIContract(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	assert.Equal("2.29.0", APISchemaVersion)

@@ -45,6 +45,7 @@ func decodeErrorEnvelope(t *testing.T, w *httptest.ResponseRecorder) ErrorRespon
 }
 
 func TestInvalidQueryParamsReturn400(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		target    string
@@ -93,6 +94,7 @@ func TestInvalidQueryParamsReturn400(t *testing.T) {
 }
 
 func TestValidQueryParamsAccepted(t *testing.T) {
+	t.Parallel()
 	targets := []string{
 		"/api/v1/aggregates?view_type=senders&after=2024-01-01&before=2024-02-01&sort=count&direction=asc&limit=5&source_id=1",
 		"/api/v1/aggregates?view_type=time&time_granularity=day",
@@ -110,6 +112,7 @@ func TestValidQueryParamsAccepted(t *testing.T) {
 }
 
 func TestOutOfRangePaginationClamps(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		target       string
@@ -136,6 +139,7 @@ func TestOutOfRangePaginationClamps(t *testing.T) {
 }
 
 func TestUnknownAPIPathReturnsJSON404(t *testing.T) {
+	t.Parallel()
 	targets := []string{
 		"/api/v1/nonexistent",
 		"/api/v1/messages/",
@@ -153,6 +157,7 @@ func TestUnknownAPIPathReturnsJSON404(t *testing.T) {
 }
 
 func TestTypedRouteErrorEnvelopeHasNoSchema(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
 
@@ -165,6 +170,7 @@ func TestTypedRouteErrorEnvelopeHasNoSchema(t *testing.T) {
 }
 
 func TestQueryEndpointRejectsNonReadOnly(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		sql     string

@@ -9,6 +9,7 @@ import (
 )
 
 func TestExploreFilesRejectsUnboundedLimit(t *testing.T) {
+	t.Parallel()
 	srv := newTestServerWithEngine(t, newExploreDuckDBFixture(t))
 	response := postExploreJSON(t, srv, "/api/v1/explore/files", `{"predicate":{},"limit":101}`)
 	assert.Equal(t, http.StatusBadRequest, response.Code)
@@ -16,6 +17,7 @@ func TestExploreFilesRejectsUnboundedLimit(t *testing.T) {
 }
 
 func TestPrepareExplorePredicateCanonicalizesWithoutMutatingCaller(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	input := ExploreHTTPRequest{

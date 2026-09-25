@@ -216,6 +216,7 @@ func assertNoIdentityDiscoveryCacheBuild(
 }
 
 func TestCLIIdentityDiscoverPreviewAndApplyParity(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
@@ -241,6 +242,7 @@ func TestCLIIdentityDiscoverPreviewAndApplyParity(t *testing.T) {
 }
 
 func TestCLIIdentityDiscoverProviderPreviewAndApplyUseOneResolvedSource(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
@@ -300,6 +302,7 @@ func TestCLIIdentityDiscoverProviderPreviewAndApplyUseOneResolvedSource(t *testi
 }
 
 func TestCLIIdentityDiscoverProviderErrorsAreActionableAndRedacted(t *testing.T) {
+	t.Parallel()
 	t.Run("missing configuration", func(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
@@ -358,6 +361,7 @@ func TestCLIIdentityDiscoverProviderErrorsAreActionableAndRedacted(t *testing.T)
 // database error listing archive sources) surfaces as an internal server
 // error, not a user-input error, since the requester did nothing wrong.
 func TestCLIIdentityDiscoverStoreFailureIsInternalNotInvalid(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
@@ -391,6 +395,7 @@ func TestCLIIdentityDiscoverStoreFailureIsInternalNotInvalid(t *testing.T) {
 // being discarded and replaced with a generic error before logging. The
 // public HTTP response body must stay generic regardless.
 func TestCLIIdentityDiscoverInventoryFailureLogsStatusBearingError(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	const token = "do-not-log-provider-token"
@@ -419,6 +424,7 @@ func TestCLIIdentityDiscoverInventoryFailureLogsStatusBearingError(t *testing.T)
 }
 
 func TestCLIIdentityImportPreviewApplyAndRetryUseParsedEntries(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
@@ -452,6 +458,7 @@ func TestCLIIdentityImportPreviewApplyAndRetryUseParsedEntries(t *testing.T) {
 }
 
 func TestCLIIdentityImportRejectsInvalidRowsAndExplicitNonPositiveSourceID(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		body string
@@ -486,6 +493,7 @@ func TestCLIIdentityImportRejectsInvalidRowsAndExplicitNonPositiveSourceID(t *te
 }
 
 func TestCLIIdentityImportAccountRequiresUniqueSource(t *testing.T) {
+	t.Parallel()
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
 	_, err := wrapped.GetOrCreateSource("gmail", source.Identifier)
 	require.NoError(t, err)
@@ -501,6 +509,7 @@ func TestCLIIdentityImportAccountRequiresUniqueSource(t *testing.T) {
 }
 
 func TestCLIIdentityImportPartialCommitSchedulesCacheBeforeError(t *testing.T) {
+	t.Parallel()
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
 	wrapped.batchFunc = func(
 		_ context.Context,
@@ -533,6 +542,7 @@ func identityConfirmationIdentifiers(outcomes []store.IdentityConfirmationOutcom
 }
 
 func TestCLIIdentityDiscoverAccountAndSourceIDSelection(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
 
@@ -554,6 +564,7 @@ func TestCLIIdentityDiscoverAccountAndSourceIDSelection(t *testing.T) {
 }
 
 func TestCLIIdentityDiscoverStreamsSanitizedTerminalErrorAfterProgress(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
@@ -607,6 +618,7 @@ func TestCLIIdentityDiscoverStreamsSanitizedTerminalErrorAfterProgress(t *testin
 }
 
 func TestCLIIdentityDiscoverRejectsExplicitZeroSourceID(t *testing.T) {
+	t.Parallel()
 	tests := []string{
 		`{"source_id":0}`,
 		`{"account":"primary@example.test","source_id":0}`,
@@ -633,6 +645,7 @@ func TestCLIIdentityDiscoverRejectsExplicitZeroSourceID(t *testing.T) {
 }
 
 func TestCLIIdentityDiscoverAppliesExplicitWeakConfirmation(t *testing.T) {
+	t.Parallel()
 	srv, _, source := newCLIIdentityDiscoveryTestServer(t)
 	events := postDiscoverNDJSON(t, srv, fmt.Sprintf(
 		`{"source_id":%d,"apply":true,"confirm":["weak@example.test"]}`,
@@ -646,6 +659,7 @@ func TestCLIIdentityDiscoverAppliesExplicitWeakConfirmation(t *testing.T) {
 }
 
 func TestCLIIdentityDiscoverClassifiesContextErrorsBeforeStreaming(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		err      error
@@ -677,6 +691,7 @@ func TestCLIIdentityDiscoverClassifiesContextErrorsBeforeStreaming(t *testing.T)
 }
 
 func TestCLIIdentityDiscoverCancellationEmitsNoResult(t *testing.T) {
+	t.Parallel()
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	wrapped.scanCancel = cancel
@@ -695,6 +710,7 @@ func TestCLIIdentityDiscoverCancellationEmitsNoResult(t *testing.T) {
 }
 
 func TestCLIIdentityDiscoverPartialApplyErrorSchedulesOneCacheRebuildWithoutResult(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
@@ -737,6 +753,7 @@ func TestCLIIdentityDiscoverPartialApplyErrorSchedulesOneCacheRebuildWithoutResu
 }
 
 func TestCLIIdentityDiscoverCancellationAfterCommitSchedulesOneCacheRebuildWithoutResult(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
@@ -772,6 +789,7 @@ func TestCLIIdentityDiscoverCancellationAfterCommitSchedulesOneCacheRebuildWitho
 }
 
 func TestCLIIdentityListSourceIDSelectsOneDuplicateAccount(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -797,6 +815,7 @@ func TestCLIIdentityListSourceIDSelectsOneDuplicateAccount(t *testing.T) {
 }
 
 func TestCLIIdentityListRejectsSourceIDWithAccount(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
@@ -815,6 +834,7 @@ func TestCLIIdentityListRejectsSourceIDWithAccount(t *testing.T) {
 }
 
 func TestCLIIdentityListRejectsExplicitNonPositiveSourceID(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
 	_, err := st.GetOrCreateSource("gmail", "alice@example.test")
@@ -838,6 +858,7 @@ func TestCLIIdentityListRejectsExplicitNonPositiveSourceID(t *testing.T) {
 }
 
 func TestCLIIdentityMutationsSourceIDDisambiguateDuplicateAccounts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
@@ -883,6 +904,7 @@ func TestCLIIdentityMutationsSourceIDDisambiguateDuplicateAccounts(t *testing.T)
 }
 
 func TestCLIIdentityMutationsRejectExplicitNonPositiveSourceIDWithoutMutation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		method     string

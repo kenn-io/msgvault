@@ -41,6 +41,7 @@ func (s *completionAPIStore) ClusterEdges(int64) ([]store.LinkEdge, error) {
 }
 
 func TestParticipantCompletionMergesCanonicalTypedCandidatesWithoutURLQuery(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	engine := &peopleAPIEngine{
@@ -100,6 +101,7 @@ func TestParticipantCompletionMergesCanonicalTypedCandidatesWithoutURLQuery(t *t
 }
 
 func TestParticipantCompletionMatchesAtPrefixedUsername(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	engine := &peopleAPIEngine{
 		MockEngine: &querytest.MockEngine{},
@@ -129,6 +131,7 @@ func TestParticipantCompletionMatchesAtPrefixedUsername(t *testing.T) {
 }
 
 func TestParticipantCompletionCuratedDuplicatePreservesObservedRelationshipMetadata(t *testing.T) {
+	t.Parallel()
 	when := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	server := newPeopleAPIServerWithStore(
 		&peopleAPIEngine{MockEngine: &querytest.MockEngine{}},
@@ -154,6 +157,7 @@ func TestParticipantCompletionCuratedDuplicatePreservesObservedRelationshipMetad
 }
 
 func TestParticipantCompletionValidatesBodyBeforeCallingBackends(t *testing.T) {
+	t.Parallel()
 	tests := []string{
 		`{"query":" ","limit":8}`,
 		`{"query":"alice","limit":21}`,
@@ -177,6 +181,7 @@ func TestParticipantCompletionValidatesBodyBeforeCallingBackends(t *testing.T) {
 }
 
 func TestParticipantCompletionDoesNotReturnPartialRowsWhenProfileLookupFails(t *testing.T) {
+	t.Parallel()
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{},
 		completionResult: &query.PeopleCompletionResponse{
 			Rows: []query.PeopleCompletion{{ParticipantID: 1, Kind: query.PeopleCompletionName,

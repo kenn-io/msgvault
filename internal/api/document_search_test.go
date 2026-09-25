@@ -23,6 +23,7 @@ import (
 )
 
 func TestDocumentSearchHTTPPreservesDedicatedContract(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	server, catalog := newTestServerWithMockStore(t)
 	catalog.documentSearchFunc = func(
@@ -60,6 +61,7 @@ func TestDocumentSearchHTTPPreservesDedicatedContract(t *testing.T) {
 }
 
 func TestDocumentSearchHTTPResolvesDurablePersonScope(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	server, catalog := newTestServerWithMockStore(t)
 	catalog.personContextFunc = func(_ context.Context, id int64) (*store.Person, error) {
@@ -87,6 +89,7 @@ func TestDocumentSearchHTTPResolvesDurablePersonScope(t *testing.T) {
 }
 
 func TestDocumentSearchHTTPExplicitSemanticUnavailableDoesNotFallBack(t *testing.T) {
+	t.Parallel()
 	server, catalog := newTestServerWithMockStore(t)
 	calls := 0
 	catalog.documentSearchFunc = func(context.Context, store.DocumentSearchRequest) (store.DocumentSearchResponse, error) {
@@ -102,6 +105,7 @@ func TestDocumentSearchHTTPExplicitSemanticUnavailableDoesNotFallBack(t *testing
 }
 
 func TestDocumentSearchHTTPMapsCursorRevisionConflict(t *testing.T) {
+	t.Parallel()
 	server, catalog := newTestServerWithMockStore(t)
 	catalog.documentSearchFunc = func(
 		context.Context,
@@ -118,6 +122,7 @@ func TestDocumentSearchHTTPMapsCursorRevisionConflict(t *testing.T) {
 }
 
 func TestDocumentSearchHTTPMapsUnavailableFTS(t *testing.T) {
+	t.Parallel()
 	server, catalog := newTestServerWithMockStore(t)
 	catalog.documentSearchFunc = func(
 		context.Context,
@@ -133,6 +138,7 @@ func TestDocumentSearchHTTPMapsUnavailableFTS(t *testing.T) {
 }
 
 func TestDocumentSearchHTTPRejectsCrossOriginKeylessRequest(t *testing.T) {
+	t.Parallel()
 	server, catalog := newTestServerWithMockStore(t)
 	calls := 0
 	catalog.documentSearchFunc = func(
@@ -153,6 +159,7 @@ func TestDocumentSearchHTTPRejectsCrossOriginKeylessRequest(t *testing.T) {
 }
 
 func TestDocumentStatusHTTPExplicitAndCurrentRoutesRejectCrossOriginKeylessRequests(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{
 		"/api/v1/documents/status?profile_id=profile&input_key=original&media_type=application%2Fpdf",
 		"/api/v1/documents/status/current",
@@ -177,6 +184,7 @@ func TestDocumentStatusHTTPExplicitAndCurrentRoutesRejectCrossOriginKeylessReque
 }
 
 func TestDocumentStatusHTTPExplicitAndCurrentRoutesRequireConfiguredAPIKey(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{
 		"/api/v1/documents/status?profile_id=profile&input_key=original&media_type=application%2Fpdf",
 		"/api/v1/documents/status/current",
@@ -211,6 +219,7 @@ func TestDocumentStatusHTTPExplicitAndCurrentRoutesRequireConfiguredAPIKey(t *te
 }
 
 func TestDocumentSearchHTTPHasDedicatedRateLimit(t *testing.T) {
+	t.Parallel()
 	server, catalog := newTestServerWithMockStore(t)
 	server.documentSearchRateLimiter.Close()
 	server.documentSearchRateLimiter = NewRateLimiter(1, 1)
@@ -234,7 +243,7 @@ func TestDocumentSearchHTTPHasDedicatedRateLimit(t *testing.T) {
 	assert.Equal(t, 1, calls)
 }
 
-func TestDocumentSearchHTTPWaitsOnOperationGate(t *testing.T) {
+func TestDocumentSearchHTTPWaitsOnOperationGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	require := require.New(t)
 	assert := assert.New(t)
 	oldLimit := operationGateWaitLimit
@@ -265,6 +274,7 @@ func TestDocumentSearchHTTPWaitsOnOperationGate(t *testing.T) {
 }
 
 func TestDocumentSearchHTTPLeavesReconciliationToSearchStore(t *testing.T) {
+	t.Parallel()
 	server, catalog := newTestServerWithMockStore(t)
 	reconcileCalls := 0
 	catalog.documentReconcileFunc = func(context.Context) error {
@@ -286,6 +296,7 @@ func TestDocumentSearchHTTPLeavesReconciliationToSearchStore(t *testing.T) {
 }
 
 func TestDocumentSearchHTTPDoesNotRegisterUnconsentedJournalConsumer(t *testing.T) {
+	t.Parallel()
 	fixture := storetest.New(t)
 	server := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{}, Store: fixture.Store, Logger: slog.New(slog.DiscardHandler),
@@ -301,6 +312,7 @@ func TestDocumentSearchHTTPDoesNotRegisterUnconsentedJournalConsumer(t *testing.
 }
 
 func TestOpenAPIDocumentSearchParameters(t *testing.T) {
+	t.Parallel()
 	document := OpenAPIDocument()
 	operation := document.Paths["/api/v1/documents/search"].Get
 	require.NotNil(t, operation)
@@ -314,6 +326,7 @@ func TestOpenAPIDocumentSearchParameters(t *testing.T) {
 }
 
 func TestDocumentVectorStatusHTTPIsUsefulBeforeTargetConfiguration(t *testing.T) {
+	t.Parallel()
 	fixture := storetest.New(t)
 	c := config.NewDefaultConfig()
 	c.Vector.Enabled = true
@@ -327,6 +340,7 @@ func TestDocumentVectorStatusHTTPIsUsefulBeforeTargetConfiguration(t *testing.T)
 }
 
 func TestOpenAPIDocumentVectorStatusUsesSnakeCaseCoverage(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	document := OpenAPIDocument()
@@ -341,6 +355,7 @@ func TestOpenAPIDocumentVectorStatusUsesSnakeCaseCoverage(t *testing.T) {
 }
 
 func TestDocumentStatusHTTPPreservesScopedContract(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	server, catalog := newTestServerWithMockStore(t)
 	reconciled := false
@@ -399,6 +414,7 @@ func TestDocumentStatusHTTPPreservesScopedContract(t *testing.T) {
 }
 
 func TestDocumentStatusHTTPResolvesCurrentDurableScopeWithoutPublishingIdentifiers(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	server, catalog := newTestServerWithMockStore(t)
 	server.cfg.Attachments.Documents.Scope.MessageTypes = []string{"email", "mms"}
@@ -426,6 +442,7 @@ func TestDocumentStatusHTTPResolvesCurrentDurableScopeWithoutPublishingIdentifie
 }
 
 func TestDocumentStatusHTTPRejectsPartialScopeAndFixesUnavailableCurrentScope(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	server, catalog := newTestServerWithMockStore(t)
 	catalog.documentCurrentScopeFunc = func(context.Context) (string, []string, error) {
@@ -455,6 +472,7 @@ func TestDocumentStatusHTTPRejectsPartialScopeAndFixesUnavailableCurrentScope(t 
 }
 
 func TestDocumentStatusHTTPCorruptDurableScopeRemainsRetryableAndPrivate(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	fixture := storetest.New(t)
@@ -508,6 +526,7 @@ func TestDocumentStatusHTTPCorruptDurableScopeRemainsRetryableAndPrivate(t *test
 }
 
 func TestOpenAPIDocumentStatusParameters(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	document := OpenAPIDocument()

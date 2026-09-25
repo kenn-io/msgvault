@@ -58,6 +58,7 @@ func alternativeRelocationRaw(
 }
 
 func TestIMAPRelocationAdoptsEditedSentSnapshot(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -158,6 +159,7 @@ func TestIMAPRelocationAdoptsEditedSentSnapshot(t *testing.T) {
 }
 
 func TestIMAPPartialRelocationMergesLabelsAndRefreshesContent(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -218,6 +220,7 @@ func TestIMAPPartialRelocationMergesLabelsAndRefreshesContent(t *testing.T) {
 }
 
 func TestIMAPDeferredRelocationPreservesLabelsUntilFinalization(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -268,6 +271,7 @@ func TestIMAPDeferredRelocationPreservesLabelsUntilFinalization(t *testing.T) {
 // same-Message-ID copy mirrored there carries no provider-authored evidence.
 // The rekey still adopts the stable canonical ID and keeps every attachment.
 func TestIMAPPreferredAllMailAdoptionPreservesSnapshot(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -358,6 +362,7 @@ func TestIMAPPreferredAllMailAdoptionPreservesSnapshot(t *testing.T) {
 }
 
 func TestIMAPRelocationSQLFailureRetainsSnapshotAndRetries(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger to inject relocation failure")
@@ -449,6 +454,7 @@ func TestIMAPRelocationSQLFailureRetainsSnapshotAndRetries(t *testing.T) {
 }
 
 func TestIMAPRelocationRecoversMalformedSentSnapshot(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -502,6 +508,7 @@ func TestIMAPRelocationRecoversMalformedSentSnapshot(t *testing.T) {
 }
 
 func TestIMAPRelocationWithoutAttachmentsDirPreservesSnapshotAndRetries(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -574,6 +581,7 @@ func TestIMAPRelocationWithoutAttachmentsDirPreservesSnapshotAndRetries(t *testi
 // archival hook as ordinary ingest, so an edited copy that gains tracked image
 // URLs archives them under the retained internal ID.
 func TestIMAPRelocationArchivesRemoteImages(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	var requests atomic.Int64
@@ -674,6 +682,7 @@ func TestIMAPRelocationArchivesRemoteImages(t *testing.T) {
 // HTML must not reach the remote-image fetcher, because processing bytes a
 // sender controls would leak requests to sender-chosen servers.
 func TestIMAPRelocationUntrustedDestinationSkipsRemoteImages(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	var requests atomic.Int64
@@ -752,6 +761,7 @@ func TestIMAPRelocationUntrustedDestinationSkipsRemoteImages(t *testing.T) {
 // transaction, so a failing or canceled label step rolls the adoption back
 // instead of consuming the key the next retry needs.
 func TestIMAPPreferredAdoptionKeepsOldKeyOnLabelFailure(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger to fail the label write")
 	assert := assert.New(t)
 	require := require.New(t)

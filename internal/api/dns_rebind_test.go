@@ -47,6 +47,7 @@ func assertNotRejectedAsUntrustedHost(t *testing.T, w *httptest.ResponseRecorder
 // rebound Host that matches the forged Origin still fails because the Host
 // authority is not loopback.
 func TestDNSRebind_AttackerMutationRejected(t *testing.T) {
+	t.Parallel()
 	srv, _ := newTestServerWithMockStore(t)
 	srv.listenerBound = true
 	srv.listenPort = 8080
@@ -61,6 +62,7 @@ func TestDNSRebind_AttackerMutationRejected(t *testing.T) {
 // request needs no Origin header at all, so the pre-existing same-origin
 // checks (which only fire when Origin is present) would not have caught it.
 func TestDNSRebind_AttackerReadRejected(t *testing.T) {
+	t.Parallel()
 	srv, _ := newTestServerWithMockStore(t)
 	srv.listenerBound = true
 	srv.listenPort = 8080
@@ -74,6 +76,7 @@ func TestDNSRebind_AttackerReadRejected(t *testing.T) {
 // TestDNSRebind_LegitimateLoopbackAllowed verifies a genuine 127.0.0.1
 // request on the bound port is not rejected by the guard.
 func TestDNSRebind_LegitimateLoopbackAllowed(t *testing.T) {
+	t.Parallel()
 	srv, _ := newTestServerWithMockStore(t)
 	srv.listenerBound = true
 	srv.listenPort = 8080
@@ -86,6 +89,7 @@ func TestDNSRebind_LegitimateLoopbackAllowed(t *testing.T) {
 // TestDNSRebind_LegitimateLocalhostAllowed verifies the "localhost" hostname
 // literal on the bound port is not rejected by the guard.
 func TestDNSRebind_LegitimateLocalhostAllowed(t *testing.T) {
+	t.Parallel()
 	srv, _ := newTestServerWithMockStore(t)
 	srv.listenerBound = true
 	srv.listenPort = 8080
@@ -100,6 +104,7 @@ func TestDNSRebind_LegitimateLocalhostAllowed(t *testing.T) {
 // indicates the request did not actually reach the real listener the way it
 // claims to (defense-in-depth per review).
 func TestDNSRebind_WrongPortRejected(t *testing.T) {
+	t.Parallel()
 	srv, _ := newTestServerWithMockStore(t)
 	srv.listenerBound = true
 	srv.listenPort = 8080
@@ -115,6 +120,7 @@ func TestDNSRebind_WrongPortRejected(t *testing.T) {
 // real listener via StartOnListener (listenerBound defaults to false), so
 // the ~345 pre-existing direct-Router tests are unaffected by this change.
 func TestDNSRebind_InertWithoutBoundListener(t *testing.T) {
+	t.Parallel()
 	srv, _ := newTestServerWithMockStore(t)
 
 	w := dnsRebindRequest(srv, http.MethodGet, "evil.com", "")
@@ -128,6 +134,7 @@ func TestDNSRebind_InertWithoutBoundListener(t *testing.T) {
 // listing a same-host proxy such as 127.0.0.1 in trusted_proxies must not
 // turn the attack path into a trusted one.
 func TestDNSRebind_TrustedLoopbackProxyDoesNotExemptRebind(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 	srv.listenerBound = true
@@ -159,6 +166,7 @@ func TestDNSRebind_TrustedLoopbackProxyDoesNotExemptRebind(t *testing.T) {
 }
 
 func TestIsLoopbackAuthority(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		host       string

@@ -16,6 +16,7 @@ import (
 )
 
 func TestVisualSearchRequestMediaTypes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	var upload bytes.Buffer
 	form := multipart.NewWriter(&upload)

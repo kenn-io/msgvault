@@ -25,6 +25,7 @@ import (
 )
 
 func TestExploreHTTPUsesCommittedDuckDBReadModel(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -52,6 +53,7 @@ func TestExploreHTTPUsesCommittedDuckDBReadModel(t *testing.T) {
 }
 
 func TestExploreResourceLimitExplainsRecovery(t *testing.T) {
+	t.Parallel()
 	_, analyticsDir := newExploreDuckDBFixtureWithDir(t)
 	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil, query.DuckDBOptions{
 		MemoryLimit: "1MB",
@@ -76,6 +78,7 @@ func TestExploreResourceLimitExplainsRecovery(t *testing.T) {
 }
 
 func TestExploreGroupsAndFilesUseCompleteDuckDBFacts(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -110,6 +113,7 @@ func TestExploreGroupsAndFilesUseCompleteDuckDBFacts(t *testing.T) {
 }
 
 func TestExploreParticipantGroupsResolveDurableLabelsEndToEnd(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	srv := newTestServerWithEngine(t, newExploreDuckDBFixture(t))
@@ -136,6 +140,7 @@ func TestExploreParticipantGroupsResolveDurableLabelsEndToEnd(t *testing.T) {
 // ranking returns Alice, so the keyed request resolving Bob proves the exact
 // lookup reaches the engine instead of the ranked listing.
 func TestExploreGroupsGroupKeyHydratesLowRankedGroupEndToEnd(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	srv := newTestServerWithEngine(t, newExploreDuckDBFixture(t))
@@ -167,6 +172,7 @@ func TestExploreGroupsGroupKeyHydratesLowRankedGroupEndToEnd(t *testing.T) {
 }
 
 func TestExplorePreflightPinsRevisionAndExcludesCompletePredicate(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := &rawExploreEngine{DuckDBEngine: newExploreDuckDBFixture(t)}
@@ -242,6 +248,7 @@ func TestExplorePreflightPinsRevisionAndExcludesCompletePredicate(t *testing.T) 
 }
 
 func TestExploreFullTextAndVisibleMatchCountsUseExactCandidates(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -279,6 +286,7 @@ func TestExploreFullTextAndVisibleMatchCountsUseExactCandidates(t *testing.T) {
 }
 
 func TestExploreFullTextPaginationRejectsChangedLexicalRevision(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -306,6 +314,7 @@ func TestExploreFullTextPaginationRejectsChangedLexicalRevision(t *testing.T) {
 }
 
 func TestExploreSemanticIssuesBoundedSnapshotWithoutInventingTotal(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -359,6 +368,7 @@ func (s *exploreClusterStore) ClusterEdges(int64) ([]store.LinkEdge, error) {
 }
 
 func TestPersonFilesSemanticSearchIntersectsDirectionScopeEndToEnd(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -398,6 +408,7 @@ func TestPersonFilesSemanticSearchIntersectsDirectionScopeEndToEnd(t *testing.T)
 }
 
 func TestExploreSemanticPaginationFollowsSnapshotRankNotArchiveDate(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -434,6 +445,7 @@ func TestExploreSemanticPaginationFollowsSnapshotRankNotArchiveDate(t *testing.T
 // the retired generation. Reuse must re-run the issuing path's
 // active-generation check instead of serving retired candidates.
 func TestExploreSnapshotReuseRevalidatesActiveGeneration(t *testing.T) {
+	t.Parallel()
 	vecCfg := vector.Config{
 		Enabled:    true,
 		Embeddings: vector.EmbeddingsConfig{Model: "test", Dimension: 2},
@@ -489,6 +501,7 @@ func TestExploreSnapshotReuseRevalidatesActiveGeneration(t *testing.T) {
 }
 
 func TestExploreSemanticPreflightRequiresAndReusesCandidateSnapshot(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -520,6 +533,7 @@ func TestExploreSemanticPreflightRequiresAndReusesCandidateSnapshot(t *testing.T
 }
 
 func TestExploreIdentityFilterDirectionsAndHydrationAcrossSearchModes(t *testing.T) {
+	t.Parallel()
 	fixture := newExploreIdentityAPIFixture(t)
 	tests := []struct {
 		name string
@@ -602,6 +616,7 @@ func TestExploreIdentityFilterDirectionsAndHydrationAcrossSearchModes(t *testing
 }
 
 func TestExploreIdentityFilterCursorCanonicalizesEmptyDirectionAsAny(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := newExploreIdentityAPIFixture(t)
@@ -635,6 +650,7 @@ func TestExploreIdentityFilterCursorCanonicalizesEmptyDirectionAsAny(t *testing.
 }
 
 func TestExploreFilesIdentityCursorCanonicalizesEmptyDirectionAsAny(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	fixture := newExploreIdentityAPIFixture(t)
@@ -677,6 +693,7 @@ func TestExploreFilesIdentityCursorCanonicalizesEmptyDirectionAsAny(t *testing.T
 }
 
 func TestExploreIdentityFilterResolvesForGroupsFilesPreflightAndMatchCounts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := newExploreIdentityAPIFixture(t)
@@ -737,6 +754,7 @@ func TestExploreIdentityFilterResolvesForGroupsFilesPreflightAndMatchCounts(t *t
 }
 
 func TestExploreGroupsIdentityFilterPreservesTupleOrderAndNormalizesEmptyDirection(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := newExploreIdentityAPIFixture(t)
@@ -757,6 +775,7 @@ func TestExploreGroupsIdentityFilterPreservesTupleOrderAndNormalizesEmptyDirecti
 }
 
 func TestExploreHydrationUsesEmptyArraysForRowsWithoutAnchors(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	base := newExploreDuckDBFixture(t)

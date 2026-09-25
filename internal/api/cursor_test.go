@@ -39,6 +39,7 @@ const testArchiveUID = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
 // cursor that loses it resumes below the page it was handed and re-delivers that
 // page on every poll, forever.
 func TestChangesCursorRoundTripsSubSecondPrecision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -57,6 +58,7 @@ func TestChangesCursorRoundTripsSubSecondPrecision(t *testing.T) {
 // TestChangesCursorRoundTripsInUTC pins that the wire form is UTC whatever the
 // caller hands in, so two cursors for the same instant are the same string.
 func TestChangesCursorRoundTripsInUTC(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -78,6 +80,7 @@ func TestChangesCursorRoundTripsInUTC(t *testing.T) {
 // who has never polled holds: the zero time with no tiebreak. It is a real
 // cursor, published on the first page, and it has to come back as itself.
 func TestChangesCursorRoundTripsTheStartOfTheArchive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -100,6 +103,7 @@ func TestChangesCursorRoundTripsTheStartOfTheArchive(t *testing.T) {
 // message id — no tiebreak value would let the rows at 0 and below through, and
 // the clamp published 0 until this was fixed.
 func TestChangesCursorRoundTripsTheStartOfAnInstant(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -130,6 +134,7 @@ func TestChangesCursorRoundTripsTheStartOfAnInstant(t *testing.T) {
 // accepted whether or not this server minted it — see
 // TestChangesCursorAcceptsAFabricatedTokenForItsOwnArchive.
 func TestChangesCursorRejectsAMalformedToken(t *testing.T) {
+	t.Parallel()
 	v1 := func(payload string) string {
 		return "1." + base64.RawURLEncoding.EncodeToString([]byte(payload))
 	}
@@ -177,6 +182,7 @@ func TestChangesCursorRejectsAMalformedToken(t *testing.T) {
 // If tamper-evidence is ever wanted, it needs a key and a new cursor format, not
 // a tightening of this path.
 func TestChangesCursorAcceptsAFabricatedTokenForItsOwnArchive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -205,6 +211,7 @@ func TestChangesCursorAcceptsAFabricatedTokenForItsOwnArchive(t *testing.T) {
 // The empty archive covers the token shape that existed before the binding and
 // anything hand-built without one: an unnamed archive is not a wildcard.
 func TestChangesCursorIsBoundToTheArchiveThatIssuedIt(t *testing.T) {
+	t.Parallel()
 	const otherArchive = "ffeeddccbbaa99887766554433221100"
 	at := time.Date(2026, 7, 26, 10, 0, 0, 731123456, time.UTC)
 
@@ -235,6 +242,7 @@ func TestChangesCursorIsBoundToTheArchiveThatIssuedIt(t *testing.T) {
 // cursor names no position, so there is nothing to misplace and nothing to
 // bind. Binding it would make a first-ever poll a 400.
 func TestChangesCursorForTheStartOfTheArchiveBelongsToEveryArchive(t *testing.T) {
+	t.Parallel()
 	var absent changesPosition
 	require.NoError(t, absent.boundTo(testArchiveUID),
 		"the start of the archive must be accepted by the archive it is aimed at")
@@ -246,6 +254,7 @@ func TestChangesCursorForTheStartOfTheArchiveBelongsToEveryArchive(t *testing.T)
 // cursor this build cannot read has exactly one move, and guessing it from
 // "invalid" is not reasonable.
 func TestChangesCursorFromAnotherVersionSaysHowToRecover(t *testing.T) {
+	t.Parallel()
 	raw := "2." + base64.RawURLEncoding.EncodeToString([]byte(`{"t":"2026-07-26T10:00:00Z","i":1}`))
 
 	_, err := decodeChangesCursor(raw)
@@ -263,6 +272,7 @@ func TestChangesCursorFromAnotherVersionSaysHowToRecover(t *testing.T) {
 // the envelope has already been agreed on, so any format change beyond swapping
 // fields degrades to indistinguishable-from-garbage.
 func TestChangesCursorFromAnotherVersionIsRecognisedWhateverItWraps(t *testing.T) {
+	t.Parallel()
 	tests := map[string]string{
 		"a payload that is not base64url at all": "2.\x00\x01binary, signed, who knows",
 		"a payload this server cannot even see":  "2.",
@@ -285,6 +295,7 @@ func TestChangesCursorFromAnotherVersionIsRecognisedWhateverItWraps(t *testing.T
 // `.` rather than anything more decorative: all of it is unreserved. A cursor
 // that has to be escaped is one a consumer can corrupt by pasting it into a URL.
 func TestChangesCursorNeedsNoEscapingInAQueryString(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -310,6 +321,7 @@ func TestChangesCursorNeedsNoEscapingInAQueryString(t *testing.T) {
 // the request contract: `?cursor=` is absent, not a parse failure, exactly as
 // every other empty query value in this API is read.
 func TestChangesCursorParamReadsAnEmptyValueAsAbsent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

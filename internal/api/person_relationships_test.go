@@ -13,6 +13,7 @@ import (
 )
 
 func TestPersonRelationshipHTTPRendersBothEndpointsFromOneRow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -49,6 +50,7 @@ func TestPersonRelationshipHTTPRendersBothEndpointsFromOneRow(t *testing.T) {
 }
 
 func TestPersonRelationshipHTTPPatchIsAtomic(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -87,6 +89,7 @@ func TestPersonRelationshipHTTPPatchIsAtomic(t *testing.T) {
 }
 
 func TestPersonRelationshipHTTPEndPreconditionsAndConflicts(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -116,6 +119,7 @@ func TestPersonRelationshipHTTPEndPreconditionsAndConflicts(t *testing.T) {
 }
 
 func TestPersonRelationshipHTTPRejectsInvalidRequests(t *testing.T) {
+	t.Parallel()
 	srv, st := newIdentityLinkTestServer(t)
 	alice, bob := mustHTTPPersons(t, st)
 	for _, test := range []struct {
@@ -136,6 +140,7 @@ func TestPersonRelationshipHTTPRejectsInvalidRequests(t *testing.T) {
 }
 
 func TestRelationshipTypeHTTPCRUDAndSystemProtection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, _ := newIdentityLinkTestServer(t)
@@ -155,6 +160,7 @@ func TestRelationshipTypeHTTPCRUDAndSystemProtection(t *testing.T) {
 }
 
 func TestRelationshipTypeHTTPRejectsEmptyAndNullPatchesWithoutRevisionBump(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, _ := newIdentityLinkTestServer(t)
@@ -179,6 +185,7 @@ func TestRelationshipTypeHTTPRejectsEmptyAndNullPatchesWithoutRevisionBump(t *te
 }
 
 func TestPersonRelationshipOpenAPIPatchContracts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	schemas := OpenAPIDocument().Components.Schemas.Map()
@@ -200,6 +207,7 @@ func TestPersonRelationshipOpenAPIPatchContracts(t *testing.T) {
 }
 
 func TestRelationshipReviewHTTPListsStagedValues(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)

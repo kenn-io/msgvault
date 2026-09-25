@@ -59,6 +59,7 @@ func runSavedView(t *testing.T, srv *Server, id int64, body string) (*httptest.R
 }
 
 func TestRunSavedViewExecutesEntriesWithTheExploreContract(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, st := newSavedViewRunTestServer(t)
@@ -91,6 +92,7 @@ func TestRunSavedViewExecutesEntriesWithTheExploreContract(t *testing.T) {
 }
 
 func TestRunSavedViewExecutesGroupsAtTheFirstChainLevel(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, st := newSavedViewRunTestServer(t)
@@ -108,6 +110,7 @@ func TestRunSavedViewExecutesGroupsAtTheFirstChainLevel(t *testing.T) {
 }
 
 func TestRunSavedViewExecutesFilesPresentation(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, st := newSavedViewRunTestServer(t)
@@ -137,6 +140,7 @@ func (s *staleSavedViewStore) GetSavedView(context.Context, int64) (*store.Saved
 }
 
 func TestRunSavedViewRelaysSavedViewAndExploreErrors(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	srv, st := newSavedViewRunTestServer(t)
 	view := createRunTestView(t, st, "Everything", `{}`)
@@ -170,6 +174,7 @@ func TestRunSavedViewRelaysSavedViewAndExploreErrors(t *testing.T) {
 }
 
 func TestRunSavedViewRejectsInvalidStoredDefinitions(t *testing.T) {
+	t.Parallel()
 	srv, st := newSavedViewRunTestServer(t)
 	cases := map[string]string{
 		"non-numeric source ID": `{"filters":[{"field":"source","operator":"in","values":["primary"]}]}`,
@@ -197,6 +202,7 @@ func TestRunSavedViewRejectsInvalidStoredDefinitions(t *testing.T) {
 // revision contract and the run translation are proven on the production
 // path rather than on canned responses.
 func TestSavedViewLifecycleThroughDaemonClient(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, _ := newSavedViewRunTestServer(t)
@@ -259,6 +265,7 @@ func TestSavedViewLifecycleThroughDaemonClient(t *testing.T) {
 // OpenAPI document is generated from to the catalog the store validates
 // Saved Views against, so the two cannot drift apart silently.
 func TestExploreRequestEnumsMatchTheCatalog(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	enumTag := func(value any, field string) []string {
 		structField, ok := reflect.TypeOf(value).FieldByName(field)
@@ -275,6 +282,7 @@ func TestExploreRequestEnumsMatchTheCatalog(t *testing.T) {
 // TestRunSavedViewFilesDeclaresSemanticDeletionScope pins that a semantic
 // files view reports the active-only narrowing instead of hiding it.
 func TestRunSavedViewFilesDeclaresSemanticDeletionScope(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := newExploreDuckDBFixture(t)

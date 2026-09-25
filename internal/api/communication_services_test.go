@@ -10,6 +10,7 @@ import (
 )
 
 func TestListCommunicationServicesReturnsSeededCatalogWithAliases(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server, _ := newProfileTestServer(t)
@@ -30,6 +31,7 @@ func TestListCommunicationServicesReturnsSeededCatalogWithAliases(t *testing.T) 
 }
 
 func TestCreateCommunicationServiceRegistersUnknownBridge(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server, _ := newProfileTestServer(t)
@@ -52,6 +54,7 @@ func TestCreateCommunicationServiceRegistersUnknownBridge(t *testing.T) {
 }
 
 func TestCreateCommunicationServiceValidatesInput(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	server, _ := newProfileTestServer(t)
 	cases := []struct {

@@ -19,6 +19,7 @@ import (
 const testSessionAPIKey = "test-session-api-key"
 
 func TestSessionStoreCreatesOpaqueExpiringSessions(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	now := time.Date(2026, time.July, 18, 12, 0, 0, 0, time.UTC)
@@ -45,6 +46,7 @@ func TestSessionStoreCreatesOpaqueExpiringSessions(t *testing.T) {
 }
 
 func TestSessionStoreDeleteAndCloseClearSessions(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	store := newSessionStore(time.Hour)
@@ -65,6 +67,7 @@ func TestSessionStoreDeleteAndCloseClearSessions(t *testing.T) {
 }
 
 func TestSessionStoreCreatePurgesOnlyBoundedExpiredEntries(t *testing.T) {
+	t.Parallel()
 	const expectedPurgeScanLimit = 16
 	requirements := require.New(t)
 	now := time.Date(2026, time.July, 18, 12, 0, 0, 0, time.UTC)
@@ -86,12 +89,14 @@ func TestSessionStoreCreatePurgesOnlyBoundedExpiredEntries(t *testing.T) {
 }
 
 func TestConstantTimeAPIKeyEqual(t *testing.T) {
+	t.Parallel()
 	assert.True(t, constantTimeAPIKeyEqual(testSessionAPIKey, testSessionAPIKey))
 	assert.False(t, constantTimeAPIKeyEqual("wrong-session-api-key", testSessionAPIKey))
 	assert.False(t, constantTimeAPIKeyEqual("short", testSessionAPIKey))
 }
 
 func TestSessionOpenAPIRoutesDoNotReplaceAPIKeySecurity(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	doc := OpenAPIDocument()
@@ -117,6 +122,7 @@ func TestSessionOpenAPIRoutesDoNotReplaceAPIKeySecurity(t *testing.T) {
 }
 
 func TestLoginSuccessCreatesOpaqueHostOnlyCookie(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv := newSessionTestServer(t, testSessionAPIKey)
@@ -144,6 +150,7 @@ func TestLoginSuccessCreatesOpaqueHostOnlyCookie(t *testing.T) {
 }
 
 func TestLoginFailureDoesNotCreateCookie(t *testing.T) {
+	t.Parallel()
 	srv := newSessionTestServer(t, testSessionAPIKey)
 
 	resp := performSessionRequest(t, srv, http.MethodPost, sessionLoginPath,
@@ -154,6 +161,7 @@ func TestLoginFailureDoesNotCreateCookie(t *testing.T) {
 }
 
 func TestLoginOverDirectTLSUsesSecureCookie(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	srv := newSessionTestServer(t, testSessionAPIKey)
 
@@ -167,6 +175,7 @@ func TestLoginOverDirectTLSUsesSecureCookie(t *testing.T) {
 }
 
 func TestSessionBootstrapModes(t *testing.T) {
+	t.Parallel()
 	t.Run("loopback", func(t *testing.T) {
 		assertions := assert.New(t)
 		srv := newSessionTestServer(t, "")
@@ -240,6 +249,7 @@ func TestSessionBootstrapModes(t *testing.T) {
 }
 
 func TestLoginIgnoresUntrustedForwardedHTTPS(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	srv := newSessionTestServer(t, testSessionAPIKey)
 	headers := http.Header{"X-Forwarded-Proto": []string{"https"}}
@@ -254,6 +264,7 @@ func TestLoginIgnoresUntrustedForwardedHTTPS(t *testing.T) {
 }
 
 func TestSessionExpiryRevokesCookieAuthentication(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv := newSessionTestServer(t, testSessionAPIKey)
@@ -277,6 +288,7 @@ func TestSessionExpiryRevokesCookieAuthentication(t *testing.T) {
 }
 
 func TestSessionLogoutInvalidatesCookie(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv := newSessionTestServer(t, testSessionAPIKey)
@@ -303,7 +315,7 @@ func TestSessionLogoutInvalidatesCookie(t *testing.T) {
 	assertions.Equal(AuthModeRequired, decodeSessionStatus(t, bootstrap).AuthMode)
 }
 
-func TestSessionMutationsBypassHeldArchiveOperationGate(t *testing.T) {
+func TestSessionMutationsBypassHeldArchiveOperationGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	oldLimit := operationGateWaitLimit
 	operationGateWaitLimit = 20 * time.Millisecond
 	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
@@ -347,6 +359,7 @@ func TestSessionMutationsBypassHeldArchiveOperationGate(t *testing.T) {
 }
 
 func TestSessionRestartInvalidatesCookie(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	first := newSessionTestServer(t, testSessionAPIKey)
@@ -363,6 +376,7 @@ func TestSessionRestartInvalidatesCookie(t *testing.T) {
 }
 
 func TestLoginAlwaysRateLimitedOnLoopback(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		body        []byte

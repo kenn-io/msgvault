@@ -55,6 +55,7 @@ func seedConversation(t *testing.T, messageType string, count int) (*Server, int
 }
 
 func TestConversationWindowIsAnchoredBoundedAndChronological(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, conversationID, ids := seedConversation(t, "email", 8)
@@ -81,6 +82,7 @@ func TestConversationWindowIsAnchoredBoundedAndChronological(t *testing.T) {
 }
 
 func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, conversationID, ids := seedConversation(t, "imessage", 3)
@@ -100,6 +102,7 @@ func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 }
 
 func TestConversationWindowCapsInlineBodiesAndServesOmittedBodiesByID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -170,6 +173,7 @@ func TestConversationWindowCapsInlineBodiesAndServesOmittedBodiesByID(t *testing
 }
 
 func TestConversationWindowRejectsMissingOrForeignAnchor(t *testing.T) {
+	t.Parallel()
 	srv, conversationID, ids := seedConversation(t, "email", 2)
 
 	for name, target := range map[string]struct {
@@ -198,6 +202,7 @@ func TestConversationWindowRejectsMissingOrForeignAnchor(t *testing.T) {
 }
 
 func TestConversationWindowValidatesBounds(t *testing.T) {
+	t.Parallel()
 	srv, conversationID, ids := seedConversation(t, "email", 1)
 	req := httptest.NewRequest(http.MethodGet,
 		fmt.Sprintf("/api/v1/conversations/%d", conversationID), nil)
@@ -265,6 +270,7 @@ func seedConversationAcrossDays(t *testing.T, count int) (*Server, int64, []int6
 }
 
 func TestConversationWindowScopesToTimeRangeExcludingOtherDays(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, conversationID, ids, day2 := seedConversationAcrossDays(t, 6)
@@ -292,6 +298,7 @@ func TestConversationWindowScopesToTimeRangeExcludingOtherDays(t *testing.T) {
 }
 
 func TestConversationWindowRejectsAnchorOutsideTimeRange(t *testing.T) {
+	t.Parallel()
 	srv, conversationID, ids, day2 := seedConversationAcrossDays(t, 6)
 
 	start := day2.Truncate(24 * time.Hour)

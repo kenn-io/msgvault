@@ -117,6 +117,7 @@ func (s *fileCatalogStore) GetFileMetadataBatch(_ context.Context, ids []int64) 
 }
 
 func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
@@ -166,6 +167,7 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 }
 
 func TestFileAdaptersResolveIdentityFilterOncePerRequest(t *testing.T) {
+	t.Parallel()
 	t.Run("search", func(t *testing.T) {
 		requirements := require.New(t)
 		assertions := assert.New(t)
@@ -210,6 +212,7 @@ func TestFileAdaptersResolveIdentityFilterOncePerRequest(t *testing.T) {
 }
 
 func TestFileSearchRejectsUnconfirmedOrSourceMismatchedIdentity(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		identifier string
@@ -253,6 +256,7 @@ func TestFileSearchRejectsUnconfirmedOrSourceMismatchedIdentity(t *testing.T) {
 // timeline report, so files attached only to a linked alias's messages are
 // found. An unlinked participant stays scoped to its own ID.
 func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -312,6 +316,7 @@ func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
 }
 
 func TestPersonFilesSearchUsesOnePopulationForDurableAndParticipantReferences(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -350,6 +355,7 @@ func TestPersonFilesSearchUsesOnePopulationForDurableAndParticipantReferences(t 
 }
 
 func TestPersonFilesSearchNormalizesDirectionsAndSerializesProvenance(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -404,6 +410,7 @@ func TestPersonFilesSearchNormalizesDirectionsAndSerializesProvenance(t *testing
 }
 
 func TestPersonFilesSearchRejectsInvalidDirections(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
 	require.NoError(t, err)
@@ -421,6 +428,7 @@ func TestPersonFilesSearchRejectsInvalidDirections(t *testing.T) {
 }
 
 func TestPersonFilesCursorBindsDirectionsAndResolvedCluster(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
@@ -457,6 +465,7 @@ func TestPersonFilesCursorBindsDirectionsAndResolvedCluster(t *testing.T) {
 }
 
 func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	hash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -501,6 +510,7 @@ func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T
 // source:<source-id>:message:<source-message-id> shape, so a metadata-only
 // file deep link can select the containing explore entry exactly.
 func TestGetFileEntryKeyMatchesExploreProducedKey(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -540,6 +550,7 @@ func TestGetFileEntryKeyMatchesExploreProducedKey(t *testing.T) {
 }
 
 func TestFileContentUsesSelectedAttachmentMetadata(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	hash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -567,6 +578,7 @@ func TestFileContentUsesSelectedAttachmentMetadata(t *testing.T) {
 // storage path is empty — in the download, the metadata endpoint, and the
 // search listing's availability flag.
 func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	hash := strings.Repeat("cd", 32)
@@ -621,6 +633,7 @@ func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) 
 // download must answer 404 file_content_unavailable, and the metadata must
 // classify the row missing_blob.
 func TestPackedFileMissingBlobReportsMissingNotError(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	hash := strings.Repeat("ef", 32)
@@ -652,6 +665,7 @@ func TestPackedFileMissingBlobReportsMissingNotError(t *testing.T) {
 // contract: when the packed store misses and the loose content-addressed path
 // is absent, the recorded storage path still serves the bytes.
 func TestLegacyLooseFileWithRecordedPathStillDownloads(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	hash := strings.Repeat("ab", 32)
@@ -691,6 +705,7 @@ func TestLegacyLooseFileWithRecordedPathStillDownloads(t *testing.T) {
 // reports the alias available and the content endpoint streams its bytes,
 // while a hashless row with a non-CAS path stays metadata-only.
 func TestDuplicateContentAliasFileRecoversHashAndServesContent(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -755,6 +770,7 @@ func TestDuplicateContentAliasFileRecoversHashAndServesContent(t *testing.T) {
 }
 
 func TestFilesSearchNamesUnavailableCache(t *testing.T) {
+	t.Parallel()
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Store:  &mockStore{}, Engine: &querytest.MockEngine{}, Logger: testLogger(),
@@ -768,6 +784,7 @@ func TestFilesSearchNamesUnavailableCache(t *testing.T) {
 }
 
 func TestFilesSearchPreservesLegitimateEmptyFilenameAndMIME(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
@@ -799,6 +816,7 @@ func TestFilesSearchPreservesLegitimateEmptyFilenameAndMIME(t *testing.T) {
 }
 
 func TestFileGroupsUsesFilePopulationAndForwardsEveryConstraint(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
@@ -834,6 +852,7 @@ func TestFileGroupsUsesFilePopulationAndForwardsEveryConstraint(t *testing.T) {
 }
 
 func TestFileGroupsNamesUnavailableCacheWithoutGenericFallback(t *testing.T) {
+	t.Parallel()
 	engine := &fileSearchEngine{
 		MockEngine: &querytest.MockEngine{},
 		groupErr:   &query.CacheUnavailableError{Readiness: query.CacheStaleSchema},
@@ -854,6 +873,7 @@ func TestFileGroupsNamesUnavailableCacheWithoutGenericFallback(t *testing.T) {
 }
 
 func TestFileGroupsCursorBindsRequestAndCacheRevision(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, groupResult: &query.ExploreGroupResponse{
 		Rows:       []query.ExploreGroupRow{{Key: "1", Label: "First", Count: 1}},
@@ -895,6 +915,7 @@ func TestFileGroupsCursorBindsRequestAndCacheRevision(t *testing.T) {
 // message was hidden by dedup (deleted_at set), while the surviving message's
 // attachment — even one sharing the same content hash — still serves.
 func TestFileEndpointsReturnNotFoundForDedupHiddenMessageAttachments(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
@@ -944,6 +965,7 @@ func apiSingleAttachmentID(t *testing.T, f *storetest.Fixture, messageID int64) 
 }
 
 func TestParticipantFileSearchAcceptsVisualQueryFields(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	person, err := st.EnsureParticipant("visual-person@example.com", "Visual Person", "example.com")
@@ -970,6 +992,7 @@ func TestParticipantFileSearchAcceptsVisualQueryFields(t *testing.T) {
 }
 
 func TestVisualCoverageScanGuardsCrossOriginAndRateLimit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	srv := NewServerWithOptions(ServerOptions{

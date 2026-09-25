@@ -89,6 +89,7 @@ func newCountingTaskServer(t *testing.T, tasks []taskclient.Task) *countingTaskS
 }
 
 func TestTaskLinkBackendReusesFreshReverseIndex(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	identity := tasklinks.MessageIdentity{ArchiveUID: "archive-a", ArchiveRevision: "1", MessageID: 42,
@@ -123,6 +124,7 @@ func TestTaskLinkBackendReusesFreshReverseIndex(t *testing.T) {
 }
 
 func TestTaskLinkBackendConcurrentLookupsShareOneRebuild(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	identity := tasklinks.MessageIdentity{ArchiveUID: "archive-a", ArchiveRevision: "1", MessageID: 42,
 		SourceType: "gmail", SourceIdentifier: "archive@example.com", SourceMessageID: "source-42"}
@@ -151,6 +153,7 @@ func TestTaskLinkBackendConcurrentLookupsShareOneRebuild(t *testing.T) {
 }
 
 func TestTaskLinkBackendSurfacesCachePersistenceFailuresWithoutIdentityRelabeling(t *testing.T) {
+	t.Parallel()
 	identity := tasklinks.MessageIdentity{ArchiveUID: "archive-a", ArchiveRevision: "1", MessageID: 42,
 		SourceType: "gmail", SourceIdentifier: "archive@example.com", SourceMessageID: "source-42"}
 	linkedTask := func(id, title string) taskclient.Task {
@@ -274,6 +277,7 @@ func TestTaskLinkBackendSurfacesCachePersistenceFailuresWithoutIdentityRelabelin
 }
 
 func TestTaskLinkBackendDegradedStatesUseOnlySafeCache(t *testing.T) {
+	t.Parallel()
 	identity := tasklinks.MessageIdentity{ArchiveUID: "archive-a", ArchiveRevision: "1", MessageID: 42,
 		SourceType: "gmail", SourceIdentifier: "archive@example.com", SourceMessageID: "source-42"}
 	cacheIdentity := tasklinks.CacheIdentity{Project: "project", ArchiveUID: "archive-a", ArchiveRevision: "1"}

@@ -19,6 +19,7 @@ import (
 )
 
 func TestCLIRunDraftAllowlist(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	assertions.True(cliRunCommandAllowed([]string{"draft-reply", "42", "--from=alice@example.com", "--body=body"}))
 	assertions.True(IsCLIRunDraftLifecycle([]string{"draft-get", "draft-abc"}))
@@ -32,6 +33,7 @@ func TestCLIRunDraftAllowlist(t *testing.T) {
 }
 
 func TestDelegatedDraftRecoverRequiresActionPermission(t *testing.T) {
+	t.Parallel()
 	source := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
 	assert.True(t, delegatedCLIRunAdmitted(
 		[]string{"draft-recover", "draft-abc", "--revision=1"},
@@ -88,6 +90,7 @@ func newDelegatedTestServerWithGate(t *testing.T, gate OperationGate) (*Server, 
 
 // TestDelegatedCLIRunAdmission tests proof matrix row 9.
 func TestDelegatedCLIRunAdmission(t *testing.T) {
+	t.Parallel()
 	srv, secret := newDelegatedTestServer(t)
 
 	// Helper: send a run request as delegated caller with the full router
@@ -175,6 +178,7 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 }
 
 func TestDelegatedCLIRunRequiresGrantedPermission(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		grant *agentgrant.Grant
@@ -211,7 +215,7 @@ func TestDelegatedCLIRunRequiresGrantedPermission(t *testing.T) {
 	}
 }
 
-func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) {
+func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	gate := NewSerialOperationGate()
 	srv, secret := newDelegatedTestServerWithGate(t, gate)
 	serverStore, ok := srv.store.(*stubSourceStore)
@@ -275,6 +279,7 @@ func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) {
 }
 
 func TestOwnerDraftLifecycleCommandsUseOperationGateAndRunner(t *testing.T) {
+	t.Parallel()
 	gate := &recordingOperationGate{allow: true}
 	srv, _ := newDelegatedTestServerWithGate(t, gate)
 	serverStore, ok := srv.store.(*stubSourceStore)
@@ -332,6 +337,7 @@ func TestOwnerDraftLifecycleCommandsUseOperationGateAndRunner(t *testing.T) {
 // grant, which bypasses the source check and produces a 200 with no error event,
 // making the assertion fail.
 func TestDelegatedGrantScopesSource(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	reg := agentgrant.NewRegistry()

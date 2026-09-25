@@ -12,6 +12,7 @@ import (
 )
 
 func TestPersonTrackingHTTPGetsAndReplacesState(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -44,6 +45,7 @@ func TestPersonTrackingHTTPGetsAndReplacesState(t *testing.T) {
 }
 
 func TestPersonTrackingHTTPValidatesPersonIDAndExistence(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -77,6 +79,7 @@ func TestPersonTrackingHTTPValidatesPersonIDAndExistence(t *testing.T) {
 }
 
 func TestPersonTrackingOpenAPIContract(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	path := OpenAPIDocument().Paths["/api/v1/people/{id}/tracking"]

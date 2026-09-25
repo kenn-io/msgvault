@@ -13,6 +13,7 @@ import (
 )
 
 func TestOrganizationHTTPMapsProfileOrdinalValidationToBadRequest(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -31,6 +32,7 @@ func TestOrganizationHTTPMapsProfileOrdinalValidationToBadRequest(t *testing.T) 
 }
 
 func TestOrganizationHTTPMapsIncompleteScopeValidationToBadRequest(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -48,6 +50,7 @@ func TestOrganizationHTTPMapsIncompleteScopeValidationToBadRequest(t *testing.T)
 }
 
 func TestEmploymentHTTPMapsMergedOrganizationToBadRequest(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)

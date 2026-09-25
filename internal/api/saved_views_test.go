@@ -19,6 +19,7 @@ import (
 )
 
 func TestSavedViewsAuthenticatedCRUDAndSharedSessionVisibility(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv := newSavedViewTestServer(t)
@@ -87,6 +88,7 @@ func TestSavedViewsAuthenticatedCRUDAndSharedSessionVisibility(t *testing.T) {
 }
 
 func TestSavedViewsAPIRejectsInvalidStateAndRevisionHeaders(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv := newSavedViewTestServer(t)
@@ -158,6 +160,7 @@ func TestSavedViewsAPIRejectsInvalidStateAndRevisionHeaders(t *testing.T) {
 }
 
 func TestSavedViewsAPIValidatesServerGroupingCatalog(t *testing.T) {
+	t.Parallel()
 	srv := newSavedViewTestServer(t)
 	session := loginSavedViewSession(t, srv)
 
@@ -192,6 +195,7 @@ func TestSavedViewsAPIValidatesServerGroupingCatalog(t *testing.T) {
 }
 
 func TestSavedViewsAPIRejectsMixedCaseJSONAliases(t *testing.T) {
+	t.Parallel()
 	createBodies := map[string]string{
 		"request name":            `{"Name":"Alias","canonical_state":{},"schema_version":1}`,
 		"request canonical state": `{"name":"Alias","Canonical_State":{},"schema_version":1}`,
@@ -309,6 +313,7 @@ func decodeSavedView(t *testing.T, response *httptest.ResponseRecorder) store.Sa
 // inside the store vocabulary but outside Explore's value rules is refused
 // when it is saved, not when it is finally run.
 func TestSavedViewsAPIRejectDefinitionsExploreCannotRun(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"non-numeric source ID":    `{"filters":[{"field":"source","operator":"in","values":["primary"]}]}`,
 		"invalid timestamp":        `{"filters":[{"field":"after","operator":"eq","values":["yesterday"]}]}`,
@@ -388,6 +393,7 @@ func TestSavedViewsAPIRejectDefinitionsExploreCannotRun(t *testing.T) {
 }
 
 func TestSavedViewsReadReportsIncompatibleDefinitions(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"semantic", "hybrid"} {
 		for _, query := range []string{"", " \t\n ", "from:alice@example.com", "invoice"} {
 			t.Run(mode+"/"+query, func(t *testing.T) {
@@ -423,6 +429,7 @@ func TestSavedViewsReadReportsIncompatibleDefinitions(t *testing.T) {
 }
 
 func TestSavedViewsReadReportsUnsupportedSchema(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv := newSavedViewTestServer(t)
@@ -452,6 +459,7 @@ func TestSavedViewsReadReportsUnsupportedSchema(t *testing.T) {
 }
 
 func TestSavedViewsReadPreservesIncompatibleDefinitions(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		version int

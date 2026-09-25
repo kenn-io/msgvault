@@ -7,5 +7,6 @@ import (
 )
 
 func TestCardDAVSchedulerJobNameIsStable(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "carddav", CardDAVJobName)
 }

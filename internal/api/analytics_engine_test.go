@@ -36,6 +36,7 @@ func (e *blockingAnalyticsEngine) Aggregate(
 }
 
 func TestAnalyticsEngineSwapUpdatesHealthAndHandlers(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	oldEngine := &querytest.MockEngine{
@@ -73,6 +74,7 @@ func TestAnalyticsEngineSwapUpdatesHealthAndHandlers(t *testing.T) {
 }
 
 func TestAnalyticsEngineSwapDoesNotBlockHealthWhileRequestRuns(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	oldEngine := &blockingAnalyticsEngine{

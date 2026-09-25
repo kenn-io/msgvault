@@ -21,6 +21,7 @@ import (
 var personFactAPINow = time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
 
 func TestPersonFactCatalogHTTPDefaultsSensitiveAndSupportsExplicitInclude(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, st, _, _ := newPersonFactAPIFixture(t)
@@ -54,6 +55,7 @@ func TestPersonFactCatalogHTTPDefaultsSensitiveAndSupportsExplicitInclude(t *tes
 }
 
 func TestPersonFactHistoryHTTPIsBoundedNewestFirstNonNullAndNoStore(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, st, personID, targets := newPersonFactAPIFixture(t)
@@ -119,6 +121,7 @@ func TestPersonFactHistoryHTTPIsBoundedNewestFirstNonNullAndNoStore(t *testing.T
 }
 
 func TestPersonFactHistoryHTTPFiltersRealEmploymentTargetWithColonKey(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, st, personID, targets := newPersonFactAPIFixtureWithoutClaims(t)
@@ -140,6 +143,7 @@ func TestPersonFactHistoryHTTPFiltersRealEmploymentTargetWithColonKey(t *testing
 }
 
 func TestPersonFactEvidenceStatusHTTPFiltersPaginatesAndExposesSafeReactivationHistory(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, st, personID, _ := newPersonFactAPIFixture(t)
@@ -189,6 +193,7 @@ func TestPersonFactEvidenceStatusHTTPFiltersPaginatesAndExposesSafeReactivationH
 }
 
 func TestPersonFactPinHTTPUsesAPIActorAndReturnsOnlyFinalProjectionReferences(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, st, personID, targets := newPersonFactAPIFixtureWithoutClaims(t)
@@ -234,6 +239,7 @@ func TestPersonFactPinHTTPUsesAPIActorAndReturnsOnlyFinalProjectionReferences(t 
 }
 
 func TestPersonFactHTTPMapsInvalidMissingConflictAndUnavailable(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, _, personID, _ := newPersonFactAPIFixture(t)
@@ -284,6 +290,7 @@ func TestPersonFactHTTPMapsInvalidMissingConflictAndUnavailable(t *testing.T) {
 }
 
 func TestPersonFactPinHTTPDecodesTargetKeyExactlyOnce(t *testing.T) {
+	t.Parallel()
 	_, wrapped := newIdentityLinkTestServer(t)
 	participantID := wrapped.mustParticipant(t, "encoded@example.test", "encoded", "example.test")
 	person, _, err := wrapped.CreatePersonFromParticipant(participantID)

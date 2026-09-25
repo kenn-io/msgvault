@@ -22,6 +22,7 @@ import (
 )
 
 func TestCardDAVStatusUnconfiguredRemainsReadable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg := config.NewDefaultConfig()
@@ -51,6 +52,7 @@ func TestCardDAVStatusUnconfiguredRemainsReadable(t *testing.T) {
 }
 
 func TestCardDAVStatusPreservesIncompleteSavedEnablementAndRuntimeAvailability(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg := config.NewDefaultConfig()
@@ -88,6 +90,7 @@ func getCardDAVRead(t *testing.T, srv *Server, path string) *httptest.ResponseRe
 }
 
 func TestCardDAVStatusReportsStableCredentialRepairReasons(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		seedAccount bool
@@ -136,6 +139,7 @@ func TestCardDAVStatusReportsStableCredentialRepairReasons(t *testing.T) {
 }
 
 func TestCardDAVStatusRedactsSavedAccountURLSecrets(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg := config.NewDefaultConfig()
@@ -159,6 +163,7 @@ func TestCardDAVStatusRedactsSavedAccountURLSecrets(t *testing.T) {
 }
 
 func TestNewCardDAVControllerKeepsUnreadableCredentialAvailableForRepairStatus(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg, st, _ := savedCardDAVFixture(t)
@@ -179,6 +184,7 @@ func TestNewCardDAVControllerKeepsUnreadableCredentialAvailableForRepairStatus(t
 }
 
 func TestCardDAVStatusSeparatesRuntimeEnablementAndMatchingSchedule(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg, st, service := savedCardDAVFixture(t)
@@ -217,6 +223,7 @@ func TestCardDAVStatusSeparatesRuntimeEnablementAndMatchingSchedule(t *testing.T
 }
 
 func TestCardDAVStatusIgnoresUnavailableAndUnrelatedSchedulers(t *testing.T) {
+	t.Parallel()
 	cfg, st, service := savedCardDAVFixture(t)
 	controller := &CardDAVController{cfg: cfg, store: st, service: service, loadCredential: carddav.LoadCredential}
 	next := time.Date(2026, 8, 29, 1, 0, 0, 0, time.UTC)
@@ -240,6 +247,7 @@ func TestCardDAVStatusIgnoresUnavailableAndUnrelatedSchedulers(t *testing.T) {
 }
 
 func TestCardDAVStatusProjectsLatestFailureAndSuccessfulRun(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg := config.NewDefaultConfig()
@@ -276,6 +284,7 @@ func TestCardDAVStatusProjectsLatestFailureAndSuccessfulRun(t *testing.T) {
 }
 
 func TestCardDAVStatusAndRunsCollapseUnknownStoredFailureProjection(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg := config.NewDefaultConfig()
@@ -303,6 +312,7 @@ func TestCardDAVStatusAndRunsCollapseUnknownStoredFailureProjection(t *testing.T
 }
 
 func TestCardDAVStatusProjectsActiveRunExactly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg := config.NewDefaultConfig()
@@ -331,6 +341,7 @@ func TestCardDAVStatusProjectsActiveRunExactly(t *testing.T) {
 }
 
 func TestCardDAVRunHistoryPagesNewestFirstWithoutRuntimeService(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg := config.NewDefaultConfig()
@@ -368,6 +379,7 @@ func TestCardDAVRunHistoryPagesNewestFirstWithoutRuntimeService(t *testing.T) {
 }
 
 func TestCardDAVRunHistoryRejectsInvalidPagination(t *testing.T) {
+	t.Parallel()
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = cfg.HomeDir
@@ -380,6 +392,7 @@ func TestCardDAVRunHistoryRejectsInvalidPagination(t *testing.T) {
 }
 
 func TestCardDAVStatusAndRunsMapMissingDependenciesAndStorageFailureSafely(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()

@@ -93,6 +93,7 @@ func assertNoPendingCacheBuild(t *testing.T, wrapped *stubIdentityRebuildStore) 
 }
 
 func TestAddCLIIdentity_NewIdentifierSchedulesCacheRebuild(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped, _ := newIdentityRebuildTestServer(t)
@@ -117,6 +118,7 @@ func TestAddCLIIdentity_NewIdentifierSchedulesCacheRebuild(t *testing.T) {
 }
 
 func TestAddCLIIdentity_AlreadyConfirmedSkipsCacheRebuild(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped, aliceID := newIdentityRebuildTestServer(t)
@@ -151,6 +153,7 @@ func TestAddCLIIdentity_AlreadyConfirmedSkipsCacheRebuild(t *testing.T) {
 }
 
 func TestRemoveCLIIdentity_SchedulesCacheRebuild(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped, aliceID := newIdentityRebuildTestServer(t)

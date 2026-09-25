@@ -14,6 +14,7 @@ import (
 )
 
 func TestSessionCSRFRequestMatrix(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		method     string
@@ -120,6 +121,7 @@ func TestSessionCSRFRequestMatrix(t *testing.T) {
 }
 
 func TestSessionCookieRequiresSameOrigin(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name            string
 		corsOrigins     []string
@@ -272,6 +274,7 @@ func TestSessionCookieRequiresSameOrigin(t *testing.T) {
 }
 
 func TestRejectedSessionMutationDoesNotReachOperationGate(t *testing.T) {
+	t.Parallel()
 	gate := &recordingOperationGate{allow: true}
 	srv := NewServerWithOptions(ServerOptions{
 		Config:        &config.Config{Server: config.ServerConfig{APIKey: testSessionAPIKey}},
@@ -323,6 +326,7 @@ func TestRejectedSessionMutationDoesNotReachOperationGate(t *testing.T) {
 }
 
 func TestTrustedProxyForwardedHTTPSDefinesBrowserOrigin(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		forwarded http.Header
@@ -364,6 +368,7 @@ func TestTrustedProxyForwardedHTTPSDefinesBrowserOrigin(t *testing.T) {
 }
 
 func TestTrustedProxyRejectsAmbiguousForwardedSchemeOrHost(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		headers http.Header
@@ -418,6 +423,7 @@ func TestTrustedProxyRejectsAmbiguousForwardedSchemeOrHost(t *testing.T) {
 }
 
 func TestMalformedForwardedLoginRemainsNoStoreAndRateLimited(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	srv := newTrustedProxySessionTestServer(t)
 	srv.rateLimiter.rate = 0

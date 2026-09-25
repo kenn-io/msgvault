@@ -38,6 +38,7 @@ func decodePersonAttributes(
 }
 
 func TestPersonAttributesHTTPListsDefinitionsSetsHistoryAndClears(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, person := newPersonAttributeFixture(t)
@@ -77,6 +78,7 @@ func TestPersonAttributesHTTPListsDefinitionsSetsHistoryAndClears(t *testing.T) 
 // This catches coupling the writable preferred-channel attribute to the
 // Directory's observed last-contact channel and its filter membership.
 func TestPersonAttributesHTTPPreferredChannelDoesNotChangeDirectoryObservedChannel(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
 	person := createDirectoryHTTPPerson(
@@ -119,6 +121,7 @@ func TestPersonAttributesHTTPPreferredChannelDoesNotChangeDirectoryObservedChann
 }
 
 func TestHTTPAppendPersonNoteUsesAtomicStorePath(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -186,6 +189,7 @@ func TestHTTPAppendPersonNoteUsesAtomicStorePath(t *testing.T) {
 }
 
 func TestPersonAttributesHTTPClearRejectsStaleExpectedValueID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, person := newPersonAttributeFixture(t)
@@ -223,6 +227,7 @@ func TestPersonAttributesHTTPClearRejectsStaleExpectedValueID(t *testing.T) {
 }
 
 func TestPersonAttributesHTTPPreservesLegacySlugAcrossSeedCollision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -276,6 +281,7 @@ func seededAttributeDefinitionInputBySlug(
 }
 
 func TestPersonAttributesHTTPRejectsDerivedInvalidUnknownAndSupportsDryRun(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, person := newPersonAttributeFixture(t)
@@ -327,6 +333,7 @@ func TestPersonAttributesHTTPRejectsDerivedInvalidUnknownAndSupportsDryRun(t *te
 }
 
 func TestPersonAttributesHTTPKeepsInactiveDefinitionValuesVisibleAndClearable(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)

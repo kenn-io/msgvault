@@ -7,6 +7,7 @@ import (
 )
 
 func TestCLIRunCommandAllowedDocumentMutations(t *testing.T) {
+	t.Parallel()
 	for _, subcommand := range []string{
 		"build", "consent-mistral", "purge-derived", "resume", "retire", "retry",
 	} {

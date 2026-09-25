@@ -53,6 +53,7 @@ func requireNoIdentityLink(t *testing.T, wrapped *stubIdentityCacheStore, a, b i
 // browser attaches the attacker page's Origin header; the daemon must refuse
 // the mutation and leave the link graph untouched.
 func TestLoopbackMutation_CrossOriginTextPlainForgeryRejected(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -76,6 +77,7 @@ func TestLoopbackMutation_CrossOriginTextPlainForgeryRejected(t *testing.T) {
 // discloses a cross-site Origin, because keyless loopback access is an
 // ambient credential just like a session cookie.
 func TestLoopbackMutation_CrossOriginJSONRejected(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -96,6 +98,7 @@ func TestLoopbackMutation_CrossOriginJSONRejected(t *testing.T) {
 // working: curl, the TUI, and other non-browser clients send no Origin
 // header and must not be affected by the same-origin gate.
 func TestLoopbackMutation_NoOriginJSONSucceeds(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -116,6 +119,7 @@ func TestLoopbackMutation_NoOriginJSONSucceeds(t *testing.T) {
 // working in keyless mode: a browser fetch from the daemon's own origin
 // discloses a matching Origin header and must pass.
 func TestLoopbackMutation_SameOriginJSONSucceeds(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -137,6 +141,7 @@ func TestLoopbackMutation_SameOriginJSONSucceeds(t *testing.T) {
 // gate: a mutation body that does not declare application/json is refused
 // with 415 even when no Origin header implicates a browser.
 func TestLoopbackMutation_TextPlainNoOriginRejected415(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -157,6 +162,7 @@ func TestLoopbackMutation_TextPlainNoOriginRejected415(t *testing.T) {
 // parameters: "application/json; charset=utf-8" is what fetch and many HTTP
 // clients actually send.
 func TestLoopbackMutation_JSONWithCharsetParameterAccepted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -176,6 +182,7 @@ func TestLoopbackMutation_JSONWithCharsetParameterAccepted(t *testing.T) {
 // concatenated JSON values: only the first value would be decoded, so a body
 // carrying a second value must be refused outright.
 func TestLoopbackMutation_TrailingJSONRejected(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -196,6 +203,7 @@ func TestLoopbackMutation_TrailingJSONRejected(t *testing.T) {
 // TestLoopbackMutation_MediaTypeGateCoversOtherJSONRoutes proves the 415 gate
 // is wired through the shared route registration, not just identity links.
 func TestLoopbackMutation_MediaTypeGateCoversOtherJSONRoutes(t *testing.T) {
+	t.Parallel()
 	srv, _ := newIdentityLinkTestServer(t)
 	for path, body := range map[string]string{
 		"/api/v1/query":    `{"sql":"SELECT 1"}`,

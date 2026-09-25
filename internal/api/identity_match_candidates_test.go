@@ -46,6 +46,7 @@ func rejectPath(id int64) string {
 }
 
 func TestListIdentityMatchCandidatesFiltersByState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -71,6 +72,7 @@ func TestListIdentityMatchCandidatesFiltersByState(t *testing.T) {
 }
 
 func TestAcceptIdentityMatchCandidateLinksAndReportsCacheState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -96,6 +98,7 @@ func TestAcceptIdentityMatchCandidateLinksAndReportsCacheState(t *testing.T) {
 }
 
 func TestAcceptIdentityMatchCandidateAcrossPersonsReturnsPersonMergeRequired(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -128,6 +131,7 @@ func TestAcceptIdentityMatchCandidateAcrossPersonsReturnsPersonMergeRequired(t *
 }
 
 func TestRejectIdentityMatchCandidateRetainsTheRow(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -158,6 +162,7 @@ func TestRejectIdentityMatchCandidateRetainsTheRow(t *testing.T) {
 }
 
 func TestRejectAcceptedSystemIdentityMatchUnlinksAndRetainsRejection(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -189,6 +194,7 @@ func TestRejectAcceptedSystemIdentityMatchUnlinksAndRetainsRejection(t *testing.
 }
 
 func TestRejectAcceptedSystemIdentityMatchRetryRepairsStaleCache(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -220,6 +226,7 @@ func TestRejectAcceptedSystemIdentityMatchRetryRepairsStaleCache(t *testing.T) {
 }
 
 func TestRejectAcceptedSystemIdentityMatchPreservesManualEdgeWithoutBumpingRevision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -248,6 +255,7 @@ func TestRejectAcceptedSystemIdentityMatchPreservesManualEdgeWithoutBumpingRevis
 }
 
 func TestIdentityMatchStateConflictErrorsUseStableAPICodes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		err      error
@@ -290,6 +298,7 @@ func linkedParticipants(t *testing.T, st *stubIdentityCacheStore, a, b int64) bo
 }
 
 func TestIdentityMatchCandidateRoutesValidateInput(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		method     string
@@ -339,6 +348,7 @@ func TestIdentityMatchCandidateRoutesValidateInput(t *testing.T) {
 }
 
 func TestAcceptEmptyBodyIsAllowed(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
