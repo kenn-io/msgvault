@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -211,6 +212,9 @@ func restartDaemonAfterUpdate(c *config.Config, result updateDaemonStopResult, e
 		return nil
 	}
 	cmd := &cobra.Command{Use: "msgvault update daemon-restart"}
+	// A command that never runs through ExecuteC has no context, and the
+	// readiness wait dereferences the one it is given.
+	cmd.SetContext(context.Background())
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	return runServeStartWithOptions(cmd, c, backgroundServeStartOptions{ExecutablePath: executablePath})

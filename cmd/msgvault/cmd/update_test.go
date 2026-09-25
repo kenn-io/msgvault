@@ -249,3 +249,45 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 	require.NoError(err, "restart daemon")
 	assert.Equal(installedExe, gotExecutable, "restart executable")
 }
+
+// The restart builds its own command, and a cobra command only gets a context
+// from ExecuteC. Without one, cmd.Context() is nil and the first context call
+// in the readiness wait panics.
+func TestRestartDaemonAfterUpdatePassesUsableContext(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	installedExe := filepath.Join(t.TempDir(), "bin", updateExecutableName())
+	waitCh := make(chan error)
+	var gotCtx context.Context
+
+	stubStartServeBackgroundProcess(t, func(
+		_ *config.Config,
+		_ backgroundServeStartOptions,
+	) (*backgroundServeProcess, error) {
+		return &backgroundServeProcess{
+			PID:     991,
+			LogPath: "/tmp/msgvault-serve.log",
+			Wait:    waitCh,
+		}, nil
+	})
+	stubWaitForBackgroundServeReady(t, func(
+		ctx context.Context,
+		_ string,
+		_ <-chan error,
+		_ time.Duration,
+	) (*DaemonRuntime, bool, error) {
+		gotCtx = ctx
+		return &DaemonRuntime{
+			Record: daemon.RuntimeRecord{PID: 991},
+			Host:   net.IPv4(127, 0, 0, 1).String(),
+			Port:   9091,
+		}, true, nil
+	})
+
+	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, installedExe)
+
+	require.NoError(err, "restart daemon")
+	require.NotNil(gotCtx, "readiness wait received a nil context")
+	assert.NoError(gotCtx.Err(), "context usable")
+}
