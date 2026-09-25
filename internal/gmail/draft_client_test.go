@@ -240,6 +240,7 @@ func TestDraftMutationCancellationUsesDispatchState(t *testing.T) {
 	tests := []struct {
 		name       string
 		transport  error
+		gotConn    bool
 		wrote      bool
 		writeError error
 		wantCode   string
@@ -265,6 +266,13 @@ func TestDraftMutationCancellationUsesDispatchState(t *testing.T) {
 			wantState: DraftStateRemoteUnknown,
 		},
 		{
+			name:      "cancelled after connection acquisition",
+			transport: context.Canceled,
+			gotConn:   true,
+			wantCode:  "remote_unknown",
+			wantState: DraftStateRemoteUnknown,
+		},
+		{
 			name:       "partial request write",
 			transport:  context.Canceled,
 			wrote:      true,
@@ -286,10 +294,15 @@ func TestDraftMutationCancellationUsesDispatchState(t *testing.T) {
 			requests := 0
 			client := newDraftMutationClient(draftRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 				requests++
-				if tt.wrote {
+				if tt.gotConn || tt.wrote {
 					trace := httptrace.ContextClientTrace(req.Context())
 					require.NotNil(trace, "mutation request should carry a client trace")
-					trace.WroteRequest(httptrace.WroteRequestInfo{Err: tt.writeError})
+					if tt.gotConn {
+						trace.GotConn(httptrace.GotConnInfo{})
+					}
+					if tt.wrote {
+						trace.WroteRequest(httptrace.WroteRequestInfo{Err: tt.writeError})
+					}
 				}
 				return nil, tt.transport
 			}))

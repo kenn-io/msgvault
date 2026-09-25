@@ -149,6 +149,9 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 		var wroteRequest atomic.Bool
 		if remoteMutation {
 			trace := &httptrace.ClientTrace{
+				GotConn: func(httptrace.GotConnInfo) {
+					wroteRequest.Store(true)
+				},
 				WroteRequest: func(httptrace.WroteRequestInfo) {
 					wroteRequest.Store(true)
 				},
