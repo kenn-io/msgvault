@@ -154,6 +154,10 @@ type handlers struct {
 	visualSearcher VisualSearcher
 }
 
+type archiveSQLQuerier interface {
+	QueryArchiveSQL(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *daemonclient.CacheBuildAccepted, error)
+}
+
 func (h *handlers) querySQL(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 	sql, ok := args["sql"].(string)
@@ -164,28 +168,16 @@ func (h *handlers) querySQL(ctx context.Context, req toolRequest) (*toolResult, 
 		return toolErrorResult(err.Error()), nil
 	}
 	fresh, _ := args["fresh"].(bool)
-	if engine, ok := h.engine.(interface {
-		QuerySQLWithFresh(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *daemonclient.CacheBuildAccepted, error)
-	}); ok {
-		result, accepted, err := engine.QuerySQLWithFresh(ctx, sql, fresh)
-		if err != nil {
-			return nil, newInternalError("query SQL", err)
-		}
-		if accepted != nil {
-			return jsonResult(accepted)
-		}
-		return jsonResult(result)
-	}
-	if fresh {
-		return toolErrorResult("fresh SQL queries require a daemon-backed analytics engine"), nil
-	}
-	engine, ok := h.engine.(query.SQLQuerier)
+	engine, ok := h.engine.(archiveSQLQuerier)
 	if !ok {
 		return toolErrorResult("SQL queries are unavailable"), nil
 	}
-	result, err := engine.QuerySQL(ctx, sql)
+	result, accepted, err := engine.QueryArchiveSQL(ctx, sql, fresh)
 	if err != nil {
 		return nil, newInternalError("query SQL", err)
+	}
+	if accepted != nil {
+		return jsonResult(accepted)
 	}
 	return jsonResult(result)
 }

@@ -34,7 +34,7 @@ Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
 Schema 2.31.0 adds analytics query freshness metadata, accepted background
-cache-build jobs, and job status lookup.
+cache-build jobs, job status lookup, and restricted archive SQL for MCP.
 
 Schema 2.30.0 adds Kata availability and person agenda reads, creation, linking,
 list placement, and unlinking. See [Kata configuration](configuration.md#integrationskata)
@@ -285,6 +285,13 @@ and `status` instead of holding the request open. Poll
 `GET /api/v1/cache-builds/{job_id}` for `queued`, `running`, `published`, or
 `failed`; retry the SQL query after publication. The job status belongs to the
 running daemon and is not retained across daemon restarts.
+
+`POST /api/v1/query/archive` accepts the same request and response shapes. MCP
+uses this endpoint to run SQL in a separate DuckDB instance restricted to the
+analytics directory. Outside-file access, network access, and extension loading
+are disabled. Both endpoints require daemon owner authentication; the original
+`/query` endpoint retains privileged file access. An unavailable restricted
+engine returns `503` without falling back to the privileged engine.
 
 ---
 

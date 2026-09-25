@@ -327,7 +327,8 @@ import (
 // list placement, and unlinking. Each task links to one person; reads expose
 // canonical person identity and whether the bounded open-task list is truncated.
 // 2.31.0 adds analytics query freshness, accepted cache-build jobs, and a
-// cache-build status endpoint. Existing query requests remain valid.
+// cache-build status endpoint, plus archive-only SQL for MCP. Existing query
+// requests remain valid.
 const APISchemaVersion = "2.31.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

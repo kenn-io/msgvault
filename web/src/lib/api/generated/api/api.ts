@@ -328,6 +328,7 @@ import type {
   RemoteImageRequest,
   ResolveCardDAVConflictPathParameters,
   RevokeAgentTokenPathParameters,
+  RunArchiveQueryParams,
   RunQueryParams,
   RunSavedViewPathParameters,
   RunSavedViewRequest,
@@ -3172,6 +3173,27 @@ export const runQuery = (
   return orvalFetch<QueryResult | CacheBuildAccepted>(
     {
       url: `/api/v1/query`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: queryRequest,
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Run SQL restricted to archive analytics files
+ */
+export const runArchiveQuery = (
+  queryRequest: QueryRequest,
+  params?: RunArchiveQueryParams,
+  options?: SecondParameter<
+    typeof orvalFetch<QueryResult | CacheBuildAccepted>
+  >,
+) => {
+  return orvalFetch<QueryResult | CacheBuildAccepted>(
+    {
+      url: `/api/v1/query/archive`,
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: queryRequest,

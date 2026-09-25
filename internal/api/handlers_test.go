@@ -1291,45 +1291,55 @@ func TestHandleCLIRunBypassesStandardRequestTimeout(t *testing.T) {
 
 func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
 	t.Parallel()
-	require := require.New(t)
-	assert := assert.New(t)
-	started := make(chan struct{})
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Logger: testLogger(),
-		SQLQueryRunner: func(ctx context.Context, _ string) (*query.QueryResult, error) {
-			close(started)
-			<-ctx.Done() // simulate a runaway query that only stops on cancellation
-			return nil, ctx.Err()
-		},
-	})
-	// Test seam: shrink the query ceiling so the timeout fires immediately.
-	srv.queryTimeout = ordinaryQueryCeiling
+	for _, path := range []string{queryEndpointPath, archiveQueryEndpointPath} {
+		t.Run(path, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			started := make(chan struct{})
+			waitForCancellation := func(ctx context.Context) error {
+				close(started)
+				<-ctx.Done() // simulate a runaway query that only stops on cancellation
+				return ctx.Err()
+			}
+			srv := NewServerWithOptions(ServerOptions{
+				Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+				Logger: testLogger(),
+				SQLQueryRunner: func(ctx context.Context, _ string) (*query.QueryResult, error) {
+					return nil, waitForCancellation(ctx)
+				},
+				ArchiveSQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+					return nil, nil, waitForCancellation(ctx)
+				},
+			})
+			// Test seam: shrink the query ceiling so the timeout fires immediately.
+			srv.queryTimeout = ordinaryQueryCeiling
 
-	body := strings.NewReader(`{"sql":"SELECT 1"}`)
-	req := httptest.NewRequest(http.MethodPost, queryEndpointPath, body)
-	req.Header.Set("Content-Type", "application/json")
-	resp := httptest.NewRecorder()
+			body := strings.NewReader(`{"sql":"SELECT 1"}`)
+			req := httptest.NewRequest(http.MethodPost, path, body)
+			req.Header.Set("Content-Type", "application/json")
+			resp := httptest.NewRecorder()
 
-	done := make(chan struct{})
-	go func() {
-		srv.Router().ServeHTTP(resp, req)
-		close(done)
-	}()
+			done := make(chan struct{})
+			go func() {
+				srv.Router().ServeHTTP(resp, req)
+				close(done)
+			}()
 
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		require.FailNow("query runner never started")
+			select {
+			case <-started:
+			case <-time.After(2 * time.Second):
+				require.FailNow("query runner never started")
+			}
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				require.FailNow("request did not return after query timeout")
+			}
+
+			require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
+			assert.Contains(resp.Body.String(), "query_timeout")
+		})
 	}
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		require.FailNow("request did not return after query timeout")
-	}
-
-	require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
-	assert.Contains(resp.Body.String(), "query_timeout")
 }
 
 func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
@@ -6573,6 +6583,20 @@ type mockSQLQueryEngine struct {
 
 func (m *mockSQLQueryEngine) QuerySQL(_ context.Context, _ string) (*query.QueryResult, error) {
 	return m.queryResult, m.queryErr
+}
+
+func TestArchiveQueryRequiresRestrictedRunner(t *testing.T) {
+	t.Parallel()
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{},
+		Engine: &mockSQLQueryEngine{queryResult: &query.QueryResult{RowCount: 1}},
+		Logger: testLogger(),
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/query/archive", strings.NewReader(`{"sql":"SELECT 1"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
 }
 
 func TestHandleQuery(t *testing.T) {

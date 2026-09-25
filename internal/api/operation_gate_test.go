@@ -770,6 +770,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyPaths(t *testing.T) {
 	t.Parallel()
 	paths := []string{
 		"/api/v1/query",
+		"/api/v1/query/archive",
 		"/api/v1/cli/add-calendar/plan",
 		"/api/v1/cli/delete-staged/plan",
 		"/api/v1/cli/embeddings/plan",

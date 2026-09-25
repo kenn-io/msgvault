@@ -681,6 +681,7 @@ export * from "./removeResult";
 export * from "./removeResultCacheState";
 export * from "./resolveCardDAVConflictPathParameters";
 export * from "./revokeAgentTokenPathParameters";
+export * from "./runArchiveQueryParams";
 export * from "./runQueryParams";
 export * from "./runSavedViewPathParameters";
 export * from "./runSavedViewRequest";

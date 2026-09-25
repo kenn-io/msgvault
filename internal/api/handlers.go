@@ -1954,6 +1954,14 @@ var ErrCacheBuildUnavailable = errors.New("analytics cache build unavailable")
 // handleQuery executes a raw SQL query against DuckDB views.
 // POST /api/v1/query.
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
+	s.handleSQLQuery(w, r, false)
+}
+
+func (s *Server) handleArchiveQuery(w http.ResponseWriter, r *http.Request) {
+	s.handleSQLQuery(w, r, true)
+}
+
+func (s *Server) handleSQLQuery(w http.ResponseWriter, r *http.Request, archiveOnly bool) {
 	var req QueryRequest
 	dec := jsontext.NewDecoder(r.Body)
 	if err := json.UnmarshalDecode(dec, &req); err != nil {
@@ -1995,7 +2003,13 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	var result *query.QueryResult
 	var accepted *CacheBuildAccepted
 	var err error
-	if s.sqlQueryRunnerWithOptions != nil {
+	if archiveOnly {
+		if s.archiveSQLQueryRunner == nil {
+			err = ErrSQLQueryEngineUnavailable
+		} else {
+			result, accepted, err = s.archiveSQLQueryRunner(r.Context(), req.SQL, fresh)
+		}
+	} else if s.sqlQueryRunnerWithOptions != nil {
 		result, accepted, err = s.sqlQueryRunnerWithOptions(r.Context(), req.SQL, fresh)
 	} else {
 		result, err = s.runSQLQuery(r.Context(), req.SQL)

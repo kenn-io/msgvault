@@ -2553,6 +2553,12 @@ type RunQueryResponseJSON = CacheBuildAccepted
 
 type RunQueryErrorResponse = ErrorResponse
 
+type RunArchiveQueryResponse = QueryResult
+
+type RunArchiveQueryResponseJSON = CacheBuildAccepted
+
+type RunArchiveQueryErrorResponse = ErrorResponse
+
 type ListRelationshipTypesResponse = RelationshipTypesResponse
 
 type ListRelationshipTypesErrorResponse = ErrorResponse
@@ -5363,6 +5369,14 @@ type RunQueryResp struct {
 	StatusCode   int
 	JSON200      *RunQueryResponse
 	JSON202      *RunQueryResponseJSON
+}
+
+type RunArchiveQueryResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RunArchiveQueryResponse
+	JSON202      *RunArchiveQueryResponseJSON
 }
 
 type ListRelationshipTypesResp struct {

@@ -13165,7 +13165,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.30.0
+  version: 2.31.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24677,6 +24677,45 @@ paths:
       security:
         - apiKey: []
       summary: Run an aggregate query
+      tags:
+        - API
+  /api/v1/query/archive:
+    post:
+      operationId: runArchiveQuery
+      parameters:
+        - description: Request a new cache publication before returning rows
+          in: query
+          name: fresh
+          schema:
+            type: boolean
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryResult"
+          description: OK
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CacheBuildAccepted"
+          description: Accepted
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run SQL restricted to archive analytics files
       tags:
         - API
   /api/v1/relationship-types:

@@ -664,7 +664,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 			if apiServer == nil {
 				return nil, nil, errors.New("daemon API server unavailable")
 			}
-			return runDaemonSQLQueryWithJobs(requestCtx, cfg, s, apiServer.QueryEngineForRequest(requestCtx), sql, fresh, cacheJobs)
+			return runDaemonSQLQueryWithJobs(requestCtx, cfg, s, apiServer.QueryEngineForRequest(requestCtx), sql, daemonSQLQueryOptions{fresh: fresh}, cacheJobs)
+		},
+		ArchiveSQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
+			return runDaemonSQLQueryWithJobs(requestCtx, cfg, s, nil, sql, daemonSQLQueryOptions{fresh: fresh, archiveOnly: true}, cacheJobs)
 		},
 		CacheBuildStatusReader:        cacheJobs.status,
 		ShutdownToken:                 ownership.shutdownToken,
@@ -1075,12 +1078,17 @@ func runDaemonSQLQuery(
 	return queryCommittedSQL(ctx, duckEngine, sqlStr, staleness)
 }
 
+type daemonSQLQueryOptions struct {
+	fresh       bool
+	archiveOnly bool
+}
+
 // runDaemonSQLQueryWithJobs serves committed data while refresh work runs in
 // the daemon's background job registry. The request never waits for a cache
 // builder; a fresh request or unusable publication receives a job ID instead.
 func runDaemonSQLQueryWithJobs(
 	ctx context.Context, c *config.Config, s *store.Store, engine query.Engine,
-	sqlStr string, fresh bool, jobs *cacheBuildJobs,
+	sqlStr string, options daemonSQLQueryOptions, jobs *cacheBuildJobs,
 ) (*query.QueryResult, *api.CacheBuildAccepted, error) {
 	if jobs == nil || c == nil || s == nil {
 		return nil, nil, errors.New("daemon cache refresh unavailable")
@@ -1089,6 +1097,9 @@ func runDaemonSQLQueryWithJobs(
 		return nil, nil, err
 	}
 	if s.IsPostgreSQL() {
+		if options.archiveOnly {
+			return nil, nil, api.ErrSQLQueryEngineUnavailable
+		}
 		result, err := runDaemonSQLQuery(ctx, c, s, engine, sqlStr)
 		return result, nil, err
 	}
@@ -1096,7 +1107,7 @@ func runDaemonSQLQueryWithJobs(
 	if err != nil {
 		return nil, nil, fmt.Errorf("inspect analytics cache: %w", err)
 	}
-	if fresh && !staleness.NeedsBuild {
+	if options.fresh && !staleness.NeedsBuild {
 		job, err := jobs.accept(buildCacheModeAuto)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
@@ -1106,11 +1117,11 @@ func runDaemonSQLQueryWithJobs(
 		}, nil
 	}
 	if staleness.NeedsBuild {
-		if !fresh && !c.Analytics.AutoBuildCache {
+		if !options.fresh && !c.Analytics.AutoBuildCache {
 			if !staleness.HasUsablePublication {
 				return nil, nil, api.ErrSQLQueryEngineUnavailable
 			}
-		} else if fresh || !staleness.HasUsablePublication {
+		} else if options.fresh || !staleness.HasUsablePublication {
 			job, err := jobs.accept(buildCacheModeAuto)
 			if err != nil {
 				return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
@@ -1132,7 +1143,18 @@ func runDaemonSQLQueryWithJobs(
 		}
 	}
 	querier, ok := engine.(query.SQLQuerier)
-	if !ok {
+	if options.archiveOnly {
+		duckOptions, err := daemonDuckDBOptions(c)
+		if err != nil {
+			return nil, nil, err
+		}
+		duckEngine, err := query.NewArchiveDuckDBEngine(c.AnalyticsDir(), duckOptions)
+		if err != nil {
+			return nil, nil, fmt.Errorf("open archive SQL engine: %w", err)
+		}
+		defer func() { _ = duckEngine.Close() }()
+		querier = duckEngine
+	} else if !ok {
 		duckEngine, err := openDaemonDuckDBEngine(c, s)
 		if err != nil {
 			return nil, nil, fmt.Errorf("open DuckDB query engine: %w", err)
@@ -1332,38 +1354,34 @@ func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngi
 	if c == nil || s == nil {
 		return nil, errors.New("daemon DuckDB engine unavailable")
 	}
-	spillParent, err := query.PrepareDaemonSpillDir(c.HomeDir)
+	options, err := daemonDuckDBOptions(c)
 	if err != nil {
 		return nil, err
 	}
-	// Each engine spills into its own subdirectory: the daemon opens both a
-	// long-lived engine and short-lived per-query engines (runDaemonSQLQuery),
-	// and OwnTempDirectory deletes the directory on Close — sharing one
-	// directory would let a temporary engine remove the live engine's spill
-	// files. The pid-owned parent is reaped by PrepareDaemonSpillDir once
-	// this process exits.
+	return query.NewDuckDBEngine(c.AnalyticsDir(), c.DatabaseDSN(), s.DB(), options)
+}
+
+func daemonDuckDBOptions(c *config.Config) (query.DuckDBOptions, error) {
+	spillParent, err := query.PrepareDaemonSpillDir(c.HomeDir)
+	if err != nil {
+		return query.DuckDBOptions{}, err
+	}
+	// Each engine owns its spill directory, so closing a temporary SQL
+	// engine cannot remove the long-lived analytics engine's spill files.
 	tempDirectory, err := os.MkdirTemp(spillParent, "engine-")
 	if err != nil {
-		return nil, fmt.Errorf("create engine spill directory: %w", err)
+		return query.DuckDBOptions{}, fmt.Errorf("create engine spill directory: %w", err)
 	}
-	// DisableSQLiteScanner keeps DuckDB's bundled SQLite library from
-	// ATTACHing the live database for the daemon's lifetime, which can
-	// interfere with the daemon's own go-sqlite3 WAL/lock state. Detail
-	// queries route through the shared go-sqlite3 connection instead;
-	// aggregates still read Parquet.
-	return query.NewDuckDBEngine(
-		c.AnalyticsDir(),
-		c.DatabaseDSN(),
-		s.DB(),
-		query.DuckDBOptions{
-			DisableSQLiteScanner: true,
-			TempDirectory:        tempDirectory,
-			OwnTempDirectory:     true,
-			MemoryLimit:          c.Analytics.QueryMemoryLimit,
-			Threads:              c.Analytics.QueryThreads,
-			MaxTempDirectorySize: c.Analytics.QueryTempLimit,
-		},
-	)
+	// Keep DuckDB's bundled SQLite library away from the live database;
+	// detail queries use the daemon's shared go-sqlite3 connection.
+	return query.DuckDBOptions{
+		DisableSQLiteScanner: true,
+		TempDirectory:        tempDirectory,
+		OwnTempDirectory:     true,
+		MemoryLimit:          c.Analytics.QueryMemoryLimit,
+		Threads:              c.Analytics.QueryThreads,
+		MaxTempDirectorySize: c.Analytics.QueryTempLimit,
+	}, nil
 }
 
 func hasServeOAuthConfig(c *config.Config) bool {

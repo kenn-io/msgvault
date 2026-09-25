@@ -1486,12 +1486,10 @@ func TestCLIRequestDurationPolicy(t *testing.T) {
 
 			handlerResult := make(chan error, 1)
 			handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-				select {
-				case <-time.After(40 * time.Millisecond):
-					handlerResult <- nil
-				case <-r.Context().Done():
-					handlerResult <- r.Context().Err()
+				if _, bounded := r.Context().Deadline(); bounded {
+					<-r.Context().Done()
 				}
+				handlerResult <- r.Context().Err()
 			}))
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
 			if tt.configure != nil {

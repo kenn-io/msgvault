@@ -182,6 +182,8 @@ type PatchPersonRelationshipBody = PatchPersonRelationshipRequest
 
 type RunQueryBody = QueryRequest
 
+type RunArchiveQueryBody = QueryRequest
+
 type CreateRelationshipTypeBody = CreateRelationshipTypeRequest
 
 type PatchRelationshipTypeBody = PatchRelationshipTypeRequest

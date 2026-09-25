@@ -454,16 +454,24 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	)
 	registerAPIV1RawHumaJSONOneOfRoute(apiV1, "searchMessages", http.MethodGet, "/search", "Search messages", s.handleSearch, reflect.TypeFor[SearchResult](), reflect.TypeFor[hybridSearchResponse]())
 
-	queryOp := rawAPIV1Operation("runQuery", http.MethodPost, "/query", "Run an aggregate query")
-	queryOp.RequestBody = jsonRequestBodyFor[QueryRequest](apiV1)
-	queryOp.Responses = jsonResponsesFor[query.QueryResult](apiV1)
-	queryOp.Responses[httpStatusKey(http.StatusAccepted)] = &huma.Response{
-		Description: http.StatusText(http.StatusAccepted),
-		Content: map[string]*huma.MediaType{
-			applicationJSONMediaType: {Schema: schemaFor[CacheBuildAccepted](apiV1)},
-		},
+	for _, route := range []struct {
+		id, path, summary string
+		handler           http.HandlerFunc
+	}{
+		{"runQuery", "/query", "Run an aggregate query", s.handleQuery},
+		{"runArchiveQuery", "/query/archive", "Run SQL restricted to archive analytics files", s.handleArchiveQuery},
+	} {
+		queryOp := rawAPIV1Operation(route.id, http.MethodPost, route.path, route.summary)
+		queryOp.RequestBody = jsonRequestBodyFor[QueryRequest](apiV1)
+		queryOp.Responses = jsonResponsesFor[query.QueryResult](apiV1)
+		queryOp.Responses[httpStatusKey(http.StatusAccepted)] = &huma.Response{
+			Description: http.StatusText(http.StatusAccepted),
+			Content: map[string]*huma.MediaType{
+				applicationJSONMediaType: {Schema: schemaFor[CacheBuildAccepted](apiV1)},
+			},
+		}
+		registerRawHumaRoute(apiV1, queryOp, route.handler)
 	}
-	registerRawHumaRoute(apiV1, queryOp, s.handleQuery)
 	registerAPIV1RawHumaJSONRoute[CacheBuildStatus](apiV1, "getCacheBuildStatus", http.MethodGet, "/cache-builds/{job_id}", "Get analytics cache build status", s.handleCacheBuildStatus)
 	registerAPIV1RawHumaJSONRoute[AggregateResponse](apiV1, "getAggregates", http.MethodGet, "/aggregates", "Get aggregate rows", s.handleAggregates)
 	registerAPIV1RawHumaJSONRoute[AggregateResponse](apiV1, "getSubAggregates", http.MethodGet, "/aggregates/sub", "Get nested aggregate rows", s.handleSubAggregates)
@@ -734,7 +742,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{pathStringParam("id", "Opaque archive-bound operation run ID")}
 	case "getCacheBuildStatus":
 		return []*huma.Param{pathStringParam("job_id", "Analytics cache build job ID")}
-	case "runQuery":
+	case "runQuery", "runArchiveQuery":
 		return []*huma.Param{queryBooleanParam("fresh", "Request a new cache publication before returning rows")}
 	case "getCLIStats":
 		return scopeParams()

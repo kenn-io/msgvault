@@ -141,6 +141,36 @@ type DuckDBOptions struct {
 	DisableLegacyAnalyticalViews bool
 }
 
+// NewArchiveDuckDBEngine creates a separate SQL engine restricted to the
+// analytics directory. It never attaches SQLite or loads its scanner. Views,
+// resource limits, and publication locking work as on the owner query engine.
+func NewArchiveDuckDBEngine(analyticsDir string, opts ...DuckDBOptions) (*DuckDBEngine, error) {
+	if analyticsDir == "" {
+		return nil, errors.New("archive SQL requires an analytics directory")
+	}
+	analyticsDir, err := filepath.Abs(analyticsDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve analytics directory: %w", err)
+	}
+	engine, err := NewDuckDBEngine(analyticsDir, "", nil, opts...)
+	if err != nil {
+		return nil, err
+	}
+	// The constructor registered trusted Parquet views. Lock this independent
+	// instance before any caller SQL runs; the owner engine stays unrestricted.
+	escapedDir := strings.ReplaceAll(filepath.ToSlash(analyticsDir), "'", "''")
+	_, err = engine.db.Exec("SET allowed_directories = ['" + escapedDir + "']; " +
+		"SET autoinstall_known_extensions = false; " +
+		"SET autoload_known_extensions = false; " +
+		"SET allow_community_extensions = false; " +
+		"SET enable_external_access = false; " +
+		"SET lock_configuration = true")
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("restrict archive SQL access: %w", err), engine.Close())
+	}
+	return engine, nil
+}
+
 // NewDuckDBEngine creates a new DuckDB-backed query engine.
 // analyticsDir should point to ~/.msgvault/analytics/
 // sqlitePath should point to ~/.msgvault/msgvault.db
@@ -317,8 +347,8 @@ func (e *DuckDBEngine) QuerySQL(
 		}
 	}
 
-	// codeql[go/sql-injection] -- QuerySQL is an explicit trusted-user SQL
-	// interface over the user's local archive, not an injection boundary.
+	// codeql[go/sql-injection] -- This is an explicit SQL interface. MCP uses
+	// NewArchiveDuckDBEngine's native access restrictions; owner SQL is privileged.
 	rows, err := e.db.QueryContext(ctx, sqlStr)
 	if err != nil {
 		return nil, fmt.Errorf("execute query: %w", err)

@@ -1103,7 +1103,7 @@ func TestRunDaemonSQLQueryWithJobsServesStaleAndCoalescesFresh(t *testing.T) {
 		}
 	})
 	begin := time.Now()
-	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT COUNT(*) FROM messages", false, jobs)
+	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT COUNT(*) FROM messages", daemonSQLQueryOptions{}, jobs)
 	require.NoError(err)
 	assert.Nil(accepted)
 	assert.Less(time.Since(begin), time.Second)
@@ -1115,10 +1115,10 @@ func TestRunDaemonSQLQueryWithJobsServesStaleAndCoalescesFresh(t *testing.T) {
 	case <-time.After(time.Second):
 		require.FailNow("cache job did not start")
 	}
-	_, first, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", true, jobs)
+	_, first, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", daemonSQLQueryOptions{fresh: true}, jobs)
 	require.NoError(err)
 	require.NotNil(first)
-	_, second, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", true, jobs)
+	_, second, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", daemonSQLQueryOptions{fresh: true}, jobs)
 	require.NoError(err)
 	require.NotNil(second)
 	assert.Equal(first.JobID, second.JobID)
@@ -1153,7 +1153,7 @@ func TestQueryWithAutomaticCacheBuildsDisabledServesStaleWithoutStartingJob(t *t
 		started <- struct{}{}
 		return nil
 	})
-	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT COUNT(*) FROM messages", false, jobs)
+	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT COUNT(*) FROM messages", daemonSQLQueryOptions{}, jobs)
 	require.NoError(err)
 	assert.Nil(accepted)
 	require.NotNil(result.Cache)
@@ -1164,7 +1164,7 @@ func TestQueryWithAutomaticCacheBuildsDisabledServesStaleWithoutStartingJob(t *t
 		assert.Fail("automatic cache build started despite auto_build_cache=false")
 	default:
 	}
-	_, forced, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", true, jobs)
+	_, forced, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", daemonSQLQueryOptions{fresh: true}, jobs)
 	require.NoError(err)
 	require.NotNil(forced)
 	assert.NotEmpty(forced.JobID)
@@ -1193,7 +1193,7 @@ func TestFreshQueryVerifiesCleanPublicationInBackground(t *testing.T) {
 		started <- mode
 		return nil
 	})
-	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", true, jobs)
+	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", daemonSQLQueryOptions{fresh: true}, jobs)
 	require.NoError(err)
 	assert.Nil(result)
 	require.NotNil(accepted)
@@ -1218,7 +1218,7 @@ func TestSQLAnalyticsModeQueryQueuesMissingCache(t *testing.T) {
 		started <- mode
 		return nil
 	})
-	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", false, jobs)
+	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", daemonSQLQueryOptions{}, jobs)
 	require.NoError(err)
 	assert.Nil(result)
 	require.NotNil(accepted)

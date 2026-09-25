@@ -1473,14 +1473,32 @@ func (c *Client) RunSQLQueryWithFresh(ctx context.Context, sql string, fresh boo
 	if err != nil {
 		return nil, nil, err
 	}
-	if resp.StatusCode == http.StatusAccepted {
+	return sqlQueryResponse(resp.StatusCode, resp.Body)
+}
+
+func (c *Client) RunArchiveSQLQueryWithFresh(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+	body := &generated.RunArchiveQueryBody{SQL: sql}
+	if fresh {
+		body.Fresh = &fresh
+	}
+	resp, err := CLIResponseWithStatuses(c, []int{http.StatusOK, http.StatusAccepted}, func(client *apiclient.Client) (*generated.RunArchiveQueryResp, error) {
+		return client.RunArchiveQueryWithResponse(ctx, &generated.RunArchiveQueryRequestOptions{Body: body})
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return sqlQueryResponse(resp.StatusCode, resp.Body)
+}
+
+func sqlQueryResponse(statusCode int, body []byte) (*query.QueryResult, *CacheBuildAccepted, error) {
+	if statusCode == http.StatusAccepted {
 		var accepted CacheBuildAccepted
-		if err := json.Unmarshal(resp.Body, &accepted); err != nil {
+		if err := json.Unmarshal(body, &accepted); err != nil {
 			return nil, nil, fmt.Errorf("decode cache build acceptance: %w", err)
 		}
 		return nil, &accepted, nil
 	}
-	result, err := queryResultFromBody(resp.Body)
+	result, err := queryResultFromBody(body)
 	return result, nil, err
 }
 

@@ -970,6 +970,11 @@ type RunQueryQuery struct {
 	Fresh *bool `json:"fresh,omitempty"`
 }
 
+type RunArchiveQueryQuery struct {
+	// Fresh Request a new cache publication before returning rows
+	Fresh *bool `json:"fresh,omitempty"`
+}
+
 type SearchMessagesQuery struct {
 	// Q Search query
 	Q string `json:"q" validate:"required"`
