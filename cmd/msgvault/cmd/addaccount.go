@@ -471,7 +471,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		}
 
 		// Register source
-		source, saErr := s.GetOrCreateSource(sourceTypeGmail, email)
+		source, saErr := selectAddAccountGmailSource(s, existingSource, email)
 		if saErr != nil {
 			return fmt.Errorf("create source: %w", saErr)
 		}
@@ -563,7 +563,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		if grantDecided {
 			warnOnWiderThanRequestedGrant(cmd.OutOrStdout(), oauthMgr, email, resolvedApp)
 		}
-		source, err := s.GetOrCreateSource(sourceTypeGmail, email)
+		source, err := selectAddAccountGmailSource(s, existingSource, email)
 		if err != nil {
 			return fmt.Errorf("create source: %w", err)
 		}
@@ -616,7 +616,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	warnOnWiderThanRequestedGrant(cmd.OutOrStdout(), oauthMgr, email, resolvedApp)
 
 	// Authorization succeeded — now persist the binding and source.
-	source, err := s.GetOrCreateSource(sourceTypeGmail, email)
+	source, err := selectAddAccountGmailSource(s, existingSource, email)
 	if err != nil {
 		return fmt.Errorf("create source: %w", err)
 	}
@@ -1014,6 +1014,15 @@ func findGmailSource(
 		}
 	}
 	return nil, fmt.Errorf("identifier %q: %w", email, errGmailSourceNotFound)
+}
+
+func selectAddAccountGmailSource(
+	s *store.Store, existingSource *store.Source, email string,
+) (*store.Source, error) {
+	if existingSource != nil {
+		return existingSource, nil
+	}
+	return s.GetOrCreateSource(sourceTypeGmail, email)
 }
 
 func registerAddAccountFlags(cmd *cobra.Command) {

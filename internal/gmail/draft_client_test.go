@@ -1,6 +1,7 @@
 package gmail
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -230,6 +232,76 @@ func TestDraftMutationTransportAndReadFailuresAreRemoteUnknown(t *testing.T) {
 			var writeErr *DraftWriteError
 			requirements.ErrorAs(err, &writeErr)
 			assertions.Equal("remote_unknown", writeErr.Code)
+		})
+	}
+}
+
+func TestDraftMutationCancellationUsesDispatchState(t *testing.T) {
+	tests := []struct {
+		name       string
+		transport  error
+		wrote      bool
+		writeError error
+		wantCode   string
+		wantState  string
+	}{
+		{
+			name:      "cancelled before request write",
+			transport: context.Canceled,
+			wantCode:  "cancelled",
+			wantState: DraftStateCancelled,
+		},
+		{
+			name:      "deadline before request write",
+			transport: context.DeadlineExceeded,
+			wantCode:  "cancelled",
+			wantState: DraftStateCancelled,
+		},
+		{
+			name:      "cancelled after request write",
+			transport: context.Canceled,
+			wrote:     true,
+			wantCode:  "remote_unknown",
+			wantState: DraftStateRemoteUnknown,
+		},
+		{
+			name:       "partial request write",
+			transport:  context.Canceled,
+			wrote:      true,
+			writeError: errors.New("request body write failed"),
+			wantCode:   "remote_unknown",
+			wantState:  DraftStateRemoteUnknown,
+		},
+		{
+			name:      "generic transport failure before request write",
+			transport: errors.New("connection reset"),
+			wantCode:  "remote_unknown",
+			wantState: DraftStateRemoteUnknown,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			requests := 0
+			client := newDraftMutationClient(draftRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				requests++
+				if tt.wrote {
+					trace := httptrace.ContextClientTrace(req.Context())
+					require.NotNil(trace, "mutation request should carry a client trace")
+					trace.WroteRequest(httptrace.WroteRequestInfo{Err: tt.writeError})
+				}
+				return nil, tt.transport
+			}))
+
+			_, err := client.CreateDraft(t.Context(), []byte("body"), "thread")
+			require.Error(err)
+			var writeErr *DraftWriteError
+			require.ErrorAs(err, &writeErr)
+			assert.Equal(tt.wantCode, writeErr.Code)
+			assert.Equal(tt.wantState, writeErr.State)
+			require.ErrorIs(err, tt.transport)
+			assert.Equal(1, requests)
 		})
 	}
 }

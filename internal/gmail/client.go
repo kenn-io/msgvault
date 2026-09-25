@@ -11,9 +11,11 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -144,10 +146,24 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 			req.Header.Set("Content-Type", "application/json")
 		}
 
+		var wroteRequest atomic.Bool
+		if remoteMutation {
+			trace := &httptrace.ClientTrace{
+				WroteRequest: func(httptrace.WroteRequestInfo) {
+					wroteRequest.Store(true)
+				},
+			}
+			req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+		}
+
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			if remoteMutation {
 				if _, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
+					return nil, fmt.Errorf("http request: %w", err)
+				}
+				if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) &&
+					!wroteRequest.Load() {
 					return nil, fmt.Errorf("http request: %w", err)
 				}
 				return nil, fmt.Errorf("%w: http request: %w", errWriteOutcomeUnknown, err)
