@@ -399,6 +399,9 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 				}
 				return a.runCLIGmailDraftLifecycle(ctx, intent, gmailDraft, emit)
 			}
+			if !errors.Is(gmailErr, store.ErrGmailDraftNotFound) {
+				return draftReplyError("draft_read_failed", gmailErr)
+			}
 		}
 		return draftReplyError("draft_not_found", err)
 	}

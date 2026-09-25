@@ -20,7 +20,6 @@ import (
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -296,7 +295,7 @@ func (c *ActionController) resolveDeletionTargets(ctx context.Context, dctx Dele
 					return nil, fmt.Errorf("selected message %d has no source metadata", msg.ID)
 				}
 				targetsByMessageID[msg.ID] = query.DeletionTarget{
-					MessageID: msg.ID, SourceID: msg.SourceID, SourceType: store.EffectiveSourceType(account.SourceType),
+					MessageID: msg.ID, SourceID: msg.SourceID, SourceType: account.SourceType,
 					SourceIdentifier: account.Identifier, SourceMessageID: msg.SourceMessageID,
 				}
 			}

@@ -98,7 +98,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 			return lookupErr
 		}
 		for _, src := range allMatches {
-			switch store.EffectiveSourceType(src.SourceType) {
+			switch src.SourceType {
 			case sourceTypeGmail:
 				gmailTargets = append(gmailTargets, syncTarget{source: src, email: src.Identifier})
 			case sourceTypeIMAP:
@@ -124,7 +124,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 			return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
 		}
 		for _, src := range allSources {
-			switch store.EffectiveSourceType(src.SourceType) {
+			switch src.SourceType {
 			case sourceTypeGmail:
 				if !cfg.OAuth.HasAnyConfig() {
 					fmt.Printf("Skipping %s (OAuth not configured)\n", src.Identifier)

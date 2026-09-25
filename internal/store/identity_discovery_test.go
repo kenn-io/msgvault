@@ -120,26 +120,6 @@ func TestIdentityDiscoveryPageReadsStrongWeakAndAllRecipientMetadata(t *testing.
 	}, page.Observations)
 }
 
-func TestIdentityDiscoveryLegacyGmailSourceReadsSentLabel(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	fx := newIdentityDiscoveryFixture(t)
-	_, err := fx.Store.DB().Exec(fx.Store.Rebind(
-		`UPDATE sources SET source_type = '' WHERE id = ?`), fx.SourceID)
-	requirements.NoError(err)
-
-	page, err := fx.Store.ScanIdentityDiscoveryPageContext(t.Context(), fx.SourceID, 0, 100)
-	requirements.NoError(err)
-	var found bool
-	for _, observation := range page.Observations {
-		if observation.MessageID == fx.GmailSentID {
-			found = true
-			assertions.True(observation.HasSentLabel)
-		}
-	}
-	assertions.True(found, "legacy Gmail SENT evidence should be scanned")
-}
-
 func TestIdentityDiscoveryScanReadsOnlySourceNativeAttribution(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -420,7 +420,7 @@ var personRelationshipReviewsCmd = &cobra.Command{
 		query := &generated.ListPersonRelationshipReviewsQuery{}
 		if status != "" {
 			switch status {
-			case laneStatePending, "accepted", "rejected":
+			case "pending", "accepted", "rejected":
 				value := generated.ListPersonRelationshipReviewsQueryStatus(status)
 				query.Status = &value
 			default:

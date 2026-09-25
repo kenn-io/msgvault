@@ -109,8 +109,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		for _, src := range allMatches {
-			effectiveType := store.EffectiveSourceType(src.SourceType)
-			if effectiveType == sourceTypeGmail || effectiveType == sourceTypeIMAP {
+			if src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP || src.SourceType == "" {
 				sources = append(sources, src)
 			}
 		}
@@ -134,7 +133,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 			return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
 		}
 		for _, src := range allSources {
-			switch store.EffectiveSourceType(src.SourceType) {
+			switch src.SourceType {
 			case sourceTypeGmail:
 				if !cfg.OAuth.HasAnyConfig() {
 					fmt.Printf("Skipping %s (OAuth not configured)\n", src.Identifier)
@@ -201,7 +200,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		}
 
 		// Ensure credentials are available before syncing Gmail sources.
-		if store.EffectiveSourceType(src.SourceType) == sourceTypeGmail {
+		if src.SourceType == sourceTypeGmail || src.SourceType == "" {
 			appName := sourceOAuthApp(src)
 			if cfg.OAuth.ServiceAccountKeyFor(appName) == "" {
 				if _, err := getOAuthMgr(appName); err != nil {
@@ -242,8 +241,8 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 // oauth.ScopesDeletion (or another set) for workflows that need elevated
 // access.
 func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(string) (*oauth.Manager, error), saScopes []string, imapOpts ...imaplib.Option) (gmail.API, error) {
-	switch store.EffectiveSourceType(src.SourceType) {
-	case sourceTypeGmail:
+	switch src.SourceType {
+	case sourceTypeGmail, "":
 		appName := sourceOAuthApp(src)
 		var tokenSource oauth2.TokenSource
 
@@ -385,7 +384,7 @@ func imapFolderStateOptions(
 	src *store.Source,
 	forceRescan bool,
 ) []imaplib.Option {
-	if store.EffectiveSourceType(src.SourceType) != sourceTypeIMAP {
+	if src.SourceType != sourceTypeIMAP {
 		return nil
 	}
 
@@ -548,7 +547,6 @@ func saveIMAPFolderStates(
 
 func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), src *store.Source) error {
 	progress := &CLIProgress{}
-	effectiveSourceType := store.EffectiveSourceType(src.SourceType)
 
 	// --noresume promises a fresh sync, so it must also bypass the
 	// saved folder high water marks and re-enumerate every mailbox. A clean
@@ -568,7 +566,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 			parseFolderFilter(syncSkipFolders),
 		))
 
-	if effectiveSourceType == sourceTypeIMAP {
+	if src.SourceType == sourceTypeIMAP {
 		imapOpts = append(imapOpts,
 			imaplib.WithListProgress(progress.OnIMAPListProgress),
 		)
@@ -582,7 +580,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	// Build query from flags (Gmail only; IMAP date filters are
 	// handled via WithDateFilter on the client).
 	query := buildSyncQuery()
-	if query != "" && effectiveSourceType == sourceTypeIMAP {
+	if query != "" && src.SourceType == sourceTypeIMAP {
 		// --after/--before are handled natively by IMAP SEARCH;
 		// only warn about --query which has no IMAP equivalent.
 		if syncQuery != "" {
@@ -593,7 +591,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 
 	// Set up sync options
 	opts := sync.DefaultOptions()
-	opts.SourceType = effectiveSourceType
+	opts.SourceType = src.SourceType
 	opts.Query = query
 	opts.NoResume = syncNoResume
 	opts.Limit = syncLimit
@@ -605,7 +603,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	// resume is unreliable because additions or deletions shift
 	// the offsets. Already-imported messages are efficiently
 	// skipped via MessageExistsWithRawBatch.
-	if effectiveSourceType == sourceTypeIMAP {
+	if src.SourceType == sourceTypeIMAP {
 		opts.NoResume = true
 	}
 
@@ -621,13 +619,16 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 		displayID = src.DisplayName.String
 	}
 	fmt.Printf("Starting full sync for %s\n", displayID)
-	if query != "" && effectiveSourceType != sourceTypeIMAP {
+	if query != "" && src.SourceType != sourceTypeIMAP {
 		fmt.Printf("Query: %s\n", query)
 	}
 	fmt.Println()
 	syncSource := src
 	if syncSource.ID == 0 {
-		sourceType := store.EffectiveSourceType(syncSource.SourceType)
+		sourceType := syncSource.SourceType
+		if sourceType == "" {
+			sourceType = sourceTypeGmail
+		}
 		syncSource, err = s.GetOrCreateSource(sourceType, syncSource.Identifier)
 		if err != nil {
 			return fmt.Errorf("get/create source: %w", err)
@@ -638,7 +639,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 		ctx,
 		syncSource,
 		func(summary *gmail.SyncSummary) error {
-			if effectiveSourceType != sourceTypeIMAP {
+			if src.SourceType != sourceTypeIMAP {
 				return nil
 			}
 			if err := saveIMAPFolderStates(

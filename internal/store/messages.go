@@ -245,7 +245,7 @@ func (s *Store) gmailAuditPageIDsTx(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT m.id
 		FROM messages m
-		JOIN sources src ON src.id = m.source_id AND src.source_type IN ('', 'gmail')
+		JOIN sources src ON src.id = m.source_id AND src.source_type = 'gmail'
 		WHERE m.id > ? AND (? = 0 OR m.source_id = ?)
 		ORDER BY m.id
 		LIMIT ?

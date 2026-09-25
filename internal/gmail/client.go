@@ -110,7 +110,7 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 	// (oauth.refreshHTTPTimeout per call) instead of sharing this deadline.
 	// Any other TokenSource keeps its own refresh behavior.
 	timeout := defaultTimeout
-	if op == OpMessagesGetRaw {
+	if op == OpMessagesGetRaw || op == OpDraftsGet {
 		timeout = rawRequestTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -199,7 +199,7 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 			// Throttle the rate limiter to back off
 			c.rateLimiter.Throttle(30 * time.Second)
 			if remoteMutation {
-				return nil, fmt.Errorf("%w: %w", errWriteOutcomeUnknown, newStatusError(resp.StatusCode, respBody))
+				return nil, newStatusError(resp.StatusCode, respBody)
 			}
 			lastErr = errors.New("rate limited (429)")
 			continue
@@ -213,7 +213,7 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 				// Throttle the rate limiter - quota errors need longer backoff
 				c.rateLimiter.Throttle(60 * time.Second)
 				if remoteMutation {
-					return nil, fmt.Errorf("%w: %w", errWriteOutcomeUnknown, newStatusError(resp.StatusCode, respBody))
+					return nil, newStatusError(resp.StatusCode, respBody)
 				}
 				lastErr = errors.New("quota exceeded (403)")
 				continue // Retry with backoff
@@ -516,8 +516,6 @@ func classifyDraftWrite(err error) error {
 			return &DraftWriteError{State: DraftStateRejected, Code: "auth_failed", Err: err}
 		case statusErr.StatusCode == http.StatusForbidden && IsInsufficientScopeError(statusErr.Error()):
 			return &DraftWriteError{State: DraftStateRejected, Code: "insufficient_scope", Err: err}
-		case statusErr.StatusCode == http.StatusTooManyRequests:
-			return &DraftWriteError{State: DraftStateRemoteUnknown, Code: "remote_unknown", Err: err}
 		case statusErr.StatusCode >= 400 && statusErr.StatusCode < 500:
 			return &DraftWriteError{State: DraftStateRejected, Code: "provider_rejected", Err: err}
 		}

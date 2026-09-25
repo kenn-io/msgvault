@@ -941,7 +941,7 @@ func hasEquivalentContent(left, right DuplicateMessage) bool {
 }
 
 func sourcePriority(sourceType string, priorityMap map[string]int) int {
-	if p, ok := priorityMap[store.EffectiveSourceType(sourceType)]; ok {
+	if p, ok := priorityMap[sourceType]; ok {
 		return p
 	}
 	return len(priorityMap)
@@ -955,8 +955,7 @@ func remoteDeletionTargets(ctx context.Context, report *Report) (map[remoteKey][
 		}
 		survivor := group.Messages[group.Survivor]
 		for i, message := range group.Messages {
-			effectiveType := store.EffectiveSourceType(message.SourceType)
-			if i == group.Survivor || !remoteSourceTypes[effectiveType] || message.SourceID != survivor.SourceID {
+			if i == group.Survivor || !remoteSourceTypes[message.SourceType] || message.SourceID != survivor.SourceID {
 				continue
 			}
 			if !hasEquivalentContent(message, survivor) {
@@ -965,7 +964,7 @@ func remoteDeletionTargets(ctx context.Context, report *Report) (map[remoteKey][
 			switch {
 			case message.SourceID <= 0:
 				return nil, fmt.Errorf("message %d selected for remote deletion has no source ID", message.ID)
-			case strings.TrimSpace(effectiveType) == "":
+			case strings.TrimSpace(message.SourceType) == "":
 				return nil, fmt.Errorf("message %d selected for remote deletion has no source type", message.ID)
 			case strings.TrimSpace(message.SourceIdentifier) == "":
 				return nil, fmt.Errorf("message %d selected for remote deletion has no source identifier", message.ID)
@@ -973,7 +972,7 @@ func remoteDeletionTargets(ctx context.Context, report *Report) (map[remoteKey][
 				return nil, fmt.Errorf("message %d selected for remote deletion has no source message ID", message.ID)
 			}
 			key := remoteKey{
-				Account: message.SourceIdentifier, SourceType: effectiveType, SourceID: message.SourceID,
+				Account: message.SourceIdentifier, SourceType: message.SourceType, SourceID: message.SourceID,
 			}
 			bySource[key] = append(bySource[key], message.SourceMessageID)
 		}

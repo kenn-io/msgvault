@@ -126,41 +126,6 @@ func TestRepairMessageCommandRunsProductionRepairAndPrintsStableResult(t *testin
 	assert.Equal("Repaired subject", subject)
 }
 
-func TestRepairMessageCommandRunsLegacyGmailRepair(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	fixture := storetest.New(t)
-	messageID := fixture.CreateMessage("legacy-gmail-42")
-	_, err := fixture.Store.DB().Exec(fixture.Store.Rebind(
-		`UPDATE sources SET source_type = '' WHERE id = ?`), fixture.Source.ID)
-	requirements.NoError(err)
-	mock := gmail.NewMockAPI()
-	mock.Profile = &gmail.Profile{EmailAddress: fixture.Source.Identifier}
-	mock.AddMessage("legacy-gmail-42", testemail.NewMessage().
-		From("alice@example.com").To("bob@example.com").
-		Subject("Repaired legacy subject").Body("Repaired body").Bytes(), []string{"INBOX"})
-	command := newRepairMessageCmd(repairMessageCommandDeps{
-		isDaemonSubprocess: func() bool { return true },
-		openWritableStore: func() (*store.Store, func(), error) {
-			return fixture.Store, func() {}, nil
-		},
-		newGmailClient: func(context.Context, *store.Source) (gmail.API, error) {
-			return mock, nil
-		},
-		attachmentsDir: filepath.Join(t.TempDir(), "attachments"),
-	})
-	var output bytes.Buffer
-	command.SetOut(&output)
-	command.SetErr(&bytes.Buffer{})
-	command.SetArgs([]string{"legacy-gmail-42", "--source-id", "1"})
-
-	requirements.NoError(command.Execute())
-	assertions.Equal(
-		"Repaired message "+jsonNumber(messageID)+" (source 1, Gmail legacy-gmail-42): Repaired legacy subject\n",
-		output.String())
-	assertions.Equal([]string{"legacy-gmail-42"}, mock.GetMessageCalls)
-}
-
 func TestRepairMessageCommandPropagatesCacheRefreshFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

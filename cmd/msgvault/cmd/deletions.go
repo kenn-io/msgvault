@@ -326,7 +326,6 @@ type deleteStagedPlanOptions struct {
 	SourceIDSet              bool
 	ResolvedSourceType       string
 	ResolvedSourceIdentifier string
-	sourceCatalog            deletion.SourceCatalog
 	RemoteDeleteEnabled      bool
 }
 
@@ -559,13 +558,6 @@ func filterDeleteStagedManifests(manifests []*deletion.Manifest, opts deleteStag
 			matches = manifest.Version == 2 && manifest.Source != nil &&
 				manifest.Source.Type == opts.ResolvedSourceType &&
 				manifest.Source.Identifier == opts.ResolvedSourceIdentifier
-			if matches && opts.sourceCatalog != nil {
-				source, err := deletion.ResolveSourceReference(opts.sourceCatalog, *manifest.Source)
-				if err != nil {
-					return nil, fmt.Errorf("resolve batch %s source: %w", manifest.ID, err)
-				}
-				matches = source.ID == opts.SourceID
-			}
 			if manifest.Version == 1 {
 				legacyAccount := strings.TrimSpace(manifest.Filters.Account)
 				matches = legacyAccount == "" || legacyAccount == opts.ResolvedSourceIdentifier
@@ -687,7 +679,6 @@ func resolveDeleteStagedTargetWithSourceID(
 	requestedSourceIDSet bool,
 ) (deleteStagedTarget, error) {
 	var durable *deletion.SourceReference
-	var source *store.Source
 	for _, manifest := range manifests {
 		if err := manifest.ValidateVersion(); err != nil {
 			return deleteStagedTarget{}, fmt.Errorf("batch %s: %w", manifest.ID, err)
@@ -695,29 +686,23 @@ func resolveDeleteStagedTargetWithSourceID(
 		if manifest.Version != 2 {
 			continue
 		}
-		if durable != nil &&
-			(durable.Type != manifest.Source.Type || durable.Identifier != manifest.Source.Identifier) {
-			return deleteStagedTarget{}, newDeleteStagedUsageError(errors.New(
-				"pending batches target multiple sources; select one batch or use --source-id"))
-		}
-		resolved, err := deletion.ResolveSourceReference(st, *manifest.Source)
-		if err != nil {
-			return deleteStagedTarget{}, fmt.Errorf("resolve batch %s source: %w", manifest.ID, err)
-		}
 		if durable == nil {
 			copyRef := *manifest.Source
 			durable = &copyRef
-			source = resolved
 			continue
 		}
-		if source.ID != resolved.ID {
+		if durable.Type != manifest.Source.Type || durable.Identifier != manifest.Source.Identifier {
 			return deleteStagedTarget{}, newDeleteStagedUsageError(errors.New(
 				"pending batches target multiple sources; select one batch or use --source-id"))
 		}
 	}
 
 	if durable != nil {
-		if effectiveType := store.EffectiveSourceType(source.SourceType); effectiveType != sourceTypeGmail && effectiveType != sourceTypeIMAP {
+		source, err := st.GetSourceByTypeAndIdentifier(durable.Type, durable.Identifier)
+		if err != nil {
+			return deleteStagedTarget{}, err
+		}
+		if source.SourceType != sourceTypeGmail && source.SourceType != sourceTypeIMAP {
 			return deleteStagedTarget{}, fmt.Errorf("source %d is not a gmail or imap source", source.ID)
 		}
 		if requestedSourceIDSet {
@@ -727,13 +712,10 @@ func resolveDeleteStagedTargetWithSourceID(
 			if selectErr != nil {
 				return deleteStagedTarget{}, selectErr
 			}
-			if selected.ID != source.ID ||
-				store.EffectiveSourceType(selected.SourceType) != store.EffectiveSourceType(durable.Type) ||
-				selected.Identifier != durable.Identifier {
+			if selected.SourceType != durable.Type || selected.Identifier != durable.Identifier {
 				return deleteStagedTarget{}, newDeleteStagedUsageError(fmt.Errorf(
-					"requested source ID resolves to %s/%s (source %d), which does not match manifest source %s/%s (source %d)",
-					selected.SourceType, selected.Identifier, selected.ID,
-					durable.Type, durable.Identifier, source.ID))
+					"requested source ID resolves to %s/%s, which does not match manifest source %s/%s",
+					selected.SourceType, selected.Identifier, durable.Type, durable.Identifier))
 			}
 		}
 		if strings.TrimSpace(requestedAccount) != "" {
@@ -741,7 +723,7 @@ func resolveDeleteStagedTargetWithSourceID(
 			if selectErr != nil {
 				return deleteStagedTarget{}, selectErr
 			}
-			if store.EffectiveSourceType(selected.SourceType) != store.EffectiveSourceType(durable.Type) || selected.Identifier != durable.Identifier {
+			if selected.SourceType != durable.Type || selected.Identifier != durable.Identifier {
 				return deleteStagedTarget{}, newDeleteStagedUsageError(fmt.Errorf(
 					"requested account resolves to %s/%s, which does not match manifest source %s/%s",
 					selected.SourceType, selected.Identifier, durable.Type, durable.Identifier))
@@ -776,7 +758,7 @@ func resolveDeleteStagedTargetWithSourceID(
 	if err != nil {
 		return deleteStagedTarget{}, err
 	}
-	if effectiveType := store.EffectiveSourceType(source.SourceType); effectiveType != sourceTypeGmail && effectiveType != sourceTypeIMAP {
+	if source.SourceType != sourceTypeGmail && source.SourceType != sourceTypeIMAP {
 		return deleteStagedTarget{}, fmt.Errorf("source %d is not a gmail or imap source", source.ID)
 	}
 	for _, manifest := range manifests {
@@ -804,7 +786,7 @@ func deleteStagedScopeEscalationForSource(
 	permanent bool,
 	clientSecretsPath string,
 ) (deleteStagedScopeEscalation, error) {
-	if src == nil || store.EffectiveSourceType(src.SourceType) != sourceTypeGmail {
+	if src == nil || src.SourceType != sourceTypeGmail {
 		return deleteStagedScopeEscalation{}, nil
 	}
 	requiredScopes := oauth.Scopes
@@ -1012,7 +994,7 @@ Examples:
 		// Service-account flows get scopes via the JWT assertion (no stored
 		// token), so the scope-escalation prompt only applies to browser OAuth.
 		var clientSecretsPath string
-		if store.EffectiveSourceType(src.SourceType) == sourceTypeGmail {
+		if src.SourceType == sourceTypeGmail {
 			if !cfg.OAuth.HasAnyConfig() {
 				return errOAuthNotConfigured()
 			}
@@ -1136,7 +1118,7 @@ Examples:
 					}
 
 					// Check if this is a scope error - offer to re-authorize (Gmail only)
-					if store.EffectiveSourceType(src.SourceType) == sourceTypeGmail && isInsufficientScopeError(execErr) {
+					if src.SourceType == sourceTypeGmail && isInsufficientScopeError(execErr) {
 						if cfg.OAuth.ServiceAccountKeyFor(sourceOAuthApp(src)) != "" {
 							return fmt.Errorf(
 								"service account lacks required Gmail deletion scope for %s: "+
@@ -1377,7 +1359,7 @@ func planCLIDeleteStaged(
 	resolvedSourceIdentifier := ""
 	if resolvedSource != nil {
 		resolvedSourceID = resolvedSource.ID
-		resolvedSourceType = store.EffectiveSourceType(resolvedSource.SourceType)
+		resolvedSourceType = resolvedSource.SourceType
 		resolvedSourceIdentifier = resolvedSource.Identifier
 	}
 	plan, err := buildDeleteStagedPlan(deleteStagedPlanOptions{
@@ -1390,7 +1372,6 @@ func planCLIDeleteStaged(
 		SourceIDSet:              resolvedSource != nil,
 		ResolvedSourceType:       resolvedSourceType,
 		ResolvedSourceIdentifier: resolvedSourceIdentifier,
-		sourceCatalog:            st,
 		RemoteDeleteEnabled:      req.RemoteDeleteEnabled,
 	})
 	if err != nil {
@@ -1403,7 +1384,7 @@ func planCLIDeleteStaged(
 		if err != nil {
 			return api.CLIDeleteStagedPlanResponse{}, err
 		}
-		if store.EffectiveSourceType(target.Source.SourceType) == sourceTypeGmail {
+		if target.Source.SourceType == sourceTypeGmail {
 			if !cfg.OAuth.HasAnyConfig() {
 				return api.CLIDeleteStagedPlanResponse{}, errOAuthNotConfigured()
 			}

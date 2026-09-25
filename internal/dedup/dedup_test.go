@@ -371,8 +371,7 @@ func TestEngine_OptIn_StagesOnlyWithinSameSourceID(t *testing.T) {
 	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
-	gmail, err := st.GetOrCreateSource("", "test@example.com")
-	require.NoError(err, "GetOrCreateSource legacy Gmail")
+	gmail := f.Source
 
 	otherGmail, err := st.GetOrCreateSource("gmail", "other@example.com")
 	require.NoError(err, "GetOrCreateSource otherGmail")
@@ -905,8 +904,7 @@ func TestEngine_SourcePriorityOutranksPayloadCompleteness(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
-	gmail, err := st.GetOrCreateSource("", "test@example.com")
-	require.NoError(err, "GetOrCreateSource legacy Gmail")
+	gmail := f.Source
 	appleMail, err := st.GetOrCreateSource(
 		"apple-mail", "archive@example.test",
 	)
@@ -957,7 +955,6 @@ func TestEngine_SourcePriorityOutranksPayloadCompleteness(t *testing.T) {
 	group := report.Groups[0]
 	survivor := group.Messages[group.Survivor]
 	require.Equal(gmailID, survivor.ID, "source-priority survivor")
-	assert.Empty(t, survivor.SourceType, "raw source type")
 	require.Equal(0, survivor.AttachmentCount, "higher-priority source can be less complete")
 }
 

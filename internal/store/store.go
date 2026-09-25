@@ -1604,7 +1604,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// after the message and activity triggers exist so reclassified rows
 	// invalidate analytical and relationship projections like a normal update.
 	if err := s.runOnceMigration(
-		ctx, migrationGmailChatClassification, 2, false,
+		ctx, migrationGmailChatClassification, 1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 				return s.classifyLegacyGmailChats(ctx, tx)

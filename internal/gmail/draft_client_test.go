@@ -123,22 +123,44 @@ func TestDraftDeleteAcceptsEmptySuccessBody(t *testing.T) {
 	}
 }
 
-func TestDraftMutation429IsRemoteUnknownWithoutReplay(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var requests atomic.Int32
-	client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte(`{"error":{"code":429}}`))
-	}))
+func TestDraftMutationRateLimitsAreRejectedWithoutReplay(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"429", http.StatusTooManyRequests, `{"error":{"code":429}}`},
+		{"rate limit", http.StatusForbidden, `{"error":{"code":403,"errors":[{"reason":"rateLimitExceeded"}]}}`},
+		{"user rate limit", http.StatusForbidden, `{"error":{"code":403,"errors":[{"reason":"userRateLimitExceeded"}]}}`},
+	} {
+		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+			t.Run(tt.name+"/"+method, func(t *testing.T) {
+				assert := assert.New(t)
+				var requests atomic.Int32
+				client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(method, r.Method)
+					requests.Add(1)
+					w.WriteHeader(tt.status)
+					_, _ = w.Write([]byte(tt.body))
+				}))
 
-	_, err := client.CreateDraft(t.Context(), []byte("body"), "thread")
-	require.Error(err)
-	var writeErr *DraftWriteError
-	require.ErrorAs(err, &writeErr)
-	assert.Equal("remote_unknown", writeErr.Code)
-	assert.Equal(int32(1), requests.Load())
+				var err error
+				switch method {
+				case http.MethodPost:
+					_, err = client.CreateDraft(t.Context(), []byte("body"), "thread")
+				case http.MethodPut:
+					_, err = client.UpdateDraft(t.Context(), "draft-1", []byte("body"), "thread")
+				case http.MethodDelete:
+					err = client.DeleteDraft(t.Context(), "draft-1")
+				}
+				var writeErr *DraftWriteError
+				require.ErrorAs(t, err, &writeErr)
+				assert.Equal(DraftStateRejected, writeErr.State)
+				assert.Equal("provider_rejected", writeErr.Code)
+				assert.Equal(int32(1), requests.Load())
+			})
+		}
+	}
 }
 
 type draftRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -179,7 +201,6 @@ func TestDraftMutationUncertainFailuresMakeOneRequest(t *testing.T) {
 	}{
 		{name: "server error", status: http.StatusInternalServerError},
 		{name: "service unavailable", status: http.StatusServiceUnavailable},
-		{name: "rate limit", status: http.StatusForbidden, body: `{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

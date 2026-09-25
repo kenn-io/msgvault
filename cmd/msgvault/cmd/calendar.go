@@ -714,14 +714,11 @@ func calendarStoredAccountOAuthApp(st *store.Store, email string, calendarSource
 }
 
 func calendarGmailSourceForAccount(st *store.Store, email string) (*store.Source, error) {
-	sources, err := st.ListSources("")
+	sources, err := st.ListSources(sourceTypeGmail)
 	if err != nil {
 		return nil, err
 	}
 	for _, src := range sources {
-		if store.EffectiveSourceType(src.SourceType) != sourceTypeGmail {
-			continue
-		}
 		if store.EqualIdentifier(src.Identifier, email) {
 			return src, nil
 		}

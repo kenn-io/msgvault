@@ -61,10 +61,9 @@ func (m MessageFixture) resolvedMessageType() string {
 
 // SourceFixture defines a source row for Parquet test data.
 type SourceFixture struct {
-	ID                    int64
-	AccountEmail          string
-	SourceType            string // "gmail", "whatsapp", etc. Defaults to "gmail".
-	LegacyEmptySourceType bool   // writes an empty source_type instead of the Gmail default.
+	ID           int64
+	AccountEmail string
+	SourceType   string // "gmail", "whatsapp", etc. Defaults to "gmail".
 }
 
 // ParticipantFixture defines a participant row for Parquet test data.
@@ -567,7 +566,7 @@ func (m MessageFixture) sqlValuesWithInternalDeletion() []string {
 func (b *TestDataBuilder) sourcesSQL() string {
 	return joinRows(b.sources, func(s SourceFixture) string {
 		st := s.SourceType
-		if st == "" && !s.LegacyEmptySourceType {
+		if st == "" {
 			st = "gmail"
 		}
 		return fmt.Sprintf("(%d::BIGINT, %s, %s)", s.ID, sqlStr(s.AccountEmail), sqlStr(st))

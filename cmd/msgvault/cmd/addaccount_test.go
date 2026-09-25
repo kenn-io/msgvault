@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,102 +41,13 @@ func TestFindGmailSource(t *testing.T) {
 	require.ErrorIs(err, errGmailSourceNotFound, "findGmailSource")
 	assert.Nil(src, "expected nil with only mbox source")
 
-	// A legacy empty source type is Gmail and should suppress the hint.
-	legacy, err := s.GetOrCreateSource("", email)
-	require.NoError(err, "create legacy gmail source")
-	src, err = findGmailSource(s, email)
-	require.NoError(err, "findGmailSource")
-	require.NotNil(src, "expected non-nil with legacy gmail source")
-	assert.Equal(legacy.ID, src.ID, "legacy source ID")
-	assert.Empty(src.SourceType, "legacy source type remains empty")
-
-	// An explicit Gmail source remains a match too.
+	// Gmail source exists — should suppress the hint.
 	_, err = s.GetOrCreateSource("gmail", email)
 	require.NoError(err, "create gmail source")
 	src, err = findGmailSource(s, email)
 	require.NoError(err, "findGmailSource")
 	require.NotNil(src, "expected non-nil with gmail source")
-	assert.Equal(legacy.ID, src.ID, "legacy source remains the first match")
-}
-
-func TestLookupGmailAccountBindingLegacyGmailUsesNamedOAuthApp(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/cli/accounts" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"accounts":[{"id":7,"email":"legacy@example.com","type":"","display_name":"Legacy","oauth_app":"named-app","message_count":0,"source_deleted_count":0,"last_sync":"2024-01-02T03:04:05Z"}]}`))
-	}))
-	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
-		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
-	})
-
-	app, exists, err := lookupGmailAccountBinding(context.Background(), "legacy@example.com")
-	require.NoError(err)
-	assert.True(exists, "legacy response should count as an existing Gmail source")
-	assert.Equal("named-app", app.String)
-	assert.True(app.Valid)
-}
-
-func TestSelectAddAccountGmailSource(t *testing.T) {
-	tests := []struct {
-		name       string
-		sourceType string
-	}{
-		{name: "legacy Gmail", sourceType: ""},
-		{name: "explicit Gmail", sourceType: "gmail"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			s, err := store.Open(filepath.Join(t.TempDir(), "msgvault.db"))
-			require.NoError(err, "open store")
-			defer func() { _ = s.Close() }()
-			require.NoError(s.InitSchema(), "init schema")
-
-			existing, err := s.GetOrCreateSource(tt.sourceType, "user@example.com")
-			require.NoError(err, "create existing source")
-			selected, err := selectAddAccountGmailSource(s, existing, "user@example.com")
-			require.NoError(err, "select existing source")
-			require.Same(existing, selected, "reuse should return the resolved source")
-			assert.Equal(existing.ID, selected.ID)
-			assert.Equal(tt.sourceType, selected.SourceType)
-
-			sources, err := s.GetSourcesByIdentifier("user@example.com")
-			require.NoError(err, "list sources")
-			assert.Len(sources, 1, "reusing a source must not create a sibling")
-		})
-	}
-
-	t.Run("creates Gmail beside named provider", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		s, err := store.Open(filepath.Join(t.TempDir(), "msgvault.db"))
-		require.NoError(err, "open store")
-		defer func() { _ = s.Close() }()
-		require.NoError(s.InitSchema(), "init schema")
-
-		mbox, err := s.GetOrCreateSource("mbox", "user@example.com")
-		require.NoError(err, "create named provider")
-		selected, err := selectAddAccountGmailSource(s, nil, "user@example.com")
-		require.NoError(err, "create Gmail source")
-		require.NotNil(selected)
-		assert.Equal("gmail", selected.SourceType)
-		assert.NotEqual(mbox.ID, selected.ID, "named provider must remain separate")
-
-		sources, err := s.GetSourcesByIdentifier("user@example.com")
-		require.NoError(err, "list sources")
-		require.Len(sources, 2)
-		assert.ElementsMatch(
-			[]int64{mbox.ID, selected.ID},
-			[]int64{sources[0].ID, sources[1].ID},
-		)
-	})
+	assert.Equal("gmail", src.SourceType, "source type")
 }
 
 // TestAddAccount_InheritedBindingValidatesToken verifies that re-running
@@ -280,16 +189,8 @@ func TestAddAccount_CalendarOnlyTokenRequiresGmailReauth(t *testing.T) {
 
 func TestAddAccount_FullGmailScopeTokenCanBeReused(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
-
-	seedStore, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(seedStore.InitSchema(), "init schema")
-	legacySource, err := seedStore.GetOrCreateSource("", "user@example.com")
-	require.NoError(err, "create legacy Gmail source")
-	require.NoError(seedStore.Close(), "close seed store")
 
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
@@ -340,9 +241,7 @@ func TestAddAccount_FullGmailScopeTokenCanBeReused(t *testing.T) {
 
 	root := newTestRootCmd()
 	root.AddCommand(testCmd)
-	root.SetArgs([]string{
-		"add-account", "user@example.com", "--no-default-identity", "--display-name", "Personal",
-	})
+	root.SetArgs([]string{"add-account", "user@example.com", "--no-default-identity"})
 
 	require.NoError(root.ExecuteContext(ctx))
 
@@ -353,18 +252,6 @@ func TestAddAccount_FullGmailScopeTokenCanBeReused(t *testing.T) {
 	src, err := findGmailSource(s, "user@example.com")
 	require.NoError(err, "find gmail source")
 	require.NotNil(src, "expected Gmail source to be registered")
-	assert.Equal(legacySource.ID, src.ID, "reusable token must keep the legacy source ID")
-	assert.Empty(src.SourceType, "reusable token must keep the legacy source type")
-	assert.Equal("Personal", src.DisplayName.String, "display name should update the reused source")
-	sources, err := s.GetSourcesByIdentifier("user@example.com")
-	require.NoError(err, "list Gmail-family sources")
-	var gmailSources []*store.Source
-	for _, source := range sources {
-		if store.EffectiveSourceType(source.SourceType) == sourceTypeGmail {
-			gmailSources = append(gmailSources, source)
-		}
-	}
-	assert.Len(gmailSources, 1, "reusing legacy Gmail must not create an explicit sibling")
 }
 
 func TestAddAccountOAuthScopesForTokenPreservesExistingCalendarGrant(t *testing.T) {

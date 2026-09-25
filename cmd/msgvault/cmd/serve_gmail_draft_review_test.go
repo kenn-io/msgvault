@@ -302,94 +302,6 @@ func TestGmailDraftCreateAndSendAsUseLocalBehavior(t *testing.T) {
 	assert.True(sendAs.Entries[0].ConfirmedIdentity)
 }
 
-func TestGmailDraftDelegatedGrantDisambiguatesLegacySibling(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	const identifier = "owner@example.test"
-	args := func(f gmailDraftTestFixture) []string {
-		return []string{api.CLIRunDraftReplyCommand, strconv.FormatInt(f.parentID, 10),
-			"--from", identifier, "--body", "delegated body"}
-	}
-	run := func(t *testing.T, f gmailDraftTestFixture, grant *agentgrant.Grant) error {
-		t.Helper()
-		return f.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
-			Args: args(f), Grant: grant,
-		}, func(api.CLIRunEvent) error { return nil })
-	}
-
-	t.Run("ambiguous sibling is denied", func(t *testing.T) {
-		f := newSQLiteGmailDraftTestFixture(t)
-		_, err := f.store.DB().Exec(f.store.Rebind(
-			`UPDATE sources SET source_type = '' WHERE id = ?`), f.source.ID)
-		requirements.NoError(err)
-		sibling, err := f.store.GetOrCreateSource(sourceTypeGmail, f.source.Identifier)
-		requirements.NoError(err)
-		grant := &agentgrant.Grant{
-			ID: "sibling-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
-			Sources: []agentgrant.SourceRef{{ID: sibling.ID, Type: sourceTypeGmail, Identifier: identifier}},
-		}
-
-		err = run(t, f, grant)
-		requirements.Error(err)
-		assertions.Equal("not_permitted", err.Error())
-		assertions.Zero(f.client.createCalls)
-	})
-
-	t.Run("exact source ID is accepted", func(t *testing.T) {
-		f := newSQLiteGmailDraftTestFixture(t)
-		_, err := f.store.DB().Exec(f.store.Rebind(
-			`UPDATE sources SET source_type = '' WHERE id = ?`), f.source.ID)
-		requirements.NoError(err)
-		_, err = f.store.GetOrCreateSource(sourceTypeGmail, f.source.Identifier)
-		requirements.NoError(err)
-		grant := &agentgrant.Grant{
-			ID: "exact-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
-			Sources: []agentgrant.SourceRef{{ID: f.source.ID, Type: sourceTypeGmail, Identifier: identifier}},
-		}
-
-		requirements.NoError(run(t, f, grant))
-		assertions.Equal(1, f.client.createCalls)
-	})
-
-	t.Run("reused source ID does not block unique replacement", func(t *testing.T) {
-		f := newSQLiteGmailDraftTestFixture(t)
-		grant := &agentgrant.Grant{
-			ID: "reused-id-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
-			Sources: []agentgrant.SourceRef{
-				{ID: f.source.ID, Type: sourceTypeGmail, Identifier: "former-a@example.test"},
-				{ID: f.source.ID + 1, Type: sourceTypeGmail, Identifier: identifier},
-			},
-		}
-
-		requirements.NoError(run(t, f, grant))
-		assertions.Equal(1, f.client.createCalls)
-	})
-
-	t.Run("unique replacement tuple remains portable", func(t *testing.T) {
-		f := newSQLiteGmailDraftTestFixture(t)
-		grant := &agentgrant.Grant{
-			ID: "replacement-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
-			Sources: []agentgrant.SourceRef{{ID: f.source.ID + 999, Type: sourceTypeGmail, Identifier: identifier}},
-		}
-
-		requirements.NoError(run(t, f, grant))
-		assertions.Equal(1, f.client.createCalls)
-	})
-
-	t.Run("same ID with wrong tuple is denied", func(t *testing.T) {
-		f := newSQLiteGmailDraftTestFixture(t)
-		grant := &agentgrant.Grant{
-			ID: "wrong-tuple-grant", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
-			Sources: []agentgrant.SourceRef{{ID: f.source.ID, Type: sourceTypeGmail, Identifier: "other@example.test"}},
-		}
-
-		err := run(t, f, grant)
-		requirements.Error(err)
-		assertions.Equal("not_permitted", err.Error())
-		assertions.Zero(f.client.createCalls)
-	})
-}
-
 func TestGmailDraftSendAsFailureIsReportedLocally(t *testing.T) {
 	fixture := newGmailDraftTestFixture(t)
 	fixture.client.sendAsErr = errors.New("send-as unavailable")
@@ -611,7 +523,6 @@ func TestGmailDraftUncertainOutcomeRecordFailureReturnsLocalPersistenceCode(t *t
 	assert.Equal("remote_unknown", output.PendingCode)
 	assert.Equal(draft.CurrentReceipt.GmailMessageID, output.Receipt.GmailMessageID)
 	assert.Contains(output.CandidateContent, "candidate")
-	assert.True(output.ManualReconciliation)
 
 	latest, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
 	require.NoError(err)
@@ -986,7 +897,6 @@ func TestGmailDraftAcceptedReplacementReceiptIsOutputWhenOutcomeRecordFails(t *t
 	assert.Equal("gmail-message-edited", output.PendingReplacementGmailMessageID)
 	require.NotNil(output.ProviderObservation)
 	assert.Equal("gmail-message-edited", output.ProviderObservation.GmailMessageID)
-	assert.True(output.ManualReconciliation)
 
 	latest, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
 	require.NoError(err)
@@ -1012,4 +922,143 @@ func TestGmailDraftRemoteUnknownCreateHumanOutputIncludesRFC822ID(t *testing.T) 
 	var count int
 	require.NoError(fixture.store.DB().QueryRow("SELECT COUNT(*) FROM gmail_drafts").Scan(&count))
 	assert.Zero(count)
+}
+
+func TestGmailDraftPendingDeleteReconciles(t *testing.T) {
+	for _, code := range []string{"", "remote_unknown", "local_persistence_failed"} {
+		for _, absent := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/absent=%t", code, absent), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				f := newGmailDraftTestFixture(t)
+				draft := f.seedDraft(t)
+				_, err := f.store.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision, store.GmailDraftOperationDelete, nil)
+				require.NoError(err)
+				if code != "" {
+					require.NoError(f.store.RecordGmailDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, code, ""))
+				}
+				if absent {
+					f.client.getErr = &gmail.NotFoundError{Path: "/drafts/gmail-draft-managed"}
+				}
+				_, err = f.lifecycle(t, api.CLIRunDraftDeleteCommand, draft, "")
+				require.NoError(err)
+				latest, err := f.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+				require.NoError(err)
+				assert.Nil(latest.Pending)
+				assert.NotNil(latest.DiscardedAt)
+				assert.Equal(1, f.client.getCalls)
+				if absent {
+					assert.Zero(f.client.deleteCalls)
+				} else {
+					assert.Equal(1, f.client.deleteCalls)
+				}
+			})
+		}
+	}
+}
+
+func TestGmailDraftPendingEditReconciles(t *testing.T) {
+	for _, observed := range []string{"original", "replacement", "synced_replacement", "external", "absent"} {
+		t.Run(observed, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newGmailDraftTestFixture(t)
+			draft := f.seedDraft(t)
+			raw := gmailDraftTestRaw("candidate", "candidate@example.test")
+			_, err := f.store.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision, store.GmailDraftOperationEdit, raw)
+			require.NoError(err)
+			code, replacementID := "remote_unknown", ""
+			if observed == "replacement" || observed == "synced_replacement" {
+				code, replacementID = "accepted_local_failed", "gmail-message-replacement"
+			}
+			require.NoError(f.store.RecordGmailDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, code, replacementID))
+			switch observed {
+			case "replacement", "synced_replacement":
+				f.client.getDraft.Message.ID = "gmail-message-replacement"
+				f.client.getDraft.Message.Raw = raw
+			case "external":
+				f.client.getDraft.Message.ID = "gmail-message-external"
+				f.client.getDraft.Message.Raw = gmailDraftTestRaw("external", "external@example.test")
+			case "absent":
+				f.client.getErr = &gmail.NotFoundError{Path: "/drafts/gmail-draft-managed"}
+			}
+			var syncedMessageID int64
+			if observed == "synced_replacement" {
+				senderID, senderErr := f.store.EnsureParticipant("owner@example.test", "", "example.test")
+				require.NoError(senderErr)
+				syncedMessageID, err = f.store.PersistMessage(&store.MessagePersistData{
+					Message: &store.Message{
+						SourceID: f.source.ID, SourceMessageID: "gmail-message-replacement",
+						MessageType: store.MessageTypeEmail, ConversationID: f.conversationID,
+						SenderID: sql.NullInt64{Int64: senderID, Valid: true},
+					},
+					BodyText: sql.NullString{String: "candidate", Valid: true}, RawMIME: raw,
+				})
+				require.NoError(err)
+			}
+			f.client.updateDraft = &gmail.Draft{ID: "gmail-draft-managed", Message: gmail.RawMessage{ID: "gmail-message-new", ThreadID: "gmail-thread-1"}}
+			events, err := f.lifecycle(t, api.CLIRunDraftEditCommand, draft, "new body")
+			switch observed {
+			case "original":
+				require.NoError(err)
+				assert.Equal(1, f.client.updateCalls)
+			case "replacement", "synced_replacement":
+				require.ErrorContains(err, "revision_mismatch")
+				require.Len(events, 1)
+				assert.Contains(events[0].Data, `"status":"recovered"`)
+				assert.Zero(f.client.updateCalls)
+			case "external":
+				require.ErrorContains(err, "changed_externally")
+				assert.Zero(f.client.updateCalls)
+			case "absent":
+				require.ErrorContains(err, "provider_absent")
+				assert.Zero(f.client.updateCalls)
+			}
+			latest, err := f.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			if observed == "absent" {
+				require.NotNil(latest.Pending)
+				assert.Equal(raw, latest.Pending.Raw)
+				_, err = f.lifecycle(t, api.CLIRunDraftDeleteCommand, latest, "")
+				require.NoError(err)
+				latest, err = f.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+				require.NoError(err)
+				assert.NotNil(latest.DiscardedAt)
+				assert.Zero(f.client.deleteCalls)
+			}
+			assert.Nil(latest.Pending)
+			if observed == "replacement" || observed == "synced_replacement" || observed == "external" {
+				assert.Equal(f.client.getDraft.Message.ID, latest.CurrentReceipt.GmailMessageID)
+				if observed == "synced_replacement" {
+					assert.Equal(syncedMessageID, latest.CurrentMessageID)
+				}
+				assert.Equal(int64(2), latest.Revision)
+				message, err := f.store.GetMessageContext(t.Context(), latest.CurrentMessageID)
+				require.NoError(err)
+				wantBody := "candidate"
+				if observed == "external" {
+					wantBody = "external"
+				}
+				assert.Contains(message.BodyText, wantBody)
+			}
+		})
+	}
+}
+
+func TestGmailDraftSendAsRefusesDelegatedGrant(t *testing.T) {
+	f := newGmailDraftTestFixture(t)
+	err := f.adapter.runCLIDraftSendAs(t.Context(), api.CLIRunRequest{
+		Args: []string{api.CLIRunDraftSendAsCommand, f.source.Identifier}, Grant: &agentgrant.Grant{},
+	}, nil)
+	require.ErrorContains(t, err, "not_permitted")
+	assert.Zero(t, f.client.listCalls)
+}
+
+func TestGmailDraftLifecycleReportsStoreReadFailure(t *testing.T) {
+	f := newSQLiteGmailDraftTestFixture(t)
+	draft := f.seedDraft(t)
+	_, err := f.store.DB().Exec("DROP TABLE gmail_drafts")
+	require.NoError(t, err)
+	err = f.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftGetCommand, draft.DraftID}}, nil)
+	require.ErrorContains(t, err, "draft_read_failed")
 }

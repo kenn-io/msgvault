@@ -112,14 +112,6 @@ var ScopesGmailDraftWrite = []string{
 	ScopeGmailCompose,
 }
 
-// ScopesGmailDraftRead are the accepted grants for reading a Gmail draft.
-var ScopesGmailDraftRead = []string{
-	ScopeGmailFull,
-	ScopeGmailModify,
-	ScopeGmailCompose,
-	ScopeGmailReadonly,
-}
-
 // ScopesGmailSendAsList are the accepted grants for listing send-as entries.
 var ScopesGmailSendAsList = []string{
 	ScopeGmailSettingsBasic,

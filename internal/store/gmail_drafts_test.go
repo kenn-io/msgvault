@@ -34,7 +34,6 @@ func gmailTestBuild(sourceID, conversationID int64, receipt store.GmailDraftRece
 }
 
 func TestManagedGmailDraftLifecycleAndRetention(t *testing.T) {
-	testutil.SkipIfPostgres(t, "archive GC is SQLite-only")
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -90,41 +89,18 @@ func TestManagedGmailDraftLifecycleAndRetention(t *testing.T) {
 	require.NotNil(loaded.Pending)
 	assert.Equal(store.GmailDraftOperationDelete, loaded.Pending.Operation)
 
-	finished, err := st.FinishGmailDraftDeleteContext(t.Context(), draft.DraftID, 2, false)
+	finished, err := st.FinishGmailDraftDeleteContext(t.Context(), draft.DraftID, 2)
 	require.NoError(err)
 	assert.Equal(int64(3), finished.Revision)
 	assert.NotNil(finished.DiscardedAt)
 	assert.Nil(finished.Pending)
 
-	plan, err := st.PlanGCContext(t.Context())
-	require.NoError(err)
-	assert.Equal(int64(1), plan.SourceDeleted)
-}
-
-func TestPersistGmailDraftAcceptsLegacyGmailSourceType(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("", "legacy-draft@example.com")
-	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "legacy-thread", "Legacy draft")
-	require.NoError(err)
-	participants := []store.ParticipantPersistData{
-		{EmailAddress: source.Identifier, Domain: "example.com"},
-		{EmailAddress: "recipient@example.com", Domain: "example.com"},
+	// Archive GC is SQLite-only; the lifecycle above runs on both backends.
+	if !st.IsPostgreSQL() {
+		plan, err := st.PlanGCContext(t.Context())
+		require.NoError(err)
+		assert.Equal(int64(1), plan.SourceDeleted)
 	}
-	receipt := store.GmailDraftReceipt{
-		SourceID: source.ID, GmailDraftID: "legacy-gmail-draft",
-		GmailMessageID: "legacy-gmail-message", ThreadID: "legacy-thread",
-	}
-	draft, err := st.PersistGmailDraftContext(t.Context(), receipt, participants,
-		gmailTestBuild(source.ID, conversationID, receipt, []byte("legacy body")))
-	require.NoError(err)
-	assert.Equal(int64(1), draft.Revision)
-
-	stored, err := st.GetSourceByID(source.ID)
-	require.NoError(err)
-	assert.Empty(stored.SourceType)
 }
 
 func TestGmailDraftAdoptObservationReusesOrInsertsMessage(t *testing.T) {
@@ -189,6 +165,17 @@ func TestGmailDraftAdoptObservationReusesOrInsertsMessage(t *testing.T) {
 	require.NoError(err)
 	assert.NotEqual(fresh.CurrentMessageID, adopted.CurrentMessageID)
 	assert.Equal("gmail-message-inserted", adopted.CurrentReceipt.GmailMessageID)
+
+	unchanged, err := st.AdoptGmailDraftObservationContext(t.Context(), adopted.DraftID, adopted.Revision, observed, participants,
+		gmailTestBuild(source.ID, conversationID, observed, []byte("inserted")))
+	require.NoError(err)
+	assert.Equal(adopted.CurrentMessageID, unchanged.CurrentMessageID)
+	assert.Equal(adopted.Revision, unchanged.Revision)
+	var currentDeleted sql.NullTime
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT deleted_from_source_at FROM messages WHERE id = ?
+	`), unchanged.CurrentMessageID).Scan(&currentDeleted))
+	assert.False(currentDeleted.Valid)
 }
 
 func TestGmailDraftAbortClearsClaim(t *testing.T) {
@@ -260,19 +247,61 @@ func TestGmailDraftPendingOriginalRetainedByGC(t *testing.T) {
 	require.NoError(err)
 }
 
-func TestGmailDraftDeleteInspection404FinishesWithoutClaim(t *testing.T) {
+func TestGmailDraftRefusesInvalidTransitions(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "thread-404", "Draft thread")
+	conversationID, err := st.EnsureConversation(source.ID, "thread-refusals", "Draft thread")
 	require.NoError(err)
 	participants := []store.ParticipantPersistData{{EmailAddress: "alice@example.com"}, {EmailAddress: "user@example.com"}}
-	receipt := store.GmailDraftReceipt{SourceID: source.ID, GmailDraftID: "gmail-draft-404", GmailMessageID: "gmail-message-404", ThreadID: "thread-404"}
+	receipt := store.GmailDraftReceipt{SourceID: source.ID, GmailDraftID: "gmail-draft-refusals", GmailMessageID: "gmail-message-refusals", ThreadID: "thread-refusals"}
 	draft, err := st.PersistGmailDraftContext(t.Context(), receipt, participants, gmailTestBuild(source.ID, conversationID, receipt, []byte("body")))
 	require.NoError(err)
-	finished, err := st.FinishGmailDraftDeleteContext(t.Context(), draft.DraftID, draft.Revision, true)
+	_, err = st.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision+1, store.GmailDraftOperationDelete, nil)
+	require.ErrorIs(err, store.ErrGmailDraftRevision)
+	_, err = st.FinishGmailDraftDeleteContext(t.Context(), draft.DraftID, draft.Revision)
+	require.ErrorIs(err, store.ErrGmailDraftState)
+
+	_, err = st.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision, store.GmailDraftOperationEdit, []byte("candidate"))
+	require.NoError(err)
+	_, err = st.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision, store.GmailDraftOperationDelete, nil)
+	require.ErrorIs(err, store.ErrGmailDraftPending)
+	_, err = st.FinishGmailDraftDeleteContext(t.Context(), draft.DraftID, draft.Revision)
+	require.ErrorIs(err, store.ErrGmailDraftState)
+
+	observed := receipt
+	observed.GmailMessageID = "gmail-message-replacement"
+	_, err = st.AdoptGmailDraftObservationContext(t.Context(), draft.DraftID, draft.Revision, observed, participants,
+		gmailTestBuild(source.ID, conversationID, observed, []byte("external edit")))
+	require.ErrorIs(err, store.ErrGmailDraftPending)
+
+	require.NoError(st.RecordGmailDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, "accepted_local_failed", observed.GmailMessageID))
+	_, err = st.PublishGmailDraftReplacementContext(t.Context(), draft.DraftID, draft.Revision, observed.GmailMessageID, participants,
+		gmailTestBuild(source.ID, conversationID, observed, []byte("not the candidate")))
+	require.Error(err)
+	loaded, err := st.GetGmailDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.Equal(draft.Revision, loaded.Revision)
+	assert.Equal(draft.CurrentMessageID, loaded.CurrentMessageID)
+	require.NotNil(loaded.Pending)
+	assert.Equal([]byte("candidate"), loaded.Pending.Raw)
+	var replacementCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?
+	`), source.ID, observed.GmailMessageID).Scan(&replacementCount))
+	assert.Zero(replacementCount)
+
+	_, err = st.AbortGmailDraftContext(t.Context(), draft.DraftID, draft.Revision)
+	require.NoError(err)
+	_, err = st.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision, store.GmailDraftOperationDelete, nil)
+	require.NoError(err)
+	finished, err := st.FinishGmailDraftDeleteContext(t.Context(), draft.DraftID, draft.Revision)
 	require.NoError(err)
 	require.NotNil(finished.DiscardedAt)
-	require.Equal(int64(2), finished.Revision)
+	for _, operation := range []string{store.GmailDraftOperationEdit, store.GmailDraftOperationDelete} {
+		_, err = st.ClaimGmailDraftContext(t.Context(), finished.DraftID, finished.Revision, operation, []byte("candidate"))
+		require.ErrorIs(err, store.ErrGmailDraftState, operation)
+	}
 }

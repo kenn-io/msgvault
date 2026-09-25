@@ -287,33 +287,19 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	// Remove credentials for the source type.
-	switch store.EffectiveSourceType(source.SourceType) {
+	switch source.SourceType {
 	case sourceTypeGmail:
-		remaining, listErr := s.ListSources("")
+		remaining, listErr := s.ListSources(sourceTypeGmail)
 		remainingEmails := make([]string, 0, len(remaining))
 		for _, remainingSource := range remaining {
-			if store.EffectiveSourceType(remainingSource.SourceType) != sourceTypeGmail {
-				continue
-			}
 			remainingEmails = append(remainingEmails, remainingSource.Identifier)
 		}
-		tokenPath := oauth.TokenFilePath(cfg.TokensDir(), source.Identifier)
-		sharedTokenFile := false
-		equivalentGrant := false
-		if listErr == nil {
-			sharedTokenFile = tokenFileUsedByRemainingSource(
-				cfg.TokensDir(), source.Identifier, remainingEmails,
-			)
-			equivalentGrant = oauth.EquivalentStoredGrantInUse(
-				cfg.TokensDir(), source.Identifier, remainingEmails,
-			)
-		}
-		preserveTokenFile, grantInUse := gmailCredentialRetention(
-			listErr != nil, sharedTokenFile, equivalentGrant,
+		grantInUse := listErr != nil || oauth.EquivalentStoredGrantInUse(
+			cfg.TokensDir(), source.Identifier, remainingEmails,
 		)
 		if listErr != nil {
 			fmt.Fprintf(os.Stderr,
-				"Warning: could not check remaining Gmail accounts; Google grant and local token file were preserved: %v\n",
+				"Warning: could not check remaining Gmail accounts; Google grant was not revoked: %v\n",
 				listErr,
 			)
 		}
@@ -336,13 +322,14 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 				)
 			}
 		}
-		if !preserveTokenFile {
-			if err := os.Remove(tokenPath); err != nil && !os.IsNotExist(err) {
-				fmt.Fprintf(os.Stderr,
-					"Warning: could not remove token file %s: %v\n",
-					tokenPath, err,
-				)
-			}
+		tokenPath := oauth.TokenFilePath(
+			cfg.TokensDir(), source.Identifier,
+		)
+		if err := os.Remove(tokenPath); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not remove token file %s: %v\n",
+				tokenPath, err,
+			)
 		}
 	case sourceTypeTeams:
 		graphMgr := microsoft.NewGraphManager(
@@ -465,33 +452,6 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		)
 	}
 	return nil
-}
-
-func gmailCredentialRetention(
-	enumerationFailed, sharedTokenFile, equivalentGrant bool,
-) (preserveTokenFile, grantInUse bool) {
-	preserveTokenFile = enumerationFailed || sharedTokenFile
-	grantInUse = preserveTokenFile || equivalentGrant
-	return preserveTokenFile, grantInUse
-}
-
-func tokenFileUsedByRemainingSource(tokensDir, email string, remainingEmails []string) bool {
-	tokenPath := oauth.TokenFilePath(tokensDir, email)
-	tokenInfo, statErr := os.Stat(tokenPath)
-	for _, remainingEmail := range remainingEmails {
-		remainingPath := oauth.TokenFilePath(tokensDir, remainingEmail)
-		if tokenPath == remainingPath {
-			return true
-		}
-		if statErr != nil {
-			continue
-		}
-		remainingInfo, err := os.Stat(remainingPath)
-		if err == nil && os.SameFile(tokenInfo, remainingInfo) {
-			return true
-		}
-	}
-	return false
 }
 
 func removeDiscordCredentialAfterCascade(

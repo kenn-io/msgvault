@@ -55,26 +55,6 @@ func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
 	assert.Equal(t, deletedAt, msgs[0].DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
 }
 
-func TestEngineListAccountsPreservesRawLegacyGmailType(t *testing.T) {
-	require := require.New(t)
-	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/cli/accounts", r.URL.Path, "path")
-		writeJSONResponse(t, w, map[string]any{
-			"accounts": []map[string]any{{
-				"id": 7, "email": "legacy@example.com", "type": "",
-				"display_name": "Legacy",
-			}},
-		})
-	})
-	engine := NewEngineAdapter(store)
-
-	accounts, err := engine.ListAccounts(context.Background())
-	require.NoError(err, "ListAccounts")
-	require.Len(accounts, 1)
-	assert.Empty(t, accounts[0].SourceType, "raw source type")
-	assert.Equal(t, "legacy@example.com", accounts[0].Identifier, "identifier")
-}
-
 func TestEngineSemanticSearchUsesHybridEndpointAndReturnsRankedSummaries(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

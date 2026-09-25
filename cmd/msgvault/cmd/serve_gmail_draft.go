@@ -24,6 +24,7 @@ import (
 
 const (
 	gmailDraftStatusCreated     = "created"
+	gmailDraftStatusPending     = "pending"
 	gmailDraftStatusLocalFailed = "remote_accepted_local_failed"
 	gmailDraftDeleteOutcome     = "deleted"
 	gmailDraftAbsentOutcome     = "already_absent"
@@ -32,7 +33,7 @@ const (
 // authorizeGmailDraft applies the daemon-start policy snapshot. Reads from
 // the archive and owner-only send-as listing do not use this write grant.
 func authorizeGmailDraft(policy []config.GmailDraftSource, sourceID int64, sourceType string) error {
-	if store.EffectiveSourceType(sourceType) != "gmail" {
+	if sourceType != "gmail" {
 		return draftReplyError("draft_disabled", fmt.Errorf("source %d is a %q source, not gmail", sourceID, sourceType))
 	}
 	for _, grant := range policy {
@@ -448,7 +449,6 @@ type gmailDraftLifecycleOutput struct {
 	PendingReplacementGmailMessageID string                          `json:"pending_replacement_gmail_message_id,omitempty"`
 	ProviderObservation              *gmailDraftLifecycleObservation `json:"provider_observation,omitempty"`
 	Observation                      *gmailDraftLifecycleObservation `json:"observation,omitempty"`
-	ManualReconciliation             bool                            `json:"manual_reconciliation,omitempty"`
 }
 
 func (a *storeAPIAdapter) gmailDraftLifecycleOutput(
@@ -529,7 +529,6 @@ func (a *storeAPIAdapter) reportGmailDraftAcceptedLocalFailure(
 	output.PendingCode = "accepted_local_failed"
 	output.CandidateContent = string(replacementRaw)
 	output.PendingReplacementGmailMessageID = replacement.GmailMessageID
-	output.ManualReconciliation = true
 	if claimed.Pending != nil {
 		output.PendingOperation = claimed.Pending.Operation
 		if len(claimed.Pending.Raw) != 0 {
@@ -583,14 +582,14 @@ func emitGmailDraftLifecycleOutput(
 		fmt.Fprintf(&data, "acknowledged replacement receipt: %s\n",
 			textutil.SanitizeTerminal(formatGmailDraftLifecycleObservation(*output.ProviderObservation)))
 	}
-	if output.Observation != nil && output.Status == laneStatePending {
+	if output.Observation != nil && output.Status == gmailDraftStatusPending {
 		fmt.Fprintf(&data, "old provider receipt: %s\n",
 			textutil.SanitizeTerminal(formatGmailDraftLifecycleObservation(*output.Observation)))
 	}
 	providerOutcome := output.PendingCode
 	if providerOutcome == "" {
 		observations := []*gmailDraftLifecycleObservation{output.ProviderObservation, output.Observation}
-		if output.Status == laneStatePending {
+		if output.Status == gmailDraftStatusPending {
 			observations = []*gmailDraftLifecycleObservation{output.Observation, output.ProviderObservation}
 		}
 		for _, observation := range observations {
@@ -609,9 +608,8 @@ func emitGmailDraftLifecycleOutput(
 	if providerOutcome != "" {
 		fmt.Fprintf(&data, "provider outcome: %s\n", textutil.SanitizeTerminal(providerOutcome))
 	}
-	if output.Status == laneStatePending || output.Status == "accepted_local_failed" || output.ManualReconciliation {
-		fmt.Fprintf(&data, "old draft ID remains blocked at revision %d\n", output.Revision)
-		fmt.Fprintln(&data, "manual action: reconcile the provider receipt and local state before retrying")
+	if output.Status == gmailDraftStatusPending || output.Status == "accepted_local_failed" {
+		fmt.Fprintf(&data, "retry draft-%s with --revision %d to reconcile with Gmail\n", output.PendingOperation, output.Revision)
 	}
 	return emit(api.CLIRunEvent{Type: stream, Data: data.String()})
 }
@@ -665,14 +663,13 @@ func (a *storeAPIAdapter) emitGmailDraftPending(
 	if loaded, err := a.store.GetGmailDraftContext(ctx, claimed.DraftID); err == nil {
 		latest = loaded
 	}
-	output, err := a.gmailDraftLifecycleOutput(ctx, latest, laneStatePending, providerObservation, nil)
+	output, err := a.gmailDraftLifecycleOutput(ctx, latest, gmailDraftStatusPending, providerObservation, nil)
 	if err != nil {
-		output = gmailDraftLifecycleOutputWithoutMessage(latest, laneStatePending, providerObservation, nil)
+		output = gmailDraftLifecycleOutputWithoutMessage(latest, gmailDraftStatusPending, providerObservation, nil)
 	}
 	if output.PendingCode == "" {
 		output.PendingCode = code
 	}
-	output.ManualReconciliation = true
 	_ = emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
 }
 
@@ -712,7 +709,7 @@ func (a *storeAPIAdapter) completeGmailDraftDelete(
 		a.emitGmailDraftPending(evidenceCtx, intent, claimed, observation, outcomeCode, emit)
 		return draftReplyError("local_persistence_failed", err)
 	}
-	finished, err := a.store.FinishGmailDraftDeleteContext(evidenceCtx, intent.DraftID, intent.Revision, false)
+	finished, err := a.store.FinishGmailDraftDeleteContext(evidenceCtx, intent.DraftID, intent.Revision)
 	if err != nil {
 		a.emitGmailDraftPending(evidenceCtx, intent, claimed, observation, outcomeCode, emit)
 		return draftReplyError("cleanup_local_failed", err)
@@ -769,7 +766,7 @@ func (a *storeAPIAdapter) retryConfirmedGmailDraftDelete(
 		defer cancelEvidence()
 		a.refreshDraftCache(evidenceCtx, source)
 	}
-	finished, err := a.store.FinishGmailDraftDeleteContext(evidenceCtx, intent.DraftID, intent.Revision, false)
+	finished, err := a.store.FinishGmailDraftDeleteContext(evidenceCtx, intent.DraftID, intent.Revision)
 	if err != nil {
 		a.emitGmailDraftPending(evidenceCtx, intent, draft, gmailDraftDeleteObservation(draft, draft.Pending.Code), draft.Pending.Code, emit)
 		return draftReplyError("cleanup_local_failed", err)
@@ -787,76 +784,6 @@ func (a *storeAPIAdapter) retryConfirmedGmailDraftDelete(
 		return draftReplyError("draft_read_failed", err)
 	}
 	return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
-}
-
-func (a *storeAPIAdapter) retryGmailDraftDeleteWithUnknownOutcome(
-	ctx context.Context,
-	intent draftLifecycleIntent,
-	draft store.GmailDraft,
-	emit func(api.CLIRunEvent) error,
-) error {
-	source, err := a.loadManagedGmailDraftSource(ctx, draft)
-	if err != nil {
-		return err
-	}
-	if err := gmailDraftScopeGate(source, oauth.ScopesGmailDraftWrite); err != nil {
-		return err
-	}
-	evidenceCtx, cancelEvidence := localDraftEvidenceContext(ctx)
-	defer cancelEvidence()
-	execution, err := a.store.AcquireSyncExecutionContext(evidenceCtx, source.ID)
-	if err != nil {
-		if errors.Is(err, store.ErrSyncAlreadyActive) {
-			return draftReplyError("sync_active", err)
-		}
-		return draftReplyError("sync_lock_failed", err)
-	}
-	released := false
-	defer func() {
-		if !released {
-			_ = execution.Release()
-		}
-	}()
-	finish := func() {
-		if released {
-			return
-		}
-		released = true
-		if err := execution.Release(); err != nil {
-			logger.Error("release source after Gmail draft outcome recovery", "source_id", source.ID, "error", err)
-		}
-	}
-	refresh := func() {
-		refreshCtx, cancelRefresh := localDraftEvidenceContext(ctx)
-		defer cancelRefresh()
-		a.refreshDraftCache(refreshCtx, source)
-	}
-	clientFactory := a.gmailDraftClientFactory
-	if clientFactory == nil {
-		clientFactory = defaultGmailDraftClientFactory
-	}
-	client, err := clientFactory(evidenceCtx, source)
-	if err != nil {
-		return draftReplyError("invalid_source", err)
-	}
-	defer func() { _ = client.Close() }()
-	observed, err := client.GetDraft(evidenceCtx, draft.CurrentReceipt.GmailDraftID)
-	if err != nil {
-		if _, ok := errors.AsType[*gmail.NotFoundError](err); ok {
-			return a.completeGmailDraftDelete(ctx, intent, draft, gmailDraftAbsentOutcome, finish, refresh, emit)
-		}
-		return draftReplyError(gmailReadErrorCode(err), err)
-	}
-	observation := &gmailDraftLifecycleObservation{
-		State:          "present",
-		Code:           "pending_confirmation",
-		GmailDraftID:   observed.ID,
-		GmailMessageID: observed.Message.ID,
-		ThreadID:       observed.Message.ThreadID,
-		Present:        true,
-	}
-	a.emitGmailDraftPending(evidenceCtx, intent, draft, observation, observation.Code, emit)
-	return draftReplyError("pending_operation", store.ErrGmailDraftPending)
 }
 
 func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
@@ -885,17 +812,13 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		}
 		return draftReplyError("draft_discarded", errors.New("discarded drafts cannot be edited"))
 	}
-	if draft.Pending != nil {
-		if intent.Operation != api.CLIRunDraftDeleteCommand || draft.Pending.Operation != store.GmailDraftOperationDelete {
+	if draft.Pending != nil && draft.Pending.Operation == store.GmailDraftOperationDelete {
+		if intent.Operation != api.CLIRunDraftDeleteCommand {
 			return draftReplyError("pending_operation", store.ErrGmailDraftPending)
 		}
-		if draft.Pending.Code == "" {
-			return a.retryGmailDraftDeleteWithUnknownOutcome(ctx, intent, draft, emit)
+		if gmailDraftDeleteOutcomeIsConfirmed(draft.Pending.Code) {
+			return a.retryConfirmedGmailDraftDelete(ctx, intent, draft, emit)
 		}
-		if !gmailDraftDeleteOutcomeIsConfirmed(draft.Pending.Code) {
-			return draftReplyError("pending_operation", store.ErrGmailDraftPending)
-		}
-		return a.retryConfirmedGmailDraftDelete(ctx, intent, draft, emit)
 	}
 	source, err := a.loadManagedGmailDraftSource(ctx, draft)
 	if err != nil {
@@ -938,17 +861,6 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 	if draft.Revision != intent.Revision {
 		return draftReplyError("revision_mismatch", errors.New("draft changed while acquiring source ownership"))
 	}
-	currentRaw, err := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
-	if err != nil {
-		return draftReplyError("draft_read_failed", err)
-	}
-	var replacement imaplib.ReplyDraft
-	if intent.Operation == api.CLIRunDraftEditCommand {
-		replacement, err = imaplib.BuildDraftReplacement(currentRaw, intent.Body, time.Now(), "")
-		if err != nil {
-			return draftReplyError("invalid_draft", err)
-		}
-	}
 	clientFactory := a.gmailDraftClientFactory
 	if clientFactory == nil {
 		clientFactory = defaultGmailDraftClientFactory
@@ -958,10 +870,16 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		return draftReplyError("invalid_source", err)
 	}
 	defer func() { _ = client.Close() }()
+	observed, err := client.GetDraft(ctx, draft.CurrentReceipt.GmailDraftID)
 	evidenceCtx, cancelEvidence := localDraftEvidenceContext(ctx)
 	defer cancelEvidence()
-	observed, err := client.GetDraft(ctx, draft.CurrentReceipt.GmailDraftID)
 	if err != nil {
+		if _, ok := errors.AsType[*gmail.NotFoundError](err); ok && draft.Pending != nil && intent.Operation == api.CLIRunDraftDeleteCommand {
+			_, abortErr := a.store.AbortGmailDraftContext(evidenceCtx, intent.DraftID, intent.Revision)
+			if abortErr != nil {
+				return draftReplyError("local_persistence_failed", abortErr)
+			}
+		}
 		if _, ok := errors.AsType[*gmail.NotFoundError](err); ok && intent.Operation == api.CLIRunDraftDeleteCommand {
 			claimed, claimErr := a.store.ClaimGmailDraftContext(evidenceCtx, intent.DraftID, intent.Revision, store.GmailDraftOperationDelete, nil)
 			if claimErr != nil {
@@ -971,6 +889,16 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		}
 		code := gmailReadErrorCode(err)
 		return draftReplyError(code, err)
+	}
+	recovered := draft.Pending != nil && draft.Pending.Operation == store.GmailDraftOperationEdit &&
+		observed.Message.ID == draft.Pending.ReplacementGmailMessageID
+	if draft.Pending != nil {
+		// Release the resolved claim before retrying or adopting the observation.
+		// Adoption also reuses a replacement already archived by sync.
+		draft, err = a.store.AbortGmailDraftContext(evidenceCtx, intent.DraftID, intent.Revision)
+		if err != nil {
+			return draftReplyError("local_persistence_failed", err)
+		}
 	}
 	if observed.Message.ID != draft.CurrentReceipt.GmailMessageID {
 		parsed, parseErr := msgmime.Parse(observed.Message.Raw)
@@ -1007,8 +935,12 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		}
 		finish()
 		defer refresh()
-		output, outputErr := a.gmailDraftLifecycleOutput(evidenceCtx, adopted, "changed_externally", &gmailDraftLifecycleObservation{
-			State: "changed", Code: "changed_externally", GmailDraftID: observed.ID,
+		status := "changed_externally"
+		if recovered {
+			status = "recovered"
+		}
+		output, outputErr := a.gmailDraftLifecycleOutput(evidenceCtx, adopted, status, &gmailDraftLifecycleObservation{
+			State: "changed", Code: status, GmailDraftID: observed.ID,
 			GmailMessageID: observed.Message.ID, ThreadID: observed.Message.ThreadID, Present: true,
 		}, nil)
 		if outputErr != nil {
@@ -1017,9 +949,20 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		if err := emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output); err != nil {
 			return draftReplyError("output_failed", err)
 		}
+		if recovered {
+			return draftReplyError("revision_mismatch", errors.New("pending edit recovered; review the new revision before retrying"))
+		}
 		return draftReplyError("changed_externally", errors.New("gmail draft changed outside msgvault"))
 	}
 	if intent.Operation == api.CLIRunDraftEditCommand {
+		currentRaw, readErr := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
+		if readErr != nil {
+			return draftReplyError("draft_read_failed", readErr)
+		}
+		replacement, buildErr := imaplib.BuildDraftReplacement(currentRaw, intent.Body, time.Now(), "")
+		if buildErr != nil {
+			return draftReplyError("invalid_draft", buildErr)
+		}
 		return a.runGmailDraftEdit(ctx, intent, draft, source, client, replacement, finish, refresh, emit)
 	}
 	return a.runGmailDraftDelete(ctx, intent, draft, client, finish, refresh, emit)
@@ -1191,6 +1134,9 @@ type gmailSendAsRow struct {
 }
 
 func (a *storeAPIAdapter) runCLIDraftSendAs(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
+	if req.Grant != nil {
+		return draftReplyNotPermitted(errors.New("gmail send-as listing is owner-only"))
+	}
 	if len(req.Env) != 0 || req.Cwd != "" {
 		return draftReplyError("invalid_args", errors.New("draft-send-as accepts no environment or working directory"))
 	}
@@ -1198,7 +1144,7 @@ func (a *storeAPIAdapter) runCLIDraftSendAs(ctx context.Context, req api.CLIRunR
 	if err != nil {
 		return err
 	}
-	source, err := sourceops.ResolveEffectiveExactOne(a.store, sourceops.Selector{Account: account, SourceType: "gmail"})
+	source, err := sourceops.ResolveExactOne(a.store, sourceops.Selector{Account: account, SourceType: "gmail"})
 	if err != nil {
 		return draftReplyError("invalid_source", err)
 	}

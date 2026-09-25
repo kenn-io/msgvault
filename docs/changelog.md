@@ -16,8 +16,8 @@ All notable changes to msgvault, grouped by release.
   through `draft-reply`, `draft-get`, `draft-edit`, and `draft-delete`. Gmail
   `draft-edit` supports plain-text drafts and refuses HTML, multipart, or
   attached drafts before changing the provider. Drafting is disabled until the
-  source is listed in `[[gmail.drafts]]`; `draft-send-as` lists owner-only Gmail
-  aliases without sending mail.
+  source has `enabled = true` in `[[gmail.drafts]]`; `draft-send-as` lists
+  owner-only Gmail aliases without sending mail.
 
 ### Meeting context and follow-ups
 

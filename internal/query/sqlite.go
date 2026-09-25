@@ -1470,8 +1470,6 @@ func statsUseMatchingPopulation(opts StatsOptions) bool {
 		opts.SearchQuery != ""
 }
 
-const gmailDeletionSourceJoin = `JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type IN ('', 'gmail')`
-
 // GetDeletionTargetsByFilter returns source-bound message targets matching a filter.
 // This is more efficient than ListMessages when you only need the IDs.
 //
@@ -1522,7 +1520,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	// WhatsApp or other source IDs. 1:1 with messages, so kept as a
 	// JOIN; the other filter predicates below use EXISTS to stay
 	// non-multiplicative.
-	joins := []string{gmailDeletionSourceJoin}
+	joins := []string{`JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'`}
 
 	// When BOTH the email and the display name are filtered, they must
 	// match the SAME from-row (or the SAME direct sender), not two
@@ -1670,7 +1668,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	// subquery; messages.id is PK so each row contributes exactly one
 	// source_message_id.
 	query := fmt.Sprintf(`
-		SELECT m.id, s_gmail.id, 'gmail', s_gmail.identifier, m.source_message_id
+		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier, m.source_message_id
 		FROM messages m
 		%s
 		WHERE %s
@@ -1731,14 +1729,14 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearch(
 	}
 
 	queryText := fmt.Sprintf(`
-		SELECT m.id, s_gmail.id, 'gmail', s_gmail.identifier,
+		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
 		       m.source_message_id
 		FROM messages m
-		%s
+		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'
 		%s
 		WHERE %s
 		ORDER BY m.sent_at DESC, m.id DESC
-	`, gmailDeletionSourceJoin, searchJoin, strings.Join(searchConditions, " AND "))
+	`, searchJoin, strings.Join(searchConditions, " AND "))
 
 	rows, err := e.queryContext(ctx, queryText, searchArgs...)
 	if err != nil {
@@ -1796,10 +1794,10 @@ func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
 		joins += "\n" + searchJoin
 	}
 	queryText := fmt.Sprintf(`
-		SELECT m.id, s_gmail.id, 'gmail', s_gmail.identifier,
+		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
 		       m.source_message_id
 		FROM messages m
-		%s
+		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'
 		WHERE m.id IN (
 			SELECT m.id
 			FROM messages m
@@ -1808,7 +1806,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
 			GROUP BY m.id
 		)
 		ORDER BY m.sent_at DESC, m.id DESC
-	`, gmailDeletionSourceJoin, joins, strings.Join(conditions, " AND "))
+	`, joins, strings.Join(conditions, " AND "))
 
 	rows, err := e.queryContext(ctx, queryText, args...)
 	if err != nil {
@@ -1833,12 +1831,12 @@ func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 		args[i] = id
 	}
 	q := fmt.Sprintf(`
-		SELECT m.id, s_gmail.id, 'gmail', s_gmail.identifier,
+		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
 		       m.source_message_id, m.sent_at
 		FROM messages m
-		%s
+		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'
 			WHERE %s AND %s AND COALESCE(m.source_message_id, '') <> '' AND m.id IN (%s)
-	`, gmailDeletionSourceJoin, store.LiveMessagesWhere("m", true), emailOnlyFilterM, strings.Join(placeholders, ","))
+	`, store.LiveMessagesWhere("m", true), emailOnlyFilterM, strings.Join(placeholders, ","))
 	rows, err := e.queryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get deletion targets by message ids: %w", err)

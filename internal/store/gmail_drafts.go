@@ -80,7 +80,7 @@ func (s *Store) PersistGmailDraftContext(
 			}
 			return fmt.Errorf("read Gmail draft source: %w", err)
 		}
-		if EffectiveSourceType(sourceType) != "gmail" {
+		if sourceType != "gmail" {
 			return errors.New("invalid_source")
 		}
 		var existingID int64
@@ -559,6 +559,10 @@ func (s *Store) AdoptGmailDraftObservationContext(
 		if observed.SourceID != draft.SourceID || observed.GmailDraftID != draft.CurrentReceipt.GmailDraftID {
 			return errors.New("observed Gmail draft identity does not match ownership")
 		}
+		if observed.GmailMessageID == draft.CurrentReceipt.GmailMessageID {
+			adopted = draft
+			return nil
+		}
 		var messageID int64
 		err = tx.QueryRowContext(ctx, `
 			SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
@@ -628,13 +632,11 @@ func (s *Store) AdoptGmailDraftObservationContext(
 }
 
 // FinishGmailDraftDeleteContext records confirmed provider absence and
-// discards the local draft. alreadyAbsent is used for an inspection 404 before
-// a delete claim exists.
+// discards the local draft after a delete claim.
 func (s *Store) FinishGmailDraftDeleteContext(
 	ctx context.Context,
 	draftID string,
 	revision int64,
-	alreadyAbsent bool,
 ) (GmailDraft, error) {
 	if err := validateGmailDraftID(draftID); err != nil {
 		return GmailDraft{}, err
@@ -651,11 +653,7 @@ func (s *Store) FinishGmailDraftDeleteContext(
 		if draft.Revision != revision {
 			return ErrGmailDraftRevision
 		}
-		if draft.Pending == nil {
-			if !alreadyAbsent {
-				return ErrGmailDraftState
-			}
-		} else if draft.Pending.Operation != GmailDraftOperationDelete {
+		if draft.Pending == nil || draft.Pending.Operation != GmailDraftOperationDelete {
 			return ErrGmailDraftState
 		}
 		if _, err := tx.ExecContext(ctx, `
