@@ -344,6 +344,12 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 				"Warning: could not remove Microsoft Graph token: %v\n", err,
 			)
 		}
+	case sourceTypeMSMail:
+		if err := newGraphMailManager().DeleteToken(source.Identifier); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not remove Microsoft Graph mail token: %v\n", err,
+			)
+		}
 	case sourceTypeDiscord:
 		// Discord credential cleanup is part of the lifecycle-locked cascade
 		// above so a concurrent guild registration cannot lose its bot token.

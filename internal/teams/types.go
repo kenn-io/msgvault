@@ -9,14 +9,6 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
-// ---- Graph response envelopes ----
-
-type listResponse[T any] struct {
-	Value     []T    `json:"value"`
-	NextLink  string `json:"@odata.nextLink"`
-	DeltaLink string `json:"@odata.deltaLink"`
-}
-
 // ---- Chats & channels ----
 
 type Chat struct {

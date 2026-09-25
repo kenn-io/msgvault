@@ -411,6 +411,27 @@ Some organizations require administrator consent before delegated channel
 message permissions can be used. See [Microsoft Teams](/docs/usage/teams/) for the
 full Teams workflow.
 
+### Microsoft Graph Mail Sync
+
+If IMAP is turned off for a mailbox, `add-o365 --graph` syncs it through the
+Microsoft Graph mail API. It uses the same `[microsoft] client_id` and redirect
+URI. Add the **Microsoft Graph** delegated permission `Mail.Read` to the app
+registration, then authorize and sync:
+
+```bash
+msgvault add-o365 you@example.com --graph
+msgvault sync you@example.com
+```
+
+The token is saved under `tokens/msmail_<email>.json`, and the account has the
+type `msmail`. Each mail folder becomes a label. The first sync downloads every
+folder. Later syncs fetch only the changes, including moves between folders
+and deletes. The daemon schedules the account like any other.
+
+A Graph account is a new account. If the same mailbox is also synced over
+IMAP, the vault holds two copies. Run `msgvault dedup --collection` to hide the
+extra copies, and `--undo` to reverse it.
+
 ### Sync Your Email
 
 After adding the account, sync it the same way as any other account:

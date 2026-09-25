@@ -14,7 +14,7 @@ import (
 
 func TestGraphTokenPath(t *testing.T) {
 	dir := filepath.Join("tmp", "tokens")
-	m := &GraphManager{tokensDir: dir}
+	m := NewGraphManager("", "", "", dir, nil)
 	assert.Equal(t, filepath.Join(dir, "teams_user@example.com.json"), m.TokenPath("user@example.com"))
 }
 
@@ -203,4 +203,27 @@ func TestGraphManager_TokenSource_Concurrent(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// Mail and Teams tokens live in separate files with separate scope sets, so a
+// Teams token never satisfies the mail manager and the reverse.
+func TestGraphMailManager_SeparateTokenAndScopes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	teamsMgr := NewGraphManager("test-client", "common", "", dir, slog.Default())
+	mailMgr := NewGraphMailManager("test-client", "common", "", dir, slog.Default())
+	assert.Equal(filepath.Join(dir, "msmail_user@company.com.json"), mailMgr.TokenPath("user@company.com"))
+
+	token := &oauth2.Token{AccessToken: "graph-access", RefreshToken: "graph-refresh", TokenType: "Bearer"}
+	require.NoError(teamsMgr.saveToken("user@company.com", token, GraphScopes(), "org-tid"))
+	_, err := teamsMgr.TokenSource(t.Context(), "user@company.com")
+	require.NoError(err)
+	assert.False(mailMgr.HasToken("user@company.com"))
+
+	withoutMail := []string{"https://graph.microsoft.com/User.Read", scopeOfflineAccess, "openid", scopeEmail}
+	require.NoError(mailMgr.saveToken("user@company.com", token, withoutMail, "org-tid"))
+	_, err = mailMgr.TokenSource(t.Context(), "user@company.com")
+	require.ErrorContains(err, "https://graph.microsoft.com/Mail.Read")
+	require.ErrorContains(err, "msgvault add-o365 user@company.com --graph")
 }

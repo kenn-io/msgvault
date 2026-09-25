@@ -30,6 +30,7 @@ const (
 	// Private and shared channels carry their own membership, read via
 	// GET /teams/{id}/channels/{id}/members.
 	scopeGraphChannelMemberRead = "https://graph.microsoft.com/ChannelMember.Read.All"
+	scopeGraphMailRead          = "https://graph.microsoft.com/Mail.Read"
 )
 
 // GraphScopes returns the OAuth scopes requested for Microsoft Teams ingestion
@@ -44,9 +45,15 @@ func GraphScopes() []string {
 	}
 }
 
+// GraphMailScopes returns the OAuth scopes requested for mailbox ingestion via
+// the Graph API.
+func GraphMailScopes() []string {
+	return []string{scopeGraphMailRead, scopeGraphUserRead, scopeOfflineAccess, "openid", scopeEmail}
+}
+
 // GraphManager is a sibling of Manager that runs the same interactive browser
 // auth-code flow but requests Microsoft Graph scopes and persists tokens under
-// a "teams_" filename prefix. It deliberately omits the IMAP scope-validation
+// a "teams_" or "msmail_" filename prefix. It deliberately omits the IMAP scope-validation
 // and IMAP-host logic of Manager.
 //
 // The heavy browser-flow and ID-token verification machinery is reused via an
@@ -59,14 +66,35 @@ type GraphManager struct {
 	tokensDir   string
 	logger      *slog.Logger
 
+	// scopes, tokenPrefix and reauthCmd differ per capability: Teams or mail.
+	// reauthCmd is a format string that takes the account email.
+	scopes      []string
+	tokenPrefix string
+	reauthCmd   string
+
 	// Test hooks, mirrored onto the internal delegate. See Manager.
 	browserFlowFn   func(ctx context.Context, email string, scopes []string) (*oauth2.Token, string, error)
 	verifyIDTokenFn func(ctx context.Context, rawIDToken string) (*idTokenClaims, error)
 }
 
-// NewGraphManager constructs a GraphManager. An empty tenantID defaults to the
-// multi-tenant "common" endpoint; a nil logger defaults to slog.Default().
+// NewGraphManager constructs a GraphManager for Teams. An empty tenantID
+// defaults to the multi-tenant "common" endpoint; a nil logger defaults to
+// slog.Default().
 func NewGraphManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
+	m := newGraphManager(clientID, tenantID, redirectURI, tokensDir, logger)
+	m.scopes, m.tokenPrefix, m.reauthCmd = GraphScopes(), "teams_", "msgvault add-teams %s"
+	return m
+}
+
+// NewGraphMailManager constructs a GraphManager for mailbox ingestion. Its
+// tokens are saved under an "msmail_" prefix, apart from the Teams tokens.
+func NewGraphMailManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
+	m := newGraphManager(clientID, tenantID, redirectURI, tokensDir, logger)
+	m.scopes, m.tokenPrefix, m.reauthCmd = GraphMailScopes(), "msmail_", "msgvault add-o365 %s --graph"
+	return m
+}
+
+func newGraphManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
 	if tenantID == "" {
 		tenantID = DefaultTenant
 	}
@@ -84,7 +112,7 @@ func NewGraphManager(clientID, tenantID, redirectURI, tokensDir string, logger *
 
 // delegate builds an internal *Manager used only for its reusable browser-flow
 // and ID-token verification logic. Token storage is handled by GraphManager
-// itself (with the teams_ prefix), so the delegate's tokensDir is irrelevant.
+// itself (with its own prefix), so the delegate's tokensDir is irrelevant.
 func (m *GraphManager) delegate() *Manager {
 	return &Manager{
 		clientID:        m.clientID,
@@ -98,10 +126,10 @@ func (m *GraphManager) delegate() *Manager {
 }
 
 // TokenPath returns the on-disk location of the persisted Graph token for an
-// account, namespaced with a "teams_" prefix to keep it distinct from the IMAP
-// Manager's "microsoft_" tokens.
+// account, namespaced with a "teams_" or "msmail_" prefix to keep it distinct
+// from the IMAP Manager's "microsoft_" tokens.
 func (m *GraphManager) TokenPath(email string) string {
-	return filepath.Join(m.tokensDir, "teams_"+sanitizeEmail(email)+".json")
+	return filepath.Join(m.tokensDir, m.tokenPrefix+sanitizeEmail(email)+".json")
 }
 
 // Authorize runs the interactive browser auth-code flow requesting Graph
@@ -109,7 +137,7 @@ func (m *GraphManager) TokenPath(email string) string {
 // persists the token. Unlike Manager.Authorize there is no IMAP scope
 // correction step — Graph scopes are identical across account types.
 func (m *GraphManager) Authorize(ctx context.Context, email string) error {
-	scopes := GraphScopes()
+	scopes := m.scopes
 	d := m.delegate()
 	token, nonce, err := d.doBrowserFlow(ctx, email, scopes)
 	if err != nil {
@@ -141,11 +169,11 @@ func (m *GraphManager) TokenSource(ctx context.Context, email string) (func(cont
 
 	scopes := tf.Scopes
 	if len(scopes) == 0 {
-		scopes = GraphScopes()
-	} else if missing := missingGraphScopes(scopes); len(missing) > 0 {
+		scopes = m.scopes
+	} else if missing := missingScopes(scopes, m.scopes); len(missing) > 0 {
 		return nil, fmt.Errorf(
-			"token for %s is missing Microsoft Graph scopes %s — run 'msgvault add-teams %s' to re-authorize",
-			email, strings.Join(missing, ", "), email,
+			"token for %s is missing Microsoft Graph scopes %s — run '%s' to re-authorize",
+			email, strings.Join(missing, ", "), fmt.Sprintf(m.reauthCmd, email),
 		)
 	}
 
@@ -229,7 +257,7 @@ func (m *GraphManager) DeleteToken(email string) error {
 }
 
 // saveToken atomically persists the token in the same on-disk JSON format as
-// the IMAP Manager (tokenFile), under the teams_ filename.
+// the IMAP Manager (tokenFile), under the capability's filename prefix.
 func (m *GraphManager) saveToken(email string, token *oauth2.Token, scopes []string, tenantID string) error {
 	if err := fileutil.SecureMkdirAll(m.tokensDir, 0700); err != nil {
 		return err
@@ -242,7 +270,7 @@ func (m *GraphManager) saveToken(email string, token *oauth2.Token, scopes []str
 	}
 
 	path := m.TokenPath(email)
-	tmpFile, err := os.CreateTemp(m.tokensDir, ".teams-token-*.tmp")
+	tmpFile, err := os.CreateTemp(m.tokensDir, "."+m.tokenPrefix+"token-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temp token file: %w", err)
 	}
@@ -281,13 +309,13 @@ func (m *GraphManager) loadTokenFile(email string) (*tokenFile, error) {
 	return &tf, nil
 }
 
-func missingGraphScopes(scopes []string) []string {
+func missingScopes(scopes, want []string) []string {
 	have := make(map[string]struct{}, len(scopes))
 	for _, scope := range scopes {
 		have[scope] = struct{}{}
 	}
 	var missing []string
-	for _, scope := range GraphScopes() {
+	for _, scope := range want {
 		if _, ok := have[scope]; !ok {
 			missing = append(missing, scope)
 		}
