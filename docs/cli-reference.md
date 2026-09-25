@@ -2026,6 +2026,52 @@ shipped definitions and complete workflow.
 
 ---
 
+## person agenda
+
+Read and organize a person's live Kata tasks. Configure
+[`[integrations.kata]`](configuration.md#integrationskata) on the daemon first.
+Tasks belong to one person and stay in the configured Kata project.
+
+```bash
+msgvault person agenda list <person-id> [--json]
+msgvault person agenda create <person-id> --title "Discuss the proposal" [flags]
+msgvault person agenda link <person-id> <ref> [--list agenda] [--json]
+msgvault person agenda edit <person-id> <ref> --list follow-up [--json]
+msgvault person agenda unlink <person-id> <ref> [--json]
+```
+
+`<ref>` is a task reference returned by Kata or an agenda command. `create`
+creates a task and links it to the person; `link` attaches an existing task.
+`edit` changes only its list. `unlink` removes the person link without deleting
+the task. Complete or reopen tasks, or edit their title, body, priority, and
+labels, in Kata.
+
+| Flag | Commands | Default | Description |
+|---|---|---|---|
+| `--title` | `create` | — | Required task title |
+| `--body` | `create` | — | Task body |
+| `--priority` | `create` | — | Kata priority from 0 through 4 |
+| `--label` | `create` | — | Kata label; repeat for multiple labels |
+| `--list` | `create`, `link`, `edit` | `agenda` for create/link | List name; required for `edit` |
+| `--idempotency-key` | `create` | Generated | Stable key to reuse when retrying the same creation |
+| `--json` | All agenda commands | `false` | Print the response as JSON |
+
+`create` prints its generated retry key to stderr before sending the request.
+To retry, pass that key with `--idempotency-key` and keep the task details the
+same. You can also choose the key in advance:
+
+```bash
+msgvault person agenda create 42 --title "Discuss the proposal" --idempotency-key proposal-discussion-1
+```
+
+`list` returns up to 100 open tasks and recognizes the person's current vCard
+UID and aliases. JSON includes `truncated` when more items remain; use Kata to
+view the rest. Oversized Kata responses produce an explicit error. See the
+[Kata configuration](configuration.md#integrationskata) for metadata and
+response limits.
+
+---
+
 ## person directory
 
 Browse promoted people by last contact through the selected local or configured remote daemon. The default order is most recent first, `last_contact_desc`. Each page uses the daemon's default of 50 people.
@@ -2618,6 +2664,13 @@ msgvault mcp [flags]
 | `--http-allow-writes` | `false` | Expose Saved View management, attachment export, and deletion staging tools over StreamableHTTP. Enable only for trusted, authenticated clients. |
 
 See [MCP Server](/docs/usage/chat/) for configuration and tool reference.
+
+For Kata person agendas, `get_person_agenda` reads the live open tasks and
+returns the person's canonical vCard UID and aliases. Use Kata's MCP tools to
+create or change tasks; msgvault's agenda tool is read-only. Use the returned
+canonical UID as the scalar `msgvault.person` metadata value and
+`msgvault.list` for the list name (`agenda` by default). See
+[Kata configuration](configuration.md#integrationskata) for setup and limits.
 
 ---
 

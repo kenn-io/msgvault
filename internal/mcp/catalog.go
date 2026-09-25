@@ -38,6 +38,7 @@ type catalogCapabilities struct {
 	visualSearch    bool
 	savedViews      bool
 	meetings        bool
+	personAgenda    bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -116,20 +117,22 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		visualSearch:    opts.VisualSearcher != nil,
 		savedViews:      opts.SavedViews != nil,
 		meetings:        opts.Meetings != nil,
+		personAgenda:    opts.PersonAgendaBackend != nil,
 	}
 }
 
 // stableOperationCatalogs owns the immutable schemas registered with the SDK.
 // The SDK v1.7 schema cache keys explicit schemas by pointer identity, so a
 // stateless server must reuse these roots instead of rebuilding them per HTTP
-// request. There are only 512 possible capability keys, which also keeps
+// request. There are only 1024 possible capability keys, which also keeps
 // the shared SDK cache boundary fixed.
 var stableOperationCatalogs = buildOperationCatalogs()
 
 func buildOperationCatalogs() map[catalogCapabilities][]toolDefinition {
-	catalogs := make(map[catalogCapabilities][]toolDefinition, 512)
-	for mask := range 512 {
+	catalogs := make(map[catalogCapabilities][]toolDefinition, 1024)
+	for mask := range 1024 {
 		capabilities := catalogCapabilities{
+			personAgenda:    mask&0b1000000000 != 0,
 			meetings:        mask&0b100000000 != 0,
 			directoryPeople: mask&0b010000000 != 0,
 			semanticSearch:  mask&0b001000000 != 0,
@@ -163,6 +166,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		getPersonNotesDefinition(nil),
 		getPersonProfileDefinition(nil),
 		getPersonRelationshipDefinition(nil),
+		getPersonAgendaDefinition(),
 		getSavedViewDefinition(nil),
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),
@@ -266,6 +270,8 @@ func directoryPeopleAvailable(c catalogCapabilities) bool { return c.directoryPe
 func savedViewsAvailable(c catalogCapabilities) bool { return c.savedViews }
 
 func meetingsAvailable(c catalogCapabilities) bool { return c.meetings }
+
+func personAgendaAvailable(c catalogCapabilities) bool { return c.personAgenda }
 
 func toolAnnotations(readOnly bool) *sdkmcp.ToolAnnotations {
 	falseValue := false

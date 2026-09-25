@@ -459,6 +459,43 @@ func (s *Store) GetPersonContext(ctx context.Context, id int64) (*Person, error)
 	return person, nil
 }
 
+// ListPersonUIDsContext returns the person's canonical vCard UID followed by
+// every retired UID that currently resolves to that person. Cross-system
+// links can keep using an old UID across a merge and split reversal.
+func (s *Store) ListPersonUIDsContext(ctx context.Context, id int64) ([]string, error) {
+	var result []string
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		person, err := s.getPersonTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		result = append(result, person.VCardUID)
+		rows, err := tx.QueryContext(ctx, `SELECT retired_uid
+			FROM person_uid_aliases
+			WHERE surviving_person_id = ?
+			ORDER BY retired_uid`, id)
+		if err != nil {
+			return fmt.Errorf("list retired UIDs for person %d: %w", id, err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var uid string
+			if err := rows.Scan(&uid); err != nil {
+				return fmt.Errorf("scan retired UID for person %d: %w", id, err)
+			}
+			result = append(result, uid)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate retired UIDs for person %d: %w", id, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (s *Store) ListPersons() ([]Person, error) {
 	return s.ListPersonsContext(context.Background())
 }

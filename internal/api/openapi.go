@@ -323,7 +323,10 @@ import (
 // 2.29.0 adds required took_ms and timings fields to vector and hybrid
 // /api/v1/search responses. timings reports query embedding, retrieval, and
 // hydration latency. Additive (minor bump): existing search fields are unchanged.
-const APISchemaVersion = "2.29.0"
+// 2.30.0 adds Kata availability and person agenda reads, creation, linking,
+// list placement, and unlinking. Each task links to one person; reads expose
+// canonical person identity and whether the bounded open-task list is truncated.
+const APISchemaVersion = "2.30.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

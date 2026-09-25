@@ -350,6 +350,10 @@ var settingsCatalog = []settingDefinition{
 	stringSetting("integrations.tasks.endpoint", "integrations", nil, func(c *config.Config) string { return c.Integrations.Tasks.Endpoint }),
 	secretSetting("integrations.tasks.api_key", "integrations", func(c *config.Config) string { return c.Integrations.Tasks.APIKey }),
 	stringSetting("integrations.tasks.default_project", "integrations", nil, func(c *config.Config) string { return c.Integrations.Tasks.DefaultProject }),
+	boolSetting("integrations.kata.enabled", "integrations", func(c *config.Config) bool { return c.Integrations.Kata.Enabled }),
+	stringSetting("integrations.kata.endpoint", "integrations", nil, func(c *config.Config) string { return c.Integrations.Kata.Endpoint }),
+	secretSetting("integrations.kata.api_key", "integrations", func(c *config.Config) string { return c.Integrations.Kata.APIKey }),
+	stringSetting("integrations.kata.default_project", "integrations", nil, func(c *config.Config) string { return c.Integrations.Kata.DefaultProject }),
 }
 
 func (s *Server) registerSettingsRoutes(api huma.API) {
@@ -781,6 +785,12 @@ var credentialBindings = []credentialBinding{
 		credentialKey:   "integrations.tasks.api_key",
 		currentEndpoint: func(c *config.Config) string { return c.Integrations.Tasks.Endpoint },
 		credentialSet:   func(c *config.Config) bool { return c.Integrations.Tasks.APIKey != "" },
+	},
+	{
+		endpointKey:     "integrations.kata.endpoint",
+		credentialKey:   "integrations.kata.api_key",
+		currentEndpoint: func(c *config.Config) string { return c.Integrations.Kata.Endpoint },
+		credentialSet:   func(c *config.Config) bool { return c.Integrations.Kata.APIKey != "" },
 	},
 }
 

@@ -68,6 +68,21 @@ func TestPersonPromoteGetListUpdateAndRevisionConflict(t *testing.T) {
 	assert.ErrorIs(err, store.ErrPersonRevisionConflict)
 }
 
+func TestListPersonUIDsIncludesCanonicalAndRetiredAliases(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	f := storetest.New(t)
+	participantID := f.EnsureParticipant("person@example.test", "person", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(participantID)
+	require.NoError(err)
+	_, err = f.Store.RetirePersonUIDAliasContext(t.Context(), "retired-person-uid", &person.ID, "test")
+	require.NoError(err)
+
+	uids, err := f.Store.ListPersonUIDsContext(t.Context(), person.ID)
+	require.NoError(err)
+	assert.Equal(t, []string{person.VCardUID, "retired-person-uid"}, uids)
+}
+
 func TestLinkParticipantsRejectsDifferentCuratedPersons(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -113,6 +113,7 @@ func (w *WebConfig) Validate() error {
 // IntegrationsConfig groups optional, server-side integrations.
 type IntegrationsConfig struct {
 	Tasks   TaskIntegrationConfig    `toml:"tasks"`
+	Kata    TaskIntegrationConfig    `toml:"kata"`
 	Docbank DocbankIntegrationConfig `toml:"docbank"`
 }
 
@@ -125,7 +126,7 @@ type DocbankIntegrationConfig struct {
 	UploadConsent bool   `toml:"upload_consent"`
 }
 
-// TaskIntegrationConfig configures a provider-neutral compatible task daemon.
+// TaskIntegrationConfig configures a task service connection.
 type TaskIntegrationConfig struct {
 	Enabled        bool   `toml:"enabled"`
 	Endpoint       string `toml:"endpoint"`
@@ -144,15 +145,18 @@ func (t *TaskIntegrationConfig) ApplyDefaults() {
 // Shape rules live in taskclient.ValidateEndpoint; runtime-only checks
 // (authentication, socket existence and ownership) still happen when the
 // client connects.
-func (t *TaskIntegrationConfig) Validate() error {
+func (t *TaskIntegrationConfig) Validate(section string) error {
 	endpoint := strings.TrimSpace(t.Endpoint)
 	if endpoint == "" {
+		if section == "kata" && t.Enabled {
+			return errors.New("[integrations.kata] endpoint is required when enabled")
+		}
 		return nil
 	}
 	if err := taskclient.ValidateEndpoint(endpoint); err != nil {
-		return fmt.Errorf("invalid [integrations.tasks] endpoint %q: %w "+
+		return fmt.Errorf("invalid [integrations.%s] endpoint %q: %w "+
 			"(valid forms: https://tasks.example.com, http://localhost:8080, unix:///path/to/socket.sock)",
-			t.Endpoint, err)
+			section, t.Endpoint, err)
 	}
 	return nil
 }
@@ -783,6 +787,7 @@ func NewDefaultConfig() *Config {
 		},
 		Integrations: IntegrationsConfig{
 			Tasks: TaskIntegrationConfig{DefaultProject: "msgvault"},
+			Kata:  TaskIntegrationConfig{DefaultProject: "msgvault"},
 		},
 		Activity: ActivityConfig{
 			Timezone:              "UTC",
@@ -805,6 +810,7 @@ func NewDefaultConfig() *Config {
 	cfg.Discord.ApplyDefaults()
 	cfg.Web.ApplyDefaults()
 	cfg.Integrations.Tasks.ApplyDefaults()
+	cfg.Integrations.Kata.ApplyDefaults()
 	cfg.Activity.ApplyDefaults()
 	cfg.People.Sweep.ApplyDefaults()
 	cfg.People.Enrichment.ApplyDefaults()
@@ -987,7 +993,11 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	cfg.Integrations.Tasks.ApplyDefaults()
-	if err := cfg.Integrations.Tasks.Validate(); err != nil {
+	if err := cfg.Integrations.Tasks.Validate("tasks"); err != nil {
+		return nil, err
+	}
+	cfg.Integrations.Kata.ApplyDefaults()
+	if err := cfg.Integrations.Kata.Validate("kata"); err != nil {
 		return nil, err
 	}
 	cfg.Activity.ApplyDefaults()

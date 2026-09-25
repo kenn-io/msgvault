@@ -274,6 +274,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		wantDirectory  bool
 		wantSavedViews bool
 		wantMeetings   bool
+		wantAgenda     bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -285,6 +286,8 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "meeting predecessor 2.25.x", schemaVersion: "2.25.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
 		{name: "meeting predecessor 2.26.x", schemaVersion: "2.26.0", wantPeople: true, wantDirectory: true, wantSavedViews: true},
 		{name: "meeting schema", schemaVersion: "2.27.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true},
+		{name: "person agenda predecessor", schemaVersion: "2.29.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true},
+		{name: "person agenda schema", schemaVersion: "2.30.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -318,6 +321,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			}
 			assert.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
 			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
+			assert.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
 		})
 	}
 }

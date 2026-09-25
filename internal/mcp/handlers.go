@@ -127,19 +127,20 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
-	engine             query.Engine
-	attachmentsDir     string
-	attachmentReader   AttachmentReader
-	manifestSaver      DeletionManifestSaver
-	hybridSearcher     HybridSearcher
-	similarSearcher    SimilarSearcher
-	dataDir            string
-	documentSearcher   DocumentSearcher
-	personFileSearcher PersonFileSearcher
-	peopleBackend      peoplebrowser.Backend
-	directoryBackend   peoplebrowser.DirectoryLister
-	savedViews         savedview.Service
-	meetings           MeetingBackend
+	engine              query.Engine
+	attachmentsDir      string
+	attachmentReader    AttachmentReader
+	manifestSaver       DeletionManifestSaver
+	hybridSearcher      HybridSearcher
+	similarSearcher     SimilarSearcher
+	dataDir             string
+	documentSearcher    DocumentSearcher
+	personFileSearcher  PersonFileSearcher
+	peopleBackend       peoplebrowser.Backend
+	directoryBackend    peoplebrowser.DirectoryLister
+	savedViews          savedview.Service
+	meetings            MeetingBackend
+	personAgendaBackend PersonAgendaBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
