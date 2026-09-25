@@ -28,16 +28,18 @@ type fakeGraph struct {
 	t   *testing.T
 	srv *httptest.Server
 
-	mu       sync.Mutex
-	folders  []string          // folder IDs, in list order
-	folder   map[string]string // message ID -> folder ID; absent when deleted
-	log      []change          // one entry per change
-	expired  map[string]bool   // folder IDs whose next delta answers 410
-	gone     map[string]bool   // folder IDs whose every delta answers 410
-	version  map[string]int    // message ID -> content version
-	throttle bool              // answer the next $value with 429 once
-	pageSize int
-	stopAt   int // fail the delta page at this skip offset, when non-zero
+	mu      sync.Mutex
+	folders []string          // folder IDs, in list order
+	folder  map[string]string // message ID -> folder ID; absent when deleted
+	log     []change          // one entry per change
+	expired map[string]bool   // folder IDs whose next delta answers 410
+	gone    map[string]bool   // folder IDs whose every delta answers 410
+	version map[string]int    // message ID -> content version
+
+	withAttachment map[string]bool // message IDs whose MIME carries a file
+	throttle       bool            // answer the next $value with 429 once
+	pageSize       int
+	stopAt         int // fail the delta page at this skip offset, when non-zero
 
 	mimeCalls  atomic.Int32
 	walkStarts atomic.Int32 // delta requests with no token and no nextLink
@@ -48,7 +50,7 @@ type change struct{ id, from string }
 
 func newFakeGraph(t *testing.T) *fakeGraph {
 	t.Helper()
-	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, pageSize: 2}
+	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, pageSize: 2}
 	f.folders = []string{"inbox", "archive"}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -73,6 +75,15 @@ func raw(id string, version int) string {
 	return "From: a@example.com\r\nTo: me@example.com\r\nSubject: " + id +
 		"\r\nMessage-ID: <" + id + "@example.com>\r\nDate: Mon, 1 Jan 2024 10:00:00 +0000\r\n\r\nbody " + id +
 		" v" + strconv.Itoa(version) + "\r\n"
+}
+
+func rawWithAttachment(id string) string {
+	return "From: a@example.com\r\nTo: me@example.com\r\nSubject: " + id +
+		"\r\nMessage-ID: <" + id + "@example.com>\r\nDate: Mon, 1 Jan 2024 10:00:00 +0000\r\n" +
+		"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain\r\n\r\nbody " + id + "\r\n" +
+		"--b\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=a.bin\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\naGVsbG8=\r\n--b--\r\n"
 }
 
 func (f *fakeGraph) writeJSON(w http.ResponseWriter, v any) {
@@ -118,7 +129,11 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "gone", http.StatusNotFound)
 			return
 		}
-		_, _ = w.Write([]byte(raw(id, f.version[id]))) //nolint:gosec // local test server returns fixture MIME
+		body := raw(id, f.version[id])
+		if f.withAttachment[id] {
+			body = rawWithAttachment(id)
+		}
+		_, _ = w.Write([]byte(body)) //nolint:gosec // local test server returns fixture MIME
 	case strings.HasPrefix(p, "/me/messages/"):
 		id := strings.TrimPrefix(p, "/me/messages/")
 		folder, ok := f.folder[id]
@@ -209,7 +224,7 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 func (f *fakeGraph) sync(t *testing.T, st *store.Store) (*Summary, error) {
 	t.Helper()
 	c := NewClient(f.srv.URL, func(context.Context) (string, error) { return "tok", nil }, 1000)
-	return Import(context.Background(), st, c, Options{Email: "me@example.com"}, slog.Default())
+	return Import(context.Background(), st, c, Options{Email: "me@example.com", AttachmentsDir: f.t.TempDir()}, slog.Default())
 }
 
 // state returns message ID -> "folder label name" or "deleted".
@@ -289,7 +304,7 @@ func TestImportMoveAndDelete(t *testing.T) {
 	assert.Equal(1, sum.Added)
 	assert.Equal(1, sum.Moved)
 	assert.Equal(2, sum.Deleted)
-	assert.EqualValues(1, f.mimeCalls.Load())
+	assert.EqualValues(2, f.mimeCalls.Load(), "the new message, and the moved one again")
 }
 
 func TestImportResumesFromCheckpoint(t *testing.T) {
@@ -353,9 +368,10 @@ func snippets(t *testing.T, st *store.Store) map[string]string {
 	return out
 }
 
-// A draft keeps its ID while it is edited, so a changed draft is stored again.
-// A changed message in any other folder is not downloaded again.
-func TestImportRefetchesEditedDraft(t *testing.T) {
+// An incremental round stores every changed message again. A walk after an
+// expired cursor returns every message, so it downloads again only drafts,
+// which keep their ID while they are edited.
+func TestImportRefreshesChangedMessages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -370,12 +386,48 @@ func TestImportRefetchesEditedDraft(t *testing.T) {
 	f.put("d1", "drafts")
 	f.put("m1", "inbox")
 	f.mimeCalls.Store(0)
+	sum, err := f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(2, sum.Updated)
+	assert.EqualValues(2, f.mimeCalls.Load())
+	assert.Equal(map[string]string{"d1": "body d1 v1", "m1": "body m1 v1"}, snippets(t, st))
+
+	f.version["d1"], f.version["m1"] = 2, 2
+	f.expired["inbox"], f.expired["drafts"] = true, true
+	f.mimeCalls.Store(0)
 	_, err = f.sync(t, st)
 	require.NoError(err)
-	assert.EqualValues(1, f.mimeCalls.Load(), "only the draft is downloaded again")
-	got := snippets(t, st)
-	assert.Equal("body d1 v1", got["d1"])
-	assert.Equal("body m1 v0", got["m1"])
+	assert.EqualValues(1, f.mimeCalls.Load(), "the walk downloads only the draft again")
+	assert.Equal(map[string]string{"d1": "body d1 v2", "m1": "body m1 v1"}, snippets(t, st))
+}
+
+// A message stored again replaces the attachments of its old MIME.
+func TestImportRefreshReplacesAttachments(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.withAttachment["m1"] = true
+	f.put("m1", "inbox")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+	assert.Equal([2]int{1, 1}, attachments(t, st, "m1"))
+
+	f.withAttachment["m1"] = false
+	f.put("m1", "inbox")
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.Equal([2]int{0, 0}, attachments(t, st, "m1"))
+}
+
+// attachments returns the attachment row count and attachment_count of a message.
+func attachments(t *testing.T, st *store.Store, id string) [2]int {
+	t.Helper()
+	var rows, count int
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT (SELECT COUNT(*) FROM attachments a WHERE a.message_id = m.id), m.attachment_count
+		FROM messages m WHERE m.source_message_id = ?`), id).Scan(&rows, &count))
+	return [2]int{rows, count}
 }
 
 // A message deleted while no cursor covered its folder is marked deleted when

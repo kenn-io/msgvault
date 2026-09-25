@@ -46,6 +46,7 @@ type Summary struct {
 	SourceID int64
 	Folders  int
 	Added    int
+	Updated  int
 	Moved    int
 	Deleted  int
 	Errors   int
@@ -82,7 +83,7 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		blob, _ := json.Marshal(cursors, json.Deterministic(true))
 		return &store.Checkpoint{
 			PageToken:         string(blob),
-			MessagesProcessed: int64(sum.Added + sum.Moved + sum.Deleted),
+			MessagesProcessed: int64(sum.Added + sum.Updated + sum.Moved + sum.Deleted),
 			MessagesAdded:     int64(sum.Added),
 			ErrorsCount:       int64(sum.Errors),
 		}
@@ -231,9 +232,11 @@ func (s *syncer) ensureLabels(ctx context.Context, folders []Folder) (map[string
 // applyPage stores one delta page for a folder. New messages are downloaded.
 // Known messages get the folder as their only label, because a mail item is
 // in exactly one folder, and lose any deletion mark, because the mailbox has
-// them again. Known drafts are downloaded again, since their content can
-// change. Removed messages are looked up with relocate. When seen is not nil,
-// it collects the IDs of live messages.
+// them again. In an incremental round (seen is nil), known messages are also
+// downloaded again, because delta reports them only when they changed. A walk
+// (seen is not nil) returns every message, so it downloads again only drafts,
+// whose content can change under the same ID. Removed messages are looked up
+// with relocate. A walk collects the IDs of live messages in seen.
 func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMessage, seen map[string]bool) error {
 	folderLabel := s.labels[folderID]
 	var live []DeltaMessage
@@ -262,12 +265,16 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 				return err
 			}
 		}
-		if !ok || (s.drafts != "" && folderID == s.drafts) {
+		if !ok {
 			todo = append(todo, m)
 			continue
 		}
 		if err := s.setFolder(id, folderLabel); err != nil {
 			return err
+		}
+		if seen == nil || (s.drafts != "" && folderID == s.drafts) {
+			m.archiveID = id
+			todo = append(todo, m)
 		}
 	}
 	if err := s.download(ctx, folderLabel, todo); err != nil {
@@ -413,6 +420,15 @@ func (s *syncer) download(ctx context.Context, folderLabel int64, msgs []DeltaMe
 		if storeErr != nil {
 			continue
 		}
+		if r.msg.archiveID != 0 {
+			// The new MIME replaces the old one, so drop the attachment rows
+			// of the old MIME first.
+			if err := s.st.DeleteKeyedAttachmentsExceptContext(ctx, r.msg.archiveID, "mime:", ""); err != nil {
+				storeErr = fmt.Errorf("clear attachments of message %s: %w", r.msg.ID, err)
+				cancel()
+				continue
+			}
+		}
 		sum := sha256.Sum256(r.raw)
 		if err := importer.IngestRawMessage(ctx, s.st, s.sourceID, s.opts.Email, s.opts.AttachmentsDir,
 			[]int64{folderLabel}, r.msg.ID, hex.EncodeToString(sum[:]), r.raw, r.msg.ReceivedDateTime, s.log); err != nil {
@@ -421,7 +437,16 @@ func (s *syncer) download(ctx context.Context, folderLabel int64, msgs []DeltaMe
 			cancel()
 			continue
 		}
-		s.sum.Added++
+		if r.msg.archiveID == 0 {
+			s.sum.Added++
+			continue
+		}
+		if err := s.st.RecomputeMessageAttachmentStats(r.msg.archiveID); err != nil {
+			storeErr = fmt.Errorf("update attachment stats of message %s: %w", r.msg.ID, err)
+			cancel()
+			continue
+		}
+		s.sum.Updated++
 	}
 	if storeErr != nil {
 		return storeErr

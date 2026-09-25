@@ -56,6 +56,7 @@ func writeMSMailSyncSummary(out io.Writer, email string, sum *msmail.Summary) {
 	_, _ = fmt.Fprintf(out, "  Duration:        %s\n", sum.Duration.Round(time.Second))
 	_, _ = fmt.Fprintf(out, "  Folders:         %d\n", sum.Folders)
 	_, _ = fmt.Fprintf(out, "  Messages added:  %d\n", sum.Added)
+	_, _ = fmt.Fprintf(out, "  Updated:         %d\n", sum.Updated)
 	_, _ = fmt.Fprintf(out, "  Moved:           %d\n", sum.Moved)
 	_, _ = fmt.Fprintf(out, "  Deleted:         %d\n", sum.Deleted)
 	if sum.Errors > 0 {
