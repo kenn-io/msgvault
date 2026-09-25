@@ -716,6 +716,11 @@ func TestGmailDraftExternalAdoptionPersistsAttachments(t *testing.T) {
 	assert.Equal("text/plain", message.Attachments[0].MimeType)
 	assert.Equal(int64(len("attachment bytes")), message.Attachments[0].Size)
 	assert.NotEmpty(message.Attachments[0].ContentHash)
+
+	_, err = fixture.lifecycle(t, api.CLIRunDraftEditCommand, adopted, "candidate")
+	require.Error(err)
+	assert.Equal("invalid_draft", err.Error())
+	assert.Equal(0, fixture.client.updateCalls)
 }
 
 func TestGmailDraftCancellationClearsClaim(t *testing.T) {

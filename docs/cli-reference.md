@@ -263,6 +263,10 @@ The creation result supplies the opaque `draft_id` and initial revision.
 - `--body` is required for edit; `--body=` sets an empty plain-text body.
 - `--json` emits one JSON result.
 
+`draft-edit` supports `text/plain` drafts only. If the provider draft contains
+HTML, multipart content, or attachments, the command returns `invalid_draft`
+before changing the provider draft.
+
 `draft-get` reads retained archive content, including discarded drafts, without
 connecting to a provider or requiring the source's draft mutation grant. For
 IMAP drafts, edit and delete continue to require the configured `[[imap.drafts]]`

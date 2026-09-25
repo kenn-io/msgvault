@@ -13,9 +13,11 @@ All notable changes to msgvault, grouped by release.
   commands then use the running daemon and fail instead of starting their own.
   See [configuration](configuration.md).
 - Gmail sources can create, retrieve, edit, and delete reviewable reply drafts
-  through `draft-reply`, `draft-get`, `draft-edit`, and `draft-delete`. Drafting
-  is disabled until the source is listed in `[[gmail.drafts]]`; `draft-send-as`
-  lists owner-only Gmail aliases without sending mail.
+  through `draft-reply`, `draft-get`, `draft-edit`, and `draft-delete`. Gmail
+  `draft-edit` supports plain-text drafts and refuses HTML, multipart, or
+  attached drafts before changing the provider. Drafting is disabled until the
+  source is listed in `[[gmail.drafts]]`; `draft-send-as` lists owner-only Gmail
+  aliases without sending mail.
 
 ### Meeting context and follow-ups
 
