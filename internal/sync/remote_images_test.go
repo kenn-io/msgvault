@@ -18,6 +18,7 @@ import (
 )
 
 func TestSyncRemoteImagesRequireOptIn(t *testing.T) {
+	t.Parallel()
 	for _, enabled := range []bool{false, true} {
 		name := "disabled"
 		if enabled {

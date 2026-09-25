@@ -58,6 +58,7 @@ func serveTrackedNoContent(t *testing.T, tracker *IdleTracker) *httptest.Respons
 }
 
 func TestIdleTrackerExternalRequestResetsIdle(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		f := newIdleTrackerFixture(t, 200*time.Millisecond)
 		f.run(t)
@@ -70,6 +71,7 @@ func TestIdleTrackerExternalRequestResetsIdle(t *testing.T) {
 }
 
 func TestIdleTrackerInternalWorkBlocksIdle(t *testing.T) {
+	t.Parallel()
 	f := newIdleTrackerFixture(t, 20*time.Millisecond)
 	done, ok := f.tracker.BeginWork()
 	require.True(t, ok, "BeginWork")
@@ -82,6 +84,7 @@ func TestIdleTrackerInternalWorkBlocksIdle(t *testing.T) {
 }
 
 func TestIdleTrackerRejectsRequestsAfterDrainStarts(t *testing.T) {
+	t.Parallel()
 	f := newIdleTrackerFixture(t, 1*time.Millisecond)
 	f.run(t)
 

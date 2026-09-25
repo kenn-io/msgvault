@@ -106,6 +106,7 @@ func (s *importJobTestStore) CreateSyncOperation(sourceID int64, id string) (*st
 }
 
 func TestImportJobCreationDoesNotWaitForWorkerStartup(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := newImportJobTestStore()
@@ -217,6 +218,7 @@ func getImportJob(t *testing.T, srv *Server, jobID string) (int, importJobTestRe
 }
 
 func TestImportJobUsesDurableSyncOperationForProgressAndSummary(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -263,6 +265,7 @@ func TestImportJobUsesDurableSyncOperationForProgressAndSummary(t *testing.T) {
 }
 
 func TestImportJobHoldsIdleWorkLeaseUntilWorkerFinishes(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -293,6 +296,7 @@ func TestImportJobHoldsIdleWorkLeaseUntilWorkerFinishes(t *testing.T) {
 }
 
 func TestImportJobRejectsAccountWithActiveSync(t *testing.T) {
+	t.Parallel()
 	st := newImportJobTestStore()
 	st.active = &store.SyncRun{ID: 7, SourceID: 42, Status: store.SyncStatusRunning}
 	t.Cleanup(st.finish)
@@ -306,6 +310,7 @@ func TestImportJobRejectsAccountWithActiveSync(t *testing.T) {
 }
 
 func TestImportJobReturnsConflictWhenSourceReservationFails(t *testing.T) {
+	t.Parallel()
 	st := newImportJobTestStore()
 	st.createErr = store.ErrSyncAlreadyActive
 	t.Cleanup(st.finish)
@@ -322,6 +327,7 @@ func TestImportJobReturnsConflictWhenSourceReservationFails(t *testing.T) {
 }
 
 func TestImportJobRejectsQueryForIMAPSource(t *testing.T) {
+	t.Parallel()
 	st := newImportJobTestStore()
 	st.sources[42].SourceType = "imap"
 	srv := NewServer(&config.Config{}, st, nil, testLogger())
@@ -341,6 +347,7 @@ func TestImportJobRejectsQueryForIMAPSource(t *testing.T) {
 }
 
 func TestImportJobTreatsLegacyEmptySourceTypeAsGmail(t *testing.T) {
+	t.Parallel()
 	st := newImportJobTestStore()
 	st.sources[42].SourceType = ""
 	t.Cleanup(st.finish)
@@ -353,6 +360,7 @@ func TestImportJobTreatsLegacyEmptySourceTypeAsGmail(t *testing.T) {
 }
 
 func TestImportJobCreationHasNoOrdinaryRequestDeadline(t *testing.T) {
+	t.Parallel()
 	srv := NewServer(&config.Config{}, nil, nil, testLogger())
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
 
@@ -361,6 +369,7 @@ func TestImportJobCreationHasNoOrdinaryRequestDeadline(t *testing.T) {
 }
 
 func TestImportJobFailureIsSanitized(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -382,7 +391,7 @@ func TestImportJobFailureIsSanitized(t *testing.T) {
 	})
 }
 
-func TestImportJobReturnsBusyInsteadOfBuildingASecondQueue(t *testing.T) {
+func TestImportJobReturnsBusyInsteadOfBuildingASecondQueue(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	st := newImportJobTestStore()
 	gate := NewSerialOperationGate()
 	release, ok := gate.BeginLabeledWorkContext(t.Context(), "another archive operation")
@@ -401,6 +410,7 @@ func TestImportJobReturnsBusyInsteadOfBuildingASecondQueue(t *testing.T) {
 }
 
 func TestImportJobRequestValidation(t *testing.T) {
+	t.Parallel()
 	st := newImportJobTestStore()
 	srv := NewServer(&config.Config{}, st, nil, testLogger())
 	tests := []struct {
@@ -428,6 +438,7 @@ func TestImportJobRequestValidation(t *testing.T) {
 }
 
 func TestImportJobsRequireAuthentication(t *testing.T) {
+	t.Parallel()
 	st := newImportJobTestStore()
 	t.Cleanup(st.finish)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "key"}}, st, nil, testLogger())
@@ -439,6 +450,7 @@ func TestImportJobsRequireAuthentication(t *testing.T) {
 }
 
 func TestGetImportJobReturnsNotFoundForUnknownID(t *testing.T) {
+	t.Parallel()
 	srv := NewServer(&config.Config{}, newImportJobTestStore(), nil, testLogger())
 	code, _, body := getImportJob(t, srv, "missing")
 	assert.Equal(t, http.StatusNotFound, code, body)

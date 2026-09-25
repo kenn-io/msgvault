@@ -74,6 +74,7 @@ func gatedProbeStatus(srv *Server) int {
 }
 
 func TestBackupFreezeBeginBlocksGateUntilEnd(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newBackupFreezeTestServer(nil)
@@ -105,7 +106,7 @@ func TestBackupFreezeBeginBlocksGateUntilEnd(t *testing.T) {
 // fix, Begin queued on the raw, unbounded request context and would hang for
 // as long as the holder kept the gate, instead of failing fast with the
 // gate-busy response.
-func TestBackupFreezeBeginReturnsBusyWithinBoundWhenGateHeld(t *testing.T) {
+func TestBackupFreezeBeginReturnsBusyWithinBoundWhenGateHeld(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -141,6 +142,7 @@ func TestBackupFreezeBeginReturnsBusyWithinBoundWhenGateHeld(t *testing.T) {
 }
 
 func TestBackupFreezeSecondBeginWhileActiveFails(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newBackupFreezeTestServer(nil)
@@ -161,6 +163,7 @@ func TestBackupFreezeSecondBeginWhileActiveFails(t *testing.T) {
 }
 
 func TestBackupFreezeEndRejectsBogusTokenThenSucceedsOnce(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newBackupFreezeTestServer(nil)
@@ -183,7 +186,7 @@ func TestBackupFreezeEndRejectsBogusTokenThenSucceedsOnce(t *testing.T) {
 	assert.Equal(http.StatusBadRequest, secondEndResp.Code, "second end with same token should fail")
 }
 
-func TestBackupFreezeWatchdogAutoReleasesGateAndInvalidatesToken(t *testing.T) {
+func TestBackupFreezeWatchdogAutoReleasesGateAndInvalidatesToken(t *testing.T) { //nolint:paralleltest // swaps the package-level backupFreezeWatchdogTimeout
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -219,7 +222,7 @@ func TestBackupFreezeWatchdogAutoReleasesGateAndInvalidatesToken(t *testing.T) {
 	})
 }
 
-func TestBackupFreezeBeginSameHostOnly(t *testing.T) {
+func TestBackupFreezeBeginSameHostOnly(t *testing.T) { //nolint:paralleltest // swaps the package-level backupFreezeLocalAddrs
 	srv := newBackupFreezeTestServer(nil)
 
 	// Pretend this machine owns 192.168.50.5: a daemon bound to its LAN
@@ -265,7 +268,7 @@ func TestBackupFreezeBeginSameHostOnly(t *testing.T) {
 	}
 }
 
-func TestBackupFreezeBeginRequiresAuthWhenKeyConfigured(t *testing.T) {
+func TestBackupFreezeBeginRequiresAuthWhenKeyConfigured(t *testing.T) { //nolint:paralleltest // swaps the package-level backupFreezeLocalAddrs
 	const key = "secret-key"
 	srv := newBackupFreezeTestServer(&config.Config{Server: config.ServerConfig{APIKey: key}})
 
@@ -316,6 +319,7 @@ func TestBackupFreezeBeginRequiresAuthWhenKeyConfigured(t *testing.T) {
 }
 
 func TestBackupFreezeEndRejectsInvalidJSON(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	srv := newBackupFreezeTestServer(nil)
 

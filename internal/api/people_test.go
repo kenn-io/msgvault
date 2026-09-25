@@ -115,6 +115,7 @@ func newPeopleAPIServerWithStore(engine *peopleAPIEngine, store MessageStore) *S
 }
 
 func TestPeopleSearchResolvesCanonicalFullTextCandidatesAndReturnsAuthority(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, peopleResult: &query.PersonSearchResponse{
@@ -140,6 +141,7 @@ func TestPeopleSearchResolvesCanonicalFullTextCandidatesAndReturnsAuthority(t *t
 }
 
 func TestPeopleAdaptersResolveIdentityFilterOncePerRequest(t *testing.T) {
+	t.Parallel()
 	t.Run("search", func(t *testing.T) {
 		requirements := require.New(t)
 		assertions := assert.New(t)
@@ -181,6 +183,7 @@ func TestPeopleAdaptersResolveIdentityFilterOncePerRequest(t *testing.T) {
 }
 
 func TestPeopleSearchNamesUnavailableSemanticAuthorityWithoutFallback(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, peopleResult: &query.PersonSearchResponse{
 		Rows: []query.PersonSummary{{ID: 11}}, TotalCount: 1, CacheRevision: "cache",
@@ -198,6 +201,7 @@ func TestPeopleSearchNamesUnavailableSemanticAuthorityWithoutFallback(t *testing
 }
 
 func TestContextualSummaryPOSTsCarryCanonicalSearchAndReturnNamed404(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{},
@@ -230,6 +234,7 @@ func TestContextualSummaryPOSTsCarryCanonicalSearchAndReturnNamed404(t *testing.
 }
 
 func TestPeopleSearchForwardsCanonicalContextAndNeverAcceptsNameAsIdentity(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	when := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
@@ -258,6 +263,7 @@ func TestPeopleSearchForwardsCanonicalContextAndNeverAcceptsNameAsIdentity(t *te
 }
 
 func TestPeopleSearchSerializesRelationshipTemperatureSummary(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	when := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
@@ -286,6 +292,7 @@ func TestPeopleSearchSerializesRelationshipTemperatureSummary(t *testing.T) {
 }
 
 func TestPersonDetailAndTimelineRequireDurablePositiveID(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	when := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
@@ -326,6 +333,7 @@ func TestPersonDetailAndTimelineRequireDurablePositiveID(t *testing.T) {
 }
 
 func TestDomainEndpointsNormalizeExactDomainAndRejectAmbiguousOrSQLLikeValues(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	when := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
@@ -361,6 +369,7 @@ func TestDomainEndpointsNormalizeExactDomainAndRejectAmbiguousOrSQLLikeValues(t 
 // ID to the query layer so identifiers span the whole cluster, and attach a
 // PersonCluster with the canonical ID and every store-owned edge.
 func TestGetPersonComposesClusterBlockFromStoreForLinkedParticipant(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -409,6 +418,7 @@ func TestGetPersonComposesClusterBlockFromStoreForLinkedParticipant(t *testing.T
 // an unlinked participant's detail must not carry a Cluster block, and the
 // handler must not widen the query-layer call with a member list.
 func TestGetPersonOmitsClusterBlockForUnlinkedParticipant(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -438,6 +448,7 @@ func TestGetPersonOmitsClusterBlockForUnlinkedParticipant(t *testing.T) {
 // must carry that person's ID, display-name override, and revision so
 // clients can PATCH or DELETE the profile straight from the detail view.
 func TestGetPersonAttachesDurableProfileFromStore(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -480,6 +491,7 @@ func TestGetPersonAttachesDurableProfileFromStore(t *testing.T) {
 // search resolve, so activity owned only by a linked alias is forwarded to
 // the engine as in-scope. An unlinked participant stays scoped to its own ID.
 func TestPersonTimelineWidensScopeToIdentityCluster(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -527,6 +539,7 @@ func TestPersonTimelineWidensScopeToIdentityCluster(t *testing.T) {
 // metrics — matching the person detail, timeline, and files search. An
 // unlinked participant stays scoped to its own ID.
 func TestPersonContextSummaryWidensScopeToIdentityCluster(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -568,6 +581,7 @@ func TestPersonContextSummaryWidensScopeToIdentityCluster(t *testing.T) {
 }
 
 func TestPeopleEndpointsNameUnavailableCacheInsteadOfReturningEmpty(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, peopleErr: &query.CacheUnavailableError{Readiness: query.CacheStaleSchema}}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/participants/search", bytes.NewBufferString(`{}`))
@@ -579,6 +593,7 @@ func TestPeopleEndpointsNameUnavailableCacheInsteadOfReturningEmpty(t *testing.T
 }
 
 func TestParticipantDetailUsesParticipantNotFoundError(t *testing.T) {
+	t.Parallel()
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}}
 	response := httptest.NewRecorder()
 	newPeopleAPIServer(engine).Router().ServeHTTP(response,

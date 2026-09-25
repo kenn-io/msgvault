@@ -15,6 +15,7 @@ import (
 )
 
 func TestResolveVisualPersonScopeUsesDurableBindingsAndLegacySenderAlias(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	server, catalog := newTestServerWithMockStore(t)
@@ -31,6 +32,7 @@ func TestResolveVisualPersonScopeUsesDurableBindingsAndLegacySenderAlias(t *test
 }
 
 func TestResolveVisualLegacySenderAliasReportsMissingDurablePerson(t *testing.T) {
+	t.Parallel()
 	server, catalog := newTestServerWithMockStore(t)
 	catalog.personContextFunc = func(context.Context, int64) (*store.Person, error) {
 		return nil, store.ErrPersonNotFound
@@ -46,6 +48,7 @@ func TestResolveVisualLegacySenderAliasReportsMissingDurablePerson(t *testing.T)
 }
 
 func TestResolveVisualPersonScopeRejectsInvalidDirectionBeforeResolution(t *testing.T) {
+	t.Parallel()
 	server, catalog := newTestServerWithMockStore(t)
 	catalog.personContextFunc = func(context.Context, int64) (*store.Person, error) {
 		t.Fatal("invalid directions must not dispatch person resolution")
@@ -63,6 +66,7 @@ func TestResolveVisualPersonScopeRejectsInvalidDirectionBeforeResolution(t *test
 }
 
 func TestParseVisualSearchDatesPreservesRFC3339Precision(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	after := "2026-08-20T12:34:56.123456789-07:00"

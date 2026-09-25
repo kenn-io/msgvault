@@ -29,6 +29,7 @@ import (
 )
 
 func TestExploreRelativeDateRevisionIgnoresParseClock(t *testing.T) {
+	t.Parallel()
 	firstNow := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
 	secondNow := firstNow.Add(time.Minute)
 	first := (&search.Parser{Now: func() time.Time { return firstNow }}).Parse("alpha newer_than:1d")
@@ -38,6 +39,7 @@ func TestExploreRelativeDateRevisionIgnoresParseClock(t *testing.T) {
 }
 
 func TestExploreIdentityFilterRequiresMatchingSingleSource(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	tests := []struct {
@@ -123,6 +125,7 @@ func TestExploreIdentityFilterRequiresMatchingSingleSource(t *testing.T) {
 }
 
 func TestExploreIdentityFilterEmptyDirectionNormalizesToAny(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	request := ExploreHTTPRequest{Filters: []ExploreFilter{
@@ -143,6 +146,7 @@ func TestExploreIdentityFilterEmptyDirectionNormalizesToAny(t *testing.T) {
 }
 
 func TestExploreIdentityFilterResolvesConfirmedEmailCaseInsensitively(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -182,6 +186,7 @@ func TestExploreIdentityFilterResolvesConfirmedEmailCaseInsensitively(t *testing
 // address may survive in message_recipients.envelope_address, the raw header
 // snapshot) instead of short-circuiting to match-none.
 func TestExploreIdentityFilterConfirmedUnseenEmailIdentityKeepsEnvelopePredicate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -220,6 +225,7 @@ func TestExploreIdentityFilterConfirmedUnseenEmailIdentityKeepsEnvelopePredicate
 // surface: a confirmed phone identity with no participant evidence has
 // nothing left to match.
 func TestExploreIdentityFilterAcceptsConfirmedUnseenPhoneIdentityAsMatchNone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -252,6 +258,7 @@ func TestExploreIdentityFilterAcceptsConfirmedUnseenPhoneIdentityAsMatchNone(t *
 }
 
 func TestExploreIdentityFilterRejectsInvalidAndUnconfirmedIdentitiesWithoutLoggingAddress(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	sourceA, err := st.GetOrCreateSource("gmail", "archive-a@example.com")
@@ -343,6 +350,7 @@ func TestExploreIdentityFilterRejectsInvalidAndUnconfirmedIdentitiesWithoutLoggi
 }
 
 func TestExploreIdentityFilterPreservesResolverContextErrors(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -385,6 +393,7 @@ func (s *identityResolveErrorStore) ResolveAccountIdentityContext(
 }
 
 func TestExploreFullTextResolverBoundsCandidateTransfer(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	require := require.New(t)
 	require.Equal(10_000, query.MaxExploreCandidateMessageIDs)
@@ -453,6 +462,7 @@ func filteredCandidateMockSearch(allIDs, filteredIDs []int64, sourceID int64) fu
 }
 
 func TestExploreFullTextAppliesFiltersBeforeCandidateCap(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	allIDs := make([]int64, query.MaxExploreCandidateMessageIDs+50)
@@ -490,6 +500,7 @@ func TestExploreFullTextAppliesFiltersBeforeCandidateCap(t *testing.T) {
 }
 
 func TestExploreHybridLexicalBranchResolvesWithFilters(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	allIDs := make([]int64, query.MaxExploreCandidateMessageIDs+1)
@@ -547,6 +558,7 @@ func (f *fakeFusingBackend) FusedSearch(_ context.Context, req vector.FusedReque
 }
 
 func TestExploreHybridLowercasesSubjectTermsForBoost(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	backend := &fakeFusingBackend{
@@ -574,6 +586,7 @@ func TestExploreHybridLowercasesSubjectTermsForBoost(t *testing.T) {
 }
 
 func TestExploreFullTextSourceFilterFindsMatchesBeyondUnfilteredCap(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -637,6 +650,7 @@ func TestExploreFullTextSourceFilterFindsMatchesBeyondUnfilteredCap(t *testing.T
 }
 
 func TestExploreFullTextMailingListFiltersFindMatchesBeyondUnfilteredCap(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -701,6 +715,7 @@ func TestExploreFullTextMailingListFiltersFindMatchesBeyondUnfilteredCap(t *test
 }
 
 func TestApplyLexicalFilterPushdown(t *testing.T) {
+	t.Parallel()
 	afterFilter := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	beforeFilter := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	afterQuery := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
@@ -800,6 +815,7 @@ func TestApplyLexicalFilterPushdown(t *testing.T) {
 // tighten, so a filter can never broaden the candidate predicate beyond
 // what the query text alone would match.
 func TestExploreSemanticVectorFilterMergeMirrorsLexicalPushdown(t *testing.T) {
+	t.Parallel()
 	utcDate := func(month, day int) *time.Time {
 		bound := time.Date(2026, time.Month(month), day, 0, 0, 0, 0, time.UTC)
 		return &bound
@@ -888,6 +904,7 @@ func TestExploreSemanticVectorFilterMergeMirrorsLexicalPushdown(t *testing.T) {
 }
 
 func TestExploreSemanticDisjointFilterShortCircuitsToEmptyCandidates(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	backend := &fakeVectorBackend{
@@ -918,6 +935,7 @@ func TestExploreSemanticDisjointFilterShortCircuitsToEmptyCandidates(t *testing.
 }
 
 func TestExploreHybridDisjointFilterShortCircuitsToEmptyCandidates(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	backend := &fakeFusingBackend{
@@ -948,6 +966,7 @@ func TestExploreHybridDisjointFilterShortCircuitsToEmptyCandidates(t *testing.T)
 }
 
 func TestApplySemanticDeletionScope(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		searchMode   string
@@ -973,6 +992,7 @@ func TestApplySemanticDeletionScope(t *testing.T) {
 }
 
 func TestLexicalDeletionScope(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	assertions.Equal(search.DeletionScopeAny, lexicalDeletionScope(query.DeletionAny),
 		"an absent deletion filter is unrestricted, not active-only")
@@ -983,6 +1003,7 @@ func TestLexicalDeletionScope(t *testing.T) {
 }
 
 func TestWithActiveDeletionFilterPinsHybridLexicalScope(t *testing.T) {
+	t.Parallel()
 	pinned := withActiveDeletionFilter([]ExploreFilter{
 		{Dimension: "source", Values: []string{"1"}},
 		{Dimension: exploreFilterDeletion, Values: []string{"any"}},
@@ -996,6 +1017,7 @@ func TestWithActiveDeletionFilterPinsHybridLexicalScope(t *testing.T) {
 }
 
 func TestExploreSemanticRejectsDeletedOnlyFilter(t *testing.T) {
+	t.Parallel()
 	srv := newReviewSemanticServer(t)
 	response := postExploreJSON(t, srv, "/api/v1/explore", `{
 		"query":"alpha","search_mode":"semantic",
@@ -1007,6 +1029,7 @@ func TestExploreSemanticRejectsDeletedOnlyFilter(t *testing.T) {
 }
 
 func TestExploreSemanticNarrowsUnrestrictedDeletionToActive(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	base := newExploreDuckDBFixture(t)
@@ -1084,6 +1107,7 @@ func newReviewSemanticIntersectionServer(t *testing.T) (*Server, *fakeVectorBack
 }
 
 func TestExploreSemanticParticipantAndDomainFiltersNarrowRankedCandidates(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		filter string
@@ -1116,6 +1140,7 @@ func TestExploreSemanticParticipantAndDomainFiltersNarrowRankedCandidates(t *tes
 }
 
 func TestExploreSemanticGroupsAndPreflightAcceptParticipantFilter(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, _ := newReviewSemanticIntersectionServer(t)
@@ -1156,6 +1181,7 @@ func TestExploreSemanticGroupsAndPreflightAcceptParticipantFilter(t *testing.T) 
 }
 
 func TestExploreHybridParticipantFilterNarrowsFusedCandidates(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	backend := &fakeFusingBackend{
@@ -1189,6 +1215,7 @@ func TestExploreHybridParticipantFilterNarrowsFusedCandidates(t *testing.T) {
 }
 
 func TestExploreHybridMatchCountsUseCompleteLexicalMembership(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	srv := newReviewSemanticServerWithHits(t, []vector.Hit{{MessageID: 1, Score: .9, Rank: 1}})
 	request := ExploreHTTPRequest{Query: "alpha", SearchMode: exploreSearchModeHybrid}
@@ -1208,6 +1235,7 @@ func TestExploreHybridMatchCountsUseCompleteLexicalMembership(t *testing.T) {
 }
 
 func TestExploreSnapshotPreservesResolvedEmptyLexicalMembership(t *testing.T) {
+	t.Parallel()
 	state := newExploreServerState(time.Now)
 	request := ExploreHTTPRequest{Query: "alpha", SearchMode: exploreSearchModeHybrid}
 	token := state.issueSnapshot(exploreCandidateSnapshot{
@@ -1223,6 +1251,7 @@ func TestExploreSnapshotPreservesResolvedEmptyLexicalMembership(t *testing.T) {
 }
 
 func TestApplyIdentityScopeAcceptsCaseEquivalentDomain(t *testing.T) {
+	t.Parallel()
 	context := query.Context{Domains: []string{"EXAMPLE.COM"}}
 	err := applyIdentityScope(&context, ExploreFilter{Dimension: exploreFilterDomain, Values: []string{"example.com"}})
 	require.NoError(t, err)
@@ -1236,6 +1265,7 @@ func TestApplyIdentityScopeAcceptsCaseEquivalentDomain(t *testing.T) {
 // (see exploreContext), so a base group naming a different person yields the
 // intersection rather than identity_scope_conflict.
 func TestApplyIdentityScopeIsConjunctiveWithBaseParticipantFilter(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1266,6 +1296,7 @@ func TestApplyIdentityScopeIsConjunctiveWithBaseParticipantFilter(t *testing.T) 
 // analogue: a context filtered to domain A can open domain B's scoped
 // endpoints and see A∩B instead of identity_scope_conflict.
 func TestApplyIdentityScopeIsConjunctiveWithBaseDomainFilter(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1286,6 +1317,7 @@ func TestApplyIdentityScopeIsConjunctiveWithBaseDomainFilter(t *testing.T) {
 // against the first, primary group) instead of being rejected or replacing
 // it — the fix for drill-downs widening an existing filter.
 func TestExploreContextRepeatedParticipantFilterIsConjunctive(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1301,6 +1333,7 @@ func TestExploreContextRepeatedParticipantFilterIsConjunctive(t *testing.T) {
 // TestExploreContextRepeatedDomainFilterIsConjunctive is the domain analogue
 // of TestExploreContextRepeatedParticipantFilterIsConjunctive.
 func TestExploreContextRepeatedDomainFilterIsConjunctive(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1317,6 +1350,7 @@ func TestExploreContextRepeatedDomainFilterIsConjunctive(t *testing.T) {
 // with no conjunctive meaning (source, message_type, after, before,
 // deletion) still reject a repeat, unlike participant/domain.
 func TestExploreContextRejectsRepeatedSingleValuedFilters(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		filters []ExploreFilter
@@ -1343,6 +1377,7 @@ func TestExploreContextRejectsRepeatedSingleValuedFilters(t *testing.T) {
 }
 
 func TestExploreRejectsTamperedCursorsOnEveryPaginatedSurface(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		path      string
@@ -1396,6 +1431,7 @@ func TestExploreRejectsTamperedCursorsOnEveryPaginatedSurface(t *testing.T) {
 }
 
 func TestExploreGroupsValidatesCompletePredicateBeforeQuerying(t *testing.T) {
+	t.Parallel()
 	srv := newTestServerWithEngine(t, newExploreDuckDBFixture(t))
 	tests := []struct {
 		name string
@@ -1418,6 +1454,7 @@ func TestExploreGroupsValidatesCompletePredicateBeforeQuerying(t *testing.T) {
 }
 
 func TestExploreGroupsPaginatesCompletePopulation(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	srv := newTestServerWithEngine(t, newExploreDuckDBFixture(t))
@@ -1440,6 +1477,7 @@ func TestExploreGroupsPaginatesCompletePopulation(t *testing.T) {
 }
 
 func TestExploreSemanticUsesStrongestConversationHitInsteadOfChronologicalAnchor(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := newExploreSemanticChatDuckDBFixture(t)
@@ -1480,6 +1518,7 @@ func TestExploreSemanticUsesStrongestConversationHitInsteadOfChronologicalAnchor
 }
 
 func TestExploreMapsEveryCommittedCacheFailureToStructuredUnavailable(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		readiness query.CacheReadiness
@@ -1555,6 +1594,7 @@ func TestExploreMapsEveryCommittedCacheFailureToStructuredUnavailable(t *testing
 }
 
 func TestExploreCanonicalizesParsedFullTextQueryForRevisionAndCountCache(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -1612,6 +1652,7 @@ func TestExploreCanonicalizesParsedFullTextQueryForRevisionAndCountCache(t *test
 }
 
 func TestExploreSemanticSnapshotExpiresAndReportsCandidatePoolSaturation(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	hits := make([]vector.Hit, exploreMaxLimit)
@@ -1638,6 +1679,7 @@ func TestExploreSemanticSnapshotExpiresAndReportsCandidatePoolSaturation(t *test
 }
 
 func TestExploreRequiresAuthenticatedCSRFSafeRemoteMutation(t *testing.T) {
+	t.Parallel()
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIKey: testSessionAPIKey}},
 		Store:  &mockStore{stats: &StoreStats{}}, Engine: newExploreDuckDBFixture(t), Logger: testLogger(),
@@ -1655,6 +1697,7 @@ func TestExploreRequiresAuthenticatedCSRFSafeRemoteMutation(t *testing.T) {
 }
 
 func TestExploreFullTextUsesRealSQLiteFTS5Candidates(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)

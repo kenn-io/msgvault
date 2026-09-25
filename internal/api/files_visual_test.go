@@ -11,6 +11,7 @@ import (
 )
 
 func TestFuseFileRanksUsesRRFAndKeepsSignalExplain(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	lexical := &query.FileSearchResponse{Files: []query.FileRow{{ID: 11}, {ID: 22}}}
@@ -29,6 +30,7 @@ func TestFuseFileRanksUsesRRFAndKeepsSignalExplain(t *testing.T) {
 }
 
 func TestFuseFileRanksBreaksTiesByAttachmentID(t *testing.T) {
+	t.Parallel()
 	visualFiles := &query.FileSearchResponse{Files: []query.FileRow{{ID: 8}, {ID: 4}}}
 	rows, _ := fuseFileRanks(nil, visualFiles, map[int64]int{8: 1, 4: 1})
 	require.Len(t, rows, 2)
@@ -36,6 +38,7 @@ func TestFuseFileRanksBreaksTiesByAttachmentID(t *testing.T) {
 }
 
 func TestApplyVisualSearchScopeMapsHardFilters(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)

@@ -241,6 +241,7 @@ func personBriefPath(personID int64, suffix string) string {
 // must not reach a client through the API; the route strips control
 // characters the way the TUI does, while the identifiers stay as stored.
 func TestPersonBriefHTTPStripsControlCharactersFromBriefProse(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonBriefAPIFixture(t)
@@ -280,6 +281,7 @@ func TestPersonBriefHTTPStripsControlCharactersFromBriefProse(t *testing.T) {
 }
 
 func TestPersonBriefHTTPReturnsCurrentVersionWithSentencesAndEvidence(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonBriefAPIFixture(t)
@@ -351,6 +353,7 @@ func TestPersonBriefHTTPReturnsCurrentVersionWithSentencesAndEvidence(t *testing
 // walk cannot say which pointer belongs to which sentence and every sentence
 // reports no ordinals rather than a wrong one.
 func TestPersonBriefHTTPOmitsSentenceOrdinalsWhenTheCitationOrderCannotBeRebuilt(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonBriefAPIFixture(t)
@@ -373,6 +376,7 @@ func TestPersonBriefHTTPOmitsSentenceOrdinalsWhenTheCitationOrderCannotBeRebuilt
 }
 
 func TestPersonBriefHTTPWithoutLastInteraction(t *testing.T) {
+	t.Parallel()
 	for _, mismatch := range []bool{false, true} {
 		t.Run(fmt.Sprintf("mismatch=%t", mismatch), func(t *testing.T) {
 			assertions := assert.New(t)
@@ -407,6 +411,7 @@ func TestPersonBriefHTTPWithoutLastInteraction(t *testing.T) {
 }
 
 func TestPersonBriefHTTPReportsMissingCurrentVersion(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	f := newPersonBriefAPIFixture(t)
 
@@ -422,6 +427,7 @@ func TestPersonBriefHTTPReportsMissingCurrentVersion(t *testing.T) {
 }
 
 func TestPersonBriefHTTPListsVersionsNewestFirst(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonBriefAPIFixture(t)
@@ -459,6 +465,7 @@ func TestPersonBriefHTTPListsVersionsNewestFirst(t *testing.T) {
 }
 
 func TestPersonBriefHTTPRejectsTheCurrentVersionOnce(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonBriefAPIFixture(t)
@@ -492,6 +499,7 @@ func TestPersonBriefHTTPRejectsTheCurrentVersionOnce(t *testing.T) {
 }
 
 func TestPersonBriefEvidenceReportsUnsupportedAfterAStatusEvent(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonBriefAPIFixture(t)
@@ -525,6 +533,7 @@ func TestPersonBriefEvidenceReportsUnsupportedAfterAStatusEvent(t *testing.T) {
 }
 
 func TestPersonBriefEnrollmentHTTPGetsAndReplacesState(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -568,6 +577,7 @@ func TestPersonBriefEnrollmentHTTPGetsAndReplacesState(t *testing.T) {
 }
 
 func TestPersonBriefEnrollmentHTTPValidatesRequests(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -591,6 +601,7 @@ func TestPersonBriefEnrollmentHTTPValidatesRequests(t *testing.T) {
 }
 
 func TestPersonBriefGenerateHTTPRunsTheDaemonWorker(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonBriefAPIFixture(t)
@@ -631,6 +642,7 @@ func TestPersonBriefGenerateHTTPRunsTheDaemonWorker(t *testing.T) {
 }
 
 func TestPersonBriefGenerateHTTPRefusesAnUnenrolledPerson(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	f := newPersonBriefAPIFixture(t)
 	f.server.SetPersonBriefGenerator(
@@ -660,6 +672,7 @@ func TestPersonBriefGenerateHTTPRefusesAnUnenrolledPerson(t *testing.T) {
 // brief_version 0 and an empty failure class read as "nothing happened, and no
 // reason", and a profile without a brief lane used to fail inside the attempt.
 func TestPersonBriefGenerateHTTPRefusesADisabledLaneAndARefusingProfile(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		err  error
@@ -693,6 +706,7 @@ func TestPersonBriefGenerateHTTPRefusesADisabledLaneAndARefusingProfile(t *testi
 }
 
 func TestPersonBriefGenerateIsNotBoundedByTheStandardRequestTimeout(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	assert.True(isLongDaemonRequest("/api/v1/people/42/brief/generate"),
 		"a manual brief runs a provider call and must not be cut off at the request timeout")
@@ -708,6 +722,7 @@ func TestPersonBriefGenerateIsNotBoundedByTheStandardRequestTimeout(t *testing.T
 }
 
 func TestPersonBriefOpenAPIContract(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	document := OpenAPIDocument()
@@ -767,6 +782,7 @@ func TestPersonBriefOpenAPIContract(t *testing.T) {
 // owner asked for it. Nothing else in the HTTP contract may return it, which is
 // what keeps it out of person search results and the CardDAV projection.
 func TestPersonBriefIsReachableOnlyThroughItsOwnRoutes(t *testing.T) {
+	t.Parallel()
 	briefSchemas := []string{
 		`"#/components/schemas/PersonBrief"`,
 		`"#/components/schemas/PersonBriefVersionsResponse"`,

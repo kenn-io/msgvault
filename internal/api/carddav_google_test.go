@@ -48,6 +48,7 @@ func savedGoogleCardDAVFixture(t *testing.T) (*config.Config, *store.Store) {
 }
 
 func TestGoogleCardDAVRuntimeRecoversAfterCLIAuthorization(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	required := require.New(t)
 	cfg, st := savedGoogleCardDAVFixture(t)
@@ -90,6 +91,7 @@ func TestGoogleCardDAVRuntimeRecoversAfterCLIAuthorization(t *testing.T) {
 }
 
 func TestGoogleCardDAVScheduleSaveDoesNotRequireAuthorization(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	required := require.New(t)
 	cfg, st := savedGoogleCardDAVFixture(t)
@@ -105,6 +107,7 @@ func TestGoogleCardDAVScheduleSaveDoesNotRequireAuthorization(t *testing.T) {
 }
 
 func TestGoogleCardDAVRefreshFailuresReachAPIAndSyncHistory(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, body, retryAfter, wantRetryAfter, apiCode, runCode string
 		status, apiStatus                                        int
@@ -204,6 +207,7 @@ func TestGoogleCardDAVRefreshFailuresReachAPIAndSyncHistory(t *testing.T) {
 }
 
 func TestCardDAVGoogleAccountSelection(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	required := require.New(t)
 	req := normalizeCardDAVAccountRequest(CardDAVAccountRequest{Provider: "google", Username: "person@example.com", OAuthApp: "contacts", Enabled: new(true)})
@@ -227,6 +231,7 @@ func TestCardDAVGoogleAccountSelection(t *testing.T) {
 }
 
 func TestCardDAVGoogleAuthorizationConsumedOnceAndExpires(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	required := require.New(t)
 	flow := &oauth.WebAuthorization{State: "synthetic-state"}
@@ -251,7 +256,7 @@ func (f googleAuthorizationTransport) RoundTrip(r *http.Request) (*http.Response
 	return f(r)
 }
 
-func TestGoogleAuthorizationCompletesWhileArchiveGateHeld(t *testing.T) {
+func TestGoogleAuthorizationCompletesWhileArchiveGateHeld(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	assertions := assert.New(t)
 	required := require.New(t)
 	oldLimit := operationGateWaitLimit
@@ -338,6 +343,7 @@ func TestGoogleAuthorizationCompletesWhileArchiveGateHeld(t *testing.T) {
 }
 
 func TestGoogleAuthorizationCallbackReportsTransientProviderFailures(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name       string
 		failure    string

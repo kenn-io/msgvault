@@ -19,6 +19,7 @@ import (
 )
 
 func TestAuditGmailMessagesReportsCrossedFieldsAndInconclusiveRaw(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -49,6 +50,7 @@ func TestAuditGmailMessagesReportsCrossedFieldsAndInconclusiveRaw(t *testing.T) 
 }
 
 func TestAuditGmailMessagesTreatsParsedEmptyFieldsAsAuthoritative(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -65,6 +67,7 @@ func TestAuditGmailMessagesTreatsParsedEmptyFieldsAsAuthoritative(t *testing.T) 
 }
 
 func TestAuditGmailMessagesMarksNonMIMEStoredRawInconclusive(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -82,6 +85,7 @@ func TestAuditGmailMessagesMarksNonMIMEStoredRawInconclusive(t *testing.T) {
 }
 
 func TestAuditGmailMessagesOmitsCoherentLegacyEvidence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
@@ -105,6 +109,7 @@ func TestAuditGmailMessagesOmitsCoherentLegacyEvidence(t *testing.T) {
 }
 
 func TestAuditGmailMessagesComparesAttachmentHashesWithoutOccurrenceKeys(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -127,6 +132,7 @@ func TestAuditGmailMessagesComparesAttachmentHashesWithoutOccurrenceKeys(t *test
 }
 
 func TestAuditGmailMessagesAttachmentHashMultisetPreservesDuplicateCounts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
@@ -152,6 +158,7 @@ func TestAuditGmailMessagesAttachmentHashMultisetPreservesDuplicateCounts(t *tes
 }
 
 func TestAuditGmailMessagesAcceptsRepeatedPartStoredOnceWithoutOccurrenceKeys(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
@@ -179,6 +186,7 @@ func TestAuditGmailMessagesAcceptsRepeatedPartStoredOnceWithoutOccurrenceKeys(t 
 }
 
 func TestAuditGmailMessagesTreatsLegacyOnlyAttachmentAsInconclusive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
@@ -204,6 +212,7 @@ func TestAuditGmailMessagesTreatsLegacyOnlyAttachmentAsInconclusive(t *testing.T
 }
 
 func TestAuditGmailMessagesFlagsSwappedAttachmentHashes(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -251,6 +260,7 @@ func TestAuditGmailMessagesFlagsSwappedAttachmentHashes(t *testing.T) {
 }
 
 func TestAuditGmailMessagesIsReadOnlyAndKeysetPaged(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	testutil.SkipIfPostgres(t, "filesystem and SQLite query-only proof")
@@ -295,6 +305,7 @@ func TestAuditGmailMessagesIsReadOnlyAndKeysetPaged(t *testing.T) {
 }
 
 func TestAuditGmailMessagesStopsLoadedPageOnCancellation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
@@ -335,6 +346,7 @@ func (c *cancelAfterArmedChecks) arm() {
 }
 
 func TestAuditGmailMessagesReturnsCancellationAfterCoherentFinalRow(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	firstID := seedRepairRow(t, env.Store, source.ID, "gmail-a", "thread", "stored")
@@ -355,6 +367,7 @@ func TestAuditGmailMessagesReturnsCancellationAfterCoherentFinalRow(t *testing.T
 }
 
 func TestRepairedMessageWithProviderAttachmentIsNotAuditedAgain(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -377,6 +390,7 @@ func TestRepairedMessageWithProviderAttachmentIsNotAuditedAgain(t *testing.T) {
 }
 
 func TestAuditGmailMessagesScopesPositiveSourceAndRejectsNonGmail(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	gmailSource := env.CreateSource(t)
@@ -402,6 +416,7 @@ func TestAuditGmailMessagesScopesPositiveSourceAndRejectsNonGmail(t *testing.T) 
 // raw storage has no size limit and unbounded decompression could exhaust
 // memory on a corrupt or hostile archive.
 func TestAuditGmailMessagesMarksOversizedRawInconclusive(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	// The cap under test is the named production constant (64 MiB).

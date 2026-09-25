@@ -88,6 +88,7 @@ func meetingImportRequest(body string) *http.Request {
 }
 
 func TestMeetingImportRequiresAuthentication(t *testing.T) {
+	t.Parallel()
 	store := &fakeMeetingImportStore{
 		mockStore: &mockStore{stats: &StoreStats{}},
 		result:    meetingimport.Result{Status: meetingimport.StatusCreated},
@@ -110,6 +111,7 @@ func TestMeetingImportRequiresAuthentication(t *testing.T) {
 }
 
 func TestMeetingImportReturnsCreatedAndUpdated(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		status     meetingimport.Status
@@ -154,6 +156,7 @@ func TestMeetingImportReturnsCreatedAndUpdated(t *testing.T) {
 }
 
 func TestMeetingImportRejectsInvalidRequests(t *testing.T) {
+	t.Parallel()
 	store := &fakeMeetingImportStore{mockStore: &mockStore{stats: &StoreStats{}}}
 	srv := newMeetingImportTestServer(t, store)
 
@@ -208,6 +211,7 @@ func TestMeetingImportRejectsInvalidRequests(t *testing.T) {
 }
 
 func TestMeetingImportRejectsOversizedBody(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -226,6 +230,7 @@ func TestMeetingImportRejectsOversizedBody(t *testing.T) {
 }
 
 func TestMeetingImportReturnsUnavailableWithoutCapability(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -241,6 +246,7 @@ func TestMeetingImportReturnsUnavailableWithoutCapability(t *testing.T) {
 }
 
 func TestMeetingImportSanitizesInternalErrors(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -261,6 +267,7 @@ func TestMeetingImportSanitizesInternalErrors(t *testing.T) {
 }
 
 func TestMeetingImportOpenAPIDocument(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -306,6 +313,7 @@ func TestMeetingImportOpenAPIDocument(t *testing.T) {
 }
 
 func TestMeetingImportBodyLimitDoesNotReadPastBoundary(t *testing.T) {
+	t.Parallel()
 	store := &fakeMeetingImportStore{mockStore: &mockStore{stats: &StoreStats{}}}
 	srv := newMeetingImportTestServer(t, store)
 	body := bytes.NewReader(bytes.Repeat([]byte("x"), int(meetingimport.MaxRequestBytes)+1))
@@ -320,6 +328,7 @@ func TestMeetingImportBodyLimitDoesNotReadPastBoundary(t *testing.T) {
 }
 
 func TestMeetingImportReadsBodyBeforeWaitingOnOperationGate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	const ordinaryReadTimeout = 100 * time.Millisecond
@@ -397,7 +406,7 @@ func TestMeetingImportReadsBodyBeforeWaitingOnOperationGate(t *testing.T) {
 	assert.Equal(1, store.calls)
 }
 
-func TestMeetingImportValidatesBodyBeforeWaitingOnOperationGate(t *testing.T) {
+func TestMeetingImportValidatesBodyBeforeWaitingOnOperationGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	require := require.New(t)
 
 	oldLimit := operationGateWaitLimit
@@ -425,7 +434,7 @@ func TestMeetingImportValidatesBodyBeforeWaitingOnOperationGate(t *testing.T) {
 	require.False(gate.HasRequestWaiters(), "invalid body must not queue on the mutation gate")
 }
 
-func TestMeetingImportReturnsBusyWithinBoundAfterValidation(t *testing.T) {
+func TestMeetingImportReturnsBusyWithinBoundAfterValidation(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -459,7 +468,7 @@ func TestMeetingImportReturnsBusyWithinBoundAfterValidation(t *testing.T) {
 	assert.Equal(0, store.calls)
 }
 
-func TestMeetingImportUnavailableDoesNotWaitOnOperationGate(t *testing.T) {
+func TestMeetingImportUnavailableDoesNotWaitOnOperationGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	require := require.New(t)
 
 	oldLimit := operationGateWaitLimit

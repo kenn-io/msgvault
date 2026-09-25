@@ -62,6 +62,7 @@ func (g *recordingOperationGate) counts() (int, int) {
 }
 
 func TestOperationGateMiddlewareSkipsReadMethods(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodOptions} {
 		t.Run(method, func(t *testing.T) {
 			assert := assert.New(t)
@@ -86,6 +87,7 @@ func TestOperationGateMiddlewareSkipsReadMethods(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareBypassesUnauthenticatedRequests(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	gate := &recordingOperationGate{allow: false}
@@ -117,6 +119,7 @@ func TestOperationGateMiddlewareBypassesUnauthenticatedRequests(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareGatesMutatingMethods(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
 			gate := &recordingOperationGate{allow: true}
@@ -137,6 +140,7 @@ func TestOperationGateMiddlewareGatesMutatingMethods(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareSkipsUnauthorizedDelegatedCLIRun(t *testing.T) {
+	t.Parallel()
 	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}}
 	for _, tc := range []struct {
 		name    string
@@ -172,6 +176,7 @@ func TestOperationGateMiddlewareSkipsUnauthorizedDelegatedCLIRun(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareSkipsDaemonShutdown(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	gate := &recordingOperationGate{allow: true}
@@ -192,6 +197,7 @@ func TestOperationGateMiddlewareSkipsDaemonShutdown(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareSkipsLogCLIRunAndRestoresBody(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: false}
 	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -215,6 +221,7 @@ func TestOperationGateMiddlewareSkipsLogCLIRunAndRestoresBody(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareRejectsOversizedCLIRunInspectionBody(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: false}
 	handlerCalled := false
@@ -241,6 +248,7 @@ func TestOperationGateMiddlewareRejectsOversizedCLIRunInspectionBody(t *testing.
 }
 
 func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: true}
 	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -258,6 +266,7 @@ func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareStillGatesMutatingDocumentCommands(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		body string
@@ -287,6 +296,7 @@ func TestOperationGateMiddlewareStillGatesMutatingDocumentCommands(t *testing.T)
 }
 
 func TestOperationGateMiddlewareGatesMessageExport(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: true}
 	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -308,6 +318,7 @@ func TestOperationGateMiddlewareGatesMessageExport(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareRejectsUnavailableGate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	gate := &recordingOperationGate{allow: false}
@@ -334,6 +345,7 @@ func TestOperationGateMiddlewareRejectsUnavailableGate(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareStopsWaitingWhenRequestContextCancels(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	gate := NewSerialOperationGate()
@@ -394,6 +406,7 @@ func waitForParkedContext(t *testing.T, parked <-chan struct{}, work string) {
 }
 
 func TestServerEmbeddingsOptimizeHoldsOperationGateUntilRunnerReturns(t *testing.T) {
+	t.Parallel()
 	for _, ending := range []string{"complete", "cancel"} {
 		t.Run(ending, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -469,6 +482,7 @@ func TestServerEmbeddingsOptimizeHoldsOperationGateUntilRunnerReturns(t *testing
 }
 
 func TestServerBackgroundOperationGateStopsWhenContextCancelsBehindRequest(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -526,6 +540,7 @@ func TestServerBackgroundOperationGateStopsWhenContextCancelsBehindRequest(t *te
 }
 
 func TestServerBackgroundOperationGateStopsWhenDrainStartsBehindRequest(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		startDrain func(*SerialOperationGate) <-chan error
@@ -614,6 +629,7 @@ func TestServerBackgroundOperationGateStopsWhenDrainStartsBehindRequest(t *testi
 }
 
 func TestSerialOperationGateDrainRejectsQueuedWorkAndWaitsForActive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	gate := NewSerialOperationGate()
@@ -671,6 +687,7 @@ func TestSerialOperationGateDrainRejectsQueuedWorkAndWaitsForActive(t *testing.T
 }
 
 func TestServerOperationGateWrapsMutatingRequests(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: true}
@@ -696,6 +713,7 @@ func TestServerOperationGateWrapsMutatingRequests(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		body string
@@ -729,6 +747,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareSkipsSelfGatedCLIRunCommands(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: false}
 	called := false
@@ -748,6 +767,7 @@ func TestOperationGateMiddlewareSkipsSelfGatedCLIRunCommands(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareSkipsReadOnlyPaths(t *testing.T) {
+	t.Parallel()
 	paths := []string{
 		"/api/v1/query",
 		"/api/v1/cli/add-calendar/plan",
@@ -777,6 +797,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyPaths(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
+	t.Parallel()
 	paths := []string{
 		"/api/v1/explore",
 		"/api/v1/explore/groups",
@@ -821,7 +842,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 	}
 }
 
-func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.T) {
+func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -856,6 +877,7 @@ func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.
 // are the pinned non-Exploration entries. They must remain registered POST routes for
 // their table entries to stay valid.
 func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	doc := OpenAPIDocument()
 	remoteImage := doc.Paths[remoteImagePath]
@@ -983,7 +1005,7 @@ func (s *gateFilesStore) GetFileMetadataBatch(context.Context, []int64) (map[int
 // long operation holds the gate, representative analytical endpoints must
 // answer immediately instead of returning operation_in_progress, and a
 // mutating POST must still be turned away naming the holder.
-func TestServerReadOnlyAnalyticalPostsBypassHeldOperationGate(t *testing.T) {
+func TestServerReadOnlyAnalyticalPostsBypassHeldOperationGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1038,6 +1060,7 @@ func TestServerReadOnlyAnalyticalPostsBypassHeldOperationGate(t *testing.T) {
 }
 
 func TestServerParticipantInboxesBypassesHeldOperationGate(t *testing.T) {
+	t.Parallel()
 	gate := NewSerialOperationGate()
 	release, ok := gate.BeginLabeledWorkContext(context.Background(), "msgvault embeddings build")
 	require.True(t, ok, "occupy gate")
@@ -1057,7 +1080,7 @@ func TestServerParticipantInboxesBypassesHeldOperationGate(t *testing.T) {
 	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
 }
 
-func TestOperationGateMiddlewareNamesHolderWhenBusy(t *testing.T) {
+func TestOperationGateMiddlewareNamesHolderWhenBusy(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1085,6 +1108,7 @@ func TestOperationGateMiddlewareNamesHolderWhenBusy(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareReportsShutdownWhenDraining(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1105,6 +1129,7 @@ func TestOperationGateMiddlewareReportsShutdownWhenDraining(t *testing.T) {
 }
 
 func TestSerialOperationGateHolderTracksLabel(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1125,6 +1150,7 @@ func TestSerialOperationGateHolderTracksLabel(t *testing.T) {
 }
 
 func TestSerialOperationGateCountsRequestWaiters(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -1155,6 +1181,7 @@ func TestSerialOperationGateCountsRequestWaiters(t *testing.T) {
 }
 
 func TestSerialOperationGatePrioritizesQueuedRequestOverBackgroundWork(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 
@@ -1241,6 +1268,7 @@ func TestSerialOperationGatePrioritizesQueuedRequestOverBackgroundWork(t *testin
 }
 
 func TestBeginLabeledOperationGateWorkCountsAsRequestWaiter(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -1272,6 +1300,7 @@ func TestBeginLabeledOperationGateWorkCountsAsRequestWaiter(t *testing.T) {
 }
 
 func TestCLIRunEnvAllowedPermitsConfiguredAPIKeyEnv(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	srv := &Server{cfg: &config.Config{}}
 	srv.cfg.Vector.Embeddings.APIKeyEnv = "MSGVAULT_EMBED_API_KEY"
@@ -1316,6 +1345,7 @@ func newOperationHealthTestServer(gate OperationGate) *Server {
 }
 
 func TestHealthReportsActiveOperation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	gate := NewSerialOperationGate()
@@ -1339,6 +1369,7 @@ func TestHealthReportsActiveOperation(t *testing.T) {
 }
 
 func TestAuthenticatedHealthReportsActiveOperationDetails(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	gate := NewSerialOperationGate()
@@ -1367,6 +1398,7 @@ func TestAuthenticatedHealthReportsActiveOperationDetails(t *testing.T) {
 }
 
 func TestHealthLabelsUnlabeledGateHolder(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	gate := NewSerialOperationGate()
 	srv := newOperationHealthTestServer(gate)
@@ -1383,6 +1415,7 @@ func TestHealthLabelsUnlabeledGateHolder(t *testing.T) {
 }
 
 func TestHealthOmitsOperationWhenGateIdle(t *testing.T) {
+	t.Parallel()
 	srv := newOperationHealthTestServer(NewSerialOperationGate())
 
 	body := healthResponseForServer(t, srv)
@@ -1393,6 +1426,7 @@ func TestHealthOmitsOperationWhenGateIdle(t *testing.T) {
 // activity (which can carry live progress) wins over the gate holder's static
 // label, and that health falls back to the gate label once the activity ends.
 func TestOperationHealthPrefersActivityOverGateLabel(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	gate := NewSerialOperationGate()
@@ -1420,6 +1454,7 @@ func TestOperationHealthPrefersActivityOverGateLabel(t *testing.T) {
 // share one label (first begin wins, last end clears) and that calling an end
 // func twice does not clear a newer activity.
 func TestBeginActivityNestingAndIdempotentEnd(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	srv := newOperationHealthTestServer(nil)
 

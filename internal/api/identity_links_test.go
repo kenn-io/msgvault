@@ -101,6 +101,7 @@ func decodeIdentityLinkResponse(t *testing.T, w *httptest.ResponseRecorder) Iden
 }
 
 func TestLinkIdentity_CreatesEdgeAndReportsReadyCache(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -117,6 +118,7 @@ func TestLinkIdentity_CreatesEdgeAndReportsReadyCache(t *testing.T) {
 }
 
 func TestLinkIdentity_RepeatedExactEdgeIsIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -136,6 +138,7 @@ func TestLinkIdentity_RepeatedExactEdgeIsIdempotent(t *testing.T) {
 }
 
 func TestLinkIdentity_IndirectEdgeConflict(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -157,6 +160,7 @@ func TestLinkIdentity_IndirectEdgeConflict(t *testing.T) {
 }
 
 func TestLinkIdentityAcrossPersonsReturnsPersonMergeRequired(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
@@ -189,6 +193,7 @@ func TestLinkIdentityAcrossPersonsReturnsPersonMergeRequired(t *testing.T) {
 }
 
 func TestLinkIdentityMalformedPersonConflictKeepsGenericResponse(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv := newFailingIdentityLinkTestServer(t, &store.PersonBindingConflictError{
@@ -232,6 +237,7 @@ func assertPersonMergeRequiredResponse(
 }
 
 func TestLinkIdentity_RefresherFailureReportsStaleWithoutFailingRequest(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -248,6 +254,7 @@ func TestLinkIdentity_RefresherFailureReportsStaleWithoutFailingRequest(t *testi
 }
 
 func TestLinkIdentity_InvalidParticipantIDs(t *testing.T) {
+	t.Parallel()
 	srv, wrapped := newIdentityLinkTestServer(t)
 	a := wrapped.mustParticipant(t, "alice@example.com", "Alice", "example.com")
 
@@ -271,6 +278,7 @@ func TestLinkIdentity_InvalidParticipantIDs(t *testing.T) {
 // would be reported to the client as if they had sent a bad ID, leaking raw
 // driver text along the way.
 func TestLinkIdentity_StoreErrorMapsTo500(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv := newFailingIdentityLinkTestServer(t, errors.New("database is locked"))
@@ -287,6 +295,7 @@ func TestLinkIdentity_StoreErrorMapsTo500(t *testing.T) {
 // TestUnlinkIdentity_StoreErrorMapsTo500 mirrors
 // TestLinkIdentity_StoreErrorMapsTo500 for the unlink path.
 func TestUnlinkIdentity_StoreErrorMapsTo500(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv := newFailingIdentityLinkTestServer(t, errors.New("database is locked"))
@@ -300,6 +309,7 @@ func TestUnlinkIdentity_StoreErrorMapsTo500(t *testing.T) {
 }
 
 func TestUnlinkIdentity_RemovesEdgeAndBumpsRevision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -318,6 +328,7 @@ func TestUnlinkIdentity_RemovesEdgeAndBumpsRevision(t *testing.T) {
 }
 
 func TestUnlinkIdentity_RepeatedIsUnchanged(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, wrapped := newIdentityLinkTestServer(t)
@@ -346,6 +357,7 @@ func TestUnlinkIdentity_RepeatedIsUnchanged(t *testing.T) {
 // silently returned 200 (RowsAffected == 0 short-circuited to a no-op)
 // instead of 400, unlike the same IDs sent to /identity/links.
 func TestUnlinkIdentity_UnknownParticipantIsBadRequest(t *testing.T) {
+	t.Parallel()
 	srv, wrapped := newIdentityLinkTestServer(t)
 	a := wrapped.mustParticipant(t, "alice@example.com", "Alice", "example.com")
 

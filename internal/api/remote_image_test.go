@@ -100,6 +100,7 @@ func postRemoteImage(t *testing.T, srv *Server, target string) *httptest.Respons
 }
 
 func TestRemoteImageRejectsProhibitedTargetsBeforeAnyNetworkUse(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		url      string
@@ -157,6 +158,7 @@ func TestRemoteImageRejectsProhibitedTargetsBeforeAnyNetworkUse(t *testing.T) {
 }
 
 func TestRemoteImageRejectsMissingOrInvalidBody(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		body     string
@@ -191,6 +193,7 @@ func TestRemoteImageRejectsMissingOrInvalidBody(t *testing.T) {
 // via <img> or navigation as a CSRF-safe method with ambient session
 // cookies attached.
 func TestRemoteImageGetIsNotServed(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	seams := &remoteImageSeams{answers: map[string][]netip.Addr{
 		"images.example": {netip.MustParseAddr("203.0.113.7")},
@@ -213,6 +216,7 @@ func TestRemoteImageGetIsNotServed(t *testing.T) {
 // origin/CSRF middleware before the fetcher is reached, while a well-formed
 // same-origin POST with the session's CSRF token still proxies the image.
 func TestRemoteImageSessionCSRFEnforcement(t *testing.T) {
+	t.Parallel()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		_, _ = w.Write(fakePNG)
@@ -295,6 +299,7 @@ func TestRemoteImageSessionCSRFEnforcement(t *testing.T) {
 // include a private address. Every A/AAAA answer is validated, so a single
 // private answer rejects the fetch before any dial.
 func TestRemoteImageRejectsRebindingResolution(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		answers []netip.Addr
@@ -334,6 +339,7 @@ func TestRemoteImageRejectsRebindingResolution(t *testing.T) {
 // the local-use space, where the layout is unknown and the whole /48 is
 // rejected.
 func TestProhibitedRemoteIPTranslatedIPv4(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		addr string
@@ -363,6 +369,7 @@ func TestProhibitedRemoteIPTranslatedIPv4(t *testing.T) {
 // destination is private, reaching the LAN through the translator. Every
 // such answer must be rejected before any dial.
 func TestRemoteImageRejectsTranslatedPrivateResolution(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		answer string
@@ -391,6 +398,7 @@ func TestRemoteImageRejectsTranslatedPrivateResolution(t *testing.T) {
 }
 
 func TestRemoteImageHappyPathPinsValidatedAddress(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -421,6 +429,7 @@ func TestRemoteImageHappyPathPinsValidatedAddress(t *testing.T) {
 }
 
 func TestRemoteImageRedirectToPrivateTargetIsRejected(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Location", "http://internal-service.example/secret.png")
@@ -450,6 +459,7 @@ func TestRemoteImageRedirectToPrivateTargetIsRejected(t *testing.T) {
 // NAT64 address embedding a private IPv4 destination and must be rejected
 // without a second dial.
 func TestRemoteImageRedirectToNAT64PrivateTargetIsRejected(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Location", "http://nat64-gateway.example/secret.png")
@@ -475,6 +485,7 @@ func TestRemoteImageRedirectToNAT64PrivateTargetIsRejected(t *testing.T) {
 }
 
 func TestRemoteImageRedirectToPrivateLiteralIsRejected(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Location", "http://169.254.169.254/latest/meta-data")
@@ -496,6 +507,7 @@ func TestRemoteImageRedirectToPrivateLiteralIsRejected(t *testing.T) {
 }
 
 func TestRemoteImageRedirectChainIsCapped(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Location", "http://images.example"+r.URL.Path+"x")
@@ -518,6 +530,7 @@ func TestRemoteImageRedirectChainIsCapped(t *testing.T) {
 }
 
 func TestRemoteImageRejectsNonImageContent(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		contentType string
@@ -557,6 +570,7 @@ func TestRemoteImageRejectsNonImageContent(t *testing.T) {
 }
 
 func TestRemoteImageEnforcesByteCapWhileStreaming(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
@@ -578,6 +592,7 @@ func TestRemoteImageEnforcesByteCapWhileStreaming(t *testing.T) {
 }
 
 func TestRemoteImageUpstreamErrorStatus(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "gone", http.StatusNotFound)
@@ -598,6 +613,7 @@ func TestRemoteImageUpstreamErrorStatus(t *testing.T) {
 }
 
 func TestRemoteImageRequiresAuthentication(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	const key = "remote-image-test-key"
 	srv := NewServer(

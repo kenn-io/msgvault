@@ -37,6 +37,7 @@ func (e *fakePersonSearchEngine) Search(
 }
 
 func TestPersonProfileHTTPPromoteListGetUpdateAndConflictingLink(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -102,6 +103,7 @@ func TestPersonProfileHTTPPromoteListGetUpdateAndConflictingLink(t *testing.T) {
 }
 
 func TestDirectoryPeopleHTTPReturnsNoStorePage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
 	participant := st.mustParticipant(t, "alice@example.test", "Alice Example", "example.test")
@@ -122,6 +124,7 @@ func TestDirectoryPeopleHTTPReturnsNoStorePage(t *testing.T) {
 }
 
 func TestDirectoryPeopleHTTPMapsEveryQueryParameter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
 	alice := createDirectoryHTTPPerson(t, st, "Alice Example", "alice@example.test", "friend", "Acme", true)
@@ -157,6 +160,7 @@ func TestDirectoryPeopleHTTPMapsEveryQueryParameter(t *testing.T) {
 }
 
 func TestDirectoryPeopleHTTPFiltersSortsAndReturnsLastContact(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -203,6 +207,7 @@ func TestDirectoryPeopleHTTPFiltersSortsAndReturnsLastContact(t *testing.T) {
 }
 
 func TestDirectoryPeopleHTTPRejectsInvalidLastContactQuery(t *testing.T) {
+	t.Parallel()
 	srv, _ := newIdentityLinkTestServer(t)
 	for _, test := range []struct {
 		path string
@@ -219,6 +224,7 @@ func TestDirectoryPeopleHTTPRejectsInvalidLastContactQuery(t *testing.T) {
 }
 
 func TestDirectoryPeopleHTTPRejectsInvalidParametersAndStaleProjection(t *testing.T) {
+	t.Parallel()
 	srv, _ := newIdentityLinkTestServer(t)
 	for _, tc := range []struct {
 		name string
@@ -246,6 +252,7 @@ func TestDirectoryPeopleHTTPRejectsInvalidParametersAndStaleProjection(t *testin
 }
 
 func TestDirectoryPeopleHTTPAcceptsEveryPublishedContactState(t *testing.T) {
+	t.Parallel()
 	srv, _ := newIdentityLinkTestServer(t)
 	for _, state := range []string{"", "active", "inactive"} {
 		path := peoplePath + "/directory"
@@ -331,6 +338,7 @@ func directoryHTTPPersonIDs(people []store.DirectoryPersonSummary) []int64 {
 }
 
 func TestDirectoryPeopleHTTPAlwaysEmitsArrays(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -356,6 +364,7 @@ func TestDirectoryPeopleHTTPAlwaysEmitsArrays(t *testing.T) {
 }
 
 func TestListPeopleHTTPEncodesNilSliceAsArray(t *testing.T) {
+	t.Parallel()
 	srv, _ := newIdentityLinkTestServer(t)
 	response := personRequest(t, srv, http.MethodGet, peoplePath, nil, "")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
@@ -370,6 +379,7 @@ func assertDirectoryPeopleError(t *testing.T, response *httptest.ResponseRecorde
 }
 
 func TestPersonProfileHTTPDelete(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
@@ -397,6 +407,7 @@ func TestPersonProfileHTTPDelete(t *testing.T) {
 }
 
 func TestPersonProfileHTTPDeleteReportsConflicts(t *testing.T) {
+	t.Parallel()
 	srv, _ := newIdentityLinkTestServer(t)
 	for _, test := range []struct {
 		name string
@@ -416,6 +427,7 @@ func TestPersonProfileHTTPDeleteReportsConflicts(t *testing.T) {
 }
 
 func TestPersonPatchSchemaRequiresNullableDisplayName(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
@@ -428,6 +440,7 @@ func TestPersonPatchSchemaRequiresNullableDisplayName(t *testing.T) {
 }
 
 func TestSemanticPersonSearchReturnsRankedDurableRootsWithScores(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	firstName := "Synthetic Architect"
@@ -462,6 +475,7 @@ func TestSemanticPersonSearchReturnsRankedDurableRootsWithScores(t *testing.T) {
 }
 
 func TestSemanticPersonSearchReturnsEmptyArrayAndPassesExplicitLimit(t *testing.T) {
+	t.Parallel()
 	engine := &fakePersonSearchEngine{results: []personsearch.Result{}}
 	srv := newSemanticPersonSearchServer(t, engine, VectorStatusReady, "")
 
@@ -473,6 +487,7 @@ func TestSemanticPersonSearchReturnsEmptyArrayAndPassesExplicitLimit(t *testing.
 }
 
 func TestSemanticPersonSearchValidatesQueryAndLimit(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		body string
@@ -493,6 +508,7 @@ func TestSemanticPersonSearchValidatesQueryAndLimit(t *testing.T) {
 }
 
 func TestSemanticPersonSearchRequiresAuthenticationAndNeverCaches(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	const apiKey = "person-search-test-key"
 	engine := &fakePersonSearchEngine{results: []personsearch.Result{}}
@@ -511,6 +527,7 @@ func TestSemanticPersonSearchRequiresAuthenticationAndNeverCaches(t *testing.T) 
 }
 
 func TestSemanticPersonSearchReportsEveryVectorStatusState(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		status    VectorStatus
@@ -546,6 +563,7 @@ func TestSemanticPersonSearchReportsEveryVectorStatusState(t *testing.T) {
 }
 
 func TestSemanticPersonSearchClearsCachedStaleStatusBeforeServing(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	cfg := vector.Config{}
@@ -573,6 +591,7 @@ func TestSemanticPersonSearchClearsCachedStaleStatusBeforeServing(t *testing.T) 
 }
 
 func TestSemanticPersonSearchMapsGenerationAndEmbeddingErrors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		err         error

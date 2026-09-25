@@ -19,6 +19,7 @@ import (
 )
 
 func TestOrganizationHTTPCreateGetListPatchAndDelete(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -79,6 +80,7 @@ func TestOrganizationHTTPCreateGetListPatchAndDelete(t *testing.T) {
 }
 
 func TestOrganizationHTTPRejectsInvalidRequests(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -111,6 +113,7 @@ func TestOrganizationHTTPRejectsInvalidRequests(t *testing.T) {
 }
 
 func TestOrganizationHTTPRejectsInvalidProfileValues(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -130,6 +133,7 @@ func TestOrganizationHTTPRejectsInvalidProfileValues(t *testing.T) {
 }
 
 func TestOrganizationHTTPRejectsUnknownProfileIdentifierKind(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -149,6 +153,7 @@ func TestOrganizationHTTPRejectsUnknownProfileIdentifierKind(t *testing.T) {
 }
 
 func TestOrganizationHTTPDeleteWithEmploymentReturnsConflict(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)
@@ -181,6 +186,7 @@ func TestOrganizationHTTPDeleteWithEmploymentReturnsConflict(t *testing.T) {
 }
 
 func TestOrganizationHTTPPatchReplacesFieldsAndLifecycleInOneRevision(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -204,6 +210,7 @@ func TestOrganizationHTTPPatchReplacesFieldsAndLifecycleInOneRevision(t *testing
 }
 
 func TestOrganizationHTTPPatchWithoutRetiredPreservesLifecycle(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -233,6 +240,7 @@ func TestOrganizationHTTPPatchWithoutRetiredPreservesLifecycle(t *testing.T) {
 }
 
 func TestOrganizationHTTPPatchRejectsMergedRowWithoutPartialFieldUpdate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)
@@ -259,6 +267,7 @@ func TestOrganizationHTTPPatchRejectsMergedRowWithoutPartialFieldUpdate(t *testi
 }
 
 func TestConcurrentOrganizationHTTPPatchesShareOneRevisionCAS(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -301,6 +310,7 @@ func TestConcurrentOrganizationHTTPPatchesShareOneRevisionCAS(t *testing.T) {
 }
 
 func TestOrganizationHTTPProfileReplacementAndHistory(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -346,6 +356,7 @@ func TestOrganizationHTTPProfileReplacementAndHistory(t *testing.T) {
 }
 
 func TestOrganizationHTTPMergeMovesEmploymentAndBumpsBothRevisions(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)
@@ -392,6 +403,7 @@ func TestOrganizationHTTPMergeMovesEmploymentAndBumpsBothRevisions(t *testing.T)
 }
 
 func TestOrganizationHTTPAttributesListAndSet(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)
@@ -424,6 +436,7 @@ func TestOrganizationHTTPAttributesListAndSet(t *testing.T) {
 }
 
 func TestOrganizationHTTPAttributeClearSupportsCASOrdinalAndDryRun(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)
@@ -470,6 +483,7 @@ func TestOrganizationHTTPAttributeClearSupportsCASOrdinalAndDryRun(t *testing.T)
 }
 
 func TestOrganizationHTTPProfileAcceptsInlineMediaBeyondGenericRequestLimit(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -497,6 +511,7 @@ func TestOrganizationHTTPProfileAcceptsInlineMediaBeyondGenericRequestLimit(t *t
 }
 
 func TestOrganizationHTTPProfileRejectsTooManyValues(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -525,6 +540,7 @@ func TestOrganizationHTTPProfileRejectsTooManyValues(t *testing.T) {
 }
 
 func TestOrganizationHTTPProfilePutRoundTripsEnvelopeMetadata(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -588,6 +604,7 @@ func TestOrganizationHTTPProfilePutRoundTripsEnvelopeMetadata(t *testing.T) {
 }
 
 func TestOrganizationHTTPProfilePutRetainsSourceResourceUID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)
@@ -639,6 +656,7 @@ func TestOrganizationHTTPProfilePutRetainsSourceResourceUID(t *testing.T) {
 }
 
 func TestOrganizationHTTPProfileMediaContentRoundTrip(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -700,6 +718,7 @@ func TestOrganizationHTTPProfileMediaContentRoundTrip(t *testing.T) {
 }
 
 func TestOrganizationHTTPProfilePutRetainsInlineMediaViaContentHash(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -775,6 +794,7 @@ func TestOrganizationHTTPProfilePutRetainsInlineMediaViaContentHash(t *testing.T
 }
 
 func TestOrganizationHTTPProfilePutEditsInlineMediaMetadataViaContentHash(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -831,6 +851,7 @@ func TestOrganizationHTTPProfilePutEditsInlineMediaMetadataViaContentHash(t *tes
 }
 
 func TestOrganizationHTTPProfilePutRetainsInlineOnlyMediaWithoutURI(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv := newOrganizationTestServer(t)
@@ -889,6 +910,7 @@ func TestOrganizationHTTPProfilePutRetainsInlineOnlyMediaWithoutURI(t *testing.T
 }
 
 func TestOrganizationHTTPAttributeSetForwardsTemporalFields(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)

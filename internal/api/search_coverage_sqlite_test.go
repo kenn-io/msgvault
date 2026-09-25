@@ -23,6 +23,7 @@ import (
 )
 
 func TestHandleSearchReportsAcceleratorPath(t *testing.T) {
+	t.Parallel()
 	vectorCfg := vector.Config{
 		Enabled:    true,
 		Embeddings: vector.EmbeddingsConfig{Model: "test-model", Dimension: 2, MaxInputChars: 1000},
@@ -45,6 +46,7 @@ func TestHandleSearchReportsAcceleratorPath(t *testing.T) {
 }
 
 func TestSearchCoverageRealGenerationStateMatrix(t *testing.T) {
+	t.Parallel()
 	vectorCfg := vector.Config{
 		Enabled: true,
 		Embeddings: vector.EmbeddingsConfig{

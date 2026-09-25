@@ -14,6 +14,7 @@ import (
 const operationTestArchive = "archive-fixture-01"
 
 func TestOperationCursorQueryParsesDefaultsAndNormalizedFilters(t *testing.T) {
+	t.Parallel()
 	codec := newOperationTokenCodec(operationTokenTestStore(t))
 	startedFrom := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	startedBefore := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -54,6 +55,7 @@ func TestOperationCursorQueryParsesDefaultsAndNormalizedFilters(t *testing.T) {
 }
 
 func TestOperationCursorQueryRejectsDuplicateUnknownAndNoncanonicalParameters(t *testing.T) {
+	t.Parallel()
 	codec := newOperationTokenCodec(operationTokenTestStore(t))
 	tests := []struct {
 		name     string
@@ -88,6 +90,7 @@ func TestOperationCursorQueryRejectsDuplicateUnknownAndNoncanonicalParameters(t 
 }
 
 func TestOperationCursorQueryExcludesLimitAndBindsCompleteNormalizedFilters(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	codec := newOperationTokenCodec(operationTokenTestStore(t))

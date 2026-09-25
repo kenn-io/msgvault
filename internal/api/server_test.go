@@ -76,6 +76,7 @@ func (*participantFilterTextEngine) GetTextStats(context.Context, query.TextStat
 // the text engine and malformed or non-positive IDs are rejected at the HTTP
 // boundary rather than widening the conversation scope.
 func TestTextConversationsParticipantIDs(t *testing.T) {
+	t.Parallel()
 	engine := &participantFilterTextEngine{MockEngine: &querytest.MockEngine{}}
 	srv := newTestServerWithEngine(t, engine)
 
@@ -96,6 +97,7 @@ func TestTextConversationsParticipantIDs(t *testing.T) {
 }
 
 func TestTextConversationMessagesPassesScopedSearchQuery(t *testing.T) {
+	t.Parallel()
 	engine := &participantFilterTextEngine{MockEngine: &querytest.MockEngine{}}
 	srv := newTestServerWithEngine(t, engine)
 
@@ -137,6 +139,7 @@ func (b *syncBuffer) String() string {
 // overruns the in-progress threshold emits a repeating WARN carrying the
 // request id, and that the watcher goroutine does not fire for fast requests.
 func TestLoggerMiddlewareLogsInProgressRequest(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -186,6 +189,7 @@ func TestLoggerMiddlewareLogsInProgressRequest(t *testing.T) {
 }
 
 func TestPprofEndpointLoopbackOnly(t *testing.T) {
+	t.Parallel()
 	srv, _ := newTestServerWithMockStore(t)
 
 	cases := []struct {
@@ -213,6 +217,7 @@ func TestPprofEndpointLoopbackOnly(t *testing.T) {
 // arrives as loopback (e.g. forwarded by a local TLS terminator) must not read
 // profiles; only a request carrying the valid key is served.
 func TestPprofEndpointRequiresAuthWhenKeyConfigured(t *testing.T) {
+	t.Parallel()
 	const key = "secret-key"
 	srv := NewServer(
 		&config.Config{Server: config.ServerConfig{APIKey: key}},
@@ -813,6 +818,7 @@ func (m *mockStore) SaveCLIDeletionManifest(ctx context.Context, manifest *delet
 }
 
 func TestHealthEndpoint(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
 	}
@@ -833,6 +839,7 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestHealthEndpoint_HEAD(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
 	}
@@ -848,6 +855,7 @@ func TestHealthEndpoint_HEAD(t *testing.T) {
 }
 
 func TestDaemonPingEndpoint(t *testing.T) {
+	t.Parallel()
 	assert := assert.
 		New(t)
 
@@ -876,6 +884,7 @@ func TestDaemonPingEndpoint(t *testing.T) {
 }
 
 func TestDaemonShutdownEndpointRequiresRuntimeToken(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -914,6 +923,7 @@ func TestDaemonShutdownEndpointRequiresRuntimeToken(t *testing.T) {
 }
 
 func TestDaemonIdentityEndpointProvesRuntimeSecretWithoutReceivingIt(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	challenge, err := daemonauth.NewChallenge()
@@ -945,6 +955,7 @@ func TestDaemonIdentityEndpointProvesRuntimeSecretWithoutReceivingIt(t *testing.
 }
 
 func TestAuthMiddleware(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		Server: config.ServerConfig{
 			APIPort: 8080,
@@ -986,6 +997,7 @@ func TestAuthMiddleware(t *testing.T) {
 }
 
 func TestAuthMiddlewareNoKeyConfigured(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		Server: config.ServerConfig{
 			APIPort: 8080,
@@ -1005,6 +1017,7 @@ func TestAuthMiddlewareNoKeyConfigured(t *testing.T) {
 }
 
 func TestSchedulerStatusEndpoint(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
@@ -1037,6 +1050,7 @@ func TestSchedulerStatusEndpoint(t *testing.T) {
 }
 
 func TestSchedulerStatusNotRunning(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
 	}
@@ -1057,6 +1071,7 @@ func TestSchedulerStatusNotRunning(t *testing.T) {
 }
 
 func TestListAccountsEndpoint(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
 		Accounts: []config.AccountSchedule{
@@ -1082,6 +1097,7 @@ func TestListAccountsEndpoint(t *testing.T) {
 }
 
 func TestNilStoreReturns503(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
 	}
@@ -1108,6 +1124,7 @@ func TestNilStoreReturns503(t *testing.T) {
 }
 
 func TestNilSchedulerReturns503(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
 	}
@@ -1134,6 +1151,7 @@ func TestNilSchedulerReturns503(t *testing.T) {
 }
 
 func TestSecurityValidation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		cfg       config.ServerConfig
@@ -1164,6 +1182,7 @@ func TestSecurityValidation(t *testing.T) {
 }
 
 func TestCORSFromConfig(t *testing.T) {
+	t.Parallel()
 	assert := assert.
 		New(t)
 
@@ -1203,6 +1222,7 @@ func TestCORSFromConfig(t *testing.T) {
 }
 
 func TestCORSDisabledByDefault(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
 	}
@@ -1238,6 +1258,7 @@ func (w *deadlineClearingRecorder) SetWriteDeadline(deadline time.Time) error {
 }
 
 func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
+	t.Parallel()
 	const apiKey = "deadline-policy-test-key"
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{
@@ -1303,15 +1324,15 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			recorder := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
+			started := time.Now()
 			handler.ServeHTTP(recorder, tt.request)
+			finished := time.Now()
 			if tt.wantReadClear {
 				require.Len(recorder.readDeadlines, 1, "read deadline changes")
 				assert.True(recorder.readDeadlines[0].IsZero(), "read deadline cleared, not extended")
 			} else if tt.wantReadDeadline {
 				require.Len(recorder.readDeadlines, 1, "read deadline changes")
-				remaining := time.Until(recorder.readDeadlines[0])
-				assert.Greater(remaining, DaemonLongRequestTimeout-time.Second)
-				assert.LessOrEqual(remaining, DaemonLongRequestTimeout)
+				assertDeadlineWithin(t, recorder.readDeadlines[0], started, finished)
 			} else {
 				assert.Empty(recorder.readDeadlines, "request keeps the server read deadline")
 			}
@@ -1325,7 +1346,16 @@ func TestTimeoutMiddlewareDeadlinePolicy(t *testing.T) {
 	}
 }
 
+// assertDeadlineWithin checks a DaemonLongRequestTimeout deadline against clock readings taken around the request, so a scheduler pause cannot fail it.
+func assertDeadlineWithin(t *testing.T, deadline, started, finished time.Time) {
+	t.Helper()
+	const timeout = DaemonLongRequestTimeout
+	assert.False(t, deadline.Before(started.Add(timeout)), "deadline %v is earlier than %v after the request started at %v", deadline, timeout, started)
+	assert.False(t, deadline.After(finished.Add(timeout)), "deadline %v is later than %v after the request finished at %v", deadline, timeout, finished)
+}
+
 func TestCardDAVNetworkRoutesReceiveProtectiveDeadline(t *testing.T) {
+	t.Parallel()
 	srv := NewServerWithOptions(ServerOptions{
 		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Logger:         testLogger(),
@@ -1353,12 +1383,12 @@ func TestCardDAVNetworkRoutesReceiveProtectiveDeadline(t *testing.T) {
 				deadline, hasDeadline = r.Context().Deadline()
 			}))
 			recorder := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
+			started := time.Now()
 			handler.ServeHTTP(recorder, httptest.NewRequest(route.method, route.path, nil))
+			finished := time.Now()
 
 			require.True(hasDeadline, "network route receives a context deadline")
-			remaining := time.Until(deadline)
-			assert.Greater(remaining, DaemonLongRequestTimeout-time.Second)
-			assert.LessOrEqual(remaining, DaemonLongRequestTimeout)
+			assertDeadlineWithin(t, deadline, started, finished)
 			require.Len(recorder.readDeadlines, 1, "network route extends the server read deadline")
 			assert.Empty(recorder.writeDeadlines, "network route keeps the generous server write deadline")
 		})
@@ -1366,6 +1396,7 @@ func TestCardDAVNetworkRoutesReceiveProtectiveDeadline(t *testing.T) {
 }
 
 func TestCLIRequestDurationPolicy(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		apiKey      string
@@ -1479,6 +1510,7 @@ func TestCLIRequestDurationPolicy(t *testing.T) {
 }
 
 func TestCLIRepairMessageRouteParsesDedicatedRequestAndStreamsNDJSON(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	var got CLIRepairMessageRequest
 	store := &mockStore{repairMessageFunc: func(
@@ -1511,6 +1543,7 @@ func TestCLIRepairMessageRouteParsesDedicatedRequestAndStreamsNDJSON(t *testing.
 }
 
 func TestCLIRepairMessageRouteRejectsInvalidModeBeforeRunning(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		body string
@@ -1545,6 +1578,7 @@ func TestCLIRepairMessageRouteRejectsInvalidModeBeforeRunning(t *testing.T) {
 }
 
 func TestCLIRepairMessageRoutePropagatesCancellation(t *testing.T) {
+	t.Parallel()
 	started := make(chan struct{})
 	stopped := make(chan error, 1)
 	store := &mockStore{repairMessageFunc: func(
@@ -1573,6 +1607,7 @@ func TestCLIRepairMessageRoutePropagatesCancellation(t *testing.T) {
 }
 
 func TestCLIRepairMessageRepairWaitsForOperationGate(t *testing.T) {
+	t.Parallel()
 	gate := NewSerialOperationGate()
 	release, ok := gate.BeginWorkContext(t.Context())
 	require.True(t, ok)
@@ -1610,7 +1645,7 @@ func TestCLIRepairMessageRepairWaitsForOperationGate(t *testing.T) {
 	<-done
 }
 
-func TestCLIRepairMessageValidAuditBypassesOperationGateAndPreservesBody(t *testing.T) {
+func TestCLIRepairMessageValidAuditBypassesOperationGateAndPreservesBody(t *testing.T) { //nolint:paralleltest // expects the audit to reach the store inside a 250ms real-time window
 	assert := assert.New(t)
 	require := require.New(t)
 	gate := NewSerialOperationGate()
@@ -1654,6 +1689,7 @@ func TestCLIRepairMessageValidAuditBypassesOperationGateAndPreservesBody(t *test
 }
 
 func TestCLIRepairMessageInvalidAuditBodiesDoNotBypassOperationGate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		body string
@@ -1696,6 +1732,7 @@ func TestCLIRepairMessageInvalidAuditBodiesDoNotBypassOperationGate(t *testing.T
 }
 
 func TestCLIRepairMessageWholeArchiveAuditHasNoOrdinaryRequestDeadline(t *testing.T) {
+	t.Parallel()
 	deadline := make(chan bool, 1)
 	store := &mockStore{repairMessageFunc: func(
 		ctx context.Context, req CLIRepairMessageRequest, _ func(CLIRepairMessageEvent) error,
@@ -1721,6 +1758,7 @@ func TestCLIRepairMessageWholeArchiveAuditHasNoOrdinaryRequestDeadline(t *testin
 }
 
 func TestTimeoutMiddlewareMarkedRequestPreservesCallerCancellation(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 		// The timeout must be far beyond the test's cancel latency: this test
@@ -1766,6 +1804,7 @@ func TestTimeoutMiddlewareMarkedRequestPreservesCallerCancellation(t *testing.T)
 }
 
 func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {
+	t.Parallel()
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{
 			APIPort: 8080,
@@ -1811,22 +1850,20 @@ func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {
 
 			started := time.Now()
 			handler.ServeHTTP(recorder, req)
+			finished := time.Now()
 
 			require.True(hasDeadline, "protective route receives a context deadline")
-			remaining := time.Until(deadline)
-			assert.Greater(remaining, DaemonLongRequestTimeout-time.Second)
-			assert.LessOrEqual(remaining, DaemonLongRequestTimeout)
+			assertDeadlineWithin(t, deadline, started, finished)
 			assert.False(deadline.Before(started), "protective deadline is in the future")
 			require.Len(recorder.readDeadlines, 1, "protective route extends the server read deadline")
-			readRemaining := time.Until(recorder.readDeadlines[0])
-			assert.Greater(readRemaining, DaemonLongRequestTimeout-time.Second)
-			assert.LessOrEqual(readRemaining, DaemonLongRequestTimeout)
+			assertDeadlineWithin(t, recorder.readDeadlines[0], started, finished)
 			assert.Empty(recorder.writeDeadlines, "protective route keeps the server write deadline")
 		})
 	}
 }
 
 func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing.T) {
+	t.Parallel()
 	const ordinaryReadTimeout = 100 * time.Millisecond
 
 	srv := NewServerWithOptions(ServerOptions{
@@ -1949,6 +1986,7 @@ func (l *blockingAddrListener) Addr() net.Addr {
 }
 
 func TestServerWaitStartedHonorsCancellationAndReportsReadiness(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	base, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1999,6 +2037,7 @@ func TestServerWaitStartedHonorsCancellationAndReportsReadiness(t *testing.T) {
 }
 
 func TestServerWaitStartedReportsListenError(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(err, "reserve listener")

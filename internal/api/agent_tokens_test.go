@@ -23,6 +23,7 @@ import (
 // Grants issued against one in-memory registry are not visible in a fresh
 // registry (simulating a daemon restart).
 func TestAgentTokensDoNotSurviveRestart(t *testing.T) {
+	t.Parallel()
 	// First "instance": issue a grant.
 	_, reg1 := newAgentTokenTestServer(t)
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
@@ -49,6 +50,7 @@ func TestAgentTokensDoNotSurviveRestart(t *testing.T) {
 // which includes the operation label. When the gate is held, the two bodies
 // differ on Operation.Label: delegated sees none, owner sees the label.
 func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	gate := NewSerialOperationGate()
@@ -162,6 +164,7 @@ func newAgentTokenTestServer(t *testing.T) (*Server, *agentgrant.Registry) {
 // TestAgentTokenIssueRequiresOwnerKey verifies proof matrix row 15:
 // issue/list/revoke require owner API key; browser session and delegated get 401.
 func TestAgentTokenIssueRequiresOwnerKey(t *testing.T) {
+	t.Parallel()
 	srv, reg := newAgentTokenTestServer(t)
 
 	reqBody := agentTokenIssueRequest{
@@ -206,6 +209,7 @@ func TestAgentTokenIssueRequiresOwnerKey(t *testing.T) {
 }
 
 func TestIssueAgentTokenUsesEffectiveRequestOrigin(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	reg := agentgrant.NewRegistry()
@@ -251,6 +255,7 @@ func TestIssueAgentTokenUsesEffectiveRequestOrigin(t *testing.T) {
 
 // TestAgentTokenListRequiresOwnerKey verifies proof matrix row 15.
 func TestAgentTokenListRequiresOwnerKey(t *testing.T) {
+	t.Parallel()
 	srv, _ := newAgentTokenTestServer(t)
 
 	t.Run("no auth gets 401", func(t *testing.T) {
@@ -271,6 +276,7 @@ func TestAgentTokenListRequiresOwnerKey(t *testing.T) {
 
 // TestAgentTokenRevokeRequiresOwnerKey verifies proof matrix rows 15 and 16.
 func TestAgentTokenRevokeRequiresOwnerKey(t *testing.T) {
+	t.Parallel()
 	srv, _ := newAgentTokenTestServer(t)
 
 	t.Run("no auth gets 401", func(t *testing.T) {
@@ -292,6 +298,7 @@ func TestAgentTokenRevokeRequiresOwnerKey(t *testing.T) {
 // TestAgentTokenSecretNotInListResponse verifies proof matrix row 16:
 // secret appears once in issue response and never in list response.
 func TestAgentTokenSecretNotInListResponse(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, _ := newAgentTokenTestServer(t)
@@ -341,6 +348,7 @@ func TestAgentTokenSecretNotInListResponse(t *testing.T) {
 // revoked even during a multi-hour sync or import, and the revoked grant is
 // gone immediately.
 func TestAgentTokenRoutesExemptFromOperationGate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	gate := NewSerialOperationGate()
 	stub := &stubSourceStore{
@@ -423,6 +431,7 @@ func TestAgentTokenRoutesExemptFromOperationGate(t *testing.T) {
 // independently, but these tests pin the HTTP error contract (status + code)
 // documented in docs/cli-reference.md.
 func TestHandleIssueAgentTokenValidation(t *testing.T) {
+	t.Parallel()
 	validBody := agentTokenIssueRequest{
 		Label:       "test-agent",
 		Permissions: []string{string(agentgrant.PermissionDraftCreate)},
@@ -611,6 +620,7 @@ func TestHandleIssueAgentTokenValidation(t *testing.T) {
 // endpoints (POST /api/v1/agent-tokens, GET /api/v1/health,
 // DELETE /api/v1/agent-tokens/{id}).
 func TestRevocationDeniesSubsequentAuthentication(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, _ := newAgentTokenTestServer(t)
@@ -658,6 +668,7 @@ func TestRevocationDeniesSubsequentAuthentication(t *testing.T) {
 }
 
 func TestAgentTokenManagementDisabled(t *testing.T) {
+	t.Parallel()
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIKey: agentTokenTestAPIKey}},
 		Store:  &mockStore{}, Logger: testLogger(), Scheduler: newMockScheduler(),

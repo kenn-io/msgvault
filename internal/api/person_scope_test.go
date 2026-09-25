@@ -13,6 +13,7 @@ import (
 )
 
 func TestWritePersonScopeErrorMapsBindingConflict(t *testing.T) {
+	t.Parallel()
 	server, _ := newTestServerWithMockStore(t)
 	response := httptest.NewRecorder()
 
@@ -25,6 +26,7 @@ func TestWritePersonScopeErrorMapsBindingConflict(t *testing.T) {
 }
 
 func TestWritePersonScopeErrorMapsMissingPerson(t *testing.T) {
+	t.Parallel()
 	server, _ := newTestServerWithMockStore(t)
 	response := httptest.NewRecorder()
 
@@ -37,6 +39,7 @@ func TestWritePersonScopeErrorMapsMissingPerson(t *testing.T) {
 }
 
 func TestWritePersonScopeErrorReportsEmptyIdentityPopulation(t *testing.T) {
+	t.Parallel()
 	server, _ := newTestServerWithMockStore(t)
 	response := httptest.NewRecorder()
 
@@ -49,6 +52,7 @@ func TestWritePersonScopeErrorReportsEmptyIdentityPopulation(t *testing.T) {
 }
 
 func TestWritePersonScopeErrorPreservesStructuredContextErrors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		err  error

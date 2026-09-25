@@ -72,6 +72,7 @@ func ignoreNotExist(err error) error {
 // test is here so a change in the behaviour is a decision rather than an
 // accident.
 func TestChangesEndpoint_RestoringAnOlderSnapshotSilentlyDivergesTheConsumer(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t,
 		"a file-level snapshot and restore of the archive is a SQLite-only operation")
 	require := require.New(t)

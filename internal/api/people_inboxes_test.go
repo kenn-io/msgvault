@@ -40,6 +40,7 @@ func (e *participantInboxAPIEngine) ListPersonInboxes(_ context.Context, request
 }
 
 func TestParticipantInboxesResolveAliasAndReturnSourceRollups(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	aliasID := int64(22)
@@ -86,6 +87,7 @@ func TestParticipantInboxesResolveAliasAndReturnSourceRollups(t *testing.T) {
 }
 
 func TestParticipantInboxesValidationCapabilityAndMissingParticipant(t *testing.T) {
+	t.Parallel()
 	t.Run("invalid ID", func(t *testing.T) {
 		response := httptest.NewRecorder()
 		newTestServerWithEngine(t, &peopleAPIEngine{MockEngine: &querytest.MockEngine{}}).Router().ServeHTTP(
@@ -134,6 +136,7 @@ func TestParticipantInboxesValidationCapabilityAndMissingParticipant(t *testing.
 }
 
 func TestParticipantInboxesMapsCommittedCacheFailure(t *testing.T) {
+	t.Parallel()
 	engine := &participantInboxAPIEngine{
 		peopleAPIEngine: &peopleAPIEngine{
 			MockEngine: &querytest.MockEngine{}, person: &query.PersonSummary{ID: 7},

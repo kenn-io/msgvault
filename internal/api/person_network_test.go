@@ -13,6 +13,7 @@ import (
 )
 
 func TestPersonNetworkRouteReturnsProjection(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	srv, s := newPersonNetworkTestServer(t)
 	root := mustAPIPerson(t, s, "root@example.test", "Root")
@@ -40,6 +41,7 @@ func newPersonNetworkTestServer(t *testing.T) (*Server, *store.Store) {
 }
 
 func TestPersonNetworkRouteRejectsInvalidDepth(t *testing.T) {
+	t.Parallel()
 	srv, s := newPersonNetworkTestServer(t)
 	root := mustAPIPerson(t, s, "root@example.test", "Root")
 
@@ -50,6 +52,7 @@ func TestPersonNetworkRouteRejectsInvalidDepth(t *testing.T) {
 }
 
 func TestPersonNetworkRouteReturnsNotFoundForMissingRoot(t *testing.T) {
+	t.Parallel()
 	srv, _ := newPersonNetworkTestServer(t)
 
 	got := doRequest(t, srv.Router(), http.MethodGet, "/api/v1/people/999/network?depth=1", nil, nil)
@@ -58,6 +61,7 @@ func TestPersonNetworkRouteReturnsNotFoundForMissingRoot(t *testing.T) {
 }
 
 func TestPersonNetworkOpenAPIDocumentsDepthBounds(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {

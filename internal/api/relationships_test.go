@@ -244,6 +244,7 @@ func republishRelationshipsFixture(
 }
 
 func TestRelationshipsRanksAndGatesOverHTTP(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -272,6 +273,7 @@ func TestRelationshipsRanksAndGatesOverHTTP(t *testing.T) {
 }
 
 func TestRelationshipsResolvesSourceScopedIdentityBeforeRanking(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
@@ -327,6 +329,7 @@ func TestRelationshipsResolvesSourceScopedIdentityBeforeRanking(t *testing.T) {
 }
 
 func TestRelationshipsCursorConflictsOnRevisionDrift(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -374,6 +377,7 @@ func TestRelationshipsCursorConflictsOnRevisionDrift(t *testing.T) {
 // the committed cache state must still report identity_revision_changed,
 // not archive_revision_changed.
 func TestRelationshipsCursorReportsIdentityDriftDistinctlyFromArchiveDrift(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -401,6 +405,7 @@ func TestRelationshipsCursorReportsIdentityDriftDistinctlyFromArchiveDrift(t *te
 }
 
 func TestRelationshipsCursorConflictsOnAnchorDrift(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
@@ -455,6 +460,7 @@ func relationshipRowOf(t *testing.T, page RelationshipsHTTPResponse, canonicalID
 }
 
 func TestRelationshipsPaginationPinsDecayDateAcrossUTCMidnight(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -494,6 +500,7 @@ func TestRelationshipsPaginationPinsDecayDateAcrossUTCMidnight(t *testing.T) {
 }
 
 func TestRelationshipsCursorWithoutDecayDateFallsBackToCurrentDate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -523,6 +530,7 @@ func TestRelationshipsCursorWithoutDecayDateFallsBackToCurrentDate(t *testing.T)
 }
 
 func TestRelationshipsCursorRejectsInvalidDecayDate(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 10, 23, 58, 0, 0, time.UTC)
 	srv := newTestServerWithEngine(t, newRelationshipsDuckDBFixture(t, now))
 	srv.clock = func() time.Time { return now }
@@ -552,6 +560,7 @@ func TestRelationshipsCursorRejectsInvalidDecayDate(t *testing.T) {
 }
 
 func TestRelationshipsRejectsOutOfRangeLimit(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -564,6 +573,7 @@ func TestRelationshipsRejectsOutOfRangeLimit(t *testing.T) {
 }
 
 func TestRelationshipsUnavailableUnderNonAnalyzerEngine(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 

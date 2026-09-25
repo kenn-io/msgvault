@@ -332,6 +332,7 @@ func changedIDs(resp ChangesResponse) []int64 {
 // walked five at a time ends on a full page with nothing after it, and has_more
 // must say so.
 func TestChangesEndpoint_WalksEveryMessageExactlyOnce(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
@@ -381,6 +382,7 @@ func TestChangesEndpoint_WalksEveryMessageExactlyOnce(t *testing.T) {
 // TestChangesCursorRoundTripsSubSecondPrecision; what is checked here is the
 // position the server chose to publish, and that resending it moves the walk on.
 func TestChangesEndpoint_CursorRoundTripsFullPrecision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
@@ -413,6 +415,7 @@ func TestChangesEndpoint_CursorRoundTripsFullPrecision(t *testing.T) {
 // a change committing after a later transaction's watermark was already
 // returned is missed, and no cursor arithmetic here can recover it.
 func TestChangesEndpoint_ResumeFromEarlierCursorRedelivers(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
@@ -441,6 +444,7 @@ func TestChangesEndpoint_ResumeFromEarlierCursorRedelivers(t *testing.T) {
 // the store returns a zero ServerTime for a non-positive limit, so a handler
 // that forwarded its raw limit would publish "0001-01-01T00:00:00Z" here.
 func TestChangesEndpoint_EmptyArchiveReturnsEchoableCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, _ := newChangesServer(t)
@@ -473,6 +477,7 @@ func TestChangesEndpoint_EmptyArchiveReturnsEchoableCursor(t *testing.T) {
 // request's cursor; zero values would replay the whole archive on the next poll
 // of an idle feed.
 func TestChangesEndpoint_EmptyPageEchoesRequestCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
@@ -510,6 +515,7 @@ func TestChangesEndpoint_EmptyPageEchoesRequestCursor(t *testing.T) {
 // cursor, which no cursor policy reaches. That is
 // TestChangesEndpoint_BackwardClockStepLosesChangesBelowTheCursor.
 func TestChangesEndpoint_CursorAboveTheDatabaseClockRecovers(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
@@ -559,6 +565,7 @@ func TestChangesEndpoint_CursorAboveTheDatabaseClockRecovers(t *testing.T) {
 // which hands out auto-generated positive ids, and every positive id sorts
 // above any tiebreak the clamp has ever published.
 func TestChangesEndpoint_ClampedCursorReachesEveryIDAtTheBound(t *testing.T) {
+	t.Parallel()
 	for _, id := range []int64{0, -7} {
 		t.Run(fmt.Sprintf("a row at id %d", id), func(t *testing.T) {
 			require := require.New(t)
@@ -604,6 +611,7 @@ func TestChangesEndpoint_ClampedCursorReachesEveryIDAtTheBound(t *testing.T) {
 // The two subtests are the same failure on either side of the future-cursor
 // clamp, which is why the clamp cannot be blamed for it or fixed to prevent it.
 func TestChangesEndpoint_BackwardClockStepLosesChangesBelowTheCursor(t *testing.T) {
+	t.Parallel()
 	t.Run("the clamp does not recover what the step stranded", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -687,6 +695,7 @@ func TestChangesEndpoint_BackwardClockStepLosesChangesBelowTheCursor(t *testing.
 // reaching the store returns a zero server_time and no database round trip, so
 // the default has to be applied first.
 func TestChangesEndpoint_ClampsLimit(t *testing.T) {
+	t.Parallel()
 	srv, st := newChangesServer(t)
 	seedChangedMessages(t, st, maxPageSize+1)
 	settleChangesClock(t, srv)
@@ -744,6 +753,7 @@ func changesLimitParam(t *testing.T) *huma.Param {
 // validation failures — the generated Go client refuses to send a request the
 // server would have answered — and contradicts the parameter's own description.
 func TestChangesEndpoint_PublishedLimitRangeMatchesWhatTheServerAccepts(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
@@ -776,6 +786,7 @@ func TestChangesEndpoint_PublishedLimitRangeMatchesWhatTheServerAccepts(t *testi
 // partial one unless the handler looks one row further, and a spurious
 // has_more sends every caught-up consumer round again.
 func TestChangesEndpoint_ExactPageBoundaryReportsNoMorePages(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
 
@@ -796,6 +807,7 @@ func TestChangesEndpoint_ExactPageBoundaryReportsNoMorePages(t *testing.T) {
 // store is consulted, so a client typo is reported as the typo it is whatever
 // backend is configured.
 func TestChangesEndpoint_RejectsMalformedCursor(t *testing.T) {
+	t.Parallel()
 	srv, st := newChangesServer(t)
 	ids := seedChangedMessages(t, st, 3)
 	setChangesWatermark(t, st, subSecondWatermark(st), ids...)
@@ -830,6 +842,7 @@ func TestChangesEndpoint_RejectsMalformedCursor(t *testing.T) {
 // than a 400. It is the surprising half of the cursor contract, so the docs
 // state it and this holds them to it.
 func TestChangesEndpoint_EmptyCursorStartsFromTheBeginning(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
@@ -861,6 +874,7 @@ func TestChangesEndpoint_EmptyCursorStartsFromTheBeginning(t *testing.T) {
 // coupling, not an enforced rule, and the docs say so rather than promising an
 // enforcement this server cannot perform.
 func TestChangesEndpoint_AcceptsAFabricatedCursorForItsOwnArchive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
@@ -896,6 +910,7 @@ func TestChangesEndpoint_AcceptsAFabricatedCursorForItsOwnArchive(t *testing.T) 
 // would also pass the first half: a cursor sent back to the archive that issued
 // it resumes the walk.
 func TestChangesEndpoint_RejectsACursorFromAnotherArchive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -936,6 +951,7 @@ func TestChangesEndpoint_RejectsACursorFromAnotherArchive(t *testing.T) {
 // send back, whatever shape the page took. A page that withheld the cursor would
 // leave the caller with nothing to hold its place but the start of the archive.
 func TestChangesEndpoint_AlwaysPublishesACursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
@@ -971,6 +987,7 @@ func TestChangesEndpoint_AlwaysPublishesACursor(t *testing.T) {
 // that never learns a message was hidden or deleted at the source keeps
 // mirroring something the archive no longer shows.
 func TestChangesEndpoint_ReportsDeletedMessages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
@@ -1011,6 +1028,7 @@ func TestChangesEndpoint_ReportsDeletedMessages(t *testing.T) {
 // defined refusal, not a panic and not an empty 200 that a consumer would read
 // as "nothing changed".
 func TestChangesEndpoint_UnavailableWhenStoreLacksSupport(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv := newTestServerWithEngine(t, &querytest.MockEngine{})
@@ -1075,6 +1093,7 @@ func (s *failingChangedMessageLister) ListChangedMessages(
 // (a PostgreSQL grant) and the database objects behind it, so it belongs in the
 // operator's log and not in a response any API client can read.
 func TestChangesEndpoint_StoreFailureIsA500WithTheDetailOnlyInTheLog(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	logs := &bytes.Buffer{}
@@ -1102,6 +1121,7 @@ func TestChangesEndpoint_StoreFailureIsA500WithTheDetailOnlyInTheLog(t *testing.
 }
 
 func TestChangesEndpoint_MalformedWatermarkIsA500WithoutACursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -1127,6 +1147,7 @@ func TestChangesEndpoint_MalformedWatermarkIsA500WithoutACursor(t *testing.T) {
 // server, so it answers with the defined refusal and leaves the error log clean
 // for failures an operator can do something about.
 func TestChangesEndpoint_CanceledRequestIsNotReportedAsAServerFault(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	logs := &bytes.Buffer{}
@@ -1169,6 +1190,7 @@ func (s *unidentifiedChangedMessageLister) ListChangedMessages(
 // cannot serve the feed at all. Falling back to an unbound cursor would trade a
 // visible 503 for silent, undetectable data loss on the next restore.
 func TestChangesEndpoint_UnavailableWhenTheStoreCannotIdentifyItsArchive(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv := NewServerWithOptions(ServerOptions{
@@ -1214,6 +1236,7 @@ func (s *erroringArchiveIdentity) ListChangedMessages(
 // missing feature, so it is a 500 with the cause in the operator's log — and
 // again never a cursor bound to nothing.
 func TestChangesEndpoint_UnreadableArchiveIdentityIsA500WithTheDetailOnlyInTheLog(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	logs := &bytes.Buffer{}
@@ -1274,6 +1297,7 @@ func (s *blockingArchiveIdentity) ListChangedMessages(
 // The lookup receives the request context directly, so a saturated pool cannot
 // outlive both the client hanging up and the server's request timeout.
 func TestChangesEndpoint_CanceledRequestDoesNotBlockInArchiveIdentity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1327,6 +1351,7 @@ func TestChangesEndpoint_CanceledRequestDoesNotBlockInArchiveIdentity(t *testing
 // TestChangesEndpoint_NoBoundPublishesNull pins the wire value of the state
 // complete_through has no instant for.
 func TestChangesEndpoint_NoBoundPublishesNull(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv := NewServerWithOptions(ServerOptions{
@@ -1397,6 +1422,7 @@ func seedSparseChangedMessages(t *testing.T, st *store.Store) (email, chat int64
 // how a feed whose every row omits something shipped a client that refused its
 // own server's ordinary 200s.
 func TestChangesEndpoint_PagesSatisfyTheGeneratedClientContract(t *testing.T) {
+	t.Parallel()
 	t.Run("a page of live and sparse rows", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -1470,6 +1496,7 @@ func decodeGeneratedChangesPage(t *testing.T, srv *Server, target string) genera
 //     non-content — a trigger keying off it would recurse — but it is
 //     necessarily present in every response item as the cursor.
 func TestChangesResponseFieldsAreAllTracked(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	exempt := []string{"id", "source_id", "content_changed_at"}
 
@@ -1489,6 +1516,7 @@ func TestChangesResponseFieldsAreAllTracked(t *testing.T) {
 }
 
 func TestChangesEndpointIncludesListID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newChangesServer(t)
@@ -1512,6 +1540,7 @@ func TestChangesEndpointIncludesListID(t *testing.T) {
 // indistinguishable from being caught up — no rows, has_more false — while
 // server_time keeps moving. complete_through is what says which one it is.
 func TestChangesEndpoint_PublishesHowFarItIsComplete(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
@@ -1579,6 +1608,7 @@ func TestChangesEndpoint_PublishesHowFarItIsComplete(t *testing.T) {
 // server, and the cause — a connection sitting inside a transaction — is theirs
 // to fix, not the consumer's.
 func TestChangesEndpoint_StalledFeedIsLogged(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	logs := &bytes.Buffer{}
@@ -1630,6 +1660,7 @@ func TestChangesEndpoint_StalledFeedIsLogged(t *testing.T) {
 // than a server that started a moment ago. The lag is not merely large here; it
 // is undefined, and the log has to say which of the two it is.
 func TestChangesEndpoint_FeedWithNoBoundYetLogsAFiniteLag(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	logs := &bytes.Buffer{}
@@ -1672,6 +1703,7 @@ func TestChangesEndpoint_FeedWithNoBoundYetLogsAFiniteLag(t *testing.T) {
 // So the property is two-sided — the gap is real (a consumer must not treat the
 // bound as a cursor), and following next_cursor closes it completely.
 func TestChangesEndpoint_CompleteThroughIsAReachabilityBoundNotACursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newChangesServer(t)
@@ -1742,6 +1774,7 @@ func countMessagesStampedBelow(t *testing.T, st *store.Store, instant time.Time)
 // feed delivers, are enumerated in one place: docs/api-server.md's delivery
 // contract.
 func TestChangesEndpoint_FutureCursorClampsToTheCommitBoundNotTheClock(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1788,6 +1821,7 @@ func TestChangesEndpoint_FutureCursorClampsToTheCommitBoundNotTheClock(t *testin
 // replay the whole archive, and clamping to the clock would be the unsafe move
 // this fix removes. Echoing holds the consumer's place until the bound resolves.
 func TestChangesEndpoint_FutureCursorIsEchoedWhenNoBoundIsEstablished(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	serverTime := time.Date(2026, 7, 26, 10, 0, 30, 0, time.UTC)

@@ -110,6 +110,7 @@ func postDeletions(t *testing.T, srv *Server, body string) *httptest.ResponseRec
 }
 
 func TestStageDeletionLegacyFilterIsDryRunOnly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -152,6 +153,7 @@ func TestStageDeletionLegacyFilterIsDryRunOnly(t *testing.T) {
 }
 
 func TestStageDeletionListIDFilterIsForwardedAndRecorded(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -179,6 +181,7 @@ func TestStageDeletionListIDFilterIsForwardedAndRecorded(t *testing.T) {
 }
 
 func TestStageDeletionLegacyExplicitMessageIDsRemainCompatible(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -206,6 +209,7 @@ func TestStageDeletionLegacyExplicitMessageIDsRemainCompatible(t *testing.T) {
 }
 
 func TestStageDeletionLegacyFilterCannotPiggybackOnExplicitMessageIDs(t *testing.T) {
+	t.Parallel()
 	st := &deletionMockStore{}
 	srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
 
@@ -217,6 +221,7 @@ func TestStageDeletionLegacyFilterCannotPiggybackOnExplicitMessageIDs(t *testing
 }
 
 func TestStageDeletionRejectsMultiAccountSelection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	st := &deletionMockStore{}
@@ -240,6 +245,7 @@ func TestStageDeletionRejectsMultiAccountSelection(t *testing.T) {
 }
 
 func TestStageDeletionDryRun(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -270,6 +276,7 @@ func TestStageDeletionDryRun(t *testing.T) {
 }
 
 func TestStageDeletionSelectionRequiresAndConsumesExactPreflightAuthority(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -316,6 +323,7 @@ func TestStageDeletionSelectionRequiresAndConsumesExactPreflightAuthority(t *tes
 }
 
 func TestStageDeletionReplaysResolvedIdentityFilterOnceAfterPreflight(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	fixture := newExploreIdentityAPIFixture(t)
@@ -380,6 +388,7 @@ func preflightDeletionSelection(t *testing.T, srv *Server) (selection, token str
 }
 
 func TestStageDeletionPersistFailureLeavesTokenRetryable(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -409,6 +418,7 @@ func TestStageDeletionPersistFailureLeavesTokenRetryable(t *testing.T) {
 }
 
 func TestStageDeletionConcurrentDoubleSubmitStagesExactlyOnce(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -448,6 +458,7 @@ const mixedDeletabilityFixtureMessages = `(1::BIGINT, 1::BIGINT, 'm1', 101::BIGI
 // subset instead and report what it left out, with the legacy blank-typed
 // Gmail row counted as email.
 func TestStageDeletionStagesDeletableSubsetOfMixedSelection(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	engine, _ := newExploreDuckDBFixtureWithMessages(t, mixedDeletabilityFixtureMessages, 3)
@@ -501,6 +512,7 @@ func TestStageDeletionStagesDeletableSubsetOfMixedSelection(t *testing.T) {
 // TestStageDeletionRejectsSelectionWithNothingDeletable keeps the dead-end
 // case an error: partial staging only helps when something is stageable.
 func TestStageDeletionRejectsSelectionWithNothingDeletable(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -536,6 +548,7 @@ func TestStageDeletionRejectsSelectionWithNothingDeletable(t *testing.T) {
 // a narrowing typo: from: with no value renders as LIKE '%%' and would stage
 // the whole archive.
 func TestDeletionSelectionRejectsEmptyAddressFilter(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	engine := newExploreDuckDBFixture(t)
@@ -563,6 +576,7 @@ func TestDeletionSelectionRejectsEmptyAddressFilter(t *testing.T) {
 }
 
 func TestStageDeletionRejectsEmptyFilter(t *testing.T) {
+	t.Parallel()
 	st := &deletionMockStore{}
 	srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
 
@@ -575,6 +589,7 @@ func TestStageDeletionRejectsEmptyFilter(t *testing.T) {
 }
 
 func TestStageDeletionNoMatches(t *testing.T) {
+	t.Parallel()
 	st := &deletionMockStore{}
 	engine := &querytest.MockEngine{
 		GetDeletionTargetsByFilterFunc: func(_ context.Context, _ query.MessageFilter) ([]query.DeletionTarget, error) {
@@ -591,6 +606,7 @@ func TestStageDeletionNoMatches(t *testing.T) {
 }
 
 func TestStageDeletionInvalidDate(t *testing.T) {
+	t.Parallel()
 	srv := newDeletionTestServer(t, &deletionMockStore{}, &querytest.MockEngine{})
 	w := postDeletions(t, srv, `{"filter": {"after": "not-a-date"}, "dry_run": true}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -598,6 +614,7 @@ func TestStageDeletionInvalidDate(t *testing.T) {
 }
 
 func TestStageDeletionRejectsUnknownFields(t *testing.T) {
+	t.Parallel()
 	st := &deletionMockStore{}
 	engine := &querytest.MockEngine{GmailIDs: []string{"gm-1"}}
 	srv := newDeletionTestServer(t, st, engine)
@@ -615,6 +632,7 @@ func TestStageDeletionRejectsUnknownFields(t *testing.T) {
 }
 
 func TestStageDeletionEngineUnavailable(t *testing.T) {
+	t.Parallel()
 	srv := newDeletionTestServer(t, &deletionMockStore{}, nil)
 	w := postDeletions(t, srv, `{"filter": {"sender": "alice@example.com"}}`)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
@@ -622,6 +640,7 @@ func TestStageDeletionEngineUnavailable(t *testing.T) {
 }
 
 func TestListDeletions(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -665,6 +684,7 @@ func TestListDeletions(t *testing.T) {
 }
 
 func TestGetDeletionReturnsManifestLifecycleDetail(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	completedAt := time.Date(2026, 7, 1, 13, 0, 0, 0, time.UTC)
@@ -704,6 +724,7 @@ func deleteDeletion(srv *Server, id string) *httptest.ResponseRecorder {
 }
 
 func TestCancelDeletion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -720,6 +741,7 @@ func TestCancelDeletion(t *testing.T) {
 }
 
 func TestCancelDeletionNotFound(t *testing.T) {
+	t.Parallel()
 	st := &deletionMockStore{getErr: fmt.Errorf("manifest batch-x: %w", deletion.ErrManifestNotFound)}
 	srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
 
@@ -730,6 +752,7 @@ func TestCancelDeletionNotFound(t *testing.T) {
 }
 
 func TestCancelDeletionNotCancellable(t *testing.T) {
+	t.Parallel()
 	for _, status := range []deletion.Status{deletion.StatusCompleted, deletion.StatusFailed, deletion.StatusCancelled} {
 		st := &deletionMockStore{getStatus: status}
 		srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
@@ -742,6 +765,7 @@ func TestCancelDeletionNotCancellable(t *testing.T) {
 }
 
 func TestCancelDeletionRejectsTraversalID(t *testing.T) {
+	t.Parallel()
 	st := &deletionMockStore{getStatus: deletion.StatusPending}
 	srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
 

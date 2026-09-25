@@ -220,6 +220,7 @@ func seedReplaySource(t *testing.T, env *TestEnv, messageID string) *store.Sourc
 // TestIncrementalSyncReplayRecordsEachErrorResultClass keeps fetch and ingest
 // failures in their respective phases when replay cannot archive a message.
 func TestIncrementalSyncReplayRecordsEachErrorResultClass(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -263,6 +264,7 @@ func TestIncrementalSyncReplayRecordsEachErrorResultClass(t *testing.T) {
 }
 
 func TestFullSync_PanicReturnsError(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg1")
 
@@ -276,6 +278,7 @@ func TestFullSync_PanicReturnsError(t *testing.T) {
 }
 
 func TestFullSyncBatchFetchErrorUpdatesFailedSyncErrorCount(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -312,6 +315,7 @@ func (p *panicOnHistoryAPI) ListHistory(_ context.Context, _ uint64, _ string) (
 }
 
 func TestIncrementalSync_PanicReturnsError(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12340")
 
@@ -328,6 +332,7 @@ func TestIncrementalSync_PanicReturnsError(t *testing.T) {
 }
 
 func TestFullSync(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	seedMessages(env, 3, 12345, "msg1", "msg2", "msg3")
 	env.Mock.Messages["msg2"].LabelIDs = []string{"INBOX", "SENT"}
@@ -342,6 +347,7 @@ func TestFullSync(t *testing.T) {
 }
 
 func TestFullSyncClassifiesGmailChatMessages(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Labels = []*gmail.Label{
 		{ID: "INBOX", Name: "INBOX", Type: "system"},
@@ -376,6 +382,7 @@ func TestFullSyncClassifiesGmailChatMessages(t *testing.T) {
 }
 
 func TestFullSyncProviderHookFailureWarnsOnceAfterSuccessfulCompletion(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	env := newTestEnv(t)
@@ -409,6 +416,7 @@ func TestFullSyncProviderHookFailureWarnsOnceAfterSuccessfulCompletion(t *testin
 }
 
 func TestFullSyncProviderHookDoesNotRunAfterFailedSync(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg1")
 	hookCalls := 0
@@ -427,6 +435,7 @@ func TestFullSyncProviderHookDoesNotRunAfterFailedSync(t *testing.T) {
 }
 
 func TestFullSyncRejectsConcurrentStart(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -451,6 +460,7 @@ func TestFullSyncRejectsConcurrentStart(t *testing.T) {
 }
 
 func TestFullSyncCompletionFailureMarksRunFailed(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger to inject the completion failure")
@@ -481,6 +491,7 @@ func TestFullSyncCompletionFailureMarksRunFailed(t *testing.T) {
 }
 
 func TestIncrementalSyncRejectsConcurrentStart(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "1000")
@@ -505,6 +516,7 @@ func TestIncrementalSyncRejectsConcurrentStart(t *testing.T) {
 // can change while a mailbox is idle — but flagged as unchanged so the
 // installer can skip provider round trips it has made recently.
 func TestIncrementalSyncProviderHookRunsAfterSuccessfulCompletion(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name               string
 		profileHistoryID   uint64
@@ -547,6 +559,7 @@ func TestIncrementalSyncProviderHookRunsAfterSuccessfulCompletion(t *testing.T) 
 }
 
 func TestSyncLabelsPersistsRoleFromCanonicalGmailIDNotName(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -581,7 +594,7 @@ func TestSyncLabelsPersistsRoleFromCanonicalGmailIDNotName(t *testing.T) {
 // sync page may contribute Sent evidence to. Every address here is confirmed up
 // front because sync-time discovery is refresh-only: it merges signals into
 // identities the source already owns and never confirms a new one.
-func TestSyncPageRefreshesOnlyUnambiguousSentAliasesOnce(t *testing.T) {
+func TestSyncPageRefreshesOnlyUnambiguousSentAliasesOnce(t *testing.T) { //nolint:paralleltest // sets process-wide SQL logging options and swaps the slog default logger
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -669,6 +682,7 @@ func TestSyncPageRefreshesOnlyUnambiguousSentAliasesOnce(t *testing.T) {
 }
 
 func TestSyncPageDoesNotTrustNameOnlySentMailbox(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -693,6 +707,7 @@ func TestSyncPageDoesNotTrustNameOnlySentMailbox(t *testing.T) {
 }
 
 func TestSyncPageRetryAfterCheckpointFailureIsCaseFoldedAndIdempotent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -763,6 +778,7 @@ func TestSyncPageRetryAfterCheckpointFailureIsCaseFoldedAndIdempotent(t *testing
 }
 
 func TestFullSyncResume(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	// Create mock with pagination
@@ -805,6 +821,7 @@ func (c *cancelOnSecondListAPI) ListMessages(ctx context.Context, query, pageTok
 }
 
 func TestFullSyncCanceledFailsRunAndKeepsCheckpointResumable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -832,6 +849,7 @@ func TestFullSyncCanceledFailsRunAndKeepsCheckpointResumable(t *testing.T) {
 }
 
 func TestFullSyncRestartsWhenCheckpointRequestDiffers(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	env := newTestEnv(t)
@@ -855,6 +873,7 @@ func TestFullSyncRestartsWhenCheckpointRequestDiffers(t *testing.T) {
 }
 
 func TestBoundedGmailFullSyncPreservesIncrementalCursor(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	env := newTestEnv(t)
@@ -879,6 +898,7 @@ func TestBoundedGmailFullSyncPreservesIncrementalCursor(t *testing.T) {
 }
 
 func TestFullSyncLeavesOperationFinalizationToCaller(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	env := newTestEnv(t)
@@ -912,6 +932,7 @@ func TestFullSyncLeavesOperationFinalizationToCaller(t *testing.T) {
 }
 
 func TestFullSyncKeepsSelectedLegacySourceID(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	env := newTestEnv(t)
@@ -941,6 +962,7 @@ func TestFullSyncKeepsSelectedLegacySourceID(t *testing.T) {
 }
 
 func TestFullSyncAcknowledgesOnlySafelyHandledMessages(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -983,7 +1005,7 @@ func seedConfirmedSentIdentity(t *testing.T, env *TestEnv) *store.Source {
 // recomputable from the archived messages, so a page whose discovery keeps
 // failing parks a durable backlog marker rather than unwinding a run whose
 // messages are already safely stored.
-func TestFullSyncCompletesAndSetsBacklogWhenDiscoveryFails(t *testing.T) {
+func TestFullSyncCompletesAndSetsBacklogWhenDiscoveryFails(t *testing.T) { //nolint:paralleltest // swaps the package-level identityDiscoveryRetryBackoff
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1031,7 +1053,7 @@ func TestFullSyncCompletesAndSetsBacklogWhenDiscoveryFails(t *testing.T) {
 // of that gate: a long run whose later pages show discovery working again pays
 // the refresh immediately instead of leaving the archive inconsistent until
 // whenever the next sync happens to run.
-func TestFullSyncSettlesBacklogItParkedOnceDiscoveryRecovers(t *testing.T) {
+func TestFullSyncSettlesBacklogItParkedOnceDiscoveryRecovers(t *testing.T) { //nolint:paralleltest // swaps the package-level identityDiscoveryRetryBackoff
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1083,7 +1105,7 @@ func TestFullSyncSettlesBacklogItParkedOnceDiscoveryRecovers(t *testing.T) {
 // TestFullSyncDiscoveryRetriesTransientFailureWithoutBacklog clears the failure
 // seam from the retry log record itself, so the retry happens at an exact point
 // in the loop rather than after a sleep the test hopes is long enough.
-func TestFullSyncDiscoveryRetriesTransientFailureWithoutBacklog(t *testing.T) {
+func TestFullSyncDiscoveryRetriesTransientFailureWithoutBacklog(t *testing.T) { //nolint:paralleltest // swaps the package-level identityDiscoveryRetryBackoff
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1123,7 +1145,7 @@ func TestFullSyncDiscoveryRetriesTransientFailureWithoutBacklog(t *testing.T) {
 // broken" from "the operator stopped the sync". Only the former is a debt worth
 // recording; cancellation must leave the run exactly as resumable as any other
 // interruption.
-func TestSyncCancellationDuringDiscoveryStaysResumable(t *testing.T) {
+func TestSyncCancellationDuringDiscoveryStaysResumable(t *testing.T) { //nolint:paralleltest // swaps the package-level identityDiscoveryRetryBackoff
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1174,7 +1196,7 @@ func TestSyncCancellationDuringDiscoveryStaysResumable(t *testing.T) {
 // evidence from the whole archive, which is why the page that fails can be
 // allowed to complete. The second sync lists only an unrelated message, so
 // merging the Sent evidence can come from nowhere but the drain.
-func TestNextSyncDrainsIdentityDiscoveryBacklog(t *testing.T) {
+func TestNextSyncDrainsIdentityDiscoveryBacklog(t *testing.T) { //nolint:paralleltest // swaps the package-level identityDiscoveryRetryBackoff
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1217,6 +1239,7 @@ func TestNextSyncDrainsIdentityDiscoveryBacklog(t *testing.T) {
 // up-to-date early return, debt parked by the last page that ever ran would
 // never be settled, because no later sync would reach the drain.
 func TestNoOpIncrementalSyncDrainsIdentityDiscoveryBacklog(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1271,6 +1294,7 @@ func TestNoOpIncrementalSyncDrainsIdentityDiscoveryBacklog(t *testing.T) {
 // the sync boundary: a Sent-placed message from an unknown address is archived,
 // but never claims that address as one of the account's identities.
 func TestFullSyncDoesNotConfirmFirstTimeIdentity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1293,6 +1317,7 @@ func TestFullSyncDoesNotConfirmFirstTimeIdentity(t *testing.T) {
 }
 
 func TestFullSyncWithErrors(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1317,6 +1342,7 @@ func TestFullSyncWithErrors(t *testing.T) {
 }
 
 func TestIncrementalSyncReplaysPreviousCompletedFetchError(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1356,6 +1382,7 @@ func TestIncrementalSyncReplaysPreviousCompletedFetchError(t *testing.T) {
 }
 
 func TestIncrementalSyncReplaysAfterInterveningFailedRun(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1380,6 +1407,7 @@ func TestIncrementalSyncReplaysAfterInterveningFailedRun(t *testing.T) {
 }
 
 func TestIncrementalSyncReplayCompletion(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name           string
 		historyID      uint64
@@ -1427,6 +1455,7 @@ func TestIncrementalSyncReplayCompletion(t *testing.T) {
 }
 
 func TestIncrementalSyncReplayUsesBoundedBatches(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1477,6 +1506,7 @@ func TestIncrementalSyncReplayUsesBoundedBatches(t *testing.T) {
 }
 
 func TestIncrementalSyncCarriesForwardFailedFetchReplay(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1518,6 +1548,7 @@ func TestIncrementalSyncCarriesForwardFailedFetchReplay(t *testing.T) {
 }
 
 func TestIncrementalSyncSkipsGoneFetchReplay(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1564,6 +1595,7 @@ func TestIncrementalSyncSkipsGoneFetchReplay(t *testing.T) {
 }
 
 func TestIncrementalSyncFiltersFetchReplayCandidates(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1630,6 +1662,7 @@ func TestIncrementalSyncFiltersFetchReplayCandidates(t *testing.T) {
 }
 
 func TestIncrementalSyncFetchReplayPreservesCursorAndFence(t *testing.T) {
+	t.Parallel()
 	t.Run("cancellation", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -1679,6 +1712,7 @@ func TestIncrementalSyncFetchReplayPreservesCursorAndFence(t *testing.T) {
 }
 
 func TestFullSyncSkipsGmailNotFoundBeforeFetch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1702,6 +1736,7 @@ func TestFullSyncSkipsGmailNotFoundBeforeFetch(t *testing.T) {
 }
 
 func TestMIMEParsing(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	pdfData := []byte{0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a, 0x31, 0x20, 0x30, 0x20, 0x6f, 0x62, 0x6a, 0x0a, 0x3c, 0x3c, 0x2f, 0x54, 0x79, 0x70, 0x65, 0x2f, 0x43, 0x61, 0x74, 0x61, 0x6c, 0x6f, 0x67, 0x2f, 0x50, 0x61, 0x67, 0x65, 0x73, 0x20, 0x32, 0x20, 0x30, 0x20, 0x52, 0x3e, 0x3e, 0x0a, 0x65, 0x6e, 0x64, 0x6f, 0x62, 0x6a}
@@ -1731,6 +1766,7 @@ func TestMIMEParsing(t *testing.T) {
 }
 
 func TestStoreAttachment_ComputesHashWhenMissing(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 
@@ -1783,6 +1819,7 @@ func TestStoreAttachment_ComputesHashWhenMissing(t *testing.T) {
 }
 
 func TestStoreAttachmentPersistsInlineMIMEEvidence(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	env.SetOptions(t, func(o *Options) { o.AttachmentsDir = filepath.Join(env.TmpDir, "attachments") })
@@ -1812,6 +1849,7 @@ func TestStoreAttachmentPersistsInlineMIMEEvidence(t *testing.T) {
 }
 
 func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 
@@ -1850,6 +1888,7 @@ func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {
 }
 
 func TestFullSyncEmptyInbox(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 0
 	env.Mock.Profile.HistoryID = 12345
@@ -1859,6 +1898,7 @@ func TestFullSyncEmptyInbox(t *testing.T) {
 }
 
 func TestFullSyncProfileError(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.ProfileError = errors.New("auth failed")
 
@@ -1867,6 +1907,7 @@ func TestFullSyncProfileError(t *testing.T) {
 }
 
 func TestFullSyncAllDuplicates(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	seedMessages(env, 3, 12345, "msg1", "msg2", "msg3")
 
@@ -1879,6 +1920,7 @@ func TestFullSyncAllDuplicates(t *testing.T) {
 }
 
 func TestFullSyncNoResume(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	seedMessages(env, 2, 12345, "msg1", "msg2")
 
@@ -1892,6 +1934,7 @@ func TestFullSyncNoResume(t *testing.T) {
 }
 
 func TestFullSyncAllErrors(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	seedMessages(env, 3, 12345, "msg1", "msg2", "msg3")
 
@@ -1904,6 +1947,7 @@ func TestFullSyncAllErrors(t *testing.T) {
 }
 
 func TestFullSyncWithQuery(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	seedMessages(env, 2, 12345, "msg1", "msg2")
 
@@ -1918,6 +1962,7 @@ func TestFullSyncWithQuery(t *testing.T) {
 }
 
 func TestFullSyncPagination(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Profile.HistoryID = 12345
 	seedPagedMessages(env, 6)
@@ -1928,12 +1973,14 @@ func TestFullSyncPagination(t *testing.T) {
 }
 
 func TestSyncerWithLogger(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	syncer := env.Syncer.WithLogger(nil)
 	assert.NotNil(t, syncer, "WithLogger should return syncer for chaining")
 }
 
 func TestSyncerWithProgress(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	syncer := env.Syncer.WithProgress(gmail.NullProgress{})
 	assert.NotNil(t, syncer, "WithProgress should return syncer for chaining")
@@ -1942,6 +1989,7 @@ func TestSyncerWithProgress(t *testing.T) {
 // Tests for incremental sync
 
 func TestIncrementalSyncNilSource(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	_, err := env.Syncer.Incremental(env.Context, nil)
@@ -1949,6 +1997,7 @@ func TestIncrementalSyncNilSource(t *testing.T) {
 }
 
 func TestIncrementalSyncNoHistoryID(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	source := env.CreateSource(t)
@@ -1958,6 +2007,7 @@ func TestIncrementalSyncNoHistoryID(t *testing.T) {
 }
 
 func TestIncrementalSyncAlreadyUpToDate(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.CreateSourceWithHistory(t, "12345")
 
@@ -1973,6 +2023,7 @@ func TestIncrementalSyncAlreadyUpToDate(t *testing.T) {
 }
 
 func TestIncrementalSyncWithChanges(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.CreateSourceWithHistory(t, "12340")
 
@@ -1991,6 +2042,7 @@ func TestIncrementalSyncWithChanges(t *testing.T) {
 }
 
 func TestIncrementalSyncDiscoversOnlySuccessfulChangesBeforeAdvancingCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -2054,7 +2106,7 @@ func TestIncrementalSyncDiscoversOnlySuccessfulChangesBeforeAdvancingCursor(t *t
 // incremental analog of TestFullSyncCompletesAndSetsBacklogWhenDiscoveryFails:
 // the history cursor advances, because holding it back would replay the same
 // already-archived changes forever over a debt the backlog can settle.
-func TestIncrementalSyncCompletesAndSetsBacklogWhenDiscoveryFails(t *testing.T) {
+func TestIncrementalSyncCompletesAndSetsBacklogWhenDiscoveryFails(t *testing.T) { //nolint:paralleltest // swaps the package-level identityDiscoveryRetryBackoff
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -2100,6 +2152,7 @@ func TestIncrementalSyncCompletesAndSetsBacklogWhenDiscoveryFails(t *testing.T) 
 }
 
 func TestIncrementalSyncWithDeletions(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	seedMessages(env, 2, 12340, "msg1", "msg2")
 
@@ -2117,6 +2170,7 @@ func TestIncrementalSyncWithDeletions(t *testing.T) {
 }
 
 func TestIncrementalSyncHistoryExpired(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "1000")
 
@@ -2132,6 +2186,7 @@ func TestIncrementalSyncHistoryExpired(t *testing.T) {
 }
 
 func TestRecoverExpiredHistoryMarksOnlyMissingSourceMetadata(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	seedMessages(env, 2, 1000, "present", "missing")
 	runFullSync(t, env)
@@ -2174,6 +2229,7 @@ func (a *recoveryProfileSequenceAPI) GetProfile(context.Context) (*gmail.Profile
 }
 
 func TestFullRecoversCheckpointAfterSyncOwnerExit(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "owner-exit.db")
@@ -2219,6 +2275,7 @@ func TestFullRecoversCheckpointAfterSyncOwnerExit(t *testing.T) {
 }
 
 func TestRecoverExpiredHistoryConsumesChangesAfterSnapshotCursor(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -2249,6 +2306,7 @@ func TestRecoverExpiredHistoryConsumesChangesAfterSnapshotCursor(t *testing.T) {
 }
 
 func TestRecoverExpiredHistoryRetainsSourceOwnershipThroughCatchup(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	env := newTestEnv(t)
@@ -2293,6 +2351,7 @@ func TestRecoverExpiredHistoryRetainsSourceOwnershipThroughCatchup(t *testing.T)
 }
 
 func TestRecoverExpiredHistoryRejectsPartialEnumerationOptions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		modify func(*Options)
@@ -2354,6 +2413,7 @@ func (a *interruptedRecoverySnapshotAPI) ListCompleteMessageSnapshot(
 }
 
 func TestRecoverExpiredHistoryDoesNotReconcileIncompleteSnapshot(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	seedMessages(env, 2, 1000, "present", "not-yet-enumerated")
 	runFullSync(t, env)
@@ -2372,6 +2432,7 @@ func TestRecoverExpiredHistoryDoesNotReconcileIncompleteSnapshot(t *testing.T) {
 }
 
 func TestRecoverExpiredHistoryRejectsUnmarkedActiveSync(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	env.Mock.Profile.HistoryID = 12345
@@ -2398,6 +2459,7 @@ func TestRecoverExpiredHistoryRejectsUnmarkedActiveSync(t *testing.T) {
 }
 
 func TestIncrementalWithHistoryRecoveryResumesPinnedCursorBeforeIncremental(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env, source, prior := setupInterruptedHistoryRecoveryWithPrefixChange(t)
@@ -2418,6 +2480,7 @@ func TestIncrementalWithHistoryRecoveryResumesPinnedCursorBeforeIncremental(t *t
 }
 
 func TestIncrementalWithHistoryRecoveryRejectsPartialEnumerationOptions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		modify func(*Options)
@@ -2457,6 +2520,7 @@ func TestIncrementalWithHistoryRecoveryRejectsPartialEnumerationOptions(t *testi
 }
 
 func TestFullRoutesPinnedHistoryRecoveryThroughCatchup(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env, source, prior := setupInterruptedHistoryRecoveryWithPrefixChange(t)
@@ -2507,6 +2571,7 @@ func setupInterruptedHistoryRecoveryWithPrefixChange(
 }
 
 func TestIncrementalSyncProfileError(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12345")
 	env.Mock.ProfileError = errors.New("auth failed")
@@ -2516,6 +2581,7 @@ func TestIncrementalSyncProfileError(t *testing.T) {
 }
 
 func TestIncrementalSyncWithLabelAdded(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12340
@@ -2542,6 +2608,7 @@ func TestIncrementalSyncWithLabelAdded(t *testing.T) {
 }
 
 func TestIncrementalSyncWithLabelRemoved(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12340
@@ -2573,6 +2640,7 @@ func TestIncrementalSyncWithLabelRemoved(t *testing.T) {
 }
 
 func TestIncrementalSyncLabelAddedToNewMessage(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12340")
 	_, err := env.Store.EnsureLabel(source.ID, "INBOX", "Inbox", labelTypeSystem)
@@ -2593,6 +2661,7 @@ func TestIncrementalSyncLabelAddedToNewMessage(t *testing.T) {
 }
 
 func TestIncrementalSyncLabelRemovedFromMissingMessage(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.CreateSourceWithHistory(t, "12340")
 
@@ -2606,6 +2675,7 @@ func TestIncrementalSyncLabelRemovedFromMissingMessage(t *testing.T) {
 }
 
 func TestFullSyncWithAttachment(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12345
@@ -2625,6 +2695,7 @@ func TestFullSyncWithAttachment(t *testing.T) {
 // TestFullSyncPersistsListID catches an email sync path that parses List-Id
 // but drops it before the shared message persistence boundary.
 func TestFullSyncPersistsListID(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	raw := testemail.NewMessage().
 		From("Alice <alice@example.com>").
@@ -2649,6 +2720,7 @@ func TestFullSyncPersistsListID(t *testing.T) {
 }
 
 func TestFullSyncWithEmptyAttachment(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	emptyAttachMIME := testemail.NewMessage().
@@ -2668,6 +2740,7 @@ func TestFullSyncWithEmptyAttachment(t *testing.T) {
 }
 
 func TestFullSyncAttachmentDeduplication(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 2
 	env.Mock.Profile.HistoryID = 12345
@@ -2684,6 +2757,7 @@ func TestFullSyncAttachmentDeduplication(t *testing.T) {
 
 // TestFullSync_MessageVariations consolidates tests for various MIME message formats.
 func TestFullSync_MessageVariations(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		mime  func() []byte
@@ -2741,6 +2815,7 @@ func TestFullSync_MessageVariations(t *testing.T) {
 }
 
 func TestFullSync_Latin1InFromName(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -2780,6 +2855,7 @@ func TestFullSync_Latin1InFromName(t *testing.T) {
 }
 
 func TestFullSync_InvalidUTF8InAllAddressFields(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -2831,6 +2907,7 @@ func TestFullSync_InvalidUTF8InAllAddressFields(t *testing.T) {
 }
 
 func TestFullSync_InvalidUTF8InAttachmentFilename(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -2878,6 +2955,7 @@ func TestFullSync_InvalidUTF8InAttachmentFilename(t *testing.T) {
 }
 
 func TestFullSync_InvalidPartContentType(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -2915,6 +2993,7 @@ func TestFullSync_InvalidPartContentType(t *testing.T) {
 }
 
 func TestFullSync_MultipleEncodingIssuesSameMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -2953,6 +3032,7 @@ func TestFullSync_MultipleEncodingIssuesSameMessage(t *testing.T) {
 }
 
 func TestFullSyncWithMIMEParseError(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 2
 	env.Mock.Profile.HistoryID = 12345
@@ -2975,6 +3055,7 @@ func TestFullSyncWithMIMEParseError(t *testing.T) {
 }
 
 func TestFullSyncWithFatalMIMEParseSalvagesHeaders(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3023,6 +3104,7 @@ func TestFullSyncWithFatalMIMEParseSalvagesHeaders(t *testing.T) {
 }
 
 func TestFullSyncMessageFetchError(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 2
 	env.Mock.Profile.HistoryID = 12345
@@ -3035,6 +3117,7 @@ func TestFullSyncMessageFetchError(t *testing.T) {
 }
 
 func TestIncrementalSyncLabelsError(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12340")
 
@@ -3047,6 +3130,7 @@ func TestIncrementalSyncLabelsError(t *testing.T) {
 }
 
 func TestFullSyncResumeWithCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3094,6 +3178,7 @@ func TestFullSyncResumeWithCursor(t *testing.T) {
 }
 
 func TestFullSyncResumesLegacyUnfilteredCheckpoint(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	env := newTestEnv(t)
@@ -3126,6 +3211,7 @@ func TestFullSyncResumesLegacyUnfilteredCheckpoint(t *testing.T) {
 }
 
 func TestFullSyncDoesNotResumeIncrementalCheckpoint(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)
 	env := newTestEnv(t)
@@ -3150,6 +3236,7 @@ func TestFullSyncDoesNotResumeIncrementalCheckpoint(t *testing.T) {
 }
 
 func TestFullSyncDateFallbackToInternalDate(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	badDateMIME := testemail.NewMessage().
@@ -3175,6 +3262,7 @@ func TestFullSyncDateFallbackToInternalDate(t *testing.T) {
 }
 
 func TestFullSyncImplausibleDateUsesOldestReceivedTimestamp(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3207,6 +3295,7 @@ func TestFullSyncImplausibleDateUsesOldestReceivedTimestamp(t *testing.T) {
 }
 
 func TestFullSyncEmptyRawMIME(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3237,6 +3326,7 @@ func TestFullSyncEmptyRawMIME(t *testing.T) {
 }
 
 func TestFullSyncEmptyThreadID(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12345
@@ -3259,6 +3349,7 @@ func TestFullSyncEmptyThreadID(t *testing.T) {
 }
 
 func TestFullSyncListEmptyThreadIDRawPresent(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12345
@@ -3285,6 +3376,7 @@ func TestFullSyncListEmptyThreadIDRawPresent(t *testing.T) {
 // Tests for initSyncState
 
 func TestInitSyncState_NewSync(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
@@ -3303,6 +3395,7 @@ func TestInitSyncState_NewSync(t *testing.T) {
 }
 
 func TestInitSyncState_Resume(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3341,6 +3434,7 @@ func TestInitSyncState_Resume(t *testing.T) {
 }
 
 func TestLegacyFullCheckpointCompatibilityIsUnfilteredOnly(t *testing.T) {
+	t.Parallel()
 	legacy := &store.SyncRun{
 		CursorBefore: sql.NullString{String: "page_1", Valid: true},
 	}
@@ -3378,6 +3472,7 @@ func TestLegacyFullCheckpointCompatibilityIsUnfilteredOnly(t *testing.T) {
 }
 
 func TestInitSyncState_NoResumeOption(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3403,6 +3498,7 @@ func TestInitSyncState_NoResumeOption(t *testing.T) {
 // Tests for processBatch
 
 func TestProcessBatch_EmptyBatch(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
@@ -3424,6 +3520,7 @@ func TestProcessBatch_EmptyBatch(t *testing.T) {
 }
 
 func TestProcessBatch_AllNew(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
@@ -3453,6 +3550,7 @@ func TestProcessBatch_AllNew(t *testing.T) {
 }
 
 func TestProcessBatch_AllExisting(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 2, 12345, "msg1", "msg2")
@@ -3484,6 +3582,7 @@ func TestProcessBatch_AllExisting(t *testing.T) {
 }
 
 func TestProcessBatch_MixedNewAndExisting(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg1")
@@ -3518,6 +3617,7 @@ func TestProcessBatch_MixedNewAndExisting(t *testing.T) {
 }
 
 func TestProcessBatch_OldestDatePropagation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
@@ -3564,6 +3664,7 @@ func TestProcessBatch_OldestDatePropagation(t *testing.T) {
 }
 
 func TestProcessBatch_ErrorsCount(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3600,6 +3701,7 @@ func TestProcessBatch_ErrorsCount(t *testing.T) {
 }
 
 func TestProcessBatch_GmailNotFoundIsSkipped(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3638,6 +3740,7 @@ func TestProcessBatch_GmailNotFoundIsSkipped(t *testing.T) {
 // TestAttachmentFilePermissions verifies that attachment files are saved with
 // restrictive permissions (0600) to protect email content.
 func TestAttachmentFilePermissions(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 1
@@ -3676,6 +3779,7 @@ func TestAttachmentFilePermissions(t *testing.T) {
 // labels on the same existing message in a single history page applies correctly
 // and makes NO API calls to re-fetch the message.
 func TestIncrementalSyncLabelAddAndRemoveOnExisting(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12340
@@ -3711,6 +3815,7 @@ func TestIncrementalSyncLabelAddAndRemoveOnExisting(t *testing.T) {
 // TestIncrementalSyncBatchDeletions verifies that multiple deletions in a single
 // history page are applied in batch.
 func TestIncrementalSyncBatchDeletions(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	seedMessages(env, 4, 12340, "msg1", "msg2", "msg3", "msg4")
 
@@ -3736,6 +3841,7 @@ func TestIncrementalSyncBatchDeletions(t *testing.T) {
 // TestIncrementalSyncBatchNewMessages verifies that multiple new messages in a
 // single history page are fetched via GetMessagesRawBatch (not one at a time).
 func TestIncrementalSyncBatchNewMessages(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.CreateSourceWithHistory(t, "12340")
 
@@ -3760,6 +3866,7 @@ func TestIncrementalSyncBatchNewMessages(t *testing.T) {
 }
 
 func TestIncrementalSyncSkipsGmailNotFoundBeforeFetch(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3789,6 +3896,7 @@ func TestIncrementalSyncSkipsGmailNotFoundBeforeFetch(t *testing.T) {
 }
 
 func TestIncrementalSyncRecordsFetchErrors(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3818,6 +3926,7 @@ func TestIncrementalSyncRecordsFetchErrors(t *testing.T) {
 }
 
 func TestIncrementalSyncRecordsLabelAddFetchErrors(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3846,6 +3955,7 @@ func TestIncrementalSyncRecordsLabelAddFetchErrors(t *testing.T) {
 }
 
 func TestIncrementalSyncRecordsLabelAddGmailNotFound(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3874,6 +3984,7 @@ func TestIncrementalSyncRecordsLabelAddGmailNotFound(t *testing.T) {
 }
 
 func TestIncrementalSyncRecordsLabelAddIngestErrors(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3907,6 +4018,7 @@ func TestIncrementalSyncRecordsLabelAddIngestErrors(t *testing.T) {
 }
 
 func TestIncrementalSyncDedupesMessageAddedAndLabelAddedForSameUnknownMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -3944,6 +4056,7 @@ func TestIncrementalSyncDedupesMessageAddedAndLabelAddedForSameUnknownMessage(t 
 }
 
 func TestIncrementalSyncKeepsSiblingPayloadsDistinctWhenAddsRepeatAsLabelChanges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -4039,6 +4152,7 @@ func TestIncrementalSyncKeepsSiblingPayloadsDistinctWhenAddsRepeatAsLabelChanges
 // TestIncrementalSyncMixedOperations tests a history page with adds, deletes,
 // and label changes all at once.
 func TestIncrementalSyncMixedOperations(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	seedMessages(env, 2, 12340, "existing-1", "existing-2")
 
@@ -4076,6 +4190,7 @@ func TestIncrementalSyncMixedOperations(t *testing.T) {
 // TestDeriveThreadKey verifies the MIME-based thread key derivation used for
 // IMAP sources that lack server-side threading.
 func TestDeriveThreadKey(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		msg       *mime.Message
@@ -4138,6 +4253,7 @@ func TestDeriveThreadKey(t *testing.T) {
 // TestIMAPThreading verifies that IMAP messages sharing an email thread
 // (via References/In-Reply-To headers) are grouped into the same conversation.
 func TestIMAPThreading(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.SetOptions(t, func(o *Options) {
 		o.SourceType = sourceTypeIMAP
@@ -4205,6 +4321,7 @@ func TestIMAPThreading(t *testing.T) {
 // is not re-imported when it appears under a different mailbox|uid on a
 // subsequent sync (e.g. moved from All Mail to Trash).
 func TestIMAPCrossSyncDedup(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -4260,6 +4377,7 @@ func TestIMAPCrossSyncDedup(t *testing.T) {
 }
 
 func TestIMAPFullRescanWithoutAllReconcilesMovedMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	opts := DefaultOptions()
@@ -4297,6 +4415,7 @@ func TestIMAPFullRescanWithoutAllReconcilesMovedMessage(t *testing.T) {
 }
 
 func TestIMAPFullRescanWithoutAllPreservesExistingIDForOverlappingFolders(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	opts := DefaultOptions()
@@ -4340,6 +4459,7 @@ func TestIMAPFullRescanWithoutAllPreservesExistingIDForOverlappingFolders(t *tes
 }
 
 func TestIMAPCompleteSnapshotAdoptsAllMailCanonicalID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	opts := DefaultOptions()
@@ -4383,6 +4503,7 @@ func TestIMAPCompleteSnapshotAdoptsAllMailCanonicalID(t *testing.T) {
 }
 
 func TestIMAPUnsupportedQresyncMoveUsesFullFallback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -4425,6 +4546,7 @@ func TestIMAPUnsupportedQresyncMoveUsesFullFallback(t *testing.T) {
 }
 
 func TestIMAPUIDValidityReusePreservesOldAndArchivesNewMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -4526,6 +4648,7 @@ func TestIMAPUIDValidityReusePreservesOldAndArchivesNewMessage(t *testing.T) {
 }
 
 func TestIMAPNoResumeUIDValidityReuseArchivesReplacement(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -4618,6 +4741,7 @@ func TestIMAPNoResumeUIDValidityReuseArchivesReplacement(t *testing.T) {
 }
 
 func TestIMAPForcedUIDReuseWithoutMessageIDArchivesReplacement(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	opts := DefaultOptions()
@@ -4666,6 +4790,7 @@ func TestIMAPForcedUIDReuseWithoutMessageIDArchivesReplacement(t *testing.T) {
 }
 
 func TestIMAPMissingIdentityRawComparisonKeepsEqualMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	opts := DefaultOptions()
@@ -4698,6 +4823,7 @@ func TestIMAPMissingIdentityRawComparisonKeepsEqualMessage(t *testing.T) {
 }
 
 func TestIMAPAsymmetricMessageIDUsesRawComparison(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	opts := DefaultOptions()
@@ -4739,6 +4865,7 @@ func TestIMAPAsymmetricMessageIDUsesRawComparison(t *testing.T) {
 }
 
 func TestIMAPMissingIdentityRawComparisonArchivesDifferentMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	opts := DefaultOptions()
@@ -4826,6 +4953,7 @@ func assertMissingIDArchiveState(
 }
 
 func TestIMAPFilteredMoveReconcilesBeforeAdvancingFolderState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -4895,6 +5023,7 @@ func TestIMAPFilteredMoveReconcilesBeforeAdvancingFolderState(t *testing.T) {
 }
 
 func TestIMAPUnsupportedQresyncRenameUsesFullFallback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -4948,6 +5077,7 @@ func TestIMAPUnsupportedQresyncRenameUsesFullFallback(t *testing.T) {
 }
 
 func TestIMAPHighWaterOverlapPreservesValidID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -4999,6 +5129,7 @@ func TestIMAPHighWaterOverlapPreservesValidID(t *testing.T) {
 }
 
 func TestIMAPCompleteCrossPageOverlapPreservesValidID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	opts := DefaultOptions()
@@ -5103,6 +5234,7 @@ func (a *highWaterValidationAPI) AcknowledgeMessages(
 }
 
 func TestIMAPHighWaterValidationFailureRemainsRetryable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -5256,6 +5388,7 @@ func (a *labelMetadataSnapshotAPI) GetMessageLabelsBatch(_ context.Context, mess
 }
 
 func TestIMAPFilteredRescanPreservesCanonicalIDAndMergesLabels(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -5302,6 +5435,7 @@ func TestIMAPFilteredRescanPreservesCanonicalIDAndMergesLabels(t *testing.T) {
 }
 
 func TestIMAPFilteredRescanExactIDMergesNewLabels(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	opts := DefaultOptions()
 	opts.SourceType = sourceTypeIMAP
@@ -5343,6 +5477,7 @@ func TestIMAPFilteredRescanExactIDMergesNewLabels(t *testing.T) {
 }
 
 func TestIMAPCompleteRescanReplacesExactIDLabels(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -5407,6 +5542,7 @@ func TestIMAPCompleteRescanReplacesExactIDLabels(t *testing.T) {
 }
 
 func TestIMAPCompleteLimitedRescanReconcilesProcessedExistingLabels(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	opts := DefaultOptions()
 	opts.SourceType = sourceTypeIMAP
@@ -5448,6 +5584,7 @@ func TestIMAPCompleteLimitedRescanReconcilesProcessedExistingLabels(t *testing.T
 }
 
 func TestIMAPLabelMetadataFailureDoesNotAbortBatch(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	opts := DefaultOptions()
 	opts.SourceType = sourceTypeIMAP
@@ -5490,6 +5627,7 @@ func TestIMAPLabelMetadataFailureDoesNotAbortBatch(t *testing.T) {
 // from a message whose raw MIME data is missing still succeeds. The label-removal
 // path operates on the message_labels table directly and never touches raw data.
 func TestIncrementalSyncLabelRemovedWithMissingRaw(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12340
@@ -5527,6 +5665,7 @@ func TestIncrementalSyncLabelRemovedWithMissingRaw(t *testing.T) {
 }
 
 func TestIMAPMessageGoneBeforeRawFetchStillSavesFolderState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -5562,6 +5701,7 @@ func TestIMAPMessageGoneBeforeRawFetchStillSavesFolderState(t *testing.T) {
 }
 
 func TestIMAPExpungeDuringRunStillSavesFolderState(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -5612,6 +5752,7 @@ func TestIMAPExpungeDuringRunStillSavesFolderState(t *testing.T) {
 // The message-count recovery this asserts belongs to the non-QRESYNC paths.
 // See TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount.
 func TestIMAPGoneUIDIsArchivedOnceTheServerReturnsIt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)

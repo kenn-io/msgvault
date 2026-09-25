@@ -16,6 +16,7 @@ import (
 // notation (e.g. /api/v1/messages/2.4489626e+07), which the server's
 // strconv.ParseInt rejected with a 400.
 func TestGetMessageLargeIDEndToEnd(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

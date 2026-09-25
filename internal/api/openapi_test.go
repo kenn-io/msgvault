@@ -29,6 +29,7 @@ const (
 )
 
 func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
+	t.Parallel()
 	doc := OpenAPIDocument()
 
 	require.NotNil(t, doc.Info, "openapi info")
@@ -37,6 +38,7 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 }
 
 func TestMeetingIntelligenceOpenAPIContract(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	assertions.Equal("2.29.0", APISchemaVersion)
@@ -93,6 +95,7 @@ func TestMeetingIntelligenceOpenAPIContract(t *testing.T) {
 }
 
 func TestGeneratedMeetingRequestsPreserveExplicitEmptyMessageIDs(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		absent    any
@@ -132,6 +135,7 @@ func TestGeneratedMeetingRequestsPreserveExplicitEmptyMessageIDs(t *testing.T) {
 }
 
 func TestGeneratedMeetingImportPreservesExplicitEmptyActionItems(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	absent, err := json.Marshal(&generated.Meeting{})
@@ -144,6 +148,7 @@ func TestGeneratedMeetingImportPreservesExplicitEmptyActionItems(t *testing.T) {
 }
 
 func TestGeneratedMeetingMetricsPreserveNullableResponseValues(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	for _, raw := range []string{
@@ -173,11 +178,13 @@ func TestGeneratedMeetingMetricsPreserveNullableResponseValues(t *testing.T) {
 }
 
 func TestGeneratedMeetingStatusKeepsRelationshipReviewPendingCompatibility(t *testing.T) {
+	t.Parallel()
 	status := generated.Pending
 	assert.Equal(t, generated.ListPersonRelationshipReviewsQueryStatus("pending"), status)
 }
 
 func TestOpenAPISchemaVersionSavedViewRun(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	assertions.Equal("2.29.0", APISchemaVersion)
@@ -198,16 +205,19 @@ func TestOpenAPISchemaVersionSavedViewRun(t *testing.T) {
 }
 
 func TestDeletionSubsetSchemaVersion(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "2.29.0", APISchemaVersion)
 }
 
 func TestOperationsWorkspaceSchemaVersion(t *testing.T) {
+	t.Parallel()
 	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
 		assert.Equal(t, "2.29.0", doc.Info.Version)
 	}
 }
 
 func TestSearchTimingFieldsUseAdditiveSchemaVersion(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	assertions.Equal("2.29.0", APISchemaVersion)
@@ -229,10 +239,12 @@ func TestSearchTimingFieldsUseAdditiveSchemaVersion(t *testing.T) {
 }
 
 func TestOpenAPISchemaVersionPersonBrief(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "2.29.0", APISchemaVersion)
 }
 
 func TestOpenAPIImportJobContract(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	doc := OpenAPIDocument()
@@ -266,6 +278,7 @@ func TestOpenAPIImportJobContract(t *testing.T) {
 }
 
 func TestOpenAPIClientImportJobStatusEnumNamesPreserveExistingConstants(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	schema := openAPIClientDocument().Components.Schemas.Map()["ImportJobResponse"]
@@ -280,6 +293,7 @@ func TestOpenAPIClientImportJobStatusEnumNamesPreserveExistingConstants(t *testi
 }
 
 func TestCLISearchOpenAPIDocumentsDeletionScope(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	operation := OpenAPIDocument().Paths["/api/v1/cli/search"].Get
 	require.NotNil(t, operation)
@@ -296,6 +310,7 @@ func TestCLISearchOpenAPIDocumentsDeletionScope(t *testing.T) {
 }
 
 func TestOpenAPIDeepSearchDocumentsBodyScopeListIDRestriction(t *testing.T) {
+	t.Parallel()
 	operation := OpenAPIDocument().Paths["/api/v1/search/deep"].Get
 	require.NotNil(t, operation)
 	for _, parameter := range operation.Parameters {
@@ -308,6 +323,7 @@ func TestOpenAPIDeepSearchDocumentsBodyScopeListIDRestriction(t *testing.T) {
 }
 
 func TestPersonFactOpenAPIOperationsContainNoReviewMutation(t *testing.T) {
+	t.Parallel()
 	want := map[string]map[string]string{
 		"/api/v1/person-fact-targets": {
 			http.MethodGet: "listPersonFactTargets",
@@ -353,6 +369,7 @@ func TestPersonFactOpenAPIOperationsContainNoReviewMutation(t *testing.T) {
 }
 
 func TestPersonFactOpenAPIHistoryCollectionsAreNonNullable(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
@@ -372,6 +389,7 @@ func TestPersonFactOpenAPIHistoryCollectionsAreNonNullable(t *testing.T) {
 }
 
 func TestPersonFactPinsOpenAPIDeclaresBadPersonIDResponse(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
@@ -383,6 +401,7 @@ func TestPersonFactPinsOpenAPIDeclaresBadPersonIDResponse(t *testing.T) {
 }
 
 func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	doc := OpenAPIDocument()
 
@@ -408,14 +427,17 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 }
 
 func TestAnalyticsCacheReadinessUsesAdditiveSchemaVersion(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "2.29.0", APISchemaVersion)
 }
 
 func TestPersonFilesUseAdditiveSchemaVersion(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, "2.29.0", APISchemaVersion)
 }
 
 func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	for _, path := range []string{
@@ -435,6 +457,7 @@ func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
 }
 
 func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assert.Equal(t, "2.29.0", APISchemaVersion,
 		"document and person-file search preserve the organization and employment contract")
@@ -452,6 +475,7 @@ func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
 }
 
 func TestOpenAPISemanticPersonSearchReturnsOnlyDurableRootsAndScores(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
@@ -484,6 +508,7 @@ func TestOpenAPISemanticPersonSearchReturnsOnlyDurableRootsAndScores(t *testing.
 }
 
 func TestOrganizationCreateSchemaOmitsPatchOnlyRetiredState(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
@@ -518,6 +543,7 @@ func operationBodySchema(
 }
 
 func TestSourceStatusRunReferencesAreNullable(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	doc := OpenAPIDocument()
@@ -533,6 +559,7 @@ func TestSourceStatusRunReferencesAreNullable(t *testing.T) {
 }
 
 func TestExploreServiceUnavailableResponseUsesNonExclusiveAlternatives(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	doc := OpenAPIDocument()
@@ -547,6 +574,7 @@ func TestExploreServiceUnavailableResponseUsesNonExclusiveAlternatives(t *testin
 }
 
 func TestOpenAPIFileNamesAndMIMETypesAreRequiredButMayBeEmpty(t *testing.T) {
+	t.Parallel()
 	doc := OpenAPIDocument()
 	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow"} {
 		t.Run(schemaName, func(t *testing.T) {
@@ -566,6 +594,7 @@ func TestOpenAPIFileNamesAndMIMETypesAreRequiredButMayBeEmpty(t *testing.T) {
 }
 
 func TestOpenAPIClientUsesPresenceAwareFileMetadataStrings(t *testing.T) {
+	t.Parallel()
 	publicSchemas := OpenAPIDocument().Components.Schemas.Map()
 	clientSchemas := openAPIClientDocument().Components.Schemas.Map()
 	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow"} {
@@ -583,6 +612,7 @@ func TestOpenAPIClientUsesPresenceAwareFileMetadataStrings(t *testing.T) {
 }
 
 func TestOpenAPIJSONVersionPrettyPrintsSchema(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements :=
 		require.New(t)
@@ -607,6 +637,7 @@ func TestOpenAPIJSONVersionPrettyPrintsSchema(t *testing.T) {
 }
 
 func TestOpenAPIYAMLDeterministic(t *testing.T) {
+	t.Parallel()
 	first, err := OpenAPIYAML()
 	require.NoError(t, err, "first render")
 	second, err := OpenAPIYAML()
@@ -616,6 +647,7 @@ func TestOpenAPIYAMLDeterministic(t *testing.T) {
 }
 
 func TestOpenAPIIdentityDiscoveryApplyIsOptional(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
@@ -628,6 +660,7 @@ func TestOpenAPIIdentityDiscoveryApplyIsOptional(t *testing.T) {
 }
 
 func TestOpenAPIIdentityCandidateRequiresProviderStates(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
@@ -649,6 +682,7 @@ func TestOpenAPIIdentityCandidateRequiresProviderStates(t *testing.T) {
 }
 
 func TestOpenAPIIdentityImportUsesParsedEntryContract(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
@@ -694,6 +728,7 @@ func TestOpenAPIIdentityImportUsesParsedEntryContract(t *testing.T) {
 }
 
 func TestOpenAPITotalStatsDocumentsSearchScope(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -724,6 +759,7 @@ func TestOpenAPITotalStatsDocumentsSearchScope(t *testing.T) {
 }
 
 func TestOpenAPIFastSearchDocumentsSourceIDs(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -745,6 +781,7 @@ func TestOpenAPIFastSearchDocumentsSourceIDs(t *testing.T) {
 }
 
 func TestOpenAPISearchDocumentsConversationID(t *testing.T) {
+	t.Parallel()
 	operation := OpenAPIDocument().Paths["/api/v1/search"].Get
 	require.NotNil(t, operation, "search operation")
 
@@ -758,6 +795,7 @@ func TestOpenAPISearchDocumentsConversationID(t *testing.T) {
 }
 
 func TestOpenAPIPersonAttributeContract(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	assertions.Equal("2.29.0", APISchemaVersion,
@@ -787,6 +825,7 @@ func TestOpenAPIPersonAttributeContract(t *testing.T) {
 }
 
 func TestOpenAPIParticipantInboxAndTextScopeContracts(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	doc := OpenAPIDocument()
@@ -823,6 +862,7 @@ func TestOpenAPIParticipantInboxAndTextScopeContracts(t *testing.T) {
 }
 
 func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	doc := OpenAPIDocument()
@@ -872,6 +912,7 @@ func TestOpenAPIPersonProfilePatchUsesWritableEnvelopeShape(t *testing.T) {
 }
 
 func TestOpenAPIOrganizationProfilePutDocumentsLimits(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	assertions.Equal("2.29.0", APISchemaVersion,
@@ -891,6 +932,7 @@ func TestOpenAPIOrganizationProfilePutDocumentsLimits(t *testing.T) {
 }
 
 func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -919,6 +961,7 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 }
 
 func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -953,6 +996,7 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 }
 
 func TestOpenAPIMeetingImportContract(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
@@ -1075,6 +1119,7 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 }
 
 func TestOpenAPIBinaryRoutesDocumentJSONErrors(t *testing.T) {
+	t.Parallel()
 	doc := OpenAPIDocument()
 	routes := map[string]struct {
 		operationID string
@@ -1129,6 +1174,7 @@ func TestOpenAPIBinaryRoutesDocumentJSONErrors(t *testing.T) {
 }
 
 func TestOpenAPISavedViewMutationsDocumentBadRequests(t *testing.T) {
+	t.Parallel()
 	doc := OpenAPIDocument()
 
 	for name, operation := range map[string]*huma.Operation{
@@ -1149,6 +1195,7 @@ func TestOpenAPISavedViewMutationsDocumentBadRequests(t *testing.T) {
 }
 
 func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	doc := OpenAPIDocument()
@@ -1210,6 +1257,7 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 }
 
 func TestOpenAPIDirectoryLastContactParametersAreTyped(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	doc := OpenAPIDocument()
@@ -1228,6 +1276,7 @@ func TestOpenAPIDirectoryLastContactParametersAreTyped(t *testing.T) {
 }
 
 func TestOpenAPICardDAVConflictArraysAreRequiredAndNonNull(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		schema   string
 		property string
@@ -1260,6 +1309,7 @@ func TestOpenAPICardDAVConflictArraysAreRequiredAndNonNull(t *testing.T) {
 }
 
 func TestOpenAPIClientServiceEnumsPreserveExistingGoNames(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	schema := openAPIClientDocument().Components.Schemas.Map()["CreateCommunicationServiceRequest"]
@@ -1286,6 +1336,7 @@ func TestOpenAPIClientServiceEnumsPreserveExistingGoNames(t *testing.T) {
 }
 
 func TestOpenAPIClientAppendNoteSourceEnumNamesAvoidExistingConstants(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	schema := openAPIClientDocument().Components.Schemas.Map()["AppendPersonNoteRequest"]
@@ -1303,6 +1354,7 @@ func TestOpenAPIClientAppendNoteSourceEnumNamesAvoidExistingConstants(t *testing
 }
 
 func TestOpenAPIClientOperationCounterUnitNamesCannotCollideWithExistingExports(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	schema := openAPIClientDocument().Components.Schemas.Map()["OperationPublicCounter"]
@@ -1321,6 +1373,7 @@ func TestOpenAPIClientOperationCounterUnitNamesCannotCollideWithExistingExports(
 }
 
 func TestOpenAPIClientCardDAVEnumsDoNotRenameExistingConstants(t *testing.T) {
+	t.Parallel()
 	schemas := openAPIClientDocument().Components.Schemas.Map()
 	tests := []struct {
 		schema, property string
@@ -1349,6 +1402,7 @@ func TestOpenAPIClientCardDAVEnumsDoNotRenameExistingConstants(t *testing.T) {
 }
 
 func TestOpenAPIExplorationUsesStructuredUnavailableUnion(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	doc := OpenAPIDocument()
@@ -1375,6 +1429,7 @@ func TestOpenAPIExplorationUsesStructuredUnavailableUnion(t *testing.T) {
 }
 
 func TestOpenAPIPersonAndDomainDetailsUseStructuredUnavailableUnion(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
@@ -1394,6 +1449,7 @@ func TestOpenAPIPersonAndDomainDetailsUseStructuredUnavailableUnion(t *testing.T
 }
 
 func TestGeneratedPersonAndDomainDetailsExposeServiceUnavailable(t *testing.T) {
+	t.Parallel()
 	for name, responseType := range map[string]reflect.Type{
 		"get participant": reflect.TypeFor[generated.GetParticipantResp](),
 		"get domain":      reflect.TypeFor[generated.GetDomainResp](),
@@ -1404,6 +1460,7 @@ func TestGeneratedPersonAndDomainDetailsExposeServiceUnavailable(t *testing.T) {
 }
 
 func TestGeneratedPersonTrackingPreservesRequiredNullTimestamp(t *testing.T) {
+	t.Parallel()
 	state := generated.PersonTracking{
 		PersonID:  7,
 		Tracked:   false,
@@ -1417,6 +1474,7 @@ func TestGeneratedPersonTrackingPreservesRequiredNullTimestamp(t *testing.T) {
 }
 
 func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	doc := OpenAPIDocument()
@@ -1456,6 +1514,7 @@ func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {
 }
 
 func TestOpenAPIPersonMergeSnapshotUsesLosslessGoType(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	snapshot := openAPIClientDocument().Components.Schemas.Map()["PersonMergeSnapshotResponse"]
@@ -1468,6 +1527,7 @@ func TestOpenAPIPersonMergeSnapshotUsesLosslessGoType(t *testing.T) {
 }
 
 func TestOpenAPIExploreGroupingEnumUsesServerCatalog(t *testing.T) {
+	t.Parallel()
 	dimensions := explorecatalog.GroupingDimensions()
 	want := make([]any, len(dimensions))
 	for index, dimension := range dimensions {
@@ -1481,6 +1541,7 @@ func TestOpenAPIExploreGroupingEnumUsesServerCatalog(t *testing.T) {
 }
 
 func TestOpenAPIArtifactUpToDate(t *testing.T) {
+	t.Parallel()
 	got, err := OpenAPIYAML()
 	require.NoError(t, err, "render OpenAPI YAML")
 
@@ -1490,6 +1551,7 @@ func TestOpenAPIArtifactUpToDate(t *testing.T) {
 }
 
 func TestOpenAPIDirectoryArraysAreRequiredAndNonNullInRenderedDocuments(t *testing.T) {
+	t.Parallel()
 	for _, version := range []string{"3.1", "3.0"} {
 		t.Run(version, func(t *testing.T) {
 			requirements := require.New(t)
@@ -1527,6 +1589,7 @@ func TestOpenAPIDirectoryArraysAreRequiredAndNonNullInRenderedDocuments(t *testi
 }
 
 func TestCardDAVOpenAPIDocumentsPositiveIDsAndOperationalErrors(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -1569,6 +1632,7 @@ func TestCardDAVOpenAPIDocumentsPositiveIDsAndOperationalErrors(t *testing.T) {
 }
 
 func TestCardDAVStatusAndRunHistoryOpenAPIContract(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	doc := OpenAPIDocument()
@@ -1608,6 +1672,7 @@ func TestCardDAVStatusAndRunHistoryOpenAPIContract(t *testing.T) {
 }
 
 func TestOpenAPIOperationRoutesParametersAndFailures(t *testing.T) {
+	t.Parallel()
 	for documentName, document := range map[string]*huma.OpenAPI{
 		"server": OpenAPIDocument(),
 		"client": openAPIClientDocument(),
@@ -1669,6 +1734,7 @@ func TestOpenAPIOperationRoutesParametersAndFailures(t *testing.T) {
 }
 
 func TestOpenAPIOperationErrorsAreClosedAndRouteScoped(t *testing.T) {
+	t.Parallel()
 	for documentName, document := range map[string]*huma.OpenAPI{
 		"server": OpenAPIDocument(),
 		"client": openAPIClientDocument(),
@@ -1711,6 +1777,7 @@ func TestOpenAPIOperationErrorsAreClosedAndRouteScoped(t *testing.T) {
 }
 
 func TestOpenAPIOperationEnumsAndNonNullCollections(t *testing.T) {
+	t.Parallel()
 	enums := map[string]map[string][]string{
 		"OperationPublicCounter": {
 			"name": operationCounterNameValues(),
@@ -1821,6 +1888,7 @@ func operationPublicErrorCodeValues() []string {
 }
 
 func TestOpenAPIOperationServerAndClientSchemasMatch(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	server := OpenAPIDocument().Components.Schemas.Map()
@@ -1850,6 +1918,7 @@ func TestOpenAPIOperationServerAndClientSchemasMatch(t *testing.T) {
 }
 
 func TestOpenAPIOperationActionsUseOnlyExistingProtectedMutations(t *testing.T) {
+	t.Parallel()
 	for documentName, document := range map[string]*huma.OpenAPI{
 		"server": OpenAPIDocument(),
 		"client": openAPIClientDocument(),
@@ -1894,6 +1963,7 @@ func operationSchemaPropertyNames(values map[string]*huma.Schema) []string {
 }
 
 func TestCardDAVServiceUnavailableResponsesDocumentRetryAfter(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -1957,6 +2027,7 @@ func pathOperation(item *huma.PathItem, method string) *huma.Operation {
 }
 
 func TestOpenAPIClientSpecArtifactUpToDate(t *testing.T) {
+	t.Parallel()
 	got, err := OpenAPIYAMLVersion("3.0")
 	require.NoError(t, err, "render OpenAPI 3.0 YAML")
 
@@ -1966,6 +2037,7 @@ func TestOpenAPIClientSpecArtifactUpToDate(t *testing.T) {
 }
 
 func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
+	t.Parallel()
 	requirements :=
 		require.New(t)
 
@@ -2037,6 +2109,7 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 }
 
 func TestOpenAPIGeneratedMeetingImportClient(t *testing.T) {
+	t.Parallel()
 	assertGeneratedFileContains(t, "client.go",
 		"ImportMeeting(ctx context.Context, options *ImportMeetingRequestOptions")
 	assertGeneratedFileContains(t, "client_options.go",
@@ -2082,6 +2155,7 @@ func generatedGoFiles(dir string) ([]string, error) {
 }
 
 func TestOpenAPICollectionScopeContracts(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	doc := OpenAPIDocument()

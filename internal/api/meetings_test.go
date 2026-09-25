@@ -109,6 +109,7 @@ func (c meetingHTTPClient) Do(ctx context.Context, request *http.Request) (*http
 }
 
 func TestMeetingDirectRoutesPreserveScopeAndDefaults(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := &meetingRouteStore{
@@ -145,6 +146,7 @@ func TestMeetingDirectRoutesPreserveScopeAndDefaults(t *testing.T) {
 }
 
 func TestGeneratedMeetingClientSendsExplicitEmptyMessageIDs(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	st := &meetingRouteStore{
 		mockStore: &mockStore{},
@@ -170,6 +172,7 @@ func TestGeneratedMeetingClientSendsExplicitEmptyMessageIDs(t *testing.T) {
 }
 
 func TestMeetingRoutesRejectNoncanonicalJSONFieldsBeforeResolution(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		body string
@@ -208,6 +211,7 @@ func TestMeetingRoutesRejectNoncanonicalJSONFieldsBeforeResolution(t *testing.T)
 }
 
 func TestMeetingActionsValidateOptionsBeforeResolvingScope(t *testing.T) {
+	t.Parallel()
 	t.Run("direct person", func(t *testing.T) {
 		personCalls := 0
 		st := &meetingRouteStore{mockStore: &mockStore{personContextFunc: func(_ context.Context, id int64) (*store.Person, error) {
@@ -243,6 +247,7 @@ func TestMeetingActionsValidateOptionsBeforeResolvingScope(t *testing.T) {
 }
 
 func TestMeetingDirectScopeValidatesBeforeResolvingPerson(t *testing.T) {
+	t.Parallel()
 	personCalls := 0
 	st := &meetingRouteStore{mockStore: &mockStore{personContextFunc: func(_ context.Context, id int64) (*store.Person, error) {
 		personCalls++
@@ -260,6 +265,7 @@ func TestMeetingDirectScopeValidatesBeforeResolvingPerson(t *testing.T) {
 }
 
 func TestMeetingExploreMetricsApplyResolvedDeletionToCurrentStoreSnapshot(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	fixture := storetest.New(t)
 	meetingID, err := fixture.Store.UpsertMessage(&store.Message{
@@ -310,6 +316,7 @@ func TestMeetingExploreMetricsApplyResolvedDeletionToCurrentStoreSnapshot(t *tes
 }
 
 func TestMeetingExploreContextRechecksSourceDeletion(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		deletion         string
 		initiallyDeleted bool
@@ -389,6 +396,7 @@ func TestMeetingExploreContextRechecksSourceDeletion(t *testing.T) {
 }
 
 func TestMeetingRoutesRejectMalformedAndOversizedBodiesBeforeStoreWork(t *testing.T) {
+	t.Parallel()
 	st := &meetingRouteStore{mockStore: &mockStore{}}
 	srv := newMeetingRouteTestServer(t, st, &querytest.MockEngine{})
 
@@ -416,6 +424,7 @@ func TestMeetingRoutesRejectMalformedAndOversizedBodiesBeforeStoreWork(t *testin
 }
 
 func TestMeetingRoutesRejectInvalidPublicScopeAndOptionValues(t *testing.T) {
+	t.Parallel()
 	st := &meetingRouteStore{mockStore: &mockStore{}}
 	after := "2026-09-12T12:00:00Z"
 
@@ -470,6 +479,7 @@ func TestMeetingRoutesRejectInvalidPublicScopeAndOptionValues(t *testing.T) {
 }
 
 func TestMeetingScopeResolvesDurablePersonAndPreservesExactPluralIDs(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := &meetingRouteStore{mockStore: &mockStore{personContextFunc: func(_ context.Context, id int64) (*store.Person, error) {
@@ -495,6 +505,7 @@ func TestMeetingScopeResolvesDurablePersonAndPreservesExactPluralIDs(t *testing.
 }
 
 func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := &meetingRouteStore{
@@ -529,6 +540,7 @@ func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *test
 }
 
 func TestMeetingExploreScopeUsesSemanticSnapshotAndRejectsSaturatedPool(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	generation := int64(7)
@@ -588,6 +600,7 @@ func TestMeetingExploreScopeUsesSemanticSnapshotAndRejectsSaturatedPool(t *testi
 }
 
 func TestMeetingExploreScopeMapsPopulationAndRevisionFailures(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		result     *query.ExploreMeetingSelection
@@ -622,6 +635,7 @@ func TestMeetingExploreScopeMapsPopulationAndRevisionFailures(t *testing.T) {
 }
 
 func TestMeetingExploreContextMapsEligibilityDriftToScopeChanged(t *testing.T) {
+	t.Parallel()
 	st := &meetingRouteStore{mockStore: &mockStore{}, contextErr: store.ErrMeetingNotFound}
 	engine := &meetingRouteEngine{MockEngine: &querytest.MockEngine{}, result: &query.ExploreMeetingSelection{
 		SelectedCount: 1, MeetingCount: 1, MessageIDs: []int64{41}, CacheRevision: "r",
@@ -640,6 +654,7 @@ func TestMeetingExploreContextMapsEligibilityDriftToScopeChanged(t *testing.T) {
 }
 
 func TestMeetingStoreErrorsUseStableHTTPContracts(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		err        error
@@ -669,6 +684,7 @@ func TestMeetingStoreErrorsUseStableHTTPContracts(t *testing.T) {
 }
 
 func TestMeetingRouteContextCancellationIsStructured(t *testing.T) {
+	t.Parallel()
 	st := &meetingRouteStore{mockStore: &mockStore{}, contextErr: context.Canceled}
 	srv := newMeetingRouteTestServer(t, st, &querytest.MockEngine{})
 	request := meetingRouteRequest("/api/v1/meetings/context", `{"message_ids":[1]}`)
@@ -680,6 +696,7 @@ func TestMeetingRouteContextCancellationIsStructured(t *testing.T) {
 }
 
 func TestMeetingRouteStoreErrorDoesNotLeakDetails(t *testing.T) {
+	t.Parallel()
 	st := &meetingRouteStore{mockStore: &mockStore{}, contextErr: errors.New("private transcript content")}
 	srv := newMeetingRouteTestServer(t, st, &querytest.MockEngine{})
 	response := httptest.NewRecorder()

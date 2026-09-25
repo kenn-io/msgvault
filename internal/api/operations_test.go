@@ -175,6 +175,7 @@ func operationRunForKindFixture(t *testing.T, kind operations.Kind, state operat
 }
 
 func TestOperationStatusReturnsExactRegistryAndNonNullActions(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg := config.NewDefaultConfig()
@@ -272,6 +273,7 @@ func TestOperationStatusReturnsExactRegistryAndNonNullActions(t *testing.T) {
 }
 
 func TestOperationStatusDocumentExtractionConfigurationUsesDurableSelectedScope(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name             string
 		documentsEnabled bool
@@ -328,6 +330,7 @@ func TestOperationStatusDocumentExtractionConfigurationUsesDurableSelectedScope(
 }
 
 func TestOperationStatusPersonEnrichmentConfiguredRequiresEnabledProviderRuntime(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name             string
 		enabled          bool
@@ -381,6 +384,7 @@ func TestOperationStatusPersonEnrichmentConfiguredRequiresEnabledProviderRuntime
 }
 
 func TestOperationStatusProjectsRealStoreRunsAndDegradesOnlyOneLane(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -437,6 +441,7 @@ func TestOperationStatusProjectsRealStoreRunsAndDegradesOnlyOneLane(t *testing.T
 }
 
 func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg, st, _ := savedCardDAVFixture(t)
@@ -546,6 +551,7 @@ func TestOperationStatusAdvertisesOnlySafeTypedActions(t *testing.T) {
 }
 
 func TestOperationStatusBypassesGateAndHandlesNilDependencies(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	gate := NewSerialOperationGate()
@@ -573,6 +579,7 @@ func TestOperationStatusBypassesGateAndHandlesNilDependencies(t *testing.T) {
 }
 
 func TestOperationRunsPaginatesAndDeclaresUnavailableKinds(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	newest := operationRunFixture(t)
@@ -624,6 +631,7 @@ func TestOperationRunsPaginatesAndDeclaresUnavailableKinds(t *testing.T) {
 }
 
 func TestOperationRunsPaginatesSQLiteEnrichmentAtNanosecondPrecision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	startedAt := time.Date(2026, 9, 5, 12, 0, 0, 123456789, time.UTC)
@@ -671,6 +679,7 @@ func TestOperationRunsPaginatesSQLiteEnrichmentAtNanosecondPrecision(t *testing.
 }
 
 func TestOperationRunsRejectsInvalidQueriesAndUnavailableKinds(t *testing.T) {
+	t.Parallel()
 	srv := newOperationTestServer(&operationHistoryStub{}, &operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID})
 	tests := []struct {
 		name   string
@@ -693,6 +702,7 @@ func TestOperationRunsRejectsInvalidQueriesAndUnavailableKinds(t *testing.T) {
 }
 
 func TestOperationRunsRejectsSingleDynamicallyUnavailableKind(t *testing.T) {
+	t.Parallel()
 	reader := &operationHistoryStub{snapshots: []operations.HistorySnapshot{{
 		AvailableKinds: []operations.Kind{}, UnavailableKinds: []operations.Kind{operations.KindMessageEmbedding},
 		MembershipRevision: 4,
@@ -705,6 +715,7 @@ func TestOperationRunsRejectsSingleDynamicallyUnavailableKind(t *testing.T) {
 }
 
 func TestOperationRunsRejectsCursorSnapshotDrift(t *testing.T) {
+	t.Parallel()
 	newest := operationRunFixture(t)
 	older := operationRunFixture(t)
 	older.ID = mustOperationIntID(t, operations.KindSourceSync, 16)
@@ -778,6 +789,7 @@ func TestOperationRunsRejectsCursorSnapshotDrift(t *testing.T) {
 }
 
 func TestOperationRunsRejectsCursorDateFilterDrift(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	newest := operationRunFixture(t)
@@ -802,6 +814,7 @@ func TestOperationRunsRejectsCursorDateFilterDrift(t *testing.T) {
 }
 
 func TestOperationRunsRejectsBoundCursorAndFailsAtomically(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	run := operationRunFixture(t)
 	position := operations.Position{StartedAt: run.StartedAt, ID: run.ID}
@@ -826,6 +839,7 @@ func TestOperationRunsRejectsBoundCursorAndFailsAtomically(t *testing.T) {
 }
 
 func TestOperationRunDetailUsesOpaqueIdentityAndExactErrors(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	run := operationRunFixture(t)
@@ -871,6 +885,7 @@ func TestOperationRunDetailUsesOpaqueIdentityAndExactErrors(t *testing.T) {
 }
 
 func TestOperationRunDetailAddsOnlyRegistryStatusAndEligibleActions(t *testing.T) {
+	t.Parallel()
 	t.Run("CardDAV", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -944,6 +959,7 @@ func TestOperationRunDetailAddsOnlyRegistryStatusAndEligibleActions(t *testing.T
 }
 
 func TestVisualActionsUnavailableDuringActiveRun(t *testing.T) {
+	t.Parallel()
 	for _, action := range []struct {
 		name      string
 		path      string
@@ -1004,6 +1020,7 @@ func TestVisualActionsUnavailableDuringActiveRun(t *testing.T) {
 }
 
 func TestVisualActionsUnavailableWithoutHistory(t *testing.T) {
+	t.Parallel()
 	for _, action := range []struct {
 		name      string
 		path      string
@@ -1068,6 +1085,7 @@ func TestVisualActionsUnavailableWithoutHistory(t *testing.T) {
 }
 
 func TestOperationActionsKeepExistingMutationBoundaries(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	const apiKey = "synthetic-operations-api-key"
 	srv := NewServerWithOptions(ServerOptions{
@@ -1125,6 +1143,7 @@ func TestOperationActionsKeepExistingMutationBoundaries(t *testing.T) {
 }
 
 func TestOperationHistoryAPIBypassesHeldOperationGate(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	run := operationRunFixture(t)
@@ -1156,6 +1175,7 @@ func TestOperationHistoryAPIBypassesHeldOperationGate(t *testing.T) {
 }
 
 func TestOperationHistoryAPIDependencyFailures(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		reader  operations.HistoryReader
@@ -1192,6 +1212,7 @@ func withoutOpaqueOperationTokens(body string) string {
 }
 
 func TestOperationHistoryAPIRealStoreSameSecondWalkAndPrivacy(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	sentinels := loadBrowserOperationPrivateSentinels(t)

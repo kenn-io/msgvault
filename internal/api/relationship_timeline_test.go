@@ -152,6 +152,7 @@ func newRelationshipTimelineDuckDBFixture(t *testing.T, now time.Time) (*query.D
 }
 
 func TestRelationshipTimelineOverHTTP(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -176,6 +177,7 @@ func TestRelationshipTimelineOverHTTP(t *testing.T) {
 }
 
 func TestRelationshipTimelineResolvesSourceScopedIdentityBeforeAnalyzerWork(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
@@ -236,6 +238,7 @@ func TestRelationshipTimelineResolvesSourceScopedIdentityBeforeAnalyzerWork(t *t
 }
 
 func TestRelationshipTimelineResolvesAnyMemberIDOverHTTP(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -253,6 +256,7 @@ func TestRelationshipTimelineResolvesAnyMemberIDOverHTTP(t *testing.T) {
 }
 
 func TestRelationshipTimelinePaginatesWithStableCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -283,6 +287,7 @@ func TestRelationshipTimelinePaginatesWithStableCursor(t *testing.T) {
 }
 
 func TestRelationshipTimelineCursorInvalidatedOnIdentityRevisionChange(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -308,6 +313,7 @@ func TestRelationshipTimelineCursorInvalidatedOnIdentityRevisionChange(t *testin
 }
 
 func TestRelationshipTimelineRejectsBadTimezone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -321,6 +327,7 @@ func TestRelationshipTimelineRejectsBadTimezone(t *testing.T) {
 }
 
 func TestRelationshipTimelineRejectsBadParticipantID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -334,6 +341,7 @@ func TestRelationshipTimelineRejectsBadParticipantID(t *testing.T) {
 }
 
 func TestRelationshipTimelineUnavailableUnderNonAnalyzerEngine(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

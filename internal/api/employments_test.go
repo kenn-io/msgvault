@@ -13,6 +13,7 @@ import (
 )
 
 func TestEmploymentHTTPLifecycleAndProjection(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)
@@ -111,6 +112,7 @@ func TestEmploymentHTTPLifecycleAndProjection(t *testing.T) {
 }
 
 func TestPersonEmploymentsProjectionIsAbsentWithoutAPrimaryCurrentRow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)
@@ -126,6 +128,7 @@ func TestPersonEmploymentsProjectionIsAbsentWithoutAPrimaryCurrentRow(t *testing
 }
 
 func TestEmploymentHTTPValidationAndConflictMapping(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)
@@ -212,6 +215,7 @@ func TestEmploymentHTTPValidationAndConflictMapping(t *testing.T) {
 }
 
 func TestOrganizationEmploymentsListing(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)
@@ -245,6 +249,7 @@ func TestOrganizationEmploymentsListing(t *testing.T) {
 }
 
 func TestEmploymentHTTPGetPatchAndStrictBody(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)

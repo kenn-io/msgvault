@@ -14,6 +14,7 @@ import (
 )
 
 func TestSPARoutePreservesRegisteredAPIPriorityAndServesNavigation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	shell := []byte("<!doctype html><title>test shell</title>")
 	spa := webapp.NewHandler(fstest.MapFS{

@@ -17,6 +17,7 @@ import (
 )
 
 func TestGetPersonProfileReturnsTypedValuesAndETag(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server, st := newProfileTestServer(t)
@@ -36,6 +37,7 @@ func TestGetPersonProfileReturnsTypedValuesAndETag(t *testing.T) {
 }
 
 func TestPatchPersonProfileAcceptsServiceLessEmailAndRejectsUnknownService(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server, st := newProfileTestServer(t)
@@ -66,6 +68,7 @@ func TestPatchPersonProfileAcceptsServiceLessEmailAndRejectsUnknownService(t *te
 }
 
 func TestPatchPersonProfileRoundTripsPartialDatesAndAddresses(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server, st := newProfileTestServer(t)
@@ -110,6 +113,7 @@ func TestPatchPersonProfileRoundTripsPartialDatesAndAddresses(t *testing.T) {
 }
 
 func TestPatchPersonProfileAcceptsFallbackBackedOptionalFields(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server, st := newProfileTestServer(t)
@@ -140,6 +144,7 @@ func TestPatchPersonProfileAcceptsFallbackBackedOptionalFields(t *testing.T) {
 }
 
 func TestPatchPersonProfileRequiresIfMatchAndRejectsStaleRevision(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server, st := newProfileTestServer(t)
@@ -163,6 +168,7 @@ func TestPatchPersonProfileRequiresIfMatchAndRejectsStaleRevision(t *testing.T) 
 }
 
 func TestPatchPersonProfileMapsValidationErrorsToBadRequest(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server, st := newProfileTestServer(t)
@@ -193,6 +199,7 @@ func TestPatchPersonProfileMapsValidationErrorsToBadRequest(t *testing.T) {
 }
 
 func TestPatchPersonProfilePreservesExplicitZeroOrdinal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	server, st := newProfileTestServer(t)
 	personID := seedAPIPerson(t, st)
@@ -215,6 +222,7 @@ func TestPatchPersonProfilePreservesExplicitZeroOrdinal(t *testing.T) {
 }
 
 func TestPatchPersonProfileRejectsResponseOnlyEnvelopeFields(t *testing.T) {
+	t.Parallel()
 	responseOnlyFields := []struct {
 		name  string
 		value string
@@ -243,6 +251,7 @@ func TestPatchPersonProfileRejectsResponseOnlyEnvelopeFields(t *testing.T) {
 }
 
 func TestPatchPersonProfileRejectsOversizedBody(t *testing.T) {
+	t.Parallel()
 	server, st := newProfileTestServer(t)
 	personID := seedAPIPerson(t, st)
 	read := doRequest(t, server, http.MethodGet, personProfilePath(personID), nil, nil)
@@ -255,6 +264,7 @@ func TestPatchPersonProfileRejectsOversizedBody(t *testing.T) {
 }
 
 func TestGetPersonProfileHistoryIsASeparateEndpoint(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server, st := newProfileTestServer(t)
@@ -269,6 +279,7 @@ func TestGetPersonProfileHistoryIsASeparateEndpoint(t *testing.T) {
 }
 
 func TestProfileEndpointsRejectUnknownPersonAndBadID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	server, _ := newProfileTestServer(t)
 	missing := doRequest(t, server, http.MethodGet, "/api/v1/people/999999/profile", nil, nil)
@@ -278,6 +289,7 @@ func TestProfileEndpointsRejectUnknownPersonAndBadID(t *testing.T) {
 }
 
 func TestGetPersonProfileMediaContentReturnsStoredBytes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	server, st := newProfileTestServer(t)
@@ -304,6 +316,7 @@ func TestGetPersonProfileMediaContentReturnsStoredBytes(t *testing.T) {
 }
 
 func TestGetPersonProfileMediaContentRejectsMissingAndURIOnlyValues(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	server, st := newProfileTestServer(t)
 	personID := seedAPIPerson(t, st)
@@ -330,6 +343,7 @@ func TestGetPersonProfileMediaContentRejectsMissingAndURIOnlyValues(t *testing.T
 }
 
 func TestGetPersonProfileMediaContentRequiresAuthentication(t *testing.T) {
+	t.Parallel()
 	const apiKey = "profile-media-test-key"
 	st := testutil.NewTestStore(t)
 	wrapped := &stubIdentityCacheStore{Store: st}

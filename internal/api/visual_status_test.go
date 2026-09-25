@@ -22,6 +22,7 @@ import (
 )
 
 func TestVisualBuildAndResumeRejectOverlappingRequests(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	srv := newOperationTestServer(st, &operationArchiveRealStore{Store: st, uid: operationTestArchiveUID})
@@ -61,6 +62,7 @@ func TestVisualBuildAndResumeRejectOverlappingRequests(t *testing.T) {
 }
 
 func TestVisualOperationPassScopeIsRequestOwnedStableAndPrivacyBounded(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	privateRequestID := "private-browser-request-with-user-material"
@@ -115,6 +117,7 @@ func TestVisualOperationPassScopeIsRequestOwnedStableAndPrivacyBounded(t *testin
 }
 
 func TestVisualOperationPassScopeFailurePreventsExecution(t *testing.T) {
+	t.Parallel()
 	executed := false
 	srv := NewServerWithOptions(ServerOptions{
 		Config: config.NewDefaultConfig(), Store: testutil.NewSQLiteTestStore(t), Logger: testLogger(),
@@ -135,6 +138,7 @@ func TestVisualOperationPassScopeFailurePreventsExecution(t *testing.T) {
 }
 
 func TestVisualOperationHTTPMapsTerminalReplayToFixedFailure(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		state    operations.State
@@ -190,6 +194,7 @@ func TestVisualOperationHTTPMapsTerminalReplayToFixedFailure(t *testing.T) {
 }
 
 func TestVisualOperationPassScopeIsFreshForEachGeneratedRequestID(t *testing.T) {
+	t.Parallel()
 	var scopes []operations.PassScope
 	srv := NewServerWithOptions(ServerOptions{
 		Config: config.NewDefaultConfig(), Store: testutil.NewSQLiteTestStore(t), Logger: testLogger(),
@@ -216,6 +221,7 @@ func TestVisualOperationPassScopeIsFreshForEachGeneratedRequestID(t *testing.T) 
 }
 
 func TestVisualRetryInvocationIncludesCanonicalTarget(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	archive := testutil.NewSQLiteTestStore(t)
 	srv := NewServerWithOptions(ServerOptions{
@@ -254,6 +260,7 @@ func TestVisualRetryInvocationIncludesCanonicalTarget(t *testing.T) {
 }
 
 func TestVisualInvocationIsFreshAfterProcessRestart(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	// Each subprocess starts the real request-ID middleware from a fresh
 	// process. The parent keeps the invocation ledger across both starts.

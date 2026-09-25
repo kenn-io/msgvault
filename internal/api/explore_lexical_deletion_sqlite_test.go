@@ -23,6 +23,7 @@ import (
 // deletion:deleted returned nothing and unrestricted searches silently
 // omitted source-deleted matches.
 func TestExploreFullTextHonorsDeletionScope(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 

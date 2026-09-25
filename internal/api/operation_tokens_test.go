@@ -14,6 +14,7 @@ import (
 )
 
 func TestOperationTokenRunReferenceIsPrivatePersistentAndArchiveBound(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "archive.db")
@@ -48,6 +49,7 @@ func TestOperationTokenRunReferenceIsPrivatePersistentAndArchiveBound(t *testing
 }
 
 func TestOperationTokenRunReferenceRejectsTamperingLegacyAndMalformedInput(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := operationTokenTestStore(t)
@@ -88,6 +90,7 @@ func TestOperationTokenRunReferenceRejectsTamperingLegacyAndMalformedInput(t *te
 }
 
 func TestOperationTokenRunReferenceUsesRetainedKeyUntilExplicitPurge(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := operationTokenTestStore(t)
@@ -111,6 +114,7 @@ func TestOperationTokenRunReferenceUsesRetainedKeyUntilExplicitPurge(t *testing.
 }
 
 func TestOperationTokenCursorHidesAndRestoresCompleteSnapshotBinding(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	st := operationTokenTestStore(t)
@@ -162,6 +166,7 @@ func TestOperationTokenCursorHidesAndRestoresCompleteSnapshotBinding(t *testing.
 }
 
 func TestOperationCursorRejectsAuthenticatedNoncanonicalTimestamp(t *testing.T) {
+	t.Parallel()
 	codec := newOperationTokenCodec(operationTokenTestStore(t))
 	filter := operationHistoryFilter{}
 	intID := int64(42)

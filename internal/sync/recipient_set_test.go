@@ -15,6 +15,7 @@ import (
 // empty first-seen name picks up a later non-empty one) must apply to every
 // row of that participant.
 func TestBuildRecipientSetKeepsAliasEnvelopeSnapshots(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 
 	// primary@ and alias@ resolve to the same participant (7), as an

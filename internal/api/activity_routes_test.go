@@ -119,6 +119,7 @@ func activityRequest(
 }
 
 func TestActivityHTTPRealProjectionAndIntersectionContract(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newActivityRouteFixture(t)
@@ -174,6 +175,7 @@ func TestActivityHTTPRealProjectionAndIntersectionContract(t *testing.T) {
 }
 
 func TestDayEntriesHTTPCreateListDeleteAndValidation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newActivityRouteFixture(t)
@@ -244,6 +246,7 @@ func TestDayEntriesHTTPCreateListDeleteAndValidation(t *testing.T) {
 }
 
 func TestActivityHTTPIndependentPagingPreviewAndNoteOnlyTargets(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newActivityRouteFixture(t)
@@ -326,6 +329,7 @@ func (s *failingActivityStore) ContactStateContext(
 }
 
 func TestActivityHTTPUnavailableAndRedactedStoreErrors(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	unavailable := NewServer(
 		&config.Config{Server: config.ServerConfig{APIKey: activityTestAPIKey}},
@@ -361,6 +365,7 @@ func TestActivityHTTPUnavailableAndRedactedStoreErrors(t *testing.T) {
 }
 
 func TestActivityHTTPMissingContactStateAndBeyondTailPages(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newActivityRouteFixture(t)
@@ -414,6 +419,7 @@ func TestActivityHTTPMissingContactStateAndBeyondTailPages(t *testing.T) {
 }
 
 func TestActivityHTTPInvalidAPIKeyAndSessionCSRF(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newActivityRouteFixture(t)
@@ -456,6 +462,7 @@ func TestActivityHTTPInvalidAPIKeyAndSessionCSRF(t *testing.T) {
 }
 
 func TestActivityHTTPRejectsInvalidParametersAndAuthentication(t *testing.T) {
+	t.Parallel()
 	f := newActivityRouteFixture(t)
 	paths := []struct {
 		method string
@@ -491,6 +498,7 @@ func TestActivityHTTPRejectsInvalidParametersAndAuthentication(t *testing.T) {
 }
 
 func TestActivityOpenAPIContract(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	doc := OpenAPIDocument()

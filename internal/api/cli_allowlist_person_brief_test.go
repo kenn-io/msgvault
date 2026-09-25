@@ -12,6 +12,7 @@ import (
 // over the generated client, so admitting it here would create a second,
 // unvalidated path to the same state.
 func TestCLIRunCommandAllowedRefusesPersonBrief(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{
 		{"person", "brief"},
 		{"person", "brief", "show", "7"},

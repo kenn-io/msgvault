@@ -14,6 +14,7 @@ import (
 )
 
 func TestTaskIntegrationStatusAndTestStayServerSide(t *testing.T) {
+	t.Parallel()
 	var calls int
 	var received taskclient.IntegrationConfig
 	probe := TaskIntegrationProbe(func(_ context.Context, cfg taskclient.IntegrationConfig) taskclient.Status {
@@ -74,6 +75,7 @@ func TestTaskIntegrationStatusAndTestStayServerSide(t *testing.T) {
 }
 
 func TestTaskIntegrationStatusMapsRuntimeConfigWithoutAmbientDiscovery(t *testing.T) {
+	t.Parallel()
 	var received taskclient.IntegrationConfig
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{

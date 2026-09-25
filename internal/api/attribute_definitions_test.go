@@ -30,6 +30,7 @@ func attributeRequest(
 }
 
 func TestAttributeDefinitionsHTTPListsSeedsAndRejectsUniqueness(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, _ := newIdentityLinkTestServer(t)
@@ -53,6 +54,7 @@ func TestAttributeDefinitionsHTTPListsSeedsAndRejectsUniqueness(t *testing.T) {
 }
 
 func TestAttributeDefinitionsHTTPCreateRenameAndDelete(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, _ := newIdentityLinkTestServer(t)
@@ -96,6 +98,7 @@ func TestAttributeDefinitionsHTTPCreateRenameAndDelete(t *testing.T) {
 }
 
 func TestAttributeDefinitionsHTTPCreateDerivesSlug(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, _ := newIdentityLinkTestServer(t)
@@ -117,6 +120,7 @@ func TestAttributeDefinitionsHTTPCreateDerivesSlug(t *testing.T) {
 }
 
 func TestAttributeDefinitionsHTTPWebSafeChoicesRoundTripThroughPersonWrites(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		valueType string
@@ -217,6 +221,7 @@ func TestAttributeDefinitionsHTTPWebSafeChoicesRoundTripThroughPersonWrites(t *t
 }
 
 func TestAttributeDefinitionsHTTPProtectsSeedAndRejectsUnknownFields(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)

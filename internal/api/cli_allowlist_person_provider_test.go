@@ -31,6 +31,7 @@ func completeAPIProvider(keyEnv, model string) peoplesweep.ProviderConfig {
 }
 
 func TestCLIRunCommandAllowedPermitsExactPersonProviderCommands(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		args []string
@@ -88,6 +89,7 @@ func TestCLIRunCommandAllowedPermitsExactPersonProviderCommands(t *testing.T) {
 }
 
 func TestCLIRunEnvAllowedPermitsConfiguredPeopleProviderKeyOnly(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	srv := &Server{cfg: &config.Config{}}
 	configureAPIProvider(srv.cfg, peoplesweep.ProviderConfig{
@@ -109,6 +111,7 @@ func TestCLIRunEnvAllowedPermitsConfiguredPeopleProviderKeyOnly(t *testing.T) {
 }
 
 func TestCLIAllowlistPermitsExactPersonSweepCommands(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		args []string
 		want bool
@@ -126,6 +129,7 @@ func TestCLIAllowlistPermitsExactPersonSweepCommands(t *testing.T) {
 }
 
 func TestCLIAllowlistRejectsProviderCredentialValuesInDaemonRequest(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	cfg := config.NewDefaultConfig()
@@ -150,6 +154,7 @@ func TestCLIAllowlistRejectsProviderCredentialValuesInDaemonRequest(t *testing.T
 }
 
 func TestCLIAllowlistPersonSweepForwardsExactCredentialOnly(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	srv := &Server{cfg: &config.Config{}}
 	configureAPIProvider(srv.cfg, peoplesweep.ProviderConfig{
@@ -174,6 +179,7 @@ func TestCLIAllowlistPersonSweepForwardsExactCredentialOnly(t *testing.T) {
 }
 
 func TestCLIAllowlistCodexProviderOperations(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	for _, operation := range []string{"login", "models"} {
 		args := []string{"person", "provider", operation}
@@ -195,6 +201,7 @@ func TestCLIAllowlistCodexProviderOperations(t *testing.T) {
 }
 
 func TestCLIRunCommandAllowedPermitsExactPersonEnrichmentCommandsAndRejectsRawShapes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		args []string
@@ -228,6 +235,7 @@ func TestCLIRunCommandAllowedPermitsExactPersonEnrichmentCommandsAndRejectsRawSh
 }
 
 func TestCLIRunCommandAllowedRejectsPersonSuppressionMetadataSmuggling(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{
 		"provider-namespace", "identifier-class", "normalization-version", "key-id", "digest", "actor",
 	} {
@@ -240,6 +248,7 @@ func TestCLIRunCommandAllowedRejectsPersonSuppressionMetadataSmuggling(t *testin
 }
 
 func TestCLIAllowlistPersonEnrichmentForwardsOnlyCommandCredentials(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	srv := &Server{cfg: &config.Config{}}
 	srv.cfg.People.Enrichment.SuppressionKeyEnv = "ENRICHMENT_SUPPRESSION_KEY"
