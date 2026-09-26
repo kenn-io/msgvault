@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-26"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -74,7 +74,10 @@ setup reuses it and requests the combined permissions. Otherwise, setup stores
 separate CardDAV credentials. Use a different OAuth client when you want Google
 consent and revocation to be independent as well.
 
-1. Configure a Google OAuth client following the [OAuth setup guide](../guides/oauth-setup.md).
+1. Configure a Google OAuth client following the [OAuth setup guide](../guides/oauth-setup.md),
+   and enable the **Google Contacts CardDAV API** in the same Google Cloud
+   project. The Gmail and Calendar APIs do not cover contacts; without it,
+   **Save CardDAV account** fails during discovery.
    For Web UI sign-in, register the Web UI's root URL, including its trailing
    slash, as an authorized redirect URI in a **Web application** OAuth client.
    The settings form shows the exact URL. Remote Web UIs need HTTPS; loopback
