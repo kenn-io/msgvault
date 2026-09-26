@@ -19,6 +19,9 @@ import (
 // ErrNotSupported is returned for operations not available through the daemon API.
 var ErrNotSupported = errors.New("operation not supported through daemon API")
 
+// ErrMessageRawNotFound means the daemon holds the message but no raw data.
+var ErrMessageRawNotFound = errors.New("message raw data not found")
+
 const (
 	apiValueCount   = "count"
 	apiValueLabels  = "labels"
@@ -900,6 +903,9 @@ func (e *Engine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]q
 // GetMessageRaw returns raw MIME data for a message.
 func (e *Engine) GetMessageRaw(ctx context.Context, id int64) ([]byte, error) {
 	raw, _, err := e.store.GetCLIMessageRaw(ctx, strconv.FormatInt(id, 10))
+	if errors.Is(err, ErrMessageRawNotFound) {
+		return nil, nil
+	}
 	return raw, err
 }
 
@@ -1335,6 +1341,7 @@ func (e *Engine) ListAccounts(ctx context.Context) ([]query.AccountInfo, error) 
 			SourceType:  acc.Type,
 			Identifier:  acc.Email,
 			DisplayName: acc.DisplayName,
+			LastSyncAt:  copyTime(acc.LastSync),
 		}
 	}
 	return result, nil

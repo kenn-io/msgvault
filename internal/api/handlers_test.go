@@ -742,6 +742,8 @@ func TestOpenAPIExportsServerRouteTable(t *testing.T) {
 		"/api/v1/cli/repair-encoding":            {"post"},
 		"/api/v1/cli/message":                    {"get"},
 		"/api/v1/cli/message/raw":                {"get"},
+		"/api/v1/cli/message/original":           {"get"},
+		"/api/v1/cli/message/thread":             {"get"},
 		"/api/v1/cli/attachment":                 {"get"},
 		"/api/v1/cli/collections":                {"get", "post"},
 		"/api/v1/cli/collections/{name}":         {"delete"},

@@ -2258,6 +2258,18 @@ components:
         - body_text
         - body_html
       type: object
+    CliOriginalMessageResponse:
+      additionalProperties: true
+      properties:
+        message:
+          $ref: "#/components/schemas/MessageRecord"
+        mime:
+          contentEncoding: base64
+          type: string
+      required:
+        - message
+        - mime
+      type: object
     CliRebuildFTSEvent:
       additionalProperties: true
       properties:
@@ -6059,6 +6071,38 @@ components:
         - page
         - page_size
         - messages
+      type: object
+    MessageRecord:
+      additionalProperties: true
+      properties:
+        account:
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        last_sync_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        message_id:
+          format: int64
+          type: integer
+        source_conversation_id:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_message_id:
+          type: string
+        source_type:
+          type: string
+      required:
+        - conversation_id
+        - source_conversation_id
+        - source_id
+        - account
+        - source_type
       type: object
     MessageSummary:
       additionalProperties: true
@@ -12563,6 +12607,101 @@ components:
         - limit
         - messages
       type: object
+    ThreadMessage:
+      additionalProperties: true
+      properties:
+        attachment_count:
+          format: int64
+          type: integer
+        cc:
+          items:
+            $ref: "#/components/schemas/Address"
+          type: array
+        deleted_from_source_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        from:
+          items:
+            $ref: "#/components/schemas/Address"
+          type: array
+        has_raw:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        sent_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        source_message_id:
+          type: string
+        subject:
+          type: string
+        to:
+          items:
+            $ref: "#/components/schemas/Address"
+          type: array
+      required:
+        - id
+        - source_message_id
+        - subject
+        - from
+        - to
+        - cc
+        - has_raw
+        - attachment_count
+      type: object
+    ThreadPage:
+      additionalProperties: true
+      properties:
+        account:
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        last_sync_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        message_id:
+          format: int64
+          type: integer
+        messages:
+          items:
+            $ref: "#/components/schemas/ThreadMessage"
+          type: array
+        offset:
+          format: int64
+          type: integer
+        source_conversation_id:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_message_id:
+          type: string
+        source_type:
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+        - total
+        - offset
+        - has_more
+        - messages
+        - conversation_id
+        - source_conversation_id
+        - source_id
+        - account
+        - source_type
+      type: object
     TimelineRow:
       additionalProperties: true
       properties:
@@ -12949,7 +13088,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.29.0
+  version: 2.30.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -15848,6 +15987,68 @@ paths:
       summary: Get one message for CLI output
       tags:
         - API
+  /api/v1/cli/message/original:
+    get:
+      operationId: getCLIMessageOriginal
+      parameters:
+        - description: Internal message ID
+          in: query
+          name: id
+          schema:
+            format: int64
+            type: integer
+        - description: Provider message ID
+          in: query
+          name: source_message_id
+          schema:
+            type: string
+        - description: Source identifier that narrows the lookup
+          in: query
+          name: account
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliOriginalMessageResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one message's original MIME for export
+      tags:
+        - API
   /api/v1/cli/message/raw:
     get:
       operationId: getCLIMessageRaw
@@ -15906,6 +16107,85 @@ paths:
       security:
         - apiKey: []
       summary: Get one raw message for CLI export
+      tags:
+        - API
+  /api/v1/cli/message/thread:
+    get:
+      operationId: getCLIMessageThread
+      parameters:
+        - description: Internal ID of a message in the conversation
+          in: query
+          name: id
+          schema:
+            format: int64
+            type: integer
+        - description: Provider ID of a message in the conversation
+          in: query
+          name: source_message_id
+          schema:
+            type: string
+        - description: Provider conversation ID
+          in: query
+          name: thread_id
+          schema:
+            type: string
+        - description: Source identifier that narrows the lookup
+          in: query
+          name: account
+          schema:
+            type: string
+        - description: Messages per page (default 100, max 500)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Messages to skip
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThreadPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List one conversation in chronological order for export
       tags:
         - API
   /api/v1/cli/rebuild-fts:

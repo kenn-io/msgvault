@@ -5541,6 +5541,117 @@ func (c *Client) GetCLIMessageWithResponse(ctx context.Context, options *GetCLIM
 	}
 }
 
+// GetCLIMessageOriginal Get one message's original MIME for export
+func (c *Client) GetCLIMessageOriginalWithResponse(ctx context.Context, options *GetCLIMessageOriginalRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageOriginalResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/cli/message/original",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/message/original")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &GetCLIMessageOriginalResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 200:
+		out.JSON200 = new(GetCLIMessageOriginalResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetCLIMessageOriginalResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, nil
+	case 400:
+		out.JSON400 = new(GetCLIMessageOriginalErrorResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON400); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetCLIMessageOriginalErrorResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 404:
+		out.JSON404 = new(GetCLIMessageOriginalErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetCLIMessageOriginalErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 409:
+		out.JSON409 = new(GetCLIMessageOriginalErrorResponseJSON409)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON409); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetCLIMessageOriginalErrorResponseJSON409",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 503:
+		out.JSON503 = new(GetCLIMessageOriginalErrorResponseJSON503)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON503); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetCLIMessageOriginalErrorResponseJSON503",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	default:
+		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
+}
+
 // GetCLIMessageRaw Get one raw message for CLI export
 func (c *Client) GetCLIMessageRawWithResponse(ctx context.Context, options *GetCLIMessageRawRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageRawResp, error) {
 	var err error
@@ -5643,6 +5754,117 @@ func (c *Client) GetCLIMessageRawWithResponse(ctx context.Context, options *GetC
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
 					TargetType:    "GetCLIMessageRawErrorResponseJSON503",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	default:
+		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
+}
+
+// GetCLIMessageThread List one conversation in chronological order for export
+func (c *Client) GetCLIMessageThreadWithResponse(ctx context.Context, options *GetCLIMessageThreadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageThreadResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/cli/message/thread",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/message/thread")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &GetCLIMessageThreadResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 200:
+		out.JSON200 = new(GetCLIMessageThreadResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetCLIMessageThreadResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, nil
+	case 400:
+		out.JSON400 = new(GetCLIMessageThreadErrorResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON400); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetCLIMessageThreadErrorResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 404:
+		out.JSON404 = new(GetCLIMessageThreadErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetCLIMessageThreadErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 409:
+		out.JSON409 = new(GetCLIMessageThreadErrorResponseJSON409)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON409); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetCLIMessageThreadErrorResponseJSON409",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 503:
+		out.JSON503 = new(GetCLIMessageThreadErrorResponseJSON503)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON503); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetCLIMessageThreadErrorResponseJSON503",
 					Body:          bodyBytes,
 					Err:           err,
 				}

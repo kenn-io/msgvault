@@ -53,6 +53,9 @@ const (
 	toolArgBefore        = "before"
 	toolArgAccount       = "account"
 	toolArgOffset        = "offset"
+	toolArgLength        = "length"
+	toolArgSourceMsgID   = "source_message_id"
+	toolArgThreadID      = "thread_id"
 	toolArgMinScore      = "min_score"
 	toolArgMaxChars      = "max_chars"
 	toolArgAttachmentID  = "attachment_id"
@@ -1840,6 +1843,10 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
+	chunkReq, chunked, err := chunkArgs(args)
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
 
 	payload, err := h.attachmentService().load(ctx, id)
 	if err != nil {
@@ -1854,6 +1861,16 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 		Filename: att.Filename,
 		MIMEType: payload.mimeType,
 		Size:     att.Size,
+	}
+	if chunked {
+		chunk, err := sliceChunk(payload.data, chunkReq)
+		if err != nil {
+			return toolErrorResult(err.Error()), nil
+		}
+		metaObj.Size = chunk.Size
+		metaObj.Offset, metaObj.Length = &chunk.Offset, &chunk.Length
+		metaObj.SHA256, metaObj.Complete, metaObj.DataBase64 = &chunk.SHA256, &chunk.Complete, &chunk.DataBase64
+		return jsonResult(metaObj)
 	}
 	result, err := jsonResult(metaObj)
 	if err != nil {

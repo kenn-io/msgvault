@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"fmt"
 	"slices"
 	"sort"
 
@@ -155,6 +156,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		createSavedViewDefinition(nil),
 		deleteSavedViewDefinition(nil),
 		exportAttachmentDefinition(nil),
+		exportEMLDefinition(),
 		findSimilarMessagesDefinition(nil),
 		getAttachmentDefinition(nil),
 		getMessageDefinition(nil),
@@ -166,6 +168,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		getSavedViewDefinition(nil),
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),
+		listThreadDefinition(),
 		listMeetingActionItemsDefinition(nil),
 		listDirectoryPeopleDefinition(nil),
 		listSavedViewsDefinition(nil),
@@ -550,12 +553,76 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 	)
 }
 
+func chunkInputSchemas(object string) (offset, length *jsonschema.Schema) {
+	offset = nonNegativeIntegerSchema("Byte offset of the "+object+" to start this chunk at (default 0). Request offset += length until complete is true.", 0)
+	length = boundedIntegerSchema(fmt.Sprintf("Maximum bytes in this chunk (1-%d, default %d)", maxChunkBytes, defaultChunkBytes), 1, maxChunkBytes)
+	length.Default = jsontext.Value(defaultValueString(defaultChunkBytes))
+	return offset, length
+}
+
+func exportEMLDefinition() toolDefinition {
+	offset, length := chunkInputSchemas("message")
+	return readDefinition(
+		ToolExportEML,
+		"Export one archived email as its original .eml bytes, exactly as the provider delivered them, in base64 chunks. "+
+			"Pass exactly one of id (msgvault message ID) or source_message_id (provider ID, such as a Gmail message ID); "+
+			"add account when a provider ID exists in more than one account. "+
+			"Call from offset 0, then offset += length until complete is true; concatenate the decoded chunks and verify them against size and sha256 (of the whole message). "+
+			"last_sync_at is the account's latest sync activity: provider messages newer than it may not be archived yet. "+
+			"Messages without stored original MIME (chat and calendar sources, some imports) return raw_mime_unavailable. "+
+			"Gmail, IMAP (including Outlook over IMAP), and mbox/eml/emlx/maildir imports hold the bytes msgvault received; "+
+			"PST imports hold MIME rebuilt from Outlook data (source_type pst).",
+		closedObject(map[string]*jsonschema.Schema{
+			"id":               safeIDSchema("msgvault message ID"),
+			toolArgSourceMsgID: stringSchema("Provider message ID"),
+			toolArgAccount:     stringSchema("Account identifier (email address) that narrows a source_message_id lookup"),
+			toolArgOffset:      offset,
+			toolArgLength:      length,
+		}),
+		outputSchemaFor[exportEMLResponse](),
+		(*handlers).exportEML,
+	)
+}
+
+func listThreadDefinition() toolDefinition {
+	limit := boundedIntegerSchema(fmt.Sprintf("Messages per page (1-%d, default %d)", query.ThreadMaxLimit, query.ThreadDefaultLimit), 1, query.ThreadMaxLimit)
+	limit.Default = jsontext.Value(defaultValueString(query.ThreadDefaultLimit))
+	return readDefinition(
+		ToolListThread,
+		"List every archived message in one conversation in chronological order (sent_at, undated last, then id). "+
+			"Pass exactly one of id or source_message_id (any message in the thread) or thread_id (provider conversation ID, such as a Gmail threadId); "+
+			"add account when a provider ID exists in more than one account. "+
+			"Page with offset until has_more is false; total counts the whole conversation. "+
+			"has_raw marks messages whose original .eml can be fetched with export_eml. "+
+			"Messages deleted from the provider stay listed with deleted_from_source_at. "+
+			"last_sync_at is the account's latest sync activity: newer replies may not be archived yet.",
+		closedObject(map[string]*jsonschema.Schema{
+			"id":               safeIDSchema("msgvault ID of any message in the conversation"),
+			toolArgSourceMsgID: stringSchema("Provider ID of any message in the conversation"),
+			toolArgThreadID:    stringSchema("Provider conversation ID"),
+			toolArgAccount:     stringSchema("Account identifier (email address) that narrows a provider-ID lookup"),
+			toolArgOffset:      nonNegativeIntegerSchema("Messages to skip (default 0)", 0),
+			toolArgLimit:       limit,
+		}),
+		outputSchemaFor[query.ThreadPage](),
+		(*handlers).listThread,
+	)
+}
+
 func getAttachmentDefinition(_ *handlers) toolDefinition {
+	// No defaults here: the SDK applies schema defaults to arguments, and
+	// either argument being present selects chunk mode.
+	offset, length := chunkInputSchemas("attachment")
+	offset.Default, length.Default = nil, nil
 	return readDefinition(
 		ToolGetAttachment,
-		"Get attachment content by attachment ID. Returns metadata as text and the file content as an embedded resource blob. Use get_message first to find attachment IDs.",
+		"Get attachment content by attachment ID. Returns metadata as text and the file content as an embedded resource blob. Use get_message first to find attachment IDs. "+
+			"Pass offset or length to download in base64 chunks instead (no embedded resource): call from offset 0, then offset += length until complete is true, "+
+			"and verify the decoded concatenation against size and sha256.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgAttachmentID: safeIDSchema("Attachment ID (from get_message response)"),
+			toolArgOffset:       offset,
+			toolArgLength:       length,
 		}, toolArgAttachmentID),
 		outputSchemaFor[getAttachmentResponse](),
 		(*handlers).getAttachment,
@@ -802,6 +869,12 @@ type getAttachmentResponse struct {
 	Filename string `json:"filename"`
 	MIMEType string `json:"mime_type"`
 	Size     int64  `json:"size"`
+	// Chunk fields are present only when the call passed offset or length.
+	Offset     *int64  `json:"offset,omitzero"`
+	Length     *int64  `json:"length,omitzero"`
+	SHA256     *string `json:"sha256,omitzero"`
+	Complete   *bool   `json:"complete,omitzero"`
+	DataBase64 *string `json:"data_base64,omitzero"`
 }
 
 type exportAttachmentResponse struct {

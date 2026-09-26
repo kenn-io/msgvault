@@ -1133,6 +1133,8 @@ func cliRequestNeedsProtectiveCeiling(r *http.Request) bool {
 		"POST /api/v1/cli/embeddings/plan",
 		"GET /api/v1/cli/message",
 		"GET /api/v1/cli/message/raw",
+		"GET /api/v1/cli/message/original",
+		"GET /api/v1/cli/message/thread",
 		"GET /api/v1/cli/attachment",
 		"GET /api/v1/cli/search",
 		"POST /api/v1/cli/deduplicate/plan",

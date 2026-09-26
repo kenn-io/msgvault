@@ -4321,3 +4321,24 @@ func TestGetMessagePreservesBrowserURL(t *testing.T) {
 	result := runTool[map[string]any](t, "get_message", h.getMessage, map[string]any{"id": float64(42)})
 	assert.Equal(t, link, result["web_url"])
 }
+
+func TestGetStats_AccountLastSyncAt(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	syncedAt := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	eng := &querytest.MockEngine{
+		Stats: &query.TotalStats{AccountCount: 2},
+		Accounts: []query.AccountInfo{
+			{ID: 1, Identifier: "synced@example.com", LastSyncAt: &syncedAt},
+			{ID: 2, Identifier: "never@example.com"},
+		},
+	}
+	r := callToolDirect(t, "get_stats", newTestHandlers(eng).getStats, map[string]any{})
+	var raw struct {
+		Accounts []map[string]json.RawMessage `json:"accounts"`
+	}
+	must.NoError(json.Unmarshal([]byte(resultText(t, r)), &raw))
+	must.Len(raw.Accounts, 2)
+	checks.JSONEq(`"2026-03-04T05:06:07Z"`, string(raw.Accounts[0]["LastSyncAt"]))
+	checks.NotContains(raw.Accounts[1], "LastSyncAt", "unknown sync time is omitted, not null")
+}

@@ -31,7 +31,7 @@ var mcpCmd = &cobra.Command{
 	Long: `Start an MCP (Model Context Protocol) server over stdio.
 
 This allows Claude Desktop (or any MCP client) to query your archive
-using tools like search_metadata, search_message_bodies, search_document_attachments, semantic_search_messages, get_message, list_messages, get_stats,
+using tools like search_metadata, search_message_bodies, search_document_attachments, semantic_search_messages, get_message, list_messages, list_thread, export_eml, get_stats,
 aggregate, list_saved_views, run_saved_view, and stage_deletion.
 
 Add to Claude Desktop config:
