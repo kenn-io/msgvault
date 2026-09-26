@@ -1,12 +1,14 @@
 package carddav
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5" // #nosec G501 -- RFC 7616 MD5 interoperability fixture.
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -787,4 +789,30 @@ func fixtureDNSResponse(request []byte, addresses ...netip.Addr) []byte {
 		response = append(response, address.AsSlice()...)
 	}
 	return response
+}
+
+func TestClientLogsUpstreamFailureStatusAndBodyExcerpt(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, err := w.Write([]byte(`{"error": {"code": 400, "status": "INVALID_ARGUMENT"}}`))
+		assert.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	client := newFixtureClient(t, server.URL, "alice", "secret")
+	_, err := client.Do(t.Context(), Request{Method: "REPORT", URL: server.URL + "/books/personal/"})
+	var status *StatusError
+	require.ErrorAs(err, &status)
+	assert.Equal(http.StatusBadRequest, status.StatusCode)
+	assert.Contains(logged.String(), "level=WARN")
+	assert.Contains(logged.String(), "status=400")
+	assert.Contains(logged.String(), "INVALID_ARGUMENT")
+	assert.NotContains(logged.String(), "/books/personal/", "the request URL is not logged")
 }
