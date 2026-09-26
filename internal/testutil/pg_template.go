@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for test setup
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/pgtest"
 )
 
 // A PostgreSQL fixture used to create a schema and replay InitSchema() into it:
@@ -228,6 +229,9 @@ func templateScope(ctx context.Context, admin *sql.DB) (string, error) {
 // initTemplate makes a fresh template database match the configured one: the
 // same extensions, then the production schema through InitSchema().
 func initTemplate(ctx context.Context, admin *sql.DB, dbURL, name string) error {
+	pgtest.SchemaDDL.Lock()
+	defer pgtest.SchemaDDL.Unlock()
+
 	extensions, err := installedExtensions(ctx, admin)
 	if err != nil {
 		return err

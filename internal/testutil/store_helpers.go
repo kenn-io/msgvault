@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/pgtest"
 )
 
 // NewTestStore creates a temporary database for testing.
@@ -124,6 +125,8 @@ func cloneTestDatabase(t *testing.T, tmpl *pgTemplate) *store.Store {
 // it on cleanup.
 func newSchemaTestStore(t *testing.T, dbURL string) *store.Store {
 	t.Helper()
+	pgtest.SchemaDDL.Lock()
+	defer pgtest.SchemaDDL.Unlock()
 
 	schemaName := createTestSchema(t, dbURL)
 
@@ -181,6 +184,8 @@ func dropOwnedSchema(db *sql.DB, name string) {
 		return
 	}
 
+	pgtest.SchemaDDL.Lock()
+	defer pgtest.SchemaDDL.Unlock()
 	_, _ = db.Exec("DROP SCHEMA IF EXISTS msgvault_test_" + match[1] + " CASCADE")
 }
 

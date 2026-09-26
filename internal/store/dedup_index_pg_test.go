@@ -74,7 +74,7 @@ func TestFindDuplicatesByRFC822ID_PGCreatesAndUsesCanonicalExpressionIndex(t *te
 	s.beforeLargeIndexBuildHook = func() {
 		freshIndexPresentBeforeConcurrentBuild = pgCanonicalIndexValid(t, s)
 	}
-	require.NoError(s.InitSchema(), "initialize fresh schema")
+	require.NoError(initPGSchemaInternal(s), "initialize fresh schema")
 	require.True(freshIndexPresentBeforeConcurrentBuild,
 		"fresh schema must create the canonical index before concurrent upgrade builds")
 	require.True(pgCanonicalIndexValid(t, s),
@@ -83,7 +83,7 @@ func TestFindDuplicatesByRFC822ID_PGCreatesAndUsesCanonicalExpressionIndex(t *te
 	require.NotZero(freshOID, "fresh canonical index OID")
 
 	s.beforeLargeIndexBuildHook = nil
-	require.NoError(s.InitSchema(), "repeat InitSchema on the initialized schema")
+	require.NoError(initPGSchemaInternal(s), "repeat InitSchema on the initialized schema")
 	assert.Equal(freshOID, pgCanonicalIndexOID(t, s),
 		"repeated InitSchema must retain, not rebuild, the canonical index")
 
@@ -94,7 +94,7 @@ func TestFindDuplicatesByRFC822ID_PGCreatesAndUsesCanonicalExpressionIndex(t *te
 	s.beforeLargeIndexBuildHook = func() {
 		upgradeIndexPresentBeforeConcurrentBuild = pgCanonicalIndexValid(t, s)
 	}
-	require.NoError(s.InitSchema(), "re-init must upgrade the existing database")
+	require.NoError(initPGSchemaInternal(s), "re-init must upgrade the existing database")
 	require.False(upgradeIndexPresentBeforeConcurrentBuild,
 		"existing schema must leave a missing index for the concurrent upgrade path")
 	require.True(pgCanonicalIndexValid(t, s),

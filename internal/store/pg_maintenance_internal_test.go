@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/pgtest"
 )
 
 // skipUnlessPostgresInternal skips the calling internal (package store) test
@@ -35,17 +36,15 @@ func skipUnlessPostgresInternal(t *testing.T) string {
 func newPGStoreInternal(t *testing.T, dbURL string) *Store {
 	t.Helper()
 	st := newUninitializedPGStoreInternal(t, dbURL)
-	pgSchemaDDLMu.Lock()
-	err := st.InitSchema()
-	pgSchemaDDLMu.Unlock()
-	require.NoError(t, err, "init schema")
+	require.NoError(t, initPGSchemaInternal(st), "init schema")
 	return st
 }
 
-// pgSchemaDDLMu runs one whole-schema create or drop at a time per test
-// process: each locks every object in the schema in one transaction, and
-// parallel ones exhaust the server's shared lock table (out of shared memory).
-var pgSchemaDDLMu sync.Mutex
+func initPGSchemaInternal(st *Store) error {
+	pgtest.SchemaDDL.Lock()
+	defer pgtest.SchemaDDL.Unlock()
+	return st.InitSchema()
+}
 
 // newUninitializedPGStoreInternal opens an empty schema-isolated PostgreSQL
 // store without running InitSchema. Tests that need to observe a specific
@@ -75,8 +74,8 @@ func newUninitializedPGStoreInternal(t *testing.T, dbURL string) *Store {
 			return
 		}
 		defer func() { _ = cleanupDB.Close() }()
-		pgSchemaDDLMu.Lock()
-		defer pgSchemaDDLMu.Unlock()
+		pgtest.SchemaDDL.Lock()
+		defer pgtest.SchemaDDL.Unlock()
 		_, _ = cleanupDB.Exec(fmt.Sprintf("DROP SCHEMA %s CASCADE", schemaName))
 	})
 
