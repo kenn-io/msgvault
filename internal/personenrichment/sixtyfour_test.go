@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -637,22 +638,28 @@ func TestSixtyfourRejectsRedirectsAndEnforcesTimeout(t *testing.T) {
 	})
 
 	t.Run("timeout", func(t *testing.T) {
-		requirements := require.New(t)
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			time.Sleep(100 * time.Millisecond)
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(sixtyfourFixture(t, "sixtyfour_pending.json"))
-		}))
-		defer server.Close()
-		config := sixtyfourConfig(server.URL+"/start", server.URL+"/job-status")
-		config.RequestTimeout = 10 * time.Millisecond
-		provider, err := personenrichment.NewSixtyfourProvider(config, "test-key", server.Client())
-		requirements.NoError(err)
-		_, err = provider.Poll(t.Context(), sixtyfourPendingAttempt(t))
-		requirements.Error(err)
-		var providerErr *personenrichment.ProviderError
-		requirements.ErrorAs(err, &providerErr)
-		assert.Equal(t, personenrichment.FailureTransient, providerErr.Class)
+		synctest.Test(t, func(t *testing.T) {
+			requirements := require.New(t)
+			var handlerCalls atomic.Int32
+			server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				handlerCalls.Add(1)
+				time.Sleep(100 * time.Millisecond)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(sixtyfourFixture(t, "sixtyfour_pending.json"))
+			}))
+			client := server.Client()
+			serverURL := strings.Replace(server.URL, "http://", "https://", 1)
+			config := sixtyfourConfig(serverURL+"/start", serverURL+"/job-status")
+			config.RequestTimeout = 10 * time.Millisecond
+			provider, err := personenrichment.NewSixtyfourProvider(config, "test-key", client)
+			requirements.NoError(err)
+			_, err = provider.Poll(t.Context(), sixtyfourPendingAttempt(t))
+			requirements.Error(err)
+			var providerErr *personenrichment.ProviderError
+			requirements.ErrorAs(err, &providerErr)
+			assert.Equal(t, personenrichment.FailureTransient, providerErr.Class)
+			requirements.Equal(int32(1), handlerCalls.Load())
+		})
 	})
 }
 

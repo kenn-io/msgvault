@@ -303,7 +303,7 @@ func waitChangesBoundPast(t *testing.T, srv *Server, at time.Time) {
 					"transaction open", at)
 			return
 		}
-		time.Sleep(200 * time.Microsecond)
+		time.Sleep(200 * time.Microsecond) //nolint:kennlint // waits for the database clock and commit bound
 	}
 }
 
@@ -1591,7 +1591,7 @@ func TestChangesEndpoint_PublishesHowFarItIsComplete(t *testing.T) {
 		if len(resumed.Messages) > 0 || time.Now().After(deadline) {
 			break
 		}
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(2 * time.Millisecond) //nolint:kennlint // waits for the database clock and commit bound
 	}
 	require.Len(resumed.Messages, 1, "the committed change must arrive")
 	assert.Equal(ids[0], resumed.Messages[0].ID, "the changed message")

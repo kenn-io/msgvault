@@ -1071,10 +1071,9 @@ func TestProbeLocalDaemonAuthDoesNotWaitForStats(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
-	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/stats", func(_ http.ResponseWriter, r *http.Request) {
 		statsCalled.Store(true)
-		time.Sleep(3 * localDaemonAuthProbeTimeout)
-		w.WriteHeader(http.StatusOK)
+		<-r.Context().Done()
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)

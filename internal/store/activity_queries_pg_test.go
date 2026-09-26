@@ -177,7 +177,7 @@ func waitForBlockedDailyNoteRead(t *testing.T, admin *sql.DB) {
 		if blocked {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) //nolint:kennlint // polls PostgreSQL lock state
 	}
 	require.FailNow("daily-note subpage did not block on the table lock")
 }

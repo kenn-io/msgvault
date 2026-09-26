@@ -132,6 +132,11 @@ Named budgets and variables stay outside this rule. Virtual sleeps are valid
 inside a bubble. CI runs this check on Ubuntu, so Windows-only test files still
 need Windows validation.
 
+`make lint` and `make lint-ci` build a pinned golangci-lint with Kit's
+`kennlint` plugin and run its `sleeptest` check. The check rejects `time.Sleep`
+in tests outside a `synctest.Test` bubble. A kept real wait carries
+`//nolint:kennlint // <what it waits for>` on the sleep line.
+
 ### PostgreSQL tests
 
 `MSGVAULT_TEST_DB=postgres://...` runs PostgreSQL-backed
@@ -202,7 +207,7 @@ CI's explicit `test-unsharded` and package-shard jobs keep their existing layout
 # Format code
 make fmt
 
-# Run linter (requires golangci-lint)
+# Run linter (builds the pinned golangci-lint with Kit's plugin; needs git)
 make lint
 
 # Check for issues

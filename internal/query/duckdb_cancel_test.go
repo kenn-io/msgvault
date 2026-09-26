@@ -27,7 +27,7 @@ func TestQuerySQLHonorsContextCancellation(t *testing.T) {
 	// Cancel shortly after the query starts. Uncancelled, the cross join
 	// below (1e6 x 1e6 rows) would run for many minutes.
 	go func() {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond) //nolint:kennlint // lets DuckDB start the query in cgo
 		cancel()
 	}()
 

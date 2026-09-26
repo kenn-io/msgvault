@@ -140,7 +140,7 @@ func (c *changeFeedConsumer) pollInBackground(st *store.Store, stop <-chan struc
 			c.record(err)
 			return
 		}
-		time.Sleep(gap(i))
+		time.Sleep(gap(i)) //nolint:kennlint // paces polls against the database clock
 	}
 }
 
@@ -213,7 +213,7 @@ func (c *changeFeedConsumer) drainUntil(t *testing.T, st *store.Store, done func
 		if time.Now().After(deadline) {
 			return false
 		}
-		time.Sleep(changeFeedCatchUpPoll)
+		time.Sleep(changeFeedCatchUpPoll) //nolint:kennlint // paces polls against the database clock
 	}
 }
 
@@ -630,7 +630,7 @@ func TestListChangedMessages_DeletionRunTombstonesAllArrive(t *testing.T) {
 				consumer.record(fmt.Errorf("incoming sync traffic: %w", err))
 				return
 			}
-			time.Sleep(2 * time.Millisecond)
+			time.Sleep(2 * time.Millisecond) //nolint:kennlint // paces real writes against the database clock
 		}
 	})
 
@@ -763,7 +763,7 @@ func TestListChangedMessages_BoundNeverEntersABatchesStampRange(t *testing.T) {
 					trafficErr = err
 					return
 				}
-				time.Sleep(time.Millisecond)
+				time.Sleep(time.Millisecond) //nolint:kennlint // paces real writes against the database clock
 			}
 		})
 	}
@@ -873,7 +873,7 @@ func TestListChangedMessages_ConcurrentTransactionalWritersLoseNothing(t *testin
 				return
 			}
 			record(id, value)
-			time.Sleep(staggered(i, 0, 90))
+			time.Sleep(staggered(i, 0, 90)) //nolint:kennlint // paces real writes against the database clock
 		}
 	})
 
@@ -885,10 +885,10 @@ func TestListChangedMessages_ConcurrentTransactionalWritersLoseNothing(t *testin
 		require.NoError(err, "begin batched write")
 		_, err = tx.Exec(st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), value, id)
 		require.NoError(err, "batched write")
-		time.Sleep(pendingStampWindow) // stamped, not yet published
+		time.Sleep(pendingStampWindow) //nolint:kennlint // stamped, not yet published
 		require.NoError(tx.Commit(), "commit batched write")
 		record(id, value)
-		time.Sleep(staggered(round, 0, 900))
+		time.Sleep(staggered(round, 0, 900)) //nolint:kennlint // paces real writes against the database clock
 	}
 
 	close(stop)

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -130,17 +131,20 @@ func TestClientRetryAfter(t *testing.T) {
 }
 
 func TestClientContextCancelDuringRetry(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Retry-After", "30") // long wait so cancellation wins
-		w.WriteHeader(http.StatusTooManyRequests)
-	}))
-	defer srv.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
-	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
-	_, err := pageThrough[Chat](ctx, c, "/x", func([]Chat) {})
-	require.Error(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Retry-After", "30") // long wait so cancellation wins
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		httpClient := server.Client()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		c := NewClient(server.URL, func(context.Context) (string, error) { return "t", nil }, 50)
+		c.http.Transport = httpClient.Transport
+		go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+		_, err := pageThrough[Chat](ctx, c, "/x", func([]Chat) {})
+		require.ErrorIs(t, err, context.Canceled)
+	})
 }
 
 func TestListChatsAndMessages(t *testing.T) {

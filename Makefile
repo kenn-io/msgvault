@@ -50,6 +50,7 @@ GO_INSTALL_BIN := $(shell go env GOPATH)/bin
 endif
 GOLANGCI_LINT_BIN := $(GO_INSTALL_BIN)/golangci-lint
 CI_TOOLS_BIN := $(shell git rev-parse --path-format=absolute --git-path ci-tools/bin)
+CUSTOM_GCL_BIN := $(CI_TOOLS_BIN)/custom-gcl$(shell go env GOEXE)
 GOVULNCHECK_BIN := $(CI_TOOLS_BIN)/govulncheck
 
 # Build tags for the PostgreSQL test lane (test-pg). Must be the full build set:
@@ -87,7 +88,7 @@ export GOLANGCI_LINT_CACHE
 # serialize one another while duplicate runners in one worktree can wait.
 GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 
-.PHONY: build build-release install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build: web-embed
@@ -353,14 +354,20 @@ lint-tools:
 	@if [ "$$("$(GOLANGCI_LINT_BIN)" version --short 2>/dev/null)" = "$(GOLANGCI_LINT_VERSION:v%=%)" ]; then exit 0; fi; \
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
+# Build golangci-lint with the plugins in .custom-gcl.yml into the
+# repository-owned tool path. Strip repo-local Git variables so a build run
+# from the commit hook does not inherit GIT_DIR.
+custom-gcl: lint-tools
+	@mkdir -p "$(CI_TOOLS_BIN)"
+	@unset_args=$$(git rev-parse --local-env-vars 2>/dev/null | sed 's/^/-u /' | tr '\n' ' '); \
+	env $$unset_args GOFLAGS=-buildvcs=false "$(GOLANGCI_LINT_BIN)" custom \
+		--destination "$(CI_TOOLS_BIN)" --name custom-gcl \
+		--version "$(GOLANGCI_LINT_VERSION)"
+
 # Run linter (auto-fix)
-lint:
-	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
-		exit 1; \
-	fi
+lint: custom-gcl
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
-	TMPDIR="$(GOLANGCI_LINT_TMP)" golangci-lint run --fix ./...
+	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run --fix ./...
 
 # Check the shared Huma API contract.
 huma-check:
@@ -369,9 +376,9 @@ huma-check:
 .PHONY: huma-check
 
 # Run linter (CI, no auto-fix)
-lint-ci: lint-tools testify-helper-check
+lint-ci: custom-gcl testify-helper-check
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
-	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(GOLANGCI_LINT_BIN)" run ./...
+	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run ./...
 	@if [ -n "$$GITHUB_PATH" ]; then \
 		$(MAKE) --no-print-directory vuln-tools; \
 		printf '%s\n' "$(CI_TOOLS_BIN)" >> "$$GITHUB_PATH"; \

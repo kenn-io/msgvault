@@ -240,58 +240,60 @@ func TestClientSanitizesSuccessfulResponseDecodeErrors(t *testing.T) {
 }
 
 func TestClientSerializesRoutesLearnedToShareBucket(t *testing.T) {
-	require := require.New(t)
-	var enabled atomic.Bool
-	var inFlight atomic.Int32
-	var maximum atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		w.Header().Set("X-Ratelimit-Bucket", "shared-message-bucket")
-		if enabled.Load() {
-			current := inFlight.Add(1)
-			for {
-				previous := maximum.Load()
-				if current <= previous || maximum.CompareAndSwap(previous, current) {
-					break
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		var enabled atomic.Bool
+		var inFlight atomic.Int32
+		var maximum atomic.Int32
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			w.Header().Set("X-Ratelimit-Bucket", "shared-message-bucket")
+			if enabled.Load() {
+				current := inFlight.Add(1)
+				for {
+					previous := maximum.Load()
+					if current <= previous || maximum.CompareAndSwap(previous, current) {
+						break
+					}
 				}
+				time.Sleep(40 * time.Millisecond)
+				inFlight.Add(-1)
 			}
-			time.Sleep(40 * time.Millisecond)
-			inFlight.Add(-1)
-		}
-		if request.URL.Path == "/channels/301/messages" {
-			writeDiscordJSON(w, http.StatusOK, []any{})
-			return
-		}
-		writeDiscordJSON(w, http.StatusOK, map[string]any{"id": "501", "channel_id": "301", "author": map[string]any{"id": "102"}, "timestamp": "2026-07-18T12:00:00Z"})
-	}))
-	t.Cleanup(server.Close)
-	client, err := NewClient(server.URL, "test-token")
-	require.NoError(err)
+			if request.URL.Path == "/channels/301/messages" {
+				writeDiscordJSON(w, http.StatusOK, []any{})
+				return
+			}
+			writeDiscordJSON(w, http.StatusOK, map[string]any{"id": "501", "channel_id": "301", "author": map[string]any{"id": "102"}, "timestamp": "2026-07-18T12:00:00Z"})
+		}))
+		client, err := NewClient("http://127.0.0.1", "test-token")
+		require.NoError(err)
+		client.http.Transport = server.Client().Transport
 
-	_, err = client.Messages(context.Background(), "301", MessageQuery{Limit: 1})
-	require.NoError(err)
-	_, err = client.Message(context.Background(), "301", "501")
-	require.NoError(err)
-	enabled.Store(true)
+		_, err = client.Messages(context.Background(), "301", MessageQuery{Limit: 1})
+		require.NoError(err)
+		_, err = client.Message(context.Background(), "301", "501")
+		require.NoError(err)
+		enabled.Store(true)
 
-	var wg sync.WaitGroup
-	errs := make(chan error, 2)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		_, callErr := client.Messages(context.Background(), "301", MessageQuery{Limit: 1})
-		errs <- callErr
-	}()
-	go func() {
-		defer wg.Done()
-		_, callErr := client.Message(context.Background(), "301", "501")
-		errs <- callErr
-	}()
-	wg.Wait()
-	close(errs)
-	for callErr := range errs {
-		require.NoError(callErr)
-	}
-	assert.Equal(t, int32(1), maximum.Load())
+		var wg sync.WaitGroup
+		errs := make(chan error, 2)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, callErr := client.Messages(context.Background(), "301", MessageQuery{Limit: 1})
+			errs <- callErr
+		}()
+		go func() {
+			defer wg.Done()
+			_, callErr := client.Message(context.Background(), "301", "501")
+			errs <- callErr
+		}()
+		wg.Wait()
+		close(errs)
+		for callErr := range errs {
+			require.NoError(callErr)
+		}
+		assert.Equal(t, int32(1), maximum.Load())
+	})
 }
 
 func TestClientHonorsGlobal429AcrossRoutes(t *testing.T) {

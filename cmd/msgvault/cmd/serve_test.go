@@ -899,7 +899,7 @@ func waitForServeHealth(t *testing.T, port int, errCh <-chan error) {
 				return
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls runServe's real TCP listener
 	}
 	require.FailNow(t, "serve health endpoint did not become ready")
 }
@@ -923,7 +923,7 @@ func waitForServeHealthBounded(t *testing.T, port int, errCh <-chan error) {
 				return
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls runServe's real TCP listener
 	}
 	require.FailNow(t, "serve health endpoint did not become ready")
 }

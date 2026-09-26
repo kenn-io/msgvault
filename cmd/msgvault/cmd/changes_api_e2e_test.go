@@ -69,7 +69,7 @@ func settleChangesFeed(t *testing.T, baseURL string) api.ChangesResponse {
 					"transaction open", start)
 			return page
 		}
-		time.Sleep(200 * time.Microsecond)
+		time.Sleep(200 * time.Microsecond) //nolint:kennlint // polls the database clock through the feed
 	}
 }
 

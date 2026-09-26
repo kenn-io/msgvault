@@ -391,7 +391,7 @@ func TestMeetingImportReadsBodyBeforeWaitingOnOperationGate(t *testing.T) {
 	)
 	require.NoError(err, "write headers and partial body")
 
-	time.Sleep(2 * ordinaryReadTimeout)
+	time.Sleep(2 * ordinaryReadTimeout) //nolint:kennlint // outlasts the real socket read deadline
 	assert.False(gate.HasRequestWaiters(), "partial upload must not hold or queue on the mutation gate")
 	_, err = conn.Write(body[len(body)-1:])
 	require.NoError(err, "finish body after ordinary server read timeout")

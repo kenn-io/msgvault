@@ -80,7 +80,7 @@ func TestBackupDatabaseContext_CancellationRemovesUnpublishedBackup(t *testing.T
 		if time.Now().After(deadline) {
 			require.FailNow("backup output did not appear")
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) //nolint:kennlint // polls for SQLite's VACUUM INTO file
 	}
 	cancel()
 

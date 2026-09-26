@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
@@ -99,41 +100,44 @@ func TestNew_DefaultTimeout(t *testing.T) {
 }
 
 func TestRunCLISyncStreamsWithoutAbsoluteClientTimeout(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(http.MethodPost, r.Method, "method")
-		assert.Equal("/api/v1/cli/sync-full", r.URL.Path, "path")
-		assert.Equal(apiprotocol.ClientClassCLI, r.Header.Get(apiprotocol.ClientClassHeader), "client class")
+		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(http.MethodPost, r.Method, "method")
+			assert.Equal("/api/v1/cli/sync-full", r.URL.Path, "path")
+			assert.Equal(apiprotocol.ClientClassCLI, r.Header.Get(apiprotocol.ClientClassHeader), "client class")
 
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		_, _ = w.Write([]byte(`{"type":"stdout","data":"begin\n"}` + "\n"))
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
-		time.Sleep(50 * time.Millisecond)
-		_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
-	}))
-	t.Cleanup(srv.Close)
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_, _ = w.Write([]byte(`{"type":"stdout","data":"begin\n"}` + "\n"))
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			time.Sleep(50 * time.Millisecond)
+			_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+		}))
+		httpClient := srv.Client()
 
-	st, err := New(Config{
-		URL:           srv.URL,
-		AllowInsecure: true,
-		Timeout:       10 * time.Millisecond,
-		HTTPClient:    srv.Client(),
-		RequestMode:   RequestModeCLI,
+		st, err := New(Config{
+			URL:           "http://127.0.0.1",
+			AllowInsecure: true,
+			Timeout:       10 * time.Millisecond,
+			HTTPClient:    httpClient,
+			RequestMode:   RequestModeCLI,
+		})
+		require.NoError(err, "New")
+		st.httpClient.Timeout = 10 * time.Millisecond
+
+		var output strings.Builder
+		err = st.RunCLISync(context.Background(), CLISyncRequest{Full: true}, func(stream, data string) error {
+			assert.Equal("stdout", stream, "stream")
+			_, _ = output.WriteString(data)
+			return nil
+		})
+		require.NoError(err, "streaming CLI sync should not use http.Client.Timeout as an absolute body-read timeout")
+		assert.Equal("begin\n", output.String(), "streamed output")
 	})
-	require.NoError(err, "New")
-
-	var output strings.Builder
-	err = st.RunCLISync(context.Background(), CLISyncRequest{Full: true}, func(stream, data string) error {
-		assert.Equal("stdout", stream, "stream")
-		_, _ = output.WriteString(data)
-		return nil
-	})
-	require.NoError(err, "streaming CLI sync should not use http.Client.Timeout as an absolute body-read timeout")
-	assert.Equal("begin\n", output.String(), "streamed output")
 }
 
 func TestLegacyAdapterUsesClientRootContext(t *testing.T) {

@@ -278,7 +278,7 @@ func waitForPostgreSQLBlockedBy(
 			blockedPID > 0 {
 			return true
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) //nolint:kennlint // polls PostgreSQL lock state
 	}
 	return false
 }

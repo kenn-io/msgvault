@@ -2666,7 +2666,7 @@ func waitForPostgreSQLLockWait(t *testing.T, st *store.Store, pattern string) {
 		if count > 0 {
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) //nolint:kennlint // polls PostgreSQL lock state
 	}
 	require.FailNow(t, "timed out waiting for PostgreSQL lock", pattern)
 }

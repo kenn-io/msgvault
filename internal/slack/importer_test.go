@@ -596,22 +596,23 @@ func TestImportInterruptResumesWithoutDuplicates(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	// Cancel partway through the first run: as soon as the first history
-	// page has been served, mid-conversation-walk.
+	// Cancel partway through the first run when the fake serves the second
+	// history page, mid-conversation-walk.
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		for {
-			f.mu.Lock()
-			served := f.historyCalls > 0
-			f.mu.Unlock()
-			if served {
-				cancel()
-				return
-			}
-			time.Sleep(time.Millisecond)
+	defer cancel()
+	historyCalls := 0
+	f.mu.Lock()
+	f.onHistory = func(string) {
+		historyCalls++
+		if historyCalls == 2 {
+			cancel()
 		}
-	}()
+	}
+	f.mu.Unlock()
 	_, _ = imp.Import(ctx, opts)
+	f.mu.Lock()
+	f.onHistory = nil
+	f.mu.Unlock()
 
 	// Resume to completion: every message exactly once.
 	_, err := imp.Import(context.Background(), opts)
@@ -2018,9 +2019,17 @@ func TestFullRepairSurvivesInterruption(t *testing.T) {
 	require.NoError(err)
 
 	// An old message is edited at the source; --full is the repair path.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	historyCalls := 0
 	f.mu.Lock()
 	f.conv("C01").Msgs[0].Text = "hello 0 (repaired)"
-	baseline := f.historyCalls
+	f.onHistory = func(string) {
+		historyCalls++
+		if historyCalls == 2 {
+			cancel()
+		}
+	}
 	f.mu.Unlock()
 
 	// The repair run dies mid-walk. Its generation-stamped checkpoint must
@@ -2029,20 +2038,10 @@ func TestFullRepairSurvivesInterruption(t *testing.T) {
 	// abandon the repair half-done.
 	full := opts
 	full.Full = true
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		for {
-			f.mu.Lock()
-			served := f.historyCalls > baseline
-			f.mu.Unlock()
-			if served {
-				cancel()
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
-	}()
 	_, _ = imp.Import(ctx, full)
+	f.mu.Lock()
+	f.onHistory = nil
+	f.mu.Unlock()
 
 	// A PLAIN run continues (and completes) the repair session.
 	_, err = imp.Import(context.Background(), opts)

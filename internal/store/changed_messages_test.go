@@ -134,7 +134,7 @@ func waitForDatabaseClockPast(t *testing.T, st *store.Store, when time.Time) {
 				"the database clock never moved past %s", when)
 			return
 		}
-		time.Sleep(databaseProgressPoll)
+		time.Sleep(databaseProgressPoll) //nolint:kennlint // polls the database clock
 	}
 }
 
@@ -151,7 +151,7 @@ func waitForFeedPast(t *testing.T, st *store.Store, when time.Time) {
 					"transaction open", when)
 			return
 		}
-		time.Sleep(databaseProgressPoll)
+		time.Sleep(databaseProgressPoll) //nolint:kennlint // polls the database commit bound
 	}
 }
 
