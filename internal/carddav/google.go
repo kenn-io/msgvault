@@ -47,6 +47,7 @@ func discoverGoogle(ctx context.Context, client *Client, baseURL string) (Discov
 			}
 			for i := range discovery.Books {
 				discovery.Books[i].Capabilities = googleCapabilities(discovery.Books[i].Capabilities)
+				discovery.Books[i].SupportsSyncCollection = false
 			}
 			return discovery, nil
 		}
@@ -80,7 +81,7 @@ func discoverGoogle(ctx context.Context, client *Client, baseURL string) (Discov
 		return Discovery{
 			PrincipalURL: book, HomeURL: book, HomeURLs: []*url.URL{book},
 			Books: []DiscoveredBook{{URL: book, DisplayName: name,
-				SupportsSyncCollection: true, SupportsMultiget: true, SupportedVCardVersions: []string{"3.0"},
+				SupportsSyncCollection: false, SupportsMultiget: true, SupportedVCardVersions: []string{"3.0"},
 				Capabilities: googleCapabilities(capabilitiesFrom(properties))}},
 		}, nil
 	}

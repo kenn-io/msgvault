@@ -313,7 +313,7 @@ func (s *Service) fetchBookPlan(
 			plan.SyncRevision = base.SyncRevision
 			plan.CompletesFullReconcile = options.Full || book.NeedsFullReconcile
 			return plan, nil
-		case errors.As(err, &status) && (status.StatusCode == http.StatusMethodNotAllowed || status.StatusCode == http.StatusNotImplemented):
+		case errors.As(err, &status) && (status.StatusCode == http.StatusMethodNotAllowed || status.StatusCode == http.StatusNotImplemented || status.StatusCode == http.StatusBadRequest):
 			// Capability advertisements are hints. A standards-compliant snapshot
 			// is the bounded downgrade when sync-collection is unavailable.
 		default:

@@ -45,7 +45,7 @@ func TestGoogleDiscoveryDirectCollectionWithBearerTokens(t *testing.T) {
 	books, err := service.ListBooks(t.Context())
 	required.NoError(err)
 	required.Len(books, 1)
-	assertions.True(books[0].SupportsSyncCollection)
+	assertions.False(books[0].SupportsSyncCollection)
 	assertions.True(books[0].SupportsMultiget)
 	assertions.Equal([]string{"3.0"}, books[0].SupportedVCardVersions)
 	assertions.Equal(new(true), books[0].CanCreate)
