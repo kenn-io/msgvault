@@ -321,6 +321,25 @@ func TestEvaluate_HonoursCutoffs(t *testing.T) {
 	assert.InDelta(1.0, Evaluate(short, rel, CutoffsForDepth(3)).P, 1e-9)
 }
 
+func TestHitAtAndEvaluateDepth(t *testing.T) {
+	assert := assert.New(t)
+	assert.Equal(100, HitDepth(StandardCutoffs))
+	assert.Equal(5, HitDepth(CutoffsForDepth(5)))
+	rel := map[string]struct{}{"tail": {}}
+	ranked := []string{"one", "two", "three", "tail"}
+	assert.InDelta(0.0, HitAt(ranked, rel, 1), 1e-9)
+	assert.InDelta(1.0, HitAt(ranked, rel, 4), 1e-9)
+	assert.InDelta(0.0, HitAt(ranked, map[string]struct{}{}, 10), 1e-9)
+
+	scores := Evaluate(ranked, rel, CutoffsForDepth(5))
+	assert.InDelta(0.0, scores.Hit1, 1e-9)
+	assert.InDelta(1.0, scores.Hit10, 1e-9, "Hit@min(10, depth) includes the retained tail")
+
+	var aggregate Aggregate
+	aggregate.Add(scores)
+	assert.InDelta(1.0, aggregate.Mean().Hit10, 1e-9)
+}
+
 func TestLoadQrels_MissingFile(t *testing.T) {
 	_, _, err := LoadQrels(filepath.Join(t.TempDir(), "nope.txt"))
 	require.Error(t, err)

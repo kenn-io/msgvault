@@ -2659,11 +2659,68 @@ msgvault eval \
 | `--doc-key <kind>` | `message` | Match judgments to `message` source IDs or `conversation` source IDs |
 | `-n`, `--limit <count>` | `100` | Distinct documents retrieved per query |
 | `--json` | `false` | Emit the report as JSON |
+| `--rerank-jev <shapes>` | disabled | Opt in to `per-candidate`, `batched`, or both Jev shapes |
+| `--rerank-top <count>` | `30` | Between 2 and 30 candidates; cannot exceed `--limit` |
+| `--rerank-max-requests <count>` | `1000` | Maximum provider requests for the whole invocation |
+| `--rerank-cost-stop-usd <amount>` | required when enabled | Local per-run stop based on returned token usage |
+| `--rerank-input-usd-per-million <amount>` | required when enabled | Input price supplied for this run |
+| `--rerank-output-usd-per-million <amount>` | required when enabled | Output price supplied for this run |
 
 `eval` opens the archive selected by local configuration directly; it does not
 use `[remote]`. Vector and hybrid evaluation currently require a SQLite archive,
 an `sqlite_vec` build, enabled vector configuration, and a compatible active
 generation. On PostgreSQL, run `--modes fts`.
+
+### Optional Jev reranking
+
+`--rerank-jev` adds an evaluation arm after retrieval. It sends the topic query
+and up to 30 message candidates to TypeSafe's fixed Jev endpoint. The command
+uses `TYPESAFE_API_KEY` from the process environment. Selecting a shape is the
+per-invocation consent to send that archived text. The reranked arms accept
+`--doc-key=message` because TREC judgments identify messages. Conversation
+judgments remain available for the baseline run.
+
+The command prepares candidate text with the same body selection and cleanup
+used for embeddings. It sends only the query and the cleaned subject/body.
+Candidate text is capped at 2048 UTF-8 bytes, query text at 4096 bytes, each
+request at 128 KiB, and each response at 64 KiB. Per-candidate requests use at
+most eight concurrent calls. Each HTTP call has a 10-second deadline, including
+reading the response. A ranking can take longer when requests run in several
+waves; its full elapsed time contributes to the reported latency. The
+`per-candidate` and `batched` shapes use the same retrieved messages in one
+invocation.
+
+The local cost stop uses the input and output prices supplied on the command
+line. It stops new calls after returned usage reaches the threshold. Calls
+already in flight can finish afterward, so this value is a run stop rather than
+a billing ceiling. Before a live study, verify an account or order limit that
+TypeSafe enforces by rejecting charges above the cap. A displayed balance or
+alert does not establish that behavior. Missing token usage makes cost unknown
+and stops later calls. The report keeps observed input and output token
+subtotals, which may be zero. `usage_complete=false` marks them as partial.
+Unknown cost prints `unknown` in the table and `null` in JSON. Provider
+failures stop further provider calls because failed requests may have unreported
+usage. They leave the baseline in the report and return a nonzero command result.
+
+Example with placeholder prices:
+
+```bash
+TYPESAFE_API_KEY=replace-me msgvault eval \
+  --topics topics.tsv --qrels qrels.txt --modes fts,vector,hybrid \
+  --limit 100 --rerank-jev per-candidate,batched --rerank-top 30 \
+  --rerank-cost-stop-usd 2 \
+  --rerank-input-usd-per-million 1 \
+  --rerank-output-usd-per-million 2
+```
+
+Reranked p95 includes retrieval, shared candidate preparation, and that shape's
+provider calls. A live TREC Legal 2010 study also needs a permitted matching
+message collection, topics, qrels, source-id mapping, and the enforced account
+cap. Consider a search integration only when a complete hybrid shape improves
+Hit@10 by 0.05 absolute and has end-to-end p95 at or below 2000 ms under the
+same corpus, topics, qrels, retrieval settings, and top N of 30. Report the
+paired topic denominator and changes for both shapes. The local threaded
+fixture checks wiring only.
 
 ---
 

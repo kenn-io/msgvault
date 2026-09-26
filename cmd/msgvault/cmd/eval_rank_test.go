@@ -37,6 +37,7 @@ type saturatingFusingBackend struct {
 
 	generation vector.Generation
 	hits       []vector.FusedHit
+	vectorHits []vector.Hit
 	saturated  bool
 	fusedCalls int
 }
@@ -50,6 +51,12 @@ func (b *saturatingFusingBackend) FusedSearch(
 ) ([]vector.FusedHit, vector.SearchMetadata, error) {
 	b.fusedCalls++
 	return b.hits, vector.SearchMetadata{PoolSaturated: b.saturated}, nil
+}
+
+func (b *saturatingFusingBackend) Search(
+	context.Context, vector.GenerationID, []float32, int, vector.Filter,
+) ([]vector.Hit, error) {
+	return b.vectorHits, nil
 }
 
 // stubEmbedder returns a fixed query vector; the fake backend never looks at
@@ -168,6 +175,21 @@ func TestRankedFTS_MessageKeyDoesNotOverFetch(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, ranked, 100)
 	assert.Equal(t, []int{100}, eng.depths, "no over-fetch for a 1:1 doc-key")
+}
+
+func TestRankedFTS_CapturesMessageIdentityWithKey(t *testing.T) {
+	corpus := threadedCorpus(2, 2)
+	eng := newPagingFTS(corpus)
+	ev, _ := newTestEvaluator(t, eng, "message")
+	ev.captureHits = true
+
+	ranked, err := ev.rankedFTS(evalTestQuery(t, "lease renewal"))
+	require.NoError(t, err)
+	require.NotEmpty(t, ranked)
+	hit, ok := ev.lastHits[ranked[0]]
+	require.True(t, ok)
+	assert.Equal(t, corpus[0].ID, hit.MessageID)
+	assert.Equal(t, corpus[0].SourceMessageID, ranked[0])
 }
 
 // TestRankedFTS_GrowsThePoolUntilTheDepthIsFilled: one over-fetch is not always
@@ -316,6 +338,7 @@ func TestRankedVector_CarriesPoolSaturationFromTheEngine(t *testing.T) {
 		},
 	}
 	ev, diag := newTestEvaluator(t, nil, "conversation")
+	ev.captureHits = true
 	ev.qeng = qeng
 	ev.heng = hybrid.NewEngine(backend, nil, stubEmbedder{}, hybrid.Config{
 		ExpectedFingerprint: vectorTestGeneration.Fingerprint,
@@ -325,9 +348,38 @@ func TestRankedVector_CarriesPoolSaturationFromTheEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"thread-000"}, ranked)
+	hit, ok := ev.lastHits[ranked[0]]
+	require.True(t, ok)
+	assert.Equal(t, int64(1), hit.MessageID)
 	assert.Equal(t, 1, backend.fusedCalls, "a saturated pool must not be retried at a deeper page")
 	assert.Equal(t, 1, diag.PoolShortfalls, "the engine's own saturation flag has to reach the diagnostics")
 	assert.Zero(t, diag.DepthShortfalls)
+}
+
+func TestRankedVector_CapturesMessageIdentityWithKey(t *testing.T) {
+	backend := &saturatingFusingBackend{
+		generation: vectorTestGeneration,
+		vectorHits: []vector.Hit{{MessageID: 7, Score: 0.9, Rank: 1}},
+	}
+	ev, _ := newTestEvaluator(t, nil, "message")
+	ev.captureHits = true
+	ev.qeng = &querytest.MockEngine{
+		GetMessageSummariesByIDsFunc: func(_ context.Context, ids []int64) ([]query.MessageSummary, error) {
+			return []query.MessageSummary{{
+				ID: ids[0], SourceMessageID: "<m7@example.com>", SourceConversationID: "thread-007",
+			}}, nil
+		},
+	}
+	ev.heng = hybrid.NewEngine(backend, nil, stubEmbedder{}, hybrid.Config{
+		ExpectedFingerprint: vectorTestGeneration.Fingerprint,
+	})
+
+	ranked, err := ev.rankedVector("vector", "lease renewal", evalTestQuery(t, "lease renewal"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"<m7@example.com>"}, ranked)
+	hit, ok := ev.lastHits[ranked[0]]
+	require.True(t, ok)
+	assert.Equal(t, int64(7), hit.MessageID)
 }
 
 // TestRankedVector_FilterOnlyTopicIsRecoverable: a topic that parses to filters

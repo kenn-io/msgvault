@@ -45,6 +45,12 @@ func TestDedupeThenTruncate_Order(t *testing.T) {
 		"collapsing first yields the requested number of DISTINCT threads")
 }
 
+func TestDedupeRankedCarriesBestSourceIndex(t *testing.T) {
+	keys, indices := DedupeRanked([]string{"a", "a", "b", "", "c"})
+	assert.Equal(t, []string{"a", "b", "\x00unscorable:3", "c"}, keys)
+	assert.Equal(t, []int{0, 2, 3, 4}, indices)
+}
+
 // TestOverFetchPlan_NonCollapsingKey: with a doc-key that is 1:1 with hits
 // there is nothing to collapse, so the plan must not over-fetch. This command
 // reports latency, and padding every query would inflate it for no gain.

@@ -1,0 +1,49 @@
+{
+  "request": {
+    "state": {
+      "query": "synthetic question",
+      "candidates": [
+        "synthetic first",
+        "synthetic second"
+      ]
+    },
+    "model": "jev-1.13.0",
+    "questions": {
+      "candidate_0": {
+        "type": "noul",
+        "instructions": "Could `candidates[0]` be the best answer to `query`?",
+        "criteria": {
+          "true": "The candidates[0] contains the specific information needed to answer the query.",
+          "false": "The candidates[0] is only topically similar or does not contain the needed evidence."
+        }
+      },
+      "candidate_1": {
+        "type": "noul",
+        "instructions": "Could `candidates[1]` be the best answer to `query`?",
+        "criteria": {
+          "true": "The candidates[1] contains the specific information needed to answer the query.",
+          "false": "The candidates[1] is only topically similar or does not contain the needed evidence."
+        }
+      }
+    }
+  },
+  "status": 200,
+  "content_type": "application/json",
+  "response": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "candidate_0": {
+        "type": "noul",
+        "noul": 0.37
+      },
+      "candidate_1": {
+        "type": "noul",
+        "noul": 0.34
+      }
+    },
+    "usage": {
+      "input_tokens": 438,
+      "output_tokens": 40
+    }
+  }
+}
