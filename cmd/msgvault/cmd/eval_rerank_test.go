@@ -8,13 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unicode/utf8"
 
@@ -30,239 +31,11 @@ import (
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
-type testTransport func(*http.Request) (*http.Response, error)
-
-func (f testTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-func captureResponse(t *testing.T, name string) []byte {
-	t.Helper()
-	data, err := os.ReadFile("testdata/typesafe/" + name)
-	require.NoError(t, err)
-	var capture struct {
-		Response json.RawMessage `json:"response"`
-	}
-	require.NoError(t, json.Unmarshal(data, &capture))
-	return capture.Response
-}
-
-func TestJevWireCaptures(t *testing.T) {
-	assert := assert.New(t)
-	per, err := encodeJevCalls("synthetic question", []string{"synthetic candidate"}, "per-candidate")
-	require.NoError(t, err)
-	batch, err := encodeJevCalls("synthetic question", []string{"synthetic first", "synthetic second"}, "batched")
-	require.NoError(t, err)
-	var perCapture, batchCapture map[string]any
-	require.NoError(t, json.Unmarshal(mustReadCapture(t, "capture_per_candidate.json"), &perCapture))
-	require.NoError(t, json.Unmarshal(mustReadCapture(t, "capture_batched.json"), &batchCapture))
-	var got map[string]any
-	require.NoError(t, json.Unmarshal(per[0], &got))
-	assert.Equal(perCapture["request"], got)
-	require.NoError(t, json.Unmarshal(batch[0], &got))
-	assert.Equal(batchCapture["request"], got)
-
-	perResult, err := decodeJevResponse(captureResponse(t, "capture_per_candidate.json"), []string{"matches"})
-	require.NoError(t, err)
-	assert.Equal([]float64{0.15}, perResult.Scores)
-	assert.Equal(int64(342), *perResult.Usage.InputTokens)
-	assert.True(perResult.Usage.Complete)
-	batchResult, err := decodeJevResponse(captureResponse(t, "capture_batched.json"), []string{"candidate_0", "candidate_1"})
-	require.NoError(t, err)
-	assert.Equal([]float64{0.37, 0.34}, batchResult.Scores)
-}
-
-func mustReadCapture(t *testing.T, name string) []byte {
-	t.Helper()
-	data, err := os.ReadFile("testdata/typesafe/" + name)
-	require.NoError(t, err)
-	return data
-}
-
-func TestJevBounds(t *testing.T) {
-	assert := assert.New(t)
-	t.Log("candidate=2048 query=4096 request=131072 response=65536 max_requests=1000")
-	require.NoError(t, func() error {
-		_, err := encodeJevCalls(strings.Repeat("q", 4096), []string{"candidate"}, "batched")
-		return err
-	}())
-	_, err := encodeJevCalls(strings.Repeat("q", 4097), []string{"candidate"}, "batched")
-	require.Error(t, err)
-	_, err = encodeJevCalls("query", []string{strings.Repeat("x", 2049)}, "batched")
-	require.Error(t, err)
-	maxCandidates := make([]string, typesafeMaxCandidates)
-	for i := range maxCandidates {
-		maxCandidates[i] = strings.Repeat("x", typesafeMaxCandidate)
-	}
-	requests, err := encodeJevCalls(strings.Repeat("q", typesafeMaxQuery), maxCandidates, "batched")
-	require.NoError(t, err)
-	require.Len(t, requests, 1)
-	assert.LessOrEqual(len(requests[0]), typesafeMaxRequest)
-
-	budget := &rerankBudget{maxRequests: 0, stopUSD: 1}
-	scorer, err := newJevReranker("batched", "secret", budget)
-	require.NoError(t, err)
-	scorer.client = &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: http.NoBody}, nil
-	})}
-	_, err = scorer.Rerank(context.Background(), rerank.Request{Query: "query", Candidates: []string{"a", "b"}})
-	require.Error(t, err)
-	assert.Equal(0, budget.attempts, "the request limit is checked before egress")
-
-	preflightBudget := &rerankBudget{maxRequests: 2, stopUSD: 1, attempts: 1}
-	preflightScorer, err := newJevReranker("per-candidate", "secret", preflightBudget)
-	require.NoError(t, err)
-	var preflightCalls atomic.Int32
-	preflightScorer.client = &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
-		preflightCalls.Add(1)
-		return nil, errors.New("unexpected provider call")
-	})}
-	_, err = preflightScorer.Rerank(context.Background(), rerank.Request{Query: "query", Candidates: []string{"a", "b"}})
-	require.Error(t, err)
-	assert.Equal(int32(0), preflightCalls.Load(), "remaining request capacity is checked before egress")
-
-	responseBudget := &rerankBudget{maxRequests: 1000, stopUSD: 1}
-	responseScorer, err := newJevReranker("batched", "secret", responseBudget)
-	require.NoError(t, err)
-	responseScorer.client = &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: ioNopCloser{strings.NewReader(strings.Repeat("x", 65537))}}, nil
-	})}
-	_, err = responseScorer.Rerank(context.Background(), rerank.Request{Query: "query", Candidates: []string{"a", "b"}})
-	require.Error(t, err)
-	assert.Contains(err.Error(), "65536")
-}
-
-func TestJevAccounting(t *testing.T) {
-	assert := assert.New(t)
-	response := captureResponse(t, "capture_batched.json")
-	budget := &rerankBudget{maxRequests: 10, stopUSD: 0.0005, inputUSDPerM: 1, outputUSDPerM: 2}
-	scorer, err := newJevReranker("batched", "secret", budget)
-	require.NoError(t, err)
-	var requests atomic.Int32
-	scorer.client = &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
-		requests.Add(1)
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: ioNopCloser{strings.NewReader(string(response))}}, nil
-	})}
-	result, err := scorer.Rerank(context.Background(), rerank.Request{Query: "query", Candidates: []string{"a", "b"}})
-	require.NoError(t, err)
-	assert.Equal([]float64{0.37, 0.34}, result.Scores)
-	assert.Equal(1, result.Usage.Requests)
-	assert.Equal(int64(438), *result.Usage.InputTokens)
-	assert.Equal(int64(40), *result.Usage.OutputTokens)
-	assert.InDelta(0.000518, budget.cost, 1e-9)
-	_, err = scorer.Rerank(context.Background(), rerank.Request{Query: "query", Candidates: []string{"a", "b"}})
-	require.ErrorContains(t, err, "local cost stop reached")
-	assert.Equal(int32(1), requests.Load(), "a measured cost stop prevents another provider call")
-}
-
-func TestJevFailureReturnsAttemptedCallsAndPartialUsage(t *testing.T) {
-	response := captureResponse(t, "capture_per_candidate.json")
-	budget := &rerankBudget{maxRequests: 10, stopUSD: 1, inputUSDPerM: 1, outputUSDPerM: 1}
-	scorer, err := newJevReranker("per-candidate", "secret-key", budget)
-	require.NoError(t, err)
-	var requests atomic.Int32
-	scorer.client = &http.Client{Transport: testTransport(func(_ *http.Request) (*http.Response, error) {
-		if requests.Add(1) == 1 {
-			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: ioNopCloser{strings.NewReader(string(response))}}, nil
-		}
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			budget.mu.Lock()
-			recorded := budget.cost > 0
-			budget.mu.Unlock()
-			if recorded {
-				break
-			}
-			time.Sleep(time.Millisecond)
-		}
-		budget.mu.Lock()
-		recorded := budget.cost > 0
-		budget.mu.Unlock()
-		if !recorded {
-			return nil, errors.New("first call usage was not recorded")
-		}
-		return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{"Content-Type": []string{"text/plain"}}, Body: ioNopCloser{strings.NewReader("private provider body")}}, nil
-	})}
-
-	result, err := scorer.Rerank(context.Background(), rerank.Request{Query: "query", Candidates: []string{"first", "second"}})
-	require.ErrorContains(t, err, "HTTP 503")
-	assert.Equal(t, 2, result.Usage.Requests)
-	assert.Equal(t, int64(342), *result.Usage.InputTokens)
-	assert.Equal(t, int64(20), *result.Usage.OutputTokens)
-	assert.False(t, result.Usage.Complete)
-	assert.Equal(t, "provider returned HTTP 503", safeRerankFailure(err))
-	assert.NotContains(t, err.Error(), "private provider body")
-	assert.NotContains(t, err.Error(), "secret-key")
-}
-
-type contextErrorBody struct{ ctx context.Context }
-
-func (b contextErrorBody) Read([]byte) (int, error) {
-	<-b.ctx.Done()
-	return 0, b.ctx.Err()
-}
-
-func (contextErrorBody) Close() error { return nil }
-
-func TestJevBodyReadTimeoutKeepsTimeoutCategory(t *testing.T) {
-	scorer, err := newJevReranker("per-candidate", "secret-key", &rerankBudget{maxRequests: 1, stopUSD: 1})
-	require.NoError(t, err)
-	scorer.client = &http.Client{Transport: testTransport(func(request *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       contextErrorBody{ctx: request.Context()},
-		}, nil
-	})}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-
-	_, err = scorer.Rerank(ctx, rerank.Request{Query: "query", Candidates: []string{"candidate"}})
-	require.Error(t, err)
-	assert.Equal(t, "provider timeout or cancellation", safeRerankFailure(err))
-}
-
-func TestJevMissingUsageStopsFurtherCalls(t *testing.T) {
-	assert := assert.New(t)
-	response := `{"model":"jev-1.13.0","answers":{"candidate_0":{"type":"noul","noul":0.75}}}`
-	budget := &rerankBudget{maxRequests: 10, stopUSD: 1}
-	scorer, err := newJevReranker("batched", "secret", budget)
-	require.NoError(t, err)
-	var requests atomic.Int32
-	scorer.client = &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
-		requests.Add(1)
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: ioNopCloser{strings.NewReader(response)}}, nil
-	})}
-	result, err := scorer.Rerank(context.Background(), rerank.Request{Query: "query", Candidates: []string{"a"}})
-	require.NoError(t, err)
-	assert.Equal([]float64{0.75}, result.Scores)
-	assert.Equal(int64(0), *result.Usage.InputTokens)
-	assert.Equal(int64(0), *result.Usage.OutputTokens)
-	assert.False(result.Usage.Complete)
-	_, err = scorer.Rerank(context.Background(), rerank.Request{Query: "query", Candidates: []string{"a"}})
-	require.ErrorContains(t, err, "usage is unknown")
-	assert.Equal(int32(1), requests.Load(), "unknown usage prevents another provider call")
-}
-
-func TestJevFailureRedactsProviderBody(t *testing.T) {
-	assert := assert.New(t)
-	budget := &rerankBudget{maxRequests: 10, stopUSD: 1}
-	scorer, err := newJevReranker("batched", "secret", budget)
-	require.NoError(t, err)
-	scorer.client = &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusBadGateway, Header: http.Header{"Content-Type": []string{"text/plain"}}, Body: ioNopCloser{strings.NewReader("candidate secret body")}}, nil
-	})}
-	_, err = scorer.Rerank(context.Background(), rerank.Request{Query: "query", Candidates: []string{"candidate"}})
-	require.Error(t, err)
-	assert.NotContains(err.Error(), "candidate secret body")
-	assert.NotContains(err.Error(), "secret")
-}
-
 type evalRerankRecorder struct {
 	requests     map[string][]rerank.Request
-	deadlines    []time.Time
 	failAt       map[string]int
 	failUsage    rerank.Usage
 	promoteText  string
-	delay        time.Duration
 	factoryCalls int
 }
 
@@ -271,7 +44,7 @@ type recordingReranker struct {
 	recorder *evalRerankRecorder
 }
 
-func (r *evalRerankRecorder) makeReranker(shape, _ string, _ *rerankBudget) (rerank.Reranker, error) {
+func (r *evalRerankRecorder) makeReranker(shape, _ string, _ *rerank.Budget) (evalReranker, error) {
 	r.factoryCalls++
 	if r.requests == nil {
 		r.requests = make(map[string][]rerank.Request)
@@ -282,12 +55,6 @@ func (r *evalRerankRecorder) makeReranker(shape, _ string, _ *rerankBudget) (rer
 func (r *recordingReranker) Rerank(ctx context.Context, request rerank.Request) (rerank.Result, error) {
 	request.Candidates = append([]string(nil), request.Candidates...)
 	r.recorder.requests[r.shape] = append(r.recorder.requests[r.shape], request)
-	if deadline, ok := ctx.Deadline(); ok {
-		r.recorder.deadlines = append(r.recorder.deadlines, deadline)
-	}
-	if r.recorder.delay > 0 {
-		time.Sleep(r.recorder.delay)
-	}
 	if r.recorder.failAt[r.shape] == len(r.recorder.requests[r.shape]) {
 		return rerank.Result{Usage: r.recorder.failUsage}, errors.New("fake provider failure")
 	}
@@ -367,15 +134,11 @@ func prepareEvalRerankRun(t *testing.T, shapes string, topicCount int) (*cobra.C
 	return newEvalRerankTestCommand(t, out, true, true), out
 }
 
-func TestRunEvalReranksFTSCandidatesWithIndependentDeadlines(t *testing.T) {
+func TestRunEvalReranksFTSCandidates(t *testing.T) {
 	assert := assert.New(t)
 	cmd, out := prepareEvalRerankRun(t, "batched,per-candidate", 2)
-	recorder := &evalRerankRecorder{delay: 20 * time.Millisecond}
+	recorder := &evalRerankRecorder{}
 	require.NoError(t, runEvalWithRerankerFactory(cmd, nil, recorder.makeReranker))
-	require.Len(t, recorder.deadlines, 4)
-	for i := 0; i < len(recorder.deadlines); i += 2 {
-		assert.GreaterOrEqual(recorder.deadlines[i+1].Sub(recorder.deadlines[i]), recorder.delay/2)
-	}
 	for _, shape := range []string{"batched", "per-candidate"} {
 		require.Len(t, recorder.requests[shape], 2)
 		for _, request := range recorder.requests[shape] {
@@ -428,9 +191,58 @@ func TestRunEvalReranksFTSCandidatesWithIndependentDeadlines(t *testing.T) {
 	}
 }
 
-type ioNopCloser struct{ *strings.Reader }
+func TestRunEvalJevSlowRequestWaves(t *testing.T) {
+	cmd, out := prepareEvalRerankRun(t, "per-candidate", 2)
+	evalLimit, evalRerankTop = 30, 30
+	s, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(t, err)
+	for i := 4; i <= 31; i++ {
+		_, err := s.DB().Exec(`INSERT INTO messages
+			(id, conversation_id, source_id, source_message_id, message_type, subject, size_estimate)
+			VALUES (?, 1, 1, ?, 'email', 'renewal', 100)`, i, fmt.Sprintf("<m%d@example.com>", i))
+		require.NoError(t, err)
+	}
+	_, err = s.BackfillFTS(nil)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	response := `{"model":"jev-1.13.0","answers":{"matches":{"type":"noul","noul":0.15}},"usage":{"input_tokens":342,"output_tokens":20}}`
+	factory := func(shape, key string, budget *rerank.Budget) (evalReranker, error) {
+		return rerank.NewJev(shape, key, budget, testTransport(func(request *http.Request) (*http.Response, error) {
+			select {
+			case <-time.After(3 * time.Second):
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(response))}, nil
+			case <-request.Context().Done():
+				return nil, request.Context().Err()
+			}
+		}))
+	}
+	synctest.Test(t, func(t *testing.T) {
+		cmd.SetContext(t.Context())
+		require.NoError(t, runEvalWithRerankerFactory(cmd, nil, factory))
+	})
+	var report struct {
+		Rerank struct {
+			Complete bool `json:"complete"`
+			Results  map[string]map[string]struct {
+				Topics   int `json:"topics"`
+				Requests int `json:"requests"`
+				Latency  struct {
+					P95MS float64 `json:"p95_ms"`
+				} `json:"latency"`
+			} `json:"results"`
+		} `json:"rerank_results"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	assert.True(t, report.Rerank.Complete)
+	arm := report.Rerank.Results["fts"]["per-candidate"]
+	assert.Equal(t, 2, arm.Topics)
+	assert.Equal(t, 60, arm.Requests)
+	assert.GreaterOrEqual(t, arm.Latency.P95MS, 12000.0)
+}
 
-func (ioNopCloser) Close() error { return nil }
+type testTransport func(*http.Request) (*http.Response, error)
+
+func (f testTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 type fakeReranker struct{}
 
@@ -445,6 +257,12 @@ func TestEvalRerankShortlist(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal([]string{"second", "first", "tail"}, keys)
 	assert.Equal([]float64{0.1, 0.9}, result.Scores)
+	for _, shortlist := range [][]string{nil, {"only"}} {
+		keys, result, err := rerankEvalKeys(t.Context(), nil, "query", shortlist, shortlist)
+		require.NoError(t, err)
+		assert.Equal(shortlist, keys)
+		assert.Equal(rerank.Usage{InputTokens: new(int64(0)), OutputTokens: new(int64(0)), Complete: true}, result.Usage)
+	}
 }
 
 func TestRunEvalRerankFailureKeepsCompleteBaseline(t *testing.T) {
@@ -556,32 +374,6 @@ func TestRunEvalRerankQualityMetricsFollowProviderScoresAcrossModes(t *testing.T
 	assert.Len(t, recorder.requests["batched"], 3)
 }
 
-func TestSafeRerankFailureCategories(t *testing.T) {
-	cases := []struct {
-		message string
-		want    string
-	}{
-		{"rerank request limit reached before provider call", "request limit reached"},
-		{"rerank local cost stop reached; no further requests will start", "local cost stop reached"},
-		{"rerank usage is unknown; no further requests will start", "provider usage unavailable"},
-		{"provider request timed out or was canceled", "provider timeout or cancellation"},
-		{"provider returned HTTP 503", "provider returned HTTP 503"},
-		{"provider returned HTTP 503 secret", "provider request failed"},
-		{"invalid Jev response", "invalid provider response"},
-		{"candidate 1 exceeds the 2048-byte Jev limit", "request bounds exceeded"},
-		{"secret provider exploded", "provider request failed"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.want, func(t *testing.T) {
-			got := safeRerankFailure(errors.New(tc.message))
-			assert.Equal(t, tc.want, got)
-			assert.NotContains(t, got, "secret")
-		})
-	}
-	wrapped := fmt.Errorf("rerank requests failed: %w", errors.New("provider returned HTTP 503"))
-	assert.Equal(t, "provider returned HTTP 503", safeRerankFailure(wrapped))
-}
-
 func TestValidateJevRequestEstimate(t *testing.T) {
 	shapes := []string{"per-candidate", "batched"}
 	require.NoError(t, validateJevRequestEstimate(10, 3, shapes, 30, 1000))
@@ -616,7 +408,7 @@ func TestRunEvalPreflightsJevRequestEstimateBeforeOpeningArchive(t *testing.T) {
 
 func TestEvalRerankCandidateText(t *testing.T) {
 	assert := assert.New(t)
-	text := truncateUTF8Bytes(strings.Repeat("界", 1000), typesafeMaxCandidate)
+	text := truncateUTF8Bytes(strings.Repeat("界", 1000), rerank.MaxCandidateBytes)
 	assert.LessOrEqual(len([]byte(text)), 2048)
 	assert.True(utf8.ValidString(text))
 	assert.Equal("abc", truncateUTF8Bytes("abc", 2048))
@@ -642,7 +434,8 @@ func TestReadEvalRerankOptionsRejectsInvalidInputs(t *testing.T) {
 		mutate      func()
 	}{
 		{name: "conversation key", inputPrice: true, outputPrice: true, key: "test-key", wantError: "--rerank-jev requires --doc-key=message", mutate: func() { evalDocKey = "conversation" }},
-		{name: "top outside provider bound", inputPrice: true, outputPrice: true, key: "test-key", wantError: "--rerank-top must be between", mutate: func() { evalRerankTop = typesafeMaxCandidates + 1 }},
+		{name: "top outside provider bound", inputPrice: true, outputPrice: true, key: "test-key", wantError: "--rerank-top must be between", mutate: func() { evalRerankTop = rerank.MaxCandidates + 1 }},
+		{name: "top cannot rerank", inputPrice: true, outputPrice: true, key: "test-key", wantError: "--rerank-top must be between", mutate: func() { evalRerankTop = 1 }},
 		{name: "top exceeds retrieval depth", inputPrice: true, outputPrice: true, key: "test-key", wantError: "cannot exceed --limit", mutate: func() { evalRerankTop = evalLimit + 1 }},
 		{name: "nonpositive request limit", inputPrice: true, outputPrice: true, key: "test-key", wantError: "--rerank-max-requests must be positive", mutate: func() { evalRerankMaxRequests = 0 }},
 		{name: "invalid cost stop", inputPrice: true, outputPrice: true, key: "test-key", wantError: "must be a positive finite number", mutate: func() { evalRerankCostStopUSD = math.NaN() }},

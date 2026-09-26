@@ -5,7 +5,6 @@ package cmd
 import (
 	"context"
 	"database/sql"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -26,7 +25,6 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
-	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/rerank"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -437,7 +435,6 @@ type evaluator struct {
 	diag        *runDiagnostics
 	captureHits bool
 	lastHits    map[string]evalHit
-	preprocess  embed.PreprocessConfig
 }
 
 // fetchResult is one attempt at pulling raw hits out of a search engine.
@@ -539,8 +536,9 @@ func (e *evaluator) rankedFTS(q *search.Query) ([]string, error) {
 		keys := make([]string, 0, len(res))
 		hits := make([]evalHit, 0, len(res))
 		for _, m := range res {
-			keys = append(keys, e.key.extract(hitFromAPIMessage(m)))
-			hits = append(hits, hitFromAPIMessage(m))
+			hit := hitFromAPIMessage(m)
+			keys = append(keys, e.key.extract(hit))
+			hits = append(hits, hit)
 		}
 		// The store path pages a single ranked list, so a short page means
 		// the corpus ran out — there is no candidate pool to saturate.
@@ -614,8 +612,9 @@ func (e *evaluator) rankedVector(mode, qstr string, q *search.Query) ([]string, 
 				out.dropped++
 				continue
 			}
-			out.keys = append(out.keys, e.key.extract(hitFromSummary(m)))
-			out.hits = append(out.hits, hitFromSummary(m))
+			hit := hitFromSummary(m)
+			out.keys = append(out.keys, e.key.extract(hit))
+			out.hits = append(out.hits, hit)
 		}
 		return out, nil
 	})
@@ -675,7 +674,9 @@ func parseTopic(t eval.Topic, diag *runDiagnostics) (*search.Query, bool) {
 }
 
 func runEval(cmd *cobra.Command, args []string) error {
-	return runEvalWithRerankerFactory(cmd, args, newEvalJevReranker)
+	return runEvalWithRerankerFactory(cmd, args, func(shape, key string, budget *rerank.Budget) (evalReranker, error) {
+		return rerank.NewJev(shape, key, budget, nil)
+	})
 }
 
 func runEvalWithRerankerFactory(cmd *cobra.Command, _ []string, makeReranker evalRerankerFactory) error {
@@ -796,7 +797,6 @@ func runEvalWithRerankerFactory(cmd *cobra.Command, _ []string, makeReranker eva
 		limit:       evalLimit,
 		diag:        diag,
 		captureHits: len(rerankOptions.Shapes) > 0,
-		preprocess:  rerankOptions.Preprocess,
 	}
 
 	if needVec {
@@ -807,21 +807,19 @@ func runEvalWithRerankerFactory(cmd *cobra.Command, _ []string, makeReranker eva
 		defer cleanup()
 	}
 	var rerankReport *evalRerankReport
-	var rerankScorers map[string]rerank.Reranker
-	var rerankBudgetState *rerankBudget
 	if len(rerankOptions.Shapes) > 0 {
 		rerankReport = newEvalRerankReport(rerankOptions)
-		rerankBudgetState = &rerankBudget{
-			maxRequests: rerankOptions.MaxRequests, stopUSD: rerankOptions.CostStopUSD,
-			inputUSDPerM: rerankOptions.InputUSDPerM, outputUSDPerM: rerankOptions.OutputUSDPerM,
+		budget := &rerank.Budget{
+			MaxRequests: rerankOptions.MaxRequests, StopUSD: rerankOptions.CostStopUSD,
+			InputUSDPerM: rerankOptions.InputUSDPerM, OutputUSDPerM: rerankOptions.OutputUSDPerM,
 		}
-		rerankScorers = make(map[string]rerank.Reranker, len(rerankOptions.Shapes))
+		rerankReport.scorers = make(map[string]evalReranker, len(rerankOptions.Shapes))
 		for _, shape := range rerankOptions.Shapes {
-			scorer, createErr := makeReranker(shape, rerankOptions.APIKey, rerankBudgetState)
+			scorer, createErr := makeReranker(shape, rerankOptions.APIKey, budget)
 			if createErr != nil {
 				return createErr
 			}
-			rerankScorers[shape] = scorer
+			rerankReport.scorers[shape] = scorer
 		}
 	}
 
@@ -846,7 +844,6 @@ func runEvalWithRerankerFactory(cmd *cobra.Command, _ []string, makeReranker eva
 	catCounts := map[string]int{}
 	scored := 0
 	var runErr error
-	rerankStopped := false
 	for _, t := range topics {
 		if !qrels.HasJudgments(t.ID) {
 			// This qrels file says nothing at all about the topic, so there is
@@ -897,60 +894,8 @@ func runEvalWithRerankerFactory(cmd *cobra.Command, _ []string, makeReranker eva
 				catAggs[m][t.Category].Add(score)
 			}
 			anyMode = true
-			if rerankReport != nil && !rerankStopped {
-				prepStart := time.Now()
-				var texts []string
-				if len(ranked) >= 2 && rerankOptions.Top >= 2 {
-					texts, err = prepareEvalCandidates(ctx, s, ranked, ev.lastHits, ev.preprocess, rerankOptions.Top)
-					if err != nil {
-						rerankReport.Complete = false
-						rerankReport.Failure = "candidate preparation failed"
-						for _, pendingShape := range rerankOptions.Shapes {
-							pending := rerankReport.arm(m, pendingShape)
-							pending.Status = "failed"
-							pending.Complete = false
-							pending.Error = "candidate preparation failed"
-						}
-						runErr = fmt.Errorf("topic %s, mode %s: candidate preparation failed", t.ID, m)
-						rerankStopped = true
-					}
-				}
-				if !rerankStopped {
-					prepElapsed := time.Since(prepStart)
-					for _, shape := range rerankOptions.Shapes {
-						arm := rerankReport.arm(m, shape)
-						providerStart := time.Now()
-						shapeCtx, shapeCancel := context.WithTimeout(ctx, typesafeRequestTimeout)
-						reranked, result, rerankErr := rerankEvalKeys(shapeCtx, rerankScorers[shape], t.Query, ranked, texts)
-						shapeCancel()
-						if rerankErr != nil {
-							arm.addUsage(result.Usage, rerankOptions.InputUSDPerM, rerankOptions.OutputUSDPerM)
-							failure := safeRerankFailure(rerankErr)
-							arm.Status = "failed"
-							arm.Complete = false
-							arm.Error = failure
-							rerankReport.Complete = false
-							rerankReport.Failure = failure
-							runErr = fmt.Errorf("topic %s, mode %s, shape %s: %s", t.ID, m, shape, failure)
-							rerankStopped = true
-							rerankBudgetState.fail()
-							break
-						}
-						latency := elapsed + prepElapsed + time.Since(providerStart)
-						if len(ranked) < 2 {
-							latency = elapsed
-						}
-						if len(texts) < 2 {
-							zero := int64(0)
-							result.Usage.InputTokens = &zero
-							result.Usage.OutputTokens = &zero
-							result.Usage.Requests = 0
-							result.Usage.Complete = true
-						}
-						arm.addUsage(result.Usage, rerankOptions.InputUSDPerM, rerankOptions.OutputUSDPerM)
-						arm.addQuality(reranked, rel, cutoffs, latency)
-					}
-				}
+			if rerankReport != nil && runErr == nil {
+				runErr = rerankReport.scoreRanking(ctx, s, ev.lastHits, m, t, ranked, rel, cutoffs, elapsed)
 			}
 		}
 		if !anyMode {
@@ -962,28 +907,7 @@ func runEvalWithRerankerFactory(cmd *cobra.Command, _ []string, makeReranker eva
 		scored++
 	}
 	if rerankReport != nil {
-		for _, mode := range modes {
-			for _, shape := range rerankOptions.Shapes {
-				if rerankReport.Results[mode] == nil || rerankReport.Results[mode][shape] == nil {
-					rerankReport.Complete = false
-					if rerankReport.Results[mode] == nil {
-						rerankReport.Results[mode] = make(map[string]*evalRerankArm)
-					}
-					input, output := int64(0), int64(0)
-					rerankReport.Results[mode][shape] = &evalRerankArm{
-						Status: "unrun", UsageComplete: true, InputTokens: &input, OutputTokens: &output,
-						CostUSD: new(0.0),
-					}
-					continue
-				}
-				arm := rerankReport.Results[mode][shape]
-				if arm.Status != "failed" && (arm.Agg == nil || arm.Agg.N != aggs[mode].N) {
-					arm.Status = "incomplete"
-					arm.Complete = false
-					rerankReport.Complete = false
-				}
-			}
-		}
+		rerankReport.reconcile(modes, aggs)
 	}
 	diag.scored = scored
 	if scored == 0 {
@@ -1131,7 +1055,6 @@ func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (f
 	if err := vecCfg.Validate(); err != nil {
 		return nil, fmt.Errorf("vector/hybrid modes need a valid [vector] config: %w", err)
 	}
-	e.preprocess = embeddingPreprocessConfig(vecCfg)
 
 	// Select the query client by api_format, exactly as the serve path does,
 	// and before anything is opened. A run scored with the OpenAI-compatible
@@ -1693,9 +1616,4 @@ func (r evalReport) json(w io.Writer) error {
 		out["rerank_results"] = r.rerank.json(r.cutoffs)
 	}
 	return printJSONTo(w, out)
-}
-
-func printJSONTo(w io.Writer, value any) error {
-	encoder := jsontext.NewEncoder(w, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
-	return json.MarshalEncode(encoder, value, json.Deterministic(true))
 }

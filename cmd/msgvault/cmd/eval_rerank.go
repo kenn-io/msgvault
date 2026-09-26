@@ -3,20 +3,15 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"math"
-	"mime"
-	"net/http"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"text/tabwriter"
 	"time"
 	"unicode/utf8"
@@ -26,21 +21,9 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/rerank"
-	"golang.org/x/sync/errgroup"
 )
 
-const (
-	typesafeEndpoint       = "https://api.typesafe.ai/v1/systemone"
-	typesafeModel          = "jev-1.13.0"
-	typesafeMaxCandidates  = 30
-	typesafeMaxCandidate   = 2048
-	typesafeMaxQuery       = 4096
-	typesafeMaxRequest     = 128 << 10
-	typesafeMaxResponse    = 64 << 10
-	typesafeMaxConcurrent  = 8
-	typesafeRequestTimeout = 10 * time.Second
-	typesafeRunTimeout     = 30 * time.Minute
-)
+const typesafeRunTimeout = 30 * time.Minute
 
 var (
 	evalRerankJev           string
@@ -62,7 +45,11 @@ type evalRerankOptions struct {
 	Preprocess    embed.PreprocessConfig
 }
 
-type evalRerankerFactory func(string, string, *rerankBudget) (rerank.Reranker, error)
+type evalReranker interface {
+	Rerank(ctx context.Context, request rerank.Request) (rerank.Result, error)
+}
+
+type evalRerankerFactory func(string, string, *rerank.Budget) (evalReranker, error)
 
 type evalRerankArm struct {
 	Agg           *eval.Aggregate
@@ -78,6 +65,7 @@ type evalRerankArm struct {
 }
 
 type evalRerankReport struct {
+	scorers       map[string]evalReranker
 	Shapes        []string
 	Top           int
 	MaxRequests   int
@@ -97,7 +85,7 @@ func newEvalRerankReport(options evalRerankOptions) *evalRerankReport {
 		Shapes: slices.Clone(options.Shapes), Top: options.Top,
 		MaxRequests: options.MaxRequests, CostStopUSD: options.CostStopUSD,
 		InputUSDPerM: options.InputUSDPerM, OutputUSDPerM: options.OutputUSDPerM,
-		Model: typesafeModel, Endpoint: typesafeEndpoint, Preprocess: options.Preprocess,
+		Model: rerank.JevModel, Endpoint: rerank.JevEndpoint, Preprocess: options.Preprocess,
 		Complete: true, Results: make(map[string]map[string]*evalRerankArm),
 	}
 }
@@ -311,8 +299,8 @@ func readEvalRerankOptions(cmd *cobra.Command) (evalRerankOptions, error) {
 	if evalDocKey != "message" {
 		return opts, errors.New("--rerank-jev requires --doc-key=message")
 	}
-	if opts.Top < 1 || opts.Top > typesafeMaxCandidates {
-		return opts, fmt.Errorf("--rerank-top must be between 1 and %d", typesafeMaxCandidates)
+	if opts.Top < 2 || opts.Top > rerank.MaxCandidates {
+		return opts, fmt.Errorf("--rerank-top must be between 2 and %d", rerank.MaxCandidates)
 	}
 	if opts.Top > evalLimit {
 		return opts, fmt.Errorf("--rerank-top (%d) cannot exceed --limit (%d)", opts.Top, evalLimit)
@@ -404,410 +392,6 @@ func validateJevRequestEstimate(topicCount, modeCount int, shapes []string, top,
 	return nil
 }
 
-type rerankBudget struct {
-	mu            sync.Mutex
-	maxRequests   int
-	stopUSD       float64
-	inputUSDPerM  float64
-	outputUSDPerM float64
-	attempts      int
-	cost          float64
-	unknown       bool
-	stopped       bool
-	failed        bool
-}
-
-func (b *rerankBudget) reserve() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.failed {
-		return errors.New("rerank provider failed; no further requests will start")
-	}
-	if b.unknown {
-		return errors.New("rerank usage is unknown; no further requests will start")
-	}
-	if b.stopped || b.cost >= b.stopUSD {
-		b.stopped = true
-		return errors.New("rerank local cost stop reached; no further requests will start")
-	}
-	if b.attempts >= b.maxRequests {
-		return errors.New("rerank request limit reached before provider call")
-	}
-	b.attempts++
-	return nil
-}
-
-func (b *rerankBudget) preflight(requests int) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if requests <= 0 || b.attempts+requests > b.maxRequests {
-		return errors.New("rerank request limit reached before provider call")
-	}
-	if b.failed {
-		return errors.New("rerank provider failed; no further requests will start")
-	}
-	if b.unknown {
-		return errors.New("rerank usage is unknown; no further requests will start")
-	}
-	if b.stopped || b.cost >= b.stopUSD {
-		return errors.New("rerank local cost stop reached; no further requests will start")
-	}
-	return nil
-}
-
-func (b *rerankBudget) record(usage rerank.Usage) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if usage.InputTokens == nil || usage.OutputTokens == nil {
-		b.unknown = true
-		return
-	}
-	b.cost += float64(*usage.InputTokens)*b.inputUSDPerM/1e6 +
-		float64(*usage.OutputTokens)*b.outputUSDPerM/1e6
-	if b.cost >= b.stopUSD {
-		b.stopped = true
-	}
-}
-
-func (b *rerankBudget) fail() {
-	b.mu.Lock()
-	b.failed = true
-	b.mu.Unlock()
-}
-
-type jevReranker struct {
-	shape  string
-	key    string
-	client *http.Client
-	budget *rerankBudget
-}
-
-func newEvalJevReranker(shape, key string, budget *rerankBudget) (rerank.Reranker, error) {
-	return newJevReranker(shape, key, budget)
-}
-
-func newJevReranker(shape, key string, budget *rerankBudget) (*jevReranker, error) {
-	if shape != "per-candidate" && shape != "batched" {
-		return nil, fmt.Errorf("unknown Jev request shape %q", shape)
-	}
-	if strings.TrimSpace(key) == "" {
-		return nil, errors.New("TYPESAFE_API_KEY is required")
-	}
-	if budget == nil {
-		return nil, errors.New("reranker budget is required")
-	}
-	return &jevReranker{
-		shape: shape,
-		key:   key,
-		client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		}},
-		budget: budget,
-	}, nil
-}
-
-type jevRequest struct {
-	State     any                    `json:"state"`
-	Model     string                 `json:"model"`
-	Questions map[string]jevQuestion `json:"questions"`
-}
-
-type jevQuestion struct {
-	Type         string      `json:"type"`
-	Instructions string      `json:"instructions"`
-	Criteria     jevCriteria `json:"criteria"`
-}
-
-type jevCriteria struct {
-	True  string `json:"true"`
-	False string `json:"false"`
-}
-
-type jevPerCandidateState struct {
-	Query     string `json:"query"`
-	Candidate string `json:"candidate"`
-}
-
-type jevBatchedState struct {
-	Query      string   `json:"query"`
-	Candidates []string `json:"candidates"`
-}
-
-type jevResponse struct {
-	Model   string               `json:"model"`
-	Answers map[string]jevAnswer `json:"answers"`
-	Usage   *jevUsage            `json:"usage"`
-}
-
-type jevAnswer struct {
-	Type string   `json:"type"`
-	Noul *float64 `json:"noul"`
-}
-
-type jevUsage struct {
-	InputTokens  *int64 `json:"input_tokens"`
-	OutputTokens *int64 `json:"output_tokens"`
-}
-
-func rankingQuestion(name string) jevQuestion {
-	return jevQuestion{
-		Type:         "noul",
-		Instructions: fmt.Sprintf("Could `%s` be the best answer to `query`?", name),
-		Criteria: jevCriteria{
-			True:  fmt.Sprintf("The %s contains the specific information needed to answer the query.", name),
-			False: fmt.Sprintf("The %s is only topically similar or does not contain the needed evidence.", name),
-		},
-	}
-}
-
-func encodeJevCalls(query string, candidates []string, shape string) ([][]byte, error) {
-	if strings.TrimSpace(query) == "" || !utf8.ValidString(query) || len([]byte(query)) > typesafeMaxQuery {
-		return nil, errors.New("query exceeds the 4096-byte Jev limit or is empty")
-	}
-	if len(candidates) == 0 || len(candidates) > typesafeMaxCandidates {
-		return nil, fmt.Errorf("candidate count must be between 1 and %d", typesafeMaxCandidates)
-	}
-	for i, candidate := range candidates {
-		if !utf8.ValidString(candidate) || len([]byte(candidate)) > typesafeMaxCandidate {
-			return nil, fmt.Errorf("candidate %d exceeds the 2048-byte Jev limit", i)
-		}
-	}
-	var requests []jevRequest
-	switch shape {
-	case "per-candidate":
-		requests = make([]jevRequest, len(candidates))
-		for i, candidate := range candidates {
-			requests[i] = jevRequest{
-				State:     jevPerCandidateState{Query: query, Candidate: candidate},
-				Model:     typesafeModel,
-				Questions: map[string]jevQuestion{"matches": rankingQuestion("candidate")},
-			}
-		}
-	case "batched":
-		questions := make(map[string]jevQuestion, len(candidates))
-		for i := range candidates {
-			name := fmt.Sprintf("candidates[%d]", i)
-			questions[fmt.Sprintf("candidate_%d", i)] = rankingQuestion(name)
-		}
-		requests = []jevRequest{{
-			State: jevBatchedState{Query: query, Candidates: slices.Clone(candidates)},
-			Model: typesafeModel, Questions: questions,
-		}}
-	default:
-		return nil, fmt.Errorf("unknown Jev request shape %q", shape)
-	}
-	out := make([][]byte, len(requests))
-	for i, request := range requests {
-		body, err := json.Marshal(request)
-		if err != nil {
-			return nil, errors.New("encode Jev request")
-		}
-		if len(body) > typesafeMaxRequest {
-			return nil, errors.New("encoded Jev request exceeds 131072 bytes")
-		}
-		out[i] = body
-	}
-	return out, nil
-}
-
-func decodeJevResponse(data []byte, questionIDs []string) (rerank.Result, error) {
-	var response jevResponse
-	if err := json.Unmarshal(data, &response); err != nil {
-		return rerank.Result{}, errors.New("invalid Jev response")
-	}
-	if response.Model != typesafeModel || len(response.Answers) != len(questionIDs) {
-		return rerank.Result{}, errors.New("reranker response model or answer count did not match request")
-	}
-	wanted := make(map[string]struct{}, len(questionIDs))
-	scores := make([]float64, len(questionIDs))
-	for i, id := range questionIDs {
-		wanted[id] = struct{}{}
-		answer, ok := response.Answers[id]
-		if !ok || answer.Type != "noul" || answer.Noul == nil || math.IsNaN(*answer.Noul) ||
-			math.IsInf(*answer.Noul, 0) || *answer.Noul < 0 || *answer.Noul > 1 {
-			return rerank.Result{}, errors.New("reranker response contained an invalid answer")
-		}
-		scores[i] = *answer.Noul
-	}
-	for id := range response.Answers {
-		if _, ok := wanted[id]; !ok {
-			return rerank.Result{}, errors.New("reranker response contained an unexpected answer")
-		}
-	}
-	var usage rerank.Usage
-	if response.Usage != nil {
-		if response.Usage.InputTokens != nil && *response.Usage.InputTokens < 0 ||
-			response.Usage.OutputTokens != nil && *response.Usage.OutputTokens < 0 {
-			return rerank.Result{}, errors.New("reranker response contained invalid token usage")
-		}
-		usage.InputTokens = validTokenPointer(response.Usage.InputTokens)
-		usage.OutputTokens = validTokenPointer(response.Usage.OutputTokens)
-	}
-	usage.Complete = usage.InputTokens != nil && usage.OutputTokens != nil
-	return rerank.Result{Scores: scores, Usage: usage}, nil
-}
-
-func validTokenPointer(value *int64) *int64 {
-	if value == nil || *value < 0 {
-		return nil
-	}
-	usage := *value
-	return &usage
-}
-
-func (j *jevReranker) Rerank(ctx context.Context, request rerank.Request) (rerank.Result, error) {
-	if ctx == nil {
-		return emptyJevResult(), errors.New("reranker context is required")
-	}
-	calls, err := encodeJevCalls(request.Query, request.Candidates, j.shape)
-	if err != nil {
-		return emptyJevResult(), err
-	}
-	if err := j.budget.preflight(len(calls)); err != nil {
-		return emptyJevResult(), err
-	}
-	scores := make([]float64, len(request.Candidates))
-	var usageMu sync.Mutex
-	attempted := 0
-	var totalInput, totalOutput int64
-	usageComplete := true
-	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(typesafeMaxConcurrent)
-	for callIndex, body := range calls {
-		group.Go(func() error {
-			if err := j.budget.reserve(); err != nil {
-				return err
-			}
-			usageMu.Lock()
-			attempted++
-			usageMu.Unlock()
-			ids := []string{"matches"}
-			if j.shape == "batched" {
-				ids = make([]string, len(request.Candidates))
-				for i := range request.Candidates {
-					ids[i] = fmt.Sprintf("candidate_%d", i)
-				}
-			}
-			result, callErr := j.send(groupCtx, body, ids)
-			if callErr != nil {
-				usageMu.Lock()
-				usageComplete = false
-				usageMu.Unlock()
-				j.budget.fail()
-				return callErr
-			}
-			usageMu.Lock()
-			defer usageMu.Unlock()
-			if j.shape == "batched" {
-				copy(scores, result.Scores)
-			} else {
-				scores[callIndex] = result.Scores[0]
-			}
-			if result.Usage.InputTokens == nil {
-				usageComplete = false
-			} else {
-				totalInput += *result.Usage.InputTokens
-			}
-			if result.Usage.OutputTokens == nil {
-				usageComplete = false
-			} else {
-				totalOutput += *result.Usage.OutputTokens
-			}
-			j.budget.record(result.Usage)
-			return nil
-		})
-	}
-	groupErr := group.Wait()
-	result := rerank.Result{Scores: scores, Usage: rerank.Usage{
-		Requests: attempted, InputTokens: &totalInput, OutputTokens: &totalOutput, Complete: usageComplete,
-	}}
-	if groupErr != nil {
-		return result, fmt.Errorf("rerank requests failed: %w", groupErr)
-	}
-	return result, nil
-}
-
-func emptyJevResult() rerank.Result {
-	input, output := int64(0), int64(0)
-	return rerank.Result{Usage: rerank.Usage{InputTokens: &input, OutputTokens: &output, Complete: true}}
-}
-
-func safeRerankFailure(err error) string {
-	if err == nil {
-		return "provider request failed"
-	}
-	message := err.Error()
-	for cause := errors.Unwrap(err); cause != nil; cause = errors.Unwrap(cause) {
-		message = cause.Error()
-	}
-	switch {
-	case strings.Contains(message, "request limit reached"):
-		return "request limit reached"
-	case strings.Contains(message, "local cost stop reached"):
-		return "local cost stop reached"
-	case strings.Contains(message, "usage is unknown"):
-		return "provider usage unavailable"
-	case strings.Contains(message, "timed out or was canceled"):
-		return "provider timeout or cancellation"
-	case strings.HasPrefix(message, "provider returned HTTP "):
-		status, err := strconv.Atoi(strings.TrimPrefix(message, "provider returned HTTP "))
-		if err == nil && status >= 100 && status <= 599 {
-			return fmt.Sprintf("provider returned HTTP %d", status)
-		}
-		return "provider request failed"
-	case strings.Contains(message, "query exceeds") || strings.Contains(message, "candidate count") ||
-		strings.Contains(message, "candidate ") && strings.Contains(message, "exceeds") ||
-		strings.Contains(message, "encoded Jev request exceeds"):
-		return "request bounds exceeded"
-	case strings.Contains(message, "response") || strings.Contains(message, "Jev response"):
-		return "invalid provider response"
-	case strings.Contains(message, "candidate preparation"):
-		return "candidate preparation failed"
-	default:
-		return "provider request failed"
-	}
-}
-
-func (j *jevReranker) send(ctx context.Context, body []byte, ids []string) (rerank.Result, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, typesafeEndpoint, bytes.NewReader(body))
-	if err != nil {
-		return rerank.Result{}, errors.New("construct Jev request")
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+j.key)
-	response, err := j.client.Do(req)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return rerank.Result{}, errors.New("provider request timed out or was canceled")
-		}
-		return rerank.Result{}, errors.New("provider request failed")
-	}
-	if response == nil || response.Body == nil {
-		return rerank.Result{}, errors.New("provider returned no response body")
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusOK {
-		return rerank.Result{}, fmt.Errorf("provider returned HTTP %d", response.StatusCode)
-	}
-	mediaType, _, parseErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if parseErr != nil || (mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json")) {
-		return rerank.Result{}, errors.New("provider returned a non-JSON response")
-	}
-	limited := io.LimitReader(response.Body, typesafeMaxResponse+1)
-	body, err = io.ReadAll(limited)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
-			return rerank.Result{}, errors.New("provider request timed out or was canceled")
-		}
-		return rerank.Result{}, errors.New("read Jev response")
-	}
-	if len(body) > typesafeMaxResponse {
-		return rerank.Result{}, errors.New("provider response exceeds 65536 bytes")
-	}
-	return decodeJevResponse(body, ids)
-}
-
 func truncateUTF8Bytes(value string, limit int) string {
 	if len([]byte(value)) <= limit {
 		return value
@@ -836,14 +420,16 @@ func prepareEvalCandidates(ctx context.Context, s *store.Store, keys []string, h
 		}
 		body := embed.BodyTextForEmbedding(message.BodyText, message.BodyHTML)
 		text, _ := embed.Preprocess(message.Subject, body, 0, preprocess)
-		texts[i] = truncateUTF8Bytes(text, typesafeMaxCandidate)
+		texts[i] = truncateUTF8Bytes(text, rerank.MaxCandidateBytes)
 	}
 	return texts, nil
 }
 
-func rerankEvalKeys(ctx context.Context, scorer rerank.Reranker, query string, keys, texts []string) ([]string, rerank.Result, error) {
+func rerankEvalKeys(ctx context.Context, scorer evalReranker, query string, keys, texts []string) ([]string, rerank.Result, error) {
 	if len(keys) < 2 || len(texts) < 2 {
-		return slices.Clone(keys), rerank.Result{}, nil
+		return slices.Clone(keys), rerank.Result{Usage: rerank.Usage{
+			InputTokens: new(int64(0)), OutputTokens: new(int64(0)), Complete: true,
+		}}, nil
 	}
 	texts = texts[:min(len(texts), len(keys))]
 	result, err := scorer.Rerank(ctx, rerank.Request{Query: query, Candidates: texts})
@@ -851,11 +437,11 @@ func rerankEvalKeys(ctx context.Context, scorer rerank.Reranker, query string, k
 		return nil, result, err
 	}
 	if len(result.Scores) != len(texts) {
-		return nil, result, fmt.Errorf("reranker returned %d scores for %d candidates", len(result.Scores), len(texts))
+		return nil, result, fmt.Errorf("%w: returned %d scores for %d candidates", rerank.ErrInvalidResponse, len(result.Scores), len(texts))
 	}
 	order, err := rerank.Order(result.Scores)
 	if err != nil {
-		return nil, result, err
+		return nil, result, fmt.Errorf("%w: %w", rerank.ErrInvalidResponse, err)
 	}
 	out := slices.Clone(keys)
 	prefix := slices.Clone(keys[:len(texts)])
@@ -863,4 +449,63 @@ func rerankEvalKeys(ctx context.Context, scorer rerank.Reranker, query string, k
 		out[i] = prefix[index]
 	}
 	return out, result, nil
+}
+
+func (r *evalRerankReport) fail(mode, shape, reason string) {
+	arm := r.arm(mode, shape)
+	arm.Status, arm.Complete, arm.Error = "failed", false, reason
+	r.Complete, r.Failure = false, reason
+}
+
+func (r *evalRerankReport) scoreRanking(ctx context.Context, s *store.Store, hits map[string]evalHit,
+	mode string, topic eval.Topic, ranked []string, rel map[string]struct{}, cutoffs eval.Cutoffs, elapsed time.Duration,
+) error {
+	prepStart := time.Now()
+	var texts []string
+	if len(ranked) >= 2 {
+		var err error
+		texts, err = prepareEvalCandidates(ctx, s, ranked, hits, r.Preprocess, r.Top)
+		if err != nil {
+			for _, shape := range r.Shapes {
+				r.fail(mode, shape, "candidate preparation failed")
+			}
+			return fmt.Errorf("topic %s, mode %s: candidate preparation failed", topic.ID, mode)
+		}
+	}
+	prepElapsed := time.Since(prepStart)
+	for _, shape := range r.Shapes {
+		arm := r.arm(mode, shape)
+		providerStart := time.Now()
+		reranked, result, err := rerankEvalKeys(ctx, r.scorers[shape], topic.Query, ranked, texts)
+		arm.addUsage(result.Usage, r.InputUSDPerM, r.OutputUSDPerM)
+		if err != nil {
+			failure := rerank.SafeFailure(err)
+			r.fail(mode, shape, failure)
+			return fmt.Errorf("topic %s, mode %s, shape %s: %s", topic.ID, mode, shape, failure)
+		}
+		latency := elapsed
+		if len(texts) >= 2 {
+			latency += prepElapsed + time.Since(providerStart)
+		}
+		arm.addQuality(reranked, rel, cutoffs, latency)
+	}
+	return nil
+}
+
+func (r *evalRerankReport) reconcile(modes []string, baseline map[string]*eval.Aggregate) {
+	for _, mode := range modes {
+		for _, shape := range r.Shapes {
+			if r.Results[mode][shape] == nil {
+				arm := r.arm(mode, shape)
+				arm.Status, arm.Complete = "unrun", false
+				r.Complete = false
+				continue
+			}
+			arm := r.Results[mode][shape]
+			if arm.Status != "failed" && (arm.Agg == nil || arm.Agg.N != baseline[mode].N) {
+				arm.Status, arm.Complete = "incomplete", false
+				r.Complete = false
+			}
+		}
+	}
 }

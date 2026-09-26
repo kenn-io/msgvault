@@ -1,9 +1,7 @@
-// Package rerank contains the provider-neutral contract used by evaluation
-// and later search integrations to reorder a fixed candidate list.
+// Package rerank scores and reorders search candidates with TypeSafe Jev.
 package rerank
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"slices"
@@ -28,12 +26,6 @@ type Result struct {
 type Request struct {
 	Query      string
 	Candidates []string
-}
-
-// Reranker scores the supplied candidates without changing their identity or
-// order. Implementations own transport and provider accounting.
-type Reranker interface {
-	Rerank(ctx context.Context, request Request) (Result, error)
 }
 
 // Order returns stable descending score indices. It rejects a score that

@@ -2482,7 +2482,7 @@ msgvault eval \
 | `-n`, `--limit <count>` | `100` | Distinct documents retrieved per query |
 | `--json` | `false` | Emit the report as JSON |
 | `--rerank-jev <shapes>` | disabled | Opt in to `per-candidate`, `batched`, or both Jev shapes |
-| `--rerank-top <count>` | `30` | At most 30 candidates; cannot exceed `--limit` |
+| `--rerank-top <count>` | `30` | Between 2 and 30 candidates; cannot exceed `--limit` |
 | `--rerank-max-requests <count>` | `1000` | Maximum provider requests for the whole invocation |
 | `--rerank-cost-stop-usd <amount>` | required when enabled | Local per-run stop based on returned token usage |
 | `--rerank-input-usd-per-million <amount>` | required when enabled | Input price supplied for this run |
@@ -2506,8 +2506,11 @@ The command prepares candidate text with the same body selection and cleanup
 used for embeddings. It sends only the query and the cleaned subject/body.
 Candidate text is capped at 2048 UTF-8 bytes, query text at 4096 bytes, each
 request at 128 KiB, and each response at 64 KiB. Per-candidate requests use at
-most eight concurrent calls. The `per-candidate` and `batched` shapes use the
-same retrieved messages in one invocation.
+most eight concurrent calls. Each HTTP call has a 10-second deadline, including
+reading the response. A ranking can take longer when requests run in several
+waves; its full elapsed time contributes to the reported latency. The
+`per-candidate` and `batched` shapes use the same retrieved messages in one
+invocation.
 
 The local cost stop uses the input and output prices supplied on the command
 line. It stops new calls after returned usage reaches the threshold. Calls
@@ -2518,7 +2521,8 @@ alert does not establish that behavior. Missing token usage makes cost unknown
 and stops later calls. The report keeps observed input and output token
 subtotals, which may be zero. `usage_complete=false` marks them as partial.
 Unknown cost prints `unknown` in the table and `null` in JSON. Provider
-failures leave the baseline in the report and return a nonzero command result.
+failures stop further provider calls because failed requests may have unreported
+usage. They leave the baseline in the report and return a nonzero command result.
 
 Example with placeholder prices:
 
