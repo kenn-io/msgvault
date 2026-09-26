@@ -1,12 +1,14 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import CopyIcon from '@lucide/svelte/icons/copy';
   import XIcon from '@lucide/svelte/icons/x';
-  import { Button, IconButton, SegmentedControl } from '@kenn-io/kit-ui';
+  import { Button, IconButton, SegmentedControl, copyToClipboard } from '@kenn-io/kit-ui';
 
   import type { APIClient } from '../../api/client';
   import type { PersonAttributeGroup } from '../../api/generated/models';
   import type { DomainSummary, PersonSummary } from '../../explore/models';
   import type { LinkOutcome, RelationshipsMergeContext } from '../../relationships/controller.svelte';
+  import { identityChipText } from '../../relationships/identity-chip';
   import type { PersonMergeSuccess, ValidatedPersonMergeRequired } from '../../directory/person-merge';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import AttributeSummary from '../directory/AttributeSummary.svelte';
@@ -131,6 +133,22 @@
     if (identifier.provenance === 'participant_identifiers') parts.push('stored identifier');
     else if (identifier.provenance) parts.push(identifier.provenance.replaceAll('_', ' '));
     return parts.join(' · ');
+  }
+
+  function memberFor(participantID: number) {
+    return detail && isPersonDetail(detail)
+      ? detail.cluster?.members?.find((member) => member.participant_id === participantID) : undefined;
+  }
+
+  function edgesFor(participantID: number) {
+    return detail && isPersonDetail(detail)
+      ? (detail.cluster?.edges ?? []).filter((edge) => edge.participant_a === participantID || edge.participant_b === participantID)
+      : [];
+  }
+
+  async function copyIdentifier(value: string): Promise<void> {
+    const copied = await copyToClipboard(value);
+    onAnnounce?.(copied ? 'Identity copied' : 'Could not copy identity');
   }
 
   // Navigating to a different person must not leave behind a stale banner
@@ -350,15 +368,42 @@
         <div class="identifiers" aria-label="Linked identities">
         {#each detail.identifiers ?? [] as identifier (`${identifier.participant_id}:${identifier.type}:${identifier.value}`)}
           {@const isOtherMember = !!detail.cluster && identifier.participant_id !== detail.id}
-          {@const chipName = identifier.display_value?.trim() || identifier.value}
-          <span class="chip" aria-label={`Identity ${chipName}`} title={identifierTooltip(identifier)}>
-            {#if identifier.display_value?.trim() && identifier.display_value.trim() !== identifier.value}
+          {@const opaque = identifier.type !== 'email' && identifier.type !== 'phone'}
+          {@const edges = isOtherMember ? edgesFor(identifier.participant_id) : []}
+          {@const member = memberFor(identifier.participant_id)}
+          {@const text = identityChipText(identifier, member, edges)}
+          {@const memberName = identifier.participant_display_name || member?.display_name}
+          {@const chipName = opaque
+            ? `${text.title} identifier for ${memberName ? `${memberName} (profile ${identifier.participant_id})` : `profile ${identifier.participant_id}`}`
+            : identifier.display_value?.trim() || identifier.value}
+          {@const relation = isOtherMember ? (edges.some((edge) => edge.link_origin) ? '' : 'linked') : 'this profile'}
+          <span class="chip" class:two-actions={isOtherMember && confirmingParticipantID !== identifier.participant_id} aria-label={`Identity ${chipName}`} title={opaque ? `${text.detail} · ${identifierTooltip(identifier)}` : identifierTooltip(identifier)}>
+            {#if !opaque && identifier.display_value?.trim() && identifier.display_value.trim() !== identifier.value}
               <span class="chip-display">{identifier.display_value}</span>
             {/if}
-            <strong data-mono>{identifier.value}</strong>
-            <small>{isOtherMember ? 'linked' : 'this profile'}</small>
-            {#if isOtherMember}
-              {#if confirmingParticipantID === identifier.participant_id}
+            <strong>{text.title}</strong>
+            <small>{[text.subtitle, relation].filter(Boolean).join(' · ')}</small>
+            <span class="chip-actions">
+              <IconButton
+                size="sm"
+                ariaLabel={opaque ? `Copy ${chipName}` : `Copy ${identifier.value}`}
+                onclick={() => void copyIdentifier(identifier.value)}
+              >
+                <CopyIcon size="12" aria-hidden="true" />
+              </IconButton>
+              {#if isOtherMember && confirmingParticipantID !== identifier.participant_id}
+                <IconButton
+                  class="chip-unlink"
+                  size="sm"
+                  tone="danger"
+                  ariaLabel={`Unlink ${chipName}`}
+                  onclick={() => startUnlink(identifier.participant_id)}
+                >
+                  <XIcon size="12" aria-hidden="true" />
+                </IconButton>
+              {/if}
+            </span>
+            {#if isOtherMember && confirmingParticipantID === identifier.participant_id}
                 <span class="chip-confirm" role="group" aria-label={`Confirm unlinking ${chipName}`}>
                   <span>Not the same person?</span>
                   <Button
@@ -371,26 +416,18 @@
                   />
                   <Button label="Cancel" surface="soft" size="sm" disabled={unlinking} onclick={cancelUnlink} />
                 </span>
-              {:else}
-                <IconButton
-                  class="chip-unlink"
-                  size="sm"
-                  tone="danger"
-                  ariaLabel={`Unlink ${chipName}`}
-                  onclick={() => startUnlink(identifier.participant_id)}
-                >
-                  <XIcon size="12" aria-hidden="true" />
-                </IconButton>
-              {/if}
             {/if}
           </span>
         {/each}
         {#each unrepresentedMembers as memberID (memberID)}
-          <span class="chip" aria-label={`Linked profile ${memberID}`}>
-            <strong>Linked profile</strong>
-            <small>linked · no stored address</small>
+          {@const member = memberFor(memberID)}
+          {@const text = identityChipText(undefined, member, edgesFor(memberID))}
+          {@const chipName = `profile ${member?.display_name ? `${text.title} (${memberID})` : member?.email || member?.phone || memberID}`}
+          <span class="chip" aria-label={`Linked ${chipName}`}>
+            <strong>{text.title}</strong>
+            <small>{text.subtitle}</small>
             {#if confirmingParticipantID === memberID}
-              <span class="chip-confirm" role="group" aria-label={`Confirm unlinking profile ${memberID}`}>
+              <span class="chip-confirm" role="group" aria-label={`Confirm unlinking ${chipName}`}>
                 <span>Not the same person?</span>
                 <Button
                   label="Unlink"
@@ -407,7 +444,7 @@
                 class="chip-unlink"
                 size="sm"
                 tone="danger"
-                ariaLabel={`Unlink profile ${memberID}`}
+                ariaLabel={`Unlink ${chipName}`}
                 onclick={() => startUnlink(memberID)}
               >
                 <XIcon size="12" aria-hidden="true" />
@@ -536,7 +573,11 @@
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-sm);
     background: var(--bg-subtle);
-    padding: var(--space-2) var(--space-6) var(--space-2) var(--space-3);
+    padding: var(--space-2) 2.5rem var(--space-2) var(--space-3);
+  }
+
+  .chip.two-actions {
+    padding-right: 4.5rem;
   }
 
   .chip-display {
@@ -549,10 +590,12 @@
     font-size: var(--font-size-2xs);
   }
 
-  :global(.chip-unlink) {
+  .chip-actions {
     position: absolute;
     top: var(--space-1);
     right: var(--space-1);
+    display: flex;
+    gap: var(--space-1);
   }
 
   .chip-confirm {

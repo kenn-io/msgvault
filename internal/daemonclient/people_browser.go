@@ -562,6 +562,9 @@ func personSummaryFromGenerated(person generated.PersonSummary) query.PersonSumm
 			Type: identifier.Type, Value: identifier.Value,
 			DisplayValue: stringValue(identifier.DisplayValue), IsPrimary: identifier.IsPrimary,
 			Provenance: identifier.Provenance, ParticipantID: identifier.ParticipantID,
+			ServiceSlug: stringValue(identifier.ServiceSlug), ServiceLabel: stringValue(identifier.ServiceLabel),
+			ScopeKind: stringValue(identifier.ScopeKind), ScopeValue: stringValue(identifier.ScopeValue),
+			ParticipantDisplayName: stringValue(identifier.ParticipantDisplayName),
 		}
 	}
 	counts := make([]query.SourceCount, len(person.SourceCounts))
@@ -585,11 +588,25 @@ func personSummaryFromGenerated(person generated.PersonSummary) query.PersonSumm
 			edges[i] = query.PersonClusterEdge{
 				ParticipantA: edge.ParticipantA, ParticipantB: edge.ParticipantB,
 			}
+			if edge.LinkOrigin != nil {
+				edges[i].LinkOrigin = &query.PersonClusterLinkOrigin{
+					Kind: edge.LinkOrigin.Kind, Source: stringValue(edge.LinkOrigin.Source),
+					Basis: stringValue(edge.LinkOrigin.Basis),
+				}
+			}
+		}
+		members := make([]query.PersonClusterMember, len(person.Cluster.Members))
+		for i, member := range person.Cluster.Members {
+			members[i] = query.PersonClusterMember{
+				ParticipantID: member.ParticipantID, DisplayName: stringValue(member.DisplayName),
+				Email: stringValue(member.Email), Phone: stringValue(member.Phone),
+			}
 		}
 		out.Cluster = &query.PersonCluster{
 			CanonicalID: person.Cluster.CanonicalID,
 			MemberIDs:   append([]int64(nil), person.Cluster.MemberIds...),
 			Edges:       edges,
+			Members:     members,
 		}
 	}
 	if person.Profile != nil {
