@@ -5,6 +5,7 @@
 export interface HybridSearchTimings {
   hydration_ms: number;
   query_embedding_ms: number;
+  rerank_ms?: number;
   retrieval_ms: number;
   [key: string]: unknown;
 }

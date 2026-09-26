@@ -1,0 +1,32 @@
+{
+  "id": "gen-rerank-0000000000-exampleexampleexam",
+  "model": "rerank-v4.0-pro",
+  "results": [
+    {
+      "index": 0,
+      "relevance_score": 0.93982506,
+      "document": {
+        "text": "Votre colis sera livré mardi entre 9h et 12h."
+      }
+    },
+    {
+      "index": 2,
+      "relevance_score": 0.5560139,
+      "document": {
+        "text": "Rechnung Nr. 4471 ist fällig."
+      }
+    },
+    {
+      "index": 1,
+      "relevance_score": 0.5093739,
+      "document": {
+        "text": "Reminder: team lunch on Friday at noon."
+      }
+    }
+  ],
+  "usage": {
+    "search_units": 1,
+    "cost": 0.0025
+  },
+  "provider": "Cohere"
+}

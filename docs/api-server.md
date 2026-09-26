@@ -1361,6 +1361,7 @@ to `mode=fts` instead.
 | `account` | string | — | Restrict to one account/source |
 | `collection` | string | — | Restrict to one collection |
 | `explain` | 0/1 | `0` | When `1` and `mode=vector|hybrid`, include per-signal scores |
+| `rerank` | bool | `[vector.rerank].default` | When `true` and `mode=vector|hybrid`, rescore the top hits with the configured reranker. `true` with `mode=fts` returns `400 rerank_unsupported_mode`; `true` without a configured reranker returns `503 rerank_unavailable` |
 
 `message_type` uses the same values as local search: `email`,
 `calendar_event`, `meeting_transcript`, `beeper`, `teams`, `discord`, `sms`,
@@ -1465,7 +1466,23 @@ object exposing the fused-score components:
 that signal (BM25 missed it or the ANN pool did not include it).
 `rrf` is omitted in `mode=vector` (only one signal — there is
 nothing to fuse). `subject_boosted` is true when the subject-line
-boost was applied.
+boost was applied. `rerank` is the reranker's relevance score (0–1);
+it appears only for hits the reranker rescored.
+
+A search that reranks adds a `rerank` object and `timings.rerank_ms`:
+
+```json
+{
+  "rerank": {"applied": true, "model": "cohere/rerank-4-pro", "candidates": 50},
+  "timings": {"query_embedding_ms": 12, "retrieval_ms": 41, "hydration_ms": 31, "rerank_ms": 420}
+}
+```
+
+`candidates` is how many hits the provider rescored. When the provider fails,
+`applied` is `false`, `fallback` names the failure (`timeout`,
+`provider_status`, `invalid_response`, `transport`, or `candidate_text`), and
+`results` keep the retrieval order. See
+[Reranking](/docs/usage/vector-search/#reranking).
 
 See [Searching](/docs/usage/searching/) for the full query syntax
 reference and [Vector Search](/docs/usage/vector-search/) for vector /

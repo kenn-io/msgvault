@@ -37,6 +37,10 @@ type SearchRequest struct {
 	Limit        int
 	SubjectTerms []string // lowercased terms for subject-boost check
 	Explain      bool     // reserved for future use; no-op in this task
+	// Rerank asks the engine to rescore the top retrieval hits with the
+	// configured rerank stage. It fails with ErrRerankNotConfigured when the
+	// engine has none.
+	Rerank bool
 }
 
 // ResultMeta returns engine-level metadata alongside the hit list.
@@ -52,6 +56,9 @@ type ResultMeta struct {
 	// for structured diagnostics; they contain no query or vector data.
 	QueryEmbeddingDuration time.Duration
 	RetrievalDuration      time.Duration
+	// Rerank reports the rerank stage; zero when the request did not ask
+	// for it.
+	Rerank RerankMeta
 }
 
 // EmbeddingClient embeds free-text queries. The engine uses it once per
@@ -92,6 +99,9 @@ type Config struct {
 	// (or SQLiteDialect.Rebind, which is identity) on SQLite.
 	Rebind     func(string) string
 	BuildScope vector.BuildScope
+	// Rerank is the optional stage requests opt into with
+	// SearchRequest.Rerank. Nil disables reranking.
+	Rerank *RerankStage
 }
 
 // Engine orchestrates the generation check, query embedding, and fusion
@@ -162,7 +172,27 @@ func (e *Engine) BuildFilter(
 //   - ErrNotEnabled: no generation at all (vector search unused).
 //
 // mode=fts is rejected with a clear error (legacy path handles it).
+//
+// With req.Rerank, the engine retrieves at least the rerank window, rescores
+// its head, and trims the result back to req.Limit. A reranker failure falls
+// back to the retrieval order and is reported in ResultMeta.Rerank.
 func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedHit, ResultMeta, error) {
+	if !req.Rerank {
+		return e.retrieve(ctx, req)
+	}
+	if e.cfg.Rerank == nil {
+		return nil, ResultMeta{}, ErrRerankNotConfigured
+	}
+	limit := req.Limit
+	req.Limit = max(req.Limit, e.cfg.Rerank.Candidates)
+	hits, meta, err := e.retrieve(ctx, req)
+	if err != nil {
+		return nil, ResultMeta{}, err
+	}
+	return e.applyRerank(ctx, req.FreeText, hits, limit, meta)
+}
+
+func (e *Engine) retrieve(ctx context.Context, req SearchRequest) ([]vector.FusedHit, ResultMeta, error) {
 	if req.Mode == ModeFTS {
 		return nil, ResultMeta{}, errors.New("mode=fts should be handled by the legacy engine")
 	}

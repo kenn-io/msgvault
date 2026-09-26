@@ -871,6 +871,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryBooleanParam("explain", "Include score explanation when mode is vector or hybrid"),
 			queryBooleanParam("include_matches", "Include scored semantic chunk excerpts for vector or hybrid results"),
 			queryNumberParam("min_score", "Minimum chunk score for included excerpts; does not filter ranked messages"),
+			queryBooleanParam("rerank", "Rescore the top vector or hybrid hits with the configured [vector.rerank] provider. Omitted follows [vector.rerank].default; true fails with 503 rerank_unavailable when reranking is not configured"),
 			queryStringParam("message_type", "Message type filter; repeat or comma-separate for multiple values", false),
 		}, scopeParams(), semanticMessageFilterParams())
 	case "getAggregates":

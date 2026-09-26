@@ -525,6 +525,17 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			return nil, fmt.Errorf("resolve visual embedding credential: %w", err)
 		}
 	}
+	// A rerank credential problem disables reranking, not vector search:
+	// requests without rerank keep working and requests with it get a clear
+	// rerank_unavailable answer.
+	var rerankAPIKey string
+	var rerankCredentialErr error
+	if vecCfg.Enabled && vecCfg.Rerank.Enabled {
+		rerankAPIKey, rerankCredentialErr = resolveProviderCredentialFromSnapshot(
+			credentialSnapshot, providercredentials.VectorRerankID,
+			vecCfg.Rerank.Endpoint, vecCfg.Rerank.APIKeyEnv,
+		)
+	}
 	mainDB := mainStore.DB()
 
 	// Resolve the dialect once from the main DSN. The worker is
@@ -630,6 +641,16 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		features.SemanticClient = runtime.SemanticClient
 		features.DocumentQueryClient = runtime.QuerySemanticClient
 		features.PersonQueryClient = runtime.PersonQueryClient
+		var rerankStage *hybrid.RerankStage
+		if vecCfg.Rerank.Enabled {
+			stageErr := rerankCredentialErr
+			if stageErr == nil {
+				rerankStage, stageErr = newRerankStage(vecCfg, mainStore, rerankAPIKey)
+			}
+			if stageErr != nil {
+				logger.Error("search reranking unavailable", "error", stageErr)
+			}
+		}
 		features.HybridEngine = hybrid.NewEngine(backend, mainDB, runtime.QueryClient, hybrid.Config{
 			ExpectedFingerprint: vecCfg.GenerationFingerprint(),
 			RRFK:                vecCfg.Search.RRFK,
@@ -641,6 +662,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			// carries the dialect's Rebind. SQLite's Rebind is identity.
 			Rebind:     dialect.Rebind,
 			BuildScope: vecCfg.Embed.Scope.BuildScope(),
+			Rerank:     rerankStage,
 		})
 		personSearchBackend, ok := backend.(personsearch.Backend)
 		if !ok {

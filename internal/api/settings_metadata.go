@@ -17,6 +17,7 @@ import (
 const (
 	sectionProvider = "provider"
 	sectionVisual   = "visual"
+	sectionRanking  = "ranking"
 )
 
 type settingMetadata struct {
@@ -60,7 +61,7 @@ var settingsGroups = []SettingGroup{
 			{ID: "schedule", Label: "Embedding schedule and scope"},
 			{ID: "people", Label: "Person embeddings", Description: "Sends consented person fields to the text embedding provider."},
 			{ID: sectionVisual, Label: "Visual attachment search", Description: "Sends images to a hosted provider. Semantic search must also be on."},
-			{ID: "ranking", Label: "Hybrid ranking", Description: "How full-text and semantic results combine."},
+			{ID: sectionRanking, Label: "Hybrid ranking", Description: "How full-text and semantic results combine."},
 			{ID: "preprocess", Label: "Text preprocessing", Description: "What to strip from message text before embedding it."},
 		},
 	},
@@ -172,14 +173,24 @@ var settingsMetadata = map[string]settingMetadata{
 	"vector.multimodal.schedule.cron":           {"Visual indexing schedule", "When background visual indexing runs.", sectionVisual},
 	"vector.multimodal.schedule.run_after_sync": {"Index visuals after sync", "Run visual indexing after each successful source sync.", sectionVisual},
 
-	"vector.search.rrf_k":                {"RRF constant", "Reciprocal rank fusion constant used to merge result lists.", "ranking"},
-	"vector.search.k_per_signal":         {"Candidates per signal", "Results each signal contributes before merging.", "ranking"},
-	"vector.search.subject_boost":        {"Subject boost", "Extra weight for matches in the subject line.", "ranking"},
-	"vector.search.max_page_size_hybrid": {"Maximum hybrid page size", "Largest page a hybrid search returns.", "ranking"},
-	"vector.search.sqlite_accelerator":   {"SQLite search accelerator", "Use the SQLite approximate index when it is ready, or always scan exact vectors.", "ranking"},
-	"vector.search.ann_nprobe":           {"ANN probe count", "SQLite index partitions searched for each semantic query.", "ranking"},
-	"vector.search.ann_oversample":       {"ANN oversampling", "Extra approximate candidates reranked with exact vector distance.", "ranking"},
-	"vector.search.ann_threads":          {"ANN build threads", "Maximum native worker threads used while optimizing a SQLite index.", "ranking"},
+	"vector.search.rrf_k":                {"RRF constant", "Reciprocal rank fusion constant used to merge result lists.", sectionRanking},
+	"vector.search.k_per_signal":         {"Candidates per signal", "Results each signal contributes before merging.", sectionRanking},
+	"vector.search.subject_boost":        {"Subject boost", "Extra weight for matches in the subject line.", sectionRanking},
+	"vector.search.max_page_size_hybrid": {"Maximum hybrid page size", "Largest page a hybrid search returns.", sectionRanking},
+	"vector.search.sqlite_accelerator":   {"SQLite search accelerator", "Use the SQLite approximate index when it is ready, or always scan exact vectors.", sectionRanking},
+	"vector.search.ann_nprobe":           {"ANN probe count", "SQLite index partitions searched for each semantic query.", sectionRanking},
+	"vector.search.ann_oversample":       {"ANN oversampling", "Extra approximate candidates reranked with exact vector distance.", sectionRanking},
+	"vector.search.ann_threads":          {"ANN build threads", "Maximum native worker threads used while optimizing a SQLite index.", sectionRanking},
+	"vector.rerank.enabled":              {"Search reranking", "Let vector and hybrid searches rescore their top hits with a hosted reranker. Enabling it sends each reranked query and its top candidates' text to the provider.", sectionRanking},
+	"vector.rerank.api_format":           {"Reranker API format", "Wire contract of the rerank endpoint.", sectionRanking},
+	"vector.rerank.endpoint":             {"Reranker endpoint", "Base URL of the rerank API, such as OpenRouter.", sectionRanking},
+	"vector.rerank.api_key_env":          {"Reranker key variable", "Environment variable the daemon reads when no stored credential exists.", sectionRanking},
+	"vector.rerank.api_key":              {"Reranker API key", "Stored reranker key. It overrides the environment variable.", sectionRanking},
+	"vector.rerank.model":                {"Reranker model", "Rerank model identifier, such as cohere/rerank-4-pro.", sectionRanking},
+	"vector.rerank.candidates":           {"Rerank candidates", "Top search hits the reranker rescores for each search.", sectionRanking},
+	"vector.rerank.max_candidate_chars":  {"Rerank text per candidate", "Longest excerpt of each candidate message sent to the reranker.", sectionRanking},
+	"vector.rerank.timeout":              {"Reranker timeout", "Longest wait for the reranker before a search keeps its retrieval order.", sectionRanking},
+	"vector.rerank.default":              {"Rerank by default", "Rerank vector and hybrid searches that do not ask either way.", sectionRanking},
 
 	"vector.preprocess.strip_quotes":        {"Strip quoted replies", "Remove quoted earlier messages before embedding.", "preprocess"},
 	"vector.preprocess.strip_signatures":    {"Strip signatures", "Remove detected signatures before embedding.", "preprocess"},
@@ -277,6 +288,11 @@ var settingsValidation = map[string]SettingValidation{
 	"vector.search.ann_nprobe":            numberRange(1, 65_536),
 	"vector.search.ann_oversample":        numberRange(1, 128),
 	"vector.search.ann_threads":           numberRange(1, vector.MaxANNThreads),
+	"vector.rerank.endpoint":              {Required: true},
+	"vector.rerank.model":                 {Required: true},
+	"vector.rerank.candidates":            numberRange(1, vector.MaxRerankCandidates),
+	"vector.rerank.max_candidate_chars":   numberRange(1, vector.MaxRerankCandidateChars),
+	"vector.rerank.timeout":               {Hint: "Duration such as 10s.", Required: true},
 
 	"beeper.schedule": cronValidation(false),
 	"slack.schedule":  cronValidation(false),

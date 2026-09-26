@@ -484,4 +484,7 @@ type FusedHit struct {
 	BM25Score      float64 // math.NaN() if missing
 	VectorScore    float64 // math.NaN() if missing
 	SubjectBoosted bool
+	// RerankScore is the reranker's relevance probability; nil when the hit
+	// was not rescored.
+	RerankScore *float64
 }

@@ -243,3 +243,105 @@ func writeVectorSearchResponse(
 	})
 	require.NoError(t, err, "write vector search response")
 }
+
+func writeRerankedSearchResponse(t *testing.T, w http.ResponseWriter, rerank map[string]any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	score := map[string]any{"rrf": 0.5, "vector": 0.9}
+	if rerank["applied"] == true {
+		score["rerank"] = 0.93
+	}
+	result := map[string]any{
+		"id": 42, "subject": "Parcel", "from": "alice@example.com", "sent_at": "2024-01-02T03:04:05Z",
+		"score": score,
+	}
+	err := json.NewEncoder(w).Encode(map[string]any{
+		"returned": 1, "pool_saturated": false, "took_ms": 420,
+		"timings": map[string]any{"query_embedding_ms": 2, "retrieval_ms": 7, "hydration_ms": 3, "rerank_ms": 408},
+		"rerank":  rerank,
+		"generation": map[string]any{
+			"id": 7, "model": "fake-model", "dimension": 4, "fingerprint": "fake:4", "state": "active",
+		},
+		"results": []map[string]any{result},
+	})
+	require.NoError(t, err, "write reranked search response")
+}
+
+func TestSearchCmd_RerankFlagForwardsAndReportsStage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("true", r.URL.Query().Get("rerank"), "rerank query")
+		writeRerankedSearchResponse(t, w, map[string]any{
+			"applied": true, "model": "cohere/rerank-4-pro", "candidates": 50,
+		})
+	})
+	writeStatsHTTPDaemonRuntime(t, dataDir, srv)
+	restore := configureVectorSearchHTTPTest(t, dataDir, true, "")
+	defer restore()
+
+	done := captureStdout(t)
+	root := newTestRootCmd()
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--mode", "hybrid", "--rerank", "--explain", "when does the parcel arrive"})
+	err := root.Execute()
+	out := done()
+	require.NoError(err)
+
+	assert.Contains(out, "RERANK", "explain table gains a rerank column")
+	assert.Contains(out, "0.9300", "rerank score")
+	assert.Contains(out, "Reranked the top 50 with cohere/rerank-4-pro")
+	assert.Contains(out, "rerank=408ms", "rerank timing")
+}
+
+func TestSearchCmd_RerankFallbackWarnsOnStderrAndKeepsJSONClean(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeRerankedSearchResponse(t, w, map[string]any{
+			"applied": false, "model": "cohere/rerank-4-pro", "candidates": 0, "fallback": "timeout",
+		})
+	})
+	writeStatsHTTPDaemonRuntime(t, dataDir, srv)
+	restore := configureVectorSearchHTTPTest(t, dataDir, true, "")
+	defer restore()
+
+	doneOut := captureStdout(t)
+	doneErr := captureStderr(t)
+	root := newTestRootCmd()
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--mode", "hybrid", "--rerank", "--json", "when does the parcel arrive"})
+	err := root.Execute()
+	out := doneOut()
+	errOut := doneErr()
+	require.NoError(err)
+
+	var decoded map[string]any
+	require.NoError(json.Unmarshal([]byte(out), &decoded), "stdout stays valid JSON")
+	assert.Equal(map[string]any{
+		"applied": false, "model": "cohere/rerank-4-pro", "candidates": float64(0), "fallback": "timeout",
+	}, decoded["rerank"])
+	assert.Contains(errOut, "Reranking failed (timeout); showing hybrid order")
+}
+
+func TestSearchCmd_RerankOmittedLeavesDaemonDefault(t *testing.T) {
+	dataDir := t.TempDir()
+	srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		_, present := r.URL.Query()["rerank"]
+		assert.False(t, present, "an omitted --rerank sends no rerank parameter")
+		writeVectorSearchResponse(t, w, "bob@example.com", "", 0)
+	})
+	writeStatsHTTPDaemonRuntime(t, dataDir, srv)
+	restore := configureVectorSearchHTTPTest(t, dataDir, true, "")
+	defer restore()
+
+	done := captureStdout(t)
+	root := newTestRootCmd()
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--mode", "vector", "lunch"})
+	err := root.Execute()
+	_ = done()
+	require.NoError(t, err)
+}

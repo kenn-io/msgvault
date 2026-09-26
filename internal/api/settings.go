@@ -297,6 +297,18 @@ var settingsCatalog = []settingDefinition{
 	intSetting("vector.search.ann_nprobe", "search", func(c *config.Config) int { return c.Vector.Search.ANNNProbe }),
 	intSetting("vector.search.ann_oversample", "search", func(c *config.Config) int { return c.Vector.Search.ANNOversample }),
 	intSetting("vector.search.ann_threads", "search", func(c *config.Config) int { return c.Vector.Search.ANNThreads }),
+	boolSetting("vector.rerank.enabled", "search", func(c *config.Config) bool { return c.Vector.Rerank.Enabled }),
+	stringSetting("vector.rerank.api_format", "search", []string{"cohere"}, func(c *config.Config) string { return c.Vector.Rerank.APIFormat }),
+	stringSetting("vector.rerank.endpoint", "search", nil, func(c *config.Config) string { return c.Vector.Rerank.Endpoint }),
+	localOnlyStringSetting("vector.rerank.api_key_env", "search", func(c *config.Config) string { return c.Vector.Rerank.APIKeyEnv }),
+	providerCredentialSetting("vector.rerank.api_key", "search", providercredentials.VectorRerankID,
+		func(c *config.Config) string { return c.Vector.Rerank.Endpoint },
+		func(c *config.Config) string { return c.Vector.Rerank.APIKeyEnv }),
+	stringSetting("vector.rerank.model", "search", nil, func(c *config.Config) string { return c.Vector.Rerank.Model }),
+	intSetting("vector.rerank.candidates", "search", func(c *config.Config) int { return c.Vector.Rerank.Candidates }),
+	intSetting("vector.rerank.max_candidate_chars", "search", func(c *config.Config) int { return c.Vector.Rerank.MaxCandidateChars }),
+	stringSetting("vector.rerank.timeout", "search", nil, func(c *config.Config) string { return c.Vector.Rerank.Timeout.String() }),
+	boolSetting("vector.rerank.default", "search", func(c *config.Config) bool { return c.Vector.Rerank.Default }),
 	configuredBoolSetting("vector.preprocess.strip_quotes", "search", func(c *config.Config) bool { return c.Vector.Preprocess.StripQuotesEnabled() }, func(c *config.Config) bool { return c.Vector.Preprocess.StripQuotes == nil }),
 	configuredBoolSetting("vector.preprocess.strip_signatures", "search", func(c *config.Config) bool { return c.Vector.Preprocess.StripSignaturesEnabled() }, func(c *config.Config) bool { return c.Vector.Preprocess.StripSignatures == nil }),
 	configuredBoolSetting("vector.preprocess.strip_html", "search", func(c *config.Config) bool { return c.Vector.Preprocess.StripHTMLEnabled() }, func(c *config.Config) bool { return c.Vector.Preprocess.StripHTML == nil }),
@@ -802,6 +814,10 @@ var storedCredentialBindings = []storedCredentialBinding{
 		credentialID:    providercredentials.VectorMultimodalID,
 		currentEndpoint: func(c *config.Config) string { return c.Vector.Multimodal.Endpoint },
 	},
+	{
+		credentialID:    providercredentials.VectorRerankID,
+		currentEndpoint: func(c *config.Config) string { return c.Vector.Rerank.Endpoint },
+	},
 }
 
 // staleStoredCredentialIDs lists the stored provider credentials that are
@@ -994,7 +1010,7 @@ func validateSettingUpdate(key string, value any, options []string) error {
 		if !ok || number < 0 {
 			return errors.New("must be non-negative")
 		}
-	case "vector.embeddings.endpoint", "vector.multimodal.endpoint":
+	case "vector.embeddings.endpoint", "vector.multimodal.endpoint", "vector.rerank.endpoint":
 		endpoint, ok := value.(string)
 		if !ok {
 			return errors.New("endpoint must be a string")
@@ -1002,7 +1018,7 @@ func validateSettingUpdate(key string, value any, options []string) error {
 		if _, err := providercredentials.EndpointOrigin(endpoint); err != nil {
 			return err
 		}
-	case "vector.embeddings.timeout", "server.daemon_idle_timeout", "analytics.min_rebuild_interval",
+	case "vector.embeddings.timeout", "vector.rerank.timeout", "server.daemon_idle_timeout", "analytics.min_rebuild_interval",
 		"people.enrichment.lease_duration":
 		text, ok := value.(string)
 		if !ok {

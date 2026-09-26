@@ -1416,6 +1416,7 @@ msgvault search <query> [flags]
 | `--deletion-scope` | Source-deletion scope: `active` (default), `deleted`, or `any`. Non-active scopes require `--mode fts`. |
 | `--mode` | Search mode: `fts` (default), `vector`, or `hybrid`. `vector` and `hybrid` require vector search to be configured. |
 | `--explain` | Include per-signal scores (RRF, BM25, vector) in the output. Only applies to `--mode vector` and `--mode hybrid`. |
+| `--rerank` | Rescore the top hits with the configured `[vector.rerank]` provider. Only applies to `--mode vector` and `--mode hybrid`. `--rerank=false` skips a configured `default = true`. With `--explain`, adds a `RERANK` score column. See [Reranking](/docs/usage/vector-search/#reranking). |
 
 Without an explicit message-type filter, search intentionally returns all
 matching cached message types, including meeting transcripts and chats.

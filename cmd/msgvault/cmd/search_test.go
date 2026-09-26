@@ -89,6 +89,7 @@ func resetSearchFlags() {
 	searchJSON = false
 	searchMode = "fts"
 	searchExplain = false
+	searchRerank = false
 	searchDeletionScope = "active"
 	searchMessageTypes = nil
 	// Cobra remembers per-flag `Changed` state on the global searchCmd
@@ -255,6 +256,18 @@ func TestSearchCmd_DeletionScopeRejectsInvalidValue(t *testing.T) {
 	err := root.Execute()
 	require.Error(t, err, "invalid deletion scope")
 	assert.ErrorContains(t, err, `invalid --deletion-scope: "trash" (want active|deleted|any)`)
+}
+
+func TestSearchCmd_RerankRejectsFTS(t *testing.T) {
+	defer resetSearchFlags()
+
+	root := newTestRootCmd()
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--rerank", "statement"})
+
+	err := root.Execute()
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "--rerank requires --mode=vector or --mode=hybrid")
 }
 
 func TestSearchCmd_DeletionScopeRejectsVectorAndHybrid(t *testing.T) {

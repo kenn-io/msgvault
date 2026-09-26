@@ -194,6 +194,9 @@ type CLIHybridSearchRequest struct {
 	Offset         int
 	IncludeMatches bool
 	MinScore       float64
+	// Rerank asks the daemon to rescore the top hits with [vector.rerank];
+	// nil leaves the choice to [vector.rerank].default.
+	Rerank *bool
 }
 
 type CLIHybridSearch struct {
@@ -207,12 +210,25 @@ type CLIHybridSearch struct {
 	ScopeLabel       string
 	ScopeSourceCount int
 	HasMore          bool
+	// Rerank is nil when the search did not ask for reranking.
+	Rerank *CLIHybridRerank
 }
 
 type CLIHybridSearchTimings struct {
 	QueryEmbeddingMS int64 `json:"query_embedding_ms"`
 	RetrievalMS      int64 `json:"retrieval_ms"`
 	HydrationMS      int64 `json:"hydration_ms"`
+	RerankMS         int64 `json:"rerank_ms,omitzero"`
+}
+
+// CLIHybridRerank reports the daemon's rerank stage. Fallback names the
+// failure category when the provider failed and the retrieval order was
+// kept.
+type CLIHybridRerank struct {
+	Applied    bool   `json:"applied"`
+	Model      string `json:"model"`
+	Candidates int    `json:"candidates"`
+	Fallback   string `json:"fallback,omitempty"`
 }
 
 type CLIHybridGeneration struct {
@@ -232,6 +248,7 @@ type CLIHybridSearchResult struct {
 	RRFScore         *float64
 	BM25Score        *float64
 	VectorScore      *float64
+	RerankScore      *float64
 	SubjectBoosted   bool
 	Matches          []CLIHybridSearchMatch
 	MatchesTruncated bool
@@ -964,6 +981,7 @@ func (c *Client) GetCLIHybridSearch(
 				Offset:          optionalPositiveInt64(req.Offset),
 				IncludeMatches:  optionalBool(req.IncludeMatches),
 				MinScore:        optionalFloat32(req.MinScore),
+				Rerank:          req.Rerank,
 				Sender:          optionalString(req.Filter.Sender),
 				Recipient:       optionalString(req.Filter.Recipient),
 				Domain:          optionalString(req.Filter.Domain),

@@ -801,3 +801,90 @@ include_animated_gifs = true
 	require.Error(err)
 	require.Contains(err.Error(), "include_animated_gifs")
 }
+
+func TestRerankDefaultsToOpenRouterCohere(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg := validConfig()
+	_, err := toml.Decode("[rerank]\nenabled = true\n", &cfg)
+	require.NoError(err)
+	cfg.ApplyDefaults()
+
+	require.NoError(cfg.Validate())
+	assert.Equal(RerankConfig{
+		Enabled:           true,
+		APIFormat:         "cohere",
+		Endpoint:          "https://openrouter.ai/api/v1",
+		APIKeyEnv:         "OPENROUTER_API_KEY",
+		Model:             "cohere/rerank-4-pro",
+		Candidates:        50,
+		MaxCandidateChars: 4000,
+		Timeout:           10 * time.Second,
+	}, cfg.Rerank)
+}
+
+func TestRerankCustomEndpointGetsNoDefaultCredential(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	cfg := validConfig()
+	_, err := toml.Decode(`[rerank]
+enabled = true
+endpoint = "http://127.0.0.1:8000/v1/"
+model = "BAAI/bge-reranker-v2-m3"
+candidates = 100
+default = true
+`, &cfg)
+	require.NoError(err)
+	cfg.ApplyDefaults()
+
+	require.NoError(cfg.Validate())
+	assert.Equal("http://127.0.0.1:8000/v1", cfg.Rerank.Endpoint)
+	assert.Empty(cfg.Rerank.APIKeyEnv, "a local reranker must not inherit the hosted key")
+	assert.Equal(100, cfg.Rerank.Candidates)
+	assert.True(cfg.Rerank.Default)
+}
+
+func TestRerankValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{"requires text vectors", func(c *Config) { c.Enabled = false }, "requires vector.enabled = true"},
+		{"unknown api format", func(c *Config) { c.Rerank.APIFormat = "voyage" }, "vector.rerank.api_format"},
+		{"endpoint scheme", func(c *Config) { c.Rerank.Endpoint = "ftp://example.com" }, "vector.rerank.endpoint"},
+		{"endpoint credentials", func(c *Config) { c.Rerank.Endpoint = "https://u:p@example.com/v1" }, "must not contain"},
+		{"api key env name", func(c *Config) { c.Rerank.APIKeyEnv = "NOT-A-NAME" }, "vector.rerank.api_key_env"},
+		{"blank model", func(c *Config) { c.Rerank.Model = " " }, "vector.rerank.model"},
+		{"too many candidates", func(c *Config) { c.Rerank.Candidates = 101 }, "vector.rerank.candidates"},
+		{"negative candidates", func(c *Config) { c.Rerank.Candidates = -1 }, "vector.rerank.candidates"},
+		{"candidate chars cap", func(c *Config) { c.Rerank.MaxCandidateChars = 32001 }, "vector.rerank.max_candidate_chars"},
+		{"negative timeout", func(c *Config) { c.Rerank.Timeout = -time.Second }, "vector.rerank.timeout"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Rerank.Enabled = true
+			cfg.ApplyDefaults()
+			tt.mutate(&cfg)
+			err := cfg.Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestRerankDisabledSettingsAreNotValidated(t *testing.T) {
+	cfg := validConfig()
+	cfg.Rerank = RerankConfig{Candidates: 1000, APIFormat: "unknown"}
+	assert.NoError(t, cfg.Validate())
+}
+
+func TestRerankSettingsDoNotChangeGenerationFingerprint(t *testing.T) {
+	base := validConfig()
+	base.ApplyDefaults()
+	tuned := base
+	tuned.Rerank = RerankConfig{Enabled: true, Model: "voyageai/rerank-2.5", Candidates: 20}
+	assert.Equal(t, base.GenerationFingerprint(), tuned.GenerationFingerprint(),
+		"reranking reorders results and must never force an index rebuild")
+}

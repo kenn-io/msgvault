@@ -520,6 +520,9 @@ func semanticSearchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDef
 			toolArgMode:     mode,
 			"explain":       booleanSchema("Include per-signal scores in the response (for debugging or ranking inspection)"),
 			toolArgMinScore: scoreSchema("Minimum chunk similarity score for included match excerpts (default 0); does not filter ranked messages"),
+			toolArgRerank: booleanSchema("Rescore the top hits with the server's configured reranker for better relevance on natural-language questions. " +
+				"Omit to use the server default. Sends the query and top candidates' text to the configured provider. " +
+				"Fails with rerank_unavailable when the server has no reranker; the response's rerank.fallback reports a provider failure, in which case the retrieval order is kept."),
 		}, toolArgQuery),
 		outputSchemaFor[searchMessageBodiesResponse](),
 		(*handlers).semanticSearchMessages,
