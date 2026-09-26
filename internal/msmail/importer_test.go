@@ -41,6 +41,8 @@ type fakeGraph struct {
 	withAttachment map[string]bool   // message IDs whose MIME carries a file
 	shifted        map[string]bool   // message IDs whose file moves to another part
 	attachmentBody map[string]string // message ID -> base64 file content
+	broken         map[string]bool   // message IDs whose MIME does not parse
+	goneOnValue    map[string]bool   // message IDs deleted just before their $value
 	attachDir      string            // attachments directory; a fresh one when empty
 	throttle       bool              // answer the next $value with 429 once
 	pageSize       int
@@ -55,7 +57,7 @@ type change struct{ id, from string }
 
 func newFakeGraph(t *testing.T) *fakeGraph {
 	t.Helper()
-	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, pageSize: 2}
+	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, broken: map[string]bool{}, goneOnValue: map[string]bool{}, pageSize: 2}
 	f.folders = []string{"inbox", "archive"}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -142,6 +144,9 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		id := strings.Split(p, "/")[3]
+		if f.goneOnValue[id] {
+			delete(f.folder, id)
+		}
 		if _, ok := f.folder[id]; !ok {
 			http.Error(w, "gone", http.StatusNotFound)
 			return
@@ -149,6 +154,10 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 		body := raw(id, f.version[id])
 		if f.withAttachment[id] {
 			body = rawWithAttachment(id, f.shifted[id], f.attachmentBody[id])
+		}
+		if f.broken[id] {
+			body = "From: a@example.com\r\nSubject: " + id + "\r\nMIME-Version: 1.0\r\n" +
+				"Content-Type: multipart mixed; boundary=b\r\n\r\n--b\r\n\r\nbody\r\n--b--\r\n"
 		}
 		_, _ = w.Write([]byte(body)) //nolint:gosec // local test server returns fixture MIME
 	case strings.HasPrefix(p, "/me/messages/"):
@@ -690,4 +699,40 @@ func TestImportRemovedFolderIsRetired(t *testing.T) {
 	_, err = f.sync(t, st)
 	require.NoError(err)
 	assert.Equal(map[string]string{"m1": "deleted", "m2": "Inbox"}, state(t, st))
+}
+
+// A known message that delta reports but that is deleted before its $value is
+// looked up and marked deleted.
+func TestImportKnownMessageGoneBeforeDownload(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.put("m1", "inbox")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+
+	f.put("m1", "inbox") // changed, so the round downloads it again
+	f.goneOnValue["m1"] = true
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(map[string]string{"m1": "deleted"}, state(t, st))
+}
+
+// A refreshed MIME that does not parse keeps the attachment rows there.
+func TestImportRefreshWithBrokenMIMEKeepsAttachments(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.withAttachment["m1"] = true
+	f.put("m1", "inbox")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+
+	f.broken["m1"] = true
+	f.put("m1", "inbox")
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(1, attachments(t, st)[0])
 }

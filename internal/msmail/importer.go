@@ -338,7 +338,13 @@ func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) err
 		}
 		msgID = ids[m.ID]
 	}
-	parsed, _ := mime.ParseWithRecovery(raw, "")
+	parsed, err := mime.ParseWithRecovery(raw, "")
+	if err != nil {
+		// The MIME did not parse, so its attachments are unknown. Keep the
+		// rows that are there.
+		s.log.Warn("MIME did not parse, keeping attachment rows", "id", m.ID, "error", err)
+		return nil
+	}
 	complete, err := s.attachmentsStored(ctx, msgID, parsed.Attachments)
 	if err != nil {
 		return err
@@ -545,9 +551,11 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 			for m := range jobs {
 				raw, err := s.c.GetMIME(gctx, m.ID)
 				if errors.Is(err, msgraph.ErrNotFound) {
-					continue
-				}
-				if err != nil {
+					if m.archiveID == 0 {
+						continue // never stored, nothing to undo
+					}
+					raw = nil // a known message vanished; relocate it below
+				} else if err != nil {
 					return fmt.Errorf("download message: %w", err)
 				}
 				select {
@@ -569,8 +577,13 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 	// move past it; the next sync retries the page. Results are drained so
 	// the workers can exit.
 	var storeErr error
+	vanished := map[string]int64{}
 	for r := range results {
 		if storeErr != nil {
+			continue
+		}
+		if r.raw == nil {
+			vanished[r.msg.ID] = r.msg.archiveID
 			continue
 		}
 		sum := sha256.Sum256(r.raw)
@@ -600,5 +613,7 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 	if fetchErr != nil {
 		return fmt.Errorf("download messages: %w", fetchErr)
 	}
-	return nil
+	// A known message that delta reported but $value no longer finds moved or
+	// is gone since the page was read.
+	return s.relocate(ctx, vanished)
 }
