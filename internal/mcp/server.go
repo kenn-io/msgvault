@@ -35,6 +35,8 @@ const (
 	ToolGetMessage              = "get_message"
 	ToolGetAttachment           = "get_attachment"
 	ToolExportAttachment        = "export_attachment"
+	ToolExportEML               = "export_eml"
+	ToolListThread              = "list_thread"
 	ToolListMessages            = "list_messages"
 	ToolGetStats                = "get_stats"
 	ToolAggregate               = "aggregate"

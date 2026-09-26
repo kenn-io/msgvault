@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-26"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1601,7 +1601,9 @@ msgvault export-eml <id> [flags]
 
 | Flag | Description |
 |---|---|
-| `-o`, `--output <path>` | Output file (default: `<gmail_id>.eml`, use `-` for stdout) |
+| `-o`, `--output <path>` | Output file (default: `<gmail_id>.eml`, use `-` for stdout). With `--thread`, the output directory (default: current directory) |
+| `--thread` | Write every message in the conversation that has stored MIME as `<n>-<source_message_id>.eml`, numbered oldest first. Reports skipped messages and when the account last synced. Needs a daemon with API schema 2.30.0 or newer |
+| `--account <email>` | With `--thread`, the account that holds a provider message ID found in more than one account |
 
 ---
 

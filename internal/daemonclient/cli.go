@@ -378,6 +378,8 @@ type cliStreamEvent struct {
 const (
 	apiErrorCodeMessageNotFound = "message_not_found"
 	apiErrorCodeLegacyNotFound  = "not_found"
+	// apiErrorCodeRawMessageNotFound means the message exists without raw data.
+	apiErrorCodeRawMessageNotFound = "raw_message_not_found"
 )
 
 // InitCLIArchive runs setup-style startup work through the CLI-compatible API.
@@ -1371,6 +1373,9 @@ func handleCLIMessageRawNotFound(resp *generated.GetCLIMessageRawResp, id string
 		if resp.JSON404.ErrorData == apiErrorCodeMessageNotFound ||
 			(resp.JSON404.ErrorData == apiErrorCodeLegacyNotFound && message == "Message not found") {
 			return fmt.Errorf("message %s: %w", id, store.ErrMessageNotFound)
+		}
+		if resp.JSON404.ErrorData == apiErrorCodeRawMessageNotFound {
+			return fmt.Errorf("message %s: %w", id, ErrMessageRawNotFound)
 		}
 		if message != "" {
 			return fmt.Errorf("API error (%d): %s", http.StatusNotFound, message)

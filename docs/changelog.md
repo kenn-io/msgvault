@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-25"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,16 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- **Export original emails over MCP.** `export_eml` returns an email's
+  original `.eml` bytes in chunks with a whole-message `sha256`, `list_thread`
+  lists a whole conversation oldest first, and `get_attachment` accepts
+  `offset` and `length` for chunked downloads. Responses report the account's
+  `last_sync_at`, and `get_stats` lists it per account.
+  `msgvault export-eml <id> --thread -o DIR` writes a whole conversation as
+  numbered `.eml` files. Works for Gmail, IMAP (including Outlook), and file
+  imports; PST exports are rebuilt from Outlook data. The daemon serves
+  these through two new CLI routes; upgrade it for API schema 2.30.0. See
+  [Export original emails](usage/chat.md#export-original-emails).
 - Saved View MCP tools publish canonical_state as a schema object, so MCP clients that validate tools/list strictly, such as those built on the official TypeScript SDK, load msgvault's tools.
 - Log canceled SQLite planner-statistics maintenance at debug level.
 - **Supervised daemons can own startup.** Set `[server].daemon_auto_start = false`

@@ -2079,6 +2079,27 @@ func (c CliMessageResponse) Validate() error {
 	return errors
 }
 
+type CliOriginalMessageResponse struct {
+	Message MessageRecord `json:"message"`
+	Mime    string        `json:"mime" validate:"required"`
+}
+
+func (c CliOriginalMessageResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.Message).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Message", err)
+		}
+	}
+	if err := typesValidator.Var(c.Mime, "required"); err != nil {
+		errors = errors.Append("Mime", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CliRebuildFTSEvent struct {
 	Done      *int64  `json:"done,omitempty"`
 	ErrorData *string `json:"error,omitzero"`
@@ -5588,6 +5609,21 @@ func (m MessageListResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type MessageRecord struct {
+	Account              string     `json:"account" validate:"required"`
+	ConversationID       int64      `json:"conversation_id"`
+	LastSyncAt           *time.Time `json:"last_sync_at,omitempty"`
+	MessageID            *int64     `json:"message_id,omitempty"`
+	SourceConversationID string     `json:"source_conversation_id" validate:"required"`
+	SourceID             int64      `json:"source_id"`
+	SourceMessageID      *string    `json:"source_message_id,omitzero"`
+	SourceType           string     `json:"source_type" validate:"required"`
+}
+
+func (m MessageRecord) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
 type MessageSummary struct {
@@ -11928,6 +11964,93 @@ func (t TextSearchResponse) Validate() error {
 				errors = errors.Append(fmt.Sprintf("Messages[%d]", i), err)
 			}
 		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ThreadMessage struct {
+	AttachmentCount     int64      `json:"attachment_count"`
+	Cc                  []Address  `json:"cc" validate:"required"`
+	DeletedFromSourceAt *time.Time `json:"deleted_from_source_at,omitempty"`
+	From                []Address  `json:"from" validate:"required"`
+	HasRaw              bool       `json:"has_raw"`
+	ID                  int64      `json:"id"`
+	SentAt              *time.Time `json:"sent_at,omitempty"`
+	SourceMessageID     string     `json:"source_message_id" validate:"required"`
+	Subject             string     `json:"subject" validate:"required"`
+	To                  []Address  `json:"to" validate:"required"`
+}
+
+func (t ThreadMessage) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range t.Cc {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Cc[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range t.From {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("From[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(t.SourceMessageID, "required"); err != nil {
+		errors = errors.Append("SourceMessageID", err)
+	}
+	if err := typesValidator.Var(t.Subject, "required"); err != nil {
+		errors = errors.Append("Subject", err)
+	}
+	for i, item := range t.To {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("To[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ThreadPage struct {
+	Account              string          `json:"account" validate:"required"`
+	ConversationID       int64           `json:"conversation_id"`
+	HasMore              bool            `json:"has_more"`
+	LastSyncAt           *time.Time      `json:"last_sync_at,omitempty"`
+	MessageID            *int64          `json:"message_id,omitempty"`
+	Messages             []ThreadMessage `json:"messages" validate:"required"`
+	Offset               int64           `json:"offset"`
+	SourceConversationID string          `json:"source_conversation_id" validate:"required"`
+	SourceID             int64           `json:"source_id"`
+	SourceMessageID      *string         `json:"source_message_id,omitzero"`
+	SourceType           string          `json:"source_type" validate:"required"`
+	Total                int64           `json:"total"`
+}
+
+func (t ThreadPage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.Account, "required"); err != nil {
+		errors = errors.Append("Account", err)
+	}
+	for i, item := range t.Messages {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Messages[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(t.SourceConversationID, "required"); err != nil {
+		errors = errors.Append("SourceConversationID", err)
+	}
+	if err := typesValidator.Var(t.SourceType, "required"); err != nil {
+		errors = errors.Append("SourceType", err)
 	}
 	if len(errors) == 0 {
 		return nil

@@ -67,6 +67,7 @@ import type {
   CliCollectionsResponse,
   CliInitDBResponse,
   CliMessageResponse,
+  CliOriginalMessageResponse,
   CliRebuildFTSEvent,
   CliSearchResponse,
   CliStatsResponse,
@@ -127,8 +128,10 @@ import type {
   GetAttributeDefinitionPathParameters,
   GetCLIAttachmentParams,
   GetCLICollectionParams,
+  GetCLIMessageOriginalParams,
   GetCLIMessageParams,
   GetCLIMessageRawParams,
+  GetCLIMessageThreadParams,
   GetCLIStatsParams,
   GetCardDAVConflictPathParameters,
   GetCardDAVPublicationPathParameters,
@@ -365,6 +368,7 @@ import type {
   TextConversationsResponse,
   TextMessagesResponse,
   TextSearchResponse,
+  ThreadPage,
   TokenUploadRequest,
   TotalStatsResponse,
   TriggerSyncParams,
@@ -1080,6 +1084,18 @@ export const getCLIMessage = (
   );
 };
 /**
+ * @summary Get one message's original MIME for export
+ */
+export const getCLIMessageOriginal = (
+  params?: GetCLIMessageOriginalParams,
+  options?: SecondParameter<typeof orvalFetch<CliOriginalMessageResponse>>,
+) => {
+  return orvalFetch<CliOriginalMessageResponse>(
+    { url: `/api/v1/cli/message/original`, method: "GET", params },
+    options,
+  );
+};
+/**
  * @summary Get one raw message for CLI export
  */
 export const getCLIMessageRaw = (
@@ -1093,6 +1109,18 @@ export const getCLIMessageRaw = (
       params,
       responseType: "blob",
     },
+    options,
+  );
+};
+/**
+ * @summary List one conversation in chronological order for export
+ */
+export const getCLIMessageThread = (
+  params?: GetCLIMessageThreadParams,
+  options?: SecondParameter<typeof orvalFetch<ThreadPage>>,
+) => {
+  return orvalFetch<ThreadPage>(
+    { url: `/api/v1/cli/message/thread`, method: "GET", params },
     options,
   );
 };

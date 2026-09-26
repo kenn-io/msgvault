@@ -2296,6 +2296,50 @@ func (o *GetCLIMessageRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// GetCLIMessageOriginalRequestOptions is the options needed to make a request to GetCLIMessageOriginal.
+type GetCLIMessageOriginalRequestOptions struct {
+	Query *GetCLIMessageOriginalQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetCLIMessageOriginalRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetCLIMessageOriginalRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetCLIMessageOriginalRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetCLIMessageOriginalRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetCLIMessageOriginalRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetCLIMessageRawRequestOptions is the options needed to make a request to GetCLIMessageRaw.
 type GetCLIMessageRawRequestOptions struct {
 	Query *GetCLIMessageRawQuery
@@ -2337,6 +2381,50 @@ func (o *GetCLIMessageRawRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetCLIMessageRawRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetCLIMessageThreadRequestOptions is the options needed to make a request to GetCLIMessageThread.
+type GetCLIMessageThreadRequestOptions struct {
+	Query *GetCLIMessageThreadQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetCLIMessageThreadRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetCLIMessageThreadRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetCLIMessageThreadRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetCLIMessageThreadRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetCLIMessageThreadRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 

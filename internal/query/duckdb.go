@@ -1781,7 +1781,7 @@ func (e *DuckDBEngine) ListAccounts(ctx context.Context) ([]AccountInfo, error) 
 	}
 
 	rows, err := e.db.QueryContext(ctx, `
-		SELECT id, source_type, identifier, COALESCE(display_name, '')
+		SELECT id, source_type, identifier, COALESCE(display_name, ''), last_sync_at
 		FROM sqlite_db.sources
 		ORDER BY identifier
 	`)
@@ -1793,8 +1793,13 @@ func (e *DuckDBEngine) ListAccounts(ctx context.Context) ([]AccountInfo, error) 
 	var accounts []AccountInfo
 	for rows.Next() {
 		var acc AccountInfo
-		if err := rows.Scan(&acc.ID, &acc.SourceType, &acc.Identifier, &acc.DisplayName); err != nil {
+		var lastSyncAt sql.NullTime
+		if err := rows.Scan(&acc.ID, &acc.SourceType, &acc.Identifier, &acc.DisplayName, &lastSyncAt); err != nil {
 			return nil, fmt.Errorf("scan account: %w", err)
+		}
+		if lastSyncAt.Valid {
+			syncedAt := lastSyncAt.Time.UTC()
+			acc.LastSyncAt = &syncedAt
 		}
 		accounts = append(accounts, acc)
 	}
@@ -3181,4 +3186,22 @@ func appendDuckDBRecipientSearchCondition(
 	)`, strings.Join(addressParts, " OR ")))
 	args = append(args, recipientArgs...)
 	return conditions, args
+}
+
+var errOriginalMessageNeedsSQLite = fmt.Errorf("original message export requires the SQLite archive: %w", ErrOriginalExportUnsupported)
+
+// ReadOriginalMessage reads from SQLite; the Parquet cache holds no raw MIME.
+func (e *DuckDBEngine) ReadOriginalMessage(ctx context.Context, ref MessageRef) (*OriginalMessage, error) {
+	if e.sqliteEngine == nil {
+		return nil, errOriginalMessageNeedsSQLite
+	}
+	return e.sqliteEngine.ReadOriginalMessage(ctx, ref)
+}
+
+// ListThread reads from SQLite because the Parquet cache can lag recent syncs.
+func (e *DuckDBEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPage, error) {
+	if e.sqliteEngine == nil {
+		return nil, errOriginalMessageNeedsSQLite
+	}
+	return e.sqliteEngine.ListThread(ctx, q)
 }

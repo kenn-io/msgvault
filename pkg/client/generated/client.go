@@ -291,9 +291,17 @@ type ClientInterface interface {
 	GetCLIMessage(ctx context.Context, options *GetCLIMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageResponse, error)
 	GetCLIMessageWithResponse(ctx context.Context, options *GetCLIMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageResp, error)
 
+	// GetCLIMessageOriginal Get one message's original MIME for export
+	GetCLIMessageOriginal(ctx context.Context, options *GetCLIMessageOriginalRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageOriginalResponse, error)
+	GetCLIMessageOriginalWithResponse(ctx context.Context, options *GetCLIMessageOriginalRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageOriginalResp, error)
+
 	// GetCLIMessageRaw Get one raw message for CLI export
 	GetCLIMessageRaw(ctx context.Context, options *GetCLIMessageRawRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageRawResponse, error)
 	GetCLIMessageRawWithResponse(ctx context.Context, options *GetCLIMessageRawRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageRawResp, error)
+
+	// GetCLIMessageThread List one conversation in chronological order for export
+	GetCLIMessageThread(ctx context.Context, options *GetCLIMessageThreadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageThreadResponse, error)
+	GetCLIMessageThreadWithResponse(ctx context.Context, options *GetCLIMessageThreadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageThreadResp, error)
 
 	// RebuildCLIFTS Rebuild the CLI full-text search index
 	RebuildCLIFTS(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*RebuildCLIFTSResponse, error)
@@ -4996,6 +5004,69 @@ func (c *Client) GetCLIMessage(ctx context.Context, options *GetCLIMessageReques
 	return responseParser(ctx, resp)
 }
 
+// GetCLIMessageOriginal Get one message's original MIME for export
+func (c *Client) GetCLIMessageOriginal(ctx context.Context, options *GetCLIMessageOriginalRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageOriginalResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/cli/message/original",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetCLIMessageOriginalResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetCLIMessageOriginalErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetCLIMessageOriginalErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetCLIMessageOriginalResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetCLIMessageOriginalResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/message/original")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetCLIMessageRaw Get one raw message for CLI export
 func (c *Client) GetCLIMessageRaw(ctx context.Context, options *GetCLIMessageRawRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageRawResponse, error) {
 	var err error
@@ -5039,6 +5110,69 @@ func (c *Client) GetCLIMessageRaw(ctx context.Context, options *GetCLIMessageRaw
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/message/raw")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetCLIMessageThread List one conversation in chronological order for export
+func (c *Client) GetCLIMessageThread(ctx context.Context, options *GetCLIMessageThreadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageThreadResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/cli/message/thread",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetCLIMessageThreadResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetCLIMessageThreadErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetCLIMessageThreadErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetCLIMessageThreadResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetCLIMessageThreadResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/message/thread")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

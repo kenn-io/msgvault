@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-24"
+last_edited: "2026-09-25"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -29,9 +29,14 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.29.0**.
+it is separate from the binary release version. The current schema is **2.30.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.30.0 adds `GET /api/v1/cli/message/original`, which returns one
+message's original MIME with its account and conversation, and
+`GET /api/v1/cli/message/thread`, which lists a whole conversation in
+chronological order and reports which messages have original MIME stored.
 
 Schema 2.29.0 adds `took_ms` and a required `timings` breakdown
 (`query_embedding_ms`, `retrieval_ms`, and `hydration_ms`) to vector and hybrid

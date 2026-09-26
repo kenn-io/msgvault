@@ -323,7 +323,11 @@ import (
 // 2.29.0 adds required took_ms and timings fields to vector and hybrid
 // /api/v1/search responses. timings reports query embedding, retrieval, and
 // hydration latency. Additive (minor bump): existing search fields are unchanged.
-const APISchemaVersion = "2.29.0"
+// 2.30.0 adds GET /api/v1/cli/message/original (a message's original MIME
+// and provenance) and GET /api/v1/cli/message/thread (a complete,
+// chronological conversation listing with original-MIME availability).
+// Additive (minor bump): existing routes are unchanged.
+const APISchemaVersion = "2.30.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

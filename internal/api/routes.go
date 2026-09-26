@@ -340,6 +340,10 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRouteWithRequest[CLIEmbeddingsPlanRequest, CLIEmbeddingsPlanResponse](apiV1, "planCLIEmbeddings", http.MethodPost, "/cli/embeddings/plan", "Plan CLI embeddings management", s.handleCLIEmbeddingsPlan)
 	registerAPIV1RawHumaNDJSONRouteWithRequest[CLIRunRequest, CLIRunEvent](apiV1, "runCLI", http.MethodPost, "/cli/run", "Run an allowlisted CLI command", s.handleCLIRun)
 	registerAPIV1RawHumaJSONRoute[cliMessageResponse](apiV1, "getCLIMessage", http.MethodGet, "/cli/message", "Get one message for CLI output", s.handleCLIMessage)
+	registerAPIV1RawHumaJSONRouteWithErrors[cliOriginalMessageResponse](apiV1, "getCLIMessageOriginal", http.MethodGet, "/cli/message/original", "Get one message's original MIME for export", s.handleCLIMessageOriginal,
+		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable)
+	registerAPIV1RawHumaJSONRouteWithErrors[query.ThreadPage](apiV1, "getCLIMessageThread", http.MethodGet, "/cli/message/thread", "List one conversation in chronological order for export", s.handleCLIMessageThread,
+		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable)
 	// Agent-token management routes: owner API key required.
 	registerAPIV1RawHumaJSONRouteWithRequest[agentTokenIssueRequest, agentTokenIssueResponse](apiV1, "issueAgentToken", http.MethodPost, "/agent-tokens", "Issue a restricted agent grant", s.handleIssueAgentToken, http.StatusCreated)
 	registerAPIV1RawHumaJSONRoute[agentTokenListResponse](apiV1, "listAgentTokens", http.MethodGet, "/agent-tokens", "List active agent grants", s.handleListAgentTokens)
@@ -767,6 +771,21 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}
 	case "getCLIMessage", "getCLIMessageRaw":
 		return []*huma.Param{queryStringParam("id", "Message numeric ID or source message ID", true)}
+	case "getCLIMessageOriginal":
+		return []*huma.Param{
+			queryIntegerParam("id", "Internal message ID"),
+			queryStringParam("source_message_id", "Provider message ID", false),
+			queryStringParam("account", "Source identifier that narrows the lookup", false),
+		}
+	case "getCLIMessageThread":
+		return []*huma.Param{
+			queryIntegerParam("id", "Internal ID of a message in the conversation"),
+			queryStringParam("source_message_id", "Provider ID of a message in the conversation", false),
+			queryStringParam("thread_id", "Provider conversation ID", false),
+			queryStringParam("account", "Source identifier that narrows the lookup", false),
+			queryIntegerParam(limitParam, "Messages per page (default 100, max 500)"),
+			queryIntegerParam("offset", "Messages to skip"),
+		}
 	case "getCLIAttachment":
 		return []*huma.Param{queryStringParam("content_hash", "Attachment SHA-256 content hash", true)}
 	case "getCLICollection":

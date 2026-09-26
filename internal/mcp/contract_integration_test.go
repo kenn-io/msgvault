@@ -28,6 +28,7 @@ var task5StableToolNames = []string{
 	ToolCreateSavedView,
 	ToolDeleteSavedView,
 	ToolExportAttachment,
+	ToolExportEML,
 	ToolFindSimilarMessages,
 	ToolGetAttachment,
 	ToolGetMessage,
@@ -35,6 +36,7 @@ var task5StableToolNames = []string{
 	ToolGetStats,
 	ToolListMessages,
 	ToolListSavedViews,
+	ToolListThread,
 	ToolRunSavedView,
 	ToolSearchByDomains,
 	ToolSearchInMessage,
@@ -45,6 +47,45 @@ var task5StableToolNames = []string{
 	ToolSemanticSearchMessages,
 	ToolStageDeletion,
 	ToolUpdateSavedView,
+}
+
+// task5OriginalEngine adds original-message export to the mock engine so
+// the export tools have a deterministic success path.
+type task5OriginalEngine struct {
+	*querytest.MockEngine
+
+	message *query.MessageDetail
+}
+
+func (e task5OriginalEngine) record() query.MessageRecord {
+	return query.MessageRecord{
+		MessageID: e.message.ID, SourceMessageID: e.message.SourceMessageID,
+		ConversationID: e.message.ConversationID, SourceConversationID: e.message.SourceConversationID,
+		SourceID: e.message.SourceID, Account: "alice@example.com", SourceType: "gmail",
+	}
+}
+
+func (e task5OriginalEngine) ReadOriginalMessage(_ context.Context, ref query.MessageRef) (*query.OriginalMessage, error) {
+	if ref.ID != e.message.ID {
+		return nil, store.ErrMessageNotFound
+	}
+	return &query.OriginalMessage{
+		MessageRecord: e.record(),
+		MIME:          []byte("Subject: Deterministic archive note\r\n\r\nneedle appears\r\n"),
+	}, nil
+}
+
+func (e task5OriginalEngine) ListThread(_ context.Context, _ query.ThreadQuery) (*query.ThreadPage, error) {
+	sentAt := e.message.SentAt
+	return &query.ThreadPage{
+		MessageRecord: e.record(),
+		Total:         1,
+		Messages: []query.ThreadMessage{{
+			ID: e.message.ID, SourceMessageID: e.message.SourceMessageID, Subject: e.message.Subject,
+			SentAt: &sentAt, From: e.message.From, To: e.message.To, Cc: []query.Address{}, HasRaw: true,
+			AttachmentCount: len(e.message.Attachments),
+		}},
+	}, nil
 }
 
 type task5Fixture struct {
@@ -215,7 +256,7 @@ func newTask5Fixture(t *testing.T, shape string) task5Fixture {
 
 	saver := &captureDeletionManifestSaver{}
 	opts := ServeOptions{
-		Engine: engine,
+		Engine: task5OriginalEngine{MockEngine: engine, message: message},
 		AttachmentReader: attachmentReaderFunc(func(_ context.Context, contentHash string) ([]byte, error) {
 			if contentHash != attachment.ContentHash {
 				return nil, fmt.Errorf("attachment content hash = %q, want %q", contentHash, attachment.ContentHash)
@@ -336,6 +377,10 @@ func task5ToolArguments(name, shape, exportDir string) (map[string]any, bool) {
 		return map[string]any{"id": 7}, true
 	case ToolGetAttachment:
 		return map[string]any{"attachment_id": 7}, true
+	case ToolExportEML:
+		return map[string]any{"id": 42, "length": 16}, true
+	case ToolListThread:
+		return map[string]any{"id": 42, "limit": 10}, true
 	case ToolExportAttachment:
 		return map[string]any{"attachment_id": 7, "destination": exportDir}, true
 	case ToolListMessages:

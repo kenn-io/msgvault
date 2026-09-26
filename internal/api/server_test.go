@@ -1825,6 +1825,8 @@ func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {
 		{method: http.MethodPost, path: "/api/v1/cli/embeddings/plan"},
 		{method: http.MethodGet, path: "/api/v1/cli/message"},
 		{method: http.MethodGet, path: "/api/v1/cli/message/raw"},
+		{method: http.MethodGet, path: "/api/v1/cli/message/original"},
+		{method: http.MethodGet, path: "/api/v1/cli/message/thread"},
 		{method: http.MethodGet, path: "/api/v1/cli/attachment"},
 		{method: http.MethodGet, path: "/api/v1/cli/search"},
 		{method: http.MethodPost, path: "/api/v1/cli/deduplicate/plan"},

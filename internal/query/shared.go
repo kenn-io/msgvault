@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -453,27 +454,18 @@ func getMessageRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tab
 		JOIN %smessages m ON m.id = mr.message_id
 		WHERE mr.message_id = ? AND %s
 	`, tablePrefix, tablePrefix, store.LiveMessagesWhere("m", false))), messageID).Scan(&compressed, &compression)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query message_raw for id %d: %w", messageID, err)
 	}
 
-	if compression.Valid && compression.String == "zlib" {
-		r, err := zlib.NewReader(bytes.NewReader(compressed))
-		if err != nil {
-			return nil, fmt.Errorf("zlib reader for id %d: %w", messageID, err)
-		}
-		defer func() { _ = r.Close() }()
-		raw, err := io.ReadAll(r)
-		if err != nil {
-			return nil, fmt.Errorf("zlib decompress message_raw id %d: %w", messageID, err)
-		}
-		return raw, nil
+	raw, err := inflateMessageRaw(compressed, compression)
+	if err != nil {
+		return nil, fmt.Errorf("message_raw id %d: %w", messageID, err)
 	}
-
-	return compressed, nil
+	return raw, nil
 }
 
 // getMessageByQueryShared retrieves a full message detail by an arbitrary WHERE clause.

@@ -394,6 +394,27 @@ func TestListAccounts(t *testing.T) {
 	assert.Equal(t, "test@gmail.com", accounts[0].Identifier)
 }
 
+func TestListAccountsLastSyncAt(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	env := newTestEnv(t)
+
+	accounts, err := env.Engine.ListAccounts(env.Ctx)
+	must.NoError(err, "ListAccounts before sync")
+	must.Len(accounts, 1)
+	checks.Nil(accounts[0].LastSyncAt, "never-synced source has no last sync time")
+
+	syncedAt := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	_, err = env.DB.Exec(`UPDATE sources SET last_sync_at = ? WHERE id = ?`, syncedAt, accounts[0].ID)
+	must.NoError(err, "set last_sync_at")
+
+	accounts, err = env.Engine.ListAccounts(env.Ctx)
+	must.NoError(err, "ListAccounts after sync")
+	must.Len(accounts, 1)
+	must.NotNil(accounts[0].LastSyncAt)
+	checks.True(syncedAt.Equal(*accounts[0].LastSyncAt), "last sync time %v", accounts[0].LastSyncAt)
+}
+
 func TestGetTotalStats(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)
