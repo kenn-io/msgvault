@@ -46,6 +46,49 @@ func TestBackupDatabaseContext_AtomicallyPublishesValidBackup(t *testing.T) {
 	assert.Empty(tempMatches, "successful backup must remove its staging directory")
 }
 
+func TestBackupDatabaseContext_PreservesTargetCreatedDuringBackup(t *testing.T) {
+	testutil.SkipIfPostgres(t, "VACUUM INTO backup publication is SQLite-only")
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	backupDir := t.TempDir()
+	dst := filepath.Join(backupDir, "msgvault.db.backup")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	// Hold the only connection so the backup passes its target check, then
+	// waits for a connection before running VACUUM INTO.
+	db := f.Store.DB()
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(ctx)
+	require.NoError(err)
+	waits := db.Stats().WaitCount
+	done := make(chan struct{})
+	var backupErr error
+	go func() {
+		defer close(done)
+		backupErr = f.Store.BackupDatabaseContext(ctx, dst)
+	}()
+	defer func() {
+		cancel()
+		_ = conn.Close()
+		<-done
+	}()
+	require.Eventually(func() bool { return db.Stats().WaitCount > waits },
+		5*time.Second, time.Millisecond, "backup must reach connection acquisition")
+	require.NoError(os.WriteFile(dst, []byte("keep this file"), 0o600))
+	require.NoError(conn.Close())
+	<-done
+
+	require.ErrorContains(backupErr, "backup target already exists")
+	data, err := os.ReadFile(dst)
+	require.NoError(err)
+	assert.Equal("keep this file", string(data))
+	entries, err := os.ReadDir(backupDir)
+	require.NoError(err)
+	assert.Len(entries, 1, "failed publication must remove its staging directory")
+}
+
 func TestBackupDatabaseContext_CancellationRemovesUnpublishedBackup(t *testing.T) {
 	testutil.SkipIfPostgres(t, "VACUUM INTO backup cancellation is SQLite-only")
 	assert := assert.New(t)

@@ -401,6 +401,8 @@ func persist(tokenDir string, permissions permissionBackend, credentials map[str
 }
 
 func publish(tokenDir string, permissions permissionBackend, encoded []byte) ([]byte, error) {
+	// Kit's WithPrivate permits SYSTEM and Administrators on Windows; this
+	// store requires and verifies a DACL containing only the current user.
 	temporary, err := os.CreateTemp(tokenDir, ".provider-credentials-*.json")
 	if err != nil {
 		return nil, fmt.Errorf("create credential candidate: %w", err)
