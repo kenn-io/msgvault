@@ -110,12 +110,17 @@ msgvault sync-slack T0123456789
 
 # Repair path: re-fetch everything, upserting in place.
 msgvault sync-slack --full
+
+# Override DM selection for this run, for example in a frequent channel-only job.
+msgvault sync-slack --dms=false --group-dms=false
 ```
 
 | Flag | Description |
 |---|---|
 | `--limit N` | Bound work per conversation, including thread replies; progress resumes next run |
+| `--dms BOOL` | Override one-to-one DM selection for this run |
 | `--full` | Re-fetch all messages and update the existing archive rows |
+| `--group-dms BOOL` | Override group DM selection for this run |
 | `--no-threads` | Skip thread-reply fetching this run (a later threaded run pays the debt automatically) |
 | `--maintenance` | Refresh recent messages and replies for edits and reaction changes |
 | `--no-media` | Skip file downloads this run (files stay pending for `backfill-slack-media`) |

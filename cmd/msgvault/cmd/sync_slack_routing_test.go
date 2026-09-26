@@ -5,11 +5,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -152,6 +154,32 @@ func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
 	assert.False(opts.ExcludeGroupDMs)
 }
 
+func TestApplySlackConversationOverrides(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	configured := &cobra.Command{}
+	configured.Flags().Bool("dms", true, "")
+	configured.Flags().Bool("group-dms", true, "")
+	configuredOpts := slack.ImportOptions{ExcludeDMs: true}
+	applySlackConversationOverrides(configured, &configuredOpts, false, false)
+	assert.True(configuredOpts.ExcludeDMs)
+	assert.False(configuredOpts.ExcludeGroupDMs)
+
+	cmd := &cobra.Command{}
+	dms := true
+	groupDMs := false
+	cmd.Flags().Bool("dms", true, "")
+	cmd.Flags().Bool("group-dms", true, "")
+	require.NoError(cmd.Flags().Set("dms", "true"))
+	require.NoError(cmd.Flags().Set("group-dms", "false"))
+
+	opts := slack.ImportOptions{ExcludeDMs: true}
+	applySlackConversationOverrides(cmd, &opts, dms, groupDMs)
+
+	assert.False(opts.ExcludeDMs)
+	assert.True(opts.ExcludeGroupDMs)
+}
+
 func TestWriteSlackProgressSanitizesProviderNames(t *testing.T) {
 	var out bytes.Buffer
 	writeSlackProgress(&out,
@@ -196,7 +224,9 @@ func TestSyncSlackCommandUsesDaemonRunner(t *testing.T) {
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
 		assert.Equal([]string{
 			"sync-slack",
+			"--dms=false",
 			"--full",
+			"--group-dms=false",
 			"--limit=25",
 			"--no-threads",
 			"T0123456789",
@@ -210,7 +240,9 @@ func TestSyncSlackCommandUsesDaemonRunner(t *testing.T) {
 	cmd.SetErr(&stdout)
 	cmd.SetArgs([]string{
 		"T0123456789",
+		"--dms=false",
 		"--full",
+		"--group-dms=false",
 		"--limit", "25",
 		"--no-threads",
 	})

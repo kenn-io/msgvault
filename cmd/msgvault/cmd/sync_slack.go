@@ -26,6 +26,7 @@ var (
 )
 
 func newSyncSlackCmd() *cobra.Command {
+	var syncDMs, syncGroupDMs bool
 	cmd := &cobra.Command{
 		Use:   "sync-slack [team-id]",
 		Short: "Sync Slack conversations (channels, group DMs, DMs)",
@@ -86,6 +87,7 @@ Examples:
 				}
 				imp := slack.NewImporter(s, slack.NewClient("", token), teamID)
 				opts := slackImportOptions(teamID, userID)
+				applySlackConversationOverrides(cmd, &opts, syncDMs, syncGroupDMs)
 				opts.Limit = syncSlackLimit
 				opts.Full = syncSlackFull
 				opts.NoThreads = syncSlackNoThreads
@@ -124,7 +126,18 @@ Examples:
 	cmd.Flags().BoolVar(&syncSlackNoThreads, "no-threads", false, "skip thread-reply fetching (backfill inline fetches and the reply sweep) for this run")
 	cmd.Flags().BoolVar(&syncSlackMaintenance, "maintenance", false, "run the maintenance rescan: repair edits and reaction changes on recent messages (archives ignore post-capture mutations by default)")
 	cmd.Flags().BoolVar(&syncSlackNoMedia, "no-media", false, "skip file downloads for this run (files are recorded as pending; backfill-slack-media fetches them later)")
+	cmd.Flags().BoolVar(&syncDMs, "dms", true, "include one-to-one DMs for this run, overriding config (true or false)")
+	cmd.Flags().BoolVar(&syncGroupDMs, "group-dms", true, "include group DMs for this run, overriding config (true or false)")
 	return cmd
+}
+
+func applySlackConversationOverrides(cmd *cobra.Command, opts *slack.ImportOptions, dms, groupDMs bool) {
+	if cmd.Flags().Changed("dms") {
+		opts.ExcludeDMs = !dms
+	}
+	if cmd.Flags().Changed("group-dms") {
+		opts.ExcludeGroupDMs = !groupDMs
+	}
 }
 
 func writeSlackProgress(out io.Writer, line string) {

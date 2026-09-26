@@ -924,12 +924,15 @@ config `channels`/`exclude_channels` filters select which channels sync. The
 msgvault sync-slack
 msgvault sync-slack T0123456789
 msgvault sync-slack --full
+msgvault sync-slack --dms=false --group-dms=false
 ```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--limit` | `0` | Max messages of work per conversation this run, thread replies included; the reply sweep gets the same budget workspace-wide (0 = no limit; every phase resumes next run so standing limited schedules converge; only the maintenance rescan is skipped) |
+| `--dms` | configured | Include one-to-one DMs for this run (`true` or `false`) |
 | `--full` | `false` | Start (or continue) a repair session: re-fetch every message, upserting in place (catches old thread replies and edits). Interrupted or --limit-scoped repairs resume across later runs of any kind until complete |
+| `--group-dms` | configured | Include group DMs for this run (`true` or `false`) |
 | `--no-threads` | `false` | Skip thread-reply fetching for this run (a later threaded run pays the debt automatically) |
 | `--maintenance` | `false` | Repair edits/reaction changes on recent messages (ignored by default after capture) |
 | `--no-media` | `false` | Skip file downloads for this run (files become pending markers; `backfill-slack-media` fetches them later) |
