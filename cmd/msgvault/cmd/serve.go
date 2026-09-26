@@ -1085,7 +1085,7 @@ func runDaemonSQLQueryWithJobs(
 		if err != nil {
 			return nil, nil, err
 		}
-		duckEngine, err := query.NewArchiveDuckDBEngine(c.AnalyticsDir(), duckOptions)
+		duckEngine, err := query.NewArchiveDuckDBEngine(ctx, c.AnalyticsDir(), duckOptions)
 		if err != nil {
 			return nil, nil, fmt.Errorf("open archive SQL engine: %w", err)
 		}

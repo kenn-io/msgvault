@@ -35,10 +35,11 @@ type SQLQuerier interface {
 
 // probeColumns checks which columns exist in a Parquet file.
 // Returns a set of column names present in the schema.
-// On any error, returns an empty map (callers supply defaults).
+// Missing optional schemas return an empty map (callers supply defaults).
+// Context cancellation remains an error so incomplete probes are not cached.
 func probeColumns(
-	db *sql.DB, pathPattern string, hivePartitioning bool,
-) map[string]bool {
+	ctx context.Context, db *sql.DB, pathPattern string, hivePartitioning bool,
+) (map[string]bool, error) {
 	cols := make(map[string]bool)
 	hiveOpt := ""
 	if hivePartitioning {
@@ -49,9 +50,9 @@ func probeColumns(
 		"DESCRIBE SELECT * FROM read_parquet('%s'%s)",
 		escaped, hiveOpt,
 	)
-	rows, err := db.Query(q)
+	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
-		return cols
+		return cols, ctx.Err()
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -66,9 +67,9 @@ func probeColumns(
 		}
 	}
 	if rows.Err() != nil {
-		return cols
+		return cols, ctx.Err()
 	}
-	return cols
+	return cols, ctx.Err()
 }
 
 // viewDef holds the parameters needed to create one DuckDB view
@@ -129,42 +130,51 @@ func buildViewSQL(def viewDef, probedCols map[string]bool) string {
 // probeAllOptionalColumns probes Parquet schemas for all tables that
 // have optional columns, returning a map of table name -> column set.
 // Used by both RegisterViews and RegisterViewsWithColumns.
-func probeAllOptionalColumns(db *sql.DB, analyticsDir string) map[string]map[string]bool {
+func probeAllOptionalColumns(ctx context.Context, db *sql.DB, analyticsDir string) (map[string]map[string]bool, error) {
 	msgGlob := filepath.Join(analyticsDir, datasetMessages, "**", "*.parquet")
 	tablePath := func(name string) string {
 		return filepath.Join(analyticsDir, name, "*.parquet")
 	}
-	return map[string]map[string]bool{
-		datasetMessages:      probeColumns(db, msgGlob, true),
-		datasetParticipants:  probeColumns(db, tablePath(datasetParticipants), false),
-		datasetConversations: probeColumns(db, tablePath(datasetConversations), false),
-		"attachments":        probeColumns(db, tablePath("attachments"), false),
-		"sources":            probeColumns(db, tablePath("sources"), false),
-		"message_recipients": probeColumns(db, tablePath("message_recipients"), false),
+	cols := make(map[string]map[string]bool)
+	for _, table := range []string{datasetMessages, datasetParticipants, datasetConversations, "attachments", "sources", "message_recipients"} {
+		path := tablePath(table)
+		partitioned := table == datasetMessages
+		if partitioned {
+			path = msgGlob
+		}
+		var err error
+		cols[table], err = probeColumns(ctx, db, path, partitioned)
+		if err != nil {
+			return nil, err
+		}
 	}
+	return cols, nil
 }
 
 // RegisterViews creates DuckDB views over the Parquet files in
 // analyticsDir. Each view normalises types and supplies defaults
 // for optional columns that may be absent in older cache files.
-func RegisterViews(db *sql.DB, analyticsDir string) error {
-	optCols := probeAllOptionalColumns(db, analyticsDir)
-	return RegisterViewsWithColumns(db, analyticsDir, optCols)
+func RegisterViews(ctx context.Context, db *sql.DB, analyticsDir string) error {
+	optCols, err := probeAllOptionalColumns(ctx, db, analyticsDir)
+	if err != nil {
+		return err
+	}
+	return RegisterViewsWithColumns(ctx, db, analyticsDir, optCols)
 }
 
 // RegisterViewsWithColumns is like RegisterViews but uses pre-computed
 // optional column info instead of probing Parquet schemas. Used by
 // NewDuckDBEngine which already probed columns during initialisation.
-func RegisterViewsWithColumns(db *sql.DB, analyticsDir string, optCols map[string]map[string]bool) error {
-	if err := createBaseViews(db, analyticsDir, optCols); err != nil {
+func RegisterViewsWithColumns(ctx context.Context, db *sql.DB, analyticsDir string, optCols map[string]map[string]bool) error {
+	if err := createBaseViews(ctx, db, analyticsDir, optCols); err != nil {
 		return fmt.Errorf("create base views: %w", err)
 	}
-	return createConvenienceViews(db)
+	return createConvenienceViews(ctx, db)
 }
 
 // createBaseViews creates the raw Parquet-backed views using the
 // pre-computed optional column map so no additional Parquet probes occur.
-func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[string]bool) error {
+func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCols map[string]map[string]bool) error {
 	msgGlob := filepath.Join(
 		analyticsDir, datasetMessages, "**", "*.parquet",
 	)
@@ -409,7 +419,7 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 			probe = map[string]bool{}
 		}
 		stmt := buildViewSQL(d.def, probe)
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("create view %s: %w", d.def.name, err)
 		}
 	}
@@ -419,7 +429,7 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 // createConvenienceViews builds higher-level views on top of the
 // base Parquet views. Each view joins or aggregates the base views
 // to provide ready-to-query datasets.
-func createConvenienceViews(db *sql.DB) error {
+func createConvenienceViews(ctx context.Context, db *sql.DB) error {
 	views := []struct {
 		name string
 		sql  string
@@ -432,7 +442,7 @@ func createConvenienceViews(db *sql.DB) error {
 		{"analytical_entries", sqlAnalyticalEntries},
 	}
 	for _, v := range views {
-		if _, err := db.Exec(v.sql); err != nil {
+		if _, err := db.ExecContext(ctx, v.sql); err != nil {
 			return fmt.Errorf("create view %s: %w", v.name, err)
 		}
 	}

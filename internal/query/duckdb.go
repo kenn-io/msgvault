@@ -144,7 +144,7 @@ type DuckDBOptions struct {
 // NewArchiveDuckDBEngine creates a separate SQL engine restricted to the
 // analytics directory. It never attaches SQLite or loads its scanner. Views,
 // resource limits, and publication locking work as on the owner query engine.
-func NewArchiveDuckDBEngine(analyticsDir string, opts ...DuckDBOptions) (*DuckDBEngine, error) {
+func NewArchiveDuckDBEngine(ctx context.Context, analyticsDir string, opts ...DuckDBOptions) (*DuckDBEngine, error) {
 	if analyticsDir == "" {
 		return nil, errors.New("archive SQL requires an analytics directory")
 	}
@@ -152,18 +152,18 @@ func NewArchiveDuckDBEngine(analyticsDir string, opts ...DuckDBOptions) (*DuckDB
 	if err != nil {
 		return nil, fmt.Errorf("resolve analytics directory: %w", err)
 	}
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil, opts...)
+	engine, err := newDuckDBEngine(ctx, analyticsDir, "", nil, opts...)
 	if err != nil {
 		return nil, err
 	}
 	// The constructor registered trusted Parquet views. Lock this independent
 	// instance before any caller SQL runs; the owner engine stays unrestricted.
 	escapedDir := strings.ReplaceAll(filepath.ToSlash(analyticsDir), "'", "''")
-	_, err = engine.db.Exec("SET allowed_directories = ['" + escapedDir + "']; " +
-		"SET autoinstall_known_extensions = false; " +
-		"SET autoload_known_extensions = false; " +
-		"SET allow_community_extensions = false; " +
-		"SET enable_external_access = false; " +
+	_, err = engine.db.ExecContext(ctx, "SET allowed_directories = ['"+escapedDir+"']; "+
+		"SET autoinstall_known_extensions = false; "+
+		"SET autoload_known_extensions = false; "+
+		"SET allow_community_extensions = false; "+
+		"SET enable_external_access = false; "+
 		"SET lock_configuration = true")
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("restrict archive SQL access: %w", err), engine.Close())
@@ -184,6 +184,10 @@ func NewArchiveDuckDBEngine(analyticsDir string, opts ...DuckDBOptions) (*DuckDB
 // If sqliteDB is nil, Search will fall back to LIKE queries and body extraction
 // from raw MIME may be slower.
 func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, opts ...DuckDBOptions) (*DuckDBEngine, error) {
+	return newDuckDBEngine(context.Background(), analyticsDir, sqlitePath, sqliteDB, opts...)
+}
+
+func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string, sqliteDB *sql.DB, opts ...DuckDBOptions) (*DuckDBEngine, error) {
 	var opt DuckDBOptions
 	if len(opts) > 0 {
 		opt = opts[0]
@@ -199,7 +203,7 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 		ownTempDirectory = true
 	}
 
-	db, err := duckdbutil.Open(context.Background(), duckdbutil.InteractivePolicyWithOverrides(
+	db, err := duckdbutil.Open(ctx, duckdbutil.InteractivePolicyWithOverrides(
 		tempDirectory,
 		duckdbutil.InteractiveOverrides{
 			MemoryLimit:          opt.MemoryLimit,
@@ -221,13 +225,13 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	// On other platforms, try to load but fall back gracefully (e.g. no internet).
 	var hasSQLiteScanner bool
 	if sqlitePath != "" && runtime.GOOS != "windows" && !opt.DisableSQLiteScanner {
-		if _, err := db.Exec("INSTALL sqlite; LOAD sqlite;"); err != nil {
+		if _, err := db.ExecContext(ctx, "INSTALL sqlite; LOAD sqlite;"); err != nil {
 			log.Printf("[warn] sqlite_scanner extension unavailable, falling back to direct SQLite: %v", err)
 		} else {
 			// Attach SQLite database as read-only
 			escapedPath := strings.ReplaceAll(sqlitePath, "'", "''")
 			attachSQL := fmt.Sprintf("ATTACH '%s' AS sqlite_db (TYPE sqlite, READ_ONLY)", escapedPath)
-			if _, err := db.Exec(attachSQL); err != nil {
+			if _, err := db.ExecContext(ctx, attachSQL); err != nil {
 				log.Printf("[warn] failed to attach SQLite via sqlite_scanner, falling back to direct SQLite: %v", err)
 			} else {
 				hasSQLiteScanner = true
@@ -256,7 +260,7 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	}
 	var releaseInitialCacheRead func()
 	if analyticsDir != "" {
-		releaseInitialCacheRead, err = AcquireCacheReadLock(context.Background(), analyticsDir)
+		releaseInitialCacheRead, err = AcquireCacheReadLock(ctx, analyticsDir)
 		if err != nil {
 			_ = engine.Close()
 			return nil, err
@@ -273,9 +277,12 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 
 	// Probe Parquet schemas for optional columns added in PR #160 (WhatsApp import).
 	// Old cache files may lack these columns; we'll supply defaults in parquetCTEs().
-	engine.optionalCols, engine.cacheFP = stableOptionalColumns(engine.cacheFingerprint, func() map[string]map[string]bool {
-		return probeAllOptionalColumns(db, analyticsDir)
+	engine.optionalCols, engine.cacheFP, err = stableOptionalColumns(ctx, engine.cacheFingerprint, func() (map[string]map[string]bool, error) {
+		return probeAllOptionalColumns(ctx, db, analyticsDir)
 	})
+	if err != nil {
+		return nil, errors.Join(err, engine.Close())
+	}
 	var missing []string
 	for _, col := range []struct{ table, col string }{
 		{datasetParticipants, "phone_number"},
@@ -298,7 +305,10 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	// Register SQL views over Parquet files for raw SQL access.
 	// Pass the already-probed optionalCols to avoid a redundant schema probe.
 	if !engine.disableLegacyAnalyticalViews {
-		if err := RegisterViewsWithColumns(db, analyticsDir, engine.optionalCols); err != nil {
+		if err := RegisterViewsWithColumns(ctx, db, analyticsDir, engine.optionalCols); err != nil {
+			if ctx.Err() != nil {
+				return nil, errors.Join(ctx.Err(), engine.Close())
+			}
 			log.Printf("[warn] failed to register SQL views: %v", err)
 			// Non-fatal: existing CTE-based queries still work.
 		}
@@ -440,7 +450,10 @@ func (e *DuckDBEngine) acquireCacheRead(ctx context.Context) (func(), error) {
 		release()
 		return nil, err
 	}
-	e.ensureFreshOptionalCols(statSig)
+	if err := e.ensureFreshOptionalCols(ctx, statSig); err != nil {
+		release()
+		return nil, err
+	}
 	return release, nil
 }
 
@@ -571,15 +584,25 @@ func (e *DuckDBEngine) cacheFingerprintGlobs() []string {
 }
 
 func stableOptionalColumns(
+	ctx context.Context,
 	cacheFingerprint func() string,
-	probe func() map[string]map[string]bool,
-) (map[string]map[string]bool, string) {
+	probe func() (map[string]map[string]bool, error),
+) (map[string]map[string]bool, string, error) {
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
 		before := cacheFingerprint()
-		cols := probe()
+		cols, err := probe()
+		if err != nil {
+			return nil, "", err
+		}
 		after := cacheFingerprint()
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
 		if before == after {
-			return cols, after
+			return cols, after, nil
 		}
 		log.Printf("[info] analytics cache changed during Parquet schema probe — retrying")
 	}
@@ -597,31 +620,41 @@ func stableOptionalColumns(
 //
 // Runs centrally from acquireCacheRead, so every query path — slot-gated and
 // detail lookups alike — refreshes before touching Parquet or the views.
-func (e *DuckDBEngine) ensureFreshOptionalCols(fp string) {
+func (e *DuckDBEngine) ensureFreshOptionalCols(ctx context.Context, fp string) error {
 	e.optColsMu.RLock()
 	unchanged := fp == e.cacheFP
 	e.optColsMu.RUnlock()
 	if unchanged {
-		return
+		return ctx.Err()
 	}
 
 	e.optColsMu.Lock()
 	defer e.optColsMu.Unlock()
 	if fp == e.cacheFP { // another goroutine refreshed while we waited
-		return
+		return ctx.Err()
 	}
 
-	newCols, fp := stableOptionalColumns(e.cacheFingerprint, func() map[string]map[string]bool {
-		return probeAllOptionalColumns(e.db, e.analyticsDir)
+	newCols, fp, err := stableOptionalColumns(ctx, e.cacheFingerprint, func() (map[string]map[string]bool, error) {
+		return probeAllOptionalColumns(ctx, e.db, e.analyticsDir)
 	})
-	e.optionalCols = newCols
-	e.cacheFP = fp
+	if err != nil {
+		return err
+	}
 	if !e.disableLegacyAnalyticalViews {
-		if err := RegisterViewsWithColumns(e.db, e.analyticsDir, newCols); err != nil {
+		if err := RegisterViewsWithColumns(ctx, e.db, e.analyticsDir, newCols); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			log.Printf("[warn] re-register views after analytics cache change: %v", err)
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	e.optionalCols = newCols
+	e.cacheFP = fp
 	log.Printf("[info] analytics cache changed — re-probed Parquet optional columns")
+	return nil
 }
 
 func (e *DuckDBEngine) currentCacheFingerprint() string {

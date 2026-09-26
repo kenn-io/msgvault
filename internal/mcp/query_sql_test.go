@@ -101,7 +101,7 @@ func TestQuerySQLToolConfinesDaemonOwnerCredentialsToArchive(t *testing.T) {
 	owner, err := query.NewDuckDBEngine(analyticsDir, "", nil, options)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(owner.Close()) })
-	archive, err := query.NewArchiveDuckDBEngine(analyticsDir, options)
+	archive, err := query.NewArchiveDuckDBEngine(t.Context(), analyticsDir, options)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(archive.Close()) })
 	daemon := api.NewServerWithOptions(api.ServerOptions{

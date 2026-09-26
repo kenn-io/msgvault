@@ -29,6 +29,15 @@ const (
 // TestMCPInitializeWithoutStats exercises the real mcp command in a child
 // process so stdio startup and the daemon request boundary stay in the test.
 func TestMCPInitializeWithoutStats(t *testing.T) {
+	testMCPStartupCatalog(t, api.AnalyticsModeDuckDB)
+}
+
+func TestMCPPostgresCatalogWithoutSQL(t *testing.T) {
+	testMCPStartupCatalog(t, api.AnalyticsModePostgres)
+}
+
+func testMCPStartupCatalog(t *testing.T, analyticsEngine string) {
+	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -39,7 +48,7 @@ func TestMCPInitializeWithoutStats(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/health":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, api.APISchemaVersion)
+			_, _ = fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q,"analytics_engine":%q}`, api.APISchemaVersion, analyticsEngine)
 		case "/api/v1/stats":
 			statsSeen <- struct{}{}
 			<-releaseStats
@@ -142,6 +151,11 @@ func TestMCPInitializeWithoutStats(t *testing.T) {
 	assert.Contains(names, "semantic_search_messages")
 	assert.NotContains(names, "find_similar_messages")
 	assert.NotContains(names, "search_visual_attachments")
+	if analyticsEngine == api.AnalyticsModePostgres {
+		assert.NotContains(names, "query_sql")
+	} else {
+		assert.Contains(names, "query_sql")
+	}
 	assert.Empty(statsSeen, "tool discovery must not request /api/v1/stats")
 
 	_ = stdin.Close()

@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"encoding/json/v2"
 	"fmt"
 	"os"
@@ -14,10 +15,67 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestArchiveDuckDBEngineCanceledStartupCleansOwnedSpill(t *testing.T) {
+	requirements := require.New(t)
+	spillDir := t.TempDir()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	engine, err := NewArchiveDuckDBEngine(ctx, t.TempDir(), DuckDBOptions{
+		TempDirectory: spillDir, OwnTempDirectory: true,
+	})
+	requirements.ErrorIs(err, context.Canceled)
+	requirements.Nil(engine)
+	_, err = os.Stat(spillDir)
+	requirements.ErrorIs(err, os.ErrNotExist)
+}
+
+func TestArchiveDuckDBEngineStartupHonorsDeadlineDuringPublication(t *testing.T) {
+	requirements := require.New(t)
+	builder := NewTestDataBuilder(t)
+	builder.AddSource("owner@example.com")
+	builder.AddMessage(MessageOpt{Subject: "Published message"})
+	dir, cleanup := builder.Build()
+	t.Cleanup(cleanup)
+	publicationLock := flock.New(CacheBuildLockPath(dir))
+	requirements.NoError(publicationLock.Lock())
+	spillDir := filepath.Join(t.TempDir(), "spill")
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		engine, err := NewArchiveDuckDBEngine(ctx, dir, DuckDBOptions{
+			TempDirectory: spillDir, OwnTempDirectory: true,
+		})
+		if engine != nil {
+			_ = engine.Close()
+		}
+		done <- err
+	}()
+	t.Cleanup(func() {
+		cancel()
+		requirements.NoError(publicationLock.Unlock())
+		select {
+		case <-finished:
+		case <-time.After(10 * time.Second):
+			requirements.FailNow("archive engine startup did not settle")
+		}
+	})
+	select {
+	case err := <-done:
+		requirements.ErrorIs(err, context.DeadlineExceeded)
+	case <-time.After(10 * time.Second):
+		requirements.FailNow("archive engine startup ignored its deadline while publication was locked")
+	}
+	_, err := os.Stat(spillDir)
+	requirements.ErrorIs(err, os.ErrNotExist, "failed startup must clean up its owned spill directory")
+}
+
 func TestArchiveDuckDBEngineRestrictsSQLToAnalytics(t *testing.T) {
 	requirements := require.New(t)
 	t.Run("missing analytics directory", func(t *testing.T) {
-		_, err := NewArchiveDuckDBEngine("")
+		_, err := NewArchiveDuckDBEngine(t.Context(), "")
 		require.Error(t, err)
 	})
 
@@ -31,7 +89,7 @@ func TestArchiveDuckDBEngineRestrictsSQLToAnalytics(t *testing.T) {
 
 	outside := filepath.Join(t.TempDir(), "outside.txt")
 	requirements.NoError(os.WriteFile(outside, []byte("synthetic outside content"), 0o600))
-	engine, err := NewArchiveDuckDBEngine(dir)
+	engine, err := NewArchiveDuckDBEngine(t.Context(), dir)
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(engine.Close()) })
 
@@ -84,7 +142,7 @@ func TestArchiveDuckDBEngineFollowsPublication(t *testing.T) {
 	builder.AddMessage(MessageOpt{Subject: "Original publication"})
 	dir, cleanup := builder.Build()
 	t.Cleanup(cleanup)
-	engine, err := NewArchiveDuckDBEngine(dir)
+	engine, err := NewArchiveDuckDBEngine(t.Context(), dir)
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(engine.Close()) })
 	before, err := engine.QuerySQL(t.Context(), "SELECT subject FROM messages")
@@ -100,7 +158,7 @@ func TestArchiveDuckDBEngineFollowsPublication(t *testing.T) {
 	requirements.Len(files, 1)
 	replacement := filepath.Join(t.TempDir(), "replacement.parquet")
 	_, err = writer.db.Exec(fmt.Sprintf(
-		"COPY (SELECT * REPLACE ('New publication' AS subject) FROM read_parquet('%s')) TO '%s' (FORMAT PARQUET)",
+		"COPY (SELECT * EXCLUDE (message_type) REPLACE ('New publication' AS subject) FROM read_parquet('%s')) TO '%s' (FORMAT PARQUET)",
 		escapePath(files[0]), escapePath(replacement)))
 	requirements.NoError(err)
 	publicationLock := flock.New(CacheBuildLockPath(dir))
@@ -116,6 +174,41 @@ func TestArchiveDuckDBEngineFollowsPublication(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(os.WriteFile(CacheStatePath(dir), marker, 0o600))
 	requirements.NoError(publicationLock.Unlock())
+
+	// Keep the real DuckDB connection occupied until the refreshed schema
+	// probe is waiting for it, then cancel that query. The next query must
+	// retry the refresh, including views that referenced the removed column.
+	conn, err := engine.db.Conn(t.Context())
+	requirements.NoError(err)
+	ctx, cancel := context.WithCancel(t.Context())
+	waitCount := engine.db.Stats().WaitCount
+	done := make(chan error, 1)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		_, err := engine.QuerySQL(ctx, "SELECT subject FROM messages")
+		done <- err
+	}()
+	t.Cleanup(func() {
+		cancel()
+		_ = conn.Close()
+		select {
+		case <-finished:
+		case <-time.After(10 * time.Second):
+			requirements.FailNow("canceled archive query did not settle")
+		}
+	})
+	requirements.Eventually(func() bool {
+		return engine.db.Stats().WaitCount > waitCount
+	}, 10*time.Second, 10*time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		requirements.ErrorIs(err, context.Canceled)
+	case <-time.After(10 * time.Second):
+		requirements.FailNow("archive schema refresh ignored cancellation")
+	}
+	requirements.NoError(conn.Close())
 
 	after, err := engine.QuerySQL(t.Context(), "SELECT subject FROM messages")
 	requirements.NoError(err)

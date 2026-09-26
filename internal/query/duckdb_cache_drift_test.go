@@ -216,19 +216,20 @@ func TestStableOptionalColumnsRetriesWhenFingerprintChanges(t *testing.T) {
 	fingerprints := []string{"before", "after", "after", "after"}
 	probeCalls := 0
 
-	cols, fp := stableOptionalColumns(func() string {
+	cols, fp, err := stableOptionalColumns(t.Context(), func() string {
 		require.NotEmpty(fingerprints, "unexpected fingerprint call")
 		fp := fingerprints[0]
 		fingerprints = fingerprints[1:]
 		return fp
-	}, func() map[string]map[string]bool {
+	}, func() (map[string]map[string]bool, error) {
 		probeCalls++
 		if probeCalls == 1 {
-			return staleCols
+			return staleCols, nil
 		}
-		return freshCols
+		return freshCols, nil
 	})
 
+	require.NoError(err)
 	assert.Equal(2, probeCalls)
 	assert.Equal(freshCols, cols)
 	assert.Equal("after", fp)
