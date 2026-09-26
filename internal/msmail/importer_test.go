@@ -85,8 +85,11 @@ func raw(id string, version int) string {
 // rawWithAttachment carries one file. When shifted, a second text part comes
 // first, so the file gets another MIME part key.
 func rawWithAttachment(id string, shifted bool, content string) string {
-	if content == "" {
+	switch content {
+	case "":
 		content = "aGVsbG8="
+	case "-":
+		content = "" // an empty file
 	}
 	extra := ""
 	if shifted {
@@ -553,7 +556,7 @@ func TestImportInterruptedRewalkStartsOver(t *testing.T) {
 }
 
 // When the attachment of a refreshed message cannot be written, the row of
-// the old MIME stays and the sync fails, so the next sync stores it.
+// the old MIME stays, and the next sync downloads the message again.
 func TestImportRefreshKeepsAttachmentWhenWriteFails(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -569,8 +572,9 @@ func TestImportRefreshKeepsAttachmentWhenWriteFails(t *testing.T) {
 	f.attachDir = filepath.Join(blocker, "attachments") // cannot be created
 	f.shifted["m1"] = true                              // the file gets a new part key
 	f.put("m1", "inbox")
-	_, err = f.sync(t, st)
-	require.Error(err)
+	sum, err := f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(1, sum.Errors)
 	assert.Equal([2]int{1, 1}, attachments(t, st))
 
 	f.attachDir = ""
@@ -580,9 +584,9 @@ func TestImportRefreshKeepsAttachmentWhenWriteFails(t *testing.T) {
 	assert.Equal("mime:3", attachmentKey(t, st), "the old row is replaced by the new part")
 }
 
-// A refreshed part with the same key but new bytes that cannot be written
-// fails the sync, so the old content is not kept as if it were current.
-func TestImportRefreshFailsWhenChangedPartIsNotWritten(t *testing.T) {
+// A refreshed part with the same key but new bytes that cannot be written is
+// retried on the next sync, so the old content is not kept as if current.
+func TestImportRefreshRetriesChangedPartNotWritten(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -598,8 +602,9 @@ func TestImportRefreshFailsWhenChangedPartIsNotWritten(t *testing.T) {
 	f.attachDir = filepath.Join(blocker, "attachments") // cannot be created
 	f.attachmentBody["m1"] = "d29ybGQ="                 // same part, new bytes
 	f.put("m1", "inbox")
-	_, err = f.sync(t, st)
-	require.Error(err)
+	sum, err := f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(1, sum.Errors)
 
 	f.attachDir = ""
 	_, err = f.sync(t, st)
@@ -624,4 +629,65 @@ func attachmentHash(t *testing.T, st *store.Store) string {
 		SELECT a.content_hash FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_message_id = 'm1'`)).Scan(&hash))
 	return hash
+}
+
+// A new message whose attachment cannot be written is downloaded again on the
+// next sync, even though a walk skips known messages.
+func TestImportNewMessageAttachmentWriteFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	blocker := filepath.Join(t.TempDir(), "file")
+	require.NoError(os.WriteFile(blocker, nil, 0o600))
+	f.attachDir = filepath.Join(blocker, "attachments") // cannot be created
+	f.withAttachment["m1"] = true
+	f.put("m1", "inbox")
+	sum, err := f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(1, sum.Errors)
+	assert.Equal([2]int{0, 0}, attachments(t, st))
+
+	f.attachDir = ""
+	f.expired["inbox"] = true // the next sync walks, and a walk skips known messages
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.Equal([2]int{1, 1}, attachments(t, st))
+}
+
+// Storage skips an empty attachment on purpose, so it does not fail the sync.
+func TestImportEmptyAttachmentDoesNotFail(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.withAttachment["m1"] = true
+	f.attachmentBody["m1"] = "-"
+	f.put("m1", "inbox")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+
+	f.put("m1", "inbox") // refresh
+	_, err = f.sync(t, st)
+	require.NoError(err)
+}
+
+// A folder removed from the mailbox is retired: its messages that moved get
+// their new folder, and the ones that are gone are marked deleted.
+func TestImportRemovedFolderIsRetired(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.folders = append(f.folders, "old")
+	f.put("m1", "old")
+	f.put("m2", "old")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+
+	f.folders = []string{"inbox", "archive"} // "old" is removed
+	f.remove("m1")
+	f.folder["m2"] = "inbox" // moved before the removal, with no change log entry
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(map[string]string{"m1": "deleted", "m2": "Inbox"}, state(t, st))
 }

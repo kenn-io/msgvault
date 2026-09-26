@@ -3,6 +3,7 @@ package msmail
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
@@ -25,6 +26,9 @@ const SourceType = "msmail"
 // run, because its end looks up the archived messages it did not return, so
 // an interrupted walk starts over. Known messages are not downloaded again.
 const walkPrefix = "walk:"
+
+// retryPrefix marks a saved-state key that names a message to download again.
+const retryPrefix = "retry:"
 
 // fetchWorkers is the number of parallel $value downloads. Microsoft documents
 // four concurrent requests per mailbox as the limit.
@@ -101,13 +105,25 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		}
 	}()
 
-	s := &syncer{st: st, c: c, opts: opts, log: log, sourceID: src.ID, sum: sum}
+	s := &syncer{st: st, c: c, opts: opts, log: log, sourceID: src.ID, sum: sum, cursors: cursors}
 	folders, err := c.ListFolders(ctx)
 	if err != nil {
 		return sum, fmt.Errorf("list mail folders: %w", err)
 	}
 	if s.labels, err = s.ensureLabels(ctx, folders); err != nil {
 		return sum, err
+	}
+	if err = s.retryAttachments(ctx); err != nil {
+		return sum, err
+	}
+	for id := range cursors {
+		if _, listed := s.labels[id]; listed || strings.HasPrefix(id, retryPrefix) {
+			continue
+		}
+		if err = s.retireFolder(ctx, id); err != nil {
+			return sum, fmt.Errorf("retire removed folder: %w", err)
+		}
+		delete(cursors, id)
 	}
 
 	for _, f := range folders {
@@ -186,6 +202,10 @@ func mergeCursors(dst map[string]string, blob string) {
 }
 
 type syncer struct {
+	// cursors is the saved state: folder ID -> delta link, and
+	// retryPrefix + message ID -> folder ID for messages to download again.
+	cursors map[string]string
+
 	st       *store.Store
 	c        *Client
 	opts     Options
@@ -290,7 +310,7 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 			todo = append(todo, m)
 		}
 	}
-	if err := s.download(ctx, folderLabel, todo); err != nil {
+	if err := s.download(ctx, folderID, todo); err != nil {
 		return err
 	}
 
@@ -303,31 +323,123 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 	return s.relocate(ctx, removed)
 }
 
-// attachmentsStored reports whether every attachment part of a new MIME has a
-// row with its part key and the hash of its new content. A part without a key
-// cannot be checked, so it counts as missing.
-func (s *syncer) attachmentsStored(ctx context.Context, messageID int64, atts []mime.Attachment) (bool, error) {
-	want := map[string]string{} // part key -> content hash
-	for _, a := range atts {
-		if a.PartKey == "" {
-			return false, nil
+// afterStore makes sure that every attachment of a stored MIME has a row. For
+// a refreshed message, it then drops the rows of parts that the new MIME no
+// longer has. If a row is missing, the old rows stay and it returns an error.
+func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) error {
+	if s.opts.AttachmentsDir == "" {
+		return nil // no attachment rows are written
+	}
+	msgID := m.archiveID
+	if msgID == 0 {
+		ids, err := s.st.MessageExistsBatch(s.sourceID, []string{m.ID})
+		if err != nil {
+			return err
 		}
-		want[a.PartKey] = a.ContentHash
+		msgID = ids[m.ID]
+	}
+	parsed, _ := mime.ParseWithRecovery(raw, "")
+	complete, err := s.attachmentsStored(ctx, msgID, parsed.Attachments)
+	if err != nil {
+		return err
+	}
+	if !complete {
+		return errors.New("an attachment was not stored")
+	}
+	if m.archiveID == 0 {
+		return nil
+	}
+	keep := make([]string, 0, len(parsed.Attachments))
+	for _, a := range parsed.Attachments {
+		keep = append(keep, a.PartKey)
+	}
+	if err := s.st.DeleteMIMEAttachmentsExceptContext(ctx, msgID, keep); err != nil {
+		return err
+	}
+	return s.st.RecomputeMessageAttachmentStats(msgID)
+}
+
+// attachmentsStored reports whether every attachment that storage writes has
+// a row with its part key and content hash. Storage skips a part with no
+// content. A part without a key is matched by its hash alone.
+func (s *syncer) attachmentsStored(ctx context.Context, messageID int64, atts []mime.Attachment) (bool, error) {
+	want := map[string][2]string{}
+	for _, a := range atts {
+		if len(a.Content) == 0 {
+			continue
+		}
+		want[a.PartKey+"\x00"+a.ContentHash] = [2]string{a.PartKey, a.ContentHash}
 	}
 	if len(want) == 0 {
 		return true, nil
 	}
 	args := []any{messageID}
 	match := make([]string, 0, len(want))
-	for k, h := range want {
-		match = append(match, "(source_part_key = ? AND content_hash = ?)")
-		args = append(args, k, h)
+	for _, kh := range want {
+		match = append(match, "(COALESCE(source_part_key, '') = ? AND content_hash = ?)")
+		args = append(args, kh[0], kh[1])
 	}
 	var n int
 	err := s.st.DB().QueryRowContext(ctx, s.st.Rebind(`
-		SELECT COUNT(DISTINCT source_part_key) FROM attachments
+		SELECT COUNT(DISTINCT COALESCE(source_part_key, '') || ':' || content_hash) FROM attachments
 		WHERE message_id = ? AND (`+strings.Join(match, " OR ")+`)`), args...).Scan(&n)
 	return n == len(want), err
+}
+
+// retryAttachments downloads again the messages whose attachments did not
+// store in an earlier sync. A message that is gone is marked deleted.
+func (s *syncer) retryAttachments(ctx context.Context) error {
+	var ids []string
+	for key := range s.cursors {
+		if id, ok := strings.CutPrefix(key, retryPrefix); ok {
+			ids = append(ids, id)
+		}
+	}
+	for _, id := range ids {
+		delete(s.cursors, retryPrefix+id)
+		known, err := s.st.MessageExistsBatch(s.sourceID, []string{id})
+		if err != nil {
+			return err
+		}
+		if known[id] == 0 {
+			continue
+		}
+		parent, err := s.c.ParentFolderID(ctx, id)
+		if errors.Is(err, msgraph.ErrNotFound) || (err == nil && s.deletions != "" && parent == s.deletions) {
+			if err := s.st.MarkMessagesDeletedBatch(s.sourceID, []string{id}); err != nil {
+				return err
+			}
+			s.sum.Deleted++
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("look up message to retry: %w", err)
+		}
+		if _, ok := s.labels[parent]; !ok {
+			s.cursors[retryPrefix+id] = parent // a folder this run did not list
+			continue
+		}
+		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, archiveID: known[id]}}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// retireFolder handles a folder that has a saved cursor but is no longer in
+// the mailbox. Each archived message still labeled with it is looked up: it
+// moved to another folder, or it is gone.
+func (s *syncer) retireFolder(ctx context.Context, folderID string) error {
+	var labelID int64
+	err := s.st.DB().QueryRowContext(ctx, s.st.Rebind(`
+		SELECT id FROM labels WHERE source_id = ? AND source_label_id = ?`), s.sourceID, folderID).Scan(&labelID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.reconcileWalk(ctx, labelID, nil)
 }
 
 // reconcileWalk looks up the archived messages of a folder that a complete
@@ -407,7 +519,8 @@ type fetched struct {
 // them one at a time. A message that disappears before its download is
 // skipped. Any other download failure stops the sync, so the cursor does not
 // move past a message that is not in the vault.
-func (s *syncer) download(ctx context.Context, folderLabel int64, msgs []DeltaMessage) error {
+func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMessage) error {
+	folderLabel := s.labels[folderID]
 	if len(msgs) == 0 {
 		return nil
 	}
@@ -468,34 +581,15 @@ func (s *syncer) download(ctx context.Context, folderLabel int64, msgs []DeltaMe
 			cancel()
 			continue
 		}
+		if err := s.afterStore(ctx, r.msg, r.raw); err != nil {
+			// The message is stored, but an attachment is not. A later walk
+			// would skip the known message, so it goes on the retry list.
+			s.log.Warn("attachment not stored, retrying on the next sync", "id", r.msg.ID, "error", err)
+			s.sum.Errors++
+			s.cursors[retryPrefix+r.msg.ID] = folderID
+		}
 		if r.msg.archiveID == 0 {
 			s.sum.Added++
-			continue
-		}
-		// The new MIME replaces the old one. Its attachment rows are written,
-		// so drop the rows of parts that the new MIME no longer has.
-		parsed, _ := mime.ParseWithRecovery(r.raw, "")
-		keep := make([]string, 0, len(parsed.Attachments))
-		for _, a := range parsed.Attachments {
-			keep = append(keep, a.PartKey)
-		}
-		// A part that was not stored fails the page, so the old rows stay
-		// and the next sync downloads the message again.
-		complete, err := s.attachmentsStored(ctx, r.msg.archiveID, parsed.Attachments)
-		if err == nil && !complete {
-			err = errors.New("an attachment of the new MIME was not stored")
-		}
-		if err == nil {
-			err = s.st.DeleteMIMEAttachmentsExceptContext(ctx, r.msg.archiveID, keep)
-		}
-		if err != nil {
-			storeErr = fmt.Errorf("drop old attachments of message %s: %w", r.msg.ID, err)
-			cancel()
-			continue
-		}
-		if err := s.st.RecomputeMessageAttachmentStats(r.msg.archiveID); err != nil {
-			storeErr = fmt.Errorf("update attachment stats of message %s: %w", r.msg.ID, err)
-			cancel()
 			continue
 		}
 		s.sum.Updated++
