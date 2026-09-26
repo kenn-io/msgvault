@@ -1,11 +1,13 @@
 package carddav
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -1194,6 +1196,44 @@ func TestGoogleSnapshotNeverUsesAddressbookQuery(t *testing.T) {
 	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
 	assert.NotContains(state.requests, "REPORT addressbook-query",
 		"Google's empty addressbook-query must never become a replace-all plan")
+	assert.Equal([]string{
+		"PROPFIND 0",
+		"PROPFIND 1",
+		"REPORT addressbook-multiget /books/personal/alice.vcf,/books/personal/bob.vcf",
+	}, state.requests)
+}
+
+func TestEnumeratedSnapshotWarnsWhenCollectionOmitsSyncToken(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	state := newGoogleLikeState()
+	state.token = ""
+	server := httptest.NewServer(newGoogleLikeHandler(t, state))
+	t.Cleanup(server.Close)
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	base, st, _ := newPullService(t, server, true)
+	service := NewGoogleService(st, base.client)
+
+	result, err := service.Sync(t.Context(), SyncOptions{})
+	require.NoError(err)
+	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
+	assert.Contains(logged.String(), "level=WARN")
+	assert.Contains(logged.String(), "no sync token")
+	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	require.NoError(err)
+	require.Len(books, 1)
+	assert.Empty(books[0].SyncToken)
+
+	// Without a token the next sync enumerates again rather than failing.
+	state.mu.Lock()
+	state.requests = nil
+	state.mu.Unlock()
+	result, err = service.Sync(t.Context(), SyncOptions{})
+	require.NoError(err)
+	assert.Equal(SyncResult{Books: 1}, result)
 	assert.Equal([]string{
 		"PROPFIND 0",
 		"PROPFIND 1",

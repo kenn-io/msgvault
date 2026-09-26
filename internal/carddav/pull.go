@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -472,7 +473,7 @@ func (s *Service) fetchEnumeratedSnapshot(
 	if err != nil {
 		return store.CardDAVSyncPlan{}, ErrUnsafeTarget
 	}
-	token, err := s.fetchCollectionSyncToken(ctx, collection, budget)
+	token, err := s.fetchCollectionSyncToken(ctx, book.ID, collection, budget)
 	if err != nil {
 		return store.CardDAVSyncPlan{}, err
 	}
@@ -488,10 +489,11 @@ func (s *Service) fetchEnumeratedSnapshot(
 }
 
 // fetchCollectionSyncToken reads the collection's current DAV:sync-token. A
-// server that omits the property yields an empty token, which simply repeats
-// the enumerated snapshot on the next sync.
+// server that omits the property yields an empty token, which repeats the
+// enumerated snapshot on every sync; that is logged so the degradation is not
+// silent.
 func (s *Service) fetchCollectionSyncToken(
-	ctx context.Context, collection *url.URL, budget *operationBudget,
+	ctx context.Context, bookID int64, collection *url.URL, budget *operationBudget,
 ) (string, error) {
 	body, err := PropfindBody([]PropertyName{SyncTokenProperty})
 	if err != nil {
@@ -518,9 +520,16 @@ func (s *Service) fetchCollectionSyncToken(
 			return "", err
 		}
 		if sameCollectionURL(resolved, collection) {
-			return mergeSuccessfulProperties(davResponse.PropStats).SyncToken, nil
+			token := mergeSuccessfulProperties(davResponse.PropStats).SyncToken
+			if token == "" {
+				slog.WarnContext(ctx, "CardDAV collection reported no sync token; every sync will enumerate the address book",
+					"address_book_id", bookID)
+			}
+			return token, nil
 		}
 	}
+	slog.WarnContext(ctx, "CardDAV collection omitted its own response; every sync will enumerate the address book",
+		"address_book_id", bookID)
 	return "", nil
 }
 
