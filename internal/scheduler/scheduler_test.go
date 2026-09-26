@@ -94,6 +94,31 @@ func TestRemoveAccount(t *testing.T) {
 	assert.False(t, exists, "job still exists after RemoveAccount()")
 }
 
+func TestRemoveAccountClearsPendingFollowup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s := New(func(context.Context, string) error { return nil })
+	email := "pending@example.com"
+	require.NoError(s.AddAccount(email, "0 2 * * *"))
+
+	s.mu.Lock()
+	s.running[email] = true
+	s.pending[email] = true
+	s.mu.Unlock()
+
+	s.RemoveAccount(email)
+
+	s.mu.RLock()
+	pending := s.pending[email]
+	s.mu.RUnlock()
+	assert.False(pending, "removing an account cancels its queued follow-up")
+	s.finishAccountRun(email)
+	s.mu.RLock()
+	running := s.running[email]
+	s.mu.RUnlock()
+	assert.False(running, "finishing the active run must not start the removed account's follow-up")
+}
+
 func TestRemoveAccountNonExistent(t *testing.T) {
 	s := New(func(ctx context.Context, email string) error {
 		return nil
@@ -2270,6 +2295,7 @@ func TestGenericJobYieldContextFinishesCleanly(t *testing.T) {
 
 		tracker := &yieldingWorkTracker{}
 		started := make(chan struct{})
+		var runs int
 		causeCh := make(chan error, 1)
 		s := New(func(context.Context, string) error { return nil }).WithWorkTracker(tracker)
 		defer func() { <-s.Stop().Done() }()
@@ -2277,6 +2303,10 @@ func TestGenericJobYieldContextFinishesCleanly(t *testing.T) {
 			Name:     "attachment-maintenance",
 			Schedule: "17 3 * * *",
 			Run: func(ctx context.Context) error {
+				runs++
+				if runs > 1 {
+					return nil
+				}
 				close(started)
 				<-ctx.Done()
 				causeCh <- context.Cause(ctx)
@@ -2308,6 +2338,7 @@ func TestGenericJobYieldContextFinishesCleanly(t *testing.T) {
 		}
 		synctest.Wait()
 		assert.Equal(0, tracker.active(), "gate released after generic job yield")
+		assert.Equal(2, runs, "the yielded job resumes without a schedule tick")
 		status := s.JobStatus()
 		require.Len(status, 1)
 		assert.Empty(status[0].LastError, "yield must not be recorded as a generic job error")
@@ -2384,10 +2415,14 @@ func TestScheduledSyncYieldsToWaiter(t *testing.T) {
 
 		tracker := &yieldingWorkTracker{}
 		started := make(chan struct{})
-		var startedOnce sync.Once
+		var runs int
 		syncCtxErr := make(chan error, 1)
 		s := New(func(ctx context.Context, email string) error {
-			startedOnce.Do(func() { close(started) })
+			runs++
+			if runs > 1 {
+				return nil
+			}
+			close(started)
 			<-ctx.Done()
 			syncCtxErr <- context.Cause(ctx)
 			return ctx.Err()
@@ -2418,6 +2453,7 @@ func TestScheduledSyncYieldsToWaiter(t *testing.T) {
 
 		synctest.Wait()
 		assert.Equal(0, tracker.active(), "gate released after yield")
+		assert.Equal(2, runs, "the yielded sync resumes without a schedule tick")
 
 		for _, status := range s.Status() {
 			assert.Empty(status.LastError, "yield must not be recorded as a sync error")
@@ -2480,5 +2516,417 @@ func TestScheduler_VisualPostSyncQueuesPendingRunWhileActive(t *testing.T) {
 		mu.Unlock()
 		requirements.Equal(2, runsAfterRelease,
 			"the pending pass must run after the active one finishes")
+	})
+}
+
+func TestRegistrationLogsNextRunBeforeStart(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	s := New(func(context.Context, string) error { return nil }).WithLogger(logger)
+
+	require.NoError(s.AddAccount("a@example.com", "*/5 * * * *"))
+	require.NoError(s.AddJob(Job{Name: "job", Schedule: "*/5 * * * *", Run: func(context.Context) error { return nil }}))
+
+	assert.NotContains(buf.String(), "0001-01-01", "registration logs must not report a zero next run")
+	statuses := s.Status()
+	require.Len(statuses, 1)
+	assert.True(statuses[0].NextRun.After(time.Now()), "account next run before Start")
+	jobs := s.JobStatus()
+	require.Len(jobs, 1)
+	assert.True(jobs[0].NextRun.After(time.Now()), "job next run before Start")
+}
+
+// serialWorkTracker is a one-slot gate like the daemon's operation gate.
+type serialWorkTracker struct {
+	sem chan struct{}
+}
+
+func newSerialWorkTracker() *serialWorkTracker {
+	return &serialWorkTracker{sem: make(chan struct{}, 1)}
+}
+
+func (t *serialWorkTracker) BeginWork() (func(), bool) {
+	return t.BeginWorkContext(context.Background())
+}
+
+func (t *serialWorkTracker) BeginWorkContext(ctx context.Context) (func(), bool) {
+	select {
+	case t.sem <- struct{}{}:
+		var once sync.Once
+		return func() { once.Do(func() { <-t.sem }) }, true
+	case <-ctx.Done():
+		return func() {}, false
+	}
+}
+
+func TestTickWhileExecutingQueuesOneFollowUp(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		var buf bytes.Buffer
+		var runs atomic.Int32
+		release := make(chan struct{})
+		s := New(func(ctx context.Context, email string) error {
+			if runs.Add(1) == 1 {
+				<-release
+			}
+			return nil
+		}).WithLogger(slog.New(slog.NewTextHandler(&buf, nil))).WithWorkTracker(newSerialWorkTracker())
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddAccount("a@example.com", "0 0 1 1 *"))
+
+		go s.onAccountTick("a@example.com")
+		synctest.Wait()
+		require.Equal(int32(1), runs.Load(), "first run executing")
+
+		s.onAccountTick("a@example.com")
+		s.onAccountTick("a@example.com")
+		status := s.Status()
+		require.Len(status, 1)
+		assert.True(status[0].Pending, "tick during a run is kept as pending")
+
+		close(release)
+		synctest.Wait()
+		assert.Equal(int32(2), runs.Load(), "several ticks during one run produce exactly one follow-up")
+		assert.Contains(buf.String(), "previous run still active; queued one follow-up run")
+		status = s.Status()
+		assert.False(status[0].Running)
+		assert.False(status[0].Pending)
+	})
+}
+
+func TestTickWhileQueuedIsDropped(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		gate := newSerialWorkTracker()
+		hold, ok := gate.BeginWork()
+		require.True(ok)
+		var runs atomic.Int32
+		s := New(func(ctx context.Context, email string) error {
+			runs.Add(1)
+			return nil
+		}).WithWorkTracker(gate)
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddAccount("a@example.com", "0 0 1 1 *"))
+
+		go s.onAccountTick("a@example.com")
+		synctest.Wait()
+		status := s.Status()
+		require.Len(status, 1)
+		assert.True(status[0].Queued, "run waiting for the gate is reported as queued")
+		assert.True(status[0].StartedAt.IsZero(), "a queued run has not started")
+
+		s.onAccountTick("a@example.com")
+		hold()
+		synctest.Wait()
+		assert.Equal(int32(1), runs.Load(), "a tick while the run is still queued is redundant")
+	})
+}
+
+func TestStatusReportsStartedWhileExecuting(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		release := make(chan struct{})
+		s := New(func(ctx context.Context, email string) error {
+			<-release
+			return nil
+		}).WithWorkTracker(newSerialWorkTracker())
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddAccount("a@example.com", "0 0 1 1 *"))
+		require.NoError(s.AddJob(Job{Name: "job", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
+			<-release
+			return nil
+		}}))
+
+		require.NoError(s.TriggerSync("a@example.com"))
+		synctest.Wait()
+		go s.onJobTick("job")
+		synctest.Wait()
+
+		account := s.Status()[0]
+		assert.False(account.Queued)
+		assert.False(account.StartedAt.IsZero(), "executing run reports its start")
+		job := s.JobStatus()[0]
+		assert.True(job.Queued, "generic job waiting for the gate is queued")
+		assert.True(job.Running)
+
+		close(release)
+		synctest.Wait()
+		assert.True(s.Status()[0].StartedAt.IsZero(), "finished run clears its start")
+	})
+}
+
+func TestJobTickWhileExecutingQueuesOneFollowUp(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		var runs atomic.Int32
+		release := make(chan struct{})
+		s := New(func(context.Context, string) error { return nil }).WithWorkTracker(newSerialWorkTracker())
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddJob(Job{Name: "job", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
+			if runs.Add(1) == 1 {
+				<-release
+			}
+			return nil
+		}}))
+
+		go s.onJobTick("job")
+		synctest.Wait()
+		s.onJobTick("job")
+		s.onJobTick("job")
+		assert.True(s.JobStatus()[0].Pending)
+		close(release)
+		synctest.Wait()
+		assert.Equal(int32(2), runs.Load())
+		require.NoError(s.StartJob("job"))
+		synctest.Wait()
+		assert.Equal(int32(3), runs.Load(), "manual start still runs when idle")
+	})
+}
+
+func TestStopDuringPendingFollowUpStartsNothing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var runs atomic.Int32
+		s := New(func(ctx context.Context, email string) error {
+			runs.Add(1)
+			<-ctx.Done()
+			return ctx.Err()
+		}).WithWorkTracker(newSerialWorkTracker())
+		require.NoError(t, s.AddAccount("a@example.com", "0 0 1 1 *"))
+
+		go s.onAccountTick("a@example.com")
+		synctest.Wait()
+		s.onAccountTick("a@example.com")
+		<-s.Stop().Done()
+		synctest.Wait()
+		assert.Equal(t, int32(1), runs.Load(), "no follow-up starts after Stop")
+	})
+}
+
+func TestLongCooperativeJobYieldsToQueuedJob(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		oldPoll := yieldPollInterval
+		yieldPollInterval = time.Second
+		defer func() { yieldPollInterval = oldPoll }()
+
+		var shortStarted time.Time
+		var runs int
+		s := New(func(ctx context.Context, email string) error {
+			shortStarted = time.Now()
+			return nil
+		}).WithWorkTracker(newSerialWorkTracker())
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddAccount("short@example.com", "0 0 1 1 *"))
+		require.NoError(s.AddJob(Job{Name: "long", Preemptible: true, Schedule: "0 0 1 1 *", Run: func(ctx context.Context) error {
+			runs++
+			if runs > 1 {
+				return nil
+			}
+			for !jobctx.PreemptionRequested(ctx) {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				time.Sleep(time.Second)
+			}
+			return nil
+		}}))
+
+		longStarted := time.Now()
+		go s.onJobTick("long")
+		synctest.Wait()
+		time.Sleep(10 * time.Second)
+		require.NoError(s.TriggerSync("short@example.com"))
+		time.Sleep(preemptAfter + 5*time.Second)
+		synctest.Wait()
+
+		require.False(shortStarted.IsZero(), "short job ran")
+		assert.LessOrEqual(shortStarted.Sub(longStarted), preemptAfter+2*yieldPollInterval)
+		job := s.JobStatus()[0]
+		assert.Empty(job.LastError, "cooperative yield is not an error")
+		assert.False(job.LastRun.IsZero(), "long job completed normally")
+		assert.Equal(2, runs, "cooperative preemption resumes without another tick")
+	})
+}
+
+func TestPreemptedDailyRunResumesBehindWaiter(t *testing.T) {
+	for _, account := range []bool{false, true} {
+		name := "job"
+		if account {
+			name = "account"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var order []string
+				var runs int
+				var cause error
+				run := func(ctx context.Context) error {
+					runs++
+					order = append(order, "daily")
+					if runs == 1 {
+						<-ctx.Done()
+						cause = context.Cause(ctx)
+						return ctx.Err()
+					}
+					return nil
+				}
+				s := New(func(ctx context.Context, _ string) error { return run(ctx) }).WithWorkTracker(newSerialWorkTracker())
+				defer func() { <-s.Stop().Done() }()
+				if account {
+					require.NoError(t, s.AddAccount("daily@example.com", "0 0 * * *"))
+					require.NoError(t, s.TriggerSync("daily@example.com"))
+				} else {
+					require.NoError(t, s.AddJob(Job{Name: "daily", Preemptible: true, Schedule: "0 0 * * *", Run: run}))
+					require.NoError(t, s.StartJob("daily"))
+				}
+				synctest.Wait()
+
+				releaseWaiter := make(chan struct{})
+				require.NoError(t, s.AddJob(Job{Name: "waiter", Schedule: "* * * * *", Run: func(ctx context.Context) error {
+					order = append(order, "waiter")
+					select {
+					case <-releaseWaiter:
+					case <-ctx.Done():
+					}
+					return nil
+				}}))
+				require.NoError(t, s.StartJob("waiter"))
+				time.Sleep(preemptAfter + yieldPollInterval)
+				synctest.Wait()
+				require.ErrorIs(t, cause, ErrYieldedToWaiter)
+				assert.Equal(t, []string{"daily", "waiter"}, order, "the existing waiter goes first")
+				close(releaseWaiter)
+				synctest.Wait()
+				assert.Equal(t, []string{"daily", "waiter", "daily"}, order, "the interrupted daily run resumes without a cron tick")
+			})
+		})
+	}
+}
+
+func TestBoundedMaintenanceCompletesWithQueuedWork(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		var completed bool
+		var shortStarted time.Time
+		s := New(func(context.Context, string) error {
+			shortStarted = time.Now()
+			return nil
+		}).WithWorkTracker(newSerialWorkTracker())
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddAccount("short@example.com", "0 0 * * *"))
+		require.NoError(s.AddJob(Job{Name: "maintenance", Schedule: "0 0 * * *", Run: func(ctx context.Context) error {
+			timer := time.NewTimer(90 * time.Second)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				completed = true
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}}))
+
+		started := time.Now()
+		require.NoError(s.StartJob("maintenance"))
+		synctest.Wait()
+		require.NoError(s.TriggerSync("short@example.com"))
+		time.Sleep(90 * time.Second)
+		synctest.Wait()
+		assert.True(completed, "maintenance keeps its full budget despite a queued source")
+		assert.Equal(90*time.Second, shortStarted.Sub(started))
+	})
+}
+
+func TestBoundedJobReschedulesBehindWaiter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		var order []string
+		var runs int
+		finishPass := make(chan struct{})
+		s := New(nil).WithWorkTracker(newSerialWorkTracker())
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddJob(Job{Name: "bounded", Schedule: "0 0 * * *", Run: func(ctx context.Context) error {
+			runs++
+			order = append(order, "bounded")
+			if runs == 1 {
+				select {
+				case <-finishPass:
+					return errors.Join(ErrReschedule)
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			return nil
+		}}))
+		require.NoError(s.AddJob(Job{Name: "waiter", Schedule: "0 0 * * *", Run: func(context.Context) error {
+			order = append(order, "waiter")
+			return nil
+		}}))
+		require.NoError(s.StartJob("bounded"))
+		synctest.Wait()
+		require.NoError(s.StartJob("waiter"))
+		synctest.Wait()
+		close(finishPass)
+		synctest.Wait()
+		assert.Equal([]string{"bounded", "waiter", "bounded"}, order)
+		assert.Empty(s.JobStatus()[0].LastError, "requesting another pass is not a failure")
+	})
+}
+
+func TestNoPreemptionWithoutQueuedWork(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		oldPoll := yieldPollInterval
+		yieldPollInterval = time.Second
+		defer func() { yieldPollInterval = oldPoll }()
+
+		preempted := make(chan bool, 1)
+		s := New(func(context.Context, string) error { return nil }).WithWorkTracker(newSerialWorkTracker())
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(t, s.AddJob(Job{Name: "long", Preemptible: true, Schedule: "0 0 1 1 *", Run: func(ctx context.Context) error {
+			time.Sleep(3 * preemptAfter)
+			preempted <- jobctx.PreemptionRequested(ctx)
+			return nil
+		}}))
+		go s.onJobTick("long")
+		time.Sleep(4 * preemptAfter)
+		synctest.Wait()
+		assert.False(t, <-preempted, "nothing waited, so the job was not asked to yield")
+	})
+}
+
+func TestJobFollowUpRunsReregisteredFunction(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		release := make(chan struct{})
+		var oldRuns, newRuns atomic.Int32
+		s := New(func(context.Context, string) error { return nil }).WithWorkTracker(newSerialWorkTracker())
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddJob(Job{Name: "job", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
+			oldRuns.Add(1)
+			<-release
+			return nil
+		}}))
+
+		go s.onJobTick("job")
+		synctest.Wait()
+		s.onJobTick("job")
+		require.NoError(s.AddJob(Job{Name: "job", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
+			newRuns.Add(1)
+			return nil
+		}}))
+		close(release)
+		synctest.Wait()
+
+		assert.Equal(int32(1), oldRuns.Load())
+		assert.Equal(int32(1), newRuns.Load(), "the follow-up runs the job as currently registered")
 	})
 }

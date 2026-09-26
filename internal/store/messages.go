@@ -3621,6 +3621,13 @@ const latestConversationPreviewSubquery = `(SELECT snippet FROM messages
 // last_message_at, and last_message_preview from the current table state.
 // Safe to call multiple times — always produces the same result (idempotent).
 func (s *Store) RecomputeConversationStats(sourceID int64) error {
+	return s.RecomputeConversationStatsContext(context.Background(), sourceID)
+}
+
+// RecomputeConversationStatsContext updates the denormalized stats columns on
+// all conversations belonging to the given source and honors ctx while
+// waiting for the database and executing the update.
+func (s *Store) RecomputeConversationStatsContext(ctx context.Context, sourceID int64) error {
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
@@ -3628,9 +3635,11 @@ func (s *Store) RecomputeConversationStats(sourceID int64) error {
 		return s.recomputeConversationStatsWith(q, "source_id = ?", sourceID)
 	}
 	if s.syncGeneration != nil {
-		return s.withTx(func(tx *loggedTx) error { return write(tx) })
+		return s.withTxContext(ctx, func(tx *loggedTx) error {
+			return write(boundQuerier{ctx: ctx, q: tx})
+		})
 	}
-	return write(s.db)
+	return write(boundQuerier{ctx: ctx, q: s.db})
 }
 
 // RecomputeConversationStatsForMessage updates the denormalized stats only for
@@ -3648,6 +3657,23 @@ func (s *Store) RecomputeConversationStatsForMessageContext(ctx context.Context,
 		}
 		return s.recomputeConversationStatsWith(q,
 			"id = (SELECT conversation_id FROM messages WHERE id = ?)", messageID)
+	}
+	if s.syncGeneration != nil {
+		return s.withTxContext(ctx, func(tx *loggedTx) error {
+			return write(boundQuerier{ctx: ctx, q: tx})
+		})
+	}
+	return write(boundQuerier{ctx: ctx, q: s.db})
+}
+
+// RecomputeConversationStatsForConversationContext refreshes one touched chat,
+// including partial imports that stopped before the source finished syncing.
+func (s *Store) RecomputeConversationStatsForConversationContext(ctx context.Context, conversationID int64) error {
+	write := func(q querier) error {
+		if err := s.requireSyncConversationSourceTx(q, conversationID); err != nil {
+			return err
+		}
+		return s.recomputeConversationStatsWith(q, "id = ?", conversationID)
 	}
 	if s.syncGeneration != nil {
 		return s.withTxContext(ctx, func(tx *loggedTx) error {

@@ -89,6 +89,11 @@ func (d *SQLiteDialect) TimestampParam(t time.Time) any {
 // lock contention.
 const sqliteQuiescentProbeTimeout = 250 * time.Millisecond
 
+// sqliteCheckpointBusyTimeout caps one scheduled WAL checkpoint attempt. The
+// busy handler cannot always be interrupted promptly by sqlite3_interrupt, so
+// the attempt must not inherit the connection's normal 30-second timeout.
+const sqliteCheckpointBusyTimeout = time.Second
+
 // ReadWatermarkBounds implements Dialect.
 //
 // SQLite has no pg_stat_activity: nothing exposes when another connection's
@@ -2087,10 +2092,75 @@ func (d *SQLiteDialect) SchemaFiles() []string {
 	return []string{"schema.sql"}
 }
 
+// CheckpointWALPassive checkpoints in PASSIVE mode, which never waits on
+// readers or writers. ctx also bounds waiting for a pooled connection, and
+// frames it could not copy are reported as an error.
+func (d *SQLiteDialect) CheckpointWALPassive(ctx context.Context, db *sql.DB) error {
+	ctx, cancel := context.WithTimeout(ctx, sqliteCheckpointBusyTimeout)
+	defer cancel()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire SQLite connection for passive WAL checkpoint: %w", err)
+	}
+	defer func() {
+		if err := conn.Close(); err != nil {
+			slog.Warn("SQLite passive WAL checkpoint could not release connection", "error", err)
+		}
+	}()
+	var busy, log, checkpointed int
+	err = conn.QueryRowContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)").Scan(&busy, &log, &checkpointed)
+	if err != nil {
+		return fmt.Errorf("run SQLite passive WAL checkpoint: %w", err)
+	}
+	if log >= 0 && checkpointed < log {
+		return fmt.Errorf("WAL checkpoint incomplete (log=%d, checkpointed=%d)", log, checkpointed)
+	}
+	return nil
+}
+
 // CheckpointWAL forces a WAL checkpoint using TRUNCATE mode.
 func (d *SQLiteDialect) CheckpointWAL(db *sql.DB) error {
+	return d.CheckpointWALContext(context.Background(), db)
+}
+
+// CheckpointWALContext forces a WAL checkpoint using TRUNCATE mode and honors
+// ctx while waiting for SQLite's busy handler and while stepping the PRAGMA.
+func (d *SQLiteDialect) CheckpointWALContext(ctx context.Context, db *sql.DB) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire SQLite connection for WAL checkpoint: %w", err)
+	}
+	defer func() {
+		if err := conn.Close(); err != nil {
+			slog.Warn("SQLite WAL checkpoint could not release connection", "error", err)
+		}
+	}()
+	var configuredBusyTimeout int64
+	if err := conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&configuredBusyTimeout); err != nil {
+		return fmt.Errorf("read SQLite busy timeout for WAL checkpoint: %w", err)
+	}
+	busyTimeout := min(configuredBusyTimeout, sqliteCheckpointBusyTimeout.Milliseconds())
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline).Milliseconds()
+		busyTimeout = min(busyTimeout, max(remaining, int64(0)))
+	}
+	// Restore this pooled connection even if the checkpoint or its context
+	// fails, or a later unrelated query would inherit the shortened timeout.
+	defer func() {
+		if _, err := conn.ExecContext(context.WithoutCancel(ctx),
+			fmt.Sprintf("PRAGMA busy_timeout = %d", configuredBusyTimeout)); err != nil {
+			slog.Warn("SQLite WAL checkpoint could not restore connection busy timeout",
+				"configured_ms", configuredBusyTimeout, "error", err)
+		}
+	}()
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeout)); err != nil {
+		return fmt.Errorf("bound SQLite busy timeout for WAL checkpoint: %w", err)
+	}
 	var busy, log, checkpointed int
-	err := db.QueryRowContext(context.Background(), "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &checkpointed)
+	err = conn.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &checkpointed)
 	if err != nil {
 		return err
 	}

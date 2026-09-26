@@ -93,8 +93,9 @@ type ctxMessageSearcher interface {
 // accept a context on the non-search read paths. Request handlers prefer it so
 // the request_id carried on r.Context() (via store.WithRequestID) reaches every
 // request-owned SQL query for slow/error logging, and so an abandoned request
-// cancels the underlying queries. Stores that predate it fall back to the
-// non-context methods.
+// cancels the underlying queries. Shared stats refreshes retain the initiating
+// request's ID but use the server lifetime for cancellation. Stores that predate
+// it fall back to the non-context methods.
 type CtxMessageStore interface {
 	GetStatsContext(ctx context.Context) (*StoreStats, error)
 	ListMessagesContext(ctx context.Context, offset, limit int) ([]APIMessage, int64, error)
@@ -103,7 +104,7 @@ type CtxMessageStore interface {
 }
 
 // getStats calls the context-aware store variant when available, so
-// request-owned stats queries carry the request context.
+// stats queries carry the caller's context and request ID.
 func (s *Server) getStats(ctx context.Context) (*StoreStats, error) {
 	if cs, ok := s.store.(CtxMessageStore); ok {
 		return cs.GetStatsContext(ctx)
@@ -243,6 +244,15 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
+	// statsSnapshots and accountCountSnapshots bound /stats and
+	// /cli/accounts latency under load (see snapshotCache). Background
+	// computations run on importContext, the server-lifetime context that
+	// Shutdown cancels.
+	statsSnapshots        snapshotCache[*StoreStats]
+	accountCountSnapshots snapshotCache[map[int64]store.SourceMessageCounts]
+	statsSnapshotWait     time.Duration
+	vectorStatsTimeout    time.Duration
+
 	cfg            *config.Config
 	store          MessageStore
 	analyticsState atomic.Pointer[analyticsEngineState]
@@ -600,6 +610,10 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		operationHistoryReader: opts.OperationHistoryReader,
 		importContext:          importContext,
 		cancelImports:          cancelImports,
+		statsSnapshots:         snapshotCache[*StoreStats]{logger: opts.Logger},
+		accountCountSnapshots:  snapshotCache[map[int64]store.SourceMessageCounts]{logger: opts.Logger},
+		statsSnapshotWait:      statsSnapshotWait,
+		vectorStatsTimeout:     vectorStatsTimeout,
 		blobStore:              opts.BlobStore,
 		remoteImages:           remoteimage.NewFetcher(),
 		inlineCache:            newInlineParseCache(inlineCacheMaxEntries, inlineCacheMaxBytes),

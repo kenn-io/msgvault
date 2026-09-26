@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-26"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1358,8 +1358,14 @@ msgvault pack-attachments
 The daemon serializes packing against sync and backup operations. Reads remain
 available from loose, packed, or mixed storage, and the command is safe to
 rerun as new loose content arrives. Bounded packing also runs after successful
-attachment-producing operations and during scheduled maintenance; this command
-processes the complete eligible backlog immediately.
+attachment-producing commands sent to the daemon. Scheduled syncs never pack
+inline: when one writes new loose blobs, the daemon's `attachment-pack` job
+(every 6 hours) packs them, and the daily `attachment-maintenance` job packs
+and repacks. Each automatic pack pass has a 256 MiB raw-byte budget and finishes
+its current blob before stopping. It queues another pass behind waiting work
+if the backlog remains. The first pack tick after a restart also checks for
+blobs left by the previous daemon.
+This command processes the complete eligible backlog immediately.
 
 With `[data].loose_attachments = true`, automatic packing is disabled and this
 command refuses to run.

@@ -98,6 +98,8 @@ type fakeBeeper struct {
 	failMessageGets map[string]bool
 	// failMessageLists does the same for GET /v1/chats/{id}/messages.
 	failMessageLists map[string]bool
+	// failMessageListsTimes fails the next N message-list fetches of a chat.
+	failMessageListsTimes map[string]int
 	// cancelAfterPages invokes cancelFn once after that many message-list
 	// pages have been fully served (0 = disabled), emulating a mid-walk
 	// interrupt between pages.
@@ -107,13 +109,20 @@ type fakeBeeper struct {
 	// cancelOnMessageListChatID invokes cancelFn once after serving a
 	// message-list response for the named chat.
 	cancelOnMessageListChatID string
+	blockMessageListChatID    string
+	messageListStarted        chan struct{}
 	reqs                      []string // "PATH?QUERY" per request, in order
 }
 
 func newFakeBeeper(t *testing.T) *fakeBeeper {
 	t.Helper()
+	// Retries are exercised without real waits.
+	oldBackoff := fetchRetryBackoff
+	fetchRetryBackoff = []time.Duration{0, 0}
+	t.Cleanup(func() { fetchRetryBackoff = oldBackoff })
+	t.Helper()
 	return &fakeBeeper{t: t, pageSize: 20, assets: map[string][]byte{}, failMessageGets: map[string]bool{},
-		failMessageLists: map[string]bool{}, failChatGets: map[string]bool{}}
+		failMessageLists: map[string]bool{}, failMessageListsTimes: map[string]int{}, failChatGets: map[string]bool{}}
 }
 
 // setMessageListFailure toggles a 400 response for message-list fetches of a chat.
@@ -121,6 +130,13 @@ func (f *fakeBeeper) setMessageListFailure(chatID string, fail bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failMessageLists[chatID] = fail
+}
+
+// failMessageListTimes makes the next n message-list fetches of a chat fail.
+func (f *fakeBeeper) failMessageListTimes(chatID string, n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failMessageListsTimes[chatID] = n
 }
 
 // setMessageGetFailure toggles a 400 response for single-message fetches of id.
@@ -259,6 +275,18 @@ func (f *fakeBeeper) server() *httptest.Server {
 			case len(parts) == 1:
 				f.writeChat(w, parts[0])
 			case len(parts) == 2 && parts[1] == "messages":
+				f.mu.Lock()
+				blocked := f.blockMessageListChatID == parts[0]
+				started := f.messageListStarted
+				if blocked {
+					f.blockMessageListChatID = ""
+				}
+				f.mu.Unlock()
+				if blocked {
+					close(started)
+					<-r.Context().Done()
+					return
+				}
 				f.writeMessages(w, r, parts[0])
 			case len(parts) == 3 && parts[1] == "messages":
 				f.writeMessage(w, parts[0], parts[2])
@@ -429,6 +457,11 @@ func (f *fakeBeeper) writeMessages(w http.ResponseWriter, r *http.Request, chatI
 	}
 	if f.failMessageLists[chatID] {
 		http.Error(w, `{"error":"transient"}`, http.StatusBadRequest)
+		return
+	}
+	if f.failMessageListsTimes[chatID] > 0 {
+		f.failMessageListsTimes[chatID]--
+		http.Error(w, `{"error":"timeout"}`, http.StatusRequestTimeout)
 		return
 	}
 	q := r.URL.Query()

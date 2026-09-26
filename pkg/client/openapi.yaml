@@ -43,9 +43,16 @@ components:
         next_run:
           format: date-time
           type: string
+        pending:
+          type: boolean
+        queued:
+          type: boolean
         running:
           type: boolean
         schedule:
+          type: string
+        started_at:
+          format: date-time
           type: string
       required:
         - email
@@ -1923,6 +1930,11 @@ components:
           items:
             $ref: "#/components/schemas/CliAccountResponse"
           type: array
+        as_of:
+          format: date-time
+          type: string
+        stale:
+          type: boolean
       required:
         - accounts
       type: object
@@ -11643,6 +11655,12 @@ components:
           type: boolean
         scheduler_last_error:
           type: string
+        scheduler_pending:
+          type: boolean
+        scheduler_queued:
+          type: boolean
+        scheduler_started_at:
+          type: string
         source_type:
           type: string
         sync_unavailable_reason:
@@ -11772,12 +11790,17 @@ components:
         active_messages:
           format: int64
           type: integer
+        as_of:
+          format: date-time
+          type: string
         database_size_bytes:
           format: int64
           type: integer
         source_deleted_messages:
           format: int64
           type: integer
+        stale:
+          type: boolean
         total_accounts:
           format: int64
           type: integer
@@ -11795,6 +11818,8 @@ components:
           type: integer
         vector_search:
           $ref: "#/components/schemas/StatsView"
+        vector_stats_unavailable:
+          type: boolean
         vector_status:
           type: string
         vector_text_message_types:

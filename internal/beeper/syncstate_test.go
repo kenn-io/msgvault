@@ -91,3 +91,18 @@ func TestSyncStateMergeFillsAnchor(t *testing.T) {
 	require.NotEmpty(base.Anchors)
 	assert.Equal("9", base.Anchors[0].MessageID)
 }
+
+func TestSyncStateMergePreservesExplicitTailScanClears(t *testing.T) {
+	assert := assert.New(t)
+	base := NewSyncState()
+	base.TailScanStarted = "2026-01-01T00:00:00Z"
+	base.EnsureChat("!a:x").TailProbeCursor = "old-page"
+
+	checkpoint := NewSyncState()
+	checkpoint.EnsureChat("!a:x")
+
+	base.Merge(checkpoint)
+
+	assert.Empty(base.TailScanStarted, "the newer checkpoint explicitly ended its scan")
+	assert.Empty(base.Chats["!a:x"].TailProbeCursor, "the newer checkpoint cleared the tail probe cursor")
+}

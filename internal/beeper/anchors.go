@@ -16,6 +16,11 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+// ErrNeedsReanchor marks evidence that Beeper reassigned its local message IDs.
+// Scheduled syncs must stop for that source until a manual import verifies the
+// archive against the current installation.
+var ErrNeedsReanchor = errors.New("beeper message IDs appear re-assigned")
+
 // maxAnchors is how many distinct chats fingerprint the installation.
 // Multiple probes keep ordinary churn (the user deleting one anchored chat)
 // distinguishable from a reinstall, which invalidates all of them.
@@ -39,7 +44,8 @@ func (imp *Importer) verifyAnchors(ctx context.Context, syncID, sourceID int64, 
 		switch {
 		case err == nil:
 			if !m.Timestamp.Equal(a.Timestamp) {
-				return fmt.Errorf("beeper message IDs appear re-assigned (Beeper Desktop reinstall or re-index?): anchor message %s changed timestamp; remove and re-add this account to avoid duplicate archives", a.MessageID)
+				return fmt.Errorf("%w (Beeper Desktop reinstall or re-index?): anchor message %s changed timestamp; remove and re-add this account to avoid duplicate archives",
+					ErrNeedsReanchor, a.MessageID)
 			}
 			kept = append(kept, a)
 		case errors.Is(err, ErrNotFound):
@@ -82,14 +88,16 @@ func (imp *Importer) verifyArchivedSample(ctx context.Context, sourceID int64) e
 			if diff <= archivedSampleTolerance {
 				return nil // the archive still matches the source
 			}
-			return fmt.Errorf("beeper message IDs appear re-assigned (Beeper Desktop reinstall or re-index?): archived message %s resolves to different content; remove and re-add this account to avoid duplicate archives", ref.SourceMessageID)
+			return fmt.Errorf("%w (Beeper Desktop reinstall or re-index?): archived message %s resolves to different content; remove and re-add this account to avoid duplicate archives",
+				ErrNeedsReanchor, ref.SourceMessageID)
 		case errors.Is(err, ErrNotFound):
 			continue
 		default:
 			return fmt.Errorf("verify beeper sync anchor: %w", err)
 		}
 	}
-	return fmt.Errorf("beeper message IDs appear re-assigned (Beeper Desktop reinstall or re-index?): no anchor and none of the %d most recently archived messages resolve at the source; remove and re-add this account to avoid duplicate archives", len(refs))
+	return fmt.Errorf("%w (Beeper Desktop reinstall or re-index?): no anchor and none of the %d most recently archived messages resolve at the source; remove and re-add this account to avoid duplicate archives",
+		ErrNeedsReanchor, len(refs))
 }
 
 // rearmAnchors tops the anchor set back up to maxAnchors, probing the heads

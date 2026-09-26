@@ -109,6 +109,7 @@ func storeAttachmentFile(attachmentsDir string, att *mime.Attachment, includeEmp
 	if writeErr != nil {
 		return "", fmt.Errorf("store loose attachment: %w", writeErr)
 	}
+	recordLooseBlobCreated(baseDir, result.Created)
 	contentHash := result.Hash.String()
 	return path.Join(contentHash[:2], contentHash), nil
 }
@@ -198,6 +199,7 @@ func StoreAttachmentFileDurable(attachmentsDir string, att *mime.Attachment) (Du
 	if writeErr != nil {
 		return receipt, fmt.Errorf("store durable loose attachment: %w", writeErr)
 	}
+	recordLooseBlobCreated(baseDir, result.Created)
 	return receipt, nil
 }
 
@@ -328,5 +330,6 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 	if writeErr != nil {
 		return "", contentHash, size, fmt.Errorf("store attachment source %q: %w", srcPath, writeErr)
 	}
+	recordLooseBlobCreated(baseDir, result.Created)
 	return path.Join(contentHash[:2], contentHash), contentHash, size, nil
 }

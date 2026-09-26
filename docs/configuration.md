@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-26"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -713,7 +713,7 @@ Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, 
 |---|---|---|
 | `engine` | `auto` | Aggregate engine: `auto` starts with live SQL and switches to DuckDB after cache maintenance succeeds; `sql` always uses live SQL; `duckdb` requires a usable Parquet cache |
 | `auto_build_cache` | `true` | Build a stale or missing Parquet cache during daemon startup and after scheduled syncs; `false` skips both automatic paths |
-| `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a scheduled sync may rebuild it; zero preserves rebuilding after each sync |
+| `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a scheduled sync or daemon restart may rebuild it; zero preserves rebuilding after each sync |
 | `builder_memory_limit` | `2GB` | DuckDB memory limit for cache builds, such as `4GB` or `512MiB` |
 | `builder_threads` | min(CPUs, 2) | DuckDB threads for cache builds; zero keeps the default |
 | `builder_temp_limit` | `32GB` | Maximum spill-to-disk size for cache builds |
@@ -730,19 +730,30 @@ or disk space. Cache builds have separate `builder_*` limits.
 
 The daemon starts HTTP health and API routing before analytics cache
 maintenance. With `engine = "duckdb"`, analytics remain unavailable until a
-usable cache is ready; if the cache cannot be built or opened, `msgvault serve`
-fails instead of silently falling back. With `auto_build_cache = false`, use
+usable cache is ready. If no usable cache can be built or opened, `msgvault serve`
+fails instead of silently falling back. A failed automatic refresh keeps serving
+the last usable publication. With `auto_build_cache = false`, use
 `msgvault build-cache` for explicit cache maintenance. Deprecated in 0.17.0:
 per-command analytics flags such as `msgvault tui --force-sql`,
 `msgvault mcp --force-sql`, `msgvault tui --no-cache-build`, and
 `--no-sqlite-scanner` were replaced by this daemon-level section. Use
 `engine = "sql"` to force live SQL.
 
-`min_rebuild_interval` limits only automatic post-sync rebuilds. A busy archive
-can therefore serve Parquet analytics that lag SQLite by approximately the
+`min_rebuild_interval` limits automatic rebuilds after syncs and at daemon
+startup. A restart, or a sync, within the interval leaves the existing
+publication in service and schedules one rebuild check for when the interval
+ends, so the cache refreshes even if no later sync arrives. A busy archive can
+therefore serve Parquet analytics that lag SQLite by approximately the
 configured interval plus cache build time. Explicit `msgvault build-cache`
-requests, startup maintenance, query-required builds, and recovery of an
-absent, interrupted, incompatible, or otherwise unusable cache are not delayed.
+requests, query-required builds, and recovery of an absent, interrupted,
+incompatible, or otherwise unusable cache are not delayed.
+
+The daemon runs automatic rebuilds in the background, outside the scheduled
+sync that requested them, so syncs keep their cadence while a build runs. A
+sync that finishes during a build does not discard it: the build publishes
+what it exported and marks the cache so the next build is a full rebuild.
+This partial snapshot remains usable across daemon restarts, and its next
+automatic rebuild still honors `min_rebuild_interval`.
 Cache build memory and temporary disk usage scale with archive size, so a
 minimum interval can prevent repeated archive-scale work when sources sync
 frequently. Changes under `[analytics]` take effect after the daemon restarts.

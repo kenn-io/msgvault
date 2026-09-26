@@ -51,8 +51,11 @@ type AccountStatus struct {
 	LastError *string    `json:"last_error,omitzero"`
 	LastRun   *time.Time `json:"last_run,omitempty"`
 	NextRun   time.Time  `json:"next_run" validate:"required"`
+	Pending   *bool      `json:"pending,omitempty"`
+	Queued    *bool      `json:"queued,omitempty"`
 	Running   bool       `json:"running"`
 	Schedule  string     `json:"schedule" validate:"required"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
 }
 
 func (a AccountStatus) Validate() error {
@@ -1742,6 +1745,8 @@ func (c CliAccountResponse) Validate() error {
 
 type CliAccountsResponse struct {
 	Accounts []CliAccountResponse `json:"accounts" validate:"required"`
+	AsOf     *time.Time           `json:"as_of,omitempty"`
+	Stale    *bool                `json:"stale,omitempty"`
 }
 
 func (c CliAccountsResponse) Validate() error {
@@ -11294,6 +11299,9 @@ type SourceStatus struct {
 	Schedule              *string        `json:"schedule,omitzero"`
 	Scheduled             bool           `json:"scheduled"`
 	SchedulerLastError    *string        `json:"scheduler_last_error,omitzero"`
+	SchedulerPending      *bool          `json:"scheduler_pending,omitempty"`
+	SchedulerQueued       *bool          `json:"scheduler_queued,omitempty"`
+	SchedulerStartedAt    *string        `json:"scheduler_started_at,omitzero"`
 	SourceType            string         `json:"source_type" validate:"required"`
 	SyncUnavailableReason *string        `json:"sync_unavailable_reason,omitzero"`
 	UpdatedAt             string         `json:"updated_at" validate:"required"`
@@ -11461,14 +11469,17 @@ func (s StageDeletionResponse) Validate() error {
 
 type StatsResponse struct {
 	ActiveMessages         int64      `json:"active_messages"`
+	AsOf                   *time.Time `json:"as_of,omitempty"`
 	DatabaseSizeBytes      int64      `json:"database_size_bytes"`
 	SourceDeletedMessages  int64      `json:"source_deleted_messages"`
+	Stale                  *bool      `json:"stale,omitempty"`
 	TotalAccounts          int64      `json:"total_accounts"`
 	TotalAttachments       int64      `json:"total_attachments"`
 	TotalLabels            int64      `json:"total_labels"`
 	TotalMessages          int64      `json:"total_messages"`
 	TotalThreads           int64      `json:"total_threads"`
 	VectorSearch           *StatsView `json:"vector_search,omitempty"`
+	VectorStatsUnavailable *bool      `json:"vector_stats_unavailable,omitempty"`
 	VectorStatus           *string    `json:"vector_status,omitzero"`
 	VectorTextMessageTypes []string   `json:"vector_text_message_types,omitempty"`
 	VectorTextStatus       *string    `json:"vector_text_status,omitzero"`
