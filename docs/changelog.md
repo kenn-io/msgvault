@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-26"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Repeated `import-emlx` runs no longer rewrite Apple Mail partial messages whose archived copy already holds every cached attachment, and the summary counts only attachments the run added to the archive.
 - Saved View MCP tools publish canonical_state as a schema object, so MCP clients that validate tools/list strictly, such as those built on the official TypeScript SDK, load msgvault's tools.
 - Log canceled SQLite planner-statistics maintenance at debug level.
 - **Supervised daemons can own startup.** Set `[server].daemon_auto_start = false`
