@@ -2122,3 +2122,24 @@ func TestLoadConfigFileUsesLogicalSymlinkPathForRelativeDefaults(t *testing.T) {
 	assert.Equal(fromDaemon.HomeDir, fromSnapshot.HomeDir)
 	assert.Equal(logicalDir, fromSnapshot.HomeDir)
 }
+
+func TestEditConfigRejectsInvalidMuesliSchedule(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before := "[[muesli]]\n" +
+		"identifier = \"mac\"\n" +
+		"account_email = \"you@example.com\"\n" +
+		"schedule = \"*/30 * * * *\"\n" +
+		"enabled = true\n"
+	require.NoError(os.WriteFile(path, []byte(before), 0o600))
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+
+	_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "muesli.schedule", Value: "not a cron"}})
+	require.ErrorIs(err, ErrInvalidConfigCandidate)
+	assert.Contains(err.Error(), "invalid muesli[0].schedule")
+	got, readErr := os.ReadFile(path)
+	require.NoError(readErr)
+	assert.Equal(before, string(got))
+}

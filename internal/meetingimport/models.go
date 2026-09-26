@@ -12,6 +12,7 @@ import (
 	"net/mail"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/jsonexact"
@@ -27,6 +28,7 @@ const (
 	maxSourceIdentifierChars  = 128
 	maxSourceDisplayNameChars = 256
 	maxExternalIDChars        = 256
+	maxPersonIDChars          = 200
 	maxTitleChars             = 4096
 )
 
@@ -101,9 +103,14 @@ type MeetingActionItem struct {
 	DueDate       string `json:"due_date,omitempty"`
 }
 
+// MeetingPerson is one organizer or attendee. At least one of Email or Phone
+// is required. ID is a stable identifier for this human in the import source;
+// with it, the person's email and phone are linked, including across meetings.
 type MeetingPerson struct {
 	Name  string `json:"name,omitempty"`
-	Email string `json:"email" format:"email"`
+	Email string `json:"email,omitempty" format:"email"`
+	Phone string `json:"phone,omitempty" doc:"International phone number starting with + or 00; normalized to E.164"`
+	ID    string `json:"id,omitempty" doc:"Stable identifier for this person in the import source"`
 }
 
 type TranscriptSegment struct {
@@ -310,14 +317,67 @@ func normalizeSegments(segments []TranscriptSegment) ([]TranscriptSegment, error
 }
 
 func normalizePerson(field string, person MeetingPerson) (MeetingPerson, error) {
-	email, err := normalizeEmail(field+".email", person.Email)
-	if err != nil {
+	out := MeetingPerson{Name: strings.TrimSpace(person.Name)}
+	if strings.TrimSpace(person.Email) != "" {
+		email, err := normalizeEmail(field+".email", person.Email)
+		if err != nil {
+			return MeetingPerson{}, err
+		}
+		out.Email = email
+	}
+	if strings.TrimSpace(person.Phone) != "" {
+		phone, err := normalizePhone(field+".phone", person.Phone)
+		if err != nil {
+			return MeetingPerson{}, err
+		}
+		out.Phone = phone
+	}
+	if out.Email == "" && out.Phone == "" {
+		return MeetingPerson{}, validationError("%s requires an email or phone", field)
+	}
+	out.ID = strings.TrimSpace(person.ID)
+	if err := validateBoundedOptional(field+".id", out.ID, maxPersonIDChars); err != nil {
 		return MeetingPerson{}, err
 	}
-	return MeetingPerson{
-		Name:  strings.TrimSpace(person.Name),
-		Email: email,
-	}, nil
+	if strings.IndexFunc(out.ID, unicode.IsControl) >= 0 {
+		return MeetingPerson{}, validationError("%s.id must not contain control characters", field)
+	}
+	return out, nil
+}
+
+// normalizePhone accepts international numbers only (a leading + or 00) and
+// returns E.164. National numbers are rejected rather than guessed: a wrong
+// country code could attach a meeting to someone else. Errors name the field,
+// never the number.
+func normalizePhone(field, value string) (string, error) {
+	// "+44 (0)20 …" marks a trunk zero that is dialed only nationally.
+	value = strings.ReplaceAll(strings.TrimSpace(value), "(0)", "")
+	var digits strings.Builder
+	for i, r := range value {
+		switch {
+		case r >= '0' && r <= '9':
+			digits.WriteRune(r)
+		case r == '+' && i == 0:
+		case r == ' ' || r == '-' || r == '.' || r == '(' || r == ')':
+		default:
+			return "", validationError("%s must contain only digits and phone formatting", field)
+		}
+	}
+	number := digits.String()
+	switch {
+	case strings.HasPrefix(value, "+"):
+	case strings.HasPrefix(number, "00"):
+		number = number[2:]
+	default:
+		return "", validationError("%s must be an international number starting with + or 00", field)
+	}
+	if strings.HasPrefix(number, "0") {
+		return "", validationError("%s must start with a country code", field)
+	}
+	if len(number) < 7 || len(number) > 15 {
+		return "", validationError("%s must have 7 to 15 digits", field)
+	}
+	return "+" + number, nil
 }
 
 func normalizeAttendees(attendees []MeetingPerson) ([]MeetingPerson, error) {
@@ -331,7 +391,9 @@ func normalizeAttendees(attendees []MeetingPerson) ([]MeetingPerson, error) {
 		if err != nil {
 			return nil, err
 		}
-		key := strings.ToLower(person.Email)
+		// Only exact repeats collapse. Entries with different identity sets are
+		// separate assertions; merging them could link unrelated people.
+		key := person.Email + "\x00" + person.Phone + "\x00" + person.ID
 		if _, exists := seen[key]; exists {
 			continue
 		}

@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-17"
+last_edited: "2026-09-25"
 title: Meeting Transcripts
-description: Archive AI meeting notes and transcripts from Granola, Circleback, and Notion into your searchable local archive.
+description: Archive AI meeting notes and transcripts from Granola, Circleback, Notion, and Muesli into your searchable local archive.
 ---
 
 Find meeting decisions and transcripts in the same archive as your email and
@@ -16,10 +16,11 @@ emails connect meetings to the people you already know in msgvault.
 | [Granola](#granola) | API key | Requires access to Granola's public API |
 | [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Notion integration token | At most 50 attendee-visible meetings per discovery query |
 | [Circleback](#circleback) | Browser authorization to its MCP server | Older note edits require a full refresh |
+| [Muesli](#muesli) | Local database on the same Mac | msgvault must run on the Mac where Muesli records |
 | [Another meeting source](#import-from-any-meeting-source) | Authenticated JSON import | Your integration supplies each meeting and its updates |
 
 Provider sync reads meeting data without changing the source service. Recording
-media is not downloaded by the Notion or Circleback integrations.
+media is not downloaded by the Notion, Circleback, or Muesli integrations.
 
 ## Browse and search
 
@@ -131,7 +132,7 @@ Each meeting source has two distinct values:
 rejects a missing or invalid value with guidance to preserve the source label
 and add the account email separately.
 
-`add-granola`, `add-circleback`, and `add-notion-meetings` always confirm the primary email for their
+`add-granola`, `add-circleback`, `add-notion-meetings`, and `add-muesli` always confirm the primary email for their
 source. Add other confirmed aliases with the identity command:
 
 ```bash
@@ -140,6 +141,40 @@ msgvault identity add work you+meetings@example.com
 
 Adding a new confirmed identity immediately repairs `is_from_me` on matching
 messages already stored for that source. No provider resync is required.
+
+## How meetings connect to people
+
+A meeting shows up on a person when one of its attendees is an email or phone
+number that already belongs to that person, for example from mail, chat, or a
+promoted profile. The attendee becomes a participant, and the next activity
+update (hourly, or `msgvault activity build`) adds the meeting to the person's
+timeline, relationships, and last-contact information.
+
+Some sources also know that several emails and phone numbers are the same
+human. msgvault links those identities through the source's stable identifier,
+so a meeting reaches the person even when it only names an address the person
+has never used with you:
+
+| Source | Identities per attendee | Linked through |
+|---|---|---|
+| Granola, Circleback | One email | Not needed |
+| Notion AI Meeting Notes | The user's verified email | The Notion user ID, so a user whose email changes keeps one person |
+| Muesli | Email, or the emails and phones on the attendee's Apple Contacts card | The Contacts card |
+| Import API | `email` and `phone` | The person's `id` within the import source |
+
+These links follow the same rules as other automatic identity links:
+
+- Only a shared stable identifier links identities. Matching names never do.
+- If the identities already belong to two different people, msgvault leaves
+  them apart and records a conflict. So does an address that another card or
+  `id` from the same source already claims, such as a shared household phone.
+  Review conflicts in the Web [Directory review queues](/docs/web-ui/#directory-and-reviews).
+- Rejecting a proposed link keeps that pair apart. The same identities can
+  still connect through another identity of the same person.
+
+Attendees known only by name appear in the meeting body but do not link to a
+person. A profile imported from CardDAV links meetings once its email or phone
+participant is promoted or linked to it; see [people](/docs/usage/people/).
 
 ## Import from any meeting source
 
@@ -171,6 +206,15 @@ curl http://localhost:8080/api/v1/import/meeting \
       ]
     }
   }'
+```
+
+Each organizer or attendee needs an `email`, a `phone`, or both. A phone must be
+international (a leading `+` or `00`) and is stored in E.164 form; national
+numbers are rejected rather than guessed. Add a stable `id` for the person in
+your source to link their email and phone, including across meetings:
+
+```json
+{"name": "Alex Example", "email": "alex@example.com", "phone": "+1 604 555 0100", "id": "crm-42"}
 ```
 
 Choose a stable `source.identifier` for the upstream dataset and preserve the
@@ -455,3 +499,105 @@ status), insights, and tags land in the message metadata and body; the
 meeting recording URL and `recording_url_fetched_at` remain in the archived
 provider metadata. msgvault does not expose recording URLs as durable
 attachments, and downloading or archiving recording media is not supported.
+
+## Muesli
+
+[Muesli](https://github.com/Muesli-HQ/muesli) records and transcribes meetings
+on a Mac and keeps them in a local SQLite database. msgvault reads that
+database directly and read-only. It never changes Muesli's meetings or schema,
+and it does not call `muesli-cli`, which updates the database whenever it runs.
+
+### Prerequisites
+
+The msgvault daemon reads the database on its own host, so run msgvault on the
+Mac where Muesli records. If your archive lives on another machine, send each
+meeting to that daemon with the [import API](#import-from-any-meeting-source)
+from a Muesli post-meeting hook instead.
+
+If macOS blocks the read, grant the process that runs `msgvault serve` Full
+Disk Access in System Settings.
+
+### Configure and register
+
+```toml
+[[muesli]]
+identifier = "mac"
+account_email = "you@example.com"   # you, the person who records
+# db_path = "~/Library/Application Support/Muesli/muesli.db"  # default
+schedule = "*/30 * * * *"           # optional daemon schedule
+enabled = true
+```
+
+`db_path` defaults to the stable app's database. Development builds of Muesli
+use a different support folder, such as `MuesliDev`; set `db_path` for those.
+
+### Attendees from Apple Contacts
+
+People you tag in Muesli usually come from Apple Contacts. msgvault reads the
+Mac's Contacts stores read-only, finds each attendee's card by its Contacts ID
+or exact email, and links every email and phone on that card. A contact tagged
+with only a phone number therefore reaches the person you already chat with at
+that number.
+
+- Reading Contacts needs Full Disk Access for the process that runs
+  `msgvault serve`. Without it, meetings still sync, and `sync-muesli` reports
+  `Contacts: unavailable`.
+- Phone numbers typed with `+` or `00` always work. Set `phone_country_code`
+  (for example `"1"` or `"44"`) to also use numbers typed without a country
+  code.
+- When only some Contacts accounts can be read, msgvault still uses Contacts
+  IDs but stops matching by email, because a hidden account could hold another
+  card with the same email.
+- When Contacts is temporarily unreadable, attendees keep the identities from
+  the previous sync.
+- Set `contacts = false` to turn the lookup off.
+
+```bash
+msgvault add-muesli mac
+```
+
+`add-muesli` checks that the file opens read-only as a Muesli database, then
+registers the source.
+
+### Sync
+
+```bash
+msgvault sync-muesli                     # all configured databases
+msgvault sync-muesli mac --limit 5
+msgvault sync-muesli --after 2026-01-01
+msgvault sync-muesli --full
+```
+
+Every run reads the whole database and updates meetings that changed in place,
+including title, notes, transcript, participant, and folder edits. Unchanged
+meetings are skipped.
+
+- Meetings still recording or processing wait for a later run.
+- Meetings deleted in Muesli stay in the archive unchanged.
+- `--after` keeps meetings that start on or after the date, read as UTC.
+- `--limit` caps the meetings processed in one run.
+- `--full` rewrites every archived meeting, which refreshes attribution after
+  you add an identity.
+
+### What gets stored (Muesli)
+
+Each meeting becomes one `meeting_transcript` message in a `meeting`
+conversation. The body holds the title, time, participant names, Muesli's AI
+notes, the notes you typed, and the transcript. When Muesli skipped or failed
+the summary, the body omits that notice instead of showing it as a summary.
+
+Muesli does not record an organizer. msgvault attributes each meeting to
+`account_email` as its organizer. Participants with an email address become
+recipients and connect to your existing people. Participants without one,
+such as a contact picked by name, appear only by name.
+
+The raw archive (`muesli_json`) keeps the meeting's text, times, status,
+template name, calendar event ID, folder path, and participant names, emails,
+phones, and sources. It never stores audio or audio file paths, screen text,
+template prompts, or Apple Contacts identifiers.
+
+Remove the archive source with:
+
+```bash
+msgvault remove-account mac --type muesli --yes
+```

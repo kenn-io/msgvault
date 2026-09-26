@@ -30,6 +30,7 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/operations"
@@ -611,6 +612,32 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule notion meeting source", "source", source.Identifier, "error", err)
 		} else {
 			logger.Info("scheduled notion meeting source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+	for _, src := range cfg.Muesli {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("muesli source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "*/30 * * * *") on the [[muesli]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledMuesliSources() {
+		source := src
+		jobName, ok := api.SchedulerJobNameForSource(muesli.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for muesli source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: func(ctx context.Context) error {
+				return runConfiguredMuesliSync(ctx, s, source)
+			},
+		}); err != nil {
+			logger.Error("failed to schedule muesli source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled muesli source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
 

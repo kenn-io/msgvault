@@ -210,6 +210,29 @@ func TestMeetingImportRejectsInvalidRequests(t *testing.T) {
 	assert.Equal(t, 0, store.calls)
 }
 
+func TestMeetingImportValidationNamesFieldWithoutEchoingValue(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	store := &fakeMeetingImportStore{mockStore: &mockStore{stats: &StoreStats{}}}
+	srv := newMeetingImportTestServer(t, store)
+	body := strings.Replace(validMeetingImportBody, `"email": "attendee@example.com"`,
+		`"phone": "(604) 555-0100"`, 1)
+	require.NotEqual(validMeetingImportBody, body, "fixture must contain the attendee email")
+
+	req := meetingImportRequest(body)
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusUnprocessableEntity, resp.Code, "body: %s", resp.Body.String())
+	var decoded ErrorResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&decoded))
+	assert.Equal("validation_failed", decoded.Error)
+	assert.Contains(decoded.Message, "meeting.attendees[0].phone")
+	assert.NotContains(decoded.Message, "555")
+	assert.Equal(0, store.calls)
+}
+
 func TestMeetingImportRejectsOversizedBody(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

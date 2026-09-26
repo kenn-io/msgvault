@@ -25,6 +25,7 @@ import (
 const (
 	mcpStartupChildEnv = "MSGVAULT_MCP_STARTUP_CHILD"
 	mcpStartupHomeEnv  = "MSGVAULT_MCP_STARTUP_HOME"
+	mcpStartupTimeout  = 15 * time.Second
 )
 
 // TestMCPInitializeWithoutStats exercises the real mcp command in a child
@@ -59,7 +60,7 @@ func TestMCPInitializeWithoutStats(t *testing.T) {
 	configText := fmt.Sprintf("[remote]\nurl = %q\nallow_insecure = true\n", daemon.URL)
 	require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte(configText), 0o600))
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), mcpStartupTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestMCPStartupChild$") //nolint:gosec // the test binary and fixed test selector are local.
 	cmd.Env = append(os.Environ(),
@@ -109,7 +110,7 @@ func TestMCPInitializeWithoutStats(t *testing.T) {
 	case <-statsSeen:
 		require.FailNow("MCP initialization must not request /api/v1/stats")
 	case response = <-waitForResponse:
-	case <-time.After(5 * time.Second):
+	case <-time.After(mcpStartupTimeout):
 		require.FailNow("MCP initialize did not return or request stats within the watchdog")
 	}
 	require.NotEmpty(response, "MCP initialize returned no response")

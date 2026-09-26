@@ -37,6 +37,7 @@ func TestMeetingConfigurationHintsLoad(t *testing.T) {
 		{name: "Granola", hint: granolaConfigHint},
 		{name: "Circleback", hint: circlebackConfigHint},
 		{name: "Notion", hint: notionMeetingsConfigHint},
+		{name: "Muesli", hint: muesliConfigHint},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -57,6 +58,9 @@ func TestMeetingConfigurationHintsLoad(t *testing.T) {
 			case "Notion":
 				require.Len(cfg.NotionMeetings, 1)
 				assert.Equal("you@example.com", cfg.NotionMeetings[0].AccountEmail)
+			case "Muesli":
+				require.Len(cfg.Muesli, 1)
+				assert.Equal("you@example.com", cfg.Muesli[0].AccountEmail)
 			}
 		})
 	}

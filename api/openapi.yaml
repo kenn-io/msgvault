@@ -5817,14 +5817,35 @@ components:
       type: object
     MeetingPerson:
       additionalProperties: false
+      anyOf:
+        - properties:
+            email:
+              format: email
+              type: string
+          required:
+            - email
+          type: object
+        - properties:
+            phone:
+              maxLength: 64
+              type: string
+          required:
+            - phone
+          type: object
       properties:
         email:
           format: email
           type: string
+        id:
+          description: Stable identifier for this person in the import source
+          maxLength: 200
+          type: string
         name:
           type: string
-      required:
-        - email
+        phone:
+          description: International phone number starting with + or 00; normalized to E.164
+          maxLength: 64
+          type: string
       type: object
     MeetingRef:
       additionalProperties: true

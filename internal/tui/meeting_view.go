@@ -62,6 +62,8 @@ func (m Model) meetingSourceLabel(sourceID int64) string {
 			return "Circleback"
 		case meetingSourceNotion:
 			return "Notion"
+		case meetingSourceMuesli:
+			return "Muesli"
 		case meetingSourceImported:
 			if account.DisplayName != "" {
 				return textutil.SanitizeTerminal(account.DisplayName)

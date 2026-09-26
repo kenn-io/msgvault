@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-25"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -635,6 +635,50 @@ cancellation failures fail the sync and preserve the prior successful cursor.
 | `--probe` | `false` | Print the MCP tool inventory and a sample result instead of syncing |
 
 See [Meeting Transcripts](/docs/usage/meetings/) for setup and what gets stored.
+
+---
+
+## add-muesli
+
+Check a configured local Muesli database and register it as a meeting source.
+
+```bash
+msgvault add-muesli [identifier]
+```
+
+The matching `[[muesli]]` entry requires `account_email`; `db_path` defaults
+to `~/Library/Application Support/Muesli/muesli.db`. With one entry, the
+identifier may be omitted. The command fails unless the file opens read-only
+as a Muesli database on the daemon's host.
+
+---
+
+## sync-muesli
+
+Archive completed meetings from a local Muesli database.
+
+```bash
+msgvault sync-muesli [identifier]
+msgvault sync-muesli mac --limit 5
+msgvault sync-muesli --after 2026-01-01
+msgvault sync-muesli --full
+```
+
+Every run reads the whole database read-only and updates changed meetings in
+place; unchanged meetings are skipped. Attendees are resolved through Apple
+Contacts unless `contacts = false`; the summary reports whether Contacts was
+`complete`, `partial`, `unavailable`, or `off`. Meetings still recording or processing
+wait for a later run, and meetings deleted in Muesli stay archived. With no
+identifier, every configured `[[muesli]]` source is synced.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--limit` | `0` | Maximum meetings processed per run (`0` = unlimited) |
+| `--after` | — | Only meetings that start on or after this UTC date (`YYYY-MM-DD`) |
+| `--full` | `false` | Rewrite every archived meeting, even unchanged ones, to refresh attribution |
+
+See [Meeting Transcripts](/docs/usage/meetings/#muesli) for setup and what gets
+stored.
 
 ---
 
