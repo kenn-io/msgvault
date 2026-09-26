@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-25"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Beeper media sync stops retrying files the network has deleted, such as expired WhatsApp media. Each is requested once, recorded as unavailable, and reported in the sync summary. Other failed downloads get at most three attempts per run instead of eight, so one bad file no longer stalls a sync.
 - Saved View MCP tools publish canonical_state as a schema object, so MCP clients that validate tools/list strictly, such as those built on the official TypeScript SDK, load msgvault's tools.
 - Log canceled SQLite planner-statistics maintenance at debug level.
 - **Supervised daemons can own startup.** Set `[server].daemon_auto_start = false`

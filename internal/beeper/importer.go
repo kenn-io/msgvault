@@ -68,6 +68,11 @@ type chatScope struct {
 	tailScan bool
 }
 
+type mediaAttemptKey struct {
+	messageID int64
+	sourceID  string
+}
+
 // chatVisit records why a chat was enumerated. tailOnly means the chat would
 // have been excluded by the normal activity filter and is present solely for
 // the completed-history probe.
@@ -90,7 +95,10 @@ func (cc *chatScope) chargeBudget(processed int) {
 type Importer struct {
 	store  *store.Store
 	client *Client
-	res    *participantResolver
+	// mediaFailures caches retryable attachment failures for one sync run. The
+	// incremental and reconcile passes can both persist the same message.
+	mediaFailures map[mediaAttemptKey]store.AttachmentRef
+	res           *participantResolver
 	// obs captures the addresses Beeper exposes for each participant. It is
 	// enrichment beside the resolution ladder, never a replacement for it.
 	obs *observationRecorder
@@ -115,6 +123,7 @@ func NewImporter(s *store.Store, c *Client) *Importer {
 func (imp *Importer) scopedToSync(sourceID, syncID int64) *Importer {
 	scoped := *imp
 	scoped.store = imp.store.ScopedToSync(sourceID, syncID)
+	scoped.mediaFailures = make(map[mediaAttemptKey]store.AttachmentRef)
 	accountID := ""
 	if imp.res != nil {
 		accountID = imp.res.accountID

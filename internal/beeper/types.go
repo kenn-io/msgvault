@@ -256,6 +256,9 @@ type ImportSummary struct {
 	AttachmentsDownloaded int64
 	AttachmentsPending    int64
 	AttachmentsSkipped    int64
+	// AttachmentsUnavailable counts media the source reported as permanently
+	// gone (e.g. expired WhatsApp media). Their markers are terminal.
+	AttachmentsUnavailable int64
 	// AttachmentsOverCap is the size-specific subset of AttachmentsSkipped.
 	// AttachmentsOverCapBytes saturates while summing declared sizes or the
 	// minimum observed streamed size. AttachmentsOverCapUnknownSize is nonzero

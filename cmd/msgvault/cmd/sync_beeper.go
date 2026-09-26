@@ -159,6 +159,9 @@ func writeBeeperMediaSkipSummary(out io.Writer, sum *beeper.ImportSummary) {
 	if otherSkipped > 0 {
 		_, _ = fmt.Fprintf(out, ", %d media skipped by policy", otherSkipped)
 	}
+	if sum.AttachmentsUnavailable > 0 {
+		_, _ = fmt.Fprintf(out, ", %d media no longer available at source", sum.AttachmentsUnavailable)
+	}
 }
 
 // resolveBeeperSyncAccounts returns the Beeper accountIDs to sync: the

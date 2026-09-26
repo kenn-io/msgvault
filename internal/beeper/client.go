@@ -17,8 +17,13 @@ import (
 )
 
 const (
-	maxRetries    = 8
-	maxRetryAfter = httpretry.DefaultMaxRetryAfter
+	maxRetries = 8
+	// maxAssetAttempts bounds transient HTTP responses for one asset download,
+	// including 429 and 5xx. A failed asset stays retryable on the next run.
+	maxAssetAttempts = 3
+	// maxErrorBodyBytes bounds how much of a non-200 response is read.
+	maxErrorBodyBytes = 64 << 10
+	maxRetryAfter     = httpretry.DefaultMaxRetryAfter
 	// DefaultBaseURL is the Beeper Desktop API loopback address.
 	DefaultBaseURL = "http://localhost:23373"
 	// defaultQPS bounds request rate against the live Beeper Desktop app. The
@@ -34,6 +39,29 @@ var ErrNotFound = errors.New("not found")
 // ErrAssetTooLarge reports an asset exceeding the caller's size cap; the cap
 // is enforced while reading so oversized bodies are never fully buffered.
 var ErrAssetTooLarge = errors.New("asset exceeds size cap")
+
+// ErrAssetUnavailable reports an asset the source network has permanently
+// deleted (WhatsApp expires old media from its servers). Retrying cannot
+// succeed, so callers record it as terminal.
+var ErrAssetUnavailable = errors.New("asset no longer available at source")
+
+// permanentAssetErrors are lower-cased phrases in a Beeper asset error body
+// that mean the media is gone for good.
+var permanentAssetErrors = []string{
+	"media is no longer available",
+}
+
+// isPermanentAssetError reports whether an asset error body says the media
+// can never be downloaded.
+func isPermanentAssetError(body []byte) bool {
+	lower := strings.ToLower(string(body))
+	for _, phrase := range permanentAssetErrors {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
 
 // TokenFunc returns a bearer token for a Beeper Desktop API request.
 type TokenFunc func(context.Context) (string, error)
@@ -69,14 +97,19 @@ func NewClient(baseURL string, token TokenFunc, qps float64) *Client {
 // get fetches path, respecting the rate limiter and retrying on 429/5xx with
 // Retry-After or exponential back-off.
 func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
-	return c.fetch(ctx, path, 0)
+	return c.fetch(ctx, path, 0, false)
 }
 
 // fetch is get with an optional response-size cap (0 = unlimited). Bodies are
 // read through a limited reader, so an over-cap asset costs at most
-// maxBytes+1 of memory regardless of what the server sends.
-func (c *Client) fetch(ctx context.Context, path string, maxBytes int64) ([]byte, error) {
+// maxBytes+1 of memory regardless of what the server sends. The cap applies
+// to successful responses only; error bodies have their own small bound.
+// asset enables asset-specific handling: permanent source errors return
+// ErrAssetUnavailable without retrying, and transient 429/5xx responses are
+// capped at maxAssetAttempts.
+func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset bool) ([]byte, error) {
 	reqURL := c.baseURL + path
+	assetAttempts := 0
 	for attempt := range maxRetries {
 		if err := c.limiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("wait for beeper rate limit: %w", err)
@@ -98,12 +131,19 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64) ([]byte
 			}
 			return nil, err
 		}
-		if maxBytes > 0 && resp.ContentLength > maxBytes {
+		if asset {
+			assetAttempts++
+		}
+		ok := resp.StatusCode == http.StatusOK
+		if ok && maxBytes > 0 && resp.ContentLength > maxBytes {
 			_ = resp.Body.Close()
 			return nil, fmt.Errorf("beeper GET %s: %d bytes: %w", reqURL, resp.ContentLength, ErrAssetTooLarge)
 		}
 		reader := io.Reader(resp.Body)
-		if maxBytes > 0 {
+		switch {
+		case !ok:
+			reader = io.LimitReader(resp.Body, maxErrorBodyBytes)
+		case maxBytes > 0:
 			reader = io.LimitReader(resp.Body, maxBytes+1)
 		}
 		body, readErr := io.ReadAll(reader)
@@ -116,30 +156,55 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64) ([]byte
 		}
 
 		switch {
-		case resp.StatusCode == http.StatusOK:
+		case ok:
 			if maxBytes > 0 && int64(len(body)) > maxBytes {
 				return nil, fmt.Errorf("beeper GET %s: %w", reqURL, ErrAssetTooLarge)
 			}
 			return body, nil
 		case resp.StatusCode == http.StatusUnauthorized:
 			return nil, fmt.Errorf("beeper GET %s: unauthorized (401): the access token was rejected; mint a new token in Beeper Desktop (Settings > Developer) and re-run 'msgvault add-beeper'", reqURL)
+		case resp.StatusCode == http.StatusTooManyRequests:
+			// Throttling is transient whatever the body says.
+			if asset && assetAttempts >= maxAssetAttempts {
+				return nil, fmt.Errorf("beeper GET %s: status %d after %d attempts: %s",
+					reqURL, resp.StatusCode, assetAttempts, errorSnippet(body))
+			}
+		case asset && isPermanentAssetError(body):
+			return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w",
+				reqURL, resp.StatusCode, errorSnippet(body), ErrAssetUnavailable)
 		case resp.StatusCode == http.StatusNotFound:
 			return nil, fmt.Errorf("beeper GET %s: %w", reqURL, ErrNotFound)
-		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-			wait := httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, c.retryAfterMax)
-			timer := time.NewTimer(wait)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return nil, ctx.Err()
-			case <-timer.C:
+		case resp.StatusCode >= 500:
+			if asset && assetAttempts >= maxAssetAttempts {
+				return nil, fmt.Errorf("beeper GET %s: status %d after %d attempts: %s",
+					reqURL, resp.StatusCode, assetAttempts, errorSnippet(body))
 			}
-			continue
 		default:
 			return nil, fmt.Errorf("beeper GET %s: status %d: %s", reqURL, resp.StatusCode, string(body))
 		}
+		if attempt == maxRetries-1 {
+			break
+		}
+		wait := httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, c.retryAfterMax)
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 	return nil, fmt.Errorf("beeper GET %s: exhausted %d retries", reqURL, maxRetries)
+}
+
+// errorSnippet returns a short single-line excerpt of an error body for logs.
+func errorSnippet(body []byte) string {
+	const limit = 300
+	s := strings.Join(strings.Fields(strings.ToValidUTF8(string(body), "\uFFFD")), " ")
+	if len(s) > limit {
+		s = strings.ToValidUTF8(s[:limit], "") + "..."
+	}
+	return s
 }
 
 // getJSON fetches path and unmarshals the JSON body into out.
@@ -248,7 +313,7 @@ func (c *Client) ListMessagesPage(ctx context.Context, chatID, cursor, direction
 // URL via the assets/serve endpoint. Reads are capped at maxBytes (see
 // ErrAssetTooLarge); asset sizes are untrusted remote metadata.
 func (c *Client) GetAssetBytes(ctx context.Context, assetURL string, maxBytes int64) ([]byte, error) {
-	return c.fetch(ctx, "/v1/assets/serve?url="+url.QueryEscape(assetURL), maxBytes)
+	return c.fetch(ctx, "/v1/assets/serve?url="+url.QueryEscape(assetURL), maxBytes, true)
 }
 
 // GetMessage fetches a single message by ID (used to refresh reaction targets
