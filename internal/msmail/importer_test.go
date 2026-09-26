@@ -38,10 +38,11 @@ type fakeGraph struct {
 	gone    map[string]bool   // folder IDs whose every delta answers 410
 	version map[string]int    // message ID -> content version
 
-	withAttachment map[string]bool // message IDs whose MIME carries a file
-	shifted        map[string]bool // message IDs whose file moves to another part
-	attachDir      string          // attachments directory; a fresh one when empty
-	throttle       bool            // answer the next $value with 429 once
+	withAttachment map[string]bool   // message IDs whose MIME carries a file
+	shifted        map[string]bool   // message IDs whose file moves to another part
+	attachmentBody map[string]string // message ID -> base64 file content
+	attachDir      string            // attachments directory; a fresh one when empty
+	throttle       bool              // answer the next $value with 429 once
 	pageSize       int
 	stopAt         int // fail the delta page at this skip offset, when non-zero
 
@@ -54,7 +55,7 @@ type change struct{ id, from string }
 
 func newFakeGraph(t *testing.T) *fakeGraph {
 	t.Helper()
-	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, pageSize: 2}
+	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, pageSize: 2}
 	f.folders = []string{"inbox", "archive"}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -83,7 +84,10 @@ func raw(id string, version int) string {
 
 // rawWithAttachment carries one file. When shifted, a second text part comes
 // first, so the file gets another MIME part key.
-func rawWithAttachment(id string, shifted bool) string {
+func rawWithAttachment(id string, shifted bool, content string) string {
+	if content == "" {
+		content = "aGVsbG8="
+	}
 	extra := ""
 	if shifted {
 		extra = "--b\r\nContent-Type: text/plain\r\n\r\nnote\r\n"
@@ -93,7 +97,7 @@ func rawWithAttachment(id string, shifted bool) string {
 		"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n" +
 		"--b\r\nContent-Type: text/plain\r\n\r\nbody " + id + "\r\n" + extra +
 		"--b\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=a.bin\r\n" +
-		"Content-Transfer-Encoding: base64\r\n\r\naGVsbG8=\r\n--b--\r\n"
+		"Content-Transfer-Encoding: base64\r\n\r\n" + content + "\r\n--b--\r\n"
 }
 
 func (f *fakeGraph) writeJSON(w http.ResponseWriter, v any) {
@@ -141,7 +145,7 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		body := raw(id, f.version[id])
 		if f.withAttachment[id] {
-			body = rawWithAttachment(id, f.shifted[id])
+			body = rawWithAttachment(id, f.shifted[id], f.attachmentBody[id])
 		}
 		_, _ = w.Write([]byte(body)) //nolint:gosec // local test server returns fixture MIME
 	case strings.HasPrefix(p, "/me/messages/"):
@@ -425,22 +429,22 @@ func TestImportRefreshReplacesAttachments(t *testing.T) {
 	f.put("m1", "inbox")
 	_, err := f.sync(t, st)
 	require.NoError(err)
-	assert.Equal([2]int{1, 1}, attachments(t, st, "m1"))
+	assert.Equal([2]int{1, 1}, attachments(t, st))
 
 	f.withAttachment["m1"] = false
 	f.put("m1", "inbox")
 	_, err = f.sync(t, st)
 	require.NoError(err)
-	assert.Equal([2]int{0, 0}, attachments(t, st, "m1"))
+	assert.Equal([2]int{0, 0}, attachments(t, st))
 }
 
-// attachments returns the attachment row count and attachment_count of a message.
-func attachments(t *testing.T, st *store.Store, id string) [2]int {
+// attachments returns the attachment row count and attachment_count of m1.
+func attachments(t *testing.T, st *store.Store) [2]int {
 	t.Helper()
 	var rows, count int
 	require.NoError(t, st.DB().QueryRow(st.Rebind(`
 		SELECT (SELECT COUNT(*) FROM attachments a WHERE a.message_id = m.id), m.attachment_count
-		FROM messages m WHERE m.source_message_id = ?`), id).Scan(&rows, &count))
+		FROM messages m WHERE m.source_message_id = 'm1'`)).Scan(&rows, &count))
 	return [2]int{rows, count}
 }
 
@@ -549,7 +553,7 @@ func TestImportInterruptedRewalkStartsOver(t *testing.T) {
 }
 
 // When the attachment of a refreshed message cannot be written, the row of
-// the old MIME stays.
+// the old MIME stays and the sync fails, so the next sync stores it.
 func TestImportRefreshKeepsAttachmentWhenWriteFails(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -566,6 +570,58 @@ func TestImportRefreshKeepsAttachmentWhenWriteFails(t *testing.T) {
 	f.shifted["m1"] = true                              // the file gets a new part key
 	f.put("m1", "inbox")
 	_, err = f.sync(t, st)
+	require.Error(err)
+	assert.Equal([2]int{1, 1}, attachments(t, st))
+
+	f.attachDir = ""
+	_, err = f.sync(t, st)
 	require.NoError(err)
-	assert.Equal([2]int{1, 1}, attachments(t, st, "m1"))
+	assert.Equal([2]int{1, 1}, attachments(t, st))
+	assert.Equal("mime:3", attachmentKey(t, st), "the old row is replaced by the new part")
+}
+
+// A refreshed part with the same key but new bytes that cannot be written
+// fails the sync, so the old content is not kept as if it were current.
+func TestImportRefreshFailsWhenChangedPartIsNotWritten(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.withAttachment["m1"] = true
+	f.put("m1", "inbox")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+	before := attachmentHash(t, st)
+
+	blocker := filepath.Join(t.TempDir(), "file")
+	require.NoError(os.WriteFile(blocker, nil, 0o600))
+	f.attachDir = filepath.Join(blocker, "attachments") // cannot be created
+	f.attachmentBody["m1"] = "d29ybGQ="                 // same part, new bytes
+	f.put("m1", "inbox")
+	_, err = f.sync(t, st)
+	require.Error(err)
+
+	f.attachDir = ""
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.NotEqual(before, attachmentHash(t, st))
+	assert.Equal([2]int{1, 1}, attachments(t, st))
+}
+
+func attachmentKey(t *testing.T, st *store.Store) string {
+	t.Helper()
+	var key string
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT a.source_part_key FROM attachments a JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = 'm1'`)).Scan(&key))
+	return key
+}
+
+func attachmentHash(t *testing.T, st *store.Store) string {
+	t.Helper()
+	var hash string
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+		SELECT a.content_hash FROM attachments a JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = 'm1'`)).Scan(&hash))
+	return hash
 }

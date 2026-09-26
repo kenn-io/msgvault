@@ -303,28 +303,31 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 	return s.relocate(ctx, removed)
 }
 
-// attachmentsStored reports whether every attachment part key of a new MIME
-// has a row. A part without a key cannot be checked, so it counts as missing.
-func (s *syncer) attachmentsStored(ctx context.Context, messageID int64, keys []string) (bool, error) {
-	distinct := map[string]bool{}
-	for _, k := range keys {
-		if k == "" {
+// attachmentsStored reports whether every attachment part of a new MIME has a
+// row with its part key and the hash of its new content. A part without a key
+// cannot be checked, so it counts as missing.
+func (s *syncer) attachmentsStored(ctx context.Context, messageID int64, atts []mime.Attachment) (bool, error) {
+	want := map[string]string{} // part key -> content hash
+	for _, a := range atts {
+		if a.PartKey == "" {
 			return false, nil
 		}
-		distinct[k] = true
+		want[a.PartKey] = a.ContentHash
 	}
-	if len(distinct) == 0 {
+	if len(want) == 0 {
 		return true, nil
 	}
 	args := []any{messageID}
-	for k := range distinct {
-		args = append(args, k)
+	match := make([]string, 0, len(want))
+	for k, h := range want {
+		match = append(match, "(source_part_key = ? AND content_hash = ?)")
+		args = append(args, k, h)
 	}
 	var n int
 	err := s.st.DB().QueryRowContext(ctx, s.st.Rebind(`
 		SELECT COUNT(DISTINCT source_part_key) FROM attachments
-		WHERE message_id = ? AND source_part_key IN (?`+strings.Repeat(`, ?`, len(distinct)-1)+`)`), args...).Scan(&n)
-	return n == len(distinct), err
+		WHERE message_id = ? AND (`+strings.Join(match, " OR ")+`)`), args...).Scan(&n)
+	return n == len(want), err
 }
 
 // reconcileWalk looks up the archived messages of a folder that a complete
@@ -476,13 +479,14 @@ func (s *syncer) download(ctx context.Context, folderLabel int64, msgs []DeltaMe
 		for _, a := range parsed.Attachments {
 			keep = append(keep, a.PartKey)
 		}
-		complete, err := s.attachmentsStored(ctx, r.msg.archiveID, keep)
-		if err == nil && complete {
+		// A part that was not stored fails the page, so the old rows stay
+		// and the next sync downloads the message again.
+		complete, err := s.attachmentsStored(ctx, r.msg.archiveID, parsed.Attachments)
+		if err == nil && !complete {
+			err = errors.New("an attachment of the new MIME was not stored")
+		}
+		if err == nil {
 			err = s.st.DeleteMIMEAttachmentsExceptContext(ctx, r.msg.archiveID, keep)
-		} else if err == nil {
-			// ponytail: an attachment of the new MIME has no row, so the old
-			// rows stay; they are dropped when a later refresh stores all.
-			s.log.Warn("keep old attachments: new MIME not fully stored", "id", r.msg.ID)
 		}
 		if err != nil {
 			storeErr = fmt.Errorf("drop old attachments of message %s: %w", r.msg.ID, err)
