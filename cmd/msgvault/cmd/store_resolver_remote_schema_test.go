@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,8 +20,12 @@ import (
 // stub a remote daemon with single-route handlers that do not serve
 // /api/v1/health. The probe itself is exercised by the
 // TestOpenRemoteStore*APISchema* tests, which re-enable it per test.
+// It also blocks real daemon launches, which would rerun this test binary as "serve".
 func TestMain(m *testing.M) {
 	remoteAPISchemaCheckEnabled = false
+	startServeBackgroundProcessForRun = func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		return nil, errors.New("test reached the real background daemon launcher; stub it with stubStartServeBackgroundProcess or disable daemon auto-start")
+	}
 	os.Exit(m.Run())
 }
 
