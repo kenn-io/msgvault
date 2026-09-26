@@ -3420,6 +3420,8 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 			summary, err = runScheduledIMAPSync(ctx, src, s)
 		case sourceTypeTeams:
 			err = runScheduledTeamsSync(ctx, src, s)
+		case sourceTypeMSMail:
+			err = runScheduledMSMailSync(ctx, src, s)
 		case sourceTypeDiscord:
 			var discordSummary *discord.ImportSummary
 			discordSummary, err = importDiscordSourceForScheduledRun(
@@ -3486,7 +3488,7 @@ func logScheduledDiscordIssues(identifier string, summary *discord.ImportSummary
 
 // findScheduledSyncSources resolves ALL syncable source rows for a
 // scheduler identifier. Returns at most one row per syncable type
-// (gmail, imap, teams, discord), in that stable order. Non-syncable types
+// (gmail, imap, msmail, teams, discord), in that stable order. Non-syncable types
 // (mbox, apple-mail, etc.) are skipped.
 //
 // Returns an empty slice (not nil) when no syncable source matches —
@@ -3503,7 +3505,7 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 	seen := make(map[string]*store.Source, 4)
 	for _, src := range rows {
 		switch src.SourceType {
-		case sourceTypeGmail, sourceTypeIMAP, sourceTypeTeams:
+		case sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, sourceTypeTeams:
 			if _, dup := seen[src.SourceType]; !dup {
 				seen[src.SourceType] = src
 			}
@@ -3516,9 +3518,9 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 		}
 	}
 
-	// Return in stable order: gmail, imap, teams, discord.
+	// Return in stable order: gmail, imap, msmail, teams, discord.
 	var result []*store.Source
-	for _, t := range []string{sourceTypeGmail, sourceTypeIMAP, sourceTypeTeams, sourceTypeDiscord} {
+	for _, t := range []string{sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, sourceTypeTeams, sourceTypeDiscord} {
 		if src, ok := seen[t]; ok {
 			result = append(result, src)
 		}

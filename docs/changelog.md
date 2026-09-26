@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-25"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,10 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- `add-o365 --graph` syncs a Microsoft 365 or Outlook.com mailbox through the
+  Microsoft Graph mail API, for a mailbox that has IMAP turned off. Each folder
+  becomes a label, and later syncs fetch only the changes, including moves and
+  deletes. See [Microsoft Graph mail sync](guides/oauth-setup.md#microsoft-graph-mail-sync).
 - Saved View MCP tools publish canonical_state as a schema object, so MCP clients that validate tools/list strictly, such as those built on the official TypeScript SDK, load msgvault's tools.
 - Log canceled SQLite planner-statistics maintenance at debug level.
 - **Supervised daemons can own startup.** Set `[server].daemon_auto_start = false`

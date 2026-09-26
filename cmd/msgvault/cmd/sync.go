@@ -31,6 +31,10 @@ Requires a prior full sync to establish the history ID baseline.
 IMAP accounts use folder-based sync. Unchanged folders are skipped when
 UIDVALIDITY/UIDNEXT high water marks are available.
 
+Microsoft Graph mail accounts (add-o365 --graph) use one delta cursor per
+folder. The first sync downloads every folder; later syncs fetch only the
+changes, including moves and deletes.
+
 If no email is specified, syncs all accounts that have credentials configured.
 Accounts without tokens or history IDs are skipped.
 
@@ -88,6 +92,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 	}
 	var gmailTargets []syncTarget
 	var imapTargets []*store.Source
+	var msmailTargets []*store.Source
 	var syncErrors []string
 
 	if selectorSet {
@@ -103,11 +108,13 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 				gmailTargets = append(gmailTargets, syncTarget{source: src, email: src.Identifier})
 			case sourceTypeIMAP:
 				imapTargets = append(imapTargets, src)
+			case sourceTypeMSMail:
+				msmailTargets = append(msmailTargets, src)
 			}
 		}
-		if len(gmailTargets) == 0 && len(imapTargets) == 0 {
+		if len(gmailTargets) == 0 && len(imapTargets) == 0 && len(msmailTargets) == 0 {
 			if len(allMatches) > 0 {
-				return fmt.Errorf("%s exists but its source type cannot be synced (only gmail and imap are supported)", syncSelectorLabel(selector))
+				return fmt.Errorf("%s exists but its source type cannot be synced (only gmail, imap and msmail are supported)", syncSelectorLabel(selector))
 			}
 			if legacy {
 				// Token not in DB — assume Gmail (legacy behaviour).
@@ -159,11 +166,17 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 					continue
 				}
 				imapTargets = append(imapTargets, src)
+			case sourceTypeMSMail:
+				if !newGraphMailManager().HasToken(src.Identifier) {
+					fmt.Printf("Skipping %s (no Microsoft Graph token - run 'add-o365 %s --graph' first)\n", src.Identifier, src.Identifier)
+					continue
+				}
+				msmailTargets = append(msmailTargets, src)
 			default:
 				continue
 			}
 		}
-		if len(gmailTargets) == 0 && len(imapTargets) == 0 {
+		if len(gmailTargets) == 0 && len(imapTargets) == 0 && len(msmailTargets) == 0 {
 			if len(syncErrors) > 0 {
 				// Surface the collected errors (e.g. broken OAuth config).
 				return fmt.Errorf("%s", syncErrors[0])
@@ -181,6 +194,20 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 		if err := runFullSync(ctx, s, getOAuthMgr, src); err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 		}
+	}
+
+	// Sync Microsoft Graph mail sources. The first run walks every folder.
+	for _, src := range msmailTargets {
+		if ctx.Err() != nil {
+			break
+		}
+		fmt.Printf("Syncing Microsoft Graph mail for %s\n", src.Identifier)
+		sum, err := runMSMailSync(ctx, s, src.Identifier, func(line string) { fmt.Println(line) })
+		if err != nil {
+			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
+			continue
+		}
+		writeMSMailSyncSummary(os.Stdout, src.Identifier, sum)
 	}
 
 	// Sync Gmail sources via incremental sync.

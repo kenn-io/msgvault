@@ -51,7 +51,7 @@ const CardDAVJobName = "carddav"
 // types cannot borrow a scheduled account merely by sharing its identifier.
 func classifySourceScheduling(sourceType, identifier string) sourceScheduleClassification {
 	switch sourceType {
-	case "", sourceTypeGmail, "imap", "teams", "discord":
+	case "", sourceTypeGmail, "imap", "msmail", "teams", "discord":
 		return sourceScheduleClassification{kind: sourceScheduleAccount}
 	case meetingimport.SourceType:
 		return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}

@@ -13,6 +13,7 @@ import (
 var (
 	o365TenantID             string
 	noDefaultIdentityAddO365 bool
+	o365Graph                bool
 )
 
 func newAddO365Cmd() *cobra.Command {
@@ -40,16 +41,8 @@ func preflightAddO365Authorize(cmd *cobra.Command, email string) error {
 	if err := requireMicrosoftOAuthConfig(); err != nil {
 		return err
 	}
-	msMgr := microsoft.NewManager(
-		cfg.Microsoft.ClientID,
-		microsoftTenantID(o365TenantID),
-		cfg.Microsoft.EffectiveRedirectURI(),
-		cfg.TokensDir(),
-		logger,
-	)
-	fmt.Printf("Authorizing %s with Microsoft...\n", email)
-	if err := msMgr.Authorize(cmd.Context(), email); err != nil {
-		return fmt.Errorf("authorization failed: %w", err)
+	if err := authorizeO365(cmd, email); err != nil {
+		return err
 	}
 	if err := cmd.Flags().Set(oauthPreflightedFlag, "true"); err != nil {
 		return fmt.Errorf("set --%s after authorization: %w", oauthPreflightedFlag, err)
@@ -69,15 +62,23 @@ to outlook.office365.com automatically using the XOAUTH2 SASL mechanism.
 Requires a [microsoft] section in config.toml with your Azure AD app's client_id.
 See the docs for Azure AD app registration setup.
 
+With --graph, the account syncs through the Microsoft Graph mail API instead
+of IMAP. Use it when IMAP is turned off for the mailbox. It needs the Mail.Read
+permission on the app registration. A Graph account is a separate account: if
+the mailbox is also synced over IMAP, the vault holds two copies, and
+'msgvault dedup --collection' hides the extra ones.
+
 Examples:
   msgvault add-o365 user@outlook.com
-  msgvault add-o365 user@company.com --tenant my-tenant-id`,
+  msgvault add-o365 user@company.com --tenant my-tenant-id
+  msgvault add-o365 user@company.com --graph`,
 		Args: cobra.ExactArgs(1),
 		RunE: runAddO365Local,
 	}
 	cmd.Flags().StringVar(&o365TenantID, "tenant", "",
 		"Azure AD tenant ID (default: \"common\" for multi-tenant)")
 	cmd.Flags().BoolVar(&noDefaultIdentityAddO365, "no-default-identity", false, noDefaultIdentityHelp)
+	cmd.Flags().BoolVar(&o365Graph, "graph", false, "sync through the Microsoft Graph mail API instead of IMAP")
 	registerOAuthPreflightedFlag(cmd)
 	return cmd
 }
@@ -87,6 +88,9 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 
 	if err := requireMicrosoftOAuthConfig(); err != nil {
 		return err
+	}
+	if o365Graph {
+		return runAddO365GraphLocal(cmd, email)
 	}
 
 	msMgr := microsoft.NewManager(
@@ -102,9 +106,8 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if !preflighted {
-		fmt.Printf("Authorizing %s with Microsoft...\n", email)
-		if err := msMgr.Authorize(cmd.Context(), email); err != nil {
-			return fmt.Errorf("authorization failed: %w", err)
+		if err := authorizeO365(cmd, email); err != nil {
+			return err
 		}
 	}
 
@@ -188,6 +191,65 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	fmt.Println("You can now run:")
 	fmt.Printf("  msgvault sync-full %s\n", email)
 
+	return nil
+}
+
+// authorizeO365 runs the Microsoft sign-in for the account kind: Graph mail
+// with --graph, IMAP otherwise.
+func authorizeO365(cmd *cobra.Command, email string) error {
+	tenant := microsoftTenantID(o365TenantID)
+	redirect := cfg.Microsoft.EffectiveRedirectURI()
+	fmt.Printf("Authorizing %s with Microsoft...\n", email)
+	var err error
+	if o365Graph {
+		err = microsoft.NewGraphMailManager(cfg.Microsoft.ClientID, tenant, redirect, cfg.TokensDir(), logger).Authorize(cmd.Context(), email)
+	} else {
+		err = microsoft.NewManager(cfg.Microsoft.ClientID, tenant, redirect, cfg.TokensDir(), logger).Authorize(cmd.Context(), email)
+	}
+	if err != nil {
+		return fmt.Errorf("authorization failed: %w", err)
+	}
+	return nil
+}
+
+// runAddO365GraphLocal creates an msmail source, the Graph mail counterpart of
+// the IMAP source that add-o365 makes by default.
+func runAddO365GraphLocal(cmd *cobra.Command, email string) error {
+	preflighted, err := oauthPreflighted(cmd)
+	if err != nil {
+		return err
+	}
+	if !preflighted {
+		if err := authorizeO365(cmd, email); err != nil {
+			return err
+		}
+	}
+
+	s, cleanup, err := openWritableStoreAndInitForIngest()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	source, err := s.GetOrCreateSource(sourceTypeMSMail, email)
+	if err != nil {
+		return fmt.Errorf("create source: %w", err)
+	}
+	if err := s.UpdateSourceDisplayName(source.ID, email); err != nil {
+		return fmt.Errorf("set display name: %w", err)
+	}
+	if !noDefaultIdentityAddO365 {
+		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier")
+	}
+	if err := runPostSourceCreateMigrations(s); err != nil {
+		return fmt.Errorf("post-source-create migrations: %w", err)
+	}
+
+	fmt.Printf("\nMicrosoft 365 account added for Graph mail sync!\n")
+	fmt.Printf("  Email: %s\n", email)
+	fmt.Println()
+	fmt.Println("You can now run:")
+	fmt.Printf("  msgvault sync %s\n", email)
 	return nil
 }
 

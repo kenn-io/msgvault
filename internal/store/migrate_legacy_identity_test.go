@@ -20,6 +20,7 @@ func TestSourceTypeUsesEmailIdentity(t *testing.T) {
 		{"gmail", true},
 		{"imap", true},
 		{"o365", true},
+		{"msmail", true},
 		{"mbox", true},
 		{"hey", true},
 		{"apple-mail", true},
