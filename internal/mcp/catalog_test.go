@@ -325,7 +325,7 @@ func TestCatalogSchemas(t *testing.T) {
 				semanticProperties := []string{"query"}
 				if shape.semantic {
 					searchMessagesProperties = append(searchMessagesProperties, "explain", "min_score", "mode")
-					semanticProperties = []string{"account", "explain", "limit", "min_score", "mode", "offset", "query"}
+					semanticProperties = []string{"account", "explain", "limit", "min_score", "mode", "offset", "query", "rerank"}
 				}
 				sort.Strings(searchMessagesProperties)
 				checks.Equal(searchMessagesProperties, toolPropertyNames(t, byName[ToolSearchMessages]))

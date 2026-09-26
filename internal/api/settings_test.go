@@ -80,6 +80,7 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 			setting.Key == "vector.embeddings.api_key_env" ||
 			setting.Key == "vector.multimodal.api_key_env" ||
 			setting.Key == "vector.multimodal.capabilities_file" ||
+			setting.Key == "vector.rerank.api_key_env" ||
 			strings.HasPrefix(setting.Key, "carddav.")
 		assertions.Equal(wantReadOnly, setting.ReadOnly, setting.Key)
 	}

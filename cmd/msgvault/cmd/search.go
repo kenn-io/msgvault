@@ -22,6 +22,7 @@ var (
 	searchCollection    string
 	searchMode          string
 	searchExplain       bool
+	searchRerank        bool
 	searchDeletionScope string
 	searchMessageTypes  []string
 )
@@ -121,6 +122,9 @@ Examples:
 			}
 		}
 		if searchMode == "fts" {
+			if searchRerank {
+				return usageErr(cmd, errors.New("--rerank requires --mode=vector or --mode=hybrid"))
+			}
 			return runHTTPSearch(cmd, queryStr)
 		}
 		if searchMode != "fts" && searchOffset > 0 {
@@ -312,6 +316,8 @@ func init() {
 	searchCmd.MarkFlagsMutuallyExclusive("account", "collection")
 	searchCmd.Flags().StringVar(&searchMode, "mode", "fts", "Search mode: fts|vector|hybrid")
 	searchCmd.Flags().BoolVar(&searchExplain, "explain", false, "Include per-signal scores in output (hybrid/vector modes)")
+	searchCmd.Flags().BoolVar(&searchRerank, "rerank", false,
+		"Rescore the top hits with the configured [vector.rerank] provider (vector/hybrid modes); --rerank=false skips a configured default")
 	searchCmd.Flags().StringVar(&searchDeletionScope, "deletion-scope", "active",
 		"Source deletion scope: active|deleted|any (FTS mode only)")
 	searchCmd.Flags().StringSliceVar(&searchMessageTypes, "message-type", nil,

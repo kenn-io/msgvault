@@ -4,6 +4,7 @@
 
 export interface ScoreBreakdown {
   bm25?: number;
+  rerank?: number;
   rrf?: number;
   subject_boosted?: boolean;
   vector?: number;

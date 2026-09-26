@@ -1104,6 +1104,36 @@ Accelerator tuning does not change the embedding generation fingerprint. It
 changes how stored vectors are searched or optimized, not how text is sent to
 the embedding provider.
 
+#### `[vector.rerank]`
+
+Optional hosted reranking for vector and hybrid search. The reranker reads the
+query and each top candidate's text together and reorders the candidates by
+relevance. It runs after retrieval, so it can only reorder messages that
+retrieval already found. Requires `[vector] enabled = true`.
+
+Enabling this section is your consent to send each reranked query, plus the
+preprocessed subject and body of its top candidates, to the configured
+provider. A search reranks only when it asks with `rerank=true` (API and MCP)
+or `--rerank` (CLI), unless you set `default = true`. See
+[Reranking](usage/vector-search.md#reranking).
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Turn on the rerank stage. |
+| `api_format` | `cohere` | Wire contract: `POST {endpoint}/rerank` with `model`, `query`, and `documents`. OpenRouter, Cohere, Jina, and vLLM serve it. Only legal value. |
+| `endpoint` | `https://openrouter.ai/api/v1` | Provider API root. Local `http` endpoints are allowed. |
+| `api_key_env` | `OPENROUTER_API_KEY` for the default endpoint, otherwise empty | Environment variable holding the key. A stored `vector.rerank` provider credential takes precedence. |
+| `model` | `cohere/rerank-4-pro` | Provider model identifier, such as `cohere/rerank-4-fast` or `voyageai/rerank-2.5` on OpenRouter. |
+| `candidates` | `50` | Top retrieval hits rescored per search. Range: 1–100. |
+| `max_candidate_chars` | `4000` | Characters of preprocessed subject and body sent per candidate. Range: 1–32000. |
+| `timeout` | `10s` | Provider request timeout. On timeout the search returns the retrieval order. |
+| `default` | `false` | Rerank vector and hybrid searches that do not set `rerank`. |
+
+The daemon refuses to start the stage when the default endpoint has no API key.
+Vector search keeps working, and a request with `rerank=true` returns
+`rerank_unavailable`. Rerank settings do not change the embedding generation
+fingerprint.
+
 #### `[vector.embed.scope]`
 
 Optional scope for newly built embedding generations. The zero value embeds the

@@ -978,6 +978,9 @@ type SearchMessagesQuery struct {
 	// MinScore Minimum chunk score for included excerpts; does not filter ranked messages
 	MinScore *float32 `json:"min_score,omitempty"`
 
+	// Rerank Rescore the top vector or hybrid hits with the configured [vector.rerank] provider. Omitted follows [vector.rerank].default; true fails with 503 rerank_unavailable when reranking is not configured
+	Rerank *bool `json:"rerank,omitempty"`
+
 	// MessageType Message type filter; repeat or comma-separate for multiple values
 	MessageType *string `json:"message_type,omitempty"`
 

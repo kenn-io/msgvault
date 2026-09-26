@@ -346,6 +346,7 @@ type hybridSearchResponse struct {
 	Generation       hybridGenerationSummary `json:"generation"`
 	TookMS           int64                   `json:"took_ms"`
 	Timings          hybridSearchTimings     `json:"timings"`
+	Rerank           *hybridRerankSummary    `json:"rerank,omitzero" nullable:"false"`
 	ScopeLabel       string                  `json:"scope_label,omitempty"`
 	ScopeSourceCount int                     `json:"scope_source_count,omitzero"`
 	Results          []hybridSearchItem      `json:"results"`
@@ -355,6 +356,17 @@ type hybridSearchTimings struct {
 	QueryEmbeddingMS int64 `json:"query_embedding_ms"`
 	RetrievalMS      int64 `json:"retrieval_ms"`
 	HydrationMS      int64 `json:"hydration_ms"`
+	RerankMS         int64 `json:"rerank_ms,omitzero"`
+}
+
+// hybridRerankSummary reports the rerank stage of one search. Fallback names
+// the failure category when the provider failed and the results keep their
+// retrieval order.
+type hybridRerankSummary struct {
+	Applied    bool   `json:"applied"`
+	Model      string `json:"model"`
+	Candidates int    `json:"candidates"`
+	Fallback   string `json:"fallback,omitempty"`
 }
 
 type similarSearchResponse struct {
@@ -404,6 +416,7 @@ type scoreBreakdown struct {
 	RRF            *float64 `json:"rrf,omitzero" nullable:"false"`
 	BM25           *float64 `json:"bm25,omitzero" nullable:"false"`
 	Vector         *float64 `json:"vector,omitzero" nullable:"false"`
+	Rerank         *float64 `json:"rerank,omitzero" nullable:"false"`
 	SubjectBoosted bool     `json:"subject_boosted,omitzero"`
 }
 
@@ -826,6 +839,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			s.rejectBadParam(w, err)
 			return
 		}
+		rerankValue, rerankSet, err := queryBool(r, "rerank")
+		if err != nil {
+			s.rejectBadParam(w, err)
+			return
+		}
 		pageSize, ok, err := queryInt(r, "page_size")
 		if err != nil {
 			s.rejectBadParam(w, err)
@@ -848,6 +866,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		s.handleHybridSearch(
 			w, r, searchText, parsedQuery, structuredFilter,
 			mode, explain, offset, pageSize, includeMatches, minScore, scope,
+			rerankChoice{value: rerankValue, explicit: rerankSet},
 		)
 		return
 	}
@@ -855,6 +874,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if mode != "fts" {
 		writeError(w, http.StatusBadRequest, "invalid_mode",
 			fmt.Sprintf("mode must be one of fts|vector|hybrid, got %q", mode))
+		return
+	}
+	if rerankValue, _, err := queryBool(r, "rerank"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if rerankValue {
+		writeError(w, http.StatusBadRequest, "rerank_unsupported_mode",
+			"rerank=true requires mode=vector or mode=hybrid")
 		return
 	}
 	if conversationID, ok, err := queryInt64(r, "conversation_id"); err != nil {
@@ -977,11 +1004,15 @@ func (s *Server) handleHybridSearch(
 	q string, parsed *search.Query, structuredFilter query.MessageFilter,
 	mode string, explain bool,
 	offset, pageSize int, includeMatches bool, minScore float64,
-	scope cliScope,
+	scope cliScope, rerankRequest rerankChoice,
 ) {
 	hybridEngine, backend, vectorCfg := s.vectorComponents()
 	if hybridEngine == nil {
 		s.writeVectorUnavailable(w)
+		return
+	}
+	useRerank, ok := resolveRerank(w, hybridEngine, vectorCfg, rerankRequest)
+	if !ok {
 		return
 	}
 	ctx := r.Context()
@@ -1025,11 +1056,14 @@ func (s *Server) handleHybridSearch(
 		Limit:        fetchLimit,
 		SubjectTerms: subjectTerms,
 		Explain:      explain,
+		Rerank:       useRerank,
 	}
 
 	hits, meta, err := hybridEngine.Search(ctx, req)
 	if err != nil {
 		switch {
+		case errors.Is(err, hybrid.ErrRerankNotConfigured):
+			writeRerankUnavailable(w)
 		case errors.Is(err, vector.ErrNotEnabled):
 			writeError(w, http.StatusServiceUnavailable, "vector_not_enabled",
 				"vector search is not configured")
@@ -1049,6 +1083,11 @@ func (s *Server) handleHybridSearch(
 			writeError(w, http.StatusInternalServerError, "internal_error", "search failed")
 		}
 		return
+	}
+
+	if meta.Rerank.Err != nil {
+		s.logger.Warn("search rerank failed; returning retrieval order",
+			"fallback", meta.Rerank.Fallback, "model", meta.Rerank.Model, "error", meta.Rerank.Err)
 	}
 
 	hydrationStarted := time.Now()
@@ -1103,6 +1142,7 @@ func (s *Server) handleHybridSearch(
 				v := h.VectorScore
 				sb.Vector = &v
 			}
+			sb.Rerank = h.RerankScore
 			item.Score = sb
 		}
 		items = append(items, item)
@@ -1133,9 +1173,50 @@ func (s *Server) handleHybridSearch(
 			QueryEmbeddingMS: meta.QueryEmbeddingDuration.Milliseconds(),
 			RetrievalMS:      meta.RetrievalDuration.Milliseconds(),
 			HydrationMS:      hydrationDuration.Milliseconds(),
+			RerankMS:         meta.Rerank.Duration.Milliseconds(),
 		},
+		Rerank:  rerankSummary(meta.Rerank),
 		Results: items,
 	})
+}
+
+// rerankChoice is the request's rerank parameter; explicit is false when the
+// parameter was omitted and [vector.rerank].default decides.
+type rerankChoice struct {
+	value    bool
+	explicit bool
+}
+
+// resolveRerank decides whether one search reranks. An explicit rerank=true
+// against an engine without a rerank stage is refused, so a caller never
+// mistakes the retrieval order for a reranked one; an omitted parameter
+// follows [vector.rerank].default only when the stage is available.
+func resolveRerank(w http.ResponseWriter, engine *hybrid.Engine, cfg vector.Config, choice rerankChoice) (bool, bool) {
+	if !choice.explicit {
+		return cfg.Rerank.Enabled && cfg.Rerank.Default && engine.RerankAvailable(), true
+	}
+	if choice.value && !engine.RerankAvailable() {
+		writeRerankUnavailable(w)
+		return false, false
+	}
+	return choice.value, true
+}
+
+func writeRerankUnavailable(w http.ResponseWriter) {
+	writeError(w, http.StatusServiceUnavailable, "rerank_unavailable",
+		"search reranking is not available; enable [vector.rerank] and configure its API key")
+}
+
+func rerankSummary(meta hybrid.RerankMeta) *hybridRerankSummary {
+	if !meta.Requested {
+		return nil
+	}
+	return &hybridRerankSummary{
+		Applied:    meta.Applied,
+		Model:      meta.Model,
+		Candidates: meta.Candidates,
+		Fallback:   meta.Fallback,
+	}
 }
 
 func (s *Server) enrichHybridMatches(

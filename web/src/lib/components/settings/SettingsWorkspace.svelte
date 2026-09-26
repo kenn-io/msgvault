@@ -438,10 +438,12 @@
     'vector.embeddings.api_key_env',
     'vector.multimodal.api_key_env',
     'vector.multimodal.capabilities_file',
+    'vector.rerank.api_key_env',
   ]);
   const credentialEndpointKeys: Readonly<Record<string, string>> = {
     'vector.embeddings': 'vector.embeddings.endpoint',
     'vector.multimodal': 'vector.multimodal.endpoint',
+    'vector.rerank': 'vector.rerank.endpoint',
   };
 </script>
 
