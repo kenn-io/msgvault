@@ -234,3 +234,69 @@ func TestPersonSweepAttemptBriefFailureMigrationAddsColumnToExistingArchives(t *
 		`SELECT COUNT(*) FROM person_sweep_attempts WHERE id = ?`), f.attemptID).Scan(&attempts))
 	checks.Equal(1, attempts)
 }
+
+func TestPersonFactClaimOriginMigrationScopesForeignKeyChecks(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		corruptSQL string
+		wantError  bool
+	}{
+		{
+			name: "unrelated legacy references",
+			corruptSQL: `CREATE TABLE legacy_parent (id INTEGER PRIMARY KEY);
+				CREATE TABLE legacy_child (parent_id INTEGER REFERENCES legacy_parent(id));
+				INSERT INTO legacy_child VALUES (1)`,
+		},
+		{
+			name:       "claim parent reference",
+			corruptSQL: `UPDATE person_fact_claims SET generation_id = 1000000`,
+			wantError:  true,
+		},
+		{
+			name:       "evidence claim reference",
+			corruptSQL: `UPDATE person_fact_claim_evidence SET claim_id = 1000000`,
+			wantError:  true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newPersonSweepBudgetFixture(t, "scoped-claim-migration")
+			if f.store.IsPostgreSQL() {
+				t.Skip("SQLite table rebuild")
+			}
+			seedPersonFactClaimLedger(t, f.store, f.personID, "extraction-claim")
+			installLegacyPersonFactClaimOrigin(t, f.store)
+			conn, err := f.store.DB().Conn(t.Context())
+			require.NoError(err)
+			_, err = conn.ExecContext(t.Context(), `PRAGMA foreign_keys = OFF`)
+			require.NoError(err)
+			_, err = conn.ExecContext(t.Context(), tc.corruptSQL)
+			require.NoError(err)
+			_, err = conn.ExecContext(t.Context(), `PRAGMA foreign_keys = ON`)
+			require.NoError(err)
+			require.NoError(conn.Close())
+			_, err = f.store.DB().ExecContext(t.Context(),
+				`DELETE FROM applied_migrations WHERE name = 'person_fact_claim_origin_brief_v1'`)
+			require.NoError(err)
+
+			err = f.store.InitSchema()
+			if tc.wantError {
+				require.ErrorContains(err, "dangling references")
+				var definition string
+				require.NoError(f.store.DB().QueryRowContext(t.Context(),
+					`SELECT sql FROM sqlite_master WHERE name = 'person_fact_claims'`).Scan(&definition))
+				assert.NotContains(definition, "'brief'", "failed rebuild must roll back")
+			} else {
+				require.NoError(err)
+				require.NoError(insertBriefOriginClaim(t.Context(), f.store, f.personID, "brief-after"))
+				var violations int
+				require.NoError(f.store.DB().QueryRowContext(t.Context(),
+					`SELECT COUNT(*) FROM pragma_foreign_key_check('legacy_child')`).Scan(&violations))
+				assert.Equal(1, violations, "unrelated data must remain unchanged")
+			}
+			_, err = f.store.DB().ExecContext(t.Context(), st1000ClaimEvidenceInsert(f.store))
+			require.Error(err, "foreign key enforcement must be restored")
+		})
+	}
+}

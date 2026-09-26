@@ -101,7 +101,7 @@ func (s *Store) migratePersonFactClaimOriginBriefSQLite(ctx context.Context) (er
 			return fmt.Errorf("rebuild person fact claim origins: %w", err)
 		}
 	}
-	violations, err := countSQLiteForeignKeyViolations(ctx, tx)
+	violations, err := countPersonFactClaimForeignKeyViolations(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -254,20 +254,16 @@ func sqliteColumnPresent(ctx context.Context, tx *loggedTx, table, column string
 	return false, nil
 }
 
-// countSQLiteForeignKeyViolations reports how many references the rebuilt
-// schema leaves dangling, so a rebuild that lost a row fails the upgrade rather
-// than committing a corrupt ledger.
-func countSQLiteForeignKeyViolations(ctx context.Context, tx *sql.Tx) (int, error) {
-	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+// countPersonFactClaimForeignKeyViolations checks the rebuilt table and its
+// referencing tables. Unrelated legacy violations must not block this migration.
+func countPersonFactClaimForeignKeyViolations(ctx context.Context, tx *sql.Tx) (int, error) {
+	var violations int
+	err := tx.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM pragma_foreign_key_check('person_fact_claims')) +
+		(SELECT COUNT(*) FROM pragma_foreign_key_check('person_fact_claim_evidence')) +
+		(SELECT COUNT(*) FROM pragma_foreign_key_check('person_fact_decisions'))
+	`).Scan(&violations)
 	if err != nil {
-		return 0, fmt.Errorf("check person fact claim references: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	violations := 0
-	for rows.Next() {
-		violations++
-	}
-	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("check person fact claim references: %w", err)
 	}
 	return violations, nil
