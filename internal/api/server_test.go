@@ -1898,7 +1898,9 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 		serveErr <- srv.StartOnListener(listener)
 	}()
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		// net/http delays closing connections with unread request data, then
+		// polls for shutdown. Allow cleanup time beyond the request deadlines.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		require.NoError(t, srv.Shutdown(ctx), "shutdown")
 		require.ErrorIs(t, <-serveErr, http.ErrServerClosed, "serve result")
