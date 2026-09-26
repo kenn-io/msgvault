@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -79,17 +78,22 @@ func (a *storeAPIAdapter) queueCacheRefreshAfterManualSync(force, skip bool) err
 	if a.cacheJobs == nil || skip || (!force && !cfg.Analytics.AutoBuildCache) {
 		return nil
 	}
+	if a.cacheJobs.ctx.Err() != nil {
+		return nil //nolint:nilerr // Shutdown must not turn a completed sync into a failure.
+	}
 	dbPath := cfg.DatabaseDSN()
 	if store.IsPostgresURL(dbPath) {
 		return nil
 	}
-	staleness, err := cacheNeedsBuildForQuery(context.Background(), dbPath, cfg.AnalyticsDir())
+	staleness, err := cacheNeedsBuildForServing(a.cacheJobs.ctx, dbPath, cfg.AnalyticsDir())
 	if err != nil {
+		if a.cacheJobs.ctx.Err() != nil {
+			return nil //nolint:nilerr // Shutdown must not turn a completed sync into a failure.
+		}
 		return fmt.Errorf("inspect analytics cache after sync: %w", err)
 	}
-	if !staleness.NeedsBuild {
-		return nil
-	}
+	// Even a light check with no changes needs background verification:
+	// conversation-only edits do not appear in its indexed revision signals.
 	mode := buildCacheModeAuto
 	if !force && staleness.HasUsablePublication {
 		if remaining, deferBuild := scheduledCacheBuildDelay(staleness, cfg.Analytics.MinRebuildInterval, time.Now()); deferBuild {
@@ -101,8 +105,13 @@ func (a *storeAPIAdapter) queueCacheRefreshAfterManualSync(force, skip bool) err
 	}
 	job, err := a.cacheJobs.acceptAfterWrite(mode)
 	if err != nil {
+		if a.cacheJobs.ctx.Err() != nil {
+			return nil //nolint:nilerr // Shutdown must not turn a completed sync into a failure.
+		}
 		return fmt.Errorf("queue analytics cache build after sync: %w", err)
 	}
-	logger.Info("queued analytics cache build after manual sync", "job_id", job.JobID)
+	if job.JobID != "" {
+		logger.Info("queued analytics cache build after manual sync", "job_id", job.JobID)
+	}
 	return nil
 }

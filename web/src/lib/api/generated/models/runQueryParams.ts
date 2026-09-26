@@ -4,7 +4,7 @@
 
 export type RunQueryParams = {
   /**
-   * Request a new cache publication before returning rows
+   * Request a background cache check including writes committed before this request
    */
   fresh?: boolean;
 };

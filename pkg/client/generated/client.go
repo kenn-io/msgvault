@@ -908,7 +908,7 @@ type ClientInterface interface {
 	RunQueryWithResponse(ctx context.Context, options *RunQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunQueryResp, error)
 
 	// RunArchiveQuery Run SQL restricted to archive analytics files
-	RunArchiveQuery(ctx context.Context, options *RunArchiveQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunArchiveQueryResponseJSON, error)
+	RunArchiveQuery(ctx context.Context, options *RunArchiveQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunArchiveQueryResponse, error)
 	RunArchiveQueryWithResponse(ctx context.Context, options *RunArchiveQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunArchiveQueryResp, error)
 
 	// ListRelationshipTypes List person relationship types
@@ -14506,7 +14506,7 @@ func (c *Client) RunQuery(ctx context.Context, options *RunQueryRequestOptions, 
 }
 
 // RunArchiveQuery Run SQL restricted to archive analytics files
-func (c *Client) RunArchiveQuery(ctx context.Context, options *RunArchiveQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunArchiveQueryResponseJSON, error) {
+func (c *Client) RunArchiveQuery(ctx context.Context, options *RunArchiveQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunArchiveQueryResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/query/archive",
@@ -14520,9 +14520,9 @@ func (c *Client) RunArchiveQuery(ctx context.Context, options *RunArchiveQueryRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*RunArchiveQueryResponseJSON, error) {
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*RunArchiveQueryResponse, error) {
 		bodyBytes := resp.Content
-		if resp.StatusCode != 202 {
+		if resp.StatusCode != 200 {
 			target := new(RunArchiveQueryErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {
@@ -14544,7 +14544,7 @@ func (c *Client) RunArchiveQuery(ctx context.Context, options *RunArchiveQueryRe
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(RunArchiveQueryResponseJSON)
+		target := new(RunArchiveQueryResponse)
 		// Handle empty response body gracefully
 		if len(bodyBytes) == 0 {
 			return target, nil
@@ -14554,7 +14554,7 @@ func (c *Client) RunArchiveQuery(ctx context.Context, options *RunArchiveQueryRe
 				StatusCode:    resp.StatusCode,
 				ContentType:   resp.Headers.Get("Content-Type"),
 				ContentLength: len(bodyBytes),
-				TargetType:    "RunArchiveQueryResponseJSON",
+				TargetType:    "RunArchiveQueryResponse",
 				Body:          bodyBytes,
 				Err:           err,
 			}

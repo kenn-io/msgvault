@@ -2000,6 +2000,15 @@ func (s *Server) handleSQLQuery(w http.ResponseWriter, r *http.Request, archiveO
 		fresh = parsed
 	}
 
+	// Startup already owns cache recovery. Keep serving an installed SQL
+	// engine, but do not start a duplicate build while it is unavailable.
+	if s.analyticsCacheInitializingForContext(r.Context()) {
+		if _, usable := s.queryEngineForContext(r.Context()).(query.SQLQuerier); !usable {
+			writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Analytics engine is initializing")
+			return
+		}
+	}
+
 	var result *query.QueryResult
 	var accepted *CacheBuildAccepted
 	var err error
@@ -2009,8 +2018,8 @@ func (s *Server) handleSQLQuery(w http.ResponseWriter, r *http.Request, archiveO
 		} else {
 			result, accepted, err = s.archiveSQLQueryRunner(r.Context(), req.SQL, fresh)
 		}
-	} else if s.sqlQueryRunnerWithOptions != nil {
-		result, accepted, err = s.sqlQueryRunnerWithOptions(r.Context(), req.SQL, fresh)
+	} else if s.sqlQueryRunner != nil {
+		result, accepted, err = s.sqlQueryRunner(r.Context(), req.SQL, fresh)
 	} else {
 		result, err = s.runSQLQuery(r.Context(), req.SQL)
 	}
@@ -2059,9 +2068,6 @@ func (s *Server) handleCacheBuildStatus(w http.ResponseWriter, r *http.Request) 
 func (s *Server) runSQLQuery(ctx context.Context, sql string) (*query.QueryResult, error) {
 	if s.analyticsInitializingForContext(ctx) {
 		return nil, ErrSQLQueryEngineUnavailable
-	}
-	if s.sqlQueryRunner != nil {
-		return s.sqlQueryRunner(ctx, sql)
 	}
 	querier, ok := s.queryEngineForContext(ctx).(query.SQLQuerier)
 	if !ok {

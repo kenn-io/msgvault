@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,7 +58,7 @@ func TestMCPInitializeWithoutStats(t *testing.T) {
 	configText := fmt.Sprintf("[remote]\nurl = %q\nallow_insecure = true\n", daemon.URL)
 	require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte(configText), 0o600))
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestMCPStartupChild$") //nolint:gosec // the test binary and fixed test selector are local.
 	cmd.Env = append(os.Environ(),
@@ -109,7 +108,7 @@ func TestMCPInitializeWithoutStats(t *testing.T) {
 	case <-statsSeen:
 		require.FailNow("MCP initialization must not request /api/v1/stats")
 	case response = <-waitForResponse:
-	case <-time.After(5 * time.Second):
+	case <-ctx.Done():
 		require.FailNow("MCP initialize did not return or request stats within the watchdog")
 	}
 	require.NotEmpty(response, "MCP initialize returned no response")
@@ -150,7 +149,7 @@ func TestMCPInitializeWithoutStats(t *testing.T) {
 	go func() { waitDone <- waitChild() }()
 	select {
 	case waitErr = <-waitDone:
-	case <-time.After(5 * time.Second):
+	case <-ctx.Done():
 		require.FailNow("MCP child did not exit after stdin closed")
 	}
 	require.NoError(waitErr, stderr.String())

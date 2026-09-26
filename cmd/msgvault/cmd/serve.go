@@ -654,13 +654,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Store:          storeAdapter,
 		SavedViewStore: s,
 		Engine:         engine,
-		SQLQueryRunner: func(ctx context.Context, sql string) (*query.QueryResult, error) {
-			if apiServer == nil {
-				return nil, errors.New("daemon API server unavailable")
-			}
-			return runDaemonSQLQuery(ctx, cfg, s, apiServer.QueryEngineForRequest(ctx), sql)
-		},
-		SQLQueryRunnerWithOptions: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
+		SQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
 			if apiServer == nil {
 				return nil, nil, errors.New("daemon API server unavailable")
 			}
@@ -1018,66 +1012,6 @@ func shutdownServeRuntime(
 	return nil
 }
 
-func runDaemonSQLQuery(
-	ctx context.Context,
-	c *config.Config,
-	s *store.Store,
-	engine query.Engine,
-	sqlStr string,
-) (*query.QueryResult, error) {
-	if c == nil || s == nil {
-		return nil, errors.New("daemon query unavailable")
-	}
-	if engine == nil {
-		return nil, api.ErrSQLQueryEngineUnavailable
-	}
-	if s.IsPostgreSQL() {
-		if querier, ok := engine.(query.SQLQuerier); ok {
-			return querier.QuerySQL(ctx, sqlStr)
-		}
-		return nil, errors.New("SQL query requires DuckDB engine")
-	}
-
-	dbPath := c.DatabaseDSN()
-	analyticsDir := c.AnalyticsDir()
-	staleness, err := cacheNeedsBuildForQuery(ctx, dbPath, analyticsDir)
-	if err != nil {
-		return nil, fmt.Errorf("inspect analytics cache: %w", err)
-	}
-	if staleness.NeedsBuild && staleness.HasUsablePublication {
-		if _, deferBuild := scheduledCacheBuildDelay(staleness, c.Analytics.MinRebuildInterval, time.Now()); deferBuild {
-			if querier, ok := engine.(query.SQLQuerier); ok {
-				return queryCommittedSQL(ctx, querier, sqlStr, staleness)
-			}
-		}
-	}
-	if !store.IsPostgresURL(dbPath) && !staleness.NeedsBuild {
-		if querier, ok := engine.(query.SQLQuerier); ok {
-			return queryCommittedSQL(ctx, querier, sqlStr, staleness)
-		}
-	}
-
-	if staleness.NeedsBuild {
-		if err := buildCacheSubprocessForRun(ctx, staleness.FullRebuild); err != nil {
-			return nil, fmt.Errorf("build cache: %w", err)
-		}
-		logger.Info("rebuilt analytics cache for SQL query",
-			"reason", staleness.Reason,
-			"full_rebuild", staleness.FullRebuild)
-	}
-
-	duckEngine, err := openDaemonDuckDBEngine(c, s)
-	if err != nil {
-		return nil, fmt.Errorf("open DuckDB query engine: %w", err)
-	}
-	defer func() { _ = duckEngine.Close() }()
-	staleness, err = cacheNeedsBuildForQuery(ctx, dbPath, analyticsDir)
-	if err != nil {
-		return nil, fmt.Errorf("inspect rebuilt analytics cache: %w", err)
-	}
-	return queryCommittedSQL(ctx, duckEngine, sqlStr, staleness)
-}
-
 type daemonSQLQueryOptions struct {
 	fresh       bool
 	archiveOnly bool
@@ -1100,15 +1034,18 @@ func runDaemonSQLQueryWithJobs(
 		if options.archiveOnly {
 			return nil, nil, api.ErrSQLQueryEngineUnavailable
 		}
-		result, err := runDaemonSQLQuery(ctx, c, s, engine, sqlStr)
-		return result, nil, err
+		if querier, ok := engine.(query.SQLQuerier); ok {
+			result, err := querier.QuerySQL(ctx, sqlStr)
+			return result, nil, err
+		}
+		return nil, nil, api.ErrSQLQueryEngineUnavailable
 	}
 	staleness, err := cacheNeedsBuildForServing(ctx, c.DatabaseDSN(), c.AnalyticsDir())
 	if err != nil {
 		return nil, nil, fmt.Errorf("inspect analytics cache: %w", err)
 	}
-	if options.fresh && !staleness.NeedsBuild {
-		job, err := jobs.accept(buildCacheModeAuto)
+	if options.fresh {
+		job, err := jobs.acceptAfterWrite(buildCacheModeAuto)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
 		}
@@ -1117,11 +1054,11 @@ func runDaemonSQLQueryWithJobs(
 		}, nil
 	}
 	if staleness.NeedsBuild {
-		if !options.fresh && !c.Analytics.AutoBuildCache {
+		if !c.Analytics.AutoBuildCache {
 			if !staleness.HasUsablePublication {
 				return nil, nil, api.ErrSQLQueryEngineUnavailable
 			}
-		} else if options.fresh || !staleness.HasUsablePublication {
+		} else if !staleness.HasUsablePublication {
 			job, err := jobs.accept(buildCacheModeAuto)
 			if err != nil {
 				return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)

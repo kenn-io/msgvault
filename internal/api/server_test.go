@@ -152,9 +152,9 @@ func TestLoggerMiddlewareLogsInProgressRequest(t *testing.T) {
 		srv := NewServerWithOptions(ServerOptions{
 			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 			Logger: logger,
-			SQLQueryRunner: func(_ context.Context, _ string) (*query.QueryResult, error) {
+			SQLQueryRunner: func(_ context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
 				<-release // hold the request open past the in-progress threshold
-				return &query.QueryResult{}, nil
+				return &query.QueryResult{}, nil, nil
 			},
 		})
 		defer func() {

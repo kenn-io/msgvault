@@ -275,6 +275,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		wantSavedViews bool
 		wantMeetings   bool
 		wantAgenda     bool
+		wantArchiveSQL bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -288,6 +289,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "meeting schema", schemaVersion: "2.27.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true},
 		{name: "person agenda predecessor", schemaVersion: "2.29.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true},
 		{name: "person agenda schema", schemaVersion: "2.30.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true},
+		{name: "archive SQL schema", schemaVersion: "2.31.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -322,6 +324,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			assert.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
 			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
 			assert.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
+			assert.Equal(tt.wantArchiveSQL, opts.ArchiveSQLQuerier != nil)
 		})
 	}
 }
@@ -347,6 +350,7 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 	opts := daemonMCPServeOptions(t.Context(), client)
 	assert.Nil(opts.PeopleBackend)
 	assert.Nil(opts.DirectoryBackend)
+	assert.Nil(opts.ArchiveSQLQuerier)
 	assert.Contains(logs.String(), "people tools disabled")
 }
 

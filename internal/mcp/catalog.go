@@ -110,9 +110,8 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 }
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
-	_, sqlQuery := opts.Engine.(archiveSQLQuerier)
 	return catalogCapabilities{
-		sqlQuery:        sqlQuery,
+		sqlQuery:        opts.ArchiveSQLQuerier != nil,
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
 		similarMessages: opts.Backend != nil || opts.SimilarSearcher != nil,
@@ -222,7 +221,7 @@ func querySQLDefinition() toolDefinition {
 		"Run read-only SQL against the analytics cache. Files outside the cache and network access are unavailable. Set fresh to request a coalesced background refresh; an accepted build returns a job ID instead of rows.",
 		closedObject(map[string]*jsonschema.Schema{
 			"sql":   stringSchema("One read-only SQL statement"),
-			"fresh": booleanSchema("Request a new cache publication before returning rows"),
+			"fresh": booleanSchema("Request a background cache check including writes committed before this request"),
 		}, "sql"),
 		&jsonschema.Schema{Schema: schema202012, OneOf: []*jsonschema.Schema{result, accepted}},
 		(*handlers).querySQL,

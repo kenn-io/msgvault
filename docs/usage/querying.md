@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-26"
 title: SQL Queries
 description: Run read-only DuckDB queries against the analytics cache.
 ---
@@ -19,12 +19,12 @@ queryable. The JSON result reports the committed publication time and, when
 known, why the cache is stale and how many additions are pending. CSV and table
 output print that cache information to stderr.
 
-`msgvault query --fresh "SELECT 1"` requests a coalesced background freshness
-check, building the cache if needed.
-With automatic builds enabled, a missing or incompatible cache also starts recovery.
-In either case the command reports the accepted job ID on stderr and returns
-no rows. Retry the query after the job reaches `published` at
-`GET /api/v1/cache-builds/{job_id}`.
+`msgvault query --fresh "SELECT 1"` waits for a freshness check and any required
+rebuild, then returns rows. This includes archive writes committed before the
+request. If a build is already running, the daemon queues a follow-up check.
+With automatic builds enabled, a missing or incompatible cache also starts
+recovery. In either case the command reports the job ID on stderr and waits;
+a failed build or interrupted wait exits with an error.
 
 ## Output Formats
 
@@ -234,7 +234,9 @@ msgvault query "
 `min_rebuild_interval`. Once that interval expires, a query can schedule a
 background freshness check and refresh. Set `auto_build_cache = false` to
 disable automatic builds; `--fresh` still requests one explicitly. A query
-never waits for the build to finish.
+waits for the build when `--fresh` is set or no usable cache exists. Deleted
+messages can remain in the published cache until it refreshes; see the
+[cache freshness policy](../configuration.md#analytics).
 
 **Pipe-friendly.** JSON and CSV output modes are designed for piping into other tools (`jq`, `csvkit`, `xsv`, etc.). Use `--format csv` for spreadsheet workflows or `--format json` for programmatic consumption.
 

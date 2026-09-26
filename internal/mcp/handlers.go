@@ -129,6 +129,7 @@ func listLimitArg(args map[string]any) int {
 
 type handlers struct {
 	engine              query.Engine
+	archiveSQLQuerier   ArchiveSQLQuerier
 	attachmentsDir      string
 	attachmentReader    AttachmentReader
 	manifestSaver       DeletionManifestSaver
@@ -154,7 +155,8 @@ type handlers struct {
 	visualSearcher VisualSearcher
 }
 
-type archiveSQLQuerier interface {
+// ArchiveSQLQuerier executes SQL confined to published archive analytics data.
+type ArchiveSQLQuerier interface {
 	QueryArchiveSQL(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *daemonclient.CacheBuildAccepted, error)
 }
 
@@ -168,11 +170,10 @@ func (h *handlers) querySQL(ctx context.Context, req toolRequest) (*toolResult, 
 		return toolErrorResult(err.Error()), nil
 	}
 	fresh, _ := args["fresh"].(bool)
-	engine, ok := h.engine.(archiveSQLQuerier)
-	if !ok {
+	if h.archiveSQLQuerier == nil {
 		return toolErrorResult("SQL queries are unavailable"), nil
 	}
-	result, accepted, err := engine.QueryArchiveSQL(ctx, sql, fresh)
+	result, accepted, err := h.archiveSQLQuerier.QueryArchiveSQL(ctx, sql, fresh)
 	if err != nil {
 		return nil, newInternalError("query SQL", err)
 	}

@@ -19,11 +19,12 @@ type cacheBuildJobs struct {
 	idle                *api.IdleTracker
 	run                 func(context.Context, buildCacheMode) error
 	current             string
-	pending             bool
+	pending             string
 	pendingMode         buildCacheMode
 	lastVerification    time.Time
 	verificationRetryAt time.Time
 	jobs                map[string]api.CacheBuildStatus
+	completed           []string
 	wg                  sync.WaitGroup
 }
 
@@ -57,7 +58,7 @@ func (m *cacheBuildJobs) verifyWhenDue(publishedAt time.Time, interval time.Dura
 	if !due {
 		return nil
 	}
-	_, err := m.accept(buildCacheModeScheduledAuto)
+	_, err := m.acceptWithFollowup(buildCacheModeScheduledAuto, false, now)
 	if err != nil {
 		m.mu.Lock()
 		if m.lastVerification.Equal(now) {
@@ -82,16 +83,16 @@ func newCacheBuildJobs(
 }
 
 func (m *cacheBuildJobs) accept(mode buildCacheMode) (api.CacheBuildStatus, error) {
-	return m.acceptWithFollowup(mode, false)
+	return m.acceptWithFollowup(mode, false, time.Now())
 }
 
 // A sync may commit while the active builder is reading an older snapshot.
-// Queue one follow-up so its new rows cannot be lost by coalescing.
+// Return a separate queued job so callers can wait for the later snapshot.
 func (m *cacheBuildJobs) acceptAfterWrite(mode buildCacheMode) (api.CacheBuildStatus, error) {
-	return m.acceptWithFollowup(mode, true)
+	return m.acceptWithFollowup(mode, true, time.Now())
 }
 
-func (m *cacheBuildJobs) acceptWithFollowup(mode buildCacheMode, afterWrite bool) (api.CacheBuildStatus, error) {
+func (m *cacheBuildJobs) acceptWithFollowup(mode buildCacheMode, afterWrite bool, now time.Time) (api.CacheBuildStatus, error) {
 	if m == nil {
 		return api.CacheBuildStatus{}, errors.New("analytics cache build manager unavailable")
 	}
@@ -100,31 +101,42 @@ func (m *cacheBuildJobs) acceptWithFollowup(mode buildCacheMode, afterWrite bool
 	if m.ctx.Err() != nil {
 		return api.CacheBuildStatus{}, m.ctx.Err()
 	}
-	if m.current != "" {
-		if afterWrite {
-			if !m.pending || (m.pendingMode == buildCacheModeScheduledAuto && mode != buildCacheModeScheduledAuto) {
-				m.pendingMode = mode
-			}
-			m.pending = true
-		}
+	if mode == buildCacheModeScheduledAuto && now.Before(m.verificationRetryAt) {
+		return api.CacheBuildStatus{}, nil
+	}
+	if m.current != "" && !afterWrite {
 		return m.jobs[m.current], nil
 	}
-	return m.startLocked(mode)
-}
-
-func (m *cacheBuildJobs) startLocked(mode buildCacheMode) (api.CacheBuildStatus, error) {
-	done, ok := m.idle.BeginWorkContext(m.ctx)
-	if !ok {
-		return api.CacheBuildStatus{}, errors.New("daemon is shutting down")
+	if m.pending != "" {
+		if m.pendingMode == buildCacheModeScheduledAuto && mode != buildCacheModeScheduledAuto {
+			m.pendingMode = mode
+		}
+		return m.jobs[m.pending], nil
 	}
 	job := api.CacheBuildStatus{
-		JobID: uuid.NewString(), Status: api.CacheBuildQueued, AcceptedAt: time.Now().UTC(),
+		JobID: uuid.NewString(), Status: api.CacheBuildQueued, AcceptedAt: now.UTC(),
 	}
-	m.current = job.JobID
 	m.jobs[job.JobID] = job
-	m.wg.Add(1)
-	go m.execute(job.JobID, mode, done)
+	if m.current != "" {
+		m.pending, m.pendingMode = job.JobID, mode
+		return job, nil
+	}
+	if err := m.startLocked(job.JobID, mode); err != nil {
+		delete(m.jobs, job.JobID)
+		return api.CacheBuildStatus{}, err
+	}
 	return job, nil
+}
+
+func (m *cacheBuildJobs) startLocked(id string, mode buildCacheMode) error {
+	done, ok := m.idle.BeginWorkContext(m.ctx)
+	if !ok {
+		return errors.New("daemon is shutting down")
+	}
+	m.current = id
+	m.wg.Add(1)
+	go m.execute(id, mode, done)
+	return nil
 }
 
 func (m *cacheBuildJobs) execute(id string, mode buildCacheMode, done func()) {
@@ -137,36 +149,62 @@ func (m *cacheBuildJobs) execute(id string, mode buildCacheMode, done func()) {
 	m.mu.Unlock()
 	err := m.run(m.ctx, mode)
 	m.mu.Lock()
-	job = m.jobs[id]
 	finishedAt := time.Now().UTC()
-	job.FinishedAt = &finishedAt
+	var failure string
 	if err != nil {
-		job.Status = api.CacheBuildFailed
-		job.Error = "analytics cache build failed; see daemon logs"
-		logger.Error("background analytics cache build failed", "job_id", id, "error", err)
+		failure = "analytics cache build failed; see daemon logs"
+		if m.ctx.Err() != nil {
+			failure = "daemon is shutting down"
+		} else {
+			logger.Error("background analytics cache build failed", "job_id", id, "error", err)
+		}
 		if mode == buildCacheModeScheduledAuto {
 			m.lastVerification = time.Time{}
 			m.verificationRetryAt = finishedAt.Add(time.Minute)
 		}
-	} else {
-		job.Status = api.CacheBuildPublished
-		if mode == buildCacheModeScheduledAuto {
-			m.verificationRetryAt = time.Time{}
-		}
+	} else if mode == buildCacheModeScheduledAuto {
+		m.verificationRetryAt = time.Time{}
 	}
-	m.jobs[id] = job
+	m.finishLocked(id, failure, finishedAt)
 	if m.current == id {
 		m.current = ""
 	}
-	if m.pending && m.ctx.Err() == nil {
-		pendingMode := m.pendingMode
-		m.pending = false
+	if m.pending != "" {
+		pending, pendingMode := m.pending, m.pendingMode
+		m.pending = ""
 		m.pendingMode = buildCacheModeDefault
-		if _, startErr := m.startLocked(pendingMode); startErr != nil {
-			logger.Error("queue follow-up analytics cache build failed", "error", startErr)
+		switch {
+		case m.ctx.Err() != nil:
+			m.finishLocked(pending, "daemon is shutting down", finishedAt)
+		case pendingMode == buildCacheModeScheduledAuto && finishedAt.Before(m.verificationRetryAt):
+			m.finishLocked(pending, "analytics cache retry deferred after build failure", finishedAt)
+		default:
+			if startErr := m.startLocked(pending, pendingMode); startErr != nil {
+				m.finishLocked(pending, startErr.Error(), finishedAt)
+				if m.ctx.Err() == nil {
+					logger.Error("queue follow-up analytics cache build failed", "error", startErr)
+				}
+			}
 		}
 	}
 	m.mu.Unlock()
+}
+
+// Keep the last 100 completions. Running and queued jobs are never evicted.
+func (m *cacheBuildJobs) finishLocked(id, failure string, finishedAt time.Time) {
+	job := m.jobs[id]
+	job.Status = api.CacheBuildPublished
+	if failure != "" {
+		job.Status = api.CacheBuildFailed
+	}
+	job.Error = failure
+	job.FinishedAt = &finishedAt
+	m.jobs[id] = job
+	m.completed = append(m.completed, id)
+	if len(m.completed) > 100 {
+		delete(m.jobs, m.completed[0])
+		m.completed = m.completed[1:]
+	}
 }
 
 func (m *cacheBuildJobs) waitContext(ctx context.Context) bool {

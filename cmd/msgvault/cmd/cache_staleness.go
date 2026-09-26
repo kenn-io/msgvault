@@ -213,7 +213,9 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 		}
 	}
 
-	db, err := store.Open(dbPath)
+	// Inspection must not checkpoint the WAL on close: an active export can
+	// hold a read snapshot, making that checkpoint wait for the busy timeout.
+	db, err := store.OpenReadOnly(dbPath)
 	if err != nil {
 		return cacheStaleness{
 			NeedsBuild: true, FullRebuild: true,

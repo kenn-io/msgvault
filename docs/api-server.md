@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-24"
+last_edited: "2026-09-26"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -278,13 +278,23 @@ A `200` response contains `columns`, `rows`, and `row_count`. When the result
 uses a committed Parquet publication, `cache` includes `generation` and
 `published_at`, plus `stale_reason`, `pending_additions`, or `building` when
 applicable. A usable stale publication remains queryable during
-`min_rebuild_interval` and while a refresh runs.
+`min_rebuild_interval` and while a refresh runs. This includes messages deleted
+since publication; see the [cache freshness policy](configuration.md#analytics).
 
-When rows require a new publication, the endpoint returns `202` with `job_id`
-and `status` instead of holding the request open. Poll
+With `fresh=true`, the endpoint accepts a refresh with `202`, `job_id`, and
+`status` instead of holding the request open. Automatic recovery of a missing
+or incompatible cache also returns `202` when enabled. A fresh request checks
+archive writes committed before the request. If a build is already running,
+its response identifies a queued follow-up check. Poll
 `GET /api/v1/cache-builds/{job_id}` for `queued`, `running`, `published`, or
-`failed`; retry the SQL query after publication. The job status belongs to the
-running daemon and is not retained across daemon restarts.
+`failed`. After `published`, repeat the SQL query with `fresh=false` to get rows.
+`published` means the check completed successfully and the cache is usable; a
+check that finds no changes preserves the existing generation. A `failed` job
+includes an `error` message.
+
+The daemon retains the last 100 completed jobs plus running and queued jobs.
+Job status is held in memory: an evicted job or a job from before a daemon
+restart returns `404`.
 
 `POST /api/v1/query/archive` accepts the same request and response shapes. MCP
 uses this endpoint to run SQL in a separate DuckDB instance restricted to the
@@ -2359,8 +2369,8 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 | Key | Default | Description |
 |---|---|---|
 | `engine` | `auto` | Aggregate engine for Web UI, TUI, and aggregate HTTP views: `auto`, `sql`, or `duckdb` |
-| `auto_build_cache` | `true` | Build stale or missing Parquet cache files during daemon startup and after scheduled syncs; `false` skips both automatic paths |
-| `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a scheduled sync may rebuild it; zero preserves rebuilding after each sync |
+| `auto_build_cache` | `true` | Refresh a stale or missing cache at startup, after scheduled or manual syncs, and when a query finds it due; `false` skips automatic builds |
+| `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a sync or query may queue an automatic rebuild |
 | `builder_memory_limit` | `2GB` | DuckDB memory limit for cache builds, such as `4GB` or `512MiB` |
 | `builder_threads` | min(CPUs, 2) | DuckDB threads for cache builds; zero keeps the default |
 | `builder_temp_limit` | `32GB` | Maximum spill-to-disk size for cache builds |
@@ -2372,15 +2382,13 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 requires a usable Parquet cache and keeps analytics unavailable until it is
 ready; a build or open failure is fatal rather than a silent SQL fallback.
 `auto_build_cache = false` leaves cache rebuilds to explicit
-`msgvault build-cache` runs. These settings replace the TUI/MCP analytics flags
-deprecated in 0.17.0; see [Configuration: analytics](/docs/configuration/#analytics).
+`msgvault build-cache`, `query --fresh`, or sync `--build-cache` requests.
+These settings replace the TUI/MCP analytics flags deprecated in 0.17.0; see [Configuration: analytics](/docs/configuration/#analytics).
 
-`min_rebuild_interval` limits only automatic post-sync rebuilds. Explicit
-builds, startup maintenance, query-required builds, and unusable-cache recovery
-remain immediate. On a continuously changing archive, Parquet analytics can lag
-SQLite by approximately the interval plus cache build time. Cache builder memory
-and temporary disk usage scale with archive size, so the interval can prevent
-repeated archive-scale work on frequently synced archives. Changes under
+`min_rebuild_interval` applies to automatic refreshes requested by syncs and
+queries. Explicit refreshes, startup maintenance, and unusable-cache recovery
+are not delayed by it. See [Configuration: analytics](configuration.md#analytics)
+for the cache freshness policy and deletion visibility. Changes under
 `[analytics]` take effect after the daemon restarts.
 
 ### `[[accounts]]`

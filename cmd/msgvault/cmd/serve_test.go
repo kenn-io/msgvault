@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -690,12 +691,8 @@ func TestRunServeDuckDBReportsInitializingWithoutSQLFallback(t *testing.T) {
 		strings.NewReader(`{"sql":"SELECT 1"}`),
 	)
 	require.NoError(err, "POST SQL query")
-	assert.Equal(http.StatusAccepted, resp.StatusCode,
-		"initializing DuckDB must accept recovery without waiting for the build")
-	var accepted api.CacheBuildAccepted
-	require.NoError(json.NewDecoder(resp.Body).Decode(&accepted))
-	assert.NotEmpty(accepted.JobID)
-	assert.Contains([]string{api.CacheBuildQueued, api.CacheBuildRunning}, accepted.Status)
+	assert.Equal(http.StatusServiceUnavailable, resp.StatusCode,
+		"startup already owns cache recovery")
 	_ = resp.Body.Close()
 
 	cancel()
@@ -932,92 +929,6 @@ func waitForServeHealthBounded(t *testing.T, port int, errCh <-chan error) {
 	require.FailNow(t, "serve health endpoint did not become ready")
 }
 
-func TestRunDaemonSQLQueryRebuildsStaleCacheOutOfProcess(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	dataDir := t.TempDir()
-	c := lifecycleTestConfig(dataDir)
-	s, err := store.Open(c.DatabaseDSN())
-	require.NoError(err, "open store")
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema(), "init schema")
-	engine := query.NewEngine(s.DB(), false)
-	defer func() { _ = engine.Close() }()
-
-	sentinel := errors.New("subprocess sentinel")
-	var called bool
-	var gotFullRebuild bool
-	old := buildCacheSubprocessForRun
-	buildCacheSubprocessForRun = func(_ context.Context, fullRebuild bool) error {
-		called = true
-		gotFullRebuild = fullRebuild
-		return sentinel
-	}
-	t.Cleanup(func() { buildCacheSubprocessForRun = old })
-
-	_, err = runDaemonSQLQuery(context.Background(), c, s, engine, "select 1")
-
-	require.Error(err, "query should fail with subprocess sentinel")
-	require.ErrorIs(err, sentinel, "error")
-	assert.True(called, "subprocess rebuild should be called")
-	assert.True(gotFullRebuild, "missing cache should request full rebuild")
-}
-
-func TestRunDaemonSQLQueryServesPublishedCacheWhileBuilderRuns(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	c, s := openTestDaemonAnalyticsStore(t)
-	c.Analytics.MinRebuildInterval = 6 * time.Hour
-	_, err := s.DB().Exec(`
-		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
-		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
-			VALUES (1, 1, 'thread-1', 'email_thread');
-		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
-			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
-	`)
-	require.NoError(err)
-	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
-	require.NoError(err)
-	engine, err := openDaemonDuckDBEngine(c, s)
-	require.NoError(err)
-	t.Cleanup(func() { _ = engine.Close() })
-	_, err = s.DB().Exec(`
-		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
-			VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')
-	`)
-	require.NoError(err)
-
-	builderLock, err := cacheBuilderFileLock(c.AnalyticsDir())
-	require.NoError(err)
-	locked, err := builderLock.TryLock()
-	require.NoError(err)
-	require.True(locked)
-	release := make(chan struct{})
-	defer close(release)
-	go func() {
-		select {
-		case <-time.After(2 * time.Second):
-		case <-release:
-		}
-		_ = builderLock.Unlock()
-	}()
-
-	started := time.Now()
-	result, err := runDaemonSQLQuery(t.Context(), c, s, engine, "SELECT COUNT(*) FROM messages")
-	elapsed := time.Since(started)
-	require.NoError(err)
-	assert.Less(elapsed, time.Second, "query waited for the active cache builder")
-	assert.Equal(1, result.RowCount)
-	require.Len(result.Rows, 1)
-	require.Len(result.Rows[0], 1)
-	assert.EqualValues(1, result.Rows[0][0], "query must read the committed publication")
-	require.NotNil(result.Cache)
-	assert.NotEmpty(result.Cache.Generation)
-	assert.False(result.Cache.PublishedAt.IsZero())
-	assert.Contains(result.Cache.StaleReason, "new messages")
-	assert.Equal(int64(1), result.Cache.PendingAdditions)
-}
-
 func TestRebuildCacheAfterManualSyncDefersUsableStaleCache(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1050,18 +961,15 @@ func TestRebuildCacheAfterManualSyncDefersUsableStaleCache(t *testing.T) {
 	locked, err := builderLock.TryLock()
 	require.NoError(err)
 	require.True(locked)
-	release := make(chan struct{})
-	defer close(release)
-	go func() {
-		select {
-		case <-time.After(2 * time.Second):
-		case <-release:
-		}
-		_ = builderLock.Unlock()
-	}()
-	started := time.Now()
-	require.NoError(rebuildCacheAfterManualSync(c.DatabaseDSN()))
-	assert.Less(time.Since(started), time.Second, "manual sync waited for the active cache builder")
+	t.Cleanup(func() { require.NoError(builderLock.Unlock()) })
+	done := make(chan error, 1)
+	go func() { done <- rebuildCacheAfterManualSync(c.DatabaseDSN()) }()
+	select {
+	case err := <-done:
+		require.NoError(err, "manual sync must finish while the builder lock is held")
+	case <-time.After(serveLifecycleTestTimeout):
+		require.FailNow("manual sync waited for the active cache builder")
+	}
 	staleness, err := cacheNeedsBuildForQuery(t.Context(), c.DatabaseDSN(), c.AnalyticsDir())
 	require.NoError(err)
 	assert.True(staleness.NeedsBuild)
@@ -1090,10 +998,19 @@ func TestRunDaemonSQLQueryWithJobsServesStaleAndCoalescesFresh(t *testing.T) {
 			VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')
 	`)
 	require.NoError(err)
+	ctx, cancel := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
+	defer cancel()
 	started := make(chan struct{})
 	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
-	jobs := newCacheBuildJobs(t.Context(), nil, func(ctx context.Context, mode buildCacheMode) error {
+	var releaseOnce sync.Once
+	releaseBuild := func() { releaseOnce.Do(func() { close(release) }) }
+	firstBuild := true
+	buildCacheBeforeMessagesExportHook = func() error {
+		if !firstBuild {
+			return nil
+		}
+		firstBuild = false
+		// The first export has already pinned its SQLite snapshot here.
 		close(started)
 		select {
 		case <-release:
@@ -1101,27 +1018,58 @@ func TestRunDaemonSQLQueryWithJobsServesStaleAndCoalescesFresh(t *testing.T) {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+	jobs := newCacheBuildJobs(ctx, nil, func(context.Context, buildCacheMode) error {
+		_, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+		return err
 	})
-	begin := time.Now()
-	result, accepted, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT COUNT(*) FROM messages", daemonSQLQueryOptions{}, jobs)
+	t.Cleanup(func() {
+		releaseBuild()
+		cancel()
+		drainCtx, drainCancel := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+		defer drainCancel()
+		require.True(jobs.waitContext(drainCtx))
+		buildCacheBeforeMessagesExportHook = nil
+	})
+	active, err := jobs.accept(buildCacheModeAuto)
 	require.NoError(err)
+	select {
+	case <-started:
+	case <-ctx.Done():
+		require.FailNow("cache job did not reach its export snapshot")
+	}
+	result, accepted, err := runDaemonSQLQueryWithJobs(ctx, c, s, engine, "SELECT COUNT(*) FROM messages", daemonSQLQueryOptions{}, jobs)
+	require.NoError(err, "published rows must remain readable while the builder is held")
 	assert.Nil(accepted)
-	assert.Less(time.Since(begin), time.Second)
 	require.NotNil(result.Cache)
 	assert.True(result.Cache.Building)
 	assert.EqualValues(1, result.Rows[0][0])
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		require.FailNow("cache job did not start")
-	}
-	_, first, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", daemonSQLQueryOptions{fresh: true}, jobs)
+	_, err = s.DB().Exec(`
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
+			VALUES (3, 1, 'message-3', 1, 'email', '2024-01-03 00:00:00')
+	`)
+	require.NoError(err)
+	_, first, err := runDaemonSQLQueryWithJobs(ctx, c, s, engine, "SELECT 1", daemonSQLQueryOptions{fresh: true}, jobs)
 	require.NoError(err)
 	require.NotNil(first)
-	_, second, err := runDaemonSQLQueryWithJobs(t.Context(), c, s, engine, "SELECT 1", daemonSQLQueryOptions{fresh: true}, jobs)
+	assert.NotEqual(active.JobID, first.JobID)
+	assert.Equal(api.CacheBuildQueued, first.Status)
+	_, second, err := runDaemonSQLQueryWithJobs(ctx, c, s, engine, "SELECT 1", daemonSQLQueryOptions{fresh: true}, jobs)
 	require.NoError(err)
 	require.NotNil(second)
 	assert.Equal(first.JobID, second.JobID)
+	releaseBuild()
+	require.Eventually(func() bool {
+		job, ok := jobs.status(first.JobID)
+		return ok && (job.Status == api.CacheBuildPublished || job.Status == api.CacheBuildFailed)
+	}, serveLifecycleTestTimeout, 10*time.Millisecond)
+	job, ok := jobs.status(first.JobID)
+	require.True(ok)
+	require.Equal(api.CacheBuildPublished, job.Status, job.Error)
+	result, accepted, err = runDaemonSQLQueryWithJobs(ctx, c, s, engine, "SELECT COUNT(*) FROM messages", daemonSQLQueryOptions{}, jobs)
+	require.NoError(err)
+	assert.Nil(accepted)
+	assert.EqualValues(3, result.Rows[0][0], "fresh must include the write after the first builder's snapshot")
 }
 
 func TestQueryWithAutomaticCacheBuildsDisabledServesStaleWithoutStartingJob(t *testing.T) {
@@ -1232,8 +1180,7 @@ func TestSQLAnalyticsModeQueryQueuesMissingCache(t *testing.T) {
 }
 
 func TestManualSyncRefreshQueuesOnlyWhenForcedInsideInterval(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.AutoBuildCache = true
 	c.Analytics.MinRebuildInterval = 6 * time.Hour
@@ -1247,37 +1194,70 @@ func TestManualSyncRefreshQueuesOnlyWhenForcedInsideInterval(t *testing.T) {
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
 			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
 	`)
-	require.NoError(err)
+	requirements.NoError(err)
 	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
-	require.NoError(err)
+	requirements.NoError(err)
 	_, err = s.DB().Exec(`
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
 			VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')
 	`)
-	require.NoError(err)
-	started := make(chan struct{})
-	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
-	jobs := newCacheBuildJobs(t.Context(), nil, func(ctx context.Context, mode buildCacheMode) error {
-		close(started)
-		select {
-		case <-release:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	})
-	adapter := &storeAPIAdapter{store: s, cacheJobs: jobs}
-	require.NoError(adapter.queueCacheRefreshAfterManualSync(false, false))
-	assert.False(jobs.active())
-	require.NoError(adapter.queueCacheRefreshAfterManualSync(true, false))
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		require.FailNow("forced cache job did not start")
+	requirements.NoError(err)
+	for _, test := range []struct {
+		name       string
+		args       []string
+		interval   time.Duration
+		shutdown   bool
+		wantQueued bool
+		wantMode   buildCacheMode
+	}{
+		{name: "default inside interval", args: []string{"sync-slack"}, interval: 6 * time.Hour},
+		{name: "forced inside interval", args: []string{"sync-teams", "--build-cache"}, interval: 6 * time.Hour, wantQueued: true, wantMode: buildCacheModeAuto},
+		{name: "default when due", args: []string{"sync-calendar"}, wantQueued: true, wantMode: buildCacheModeScheduledAuto},
+		{name: "skip when due", args: []string{"sync-slack", "--no-build-cache"}},
+		{name: "shutdown skips forced refresh", args: []string{"sync-teams", "--build-cache=true"}, interval: 6 * time.Hour, shutdown: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			c.Analytics.MinRebuildInterval = test.interval
+			daemonCtx, cancel := context.WithCancel(t.Context())
+			started := make(chan buildCacheMode, 1)
+			jobs := newCacheBuildJobs(daemonCtx, nil, func(ctx context.Context, mode buildCacheMode) error {
+				started <- mode
+				<-ctx.Done()
+				return ctx.Err()
+			})
+			t.Cleanup(func() {
+				cancel()
+				cleanupCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+				defer stop()
+				require.True(jobs.waitContext(cleanupCtx), "cache worker stopped")
+			})
+			adapter := &storeAPIAdapter{store: s, cacheJobs: jobs}
+			runnerCalled := false
+			err := adapter.runCLICommandWithRunner(t.Context(), api.CLIRunRequest{Args: test.args}, nil,
+				func(_ context.Context, args []string, _ map[string]string, _ string, _ func(string, string) error) error {
+					runnerCalled = true
+					assert.Equal(test.args, args)
+					assert.False(jobs.active(), "cache work starts after the sync child returns")
+					if test.shutdown {
+						cancel()
+					}
+					return nil
+				})
+			require.NoError(err)
+			assert.True(runnerCalled)
+			assert.Equal(test.wantQueued, jobs.active())
+			if test.wantQueued {
+				select {
+				case mode := <-started:
+					assert.Equal(test.wantMode, mode)
+				case <-time.After(10 * time.Second):
+					require.FailNow("cache job did not start")
+				}
+			}
+		})
 	}
-	assert.True(jobs.active())
-	require.NoError(adapter.queueCacheRefreshAfterManualSync(false, true))
 }
 
 func TestOpenDaemonAnalyticsEngineForceSQLSkipsCacheBuild(t *testing.T) {

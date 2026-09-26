@@ -966,12 +966,12 @@ func (l ListPersonRelationshipReviewsQuery) Validate() error {
 }
 
 type RunQueryQuery struct {
-	// Fresh Request a new cache publication before returning rows
+	// Fresh Request a background cache check including writes committed before this request
 	Fresh *bool `json:"fresh,omitempty"`
 }
 
 type RunArchiveQueryQuery struct {
-	// Fresh Request a new cache publication before returning rows
+	// Fresh Request a background cache check including writes committed before this request
 	Fresh *bool `json:"fresh,omitempty"`
 }
 

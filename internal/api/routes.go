@@ -743,7 +743,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "getCacheBuildStatus":
 		return []*huma.Param{pathStringParam("job_id", "Analytics cache build job ID")}
 	case "runQuery", "runArchiveQuery":
-		return []*huma.Param{queryBooleanParam("fresh", "Request a new cache publication before returning rows")}
+		return []*huma.Param{queryBooleanParam("fresh", "Request a background cache check including writes committed before this request")}
 	case "getCLIStats":
 		return scopeParams()
 	case "getImportJob":

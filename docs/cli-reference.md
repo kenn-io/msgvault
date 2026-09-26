@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-26"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -2636,13 +2636,15 @@ msgvault query <sql> [flags]
 A usable stale cache remains queryable while refresh work runs. The JSON result
 includes `cache.published_at`, and includes `stale_reason` and
 `pending_additions` when known. If a new publication is required before rows
-can be returned, the command reports an accepted build job on stderr and
-returns no rows; retry after the job publishes.
+can be returned, the command reports the build job on stderr, waits for it,
+then returns query results. A failed build or interrupted wait exits with an
+error. `--fresh` waits for a check that includes archive writes committed before
+the request, rebuilding if needed, before returning rows.
 
 | Flag | Default | Description |
 |---|---|---|
 | `--format` | `json` | Output format: `json`, `csv`, or `table` |
-| `--fresh` | `false` | Request a coalesced background freshness check, building if needed |
+| `--fresh` | `false` | Wait for a freshness check and any required rebuild before returning rows |
 
 See [SQL Queries](/docs/usage/querying/) for available views and example queries.
 

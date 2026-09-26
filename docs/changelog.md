@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-26"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,11 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Query published analytics while the daemon refreshes the cache in the
+  background. `query --fresh` waits for current results; HTTP and MCP callers
+  can track refresh jobs. The new `query_sql` MCP tool restricts SQL to archive
+  analytics data. These API additions require schema 2.31.0. See
+  [SQL queries](usage/querying.md) and [cache freshness](configuration.md#analytics).
 - Saved View MCP tools publish canonical_state as a schema object, so MCP clients that validate tools/list strictly, such as those built on the official TypeScript SDK, load msgvault's tools.
 - `add-o365 --headless` and `add-teams --headless` sign in with a Microsoft
   device code, so no local browser is needed.
@@ -62,7 +67,7 @@ an existing installation.
   users need their own database backup; see
   [backend limits](architecture/postgresql.md).
 - **Upgrade clients and daemon together.** The API crossed the 1.x/2.x
-  compatibility boundary; the current schema is **2.27.0**. Analytical
+  compatibility boundary; the current schema is **2.26.0**. Analytical
   `/api/v1/people/*` routes moved to `/api/v1/participants/*`. Durable profiles
   moved from `/api/v1/persons/*` to `/api/v1/people/*`. The old paths were
   removed. Clients reject incompatible daemons; authenticated `/api/v1/health`

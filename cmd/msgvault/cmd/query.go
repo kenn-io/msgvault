@@ -60,13 +60,19 @@ func runHTTPQuery(cmd *cobra.Command, sqlStr string) error {
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
-	if accepted != nil {
-		_, err := fmt.Fprintf(cmd.ErrOrStderr(), "Analytics cache build %s: %s (GET /api/v1/cache-builds/%s)\n",
-			accepted.Status, accepted.JobID, accepted.JobID)
+	for accepted != nil {
+		_, err := fmt.Fprintf(cmd.ErrOrStderr(), "Analytics cache build %s: %s; waiting for completion\n",
+			accepted.Status, accepted.JobID)
 		if err != nil {
 			return fmt.Errorf("write cache build status: %w", err)
 		}
-		return nil
+		if err := st.WaitForCacheBuild(cmd.Context(), accepted.JobID); err != nil {
+			return fmt.Errorf("query: %w", err)
+		}
+		result, accepted, err = st.RunSQLQueryWithFresh(cmd.Context(), sqlStr, false)
+		if err != nil {
+			return fmt.Errorf("query: %w", err)
+		}
 	}
 	if strings.ToLower(strings.TrimSpace(queryFormat)) != outputFormatJSON && result.Cache != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Analytics cache published %s; generation %s",
@@ -204,7 +210,7 @@ func writeTable(
 
 func init() {
 	rootCmd.AddCommand(queryCmd)
-	queryCmd.Flags().BoolVar(&queryFresh, "fresh", false, "Request a new analytics cache publication before returning rows")
+	queryCmd.Flags().BoolVar(&queryFresh, "fresh", false, "Wait for analytics to include writes committed before this request, then return rows")
 	queryCmd.Flags().StringVar(
 		&queryFormat, "format", outputFormatJSON,
 		"Output format: json, csv, or table",

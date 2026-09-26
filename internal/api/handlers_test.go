@@ -1304,8 +1304,8 @@ func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
 			srv := NewServerWithOptions(ServerOptions{
 				Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 				Logger: testLogger(),
-				SQLQueryRunner: func(ctx context.Context, _ string) (*query.QueryResult, error) {
-					return nil, waitForCancellation(ctx)
+				SQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+					return nil, nil, waitForCancellation(ctx)
 				},
 				ArchiveSQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
 					return nil, nil, waitForCancellation(ctx)
@@ -1360,14 +1360,14 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 			APIKey:  cliTimeoutTestAPIKey,
 		}},
 		Logger: testLogger(),
-		SQLQueryRunner: func(ctx context.Context, sql string) (*query.QueryResult, error) {
+		SQLQueryRunner: func(ctx context.Context, sql string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
 			_, hasDeadline := ctx.Deadline()
 			queryHasDeadline <- hasDeadline
 			close(queryStarted)
 			result, err := engine.QuerySQL(ctx, sql)
 			queryErr <- err
 			close(queryReturned)
-			return result, err
+			return result, nil, err
 		},
 	})
 	srv.queryTimeout = ordinaryQueryCeiling
@@ -6650,13 +6650,13 @@ func TestHandleQueryUsesConfiguredRunnerWhenEngineDoesNotSupportSQL(t *testing.T
 		Config: cfg,
 		Engine: &querytest.MockEngine{},
 		Logger: testLogger(),
-		SQLQueryRunner: func(_ context.Context, sql string) (*query.QueryResult, error) {
+		SQLQueryRunner: func(_ context.Context, sql string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
 			gotSQL = sql
 			return &query.QueryResult{
 				Columns:  []string{"subject"},
 				Rows:     [][]any{{"Hello"}},
 				RowCount: 1,
-			}, nil
+			}, nil, nil
 		},
 	})
 
@@ -6683,7 +6683,7 @@ func TestHandleQueryAcceptsFreshBuildAndReportsStatus(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Engine: &querytest.MockEngine{}, Logger: testLogger(),
-		SQLQueryRunnerWithOptions: func(_ context.Context, sql string, fresh bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+		SQLQueryRunner: func(_ context.Context, sql string, fresh bool) (*query.QueryResult, *CacheBuildAccepted, error) {
 			gotFresh = fresh
 			return nil, &CacheBuildAccepted{Status: CacheBuildQueued, JobID: "synthetic-job"}, nil
 		},
@@ -7786,35 +7786,40 @@ func TestHandleQuery_SQLiteEngine503(t *testing.T) {
 
 func TestHandleQuery_DuckDBInitializing503(t *testing.T) {
 	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
-	cfg := &config.Config{
-		Server: config.ServerConfig{APIPort: 8080},
+	for _, mode := range []string{AnalyticsModeInitializing, AnalyticsModeSQLFallback} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			cfg := &config.Config{
+				Server: config.ServerConfig{APIPort: 8080},
+			}
+			runnerCalled := false
+			srv := NewServerWithOptions(ServerOptions{
+				Config:                        cfg,
+				Engine:                        &querytest.MockEngine{},
+				AnalyticsMode:                 mode,
+				AnalyticsInitializationActive: true,
+				SQLQueryRunner: func(context.Context, string, bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+					runnerCalled = true
+					return &query.QueryResult{}, nil, nil
+				},
+				Logger: testLogger(),
+			})
+
+			body := `{"sql": "SELECT 1"}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/query", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			srv.Router().ServeHTTP(w, req)
+
+			assert.Equal(http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+			var errResp ErrorResponse
+			require.NoError(json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
+			assert.Equal("engine_unavailable", errResp.Error, "error")
+			assert.False(runnerCalled, "initializing DuckDB must not fall through to the SQLite query runner")
+		})
 	}
-	runnerCalled := false
-	srv := NewServerWithOptions(ServerOptions{
-		Config:        cfg,
-		Engine:        &querytest.MockEngine{},
-		AnalyticsMode: AnalyticsModeInitializing,
-		SQLQueryRunner: func(context.Context, string) (*query.QueryResult, error) {
-			runnerCalled = true
-			return &query.QueryResult{}, nil
-		},
-		Logger: testLogger(),
-	})
-
-	body := `{"sql": "SELECT 1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/query", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	assert.Equal(http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
-	var errResp ErrorResponse
-	require.NoError(json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
-	assert.Equal("engine_unavailable", errResp.Error, "error")
-	assert.False(runnerCalled, "initializing DuckDB must not fall through to the SQLite query runner")
 }
 
 // fakeVectorBackend is a test stub implementing vector.Backend. Tests

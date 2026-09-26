@@ -24374,7 +24374,7 @@ paths:
     post:
       operationId: runQuery
       parameters:
-        - description: Request a new cache publication before returning rows
+        - description: Request a background cache check including writes committed before this request
           in: query
           name: fresh
           schema:
@@ -24413,7 +24413,7 @@ paths:
     post:
       operationId: runArchiveQuery
       parameters:
-        - description: Request a new cache publication before returning rows
+        - description: Request a background cache check including writes committed before this request
           in: query
           name: fresh
           schema:

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-25"
+last_edited: "2026-09-26"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -196,8 +196,10 @@ network access, and extension loading are disabled. CLI and owner HTTP SQL
 retain their privileged behavior. See [SQL queries](querying.md) for views and
 examples. Set `fresh` to request a background refresh; a `job_id` means the
 request returned no rows. Follow the [cache build status endpoint](../api-server.md#post-apiv1query)
-and retry after the job finishes. The tool does not fall back to privileged SQL
-when a daemon lacks the restricted endpoint.
+and, after `published`, repeat the tool call with `fresh=false`. A fresh request
+includes archive writes committed before the request, queuing a follow-up check
+if another build is running. Older daemons omit the tool; a failed restricted
+query never falls back to privileged SQL.
 
 `search_people` returns `rows`, `total_count`, `next_cursor`, and
 `cache_revision`. A row includes `person_id` only when it has a saved profile;

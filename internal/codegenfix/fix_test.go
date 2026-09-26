@@ -32,9 +32,8 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 }
 
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
-	fixture := `package generated
-type Client struct{}
-type ClientInterface interface {
+	assert := assert.New(t)
+	methods := `type RunQueryClientInterface interface {
 	RunQuery(ctx context.Context, options *RunQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunQueryResponseJSON, error)
 }
 func (c *Client) RunQuery(ctx context.Context, options *RunQueryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RunQueryResponseJSON, error) {
@@ -45,12 +44,13 @@ func (c *Client) RunQuery(ctx context.Context, options *RunQueryRequestOptions, 
 	}
 	return responseParser(ctx, nil)
 }
-// ListRelationshipTypes List person relationship types
 `
+	fixture := "package generated\ntype Client struct{}\n" + methods + strings.ReplaceAll(methods, "RunQuery", "RunArchiveQuery")
 	got, err := RewriteRunQueryClient([]byte(fixture))
 	require.NoError(t, err)
-	assert.Contains(t, string(got), "resp.StatusCode != 200")
+	assert.Equal(t, 2, strings.Count(string(got), "resp.StatusCode != 200"))
 	assert.NotContains(t, string(got), "RunQueryResponseJSON")
+	assert.NotContains(t, string(got), "RunArchiveQueryResponseJSON")
 }
 
 func TestRewriteGeneratedValidatorsRejectsMissingGroupingValidator(t *testing.T) {

@@ -1447,6 +1447,42 @@ type CacheBuildAccepted struct {
 	Cache  *query.CacheFreshness `json:"cache,omitempty"`
 }
 
+// WaitForCacheBuild waits until the accepted job has published or verified
+// the cache. Canceling the wait leaves the daemon-owned job running.
+func (c *Client) WaitForCacheBuild(ctx context.Context, jobID string) error {
+	if jobID == "" {
+		return errors.New("analytics cache build response is missing a job ID")
+	}
+	for {
+		resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.GetCacheBuildStatusResp, error) {
+			return client.GetCacheBuildStatusWithResponse(ctx, &generated.GetCacheBuildStatusRequestOptions{
+				PathParams: &generated.GetCacheBuildStatusPath{JobID: jobID},
+			})
+		})
+		if err != nil {
+			return fmt.Errorf("get analytics cache build %s: %w", jobID, err)
+		}
+		status := resp.JSON200
+		switch status.Status {
+		case "published":
+			return nil
+		case "failed":
+			if message := stringValue(status.ErrorData); message != "" {
+				return fmt.Errorf("analytics cache build %s failed: %s", jobID, message)
+			}
+			return fmt.Errorf("analytics cache build %s failed", jobID)
+		case "queued", "running":
+		default:
+			return fmt.Errorf("analytics cache build %s has unexpected status %q", jobID, status.Status)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
 func (c *Client) RunSQLQuery(ctx context.Context, sql string) (*query.QueryResult, error) {
 	result, accepted, err := c.RunSQLQueryWithFresh(ctx, sql, false)
 	if err != nil {

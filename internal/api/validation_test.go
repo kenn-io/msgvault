@@ -184,9 +184,9 @@ func TestQueryEndpointRejectsNonReadOnly(t *testing.T) {
 	}
 
 	ranSQL := false
-	runner := func(_ context.Context, _ string) (*query.QueryResult, error) {
+	runner := func(_ context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
 		ranSQL = true
-		return &query.QueryResult{Columns: []string{"n"}, Rows: [][]any{{int64(1)}}, RowCount: 1}, nil
+		return &query.QueryResult{Columns: []string{"n"}, Rows: [][]any{{int64(1)}}, RowCount: 1}, nil, nil
 	}
 	srv := NewServerWithOptions(ServerOptions{
 		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
