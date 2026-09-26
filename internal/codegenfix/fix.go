@@ -7,6 +7,41 @@ import (
 	"regexp"
 )
 
+// RewriteRunQueryClient preserves the simple generated SQL query methods' 200
+// response type when the endpoint also declares a 202 accepted-build body.
+// The WithResponse methods still expose both statuses to callers that need
+// asynchronous refresh handling.
+func RewriteRunQueryClient(source []byte) ([]byte, error) {
+	for _, name := range []string{"RunQuery", "RunArchiveQuery"} {
+		acceptedType := []byte(name + "ResponseJSON")
+		rowsType := []byte(name + "Response")
+		interfaceSignature := []byte(name + "(ctx context.Context, options *" + name + "RequestOptions, reqEditors ...runtime.RequestEditorFn) (*" + name + "ResponseJSON, error)")
+		if !bytes.Contains(source, interfaceSignature) {
+			return nil, fmt.Errorf("generated %s interface shape changed", name)
+		}
+		source = bytes.Replace(source, interfaceSignature, bytes.ReplaceAll(interfaceSignature, acceptedType, rowsType), 1)
+		start := bytes.Index(source, []byte("func (c *Client) "+name+"("))
+		if start < 0 {
+			return nil, fmt.Errorf("generated %s method shape changed", name)
+		}
+		endOffset := bytes.Index(source[start:], []byte("\n}\n"))
+		if endOffset < 0 {
+			return nil, fmt.Errorf("generated %s method boundary changed", name)
+		}
+		end := start + endOffset
+		method := append([]byte(nil), source[start:end]...)
+		if !bytes.Contains(method, []byte("resp.StatusCode != 202")) || !bytes.Contains(method, acceptedType) {
+			return nil, fmt.Errorf("generated %s success response shape changed", name)
+		}
+		method = bytes.ReplaceAll(method, acceptedType, rowsType)
+		method = bytes.Replace(method, []byte("resp.StatusCode != 202"), []byte("resp.StatusCode != 200"), 1)
+		result := append([]byte(nil), source[:start]...)
+		result = append(result, method...)
+		source = append(result, source[end:]...)
+	}
+	return source, nil
+}
+
 // Present empty strings and raw JSON values must survive JSON v2 encoding of generated responses.
 var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
 

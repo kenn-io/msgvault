@@ -483,6 +483,46 @@ func TestRunSQLQueryPreservesIntegerPrecision(t *testing.T) {
 	)
 }
 
+func TestRunArchiveSQLQueryPreservesRowsAndAcceptedBuild(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/query/archive", r.URL.Path)
+		var request struct {
+			SQL   string `json:"sql"`
+			Fresh bool   `json:"fresh"`
+		}
+		if !assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		assert.Equal("SELECT id FROM messages", request.SQL)
+		w.Header().Set("Content-Type", "application/json")
+		if request.Fresh {
+			w.WriteHeader(http.StatusAccepted)
+			_, err := w.Write([]byte(`{"status":"queued","job_id":"archive-build"}`))
+			assert.NoError(err)
+			return
+		}
+		_, err := w.Write([]byte(`{"columns":["id"],"rows":[[9007199254740993]],"row_count":1}`))
+		assert.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(Config{URL: server.URL, APIKey: "synthetic-owner-key", AllowInsecure: true})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(client.Close()) })
+	result, accepted, err := client.RunArchiveSQLQueryWithFresh(t.Context(), "SELECT id FROM messages", false)
+	require.NoError(err)
+	assert.Nil(accepted)
+	assert.Equal([][]any{{jsontext.Value("9007199254740993")}}, result.Rows)
+	result, accepted, err = client.RunArchiveSQLQueryWithFresh(t.Context(), "SELECT id FROM messages", true)
+	require.NoError(err)
+	assert.Nil(result)
+	require.NotNil(accepted)
+	assert.Equal("archive-build", accepted.JobID)
+	assert.Equal("queued", accepted.Status)
+}
+
 func TestGeneratedClientUsesConfiguredHTTPClient(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/query", r.URL.Path, "path")

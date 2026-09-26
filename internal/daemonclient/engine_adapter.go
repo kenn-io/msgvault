@@ -34,6 +34,15 @@ type Engine struct {
 	store *Client
 }
 
+// QueryArchiveSQL uses the daemon's archive-only SQL endpoint. It never falls
+// back to the owner's unrestricted SQL endpoint.
+func (e *Engine) QueryArchiveSQL(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+	if e == nil || e.store == nil {
+		return nil, nil, ErrNotSupported
+	}
+	return e.store.RunArchiveSQLQueryWithFresh(ctx, sql, fresh)
+}
+
 // Compile-time check that Engine implements query.Engine.
 var _ query.Engine = (*Engine)(nil)
 var _ query.TextEngine = (*Engine)(nil)

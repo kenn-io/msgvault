@@ -365,6 +365,7 @@ var operationGateExemptPaths = map[string]bool{
 	"/api/v1/carddav/google/authorize": true,
 	"/api/v1/carddav/google/callback":  true,
 	queryEndpointPath:                  true,
+	archiveQueryEndpointPath:           true,
 	sessionPath:                        true,
 	agentTokensPath:                    true,
 	sessionLoginPath:                   true,

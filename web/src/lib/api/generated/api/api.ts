@@ -35,6 +35,8 @@ import type {
   CLIRunRequest,
   CLISyncEvent,
   CLIVerifyEvent,
+  CacheBuildAccepted,
+  CacheBuildStatus,
   CacheStats,
   CancelDeletionPathParameters,
   CancelDeletionResponse,
@@ -131,6 +133,7 @@ import type {
   GetCLIMessageParams,
   GetCLIMessageRawParams,
   GetCLIStatsParams,
+  GetCacheBuildStatusPathParameters,
   GetCardDAVConflictPathParameters,
   GetCardDAVPublicationPathParameters,
   GetConversationParams,
@@ -325,6 +328,8 @@ import type {
   RemoteImageRequest,
   ResolveCardDAVConflictPathParameters,
   RevokeAgentTokenPathParameters,
+  RunArchiveQueryParams,
+  RunQueryParams,
   RunSavedViewPathParameters,
   RunSavedViewRequest,
   RunSavedViewResponse,
@@ -639,6 +644,21 @@ export const endBackupFreeze = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: backupFreezeEndRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Get analytics cache build status
+ */
+export const getCacheBuildStatus = (
+  { jobId }: GetCacheBuildStatusPathParameters,
+  options?: SecondParameter<typeof orvalFetch<CacheBuildStatus>>,
+) => {
+  return orvalFetch<CacheBuildStatus>(
+    {
+      url: `/api/v1/cache-builds/${encodeURIComponent(String(jobId))}`,
+      method: "GET",
     },
     options,
   );
@@ -3145,14 +3165,39 @@ export const patchPersonRelationship = (
  */
 export const runQuery = (
   queryRequest: QueryRequest,
-  options?: SecondParameter<typeof orvalFetch<QueryResult>>,
+  params?: RunQueryParams,
+  options?: SecondParameter<
+    typeof orvalFetch<QueryResult | CacheBuildAccepted>
+  >,
 ) => {
-  return orvalFetch<QueryResult>(
+  return orvalFetch<QueryResult | CacheBuildAccepted>(
     {
       url: `/api/v1/query`,
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: queryRequest,
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Run SQL restricted to archive analytics files
+ */
+export const runArchiveQuery = (
+  queryRequest: QueryRequest,
+  params?: RunArchiveQueryParams,
+  options?: SecondParameter<
+    typeof orvalFetch<QueryResult | CacheBuildAccepted>
+  >,
+) => {
+  return orvalFetch<QueryResult | CacheBuildAccepted>(
+    {
+      url: `/api/v1/query/archive`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: queryRequest,
+      params,
     },
     options,
   );

@@ -104,7 +104,7 @@ Examples:
 
 			// Successful workspaces' messages must reach the analytics cache
 			// regardless of interruptions or per-workspace failures.
-			cacheErr := rebuildCacheAfterWrite(cfg.DatabaseDSN())
+			cacheErr := rebuildCacheAfterManualSync(cfg.DatabaseDSN())
 			if ctx.Err() != nil {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-slack to resume.")
 			} else if len(syncErrors) > 0 {
@@ -258,5 +258,5 @@ func runConfiguredSlackSync(ctx context.Context, s *store.Store) error {
 }
 
 func init() {
-	rootCmd.AddCommand(newSyncSlackCmd())
+	rootCmd.AddCommand(addManualSyncCacheFlags(newSyncSlackCmd()))
 }

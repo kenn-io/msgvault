@@ -454,7 +454,25 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	)
 	registerAPIV1RawHumaJSONOneOfRoute(apiV1, "searchMessages", http.MethodGet, "/search", "Search messages", s.handleSearch, reflect.TypeFor[SearchResult](), reflect.TypeFor[hybridSearchResponse]())
 
-	registerAPIV1RawHumaJSONRouteWithRequest[QueryRequest, query.QueryResult](apiV1, "runQuery", http.MethodPost, "/query", "Run an aggregate query", s.handleQuery)
+	for _, route := range []struct {
+		id, path, summary string
+		handler           http.HandlerFunc
+	}{
+		{"runQuery", "/query", "Run an aggregate query", s.handleQuery},
+		{"runArchiveQuery", "/query/archive", "Run SQL restricted to archive analytics files", s.handleArchiveQuery},
+	} {
+		queryOp := rawAPIV1Operation(route.id, http.MethodPost, route.path, route.summary)
+		queryOp.RequestBody = jsonRequestBodyFor[QueryRequest](apiV1)
+		queryOp.Responses = jsonResponsesFor[query.QueryResult](apiV1)
+		queryOp.Responses[httpStatusKey(http.StatusAccepted)] = &huma.Response{
+			Description: http.StatusText(http.StatusAccepted),
+			Content: map[string]*huma.MediaType{
+				applicationJSONMediaType: {Schema: schemaFor[CacheBuildAccepted](apiV1)},
+			},
+		}
+		registerRawHumaRoute(apiV1, queryOp, route.handler)
+	}
+	registerAPIV1RawHumaJSONRoute[CacheBuildStatus](apiV1, "getCacheBuildStatus", http.MethodGet, "/cache-builds/{job_id}", "Get analytics cache build status", s.handleCacheBuildStatus)
 	registerAPIV1RawHumaJSONRoute[AggregateResponse](apiV1, "getAggregates", http.MethodGet, "/aggregates", "Get aggregate rows", s.handleAggregates)
 	registerAPIV1RawHumaJSONRoute[AggregateResponse](apiV1, "getSubAggregates", http.MethodGet, "/aggregates/sub", "Get nested aggregate rows", s.handleSubAggregates)
 	registerAPIV1RawHumaJSONRoute[FilteredMessagesResponse](apiV1, "filterMessages", http.MethodGet, "/messages/filter", "List filtered messages", s.handleFilteredMessages)
@@ -722,6 +740,10 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}
 	case "getOperationRun":
 		return []*huma.Param{pathStringParam("id", "Opaque archive-bound operation run ID")}
+	case "getCacheBuildStatus":
+		return []*huma.Param{pathStringParam("job_id", "Analytics cache build job ID")}
+	case "runQuery", "runArchiveQuery":
+		return []*huma.Param{queryBooleanParam("fresh", "Request a background cache check including writes committed before this request")}
 	case "getCLIStats":
 		return scopeParams()
 	case "getImportJob":
@@ -776,6 +798,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{queryBooleanParam("full_rebuild", "Rebuild all cache files from scratch")}
 	case "syncCLI":
 		return []*huma.Param{
+			queryBooleanParam("build-cache", "Build the analytics cache after sync even inside the interval"),
+			queryBooleanParam("no-build-cache", "Skip the analytics cache refresh after sync"),
 			queryStringParam("email", "Account email or display name to sync", false),
 			queryIntegerParam("source_id", "Exact source ID to sync"),
 			queryRefArrayParam("folder", "IMAP folder names to include (repeatable)"),
@@ -783,6 +807,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}
 	case "syncFullCLI":
 		return []*huma.Param{
+			queryBooleanParam("build-cache", "Build the analytics cache after sync even inside the interval"),
+			queryBooleanParam("no-build-cache", "Skip the analytics cache refresh after sync"),
 			queryStringParam("email", "Account email or display name to sync", false),
 			queryIntegerParam("source_id", "Exact source ID to sync"),
 			queryStringParam("query", "Gmail search query", false),

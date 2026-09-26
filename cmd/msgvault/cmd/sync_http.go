@@ -14,15 +14,21 @@ import (
 )
 
 func runSyncIncrementalHTTP(cmd *cobra.Command, args []string) error {
+	force, skip, flagErr := manualSyncCacheFlags(cmd)
+	if flagErr != nil {
+		return usageErr(cmd, flagErr)
+	}
 	selector, _, err := syncSourceSelector(cmd, args)
 	if err != nil {
 		return usageErr(cmd, err)
 	}
 	req := daemonclient.CLISyncRequest{
-		Folders:     parseFolderFilter(syncFolders),
-		SkipFolders: parseFolderFilter(syncSkipFolders),
-		SourceID:    selector.SourceID,
-		SourceIDSet: selector.SourceIDSet,
+		BuildCache:   force,
+		NoBuildCache: skip,
+		Folders:      parseFolderFilter(syncFolders),
+		SkipFolders:  parseFolderFilter(syncSkipFolders),
+		SourceID:     selector.SourceID,
+		SourceIDSet:  selector.SourceIDSet,
 	}
 	if len(args) == 1 {
 		req.Email = selector.Account
@@ -31,21 +37,27 @@ func runSyncIncrementalHTTP(cmd *cobra.Command, args []string) error {
 }
 
 func runSyncFullHTTP(cmd *cobra.Command, args []string) error {
+	force, skip, flagErr := manualSyncCacheFlags(cmd)
+	if flagErr != nil {
+		return usageErr(cmd, flagErr)
+	}
 	selector, _, err := syncSourceSelector(cmd, args)
 	if err != nil {
 		return usageErr(cmd, err)
 	}
 	req := daemonclient.CLISyncRequest{
-		Full:        true,
-		Query:       syncQuery,
-		NoResume:    syncNoResume,
-		Before:      syncBefore,
-		After:       syncAfter,
-		Limit:       syncLimit,
-		Folders:     parseFolderFilter(syncFolders),
-		SkipFolders: parseFolderFilter(syncSkipFolders),
-		SourceID:    selector.SourceID,
-		SourceIDSet: selector.SourceIDSet,
+		BuildCache:   force,
+		NoBuildCache: skip,
+		Full:         true,
+		Query:        syncQuery,
+		NoResume:     syncNoResume,
+		Before:       syncBefore,
+		After:        syncAfter,
+		Limit:        syncLimit,
+		Folders:      parseFolderFilter(syncFolders),
+		SkipFolders:  parseFolderFilter(syncSkipFolders),
+		SourceID:     selector.SourceID,
+		SourceIDSet:  selector.SourceIDSet,
 	}
 	if len(args) == 1 {
 		req.Email = selector.Account

@@ -29,6 +29,7 @@ import (
 // Tool name constants.
 const (
 	ToolSearchMessages          = "search_messages"
+	ToolQuerySQL                = "query_sql"
 	ToolSearchMetadata          = "search_metadata"
 	ToolSearchMessageBodies     = "search_message_bodies"
 	ToolSemanticSearchMessages  = "semantic_search_messages"
@@ -111,6 +112,8 @@ type ServeOptions struct {
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
 	Meetings MeetingBackend
+	// ArchiveSQLQuerier exposes query_sql when the daemon supports restricted SQL.
+	ArchiveSQLQuerier ArchiveSQLQuerier
 }
 
 type HTTPOptions struct {
@@ -223,6 +226,7 @@ func newMCPServerWithPolicy(
 
 	h := &handlers{
 		engine:              opts.Engine,
+		archiveSQLQuerier:   opts.ArchiveSQLQuerier,
 		attachmentsDir:      opts.AttachmentsDir,
 		attachmentReader:    opts.AttachmentReader,
 		manifestSaver:       opts.ManifestSaver,

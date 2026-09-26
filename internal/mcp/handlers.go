@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
@@ -128,6 +129,7 @@ func listLimitArg(args map[string]any) int {
 
 type handlers struct {
 	engine              query.Engine
+	archiveSQLQuerier   ArchiveSQLQuerier
 	attachmentsDir      string
 	attachmentReader    AttachmentReader
 	manifestSaver       DeletionManifestSaver
@@ -151,6 +153,34 @@ type handlers struct {
 	vectorCfg      vector.Config
 	backend        vector.Backend
 	visualSearcher VisualSearcher
+}
+
+// ArchiveSQLQuerier executes SQL confined to published archive analytics data.
+type ArchiveSQLQuerier interface {
+	QueryArchiveSQL(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *daemonclient.CacheBuildAccepted, error)
+}
+
+func (h *handlers) querySQL(ctx context.Context, req toolRequest) (*toolResult, error) {
+	args := req.GetArguments()
+	sql, ok := args["sql"].(string)
+	if !ok || strings.TrimSpace(sql) == "" {
+		return toolErrorResult("sql is required"), nil
+	}
+	if err := query.EnsureReadOnly(sql); err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	fresh, _ := args["fresh"].(bool)
+	if h.archiveSQLQuerier == nil {
+		return toolErrorResult("SQL queries are unavailable"), nil
+	}
+	result, accepted, err := h.archiveSQLQuerier.QueryArchiveSQL(ctx, sql, fresh)
+	if err != nil {
+		return nil, newInternalError("query SQL", err)
+	}
+	if accepted != nil {
+		return jsonResult(accepted)
+	}
+	return jsonResult(result)
 }
 
 type VisualSearcher interface {

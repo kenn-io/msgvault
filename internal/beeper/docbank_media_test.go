@@ -646,11 +646,11 @@ func TestBeeperMediaLargeUpload(t *testing.T) {
 	require.Len(rows, 1)
 	assert.Equal("retained", rows[0].State)
 	assert.Empty(rows[0].ErrorCode)
+	// The first deadline can expire during local preparation, before HTTP.
+	// TestBeeperMediaRestart covers replay identity after an accepted upload.
 	docbank.mu.Lock()
 	defer docbank.mu.Unlock()
-	require.Len(docbank.retentionOps, 2)
-	assert.Equal(docbank.retentionOps[0], docbank.retentionOps[1])
-	assert.Len(docbank.uploads, 1)
+	assert.Equal([][]byte{wav}, docbank.uploads)
 }
 
 // TestBeeperMediaHiddenPending retires a pending row whose message is hidden

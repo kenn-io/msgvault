@@ -74,7 +74,7 @@ func TestRegisterViews_BaseViews(t *testing.T) {
 	engine := builder.BuildEngine()
 	defer func() { _ = engine.Close() }()
 
-	require.NoError(RegisterViews(engine.db, dir), "RegisterViews")
+	require.NoError(RegisterViews(t.Context(), engine.db, dir), "RegisterViews")
 
 	tables := []string{
 		"messages", "participants", "message_recipients",
@@ -122,7 +122,7 @@ func TestRegisterViews_ListsCompatibility(t *testing.T) {
 	require.NoError(err)
 	defer func() { _ = engine.Close() }()
 
-	require.NoError(RegisterViews(engine.db, dir))
+	require.NoError(RegisterViews(t.Context(), engine.db, dir))
 	var got string
 	require.NoError(engine.db.QueryRow("SELECT list_id FROM messages").Scan(&got))
 	assert.Equal(t, listID, got)
@@ -158,7 +158,7 @@ func TestRegisterViews_OldMessagesCacheDefaultsListIDToNull(t *testing.T) {
 	require.NoError(err)
 	require.NoError(os.WriteFile(CacheStatePath(dir), stateData, 0o600))
 
-	require.NoError(RegisterViews(engine.db, dir))
+	require.NoError(RegisterViews(t.Context(), engine.db, dir))
 	var listID sql.NullString
 	require.NoError(engine.db.QueryRow("SELECT list_id FROM messages").Scan(&listID))
 	assert.False(listID.Valid)
@@ -207,7 +207,7 @@ func TestRegisterViews_ConvenienceViews(t *testing.T) {
 	engine := builder.BuildEngine()
 	defer func() { _ = engine.Close() }()
 
-	require.NoError(t, RegisterViews(engine.db, dir), "RegisterViews")
+	require.NoError(t, RegisterViews(t.Context(), engine.db, dir), "RegisterViews")
 	ctx := context.Background()
 
 	t.Run("v_messages", func(t *testing.T) {
@@ -319,7 +319,7 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 		t.Cleanup(cleanup)
 		engine := builder.BuildEngine()
 		t.Cleanup(func() { _ = engine.Close() })
-		require.NoError(t, RegisterViews(engine.db, dir), "RegisterViews")
+		require.NoError(t, RegisterViews(t.Context(), engine.db, dir), "RegisterViews")
 
 		err := engine.db.QueryRowContext(context.Background(),
 			`SELECT email_address, envelope_address FROM message_recipients WHERE recipient_type = 'from'`,

@@ -2170,6 +2170,38 @@ func rebuildCacheAfterWrite(dbPath string) error {
 	return nil
 }
 
+// rebuildCacheAfterManualSync applies the same minimum interval as scheduled
+// syncs. A usable committed cache stays available after a small import; an
+// absent or incompatible cache still recovers immediately.
+func rebuildCacheAfterManualSync(dbPath string) error {
+	if isDaemonCLISubprocess() {
+		// The parent daemon inspects the durable result and owns any detached
+		// refresh. A CLI child must not keep its HTTP caller waiting on a build.
+		return nil
+	}
+	if store.IsPostgresURL(dbPath) {
+		return nil
+	}
+	if !cfg.Analytics.AutoBuildCache {
+		return nil
+	}
+	staleness, err := cacheNeedsBuildForQuery(context.Background(), dbPath, cfg.AnalyticsDir())
+	if err != nil {
+		return fmt.Errorf("inspect analytics cache after manual sync: %w", err)
+	}
+	if !staleness.NeedsBuild {
+		return nil
+	}
+	if remaining, deferBuild := scheduledCacheBuildDelay(
+		staleness, cfg.Analytics.MinRebuildInterval, time.Now(),
+	); deferBuild {
+		logger.Info("skipping cache rebuild after manual sync: minimum interval not elapsed",
+			"remaining", remaining.String(), "published_at", staleness.PublishedAt)
+		return nil
+	}
+	return rebuildCacheAfterWrite(dbPath)
+}
+
 // buildCacheSubprocess runs `msgvault build-cache` as a child process
 // instead of calling buildCache in-process.
 //

@@ -41,17 +41,19 @@ type CLIStats struct {
 type CLICacheStats = cacheops.CacheStats
 
 type CLISyncRequest struct {
-	Full        bool
-	Email       string
-	SourceID    int64
-	SourceIDSet bool
-	Query       string
-	NoResume    bool
-	Before      string
-	After       string
-	Limit       int
-	Folders     []string
-	SkipFolders []string
+	Full         bool
+	BuildCache   bool
+	NoBuildCache bool
+	Email        string
+	SourceID     int64
+	SourceIDSet  bool
+	Query        string
+	NoResume     bool
+	Before       string
+	After        string
+	Limit        int
+	Folders      []string
+	SkipFolders  []string
 }
 
 type CLIVerifyRequest struct {
@@ -429,24 +431,28 @@ func (c *Client) RunCLISync(
 		path = "/api/v1/cli/sync-full"
 		return c.runCLIStream(ctx, path, "sync", &generated.SyncFullCLIRequestOptions{
 			Query: &generated.SyncFullCLIQuery{
-				Email:      optionalString(req.Email),
-				SourceID:   optionalCLIIdentitySourceID(req.SourceID, req.SourceIDSet),
-				Query:      optionalString(req.Query),
-				Noresume:   optionalBool(req.NoResume),
-				Before:     optionalString(req.Before),
-				After:      optionalString(req.After),
-				Limit:      optionalPositiveInt64(req.Limit),
-				Folder:     req.Folders,
-				SkipFolder: req.SkipFolders,
+				BuildCache:   optionalBool(req.BuildCache),
+				NoBuildCache: optionalBool(req.NoBuildCache),
+				Email:        optionalString(req.Email),
+				SourceID:     optionalCLIIdentitySourceID(req.SourceID, req.SourceIDSet),
+				Query:        optionalString(req.Query),
+				Noresume:     optionalBool(req.NoResume),
+				Before:       optionalString(req.Before),
+				After:        optionalString(req.After),
+				Limit:        optionalPositiveInt64(req.Limit),
+				Folder:       req.Folders,
+				SkipFolder:   req.SkipFolders,
 			},
 		}, output)
 	}
 	return c.runCLIStream(ctx, path, "sync", &generated.SyncCLIRequestOptions{
 		Query: &generated.SyncCLIQuery{
-			Email:      optionalString(req.Email),
-			SourceID:   optionalCLIIdentitySourceID(req.SourceID, req.SourceIDSet),
-			Folder:     req.Folders,
-			SkipFolder: req.SkipFolders,
+			BuildCache:   optionalBool(req.BuildCache),
+			NoBuildCache: optionalBool(req.NoBuildCache),
+			Email:        optionalString(req.Email),
+			SourceID:     optionalCLIIdentitySourceID(req.SourceID, req.SourceIDSet),
+			Folder:       req.Folders,
+			SkipFolder:   req.SkipFolders,
 		},
 	}, output)
 }
@@ -1435,18 +1441,101 @@ func (c *Client) OpenCLIAttachment(ctx context.Context, contentHash string) (io.
 	return verified, nil
 }
 
-func (c *Client) RunSQLQuery(ctx context.Context, sql string) (*query.QueryResult, error) {
-	// CLIResponse surfaces the daemon's user-facing message (e.g. the read-only
-	// guard rejection) directly, without the "API error (400)" wrapper.
-	resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.RunQueryResp, error) {
-		return client.RunQueryWithResponse(ctx, &generated.RunQueryRequestOptions{
-			Body: &generated.RunQueryBody{SQL: sql},
+type CacheBuildAccepted struct {
+	Status string                `json:"status"`
+	JobID  string                `json:"job_id"`
+	Cache  *query.CacheFreshness `json:"cache,omitempty"`
+}
+
+// WaitForCacheBuild waits until the accepted job has published or verified
+// the cache. Canceling the wait leaves the daemon-owned job running.
+func (c *Client) WaitForCacheBuild(ctx context.Context, jobID string) error {
+	if jobID == "" {
+		return errors.New("analytics cache build response is missing a job ID")
+	}
+	for {
+		resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.GetCacheBuildStatusResp, error) {
+			return client.GetCacheBuildStatusWithResponse(ctx, &generated.GetCacheBuildStatusRequestOptions{
+				PathParams: &generated.GetCacheBuildStatusPath{JobID: jobID},
+			})
 		})
-	})
+		if err != nil {
+			return fmt.Errorf("get analytics cache build %s: %w", jobID, err)
+		}
+		status := resp.JSON200
+		switch status.Status {
+		case "published":
+			return nil
+		case "failed":
+			if message := stringValue(status.ErrorData); message != "" {
+				return fmt.Errorf("analytics cache build %s failed: %s", jobID, message)
+			}
+			return fmt.Errorf("analytics cache build %s failed", jobID)
+		case "queued", "running":
+		default:
+			return fmt.Errorf("analytics cache build %s has unexpected status %q", jobID, status.Status)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func (c *Client) RunSQLQuery(ctx context.Context, sql string) (*query.QueryResult, error) {
+	result, accepted, err := c.RunSQLQueryWithFresh(ctx, sql, false)
 	if err != nil {
 		return nil, err
 	}
-	return queryResultFromBody(resp.Body)
+	if accepted != nil {
+		return nil, fmt.Errorf("analytics cache build accepted: %s", accepted.JobID)
+	}
+	return result, nil
+}
+
+func (c *Client) RunSQLQueryWithFresh(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+	// CLIResponse surfaces the daemon's user-facing message (e.g. the read-only
+	// guard rejection) directly, without the "API error (400)" wrapper.
+	body := &generated.RunQueryBody{SQL: sql}
+	if fresh {
+		body.Fresh = &fresh
+	}
+	resp, err := CLIResponseWithStatuses(c, []int{http.StatusOK, http.StatusAccepted}, func(client *apiclient.Client) (*generated.RunQueryResp, error) {
+		return client.RunQueryWithResponse(ctx, &generated.RunQueryRequestOptions{
+			Body: body,
+		})
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return sqlQueryResponse(resp.StatusCode, resp.Body)
+}
+
+func (c *Client) RunArchiveSQLQueryWithFresh(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+	body := &generated.RunArchiveQueryBody{SQL: sql}
+	if fresh {
+		body.Fresh = &fresh
+	}
+	resp, err := CLIResponseWithStatuses(c, []int{http.StatusOK, http.StatusAccepted}, func(client *apiclient.Client) (*generated.RunArchiveQueryResp, error) {
+		return client.RunArchiveQueryWithResponse(ctx, &generated.RunArchiveQueryRequestOptions{Body: body})
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return sqlQueryResponse(resp.StatusCode, resp.Body)
+}
+
+func sqlQueryResponse(statusCode int, body []byte) (*query.QueryResult, *CacheBuildAccepted, error) {
+	if statusCode == http.StatusAccepted {
+		var accepted CacheBuildAccepted
+		if err := json.Unmarshal(body, &accepted); err != nil {
+			return nil, nil, fmt.Errorf("decode cache build acceptance: %w", err)
+		}
+		return nil, &accepted, nil
+	}
+	result, err := queryResultFromBody(body)
+	return result, nil, err
 }
 
 // queryResultFromBody re-decodes the raw response body with UseNumber so

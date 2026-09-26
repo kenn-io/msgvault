@@ -24,7 +24,7 @@ var (
 
 var (
 	newGranolaClient                      = granola.NewClient
-	rebuildGranolaCacheAfterWrite         = rebuildCacheAfterWrite
+	rebuildGranolaCacheAfterWrite         = rebuildCacheAfterManualSync
 	rebuildGranolaCacheAfterScheduledSync = rebuildCacheAfterScheduledSync
 )
 
@@ -311,5 +311,5 @@ func init() {
 	syncGranolaCmd.Flags().StringVar(&syncGranolaAfter, "after", "", "full-sync only notes created after this date (YYYY-MM-DD; implies --full)")
 	syncGranolaCmd.Flags().BoolVar(&syncGranolaFull, "full", false, "ignore stored cursor and re-fetch every note (repairs existing rows in place)")
 	rootCmd.AddCommand(addGranolaCmd)
-	rootCmd.AddCommand(syncGranolaCmd)
+	rootCmd.AddCommand(addManualSyncCacheFlags(syncGranolaCmd))
 }

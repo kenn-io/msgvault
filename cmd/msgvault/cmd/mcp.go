@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -88,6 +89,9 @@ const savedViewsMinAPISchemaVersion = "2.21.0"
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
 
+// archiveSQLMinAPISchemaVersion adds SQL confined to archive analytics files.
+const archiveSQLMinAPISchemaVersion = "2.31.0"
+
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.
 const vectorLaneHealthMinAPISchemaVersion = "2.28.0"
@@ -145,6 +149,10 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) mcpserv
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, archiveSQLMinAPISchemaVersion) &&
+		(health.AnalyticsEngine == nil || *health.AnalyticsEngine != api.AnalyticsModePostgres) {
+		opts.ArchiveSQLQuerier = engine
 	}
 
 	return opts

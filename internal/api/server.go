@@ -243,17 +243,19 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
-	cfg            *config.Config
-	store          MessageStore
-	analyticsState atomic.Pointer[analyticsEngineState]
-	savedViewStore SavedViewStore
-	sqlQueryRunner SQLQueryRunner
-	shutdownToken  string
-	shutdownFunc   func()
-	scheduler      SyncScheduler
-	cardDAV        *CardDAVController
-	logger         *slog.Logger
-	requestTimeout time.Duration
+	cfg                    *config.Config
+	store                  MessageStore
+	analyticsState         atomic.Pointer[analyticsEngineState]
+	savedViewStore         SavedViewStore
+	sqlQueryRunner         SQLQueryRunner
+	archiveSQLQueryRunner  SQLQueryRunner
+	cacheBuildStatusReader CacheBuildStatusReader
+	shutdownToken          string
+	shutdownFunc           func()
+	scheduler              SyncScheduler
+	cardDAV                *CardDAVController
+	logger                 *slog.Logger
+	requestTimeout         time.Duration
 	// readTimeout is the ordinary connection read ceiling used by http.Server.
 	// Tests shrink it to exercise protective slow-body handling without waiting
 	// for the production timeout.
@@ -452,7 +454,8 @@ func (s *Server) clockNow() time.Time {
 	return time.Now()
 }
 
-type SQLQueryRunner func(ctx context.Context, sql string) (*query.QueryResult, error)
+type SQLQueryRunner func(ctx context.Context, sql string, fresh bool) (*query.QueryResult, *CacheBuildAccepted, error)
+type CacheBuildStatusReader func(id string) (CacheBuildStatus, bool)
 
 const (
 	DaemonLongRequestTimeout = 30 * time.Minute
@@ -461,11 +464,12 @@ const (
 	// SQL endpoint is the F2 runaway culprit: a single bad SELECT over the full
 	// archive pegged every core for minutes. 120s is generous for legitimate
 	// analytics while still bounding a pathological query.
-	QueryEndpointTimeout = 120 * time.Second
-	queryEndpointPath    = "/api/v1/query"
-	DaemonIdentityPath   = "/api/daemon/identity"
-	DaemonShutdownPath   = "/api/daemon/shutdown"
-	defaultBindAddr      = "127.0.0.1"
+	QueryEndpointTimeout     = 120 * time.Second
+	queryEndpointPath        = "/api/v1/query"
+	archiveQueryEndpointPath = "/api/v1/query/archive"
+	DaemonIdentityPath       = "/api/daemon/identity"
+	DaemonShutdownPath       = "/api/daemon/shutdown"
+	defaultBindAddr          = "127.0.0.1"
 	// inProgressLogThreshold is how long a request may run before the logger
 	// emits a WARN "http request in progress" line, and inProgressLogInterval
 	// how often it repeats thereafter. Requests are otherwise logged only on
@@ -486,14 +490,16 @@ type ServerOptions struct {
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
-	SavedViewStore SavedViewStore
-	Engine         query.Engine // Optional: query engine for aggregates and TUI support
-	SQLQueryRunner SQLQueryRunner
-	ShutdownToken  string
-	ShutdownFunc   func()
-	HybridEngine   *hybrid.Engine
-	VectorCfg      vector.Config
-	Backend        vector.Backend
+	SavedViewStore         SavedViewStore
+	Engine                 query.Engine // Optional: query engine for aggregates and TUI support
+	SQLQueryRunner         SQLQueryRunner
+	ArchiveSQLQueryRunner  SQLQueryRunner
+	CacheBuildStatusReader CacheBuildStatusReader
+	ShutdownToken          string
+	ShutdownFunc           func()
+	HybridEngine           *hybrid.Engine
+	VectorCfg              vector.Config
+	Backend                vector.Backend
 	// PersonSearchEngine is the optional semantic people service.
 	PersonSearchEngine PersonSearchEngine
 	// VectorStatus is the initial vector subsystem status. Zero value
@@ -580,6 +586,8 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		store:                  opts.Store,
 		savedViewStore:         opts.SavedViewStore,
 		sqlQueryRunner:         opts.SQLQueryRunner,
+		archiveSQLQueryRunner:  opts.ArchiveSQLQueryRunner,
+		cacheBuildStatusReader: opts.CacheBuildStatusReader,
 		shutdownToken:          opts.ShutdownToken,
 		shutdownFunc:           opts.ShutdownFunc,
 		hybridEngine:           opts.HybridEngine,
@@ -1166,7 +1174,7 @@ func cliRequestNeedsProtectiveCeiling(r *http.Request) bool {
 // unbounded (they report progress and are gated by the operation gate);
 // everything else gets the standard per-request timeout.
 func (s *Server) requestTimeoutForPath(path string) (time.Duration, bool) {
-	if path == queryEndpointPath {
+	if path == queryEndpointPath || path == archiveQueryEndpointPath {
 		return s.queryTimeout, true
 	}
 	if isLongDaemonRequest(path) {

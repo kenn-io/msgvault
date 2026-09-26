@@ -1941,17 +1941,27 @@ func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 // ============================================================================
 
 type QueryRequest struct {
-	SQL string `json:"sql"`
+	SQL   string `json:"sql"`
+	Fresh *bool  `json:"fresh,omitempty"`
 }
 
 // ErrSQLQueryEngineUnavailable is returned when a raw SQL request has no
 // analytics engine. Callers outside the API package use this sentinel so the
 // handler can preserve its 503 engine-unavailable response.
 var ErrSQLQueryEngineUnavailable = errors.New("SQL query requires DuckDB engine (analytics cache may not be built)")
+var ErrCacheBuildUnavailable = errors.New("analytics cache build unavailable")
 
 // handleQuery executes a raw SQL query against DuckDB views.
 // POST /api/v1/query.
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
+	s.handleSQLQuery(w, r, false)
+}
+
+func (s *Server) handleArchiveQuery(w http.ResponseWriter, r *http.Request) {
+	s.handleSQLQuery(w, r, true)
+}
+
+func (s *Server) handleSQLQuery(w http.ResponseWriter, r *http.Request, archiveOnly bool) {
 	var req QueryRequest
 	dec := jsontext.NewDecoder(r.Body)
 	if err := json.UnmarshalDecode(dec, &req); err != nil {
@@ -1973,9 +1983,51 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "not_read_only", err.Error())
 		return
 	}
+	fresh := false
+	if req.Fresh != nil {
+		fresh = *req.Fresh
+	}
+	if values, present := r.URL.Query()["fresh"]; present {
+		if len(values) != 1 {
+			writeError(w, http.StatusBadRequest, "invalid_fresh", "Specify fresh once")
+			return
+		}
+		parsed, err := strconv.ParseBool(values[0])
+		if err != nil || (req.Fresh != nil && parsed != *req.Fresh) {
+			writeError(w, http.StatusBadRequest, "invalid_fresh", "Invalid or conflicting fresh value")
+			return
+		}
+		fresh = parsed
+	}
 
-	result, err := s.runSQLQuery(r.Context(), req.SQL)
+	// Startup already owns cache recovery. Keep serving an installed SQL
+	// engine, but do not start a duplicate build while it is unavailable.
+	if s.analyticsCacheInitializingForContext(r.Context()) {
+		if _, usable := s.queryEngineForContext(r.Context()).(query.SQLQuerier); !usable {
+			writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Analytics engine is initializing")
+			return
+		}
+	}
+
+	var result *query.QueryResult
+	var accepted *CacheBuildAccepted
+	var err error
+	if archiveOnly {
+		if s.archiveSQLQueryRunner == nil {
+			err = ErrSQLQueryEngineUnavailable
+		} else {
+			result, accepted, err = s.archiveSQLQueryRunner(r.Context(), req.SQL, fresh)
+		}
+	} else if s.sqlQueryRunner != nil {
+		result, accepted, err = s.sqlQueryRunner(r.Context(), req.SQL, fresh)
+	} else {
+		result, err = s.runSQLQuery(r.Context(), req.SQL)
+	}
 	if err != nil {
+		if errors.Is(err, ErrCacheBuildUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "cache_build_unavailable", err.Error())
+			return
+		}
 		if errors.Is(err, ErrSQLQueryEngineUnavailable) {
 			writeError(w, http.StatusServiceUnavailable,
 				"engine_unavailable",
@@ -1992,16 +2044,30 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "query_error", err.Error())
 		return
 	}
+	if accepted != nil {
+		writeJSON(w, http.StatusAccepted, accepted)
+		return
+	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleCacheBuildStatus(w http.ResponseWriter, r *http.Request) {
+	if s.cacheBuildStatusReader == nil {
+		writeError(w, http.StatusServiceUnavailable, "cache_build_unavailable", "Analytics cache build status unavailable")
+		return
+	}
+	status, ok := s.cacheBuildStatusReader(r.PathValue("job_id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "cache_build_not_found", "Analytics cache build not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 func (s *Server) runSQLQuery(ctx context.Context, sql string) (*query.QueryResult, error) {
 	if s.analyticsInitializingForContext(ctx) {
 		return nil, ErrSQLQueryEngineUnavailable
-	}
-	if s.sqlQueryRunner != nil {
-		return s.sqlQueryRunner(ctx, sql)
 	}
 	querier, ok := s.queryEngineForContext(ctx).(query.SQLQuerier)
 	if !ok {

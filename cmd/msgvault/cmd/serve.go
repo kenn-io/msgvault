@@ -633,6 +633,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		},
 		RefreshCache: refreshCacheAfterWrite,
 	}).WithLogger(logger)
+	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
 		draftPolicy:            snapshotIMAPDraftPolicy(cfg),
@@ -641,6 +642,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
 		analyticsDir:           cfg.AnalyticsDir(),
+		cacheJobs:              cacheJobs,
 		personEnrichmentConfig: cfg.People.Enrichment,
 		lookupEnv:              personEnrichmentEnvironmentLookup(cfg),
 	}
@@ -653,12 +655,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Store:          storeAdapter,
 		SavedViewStore: s,
 		Engine:         engine,
-		SQLQueryRunner: func(ctx context.Context, sql string) (*query.QueryResult, error) {
+		SQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
 			if apiServer == nil {
-				return nil, errors.New("daemon API server unavailable")
+				return nil, nil, errors.New("daemon API server unavailable")
 			}
-			return runDaemonSQLQuery(ctx, cfg, s, apiServer.QueryEngineForRequest(ctx), sql)
+			return runDaemonSQLQueryWithJobs(requestCtx, cfg, s, apiServer.QueryEngineForRequest(requestCtx), sql, daemonSQLQueryOptions{fresh: fresh}, cacheJobs)
 		},
+		ArchiveSQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
+			return runDaemonSQLQueryWithJobs(requestCtx, cfg, s, nil, sql, daemonSQLQueryOptions{fresh: fresh, archiveOnly: true}, cacheJobs)
+		},
+		CacheBuildStatusReader:        cacheJobs.status,
 		ShutdownToken:                 ownership.shutdownToken,
 		ShutdownFunc:                  cancel,
 		Scheduler:                     schedAdapter,
@@ -779,6 +785,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
 	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate)
+	if !cacheJobs.waitContext(shutdownCtx) {
+		logger.Warn("analytics cache build did not stop within the shutdown drain timeout")
+		shutdownErr = errors.Join(shutdownErr, errors.New("analytics cache build did not stop during shutdown"))
+	}
 	if shutdownErr == nil {
 		resourceCleanupSafe = true
 	}
@@ -1010,51 +1020,131 @@ func shutdownServeRuntime(
 	return nil
 }
 
-func runDaemonSQLQuery(
-	ctx context.Context,
-	c *config.Config,
-	s *store.Store,
-	engine query.Engine,
-	sqlStr string,
-) (*query.QueryResult, error) {
-	if c == nil || s == nil {
-		return nil, errors.New("daemon query unavailable")
+type daemonSQLQueryOptions struct {
+	fresh       bool
+	archiveOnly bool
+}
+
+// runDaemonSQLQueryWithJobs serves committed data while refresh work runs in
+// the daemon's background job registry. The request never waits for a cache
+// builder; a fresh request or unusable publication receives a job ID instead.
+func runDaemonSQLQueryWithJobs(
+	ctx context.Context, c *config.Config, s *store.Store, engine query.Engine,
+	sqlStr string, options daemonSQLQueryOptions, jobs *cacheBuildJobs,
+) (*query.QueryResult, *api.CacheBuildAccepted, error) {
+	if jobs == nil || c == nil || s == nil {
+		return nil, nil, errors.New("daemon cache refresh unavailable")
 	}
-	if engine == nil {
-		return nil, api.ErrSQLQueryEngineUnavailable
+	if err := query.EnsureReadOnly(sqlStr); err != nil {
+		return nil, nil, err
 	}
 	if s.IsPostgreSQL() {
+		if options.archiveOnly {
+			return nil, nil, api.ErrSQLQueryEngineUnavailable
+		}
 		if querier, ok := engine.(query.SQLQuerier); ok {
-			return querier.QuerySQL(ctx, sqlStr)
+			result, err := querier.QuerySQL(ctx, sqlStr)
+			return result, nil, err
 		}
-		return nil, errors.New("SQL query requires DuckDB engine")
+		return nil, nil, api.ErrSQLQueryEngineUnavailable
 	}
-
-	dbPath := c.DatabaseDSN()
-	analyticsDir := c.AnalyticsDir()
-	staleness := cacheNeedsBuild(dbPath, analyticsDir)
-	if !store.IsPostgresURL(dbPath) && !staleness.NeedsBuild {
-		if querier, ok := engine.(query.SQLQuerier); ok {
-			return querier.QuerySQL(ctx, sqlStr)
-		}
-	}
-
-	if staleness.NeedsBuild {
-		if err := buildCacheSubprocessForRun(ctx, staleness.FullRebuild); err != nil {
-			return nil, fmt.Errorf("build cache: %w", err)
-		}
-		logger.Info("rebuilt analytics cache for SQL query",
-			"reason", staleness.Reason,
-			"full_rebuild", staleness.FullRebuild)
-	}
-
-	duckEngine, err := openDaemonDuckDBEngine(c, s)
+	staleness, err := cacheNeedsBuildForServing(ctx, c.DatabaseDSN(), c.AnalyticsDir())
 	if err != nil {
-		return nil, fmt.Errorf("open DuckDB query engine: %w", err)
+		return nil, nil, fmt.Errorf("inspect analytics cache: %w", err)
 	}
-	defer func() { _ = duckEngine.Close() }()
+	if options.fresh {
+		job, err := jobs.acceptAfterWrite(buildCacheModeAuto)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
+		}
+		return nil, &api.CacheBuildAccepted{
+			Status: job.Status, JobID: job.JobID, Cache: cacheFreshnessFromStaleness(staleness),
+		}, nil
+	}
+	if staleness.NeedsBuild {
+		if !c.Analytics.AutoBuildCache {
+			if !staleness.HasUsablePublication {
+				return nil, nil, api.ErrSQLQueryEngineUnavailable
+			}
+		} else if !staleness.HasUsablePublication {
+			job, err := jobs.accept(buildCacheModeAuto)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
+			}
+			return nil, &api.CacheBuildAccepted{
+				Status: job.Status, JobID: job.JobID, Cache: cacheFreshnessFromStaleness(staleness),
+			}, nil
+		}
+		if c.Analytics.AutoBuildCache {
+			if _, deferBuild := scheduledCacheBuildDelay(staleness, c.Analytics.MinRebuildInterval, time.Now()); !deferBuild {
+				if _, err := jobs.accept(buildCacheModeScheduledAuto); err != nil {
+					return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
+				}
+			}
+		}
+	} else if c.Analytics.AutoBuildCache && staleness.HasUsablePublication {
+		if err := jobs.verifyWhenDue(staleness.PublishedAt, c.Analytics.MinRebuildInterval, time.Now()); err != nil {
+			return nil, nil, fmt.Errorf("%w: %w", api.ErrCacheBuildUnavailable, err)
+		}
+	}
+	querier, ok := engine.(query.SQLQuerier)
+	if options.archiveOnly {
+		duckOptions, err := daemonDuckDBOptions(c)
+		if err != nil {
+			return nil, nil, err
+		}
+		duckEngine, err := query.NewArchiveDuckDBEngine(ctx, c.AnalyticsDir(), duckOptions)
+		if err != nil {
+			return nil, nil, fmt.Errorf("open archive SQL engine: %w", err)
+		}
+		defer func() { _ = duckEngine.Close() }()
+		querier = duckEngine
+	} else if !ok {
+		duckEngine, err := openDaemonDuckDBEngine(c, s)
+		if err != nil {
+			return nil, nil, fmt.Errorf("open DuckDB query engine: %w", err)
+		}
+		defer func() { _ = duckEngine.Close() }()
+		querier = duckEngine
+	}
+	result, err := queryCommittedSQL(ctx, querier, sqlStr, staleness)
+	if err != nil {
+		return nil, nil, err
+	}
+	if result.Cache != nil {
+		result.Cache.Building = jobs.active()
+	}
+	return result, nil, nil
+}
 
-	return duckEngine.QuerySQL(ctx, sqlStr)
+func cacheFreshnessFromStaleness(staleness cacheStaleness) *query.CacheFreshness {
+	if !staleness.HasUsablePublication {
+		return nil
+	}
+	return &query.CacheFreshness{
+		Generation: staleness.Generation, PublishedAt: staleness.PublishedAt,
+		StaleReason: staleness.Reason, PendingAdditions: staleness.PendingAdditions, Building: true,
+	}
+}
+
+func queryCommittedSQL(
+	ctx context.Context, querier query.SQLQuerier, sqlStr string, staleness cacheStaleness,
+) (*query.QueryResult, error) {
+	result, err := querier.QuerySQL(ctx, sqlStr)
+	if err != nil || result == nil || result.Cache == nil {
+		return result, err
+	}
+	if result.Cache.Generation != staleness.Generation ||
+		!result.Cache.PublishedAt.Equal(staleness.PublishedAt) {
+		// A publication may have landed between the staleness probe and the
+		// engine's read lock. Keep the engine's actual generation metadata.
+		return result, nil
+	}
+	if staleness.NeedsBuild {
+		result.Cache.StaleReason = staleness.Reason
+		result.Cache.PendingAdditions = staleness.PendingAdditions
+	}
+	return result, nil
 }
 
 // openDaemonAnalyticsEngine picks the daemon's analytics engine once at
@@ -1209,38 +1299,34 @@ func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngi
 	if c == nil || s == nil {
 		return nil, errors.New("daemon DuckDB engine unavailable")
 	}
-	spillParent, err := query.PrepareDaemonSpillDir(c.HomeDir)
+	options, err := daemonDuckDBOptions(c)
 	if err != nil {
 		return nil, err
 	}
-	// Each engine spills into its own subdirectory: the daemon opens both a
-	// long-lived engine and short-lived per-query engines (runDaemonSQLQuery),
-	// and OwnTempDirectory deletes the directory on Close — sharing one
-	// directory would let a temporary engine remove the live engine's spill
-	// files. The pid-owned parent is reaped by PrepareDaemonSpillDir once
-	// this process exits.
+	return query.NewDuckDBEngine(c.AnalyticsDir(), c.DatabaseDSN(), s.DB(), options)
+}
+
+func daemonDuckDBOptions(c *config.Config) (query.DuckDBOptions, error) {
+	spillParent, err := query.PrepareDaemonSpillDir(c.HomeDir)
+	if err != nil {
+		return query.DuckDBOptions{}, err
+	}
+	// Each engine owns its spill directory, so closing a temporary SQL
+	// engine cannot remove the long-lived analytics engine's spill files.
 	tempDirectory, err := os.MkdirTemp(spillParent, "engine-")
 	if err != nil {
-		return nil, fmt.Errorf("create engine spill directory: %w", err)
+		return query.DuckDBOptions{}, fmt.Errorf("create engine spill directory: %w", err)
 	}
-	// DisableSQLiteScanner keeps DuckDB's bundled SQLite library from
-	// ATTACHing the live database for the daemon's lifetime, which can
-	// interfere with the daemon's own go-sqlite3 WAL/lock state. Detail
-	// queries route through the shared go-sqlite3 connection instead;
-	// aggregates still read Parquet.
-	return query.NewDuckDBEngine(
-		c.AnalyticsDir(),
-		c.DatabaseDSN(),
-		s.DB(),
-		query.DuckDBOptions{
-			DisableSQLiteScanner: true,
-			TempDirectory:        tempDirectory,
-			OwnTempDirectory:     true,
-			MemoryLimit:          c.Analytics.QueryMemoryLimit,
-			Threads:              c.Analytics.QueryThreads,
-			MaxTempDirectorySize: c.Analytics.QueryTempLimit,
-		},
-	)
+	// Keep DuckDB's bundled SQLite library away from the live database;
+	// detail queries use the daemon's shared go-sqlite3 connection.
+	return query.DuckDBOptions{
+		DisableSQLiteScanner: true,
+		TempDirectory:        tempDirectory,
+		OwnTempDirectory:     true,
+		MemoryLimit:          c.Analytics.QueryMemoryLimit,
+		Threads:              c.Analytics.QueryThreads,
+		MaxTempDirectorySize: c.Analytics.QueryTempLimit,
+	}, nil
 }
 
 func hasServeOAuthConfig(c *config.Config) bool {
@@ -1292,6 +1378,7 @@ type storeAPIAdapter struct {
 	// analyticsDir is the daemon's Parquet analytics cache directory, used
 	// to read the revision committed by the derived-refresh child.
 	analyticsDir           string
+	cacheJobs              *cacheBuildJobs
 	personEnrichmentConfig personenrichment.Config
 	lookupEnv              personenrichment.CredentialLookup
 }
@@ -1678,15 +1765,17 @@ func (a *storeAPIAdapter) runCLISyncOperationWithRunner(
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}
-	if req.OperationID == "" {
-		return err
+	if req.OperationID != "" {
+		status := "done"
+		if err != nil {
+			status = "failed"
+		}
+		if finishErr := a.store.FinishSyncOperation(req.OperationID, status); finishErr != nil {
+			return errors.Join(err, fmt.Errorf("finish sync operation: %w", finishErr))
+		}
 	}
-	status := "done"
-	if err != nil {
-		status = "failed"
-	}
-	if finishErr := a.store.FinishSyncOperation(req.OperationID, status); finishErr != nil {
-		return errors.Join(err, fmt.Errorf("finish sync operation: %w", finishErr))
+	if queueErr := a.queueCacheRefreshAfterManualSync(req.BuildCache, req.NoBuildCache); queueErr != nil {
+		err = errors.Join(err, queueErr)
 	}
 	return err
 }
@@ -1733,6 +1822,12 @@ func emitFolderArgs(args []string, flag string, values []string) []string {
 func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 	if req.Full {
 		args := []string{"sync-full"}
+		if req.BuildCache {
+			args = append(args, "--build-cache")
+		}
+		if req.NoBuildCache {
+			args = append(args, "--no-build-cache")
+		}
 		if req.SourceIDSet {
 			args = append(args, "--source-id", strconv.FormatInt(req.SourceID, 10))
 		}
@@ -1762,6 +1857,12 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 		return args
 	}
 	args := []string{syncIncrementalCmd.Name()}
+	if req.BuildCache {
+		args = append(args, "--build-cache")
+	}
+	if req.NoBuildCache {
+		args = append(args, "--no-build-cache")
+	}
 	if req.SourceIDSet {
 		args = append(args, "--source-id", strconv.FormatInt(req.SourceID, 10))
 	}
@@ -1888,7 +1989,13 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	req api.CLIRunRequest,
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
-) error {
+) (runErr error) {
+	if manualSyncCLICommand(req.Args) {
+		defer func() {
+			force, skip := manualSyncCacheFlagValues(req.Args)
+			runErr = errors.Join(runErr, a.queueCacheRefreshAfterManualSync(force, skip))
+		}()
+	}
 	emitSubprocess := func(stream, data string) error {
 		if emit == nil {
 			return nil

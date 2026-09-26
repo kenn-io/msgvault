@@ -1291,45 +1291,55 @@ func TestHandleCLIRunBypassesStandardRequestTimeout(t *testing.T) {
 
 func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
 	t.Parallel()
-	require := require.New(t)
-	assert := assert.New(t)
-	started := make(chan struct{})
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Logger: testLogger(),
-		SQLQueryRunner: func(ctx context.Context, _ string) (*query.QueryResult, error) {
-			close(started)
-			<-ctx.Done() // simulate a runaway query that only stops on cancellation
-			return nil, ctx.Err()
-		},
-	})
-	// Test seam: shrink the query ceiling so the timeout fires immediately.
-	srv.queryTimeout = ordinaryQueryCeiling
+	for _, path := range []string{queryEndpointPath, archiveQueryEndpointPath} {
+		t.Run(path, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			started := make(chan struct{})
+			waitForCancellation := func(ctx context.Context) error {
+				close(started)
+				<-ctx.Done() // simulate a runaway query that only stops on cancellation
+				return ctx.Err()
+			}
+			srv := NewServerWithOptions(ServerOptions{
+				Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+				Logger: testLogger(),
+				SQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+					return nil, nil, waitForCancellation(ctx)
+				},
+				ArchiveSQLQueryRunner: func(ctx context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+					return nil, nil, waitForCancellation(ctx)
+				},
+			})
+			// Test seam: shrink the query ceiling so the timeout fires immediately.
+			srv.queryTimeout = ordinaryQueryCeiling
 
-	body := strings.NewReader(`{"sql":"SELECT 1"}`)
-	req := httptest.NewRequest(http.MethodPost, queryEndpointPath, body)
-	req.Header.Set("Content-Type", "application/json")
-	resp := httptest.NewRecorder()
+			body := strings.NewReader(`{"sql":"SELECT 1"}`)
+			req := httptest.NewRequest(http.MethodPost, path, body)
+			req.Header.Set("Content-Type", "application/json")
+			resp := httptest.NewRecorder()
 
-	done := make(chan struct{})
-	go func() {
-		srv.Router().ServeHTTP(resp, req)
-		close(done)
-	}()
+			done := make(chan struct{})
+			go func() {
+				srv.Router().ServeHTTP(resp, req)
+				close(done)
+			}()
 
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		require.FailNow("query runner never started")
+			select {
+			case <-started:
+			case <-time.After(2 * time.Second):
+				require.FailNow("query runner never started")
+			}
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				require.FailNow("request did not return after query timeout")
+			}
+
+			require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
+			assert.Contains(resp.Body.String(), "query_timeout")
+		})
 	}
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		require.FailNow("request did not return after query timeout")
-	}
-
-	require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
-	assert.Contains(resp.Body.String(), "query_timeout")
 }
 
 func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
@@ -1350,14 +1360,14 @@ func TestMarkedCLIQueryCancellationInterruptsDuckDB(t *testing.T) {
 			APIKey:  cliTimeoutTestAPIKey,
 		}},
 		Logger: testLogger(),
-		SQLQueryRunner: func(ctx context.Context, sql string) (*query.QueryResult, error) {
+		SQLQueryRunner: func(ctx context.Context, sql string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
 			_, hasDeadline := ctx.Deadline()
 			queryHasDeadline <- hasDeadline
 			close(queryStarted)
 			result, err := engine.QuerySQL(ctx, sql)
 			queryErr <- err
 			close(queryReturned)
-			return result, err
+			return result, nil, err
 		},
 	})
 	srv.queryTimeout = ordinaryQueryCeiling
@@ -6575,6 +6585,20 @@ func (m *mockSQLQueryEngine) QuerySQL(_ context.Context, _ string) (*query.Query
 	return m.queryResult, m.queryErr
 }
 
+func TestArchiveQueryRequiresRestrictedRunner(t *testing.T) {
+	t.Parallel()
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{},
+		Engine: &mockSQLQueryEngine{queryResult: &query.QueryResult{RowCount: 1}},
+		Logger: testLogger(),
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/query/archive", strings.NewReader(`{"sql":"SELECT 1"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+}
+
 func TestHandleQuery(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
@@ -6626,13 +6650,13 @@ func TestHandleQueryUsesConfiguredRunnerWhenEngineDoesNotSupportSQL(t *testing.T
 		Config: cfg,
 		Engine: &querytest.MockEngine{},
 		Logger: testLogger(),
-		SQLQueryRunner: func(_ context.Context, sql string) (*query.QueryResult, error) {
+		SQLQueryRunner: func(_ context.Context, sql string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
 			gotSQL = sql
 			return &query.QueryResult{
 				Columns:  []string{"subject"},
 				Rows:     [][]any{{"Hello"}},
 				RowCount: 1,
-			}, nil
+			}, nil, nil
 		},
 	})
 
@@ -6650,6 +6674,66 @@ func TestHandleQueryUsesConfiguredRunnerWhenEngineDoesNotSupportSQL(t *testing.T
 	require.NoError(json.NewDecoder(w.Body).Decode(&result), "decode response")
 	assert.Equal([]string{"subject"}, result.Columns, "columns")
 	assert.Equal(1, result.RowCount, "row_count")
+}
+
+func TestHandleQueryAcceptsFreshBuildAndReportsStatus(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var gotFresh bool
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Engine: &querytest.MockEngine{}, Logger: testLogger(),
+		SQLQueryRunner: func(_ context.Context, sql string, fresh bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+			gotFresh = fresh
+			return nil, &CacheBuildAccepted{Status: CacheBuildQueued, JobID: "synthetic-job"}, nil
+		},
+		CacheBuildStatusReader: func(id string) (CacheBuildStatus, bool) {
+			if id != "synthetic-job" {
+				return CacheBuildStatus{}, false
+			}
+			return CacheBuildStatus{JobID: id, Status: CacheBuildRunning}, true
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/query?fresh=true", strings.NewReader(`{"sql":"SELECT 1","fresh":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusAccepted, w.Code, w.Body.String())
+	assert.True(gotFresh)
+	var accepted CacheBuildAccepted
+	require.NoError(json.NewDecoder(w.Body).Decode(&accepted))
+	assert.Equal("synthetic-job", accepted.JobID)
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/v1/cache-builds/synthetic-job", nil)
+	statusW := httptest.NewRecorder()
+	srv.Router().ServeHTTP(statusW, statusReq)
+	require.Equal(http.StatusOK, statusW.Code, statusW.Body.String())
+	var status CacheBuildStatus
+	require.NoError(json.NewDecoder(statusW.Body).Decode(&status))
+	assert.Equal(CacheBuildRunning, status.Status)
+
+	conflict := httptest.NewRequest(http.MethodPost, "/api/v1/query?fresh=false", strings.NewReader(`{"sql":"SELECT 1","fresh":true}`))
+	conflict.Header.Set("Content-Type", "application/json")
+	conflictW := httptest.NewRecorder()
+	srv.Router().ServeHTTP(conflictW, conflict)
+	assert.Equal(http.StatusBadRequest, conflictW.Code)
+}
+
+func TestParseCLISyncRequestCacheOverrides(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	request := httptest.NewRequest(http.MethodPost,
+		"/api/v1/cli/sync?build-cache=true&no-build-cache=false", nil)
+	parsed, apiErr := parseCLISyncRequest(request, false)
+	require.Nil(apiErr)
+	assert.True(parsed.BuildCache)
+	assert.False(parsed.NoBuildCache)
+
+	conflict := httptest.NewRequest(http.MethodPost,
+		"/api/v1/cli/sync-full?build-cache=true&no-build-cache=true", nil)
+	_, apiErr = parseCLISyncRequest(conflict, true)
+	require.NotNil(apiErr)
+	assert.Equal(http.StatusBadRequest, apiErr.status)
 }
 
 func TestHandleSearch_FTSModeUnchanged(t *testing.T) {
@@ -7702,35 +7786,40 @@ func TestHandleQuery_SQLiteEngine503(t *testing.T) {
 
 func TestHandleQuery_DuckDBInitializing503(t *testing.T) {
 	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
-	cfg := &config.Config{
-		Server: config.ServerConfig{APIPort: 8080},
+	for _, mode := range []string{AnalyticsModeInitializing, AnalyticsModeSQLFallback} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			cfg := &config.Config{
+				Server: config.ServerConfig{APIPort: 8080},
+			}
+			runnerCalled := false
+			srv := NewServerWithOptions(ServerOptions{
+				Config:                        cfg,
+				Engine:                        &querytest.MockEngine{},
+				AnalyticsMode:                 mode,
+				AnalyticsInitializationActive: true,
+				SQLQueryRunner: func(context.Context, string, bool) (*query.QueryResult, *CacheBuildAccepted, error) {
+					runnerCalled = true
+					return &query.QueryResult{}, nil, nil
+				},
+				Logger: testLogger(),
+			})
+
+			body := `{"sql": "SELECT 1"}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/query", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			srv.Router().ServeHTTP(w, req)
+
+			assert.Equal(http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+			var errResp ErrorResponse
+			require.NoError(json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
+			assert.Equal("engine_unavailable", errResp.Error, "error")
+			assert.False(runnerCalled, "initializing DuckDB must not fall through to the SQLite query runner")
+		})
 	}
-	runnerCalled := false
-	srv := NewServerWithOptions(ServerOptions{
-		Config:        cfg,
-		Engine:        &querytest.MockEngine{},
-		AnalyticsMode: AnalyticsModeInitializing,
-		SQLQueryRunner: func(context.Context, string) (*query.QueryResult, error) {
-			runnerCalled = true
-			return &query.QueryResult{}, nil
-		},
-		Logger: testLogger(),
-	})
-
-	body := `{"sql": "SELECT 1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/query", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	assert.Equal(http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
-	var errResp ErrorResponse
-	require.NoError(json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
-	assert.Equal("engine_unavailable", errResp.Error, "error")
-	assert.False(runnerCalled, "initializing DuckDB must not fall through to the SQLite query runner")
 }
 
 // fakeVectorBackend is a test stub implementing vector.Backend. Tests

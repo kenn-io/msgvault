@@ -152,9 +152,9 @@ func TestLoggerMiddlewareLogsInProgressRequest(t *testing.T) {
 		srv := NewServerWithOptions(ServerOptions{
 			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 			Logger: logger,
-			SQLQueryRunner: func(_ context.Context, _ string) (*query.QueryResult, error) {
+			SQLQueryRunner: func(_ context.Context, _ string, _ bool) (*query.QueryResult, *CacheBuildAccepted, error) {
 				<-release // hold the request open past the in-progress threshold
-				return &query.QueryResult{}, nil
+				return &query.QueryResult{}, nil, nil
 			},
 		})
 		defer func() {
@@ -1486,12 +1486,10 @@ func TestCLIRequestDurationPolicy(t *testing.T) {
 
 			handlerResult := make(chan error, 1)
 			handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-				select {
-				case <-time.After(40 * time.Millisecond):
-					handlerResult <- nil
-				case <-r.Context().Done():
-					handlerResult <- r.Context().Err()
+				if _, bounded := r.Context().Deadline(); bounded {
+					<-r.Context().Done()
 				}
+				handlerResult <- r.Context().Err()
 			}))
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
 			if tt.configure != nil {
