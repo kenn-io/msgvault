@@ -214,16 +214,13 @@ func (c *Client) ImportTranscript(ctx context.Context, sourceID string, metadata
 	return receipt, nil
 }
 
-func (c *Client) Process(ctx context.Context, sourceID, operationID, suppliedInputID string) (Receipt, error) {
+func (c *Client) Process(ctx context.Context, sourceID, operationID string, processing Processing) (Receipt, error) {
 	body := struct {
 		OperationID string     `json:"operation_id"`
 		Processing  Processing `json:"processing"`
 	}{
 		OperationID: operationID,
-		Processing: Processing{
-			Profile:         "supplied-transcript",
-			SuppliedInputID: suppliedInputID,
-		},
+		Processing:  processing,
 	}
 	var receipt Receipt
 	err := c.jsonRequest(ctx, http.MethodPost,

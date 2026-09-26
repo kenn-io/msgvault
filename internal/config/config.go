@@ -117,13 +117,21 @@ type IntegrationsConfig struct {
 	Docbank DocbankIntegrationConfig `toml:"docbank"`
 }
 
-// DocbankIntegrationConfig configures the optional Beeper media destination.
+// DocbankIntegrationConfig configures the optional stored-media destination.
 // The API key stays in the daemon environment and is read when a request runs.
 type DocbankIntegrationConfig struct {
 	Enabled       bool   `toml:"enabled"`
 	URL           string `toml:"url"`
 	APIKeyEnv     string `toml:"api_key_env"`
 	UploadConsent bool   `toml:"upload_consent"`
+	ASRProfile    string `toml:"asr_profile"`
+}
+
+func (d DocbankIntegrationConfig) validate() error {
+	if strings.TrimSpace(d.ASRProfile) == "supplied-transcript" {
+		return errors.New(`integrations.docbank.asr_profile: "supplied-transcript" is reserved for supplied transcript input`)
+	}
+	return nil
 }
 
 // TaskIntegrationConfig configures a task service connection.
@@ -998,6 +1006,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.Integrations.Kata.ApplyDefaults()
 	if err := cfg.Integrations.Kata.Validate("kata"); err != nil {
+		return nil, err
+	}
+	if err := cfg.Integrations.Docbank.validate(); err != nil {
 		return nil, err
 	}
 	cfg.Activity.ApplyDefaults()

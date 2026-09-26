@@ -339,6 +339,48 @@ func TestBeeperMediaScheduledRoute(t *testing.T) {
 	require.Error(sched.TriggerJob(beeperMediaSubmitJob))
 }
 
+func TestStoredMediaSchedulerUsesOtherSourceProfile(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, blobs := storedBeeperVoiceNote(t)
+	_, err := st.DB().Exec(`UPDATE attachments SET attachment_role = 'preview'
+		WHERE message_id = (SELECT id FROM messages WHERE source_message_id = 'voice1')`)
+	require.NoError(err)
+	source, err := st.GetOrCreateSource("gmail", "rod@example.com")
+	require.NoError(err)
+	conversation, err := st.EnsureConversation(source.ID, "mail-thread-1", "Mail")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID: conversation, SourceID: source.ID, SourceMessageID: "mail-audio-1",
+		MessageType: "gmail", SizeEstimate: int64(len(testWAV())),
+	})
+	require.NoError(err)
+	wav := testWAV()
+	digest := sha256.Sum256(wav)
+	hash := hex.EncodeToString(digest[:])
+	require.NoError(st.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+		Filename: "meeting.wav", MIMEType: "application/octet-stream", StoragePath: hash[:2] + "/" + hash,
+		ContentHash: hash, Size: int64(len(wav)), SourceAttachmentID: "mail:attachment:1",
+		SourcePartKey: "mime:1.2", State: attachmentpolicy.StateStored,
+		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	}))
+	t.Setenv(beeperMediaTestKeyEnv, "synthetic-key")
+	_, httpServer := newRetentionServer(t)
+	sched := scheduler.New(nil)
+	cfg := config.DocbankIntegrationConfig{Enabled: true, URL: httpServer.URL,
+		APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true, ASRProfile: "asr"}
+	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), cfg, nil))
+	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
+	archiveUID, err := st.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	destination := beeperMediaDestinationKey(httpServer.URL, archiveUID)
+	var provider, profile string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT provider, profile FROM beeper_media_deliveries
+		WHERE destination_key = ?`), destination).Scan(&provider, &profile))
+	assert.Equal("gmail", provider)
+	assert.Equal("asr", profile)
+}
+
 // TestBeeperMediaGatedStoreWrites composes the daemon schedulers. A long
 // upload holds no operation gate, while every media Store write waits for it,
 // so a backup freeze sees no writer.

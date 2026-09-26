@@ -70,6 +70,7 @@ func (a beeperAudio) mapping(destination, revision, processingKey string) store.
 		RawHash: hex.EncodeToString(rawDigest[:]), TranscriptSHA256: transcript,
 		OccurrenceJSON: `{"ref":"msgvault:` + a.sourceMessageID + `","revision":"` + revision + `"}`,
 		Filename:       "voice.wav", MIMEType: "audio/wav", ProcessingKey: processingKey,
+		ProcessingProvider: "beeper", ProcessingProfile: "supplied-transcript",
 	}
 }
 
@@ -166,6 +167,8 @@ func TestBeeperMediaOperationReplay(t *testing.T) {
 	assert.Equal("input", process.SuppliedInputID)
 	assert.NotEqual(replayed.OperationID, process.OperationID)
 	process.FrozenRequestJSON = `{"profile":"supplied-transcript","supplied_input_id":"input"}`
+	process.SourceVersionID, process.ContentVersionID = "version", "content"
+	process.DocbankOccurrenceID = "occurrence"
 	process, err = f.Store.PrepareBeeperMediaOperation(t.Context(), process)
 	require.NoError(err)
 	assert.Equal("source", process.DocbankSourceID)
@@ -521,8 +524,8 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`
 		UPDATE beeper_media_deliveries
 		SET phase = 'observing', processing_operation_id = '11111111-1111-4111-8111-111111111111',
-		    source_id = 'source-c', source_version_id = 'version-c',
-		    content_version_id = 'content-c', donor_occurrence_id = 'observing-occurrence',
+		    source_id = 'source-cccc', source_version_id = 'version',
+		    content_version_id = 'content', donor_occurrence_id = 'observing-occurrence',
 		    job_id = 'job-c', operation_state = 'queued', coverage_state = 'pending',
 		    next_action_at = ?
 		WHERE destination_key = ? AND processing_key = ?`), dueAt, observingMapping.DestinationKey, observingMapping.ProcessingKey)
@@ -532,7 +535,7 @@ func TestBeeperMediaRevocationLifecycle(t *testing.T) {
 	require.NoError(err)
 	require.True(ok)
 	assert.Equal(store.BeeperMediaOperationStatus, operation.Kind)
-	assert.Equal("source-c", operation.DocbankSourceID)
+	assert.Equal("source-cccc", operation.DocbankSourceID)
 	assert.Equal("job-c", operation.JobID)
 }
 
@@ -640,7 +643,9 @@ func TestBeeperMediaDiscovery(t *testing.T) {
 	assert.Equal(audios[1].attachmentID, page[0].AttachmentID)
 	rest, err := f.Store.ListBeeperMediaCandidates(t.Context(), page[99].AttachmentID, 100)
 	require.NoError(err)
-	assert.Empty(rest)
+	require.Len(rest, 1)
+	assert.Equal("gmail", rest[0].SourceType)
+	assert.Equal("gmail-audio", rest[0].SourceMessageID)
 	_, err = f.Store.ListBeeperMediaCandidates(t.Context(), 0, 1001)
 	require.Error(err)
 
@@ -695,6 +700,48 @@ func TestBeeperMediaDiscovery(t *testing.T) {
 	changes, err = f.Store.ListAttachmentChanges(t.Context(), store.BeeperMediaAttachmentConsumerKey, 100)
 	require.NoError(err)
 	assert.Empty(changes)
+}
+
+func TestBeeperMediaCandidateAttachmentStates(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newBeeperMediaFixture(t)
+	gmail, err := f.Store.GetOrCreateSource("gmail", "rod@example.com")
+	require.NoError(err)
+	gmailConversation, err := f.Store.EnsureConversation(gmail.ID, "gmail-thread", "Thread")
+	require.NoError(err)
+	states := []string{"", "stored", "pending", "failed", "skipped"}
+	want := make(map[int64]string)
+	for i, state := range states {
+		audio := addBeeperAudio(t, f.Store, gmail.ID, gmailConversation,
+			fmt.Sprintf("gmail-%s-%d", state, i), fmt.Sprintf("%064x", i+1))
+		if state == "" {
+			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`), audio.attachmentID)
+		} else {
+			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = ? WHERE id = ?`),
+				state, audio.attachmentID)
+		}
+		require.NoError(err)
+		if state == "" || state == "stored" {
+			want[audio.attachmentID] = state
+		}
+	}
+	zeroBytes := addBeeperAudio(t, f.Store, gmail.ID, gmailConversation, "gmail-zero-bytes", fmt.Sprintf("%064x", 9))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET size = 0 WHERE id = ?`), zeroBytes.attachmentID)
+	require.NoError(err)
+	beeperAudio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "beeper-empty-state", strings.Repeat("a", 64))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`), beeperAudio.attachmentID)
+	require.NoError(err)
+
+	candidates, err := f.Store.ListBeeperMediaCandidates(t.Context(), 0, 10)
+	require.NoError(err)
+	require.Len(candidates, len(want))
+	for _, candidate := range candidates {
+		assert.Equal("gmail", candidate.SourceType)
+		assert.Equal(want[candidate.AttachmentID], candidate.AttachmentState)
+		delete(want, candidate.AttachmentID)
+	}
+	assert.Empty(want)
 }
 
 func TestBeeperMediaSchemaReopen(t *testing.T) {
