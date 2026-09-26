@@ -401,13 +401,16 @@ func (s *syncer) retryAttachments(ctx context.Context) error {
 			ids = append(ids, id)
 		}
 	}
+	// A marker is removed only when its retry is done, so every error path
+	// leaves it in the checkpoint for the next sync.
 	for _, id := range ids {
-		delete(s.cursors, retryPrefix+id)
+		key := retryPrefix + id
 		known, err := s.st.MessageExistsBatch(s.sourceID, []string{id})
 		if err != nil {
 			return err
 		}
 		if known[id] == 0 {
+			delete(s.cursors, key)
 			continue
 		}
 		parent, err := s.c.ParentFolderID(ctx, id)
@@ -416,16 +419,20 @@ func (s *syncer) retryAttachments(ctx context.Context) error {
 				return err
 			}
 			s.sum.Deleted++
+			delete(s.cursors, key)
 			continue
 		}
 		if err != nil {
 			return fmt.Errorf("look up message to retry: %w", err)
 		}
 		if _, ok := s.labels[parent]; !ok {
-			s.cursors[retryPrefix+id] = parent // a folder this run did not list
+			s.cursors[key] = parent // a folder this run did not list
 			continue
 		}
+		// download puts the marker back itself if an attachment fails again.
+		delete(s.cursors, key)
 		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, archiveID: known[id]}}); err != nil {
+			s.cursors[key] = parent
 			return err
 		}
 	}

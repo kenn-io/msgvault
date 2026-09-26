@@ -43,6 +43,7 @@ type fakeGraph struct {
 	attachmentBody map[string]string // message ID -> base64 file content
 	broken         map[string]bool   // message IDs whose MIME does not parse
 	goneOnValue    map[string]bool   // message IDs deleted just before their $value
+	badValue       map[string]bool   // message IDs whose $value answers 400
 	attachDir      string            // attachments directory; a fresh one when empty
 	throttle       bool              // answer the next $value with 429 once
 	pageSize       int
@@ -57,7 +58,7 @@ type change struct{ id, from string }
 
 func newFakeGraph(t *testing.T) *fakeGraph {
 	t.Helper()
-	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, broken: map[string]bool{}, goneOnValue: map[string]bool{}, pageSize: 2}
+	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, broken: map[string]bool{}, goneOnValue: map[string]bool{}, badValue: map[string]bool{}, pageSize: 2}
 	f.folders = []string{"inbox", "archive"}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -144,6 +145,10 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		id := strings.Split(p, "/")[3]
+		if f.badValue[id] {
+			http.Error(w, "bad", http.StatusBadRequest)
+			return
+		}
 		if f.goneOnValue[id] {
 			delete(f.folder, id)
 		}
@@ -735,4 +740,34 @@ func TestImportRefreshWithBrokenMIMEKeepsAttachments(t *testing.T) {
 	_, err = f.sync(t, st)
 	require.NoError(err)
 	assert.Equal(1, attachments(t, st)[0])
+}
+
+// A retry whose download fails keeps its marker. The marker here comes from a
+// sync that failed later, so no completed sync holds it, and the checkpoint of
+// the failed retry is the only place left for it.
+func TestImportFailedRetryKeepsMarker(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	blocker := filepath.Join(t.TempDir(), "file")
+	require.NoError(os.WriteFile(blocker, nil, 0o600))
+	f.attachDir = filepath.Join(blocker, "attachments") // cannot be created
+	f.withAttachment["m1"] = true
+	f.put("m1", "inbox")
+	f.put("m2", "inbox")
+	f.put("m3", "inbox")
+	f.stopAt = 2 // the second page fails after m1 is stored
+	_, err := f.sync(t, st)
+	require.Error(err)
+
+	f.attachDir = ""
+	f.badValue["m1"] = true
+	_, err = f.sync(t, st)
+	require.Error(err)
+
+	f.badValue["m1"] = false
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.Equal([2]int{1, 1}, attachments(t, st))
 }
