@@ -148,6 +148,12 @@ type SearchPeopleBody = PersonSearchRequest
 
 type PatchPersonBody = PatchPersonRequest
 
+type CreatePersonAgendaItemBody = PersonAgendaCreateRequest
+
+type LinkPersonAgendaItemBody = PersonAgendaLinkRequest
+
+type UpdatePersonAgendaItemBody = PersonAgendaUpdateRequest
+
 type SetPersonAttributeBody = SetPersonAttributeRequest
 
 type SetPersonBriefEnrollmentBody = PutPersonBriefEnrollmentRequest

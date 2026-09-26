@@ -7259,6 +7259,111 @@ func (p PersonAddressPatchRequest) Validate() error {
 	return errors
 }
 
+type PersonAgendaCreateRequest struct {
+	Body     *string  `json:"body,omitzero"`
+	Labels   []string `json:"labels,omitempty"`
+	List     *string  `json:"list,omitzero"`
+	Priority *int64   `json:"priority,omitempty"`
+	Title    string   `json:"title" validate:"required"`
+}
+
+func (p PersonAgendaCreateRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonAgendaItem struct {
+	Body         *string  `json:"body,omitzero"`
+	Labels       []string `json:"labels,omitempty"`
+	List         string   `json:"list" validate:"required"`
+	Owner        *string  `json:"owner,omitzero"`
+	Priority     *int64   `json:"priority,omitempty"`
+	Project      string   `json:"project" validate:"required"`
+	QualifiedRef string   `json:"qualified_ref" validate:"required"`
+	Ref          string   `json:"ref" validate:"required"`
+	Revision     string   `json:"revision" validate:"required"`
+	State        string   `json:"state" validate:"required"`
+	Status       string   `json:"status" validate:"required"`
+	Title        string   `json:"title" validate:"required"`
+	UID          string   `json:"uid" validate:"required"`
+	WebURL       *string  `json:"web_url,omitzero"`
+}
+
+func (p PersonAgendaItem) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonAgendaLinkRequest struct {
+	List *string `json:"list,omitzero"`
+	Ref  string  `json:"ref" validate:"required"`
+}
+
+func (p PersonAgendaLinkRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonAgendaMutationResponse struct {
+	Item PersonAgendaItem `json:"item"`
+}
+
+func (p PersonAgendaMutationResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Item).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Item", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonAgendaResult struct {
+	Items []PersonAgendaItem `json:"items" validate:"required"`
+
+	// PersonUID Canonical stable person UID used for new Kata links
+	PersonUID string `json:"person_uid" validate:"required"`
+
+	// PersonUids Canonical UID followed by retired aliases that still resolve to this person
+	PersonUids []string `json:"person_uids" validate:"required"`
+	Project    string   `json:"project" validate:"required"`
+
+	// Truncated More open tasks exist than the agenda result limit
+	Truncated bool `json:"truncated"`
+}
+
+func (p PersonAgendaResult) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.PersonUID, "required"); err != nil {
+		errors = errors.Append("PersonUID", err)
+	}
+	if err := typesValidator.Var(p.PersonUids, "required"); err != nil {
+		errors = errors.Append("PersonUids", err)
+	}
+	if err := typesValidator.Var(p.Project, "required"); err != nil {
+		errors = errors.Append("Project", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonAgendaUpdateRequest struct {
+	List string `json:"list" validate:"required"`
+}
+
+func (p PersonAgendaUpdateRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type PersonAttributeConflictResponse struct {
 	CurrentValue   *PersonAttributeValue `json:"current_value,omitempty"`
 	CurrentValueID *int64                `json:"current_value_id,omitempty"`

@@ -647,7 +647,8 @@ effect only after restart, which also invalidates browser sessions.
 
 ### `[integrations.tasks]`
 
-Optional provider-neutral task integration:
+Optional provider-neutral integration for message-to-task links. Person agendas
+use the separate Kata connection below.
 
 | Key | Default | Description |
 |---|---|---|
@@ -660,6 +661,49 @@ Remote plaintext HTTP is rejected. An endpoint is usable only when it supports
 the required idempotency and compare-and-swap capabilities; the UI distinguishes
 disabled, authentication required, incompatible, partial, stale, unavailable,
 and ready states.
+
+### `[integrations.kata]`
+
+Optional live person agendas backed by Kata. Tasks stay in Kata; msgvault shows
+their current state when you open a person's agenda. This integration is built
+against Kata v0.18.0 and requires Kata API schema version 0.21.0 or later.
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable Kata person agendas |
+| `endpoint` | — | Required when enabled: an explicit HTTPS URL, loopback HTTP URL, or Unix socket URL |
+| `api_key` | — | Bearer credential sent by the daemon to Kata; Settings returns only its configured state and a masked hint |
+| `default_project` | `msgvault` | Existing active Kata project used for person agendas |
+
+Create the project in Kata, then configure its endpoint and credential on the
+machine running the msgvault daemon:
+
+```toml
+[integrations.kata]
+enabled = true
+endpoint = "https://kata.example.com"
+api_key = "replace-with-your-kata-api-key"
+default_project = "msgvault"
+```
+
+Restart the msgvault daemon after saving. These settings are also editable in
+Settings and take effect after restart. Changing the endpoint to a different
+origin in Settings clears its saved key unless you provide a replacement key
+in the same save. Remote plaintext HTTP is rejected. Kata does not use local
+endpoint discovery, and `[integrations.tasks]` does not configure person agendas.
+
+Each Kata task can belong to one person. The scalar metadata value
+`msgvault.person` is the person's canonical vCard UID, not their numeric
+msgvault person ID. `msgvault.list` names its list and defaults to `agenda`.
+Reads and unlink operations also recognize the person's UID aliases after a
+merge.
+
+Agendas show open tasks only, with at most 100 returned items. A `truncated`
+response means more remain; open Kata to see them. The transport also limits
+each response to 1 MiB and reports an error when it exceeds that limit.
+Create, link, move between lists, and unlink tasks through msgvault; edit task
+content or priority, complete tasks, and reopen them in Kata. See
+[person agenda commands](cli-reference.md#person-agenda).
 
 ### `[analytics]`
 

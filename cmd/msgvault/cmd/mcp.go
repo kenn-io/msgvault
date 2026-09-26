@@ -32,7 +32,7 @@ var mcpCmd = &cobra.Command{
 
 This allows Claude Desktop (or any MCP client) to query your archive
 using tools like search_metadata, search_message_bodies, search_document_attachments, semantic_search_messages, get_message, list_messages, get_stats,
-aggregate, list_saved_views, run_saved_view, and stage_deletion.
+aggregate, get_person_agenda, list_saved_views, run_saved_view, and stage_deletion.
 
 Add to Claude Desktop config:
   {
@@ -84,6 +84,9 @@ Add to Claude Desktop config:
 // savedViewsMinAPISchemaVersion is the first daemon API schema that runs Saved
 // Views through POST /api/v1/saved-views/{id}/run.
 const savedViewsMinAPISchemaVersion = "2.21.0"
+
+// personAgendaMinAPISchemaVersion adds live task-backed person agendas.
+const personAgendaMinAPISchemaVersion = "2.30.0"
 
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.
@@ -139,6 +142,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) mcpserv
 		logger.Warn("meeting tools disabled because the daemon capability probe failed", "error", capabilityErr)
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
 		opts.Meetings = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
+		opts.PersonAgendaBackend = st
 	}
 
 	return opts

@@ -15,6 +15,7 @@
   import RelationshipsTab from './RelationshipsTab.svelte';
   import PersonTrackingControl from './PersonTrackingControl.svelte';
   import PersonBriefCard from './PersonBriefCard.svelte';
+  import PersonAgenda from './PersonAgenda.svelte';
   import CardDAVPublicationControl from './CardDAVPublicationControl.svelte';
   import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
 
@@ -186,6 +187,7 @@
           section?.focus({ preventScroll: true });
         } : undefined}
       />
+      <PersonAgenda {client} {personID} {onAnnounce} />
       <PersonTrackingControl {client} {personID} {onAnnounce} />
       <CardDAVPublicationControl
         {client}

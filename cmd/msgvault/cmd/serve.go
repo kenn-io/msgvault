@@ -33,6 +33,7 @@ import (
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/query"
@@ -1334,6 +1335,11 @@ var _ api.DocumentStatusStore = (*storeAPIAdapter)(nil)
 var _ api.DocumentVectorStatusStore = (*storeAPIAdapter)(nil)
 var _ api.ActivityStore = (*storeAPIAdapter)(nil)
 
+// personagenda.IdentityStore backs the live person agenda routes; without the
+// forwarding method below the backend starts nil and every agenda endpoint
+// answers 503 task_integration_unavailable.
+var _ personagenda.IdentityStore = (*storeAPIAdapter)(nil)
+
 func (a *storeAPIAdapter) ContactStateContext(
 	ctx context.Context, personID int64, now time.Time,
 ) (store.ContactState, error) {
@@ -1350,6 +1356,12 @@ func (a *storeAPIAdapter) PersonDayContext(
 	ctx context.Context, request store.PersonDayRequest,
 ) (*store.PersonDayPage, error) {
 	return a.store.PersonDayContext(ctx, request)
+}
+
+// ListPersonUIDsContext forwards to the store so the daemon's adapter, not a
+// bare *store.Store, satisfies the agenda identity lookup.
+func (a *storeAPIAdapter) ListPersonUIDsContext(ctx context.Context, personID int64) ([]string, error) {
+	return a.store.ListPersonUIDsContext(ctx, personID)
 }
 
 func (a *storeAPIAdapter) DayContext(

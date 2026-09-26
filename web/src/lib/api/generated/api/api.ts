@@ -79,6 +79,7 @@ import type {
   CreateDailyNoteEntryRequest,
   CreateDayEntryPathParameters,
   CreateOrLinkMessageTaskPathParameters,
+  CreatePersonAgendaItemPathParameters,
   CreatePersonRelationshipRequest,
   CreatePersonRequest,
   CreateRelationshipTypeRequest,
@@ -182,6 +183,7 @@ import type {
   IdentityMatchRejectResponse,
   ImportJobRequest,
   ImportJobResponse,
+  LinkPersonAgendaItemPathParameters,
   ListAttributeDefinitionsParams,
   ListCardDAVRunsParams,
   ListChangedMessagesParams,
@@ -203,6 +205,7 @@ import type {
   ListParticipantInboxesPathParameters,
   ListPersonActivityDaysParams,
   ListPersonActivityDaysPathParameters,
+  ListPersonAgendaPathParameters,
   ListPersonAttributesParams,
   ListPersonAttributesPathParameters,
   ListPersonBriefVersionsParams,
@@ -266,6 +269,11 @@ import type {
   PatchSavedViewRequest,
   PeopleResponse,
   Person,
+  PersonAgendaCreateRequest,
+  PersonAgendaLinkRequest,
+  PersonAgendaMutationResponse,
+  PersonAgendaResult,
+  PersonAgendaUpdateRequest,
   PersonAttributeWrite,
   PersonAttributesResponse,
   PersonBrief,
@@ -370,8 +378,10 @@ import type {
   TriggerSyncParams,
   TriggerSyncPathParameters,
   UnlinkMessageTaskPathParameters,
+  UnlinkPersonAgendaItemPathParameters,
   UnpublishCardDAVPersonPathParameters,
   UpdateCardDAVBookRolesPathParameters,
+  UpdatePersonAgendaItemPathParameters,
   UploadTokenPathParameters,
   VerifyCLIParams,
   VisualBuildRequest,
@@ -1740,6 +1750,17 @@ export const getImportJob = (
   );
 };
 /**
+ * @summary Get Kata person agenda availability
+ */
+export const getKataIntegrationStatus = (
+  options?: SecondParameter<typeof orvalFetch<TaskIntegrationStatusResponse>>,
+) => {
+  return orvalFetch<TaskIntegrationStatusResponse>(
+    { url: `/api/v1/integrations/kata/status`, method: "GET" },
+    options,
+  );
+};
+/**
  * @summary Search tasks in the configured project
  */
 export const searchIntegrationTasks = (
@@ -2364,6 +2385,90 @@ export const patchPerson = (
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       data: patchPersonRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary List a person's live Kata agenda
+ */
+export const listPersonAgenda = (
+  { id }: ListPersonAgendaPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonAgendaResult>>,
+) => {
+  return orvalFetch<PersonAgendaResult>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/agenda`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Create a live Kata item for a person
+ */
+export const createPersonAgendaItem = (
+  { id }: CreatePersonAgendaItemPathParameters,
+  personAgendaCreateRequest: PersonAgendaCreateRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonAgendaMutationResponse>>,
+) => {
+  return orvalFetch<PersonAgendaMutationResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/agenda`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: personAgendaCreateRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Link an existing Kata item to a person
+ */
+export const linkPersonAgendaItem = (
+  { id }: LinkPersonAgendaItemPathParameters,
+  personAgendaLinkRequest: PersonAgendaLinkRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonAgendaMutationResponse>>,
+) => {
+  return orvalFetch<PersonAgendaMutationResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/agenda/links`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: personAgendaLinkRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Unlink a live Kata item from a person
+ */
+export const unlinkPersonAgendaItem = (
+  { id, ref }: UnlinkPersonAgendaItemPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonAgendaMutationResponse>>,
+) => {
+  return orvalFetch<PersonAgendaMutationResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/agenda/${encodeURIComponent(String(ref))}`,
+      method: "DELETE",
+    },
+    options,
+  );
+};
+/**
+ * @summary Move a linked Kata item to another list
+ */
+export const updatePersonAgendaItem = (
+  { id, ref }: UpdatePersonAgendaItemPathParameters,
+  personAgendaUpdateRequest: PersonAgendaUpdateRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonAgendaMutationResponse>>,
+) => {
+  return orvalFetch<PersonAgendaMutationResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/agenda/${encodeURIComponent(String(ref))}`,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      data: personAgendaUpdateRequest,
     },
     options,
   );

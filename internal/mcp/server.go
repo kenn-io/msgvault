@@ -50,6 +50,7 @@ const (
 	ToolGetPersonNotes          = "get_person_notes"
 	ToolGetPersonProfile        = "get_person_profile"
 	ToolGetPersonRelationship   = "get_person_relationship"
+	ToolGetPersonAgenda         = "get_person_agenda"
 	ToolPromotePerson           = "promote_person"
 	ToolUpdatePersonNotes       = "update_person_notes"
 	ToolListSavedViews          = "list_saved_views"
@@ -75,17 +76,18 @@ const (
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
-	Engine             query.Engine
-	AttachmentsDir     string
-	AttachmentReader   AttachmentReader
-	ManifestSaver      DeletionManifestSaver
-	HybridSearcher     HybridSearcher
-	SimilarSearcher    SimilarSearcher
-	DataDir            string
-	DocumentSearcher   DocumentSearcher
-	PersonFileSearcher PersonFileSearcher
-	PeopleBackend      peoplebrowser.Backend
-	DirectoryBackend   peoplebrowser.DirectoryLister
+	Engine              query.Engine
+	AttachmentsDir      string
+	AttachmentReader    AttachmentReader
+	ManifestSaver       DeletionManifestSaver
+	HybridSearcher      HybridSearcher
+	SimilarSearcher     SimilarSearcher
+	DataDir             string
+	DocumentSearcher    DocumentSearcher
+	PersonFileSearcher  PersonFileSearcher
+	PeopleBackend       peoplebrowser.Backend
+	DirectoryBackend    peoplebrowser.DirectoryLister
+	PersonAgendaBackend PersonAgendaBackend
 	// AllowProfileWrites exposes person promotion and Notes mutation tools.
 	// It remains false unless the operator explicitly opts in.
 	AllowProfileWrites bool
@@ -220,23 +222,24 @@ func newMCPServerWithPolicy(
 	)
 
 	h := &handlers{
-		engine:             opts.Engine,
-		attachmentsDir:     opts.AttachmentsDir,
-		attachmentReader:   opts.AttachmentReader,
-		manifestSaver:      opts.ManifestSaver,
-		hybridSearcher:     opts.HybridSearcher,
-		similarSearcher:    opts.SimilarSearcher,
-		dataDir:            opts.DataDir,
-		documentSearcher:   opts.DocumentSearcher,
-		personFileSearcher: opts.PersonFileSearcher,
-		peopleBackend:      opts.PeopleBackend,
-		directoryBackend:   opts.DirectoryBackend,
-		hybridEngine:       opts.HybridEngine,
-		vectorCfg:          opts.VectorCfg,
-		backend:            opts.Backend,
-		visualSearcher:     opts.VisualSearcher,
-		savedViews:         opts.SavedViews,
-		meetings:           opts.Meetings,
+		engine:              opts.Engine,
+		attachmentsDir:      opts.AttachmentsDir,
+		attachmentReader:    opts.AttachmentReader,
+		manifestSaver:       opts.ManifestSaver,
+		hybridSearcher:      opts.HybridSearcher,
+		similarSearcher:     opts.SimilarSearcher,
+		dataDir:             opts.DataDir,
+		documentSearcher:    opts.DocumentSearcher,
+		personFileSearcher:  opts.PersonFileSearcher,
+		peopleBackend:       opts.PeopleBackend,
+		directoryBackend:    opts.DirectoryBackend,
+		hybridEngine:        opts.HybridEngine,
+		vectorCfg:           opts.VectorCfg,
+		backend:             opts.Backend,
+		visualSearcher:      opts.VisualSearcher,
+		savedViews:          opts.SavedViews,
+		meetings:            opts.Meetings,
+		personAgendaBackend: opts.PersonAgendaBackend,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {

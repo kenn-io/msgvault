@@ -132,6 +132,15 @@ func (p PatchPersonHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type CreatePersonAgendaItemHeaders struct {
+	// IdempotencyKey Opaque 1..128-byte retry key
+	IdempotencyKey string `json:"Idempotency-Key" validate:"required,max=128,min=1"`
+}
+
+func (c CreatePersonAgendaItemHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type MergePersonsHeaders struct {
 	// IfMatch Exactly two comma-separated strong person revision tags, one for each profile
 	IfMatch string `json:"If-Match" validate:"required"`

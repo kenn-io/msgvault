@@ -439,6 +439,45 @@ type PatchPersonPath struct {
 	ID int64 `json:"id"`
 }
 
+type ListPersonAgendaPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type CreatePersonAgendaItemPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type LinkPersonAgendaItemPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type UnlinkPersonAgendaItemPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+
+	// Ref Kata issue ref or canonical UID
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (u UnlinkPersonAgendaItemPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type UpdatePersonAgendaItemPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+
+	// Ref Kata issue ref or canonical UID
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (u UpdatePersonAgendaItemPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
 type ListPersonAttributesPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`

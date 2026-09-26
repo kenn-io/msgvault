@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
 	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
@@ -69,6 +70,14 @@ type TaskLinkOperations interface {
 }
 
 type TaskIdentityResolver func(context.Context, *APIMessage) (tasklinks.MessageIdentity, error)
+
+type PersonAgendaOperations interface {
+	List(ctx context.Context, personID int64) (personagenda.Result, error)
+	Create(ctx context.Context, personID int64, idempotencyKey string, input personagenda.CreateInput) (personagenda.Item, error)
+	Link(ctx context.Context, personID int64, taskID, list string) (personagenda.Item, error)
+	Update(ctx context.Context, personID int64, taskID string, input personagenda.UpdateInput) (personagenda.Item, error)
+	Unlink(ctx context.Context, personID int64, taskID string) (personagenda.Item, error)
+}
 
 // ctxMessageSearcher is an optional extension of MessageStore for stores that
 // accept a context on the search path. handleSearch prefers it so an
@@ -403,6 +412,7 @@ type Server struct {
 	// validation. It is never exposed to the browser with its credentials.
 	taskIntegrationProbe     TaskIntegrationProbe
 	taskLinkOperations       TaskLinkOperations
+	personAgendaOperations   PersonAgendaOperations
 	taskIdentityResolver     TaskIdentityResolver
 	fastmailInventoryFactory provideridentity.Factory
 	// personBriefGenerator runs one manual, forced person brief through the
@@ -531,9 +541,10 @@ type ServerOptions struct {
 	SPAHandler http.Handler
 	// TaskIntegrationProbe overrides provider-neutral task discovery for tests.
 	// Nil uses taskclient.Evaluate.
-	TaskIntegrationProbe TaskIntegrationProbe
-	TaskLinkOperations   TaskLinkOperations
-	TaskIdentityResolver TaskIdentityResolver
+	TaskIntegrationProbe   TaskIntegrationProbe
+	TaskLinkOperations     TaskLinkOperations
+	TaskIdentityResolver   TaskIdentityResolver
+	PersonAgendaOperations PersonAgendaOperations
 	// FastmailInventoryFactory is the provider-read seam used by identity
 	// discovery. Nil constructs the production JMAP client.
 	FastmailInventoryFactory provideridentity.Factory
@@ -606,6 +617,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		settingsConfigEditor:     config.EditConfigFilePrivate,
 		taskIntegrationProbe:     taskProbe,
 		taskLinkOperations:       opts.TaskLinkOperations,
+		personAgendaOperations:   opts.PersonAgendaOperations,
 		taskIdentityResolver:     opts.TaskIdentityResolver,
 		fastmailInventoryFactory: fastmailInventoryFactory,
 		started:                  make(chan struct{}),
@@ -619,6 +631,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	}
 	if s.taskLinkOperations == nil {
 		s.taskLinkOperations = newTaskLinkBackend(opts.Config)
+	}
+	if s.personAgendaOperations == nil {
+		s.personAgendaOperations = newPersonAgendaBackend(opts.Config, opts.Store)
 	}
 	s.vectorStatus = opts.VectorStatus
 	if s.vectorStatus == "" {

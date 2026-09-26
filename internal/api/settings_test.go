@@ -33,6 +33,7 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 		"[server]\napi_key = \"test-api-key\"\n"+
 		"[vector.embeddings]\ndocument_prefix = \"search_document: \"\nquery_prefix = \"search_query: \"\n"+
 		"[integrations.tasks]\napi_key = \"task-secret\"\n"+
+		"[integrations.kata]\napi_key = \"kata-secret\"\n"+
 		"[unsupported]\nprivate_value = \"must-not-leak\"\n")
 	resp := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "test-api-key")
 	requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
@@ -48,6 +49,8 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	assertions.Equal(&SecretSettingState{Configured: true, Hint: "tes…key"}, byKey["server.api_key"].Secret)
 	assertions.Nil(byKey["server.api_key"].Value)
 	assertions.Equal(&SecretSettingState{Configured: true}, byKey["integrations.tasks.api_key"].Secret)
+	assertions.Equal(&SecretSettingState{Configured: true}, byKey["integrations.kata.api_key"].Secret)
+	assertions.Nil(byKey["integrations.kata.api_key"].Value)
 	requirements.NotNil(byKey["vector.embeddings.api_format"].Value)
 	requirements.NotNil(byKey["vector.embeddings.api_format"].Value.String)
 	assertions.Equal("openai", *byKey["vector.embeddings.api_format"].Value.String)
@@ -85,6 +88,7 @@ func TestGetSettingsUsesAllowlistETagAndSecretStates(t *testing.T) {
 	}
 	assertions.NotContains(resp.Body.String(), "test-api-key")
 	assertions.NotContains(resp.Body.String(), "task-secret")
+	assertions.NotContains(resp.Body.String(), "kata-secret")
 	assertions.NotContains(resp.Body.String(), "must-not-leak")
 }
 
@@ -1045,6 +1049,47 @@ func TestPatchSettingsClearsTaskAPIKeyWhenEndpointOriginChanges(t *testing.T) {
 	byKey := settingsByKey(body.Settings)
 	assertions.Equal(&SecretSettingState{Configured: false}, byKey["integrations.tasks.api_key"].Secret)
 	assertions.True(body.PendingRestart)
+}
+
+func TestPatchSettingsKataConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		endpoint    string
+		replacement string
+		wantKey     string
+	}{
+		{name: "new origin clears credential", endpoint: "https://other.example.com"},
+		{name: "same origin keeps credential", endpoint: "https://kata.example.com/v2", wantKey: "kata-secret"},
+		{name: "new origin with replacement", endpoint: "https://other.example.com", replacement: "new-kata-secret", wantKey: "new-kata-secret"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			srv, path := newSettingsTestServer(t,
+				"[integrations.tasks]\napi_key = 'task-secret'\n"+
+					"[integrations.kata]\nendpoint = 'https://kata.example.com'\napi_key = 'kata-secret'\n")
+			updates := fmt.Sprintf(`{"key":"integrations.kata.endpoint","value":{"string":%q}},`+
+				`{"key":"integrations.kata.enabled","value":{"boolean":true}},`+
+				`{"key":"integrations.kata.default_project","value":{"string":"people"}}`, tt.endpoint)
+			if tt.replacement != "" {
+				updates += fmt.Sprintf(`,{"key":"integrations.kata.api_key","secret":{"action":"set","value":%q}}`, tt.replacement)
+			}
+			resp := patchSettings(t, srv, `{"updates":[`+updates+`]}`)
+			require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+			cfg, err := config.Load(path, "")
+			require.NoError(err)
+			assert.Equal(config.TaskIntegrationConfig{
+				Enabled: true, Endpoint: tt.endpoint, APIKey: tt.wantKey, DefaultProject: "people",
+			}, cfg.Integrations.Kata)
+			assert.Equal("task-secret", cfg.Integrations.Tasks.APIKey)
+			var body SettingsResponse
+			require.NoError(json.Unmarshal(resp.Body.Bytes(), &body))
+			assert.True(body.PendingRestart)
+			assert.NotContains(resp.Body.String(), "kata-secret")
+			assert.NotContains(resp.Body.String(), "task-secret")
+		})
+	}
 }
 
 func TestPatchSettingsKeepsNewTaskAPIKeyProvidedWithEndpointChange(t *testing.T) {

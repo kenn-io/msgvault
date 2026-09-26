@@ -7997,6 +7997,123 @@ components:
             type: integer
           type: array
       type: object
+    PersonAgendaCreateRequest:
+      additionalProperties: false
+      properties:
+        body:
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+        list:
+          type: string
+        priority:
+          format: int64
+          type: integer
+        title:
+          type: string
+      required:
+        - title
+      type: object
+    PersonAgendaItem:
+      additionalProperties: true
+      properties:
+        body:
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+        list:
+          type: string
+        owner:
+          type: string
+        priority:
+          format: int64
+          type: integer
+        project:
+          type: string
+        qualified_ref:
+          type: string
+        ref:
+          type: string
+        revision:
+          type: string
+        state:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        uid:
+          type: string
+        web_url:
+          type: string
+      required:
+        - uid
+        - ref
+        - qualified_ref
+        - project
+        - title
+        - revision
+        - list
+        - status
+        - state
+      type: object
+    PersonAgendaLinkRequest:
+      additionalProperties: false
+      properties:
+        list:
+          type: string
+        ref:
+          type: string
+      required:
+        - ref
+      type: object
+    PersonAgendaMutationResponse:
+      additionalProperties: true
+      properties:
+        item:
+          $ref: "#/components/schemas/PersonAgendaItem"
+      required:
+        - item
+      type: object
+    PersonAgendaResult:
+      additionalProperties: true
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/PersonAgendaItem"
+          type: array
+        person_uid:
+          description: Canonical stable person UID used for new Kata links
+          type: string
+        person_uids:
+          description: Canonical UID followed by retired aliases that still resolve to this person
+          items:
+            type: string
+          type: array
+        project:
+          type: string
+        truncated:
+          description: More open tasks exist than the agenda result limit
+          type: boolean
+      required:
+        - person_uid
+        - person_uids
+        - truncated
+        - project
+        - items
+      type: object
+    PersonAgendaUpdateRequest:
+      additionalProperties: false
+      properties:
+        list:
+          type: string
+      required:
+        - list
+      type: object
     PersonAttributeConflictResponse:
       additionalProperties: true
       properties:
@@ -12949,7 +13066,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.29.0
+  version: 2.30.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -18660,6 +18777,27 @@ paths:
       summary: Get historical import status
       tags:
         - API
+  /api/v1/integrations/kata/status:
+    get:
+      operationId: getKataIntegrationStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskIntegrationStatusResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get Kata person agenda availability
+      tags:
+        - API
   /api/v1/integrations/tasks/search:
     get:
       operationId: searchIntegrationTasks
@@ -21429,6 +21567,355 @@ paths:
       security:
         - apiKey: []
       summary: Update a durable person's display name
+      tags:
+        - API
+  /api/v1/people/{id}/agenda:
+    get:
+      operationId: listPersonAgenda
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAgendaResult"
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a person's live Kata agenda
+      tags:
+        - API
+    post:
+      operationId: createPersonAgendaItem
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Opaque 1..128-byte retry key
+          in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            maxLength: 128
+            minLength: 1
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonAgendaCreateRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAgendaMutationResponse"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a live Kata item for a person
+      tags:
+        - API
+  /api/v1/people/{id}/agenda/links:
+    post:
+      operationId: linkPersonAgendaItem
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonAgendaLinkRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAgendaMutationResponse"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Link an existing Kata item to a person
+      tags:
+        - API
+  /api/v1/people/{id}/agenda/{ref}:
+    delete:
+      operationId: unlinkPersonAgendaItem
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Kata issue ref or canonical UID
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAgendaMutationResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Unlink a live Kata item from a person
+      tags:
+        - API
+    patch:
+      operationId: updatePersonAgendaItem
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Kata issue ref or canonical UID
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonAgendaUpdateRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAgendaMutationResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Move a linked Kata item to another list
       tags:
         - API
   /api/v1/people/{id}/attributes:

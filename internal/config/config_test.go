@@ -464,6 +464,47 @@ func TestTaskIntegrationEndpointShapes(t *testing.T) {
 	}
 }
 
+func TestKataIntegrationConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    TaskIntegrationConfig
+		wantErr string
+	}{
+		{name: "disabled by default", want: TaskIntegrationConfig{DefaultProject: "msgvault"}},
+		{name: "enabled needs endpoint", content: "enabled = true\n", wantErr: "[integrations.kata] endpoint is required"},
+		{name: "whitespace endpoint", content: "enabled = true\nendpoint = '  '\n", wantErr: "[integrations.kata] endpoint is required"},
+		{name: "reject remote plaintext", content: "endpoint = 'http://kata.example.com'\n", wantErr: "invalid [integrations.kata] endpoint"},
+		{
+			name:    "explicit connection with default project",
+			content: "enabled = true\nendpoint = 'https://kata.example.com'\napi_key = 'kata-secret'\ndefault_project = '  '\n",
+			want:    TaskIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.com", APIKey: "kata-secret", DefaultProject: "msgvault"},
+		},
+		{
+			name:    "explicit project",
+			content: "endpoint = 'unix:///tmp/kata.sock'\ndefault_project = 'people'\n",
+			want:    TaskIntegrationConfig{Endpoint: "unix:///tmp/kata.sock", DefaultProject: "people"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			content := "[integrations.tasks]\nenabled = true\ndefault_project = 'messages'\n[integrations.kata]\n" + tt.content
+			require.NoError(os.WriteFile(path, []byte(content), 0o600))
+			cfg, err := Load(path, "")
+			if tt.wantErr != "" {
+				require.ErrorContains(err, tt.wantErr)
+				return
+			}
+			require.NoError(err)
+			assert.Equal(tt.want, cfg.Integrations.Kata)
+			assert.Equal(TaskIntegrationConfig{Enabled: true, DefaultProject: "messages"}, cfg.Integrations.Tasks)
+		})
+	}
+}
+
 func TestAccountScheduleEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)

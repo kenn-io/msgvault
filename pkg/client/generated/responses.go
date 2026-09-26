@@ -1431,6 +1431,10 @@ type GetImportJobErrorResponse = ErrorResponse
 
 type GetImportJobErrorResponseJSON = ErrorResponse
 
+type GetKataIntegrationStatusResponse = TaskIntegrationStatusResponse
+
+type GetKataIntegrationStatusErrorResponse = ErrorResponse
+
 type SearchIntegrationTasksResponse = TaskSearchResponse
 
 type SearchIntegrationTasksErrorResponse = ErrorResponse
@@ -2046,6 +2050,72 @@ type PatchPersonErrorResponseJSON = ErrorResponse
 type PatchPersonErrorResponseJSON428 = ErrorResponse
 
 type PatchPersonErrorResponseJSON503 = ErrorResponse
+
+type ListPersonAgendaResponse = PersonAgendaResult
+
+type ListPersonAgendaErrorResponse = ErrorResponse
+
+type ListPersonAgendaErrorResponseJSON = ErrorResponse
+
+type ListPersonAgendaErrorResponseJSON409 = ErrorResponse
+
+type ListPersonAgendaErrorResponseJSON503 = ErrorResponse
+
+type CreatePersonAgendaItemResponse = PersonAgendaMutationResponse
+
+type CreatePersonAgendaItemErrorResponse = ErrorResponse
+
+type CreatePersonAgendaItemErrorResponseJSON = ErrorResponse
+
+type CreatePersonAgendaItemErrorResponseJSON404 = ErrorResponse
+
+type CreatePersonAgendaItemErrorResponseJSON409 = ErrorResponse
+
+type CreatePersonAgendaItemErrorResponseJSON422 = ErrorResponse
+
+type CreatePersonAgendaItemErrorResponseJSON428 = ErrorResponse
+
+type CreatePersonAgendaItemErrorResponseJSON503 = ErrorResponse
+
+type LinkPersonAgendaItemResponse = PersonAgendaMutationResponse
+
+type LinkPersonAgendaItemErrorResponse = ErrorResponse
+
+type LinkPersonAgendaItemErrorResponseJSON = ErrorResponse
+
+type LinkPersonAgendaItemErrorResponseJSON404 = ErrorResponse
+
+type LinkPersonAgendaItemErrorResponseJSON409 = ErrorResponse
+
+type LinkPersonAgendaItemErrorResponseJSON422 = ErrorResponse
+
+type LinkPersonAgendaItemErrorResponseJSON503 = ErrorResponse
+
+type UnlinkPersonAgendaItemResponse = PersonAgendaMutationResponse
+
+type UnlinkPersonAgendaItemErrorResponse = ErrorResponse
+
+type UnlinkPersonAgendaItemErrorResponseJSON = ErrorResponse
+
+type UnlinkPersonAgendaItemErrorResponseJSON404 = ErrorResponse
+
+type UnlinkPersonAgendaItemErrorResponseJSON409 = ErrorResponse
+
+type UnlinkPersonAgendaItemErrorResponseJSON503 = ErrorResponse
+
+type UpdatePersonAgendaItemResponse = PersonAgendaMutationResponse
+
+type UpdatePersonAgendaItemErrorResponse = ErrorResponse
+
+type UpdatePersonAgendaItemErrorResponseJSON = ErrorResponse
+
+type UpdatePersonAgendaItemErrorResponseJSON404 = ErrorResponse
+
+type UpdatePersonAgendaItemErrorResponseJSON409 = ErrorResponse
+
+type UpdatePersonAgendaItemErrorResponseJSON422 = ErrorResponse
+
+type UpdatePersonAgendaItemErrorResponseJSON503 = ErrorResponse
 
 type ListPersonAttributesResponse = PersonAttributesResponse
 
@@ -4187,6 +4257,13 @@ type GetImportJobResp struct {
 	JSON404      *GetImportJobErrorResponseJSON
 }
 
+type GetKataIntegrationStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetKataIntegrationStatusResponse
+}
+
 type SearchIntegrationTasksResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -4715,6 +4792,69 @@ type PatchPersonResp struct {
 	JSON409      *PatchPersonErrorResponseJSON
 	JSON428      *PatchPersonErrorResponseJSON428
 	JSON503      *PatchPersonErrorResponseJSON503
+}
+
+type ListPersonAgendaResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonAgendaResponse
+	JSON401      *ListPersonAgendaErrorResponse
+	JSON404      *ListPersonAgendaErrorResponseJSON
+	JSON409      *ListPersonAgendaErrorResponseJSON409
+	JSON503      *ListPersonAgendaErrorResponseJSON503
+}
+
+type CreatePersonAgendaItemResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreatePersonAgendaItemResponse
+	JSON400      *CreatePersonAgendaItemErrorResponse
+	JSON401      *CreatePersonAgendaItemErrorResponseJSON
+	JSON404      *CreatePersonAgendaItemErrorResponseJSON404
+	JSON409      *CreatePersonAgendaItemErrorResponseJSON409
+	JSON422      *CreatePersonAgendaItemErrorResponseJSON422
+	JSON428      *CreatePersonAgendaItemErrorResponseJSON428
+	JSON503      *CreatePersonAgendaItemErrorResponseJSON503
+}
+
+type LinkPersonAgendaItemResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *LinkPersonAgendaItemResponse
+	JSON400      *LinkPersonAgendaItemErrorResponse
+	JSON401      *LinkPersonAgendaItemErrorResponseJSON
+	JSON404      *LinkPersonAgendaItemErrorResponseJSON404
+	JSON409      *LinkPersonAgendaItemErrorResponseJSON409
+	JSON422      *LinkPersonAgendaItemErrorResponseJSON422
+	JSON503      *LinkPersonAgendaItemErrorResponseJSON503
+}
+
+type UnlinkPersonAgendaItemResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UnlinkPersonAgendaItemResponse
+	JSON400      *UnlinkPersonAgendaItemErrorResponse
+	JSON401      *UnlinkPersonAgendaItemErrorResponseJSON
+	JSON404      *UnlinkPersonAgendaItemErrorResponseJSON404
+	JSON409      *UnlinkPersonAgendaItemErrorResponseJSON409
+	JSON503      *UnlinkPersonAgendaItemErrorResponseJSON503
+}
+
+type UpdatePersonAgendaItemResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UpdatePersonAgendaItemResponse
+	JSON400      *UpdatePersonAgendaItemErrorResponse
+	JSON401      *UpdatePersonAgendaItemErrorResponseJSON
+	JSON404      *UpdatePersonAgendaItemErrorResponseJSON404
+	JSON409      *UpdatePersonAgendaItemErrorResponseJSON409
+	JSON422      *UpdatePersonAgendaItemErrorResponseJSON422
+	JSON503      *UpdatePersonAgendaItemErrorResponseJSON503
 }
 
 type ListPersonAttributesResp struct {
