@@ -3712,6 +3712,12 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		if s.writeIfContextError(w, err) {
 			return
 		}
+		if query.IsEncodingError(err) {
+			s.logger.Error("fast search hit invalid UTF-8 in the analytics cache", "error", err)
+			writeError(w, http.StatusInternalServerError, "cache_encoding_error",
+				"The analytics cache contains invalid UTF-8. Run 'msgvault repair-encoding', then 'msgvault build-cache --full-rebuild'.")
+			return
+		}
 		s.logger.Error("fast search failed", "query", queryStr, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Search failed")
 		return

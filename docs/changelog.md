@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-25"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -10,6 +10,14 @@ All notable changes to msgvault, grouped by release.
 
 - Saved View MCP tools publish canonical_state as a schema object, so MCP clients that validate tools/list strictly, such as those built on the official TypeScript SDK, load msgvault's tools.
 - Log canceled SQLite planner-statistics maintenance at debug level.
+- **Damaged text no longer breaks fast search or cache builds.** The analytics
+  cache replaces invalid UTF-8 with U+FFFD in display and search text on every
+  platform; identity fields with invalid bytes are excluded from attribution
+  and export as unknown. The cache warning points to
+  `msgvault repair-encoding`, which also repairs invalid RFC 822 Message-ID
+  values in the archive. Building the cache itself does not modify the archive.
+  Older caches containing such values report `cache_encoding_error` with the
+  fix: `msgvault repair-encoding`, then `msgvault build-cache --full-rebuild`.
 - **Supervised daemons can own startup.** Set `[server].daemon_auto_start = false`
   when launchd, systemd, or Docker runs `msgvault serve`. CLI, TUI, and MCP
   commands then use the running daemon and fail instead of starting their own.

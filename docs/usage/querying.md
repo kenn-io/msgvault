@@ -56,10 +56,18 @@ These map directly to the Parquet files in `~/.msgvault/analytics/`.
 
 `message_recipients.email_address` is the recipient's address: the address
 written in the message header when one was recorded, otherwise the
-participant's current address. It is NULL only for participants without an
-email address, such as phone-number contacts. `envelope_address` is the header
-address exactly as written and is NULL when none was recorded, which covers
-chat and calendar rows and mail imported before v0.19.0.
+participant's current address. It is NULL for participants without an
+email address, such as phone-number contacts, and for addresses whose
+stored bytes are invalid UTF-8. `envelope_address` is the header
+address exactly as written, NULL when none was recorded (chat and
+calendar rows, mail imported before v0.19.0), and NULL when its stored
+bytes are invalid UTF-8. A recorded envelope is authoritative even when
+damaged: the participant's current address is never substituted for it,
+so `email_address` stays NULL instead. Damaged addresses export as
+unknown rather than as a repaired value, so a broken byte sequence
+cannot be mistaken for a different real address; `msgvault
+repair-encoding` followed by `msgvault build-cache --full-rebuild`
+restores them.
 
 ### Convenience views
 

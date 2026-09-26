@@ -452,9 +452,9 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 
 // sourceConversationTypesFingerprint hashes (id, conversation_type, title) for
 // conversations with exportable messages inside the committed watermark. The
-// NULL normalization must match the conversations Parquet export and
-// fingerprintConversationTypesFromSnapshot so an unchanged database always
-// reproduces the stamped fingerprint.
+// NULL normalization matches fingerprintConversationTypesFromSnapshot.
+// FingerprintConversationMetadata repairs invalid UTF-8 from either source
+// before hashing, so unchanged data reproduces the stamped fingerprint.
 func sourceConversationTypesFingerprint(
 	db *sql.DB,
 	lastMessageID int64,
