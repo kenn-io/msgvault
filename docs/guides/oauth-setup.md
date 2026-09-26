@@ -338,7 +338,7 @@ You need to register an application in Microsoft Entra (Azure AD) before using `
     - **Redirect URI:** Platform = **Mobile and desktop applications**, URI = your `redirect_uri` from `config.toml` (default: `http://localhost:8089/callback/microsoft`)
 3. Click **Register**
 4. Under **API permissions**, click **Add a permission > APIs my organization uses**, search for **Office 365 Exchange Online**, select **Delegated permissions**, then add `IMAP.AccessAsUser.All`
-5. Under **Authentication**, enable **Allow public client flows** (required for PKCE)
+5. Under **Authentication**, enable **Allow public client flows** (required for PKCE and for `--headless`)
 6. If you will use a custom `redirect_uri` in `config.toml`, make sure the Redirect URI in the app registration matches it exactly — including scheme, host, port, and path. For `https://localhost/` on a privileged port (e.g. 443), register that exact URI.
 7. Copy the **Application (client) ID** from the app's Overview page
 
@@ -372,6 +372,14 @@ This opens your browser for Microsoft OAuth consent. After you authorize, msgvau
 - Validates the token matches the email you specified
 - Auto-detects the correct IMAP host based on account type
 - Configures XOAUTH2 authentication automatically
+
+On a machine without a browser, such as a server or a container, add `--headless`:
+
+```bash
+msgvault add-o365 you@outlook.com --headless
+```
+
+msgvault prints a Microsoft URL and a code. Open the URL on any device and enter the code. `add-teams` accepts the same flag.
 
 Personal accounts (hotmail.com, outlook.com, live.com, msn.com) connect to `outlook.office.com`. Organizational accounts (company Microsoft 365) connect to `outlook.office365.com`. This detection is automatic.
 
