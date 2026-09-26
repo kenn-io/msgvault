@@ -929,14 +929,27 @@ type googleLikeState struct {
 	uids     map[string]string // href -> UID served by multiget
 	etags    map[string]string // href -> escaped ETag
 	changes  string            // sync-collection events for a non-empty token
+
+	omitCollection bool            // Depth 1 listing leaves out the collection's own response
+	untagged       map[string]bool // members listed with a 404 getetag and no resourcetype
 }
 
 func multiStatusBody(responses string) string {
 	return `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">` + responses + `</D:multistatus>`
 }
 
+// untaggedResponse is a member whose getetag is absent and whose resourcetype
+// says nothing, which a listing must treat as a fault rather than skip.
 func untaggedResponse(href string) string {
 	return `<D:response><D:href>` + href + `</D:href><D:propstat><D:prop><D:getetag/></D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response>`
+}
+
+// collectionResponse is what a collection looks like in a Depth 1 listing:
+// a resourcetype naming DAV:collection and no entity tag.
+func collectionResponse(href string) string {
+	return `<D:response><D:href>` + href + `</D:href>` +
+		`<D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>` +
+		`<D:propstat><D:prop><D:getetag/></D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response>`
 }
 
 func newGoogleLikeHandler(t *testing.T, state *googleLikeState) http.HandlerFunc {
@@ -953,13 +966,18 @@ func newGoogleLikeHandler(t *testing.T, state *googleLikeState) http.HandlerFunc
 		case r.Method == "PROPFIND":
 			state.requests = append(state.requests, "PROPFIND "+r.Header.Get("Depth"))
 			var responses strings.Builder
-			responses.WriteString(untaggedResponse("/books/personal/"))
+			if !state.omitCollection {
+				responses.WriteString(collectionResponse("/books/personal/"))
+			}
 			for _, href := range state.listing {
-				if strings.HasSuffix(href, "/") {
+				switch {
+				case strings.HasSuffix(href, "/"):
+					responses.WriteString(collectionResponse(href))
+				case state.untagged[href]:
 					responses.WriteString(untaggedResponse(href))
-					continue
+				default:
+					responses.WriteString(changedResponse(href, state.etags[href]))
 				}
-				responses.WriteString(changedResponse(href, state.etags[href]))
 			}
 			writeDAVXML(t, w, multiStatusBody(responses.String()))
 		case r.Method == "REPORT" && strings.Contains(body, "sync-collection"):
@@ -1239,4 +1257,47 @@ func TestEnumeratedSnapshotWarnsWhenCollectionOmitsSyncToken(t *testing.T) {
 		"PROPFIND 1",
 		"REPORT addressbook-multiget /books/personal/alice.vcf,/books/personal/bob.vcf",
 	}, state.requests)
+}
+
+func TestEnumeratedSnapshotRejectsListingThatOmitsCollection(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	state := newGoogleLikeState()
+	server := httptest.NewServer(newGoogleLikeHandler(t, state))
+	t.Cleanup(server.Close)
+	base, st, book := newPullService(t, server, true)
+	service := NewGoogleService(st, base.client)
+	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+
+	state.mu.Lock()
+	state.omitCollection = true
+	state.listing = []string{"/books/personal/alice.vcf"}
+	state.mu.Unlock()
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.ErrorContains(err, "sync failed")
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, server.URL+"/books/personal/bob.vcf")
+	require.NoError(err, "a listing without the collection's own response is incomplete and must not remove members")
+	assert.Equal(`"b1"`, resource.RemoteETag)
+}
+
+func TestEnumeratedSnapshotRejectsMemberWithoutETag(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	state := newGoogleLikeState()
+	server := httptest.NewServer(newGoogleLikeHandler(t, state))
+	t.Cleanup(server.Close)
+	base, st, book := newPullService(t, server, true)
+	service := NewGoogleService(st, base.client)
+	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+
+	state.mu.Lock()
+	state.untagged = map[string]bool{"/books/personal/bob.vcf": true}
+	state.mu.Unlock()
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.ErrorContains(err, "sync failed")
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, server.URL+"/books/personal/bob.vcf")
+	require.NoError(err, "a member with no ETag and no resourcetype may still exist and must not be removed")
+	assert.Equal(`"b1"`, resource.RemoteETag)
 }

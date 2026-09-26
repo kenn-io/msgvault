@@ -534,13 +534,15 @@ func (s *Service) fetchCollectionSyncToken(
 }
 
 // fetchMemberListing enumerates the collection's members with a Depth 1
-// PROPFIND. An empty multistatus is rejected: RFC 4918 requires at least the
-// collection's own response, so nothing at all is a server fault, not an
-// empty book.
+// PROPFIND. The result feeds a ReplaceAll plan, so anything the listing drops
+// is removed locally; the listing therefore fails rather than guesses. RFC
+// 4918 requires the collection's own response, so a listing without it is
+// treated as incomplete. Nested collections are identified by resourcetype
+// and skipped; any other member must carry an ETag.
 func (s *Service) fetchMemberListing(
 	ctx context.Context, collection *url.URL, budget *operationBudget,
 ) ([]string, *url.URL, error) {
-	body, err := PropfindBody([]PropertyName{GetETagProperty})
+	body, err := PropfindBody([]PropertyName{GetETagProperty, ResourceTypeProperty})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -559,11 +561,9 @@ func (s *Service) fetchMemberListing(
 	if response.EffectiveURL != nil {
 		collection = response.EffectiveURL
 	}
-	if len(multiStatus.Responses) == 0 {
-		return nil, nil, errors.New("CardDAV member listing returned no responses")
-	}
 	hrefs := make([]string, 0, len(multiStatus.Responses))
 	seen := map[string]bool{}
+	sawCollection := false
 	for _, davResponse := range multiStatus.Responses {
 		resolved, err := s.resolveMemberHref(ctx, collection, davResponse.Href, true)
 		if err != nil {
@@ -579,25 +579,27 @@ func (s *Service) fetchMemberListing(
 		if davResponse.StatusCode != 0 && (davResponse.StatusCode < 200 || davResponse.StatusCode >= 300) {
 			return nil, nil, &StatusError{StatusCode: davResponse.StatusCode}
 		}
-		etag, untagged := "", false
+		tagged, nested := false, false
 		for _, propStat := range davResponse.PropStats {
 			switch {
 			case propStat.StatusCode == http.StatusInsufficientStorage:
 				return nil, nil, ErrTruncatedSnapshot
 			case isAbsentStatusCode(propStat.StatusCode):
-				untagged = true
 				continue
 			case propStat.StatusCode < 200 || propStat.StatusCode >= 300:
 				return nil, nil, &StatusError{StatusCode: propStat.StatusCode}
 			}
-			if propStat.Properties.GetETag != "" {
-				etag = propStat.Properties.GetETag
-			}
+			tagged = tagged || propStat.Properties.GetETag != ""
+			nested = nested || propStat.Properties.IsCollection
 		}
-		if isCollection || untagged {
+		if isCollection {
+			sawCollection = true
 			continue
 		}
-		if etag == "" {
+		if nested {
+			continue
+		}
+		if !tagged {
 			return nil, nil, errors.New("CardDAV listed member lacks ETag")
 		}
 		identity := canonicalDAVURLIdentity(resolved)
@@ -609,6 +611,9 @@ func (s *Service) fetchMemberListing(
 		if len(hrefs) > maxSyncMembers {
 			return nil, nil, fmt.Errorf("CardDAV member listing exceeds %d members", maxSyncMembers)
 		}
+	}
+	if !sawCollection {
+		return nil, nil, errors.New("CardDAV member listing omitted the collection")
 	}
 	slices.Sort(hrefs)
 	return hrefs, collection, nil
