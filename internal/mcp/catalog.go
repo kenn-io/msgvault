@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"slices"
 	"sort"
+	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -125,11 +126,12 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 // The SDK v1.7 schema cache keys explicit schemas by pointer identity, so a
 // stateless server must reuse these roots instead of rebuilding them per HTTP
 // request. There are only 1024 possible capability keys, which also keeps
-// the shared SDK cache boundary fixed.
+// the shared SDK cache boundary fixed. Build each catalog only when used;
+// eagerly constructing every combination delays startup for all CLI commands.
 var stableOperationCatalogs = buildOperationCatalogs()
 
-func buildOperationCatalogs() map[catalogCapabilities][]toolDefinition {
-	catalogs := make(map[catalogCapabilities][]toolDefinition, 1024)
+func buildOperationCatalogs() map[catalogCapabilities]func() []toolDefinition {
+	catalogs := make(map[catalogCapabilities]func() []toolDefinition, 1024)
 	for mask := range 1024 {
 		capabilities := catalogCapabilities{
 			personAgenda:    mask&0b1000000000 != 0,
@@ -143,13 +145,15 @@ func buildOperationCatalogs() map[catalogCapabilities][]toolDefinition {
 			visualSearch:    mask&0b000000010 != 0,
 			savedViews:      mask&0b000000001 != 0,
 		}
-		catalogs[capabilities] = buildOperationCatalog(capabilities)
+		catalogs[capabilities] = sync.OnceValue(func() []toolDefinition {
+			return buildOperationCatalog(capabilities)
+		})
 	}
 	return catalogs
 }
 
 func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
-	return slices.Clone(stableOperationCatalogs[capabilitiesFor(opts)])
+	return slices.Clone(stableOperationCatalogs[capabilitiesFor(opts)]())
 }
 
 func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
