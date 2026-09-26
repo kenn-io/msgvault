@@ -20,6 +20,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"go.kenn.io/kit/atomicfile"
 )
 
 const (
@@ -399,6 +401,8 @@ func persist(tokenDir string, permissions permissionBackend, credentials map[str
 }
 
 func publish(tokenDir string, permissions permissionBackend, encoded []byte) ([]byte, error) {
+	// Kit's WithPrivate permits SYSTEM and Administrators on Windows; this
+	// store requires and verifies a DACL containing only the current user.
 	temporary, err := os.CreateTemp(tokenDir, ".provider-credentials-*.json")
 	if err != nil {
 		return nil, fmt.Errorf("create credential candidate: %w", err)
@@ -427,7 +431,7 @@ func publish(tokenDir string, permissions permissionBackend, encoded []byte) ([]
 		return nil, fmt.Errorf("publish credential store: %w", err)
 	}
 	published = true
-	if err := syncStoreDirectory(tokenDir); err != nil {
+	if err := atomicfile.SyncDir(tokenDir); err != nil {
 		return nil, fmt.Errorf("sync credential store directory: %w", err)
 	}
 	return encoded, nil

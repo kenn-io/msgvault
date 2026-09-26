@@ -1063,31 +1063,8 @@ func (m *Manager) saveTokenCompared(email string, token *oauth2.Token, scopes []
 
 	path := m.tokenPath(email)
 
-	// Atomic write via temp file + rename to avoid TOCTOU symlink races.
-	// If an attacker creates a symlink between tokenPath() returning and
-	// the write, os.Rename replaces the symlink itself rather than following it.
-	tmpFile, err := os.CreateTemp(m.tokensDir, ".token-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp token file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("write temp token file: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close temp token file: %w", err)
-	}
-	if err := fileutil.SecureChmod(tmpPath, 0600); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("chmod temp token file: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rename temp token file: %w", err)
+	if err := fileutil.SecureReplaceFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write token file: %w", err)
 	}
 	return nil
 }

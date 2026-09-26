@@ -7,9 +7,11 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/mattn/go-sqlite3"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
@@ -626,7 +629,9 @@ func (s *Store) DB() *sql.DB {
 }
 
 // BackupDatabase writes a point-in-time consistent copy of the SQLite database
-// to dst using VACUUM INTO. PostgreSQL deployments should be backed up with
+// to dst using VACUUM INTO. Publishing requires hard links or an atomic
+// no-replace rename; it fails rather than risk overwriting an existing target
+// when neither is available. PostgreSQL deployments should be backed up with
 // pg_dump, pg_basebackup, or replication tooling outside msgvault.
 func (s *Store) BackupDatabase(dst string) error {
 	return s.BackupDatabaseContext(context.Background(), dst)
@@ -670,12 +675,18 @@ func (s *Store) BackupDatabaseContext(ctx context.Context, dst string) (returnEr
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if _, err := os.Lstat(dst); err == nil {
-		return fmt.Errorf("backup target already exists: %s", dst)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect backup target %s: %w", dst, err)
+	// Publish without replacing: a file created at dst while VACUUM INTO ran
+	// must survive. Deferred staging directory cleanup removes any staged name.
+	publish := atomicfile.PublishNoReplace
+	if runtime.GOOS == "windows" {
+		// Hard links are not written through on Windows. Kit's no-replace
+		// rename uses MOVEFILE_WRITE_THROUGH instead.
+		publish = atomicfile.RenameNoReplace
 	}
-	if err := os.Rename(tempPath, dst); err != nil {
+	if err := publish(tempPath, dst); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("backup target already exists: %s", dst)
+		}
 		return fmt.Errorf("publish backup %s: %w", dst, err)
 	}
 	return nil

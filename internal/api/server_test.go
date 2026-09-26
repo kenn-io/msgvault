@@ -1470,41 +1470,43 @@ func TestCLIRequestDurationPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			srv := NewServerWithOptions(ServerOptions{
-				Config: &config.Config{Server: config.ServerConfig{
-					APIPort:       8080,
-					APIKey:        tt.apiKey,
-					BindAddr:      tt.bindAddr,
-					AllowInsecure: tt.allowUnsafe,
-				}},
-				Logger:         testLogger(),
-				RequestTimeout: 5 * time.Millisecond,
-			})
-			t.Cleanup(func() {
-				require.NoError(t, srv.Shutdown(context.Background()))
-			})
+			synctest.Test(t, func(t *testing.T) {
+				srv := NewServerWithOptions(ServerOptions{
+					Config: &config.Config{Server: config.ServerConfig{
+						APIPort:       8080,
+						APIKey:        tt.apiKey,
+						BindAddr:      tt.bindAddr,
+						AllowInsecure: tt.allowUnsafe,
+					}},
+					Logger:         testLogger(),
+					RequestTimeout: 5 * time.Millisecond,
+				})
+				t.Cleanup(func() {
+					require.NoError(t, srv.Shutdown(context.Background()))
+				})
 
-			handlerResult := make(chan error, 1)
-			handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-				select {
-				case <-time.After(40 * time.Millisecond):
-					handlerResult <- nil
-				case <-r.Context().Done():
-					handlerResult <- r.Context().Err()
+				handlerResult := make(chan error, 1)
+				handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					select {
+					case <-time.After(40 * time.Millisecond):
+						handlerResult <- nil
+					case <-r.Context().Done():
+						handlerResult <- r.Context().Err()
+					}
+				}))
+				req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
+				if tt.configure != nil {
+					tt.configure(srv, req)
 				}
-			}))
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil)
-			if tt.configure != nil {
-				tt.configure(srv, req)
-			}
 
-			handler.ServeHTTP(httptest.NewRecorder(), req)
-			err := <-handlerResult
-			if tt.wantTimeout {
-				assert.ErrorIs(t, err, context.DeadlineExceeded)
-			} else {
-				assert.NoError(t, err)
-			}
+				handler.ServeHTTP(httptest.NewRecorder(), req)
+				err := <-handlerResult
+				if tt.wantTimeout {
+					assert.ErrorIs(t, err, context.DeadlineExceeded)
+				} else {
+					assert.NoError(t, err)
+				}
+			})
 		})
 	}
 }
@@ -1896,7 +1898,9 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 		serveErr <- srv.StartOnListener(listener)
 	}()
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		// net/http delays closing connections with unread request data, then
+		// polls for shutdown. Allow cleanup time beyond the request deadlines.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		require.NoError(t, srv.Shutdown(ctx), "shutdown")
 		require.ErrorIs(t, <-serveErr, http.ErrServerClosed, "serve result")

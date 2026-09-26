@@ -19,10 +19,6 @@ func secureCacheDirectory(path string) error {
 	return nil
 }
 
-func secureCacheFile(file *os.File) error {
-	return file.Chmod(0o600)
-}
-
 func validateCacheFile(path string, info os.FileInfo) error {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("task reverse index %q must not be a symlink", path)

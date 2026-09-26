@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/daemon"
 )
 
@@ -86,36 +87,9 @@ func writeDurableStartupCacheBuildOutcome(
 	outcome startupCacheBuildOutcome,
 ) error {
 	path := durableStartupCacheBuildOutcomePath(dataDir, rec)
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".startup-cache-outcome-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create startup cache outcome: %w", err)
-	}
-	tmpPath := tmp.Name()
-	committed := false
-	defer func() {
-		if !committed {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("secure startup cache outcome: %w", err)
-	}
-	if _, err := tmp.WriteString(string(outcome) + "\n"); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write startup cache outcome: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sync startup cache outcome: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close startup cache outcome: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := atomicfile.WriteFile(path, []byte(string(outcome)+"\n")); err != nil {
 		return fmt.Errorf("publish startup cache outcome: %w", err)
 	}
-	committed = true
 	return nil
 }
 

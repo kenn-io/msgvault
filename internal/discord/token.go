@@ -428,24 +428,7 @@ func (m *TokenManager) writeLocked(record TokenRecord) error {
 		return fmt.Errorf("serialize Discord bot credential: %w", err)
 	}
 
-	tmpFile, err := os.CreateTemp(m.tokensDir, ".discord-token-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temporary Discord token file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("write temporary Discord token file: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("close temporary Discord token file: %w", err)
-	}
-	if err := fileutil.SecureChmod(tmpPath, 0600); err != nil {
-		return fmt.Errorf("protect temporary Discord token file: %w", err)
-	}
-	if err := os.Rename(tmpPath, m.TokenPath(record.BotUserID)); err != nil {
+	if err := fileutil.SecureReplaceFile(m.TokenPath(record.BotUserID), data, 0o600); err != nil {
 		return fmt.Errorf("replace Discord token file: %w", err)
 	}
 	return nil

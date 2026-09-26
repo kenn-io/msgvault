@@ -833,7 +833,7 @@ func TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState(t *testing.T) {
 	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
 		return errors.New("simulated rebuild failure")
 	}
-	defer func() { buildCacheWriteStateFile = os.WriteFile }()
+	defer func() { buildCacheWriteStateFile = writeCacheStateFile }()
 
 	err = executeRemoveAccount(t)
 	require.Error(err, "mandatory cache rebuild failure must reach the command")
@@ -938,7 +938,7 @@ func TestRemoveAccountCmd_CascadeFailureJoinsRecoveryFailure(t *testing.T) {
 	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
 		return errors.New("simulated recovery failure")
 	}
-	t.Cleanup(func() { buildCacheWriteStateFile = os.WriteFile })
+	t.Cleanup(func() { buildCacheWriteStateFile = writeCacheStateFile })
 
 	err = executeRemoveAccount(t)
 	require.Error(err)

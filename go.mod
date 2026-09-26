@@ -43,7 +43,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	go.kenn.io/docbank v0.14.1-0.20260915163736-6aefe3363846
 	go.kenn.io/kata v0.18.0
-	go.kenn.io/kit v0.25.1-0.20260916162410-e9840a327158
+	go.kenn.io/kit v0.26.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/sdk v1.44.0
 	go.opentelemetry.io/otel/trace v1.44.0
@@ -145,6 +145,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
+	github.com/spf13/pathologize v1.1.0 // indirect
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
 	github.com/tdewolff/parse/v2 v2.8.16 // indirect
 	github.com/teambition/rrule-go v1.8.2 // indirect

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/vcard/registry"
 )
 
@@ -213,32 +214,8 @@ func changedFiles(destDir string, remote map[string][]byte) ([]string, error) {
 	return changed, nil
 }
 
-func writeAtomic(dest string, data []byte) (retErr error) {
-	dir := filepath.Dir(dest)
-	temp, err := os.CreateTemp(dir, "."+filepath.Base(dest)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temporary %s: %w", filepath.Base(dest), err)
-	}
-	tempName := temp.Name()
-	defer func() {
-		if retErr != nil {
-			_ = temp.Close()
-			_ = os.Remove(tempName)
-		}
-	}()
-	if err := temp.Chmod(0o644); err != nil {
-		return fmt.Errorf("set mode on temporary %s: %w", filepath.Base(dest), err)
-	}
-	if _, err := temp.Write(data); err != nil {
-		return fmt.Errorf("write temporary %s: %w", filepath.Base(dest), err)
-	}
-	if err := temp.Sync(); err != nil {
-		return fmt.Errorf("sync temporary %s: %w", filepath.Base(dest), err)
-	}
-	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close temporary %s: %w", filepath.Base(dest), err)
-	}
-	if err := os.Rename(tempName, dest); err != nil {
+func writeAtomic(dest string, data []byte) error {
+	if err := atomicfile.WriteFile(dest, data, atomicfile.WithPerm(0o644)); err != nil {
 		return fmt.Errorf("replace %s: %w", filepath.Base(dest), err)
 	}
 	return nil

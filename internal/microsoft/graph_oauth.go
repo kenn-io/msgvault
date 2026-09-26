@@ -252,28 +252,8 @@ func (m *GraphManager) saveToken(email string, token *oauth2.Token, scopes []str
 	}
 
 	path := m.TokenPath(email)
-	tmpFile, err := os.CreateTemp(m.tokensDir, ".teams-token-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp token file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("write temp token file: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close temp token file: %w", err)
-	}
-	if err := fileutil.SecureChmod(tmpPath, 0600); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("chmod temp token file: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rename temp token file: %w", err)
+	if err := fileutil.SecureReplaceFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write token file: %w", err)
 	}
 	return nil
 }

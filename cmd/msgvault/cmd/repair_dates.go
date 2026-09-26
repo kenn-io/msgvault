@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -500,31 +501,17 @@ func writeDateRepairLedger(path string, ledger *dateRepairLedger) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create repairs directory: %w", err)
 	}
-	file, err := os.CreateTemp(dir, ".dates-*.tmp")
+	file, err := atomicfile.Create(path)
 	if err != nil {
 		return fmt.Errorf("create temporary ledger: %w", err)
 	}
-	tempPath := file.Name()
-	defer func() { _ = os.Remove(tempPath) }()
-
-	if err := file.Chmod(0o600); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("set ledger permissions: %w", err)
-	}
+	defer func() { _ = file.Abort() }()
 	encoder := jsontext.NewEncoder(file, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  "))
 
 	if err := json.MarshalEncode(encoder, ledger, json.Deterministic(true)); err != nil {
-		_ = file.Close()
 		return fmt.Errorf("encode ledger: %w", err)
 	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("sync ledger: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close ledger: %w", err)
-	}
-	if err := replaceOutputFile(tempPath, path); err != nil {
+	if err := file.Commit(); err != nil {
 		return fmt.Errorf("publish ledger: %w", err)
 	}
 	return nil

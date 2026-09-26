@@ -218,7 +218,3 @@ func replaceStoreFile(source, target string) error {
 	}
 	return nil
 }
-
-// MoveFileEx with WRITE_THROUGH is the Windows namespace durability boundary;
-// Windows does not support flushing directory handles.
-func syncStoreDirectory(string) error { return nil }

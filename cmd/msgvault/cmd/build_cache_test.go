@@ -650,7 +650,7 @@ func TestBuildCacheFailedStateWriteLeavesIncrementalDrift(t *testing.T) {
 		return errors.New("simulated state write failure")
 	}
 	_, err = buildCache(dbPath, analyticsDir, false)
-	buildCacheWriteStateFile = os.WriteFile
+	buildCacheWriteStateFile = writeCacheStateFile
 	require.ErrorContains(err, "simulated state write failure",
 		"incremental build must fail when the sync state cannot be persisted")
 
@@ -686,7 +686,7 @@ func TestBuildCacheFailedStateWriteLeavesFullRebuildDrift(t *testing.T) {
 		return errors.New("simulated state write failure")
 	}
 	_, err = buildCache(dbPath, analyticsDir, true)
-	buildCacheWriteStateFile = os.WriteFile
+	buildCacheWriteStateFile = writeCacheStateFile
 	require.ErrorContains(err, "simulated state write failure",
 		"full rebuild must fail when the sync state cannot be persisted")
 
