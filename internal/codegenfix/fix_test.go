@@ -48,9 +48,9 @@ func (c *Client) RunQuery(ctx context.Context, options *RunQueryRequestOptions, 
 	fixture := "package generated\ntype Client struct{}\n" + methods + strings.ReplaceAll(methods, "RunQuery", "RunArchiveQuery")
 	got, err := RewriteRunQueryClient([]byte(fixture))
 	require.NoError(t, err)
-	assert.Equal(t, 2, strings.Count(string(got), "resp.StatusCode != 200"))
-	assert.NotContains(t, string(got), "RunQueryResponseJSON")
-	assert.NotContains(t, string(got), "RunArchiveQueryResponseJSON")
+	assert.Equal(2, strings.Count(string(got), "resp.StatusCode != 200"))
+	assert.NotContains(string(got), "RunQueryResponseJSON")
+	assert.NotContains(string(got), "RunArchiveQueryResponseJSON")
 }
 
 func TestRewriteGeneratedValidatorsRejectsMissingGroupingValidator(t *testing.T) {
