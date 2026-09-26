@@ -13,6 +13,7 @@ All notable changes to msgvault, grouped by release.
   can track refresh jobs. The new `query_sql` MCP tool restricts SQL to archive
   analytics data. These API additions require schema 2.31.0. See
   [SQL queries](usage/querying.md) and [cache freshness](configuration.md#analytics).
+- Repeated `import-emlx` runs no longer rewrite Apple Mail partial messages whose archived copy already holds every cached attachment, and the summary counts only attachments the run added to the archive.
 - Saved View MCP tools publish canonical_state as a schema object, so MCP clients that validate tools/list strictly, such as those built on the official TypeScript SDK, load msgvault's tools.
 - `add-o365 --headless` and `add-teams --headless` sign in with a Microsoft
   device code, so no local browser is needed.

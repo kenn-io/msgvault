@@ -760,7 +760,9 @@ func TestImportEmlxDir_PartialAttachmentRestoredFromSiblingDir(t *testing.T) {
 	// later in the same batch.
 	mkEmlx(t, msgDir, "2.partial.emlx", []byte(raw))
 	notes := []byte("More notes.\n")
-	for run, restored := range []int64{1, 2, 1, 1} {
+	// Runs 2 and 3 offer nothing the archive lacks, so they skip ingestion.
+	updated := []int64{1, 1, 0, 0}
+	for run, restored := range []int64{1, 1, 0, 0} {
 		if run == 1 {
 			secondDir := filepath.Join(mboxDir, "Attachments", "2", "3")
 			require.NoError(os.MkdirAll(secondDir, 0700))
@@ -774,7 +776,8 @@ func TestImportEmlxDir_PartialAttachmentRestoredFromSiblingDir(t *testing.T) {
 		require.NoError(err)
 		require.Zero(summary.Errors)
 		assert.Zero(summary.MessagesAdded)
-		assert.Equal(int64(1), summary.MessagesUpdated)
+		assert.Equal(updated[run], summary.MessagesUpdated)
+		assert.Equal(1-updated[run], summary.MessagesSkipped)
 		assert.Equal(int64(2), summary.PartialFiles)
 		assert.Equal(restored, summary.AttachmentsRestored)
 		var count int

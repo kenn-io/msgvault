@@ -1105,12 +1105,13 @@ attachments of these messages outside the MIME payload, in a sibling
 inside the message's outer multipart, within the message size limit.
 Attachments in nested parts, such as inside some forwarded messages, are not
 restored. An attachment without a cached file stays absent; unreadable files
-or directories produce a warning. Re-importing a partial message adds restored
-attachments to the existing message without creating another copy.
-If both `N.emlx` and
+or directories produce a warning. Re-importing a partial message adds newly
+cached attachments to the existing message without creating another copy.
+When the archived message already holds every cached attachment, the rerun
+skips it instead of rewriting it. If both `N.emlx` and
 `N.partial.emlx` exist, the complete `N.emlx` copy wins. The command summary
-reports the number of partial files imported and how many attachments were
-restored.
+reports the number of partial files read and how many attachments the run
+added to the archive.
 
 | Flag | Default | Description |
 |---|---|---|
