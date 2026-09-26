@@ -489,6 +489,35 @@ func ensureRenderedFullName(properties []Property, version Version) ([]Property,
 		}
 		return slices.Insert(properties, index+1, fullName), nil
 	}
+	for _, propName := range []string{"ORG", "EMAIL", "TEL"} {
+		for index, property := range properties {
+			if strings.EqualFold(property.Name, propName) && strings.TrimSpace(property.RawValue) != "" {
+				val := strings.TrimSpace(property.RawValue)
+				val = strings.TrimPrefix(val, "mailto:")
+				val = strings.TrimPrefix(val, "tel:")
+				if val != "" {
+					fullName, err := NewProperty(property.Group, "FN", EscapeText(val))
+					if err == nil {
+						if version == Version40 {
+							if derived, err := NewParameter("DERIVED", "true"); err == nil {
+								fullName.Parameters = append(fullName.Parameters, derived)
+							}
+						}
+						return slices.Insert(properties, index+1, fullName), nil
+					}
+				}
+			}
+		}
+	}
+	fullName, err := NewProperty("", "FN", "Unnamed Contact")
+	if err == nil {
+		if version == Version40 {
+			if derived, err := NewParameter("DERIVED", "true"); err == nil {
+				fullName.Parameters = append(fullName.Parameters, derived)
+			}
+		}
+		return append(properties, fullName), nil
+	}
 	return properties, nil
 }
 

@@ -392,7 +392,31 @@ func PropfindBody(properties []PropertyName) ([]byte, error) {
 // AddressbookQueryBody builds an addressbook-query REPORT body.
 func AddressbookQueryBody(properties []PropertyName) ([]byte, error) {
 	return propertyBody(xml.Name{Space: cardDAVNamespace, Local: "addressbook-query"}, properties, func(encoder *xml.Encoder) error {
-		return encodeEmptyElement(encoder, xml.Name{Space: cardDAVNamespace, Local: "filter"})
+		filter := xml.StartElement{Name: xml.Name{Space: cardDAVNamespace, Local: "filter"}}
+		if err := encoder.EncodeToken(filter); err != nil {
+			return err
+		}
+		propFilter := xml.StartElement{
+			Name: xml.Name{Space: cardDAVNamespace, Local: "prop-filter"},
+			Attr: []xml.Attr{{Name: xml.Name{Local: "name"}, Value: "UID"}},
+		}
+		if err := encoder.EncodeToken(propFilter); err != nil {
+			return err
+		}
+		textMatch := xml.StartElement{
+			Name: xml.Name{Space: cardDAVNamespace, Local: "text-match"},
+			Attr: []xml.Attr{{Name: xml.Name{Local: "match-type"}, Value: "contains"}},
+		}
+		if err := encoder.EncodeToken(textMatch); err != nil {
+			return err
+		}
+		if err := encoder.EncodeToken(textMatch.End()); err != nil {
+			return err
+		}
+		if err := encoder.EncodeToken(propFilter.End()); err != nil {
+			return err
+		}
+		return encoder.EncodeToken(filter.End())
 	})
 }
 

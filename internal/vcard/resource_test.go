@@ -484,6 +484,18 @@ func TestResourceEnvelopeDerivesFullNameForBothViewsWithoutV4OnlyParameter(t *te
 	assert.Contains(string(v4), "FN;DERIVED=true:Jane Doe\r\n")
 }
 
+func TestResourceEnvelopeDerivesFullNameFromContactPointsWhenNameMissing(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	envelope, err := ParseResourceEnvelope(
+		[]byte("BEGIN:VCARD\r\nVERSION:3.0\r\nTEL:+15551234567\r\nEND:VCARD\r\n"),
+	)
+	require.NoError(err)
+	v4, err := envelope.RenderView(Version40)
+	require.NoError(err)
+	assert.Contains(string(v4), "FN;DERIVED=true:+15551234567\r\n")
+}
+
 func TestResourceEnvelopeMovesLegacyReferencedMediaTypeToMediatype(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
