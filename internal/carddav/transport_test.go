@@ -816,3 +816,28 @@ func TestClientLogsUpstreamFailureStatusAndBodyExcerpt(t *testing.T) {
 	assert.Contains(logged.String(), "INVALID_ARGUMENT")
 	assert.NotContains(logged.String(), "/books/personal/", "the request URL is not logged")
 }
+
+func TestClientLogsExpectedFailuresAtDebug(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusGone, http.StatusPreconditionFailed} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+			}))
+			t.Cleanup(server.Close)
+			var logged bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+
+			client := newFixtureClient(t, server.URL, "alice", "secret")
+			_, err := client.Do(t.Context(), Request{Method: http.MethodPut, URL: server.URL + "/books/personal/alice.vcf"})
+			var statusErr *StatusError
+			require.ErrorAs(err, &statusErr)
+			assert.Equal(status, statusErr.StatusCode)
+			assert.Contains(logged.String(), "level=DEBUG")
+			assert.NotContains(logged.String(), "level=WARN")
+		})
+	}
+}

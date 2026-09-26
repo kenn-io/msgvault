@@ -197,9 +197,9 @@ func (c *Client) doWithBudget(
 // logRequestFailure records the upstream status with a bounded body excerpt.
 // StatusError deliberately carries no body, so without this the reason behind
 // a non-XML rejection (such as Google's JSON diagnostics) never reaches the
-// log. Absent resources are an expected outcome for member fetches and are
-// logged at debug level only. The URL is omitted because it can embed the
-// account identity.
+// log. Absent resources and precondition failures are expected outcomes of
+// member fetches and conditional publications, so they are logged at debug
+// level only. The URL is omitted because it can embed the account identity.
 func logRequestFailure(ctx context.Context, method string, status int, body []byte) {
 	const excerptLimit = 512
 	excerpt := strings.TrimSpace(string(body))
@@ -208,7 +208,7 @@ func logRequestFailure(ctx context.Context, method string, status int, body []by
 	}
 	excerpt = strings.ToValidUTF8(excerpt, "")
 	level := slog.LevelWarn
-	if isAbsentStatusCode(status) {
+	if isAbsentStatusCode(status) || status == http.StatusPreconditionFailed {
 		level = slog.LevelDebug
 	}
 	slog.Log(ctx, level, "CardDAV request failed", "method", method, "status", status, "body", excerpt)
