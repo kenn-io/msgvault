@@ -5420,8 +5420,14 @@ func (m MeetingMetricsRequest) Validate() error {
 }
 
 type MeetingPerson struct {
-	Email string  `json:"email" validate:"required"`
-	Name  *string `json:"name,omitzero"`
+	Email string `json:"email,omitempty"`
+
+	// ID Stable identifier for this person in the import source
+	ID   *string `json:"id,omitzero" validate:"omitempty,max=200"`
+	Name *string `json:"name,omitzero"`
+
+	// Phone International phone number starting with + or 00; normalized to E.164
+	Phone *string `json:"phone,omitzero" validate:"omitempty,max=64"`
 }
 
 func (m MeetingPerson) Validate() error {

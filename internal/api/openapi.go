@@ -851,6 +851,21 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 		}
 	}
+	if person := schemas["MeetingPerson"]; person != nil {
+		// As with Meeting, keep the email-or-phone rule in the public schema but
+		// give the Go client a plain struct instead of a union wrapper.
+		person.AnyOf = nil
+		if email := person.Properties[emailProperty]; email != nil {
+			// Email used to be required. Keep the Go client field a plain string
+			// so existing callers still compile, and omit it when empty so a
+			// phone-only attendee never sends "" against format: email.
+			if email.Extensions == nil {
+				email.Extensions = map[string]any{}
+			}
+			email.Extensions["x-go-type-skip-optional-pointer"] = true
+			email.Extensions["x-omitempty"] = true
+		}
+	}
 	if totals := schemas["DurationTotals"]; totals != nil {
 		if average := totals.Properties["average_known_seconds"]; average != nil {
 			setCodegenGoType(average, "*float64")

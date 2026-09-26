@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-25"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1019,6 +1019,39 @@ the source before enabling a schedule. Removing the source prevents the
 scheduler from recreating it. See [Meeting Transcripts](/docs/usage/meetings/) for
 the 50-result discovery limit, attendee visibility, transcript retries, and
 stored data.
+
+### Muesli Sources
+
+Muesli meeting sync uses one top-level `[[muesli]]` entry per Muesli database.
+The daemon reads the database read-only on its own host, so msgvault must run
+on the Mac where Muesli records. No credential is needed.
+
+```toml
+[[muesli]]
+identifier = "mac"                  # stable source label; defaults to "default" for one entry
+account_email = "you@example.com"   # required; you, the person who records
+db_path = "~/Library/Application Support/Muesli/muesli.db"  # optional; this is the default
+phone_country_code = "1"            # optional; convert national-format Contacts phones
+schedule = "*/30 * * * *"           # optional 5-field cron, no seconds
+enabled = true
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | `default` (single entry) | Source name used by `sync-muesli <identifier>` and scheduler logs |
+| `account_email` | (required) | Normalized primary identity; attributed as the organizer of every meeting |
+| `db_path` | `~/Library/Application Support/Muesli/muesli.db` | Muesli database path; `~` expands, and a relative path resolves against the config directory when `--config` is used |
+| `contacts` | `true` | Resolve attendees through Apple Contacts; needs Full Disk Access for the daemon |
+| `contacts_path` | `~/Library/Application Support/AddressBook` | Apple Contacts data folder; expands like `db_path` |
+| `phone_country_code` | — | Country calling code (1–3 digits, such as `"1"` or `"44"`) used for Contacts phone numbers typed without one; unset means only international numbers are used |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `enabled` | `false` | Whether the source is daemon-scheduled |
+
+Run `msgvault add-muesli <identifier>` to check the database and register the
+source before enabling a schedule. Run `msgvault sync-muesli <identifier> --full`
+after identity changes to repair existing meeting attribution. Removing the
+source prevents the scheduler from recreating it. See
+[Meeting Transcripts](/docs/usage/meetings/#muesli) for what gets stored.
 
 ### `[vector]`
 

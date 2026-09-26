@@ -38,3 +38,17 @@ func TestCLIRunCommandAllowedNotionMeetingsCommands(t *testing.T) {
 		})
 	}
 }
+
+func TestCLIRunCommandAllowedMuesliCommands(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"add-muesli"},
+		{"add-muesli", "mac"},
+		{"sync-muesli"},
+		{"sync-muesli", "mac", "--full"},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			assert.True(t, cliRunCommandAllowed(args), "%v must be runnable via the daemon CLI", args)
+		})
+	}
+}

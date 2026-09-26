@@ -5736,10 +5736,18 @@ components:
           format: email
           type: string
           x-go-type: string
+          x-go-type-skip-optional-pointer: true
+          x-omitempty: true
+        id:
+          description: Stable identifier for this person in the import source
+          maxLength: 200
+          type: string
         name:
           type: string
-      required:
-        - email
+        phone:
+          description: International phone number starting with + or 00; normalized to E.164
+          maxLength: 64
+          type: string
       type: object
     MeetingRef:
       properties:

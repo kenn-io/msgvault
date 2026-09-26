@@ -68,9 +68,17 @@ type RecipientSet struct {
 // message persistence transaction.
 type ParticipantPersistData struct {
 	EmailAddress string
-	DisplayName  string
-	Domain       string
+	// PhoneNumber is an E.164 phone that identifies the participant when
+	// EmailAddress is empty. It is backed by a participant_identifiers row of
+	// type PhoneIdentifierType so owner attribution can match it.
+	PhoneNumber string
+	DisplayName string
+	Domain      string
 }
+
+// PhoneIdentifierType is the participant_identifiers type for a phone number
+// observed without a messaging service, such as a meeting attendee.
+const PhoneIdentifierType = "phone"
 
 // MessageDeliveryEvidence is provider-observed delivery state. A valid field
 // enriches the archived message; an invalid field preserves existing evidence.
@@ -1954,7 +1962,24 @@ func (s *Store) persistMessageWithParticipantsTx(
 			return 0, fmt.Errorf("lock message persistence: %w", err)
 		}
 	}
-	if len(participants) > 1 {
+	hasPhoneParticipant := false
+	for idx, participant := range participants {
+		if participant.EmailAddress == "" && participant.PhoneNumber == "" {
+			return 0, fmt.Errorf("ensure participant %d: an email address or phone number is required", idx)
+		}
+		if participant.EmailAddress == "" {
+			hasPhoneParticipant = true
+		}
+	}
+	if hasPhoneParticipant {
+		// Phone participants write participant_identifiers, which participant
+		// merges rewrite under the identity lock. Take it before the directory
+		// lock, the same order MergeParticipants uses.
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return 0, err
+		}
+	}
+	if len(participants) > 1 || hasPhoneParticipant {
 		// Participant merges take the directory lock before rewriting
 		// message rows. Keep the same order when a repair's preflight
 		// callback locks its target message for identity revalidation.
@@ -1974,17 +1999,25 @@ func (s *Store) persistMessageWithParticipantsTx(
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
-		participantID, err := ensureParticipantWith(
-			q,
-			s.dialect,
-			participant.EmailAddress,
-			participant.DisplayName,
-			participant.Domain,
-			func() error {
-				participantInserted = true
-				return nil
-			},
-		)
+		var participantID int64
+		var err error
+		if participant.EmailAddress == "" {
+			participantID, err = s.ensureParticipantByPhoneTx(
+				ctx, tx, participant.PhoneNumber, participant.DisplayName, PhoneIdentifierType,
+			)
+		} else {
+			participantID, err = ensureParticipantWith(
+				q,
+				s.dialect,
+				participant.EmailAddress,
+				participant.DisplayName,
+				participant.Domain,
+				func() error {
+					participantInserted = true
+					return nil
+				},
+			)
+		}
 		if err != nil {
 			return 0, fmt.Errorf("ensure participant %d: %w", idx, err)
 		}
@@ -3989,11 +4022,50 @@ func ensureConversationWithTypePolicy(
 // Also creates a participant_identifiers row with the given identifierType
 // (e.g., "whatsapp", "imessage", "google_voice").
 func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType string) (int64, error) {
+	var id int64
+	err := s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTx(tx); err != nil {
+			return err
+		}
+		var err error
+		id, err = s.ensureParticipantByPhoneTx(context.Background(), tx, phone, displayName, identifierType)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// EnsurePhoneParticipantContext gets or creates a participant for an E.164
+// phone observed without a messaging service, such as a meeting attendee.
+func (s *Store) EnsurePhoneParticipantContext(ctx context.Context, phone, displayName string) (int64, error) {
+	var id int64
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		var err error
+		id, err = s.ensureParticipantByPhoneTx(ctx, tx, phone, displayName, PhoneIdentifierType)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// ensureParticipantByPhoneTx is EnsureParticipantByPhone inside a caller's
+// transaction. The caller holds the identity-mutation lock.
+func (s *Store) ensureParticipantByPhoneTx(
+	ctx context.Context, tx *loggedTx, phone, displayName, identifierType string,
+) (int64, error) {
 	if phone == "" {
 		return 0, errors.New("phone number is required")
 	}
 	if !strings.HasPrefix(phone, "+") {
-		return 0, fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", phone)
+		// Name the rule, not the number: errors reach logs and API responses.
+		return 0, errors.New("phone number must be in E.164 format (starting with +)")
 	}
 
 	// The conflict target mirrors the partial unique index on
@@ -4003,10 +4075,7 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 	// from an existing participant; a guarded UPDATE then reports whether an
 	// existing blank display name was really filled.
 	var id int64
-	err := s.withTx(func(tx *loggedTx) error {
-		if err := s.lockIdentityMutationTx(tx); err != nil {
-			return err
-		}
+	err := func() error {
 		displayNameChanged := false
 		now := s.dialect.Now()
 		for range 3 {
@@ -4056,7 +4125,7 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 			}
 		}
 		if id == 0 {
-			return fmt.Errorf("ensure participant by phone %q after concurrent deletion", phone)
+			return errors.New("ensure participant by phone after concurrent deletion")
 		}
 
 		// Ensure a participant_identifiers row exists for this identifierType
@@ -4068,14 +4137,47 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 			return err
 		}
 		finish := func(result sql.Result) error {
-			if err := s.bumpParticipantIdentifierRevisionIfChanged(tx, result); err != nil {
-				return err
+			if result != nil {
+				if err := s.bumpParticipantIdentifierRevisionIfChanged(tx, result); err != nil {
+					return err
+				}
+			}
+			if identifierType != PhoneIdentifierType {
+				// Drop the generic row only once this participant really
+				// holds another row for the number; the insert above can
+				// yield to another participant's identifier.
+				removed, err := tx.Exec(`DELETE FROM participant_identifiers
+					WHERE participant_id = ? AND identifier_type = ? AND identifier_value = ?
+					  AND EXISTS (SELECT 1 FROM participant_identifiers other
+						WHERE other.participant_id = ? AND other.identifier_value = ?
+						  AND other.identifier_type <> ?)`,
+					id, PhoneIdentifierType, phone, id, phone, PhoneIdentifierType)
+				if err != nil {
+					return fmt.Errorf("replace generic phone identifier: %w", err)
+				}
+				if err := s.bumpParticipantIdentifierRevisionIfChanged(tx, removed); err != nil {
+					return err
+				}
 			}
 			if !displayNameChanged {
 				return nil
 			}
 			return s.invalidateParticipantPersonEnrichmentTx(
-				context.Background(), tx, id)
+				ctx, tx, id)
+		}
+		// One identifier row per number keeps profiles from listing it twice.
+		// Owner attribution matches any identifier value, so the generic
+		// phone row is written only when no service row already carries the
+		// number, and a service row replaces it (see finish).
+		if identifierType == PhoneIdentifierType {
+			var existing int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM participant_identifiers
+				WHERE participant_id = ? AND identifier_value = ?`, id, phone).Scan(&existing); err != nil {
+				return fmt.Errorf("check participant identifiers: %w", err)
+			}
+			if existing > 0 {
+				return finish(nil)
+			}
 		}
 		if !classificationColumns {
 			result, err := tx.Exec(`INSERT INTO participant_identifiers (
@@ -4121,7 +4223,7 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 			return fmt.Errorf("insert participant identifier: %w", err)
 		}
 		return finish(result)
-	})
+	}()
 	if err != nil {
 		return 0, err
 	}

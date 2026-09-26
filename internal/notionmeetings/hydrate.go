@@ -304,8 +304,9 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 			continue
 		}
 		result.Attendees = append(result.Attendees, meetingarchive.Person{
-			Name:  strings.TrimSpace(user.Name),
-			Email: strings.ToLower(strings.TrimSpace(user.Person.Email)),
+			Name:   strings.TrimSpace(user.Name),
+			Email:  strings.ToLower(strings.TrimSpace(user.Person.Email)),
+			Anchor: userAnchor(id),
 		})
 		result.ResolvedUsers = append(result.ResolvedUsers, resolvedUser{
 			ID: id, Name: strings.TrimSpace(user.Name),

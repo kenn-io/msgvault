@@ -496,6 +496,7 @@ type Config struct {
 	Granola        []GranolaSource                 `toml:"granola"`
 	Circleback     []CirclebackSource              `toml:"circleback"`
 	NotionMeetings []NotionMeetingsSource          `toml:"notion_meetings"`
+	Muesli         []MuesliSource                  `toml:"muesli"`
 	Backup         BackupConfig                    `toml:"backup"`
 	Discord        DiscordConfig                   `toml:"discord"`
 	Attachments    documentindex.AttachmentsConfig `toml:"attachments"`
@@ -926,6 +927,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.Vector.DBPath = expandPath(cfg.Vector.DBPath)
 	cfg.Vector.Multimodal.CapabilitiesFile = expandPath(cfg.Vector.Multimodal.CapabilitiesFile)
 	cfg.Backup.Repo = expandPath(cfg.Backup.Repo)
+	for i := range cfg.Muesli {
+		cfg.Muesli[i].DBPath = expandPath(cfg.Muesli[i].DBPath)
+		cfg.Muesli[i].ContactsPath = expandPath(cfg.Muesli[i].ContactsPath)
+	}
 	for name, app := range cfg.OAuth.Apps {
 		app.ClientSecrets = expandPath(app.ClientSecrets)
 		app.ServiceAccountKey = expandPath(app.ServiceAccountKey)
@@ -943,6 +948,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.Vector.DBPath = resolveRelative(cfg.Vector.DBPath, cfg.HomeDir)
 		cfg.Vector.Multimodal.CapabilitiesFile = resolveRelative(cfg.Vector.Multimodal.CapabilitiesFile, cfg.HomeDir)
 		cfg.Backup.Repo = resolveRelative(cfg.Backup.Repo, cfg.HomeDir)
+		for i := range cfg.Muesli {
+			cfg.Muesli[i].DBPath = resolveRelative(cfg.Muesli[i].DBPath, cfg.HomeDir)
+			cfg.Muesli[i].ContactsPath = resolveRelative(cfg.Muesli[i].ContactsPath, cfg.HomeDir)
+		}
 		for name, app := range cfg.OAuth.Apps {
 			app.ClientSecrets = resolveRelative(app.ClientSecrets, cfg.HomeDir)
 			app.ServiceAccountKey = resolveRelative(app.ServiceAccountKey, cfg.HomeDir)
@@ -1697,6 +1706,60 @@ func (s NotionMeetingsSource) EffectiveAccountEmail() (string, error) {
 	return effectiveMeetingAccountEmail("notion_meetings", s.Identifier, s.AccountEmail)
 }
 
+// MuesliSource is one local Muesli meeting database. Each entry is a
+// top-level [[muesli]] table. The daemon reads the database on its own host.
+type MuesliSource struct {
+	Identifier   string `toml:"identifier"`    // stable source label for add-/sync-muesli; defaults to "default" for a single entry
+	AccountEmail string `toml:"account_email"` // the person who records; attributed as each meeting's organizer
+	DBPath       string `toml:"db_path"`       // muesli.db path; empty = the stable app's default location
+	Schedule     string `toml:"schedule"`      // 5-field cron; empty = not daemon-scheduled
+	Enabled      bool   `toml:"enabled"`
+	// Contacts resolves attendees through the Mac's Contacts app; nil = on.
+	Contacts *bool `toml:"contacts"`
+	// ContactsPath is the Contacts data folder; empty = macOS's default.
+	ContactsPath string `toml:"contacts_path"`
+	// PhoneCountryCode lets national-format Contacts phone numbers convert to
+	// E.164, for example "1" or "44". Empty = only international numbers.
+	PhoneCountryCode string `toml:"phone_country_code"`
+}
+
+// EffectiveAccountEmail returns the normalized primary identity configured
+// for this source.
+func (s MuesliSource) EffectiveAccountEmail() (string, error) {
+	return effectiveMeetingAccountEmail("muesli", s.Identifier, s.AccountEmail)
+}
+
+// DefaultMuesliDBPath is where the stable Muesli app keeps its database.
+func DefaultMuesliDBPath() string {
+	return expandPath(filepath.Join("~", "Library", "Application Support", "Muesli", "muesli.db"))
+}
+
+// ContactsEnabled reports whether attendees are resolved through Contacts.
+func (s MuesliSource) ContactsEnabled() bool {
+	return s.Contacts == nil || *s.Contacts
+}
+
+// DefaultContactsPath is where macOS keeps the Contacts stores.
+func DefaultContactsPath() string {
+	return expandPath(filepath.Join("~", "Library", "Application Support", "AddressBook"))
+}
+
+// EffectiveContactsPath returns the configured Contacts folder, or macOS's.
+func (s MuesliSource) EffectiveContactsPath() string {
+	if strings.TrimSpace(s.ContactsPath) == "" {
+		return DefaultContactsPath()
+	}
+	return s.ContactsPath
+}
+
+// EffectiveDBPath returns the configured database path, or Muesli's default.
+func (s MuesliSource) EffectiveDBPath() string {
+	if strings.TrimSpace(s.DBPath) == "" {
+		return DefaultMuesliDBPath()
+	}
+	return s.DBPath
+}
+
 // EffectiveAccountEmail returns the normalized primary identity configured
 // for this source.
 func (s CirclebackSource) EffectiveAccountEmail() (string, error) {
@@ -1740,6 +1803,9 @@ func (c *Config) applyMeetingSourceDefaults() {
 	}
 	if len(c.NotionMeetings) == 1 && c.NotionMeetings[0].Identifier == "" {
 		c.NotionMeetings[0].Identifier = "default"
+	}
+	if len(c.Muesli) == 1 && c.Muesli[0].Identifier == "" {
+		c.Muesli[0].Identifier = "default"
 	}
 }
 
@@ -1809,6 +1875,26 @@ func (c *Config) validateMeetingSources() error {
 			c.NotionMeetings[i].AccountEmail = email
 		}
 	}
+	muesliIDs := make([]string, len(c.Muesli))
+	for i, s := range c.Muesli {
+		muesliIDs[i] = s.Identifier
+	}
+	if err := check("muesli", muesliIDs); err != nil {
+		return err
+	}
+	for i := range c.Muesli {
+		email, err := c.Muesli[i].EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		c.Muesli[i].AccountEmail = email
+		code := strings.TrimPrefix(strings.TrimSpace(c.Muesli[i].PhoneCountryCode), "+")
+		if code != "" && (len(code) > 3 || strings.Trim(code, "0123456789") != "" || code[0] == '0') {
+			return fmt.Errorf("[[muesli]] identifier %q has invalid phone_country_code %q; use 1 to 3 digits such as \"1\" or \"44\"",
+				c.Muesli[i].Identifier, c.Muesli[i].PhoneCountryCode)
+		}
+		c.Muesli[i].PhoneCountryCode = code
+	}
 	return nil
 }
 
@@ -1875,6 +1961,29 @@ func (c *Config) GetNotionMeetingsSource(identifier string) *NotionMeetingsSourc
 func (c *Config) ScheduledNotionMeetingsSources() []NotionMeetingsSource {
 	var out []NotionMeetingsSource
 	for _, src := range c.NotionMeetings {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
+// GetMuesliSource returns the configured Muesli source matching identifier
+// (case-insensitive), or nil.
+func (c *Config) GetMuesliSource(identifier string) *MuesliSource {
+	for _, src := range c.Muesli {
+		if strings.EqualFold(src.Identifier, identifier) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+// ScheduledMuesliSources returns enabled Muesli sources with a cron schedule.
+func (c *Config) ScheduledMuesliSources() []MuesliSource {
+	var out []MuesliSource
+	for _, src := range c.Muesli {
 		if src.Enabled && src.Schedule != "" {
 			out = append(out, src)
 		}
