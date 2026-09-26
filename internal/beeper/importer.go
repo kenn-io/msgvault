@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -27,6 +28,9 @@ var errRetryPage = errors.New("retry page next run")
 var checkpointMinInterval = 15 * time.Second
 
 const (
+	// stoppedImportFinalizeTimeout reserves a small bounded window for
+	// checkpoint and terminal sync writes after the scheduled request budget.
+	stoppedImportFinalizeTimeout = 15 * time.Second
 	// checkpointPageInterval flushes the sync checkpoint every N pages inside a
 	// single chat backfill. Per-chat-only checkpointing is insufficient here:
 	// one chat can hold over a million messages (tens of thousands of pages).
@@ -75,6 +79,35 @@ type chatVisit struct {
 	Chat
 
 	tailOnly bool
+}
+
+var errBeeperEnumerationStopped = errors.New("beeper chat enumeration stopped at budget boundary")
+var errBeeperBudgetExpired = errors.New("beeper scheduled budget expired")
+
+func (o ImportOptions) requestContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if o.StopAt.IsZero() {
+		return context.WithCancel(ctx)
+	}
+	return context.WithDeadline(ctx, o.StopAt)
+}
+
+func (o ImportOptions) finalizeContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	deadline := time.Now().Add(stoppedImportFinalizeTimeout)
+	if !o.StopAt.IsZero() && o.StopAt.Add(stoppedImportFinalizeTimeout).Before(deadline) {
+		deadline = o.StopAt.Add(stoppedImportFinalizeTimeout)
+	}
+	return context.WithDeadline(context.WithoutCancel(ctx), deadline)
+}
+
+func (o ImportOptions) budgetError(parent context.Context, err error) error {
+	if err != nil && parent.Err() == nil && o.budgetExpired() {
+		return errBeeperBudgetExpired
+	}
+	return err
+}
+
+func (o ImportOptions) budgetExpired() bool {
+	return !o.StopAt.IsZero() && !time.Now().Before(o.StopAt)
 }
 
 func (cc *chatScope) limitReached() bool {
@@ -178,18 +211,48 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		state = NewSyncState()
 		state.Anchors = anchors
 	}
+	if opts.stopRequested() {
+		sum.Stopped = true
+		return sum, nil
+	}
 
 	// Heal rows derived by an older build before syncing new ones, so an
 	// upgraded archive converges without the user knowing to run a repair.
 	// Ledger-gated, so this costs one indexed lookup on every later run.
-	rsum, ran, rerr := rederive.RunIfStale(ctx, imp.store, sourceTypeBeeper, opts.AccountID, src.ID, opts.Progress)
-	if rerr != nil {
-		return nil, rerr
+	repairCtx, cancelRepair := opts.requestContext(ctx)
+	repairProgress := opts.Progress
+	if opts.ShouldStop != nil {
+		// RepairSource reports progress at batch boundaries. Use those points
+		// to turn scheduler preemption into context cancellation so a long
+		// offline repair yields without advancing its ledger.
+		repairProgress = func(message string) {
+			if opts.stopRequested() {
+				cancelRepair()
+			}
+			if opts.Progress != nil {
+				opts.Progress(message)
+			}
+		}
 	}
+	rsum, ran, rerr := rederive.RunIfStale(repairCtx, imp.store, sourceTypeBeeper, opts.AccountID, src.ID, repairProgress)
+	cancelRepair()
+	rerr = opts.budgetError(ctx, rerr)
 	if ran && rsum != nil {
 		sum.BodiesRepaired = rsum.BodiesRewritten
 		sum.AttachmentsRetagged = rsum.AttachmentsTagged
 		sum.Errors += rsum.Errors
+	}
+	if errors.Is(rerr, errBeeperBudgetExpired) ||
+		(errors.Is(rerr, context.Canceled) && ctx.Err() == nil && opts.stopRequested()) {
+		sum.Stopped = true
+		return sum, nil
+	}
+	if rerr != nil {
+		return nil, rerr
+	}
+	if opts.stopRequested() {
+		sum.Stopped = true
+		return sum, nil
 	}
 
 	syncID, err := imp.store.StartSync(src.ID, sourceTypeBeeper)
@@ -201,7 +264,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	// defer records them on the run.
 	defer func() {
 		if err != nil {
-			_ = imp.store.FailSync(syncID, err.Error())
+			if sum.Stopped {
+				failCtx, cancel := opts.finalizeContext(ctx)
+				defer cancel()
+				_ = imp.store.FailSyncContext(failCtx, syncID, err.Error())
+			} else {
+				_ = imp.store.FailSync(syncID, err.Error())
+			}
 		}
 	}()
 
@@ -213,27 +282,80 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 
 	// Message IDs are only unique per Beeper installation; verify the anchor
 	// messages still exist unchanged before trusting stored cursors.
-	if err = imp.verifyAnchors(ctx, syncID, src.ID, state); err != nil {
+	if opts.budgetExpired() {
+		sum.Stopped = true
+	}
+	if opts.stopRequested() {
+		sum.Stopped = true
+	}
+	if !sum.Stopped {
+		requestCtx, cancel := opts.requestContext(ctx)
+		verifyErr := imp.verifyAnchors(requestCtx, syncID, src.ID, state)
+		cancel()
+		if errors.Is(verifyErr, ErrNeedsReanchor) {
+			markerCtx, cancelMarker := opts.finalizeContext(ctx)
+			markerErr := imp.store.SetArchiveMarker(
+				markerCtx,
+				store.BeeperReanchorMarkerKey(src.ID),
+				"Beeper message IDs may have been reassigned; manual verification is required.",
+			)
+			cancelMarker()
+			err = errors.Join(verifyErr, markerErr)
+		} else {
+			err = opts.budgetError(ctx, verifyErr)
+			if err == nil && !opts.Scheduled && !opts.stopRequested() {
+				markerCtx, cancelMarker := opts.finalizeContext(ctx)
+				err = imp.store.DeleteArchiveMarker(markerCtx, store.BeeperReanchorMarkerKey(src.ID))
+				cancelMarker()
+			}
+		}
+		if errors.Is(err, errBeeperBudgetExpired) {
+			err = nil
+			sum.Stopped = true
+		}
+	}
+	if err != nil {
 		return sum, err
 	}
 	// Accepting a match and applying its participant link are two
 	// transactions, so a crash between them can leave an accepted match
 	// unlinked. Finish those first; a contested pair must not block a sync.
-	if applied, aerr := imp.store.ApplyAcceptedIdentityMatchesContext(ctx, 0); aerr != nil {
-		sum.IdentityReplayErrors++
-		sum.Errors++
-		slog.Warn("re-applying accepted identity matches failed", "error", aerr)
-	} else if applied > 0 {
-		slog.Info("applied accepted identity matches", "count", applied)
+	if opts.stopRequested() {
+		sum.Stopped = true
+	}
+	if !sum.Stopped {
+		identityCtx, cancelIdentity := opts.requestContext(ctx)
+		applied, aerr := imp.store.ApplyAcceptedIdentityMatchesContext(identityCtx, 0)
+		cancelIdentity()
+		aerr = opts.budgetError(ctx, aerr)
+		if errors.Is(aerr, errBeeperBudgetExpired) ||
+			(errors.Is(aerr, context.Canceled) && ctx.Err() == nil && opts.stopRequested()) {
+			sum.Stopped = true
+		} else if aerr != nil {
+			sum.IdentityReplayErrors++
+			sum.Errors++
+			slog.Warn("re-applying accepted identity matches failed", "error", aerr)
+		} else if applied > 0 {
+			slog.Info("applied accepted identity matches", "count", applied)
+		}
+		if opts.stopRequested() {
+			sum.Stopped = true
+		}
 	}
 
 	// A tail scan must see every chat, not just recently-active ones: a chat
 	// gains backfilled history without its lastActivity moving, so the usual
 	// enumeration filter would skip exactly the chats worth probing.
 	tailScan := opts.Full || tailScanDue(state.LastTailScan, start)
+	if tailScan && state.TailScanStarted == "" {
+		state.TailScanStarted = tailScanCycleID(start)
+	}
 
 	reconcileCutoff := start.Add(-reconcileWindow)
-	chats, err := imp.enumerateChats(ctx, syncID, opts, state, reconcileCutoff, tailScan, sum)
+	var chats []chatVisit
+	if !sum.Stopped {
+		chats, err = imp.enumerateChats(ctx, syncID, opts, state, reconcileCutoff, tailScan, sum)
+	}
 	if err != nil {
 		return sum, err
 	}
@@ -241,21 +363,64 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	// Reconciliation re-walks each active chat's last-24h head to catch
 	// in-place edits/deletions/reaction changes the forward-only cursor cannot
 	// see. Cheap on re-runs: already-stored media is never re-downloaded.
-	maxActivity := parseWatermark(state.ListWatermark)
+	// Freeze the discovery boundary for this cycle. New activity on a chat
+	// already visited belongs to the next cycle and must remain discoverable.
+	if state.CycleWatermark == "" {
+		maxActivity := parseWatermark(state.ListWatermark)
+		for _, ch := range chats {
+			if ch.LastActivity.After(maxActivity) {
+				maxActivity = ch.LastActivity
+			}
+		}
+		if !maxActivity.IsZero() {
+			state.CycleWatermark = formatWatermark(maxActivity)
+		}
+	}
+	orderTailsFirst(chats, state)
 	total := len(chats)
+	// Keep the existing scan identity and watermark until every chat's tail
+	// probe completes, so a failed probe is retried on the next scheduled run.
+	tailScanComplete := true
 	for idx := range chats {
+		if sum.Stopped {
+			break
+		}
 		visit := &chats[idx]
 		ch := &visit.Chat
 		if err = ctx.Err(); err != nil {
 			return sum, err
 		}
-		if ch.LastActivity.After(maxActivity) {
-			maxActivity = ch.LastActivity
+		if cs := state.Chats[ch.ID]; cs != nil && cs.Visited {
+			continue
 		}
+		if visit.tailOnly {
+			if cs := state.Chats[ch.ID]; cs != nil && cs.TailProbed == state.TailScanStarted {
+				continue // already probed earlier in this tail scan
+			}
+		}
+		if opts.stopRequested() {
+			sum.Stopped = true
+			break
+		}
+		fetchErrorsBefore := sum.FetchErrors
 		var convCount int64
-		convCount, err = imp.syncChat(ctx, syncID, src.ID, ch, opts, state, reconcileCutoff, tailScan, visit.tailOnly, sum)
+		var tailProbeComplete bool
+		convCount, tailProbeComplete, err = imp.syncChat(
+			ctx, syncID, src.ID, ch, opts, state, reconcileCutoff, tailScan, visit.tailOnly, sum,
+		)
 		if err != nil {
 			return sum, err
+		}
+		if tailScan && !tailProbeComplete {
+			tailScanComplete = false
+		}
+		if tailScan && tailProbeComplete && !sum.Stopped {
+			state.EnsureChat(ch.ID).TailProbed = state.TailScanStarted
+		}
+		// Cleanup can notice a stop after the chat itself finished. Preserve
+		// that completed visit so the next tick still reaches later chats.
+		if tailProbeComplete && sum.FetchErrors == fetchErrorsBefore {
+			state.EnsureChat(ch.ID).Visited = true
 		}
 		sum.ChatsProcessed++
 		if opts.Progress != nil {
@@ -263,49 +428,129 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		}
 		// Flush checkpoint so an interrupted run can resume from this point.
 		imp.checkpoint(syncID, state, sum)
+		if sum.Stopped {
+			break
+		}
 	}
-	if err = ctx.Err(); err != nil {
-		return sum, err
+	if !sum.Stopped {
+		if err = ctx.Err(); err != nil {
+			return sum, err
+		}
 	}
-	// Advance the discovery watermark only for fetch-clean runs: a fetch error
-	// means some chat's messages are still missing, so it must stay
-	// discoverable by the next run's lastActivityAfter filter.
-	if sum.FetchErrors == 0 && !maxActivity.IsZero() {
-		state.ListWatermark = formatWatermark(maxActivity)
+	// Advance the discovery watermark only for fetch-clean runs that visited
+	// every chat: a fetch error or an early stop means some chat's messages
+	// are still missing, so it must stay discoverable by the next run's
+	// lastActivityAfter filter.
+	if sum.FetchErrors == 0 && !sum.Stopped && state.CycleWatermark != "" {
+		state.ListWatermark = state.CycleWatermark
 	}
-	// Record the scan only on a fetch-clean run: a run that failed partway
-	// through may not have probed every chat, and re-probing costs one request
-	// per chat rather than any lost data.
-	if tailScan && sum.FetchErrors == 0 {
+	if !sum.Stopped {
+		state.CycleWatermark = ""
+		for _, cs := range state.Chats {
+			cs.Visited = false
+		}
+	}
+	// Record the scan only on a fetch-clean, complete run: a run that failed
+	// or stopped partway through may not have probed every chat, and
+	// re-probing costs one request per chat rather than any lost data.
+	if tailScan && sum.FetchErrors == 0 && tailScanComplete && !sum.Stopped {
 		state.LastTailScan = formatWatermark(start)
+		state.TailScanStarted = ""
 	}
 
 	// Never complete a run under-anchored: incremental-only runs skip the
 	// backfill path that normally arms probes, and persisting none would
 	// leave the reinstall guard on its slower archived-sample fallback.
-	imp.rearmAnchors(ctx, chats, state)
+	if !sum.Stopped {
+		requestCtx, cancel := opts.requestContext(ctx)
+		imp.rearmAnchors(requestCtx, chats, state)
+		cancel()
+		if opts.stopRequested() {
+			sum.Stopped = true
+		}
+	}
 
-	if err = imp.store.RecomputeConversationStats(src.ID); err != nil {
-		return sum, err
+	finalizeCtx := ctx
+	if sum.Stopped {
+		var cancel context.CancelFunc
+		finalizeCtx, cancel = opts.finalizeContext(ctx)
+		defer cancel()
 	}
 	// Mid-run checkpoints are throttled, so persist the final counters before
 	// completing (CompleteSync only writes status and cursor).
-	imp.checkpointNow(syncID, state, sum)
-	if sum.FetchErrors > 0 {
-		// Page failures are isolated so healthy chats still sync, but the run
-		// must remain failed and caller-visible. The checkpoint above preserves
-		// all partial progress for the next attempt; the deferred FailSync marks
-		// the run consistently for diagnostics and scheduler monitoring.
-		sum.Duration = time.Since(start)
-		err = fmt.Errorf("partial Beeper sync: %d fetch error(s)", sum.FetchErrors)
+	if err = imp.checkpointNowContext(finalizeCtx, syncID, state, sum); err != nil {
 		return sum, err
 	}
 	blob, _ := state.Marshal()
-	if err = imp.store.CompleteSync(syncID, blob); err != nil {
+	if err = imp.store.CompleteSyncContext(finalizeCtx, syncID, blob); err != nil {
 		return sum, err
 	}
 	sum.Duration = time.Since(start)
+	if sum.FetchErrors > 0 {
+		// Page failures are isolated so healthy chats still sync. The run
+		// completes (with its error count and per-chat error items) so healthy
+		// progress becomes the next run's cursor without marking the run
+		// failed, which would force a full analytics cache rebuild. The held
+		// watermark keeps the failed chats discoverable, and the typed error
+		// keeps the partial result visible to callers.
+		return sum, &PartialSyncError{FetchErrors: sum.FetchErrors}
+	}
 	return sum, nil
+}
+
+// PartialSyncError reports a completed run in which some chat fetches failed
+// even after retries. The failed chats are retried on the next run.
+type PartialSyncError struct {
+	FetchErrors int64
+}
+
+func (e *PartialSyncError) Error() string {
+	return fmt.Sprintf("partial Beeper sync: %d fetch error(s)", e.FetchErrors)
+}
+
+// fetchRetryBackoff is the wait before each retry of a failed message-page
+// fetch. Variable only so tests can shorten it.
+var fetchRetryBackoff = []time.Duration{500 * time.Millisecond, 2 * time.Second}
+
+// listMessagesPage fetches one message page, retrying transient failures
+// with backoff. A missing chat or a cancelled context is returned at once.
+func (imp *Importer) listMessagesPage(ctx context.Context, opts ImportOptions, chatID, cursor, direction string) (*ListMessagesOutput, error) {
+	requestCtx, cancel := opts.requestContext(ctx)
+	defer cancel()
+	page, err := imp.client.ListMessagesPage(requestCtx, chatID, cursor, direction)
+	for _, wait := range fetchRetryBackoff {
+		if err == nil || errors.Is(err, ErrNotFound) || errors.Is(err, errPermanentResponse) || requestCtx.Err() != nil {
+			break
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-requestCtx.Done():
+			timer.Stop()
+			return nil, opts.budgetError(ctx, requestCtx.Err())
+		case <-timer.C:
+		}
+		page, err = imp.client.ListMessagesPage(requestCtx, chatID, cursor, direction)
+	}
+	return page, opts.budgetError(ctx, err)
+}
+
+// orderTailsFirst runs chats with new messages on a finished history first,
+// then chats still backfilling, then quiet chats enumerated only for the tail
+// probe, keeping the listing order within each group. New messages never wait
+// behind a large backfill, and a long probe scan never starves backfills.
+func orderTailsFirst(chats []chatVisit, state *SyncState) {
+	rank := func(v chatVisit) int {
+		if v.tailOnly {
+			return 2
+		}
+		if cs := state.Chats[v.ID]; cs != nil && cs.Done && cs.Newest != "" {
+			return 0
+		}
+		return 1
+	}
+	slices.SortStableFunc(chats, func(a, b chatVisit) int {
+		return rank(a) - rank(b)
+	})
 }
 
 // enumerateChats lists the chats this run must visit: every chat active in
@@ -319,7 +564,13 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts Impo
 	}
 	var chats []chatVisit
 	seen := map[string]bool{}
-	err := imp.client.AllChats(ctx, params, func(ch Chat) error {
+	requestCtx, cancel := opts.requestContext(ctx)
+	defer cancel()
+	err := imp.client.AllChats(requestCtx, params, func(ch Chat) error {
+		if opts.stopRequested() {
+			sum.Stopped = true
+			return errBeeperEnumerationStopped
+		}
 		seen[ch.ID] = true
 		tailOnly := tailScan && !activityCutoff.IsZero() && !ch.LastActivity.After(activityCutoff)
 		if cs := state.Chats[ch.ID]; cs != nil && !cs.Done {
@@ -329,14 +580,33 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts Impo
 		chats = append(chats, chatVisit{Chat: ch, tailOnly: tailOnly})
 		return nil
 	})
+	err = opts.budgetError(ctx, err)
+	if errors.Is(err, errBeeperBudgetExpired) {
+		sum.Stopped = true
+		return chats, nil
+	}
+	if errors.Is(err, errBeeperEnumerationStopped) {
+		return chats, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	for chatID, cs := range state.Chats {
+		if opts.stopRequested() {
+			sum.Stopped = true
+			return chats, nil
+		}
 		if cs == nil || cs.Done || seen[chatID] {
 			continue
 		}
-		detail, gerr := imp.client.GetChat(ctx, chatID)
+		requestCtx, cancel := opts.requestContext(ctx)
+		detail, gerr := imp.client.GetChat(requestCtx, chatID)
+		cancel()
+		gerr = opts.budgetError(ctx, gerr)
+		if errors.Is(gerr, errBeeperBudgetExpired) {
+			sum.Stopped = true
+			return chats, nil
+		}
 		if errors.Is(gerr, ErrNotFound) {
 			// The chat no longer exists in Beeper (left/deleted); there is
 			// nothing more to fetch. Mark it complete so it stops pinning the
@@ -381,16 +651,34 @@ func chatActivityCutoff(opts ImportOptions, state *SyncState, reconcileCutoff ti
 }
 
 // syncChat ensures the conversation and its participants, then backfills or
-// incrementally extends the chat's messages. Returns the number of messages
-// processed for this chat.
-func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan, tailOnly bool, sum *ImportSummary) (int64, error) {
+// incrementally extends the chat's messages. Returns the processed message
+// count, whether its tail-scan work completed, and any fatal error.
+func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan, tailOnly bool, sum *ImportSummary) (_ int64, _ bool, err error) {
 	convID, membershipComplete, membership, err := imp.ensureConversation(
-		ctx, syncID, sourceID, ch, opts.AccountID, sum,
+		ctx, syncID, sourceID, ch, opts, sum,
 	)
+	if errors.Is(err, errBeeperBudgetExpired) {
+		sum.Stopped = true
+		return 0, false, nil
+	}
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 
+	defer func() {
+		statsCtx, cancel := opts.finalizeContext(ctx)
+		defer cancel()
+		statsErr := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, convID)
+		statsErr = opts.budgetError(ctx, statsErr)
+		if opts.stopRequested() {
+			sum.Stopped = true
+			if errors.Is(statsErr, errBeeperBudgetExpired) || errors.Is(statsErr, context.Canceled) ||
+				errors.Is(statsErr, context.DeadlineExceeded) || ctx.Err() != nil {
+				statsErr = nil
+			}
+		}
+		err = errors.Join(err, statsErr)
+	}()
 	cs := state.EnsureChat(ch.ID)
 	cc := &chatScope{
 		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID,
@@ -402,21 +690,25 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		ParticipantCount: membership.policyCount(opts.MediaPolicy),
 	}
 	before := sum.MessagesProcessed
+	tailProbeComplete := true
 
 	// Re-open a completed chat whose oldest end has grown since it was walked;
 	// clearing Done routes it back through the backfill path below.
-	if cs.Done && tailScan {
+	if cs.Done && tailScan && cs.TailProbed != state.TailScanStarted {
 		var reopened bool
-		reopened, err = imp.probeChatTail(ctx, cc, sum)
+		reopened, tailProbeComplete, err = imp.probeChatTail(ctx, cc, sum)
 		if err != nil {
-			return sum.MessagesProcessed - before, err
+			return sum.MessagesProcessed - before, false, err
+		}
+		if sum.Stopped {
+			return sum.MessagesProcessed - before, false, nil
 		}
 		if tailOnly && !reopened && cs.Newest != "" {
 			// This quiet chat was enumerated only for the probe. With no new
 			// history, its incremental and reconciliation paths have no work.
 			// Cursorless chats still need the empty-chat recovery below.
 			imp.flushReplies(cc, sum)
-			return sum.MessagesProcessed - before, nil
+			return sum.MessagesProcessed - before, tailProbeComplete, nil
 		}
 	}
 
@@ -426,12 +718,15 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		err = imp.backfillChat(ctx, cc, state, sum)
 	} else {
 		err = imp.incrementalChat(ctx, cc, sum)
-		if err == nil && !cc.limitReached() {
+		if err == nil && !sum.Stopped && !cc.limitReached() {
 			err = imp.reconcileChat(ctx, cc, reconcileCutoff, sum)
 		}
 	}
 	if err != nil {
-		return sum.MessagesProcessed - before, err
+		return sum.MessagesProcessed - before, tailProbeComplete, err
+	}
+	if sum.Stopped {
+		return sum.MessagesProcessed - before, false, nil
 	}
 
 	// Reply pairs link parents by lookup, so flushing waits until the
@@ -440,7 +735,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	if cs.Done {
 		imp.flushReplies(cc, sum)
 	}
-	return sum.MessagesProcessed - before, nil
+	return sum.MessagesProcessed - before, tailProbeComplete, nil
 }
 
 // chatMembership is the roster media policy weighs for one chat: the
@@ -483,12 +778,18 @@ func (m chatMembership) policyCount(policy attachmentpolicy.Policy) int {
 // evaluate the same membership rather than the participant rows, which a
 // truncated listing undercounts.
 func (imp *Importer) ensureConversation(
-	ctx context.Context, syncID, sourceID int64, ch *Chat, accountID string, sum *ImportSummary,
+	ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, sum *ImportSummary,
 ) (int64, bool, chatMembership, error) {
 	detail := ch
 	membershipComplete := !ch.Participants.HasMore
 	if ch.Participants.HasMore {
-		d, gerr := imp.client.GetChat(ctx, ch.ID)
+		requestCtx, cancel := opts.requestContext(ctx)
+		d, gerr := imp.client.GetChat(requestCtx, ch.ID)
+		cancel()
+		gerr = opts.budgetError(ctx, gerr)
+		if errors.Is(gerr, errBeeperBudgetExpired) {
+			return 0, false, chatMembership{}, gerr
+		}
 		if gerr != nil {
 			if ctx.Err() != nil {
 				return 0, false, chatMembership{}, ctx.Err()
@@ -527,7 +828,7 @@ func (imp *Importer) ensureConversation(
 	// Keep the resolver tied to the import option, not to any account value
 	// echoed by the remote chat payload. This also covers direct callers of
 	// ensureConversation that do not go through Import's cache reset.
-	imp.res.accountID = accountID
+	imp.res.accountID = opts.AccountID
 	for i := range detail.Participants.Items {
 		p := &detail.Participants.Items[i]
 		pid, rerr := imp.res.resolveUser(&p.User)
@@ -563,7 +864,7 @@ func (imp *Importer) ensureConversation(
 	for _, member := range resolvedMembers {
 		imp.captureObservations(
 			ctx, member.participantID, member.user, detail,
-			sourceID, accountID, bridgePrefix, sum,
+			sourceID, opts.AccountID, bridgePrefix, sum,
 		)
 	}
 	return convID, membershipComplete, membership, nil
@@ -578,26 +879,42 @@ func (imp *Importer) ensureConversation(
 // misbehaviour backfillChat's recentIDWindow defends against), so a page of
 // familiar messages must leave the chat done or every scan would re-walk it.
 //
-// Best-effort except for context cancellation, which must abort the run so the
-// scan remains due. Other probe failures leave the chat completed and are not
-// counted as fetch errors: the messages they would find are ones the archive
-// has never had, so deferring them to the next scan loses nothing captured.
-func (imp *Importer) probeChatTail(ctx context.Context, cc *chatScope, sum *ImportSummary) (bool, error) {
+// A failed probe leaves the scan due for immediate retry. Context cancellation
+// aborts the run; provider page failures are counted as fetch errors so callers
+// can report the partial run.
+func (imp *Importer) probeChatTail(ctx context.Context, cc *chatScope, sum *ImportSummary) (bool, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return false, false, err
 	}
-	cursor := cc.cs.Oldest
+	clearProbeCursor := func() { cc.cs.TailProbeCursor = "" }
+	cursor := cc.cs.TailProbeCursor
 	if cursor == "" {
-		return false, nil
+		cursor = cc.cs.Oldest
+	}
+	if cursor == "" {
+		clearProbeCursor()
+		return false, true, nil
 	}
 	recent := newRecentIDWindow(recentIDWindowPages)
 	for range maxTailProbePages {
-		page, err := imp.client.ListMessagesPage(ctx, cc.chatID, cursor, "before")
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return false, ctxErr
+		page, err := imp.listMessagesPage(ctx, cc.opts, cc.chatID, cursor, "before")
+		if errors.Is(err, errBeeperBudgetExpired) {
+			sum.Stopped = true
+			return false, false, nil
 		}
-		if err != nil || len(page.Items) == 0 {
-			return false, nil //nolint:nilerr // non-cancellation probe failures are deferred to the next scan
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, false, ctxErr
+		}
+		if err != nil {
+			imp.recordItem(cc.syncID, cc.chatID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", err)
+			sum.FetchErrors++
+			sum.Errors++
+			clearProbeCursor()
+			return false, false, nil
+		}
+		if len(page.Items) == 0 {
+			clearProbeCursor()
+			return false, true, nil
 		}
 		ids := make([]string, 0, len(page.Items))
 		pageIDs := make([]string, 0, len(page.Items))
@@ -614,7 +931,8 @@ func (imp *Importer) probeChatTail(ctx context.Context, cc *chatScope, sum *Impo
 			}
 		}
 		if newItems == 0 {
-			return false, nil
+			clearProbeCursor()
+			return false, true, nil
 		}
 		recent.add(pageIDs)
 
@@ -622,32 +940,42 @@ func (imp *Importer) probeChatTail(ctx context.Context, cc *chatScope, sum *Impo
 			archived, err := imp.store.ArchivedSourceMessageIDs(cc.sourceID, ids)
 			if err != nil {
 				sum.Errors++
-				return false, nil //nolint:nilerr // a later scan retries this best-effort archive lookup
+				clearProbeCursor()
+				return false, false, nil //nolint:nilerr // keep the scan due so the next run retries this best-effort lookup
 			}
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return false, ctxErr
+				return false, false, ctxErr
 			}
 			for _, id := range ids {
 				if _, ok := archived[id]; !ok {
 					cc.cs.Done = false
 					sum.ChatsReopened++
-					return true, nil
+					clearProbeCursor()
+					return true, true, nil
 				}
 			}
-			return false, nil
+			clearProbeCursor()
+			return false, true, nil
 		}
 
 		if !page.HasMore || page.OldestCursor == "" || page.OldestCursor == cursor {
-			return false, nil
+			clearProbeCursor()
+			return false, true, nil
 		}
 		cursor = page.OldestCursor
+		cc.cs.TailProbeCursor = cursor
+		if cc.opts.stopRequested() {
+			sum.Stopped = true
+			return false, false, nil
+		}
 	}
 
 	// A very long event-only run is unusual. Route it through normal backfill
 	// rather than letting the probe bound hide content on every future scan.
+	clearProbeCursor()
 	cc.cs.Done = false
 	sum.ChatsReopened++
-	return true, nil
+	return true, true, nil
 }
 
 // captureObservations records the addresses observed on one chat participant.
@@ -748,8 +1076,12 @@ func (imp *Importer) backfillChat(ctx context.Context, cc *chatScope, state *Syn
 		if cursor == "" {
 			direction = "" // first page: newest messages
 		}
-		page, err := imp.client.ListMessagesPage(ctx, cc.chatID, cursor, direction)
+		page, err := imp.listMessagesPage(ctx, cc.opts, cc.chatID, cursor, direction)
 		if err != nil {
+			if errors.Is(err, errBeeperBudgetExpired) {
+				sum.Stopped = true
+				return nil
+			}
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -782,7 +1114,13 @@ func (imp *Importer) backfillChat(ctx context.Context, cc *chatScope, state *Syn
 			}
 			newItems++
 			if err := imp.processMessage(ctx, cc, m, false, sum); err != nil {
+				if errors.Is(err, errRetryPage) && sum.Stopped {
+					return nil
+				}
 				return err
+			}
+			if sum.Stopped {
+				return nil
 			}
 		}
 		cc.chargeBudget(newItems)
@@ -806,6 +1144,10 @@ func (imp *Importer) backfillChat(ctx context.Context, cc *chatScope, state *Syn
 		if cc.limitReached() {
 			return nil // resumable: Done stays false
 		}
+		if cc.opts.stopRequested() {
+			sum.Stopped = true
+			return nil // resumable: Done stays false
+		}
 		if page.OldestCursor == "" {
 			// Defensive: hasMore without a cursor would loop on the same page.
 			return nil
@@ -825,8 +1167,12 @@ func (imp *Importer) incrementalChat(ctx context.Context, cc *chatScope, sum *Im
 		if cc.limitReached() {
 			return nil
 		}
-		page, err := imp.client.ListMessagesPage(ctx, cc.chatID, cursor, "after")
+		page, err := imp.listMessagesPage(ctx, cc.opts, cc.chatID, cursor, "after")
 		if err != nil {
+			if errors.Is(err, errBeeperBudgetExpired) {
+				sum.Stopped = true
+				return nil
+			}
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -844,9 +1190,15 @@ func (imp *Importer) incrementalChat(ctx context.Context, cc *chatScope, sum *Im
 		for i := range page.Items {
 			if err := imp.processMessage(ctx, cc, &page.Items[i], true, sum); err != nil {
 				if errors.Is(err, errRetryPage) {
+					if sum.Stopped {
+						return nil
+					}
 					return nil // cursor not advanced; next run retries this page
 				}
 				return err
+			}
+			if sum.Stopped {
+				return nil
 			}
 			processed++
 		}
@@ -859,6 +1211,10 @@ func (imp *Importer) incrementalChat(ctx context.Context, cc *chatScope, sum *Im
 		}
 		cursor = page.NewestCursor
 		cs.Newest = cursor
+		if cc.opts.stopRequested() {
+			sum.Stopped = true
+			return nil
+		}
 		if cc.limitReached() {
 			return nil
 		}
@@ -882,8 +1238,12 @@ func (imp *Importer) reconcileChat(ctx context.Context, cc *chatScope, cutoff ti
 		if cc.limitReached() {
 			return nil
 		}
-		page, err := imp.client.ListMessagesPage(ctx, cc.chatID, cursor, direction)
+		page, err := imp.listMessagesPage(ctx, cc.opts, cc.chatID, cursor, direction)
 		if err != nil {
+			if errors.Is(err, errBeeperBudgetExpired) {
+				sum.Stopped = true
+				return nil
+			}
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -903,11 +1263,21 @@ func (imp *Importer) reconcileChat(ctx context.Context, cc *chatScope, cutoff ti
 			// Targets in this window are re-persisted anyway, refreshing
 			// their embedded reactions[], so REACTION events need no refetch.
 			if err := imp.processMessage(ctx, cc, m, false, sum); err != nil {
+				if errors.Is(err, errRetryPage) && sum.Stopped {
+					return nil
+				}
 				return err
+			}
+			if sum.Stopped {
+				return nil
 			}
 			processed++
 		}
 		cc.chargeBudget(processed)
+		if cc.opts.stopRequested() {
+			sum.Stopped = true
+			return nil
+		}
 		if cc.limitReached() || reachedCutoff || len(page.Items) == 0 || !page.HasMore || page.OldestCursor == "" {
 			return nil
 		}
@@ -960,7 +1330,14 @@ func persistsMessageRow(m *Message) bool {
 // incremental cursor does not advance past the event — the reaction would
 // otherwise be lost, since its target is outside the reconcile window.
 func (imp *Importer) refreshReactionTarget(ctx context.Context, cc *chatScope, m *Message, sum *ImportSummary) error {
-	target, err := imp.client.GetMessage(ctx, cc.chatID, m.LinkedMessageID)
+	requestCtx, cancel := cc.opts.requestContext(ctx)
+	target, err := imp.client.GetMessage(requestCtx, cc.chatID, m.LinkedMessageID)
+	cancel()
+	err = cc.opts.budgetError(ctx, err)
+	if errors.Is(err, errBeeperBudgetExpired) {
+		sum.Stopped = true
+		return errRetryPage
+	}
 	if errors.Is(err, ErrNotFound) {
 		imp.recordItem(cc.syncID, m.ID, "reaction", store.SyncRunItemStatusSkipped, "beeper_reaction_target_missing", err)
 		return nil
@@ -1040,7 +1417,12 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	}
 
 	if len(m.Attachments) > 0 || (!cc.opts.NoMedia && cc.opts.AttachmentsDir != "") {
-		imp.persistAttachments(ctx, cc.syncID, messageID, m, cc.opts, sum)
+		requestCtx, cancel := cc.opts.requestContext(ctx)
+		imp.persistAttachments(requestCtx, cc.syncID, messageID, m, cc.opts, sum)
+		cancel()
+		if cc.opts.budgetExpired() {
+			sum.Stopped = true
+		}
 	}
 
 	if err := imp.persistMentions(messageID, m, sum); err != nil {
@@ -1142,18 +1524,24 @@ func (imp *Importer) checkpoint(syncID int64, state *SyncState, sum *ImportSumma
 // checkpointNow persists the sync state unconditionally: for the initial
 // resume-state write and the final counters, which must never be skipped.
 func (imp *Importer) checkpointNow(syncID int64, state *SyncState, sum *ImportSummary) {
+	_ = imp.checkpointNowContext(context.Background(), syncID, state, sum)
+}
+
+func (imp *Importer) checkpointNowContext(ctx context.Context, syncID int64, state *SyncState, sum *ImportSummary) error {
 	blob, err := state.Marshal()
 	if err != nil {
-		return
+		return err
 	}
-	if imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
+	err = imp.store.UpdateSyncCheckpointContext(ctx, syncID, &store.Checkpoint{
 		PageToken:         blob,
 		MessagesProcessed: sum.MessagesProcessed,
 		MessagesAdded:     sum.MessagesAdded,
 		ErrorsCount:       sum.Errors,
-	}) == nil {
+	})
+	if err == nil {
 		imp.lastCheckpoint = time.Now()
 	}
+	return err
 }
 
 // recordItem records a per-item outcome on the sync run.
@@ -1170,6 +1558,13 @@ func (imp *Importer) recordItem(syncID int64, sourceMessageID, phase, status, ki
 		ErrorKind:       kind,
 		ErrorMessage:    msg,
 	})
+}
+
+// tailScanCycleID names a tail scan by its start time. Fixed-width
+// nanoseconds keep IDs unique across back-to-back scans and make string
+// order chronological (SyncState.Merge compares them).
+func tailScanCycleID(t time.Time) string {
+	return t.UTC().Format("2006-01-02T15:04:05.000000000Z")
 }
 
 // tailScanDue reports whether completed chats should be re-probed this run.

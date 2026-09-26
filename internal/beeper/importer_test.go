@@ -1418,20 +1418,25 @@ func TestImportWatermarkHeldOnFetchError(t *testing.T) {
 	f.setMessageListFailure("!e2e:beeper.local", true)
 	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
 	require.ErrorContains(err, "partial Beeper sync")
+	var partial *PartialSyncError
+	require.ErrorAs(err, &partial, "fetch errors are reported as a typed partial result")
+	require.Positive(partial.FetchErrors)
 
-	// The failure is reported only after the healthy chat is processed and
-	// the resumable state is checkpointed. Monitoring sees a failed run while
-	// successful work from the same attempt remains archived.
+	// The failure is reported only after the healthy chat is processed. The
+	// run completes, so the failed-run watermark the analytics cache tracks
+	// does not move, while the error count keeps it visible.
 	var healthyCount int
 	require.NoError(st.DB().QueryRow(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = 'o1'`).Scan(&healthyCount))
 	require.Equal(1, healthyCount, "healthy chats must continue after another chat fails")
 	var status string
-	var cursorBefore sql.NullString
+	var errorsCount int
+	var cursorAfter sql.NullString
 	require.NoError(st.DB().QueryRow(`
-		SELECT status, cursor_before FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status, &cursorBefore))
-	require.Equal(store.SyncStatusFailed, status)
-	require.True(cursorBefore.Valid, "partial progress must remain checkpointed for retry")
+		SELECT status, errors_count, cursor_after FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status, &errorsCount, &cursorAfter))
+	require.Equal(store.SyncStatusCompleted, status)
+	require.Positive(errorsCount, "a partial run records its fetch errors")
+	require.True(cursorAfter.Valid, "partial progress is kept for the next run")
 
 	// Healed: the held-back watermark keeps the chat discoverable and the
 	// missed message is archived.

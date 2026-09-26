@@ -5,14 +5,17 @@ import type { StatsView } from "./statsView";
 
 export interface StatsResponse {
   active_messages: number;
+  as_of?: string;
   database_size_bytes: number;
   source_deleted_messages: number;
+  stale?: boolean;
   total_accounts: number;
   total_attachments: number;
   total_labels: number;
   total_messages: number;
   total_threads: number;
   vector_search?: StatsView;
+  vector_stats_unavailable?: boolean;
   vector_status?: string;
   vector_text_message_types?: string[];
   vector_text_status?: string;

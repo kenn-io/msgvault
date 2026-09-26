@@ -70,7 +70,16 @@ type Store struct {
 	cardDAVPersonOperationsMu sync.Mutex
 	cardDAVPersonOperations   map[int64]*cardDAVPersonOperation
 
-	sqliteOptimizeMu          sync.Mutex
+	sqliteOptimizeMu sync.Mutex
+	// syncOptimizeMu guards lastSyncOptimize, which throttles the planner
+	// maintenance a successful sync triggers (see optimizeAfterSync).
+	syncOptimizeMu   sync.Mutex
+	lastSyncOptimize time.Time
+	// syncOptimizeNow and checkpointRetryBackoff are test seams, nil in
+	// production.
+	syncOptimizeNow           func() time.Time
+	syncOptimizeHook          func()
+	checkpointRetryBackoff    []time.Duration
 	documentVectorOperationMu sync.Mutex
 	// Test-only seams into migration, backfill, and transaction paths, nil in
 	// production and settable only from test files. They belong to the
@@ -547,11 +556,23 @@ func (s *Store) CheckpointWAL() error {
 	return s.dialect.CheckpointWAL(s.db.DB)
 }
 
+// CheckpointWALContext forces a WAL checkpoint using ctx. SQLite checkpoints
+// can wait for readers, so scheduled maintenance should pass its job context.
+func (s *Store) CheckpointWALContext(ctx context.Context) error {
+	return s.dialect.CheckpointWALContext(ctx, s.db.DB)
+}
+
 // optimizeSQLite refreshes persistent query-planner statistics when SQLite
 // decides they are missing or stale. The 0x10000 bit makes SQLite consider all
 // tables instead of relying on query history from whichever pooled connection
 // database/sql selects. PostgreSQL maintains planner statistics server-side.
 func (s *Store) optimizeSQLite(ctx context.Context) error {
+	return s.optimizeSQLiteWithin(ctx, sqliteOptimizeTimeout)
+}
+
+// optimizeSQLiteWithin is optimizeSQLite with a caller-chosen budget covering
+// both the pool reservation and the statistics refresh.
+func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration) error {
 	if s.IsPostgreSQL() || s.readOnly {
 		return nil
 	}
@@ -561,7 +582,7 @@ func (s *Store) optimizeSQLite(ctx context.Context) error {
 		return nil
 	}
 	defer s.sqliteOptimizeMu.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, sqliteOptimizeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// Reserve every pool slot before refreshing statistics. ANALYZE loads its
@@ -584,6 +605,13 @@ func (s *Store) optimizeSQLite(ctx context.Context) error {
 		connections = append(connections, conn)
 	}
 
+	// Bound each ANALYZE to a sample so a large archive refreshes its
+	// statistics in milliseconds rather than scanning every index.
+	for _, conn := range connections {
+		if _, err := conn.ExecContext(ctx, "PRAGMA analysis_limit=1000"); err != nil {
+			return fmt.Errorf("limit SQLite planner statistics analysis: %w", err)
+		}
+	}
 	if _, err := connections[0].ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
 		return fmt.Errorf("optimize SQLite planner statistics: %w", err)
 	}
@@ -599,11 +627,52 @@ func (s *Store) optimizeSQLiteBestEffort(ctx context.Context, trigger string) {
 	logSQLiteOptimizeError(trigger, s.optimizeSQLite(ctx))
 }
 
+// syncOptimizeInterval throttles the planner maintenance successful syncs
+// trigger; the daemon's daily SQLite maintenance job covers the rest.
+const syncOptimizeInterval = 6 * time.Hour
+
+// optimizeAfterSync runs planner maintenance after a successful sync at most
+// once per syncOptimizeInterval, so busy archives do not pay a full pool
+// reservation after every sync.
+func (s *Store) optimizeAfterSync(ctx context.Context) {
+	now := time.Now()
+	if s.syncOptimizeNow != nil {
+		now = s.syncOptimizeNow()
+	}
+	s.syncOptimizeMu.Lock()
+	due := s.lastSyncOptimize.IsZero() || now.Sub(s.lastSyncOptimize) >= syncOptimizeInterval
+	if due {
+		s.lastSyncOptimize = now
+	}
+	s.syncOptimizeMu.Unlock()
+	if due {
+		if s.syncOptimizeHook != nil {
+			s.syncOptimizeHook()
+		}
+		s.optimizeSQLiteBestEffort(ctx, "successful sync")
+	}
+}
+
+// isSQLiteContention reports errors that mean the database was busy rather
+// than broken: expected on a loaded archive and retried later.
+func isSQLiteContention(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if sqliteErr, ok := errors.AsType[sqlite3.Error](err); ok {
+		switch sqliteErr.Code {
+		case sqlite3.ErrBusy, sqlite3.ErrLocked, sqlite3.ErrInterrupt:
+			return true
+		}
+	}
+	return false
+}
+
 func logSQLiteOptimizeError(trigger string, err error) {
 	if err == nil {
 		return
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if isSQLiteContention(err) {
 		slog.Debug("SQLite planner statistics maintenance interrupted",
 			"trigger", trigger,
 			"error", err.Error(),

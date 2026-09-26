@@ -6,11 +6,13 @@ package beeper
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestImportAnchorMismatchFailsFast(t *testing.T) {
@@ -36,8 +38,10 @@ func TestImportAnchorMismatchFailsFast(t *testing.T) {
 	// Simulate a reinstall/re-index: the anchor message ID now maps to a
 	// different message (timestamp changed).
 	ch := f.chat("!e2e:beeper.local")
+	var anchorTimestamp time.Time
 	for i := range ch.Msgs {
 		if ch.Msgs[i].ID == state.Anchors[0].MessageID {
+			anchorTimestamp = ch.Msgs[i].Timestamp
 			ch.Msgs[i].Timestamp = ch.Msgs[i].Timestamp.Add(time.Hour)
 		}
 	}
@@ -49,6 +53,11 @@ func TestImportAnchorMismatchFailsFast(t *testing.T) {
 	require.Error(err)
 	assert.Contains(err.Error(), "re-assigned")
 	assert.Contains(err.Error(), "re-add")
+	markerKey := fmt.Sprintf("beeper.reanchor_required:%d", src.ID)
+	marker, marked, err := st.GetArchiveMarker(t.Context(), markerKey)
+	require.NoError(err)
+	assert.True(marked, "anchor mismatch must persist a source-specific marker")
+	assert.Contains(marker, "reassigned")
 
 	// The failure is recorded on the sync run, and the resume state was
 	// checkpointed before the anchor check so no progress is lost.
@@ -71,6 +80,19 @@ func TestImportAnchorMismatchFailsFast(t *testing.T) {
 	var after int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&after))
 	assert.Equal(before, after, "no rows may be written after an anchor mismatch")
+
+	// A manual run that verifies the anchors again is the only path that clears
+	// the scheduled skip marker.
+	for i := range ch.Msgs {
+		if ch.Msgs[i].ID == state.Anchors[0].MessageID {
+			ch.Msgs[i].Timestamp = anchorTimestamp
+		}
+	}
+	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	_, marked, err = st.GetArchiveMarker(t.Context(), markerKey)
+	require.NoError(err)
+	assert.False(marked, "successful manual anchor verification clears the marker")
 }
 
 func TestImportAnchorLostMessageReanchors(t *testing.T) {
@@ -231,4 +253,50 @@ func TestVerifyAnchorsZeroAnchorsFallsBackToArchivedSample(t *testing.T) {
 	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
 	require.Error(err)
 	require.Contains(err.Error(), "re-add")
+}
+
+// reassignFirstAnchor imports the e2e chat and then shifts the first anchor
+// message's timestamp, as a Beeper reinstall would.
+func reassignFirstAnchor(t *testing.T, f *fakeBeeper, imp *Importer, st *store.Store) int64 {
+	t.Helper()
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(t, err)
+	src, err := st.GetOrCreateSource("beeper", "signal")
+	require.NoError(t, err)
+	run, err := st.GetLastSuccessfulSync(src.ID)
+	require.NoError(t, err)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(t, err)
+	require.NotEmpty(t, state.Anchors)
+	ch := f.chat("!e2e:beeper.local")
+	for i := range ch.Msgs {
+		if ch.Msgs[i].ID == state.Anchors[0].MessageID {
+			ch.Msgs[i].Timestamp = ch.Msgs[i].Timestamp.Add(time.Hour)
+		}
+	}
+	return src.ID
+}
+
+func TestImportRecoversAfterAnchorRepair(t *testing.T) {
+	require := require.New(t)
+	f := newFakeBeeper(t)
+	f.addChat(e2eChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	sourceID := reassignFirstAnchor(t, f, imp, st)
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.ErrorContains(err, "re-assigned")
+	// The operator restores the installation's original message IDs.
+	run, err := st.GetLastSuccessfulSync(sourceID)
+	require.NoError(err)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(err)
+	for i := range f.chat("!e2e:beeper.local").Msgs {
+		m := &f.chat("!e2e:beeper.local").Msgs[i]
+		if m.ID == state.Anchors[0].MessageID {
+			m.Timestamp = state.Anchors[0].Timestamp
+		}
+	}
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err, "the next run verifies the restored installation and resumes")
 }

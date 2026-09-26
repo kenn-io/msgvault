@@ -269,24 +269,15 @@ func TestBeeperMediaInvalidConfigUnregisters(t *testing.T) {
 	assert.True(consumerRegistered(t, st))
 }
 
-type yieldTracker struct {
-	yield atomic.Bool
-}
-
-func (y *yieldTracker) BeginWork() (func(), bool) { return func() {}, true }
-
-func (y *yieldTracker) BeginWorkContext(context.Context) (func(), bool) { return func() {}, true }
-
-func (y *yieldTracker) ShouldYield() bool { return y.yield.Load() }
-
 func TestBeeperMediaScheduledRoute(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st, blobs := storedBeeperVoiceNote(t)
 	t.Setenv(beeperMediaTestKeyEnv, "synthetic-key")
 	server, httpServer := newRetentionServer(t)
-	tracker := &yieldTracker{}
-	sched := scheduler.New(nil).WithWorkTracker(tracker)
+	gate := api.NewSerialOperationGate()
+	sched := scheduler.New(nil).WithWorkTracker(labelWorkTracker(gate, "media"))
+	defer func() { <-sched.Stop().Done() }()
 	cfg := config.DocbankIntegrationConfig{Enabled: true, URL: httpServer.URL,
 		APIKeyEnv: beeperMediaTestKeyEnv, UploadConsent: true}
 	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), cfg, nil))
@@ -299,19 +290,29 @@ func TestBeeperMediaScheduledRoute(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- sched.TriggerJob(beeperMediaSubmitJob) }()
 	<-server.arrived
-	tracker.yield.Store(true)
+	requestAcquired := make(chan func(), 1)
+	go func() {
+		release, ok := gate.BeginRequestWorkContext(t.Context(), "request")
+		if !ok {
+			release = nil
+		}
+		requestAcquired <- release
+	}()
 	select {
 	case err := <-done:
 		require.NoError(err)
 	case <-time.After(time.Minute):
 		require.FailNow("scheduled job did not yield")
 	}
+	releaseRequest := <-requestAcquired
+	require.NotNil(releaseRequest)
+	defer releaseRequest()
 	assert.Equal(map[string]string{destination: "pending::"}, retentionRows(t, st))
 
-	// The next run resumes with the same operation ID.
-	tracker.yield.Store(false)
+	// The queued follow-up resumes with the same operation ID after the request.
 	server.hang.Store(false)
-	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
+	releaseRequest()
+	require.Eventually(func() bool { return !sched.JobStatus()[0].Running }, time.Minute, 10*time.Millisecond)
 	assert.Equal(map[string]string{destination: "retained::source"}, retentionRows(t, st))
 	server.mu.Lock()
 	require.Len(server.operations, 2)

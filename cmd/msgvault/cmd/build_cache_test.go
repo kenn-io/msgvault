@@ -1482,7 +1482,7 @@ func runBuildCacheSQLiteMutation(t *testing.T, dbPath, operation string) {
 	require.NoErrorf(t, err, "run concurrent SQLite mutation\noutput:\n%s", output)
 }
 
-func TestBuildCache_RejectsTerminalAdditionDuringExport(t *testing.T) {
+func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *testing.T) {
 	for _, terminalStatus := range []string{"completed", "failed"} {
 		t.Run(terminalStatus, func(t *testing.T) {
 			require := require.New(t)
@@ -1547,14 +1547,44 @@ func TestBuildCache_RejectsTerminalAdditionDuringExport(t *testing.T) {
 			t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
 
 			_, err = buildCache(dbPath, analyticsDir, false)
-			require.Error(err)
-			assert.Contains(err.Error(), "sync counters changed during cache export")
+			require.NoError(err, "a counter change during export publishes the snapshot")
 			buildCacheBeforeStateWriteHook = nil
 			stateAfter, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
 			require.NoError(readErr)
-			assert.Equal(stateBefore, stateAfter, "counter mismatch preserves committed state")
-			assert.Equal(filesBefore, snapshotCacheParquet(t, analyticsDir),
-				"counter mismatch preserves committed Parquet")
+			assert.NotEqual(stateBefore, stateAfter, "snapshot publication replaces committed state")
+			assert.NotEqual(filesBefore, snapshotCacheParquet(t, analyticsDir),
+				"snapshot publication includes the parent message")
+			published, readErr := query.ReadCacheSyncState(analyticsDir)
+			require.NoError(readErr)
+			assert.True(published.FullRebuildRequired, "partial snapshot forces the next build to be full")
+			stale := cacheNeedsBuild(dbPath, analyticsDir)
+			require.True(stale.NeedsBuild, "partial snapshot is stale: %+v", stale)
+			require.True(stale.FullRebuild, "partial snapshot needs a full rebuild: %+v", stale)
+
+			// A sync that overlaps this build also queues another automatic
+			// refresh. It must wait even though the next build must be full.
+			deferred, err := buildCacheScheduled(dbPath, analyticsDir, 6*time.Hour, func() time.Time {
+				return published.PublishedAt.Add(time.Hour)
+			})
+			require.NoError(err)
+			assert.True(deferred.Skipped, "partial publication must honor the rebuild interval")
+
+			// A newer message arriving first must not turn the repair into an
+			// incremental build above the parent, which would skip its children.
+			db, err = sql.Open("sqlite3", dbPath)
+			require.NoError(err)
+			_, err = db.Exec(`
+				INSERT INTO messages (
+					id, source_id, source_message_id, conversation_id,
+					subject, snippet, sent_at, size_estimate, message_type
+				) VALUES (
+					7, 1, 'meeting-later', 105,
+					'Later Meeting', 'Arrived after the partial snapshot',
+					'2026-07-13 10:00:00', 500, 'meeting_transcript'
+				);
+			`)
+			require.NoError(err)
+			require.NoError(db.Close())
 
 			_, err = buildCache(dbPath, analyticsDir, false)
 			require.NoError(err)
@@ -1579,7 +1609,7 @@ func TestBuildCache_RejectsTerminalAdditionDuringExport(t *testing.T) {
 	}
 }
 
-func TestBuildCache_RejectsZeroCounterFailedRunDuringExport(t *testing.T) {
+func TestBuildCache_PublishesSnapshotWhenZeroCounterRunFailsDuringExport(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := setupTestSQLite(t)
@@ -1612,7 +1642,6 @@ func TestBuildCache_RejectsZeroCounterFailedRunDuringExport(t *testing.T) {
 	require.NoError(err)
 	stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
 	require.NoError(err)
-	filesBefore := snapshotCacheParquet(t, analyticsDir)
 
 	buildCacheBeforeStateWriteHook = func() {
 		hookDB, hookErr := sql.Open("sqlite3", dbPath)
@@ -1628,14 +1657,14 @@ func TestBuildCache_RejectsZeroCounterFailedRunDuringExport(t *testing.T) {
 	t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
 
 	_, err = buildCache(dbPath, analyticsDir, true)
-	require.Error(err)
-	assert.Contains(err.Error(), "sync counters changed during cache export")
+	require.NoError(err, "a counter change during export publishes the snapshot")
 	buildCacheBeforeStateWriteHook = nil
 	stateAfter, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
 	require.NoError(readErr)
-	assert.Equal(stateBefore, stateAfter, "counter mismatch preserves committed state")
-	assert.Equal(filesBefore, snapshotCacheParquet(t, analyticsDir),
-		"counter mismatch preserves committed Parquet")
+	assert.NotEqual(stateBefore, stateAfter, "snapshot publication replaces committed state")
+	stale := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(stale.NeedsBuild, "run failing during export leaves the cache stale: %+v", stale)
+	assert.True(stale.FullRebuild, "partial snapshot needs a full rebuild: %+v", stale)
 }
 
 func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
@@ -1688,7 +1717,7 @@ func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
 	assert.Contains(staleness.Reason, "failed sync")
 }
 
-func TestBuildCache_RejectsOlderRunFailingDuringExport(t *testing.T) {
+func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := setupTestSQLite(t)
@@ -1736,8 +1765,16 @@ func TestBuildCache_RejectsOlderRunFailingDuringExport(t *testing.T) {
 	t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
 
 	_, err = buildCache(dbPath, analyticsDir, true)
-	require.Error(err)
-	assert.Contains(err.Error(), "sync counters changed during cache export")
+	require.NoError(err, "a counter change during export publishes the snapshot")
+	buildCacheBeforeStateWriteHook = nil
+	stale := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.True(stale.NeedsBuild, "older run failing during export leaves the cache stale: %+v", stale)
+	assert.True(stale.FullRebuild, "partial snapshot needs a full rebuild: %+v", stale)
+
+	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(err)
+	fresh := cacheNeedsBuild(dbPath, analyticsDir)
+	assert.False(fresh.NeedsBuild, "full follow-up build converges: %+v", fresh)
 }
 
 func TestCacheNeedsBuild_AddOnlySyncUsesIncrementalBuild(t *testing.T) {

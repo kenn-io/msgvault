@@ -31,6 +31,10 @@ const (
 // chat that no longer exists). Callers distinguish it from transient errors.
 var ErrNotFound = errors.New("not found")
 
+// errPermanentResponse excludes rejected requests from the importer's
+// transport retry loop. Retrying the same request cannot correct a 4xx error.
+var errPermanentResponse = errors.New("request rejected")
+
 // ErrAssetTooLarge reports an asset exceeding the caller's size cap; the cap
 // is enforced while reading so oversized bodies are never fully buffered.
 var ErrAssetTooLarge = errors.New("asset exceeds size cap")
@@ -122,7 +126,7 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64) ([]byte
 			}
 			return body, nil
 		case resp.StatusCode == http.StatusUnauthorized:
-			return nil, fmt.Errorf("beeper GET %s: unauthorized (401): the access token was rejected; mint a new token in Beeper Desktop (Settings > Developer) and re-run 'msgvault add-beeper'", reqURL)
+			return nil, fmt.Errorf("beeper GET %s: unauthorized (401): the access token was rejected; mint a new token in Beeper Desktop (Settings > Developer) and re-run 'msgvault add-beeper': %w", reqURL, errPermanentResponse)
 		case resp.StatusCode == http.StatusNotFound:
 			return nil, fmt.Errorf("beeper GET %s: %w", reqURL, ErrNotFound)
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
@@ -136,6 +140,9 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64) ([]byte
 			}
 			continue
 		default:
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout {
+				return nil, fmt.Errorf("beeper GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), errPermanentResponse)
+			}
 			return nil, fmt.Errorf("beeper GET %s: status %d: %s", reqURL, resp.StatusCode, string(body))
 		}
 	}

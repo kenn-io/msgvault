@@ -7,7 +7,10 @@ export interface AccountStatus {
   last_error?: string;
   last_run?: string;
   next_run: string;
+  pending?: boolean;
+  queued?: boolean;
   running: boolean;
   schedule: string;
+  started_at?: string;
   [key: string]: unknown;
 }

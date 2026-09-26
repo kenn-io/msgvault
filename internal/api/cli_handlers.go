@@ -699,6 +699,16 @@ type CLIQueryMessageSummary query.MessageSummary
 
 type cliAccountsResponse struct {
 	Accounts []cliAccountResponse `json:"accounts"`
+	// Stale reports message counts served from an earlier snapshot because
+	// fresh counts did not finish in time; AsOf says when it was taken.
+	Stale bool      `json:"stale,omitempty"`
+	AsOf  time.Time `json:"as_of,omitzero"`
+}
+
+// sourceMessageCounter is implemented by stores that count every source's
+// messages in one pass.
+type sourceMessageCounter interface {
+	CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error)
 }
 
 type cliCollectionsResponse struct {
@@ -2535,8 +2545,28 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var grouped map[int64]store.SourceMessageCounts
+	var response cliAccountsResponse
+	if counter, ok := s.store.(sourceMessageCounter); ok {
+		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.get(
+			r.Context(), s.importContext, "", s.statsSnapshotWait, counter.CountMessagesBySourceContext,
+		)
+		if err != nil {
+			if s.writeIfContextError(w, err) {
+				return
+			}
+			s.logger.Error("failed to count CLI account messages", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list accounts")
+			return
+		}
+	}
+
 	accounts := make([]cliAccountResponse, 0, len(sources))
 	for _, src := range sources {
+		if grouped != nil {
+			accounts = append(accounts, newCLIAccountResponse(src, grouped[src.ID].Live, grouped[src.ID].SourceDeleted))
+			continue
+		}
 		count, err := cliStore.CountMessagesForSource(src.ID)
 		if err != nil {
 			s.logger.Error("failed to count CLI account messages",
@@ -2555,27 +2585,32 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list accounts")
 			return
 		}
-		account := cliAccountResponse{
-			ID:                 src.ID,
-			Email:              src.Identifier,
-			Type:               src.SourceType,
-			MessageCount:       count,
-			SourceDeletedCount: sourceDeleted,
-		}
-		if src.DisplayName.Valid {
-			account.DisplayName = src.DisplayName.String
-		}
-		if src.OAuthApp.Valid {
-			account.OAuthApp = src.OAuthApp.String
-		}
-		if src.LastSyncAt.Valid {
-			lastSync := src.LastSyncAt.Time.UTC()
-			account.LastSync = &lastSync
-		}
-		accounts = append(accounts, account)
+		accounts = append(accounts, newCLIAccountResponse(src, count, sourceDeleted))
 	}
 
-	writeJSON(w, http.StatusOK, cliAccountsResponse{Accounts: accounts})
+	response.Accounts = accounts
+	writeJSON(w, http.StatusOK, response)
+}
+
+func newCLIAccountResponse(src *store.Source, count, sourceDeleted int64) cliAccountResponse {
+	account := cliAccountResponse{
+		ID:                 src.ID,
+		Email:              src.Identifier,
+		Type:               src.SourceType,
+		MessageCount:       count,
+		SourceDeletedCount: sourceDeleted,
+	}
+	if src.DisplayName.Valid {
+		account.DisplayName = src.DisplayName.String
+	}
+	if src.OAuthApp.Valid {
+		account.OAuthApp = src.OAuthApp.String
+	}
+	if src.LastSyncAt.Valid {
+		lastSync := src.LastSyncAt.Time.UTC()
+		account.LastSync = &lastSync
+	}
+	return account
 }
 
 func (s *Server) updateCLIAccount(

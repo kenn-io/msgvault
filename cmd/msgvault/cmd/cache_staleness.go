@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -108,10 +109,14 @@ func hiddenSinceBuildCountSQL() string {
 // SQLite-shaped queries against pgx (which would fail on the ?
 // placeholders and the sqlite_master probe).
 func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
+	return cacheNeedsBuildContext(context.Background(), dbPath, analyticsDir)
+}
+
+func cacheNeedsBuildContext(ctx context.Context, dbPath, analyticsDir string) cacheStaleness {
 	if store.IsPostgresURL(dbPath) {
 		return cacheStaleness{}
 	}
-	buildLock, err := acquireCacheBuildLock(analyticsDir)
+	buildLock, err := acquireCacheBuildLock(ctx, analyticsDir)
 	if err != nil {
 		return cacheStaleness{
 			NeedsBuild: true, FullRebuild: true,
@@ -205,6 +210,12 @@ func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
 	result := cacheStaleness{
 		HasUsablePublication: true,
 		PublishedAt:          state.PublishedAt,
+	}
+
+	if state.FullRebuildRequired {
+		result.HasUpdated = true
+		result.FullRebuild = true
+		reasons = append(reasons, "previous build published a partial snapshot")
 	}
 
 	if maxLiveID > state.LastMessageID {

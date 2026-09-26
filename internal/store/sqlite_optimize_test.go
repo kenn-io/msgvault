@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -390,6 +391,9 @@ func TestOptimizeSQLiteReloadsEveryPooledConnection(t *testing.T) {
 			"every pooled connection must use the refreshed planner statistics")
 		assert.NotContains(refreshedPlan, "idx_messages_source (source_id=?)",
 			"no pooled connection may retain the statistics-free plan")
+		var analysisLimit int
+		require.NoError(conn.QueryRowContext(t.Context(), "PRAGMA analysis_limit").Scan(&analysisLimit))
+		assert.Equal(1000, analysisLimit, "every connection must keep ANALYZE bounded")
 	}
 }
 
@@ -492,4 +496,150 @@ func TestCloseOptimizesWithoutDrainingSQLitePool(t *testing.T) {
 	defer func() { _ = reopened.Close() }()
 	assert.Positive(messagePlannerStatisticCount(t, reopened),
 		"store close must persist planner statistics")
+}
+
+func TestSuccessfulSyncOptimizeThrottled(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	require.NoError(err)
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema())
+	seedLiveMessages(t, s, 100)
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	s.syncOptimizeNow = func() time.Time { return now }
+	runs := 0
+	s.syncOptimizeHook = func() { runs++ }
+
+	completeTestSync := func() {
+		syncID, err := s.StartSync(1, "full")
+		require.NoError(err)
+		require.NoError(s.CompleteSyncAndUpdateSourceCursor(syncID, 1, "cursor"))
+	}
+	completeTestSync()
+	assert.Equal(1, runs, "the first successful sync runs planner maintenance")
+	assert.Positive(messagePlannerStatisticCount(t, s))
+
+	now = now.Add(time.Hour)
+	completeTestSync()
+	assert.Equal(1, runs, "syncs within the throttle interval skip planner maintenance")
+
+	now = now.Add(syncOptimizeInterval)
+	completeTestSync()
+	assert.Equal(2, runs, "maintenance resumes once the interval elapses")
+}
+
+func TestDailyMaintenanceOptimizesAndTruncatesWAL(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	require.NoError(err)
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema())
+	seedLiveMessages(t, s, 100)
+
+	report, err := s.RunDailyMaintenance(t.Context())
+	require.NoError(err)
+	assert.NoError(report.OptimizeErr)
+	assert.Equal(1, report.CheckpointAttempts)
+	assert.Positive(report.WALBytesBefore, "seeded writes leave WAL frames")
+	assert.Zero(report.WALBytesAfter, "TRUNCATE resets the WAL")
+	assert.Positive(messagePlannerStatisticCount(t, s))
+}
+
+func TestDailyMaintenanceRetriesBusyCheckpoint(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dbPath := filepath.Join(t.TempDir(), "archive.db")
+
+	s, err := OpenForTest(dbPath)
+	require.NoError(err)
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema())
+	seedLiveMessages(t, s, 10)
+	s.checkpointRetryBackoff = []time.Duration{0, 0}
+
+	// A reader outside the store's pool pins an old snapshot, so later WAL
+	// frames cannot be checkpointed and TRUNCATE reports busy.
+	reader, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	defer func() { _ = reader.Close() }()
+	readerTx, err := reader.Begin()
+	require.NoError(err)
+	defer func() { _ = readerTx.Rollback() }()
+	var n int
+	require.NoError(readerTx.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&n))
+	_, err = s.db.DB.Exec(`UPDATE messages SET snippet = 'changed after the reader snapshot'`)
+	require.NoError(err)
+
+	buf := captureSlog(t)
+	report, err := s.RunDailyMaintenance(t.Context())
+	require.Error(err)
+	assert.Equal(3, report.CheckpointAttempts, "busy checkpoints are retried")
+	assert.Contains(buf.String(), "SQLite WAL checkpoint failed after retries")
+}
+
+func TestCheckpointWALContextInterruptsBusyCheckpoint(t *testing.T) {
+	require := require.New(t)
+	dbPath := filepath.Join(t.TempDir(), "archive.db")
+	s, err := OpenForTest(dbPath)
+	require.NoError(err)
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema())
+	seedLiveMessages(t, s, 10)
+
+	reader, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	defer func() { _ = reader.Close() }()
+	readerTx, err := reader.Begin()
+	require.NoError(err)
+	defer func() { _ = readerTx.Rollback() }()
+	var n int
+	require.NoError(readerTx.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&n))
+	_, err = s.db.DB.Exec(`UPDATE messages SET snippet = 'changed after the reader snapshot'`)
+	require.NoError(err)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err = s.CheckpointWALContext(ctx)
+	assert := assert.New(t)
+	require.Error(err)
+	assert.Less(time.Since(started), time.Second,
+		"busy checkpoint returns within its bounded timeout")
+}
+
+func TestCheckpointWALPassiveContextHonorsDeadlineWaitingForPool(t *testing.T) {
+	require := require.New(t)
+	dbPath := filepath.Join(t.TempDir(), "archive.db")
+	s, err := OpenForTest(dbPath)
+	require.NoError(err)
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema())
+	s.db.SetMaxOpenConns(1)
+
+	held, err := s.db.Conn(t.Context())
+	require.NoError(err)
+	defer func() { _ = held.Close() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	err = s.CheckpointWALPassive(ctx)
+	require.ErrorIs(err, context.DeadlineExceeded)
+}
+
+func TestSQLiteContentionErrorsLogAtDebug(t *testing.T) {
+	for _, err := range []error{
+		sqlite3.Error{Code: sqlite3.ErrBusy},
+		fmt.Errorf("optimize: %w", sqlite3.Error{Code: sqlite3.ErrInterrupt}),
+		sqlite3.Error{Code: sqlite3.ErrLocked},
+	} {
+		buf := captureSlog(t)
+		logSQLiteOptimizeError("contention", err)
+		records := plannerMaintenanceRecords(t, buf)
+		require.Len(t, records, 1)
+		assert.Equal(t, "DEBUG", records[0]["level"], "%v is expected contention", err)
+	}
 }
