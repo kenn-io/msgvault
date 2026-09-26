@@ -36,29 +36,8 @@ func SaveCredentials(tokensDir, identifier, password string) error {
 	}
 	path := CredentialsPath(tokensDir, identifier)
 
-	// Atomic write via temp file + rename (matches OAuth token storage).
-	tmpFile, err := os.CreateTemp(tokensDir, ".imap-cred-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp credentials file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("write temp credentials file: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close temp credentials file: %w", err)
-	}
-	if err := fileutil.SecureChmod(tmpPath, 0600); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("chmod temp credentials file: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rename temp credentials file: %w", err)
+	if err := fileutil.SecureReplaceFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write credentials file: %w", err)
 	}
 	return nil
 }

@@ -109,12 +109,3 @@ func withStoreLock(tokenDir string, fn func() error) error {
 func replaceStoreFile(source, target string) error {
 	return os.Rename(source, target)
 }
-
-func syncStoreDirectory(path string) error {
-	directory, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer directory.Close() //nolint:errcheck // Sync result is authoritative
-	return directory.Sync()
-}

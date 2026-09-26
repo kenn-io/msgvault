@@ -7,6 +7,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/mattn/go-sqlite3"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
@@ -670,12 +672,12 @@ func (s *Store) BackupDatabaseContext(ctx context.Context, dst string) (returnEr
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if _, err := os.Lstat(dst); err == nil {
-		return fmt.Errorf("backup target already exists: %s", dst)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect backup target %s: %w", dst, err)
-	}
-	if err := os.Rename(tempPath, dst); err != nil {
+	// Publish without replacing: a file created at dst while VACUUM INTO ran
+	// must survive. The staging directory removal above drops the staged name.
+	if err := atomicfile.PublishNoReplace(tempPath, dst); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("backup target already exists: %s", dst)
+		}
 		return fmt.Errorf("publish backup %s: %w", dst, err)
 	}
 	return nil

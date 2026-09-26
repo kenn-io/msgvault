@@ -396,32 +396,12 @@ func (m *Manager) acquireManifestLock(id string) (*flock.Flock, error) {
 // error so no ".tmp" file is left behind. Callers must hold the per-manifest
 // lock and verify the destination's presence under that lock; the rename then
 // replaces the existing file rather than resurrecting a moved one.
-func writeManifestAtomic(manifest *Manifest, path string) (retErr error) {
+func writeManifestAtomic(manifest *Manifest, path string) error {
 	data, err := json.Marshal(manifest, jsontext.WithIndent("  "), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true))
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".manifest-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp manifest: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer func() {
-		if retErr != nil {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write temp manifest: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp manifest: %w", err)
-	}
-	if err := fileutil.SecureChmod(tmpPath, 0600); err != nil {
-		return fmt.Errorf("protect temp manifest: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := fileutil.SecureReplaceFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("publish manifest: %w", err)
 	}
 	return nil

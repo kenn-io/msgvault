@@ -1172,7 +1172,7 @@ func TestManager_WriteInProgressCheckpoint_Writes(t *testing.T) {
 	entries, err := os.ReadDir(mgr.InProgressDir())
 	require.NoError(err, "ReadDir")
 	for _, e := range entries {
-		assert.False(strings.HasSuffix(e.Name(), ".tmp"), "leftover temp file %s", e.Name())
+		assert.False(strings.HasPrefix(e.Name(), "."), "leftover temp file %s", e.Name())
 	}
 }
 

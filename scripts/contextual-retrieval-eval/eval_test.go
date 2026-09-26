@@ -923,9 +923,10 @@ func TestWriteJSON_DoesNotClobberDestinationOnEncodeFailure(t *testing.T) {
 	payload, readErr := os.ReadFile(path)
 	require.NoError(t, readErr)
 	assert.Equal(t, "stable", string(payload))
-	matches, globErr := filepath.Glob(path + ".tmp-*")
-	require.NoError(t, globErr)
-	assert.Empty(t, matches)
+	entries, readErr := os.ReadDir(filepath.Dir(path))
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1, "the staged report must not be left behind")
+	assert.Equal(t, "report.json", entries[0].Name())
 }
 
 func suffixPrefixRuneOverlap(left, right string) int {

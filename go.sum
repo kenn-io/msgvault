@@ -347,6 +347,8 @@ github.com/sirupsen/logrus v1.9.4 h1:TsZE7l11zFCLZnZ+teH4Umoq5BhEIfIzfRDZ1Uzql2w
 github.com/sirupsen/logrus v1.9.4/go.mod h1:ftWc9WdOfJ0a92nsE2jF5u5ZwH8Bv2zdeOC42RjbV2g=
 github.com/spf13/cobra v1.10.2 h1:DMTTonx5m65Ic0GOoRY2c16WCbHxOOw6xxezuLaBpcU=
 github.com/spf13/cobra v1.10.2/go.mod h1:7C1pvHqHw5A4vrJfjNwvOdzYu0Gml16OCs2GRiTUUS4=
+github.com/spf13/pathologize v1.1.0 h1:ByNoCEj7iPpZeZ2dUv52ky5TnfJv5IpNLilpaiAAW3I=
+github.com/spf13/pathologize v1.1.0/go.mod h1:CwE+2y5kdp5EBv1kxhXujQo2SrY0s+rYAM02KluGFEs=
 github.com/spf13/pflag v1.0.9/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
 github.com/spf13/pflag v1.0.10 h1:4EBh2KAYBwaONj6b2Ye1GiHfwjqyROoF4RwYO+vPwFk=
 github.com/spf13/pflag v1.0.10/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
@@ -397,8 +399,8 @@ go.kenn.io/docbank v0.14.1-0.20260915163736-6aefe3363846 h1:JyWJFSrUml19mALRphbV
 go.kenn.io/docbank v0.14.1-0.20260915163736-6aefe3363846/go.mod h1:SUqomY/gH6ozWIUXgxNzM2ZIgvxbOkZxqWVUg1MlF6E=
 go.kenn.io/kata v0.18.0 h1:UpF9Q2vLDhFaZuaIDr8YyzRGCuvKf85cvPPYL5/vxNI=
 go.kenn.io/kata v0.18.0/go.mod h1:KblbQ6NemGL/KSSWpFZ7FMndxdaqB4ulNx+9HvPamWQ=
-go.kenn.io/kit v0.25.1-0.20260916162410-e9840a327158 h1:fiQArN6lXZRwvyPjoGQdphxZ/u/j0v2R66oG8OaWYC4=
-go.kenn.io/kit v0.25.1-0.20260916162410-e9840a327158/go.mod h1:V00Jeg/76GKfElznsZSpISjPhThyot9kwb94igbQXbA=
+go.kenn.io/kit v0.26.0 h1:9ZrkjsM6OCc9WWJK+lHMIrHDhaUoi3reljtC8ySBTao=
+go.kenn.io/kit v0.26.0/go.mod h1:EBC1PSQTaZejmKHY7Hw1SGHY+9pYelPuI7i9pugV1D0=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0 h1:OyrsyzuttWTSur2qN/Lm0m2a8yqyIjUVBZcxFPuXq2o=

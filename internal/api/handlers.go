@@ -1784,33 +1784,8 @@ func (s *Server) handleUploadToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Atomic write via temp file
-	tmpFile, err := os.CreateTemp(tokensDir, ".token-*.tmp")
-	if err != nil {
-		s.logger.Error("failed to create temp file", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to save token")
-		return
-	}
-	tmpPath := tmpFile.Name()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to write token")
-		return
-	}
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to close token file")
-		return
-	}
-	if err := fileutil.SecureChmod(tmpPath, 0600); err != nil {
-		_ = os.Remove(tmpPath)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to set token permissions")
-		return
-	}
-	if err := os.Rename(tmpPath, tokenPath); err != nil {
-		_ = os.Remove(tmpPath)
+	if err := fileutil.SecureReplaceFile(tokenPath, data, 0o600); err != nil {
+		s.logger.Error("failed to save token", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to save token")
 		return
 	}

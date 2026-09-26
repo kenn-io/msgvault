@@ -15,12 +15,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
@@ -715,42 +715,20 @@ func writeJSON(path string, value any) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	file, err := atomicfile.Create(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("stage %s: %w", path, err)
 	}
-	tempPath := file.Name()
-	committed := false
-	defer func() {
-		_ = file.Close()
-		if !committed {
-			_ = os.Remove(tempPath)
-		}
-	}()
+	defer func() { _ = file.Abort() }()
 	encoder := jsontext.NewEncoder(file, jsontext.WithIndent("  "))
 
 	if err := json.MarshalEncode(encoder, value, json.Deterministic(true)); err != nil {
 		return err
 	}
-	if err := file.Sync(); err != nil {
-		return err
+	if err := file.Commit(); err != nil {
+		return fmt.Errorf("publish %s: %w", path, err)
 	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, path); err != nil {
-		return err
-	}
-	committed = true
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-	directory, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = directory.Close() }()
-	return directory.Sync()
+	return nil
 }
 
 func repositoryCommit() string {
