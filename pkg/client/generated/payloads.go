@@ -204,6 +204,18 @@ type GetSearchCoverageBody = SearchCoverageRequest
 
 type PatchSettingsBody = SettingsPatchRequest
 
+type StartSettingsPeopleCodexLoginBody = PeopleCodexLoginRequest
+
+type PutSettingsPeopleCodexProfileBody = PeopleCodexProfileRequest
+
+type PutSettingsPeopleInferencePresetBody = PeopleInferencePresetCreateRequest
+
+type ConsentSettingsPeopleInferenceProviderBody = PeopleInferenceConsentRequest
+
+type PutSettingsPeopleInferenceKeyBody = PeopleInferenceKeyWriteRequest
+
+type SelectSettingsPeopleInferenceBody = PeopleInferenceSelectionRequest
+
 type PutSettingsPersonEnrichmentProviderBody = PersonEnrichmentProviderUpdate
 
 type PutSettingsProviderCredentialBody = ProviderCredentialWriteRequest

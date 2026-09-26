@@ -121,6 +121,25 @@ func (s *Store) HasSuccessfulPersonInferenceCheck(
 	return check != nil, nil
 }
 
+// InvalidatePersonInferenceCheck removes the old capability proof before a
+// credential or authenticated account changes. The immutable profile and its
+// historical consent record remain available for audit.
+func (s *Store) InvalidatePersonInferenceCheck(ctx context.Context, fingerprint string) (bool, error) {
+	if !validLowerSHA256(fingerprint) {
+		return false, errors.New("people inference check requires a lowercase SHA-256 fingerprint")
+	}
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM person_inference_checks WHERE profile_fingerprint = ?`, fingerprint)
+	if err != nil {
+		return false, fmt.Errorf("invalidate people inference check: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("count invalidated people inference checks: %w", err)
+	}
+	return rows > 0, nil
+}
+
 func validatePersonInferenceCheck(check PersonInferenceCheck) error {
 	if !validLowerSHA256(check.ProfileFingerprint) {
 		return errors.New("people inference check requires a lowercase SHA-256 fingerprint")

@@ -207,7 +207,7 @@ func registerPersonFileRoute(
 	op.Tags = []string{"Exploration"}
 	if idDescription != "" {
 		op.Parameters = append(op.Parameters, &huma.Param{
-			Name: "id", In: "path", Required: true, Description: idDescription,
+			Name: "id", In: pathKey, Required: true, Description: idDescription,
 			Schema: &huma.Schema{Type: huma.TypeInteger, Format: formatInt64},
 		})
 	}

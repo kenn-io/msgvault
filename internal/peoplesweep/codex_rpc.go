@@ -2,6 +2,7 @@ package peoplesweep
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -164,12 +165,24 @@ func (c *CodexRPCClient) Notify(ctx context.Context, method string, params any) 
 	}
 	frame, err := json.Marshal(struct {
 		Method string `json:"method"`
-		Params any    `json:"params"`
+		Params any    `json:"params,omitempty"`
 	}{Method: method, Params: params}, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode codex app-server %s notification", method)
 	}
 	frame = append(frame, '\n')
+	return c.writeFrame(ctx, frame)
+}
+
+func (c *CodexRPCClient) notifyPreparedInitialized(ctx context.Context, frame []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.initialize(); err != nil {
+		return err
+	}
+	if !bytes.Equal(frame, codexInitializedNotificationFrame) {
+		return errors.New("prepared codex initialized notification is invalid")
+	}
 	return c.writeFrame(ctx, frame)
 }
 

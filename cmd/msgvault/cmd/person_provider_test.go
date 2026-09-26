@@ -1785,7 +1785,7 @@ func commandCodexScript(
 ) func(*bufio.Reader, io.Writer) error {
 	t.Helper()
 	return func(reader *bufio.Reader, writer io.Writer) error {
-		for id, want := range []string{"initialize", operation} {
+		for step, want := range []string{"initialize", "initialized", operation} {
 			line, err := reader.ReadBytes('\n')
 			if err != nil {
 				return fmt.Errorf("read command Codex request: %w", err)
@@ -1799,14 +1799,24 @@ func commandCodexScript(
 				return err
 			}
 			*methods = append(*methods, request.Method)
-			if request.Method != want || request.ID != int64(id+1) {
+			wantID := int64(0)
+			switch step {
+			case 0:
+				wantID = 1
+			case 2:
+				wantID = 2
+			}
+			if request.Method != want || request.ID != wantID {
 				return errors.New("unexpected Codex command transcript")
 			}
-			if operation == "account/login/start" && id == 1 {
+			if step == 1 {
+				continue
+			}
+			if operation == "account/login/start" && step == 2 {
 				assert.Equal(t, "chatgptDeviceCode", request.Params["type"])
 			}
 			response := map[string]any{"id": request.ID, "result": map[string]any{}}
-			if id == 1 {
+			if step == 2 {
 				response["result"] = result
 			}
 			encoded, err := json.Marshal(response)
@@ -1816,7 +1826,7 @@ func commandCodexScript(
 			if _, err := writer.Write(append(encoded, '\n')); err != nil {
 				return err
 			}
-			if operation == "account/login/start" && id == 1 {
+			if operation == "account/login/start" && step == 2 {
 				completed, err := json.Marshal(map[string]any{
 					"method": "account/login/completed",
 					"params": map[string]any{"success": true, "loginId": result["loginId"]},
@@ -1873,7 +1883,7 @@ func TestPersonProviderLoginUsesDeviceCode(t *testing.T) {
 	checks.Contains(output, "ABCD-1234")
 	checks.Contains(output, "2026-08-23T12:30:00Z")
 	checks.NotContains(output, "login-safe")
-	checks.Equal([]string{"initialize", "account/login/start"}, methods)
+	checks.Equal([]string{"initialize", "initialized", "account/login/start"}, methods)
 	checks.Zero(opens.Load())
 }
 
@@ -1902,7 +1912,7 @@ func TestPersonProviderModelsListsSupportedEfforts(t *testing.T) {
 	checks.Contains(output, "Test Model")
 	checks.Contains(output, "medium")
 	checks.Contains(output, "low, medium")
-	checks.Equal([]string{"initialize", "model/list"}, methods)
+	checks.Equal([]string{"initialize", "initialized", "model/list"}, methods)
 	checks.Zero(opens.Load())
 }
 

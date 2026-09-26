@@ -2312,6 +2312,25 @@ components:
       required:
         - stats
       type: object
+    CodexModel:
+      additionalProperties: true
+      properties:
+        default_reasoning_effort:
+          type: string
+        display_name:
+          type: string
+        id:
+          type: string
+        supported_efforts:
+          items:
+            type: string
+          type: array
+      required:
+        - id
+        - display_name
+        - default_reasoning_effort
+        - supported_efforts
+      type: object
     CommunicationService:
       additionalProperties: true
       properties:
@@ -7855,6 +7874,260 @@ components:
           format: int64
           type: integer
       type: object
+    PeopleCodexLoginRequest:
+      additionalProperties: false
+      properties:
+        name:
+          minLength: 1
+          type: string
+      required:
+        - name
+      type: object
+    PeopleCodexLoginResponse:
+      additionalProperties: true
+      properties:
+        local_deadline:
+          format: date-time
+          type: string
+        session_id:
+          type: string
+        user_code:
+          type: string
+        verification_url:
+          type: string
+      required:
+        - session_id
+        - verification_url
+        - user_code
+        - local_deadline
+      type: object
+    PeopleCodexLoginStatusResponse:
+      additionalProperties: true
+      properties:
+        state:
+          type: string
+      required:
+        - state
+      type: object
+    PeopleCodexModelsResponse:
+      additionalProperties: true
+      properties:
+        models:
+          items:
+            $ref: "#/components/schemas/CodexModel"
+          type: array
+      required:
+        - models
+      type: object
+    PeopleCodexProfileRequest:
+      additionalProperties: false
+      properties:
+        allow_sensitive:
+          type: boolean
+        allowed_sources:
+          items:
+            type: string
+          minItems: 1
+          type: array
+        model:
+          minLength: 1
+          type: string
+        reasoning_effort:
+          minLength: 1
+          type: string
+        retention_posture:
+          minLength: 1
+          type: string
+        source_since:
+          type: string
+        source_until:
+          type: string
+        training_posture:
+          minLength: 1
+          type: string
+      required:
+        - model
+        - reasoning_effort
+        - retention_posture
+        - training_posture
+        - allowed_sources
+        - source_since
+        - allow_sensitive
+      type: object
+    PeopleInferenceCheckResponse:
+      additionalProperties: true
+      properties:
+        fingerprint:
+          type: string
+        model:
+          type: string
+        ok:
+          type: boolean
+        usage:
+          $ref: "#/components/schemas/TokenUsage"
+      required:
+        - ok
+        - fingerprint
+        - model
+        - usage
+      type: object
+    PeopleInferenceConsentRequest:
+      additionalProperties: false
+      properties:
+        confirmed:
+          type: boolean
+        fingerprint:
+          type: string
+      required:
+        - fingerprint
+        - confirmed
+      type: object
+    PeopleInferenceKeyWriteRequest:
+      additionalProperties: false
+      properties:
+        value:
+          minLength: 1
+          type: string
+      required:
+        - value
+      type: object
+    PeopleInferencePresetCreateRequest:
+      additionalProperties: false
+      properties:
+        allow_sensitive:
+          type: boolean
+        allowed_sources:
+          items:
+            type: string
+          minItems: 1
+          type: array
+        credential_env:
+          type: string
+        model:
+          minLength: 1
+          type: string
+        preset_id:
+          enum:
+            - openai
+            - openrouter
+            - venice
+          type: string
+        retention_posture:
+          minLength: 1
+          type: string
+        source_since:
+          type: string
+        source_until:
+          type: string
+        training_posture:
+          minLength: 1
+          type: string
+      required:
+        - preset_id
+        - model
+        - retention_posture
+        - training_posture
+        - allowed_sources
+        - source_since
+        - allow_sensitive
+      type: object
+    PeopleInferenceProfileSetting:
+      additionalProperties: true
+      properties:
+        allow_sensitive:
+          type: boolean
+        allowed_sources:
+          items:
+            type: string
+          type: array
+        checked:
+          type: boolean
+        consent_active:
+          type: boolean
+        credential_configured:
+          type: boolean
+        credential_env:
+          type: string
+        credential_revision:
+          type: string
+        credential_source:
+          type: string
+        endpoint:
+          type: string
+        fingerprint:
+          type: string
+        model:
+          type: string
+        name:
+          type: string
+        output_mode:
+          type: string
+        preset_id:
+          type: string
+        protocol:
+          type: string
+        retention_posture:
+          type: string
+        selected:
+          type: boolean
+        source_since:
+          type: string
+        source_until:
+          type: string
+        training_posture:
+          type: string
+      required:
+        - name
+        - selected
+        - protocol
+        - model
+        - credential_source
+        - credential_configured
+        - checked
+        - consent_active
+        - output_mode
+        - retention_posture
+        - training_posture
+        - allowed_sources
+        - source_since
+        - allow_sensitive
+      type: object
+    PeopleInferenceSelectionRequest:
+      additionalProperties: false
+      properties:
+        name:
+          minLength: 1
+          type: string
+      required:
+        - name
+      type: object
+    PeopleInferenceSettingsResponse:
+      additionalProperties: true
+      properties:
+        configured_enabled:
+          type: boolean
+        configured_fingerprint:
+          type: string
+        configured_name:
+          type: string
+        pending_restart:
+          type: boolean
+        profiles:
+          items:
+            $ref: "#/components/schemas/PeopleInferenceProfileSetting"
+          type: array
+        running_enabled:
+          type: boolean
+        running_fingerprint:
+          type: string
+        running_name:
+          type: string
+      required:
+        - profiles
+        - configured_enabled
+        - running_enabled
+        - pending_restart
+      type: object
     PeopleResponse:
       additionalProperties: true
       properties:
@@ -12743,6 +13016,19 @@ components:
           type: string
       required:
         - refresh_token
+      type: object
+    TokenUsage:
+      additionalProperties: true
+      properties:
+        input_tokens:
+          format: int64
+          type: integer
+        output_tokens:
+          format: int64
+          type: integer
+      required:
+        - input_tokens
+        - output_tokens
       type: object
     TotalStatsResponse:
       additionalProperties: true
@@ -26071,6 +26357,1072 @@ paths:
       security:
         - apiKey: []
       summary: Update browser-managed settings
+      tags:
+        - API
+  /api/v1/settings/people-inference:
+    get:
+      operationId: getSettingsPeopleInference
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferenceSettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get people inference provider status
+      tags:
+        - API
+  /api/v1/settings/people-inference/codex/login:
+    post:
+      operationId: startSettingsPeopleCodexLogin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeopleCodexLoginRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleCodexLoginResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "504":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Start a private Codex device login
+      tags:
+        - API
+  /api/v1/settings/people-inference/codex/login/{id}:
+    delete:
+      operationId: cancelSettingsPeopleCodexLogin
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleCodexLoginStatusResponse"
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Cancel Codex device login
+      tags:
+        - API
+    get:
+      operationId: getSettingsPeopleCodexLogin
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleCodexLoginStatusResponse"
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get Codex device login status
+      tags:
+        - API
+  /api/v1/settings/people-inference/codex/login/{id}/models:
+    get:
+      operationId: getSettingsPeopleCodexModels
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleCodexModelsResponse"
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List models for completed Codex login
+      tags:
+        - API
+  /api/v1/settings/people-inference/codex/login/{id}/profile:
+    put:
+      operationId: putSettingsPeopleCodexProfile
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Strong config ETag returned by the latest settings read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeopleCodexProfileRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferenceSettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a Codex profile from completed device login
+      tags:
+        - API
+  /api/v1/settings/people-inference/disable:
+    post:
+      operationId: disableSettingsPeopleInference
+      parameters:
+        - description: Strong config ETag returned by the latest settings read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferenceSettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Disable people inference and revoke active consent
+      tags:
+        - API
+  /api/v1/settings/people-inference/providers/{name}:
+    delete:
+      operationId: deleteSettingsPeopleInferenceProvider
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - description: Strong config ETag returned by the latest settings read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferenceSettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Remove a people inference provider profile
+      tags:
+        - API
+    put:
+      operationId: putSettingsPeopleInferencePreset
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - description: Strong config ETag returned by the latest settings read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeopleInferencePresetCreateRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferenceSettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a vendor-bound people inference provider
+      tags:
+        - API
+  /api/v1/settings/people-inference/providers/{name}/check:
+    post:
+      operationId: checkSettingsPeopleInferenceProvider
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - description: Strong config ETag returned by the latest settings read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferenceCheckResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run a synthetic people inference provider check
+      tags:
+        - API
+  /api/v1/settings/people-inference/providers/{name}/consent:
+    post:
+      operationId: consentSettingsPeopleInferenceProvider
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - description: Strong config ETag returned by the latest settings read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeopleInferenceConsentRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferenceSettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Grant exact people inference consent
+      tags:
+        - API
+  /api/v1/settings/people-inference/providers/{name}/key:
+    delete:
+      operationId: deleteSettingsPeopleInferenceKey
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - description: Opaque revision for this people provider credential
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferenceSettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Clear a stored people inference API key
+      tags:
+        - API
+    put:
+      operationId: putSettingsPeopleInferenceKey
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - description: Opaque revision for this people provider credential
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeopleInferenceKeyWriteRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferenceSettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Set a write-only people inference API key
+      tags:
+        - API
+  /api/v1/settings/people-inference/providers/{name}/revoke:
+    post:
+      operationId: revokeSettingsPeopleInferenceProvider
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - description: Strong config ETag returned by the latest settings read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferenceSettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Revoke exact people inference consent
+      tags:
+        - API
+  /api/v1/settings/people-inference/select:
+    post:
+      operationId: selectSettingsPeopleInference
+      parameters:
+        - description: Strong config ETag returned by the latest settings read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeopleInferenceSelectionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferenceSettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Select a checked and consented people inference provider
       tags:
         - API
   /api/v1/settings/person-enrichment/providers/{name}:

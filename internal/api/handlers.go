@@ -2170,7 +2170,7 @@ func viewTypeString(v query.ViewType) string {
 
 // Accepted values for enum query parameters, surfaced in 400 messages.
 var (
-	aggregateSortFields = []string{"count", "size", "attachment_size", "name"}
+	aggregateSortFields = []string{"count", "size", "attachment_size", nameKey}
 	messageSortFields   = []string{activityDateField, "size", "subject"}
 	textSortFields      = []string{"last_message", "count", "name"}
 	sortDirections      = []string{"asc", apiSortDirectionDesc}

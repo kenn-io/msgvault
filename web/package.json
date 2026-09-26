@@ -13,6 +13,7 @@
     "generate": "bun scripts/generate-api-client.mjs",
     "test": "vitest run",
     "test:browser": "playwright test",
+    "test:people-inference-viewport": "playwright test --config tests/people-inference-viewport.config.ts",
     "test:e2e": "playwright test e2e conversation-content-frame.spec.ts files-viewer.spec.ts"
   },
   "dependencies": {

@@ -72,7 +72,7 @@ func (s *Server) registerPersonEnrichmentSettingsRoute(api huma.API) {
 	operation := rawAPIV1Operation("putSettingsPersonEnrichmentProvider", http.MethodPut,
 		settingsPersonEnrichmentProviderRoute, "Create or update one named person-enrichment provider")
 	operation.Parameters = append(operation.Parameters,
-		&huma.Param{Name: "name", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		&huma.Param{Name: nameKey, In: pathKey, Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
 		&huma.Param{Name: ifMatchHeaderName, In: headerParamLocation, Required: true,
 			Description: "Strong config ETag returned by the latest settings read", Schema: &huma.Schema{Type: huma.TypeString}},
 	)

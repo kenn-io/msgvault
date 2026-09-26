@@ -38,6 +38,7 @@ import type {
   CacheStats,
   CancelDeletionPathParameters,
   CancelDeletionResponse,
+  CancelSettingsPeopleCodexLoginPathParameters,
   CardDAVAccountRequest,
   CardDAVAccountResponse,
   CardDAVBookResponse,
@@ -58,6 +59,7 @@ import type {
   CardDAVSyncRequest,
   Catalog,
   ChangesResponse,
+  CheckSettingsPeopleInferenceProviderPathParameters,
   ClearOrganizationAttributeParams,
   ClearOrganizationAttributePathParameters,
   ClearPersonAttributeParams,
@@ -72,6 +74,7 @@ import type {
   CliStatsResponse,
   CommunicationService,
   CommunicationServicesResponse,
+  ConsentSettingsPeopleInferenceProviderPathParameters,
   ContactState,
   ConversationResponse,
   CreateAttributeDefinitionRequest,
@@ -100,6 +103,8 @@ import type {
   DeletePersonRelationshipPathParameters,
   DeleteRelationshipTypePathParameters,
   DeleteSavedViewPathParameters,
+  DeleteSettingsPeopleInferenceKeyPathParameters,
+  DeleteSettingsPeopleInferenceProviderPathParameters,
   DeleteSettingsProviderCredentialPathParameters,
   DeletionManifestDetail,
   DirectoryPeopleResponse,
@@ -169,6 +174,8 @@ import type {
   GetPersonTrackingPathParameters,
   GetRelationshipTypePathParameters,
   GetSavedViewPathParameters,
+  GetSettingsPeopleCodexLoginPathParameters,
+  GetSettingsPeopleCodexModelsPathParameters,
   GetSubAggregatesParams,
   GetTextAggregatesParams,
   GetTextStatsParams,
@@ -267,6 +274,17 @@ import type {
   PatchRelationshipTypeRequest,
   PatchSavedViewPathParameters,
   PatchSavedViewRequest,
+  PeopleCodexLoginRequest,
+  PeopleCodexLoginResponse,
+  PeopleCodexLoginStatusResponse,
+  PeopleCodexModelsResponse,
+  PeopleCodexProfileRequest,
+  PeopleInferenceCheckResponse,
+  PeopleInferenceConsentRequest,
+  PeopleInferenceKeyWriteRequest,
+  PeopleInferencePresetCreateRequest,
+  PeopleInferenceSelectionRequest,
+  PeopleInferenceSettingsResponse,
   PeopleResponse,
   Person,
   PersonAgendaCreateRequest,
@@ -312,6 +330,9 @@ import type {
   PutOrganizationProfilePathParameters,
   PutPersonBriefEnrollmentRequest,
   PutPersonTrackingRequest,
+  PutSettingsPeopleCodexProfilePathParameters,
+  PutSettingsPeopleInferenceKeyPathParameters,
+  PutSettingsPeopleInferencePresetPathParameters,
   PutSettingsPersonEnrichmentProviderPathParameters,
   PutSettingsProviderCredentialPathParameters,
   QueryRequest,
@@ -325,6 +346,7 @@ import type {
   RemoteImageRequest,
   ResolveCardDAVConflictPathParameters,
   RevokeAgentTokenPathParameters,
+  RevokeSettingsPeopleInferenceProviderPathParameters,
   RunSavedViewPathParameters,
   RunSavedViewRequest,
   RunSavedViewResponse,
@@ -3424,6 +3446,239 @@ export const patchSettings = (
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       data: settingsPatchRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Get people inference provider status
+ */
+export const getSettingsPeopleInference = (
+  options?: SecondParameter<typeof orvalFetch<PeopleInferenceSettingsResponse>>,
+) => {
+  return orvalFetch<PeopleInferenceSettingsResponse>(
+    { url: `/api/v1/settings/people-inference`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Start a private Codex device login
+ */
+export const startSettingsPeopleCodexLogin = (
+  peopleCodexLoginRequest: PeopleCodexLoginRequest,
+  options?: SecondParameter<typeof orvalFetch<PeopleCodexLoginResponse>>,
+) => {
+  return orvalFetch<PeopleCodexLoginResponse>(
+    {
+      url: `/api/v1/settings/people-inference/codex/login`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: peopleCodexLoginRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Cancel Codex device login
+ */
+export const cancelSettingsPeopleCodexLogin = (
+  { id }: CancelSettingsPeopleCodexLoginPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PeopleCodexLoginStatusResponse>>,
+) => {
+  return orvalFetch<PeopleCodexLoginStatusResponse>(
+    {
+      url: `/api/v1/settings/people-inference/codex/login/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
+    },
+    options,
+  );
+};
+/**
+ * @summary Get Codex device login status
+ */
+export const getSettingsPeopleCodexLogin = (
+  { id }: GetSettingsPeopleCodexLoginPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PeopleCodexLoginStatusResponse>>,
+) => {
+  return orvalFetch<PeopleCodexLoginStatusResponse>(
+    {
+      url: `/api/v1/settings/people-inference/codex/login/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary List models for completed Codex login
+ */
+export const getSettingsPeopleCodexModels = (
+  { id }: GetSettingsPeopleCodexModelsPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PeopleCodexModelsResponse>>,
+) => {
+  return orvalFetch<PeopleCodexModelsResponse>(
+    {
+      url: `/api/v1/settings/people-inference/codex/login/${encodeURIComponent(String(id))}/models`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Create a Codex profile from completed device login
+ */
+export const putSettingsPeopleCodexProfile = (
+  { id }: PutSettingsPeopleCodexProfilePathParameters,
+  peopleCodexProfileRequest: PeopleCodexProfileRequest,
+  options?: SecondParameter<typeof orvalFetch<PeopleInferenceSettingsResponse>>,
+) => {
+  return orvalFetch<PeopleInferenceSettingsResponse>(
+    {
+      url: `/api/v1/settings/people-inference/codex/login/${encodeURIComponent(String(id))}/profile`,
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      data: peopleCodexProfileRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Disable people inference and revoke active consent
+ */
+export const disableSettingsPeopleInference = (
+  options?: SecondParameter<typeof orvalFetch<PeopleInferenceSettingsResponse>>,
+) => {
+  return orvalFetch<PeopleInferenceSettingsResponse>(
+    { url: `/api/v1/settings/people-inference/disable`, method: "POST" },
+    options,
+  );
+};
+/**
+ * @summary Remove a people inference provider profile
+ */
+export const deleteSettingsPeopleInferenceProvider = (
+  { name }: DeleteSettingsPeopleInferenceProviderPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PeopleInferenceSettingsResponse>>,
+) => {
+  return orvalFetch<PeopleInferenceSettingsResponse>(
+    {
+      url: `/api/v1/settings/people-inference/providers/${encodeURIComponent(String(name))}`,
+      method: "DELETE",
+    },
+    options,
+  );
+};
+/**
+ * @summary Create a vendor-bound people inference provider
+ */
+export const putSettingsPeopleInferencePreset = (
+  { name }: PutSettingsPeopleInferencePresetPathParameters,
+  peopleInferencePresetCreateRequest: PeopleInferencePresetCreateRequest,
+  options?: SecondParameter<typeof orvalFetch<PeopleInferenceSettingsResponse>>,
+) => {
+  return orvalFetch<PeopleInferenceSettingsResponse>(
+    {
+      url: `/api/v1/settings/people-inference/providers/${encodeURIComponent(String(name))}`,
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      data: peopleInferencePresetCreateRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Run a synthetic people inference provider check
+ */
+export const checkSettingsPeopleInferenceProvider = (
+  { name }: CheckSettingsPeopleInferenceProviderPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PeopleInferenceCheckResponse>>,
+) => {
+  return orvalFetch<PeopleInferenceCheckResponse>(
+    {
+      url: `/api/v1/settings/people-inference/providers/${encodeURIComponent(String(name))}/check`,
+      method: "POST",
+    },
+    options,
+  );
+};
+/**
+ * @summary Grant exact people inference consent
+ */
+export const consentSettingsPeopleInferenceProvider = (
+  { name }: ConsentSettingsPeopleInferenceProviderPathParameters,
+  peopleInferenceConsentRequest: PeopleInferenceConsentRequest,
+  options?: SecondParameter<typeof orvalFetch<PeopleInferenceSettingsResponse>>,
+) => {
+  return orvalFetch<PeopleInferenceSettingsResponse>(
+    {
+      url: `/api/v1/settings/people-inference/providers/${encodeURIComponent(String(name))}/consent`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: peopleInferenceConsentRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Clear a stored people inference API key
+ */
+export const deleteSettingsPeopleInferenceKey = (
+  { name }: DeleteSettingsPeopleInferenceKeyPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PeopleInferenceSettingsResponse>>,
+) => {
+  return orvalFetch<PeopleInferenceSettingsResponse>(
+    {
+      url: `/api/v1/settings/people-inference/providers/${encodeURIComponent(String(name))}/key`,
+      method: "DELETE",
+    },
+    options,
+  );
+};
+/**
+ * @summary Set a write-only people inference API key
+ */
+export const putSettingsPeopleInferenceKey = (
+  { name }: PutSettingsPeopleInferenceKeyPathParameters,
+  peopleInferenceKeyWriteRequest: PeopleInferenceKeyWriteRequest,
+  options?: SecondParameter<typeof orvalFetch<PeopleInferenceSettingsResponse>>,
+) => {
+  return orvalFetch<PeopleInferenceSettingsResponse>(
+    {
+      url: `/api/v1/settings/people-inference/providers/${encodeURIComponent(String(name))}/key`,
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      data: peopleInferenceKeyWriteRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Revoke exact people inference consent
+ */
+export const revokeSettingsPeopleInferenceProvider = (
+  { name }: RevokeSettingsPeopleInferenceProviderPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PeopleInferenceSettingsResponse>>,
+) => {
+  return orvalFetch<PeopleInferenceSettingsResponse>(
+    {
+      url: `/api/v1/settings/people-inference/providers/${encodeURIComponent(String(name))}/revoke`,
+      method: "POST",
+    },
+    options,
+  );
+};
+/**
+ * @summary Select a checked and consented people inference provider
+ */
+export const selectSettingsPeopleInference = (
+  peopleInferenceSelectionRequest: PeopleInferenceSelectionRequest,
+  options?: SecondParameter<typeof orvalFetch<PeopleInferenceSettingsResponse>>,
+) => {
+  return orvalFetch<PeopleInferenceSettingsResponse>(
+    {
+      url: `/api/v1/settings/people-inference/select`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: peopleInferenceSelectionRequest,
     },
     options,
   );

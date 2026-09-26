@@ -216,6 +216,34 @@ const (
 
 func (*unixCredentialDeleteGuard) credentialDeleteGuard() {}
 
+// credentialRevisionData reads the pinned target while its namespace lock is
+// held. Reentering the regular store load path here would deadlock on that
+// lock and could observe a different pathname target.
+func (g *unixCredentialDeleteGuard) credentialRevisionData() ([]byte, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.state != credentialDeleteGuardReady || g.target == nil || g.target.credentialFD < 0 {
+		return nil, errors.New("people provider credential deletion guard is not ready")
+	}
+	var data []byte
+	buffer := make([]byte, 32*1024)
+	for offset := int64(0); ; {
+		count, err := unix.Pread(g.target.credentialFD, buffer, offset)
+		if err != nil {
+			return nil, fmt.Errorf("read pinned people provider credential revision: %w", err)
+		}
+		if count == 0 {
+			break
+		}
+		data = append(data, buffer[:count]...)
+		offset += int64(count)
+	}
+	if len(data) == 0 {
+		return nil, ErrCredentialNotFound
+	}
+	return data, nil
+}
+
 func (*unixCredentialCleanupGuard) credentialCleanupGuard() {}
 
 func (*unixCredentialDeleteGuard) String() string {

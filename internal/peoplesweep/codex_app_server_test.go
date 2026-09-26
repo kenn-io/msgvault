@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -83,8 +85,20 @@ type recordingCodexStarter struct {
 	scripts          []func(*bufio.Reader, io.Writer, io.Writer) error
 	records          []codexStartRecord
 	starts           atomic.Int64
+	proxyStarts      atomic.Int64
 	inspect          func(string)
 	configureProcess func(*pipeRPCProcess)
+}
+
+func (s *recordingCodexStarter) StartWithProxy(
+	ctx context.Context, executable peoplesweep.CodexExecutable, args, env []string, dir, socketPath string,
+) (peoplesweep.RPCProcess, error) {
+	s.proxyStarts.Add(1)
+	info, err := os.Lstat(socketPath)
+	require.NoError(s.t, err)
+	assert.NotZero(s.t, info.Mode()&os.ModeSocket)
+	assert.Equal(s.t, filepath.Join(dir, ".proxy.sock"), socketPath)
+	return s.Start(ctx, executable, args, env, dir)
 }
 
 func (s *recordingCodexStarter) Start(
@@ -154,8 +168,6 @@ type codexTranscript struct {
 	mu          sync.Mutex
 	methods     []string
 	frames      [][]byte
-	packet      []byte
-	packetWrite error
 	rootEntries []string
 }
 
@@ -180,7 +192,8 @@ func successfulCodexScript(
 ) func(*bufio.Reader, io.Writer, io.Writer) error {
 	t.Helper()
 	return func(reader *bufio.Reader, stdout, _ io.Writer) error {
-		for id, wantMethod := range []string{"initialize", "model/list", "thread/start", "turn/start"} {
+		requestID := int64(0)
+		for _, wantMethod := range []string{"initialize", "initialized", "model/list", "thread/start", "turn/start"} {
 			line, err := reader.ReadBytes('\n')
 			if err != nil {
 				return fmt.Errorf("read codex request frame: %w", err)
@@ -193,10 +206,17 @@ func successfulCodexScript(
 			if err := json.Unmarshal(line, &envelope); err != nil {
 				return err
 			}
-			if envelope.Method != wantMethod || envelope.ID != int64(id+1) {
+			if wantMethod != "initialized" {
+				requestID++
+			}
+			if envelope.Method != wantMethod ||
+				(wantMethod == "initialized" && envelope.ID != 0) ||
+				(wantMethod != "initialized" && envelope.ID != requestID) {
 				return errors.New("unexpected prepared request order")
 			}
 			switch wantMethod {
+			case "initialized":
+				continue
 			case "initialize":
 				err = writeRPCFrame(stdout, map[string]any{"id": envelope.ID, "result": map[string]any{}})
 			case "model/list":
@@ -229,10 +249,7 @@ func successfulCodexScript(
 		}}); err != nil {
 			return err
 		}
-		if err := writeRPCFrame(stdout, map[string]any{"method": "thread/tokenUsage/updated", "params": map[string]any{
-			"threadId": "thr_test", "turnId": "turn_test",
-			"tokenUsage": map[string]any{"totalTokenUsage": map[string]any{"inputTokens": 21, "outputTokens": 4}},
-		}}); err != nil {
+		if err := writeCodexUsageEvent(stdout, 21, 4); err != nil {
 			return err
 		}
 		return writeRPCFrame(stdout, map[string]any{"method": "turn/completed", "params": map[string]any{
@@ -267,6 +284,16 @@ func codexTurnEventScript(
 			if err := writeRPCFrame(stdout, map[string]any{"id": id + 1, "result": result}); err != nil {
 				return err
 			}
+			if id == 0 {
+				line, err := reader.ReadBytes('\n')
+				if err != nil {
+					return fmt.Errorf("read codex initialized notification: %w", err)
+				}
+				transcript.record(line)
+				if !bytes.Contains(line, []byte(`"method":"initialized"`)) {
+					return errors.New("missing codex initialized notification")
+				}
+			}
 		}
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
@@ -291,11 +318,13 @@ func codexTurnEventScript(
 }
 
 func writeCodexUsageEvent(w io.Writer, inputTokens, outputTokens int64) error {
+	breakdown := map[string]any{
+		"inputTokens": inputTokens, "outputTokens": outputTokens, "cachedInputTokens": 0,
+		"reasoningOutputTokens": 0, "totalTokens": inputTokens + outputTokens,
+	}
 	return writeRPCFrame(w, map[string]any{"method": "thread/tokenUsage/updated", "params": map[string]any{
 		"threadId": "thr_test", "turnId": "turn_test",
-		"tokenUsage": map[string]any{"totalTokenUsage": map[string]any{
-			"inputTokens": inputTokens, "outputTokens": outputTokens,
-		}},
+		"tokenUsage": map[string]any{"total": breakdown, "last": breakdown},
 	}})
 }
 
@@ -322,17 +351,8 @@ func newSuccessfulCodexTransport(
 		successfulCodexScript(t, transcript, "gpt-test", []string{"low", "high"}, nil, finalJSON),
 	}}
 	starter.inspect = func(dir string) {
-		packetPath := filepath.Join(dir, "packet.json")
-		packet, err := os.ReadFile(packetPath)
-		require.NoError(t, err)
-		writeHandle, writeErr := os.OpenFile(packetPath, os.O_WRONLY, 0)
-		if writeHandle != nil {
-			require.NoError(t, writeHandle.Close())
-		}
 		entries, err := os.ReadDir(dir)
 		require.NoError(t, err)
-		transcript.packet = packet
-		transcript.packetWrite = writeErr
 		for _, entry := range entries {
 			transcript.rootEntries = append(transcript.rootEntries, entry.Name())
 		}
@@ -341,6 +361,126 @@ func newSuccessfulCodexTransport(
 	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, gate)
 	require.NoError(t, err)
 	return transport, starter, gate, transcript
+}
+
+func TestCodexRegistryUsesOnlyExplicitAuthHome(t *testing.T) {
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("codex auth home permission gates require Unix permission bits")
+	}
+	authHome := t.TempDir()
+	requireChecks.NoError(os.Chmod(authHome, 0o700))
+	requireChecks.NoError(os.WriteFile(filepath.Join(authHome, "auth.json"), []byte(`{"synthetic":true}`), 0o600))
+	requireChecks.NoError(os.WriteFile(filepath.Join(authHome, "unrelated.txt"), []byte("SYNTHETIC_UNRELATED"), 0o600))
+	ambientHome := t.TempDir()
+	requireChecks.NoError(os.WriteFile(filepath.Join(ambientHome, "auth.json"), []byte("SYNTHETIC_AMBIENT"), 0o600))
+	t.Setenv("CODEX_HOME", ambientHome)
+	starter := &recordingCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
+		successfulCodexScript(t, &codexTranscript{}, "gpt-test", []string{"low", "high"}, nil, `{"claims":[]}`),
+	}}
+	starter.inspect = func(workRoot string) {
+		contents, err := os.ReadFile(filepath.Join(workRoot, ".codex", "auth.json"))
+		require.NoError(t, err)
+		assert.Equal(t, `{"synthetic":true}`, string(contents))
+		assert.NoFileExists(t, filepath.Join(workRoot, "unrelated.txt"))
+		assert.NoFileExists(t, filepath.Join(workRoot, ".codex", "unrelated.txt"))
+	}
+	registry, err := peoplesweep.NewDriverRegistryWithCodexAuthHome(nil, starter, &recordingCodexGate{}, authHome)
+	requireChecks.NoError(err)
+	driver, err := registry.Driver(peoplesweep.ProtocolCodexAppServer, codexTestConfig())
+	requireChecks.NoError(err)
+	profile := codexTestProfile(t)
+	prepared, err := driver.Prepare(profile, codexTestRequest())
+	requireChecks.NoError(err)
+	_, err = driver.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
+	requireChecks.NoError(err)
+	requireChecks.Len(starter.records, 1)
+	assertChecks.Equal(int64(1), starter.proxyStarts.Load())
+	assertChecks.Empty(starter.records[0].env)
+	assertChecks.NoDirExists(starter.records[0].dir)
+	contents, err := os.ReadFile(filepath.Join(authHome, "auth.json"))
+	requireChecks.NoError(err)
+	assertChecks.Equal(`{"synthetic":true}`, string(contents))
+}
+
+func syntheticCodexAuth(user, workspace, refresh string) []byte {
+	claims := fmt.Sprintf(`{"https://api.openai.com/auth":{"chatgpt_user_id":%q,"chatgpt_account_id":%q}}`, user, workspace)
+	idToken := "header." + base64.RawURLEncoding.EncodeToString([]byte(claims)) + ".signature"
+	return []byte(fmt.Sprintf(`{"auth_mode":"chatgpt","tokens":{"id_token":%q,"access_token":"synthetic-access","refresh_token":%q,"account_id":%q}}`, idToken, refresh, workspace))
+}
+
+func TestCodexInferenceCopiesBackRefreshForSameAccount(t *testing.T) {
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("codex auth home permission gates require Unix permission bits")
+	}
+	authHome := t.TempDir()
+	requireChecks.NoError(os.Chmod(authHome, 0o700))
+	initial := syntheticCodexAuth("user-one", "workspace-one", "old-refresh")
+	refreshed := syntheticCodexAuth("user-one", "workspace-one", "new-refresh")
+	requireChecks.NoError(os.WriteFile(filepath.Join(authHome, "auth.json"), initial, 0o600))
+	var workRoot string
+	base := successfulCodexScript(t, &codexTranscript{}, "gpt-test", []string{"high"}, nil, `{"claims":[]}`)
+	starter := &recordingCodexStarter{t: t, inspect: func(dir string) { workRoot = dir }, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
+		func(reader *bufio.Reader, stdout, stderr io.Writer) error {
+			if err := base(reader, stdout, stderr); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(workRoot, ".codex", "auth.json"), refreshed, 0o600)
+		},
+	}}
+	driver, err := peoplesweep.NewCodexAppServerDriverWithAuthHome(codexTestConfig(), starter, &recordingCodexGate{}, authHome)
+	requireChecks.NoError(err)
+	profile := codexTestProfile(t)
+	prepared, err := driver.Prepare(profile, codexTestRequest())
+	requireChecks.NoError(err)
+	response, err := driver.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
+	requireChecks.NoError(err)
+	assertChecks.JSONEq(`{"claims":[]}`, string(response.CandidateJSON))
+	contents, err := os.ReadFile(filepath.Join(authHome, "auth.json"))
+	requireChecks.NoError(err)
+	assertChecks.Equal(sha256.Sum256(refreshed), sha256.Sum256(contents))
+	info, err := os.Lstat(filepath.Join(authHome, "auth.json"))
+	requireChecks.NoError(err)
+	assertChecks.Equal(os.FileMode(0o600), info.Mode().Perm())
+	assertChecks.NoDirExists(workRoot)
+}
+
+func TestCodexInferenceRejectsChangedAccountDuringRefresh(t *testing.T) {
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("codex auth home permission gates require Unix permission bits")
+	}
+	authHome := t.TempDir()
+	requireChecks.NoError(os.Chmod(authHome, 0o700))
+	initial := syntheticCodexAuth("user-one", "workspace-one", "old-refresh")
+	changed := syntheticCodexAuth("user-two", "workspace-one", "new-refresh")
+	requireChecks.NoError(os.WriteFile(filepath.Join(authHome, "auth.json"), initial, 0o600))
+	var workRoot string
+	base := successfulCodexScript(t, &codexTranscript{}, "gpt-test", []string{"high"}, nil, `{"claims":[]}`)
+	starter := &recordingCodexStarter{t: t, inspect: func(dir string) { workRoot = dir }, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
+		func(reader *bufio.Reader, stdout, stderr io.Writer) error {
+			if err := base(reader, stdout, stderr); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(workRoot, ".codex", "auth.json"), changed, 0o600)
+		},
+	}}
+	driver, err := peoplesweep.NewCodexAppServerDriverWithAuthHome(codexTestConfig(), starter, &recordingCodexGate{}, authHome)
+	requireChecks.NoError(err)
+	profile := codexTestProfile(t)
+	prepared, err := driver.Prepare(profile, codexTestRequest())
+	requireChecks.NoError(err)
+	response, err := driver.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
+	requireChecks.ErrorContains(err, "account identity changed")
+	assertChecks.Empty(response.CandidateJSON)
+	contents, err := os.ReadFile(filepath.Join(authHome, "auth.json"))
+	requireChecks.NoError(err)
+	assertChecks.Equal(sha256.Sum256(initial), sha256.Sum256(contents))
+	assertChecks.NoDirExists(workRoot)
 }
 
 func decodeLengthPrefixedComponents(t *testing.T, wire []byte) [][]byte {
@@ -358,6 +498,8 @@ func decodeLengthPrefixedComponents(t *testing.T, wire []byte) [][]byte {
 }
 
 func TestCodexTransportUsesEphemeralSchemaConstrainedTurn(t *testing.T) {
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
 	checks := assert.New(t)
 	must := require.New(t)
 	transport, starter, gate, transcript := newSuccessfulCodexTransport(t, `{"claims":[]}`)
@@ -368,40 +510,34 @@ func TestCodexTransportUsesEphemeralSchemaConstrainedTurn(t *testing.T) {
 	response, err := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.NoError(err)
 	checks.JSONEq(`{"claims":[]}`, string(response.CandidateJSON))
-	checks.Equal([]string{"initialize", "model/list", "thread/start", "turn/start"}, transcript.methods)
-	must.Len(transcript.frames, 4)
+	assertChecks.Equal([]string{"initialize", "initialized", "model/list", "thread/start", "turn/start"}, transcript.methods)
+	must.Len(transcript.frames, 5)
 
 	var threadStart struct {
 		Params struct {
-			Model                   string   `json:"model"`
-			Effort                  string   `json:"effort"`
-			Ephemeral               bool     `json:"ephemeral"`
-			CWD                     string   `json:"cwd"`
-			RuntimeWorkspaceRoots   []string `json:"runtimeWorkspaceRoots"`
-			SelectedCapabilityRoots []string `json:"selectedCapabilityRoots"`
-			DynamicTools            []any    `json:"dynamicTools"`
-			Environments            []any    `json:"environments"`
-			ApprovalPolicy          string   `json:"approvalPolicy"`
-			Sandbox                 string   `json:"sandbox"`
-			SandboxPolicy           struct {
-				Type          string `json:"type"`
-				NetworkAccess bool   `json:"networkAccess"`
-			} `json:"sandboxPolicy"`
+			Model          string `json:"model"`
+			Ephemeral      bool   `json:"ephemeral"`
+			CWD            string `json:"cwd"`
+			ApprovalPolicy string `json:"approvalPolicy"`
+			Sandbox        string `json:"sandbox"`
 		} `json:"params"`
 	}
-	must.NoError(json.Unmarshal(transcript.frames[2], &threadStart))
+	must.NoError(json.Unmarshal(transcript.frames[3], &threadStart))
+	var threadFields struct {
+		Params map[string]json.RawMessage `json:"params"`
+	}
+	requireChecks.NoError(json.Unmarshal(transcript.frames[3], &threadFields))
+	assertChecks.NotContains(threadFields.Params, "effort")
+	assertChecks.NotContains(threadFields.Params, "sandboxPolicy")
 	checks.Equal("gpt-test", threadStart.Params.Model)
-	checks.Equal("high", threadStart.Params.Effort)
 	checks.True(threadStart.Params.Ephemeral)
-	checks.Equal(".", threadStart.Params.CWD)
-	checks.Equal([]string{"."}, threadStart.Params.RuntimeWorkspaceRoots)
-	checks.Empty(threadStart.Params.SelectedCapabilityRoots)
-	checks.Empty(threadStart.Params.DynamicTools)
-	checks.Empty(threadStart.Params.Environments)
+	checks.Equal("/work", threadStart.Params.CWD)
+	assertChecks.NotContains(threadFields.Params, "runtimeWorkspaceRoots")
+	assertChecks.NotContains(threadFields.Params, "selectedCapabilityRoots")
+	assertChecks.NotContains(threadFields.Params, "dynamicTools")
+	assertChecks.NotContains(threadFields.Params, "environments")
 	checks.Equal("never", threadStart.Params.ApprovalPolicy)
 	checks.Equal("read-only", threadStart.Params.Sandbox)
-	checks.Equal("readOnly", threadStart.Params.SandboxPolicy.Type)
-	checks.False(threadStart.Params.SandboxPolicy.NetworkAccess)
 
 	var turnStart struct {
 		Params struct {
@@ -410,18 +546,30 @@ func TestCodexTransportUsesEphemeralSchemaConstrainedTurn(t *testing.T) {
 				Type string `json:"type"`
 				Text string `json:"text"`
 			} `json:"input"`
-			Model        string          `json:"model"`
-			Effort       string          `json:"effort"`
-			OutputSchema json.RawMessage `json:"outputSchema"`
+			Model         string          `json:"model"`
+			Effort        string          `json:"effort"`
+			OutputSchema  json.RawMessage `json:"outputSchema"`
+			SandboxPolicy struct {
+				Type          string `json:"type"`
+				NetworkAccess bool   `json:"networkAccess"`
+			} `json:"sandboxPolicy"`
 		} `json:"params"`
 	}
-	must.NoError(json.Unmarshal(transcript.frames[3], &turnStart))
+	must.NoError(json.Unmarshal(transcript.frames[4], &turnStart))
+	var turnFields struct {
+		Params map[string]json.RawMessage `json:"params"`
+	}
+	requireChecks.NoError(json.Unmarshal(transcript.frames[4], &turnFields))
+	assertChecks.NotContains(turnFields.Params, "sandbox")
 	checks.Equal("thr_test", turnStart.Params.ThreadID)
 	checks.Equal("gpt-test", turnStart.Params.Model)
 	checks.Equal("high", turnStart.Params.Effort)
+	assertChecks.Equal("readOnly", turnStart.Params.SandboxPolicy.Type)
+	assertChecks.False(turnStart.Params.SandboxPolicy.NetworkAccess)
 	must.Len(turnStart.Params.Input, 1)
 	checks.Equal("text", turnStart.Params.Input[0].Type)
-	checks.Equal("Read packet.json and return only JSON matching the supplied output schema.", turnStart.Params.Input[0].Text)
+	assertChecks.NotContains(turnStart.Params.Input[0].Text, "packet.json")
+	assertChecks.Contains(turnStart.Params.Input[0].Text, request.InputText)
 	checks.JSONEq(string(request.JSONSchema), string(turnStart.Params.OutputSchema))
 
 	must.Len(starter.records, 1)
@@ -432,7 +580,36 @@ func TestCodexTransportUsesEphemeralSchemaConstrainedTurn(t *testing.T) {
 	checks.NoDirExists(record.dir, "packet root must be removed after process join")
 }
 
+func TestCodexTurnPreservesPacketContainingReservedThreadText(t *testing.T) {
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
+	transport, _, _, transcript := newSuccessfulCodexTransport(t, `{"claims":[]}`)
+	profile := codexTestProfile(t)
+	request := codexTestRequest()
+	marker := strings.Repeat("t", 128)
+	request.InputText += marker
+	prepared, err := transport.Prepare(profile, request)
+	requireChecks.NoError(err)
+	response, err := transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
+	requireChecks.NoError(err)
+	assertChecks.JSONEq(`{"claims":[]}`, string(response.CandidateJSON))
+	requireChecks.Len(transcript.frames, 5)
+	var turn struct {
+		Params struct {
+			ThreadID string `json:"threadId"`
+			Input    []struct {
+				Text string `json:"text"`
+			} `json:"input"`
+		} `json:"params"`
+	}
+	requireChecks.NoError(json.Unmarshal(transcript.frames[4], &turn))
+	assertChecks.Equal("thr_test", turn.Params.ThreadID)
+	requireChecks.Len(turn.Params.Input, 1)
+	assertChecks.Equal("Return only JSON matching the supplied output schema.\n\n"+request.InputText, turn.Params.Input[0].Text)
+}
+
 func TestCodexPreparedWireCoversPacketAndEveryOutboundFrame(t *testing.T) {
+	assertChecks := assert.New(t)
 	checks := assert.New(t)
 	must := require.New(t)
 	transport, starter, _, transcript := newSuccessfulCodexTransport(t, `{"claims":[]}`)
@@ -441,7 +618,7 @@ func TestCodexPreparedWireCoversPacketAndEveryOutboundFrame(t *testing.T) {
 	prepared, err := transport.Prepare(profile, request)
 	must.NoError(err)
 	components := decodeLengthPrefixedComponents(t, prepared.WireRequest())
-	must.Len(components, 5)
+	require.Len(t, components, 6)
 	checks.Equal([]byte(request.InputText), components[0])
 	for index := 1; index < len(components); index++ {
 		checks.True(bytes.HasSuffix(components[index], []byte("\n")), "JSONL frame %d", index)
@@ -449,11 +626,11 @@ func TestCodexPreparedWireCoversPacketAndEveryOutboundFrame(t *testing.T) {
 
 	_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.NoError(err)
-	checks.Equal(components[1:4], transcript.frames[:3])
+	assertChecks.Equal(components[1:5], transcript.frames[:4])
 	var reservedTurn map[string]any
 	var launchedTurn map[string]any
-	must.NoError(json.Unmarshal(components[4], &reservedTurn))
-	must.NoError(json.Unmarshal(transcript.frames[3], &launchedTurn))
+	must.NoError(json.Unmarshal(components[5], &reservedTurn))
+	must.NoError(json.Unmarshal(transcript.frames[4], &launchedTurn))
 	reservedParams, ok := reservedTurn["params"].(map[string]any)
 	must.True(ok)
 	launchedParams, ok := launchedTurn["params"].(map[string]any)
@@ -462,24 +639,31 @@ func TestCodexPreparedWireCoversPacketAndEveryOutboundFrame(t *testing.T) {
 	must.True(ok)
 	checks.Len(reservedID, 128)
 	checks.Equal("thr_test", launchedParams["threadId"])
-	wantLaunchedTurn := bytes.Replace(components[4], []byte(reservedID), []byte("thr_test"), 1)
-	checks.Equal(wantLaunchedTurn, transcript.frames[3],
+	wantLaunchedTurn := bytes.Replace(components[5], []byte(reservedID), []byte("thr_test"), 1)
+	checks.Equal(wantLaunchedTurn, transcript.frames[4],
 		"the server thread-ID slot must be the only changed wire bytes")
 	reservedParams["threadId"] = launchedParams["threadId"]
 	checks.Equal(reservedTurn, launchedTurn, "only the bounded server thread-ID slot may change")
-	actualWireBytes := len(prepared.WireRequest()) - len(components[4]) + len(transcript.frames[3])
+	actualWireBytes := len(prepared.WireRequest()) - len(components[5]) + len(transcript.frames[4])
 	checks.GreaterOrEqual(len(prepared.WireRequest()), actualWireBytes,
 		"reservation must cover the response-dependent turn frame")
 	must.Len(starter.records, 1)
 	record := starter.records[0]
-	checks.Equal(components[0], transcript.packet)
-	must.Error(transcript.packetWrite, "packet must reject writes")
-	checks.Equal([]string{"packet.json"}, transcript.rootEntries)
+	assertChecks.Contains(string(transcript.frames[4]), "private packet marker")
+	assertChecks.Empty(transcript.rootEntries)
 	checks.NoDirExists(record.dir)
 
 	wireCopy := prepared.WireRequest()
 	wireCopy[len(wireCopy)-1] ^= 0xff
 	checks.NotEqual(wireCopy, prepared.WireRequest(), "wire accessor must return a copy")
+
+	changed := request
+	changed.InputText = strings.Replace(request.InputText, "private", "Private", 1)
+	changedPrepared, err := transport.Prepare(profile, changed)
+	must.NoError(err)
+	assertChecks.NotEqual(prepared.WireSHA256(), changedPrepared.WireSHA256())
+	changedComponents := decodeLengthPrefixedComponents(t, changedPrepared.WireRequest())
+	assertChecks.NotEqual(components[5], changedComponents[5], "the disclosed turn must change with the packet")
 }
 
 func TestCodexTransportRejectsUnsupportedModelAndEffort(t *testing.T) {
@@ -802,7 +986,6 @@ func TestCodexCleanupClosesStreamsOnNonzeroExit(t *testing.T) {
 }
 
 func TestCodexTransportRejectsUnboundedModelCatalog(t *testing.T) {
-	checks := assert.New(t)
 	must := require.New(t)
 	cursor := "more-models"
 	transcript := &codexTranscript{}
@@ -816,7 +999,7 @@ func TestCodexTransportRejectsUnboundedModelCatalog(t *testing.T) {
 	must.NoError(err)
 	_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 	must.ErrorIs(err, peoplesweep.ErrInvalidStructuredOutput)
-	checks.Equal([]string{"initialize", "model/list"}, transcript.methods)
+	assert.Equal(t, []string{"initialize", "initialized", "model/list"}, transcript.methods)
 }
 
 func TestCodexTransportRejectsMalformedOrOversizedThreadIDBeforeTurn(t *testing.T) {
@@ -851,6 +1034,13 @@ func TestCodexTransportRejectsMalformedOrOversizedThreadIDBeforeTurn(t *testing.
 						if err := writeRPCFrame(stdout, map[string]any{"id": id + 1, "result": result}); err != nil {
 							return err
 						}
+						if id == 0 {
+							line, err := reader.ReadBytes('\n')
+							if err != nil {
+								return fmt.Errorf("read codex initialized notification: %w", err)
+							}
+							transcript.record(line)
+						}
 					}
 					_, err := reader.ReadBytes('\n')
 					if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
@@ -870,7 +1060,7 @@ func TestCodexTransportRejectsMalformedOrOversizedThreadIDBeforeTurn(t *testing.
 			_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
 			must.ErrorIs(err, peoplesweep.ErrInvalidStructuredOutput)
 			checks.NotContains(err.Error(), test.threadID)
-			checks.Equal([]string{"initialize", "model/list", "thread/start"}, transcript.methods)
+			assert.Equal(t, []string{"initialize", "initialized", "model/list", "thread/start"}, transcript.methods)
 		})
 	}
 }
@@ -907,7 +1097,7 @@ func TestCodexTransportRejectsInvalidFinalSchema(t *testing.T) {
 	checks.Equal("gpt-test", response.ModelVersion)
 	checks.Equal(int64(1), starter.starts.Load())
 	checks.Equal(int64(1), gate.verifyCalls.Load())
-	checks.Equal([]string{"initialize", "model/list", "thread/start", "turn/start"}, transcript.methods)
+	assert.Equal(t, []string{"initialize", "initialized", "model/list", "thread/start", "turn/start"}, transcript.methods)
 }
 
 func TestCodexTransportPreservesUsageWhenCumulativeTotalsAreInvalid(t *testing.T) {
@@ -923,12 +1113,12 @@ func TestCodexTransportPreservesUsageWhenCumulativeTotalsAreInvalid(t *testing.T
 		{name: "missing output", writeBad: func(w io.Writer) error {
 			return writeRPCFrame(w, map[string]any{"method": "thread/tokenUsage/updated", "params": map[string]any{
 				"threadId": "thr_test", "turnId": "turn_test",
-				"tokenUsage": map[string]any{"totalTokenUsage": map[string]any{"inputTokens": 22}},
+				"tokenUsage": map[string]any{"total": map[string]any{"inputTokens": 22}},
 			}})
 		}},
 		{name: "decreasing", writeBad: func(w io.Writer) error { return writeCodexUsageEvent(w, 20, 3) }},
 		{name: "overflow", writeBad: func(w io.Writer) error {
-			_, err := io.WriteString(w, `{"method":"thread/tokenUsage/updated","params":{"threadId":"thr_test","turnId":"turn_test","tokenUsage":{"totalTokenUsage":{"inputTokens":9223372036854775808,"outputTokens":5}}}}`+"\n")
+			_, err := io.WriteString(w, `{"method":"thread/tokenUsage/updated","params":{"threadId":"thr_test","turnId":"turn_test","tokenUsage":{"total":{"inputTokens":9223372036854775808,"outputTokens":5}}}}`+"\n")
 			return err
 		}},
 	}
@@ -993,12 +1183,12 @@ func TestCodexTransportConsumesNotificationsQueuedBeforeTurnResponseOnce(t *test
 	must.NoError(err)
 	checks.JSONEq(`{"claims":[]}`, string(response.CandidateJSON))
 	checks.Equal(peoplesweep.TokenUsage{InputTokens: 22, OutputTokens: 5}, response.Usage)
-	checks.Equal([]string{"initialize", "model/list", "thread/start", "turn/start"}, transcript.methods)
+	assert.Equal(t, []string{"initialize", "initialized", "model/list", "thread/start", "turn/start"}, transcript.methods)
 }
 
 func TestCodexDriverMarksReportedZeroUsageKnown(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
 	transcript := &codexTranscript{}
 	starter := &recordingCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
 		codexTurnEventScript(t, transcript, nil, func(stdout io.Writer) error {
@@ -1013,35 +1203,35 @@ func TestCodexDriverMarksReportedZeroUsageKnown(t *testing.T) {
 	}}
 	driver, err := peoplesweep.NewCodexAppServerDriver(
 		codexTestConfig(), starter, &recordingCodexGate{})
-	require.NoError(err)
+	requireChecks.NoError(err)
 	profile := codexTestProfile(t)
 	prepared, err := driver.Prepare(profile, codexTestRequest())
-	require.NoError(err)
+	requireChecks.NoError(err)
 
 	response, err := driver.GeneratePrepared(
 		t.Context(), profile, peoplesweep.Credential{}, prepared)
-	require.NoError(err)
-	assert.True(response.UsageKnown)
-	assert.Equal(peoplesweep.TokenUsage{}, response.Usage)
+	requireChecks.NoError(err)
+	assertChecks.True(response.UsageKnown)
+	assertChecks.Equal(peoplesweep.TokenUsage{}, response.Usage)
 }
 
 func TestCodexDriverRejectsNonEmptyCredentialBeforeAttestation(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
 	gate := &recordingCodexGate{}
 	starter := &recordingCodexStarter{t: t}
 	driver, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, gate)
-	require.NoError(err)
+	requireChecks.NoError(err)
 	profile := codexTestProfile(t)
 	prepared, err := driver.Prepare(profile, codexTestRequest())
-	require.NoError(err)
+	requireChecks.NoError(err)
 
 	_, err = driver.GeneratePrepared(t.Context(), profile,
 		peoplesweep.NewCredential(peoplesweep.AuthBearer, "codex-secret-canary"), prepared)
-	require.ErrorContains(err, "does not accept")
-	assert.NotContains(err.Error(), "codex-secret-canary")
-	assert.Zero(gate.verifyCalls.Load())
-	assert.Zero(starter.starts.Load())
+	requireChecks.ErrorContains(err, "does not accept")
+	assertChecks.NotContains(err.Error(), "codex-secret-canary")
+	assertChecks.Zero(gate.verifyCalls.Load())
+	assertChecks.Zero(starter.starts.Load())
 }
 
 func TestCodexTransportRejectsLateStderrOverflowAfterFinalFrame(t *testing.T) {
@@ -1118,7 +1308,7 @@ func TestCodexDeviceLoginUsesDeviceCodeMethod(t *testing.T) {
 	var frames [][]byte
 	starter := &recordingCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
 		func(reader *bufio.Reader, stdout, _ io.Writer) error {
-			for id, wantMethod := range []string{"initialize", "account/login/start"} {
+			for id, wantMethod := range []string{"initialize", "initialized", "account/login/start"} {
 				line, err := reader.ReadBytes('\n')
 				if err != nil {
 					return fmt.Errorf("read codex login frame: %w", err)
@@ -1127,6 +1317,15 @@ func TestCodexDeviceLoginUsesDeviceCodeMethod(t *testing.T) {
 				if id == 0 {
 					if err := writeRPCFrame(stdout, map[string]any{"id": 1, "result": map[string]any{}}); err != nil {
 						return err
+					}
+					continue
+				}
+				if id == 1 {
+					var got struct {
+						Method string `json:"method"`
+					}
+					if err := json.Unmarshal(line, &got); err != nil || got.Method != "initialized" {
+						return errors.New("missing codex initialized notification")
 					}
 					continue
 				}
@@ -1146,7 +1345,6 @@ func TestCodexDeviceLoginUsesDeviceCodeMethod(t *testing.T) {
 				if err := writeRPCFrame(stdout, map[string]any{"id": 2, "result": map[string]any{
 					"type": "chatgptDeviceCode", "loginId": "login-safe",
 					"verificationUrl": "https://auth.example.test/device", "userCode": "ABCD-1234",
-					"expiresAt": "2026-08-23T12:30:00Z",
 				}}); err != nil {
 					return err
 				}
@@ -1160,6 +1358,7 @@ func TestCodexDeviceLoginUsesDeviceCodeMethod(t *testing.T) {
 	transport, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
 	must.NoError(err)
 	var login peoplesweep.DeviceLogin
+	started := time.Now()
 	err = transport.StartDeviceLogin(t.Context(), func(value peoplesweep.DeviceLogin) error {
 		login = value
 		return nil
@@ -1167,8 +1366,8 @@ func TestCodexDeviceLoginUsesDeviceCodeMethod(t *testing.T) {
 	must.NoError(err)
 	checks.Equal("https://auth.example.test/device", login.VerificationURL)
 	checks.Equal("ABCD-1234", login.UserCode)
-	checks.Equal(time.Date(2026, 8, 23, 12, 30, 0, 0, time.UTC), login.ExpiresAt)
-	must.Len(frames, 2)
+	assert.WithinRange(t, login.ExpiresAt, started, started.Add(2*time.Second))
+	require.Len(t, frames, 3)
 }
 
 func TestCodexModelListReturnsSupportedEfforts(t *testing.T) {
@@ -1184,6 +1383,18 @@ func TestCodexModelListReturnsSupportedEfforts(t *testing.T) {
 			transcript.record(line)
 			if err := writeRPCFrame(stdout, map[string]any{"id": 1, "result": map[string]any{}}); err != nil {
 				return err
+			}
+			line, err = reader.ReadBytes('\n')
+			if err != nil {
+				return fmt.Errorf("read codex initialized notification: %w", err)
+			}
+			transcript.record(line)
+			var notification map[string]any
+			if err := json.Unmarshal(line, &notification); err != nil {
+				return err
+			}
+			if notification["method"] != "initialized" || len(notification) != 1 {
+				return errors.New("initialize was not followed by the initialized notification")
 			}
 			line, err = reader.ReadBytes('\n')
 			if err != nil {
@@ -1210,7 +1421,7 @@ func TestCodexModelListReturnsSupportedEfforts(t *testing.T) {
 		ID: "gpt-test", DisplayName: "Test Model", DefaultReasoningEffort: "medium",
 		SupportedEfforts: []string{"low", "medium"},
 	}}, models)
-	checks.Equal([]string{"initialize", "model/list"}, transcript.methods)
+	assert.Equal(t, []string{"initialize", "initialized", "model/list"}, transcript.methods)
 }
 
 func TestCodexEveryProcessRequiresIsolationGate(t *testing.T) {
@@ -1308,33 +1519,37 @@ func TestCodexTransportRejectsModelVersionChangeAcrossBatches(t *testing.T) {
 }
 
 func TestCodexLaunchScrubsEnvironmentAndDisablesExtensions(t *testing.T) {
-	checks := assert.New(t)
-	must := require.New(t)
+	assertChecks := assert.New(t)
+	requireChecks := require.New(t)
 	t.Setenv("PACKET_SECRET", "must-not-forward")
 	t.Setenv("OPENAI_API_KEY", "must-not-forward")
 	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "auth-store"))
 	transport, starter, _, transcript := newSuccessfulCodexTransport(t, `{"claims":[]}`)
 	profile := codexTestProfile(t)
 	prepared, err := transport.Prepare(profile, codexTestRequest())
-	must.NoError(err)
+	requireChecks.NoError(err)
 	_, err = transport.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
-	must.NoError(err)
-	must.Len(starter.records, 1)
+	requireChecks.NoError(err)
+	requireChecks.Len(starter.records, 1)
 	record := starter.records[0]
 	joinedEnv := strings.Join(record.env, "\n")
-	checks.Contains(joinedEnv, "CODEX_HOME=")
-	checks.NotContains(joinedEnv, "PACKET_SECRET")
-	checks.NotContains(joinedEnv, "OPENAI_API_KEY")
-	checks.Equal([]string{
+	assertChecks.NotContains(joinedEnv, "CODEX_HOME=")
+	assertChecks.NotContains(joinedEnv, "PACKET_SECRET")
+	assertChecks.NotContains(joinedEnv, "OPENAI_API_KEY")
+	assertChecks.Equal([]string{
 		"app-server", "--stdio", "--strict-config",
 		"--disable", "plugins", "--disable", "apps", "--disable", "enable_mcp_apps",
 		"--disable", "browser_use", "--disable", "computer_use", "--disable", "image_generation",
 		"--disable", "skill_search", "--disable", "hooks", "--disable", "memories",
 		"--disable", "multi_agent", "-c", "mcp_servers={}", "-c", "analytics.enabled=false",
 	}, record.args)
-	for _, frame := range transcript.frames {
-		checks.NotContains(string(frame), codexTestRequest().InputText)
-		checks.NotContains(string(frame), "projectId")
-		checks.NotContains(string(frame), "developerInstructions")
+	for index, frame := range transcript.frames {
+		if index == len(transcript.frames)-1 {
+			assertChecks.Contains(string(frame), "private packet marker")
+		} else {
+			assertChecks.NotContains(string(frame), "private packet marker")
+		}
+		assertChecks.NotContains(string(frame), "projectId")
+		assertChecks.NotContains(string(frame), "developerInstructions")
 	}
 }

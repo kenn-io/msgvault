@@ -210,6 +210,9 @@ jobs:
       - name: Run deterministic browser and visual tests
         run: make web-test-browser
 
+      - name: Run people sweep narrow viewport fixture
+        run: make web-test-people-inference-viewport
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:

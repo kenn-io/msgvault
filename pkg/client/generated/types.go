@@ -2134,6 +2134,17 @@ func (c CliStatsResponse) Validate() error {
 	return errors
 }
 
+type CodexModel struct {
+	DefaultReasoningEffort string   `json:"default_reasoning_effort" validate:"required"`
+	DisplayName            string   `json:"display_name" validate:"required"`
+	ID                     string   `json:"id" validate:"required"`
+	SupportedEfforts       []string `json:"supported_efforts" validate:"required"`
+}
+
+func (c CodexModel) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type CommunicationService struct {
 	Aliases              []string  `json:"aliases" validate:"required"`
 	CreatedAt            time.Time `json:"created_at" validate:"required"`
@@ -7130,6 +7141,211 @@ func (p PatchSavedViewRequest) Validate() error {
 	return errors
 }
 
+type PeopleCodexLoginRequest struct {
+	Name string `json:"name" validate:"required,min=1"`
+}
+
+func (p PeopleCodexLoginRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PeopleCodexLoginResponse struct {
+	LocalDeadline   time.Time `json:"local_deadline" validate:"required"`
+	SessionID       string    `json:"session_id" validate:"required"`
+	UserCode        string    `json:"user_code" validate:"required"`
+	VerificationURL string    `json:"verification_url" validate:"required"`
+}
+
+func (p PeopleCodexLoginResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PeopleCodexLoginStatusResponse struct {
+	State string `json:"state" validate:"required"`
+}
+
+func (p PeopleCodexLoginStatusResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PeopleCodexModelsResponse struct {
+	Models []CodexModel `json:"models" validate:"required"`
+}
+
+func (p PeopleCodexModelsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Models {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Models[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PeopleCodexProfileRequest struct {
+	AllowSensitive   bool     `json:"allow_sensitive"`
+	AllowedSources   []string `json:"allowed_sources" validate:"required"`
+	Model            string   `json:"model" validate:"required,min=1"`
+	ReasoningEffort  string   `json:"reasoning_effort" validate:"required,min=1"`
+	RetentionPosture string   `json:"retention_posture" validate:"required,min=1"`
+	SourceSince      string   `json:"source_since" validate:"required"`
+	SourceUntil      *string  `json:"source_until,omitzero"`
+	TrainingPosture  string   `json:"training_posture" validate:"required,min=1"`
+}
+
+func (p PeopleCodexProfileRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PeopleInferenceCheckResponse struct {
+	Fingerprint string     `json:"fingerprint" validate:"required"`
+	Model       string     `json:"model" validate:"required"`
+	Ok          bool       `json:"ok"`
+	Usage       TokenUsage `json:"usage"`
+}
+
+func (p PeopleInferenceCheckResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Fingerprint, "required"); err != nil {
+		errors = errors.Append("Fingerprint", err)
+	}
+	if err := typesValidator.Var(p.Model, "required"); err != nil {
+		errors = errors.Append("Model", err)
+	}
+	if v, ok := any(p.Usage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Usage", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PeopleInferenceConsentRequest struct {
+	Confirmed   bool   `json:"confirmed"`
+	Fingerprint string `json:"fingerprint" validate:"required"`
+}
+
+func (p PeopleInferenceConsentRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PeopleInferenceKeyWriteRequest struct {
+	Value string `json:"value" validate:"required,min=1"`
+}
+
+func (p PeopleInferenceKeyWriteRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PeopleInferencePresetCreateRequest struct {
+	AllowSensitive   bool                                       `json:"allow_sensitive"`
+	AllowedSources   []string                                   `json:"allowed_sources" validate:"required"`
+	CredentialEnv    *string                                    `json:"credential_env,omitzero"`
+	Model            string                                     `json:"model" validate:"required,min=1"`
+	PresetID         PeopleInferencePresetCreateRequestPresetID `json:"preset_id" validate:"required"`
+	RetentionPosture string                                     `json:"retention_posture" validate:"required,min=1"`
+	SourceSince      string                                     `json:"source_since" validate:"required"`
+	SourceUntil      *string                                    `json:"source_until,omitzero"`
+	TrainingPosture  string                                     `json:"training_posture" validate:"required,min=1"`
+}
+
+func (p PeopleInferencePresetCreateRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AllowedSources, "required"); err != nil {
+		errors = errors.Append("AllowedSources", err)
+	}
+	if err := typesValidator.Var(p.Model, "required,min=1"); err != nil {
+		errors = errors.Append("Model", err)
+	}
+	if v, ok := any(p.PresetID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("PresetID", err)
+		}
+	}
+	if err := typesValidator.Var(p.RetentionPosture, "required,min=1"); err != nil {
+		errors = errors.Append("RetentionPosture", err)
+	}
+	if err := typesValidator.Var(p.SourceSince, "required"); err != nil {
+		errors = errors.Append("SourceSince", err)
+	}
+	if err := typesValidator.Var(p.TrainingPosture, "required,min=1"); err != nil {
+		errors = errors.Append("TrainingPosture", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PeopleInferenceProfileSetting struct {
+	AllowSensitive       bool     `json:"allow_sensitive"`
+	AllowedSources       []string `json:"allowed_sources" validate:"required"`
+	Checked              bool     `json:"checked"`
+	ConsentActive        bool     `json:"consent_active"`
+	CredentialConfigured bool     `json:"credential_configured"`
+	CredentialEnv        *string  `json:"credential_env,omitzero"`
+	CredentialRevision   *string  `json:"credential_revision,omitzero"`
+	CredentialSource     string   `json:"credential_source" validate:"required"`
+	Endpoint             *string  `json:"endpoint,omitzero"`
+	Fingerprint          *string  `json:"fingerprint,omitzero"`
+	Model                string   `json:"model" validate:"required"`
+	Name                 string   `json:"name" validate:"required"`
+	OutputMode           string   `json:"output_mode" validate:"required"`
+	PresetID             *string  `json:"preset_id,omitzero"`
+	Protocol             string   `json:"protocol" validate:"required"`
+	RetentionPosture     string   `json:"retention_posture" validate:"required"`
+	Selected             bool     `json:"selected"`
+	SourceSince          string   `json:"source_since" validate:"required"`
+	SourceUntil          *string  `json:"source_until,omitzero"`
+	TrainingPosture      string   `json:"training_posture" validate:"required"`
+}
+
+func (p PeopleInferenceProfileSetting) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PeopleInferenceSelectionRequest struct {
+	Name string `json:"name" validate:"required,min=1"`
+}
+
+func (p PeopleInferenceSelectionRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PeopleInferenceSettingsResponse struct {
+	ConfiguredEnabled     bool                            `json:"configured_enabled"`
+	ConfiguredFingerprint *string                         `json:"configured_fingerprint,omitzero"`
+	ConfiguredName        *string                         `json:"configured_name,omitzero"`
+	PendingRestart        bool                            `json:"pending_restart"`
+	Profiles              []PeopleInferenceProfileSetting `json:"profiles" validate:"required"`
+	RunningEnabled        bool                            `json:"running_enabled"`
+	RunningFingerprint    *string                         `json:"running_fingerprint,omitzero"`
+	RunningName           *string                         `json:"running_name,omitzero"`
+}
+
+func (p PeopleInferenceSettingsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Profiles {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Profiles[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PeopleResponse struct {
 	People []Person `json:"people" validate:"required"`
 }
@@ -12070,6 +12286,11 @@ type TokenUploadRequest struct {
 
 func (t TokenUploadRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TokenUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
 }
 
 type TotalStatsResponse struct {

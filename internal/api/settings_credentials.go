@@ -61,7 +61,7 @@ func (s *Server) registerProviderCredentialSettingsRoutes(api huma.API) {
 		}
 		operation := rawAPIV1Operation(operationID, method, settingsProviderCredentialRoute, summary)
 		operation.Parameters = append(operation.Parameters,
-			&huma.Param{Name: "credential_id", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+			&huma.Param{Name: "credential_id", In: pathKey, Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
 			&huma.Param{Name: ifMatchHeaderName, In: headerParamLocation, Required: true,
 				Description: "Strong ETag for the provider credential store", Schema: &huma.Schema{Type: huma.TypeString}},
 		)
