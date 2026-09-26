@@ -2247,16 +2247,17 @@ func buildRecipientSet(recipientType string, addresses []mime.Address, participa
 	return rs
 }
 
-// storeAttachment stores an attachment to disk and records it in the database.
-func (s *Syncer) storeAttachment(messageID int64, att *mime.Attachment) error {
-	storagePath, err := export.StoreAttachmentFile(s.opts.AttachmentsDir, att)
+// StoreMIMEAttachment publishes one MIME attachment through the same
+// content-addressed path used by ordinary sync and returns its row data.
+func StoreMIMEAttachment(attachmentsDir string, att *mime.Attachment) (store.AttachmentWrite, error) {
+	storagePath, err := export.StoreAttachmentFile(attachmentsDir, att)
 	if err != nil || storagePath == "" {
-		return err
+		return store.AttachmentWrite{}, err
 	}
 
 	role, roleSource := store.AttachmentRoleFromMIME(
 		att.Disposition, att.IsInline, att.ContentID)
-	return s.store.UpsertAttachmentRecord(context.Background(), messageID, store.AttachmentWrite{
+	return store.AttachmentWrite{
 		Filename:      att.Filename,
 		MIMEType:      att.ContentType,
 		StoragePath:   storagePath,
@@ -2266,7 +2267,16 @@ func (s *Syncer) storeAttachment(messageID int64, att *mime.Attachment) error {
 		RoleSource:    roleSource,
 		SourcePartKey: att.PartKey,
 		ContentID:     att.ContentID,
-	})
+	}, nil
+}
+
+// storeAttachment stores an attachment to disk and records it in the database.
+func (s *Syncer) storeAttachment(messageID int64, att *mime.Attachment) error {
+	write, err := StoreMIMEAttachment(s.opts.AttachmentsDir, att)
+	if err != nil || write.StoragePath == "" {
+		return err
+	}
+	return s.store.UpsertAttachmentRecord(context.Background(), messageID, write)
 }
 
 // joinEmails concatenates email addresses from a slice of mime.Address with spaces.

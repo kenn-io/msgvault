@@ -9,11 +9,15 @@ import (
 	"strings"
 )
 
-// imapDraftRetainedMessageSQL identifies message rows still owned by a
-// managed draft. Ordinary archive GC must leave both the current content and
-// an interrupted operation's original content available for local reads.
-const imapDraftRetainedMessageSQL = `EXISTS (
+// managedDraftRetainedMessageSQL identifies message rows still owned by a
+// managed draft. Ordinary archive GC must leave current content and an
+// interrupted operation's original content available for local reads.
+const managedDraftRetainedMessageSQL = `EXISTS (
 		SELECT 1 FROM imap_drafts draft_owner
+		WHERE draft_owner.current_message_id = messages.id
+		   OR draft_owner.pending_original_message_id = messages.id
+	) OR EXISTS (
+		SELECT 1 FROM gmail_drafts draft_owner
 		WHERE draft_owner.current_message_id = messages.id
 		   OR draft_owner.pending_original_message_id = messages.id
 	)`
@@ -45,7 +49,7 @@ func planGCWith(q querier) (GCPlan, error) {
 	var plan GCPlan
 	if err := q.QueryRow(`
 		SELECT
-			COUNT(*) FILTER (WHERE deleted_from_source_at IS NOT NULL AND NOT (`+imapDraftRetainedMessageSQL+`)),
+			COUNT(*) FILTER (WHERE deleted_from_source_at IS NOT NULL AND NOT (`+managedDraftRetainedMessageSQL+`)),
 			COUNT(*) FILTER (
 				WHERE deleted_at IS NOT NULL
 				  AND deleted_from_source_at IS NULL
@@ -59,7 +63,7 @@ func planGCWith(q querier) (GCPlan, error) {
 		FROM (
 			SELECT id FROM messages
 			WHERE deleted_from_source_at IS NOT NULL
-			  AND NOT (`+imapDraftRetainedMessageSQL+`)
+			  AND NOT (`+managedDraftRetainedMessageSQL+`)
 			ORDER BY id
 		)
 	`)
@@ -127,7 +131,7 @@ func (s *Store) ExecuteGCContext(
 				SELECT DISTINCT conversation_id AS id
 				FROM messages
 				WHERE deleted_from_source_at IS NOT NULL
-				  AND NOT (`+imapDraftRetainedMessageSQL+`)
+				  AND NOT (`+managedDraftRetainedMessageSQL+`)
 				  AND conversation_id IS NOT NULL
 				ORDER BY conversation_id
 			)
@@ -142,7 +146,7 @@ func (s *Store) ExecuteGCContext(
 				WHERE rowid IN (
 					SELECT id FROM messages
 					WHERE deleted_from_source_at IS NOT NULL
-					  AND NOT (` + imapDraftRetainedMessageSQL + `)
+					  AND NOT (` + managedDraftRetainedMessageSQL + `)
 				)
 			`); err != nil {
 				return fmt.Errorf("delete source-deleted FTS rows: %w", err)
@@ -152,10 +156,10 @@ func (s *Store) ExecuteGCContext(
 		if _, err := q.Exec(`
 			UPDATE messages
 			SET reply_to_message_id = NULL
-			WHERE reply_to_message_id IN (
+				WHERE reply_to_message_id IN (
 				SELECT id FROM messages
 				WHERE deleted_from_source_at IS NOT NULL
-				  AND NOT (` + imapDraftRetainedMessageSQL + `)
+				  AND NOT (` + managedDraftRetainedMessageSQL + `)
 			)
 		`); err != nil {
 			return fmt.Errorf("clear replies to source-deleted messages: %w", err)
@@ -164,7 +168,7 @@ func (s *Store) ExecuteGCContext(
 		result, err := q.Exec(`
 		DELETE FROM messages
 		WHERE deleted_from_source_at IS NOT NULL
-		  AND NOT (` + imapDraftRetainedMessageSQL + `)
+		  AND NOT (` + managedDraftRetainedMessageSQL + `)
 		`)
 		if err != nil {
 			return fmt.Errorf("delete source-deleted messages: %w", err)

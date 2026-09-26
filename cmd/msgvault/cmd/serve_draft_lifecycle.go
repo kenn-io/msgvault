@@ -286,7 +286,7 @@ func emitDraftLifecycleOutput(
 		fmt.Fprintf(&data, "acknowledged replacement receipt: %s\n",
 			textutil.SanitizeTerminal(formatDraftLifecycleObservationReceipt(*output.ProviderObservation)))
 	}
-	if output.Observation != nil && output.Status == "pending" {
+	if output.Observation != nil && output.Status == laneStatePending {
 		fmt.Fprintf(&data, "old provider receipt: %s\n",
 			textutil.SanitizeTerminal(formatDraftLifecycleObservationReceipt(*output.Observation)))
 	}
@@ -296,7 +296,7 @@ func emitDraftLifecycleOutput(
 	providerOutcome := output.PendingCode
 	if providerOutcome == "" {
 		observations := []*draftLifecycleObservation{output.ProviderObservation, output.Observation}
-		if output.Status == "pending" {
+		if output.Status == laneStatePending {
 			observations = []*draftLifecycleObservation{output.Observation, output.ProviderObservation}
 		}
 		for _, observation := range observations {
@@ -315,7 +315,7 @@ func emitDraftLifecycleOutput(
 	if providerOutcome != "" {
 		fmt.Fprintf(&data, "provider outcome: %s\n", textutil.SanitizeTerminal(providerOutcome))
 	}
-	if output.Status == "pending" || output.Status == "accepted_local_failed" || output.ManualReconciliation {
+	if output.Status == laneStatePending || output.Status == "accepted_local_failed" || output.ManualReconciliation {
 		fmt.Fprintf(&data, "old draft ID remains blocked at revision %d\n", output.Revision)
 		fmt.Fprintln(&data, "manual action: reconcile the provider receipt and local state before retrying")
 	}
@@ -390,6 +390,18 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	if err != nil {
 		if req.Grant != nil {
 			return draftReplyNotPermitted(err)
+		}
+		if errors.Is(err, store.ErrIMAPDraftNotFound) {
+			gmailDraft, gmailErr := a.store.GetGmailDraftContext(ctx, intent.DraftID)
+			if gmailErr == nil {
+				if intent.Operation == api.CLIRunDraftRecoverCommand {
+					return draftReplyError("not_supported", errors.New("draft-recover supports IMAP drafts only"))
+				}
+				return a.runCLIGmailDraftLifecycle(ctx, intent, gmailDraft, emit)
+			}
+			if !errors.Is(gmailErr, store.ErrGmailDraftNotFound) {
+				return draftReplyError("draft_read_failed", gmailErr)
+			}
 		}
 		return draftReplyError("draft_not_found", err)
 	}
@@ -563,7 +575,7 @@ func (a *storeAPIAdapter) runDraftEdit(
 				latest = loaded
 			}
 		}
-		status := "pending"
+		status := laneStatePending
 		if latest.Pending == nil && persistenceErr == nil {
 			status = draftLifecycleActive
 		}
@@ -638,7 +650,7 @@ func (a *storeAPIAdapter) runDraftEdit(
 	}
 	defer a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
 	if ctx.Err() != nil {
-		output, outputErr := a.draftLifecycleOutput(evidenceCtx, published, "pending", nil, nil)
+		output, outputErr := a.draftLifecycleOutput(evidenceCtx, published, laneStatePending, nil, nil)
 		if outputErr == nil {
 			output.ManualReconciliation = true
 			_ = emitDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
@@ -693,9 +705,9 @@ func (a *storeAPIAdapter) emitDraftLifecyclePending(
 	if latest, err := a.store.GetIMAPDraftContext(ctx, draft.DraftID); err == nil {
 		draft = latest
 	}
-	output, err := a.draftRecoveryOutput(ctx, draft, "pending", providerObservation, draftLifecycleObservationOutput(observation), grant)
+	output, err := a.draftRecoveryOutput(ctx, draft, laneStatePending, providerObservation, draftLifecycleObservationOutput(observation), grant)
 	if err != nil {
-		output = draftLifecycleMetadata(draft, "pending", providerObservation, draftLifecycleObservationOutput(observation))
+		output = draftLifecycleMetadata(draft, laneStatePending, providerObservation, draftLifecycleObservationOutput(observation))
 		if grant == nil && draft.Pending != nil {
 			output.CandidateContent = string(draft.Pending.Raw)
 		}

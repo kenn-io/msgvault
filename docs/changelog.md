@@ -16,6 +16,12 @@ All notable changes to msgvault, grouped by release.
   when launchd, systemd, or Docker runs `msgvault serve`. CLI, TUI, and MCP
   commands then use the running daemon and fail instead of starting their own.
   See [configuration](configuration.md).
+- Gmail sources can create, retrieve, edit, and delete reviewable reply drafts
+  through `draft-reply`, `draft-get`, `draft-edit`, and `draft-delete`. Gmail
+  `draft-edit` supports plain-text drafts and refuses HTML, multipart, or
+  attached drafts before changing the provider. Drafting is disabled until the
+  source has `enabled = true` in `[[gmail.drafts]]`; `draft-send-as` lists
+  owner-only Gmail aliases without sending mail.
 
 - Send stored Beeper WAV and MP3 audio, with Beeper's own transcript, to a
   separately running Docbank media service that has the media HTTP routes. The

@@ -133,6 +133,30 @@ func TestIMAPDraftConfig(t *testing.T) {
 	t.Log("invalid [[imap.drafts]] entries reject bad source_id, mailbox, duplicate source_id, and unknown keys")
 }
 
+func TestGmailDraftConfig(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "[[gmail.drafts]]\nsource_id = 42\nenabled = true\n"
+	requirements.NoError(os.WriteFile(path, []byte(content), 0o600))
+	cfg, err := Load(path, "")
+	requirements.NoError(err)
+	requirements.Len(cfg.Gmail.Drafts, 1)
+	assertions.Equal(int64(42), cfg.Gmail.Drafts[0].SourceID)
+	assertions.True(cfg.Gmail.Drafts[0].Enabled)
+
+	for _, invalid := range []string{
+		"[[gmail.drafts]]\nenabled = true\n",
+		"[[gmail.drafts]]\nsource_id = 0\nenabled = true\n",
+		"[[gmail.drafts]]\nsource_id = 42\nenabled = true\n[[gmail.drafts]]\nsource_id = 42\nenabled = false\n",
+		"[[gmail.drafts]]\nsource_id = 42\nenabled = true\nextra = true\n",
+	} {
+		requirements.NoError(os.WriteFile(path, []byte(invalid), 0o600))
+		_, err := Load(path, "")
+		requirements.Error(err)
+	}
+}
+
 func TestCardDAVConfigRejectsPasswordField(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte(`[carddav]

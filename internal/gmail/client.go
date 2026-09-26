@@ -11,9 +11,11 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -28,6 +30,8 @@ const (
 	// Raw MIME includes attachments and needs more time on slow connections.
 	rawRequestTimeout = 5 * time.Minute
 )
+
+var errWriteOutcomeUnknown = errors.New("gmail write outcome is unknown")
 
 // Client implements the Gmail API interface.
 type Client struct {
@@ -106,7 +110,7 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 	// (oauth.refreshHTTPTimeout per call) instead of sharing this deadline.
 	// Any other TokenSource keeps its own refresh behavior.
 	timeout := defaultTimeout
-	if op == OpMessagesGetRaw {
+	if op == OpMessagesGetRaw || op == OpDraftsGet {
 		timeout = rawRequestTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -115,6 +119,7 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 	reqURL := baseURL + path
 
 	var lastErr error
+	remoteMutation := op.remoteMutation()
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := c.calculateBackoff(attempt)
@@ -141,8 +146,31 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 			req.Header.Set("Content-Type", "application/json")
 		}
 
+		var wroteRequest atomic.Bool
+		if remoteMutation {
+			trace := &httptrace.ClientTrace{
+				GotConn: func(httptrace.GotConnInfo) {
+					wroteRequest.Store(true)
+				},
+				WroteRequest: func(httptrace.WroteRequestInfo) {
+					wroteRequest.Store(true)
+				},
+			}
+			req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+		}
+
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			if remoteMutation {
+				if _, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
+					return nil, fmt.Errorf("http request: %w", err)
+				}
+				if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) &&
+					!wroteRequest.Load() {
+					return nil, fmt.Errorf("http request: %w", err)
+				}
+				return nil, fmt.Errorf("%w: http request: %w", errWriteOutcomeUnknown, err)
+			}
 			lastErr = fmt.Errorf("http request: %w", err)
 			continue // Retry on network errors
 		}
@@ -150,6 +178,9 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 		respBody, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
+			if remoteMutation {
+				return nil, fmt.Errorf("%w: read response: %w", errWriteOutcomeUnknown, err)
+			}
 			lastErr = fmt.Errorf("read response: %w", err)
 			continue
 		}
@@ -167,6 +198,9 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 			c.logger.Debug("rate limited, backing off 30s", "path", path, "attempt", attempt)
 			// Throttle the rate limiter to back off
 			c.rateLimiter.Throttle(30 * time.Second)
+			if remoteMutation {
+				return nil, newStatusError(resp.StatusCode, respBody)
+			}
 			lastErr = errors.New("rate limited (429)")
 			continue
 
@@ -178,29 +212,50 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 				c.logger.Debug("quota exceeded, backing off 60s", "path", path, "attempt", attempt)
 				// Throttle the rate limiter - quota errors need longer backoff
 				c.rateLimiter.Throttle(60 * time.Second)
+				if remoteMutation {
+					return nil, newStatusError(resp.StatusCode, respBody)
+				}
 				lastErr = errors.New("quota exceeded (403)")
 				continue // Retry with backoff
 			}
 			// Actual permission error - don't retry
-			return nil, fmt.Errorf("forbidden (403): %s", string(respBody))
+			return nil, newStatusError(resp.StatusCode, respBody)
 
 		case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout: // Server errors
+			if remoteMutation {
+				return nil, fmt.Errorf("%w: %w", errWriteOutcomeUnknown, newStatusError(resp.StatusCode, respBody))
+			}
 			lastErr = fmt.Errorf("server error (%d)", resp.StatusCode)
 			continue
 
 		case http.StatusUnauthorized: // Unauthorized - token might be expired
 			// oauth2.Client should auto-refresh, but if it fails, don't retry
-			return nil, errors.New("unauthorized (401): token may be invalid")
+			return nil, newStatusError(resp.StatusCode, respBody)
 
 		case http.StatusNotFound: // Not found
 			return nil, &NotFoundError{Path: path}
 
 		default: // Other client errors - don't retry
-			return nil, fmt.Errorf("request failed (%d): %s", resp.StatusCode, string(respBody))
+			return nil, newStatusError(resp.StatusCode, respBody)
 		}
 	}
 
 	return nil, fmt.Errorf("max retries exceeded: %w", lastErr)
+}
+
+func newStatusError(statusCode int, body []byte) *StatusError {
+	var msg string
+	switch statusCode {
+	case http.StatusUnauthorized:
+		msg = "unauthorized (401): token may be invalid"
+	case http.StatusForbidden:
+		msg = "forbidden (403): " + string(body)
+	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		msg = fmt.Sprintf("server error (%d)", statusCode)
+	default:
+		msg = fmt.Sprintf("request failed (%d): %s", statusCode, string(body))
+	}
+	return &StatusError{StatusCode: statusCode, msg: msg}
 }
 
 // calculateBackoff returns the backoff duration for a retry attempt.
@@ -272,6 +327,35 @@ type rawMessageResponse struct {
 	Raw          string   `json:"raw"` // base64url encoded (unpadded)
 }
 
+type draftMessageJSON struct {
+	ID       string   `json:"id,omitempty"`
+	Raw      string   `json:"raw,omitempty"`
+	ThreadID string   `json:"threadId,omitempty"`
+	LabelIDs []string `json:"labelIds,omitempty"`
+}
+
+type draftRequestJSON struct {
+	ID      string           `json:"id,omitempty"`
+	Message draftMessageJSON `json:"message"`
+}
+
+type draftResponseJSON struct {
+	ID      string             `json:"id"`
+	Message rawMessageResponse `json:"message"`
+}
+
+type sendAsJSON struct {
+	Email              string `json:"sendAsEmail"`
+	DisplayName        string `json:"displayName"`
+	VerificationStatus string `json:"verificationStatus"`
+	Primary            bool   `json:"isPrimary"`
+	Default            bool   `json:"isDefault"`
+}
+
+type listSendAsResponse struct {
+	SendAs []sendAsJSON `json:"sendAs"`
+}
+
 // decodeBase64URL decodes a base64url-encoded string, tolerating optional padding.
 // Gmail typically returns unpadded base64url, but this function handles both cases.
 // If padding is present, it validates that padding is correct (rejects malformed padding).
@@ -290,6 +374,162 @@ func decodeBase64URL(s string) ([]byte, error) {
 		return nil, fmt.Errorf("decode unpadded base64url: %w", err)
 	}
 	return decoded, nil
+}
+
+func (c *Client) CreateDraft(ctx context.Context, raw []byte, threadID string) (*Draft, error) {
+	body, err := marshalDraftRequest("", raw, threadID)
+	if err != nil {
+		return nil, &DraftWriteError{State: DraftStateRejected, Code: "provider_rejected", Err: err}
+	}
+	data, err := c.request(ctx, OpDraftsCreate, "POST", fmt.Sprintf("/users/%s/drafts", c.userID), body)
+	if err != nil {
+		return nil, classifyDraftWrite(err)
+	}
+	draft, err := decodeDraftResponse(data, "")
+	if err != nil {
+		return nil, classifyDraftWrite(fmt.Errorf("%w: parse draft create response: %w", errWriteOutcomeUnknown, err))
+	}
+	return draft, nil
+}
+
+func (c *Client) GetDraft(ctx context.Context, draftID string) (*Draft, error) {
+	path := fmt.Sprintf("/users/%s/drafts/%s?format=raw", c.userID, url.PathEscape(draftID))
+	data, err := c.request(ctx, OpDraftsGet, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	draft, err := decodeDraftResponse(data, draftID)
+	if err != nil {
+		return nil, fmt.Errorf("parse draft: %w", err)
+	}
+	return draft, nil
+}
+
+func (c *Client) UpdateDraft(ctx context.Context, draftID string, raw []byte, threadID string) (*Draft, error) {
+	body, err := marshalDraftRequest(draftID, raw, threadID)
+	if err != nil {
+		return nil, &DraftWriteError{State: DraftStateRejected, Code: "provider_rejected", Err: err}
+	}
+	path := fmt.Sprintf("/users/%s/drafts/%s", c.userID, url.PathEscape(draftID))
+	data, err := c.request(ctx, OpDraftsUpdate, "PUT", path, body)
+	if err != nil {
+		return nil, classifyDraftWrite(err)
+	}
+	draft, err := decodeDraftResponse(data, draftID)
+	if err != nil {
+		return nil, classifyDraftWrite(fmt.Errorf("%w: parse draft update response: %w", errWriteOutcomeUnknown, err))
+	}
+	return draft, nil
+}
+
+func (c *Client) DeleteDraft(ctx context.Context, draftID string) error {
+	path := fmt.Sprintf("/users/%s/drafts/%s", c.userID, url.PathEscape(draftID))
+	data, err := c.request(ctx, OpDraftsDelete, "DELETE", path, nil)
+	if err != nil {
+		return classifyDraftWrite(err)
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil
+	}
+	var response map[string]any
+	if err := json.Unmarshal(data, &response); err != nil || response == nil {
+		if err == nil {
+			err = errors.New("empty delete response")
+		}
+		return classifyDraftWrite(fmt.Errorf("%w: parse draft delete response: %w", errWriteOutcomeUnknown, err))
+	}
+	return nil
+}
+
+func (c *Client) ListSendAs(ctx context.Context) ([]SendAs, error) {
+	path := fmt.Sprintf("/users/%s/settings/sendAs", c.userID)
+	data, err := c.request(ctx, OpSendAsList, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var response listSendAsResponse
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, fmt.Errorf("parse send-as entries: %w", err)
+	}
+	entries := make([]SendAs, len(response.SendAs))
+	for i, entry := range response.SendAs {
+		entries[i] = SendAs(entry)
+	}
+	return entries, nil
+}
+
+func marshalDraftRequest(draftID string, raw []byte, threadID string) ([]byte, error) {
+	request := draftRequestJSON{
+		ID: draftID,
+		Message: draftMessageJSON{
+			Raw: base64.URLEncoding.EncodeToString(raw), ThreadID: threadID,
+		},
+	}
+	return json.Marshal(request, json.Deterministic(true))
+}
+
+func decodeDraftResponse(data []byte, expectedDraftID string) (*Draft, error) {
+	var response draftResponseJSON
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(response.ID) == "" || strings.TrimSpace(response.Message.ID) == "" ||
+		strings.TrimSpace(response.Message.ThreadID) == "" {
+		return nil, errors.New("draft response is missing an ID, message ID, or thread ID")
+	}
+	if expectedDraftID != "" && response.ID != expectedDraftID {
+		return nil, fmt.Errorf("draft response ID %q does not match %q", response.ID, expectedDraftID)
+	}
+	raw, err := decodeBase64URL(response.Message.Raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode draft MIME: %w", err)
+	}
+	return &Draft{
+		ID: response.ID,
+		Message: RawMessage{
+			ID: response.Message.ID, ThreadID: response.Message.ThreadID,
+			LabelIDs: response.Message.LabelIDs, Snippet: response.Message.Snippet,
+			Raw: raw,
+		},
+	}, nil
+}
+
+func classifyDraftWrite(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, errWriteOutcomeUnknown) {
+		return &DraftWriteError{State: DraftStateRemoteUnknown, Code: "remote_unknown", Err: err}
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return &DraftWriteError{State: DraftStateCancelled, Code: "cancelled", Err: err}
+	}
+	if _, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
+		return &DraftWriteError{State: DraftStateRejected, Code: "auth_failed", Err: err}
+	}
+	if _, ok := errors.AsType[*NotFoundError](err); ok {
+		return &DraftWriteError{State: DraftStateRejected, Code: "draft_absent", Err: err}
+	}
+	if statusErr, ok := errors.AsType[*StatusError](err); ok {
+		switch {
+		case statusErr.StatusCode == http.StatusUnauthorized:
+			return &DraftWriteError{State: DraftStateRejected, Code: "auth_failed", Err: err}
+		case statusErr.StatusCode == http.StatusForbidden && IsInsufficientScopeError(statusErr.Error()):
+			return &DraftWriteError{State: DraftStateRejected, Code: "insufficient_scope", Err: err}
+		case statusErr.StatusCode >= 400 && statusErr.StatusCode < 500:
+			return &DraftWriteError{State: DraftStateRejected, Code: "provider_rejected", Err: err}
+		}
+	}
+	return &DraftWriteError{State: DraftStateRejected, Code: "provider_rejected", Err: err}
+}
+
+// IsInsufficientScopeError reports the provider messages Gmail uses when an
+// OAuth grant does not contain the required scope.
+func IsInsufficientScopeError(message string) bool {
+	message = strings.ToLower(message)
+	return strings.Contains(message, "access_token_scope_insufficient") ||
+		strings.Contains(message, "insufficient authentication scopes") ||
+		strings.Contains(message, "insufficient permission")
 }
 
 type historyMessageChange struct {
@@ -631,3 +871,4 @@ func (c *Client) BatchDeleteMessages(ctx context.Context, messageIDs []string) e
 
 // Ensure Client implements API interface.
 var _ API = (*Client)(nil)
+var _ DraftAPI = (*Client)(nil)

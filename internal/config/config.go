@@ -508,6 +508,7 @@ type Config struct {
 	Teams          TeamsConfig                     `toml:"teams"`
 	Deletion       DeletionConfig                  `toml:"deletion"`
 	IMAP           IMAPConfig                      `toml:"imap"`
+	Gmail          GmailConfig                     `toml:"gmail"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
@@ -525,6 +526,18 @@ type IMAPDraftSource struct {
 	SourceID int64  `toml:"source_id"`
 	Enabled  bool   `toml:"enabled"`
 	Mailbox  string `toml:"mailbox"`
+}
+
+// GmailConfig contains operator-owned settings for Gmail draft mutations.
+type GmailConfig struct {
+	Drafts []GmailDraftSource `toml:"drafts"`
+}
+
+// GmailDraftSource grants one Gmail source permission to create, edit, or
+// delete drafts. The daemon copies this grant at startup.
+type GmailDraftSource struct {
+	SourceID int64 `toml:"source_id"`
+	Enabled  bool  `toml:"enabled"`
 }
 
 // DeletionConfig records durable operator consent for remote deletion.
@@ -915,11 +928,17 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		if strings.HasPrefix(key.String(), "imap.drafts.") {
 			return nil, fmt.Errorf("unknown IMAP draft config key %q", key.String())
 		}
+		if strings.HasPrefix(key.String(), "gmail.drafts.") {
+			return nil, fmt.Errorf("unknown Gmail draft config key %q", key.String())
+		}
 	}
 	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
 		return nil, err
 	}
 	if err := cfg.validateIMAPDraftSources(content); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateGmailDraftSources(content); err != nil {
 		return nil, err
 	}
 
@@ -1055,6 +1074,32 @@ func (c *Config) validateIMAPDraftSources(content []byte) error {
 		if strings.ContainsAny(draft.Mailbox, "\x00\r\n") {
 			return fmt.Errorf("[[imap.drafts]] entry %d: mailbox contains control characters", i+1)
 		}
+	}
+	return nil
+}
+
+func (c *Config) validateGmailDraftSources(content []byte) error {
+	var raw struct {
+		Gmail struct {
+			Drafts []struct {
+				SourceID *int64 `toml:"source_id"`
+			} `toml:"drafts"`
+		} `toml:"gmail"`
+	}
+	_, _ = toml.Decode(string(content), &raw)
+	seen := make(map[int64]struct{}, len(c.Gmail.Drafts))
+	for i := range c.Gmail.Drafts {
+		draft := &c.Gmail.Drafts[i]
+		if i >= len(raw.Gmail.Drafts) || raw.Gmail.Drafts[i].SourceID == nil {
+			return fmt.Errorf("[[gmail.drafts]] entry %d: source_id is required", i+1)
+		}
+		if draft.SourceID <= 0 {
+			return fmt.Errorf("[[gmail.drafts]] entry %d: source_id must be positive", i+1)
+		}
+		if _, ok := seen[draft.SourceID]; ok {
+			return fmt.Errorf("[[gmail.drafts]] entry %d: duplicate source_id selector %d", i+1, draft.SourceID)
+		}
+		seen[draft.SourceID] = struct{}{}
 	}
 	return nil
 }

@@ -4187,6 +4187,36 @@ func TestIncrementalSyncMixedOperations(t *testing.T) {
 	assertMessageCount(t, env.Store, 2)
 }
 
+func TestIncrementalSyncReusesPersistedGmailDraftMessageID(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSourceWithHistory(t, "1000")
+	conversationID, err := env.Store.EnsureConversation(source.ID, "thread-draft", "Draft thread")
+	requirements.NoError(err)
+	const sourceMessageID = "gmail-draft-message"
+	_, err = env.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: source.ID, SourceMessageID: sourceMessageID,
+			ConversationID: conversationID, MessageType: store.MessageTypeEmail,
+		},
+		BodyText: sql.NullString{String: "draft body", Valid: true},
+		RawMIME:  testMIME(),
+	})
+	requirements.NoError(err)
+	env.Mock.AddMessage(sourceMessageID, testMIME(), []string{"DRAFT"})
+	env.SetHistory(1001, historyAdded(sourceMessageID))
+
+	summary := runIncrementalSync(t, env)
+	assertions.Equal(int64(0), summary.MessagesAdded)
+	assertions.Empty(env.Mock.GetMessageCalls, "sync skips the persisted message body")
+	var count int
+	requirements.NoError(env.Store.DB().QueryRow(env.Store.Rebind(`
+		SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?
+	`), source.ID, sourceMessageID).Scan(&count))
+	assertions.Equal(1, count)
+}
+
 // TestDeriveThreadKey verifies the MIME-based thread key derivation used for
 // IMAP sources that lack server-side threading.
 func TestDeriveThreadKey(t *testing.T) {

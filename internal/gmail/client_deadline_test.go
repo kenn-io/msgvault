@@ -339,3 +339,23 @@ func TestGetMessageRawTransferDeadline(t *testing.T) {
 		})
 	}
 }
+
+func TestGetDraftAllowsSlowRawTransfer(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := newDeadlineClient(t, func(r *http.Request) (*http.Response, error) {
+			assert.Equal(t, "/gmail/v1/users/me/drafts/draft-1", r.URL.Path)
+			assert.Equal(t, "raw", r.URL.Query().Get("format"))
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: &delayedMessageBody{
+					ctx: r.Context(), delay: 2 * time.Minute,
+					Reader: strings.NewReader(`{"id":"draft-1","message":{"id":"msg-1","threadId":"thread-1","raw":"dGVzdA"}}`),
+				},
+			}, nil
+		})
+		draft, err := client.GetDraft(t.Context(), "draft-1")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("test"), draft.Message.Raw)
+	})
+}

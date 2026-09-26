@@ -53,6 +53,65 @@ type MessageDeleter interface {
 	BatchDeleteMessages(ctx context.Context, messageIDs []string) error
 }
 
+// DraftAPI provides Gmail-native draft operations. It is separate from API
+// because IMAP clients implement the archive sync surface but cannot create a
+// Gmail draft.
+type DraftAPI interface {
+	CreateDraft(ctx context.Context, raw []byte, threadID string) (*Draft, error)
+	GetDraft(ctx context.Context, draftID string) (*Draft, error)
+	UpdateDraft(ctx context.Context, draftID string, raw []byte, threadID string) (*Draft, error)
+	DeleteDraft(ctx context.Context, draftID string) error
+	ListSendAs(ctx context.Context) ([]SendAs, error)
+	Close() error
+}
+
+// Draft is the Gmail draft receipt. Gmail keeps ID stable while replacing the
+// enclosed message.
+type Draft struct {
+	ID      string
+	Message RawMessage
+}
+
+// SendAs is one provider-listed sender identity.
+type SendAs struct {
+	Email              string
+	DisplayName        string
+	VerificationStatus string
+	Primary            bool
+	Default            bool
+}
+
+const (
+	DraftStateRejected      = "rejected"
+	DraftStateRemoteUnknown = "remote_unknown"
+	DraftStateCancelled     = "cancelled"
+)
+
+// DraftWriteError carries a stable client-facing result for a draft mutation.
+type DraftWriteError struct {
+	State string
+	Code  string
+	Err   error
+}
+
+func (e *DraftWriteError) Error() string {
+	if e.Code != "" {
+		return e.Code
+	}
+	return e.State
+}
+
+func (e *DraftWriteError) Unwrap() error { return e.Err }
+
+// StatusError is a typed HTTP failure from Gmail. Its text matches the
+// pre-existing client errors so callers that still match text keep working.
+type StatusError struct {
+	StatusCode int
+	msg        string
+}
+
+func (e *StatusError) Error() string { return e.msg }
+
 // API defines the interface for Gmail operations.
 // This interface enables mocking for tests without hitting the real API.
 type API interface {

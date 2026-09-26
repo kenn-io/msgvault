@@ -186,8 +186,8 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 ## draft-reply
 
-Create one reply draft from an archived IMAP message. The daemon requires a
-confirmed `--from` identity and an operator grant in `[[imap.drafts]]`.
+Create one reply draft from an archived IMAP or Gmail message. The daemon
+requires a confirmed `--from` identity and the matching operator grant.
 
 ```bash
 msgvault draft-reply <message-id> --from <address> --body <text>
@@ -221,11 +221,36 @@ the target source appear in the token's grant; see [agent-token](#agent-token).
 A later sync reconciles the saved membership when the mailbox's UIDVALIDITY
 changes. Draft creation never moves an IMAP cursor.
 
+For Gmail, enable drafting per source in the daemon host's `config.toml` and
+restart the daemon:
+
+```toml
+[[gmail.drafts]]
+source_id = 42
+enabled = true
+```
+
+Gmail accepts draft writes with `gmail.modify`, `mail.google.com`, or
+`gmail.compose`. Creation also lists send-as entries. That read accepts
+`gmail.settings.basic`, `gmail.modify`, `gmail.readonly`, or
+`mail.google.com`. The daemon checks saved scope information when available;
+for older tokens without it, Gmail decides whether to allow the request.
+The daemon accepts `--from` when it is the primary address or an accepted
+alias. Service-account sources use the scopes in their delegated assertion.
+
+Gmail writes use one provider request. A 429 or rate-limit 403 is a rejection;
+retry the command after the limit clears. A transport failure, response-read
+failure, or 5xx returns `remote_unknown`. For an uncertain creation, inspect
+Gmail using the reported RFC822 Message-ID before creating another draft.
+Managed edits and deletes reconcile on retry as described below. The archive
+stores the Gmail draft and its `DRAFT` label after a confirmed response.
+`draft-reply` never sends mail.
+
 ---
 
 ## draft-get, draft-edit, draft-delete, and draft-recover
 
-Read, edit, or delete an IMAP draft created by `draft-reply`:
+Read, edit, or delete a managed draft created by `draft-reply`:
 
 ```bash
 msgvault draft-get <draft-id> [--json]
@@ -241,22 +266,62 @@ The creation result supplies the opaque `draft_id` and initial revision.
 - `--body` is required for edit; `--body=` sets an empty plain-text body.
 - `--json` emits one JSON result.
 
+`draft-edit` supports `text/plain` drafts only. If the provider draft contains
+HTML, multipart content, or attachments, the command returns `invalid_draft`
+before changing the provider draft.
+
 `draft-get` reads retained archive content, including discarded drafts, without
-connecting to IMAP or requiring the source's draft mutation grant. Edit and
-delete require the same source policy as `draft-reply`. Delete removes the
-provider draft and retains its archived content. These commands never send mail.
-Recovery resumes a pending operation from recorded receipts. It can publish a
-known replacement or finish confirmed removal without APPEND. Delegated
-recovery requires `draft.edit` for an edit or active repeat and `draft.delete`
-for a delete or discarded repeat, scoped to the source in the grant. An active
-draft with no pending operation requires `draft.edit`, including after a delete
-was aborted before writing. `draft-get`, `draft-edit`, and `draft-delete` remain
-owner-only; delegated edit and delete commands are outside this release's scope.
-Recovery output keeps the saved `pending_code`. Refused results use
-`refusal_code`; pending cleanup results describe the current provider result in
-`observation.code`. See
+connecting to a provider or requiring the source's draft mutation grant. For
+IMAP drafts, edit and delete continue to require the configured `[[imap.drafts]]`
+policy. For Gmail drafts, edit and delete require the configured
+`[[gmail.drafts]]` policy and one of `gmail.modify`, `mail.google.com`, or
+`gmail.compose`. They do not list send-as entries. Delete removes the provider
+draft and retains its archived content. Gmail edit and delete inspect the
+current provider message ID before making a change. A Gmail web edit advances
+the local revision and returns `changed_externally`; the next mutation must name
+that revision. These commands never send mail.
+
+Retry a pending Gmail edit or delete with its current revision. The daemon
+checks Gmail before writing again. If the original message is unchanged, it
+clears the pending claim and runs the requested operation. If Gmail holds a
+recorded replacement, the daemon finishes publishing it locally and returns
+`recovered` with `revision_mismatch`; review the new revision before retrying.
+Other provider edits are adopted with `changed_externally`. A pending delete
+can finish locally when Gmail confirms absence, or retry deletion when the
+original draft is still present. Confirmed deletions with unfinished local
+cleanup retry that cleanup without another provider request. If Gmail no longer
+has a draft during an edit retry, the command returns `provider_absent` and
+keeps the candidate content. Use `draft-delete` to finish discarding it.
+
+Recovery applies to IMAP drafts only. `draft-recover` refuses a Gmail draft ID
+with `not_supported`; Gmail reconciliation uses edit and delete retries.
+Delegated tokens with `draft.create` can create Gmail reply drafts.
+`draft-get`, `draft-edit`, `draft-delete`, and `draft-send-as` remain owner-only.
+For IMAP drafts, recovery resumes a pending operation from recorded receipts. It can publish a known replacement or finish
+confirmed removal without APPEND. Delegated recovery requires
+`draft.edit` for an edit or active repeat and `draft.delete` for a delete or
+discarded repeat, scoped to the source in the grant. An active draft with no
+pending operation requires `draft.edit`, including after a delete was aborted
+before writing. Recovery output keeps the saved `pending_code`.
+Refused results use `refusal_code`; pending cleanup results describe the current
+provider result in `observation.code`. See
 [Manage a created draft](usage/imap.md#manage-a-created-draft) for revision,
-provider checks, retention, and recovery limits.
+provider checks, retention, retry behavior, and recovery limits.
+
+## draft-send-as
+
+List Gmail send-as identities for an owner-invoked Gmail account:
+
+```bash
+msgvault draft-send-as <account> [--json]
+```
+
+Gmail accepts this read with `gmail.settings.basic`, `gmail.modify`,
+`gmail.readonly`, or `mail.google.com`. Saved scope information is checked
+when available. The command reports the address, display name, primary and
+default flags, verification status, and whether the
+address is a confirmed msgvault identity. Delegated agent tokens cannot run
+this command. It does not require `[[gmail.drafts]]` and never changes Gmail.
 
 ---
 

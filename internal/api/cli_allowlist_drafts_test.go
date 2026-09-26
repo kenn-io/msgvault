@@ -23,6 +23,8 @@ func TestCLIRunDraftAllowlist(t *testing.T) {
 	assertions := assert.New(t)
 	assertions.True(cliRunCommandAllowed([]string{"draft-reply", "42", "--from=alice@example.com", "--body=body"}))
 	assertions.True(IsCLIRunDraftLifecycle([]string{"draft-get", "draft-abc"}))
+	assertions.True(IsCLIRunDraftSendAs([]string{"draft-send-as", "alice@example.com"}))
+	assertions.True(cliRunCommandAllowed([]string{"draft-send-as", "alice@example.com"}))
 	assertions.True(cliRunCommandAllowed([]string{"draft-edit", "draft-abc", "--revision=1", "--body=body"}))
 	assertions.True(cliRunCommandAllowed([]string{"draft-delete", "draft-abc", "--revision=1"}))
 	assertions.True(IsCLIRunDraftLifecycle([]string{"draft-recover", "draft-abc", "--revision=1"}))
@@ -30,6 +32,7 @@ func TestCLIRunDraftAllowlist(t *testing.T) {
 	assertions.False(cliRunCommandAllowed([]string{"configure-imap-drafts"}))
 	assertions.False(cliRunCommandAllowed([]string{"draft-reply"}))
 	assertions.False(cliRunCommandAllowed([]string{"draft-get"}))
+	assertions.False(cliRunCommandAllowed([]string{"draft-send-as"}))
 }
 
 func TestDelegatedDraftRecoverRequiresActionPermission(t *testing.T) {
@@ -243,6 +246,7 @@ func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) { //
 		{name: "get", args: []string{"draft-get", "draft-abc"}},
 		{name: "edit", args: []string{"draft-edit", "draft-abc", "--revision=1", "--body=updated"}},
 		{name: "delete", args: []string{"draft-delete", "draft-abc", "--revision=1"}},
+		{name: "send-as", args: []string{"draft-send-as", "alice@example.com"}},
 	}
 
 	for _, command := range commands {
@@ -299,6 +303,7 @@ func TestOwnerDraftLifecycleCommandsUseOperationGateAndRunner(t *testing.T) {
 		{name: "get", args: []string{"draft-get", "draft-abc"}},
 		{name: "edit", args: []string{"draft-edit", "draft-abc", "--revision=1", "--body=updated"}},
 		{name: "delete", args: []string{"draft-delete", "draft-abc", "--revision=1"}},
+		{name: "send-as", args: []string{"draft-send-as", "alice@example.com"}},
 	}
 
 	for _, command := range commands {
@@ -319,7 +324,7 @@ func TestOwnerDraftLifecycleCommandsUseOperationGateAndRunner(t *testing.T) {
 			assertions.Equal(http.StatusOK, response.Code)
 			assertions.Equal(beforeRuns+1, runnerCalls)
 			begins, done := gate.counts()
-			if command.name == "get" {
+			if command.name == "get" || command.name == "send-as" {
 				assertions.Equal(beforeBegins, begins)
 				assertions.Equal(beforeDone, done)
 			} else {

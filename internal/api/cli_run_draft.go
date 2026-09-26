@@ -11,6 +11,7 @@ const (
 	CLIRunDraftEditCommand    = "draft-edit"
 	CLIRunDraftDeleteCommand  = "draft-delete"
 	CLIRunDraftRecoverCommand = "draft-recover"
+	CLIRunDraftSendAsCommand  = "draft-send-as"
 )
 
 // IsCLIRunDraftReply reports whether args invoke the in-process draft-reply
@@ -45,6 +46,11 @@ func IsCLIRunDraftLifecycle(args []string) bool {
 	default:
 		return false
 	}
+}
+
+// IsCLIRunDraftSendAs reports whether args invoke the owner-only send-as read.
+func IsCLIRunDraftSendAs(args []string) bool {
+	return len(args) > 0 && args[0] == CLIRunDraftSendAsCommand
 }
 
 // CLIRunCodedError carries a fixed code for the client and the underlying
