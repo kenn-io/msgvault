@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-26"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,11 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- **Google Contacts syncs on the first run.** Initial and full syncs of a
+  Google address book no longer fail as `upstream_failed`. Failed CardDAV
+  requests now log the upstream status and a body excerpt. See
+  [CardDAV contacts](usage/people-carddav.md#google-contacts) for the
+  Google Contacts CardDAV API that your Google Cloud project must enable.
 - Saved View MCP tools publish canonical_state as a schema object, so MCP clients that validate tools/list strictly, such as those built on the official TypeScript SDK, load msgvault's tools.
 - `add-o365 --headless` and `add-teams --headless` sign in with a Microsoft
   device code, so no local browser is needed.
