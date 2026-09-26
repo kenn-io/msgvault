@@ -22,6 +22,7 @@ msgvault requires OAuth credentials to access the Gmail API. This section walks 
 2. In the search bar, search for "Gmail API" and click the **Gmail API** box
 3. Click **Enable**
 4. If you wish to sync Google Calendar too, click **Library**, search for "Google Calendar API", click the **Google Calendar API** box and click **Enable**
+5. If you wish to sync Google Contacts over CardDAV, click **Library**, search for "CardDAV", click the **Google Contacts CardDAV API** box and click **Enable**. Without it, saving the CardDAV account fails during discovery because Google rejects every request with `SERVICE_DISABLED`
 
 ### Step 3: Configure OAuth Consent Screen
 
