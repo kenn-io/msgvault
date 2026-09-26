@@ -1049,3 +1049,117 @@ func TestUIDTheMailboxStillReportsIsNotGone(t *testing.T) {
 		assert.Contains(observedUIDs(client), uint32(2))
 	})
 }
+
+// startEmptyHeaderFieldsIMAPServer answers the way DavMail does: a
+// HEADER.FIELDS fetch returns every UID but a zero-length section for UID 2,
+// while BODY.PEEK[HEADER] returns the full header. UID 1 answers both
+// correctly. Every UID FETCH command is sent on the returned channel.
+func startEmptyHeaderFieldsIMAPServer(t *testing.T) (string, <-chan string) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	headers := map[string]string{
+		"1": "Message-ID: <uid-1@example.com>\r\n\r\n",
+		"2": "Subject: two\r\nMessage-ID: <uid-2@example.com>\r\n\r\n",
+	}
+	fetchCommands := make(chan string, 16)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _ = io.WriteString(conn, "* OK [CAPABILITY IMAP4rev1] synthetic server ready\r\n")
+		reader := bufio.NewReader(conn)
+		for {
+			line, readErr := reader.ReadString('\n')
+			if readErr != nil {
+				return
+			}
+			tag, command, _ := strings.Cut(strings.TrimSpace(line), " ")
+			upper := strings.ToUpper(command)
+			switch {
+			case strings.HasPrefix(upper, "LOGIN"):
+				_, _ = fmt.Fprintf(conn, "%s OK LOGIN completed\r\n", tag)
+			case strings.HasPrefix(upper, "SELECT"):
+				_, _ = io.WriteString(conn,
+					"* FLAGS (\\Seen)\r\n* 2 EXISTS\r\n* OK [UIDVALIDITY 1]\r\n* OK [UIDNEXT 3]\r\n")
+				_, _ = fmt.Fprintf(conn, "%s OK [READ-WRITE] SELECT completed\r\n", tag)
+			case strings.HasPrefix(upper, "UID FETCH"):
+				fetchCommands <- upper
+				fields := strings.Contains(upper, "HEADER.FIELDS")
+				uids := strings.Fields(upper)[2]
+				for _, uid := range []string{"1", "2"} {
+					if !strings.Contains(","+uids+",", ","+uid+",") && uids != "1:2" {
+						continue
+					}
+					section, body := "HEADER", headers[uid]
+					if fields {
+						section = `HEADER.FIELDS ("MESSAGE-ID")`
+						if uid == "2" {
+							body = ""
+						}
+					}
+					_, _ = fmt.Fprintf(conn, "* %s FETCH (UID %s FLAGS () BODY[%s] {%d}\r\n%s)\r\n",
+						uid, uid, section, len(body), body)
+				}
+				_, _ = fmt.Fprintf(conn, "%s OK UID FETCH completed\r\n", tag)
+			case strings.HasPrefix(upper, "LOGOUT"):
+				_, _ = fmt.Fprintf(conn, "* BYE closing\r\n%s OK LOGOUT completed\r\n", tag)
+				return
+			default:
+				_, _ = fmt.Fprintf(conn, "%s BAD unsupported synthetic command\r\n", tag)
+			}
+		}
+	}()
+	return listener.Addr().String(), fetchCommands
+}
+
+// TestEmptyHeaderFieldsSectionFallsBackToFullHeader covers servers that return
+// an empty HEADER.FIELDS section for a live message. The label reconcile and
+// the label map must read the Message-ID from BODY.PEEK[HEADER] instead of
+// failing the message on every sync, and must refetch only the UIDs that came
+// back empty.
+func TestEmptyHeaderFieldsSectionFallsBackToFullHeader(t *testing.T) {
+	t.Run("label fetch", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		addr, fetchCommands := startEmptyHeaderFieldsIMAPServer(t)
+		client := newTestClient(t, addr)
+
+		results, err := client.GetMessageLabelsBatch(
+			t.Context(), []string{"INBOX|1", "INBOX|2"})
+
+		require.NoError(err)
+		require.Len(results, 2)
+		require.NoError(results[0].Err)
+		require.NoError(results[1].Err)
+		assert.Equal("uid-1@example.com", results[0].RFC822MessageID)
+		assert.Equal("uid-2@example.com", results[1].RFC822MessageID)
+		assert.Contains(<-fetchCommands, "HEADER.FIELDS")
+		assert.Equal("UID FETCH 2 (UID BODY.PEEK[HEADER])", <-fetchCommands)
+	})
+
+	t.Run("label map", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		addr, _ := startEmptyHeaderFieldsIMAPServer(t)
+		client := newTestClient(t, addr)
+
+		client.mu.Lock()
+		defer client.mu.Unlock()
+		require.NoError(client.connect(t.Context()))
+		labels, unidentified, missing, err := client.fetchMailboxMessageIDs(
+			t.Context(), "INBOX", []imapapi.UID{1, 2})
+
+		require.NoError(err)
+		assert.Equal(map[string]bool{
+			"uid-1@example.com": true,
+			"uid-2@example.com": true,
+		}, labels)
+		assert.Empty(unidentified)
+		assert.Empty(missing)
+	})
+}

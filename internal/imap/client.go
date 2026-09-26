@@ -778,6 +778,19 @@ func messageIDHeaderFetchOptions() *imap.FetchOptions {
 	}
 }
 
+// fullHeaderFetchOptions requests the whole header block. It is the fallback
+// for servers that return an empty HEADER.FIELDS section; see
+// fetchMessageIDChunk.
+func fullHeaderFetchOptions() *imap.FetchOptions {
+	return &imap.FetchOptions{
+		UID: true,
+		BodySection: []*imap.FetchItemBodySection{{
+			Specifier: imap.PartSpecifierHeader,
+			Peek:      true,
+		}},
+	}
+}
+
 func addMessageIDsFromHeaderFetchResults(dst map[string]bool, msgs []*imapclient.FetchMessageBuffer) {
 	for _, msg := range msgs {
 		if len(msg.BodySection) == 0 {
@@ -1013,7 +1026,6 @@ func (c *Client) fetchMailboxMessageIDs(
 	result := make(map[string]bool, len(uids))
 	var unidentified []imap.UID
 	var missing []imap.UID
-	fetchOpts := messageIDHeaderFetchOptions()
 
 	for chunkStart := 0; chunkStart < len(uids); chunkStart += fetchChunkSize {
 		if ctx.Err() != nil {
@@ -1028,7 +1040,7 @@ func (c *Client) fetchMailboxMessageIDs(
 			uidSet.AddNum(uid)
 		}
 
-		msgs, _, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
+		msgs, _, err := c.fetchMessageIDChunk(ctx, mailbox, uidSet)
 		if err != nil {
 			return result, unidentified, missing, fmt.Errorf(
 				"message-ID fetch failed in %q: %w", mailbox, err)
@@ -1046,7 +1058,7 @@ func (c *Client) fetchMailboxMessageIDs(
 		for _, uid := range omitted {
 			recheckSet.AddNum(uid)
 		}
-		recheckMsgs, _, err := c.fetchChunk(ctx, mailbox, recheckSet, fetchOpts)
+		recheckMsgs, _, err := c.fetchMessageIDChunk(ctx, mailbox, recheckSet)
 		if err != nil {
 			return result, unidentified, missing, fmt.Errorf(
 				"message-ID recheck failed in %q: %w", mailbox, err)
