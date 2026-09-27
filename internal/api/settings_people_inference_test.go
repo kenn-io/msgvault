@@ -117,8 +117,7 @@ func TestPeopleInferencePresetCreationRequiresSupportedStorage(t *testing.T) {
 		var body PeopleInferenceSettingsResponse
 		require.NoError(json.Unmarshal(after.Body.Bytes(), &body))
 		assert.False(body.StoredCredentialsSupported)
-		assert.Empty(body.Profiles)
-		assert.False(body.PendingRestart)
+		assert.JSONEq(read.Body.String(), after.Body.String())
 		return
 	}
 	require.Equal(http.StatusOK, created.Code, created.Body.String())
