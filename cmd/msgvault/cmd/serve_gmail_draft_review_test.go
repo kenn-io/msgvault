@@ -302,12 +302,16 @@ func TestGmailDraftCreateAndSendAsUseLocalBehavior(t *testing.T) {
 	assert.True(sendAs.Entries[0].ConfirmedIdentity)
 }
 
-func TestGmailDraftReplyInfersConfirmedSender(t *testing.T) {
+func TestGmailDraftReplyAllInfersSenderAndIndexesCc(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	fixture := newGmailDraftTestFixture(t)
+	raw, err := fixture.store.GetMessageRaw(fixture.parentID)
+	requirements.NoError(err)
+	raw = []byte("Cc: copy@example.test\r\n" + string(raw))
+	requirements.NoError(fixture.store.UpsertMessageRaw(fixture.parentID, raw))
 	var events []api.CLIRunEvent
-	err := fixture.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
+	err = fixture.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--all", "--body", "reply", "--json"},
 	}, func(event api.CLIRunEvent) error {
 		events = append(events, event)
@@ -321,7 +325,15 @@ func TestGmailDraftReplyInfersConfirmedSender(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("owner@example.test", message.From)
 	assertions.Equal([]string{"Sender <sender@example.test>"}, message.To)
+	assertions.Equal([]string{"copy@example.test"}, message.Cc)
 	assertions.Equal("gmail-thread-1", created.ThreadID)
+
+	// A shared token avoids backend differences in email punctuation handling.
+	matches, total, err := fixture.store.SearchMessages("copy", 0, 10)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), total)
+	requirements.Len(matches, 1)
+	assertions.Equal(created.MessageID, matches[0].ID)
 }
 
 func TestGmailDraftRejectsComposeAndCrossSourceReply(t *testing.T) {

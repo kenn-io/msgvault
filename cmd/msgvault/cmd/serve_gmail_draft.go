@@ -379,7 +379,10 @@ func gmailDraftMessagePersistDataWithAttachments(
 			},
 			LabelRefs:                 []store.MessageLabelRef{{SourceLabelID: "DRAFT", Info: store.LabelInfo{Name: "DRAFT", Type: "system"}}},
 			MIMEAttachmentReplacement: attachmentWrites,
-			FTS:                       &store.FTSDoc{Subject: parsed.Subject, Body: parsed.BodyText, FromAddr: firstGmailAddress(parsed.From), ToAddrs: strings.Join(toAddresses, " ")},
+			FTS: &store.FTSDoc{
+				Subject: parsed.Subject, Body: parsed.BodyText, FromAddr: firstGmailAddress(parsed.From),
+				ToAddrs: strings.Join(toAddresses, " "), CcAddrs: strings.Join(ccAddresses, " "),
+			},
 		}
 	}
 }
