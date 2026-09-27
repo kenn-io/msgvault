@@ -42,6 +42,19 @@ func TestProviderSyncSummariesReportPolicySkips(t *testing.T) {
 	}
 }
 
+func TestBeeperSummariesReportUnavailableMedia(t *testing.T) {
+	sum := &beeper.ImportSummary{AttachmentsUnavailable: 3}
+	var syncOut bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&syncOut)
+	printBeeperSummary(cmd, "account", sum)
+	assert.Contains(t, syncOut.String(), ", 3 media no longer available at source")
+
+	var backfillOut bytes.Buffer
+	writeBeeperMediaBackfillSummary(&backfillOut, "account", sum)
+	assert.Contains(t, backfillOut.String(), ", 3 media no longer available at source")
+}
+
 func TestRemainingProviderSummariesReportPolicySkips(t *testing.T) {
 	tests := []struct {
 		name  string

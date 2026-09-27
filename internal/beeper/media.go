@@ -141,11 +141,15 @@ func attachmentMetadataJSON(m *Message, att *Attachment) string {
 // persistAttachments downloads a message's media into content-addressed
 // storage and replaces the message's Beeper attachment rows. Media already
 // downloaded for this message (matched by source_attachment_id) is kept
-// as-is, so re-persisting a message never re-fetches its attachments. Failed
+// as-is, so re-persisting a message never re-fetches its attachments; the
+// same holds for media the source reported as permanently unavailable. Failed
 // downloads and deliberate policy exclusions leave typed metadata markers;
 // BackfillMedia retries only outcomes allowed by the current policy. The
 // message itself is always archived regardless.
 func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID int64, m *Message, opts ImportOptions, sum *ImportSummary) {
+	if imp.mediaFailures == nil {
+		imp.mediaFailures = make(map[mediaAttemptKey]store.AttachmentRef)
+	}
 	existing, err := imp.store.MessageBeeperAttachments(messageID)
 	if err != nil {
 		sum.Errors++
@@ -175,6 +179,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			continue
 		}
 		sourceAttID := beeperAttachmentID(ref)
+		attemptKey := mediaAttemptKey{messageID: messageID, sourceID: sourceAttID}
 		previous, hadPrevious := existing[sourceAttID]
 		if hadPrevious && previous.ContentHash != "" {
 			// Re-persisting already-downloaded media: keep the blob as-is but
@@ -183,6 +188,19 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			previous.Metadata = attachmentMetadataJSON(m, att)
 			setBeeperAttachmentRole(&previous, att, isPreview)
 			refs = append(refs, previous)
+			continue
+		}
+		if hadPrevious && previous.State == attachmentpolicy.StateUnavailable {
+			// The source already said this media is gone for good.
+			previous.Metadata = attachmentMetadataJSON(m, att)
+			setBeeperAttachmentRole(&previous, att, isPreview)
+			refs = append(refs, previous)
+			continue
+		}
+		if failed, ok := imp.mediaFailures[attemptKey]; ok {
+			failed.Metadata = attachmentMetadataJSON(m, att)
+			setBeeperAttachmentRole(&failed, att, isPreview)
+			refs = append(refs, failed)
 			continue
 		}
 		marker := store.AttachmentRef{
@@ -198,7 +216,8 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			marker.Size = previous.Size
 		}
 		// Every unsuccessful fetch leaves a typed marker. Transient failures
-		// remain retryable; size exclusions wait until the cap is raised.
+		// remain retryable; size exclusions wait until the cap is raised;
+		// media the source reports as permanently gone is terminal.
 		pend := func(status, kind string, sizeUnknown bool, err error) {
 			newSizeSkip := status != store.SyncRunItemStatusSkipped || !hadPrevious ||
 				previous.State != attachmentpolicy.StateSkipped ||
@@ -267,14 +286,24 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 			pend(store.SyncRunItemStatusSkipped, "beeper_media_too_large", true, err)
 			continue
 		}
+		if errors.Is(err, ErrAssetUnavailable) {
+			marker.State = attachmentpolicy.StateUnavailable
+			marker.SkipReason = attachmentpolicy.SkipSourceUnavailable
+			imp.recordItem(syncID, m.ID, "attachment", store.SyncRunItemStatusSkipped, "beeper_media_unavailable", err)
+			refs = append(refs, marker)
+			sum.AttachmentsUnavailable++
+			continue
+		}
 		if err != nil {
 			pend(store.SyncRunItemStatusError, "beeper_media_error", false, err)
+			imp.mediaFailures[attemptKey] = refs[len(refs)-1]
 			continue
 		}
 		ma := &mime.Attachment{Filename: att.FileName, ContentType: att.MimeType, Content: data}
 		storagePath, serr := export.StoreAttachmentFile(opts.AttachmentsDir, ma)
 		if serr != nil || storagePath == "" {
 			pend(store.SyncRunItemStatusError, "beeper_media_error", false, serr)
+			imp.mediaFailures[attemptKey] = refs[len(refs)-1]
 			continue
 		}
 		stored := store.AttachmentRef{
@@ -373,7 +402,8 @@ func (imp *Importer) refreshChatContext(
 }
 
 // clearPendingMarkers removes a message's pending Beeper markers while
-// preserving its downloaded (content-hashed) attachment rows.
+// preserving its downloaded (content-hashed) attachment rows and the terminal
+// record of media the source reported as permanently unavailable.
 func (imp *Importer) clearPendingMarkers(messageID int64) error {
 	existing, err := imp.store.MessageBeeperAttachments(messageID)
 	if err != nil {
@@ -381,7 +411,7 @@ func (imp *Importer) clearPendingMarkers(messageID int64) error {
 	}
 	keep := make([]store.AttachmentRef, 0, len(existing))
 	for _, ref := range existing {
-		if ref.ContentHash != "" {
+		if ref.ContentHash != "" || ref.State == attachmentpolicy.StateUnavailable {
 			keep = append(keep, ref)
 		}
 	}

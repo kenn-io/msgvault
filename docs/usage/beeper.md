@@ -122,11 +122,19 @@ text and attachment metadata. Adjust the shared
 | Skipped by the size or participant cap | Change the applicable policy, then retry media backfill |
 | Deferred with `--no-media` | Run `msgvault backfill-beeper-media` |
 | Excluded by `media = false` | Re-enable media, then run `msgvault backfill-beeper-media` |
+| No longer available at the source | Not collectable; msgvault does not retry it |
 
 Policy skips record a reason such as `size_cap` or `participant_threshold`.
 A failed download does not stop the message from being archived. A one-run
 `--no-media` deferral leaves pending markers. A disabled media policy leaves
 excluded markers, which become eligible when the policy allows them.
+
+Some networks delete old media from their servers. WhatsApp, for example,
+reports `Media is no longer available`. msgvault requests such a file once,
+records it as `unavailable` with reason `source_unavailable`, and never retries
+it. Sync and backfill summaries report these as "media no longer available at
+source". Other failed downloads get at most three attempts per run and stay
+pending for the next backfill.
 
 Because Beeper's API serves what Beeper Desktop has synced locally, archive
 depth equals your local Beeper history: a freshly added Beeper account may only

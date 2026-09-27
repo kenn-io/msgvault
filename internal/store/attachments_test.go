@@ -302,6 +302,39 @@ func TestBeeperHashlessLocalPathRemainsPending(t *testing.T) {
 	assert.Empty(message.Attachments[0].ContentHash)
 }
 
+func TestBeeperUnavailableAttachmentIsNeverRetried(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("beeper", "synthetic-account")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "chat-1", "direct_chat", "synthetic chat")
+	require.NoError(err)
+	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "message-1")
+	require.NoError(st.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{{
+		StoragePath: "mxc://example.test/expired", SourceAttachmentID: "beeper:mxc://example.test/expired",
+		State: attachmentpolicy.StateUnavailable, SkipReason: attachmentpolicy.SkipSourceUnavailable,
+	}}))
+
+	retryable, err := st.ListBeeperRetryableAttachmentMessages(source.ID, attachmentpolicy.Policy{})
+	require.NoError(err)
+	assert.Empty(retryable)
+	pending, err := st.ListBeeperPendingAttachmentMessages(source.ID)
+	require.NoError(err)
+	assert.Empty(pending)
+
+	result, err := st.ApplyBeeperRetryableAttachmentPolicy(
+		t.Context(), source.ID, attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeNone})
+	require.NoError(err)
+	assert.Zero(result.NewlySkipped)
+	assert.False(result.HasExcluded)
+	refs, err := st.MessageBeeperAttachments(messageID)
+	require.NoError(err)
+	ref := refs["beeper:mxc://example.test/expired"]
+	assert.Equal(attachmentpolicy.StateUnavailable, ref.State)
+	assert.Equal(attachmentpolicy.SkipSourceUnavailable, ref.SkipReason)
+}
+
 func TestSlackAliasRowsServeHashesThroughMessageAPI(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

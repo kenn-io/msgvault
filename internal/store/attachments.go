@@ -418,8 +418,9 @@ func (s *Store) listPendingAttachmentMessages(sourceID int64, providerPrefix str
 		      AND a.source_attachment_id LIKE ?
 		      AND (a.content_hash IS NULL OR a.content_hash = '')
 		      AND COALESCE(a.media_type, '') <> 'link'
+		      AND COALESCE(a.attachment_state, '') <> ?
 		  )
-	`, sourceID, providerPrefix+"%")
+	`, sourceID, providerPrefix+"%", attachmentpolicy.StateUnavailable)
 	if err != nil {
 		return nil, err
 	}

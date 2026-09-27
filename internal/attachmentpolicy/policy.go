@@ -28,6 +28,9 @@ const (
 	SkipAccountPolicy        SkipReason = "account_policy"
 	SkipSizeCap              SkipReason = "size_cap"
 	SkipFetchFailure         SkipReason = "fetch_failure"
+	// SkipSourceUnavailable marks media the source network has permanently
+	// deleted, such as WhatsApp media past its server retention.
+	SkipSourceUnavailable SkipReason = "source_unavailable"
 )
 
 // DownloadState is the durable outcome of provider attachment processing.
@@ -38,6 +41,9 @@ const (
 	StateStored  DownloadState = "stored"
 	StateSkipped DownloadState = "skipped"
 	StateFailed  DownloadState = "failed"
+	// StateUnavailable is terminal: the source reported the media is gone
+	// for good, so no sync or backfill requests it again.
+	StateUnavailable DownloadState = "unavailable"
 )
 
 // Conversation is the provider-neutral context used to evaluate scope.

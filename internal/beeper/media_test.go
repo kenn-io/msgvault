@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1155,6 +1156,132 @@ func TestBackfillMediaGoneMessageKeepsDownloadedRows(t *testing.T) {
 	})
 	require.NoError(err)
 	assert.EqualValues(0, bsum.MessagesProcessed)
+}
+
+func TestImportMediaUnavailableIsTerminal(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(mediaChat())
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusInternalServerError, expiredAssetBody)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, sum.AttachmentsUnavailable)
+	assert.EqualValues(0, sum.AttachmentsPending)
+	assert.EqualValues(0, sum.AttachmentsSkipped)
+	assert.EqualValues(0, sum.Errors)
+	assert.Len(assetRequests(f), 1, "an expired asset costs one request")
+
+	var state, reason, itemStatus string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT a.attachment_state, a.attachment_skip_reason
+		FROM attachments a JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = ?`), "p0").Scan(&state, &reason))
+	assert.Equal(string(attachmentpolicy.StateUnavailable), state)
+	assert.Equal(string(attachmentpolicy.SkipSourceUnavailable), reason)
+	require.NoError(st.DB().QueryRow(
+		`SELECT status FROM sync_run_items WHERE error_kind = 'beeper_media_unavailable'`).Scan(&itemStatus))
+	assert.Equal(store.SyncRunItemStatusSkipped, itemStatus)
+
+	// Neither a backfill nor a full re-import asks for it again.
+	f.resetRequests()
+	bsum, err := imp.BackfillMedia(context.Background(), ImportOptions{
+		AccountID: "signal", AttachmentsDir: opts.AttachmentsDir,
+	})
+	require.NoError(err)
+	assert.EqualValues(0, bsum.MessagesProcessed)
+	_, err = imp.Import(context.Background(), ImportOptions{
+		AccountID: "signal", AttachmentsDir: opts.AttachmentsDir, Full: true,
+	})
+	require.NoError(err)
+	assert.Empty(assetRequests(f), "unavailable media must never be re-requested")
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT a.attachment_state FROM attachments a JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = ?`), "p0").Scan(&state))
+	assert.Equal(string(attachmentpolicy.StateUnavailable), state, "re-import keeps the terminal marker")
+}
+
+func TestImportBoundsRepeatedAssetAttemptsAcrossIncrementalAndReconcile(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	ch := mediaChat()
+	f.addChat(ch)
+	imp, _, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	opts.NoMedia = true
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	newAsset := "mxc://beeper.local/repeated"
+	ch = f.chat("!media:beeper.local")
+	ch.Msgs = append(ch.Msgs, fakeMsg{
+		ID: "p1", SortKey: 1, Timestamp: time.Now().Add(-time.Minute).UTC(),
+		Type: "IMAGE", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		Attachments: []map[string]any{{
+			"id": newAsset, "type": "img", "mimeType": "image/png", "fileName": "repeated.png", "fileSize": 11,
+		}},
+	})
+	ch.LastActivity = ch.Msgs[len(ch.Msgs)-1].Timestamp
+	f.setAssetError(newAsset, http.StatusInternalServerError, `{"message":"temporary failure"}`)
+	opts.NoMedia = false
+
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, sum.AttachmentsPending)
+	assert.EqualValues(1, sum.Errors)
+	assert.Len(assetRequests(f), 3, "the incremental and reconcile passes share one retry budget")
+}
+
+func TestBackfillMediaGoneMessageKeepsUnavailableRow(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	ch := mediaChat()
+	ch.Msgs[0].Attachments = append(ch.Msgs[0].Attachments, map[string]any{
+		"id": "mxc://beeper.local/photo2", "type": "img", "mimeType": "image/png", "fileName": "later.png",
+	})
+	addFillerMessages(ch, 5)
+	f.addChat(ch)
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusInternalServerError, expiredAssetBody)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	sum, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+	require.EqualValues(1, sum.AttachmentsUnavailable)
+	require.EqualValues(1, sum.AttachmentsPending)
+
+	chat := f.chat("!media:beeper.local")
+	chat.Msgs = chat.Msgs[1:]
+	_, err = imp.BackfillMedia(context.Background(), ImportOptions{
+		AccountID: "signal", AttachmentsDir: opts.AttachmentsDir,
+	})
+	require.NoError(err)
+
+	rows, err := st.DB().Query(`SELECT source_attachment_id, COALESCE(attachment_state, '') FROM attachments`)
+	require.NoError(err)
+	defer func() { _ = rows.Close() }()
+	got := map[string]string{}
+	for rows.Next() {
+		var id, state string
+		require.NoError(rows.Scan(&id, &state))
+		got[id] = state
+	}
+	require.NoError(rows.Err())
+	assert.Equal(map[string]string{
+		"beeper:mxc://beeper.local/photo1": string(attachmentpolicy.StateUnavailable),
+	}, got, "the retryable marker is cleared; the terminal record stays")
 }
 
 func TestBackfillMediaRearmsLostAnchor(t *testing.T) {
