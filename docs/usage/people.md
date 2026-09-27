@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-09-25"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -58,7 +58,10 @@ msgvault person set-display-name 7 "Alex Example"
 ```
 
 Repeating promotion returns the same profile. Archive observation alone does
-not promote people. Linking another cluster into a promoted one expands that
+not promote people. Sources that assert a stable identity link addresses
+automatically: Beeper user IDs, Notion user IDs, Apple Contacts cards for
+Muesli attendees, and person `id` values in meeting imports. See
+[how meetings connect to people](/docs/usage/meetings/#how-meetings-connect-to-people). Linking another cluster into a promoted one expands that
 profile's participant bindings. Linking two clusters that already belong to
 different profiles reports a conflict instead of silently merging curated
 data. Unlinking evidence does not move or delete profile bindings.

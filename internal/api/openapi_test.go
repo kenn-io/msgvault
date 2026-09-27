@@ -1095,6 +1095,14 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	)
 
 	assertions.Equal("email", schemas["MeetingPerson"].Properties["email"].Format)
+	person := schemas["MeetingPerson"]
+	assertions.NotContains(person.Required, "email", "an attendee may be identified by phone alone")
+	requirements.Len(person.AnyOf, 2, "attendee requires an email or a phone")
+	assertions.ElementsMatch([]string{"email", "phone"},
+		[]string{person.AnyOf[0].Required[0], person.AnyOf[1].Required[0]})
+	requirements.NotNil(person.Properties["id"].MaxLength)
+	assertions.Equal(200, *person.Properties["id"].MaxLength)
+	requirements.NotNil(person.Properties["phone"].MaxLength)
 	offset := schemas["TranscriptSegment"].Properties["offset_seconds"]
 	requirements.NotNil(offset.Minimum)
 	assertions.Zero(*offset.Minimum)

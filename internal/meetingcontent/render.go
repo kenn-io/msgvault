@@ -119,6 +119,7 @@ func normalizeEntry(entry Entry) Entry {
 	for index := range participants {
 		participants[index].Name = strings.TrimSpace(participants[index].Name)
 		participants[index].Email = strings.TrimSpace(participants[index].Email)
+		participants[index].Phone = strings.TrimSpace(participants[index].Phone)
 		participants[index].Role = strings.TrimSpace(participants[index].Role)
 	}
 	sort.SliceStable(participants, func(left, right int) bool {
@@ -146,12 +147,18 @@ func entryLess(left, right Entry) bool {
 	}
 }
 
+// participantEmailRoleKey identifies an archived or source participant by role
+// plus email, else role plus phone. Participants with neither are never
+// merged: two name-only attendees can be different people.
 func participantEmailRoleKey(participant Participant) string {
-	email := strings.ToLower(strings.TrimSpace(participant.Email))
-	if email == "" {
-		return ""
+	role := strings.TrimSpace(participant.Role)
+	if email := strings.ToLower(strings.TrimSpace(participant.Email)); email != "" {
+		return role + "\x00email\x00" + email
 	}
-	return strings.TrimSpace(participant.Role) + "\x00" + email
+	if phone := strings.TrimSpace(participant.Phone); phone != "" {
+		return role + "\x00phone\x00" + phone
+	}
+	return ""
 }
 
 func participantLess(left, right Participant) bool {
@@ -162,6 +169,9 @@ func participantLess(left, right Participant) bool {
 	rightEmail := strings.ToLower(strings.TrimSpace(right.Email))
 	if leftEmail != rightEmail {
 		return leftEmail < rightEmail
+	}
+	if left.Phone != right.Phone {
+		return left.Phone < right.Phone
 	}
 	if left.Name != right.Name {
 		return left.Name < right.Name
@@ -540,9 +550,9 @@ func writeMarkdownParticipants(builder *strings.Builder, participants []Particip
 			builder.WriteString(": ")
 			builder.WriteString(markdownSingleLine(participant.Name))
 		}
-		if participant.Email != "" {
+		if address := participantAddress(participant); address != "" {
 			builder.WriteString(" <")
-			builder.WriteString(participant.Email)
+			builder.WriteString(address)
 			builder.WriteByte('>')
 		}
 		if participant.ParticipantID != nil {
@@ -688,4 +698,11 @@ func cloneTranscript(transcript Transcript) Transcript {
 	clone := transcript
 	clone.Segments = append([]Segment(nil), transcript.Segments...)
 	return clone
+}
+
+func participantAddress(participant Participant) string {
+	if participant.Email != "" {
+		return participant.Email
+	}
+	return participant.Phone
 }

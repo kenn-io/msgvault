@@ -7,6 +7,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/synctechsms"
 )
@@ -102,6 +103,10 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return "circleback:" + identifier, true
 	case notionmeetings.SourceType:
 		return "notion-meetings:" + identifier, true
+	case muesli.SourceType:
+		// Store identifier == config Identifier (see
+		// internal/muesli/importer.go GetSourceByTypeAndIdentifier call).
+		return "muesli:" + identifier, true
 	case sourceTypeBeeper:
 		// One scheduler job syncs every beeper source (see
 		// internal/beeper/importer.go GetOrCreateSource, one store source

@@ -119,17 +119,12 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 
 	var organizer *meetingarchive.Person
 	if snapshot.Organizer != nil {
-		organizer = &meetingarchive.Person{
-			Name:  snapshot.Organizer.Name,
-			Email: snapshot.Organizer.Email,
-		}
+		person := archivePerson(snapshot.SourceIdentifier, *snapshot.Organizer)
+		organizer = &person
 	}
 	attendees := make([]meetingarchive.Person, 0, len(snapshot.Attendees))
 	for _, attendee := range snapshot.Attendees {
-		attendees = append(attendees, meetingarchive.Person{
-			Name:  attendee.Name,
-			Email: attendee.Email,
-		})
+		attendees = append(attendees, archivePerson(snapshot.SourceIdentifier, attendee))
 	}
 	archiveResult, archiveErr := meetingarchive.New(i.store).Upsert(ctx, meetingarchive.Snapshot{
 		SourceID:             source.ID,
@@ -199,4 +194,14 @@ func (i *Importer) refreshCache(ctx context.Context, label string, sourceID int6
 			"error", err,
 		)
 	}
+}
+
+// archivePerson maps an imported person to the archive. The anchor is scoped
+// to the import source, so the same id from two sources names two people.
+func archivePerson(sourceIdentifier string, person MeetingPerson) meetingarchive.Person {
+	archived := meetingarchive.Person{Name: person.Name, Email: person.Email, Phone: person.Phone}
+	if person.ID != "" {
+		archived.Anchor = meetingarchive.Anchor("meeting-import", sourceIdentifier, person.ID)
+	}
+	return archived
 }

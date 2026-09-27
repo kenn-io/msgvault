@@ -33,6 +33,8 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 		return decodeCircleback(fields)
 	case "notion_meeting_json":
 		return decodeNotion(fields)
+	case "muesli_json":
+		return decodeMuesli(fields)
 	case "meeting_json":
 		return decodeGeneric(fields)
 	default:
@@ -129,20 +131,19 @@ func providerParticipants(fields map[string]jsontext.Value) []Participant {
 type personWire struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
+	Phone string `json:"phone"`
 }
 
 func participantsFromPeople(organizer *personWire, attendees []personWire) []Participant {
 	participants := make([]Participant, 0, len(attendees)+1)
 	if organizer != nil {
-		name, email := strings.TrimSpace(organizer.Name), normalizeExplicitEmail(organizer.Email)
-		if name != "" || email != "" {
-			participants = append(participants, Participant{Name: name, Email: email, Role: "from"})
+		if participant, ok := participantFromPerson(*organizer, "from"); ok {
+			participants = append(participants, participant)
 		}
 	}
 	for _, attendee := range attendees {
-		name, email := strings.TrimSpace(attendee.Name), normalizeExplicitEmail(attendee.Email)
-		if name != "" || email != "" {
-			participants = append(participants, Participant{Name: name, Email: email, Role: "to"})
+		if participant, ok := participantFromPerson(attendee, "to"); ok {
+			participants = append(participants, participant)
 		}
 	}
 	return participants
@@ -304,4 +305,12 @@ func isNull(raw jsontext.Value) bool {
 
 func finite(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func participantFromPerson(person personWire, role string) (Participant, bool) {
+	participant := Participant{
+		Name: strings.TrimSpace(person.Name), Email: normalizeExplicitEmail(person.Email),
+		Phone: strings.TrimSpace(person.Phone), Role: role,
+	}
+	return participant, participant.Name != "" || participant.Email != "" || participant.Phone != ""
 }

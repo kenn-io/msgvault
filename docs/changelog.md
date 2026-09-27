@@ -54,6 +54,17 @@ All notable changes to msgvault, grouped by release.
   Microsoft Graph mail API, for a mailbox that has IMAP turned off. Each folder
   becomes a label, and later syncs fetch only the changes, including moves and
   deletes. See [Microsoft Graph mail sync](guides/oauth-setup.md#microsoft-graph-mail-sync).
+- **Muesli meetings.** Archive meetings recorded by Muesli on the same Mac:
+  AI notes, typed notes, transcripts, and participant emails. msgvault reads
+  Muesli's local database read-only with `add-muesli` and `sync-muesli`, or on
+  a daemon schedule. See [Muesli](usage/meetings.md#muesli).
+- **Meetings reach the right people.** Meeting attendees can be identified by
+  phone as well as email, and sources that know a stable identity link an
+  attendee's emails and phones: Notion user IDs, Apple Contacts cards for
+  Muesli, and a new attendee `id` (with `phone`) in `POST /api/v1/import/meeting`.
+  A meeting then appears on the person you already know from mail or chat.
+  Links follow the existing rules: no name matching, and conflicts between two
+  people go to review. See [how meetings connect to people](usage/meetings.md#how-meetings-connect-to-people).
 - Saved View MCP tools publish canonical_state as a schema object, so MCP clients that validate tools/list strictly, such as those built on the official TypeScript SDK, load msgvault's tools.
 - `add-o365 --headless` and `add-teams --headless` sign in with a Microsoft
   device code, so no local browser is needed.

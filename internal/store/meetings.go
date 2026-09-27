@@ -317,6 +317,7 @@ func loadMeetingContextParticipants(
 		SELECT mr.participant_id,
 			COALESCE(NULLIF(mr.display_name, ''), NULLIF(p.display_name, ''), ''),
 			COALESCE(NULLIF(mr.email_address, ''), NULLIF(p.email_address, ''), ''),
+			COALESCE(p.phone_number, ''),
 			LOWER(mr.recipient_type)
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
@@ -328,7 +329,7 @@ func loadMeetingContextParticipants(
 	for rows.Next() {
 		var participant meetingcontent.Participant
 		var participantID int64
-		if scanErr := rows.Scan(&participantID, &participant.Name, &participant.Email, &participant.Role); scanErr != nil {
+		if scanErr := rows.Scan(&participantID, &participant.Name, &participant.Email, &participant.Phone, &participant.Role); scanErr != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan meeting recipient %d: %w", id, scanErr)
 		}
@@ -352,10 +353,11 @@ func loadMeetingContextParticipants(
 	var sender meetingcontent.Participant
 	var senderID int64
 	err = tx.QueryRowContext(ctx, `
-		SELECT p.id, COALESCE(p.display_name, ''), COALESCE(p.email_address, '')
+		SELECT p.id, COALESCE(p.display_name, ''), COALESCE(p.email_address, ''),
+			COALESCE(p.phone_number, '')
 		FROM messages m
 		JOIN participants p ON p.id = m.sender_id
-		WHERE m.id = ?`, id).Scan(&senderID, &sender.Name, &sender.Email)
+		WHERE m.id = ?`, id).Scan(&senderID, &sender.Name, &sender.Email, &sender.Phone)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("load meeting sender %d: %w", id, err)
 	}
@@ -380,7 +382,8 @@ func meetingParticipantKey(participant meetingcontent.Participant) string {
 	if participant.ParticipantID != nil {
 		id = *participant.ParticipantID
 	}
-	return fmt.Sprintf("%d\x00%s\x00%s", id, strings.ToLower(participant.Role), strings.ToLower(participant.Email))
+	return fmt.Sprintf("%d\x00%s\x00%s\x00%s", id, strings.ToLower(participant.Role),
+		strings.ToLower(participant.Email), participant.Phone)
 }
 
 func (s *Store) meetingIDsMembership(column string, ids []int64) (string, []any, error) {

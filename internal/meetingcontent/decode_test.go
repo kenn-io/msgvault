@@ -299,3 +299,93 @@ func mustTime(t *testing.T, value string) *time.Time {
 	require.NoError(t, err)
 	return &parsed
 }
+
+func TestDecodeMuesliEvidence(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	raw := []byte(`{
+		"schema_version":1,
+		"meeting":{
+			"id":42,"title":"Weekly sync","start_time":"2026-09-01T14:00:00Z","end_time":"2026-09-01T14:30:00Z",
+			"duration_seconds":2700,"status":"completed",
+			"formatted_notes":"## Decisions\nShip it","notes_state":"structured_notes",
+			"manual_notes":"typed note","raw_transcript":"[10:00:01] You: hello\n[10:00:04] Speaker 1: hi",
+			"created_at":"2026-09-01T14:00:03Z"
+		},
+		"participants":[
+			{"name":"Carol Example","source":"manual"},
+			{"name":"Alice Example","email":"Alice@Example.com","source":"calendar"}
+		]
+	}`)
+
+	content := Decode("muesli_json", raw, nil)
+
+	assertions.Equal(Section{State: StateAvailable, Text: "## Decisions\nShip it"}, content.Summary)
+	assertions.Equal(Section{State: StateAvailable, Text: "typed note"}, content.Notes)
+	assertions.Equal(Transcript{State: StateAvailable, Text: "[10:00:01] You: hello\n[10:00:04] Speaker 1: hi"}, content.Transcript)
+	assertions.Equal(CoverageUnsupported, content.ActionCoverage)
+	assertions.Equal("no_structured_actions", content.ActionReason)
+	assertions.Empty(content.Actions)
+	requirements.NotNil(content.DurationSeconds)
+	assertions.InDelta(float64(2700), *content.DurationSeconds, 0)
+	assertions.Equal(DurationProvider, content.DurationBasis)
+	assertions.Equal([]Participant{
+		{Name: "Carol Example", Role: "to"},
+		{Name: "Alice Example", Email: "alice@example.com", Role: "to"},
+	}, content.SourceParticipants)
+}
+
+func TestDecodeMuesliFallbackNotesAndTimes(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	fallback := Decode("muesli_json", []byte(`{"schema_version":1,"meeting":{
+		"id":1,"start_time":"2026-09-01T14:00:00Z","end_time":"2026-09-01T14:10:00Z",
+		"formatted_notes":"## Raw Transcript\n\nhello","notes_state":"raw_transcript_fallback",
+		"raw_transcript":"  ","created_at":"2026-09-01T14:00:03Z"}}`), nil)
+	assertions.Equal(StateEmpty, fallback.Summary.State)
+	assertions.Equal(StateEmpty, fallback.Notes.State)
+	assertions.Equal(StateEmpty, fallback.Transcript.State)
+	requirements.NotNil(fallback.DurationSeconds)
+	assertions.InDelta(float64(600), *fallback.DurationSeconds, 0)
+	assertions.Equal(DurationProvider, fallback.DurationBasis)
+	assertions.Empty(fallback.SourceParticipants)
+
+	failed := Decode("muesli_json", []byte(`{"schema_version":1,"meeting":{
+		"id":2,"start_time":"2026-09-01T14:00:00Z","formatted_notes":"## Summary failed\n\ntimeout",
+		"notes_state":"summary_failed","raw_transcript":"x","created_at":"2026-09-01T14:00:03Z"}}`), nil)
+	assertions.Equal(StateEmpty, failed.Summary.State)
+	assertions.Nil(failed.DurationSeconds)
+
+	missing := Decode("muesli_json", []byte(`{"schema_version":1}`), nil)
+	assertions.Equal(StateUnavailable, missing.Summary.State)
+	assertions.Equal(StateUnavailable, missing.Transcript.State)
+	assertions.Equal(CoverageUnavailable, missing.ActionCoverage)
+}
+
+func TestDecodeCarriesAttendeePhones(t *testing.T) {
+	generic := Decode("meeting_json", []byte(`{"summary_markdown":"x",
+		"organizer":{"name":"Owner","phone":"+16045550199"},
+		"attendees":[{"name":"Pat Example","phone":"+16045550100"},{"email":"sam@example.com"}]}`), nil)
+	assert.Equal(t, []Participant{
+		{Name: "Owner", Phone: "+16045550199", Role: "from"},
+		{Name: "Pat Example", Phone: "+16045550100", Role: "to"},
+		{Email: "sam@example.com", Role: "to"},
+	}, generic.SourceParticipants)
+
+	muesli := Decode("muesli_json", []byte(`{"schema_version":1,"meeting":{"raw_transcript":"x"},
+		"participants":[{"name":"Pat Example","phone":"+16045550100","phones":["+16045550100"]}]}`), nil)
+	assert.Equal(t, []Participant{{Name: "Pat Example", Phone: "+16045550100", Role: "to"}}, muesli.SourceParticipants)
+}
+
+func TestDecodeMuesliFallsBackToContactsIdentities(t *testing.T) {
+	content := Decode("muesli_json", []byte(`{"schema_version":1,"meeting":{"raw_transcript":"x"},
+		"participants":[
+			{"name":"Alex Example","emails":["alex@example.com"],"phones":["+16045550100"]},
+			{"name":"Phone Example","phone":"+16045550101","phones":["+16045550101"]}
+		]}`), nil)
+	assert.Equal(t, []Participant{
+		{Name: "Alex Example", Email: "alex@example.com", Role: "to"},
+		{Name: "Phone Example", Phone: "+16045550101", Role: "to"},
+	}, content.SourceParticipants, "packets merge these with the archived recipients instead of listing them twice")
+}

@@ -379,6 +379,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		known, exists := state.Known[id]
 		if archived.HasEvidence && exists && !opts.Full && known.SnapshotVersion == notionSnapshotVersion &&
 			known.SnapshotSHA256 == checksum {
+			// The archived meeting is current, but attendee linking may not
+			// have finished before an earlier run stopped.
+			if _, linkErr := archiver.LinkIdentities(ctx, source.ID, snapshot.Attendees); linkErr != nil {
+				sum.Errors++
+				hardErrors = append(hardErrors, fmt.Errorf("meeting %s: link attendee identities: %w", id, linkErr))
+				continue
+			}
 			next.Known[id] = knownMeeting{
 				LastEditedTime:  meeting.LastEditedTime,
 				SnapshotSHA256:  checksum,
@@ -621,7 +628,9 @@ func preserveArchivedAttendees(meeting *HydratedMeeting, archived []resolvedUser
 		if _, seen := seenEmails[user.Email]; seen {
 			continue
 		}
-		attendees = append(attendees, meetingarchive.Person{Name: user.Name, Email: user.Email})
+		attendees = append(attendees, meetingarchive.Person{
+			Name: user.Name, Email: user.Email, Anchor: userAnchor(user.ID),
+		})
 		seenEmails[user.Email] = struct{}{}
 	}
 	if restored == 0 {

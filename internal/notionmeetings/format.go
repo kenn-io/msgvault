@@ -195,3 +195,13 @@ func meetingSnippet(body string) string {
 	}
 	return string(runes)
 }
+
+// userAnchor is the stable identity of a Notion user. The provider verifies
+// the user's email, so every email a user has had links to the same person.
+func userAnchor(userID string) string {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return ""
+	}
+	return meetingarchive.Anchor("notion-user", userID)
+}

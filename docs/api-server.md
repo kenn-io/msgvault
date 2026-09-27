@@ -1735,6 +1735,13 @@ omission means unsupported; `null` is rejected. See the
 [complete import example](usage/meetings.md#import-from-any-meeting-source).
 Unknown fields are rejected except within `meeting.metadata`.
 
+Each organizer or attendee needs an `email`, a `phone`, or both. `phone` must be
+international (a leading `+` or `00`) and is normalized to E.164. An optional
+`id` (up to 200 characters) identifies the person within the import source;
+msgvault links the person's email and phone through it, including across
+meetings. See [how meetings connect to people](usage/meetings.md#how-meetings-connect-to-people).
+Validation errors name the failing field without echoing its value.
+
 ---
 
 ### OAuth token exchange {#post-apiv1authtokenemail}

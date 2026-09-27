@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-25"
 title: Accounts, Identities, and Collections
 description: How msgvault organizes every source into accounts, tracks which identifiers are "you," and groups accounts into collections for scoped search, stats, and deduplication.
 ---
@@ -278,7 +278,7 @@ collection; selections spanning sources are rejected. Deduplication remains
 available through the collection-scoped CLI commands, not through the TUI.
 
 Meetings mode uses the same key for a separate source selector. It lists
-Granola, Circleback, and Notion meeting sources. Changing it does not replace
+Granola, Circleback, Notion, and Muesli meeting sources. Changing it does not replace
 the Email account filter.
 
 ## Command Reference

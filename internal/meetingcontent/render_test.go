@@ -315,3 +315,37 @@ func mustRenderTime(t *testing.T, value string) *time.Time {
 func jsonNumber(value int64) string {
 	return strconv.FormatInt(value, 10)
 }
+
+func TestRenderMergesParticipantsByPhone(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	entry := Entry{
+		Meeting: MeetingRef{MessageID: 4, Title: "Phone", ArchivePath: "/api/v1/messages/4"},
+		Participants: []Participant{
+			{ParticipantID: new(int64(5)), Phone: "+16045550100", Role: "to"},
+		},
+		Content: Content{
+			Summary: Section{State: StateAvailable, Text: "x"}, Notes: Section{State: StateEmpty},
+			Transcript: Transcript{State: StateEmpty}, Actions: []Action{}, ActionCoverage: CoverageUnsupported,
+			SourceParticipants: []Participant{
+				{Name: "Pat Example", Phone: "+16045550100", Role: "to"},
+				{Name: "First Guest", Role: "to"},
+				{Name: "Second Guest", Role: "to"},
+			},
+		},
+	}
+
+	result, err := Render("archive", []Entry{entry}, PacketOptions{Format: FormatJSON, MaxBytes: 8192})
+	requirements.NoError(err)
+	var packet Packet
+	requirements.NoError(json.Unmarshal([]byte(result.Content), &packet))
+	assertions.Equal([]Participant{
+		{Name: "First Guest", Role: "to"},
+		{Name: "Second Guest", Role: "to"},
+		{ParticipantID: new(int64(5)), Name: "Pat Example", Phone: "+16045550100", Role: "to"},
+	}, packet.Meetings[0].Participants)
+
+	markdown, err := Render("archive", []Entry{entry}, PacketOptions{Format: FormatMarkdown, MaxBytes: 8192})
+	requirements.NoError(err)
+	assertions.Contains(markdown.Content, "- to: Pat Example <+16045550100> (participant 5)")
+}

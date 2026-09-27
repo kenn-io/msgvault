@@ -23,9 +23,19 @@ const (
 
 var ErrUnavailable = errors.New("meeting archiver is unavailable")
 
+// Person is one meeting organizer or attendee. Email, then Phone, is the
+// identity recorded as the meeting recipient. OtherEmails and OtherPhones are
+// further identities of the same human; with an Anchor they are linked to the
+// recipient identity through LinkIdentities. Names never match anything.
 type Person struct {
-	Name  string
-	Email string
+	Name        string
+	Email       string
+	Phone       string // E.164
+	OtherEmails []string
+	OtherPhones []string
+	// Anchor is a stable, provider-scoped identifier for this human, built
+	// with Anchor(). Empty means the provider asserts no stable identity.
+	Anchor string
 }
 
 type Snapshot struct {
@@ -48,8 +58,11 @@ type Result struct {
 	MessageID int64
 	Created   bool
 	// Changed means the archive write committed, including when Upsert returns
-	// a later conversation-stat maintenance error.
+	// a later conversation-stat maintenance or identity-linking error.
 	Changed bool
+	// Links reports anchored attendee identity linking, which runs on every
+	// Upsert so an interrupted link is repaired by the next sync.
+	Links LinkResult
 }
 
 // UpsertOptions controls archive repair behavior.
@@ -89,12 +102,16 @@ func (a *Archiver) Upsert(
 	if err != nil {
 		return Result{}, err
 	}
-	organizerEmail, organizerName := "", ""
+	var organizer Person
 	if snapshot.Organizer != nil {
-		organizerEmail = normalizeEmail(snapshot.Organizer.Email)
-		organizerName = strings.TrimSpace(snapshot.Organizer.Name)
+		organizer = snapshot.Organizer.Normalized()
 	}
-	expectedIsFromMe := organizerEmail != "" && identities.Contains(organizerEmail)
+	organizerEmail, organizerName := organizer.Email, organizer.Name
+	organizerAddress := organizerEmail
+	if organizerAddress == "" {
+		organizerAddress = organizer.Phone
+	}
+	expectedIsFromMe := organizerAddress != "" && identities.Contains(organizerAddress)
 
 	if existed && !opts.Force {
 		storedRaw, rawErr := a.store.GetMessageRaw(existingMessageID)
@@ -103,38 +120,43 @@ func (a *Archiver) Upsert(
 			if err := a.store.RecomputeConversationStatsForMessageContext(ctx, existingMessageID); err != nil {
 				return Result{}, fmt.Errorf("recompute meeting conversation stats: %w", err)
 			}
-			return Result{MessageID: existingMessageID}, nil
+			result := Result{MessageID: existingMessageID}
+			result.Links, err = a.LinkIdentities(ctx, snapshot.SourceID, snapshotPeople(snapshot))
+			if err != nil {
+				return result, fmt.Errorf("link meeting attendee identities: %w", err)
+			}
+			return result, nil
 		}
 	}
 
 	participants := make([]store.ParticipantPersistData, 0, len(snapshot.Attendees)+1)
-	hasOrganizer := organizerEmail != ""
+	hasOrganizer := organizer.PrimaryKey() != ""
 	if hasOrganizer {
-		participants = append(participants, store.ParticipantPersistData{
-			EmailAddress: organizerEmail,
-			DisplayName:  organizerName,
-			Domain:       emailDomain(organizerEmail),
-		})
+		participants = append(participants, persistData(organizer))
 	}
 
 	attendeeNames := make([]string, 0, len(snapshot.Attendees))
 	attendeeEmails := make([]string, 0, len(snapshot.Attendees))
-	for _, attendee := range snapshot.Attendees {
+	attendeeAddresses := make([]string, 0, len(snapshot.Attendees))
+	seenAttendees := make(map[string]bool, len(snapshot.Attendees))
+	for _, raw := range snapshot.Attendees {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		email := normalizeEmail(attendee.Email)
-		if email == "" {
+		attendee := raw.Normalized()
+		key := attendee.PrimaryKey()
+		if key == "" || seenAttendees[key] {
 			continue
 		}
-		name := strings.TrimSpace(attendee.Name)
-		participants = append(participants, store.ParticipantPersistData{
-			EmailAddress: email,
-			DisplayName:  name,
-			Domain:       emailDomain(email),
-		})
-		attendeeNames = append(attendeeNames, name)
-		attendeeEmails = append(attendeeEmails, email)
+		seenAttendees[key] = true
+		participants = append(participants, persistData(attendee))
+		attendeeNames = append(attendeeNames, attendee.Name)
+		attendeeEmails = append(attendeeEmails, attendee.Email)
+		if attendee.Email != "" {
+			attendeeAddresses = append(attendeeAddresses, attendee.Email)
+		} else {
+			attendeeAddresses = append(attendeeAddresses, attendee.Phone)
+		}
 	}
 
 	conversationID := strings.TrimSpace(snapshot.SourceConversationID)
@@ -208,8 +230,8 @@ func (a *Archiver) Upsert(
 				FTS: &store.FTSDoc{
 					Subject:  snapshot.Title,
 					Body:     snapshot.Body,
-					FromAddr: organizerEmail,
-					ToAddrs:  strings.Join(attendeeEmails, " "),
+					FromAddr: organizerAddress,
+					ToAddrs:  strings.Join(attendeeAddresses, " "),
 				},
 			}
 		},
@@ -221,11 +243,11 @@ func (a *Archiver) Upsert(
 	if err := a.store.RecomputeConversationStatsForMessageContext(ctx, messageID); err != nil {
 		return result, fmt.Errorf("recompute meeting conversation stats: %w", err)
 	}
+	result.Links, err = a.LinkIdentities(ctx, snapshot.SourceID, snapshotPeople(snapshot))
+	if err != nil {
+		return result, fmt.Errorf("link meeting attendee identities: %w", err)
+	}
 	return result, nil
-}
-
-func normalizeEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
 }
 
 func emailDomain(email string) string {
@@ -234,4 +256,23 @@ func emailDomain(email string) string {
 		return ""
 	}
 	return strings.ToLower(email[at+1:])
+}
+
+func persistData(person Person) store.ParticipantPersistData {
+	if person.Email != "" {
+		return store.ParticipantPersistData{
+			EmailAddress: person.Email,
+			DisplayName:  person.Name,
+			Domain:       emailDomain(person.Email),
+		}
+	}
+	return store.ParticipantPersistData{PhoneNumber: person.Phone, DisplayName: person.Name}
+}
+
+func snapshotPeople(snapshot Snapshot) []Person {
+	people := make([]Person, 0, len(snapshot.Attendees)+1)
+	if snapshot.Organizer != nil {
+		people = append(people, *snapshot.Organizer)
+	}
+	return append(people, snapshot.Attendees...)
 }

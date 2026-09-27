@@ -5,6 +5,8 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/meetingimport"
@@ -83,6 +85,26 @@ func hardenMeetingImportSchemas(doc *huma.OpenAPI) {
 			email.Format = "email"
 		}
 	}
+	if person := doc.Components.Schemas.Map()["MeetingPerson"]; person != nil {
+		idLimit, phoneLimit := 200, 64
+		if id := person.Properties["id"]; id != nil {
+			id.MaxLength = &idLimit
+		}
+		if phone := person.Properties["phone"]; phone != nil {
+			phone.MaxLength = &phoneLimit
+		}
+		person.Required = slices.DeleteFunc(person.Required, func(field string) bool { return field == "email" })
+		person.AnyOf = []*huma.Schema{
+			{
+				Type: huma.TypeObject, Required: []string{"email"},
+				Properties: map[string]*huma.Schema{"email": {Type: huma.TypeString, Format: "email"}},
+			},
+			{
+				Type: huma.TypeObject, Required: []string{"phone"},
+				Properties: map[string]*huma.Schema{"phone": {Type: huma.TypeString, MaxLength: &phoneLimit}},
+			},
+		}
+	}
 	one := 1
 	contentRequired := []*huma.Schema{
 		{
@@ -150,8 +172,13 @@ func (s *Server) handleMeetingImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := req.Normalize(); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "validation_failed",
-			"Meeting import request failed validation")
+		// Validation messages name the field and the rule, never the value.
+		message := "Meeting import request failed validation"
+		if detail, ok := strings.CutPrefix(err.Error(), meetingimport.ErrValidation.Error()+": "); ok &&
+			errors.Is(err, meetingimport.ErrValidation) {
+			message += ": " + detail
+		}
+		writeError(w, http.StatusUnprocessableEntity, "validation_failed", message)
 		return
 	}
 
