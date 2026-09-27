@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -17,8 +17,96 @@ import (
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/whatsapp"
 )
+
+func TestStoredMediaNonAudioProbe(t *testing.T) {
+	for _, mode := range []string{"missing", "no-blob-store", "unread-tail"} {
+		t.Run(mode, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			world := importVoiceChat(t)
+			data := []byte("%PDF-1.7\n" + strings.Repeat("x", 1024))
+			hash := addStoredMediaSource(t, world, "gmail", "test@example.com", "document", data,
+				"report.pdf", "application/pdf", "", store.AttachmentRoleStandalone, "", nil, "part", "part")
+			path := filepath.Join(world.dir, hash[:2], hash)
+			switch mode {
+			case "missing":
+				require.NoError(os.Remove(path))
+			case "unread-tail":
+				// A changed tail would fail CAS verification if discovery drained the PDF.
+				data[len(data)-1] = 'y'
+				require.NoError(os.WriteFile(path, data, 0o600))
+			}
+			worker := NewMediaSubmitter(world.st, world.blobs, nil, "non-audio", world.dir).WithASRProfile("asr")
+			if mode == "no-blob-store" {
+				worker.blobs = nil
+			}
+			for range 2 {
+				runPasses(t, worker, 1)
+				assert.Empty(deliveryRows(t, world.st, "non-audio"))
+				_, ready, err := world.st.NextBeeperMediaOperation(t.Context(), "non-audio", time.Now().Add(time.Hour))
+				require.NoError(err)
+				assert.False(ready)
+				require.NoError(world.st.UnregisterAttachmentChangeConsumer(t.Context(), store.BeeperMediaAttachmentConsumerKey))
+			}
+		})
+	}
+}
+
+func TestStoredMediaUsesMessageTimestampWithoutRawRead(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	testutil.SkipIfPostgres(t, "SQLite authorizer detects unnecessary MIME reads")
+	world := importVoiceChat(t)
+	for _, provider := range []string{"gmail", "imap", "mbox"} {
+		addStoredMediaSource(t, world, provider, "test@example.com", provider, syntheticWAV(800, 77),
+			"voice.wav", "audio/wav", "", store.AttachmentRoleStandalone, "",
+			[]byte("Date: Tue, 10 Feb 2026 11:12:13 +0000\r\n\r\nmessage"), "part", "part")
+	}
+	_, err := world.st.DB().Exec(world.st.Rebind(`UPDATE messages SET sent_at = ?`),
+		time.Date(2026, 2, 10, 11, 12, 13, 0, time.UTC))
+	require.NoError(err)
+	world.st.DB().SetMaxOpenConns(1)
+	conn, err := world.st.DB().Conn(t.Context())
+	require.NoError(err)
+	require.NoError(conn.Raw(func(driverConn any) error {
+		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+		require.True(ok)
+		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
+			if action == sqlite3.SQLITE_READ && table == "message_raw" {
+				return sqlite3.SQLITE_DENY
+			}
+			return sqlite3.SQLITE_OK
+		})
+		return nil
+	}))
+	require.NoError(conn.Close())
+	docbank := newFakeDocbank(t)
+	server := newTestDocbankServer(t, docbank)
+	defer server.Close()
+	runPasses(t, world.submitter(t, server, "timestamps").WithASRProfile("asr"), 10)
+	docbank.mu.Lock()
+	defer docbank.mu.Unlock()
+	require.Len(docbank.occurrences, 3)
+	for _, occurrence := range docbank.occurrences {
+		assert.Equal("2026-02-10T11:12:13Z", occurrence.Message.Normalized)
+	}
+	require.Len(deliveryRows(t, world.st, "timestamps"), 1)
+	assert.Equal("done", deliveryRows(t, world.st, "timestamps")[0].Phase)
+}
+
+func TestBeeperMediaMissingPartStaysVisible(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "missing-part", asset: "mxc://beeper.local/part",
+		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 78)})
+	_, err := world.st.DB().Exec(`UPDATE attachments SET source_part_key = NULL, source_attachment_id = NULL`)
+	require.NoError(err)
+	runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "missing-part", world.dir), 1)
+	rows := occurrenceRows(t, world.st, "missing-part")
+	require.Len(rows, 1)
+	assert.Equal("blocked", rows[0].State)
+	assert.Equal("source_part_missing", rows[0].ErrorCode)
+}
 
 // addStoredMediaSource adds an importer-owned row around bytes already present
 // in the test CAS. It intentionally leaves raw evidence optional.
@@ -425,7 +513,7 @@ func TestStoredMediaProfileChangeStartedJob(t *testing.T) {
 	assert.Empty(newMappings[0].ProcessingCoverage)
 }
 
-func TestStoredMediaStartedReceiptIdentityMismatch(t *testing.T) {
+func TestStoredMediaNewerSourceVersionUsesOwnReceipt(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "identity-mismatch", asset: "mxc://beeper.local/identity-mismatch",
@@ -472,11 +560,39 @@ func TestStoredMediaStartedReceiptIdentityMismatch(t *testing.T) {
 	runPasses(t, worker, 1)
 	ended := deliveryRows(t, world.st, destination)
 	require.Len(ended, 1)
-	assert.Equal("blocked", ended[0].Phase)
-	assert.Equal("destination_mismatch", ended[0].ErrorCode)
+	assert.Equal("done", ended[0].Phase)
+	assert.Empty(ended[0].ErrorCode)
 	docbank.mu.Lock()
 	assert.Len(docbank.processOps, processes)
+	assert.Equal(1, docbank.replays)
 	docbank.mu.Unlock()
+}
+
+func TestStoredMediaOmittedReceiptVersions(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t, voiceSpec{id: "optional-versions", asset: "mxc://beeper.local/optional-versions",
+		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 79)})
+	docbank := newFakeDocbank(t)
+	docbank.coverage = "pending"
+	server := newTestDocbankServer(t, docbank)
+	defer server.Close()
+	worker := world.submitter(t, server, "optional-versions").WithASRProfile("asr")
+	runPasses(t, worker, 4)
+	docbank.mu.Lock()
+	for id, receipt := range docbank.processReceipts {
+		receipt.SourceVersionID, receipt.ContentVersionID = "", ""
+		docbank.processReceipts[id] = receipt
+	}
+	docbank.sourceOperationID = "other-operation"
+	docbank.coverage = "transcribed"
+	docbank.mu.Unlock()
+	_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+	require.NoError(err)
+	runPasses(t, worker, 1)
+	deliveries := deliveryRows(t, world.st, "optional-versions")
+	require.Len(deliveries, 1)
+	assert.Equal("done", deliveries[0].Phase)
+	assert.Empty(deliveries[0].ErrorCode)
 }
 
 func processingKeyForDestination(t *testing.T, st *store.Store, destination, profile string) string {

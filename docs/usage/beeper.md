@@ -224,6 +224,8 @@ What happens:
   evidence.
 - Audio without source text is retained and uses the configured ASR profile
   when one is set. With an empty profile it remains `unprocessed`.
+- For sources other than Beeper, the occurrence timestamp comes from the
+  archived message's `sent_at`. The route does not read the raw message.
 - The job backfills existing audio in pages of up to 100 attachments. After
   that first scan, it checks up to 100 attachment changes each minute. It
   starts another full scan a day after the previous scan finishes, to catch
@@ -242,9 +244,11 @@ What happens:
   route accepts sources up to 1 GiB; memory use includes the recording plus
   inspection and allocation overhead. These file limits are not RAM limits.
 - The same recording in several messages gets one occurrence per message.
-  Docbank stores the bytes once, and each exact transcript is processed once.
-  Shared bytes can reuse one processing delivery across providers when the same
-  ASR profile is selected.
+  Docbank stores the bytes once. Supplied transcripts share a processing job
+  when the provider, exact text, language, and audio match. Audio without a
+  transcript shares an ASR job when the bytes and configured profile match,
+  including across providers. These are separate jobs: a Beeper transcript
+  does not suppress ASR for an email attachment containing the same recording.
 - A hidden, source-deleted, removed or replaced message loses its mapping
   (`revoked`), including audio still waiting to be sent. Other messages
   sharing the audio keep theirs. Reaction changes leave the mapping live.
@@ -260,6 +264,10 @@ What happens:
   changes, and so does their transcript delivery, with the same code.
   Missing or corrupt local bytes, or a temporary upload copy that can't be
   written, wait as `source_unavailable` and retry after five minutes.
+  For other sources, an unreadable attachment needs an audio type or WAV/MP3
+  filename to enter that retry queue. Attachments without those hints wait for
+  the next full scan. Discovery reads only their header; upload preparation
+  verifies the complete audio before sending it.
 - A processed delivery reaches `done` only after Docbank reports coverage
   for its own processing request, not for another transcript of the same
   audio. A failed Docbank job or a failed processing request ends as `done`

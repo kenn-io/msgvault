@@ -54,21 +54,21 @@ const (
 )
 
 // beeperMediaEligible is the shared provider, capture and role predicate. It
-// assumes the aliases a (attachments), m (messages) and src (sources).
+// assumes a (attachments), m (messages), c (conversations) and src (sources).
 const beeperMediaEligible = `length(COALESCE(a.content_hash, '')) = 64
 	  AND COALESCE(a.size, 0) > 0
 	  AND COALESCE(a.storage_path, '') <> ''
-	  AND COALESCE(NULLIF(a.source_part_key, ''), a.source_attachment_id, '') <> ''
 	  AND COALESCE(src.source_type, '') <> ''
 	  AND COALESCE(src.identifier, '') <> ''
 	  AND COALESCE(m.source_message_id, '') <> ''
-	  AND COALESCE(c.source_conversation_id, '') <> ''
 	  AND (
 		(src.source_type = 'beeper'
 		  AND COALESCE(a.attachment_state, '') = 'stored'
 		  AND COALESCE(a.media_type, '') IN ('audio', 'voice_note')
 		  AND COALESCE(a.attachment_role, 'unknown') = 'standalone')
 		OR (src.source_type <> 'beeper'
+		  AND COALESCE(NULLIF(a.source_part_key, ''), a.source_attachment_id, '') <> ''
+		  AND COALESCE(c.source_conversation_id, '') <> ''
 		  AND COALESCE(a.attachment_state, '') IN ('', 'stored')
 		  AND COALESCE(a.attachment_role, 'unknown') IN ('standalone', 'unknown'))
 	  )`
@@ -80,18 +80,19 @@ var beeperMediaCurrentJoin = `
 	JOIN messages m ON m.source_id = src.id AND m.source_message_id = o.source_message_id
 	JOIN conversations c ON c.id = m.conversation_id
 	JOIN attachments a ON a.message_id = m.id
-	WHERE c.source_conversation_id = o.source_conversation_id
+	WHERE COALESCE(c.source_conversation_id, '') = o.source_conversation_id
 	  AND COALESCE(a.source_attachment_id, '') = o.source_attachment_id
-	  AND COALESCE(NULLIF(a.source_part_key, ''), a.source_attachment_id, '') = o.source_part_key
+	  AND COALESCE(NULLIF(a.source_part_key, ''), NULLIF(a.source_attachment_id, ''), src.source_type || ':unknown') = o.source_part_key
 	  AND a.content_hash = o.source_sha256
 	  AND ` + beeperMediaEligible + `
 	  AND ` + LiveMessagesWhere("m", true)
 
-// BeeperMediaCandidate is the current archive evidence for one stored Beeper
-// audio occurrence. The source tuple, rather than AttachmentID, is stable.
+// BeeperMediaCandidate is the current archive evidence for a stored attachment
+// to inspect for audio. The source tuple, rather than AttachmentID, is stable.
 type BeeperMediaCandidate struct {
 	AttachmentID         int64
 	MessageID            int64
+	SentAt               sql.NullTime
 	ConversationID       int64
 	SourceID             int64
 	SourceType           string
@@ -226,14 +227,14 @@ const beeperMediaCandidateColumns = `
 	       COALESCE(a.media_type, ''), COALESCE(a.attachment_role, 'unknown'),
 	       COALESCE(a.content_hash, ''), COALESCE(a.size, 0),
 	       COALESCE(a.attachment_state, ''),
-	       COALESCE(CAST(a.attachment_metadata AS TEXT), '')
+	       COALESCE(CAST(a.attachment_metadata AS TEXT), ''), m.sent_at
 	FROM attachments a
 	JOIN messages m ON m.id = a.message_id
 	JOIN conversations c ON c.id = m.conversation_id
 	JOIN sources src ON src.id = m.source_id`
 
-// ListBeeperMediaCandidates returns a bounded page of stored, standalone
-// Beeper audio on live messages. Provider ownership is an explicit filter.
+// ListBeeperMediaCandidates returns a bounded page of captured attachments on
+// live messages. Beeper candidates must be explicitly marked as standalone audio.
 func (s *Store) ListBeeperMediaCandidates(
 	ctx context.Context, afterID int64, limit int,
 ) ([]BeeperMediaCandidate, error) {
@@ -277,7 +278,7 @@ func (s *Store) queryBeeperMediaCandidates(
 			&candidate.SourceAttachmentID, &candidate.SourcePartKey,
 			&candidate.Filename, &candidate.MIMEType, &candidate.MediaType,
 			&candidate.Role, &candidate.ContentHash, &candidate.ByteLength,
-			&candidate.AttachmentState, &candidate.AttachmentMetadata,
+			&candidate.AttachmentState, &candidate.AttachmentMetadata, &candidate.SentAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan beeper media candidate: %w", err)
 		}
@@ -356,6 +357,11 @@ func (s *Store) ReconcileBeeperMediaMapping(ctx context.Context, mapping BeeperM
 				SET phase = 'blocked', next_action_at = NULL, error_code = 'processing_key_changed',
 				    updated_at = `+s.dialect.Now()+`
 				WHERE destination_key = ? AND processing_key = ?
+				  AND NOT EXISTS (
+					SELECT 1 FROM beeper_media_occurrences o
+					WHERE o.destination_key = beeper_media_deliveries.destination_key
+					  AND o.processing_key = beeper_media_deliveries.processing_key
+					  AND o.retention_state IN ('pending', 'source_unavailable', 'retained'))
 				  AND COALESCE(job_id, '') = ''
 				  AND (phase = 'pending-artifact' OR (phase = 'pending-process' AND
 				       (COALESCE(pending_operation_id, '') = '' OR COALESCE(frozen_request_json, '') = '' OR

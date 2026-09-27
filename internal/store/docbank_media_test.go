@@ -93,6 +93,24 @@ func retainAudio(t *testing.T, st *store.Store, mapping store.BeeperMediaMapping
 	require.True(t, applied)
 }
 
+func TestBeeperMediaKeyChangeKeepsSharedDelivery(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	f := newBeeperMediaFixture(t)
+	first := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "first", strings.Repeat("a", 64))
+	second := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "second", first.hash)
+	a := first.mapping("shared", "revision", "old-key")
+	b := second.mapping("shared", "revision", "old-key")
+	retainAudio(t, f.Store, a, "first-occurrence")
+	retainAudio(t, f.Store, b, "second-occurrence")
+	a.ProcessingKey = "new-key"
+	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), a))
+	operation, ready, err := f.Store.NextBeeperMediaOperation(t.Context(), "shared", time.Now().UTC())
+	require.NoError(err)
+	require.True(ready)
+	assert.Equal("old-key", operation.ProcessingKey)
+	assert.Equal(store.BeeperMediaOperationArtifact, operation.Kind)
+}
+
 func liveMessageIDs(t *testing.T, st *store.Store) []string {
 	t.Helper()
 	mappings, err := st.ListLiveBeeperMediaMappings(t.Context(), "live", "", 100)

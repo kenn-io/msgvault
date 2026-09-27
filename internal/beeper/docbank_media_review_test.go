@@ -53,7 +53,7 @@ func nextPendingProcess(t *testing.T, worker *MediaSubmitter, destination string
 		_, err = worker.RunBatch(t.Context())
 		require.NoError(t, err)
 	}
-	t.Fatalf("pending media process was not ready")
+	require.FailNow(t, "pending media process was not ready")
 	return store.BeeperMediaOperation{}
 }
 

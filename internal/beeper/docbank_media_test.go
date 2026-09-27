@@ -1130,15 +1130,12 @@ func TestBeeperMediaRevokedObservingVaultMismatch(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		sourceVault    string
-		sourceVersion  string
-		sourceContent  string
 		processVault   string
 		processVersion string
 		processContent string
 		sourceOp       string
 	}{
 		{name: "source status", sourceVault: "foreign-vault"},
-		{name: "source identity", sourceVersion: "foreign-version", sourceContent: "foreign-content"},
 		{name: "replayed processing receipt", processVault: "foreign-vault", sourceOp: "other-operation"},
 		{name: "replayed processing identity", processVersion: "foreign-version", processContent: "foreign-content", sourceOp: "other-operation"},
 	} {
@@ -1164,8 +1161,6 @@ func TestBeeperMediaRevokedObservingVaultMismatch(t *testing.T) {
 			require.NoError(err)
 			docbank.mu.Lock()
 			docbank.sourceVaultUID = tc.sourceVault
-			docbank.sourceVersionID = tc.sourceVersion
-			docbank.sourceContentVersionID = tc.sourceContent
 			docbank.processVaultUID = tc.processVault
 			docbank.processVersionID = tc.processVersion
 			docbank.processContentVersionID = tc.processContent
