@@ -247,6 +247,12 @@ terminal-only [`person provider enroll-codex`](cli-reference.md#person-provider-
 command creates a new profile through the daemon; host-side `person provider
 login` reauthenticates the selected existing Codex profile. Both remain gated.
 
+The Linux launcher disables Codex's local execution environment and shell
+tools. The app server can manage its staged OAuth credential, but its command
+and filesystem interfaces cannot access it. Command-execution requests or
+events abort inference. Enabling a release still requires a real authenticated
+structured-inference check through this launcher.
+
 `codex_app_server` profiles are also the one protocol `person provider add`
 cannot create: generic onboarding negotiates HTTP capabilities through an
 endpoint, while codex_app_server has no endpoint to negotiate against and

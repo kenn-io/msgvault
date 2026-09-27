@@ -78,7 +78,7 @@ func TestCodexPinnedArtifactRunsInIsolatedNetworkNamespace(t *testing.T) {
 	}
 	requireChecks.NoError(client.Notify(ctx, "initialized", nil))
 	var models codexModelListResult
-	requireChecks.NoError(client.Call(ctx, "model/list", codexModelListRequest(2).Params, &models))
+	requireChecks.NoError(client.Call(ctx, "model/list", codexModelListRequest().Params, &models))
 	assertChecks.NotEmpty(models.Data)
 	execProcess, ok := process.(*execRPCProcess)
 	requireChecks.True(ok)
@@ -150,7 +150,7 @@ func TestCodexPinnedArtifactDoesNotInheritAmbientAuthHome(t *testing.T) {
 	requireChecks.True(checked, "no isolated Codex child was observed")
 }
 
-func TestCodexLauncherStagesOnlyExplicitAuthFile(t *testing.T) {
+func TestCodexLauncherDeniesExecutionAndAccessToStagedAuth(t *testing.T) {
 	assertChecks := assert.New(t)
 	requireChecks := require.New(t)
 	artifact := os.Getenv("MSGVAULT_CODEX_PINNED_EXECUTABLE")
@@ -159,7 +159,8 @@ func TestCodexLauncherStagesOnlyExplicitAuthFile(t *testing.T) {
 	}
 	authHome := t.TempDir()
 	requireChecks.NoError(os.Chmod(authHome, 0o700))
-	requireChecks.NoError(os.WriteFile(filepath.Join(authHome, "auth.json"), []byte("{}"), 0o600))
+	const syntheticAuth = `{"synthetic_secret":"SYNTHETIC_AUTH_SECRET"}`
+	requireChecks.NoError(os.WriteFile(filepath.Join(authHome, "auth.json"), []byte(syntheticAuth), 0o600))
 	requireChecks.NoError(os.WriteFile(filepath.Join(authHome, "unrelated.txt"), []byte("SYNTHETIC_UNRELATED_AUTH_FILE"), 0o600))
 	ambientHome := t.TempDir()
 	requireChecks.NoError(os.WriteFile(filepath.Join(ambientHome, "auth.json"), []byte("SYNTHETIC_AMBIENT_AUTH"), 0o600))
@@ -184,6 +185,26 @@ func TestCodexLauncherStagesOnlyExplicitAuthFile(t *testing.T) {
 	defer func() { require.NoError(t, finishCodexProcess(ctx, process, client, true)) }()
 	var initialized map[string]any
 	requireChecks.NoError(client.Call(ctx, "initialize", codexInitializeRequest().Params, &initialized))
+	requireChecks.NoError(client.Notify(ctx, "initialized", nil))
+	var models codexModelListResult
+	requireChecks.NoError(client.Call(ctx, "model/list", codexModelListRequest().Params, &models))
+	requireChecks.NotEmpty(models.Data)
+	var thread codexThreadStartResult
+	requireChecks.NoError(client.Call(ctx, "thread/start", codexThreadStartRequest(3, ProviderProfile{Model: models.Data[0].ID}).Params, &thread))
+	requireChecks.NotEmpty(thread.Thread.ID)
+	for _, request := range []struct {
+		method string
+		params any
+	}{
+		{"fs/readFile", map[string]any{"path": "/work/.codex/auth.json"}},
+		{"command/exec", map[string]any{"command": []string{"/codex", "--version"}, "cwd": "/work"}},
+	} {
+		var result map[string]any
+		err := client.Call(ctx, request.method, request.params, &result)
+		requireChecks.ErrorContains(err, "failed with code", request.method)
+		assertChecks.Empty(result, request.method)
+		assertChecks.NotContains(err.Error(), "SYNTHETIC_AUTH_SECRET")
+	}
 	owned, ok := process.(*codexOwnedProcess)
 	requireChecks.True(ok)
 	execProcess, ok := owned.RPCProcess.(*execRPCProcess)
@@ -203,14 +224,14 @@ func TestCodexLauncherStagesOnlyExplicitAuthFile(t *testing.T) {
 		root := filepath.Join("/proc", strconv.Itoa(pid), "root/work")
 		contents, err := os.ReadFile(filepath.Join(root, ".codex/auth.json"))
 		requireChecks.NoError(err)
-		assertChecks.Equal("{}", string(contents))
+		assertChecks.JSONEq(syntheticAuth, string(contents))
 		assertChecks.NoFileExists(filepath.Join(root, "unrelated.txt"))
 		assertChecks.NoFileExists(filepath.Join(root, ".codex/unrelated.txt"))
 	}
 	requireChecks.True(checked, "no isolated Codex child was observed")
 	contents, err := os.ReadFile(filepath.Join(authHome, "auth.json"))
 	requireChecks.NoError(err)
-	assertChecks.Equal("{}", string(contents))
+	assertChecks.JSONEq(syntheticAuth, string(contents))
 }
 
 func codexProcessTreePIDs(pid int) ([]int, error) {
@@ -312,6 +333,8 @@ func TestCodexBridgeFailsClosedWithoutLinkedOrMatchingDigest(t *testing.T) {
 	requireChecks.NoError(os.Chmod(socketPath, 0o600))
 	bridgePath := filepath.Join(t.TempDir(), "bridge")
 	requireChecks.NoError(os.WriteFile(bridgePath, []byte("SYNTHETIC_BAD_BRIDGE"), 0o700))
+	systemBinary, err := filepath.EvalSymlinks("/bin/true")
+	requireChecks.NoError(err)
 	for _, tc := range []struct {
 		name    string
 		starter bubblewrapCodexStarter
@@ -320,6 +343,7 @@ func TestCodexBridgeFailsClosedWithoutLinkedOrMatchingDigest(t *testing.T) {
 	}{
 		{name: "unlinked", starter: bubblewrapCodexStarter{bridgePath: bridgePath}, want: "digest is not linked"},
 		{name: "mismatch", starter: bubblewrapCodexStarter{bridgePath: bridgePath, bridgeDigest: strings.Repeat("0", 64)}, want: "digest does not match"},
+		{name: "system binary still requires matching digest", starter: bubblewrapCodexStarter{bridgePath: systemBinary, bridgeDigest: strings.Repeat("0", 64)}, want: "digest does not match"},
 		{name: "missing", starter: bubblewrapCodexStarter{bridgePath: filepath.Join(workRoot, "missing-bridge"), bridgeDigest: strings.Repeat("0", 64)}, wantErr: os.ErrNotExist},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

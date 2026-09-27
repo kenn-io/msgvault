@@ -35,6 +35,7 @@ var codexInitializedNotificationFrame = []byte("{\"method\":\"initialized\"}\n")
 
 var codexAppServerArgs = []string{
 	"app-server", "--stdio", "--strict-config",
+	codexDisableFlag, "shell_tool", codexDisableFlag, "unified_exec",
 	codexDisableFlag, "plugins", codexDisableFlag, "apps", codexDisableFlag, "enable_mcp_apps",
 	codexDisableFlag, "browser_use", codexDisableFlag, "computer_use", codexDisableFlag, "image_generation",
 	codexDisableFlag, "skill_search", codexDisableFlag, "hooks", codexDisableFlag, "memories",
@@ -166,8 +167,8 @@ func codexInitializeRequest() codexRPCRequest {
 	return codexRPCRequest{Method: "initialize", ID: 1, Params: params}
 }
 
-func codexModelListRequest(id int64) codexRPCRequest {
-	return codexRPCRequest{Method: "model/list", ID: id, Params: codexModelListParams{
+func codexModelListRequest() codexRPCRequest {
+	return codexRPCRequest{Method: "model/list", ID: 2, Params: codexModelListParams{
 		Limit: codexModelListLimit, IncludeHidden: true,
 	}}
 }
@@ -206,7 +207,7 @@ func (t *CodexAppServerDriver) Prepare(
 	}
 	frames := []codexRPCRequest{
 		codexInitializeRequest(),
-		codexModelListRequest(2),
+		codexModelListRequest(),
 		codexThreadStartRequest(3, profile),
 		codexTurnStartRequest(4, profile, request, codexReservedThreadID),
 	}
@@ -734,7 +735,7 @@ func (t *CodexAppServerDriver) ListModels(ctx context.Context) (models []CodexMo
 		return nil, err
 	}
 	var result codexModelListResult
-	if err := client.Call(ctx, "model/list", codexModelListRequest(2).Params, &result); err != nil {
+	if err := client.Call(ctx, "model/list", codexModelListRequest().Params, &result); err != nil {
 		return nil, err
 	}
 	if result.NextCursor != nil || len(result.Data) > codexModelListLimit {

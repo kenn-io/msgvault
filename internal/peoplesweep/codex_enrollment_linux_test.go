@@ -3,6 +3,8 @@
 package peoplesweep
 
 import (
+	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -118,4 +120,10 @@ func TestCodexLoginRejectedReplacementKeepsOldAuth(t *testing.T) {
 			assert.Equal(t, old, contents)
 		})
 	}
+}
+
+func syntheticCodexProbeAuth(user, workspace, refresh string) []byte {
+	claims := fmt.Sprintf(`{"https://api.openai.com/auth":{"chatgpt_user_id":%q,"chatgpt_account_id":%q}}`, user, workspace)
+	idToken := "header." + base64.RawURLEncoding.EncodeToString([]byte(claims)) + ".signature"
+	return []byte(fmt.Sprintf(`{"auth_mode":"chatgpt","tokens":{"id_token":%q,"access_token":"synthetic-access","refresh_token":%q,"account_id":%q}}`, idToken, refresh, workspace))
 }

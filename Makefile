@@ -94,6 +94,7 @@ GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 build: web-embed
 ifeq ($(shell go env GOOS),linux)
 	CGO_ENABLED=0 go build -trimpath -buildvcs=false -o msgvault-codex-bridge ./cmd/msgvault-codex-bridge
+	chmod 755 msgvault-codex-bridge
 	@bridge_digest=$$(sha256sum msgvault-codex-bridge | cut -d' ' -f1); \
 		CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS) -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=$$bridge_digest" -o msgvault ./cmd/msgvault
 else
@@ -105,6 +106,7 @@ endif
 build-release: web-embed
 ifeq ($(shell go env GOOS),linux)
 	CGO_ENABLED=0 go build -trimpath -buildvcs=false -o msgvault-codex-bridge ./cmd/msgvault-codex-bridge
+	chmod 755 msgvault-codex-bridge
 	@bridge_digest=$$(sha256sum msgvault-codex-bridge | cut -d' ' -f1); \
 		CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS_RELEASE) -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=$$bridge_digest" -trimpath -o msgvault ./cmd/msgvault
 else

@@ -751,6 +751,53 @@ func TestCodexPreparedWireCoversPacketAndEveryOutboundFrame(t *testing.T) {
 	assertChecks.NotEqual(components[5], changedComponents[5], "the disclosed turn must change with the packet")
 }
 
+// Codex may interleave tool events before the turn/start reply. Neither that
+// path nor the normal notification loop may accept a final answer afterward.
+func TestCodexInferenceRejectsCommandExecution(t *testing.T) {
+	for _, test := range []struct{ name, frame string }{
+		{"approval request", `{"id":4,"method":"item/commandExecution/requestApproval","params":{"command":"cat /work/.codex/auth.json"}}`},
+		{"command started", `{"method":"item/started","params":{"item":{"type":"commandExecution"}}}`},
+		{"command completed", `{"method":"item/completed","params":{"item":{"type":"commandExecution","aggregatedOutput":"SYNTHETIC_AUTH_SECRET"}}}`},
+		{"command output", `{"method":"item/commandExecution/outputDelta","params":{"delta":"SYNTHETIC_AUTH_SECRET"}}`},
+	} {
+		for _, beforeReply := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/beforeReply=%t", test.name, beforeReply), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				event := func(stdout io.Writer) error {
+					_, err := io.WriteString(stdout, test.frame+"\n")
+					if err != nil {
+						return err
+					}
+					if err := writeCodexFinalEvent(stdout, `{"claims":[]}`); err != nil {
+						return err
+					}
+					return writeCodexCompletedEvent(stdout)
+				}
+				var before, after func(io.Writer) error
+				if beforeReply {
+					before = event
+				} else {
+					after = event
+				}
+				starter := &recordingCodexStarter{t: t, scripts: []func(*bufio.Reader, io.Writer, io.Writer) error{
+					codexTurnEventScript(t, &codexTranscript{}, before, after),
+				}}
+				driver, err := peoplesweep.NewCodexAppServerDriver(codexTestConfig(), starter, &recordingCodexGate{})
+				require.NoError(err)
+				profile := codexTestProfile(t)
+				prepared, err := driver.Prepare(profile, codexTestRequest())
+				require.NoError(err)
+				response, err := driver.GeneratePrepared(t.Context(), profile, peoplesweep.Credential{}, prepared)
+				require.ErrorContains(err, "execution is disabled")
+				assert.Empty(response.CandidateJSON)
+				assert.NotContains(err.Error(), "SYNTHETIC_AUTH_SECRET")
+				assert.Equal(int64(1), starter.records[0].process.kills.Load())
+			})
+		}
+	}
+}
+
 func TestCodexTransportRejectsUnsupportedModelAndEffort(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
@@ -1623,6 +1670,7 @@ func TestCodexLaunchScrubsEnvironmentAndDisablesExtensions(t *testing.T) {
 	assertChecks.NotContains(joinedEnv, "OPENAI_API_KEY")
 	assertChecks.Equal([]string{
 		"app-server", "--stdio", "--strict-config",
+		"--disable", "shell_tool", "--disable", "unified_exec",
 		"--disable", "plugins", "--disable", "apps", "--disable", "enable_mcp_apps",
 		"--disable", "browser_use", "--disable", "computer_use", "--disable", "image_generation",
 		"--disable", "skill_search", "--disable", "hooks", "--disable", "memories",

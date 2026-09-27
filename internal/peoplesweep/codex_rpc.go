@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -230,6 +231,9 @@ func (c *CodexRPCClient) callFrameLocked(
 		if err := decodeSingleJSON(raw, &envelope); err != nil {
 			return errors.New("codex app-server returned a malformed response frame")
 		}
+		if err := rejectCodexExecution(envelope); err != nil {
+			return err
+		}
 		if len(envelope.ID) == 0 {
 			if !codexRPCMethodPattern.MatchString(envelope.Method) {
 				return errors.New("codex app-server returned a malformed response envelope")
@@ -288,6 +292,9 @@ func (c *CodexRPCClient) nextNotification(
 	if err := decodeSingleJSON(raw, &envelope); err != nil {
 		return "", nil, errors.New("codex app-server returned a malformed notification frame")
 	}
+	if err := rejectCodexExecution(envelope); err != nil {
+		return "", nil, err
+	}
 	if len(envelope.ID) != 0 {
 		return "", nil, errors.New("codex app-server returned an unknown response ID")
 	}
@@ -295,6 +302,31 @@ func (c *CodexRPCClient) nextNotification(
 		return "", nil, errors.New("codex app-server returned a malformed notification method")
 	}
 	return envelope.Method, append(jsontext.Value(nil), envelope.Params...), c.checkStderr()
+}
+
+// Inference cannot execute commands. Reject requests and command events before
+// queuing them or accepting a response with a colliding request ID. The driver
+// kills the process on error; never echo event payloads that may contain secrets.
+func rejectCodexExecution(envelope codexRPCEnvelope) error {
+	if envelope.Method != "" && len(envelope.ID) != 0 ||
+		strings.HasPrefix(envelope.Method, "item/commandExecution/") ||
+		strings.HasPrefix(envelope.Method, "command/exec/") {
+		return errors.New("codex app-server execution is disabled")
+	}
+	if envelope.Method == "item/started" || envelope.Method == "item/completed" {
+		var event struct {
+			Item struct {
+				Type string `json:"type"`
+			} `json:"item"`
+		}
+		if decodeSingleJSON(envelope.Params, &event) != nil {
+			return errors.New("codex app-server returned a malformed item event")
+		}
+		if event.Item.Type == "commandExecution" {
+			return errors.New("codex app-server execution is disabled")
+		}
+	}
+	return nil
 }
 
 func (c *CodexRPCClient) enqueueNotification(method string, params jsontext.Value, frameBytes int) error {

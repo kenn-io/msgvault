@@ -98,8 +98,12 @@ func (s bubblewrapCodexStarter) start(
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("codex proxy bridge is missing: %w", os.ErrNotExist)
 		}
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 || !codexAuthOwnedByDaemon(info) {
-			return nil, errors.New("codex proxy bridge must be daemon-owned and not group writable")
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 {
+			return nil, errors.New("codex proxy bridge must be a regular file and not group writable")
+		}
+		owner, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || owner.Uid != 0 && !codexAuthOwnedByDaemon(info) {
+			return nil, errors.New("codex proxy bridge must be owned by root or the daemon")
 		}
 		var actualDigest string
 		bridge, actualDigest, err = snapshotCodexExecutable(path)
@@ -143,6 +147,9 @@ func (s bubblewrapCodexStarter) start(
 		"--ro-bind", caBundle, caBundle,
 		"--ro-bind", executable.verifiedPath, "/codex", "--proc", "/proc", "--dev", "/dev",
 		"--setenv", "HOME", "/work", "--setenv", "CODEX_HOME", "/work/.codex",
+		// The app server owns OAuth; model turns must have no execution or
+		// filesystem environment that could read its credential store.
+		"--setenv", "CODEX_EXEC_SERVER_URL", "none",
 		"--setenv", "SSL_CERT_FILE", caBundle,
 		"--setenv", "TMPDIR", "/tmp", "--chdir", "/work",
 	}

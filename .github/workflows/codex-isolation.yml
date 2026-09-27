@@ -1,0 +1,40 @@
+name: Codex isolation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-artifact:
+    # Ubuntu 22.04 permits the unprivileged user namespaces used by Bubblewrap.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: 'true'
+      - name: Install Bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Download pinned Codex artifact
+        run: |
+          mkdir -p "$RUNNER_TEMP/codex-artifact"
+          cd "$RUNNER_TEMP/codex-artifact"
+          curl -fsSL --retry 3 https://github.com/openai/codex/releases/download/rust-v0.156.0/codex-x86_64-unknown-linux-musl.tar.gz -o codex.tar.gz
+          echo '3d49d9af25a5168cfc51e50e520ab238b23083c259ae7c14f89b007cb2545c7b  codex.tar.gz' | sha256sum -c -
+          tar -xzf codex.tar.gz
+          echo '78a11f06e0a2dda42d13fba1d50dc62e8cbdb2d5f69789722f4d4d99b5cdbe30  codex-x86_64-unknown-linux-musl' | sha256sum -c -
+          echo "MSGVAULT_CODEX_PINNED_EXECUTABLE=$PWD/codex-x86_64-unknown-linux-musl" >> "$GITHUB_ENV"
+      - name: Exercise launcher and protocol without real credentials
+        run: |
+          CGO_ENABLED=0 go build -trimpath -buildvcs=false -o "$RUNNER_TEMP/codex-artifact/msgvault-codex-bridge" ./cmd/msgvault-codex-bridge
+          chmod 755 "$RUNNER_TEMP/codex-artifact/msgvault-codex-bridge"
+          bridge_digest=$(sha256sum "$RUNNER_TEMP/codex-artifact/msgvault-codex-bridge" | cut -d' ' -f1)
+          go test -tags "fts5 sqlite_vec" -c -ldflags="-X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=$bridge_digest" -o "$RUNNER_TEMP/codex-artifact/peoplesweep.test" ./internal/peoplesweep
+          cd internal/peoplesweep
+          MSGVAULT_CODEX_TEST_DEFAULT_BRIDGE=1 "$RUNNER_TEMP/codex-artifact/peoplesweep.test" -test.timeout=5m -test.run='^TestCodex' -test.count=1
