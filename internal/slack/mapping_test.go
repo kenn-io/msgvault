@@ -2,12 +2,33 @@ package slack
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMapMessageSizeEstimate(t *testing.T) {
+	lookup := func(string) string { return "" }
+	tests := []struct {
+		name string
+		msg  Message
+		add  int64
+	}{
+		{"text uses body bytes", Message{TS: "1.000001", Text: "deploy is green"}, 0},
+		{"files add positive sizes", Message{TS: "1.000002", Text: "logs attached", Files: []File{{Name: "a.log", Size: 2048}, {Name: "b.log", Size: 0}, {Name: "c.log", Size: -1}}}, 2048},
+		{"overflowing size ignored", Message{TS: "1.000003", Text: "see logs", Files: []File{{Name: "huge.log", Size: math.MaxInt64}, {Name: "small.log", Size: 15}}}, 15},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, body := mapMessage(&tt.msg, "C1", 1, 1, false, lookup)
+			require.NotEmpty(t, body)
+			assert.Equal(t, int64(len(body))+tt.add, msg.SizeEstimate)
+		})
+	}
+}
 
 func TestRenderText(t *testing.T) {
 	names := map[string]string{"UALICE": "Alice"}

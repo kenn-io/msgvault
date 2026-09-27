@@ -2,6 +2,7 @@ package slack
 
 import (
 	"database/sql"
+	"math"
 	"regexp"
 	"strings"
 
@@ -175,10 +176,21 @@ func mapMessage(m *Message, channelID string, conversationID, storeSourceID int6
 		ReceivedAt:      sql.NullTime{Time: t, Valid: !t.IsZero()},
 		IsFromMe:        isFromMe,
 		Snippet:         sql.NullString{String: snippet(text), Valid: text != ""},
+		SizeEstimate:    messageSizeEstimate(m, text),
 		HasAttachments:  len(m.Files) > 0,
 		AttachmentCount: len(m.Files),
 	}
 	return msg, text
+}
+
+func messageSizeEstimate(m *Message, body string) int64 {
+	size := int64(len(body))
+	for _, file := range m.Files {
+		if file.Size > 0 && file.Size <= math.MaxInt64-size {
+			size += file.Size
+		}
+	}
+	return size
 }
 
 // conversationType maps a Slack conversation to the msgvault conversation

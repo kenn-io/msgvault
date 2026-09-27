@@ -64,6 +64,7 @@ func mapMessage(gm *ChatMessage, conversationID, sourceID int64, sourceMessageID
 		SentAt:          sql.NullTime{Time: gm.CreatedDateTime, Valid: !gm.CreatedDateTime.IsZero()},
 		ReceivedAt:      sql.NullTime{Time: gm.CreatedDateTime, Valid: !gm.CreatedDateTime.IsZero()},
 		Snippet:         sql.NullString{String: snippet(text), Valid: text != ""},
+		SizeEstimate:    int64(len(text)),
 		HasAttachments:  attCount > 0,
 		AttachmentCount: attCount,
 	}

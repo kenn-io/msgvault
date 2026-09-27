@@ -9,6 +9,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMapMessageSizeEstimateIsBodyBytes(t *testing.T) {
+	gm := &ChatMessage{
+		ID:                   "m9",
+		CreatedDateTime:      time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC),
+		LastModifiedDateTime: time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC),
+		Body:                 MessageBody{ContentType: "text", Content: "standup moved to 10"},
+	}
+	msg, body := mapMessage(gm, 10, 20, chatSourceMessageID("chatA", gm.ID))
+	assert.Equal(t, int64(len(body)), msg.SizeEstimate)
+	assert.Positive(t, msg.SizeEstimate)
+}
+
 func TestHTMLToText(t *testing.T) {
 	got := htmlToText(`<p>Hello <at id="0">Bob</at> see <a href="x">link</a></p>`)
 	assert.Contains(t, got, "Hello")

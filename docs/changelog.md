@@ -41,6 +41,7 @@ All notable changes to msgvault, grouped by release.
   when launchd, systemd, or Docker runs `msgvault serve`. CLI, TUI, and MCP
   commands then use the running daemon and fail instead of starting their own.
   See [configuration](configuration.md).
+- Beeper, Slack, and Teams imports record body bytes plus reported attachment bytes as a size estimate. Earlier rows retain their recorded size until reimported.
 - Gmail sources can create, retrieve, edit, and delete reviewable reply drafts
   through `draft-reply`, `draft-get`, `draft-edit`, and `draft-delete`. Gmail
   `draft-edit` supports plain-text drafts and refuses HTML, multipart, or

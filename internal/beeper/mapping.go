@@ -3,6 +3,7 @@ package beeper
 import (
 	"database/sql"
 	"html"
+	"math"
 	"regexp"
 	"strings"
 
@@ -162,10 +163,22 @@ func mapMessage(m *Message, conversationID, sourceID int64) (store.Message, stri
 		ReceivedAt:      sql.NullTime{Time: m.Timestamp, Valid: !m.Timestamp.IsZero()},
 		IsFromMe:        m.IsSender,
 		Snippet:         sql.NullString{String: snippet(text), Valid: text != ""},
+		SizeEstimate:    messageSizeEstimate(m, text),
 		HasAttachments:  len(m.Attachments) > 0,
 		AttachmentCount: len(m.Attachments),
 	}
 	return msg, text
+}
+
+func messageSizeEstimate(m *Message, body string) int64 {
+	size := int64(len(body))
+	for i := range m.Attachments {
+		n := int64(declaredSize(&m.Attachments[i]))
+		if n > 0 && n <= math.MaxInt64-size {
+			size += n
+		}
+	}
+	return size
 }
 
 // chatTypeSingle is the Beeper chat type for direct messages (vs "group").
