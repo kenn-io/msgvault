@@ -7378,14 +7378,15 @@ func (p PeopleInferenceSelectionRequest) Validate() error {
 }
 
 type PeopleInferenceSettingsResponse struct {
-	ConfiguredEnabled     bool                            `json:"configured_enabled"`
-	ConfiguredFingerprint *string                         `json:"configured_fingerprint,omitzero"`
-	ConfiguredName        *string                         `json:"configured_name,omitzero"`
-	PendingRestart        bool                            `json:"pending_restart"`
-	Profiles              []PeopleInferenceProfileSetting `json:"profiles" validate:"required"`
-	RunningEnabled        bool                            `json:"running_enabled"`
-	RunningFingerprint    *string                         `json:"running_fingerprint,omitzero"`
-	RunningName           *string                         `json:"running_name,omitzero"`
+	ConfiguredEnabled          bool                            `json:"configured_enabled"`
+	ConfiguredFingerprint      *string                         `json:"configured_fingerprint,omitzero"`
+	ConfiguredName             *string                         `json:"configured_name,omitzero"`
+	PendingRestart             bool                            `json:"pending_restart"`
+	Profiles                   []PeopleInferenceProfileSetting `json:"profiles" validate:"required"`
+	RunningEnabled             bool                            `json:"running_enabled"`
+	RunningFingerprint         *string                         `json:"running_fingerprint,omitzero"`
+	RunningName                *string                         `json:"running_name,omitzero"`
+	StoredCredentialsSupported bool                            `json:"stored_credentials_supported"`
 }
 
 func (p PeopleInferenceSettingsResponse) Validate() error {

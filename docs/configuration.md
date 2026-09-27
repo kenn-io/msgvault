@@ -126,6 +126,10 @@ profile-specific secret under the private tokens directory and is supported
 on Linux and macOS only; `credential = "env"` stores only the selected
 environment-variable name and works everywhere. Environment-variable names are
 host-only settings: configure them through the CLI or TOML, not the Web UI.
+On hosts without stored-key support, the Web UI hides profile enrollment and
+key fields. Run [`msgvault person provider add`](cli-reference.md#person-provider-add)
+with `--credential-env` on the daemon host, then reload the Web settings to
+check and select the profile.
 `credential = "none"` is restricted to credentialless local or Codex paths.
 Changing a credential value does not change the profile fingerprint, but
 changing its source or reference does.

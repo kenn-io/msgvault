@@ -3069,6 +3069,8 @@ type PutSettingsPeopleInferencePresetErrorResponseJSON428 = ErrorResponse
 
 type PutSettingsPeopleInferencePresetErrorResponseJSON500 = ErrorResponse
 
+type PutSettingsPeopleInferencePresetErrorResponseJSON503 = ErrorResponse
+
 type CheckSettingsPeopleInferenceProviderResponse = PeopleInferenceCheckResponse
 
 type CheckSettingsPeopleInferenceProviderErrorResponse = ErrorResponse
@@ -5993,6 +5995,7 @@ type PutSettingsPeopleInferencePresetResp struct {
 	JSON422      *PutSettingsPeopleInferencePresetErrorResponseJSON422
 	JSON428      *PutSettingsPeopleInferencePresetErrorResponseJSON428
 	JSON500      *PutSettingsPeopleInferencePresetErrorResponseJSON500
+	JSON503      *PutSettingsPeopleInferencePresetErrorResponseJSON503
 }
 
 type CheckSettingsPeopleInferenceProviderResp struct {

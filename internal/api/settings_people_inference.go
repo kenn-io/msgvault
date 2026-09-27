@@ -45,14 +45,15 @@ type PeopleInferenceProfileSetting struct {
 // PeopleInferenceSettingsResponse distinguishes disk configuration from the
 // policy the daemon loaded at startup. A saved change takes effect on restart.
 type PeopleInferenceSettingsResponse struct {
-	Profiles              []PeopleInferenceProfileSetting `json:"profiles"`
-	ConfiguredName        string                          `json:"configured_name,omitempty"`
-	ConfiguredEnabled     bool                            `json:"configured_enabled"`
-	ConfiguredFingerprint string                          `json:"configured_fingerprint,omitempty"`
-	RunningName           string                          `json:"running_name,omitempty"`
-	RunningEnabled        bool                            `json:"running_enabled"`
-	RunningFingerprint    string                          `json:"running_fingerprint,omitempty"`
-	PendingRestart        bool                            `json:"pending_restart"`
+	StoredCredentialsSupported bool                            `json:"stored_credentials_supported"`
+	Profiles                   []PeopleInferenceProfileSetting `json:"profiles"`
+	ConfiguredName             string                          `json:"configured_name,omitempty"`
+	ConfiguredEnabled          bool                            `json:"configured_enabled"`
+	ConfiguredFingerprint      string                          `json:"configured_fingerprint,omitempty"`
+	RunningName                string                          `json:"running_name,omitempty"`
+	RunningEnabled             bool                            `json:"running_enabled"`
+	RunningFingerprint         string                          `json:"running_fingerprint,omitempty"`
+	PendingRestart             bool                            `json:"pending_restart"`
 }
 
 type PeopleInferenceSelectionRequest struct {
@@ -169,7 +170,7 @@ func (s *Server) registerPeopleInferenceSettingsRoute(api huma.API) {
 	createOperation.RequestBody = jsonRequestBodyFor[PeopleInferencePresetCreateRequest](api)
 	createOperation.Responses = jsonResponsesFor[PeopleInferenceSettingsResponse](api)
 	for _, status := range []int{http.StatusBadRequest, http.StatusConflict, http.StatusPreconditionFailed,
-		http.StatusPreconditionRequired, http.StatusUnprocessableEntity, http.StatusInternalServerError} {
+		http.StatusPreconditionRequired, http.StatusUnprocessableEntity, http.StatusServiceUnavailable, http.StatusInternalServerError} {
 		createOperation.Responses[httpStatusKey(status)] = errorResponseFor(api)
 	}
 	addSettingsETagHeader(createOperation.Responses[httpStatusKey(http.StatusOK)])
@@ -412,6 +413,11 @@ func (s *Server) handleCreatePeopleInferencePreset(w http.ResponseWriter, r *htt
 	}
 	var request PeopleInferencePresetCreateRequest
 	if !decodeStrictSettingsJSON(w, r, &request) {
+		return
+	}
+	if !peoplesweep.StoredCredentialsSupported() {
+		writeError(w, http.StatusServiceUnavailable, "credential_store_unsupported",
+			"Stored provider keys are unavailable on this platform; configure an environment credential with msgvault person provider add and --credential-env on the daemon host")
 		return
 	}
 	if err := peoplesweep.ValidateProviderProfileName(r.PathValue("name")); err != nil {
@@ -935,6 +941,7 @@ func (s *Server) handleRemovePeopleInferenceProvider(w http.ResponseWriter, r *h
 
 func (s *Server) buildPeopleInferenceSettingsResponse(ctx context.Context, configured *config.Config) (PeopleInferenceSettingsResponse, error) {
 	response := peopleInferenceSettingsResponse(configured.People.Sweep, s.cfg.People.Sweep)
+	response.StoredCredentialsSupported = peoplesweep.StoredCredentialsSupported()
 	credentials := peoplesweep.NewFileCredentialStore(configured.TokensDir())
 	for index := range response.Profiles {
 		profile := &response.Profiles[index]
@@ -950,7 +957,7 @@ func (s *Server) buildPeopleInferenceSettingsResponse(ctx context.Context, confi
 		if profile.CredentialSource != string(peoplesweep.CredentialStored) {
 			continue
 		}
-		if !peoplesweep.StoredCredentialsSupported() {
+		if !response.StoredCredentialsSupported {
 			continue // The platform cannot hold profile secrets, so nothing is stored.
 		}
 		revision, exists, err := credentials.Revision(profile.Name)

@@ -99,7 +99,7 @@ func TestPeopleInferenceSelectionRequiresCheckAndConsent(t *testing.T) {
 	assert.NotEmpty(resp.Header().Get("ETag"))
 }
 
-func TestPeopleInferencePresetCreationUsesBoundEndpoint(t *testing.T) {
+func TestPeopleInferencePresetCreationRequiresSupportedStorage(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, _ := newSettingsTestServer(t, "")
@@ -108,9 +108,23 @@ func TestPeopleInferencePresetCreationUsesBoundEndpoint(t *testing.T) {
 	request := []byte(`{"preset_id":"openrouter","model":"example/model","retention_posture":"operator-confirmed","training_posture":"operator-confirmed","allowed_sources":["conversation_text"],"source_since":"2025-01-01","allow_sensitive":false}`)
 	created := performSettingsRequest(t, srv, http.MethodPut,
 		peopleInferenceSettingsPath+"/providers/remote", request, read.Header().Get("ETag"), "")
+	if !peoplesweep.StoredCredentialsSupported() {
+		require.Equal(http.StatusServiceUnavailable, created.Code, created.Body.String())
+		assert.Contains(created.Body.String(), "--credential-env on the daemon host")
+		after := performSettingsRequest(t, srv, http.MethodGet, peopleInferenceSettingsPath, nil, "", "")
+		require.Equal(http.StatusOK, after.Code, after.Body.String())
+		assert.Equal(read.Header().Get("ETag"), after.Header().Get("ETag"))
+		var body PeopleInferenceSettingsResponse
+		require.NoError(json.Unmarshal(after.Body.Bytes(), &body))
+		assert.False(body.StoredCredentialsSupported)
+		assert.Empty(body.Profiles)
+		assert.False(body.PendingRestart)
+		return
+	}
 	require.Equal(http.StatusOK, created.Code, created.Body.String())
 	var body PeopleInferenceSettingsResponse
 	require.NoError(json.Unmarshal(created.Body.Bytes(), &body))
+	assert.True(body.StoredCredentialsSupported)
 	assert.False(body.ConfiguredEnabled)
 	assert.True(body.PendingRestart)
 	require.Len(body.Profiles, 1)

@@ -15,6 +15,7 @@ for (const width of [390, 320]) {
     };
     await page.route('**/api/v1/settings/people-inference', (route) => route.fulfill({
       headers: { ETag: '"config-a"' }, json: {
+        stored_credentials_supported: true,
         profiles: [profile, { ...profile, name: 'spare-profile', fingerprint: 'spare-fingerprint' }],
         configured_name: name, running_name: 'previous-profile',
         configured_enabled: true, running_enabled: true, pending_restart: true,
