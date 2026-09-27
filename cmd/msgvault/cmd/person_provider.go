@@ -37,6 +37,7 @@ type personProviderStore interface {
 	RevokeAllPersonInferenceConsents(ctx context.Context, actor string) (int64, error)
 	GetPersonInferenceConsentStatus(ctx context.Context, fingerprint string) (*store.PersonInferenceConsentStatus, error)
 	HasSuccessfulPersonInferenceCheck(ctx context.Context, fingerprint string) (bool, error)
+	InvalidatePersonInferenceCheck(ctx context.Context, fingerprint string) (bool, error)
 	RecordPersonInferenceCheck(ctx context.Context, check store.PersonInferenceCheck) error
 	GetPersonInferenceCheck(ctx context.Context, fingerprint string) (*store.PersonInferenceCheck, error)
 	HasActivePersonInferenceConsent(ctx context.Context, fingerprint string) (bool, error)
@@ -1008,6 +1009,9 @@ func runPersonProviderRemove(
 		); err != nil {
 			return rollback(err)
 		}
+		if _, err := st.InvalidatePersonInferenceCheck(command.Context(), profile.Fingerprint); err != nil {
+			return rollback(err)
+		}
 	}
 	if provider.Credential == peoplesweep.CredentialStored {
 		if err := credentials.Delete(name, deletionGuard); err != nil {
@@ -1144,7 +1148,7 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 			if fingerprint != "" {
 				return errors.New("--fingerprint requires one named people provider revoke")
 			}
-			return runPersonProviderRevoke(command, runDeps, all, jsonOutput, semanticEmbeddings)
+			return runPersonProviderRevoke(command, runDeps, all, jsonOutput, semanticEmbeddings, ifFingerprint != "")
 		},
 	}
 	command.Flags().BoolVar(&all, "all", false, "Revoke consent for every stored provider policy")
@@ -1415,6 +1419,7 @@ func runPersonProviderRevoke(
 	all bool,
 	jsonOutput bool,
 	semanticEmbeddings bool,
+	invalidateCheck bool,
 ) error {
 	if semanticEmbeddings {
 		return runPersonSemanticProviderRevoke(command, deps, all, jsonOutput)
@@ -1457,6 +1462,13 @@ func runPersonProviderRevoke(
 		command.Context(), profile.Fingerprint, personProviderConsentActor,
 	); err != nil {
 		return err
+	}
+	// Fingerprint-guarded revocation precedes profile removal or replacement.
+	// Its capability proof must not survive publication of a new credential.
+	if invalidateCheck {
+		if _, err := st.InvalidatePersonInferenceCheck(command.Context(), profile.Fingerprint); err != nil {
+			return err
+		}
 	}
 	if jsonOutput {
 		output, err := personProviderStatusFor(command.Context(), st, profile)

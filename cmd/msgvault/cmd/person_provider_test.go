@@ -856,6 +856,10 @@ func TestPersonProviderRevokeIsIdempotent(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	_, err = st.EnsurePersonInferenceProfile(t.Context(), profile)
 	require.NoError(err)
+	require.NoError(st.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
+		ProfileFingerprint: profile.Fingerprint, CheckedAt: time.Now(),
+		DriverVersion: profile.DriverVersion, OutputMode: profile.OutputMode, ModelVersion: profile.Model,
+	}))
 	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "cli")
 	require.NoError(err)
 	deps := localPersonProviderDeps(config, st, nil)
@@ -865,6 +869,7 @@ func TestPersonProviderRevokeIsIdempotent(t *testing.T) {
 	var firstStatus personProviderStatusOutput
 	require.NoError(json.Unmarshal([]byte(first), &firstStatus))
 	assert.False(firstStatus.Consent.Active)
+	assert.NotNil(firstStatus.Check, "ordinary consent revocation preserves the successful check")
 	require.NotNil(firstStatus.Consent.LastRevoked)
 	assert.Equal("cli", *firstStatus.Consent.LastRevoked.RevokedBy)
 

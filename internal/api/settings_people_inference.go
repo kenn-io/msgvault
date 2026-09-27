@@ -947,7 +947,16 @@ func (s *Server) handleRemovePeopleInferenceProvider(w http.ResponseWriter, r *h
 	}
 	service := personenrollment.NewService(s.cfg.ConfigFilePath(), st)
 	credentials := peoplesweep.NewFileCredentialStore(s.cfg.TokensDir())
-	if _, err := service.RemoveProfile(r.Context(), ifMatch, name, "web", credentials); err != nil {
+	runningFingerprint := ""
+	if s.cfg.People.Sweep.Enabled && s.cfg.People.Sweep.Provider.Name == name {
+		running, err := s.cfg.People.Sweep.Profile()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "running_provider_invalid", "Running people provider policy is invalid")
+			return
+		}
+		runningFingerprint = running.Fingerprint
+	}
+	if _, err := service.RemoveProfile(r.Context(), ifMatch, name, runningFingerprint, "web", credentials); err != nil {
 		switch {
 		case errors.Is(err, config.ErrConfigConflict):
 			writeError(w, http.StatusPreconditionFailed, "settings_conflict", "The config file changed; reload settings and retry")

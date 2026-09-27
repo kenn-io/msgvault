@@ -54,6 +54,45 @@ func TestPeopleInferenceSettingsReportsConfiguredAndRunningState(t *testing.T) {
 	assert.NotContains(resp.Body.String(), "synthetic-private-api-key")
 }
 
+func TestPeopleInferenceRemovalRevokesRunningPolicyBeforeRestart(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, path := newSettingsTestServer(t, peopleInferenceSettingsConfig("first-model", true))
+	st := testutil.NewTestStore(t)
+	srv.store = st
+	running, err := srv.cfg.People.Sweep.Profile()
+	require.NoError(err)
+	_, err = st.EnsurePersonInferenceProfile(t.Context(), running)
+	require.NoError(err)
+	require.NoError(st.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
+		ProfileFingerprint: running.Fingerprint, CheckedAt: time.Now(),
+		DriverVersion: running.DriverVersion, OutputMode: running.OutputMode, ModelVersion: running.Model,
+	}))
+	_, _, err = st.GrantPersonInferenceConsent(t.Context(), running.Fingerprint, "test")
+	require.NoError(err)
+	// A host config edit leaves the daemon on its original policy until restart.
+	require.NoError(os.WriteFile(path, []byte(peopleInferenceSettingsConfig("second-model", false)), 0o600))
+	snapshot, err := config.ReadConfigFile(path)
+	require.NoError(err)
+	backup, err := personenrollment.NewService(path, st).CreateProfile(snapshot.ETag, "backup", completeAPIProvider("EXAMPLE_KEY", "backup-model"))
+	require.NoError(err)
+	stale := performSettingsRequest(t, srv, http.MethodDelete,
+		peopleInferenceSettingsPath+"/providers/primary", nil, snapshot.ETag, "")
+	require.Equal(http.StatusPreconditionFailed, stale.Code, stale.Body.String())
+	active, err := st.HasActivePersonInferenceConsent(t.Context(), running.Fingerprint)
+	require.NoError(err)
+	assert.True(active, "a stale request must leave running consent intact")
+	removed := performSettingsRequest(t, srv, http.MethodDelete,
+		peopleInferenceSettingsPath+"/providers/primary", nil, backup.ETag, "")
+	require.Equal(http.StatusOK, removed.Code, removed.Body.String())
+	active, err = st.HasActivePersonInferenceConsent(t.Context(), running.Fingerprint)
+	require.NoError(err)
+	assert.False(active)
+	checked, err := st.HasSuccessfulPersonInferenceCheck(t.Context(), running.Fingerprint)
+	require.NoError(err)
+	assert.False(checked)
+}
+
 func TestPeopleInferenceSelectionRequiresCheckAndConsent(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

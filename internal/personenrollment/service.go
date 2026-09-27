@@ -29,6 +29,7 @@ type CheckConsentStore interface {
 type RevocationStore interface {
 	CheckConsentStore
 	RevokePersonInferenceConsent(ctx context.Context, fingerprint, actor string) (bool, error)
+	InvalidatePersonInferenceCheck(ctx context.Context, fingerprint string) (bool, error)
 }
 
 // Service writes named policies with config ETags and gates selection on the
@@ -173,11 +174,11 @@ func (s *Service) Disable(
 	return Selection{Name: configuredName, ETag: written.ETag}, nil
 }
 
-// RemoveProfile removes a saved policy after revoking its authority. Stored
-// credentials are pinned and preflighted before changing the config, then
-// deleted only after the config edit succeeds.
+// RemoveProfile revokes saved and running authority and discards their checks
+// before removing the saved policy. Stored credentials are pinned and
+// preflighted before changing the config, then deleted after the edit succeeds.
 func (s *Service) RemoveProfile(
-	ctx context.Context, ifMatch, name, actor string, credentials peoplesweep.CredentialStore,
+	ctx context.Context, ifMatch, name, runningFingerprint, actor string, credentials peoplesweep.CredentialStore,
 ) (removed Selection, retErr error) {
 	if err := peoplesweep.ValidateProviderProfileName(name); err != nil {
 		return Selection{}, err
@@ -238,8 +239,17 @@ func (s *Service) RemoveProfile(
 	if !ok {
 		return Selection{}, errors.New("people provider consent store is unavailable")
 	}
-	if _, err := revocations.RevokePersonInferenceConsent(ctx, profile.Fingerprint, actor); err != nil {
-		return Selection{}, err
+	fingerprints := []string{profile.Fingerprint}
+	if runningFingerprint != "" && runningFingerprint != profile.Fingerprint {
+		fingerprints = append(fingerprints, runningFingerprint)
+	}
+	for _, fingerprint := range fingerprints {
+		if _, err := revocations.RevokePersonInferenceConsent(ctx, fingerprint, actor); err != nil {
+			return Selection{}, err
+		}
+		if _, err := revocations.InvalidatePersonInferenceCheck(ctx, fingerprint); err != nil {
+			return Selection{}, err
+		}
 	}
 	written, err := config.EditConfigTables(s.configPath, snapshot.ETag, edits)
 	if err != nil {

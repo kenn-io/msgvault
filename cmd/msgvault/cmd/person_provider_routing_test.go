@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -180,6 +181,15 @@ func TestPersonProviderFrontendRemoveProxiesOnlyNamedRevoke(t *testing.T) {
 	selected.Provider = peoplesweep.ProviderSelection{Name: "beta"}
 	profile, err := selected.Profile()
 	require.NoError(err)
+	st := testutil.NewSQLiteTestStore(t)
+	_, err = st.EnsurePersonInferenceProfile(t.Context(), profile)
+	require.NoError(err)
+	require.NoError(st.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
+		ProfileFingerprint: profile.Fingerprint, CheckedAt: time.Now(),
+		DriverVersion: profile.DriverVersion, OutputMode: profile.OutputMode, ModelVersion: profile.Model,
+	}))
+	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "test")
+	require.NoError(err)
 	var gotArgs []string
 	var events []string
 	deps := personProviderCommandDeps{
@@ -189,6 +199,10 @@ func TestPersonProviderFrontendRemoveProxiesOnlyNamedRevoke(t *testing.T) {
 			events = append(events, "revoke")
 			var err error
 			gotArgs, err = daemonCLIArgsFromCobra(command, args)
+			if err != nil {
+				return err
+			}
+			_, err = executePersonProviderCommand(t, localPersonProviderDeps(configured, st, nil), gotArgs[2:]...)
 			return err
 		},
 		openStore: func() (personProviderStore, func(), error) {
@@ -215,6 +229,12 @@ func TestPersonProviderFrontendRemoveProxiesOnlyNamedRevoke(t *testing.T) {
 		"person", "provider", "revoke", "--if-fingerprint=" + profile.Fingerprint, "beta",
 	}, gotArgs)
 	assert.Equal([]string{"revoke", "edit"}, events)
+	checked, err := st.HasSuccessfulPersonInferenceCheck(t.Context(), profile.Fingerprint)
+	require.NoError(err)
+	assert.False(checked, "proxied removal must discard the check in the daemon's store")
+	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
+	require.NoError(err)
+	assert.False(active)
 }
 
 func TestPersonProviderRemoveCompletesLocalPreflightBeforeRevoke(t *testing.T) {

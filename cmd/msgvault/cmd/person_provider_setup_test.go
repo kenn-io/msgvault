@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
@@ -20,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -1886,6 +1888,10 @@ func TestPersonProviderRemoveRevokesAndDeletesOnlyExactCredential(t *testing.T) 
 	require.NoError(err)
 	_, err = st.EnsurePersonInferenceProfile(t.Context(), profile)
 	require.NoError(err)
+	require.NoError(st.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
+		ProfileFingerprint: profile.Fingerprint, CheckedAt: time.Now(),
+		DriverVersion: profile.DriverVersion, OutputMode: profile.OutputMode, ModelVersion: profile.Model,
+	}))
 	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "cli")
 	require.NoError(err)
 	deps := localPersonProviderDeps(loaded.People.Sweep, st, nil)
@@ -1918,6 +1924,9 @@ func TestPersonProviderRemoveRevokesAndDeletesOnlyExactCredential(t *testing.T) 
 	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
 	require.NoError(err)
 	assert.False(active)
+	checked, err := st.HasSuccessfulPersonInferenceCheck(t.Context(), profile.Fingerprint)
+	require.NoError(err)
+	assert.False(checked, "removal must discard the old credential's check")
 	profiles, err := st.ListPersonInferenceProfiles(t.Context())
 	require.NoError(err)
 	assert.Len(profiles, 1, "immutable audit profile must remain")
