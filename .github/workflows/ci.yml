@@ -359,8 +359,8 @@ jobs:
           cache: go
 
       # sqlite-vec's CGo bindings #include <sqlite3.h>, which isn't on
-      # the default include path. Install it with MinGW through MSYS2
-      # and point CGO_CFLAGS at it.
+      # the default include path. Install it from MSYS2 and point
+      # CGO_CFLAGS at it. Keep the runner's default compiler for DuckDB.
       #
       # arrow-go/v18's cdata helpers.h declares its helpers as plain
       # `inline` (not `static inline`). Under C99 that requires exactly
@@ -372,9 +372,10 @@ jobs:
       - name: Install SQLite development headers
         shell: pwsh
         run: |
-          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
+          Get-Command gcc
+          gcc --version
 
       - name: Build
         shell: pwsh
@@ -443,9 +444,10 @@ jobs:
       - name: Install SQLite development headers
         shell: pwsh
         run: |
-          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
+          Get-Command gcc
+          gcc --version
 
       - name: Test slow packages
         shell: pwsh
@@ -500,9 +502,10 @@ jobs:
       - name: Install SQLite development headers
         shell: pwsh
         run: |
-          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
+          Get-Command gcc
+          gcc --version
 
       - name: Test package in isolated shards
         shell: pwsh
@@ -541,9 +544,10 @@ jobs:
       - name: Install SQLite development headers
         shell: pwsh
         run: |
-          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
+          Get-Command gcc
+          gcc --version
 
       - name: Measure packed and loose restore layouts
         shell: pwsh
