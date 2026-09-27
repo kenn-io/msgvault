@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -37,6 +38,131 @@ func (completedCodexLoginClient) StartDeviceLogin(_ context.Context, present fun
 
 func (completedCodexLoginClient) ListModels(context.Context) ([]peoplesweep.CodexModel, error) {
 	return []peoplesweep.CodexModel{{ID: "gpt-test", SupportedEfforts: []string{"medium", "high"}}}, nil
+}
+
+type finishingCodexLoginClient struct {
+	completedCodexLoginClient
+
+	finish <-chan struct{}
+}
+
+func (c finishingCodexLoginClient) StartDeviceLogin(ctx context.Context, present func(peoplesweep.DeviceLogin) error) error {
+	if err := c.completedCodexLoginClient.StartDeviceLogin(ctx, present); err != nil {
+		return err
+	}
+	select {
+	case <-c.finish:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestPeopleCodexCheckRejectsOverlappingSignIn(t *testing.T) {
+	for _, loginState := range []string{"unchanged", "pending", "complete"} {
+		t.Run(loginState, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			srv, path := newSettingsTestServer(t, "")
+			st := testutil.NewTestStore(t)
+			srv = NewServerWithOptions(ServerOptions{Config: srv.cfg, Store: st, Logger: srv.logger, OperationGate: NewSerialOperationGate()})
+			before, err := config.ReadConfigFile(path)
+			require.NoError(err)
+			created, err := personenrollment.NewService(path, st).CreateProfile(before.ETag, "subscription", peoplesweep.ProviderConfig{
+				Protocol: peoplesweep.ProtocolCodexAppServer, Model: "gpt-test", ReasoningEffort: "high",
+				Auth: peoplesweep.AuthNone, Credential: peoplesweep.CredentialNone,
+				OutputMode: peoplesweep.OutputModeNativeJSONSchema, Executable: "codex",
+				ExecutionBoundary: peoplesweep.CodexExecutionBoundaryV1,
+				RetentionPosture:  "operator-confirmed", TrainingPosture: "operator-confirmed",
+				AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+				SourceSince:    "2025-01-01", RequestTimeout: time.Minute,
+			})
+			require.NoError(err)
+			request := httptest.NewRequest(http.MethodPost, peopleInferenceSettingsPath+"/providers/subscription/check", nil)
+			request.SetPathValue("name", "subscription")
+			_, configured, _, profile, ok := srv.peopleInferenceProfileForRequest(httptest.NewRecorder(), request, created.ETag)
+			require.True(ok)
+			credentials := peoplesweep.NewFileCredentialStore(configured.TokensDir())
+			loginFinish := make(chan struct{}, 1)
+			defer close(loginFinish)
+			srv.peopleCodexLogins = newPeopleCodexLogins(finishingCodexLoginClient{finish: loginFinish}, time.Now)
+			arrived, respond := make(chan struct{}), make(chan struct{}, 1)
+			defer close(respond)
+			finished := make(chan *httptest.ResponseRecorder, 1)
+			// The release gate stays closed. Exercise the production check/save
+			// orchestration with a blocked response at the external provider boundary.
+			go func() {
+				result := httptest.NewRecorder()
+				srv.runPeopleInferenceCheck(result, request, created.ETag, profile, credentials,
+					func(context.Context) (peoplesweep.StructuredResponse, error) {
+						close(arrived)
+						<-respond
+						return peoplesweep.StructuredResponse{ProviderVersion: profile.DriverVersion, ModelVersion: "gpt-test"}, nil
+					})
+				finished <- result
+			}()
+			select {
+			case <-arrived:
+			case <-time.After(5 * time.Second):
+				require.FailNow("provider did not receive the check")
+			}
+			if loginState != "unchanged" {
+				started := performSettingsRequest(t, srv, http.MethodPost,
+					peopleInferenceSettingsPath+"/codex/login", []byte(`{"name":"replacement"}`), "", "")
+				require.Equal(http.StatusOK, started.Code, started.Body.String())
+				var login PeopleCodexLoginResponse
+				require.NoError(json.Unmarshal(started.Body.Bytes(), &login))
+				defer func() { require.NoError(srv.peopleCodexLogins.Cancel("loopback", login.SessionID)) }()
+				if loginState == "complete" {
+					loginFinish <- struct{}{}
+					session, err := srv.peopleCodexLogins.Get("loopback", login.SessionID)
+					require.NoError(err)
+					select {
+					case <-session.done:
+					case <-time.After(5 * time.Second):
+						require.FailNow("sign-in did not complete")
+					}
+				} else {
+					newCheck := httptest.NewRecorder()
+					called := false
+					srv.runPeopleInferenceCheck(newCheck, request, created.ETag, profile, credentials,
+						func(context.Context) (peoplesweep.StructuredResponse, error) {
+							called = true
+							return peoplesweep.StructuredResponse{ProviderVersion: profile.DriverVersion, ModelVersion: "gpt-test"}, nil
+						})
+					assert.Equal(http.StatusConflict, newCheck.Code, newCheck.Body.String())
+					assert.False(called, "checks must not start while authentication is changing")
+				}
+			}
+			respond <- struct{}{}
+			var result *httptest.ResponseRecorder
+			select {
+			case result = <-finished:
+			case <-time.After(5 * time.Second):
+				require.FailNow("check did not finish")
+			}
+			if loginState == "unchanged" {
+				assert.Equal(http.StatusOK, result.Code, result.Body.String())
+			} else {
+				assert.Equal(http.StatusConflict, result.Code, result.Body.String())
+				assert.Contains(result.Body.String(), "credential_conflict")
+			}
+			checked, err := st.HasSuccessfulPersonInferenceCheck(t.Context(), created.Fingerprint)
+			require.NoError(err)
+			assert.Equal(loginState == "unchanged", checked)
+			if loginState == "complete" {
+				fresh := httptest.NewRecorder()
+				srv.runPeopleInferenceCheck(fresh, request, created.ETag, profile, credentials,
+					func(context.Context) (peoplesweep.StructuredResponse, error) {
+						return peoplesweep.StructuredResponse{ProviderVersion: profile.DriverVersion, ModelVersion: "gpt-test"}, nil
+					})
+				assert.Equal(http.StatusOK, fresh.Code, fresh.Body.String())
+				checked, err = st.HasSuccessfulPersonInferenceCheck(t.Context(), created.Fingerprint)
+				require.NoError(err)
+				assert.True(checked, "a fresh check must work after sign-in finishes")
+			}
+		})
+	}
 }
 
 func (c pendingCodexLoginClient) StartDeviceLogin(ctx context.Context, present func(peoplesweep.DeviceLogin) error) error {

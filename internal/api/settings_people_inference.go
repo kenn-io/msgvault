@@ -699,21 +699,52 @@ func (s *Server) handleCheckPeopleInferenceProvider(w http.ResponseWriter, r *ht
 		return
 	}
 	credentials := peoplesweep.NewFileCredentialStore(configured.TokensDir())
-	var credentialRevision string
-	if selected.Providers[selected.Provider.Name].Credential == peoplesweep.CredentialStored {
-		credentialRevision, _, err = credentials.Revision(selected.Provider.Name)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "credential_store_unavailable", "People provider credential store is unavailable")
-			return
-		}
-	}
 	resolver := peoplesweep.NewCredentialResolver(credentials, os.LookupEnv)
 	runner, err := peoplesweep.NewRunner(selected, st, registry, resolver)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "provider_unavailable", "People inference provider is unavailable")
 		return
 	}
-	response, err := runner.Check(r.Context())
+	s.runPeopleInferenceCheck(w, r, ifMatch, profile, credentials, runner.Check)
+}
+
+// runPeopleInferenceCheck keeps credential validation and recording around the
+// external provider call. The operation gate is held only for the final write.
+func (s *Server) runPeopleInferenceCheck(
+	w http.ResponseWriter, r *http.Request, ifMatch string,
+	profile peoplesweep.ProviderProfile, credentials *peoplesweep.FileCredentialStore,
+	check func(context.Context) (peoplesweep.StructuredResponse, error),
+) {
+	st, ok := s.store.(peopleInferenceCheckStore)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "people_inference_unavailable", "People inference store is unavailable")
+		return
+	}
+	var logins *peopleCodexLogins
+	var authRevision uint64
+	if profile.Protocol == peoplesweep.ProtocolCodexAppServer {
+		var err error
+		logins, err = s.codexLoginManager()
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "codex_unavailable", "Codex device login is unavailable on this daemon")
+			return
+		}
+		authRevision = logins.authRevision.Load()
+		if logins.authPending.Load() != 0 {
+			writeError(w, http.StatusConflict, "credential_conflict", "Codex sign-in is in progress; retry the check after it finishes")
+			return
+		}
+	}
+	var credentialRevision string
+	if profile.Credential == peoplesweep.CredentialStored {
+		var err error
+		credentialRevision, _, err = credentials.Revision(profile.CredentialRef)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "credential_store_unavailable", "People provider credential store is unavailable")
+			return
+		}
+	}
+	response, err := check(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "provider_check_failed", "Synthetic provider check failed")
 		return
@@ -730,12 +761,18 @@ func (s *Server) handleCheckPeopleInferenceProvider(w http.ResponseWriter, r *ht
 		}
 		defer done()
 	}
-	// The policy or key may have changed while the provider was responding.
+	// The policy, key, or Codex account may have changed during the request.
 	if _, _, _, _, ok := s.peopleInferenceProfileForRequest(w, r, ifMatch); !ok {
 		return
 	}
+	// Enrollment revokes checks under the same operation gate. A sign-in that
+	// starts after this validation must invalidate this write before proceeding.
+	if logins != nil && (logins.authRevision.Load() != authRevision || logins.authPending.Load() != 0) {
+		writeError(w, http.StatusConflict, "credential_conflict", "Codex authentication changed during the check; retry after sign-in finishes")
+		return
+	}
 	if credentialRevision != "" {
-		current, _, err := credentials.Revision(selected.Provider.Name)
+		current, _, err := credentials.Revision(profile.CredentialRef)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "credential_store_unavailable", "People provider credential store is unavailable")
 			return

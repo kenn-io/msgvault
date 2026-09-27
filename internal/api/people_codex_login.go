@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -41,6 +42,12 @@ type peopleCodexLogins struct {
 	drafts   *peoplesweep.EnrollmentDrafts
 	sessions map[string]*peopleCodexLoginSession
 	client   peopleCodexLoginClient
+
+	// Read without mu: enrollment preparation takes the operation gate while
+	// holding mu, and check completion already holds that gate. Count pending
+	// runs because an expired session can still be stopping when another starts.
+	authRevision atomic.Uint64
+	authPending  atomic.Int64
 }
 
 func newPeopleCodexLogins(client peopleCodexLoginClient, now func() time.Time) *peopleCodexLogins {
@@ -80,8 +87,13 @@ func (m *peopleCodexLogins) Start(owner, name string, beforeStart func() error) 
 	if err != nil {
 		return peoplesweep.EnrollmentDraft{}, err
 	}
+	// Mark authentication as changing before revoking old authority. A check
+	// must not restore that authority while the device flow waits for its lock.
+	m.authPending.Add(1)
+	m.authRevision.Add(1)
 	if beforeStart != nil {
 		if err := beforeStart(); err != nil {
+			m.authPending.Add(-1)
 			_ = m.drafts.Cancel(owner, draft.ID)
 			return peoplesweep.EnrollmentDraft{}, errors.Join(errPeopleCodexLoginPreparation, err)
 		}
@@ -104,6 +116,9 @@ func (m *peopleCodexLogins) run(ctx context.Context, session *peopleCodexLoginSe
 		session.login = login
 		return nil
 	})
+	// StartDeviceLogin has finished committing or discarding authentication,
+	// including cancellation cleanup. Only now may new checks use it.
+	m.authPending.Add(-1)
 	m.mu.Lock()
 	defer close(session.done)
 	defer m.mu.Unlock()
