@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"fmt"
 	"io"
@@ -31,16 +32,32 @@ const (
 
 var configureHumaOnce sync.Once
 
-// marshalAPIJSON writes nil slices as empty arrays to match the OpenAPI schema.
-func marshalAPIJSON(w io.Writer, value any) error {
-	err := jsonv2.MarshalWrite(
-		w, value,
+// marshalAPIJSONBytes encodes an API response with the wire options every
+// JSON route shares: nil slices encode as empty arrays to match the OpenAPI
+// schema, and invalid UTF-8 bytes are replaced with U+FFFD.
+func marshalAPIJSONBytes(value any) ([]byte, error) {
+	data, err := jsonv2.Marshal(value,
 		jsonv2.FormatNilSliceAsNull(false),
+		// Replace each invalid UTF-8 byte with U+FFFD, as encoding/json v1
+		// did, so one damaged stored value cannot fail a whole response.
+		jsontext.AllowInvalidUTF8(true),
 	)
 	if err != nil {
-		return fmt.Errorf("marshal API JSON: %w", err)
+		return nil, fmt.Errorf("marshal API JSON: %w", err)
 	}
-	return nil
+	return data, nil
+}
+
+// marshalAPIJSON writes the complete encoded value in one Write, or nothing.
+// Streaming straight to w would flush finished top-level members before a
+// later member failed, leaving the client a truncated body.
+func marshalAPIJSON(w io.Writer, value any) error {
+	data, err := marshalAPIJSONBytes(value)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(data)
+	return err
 }
 
 type apiHTTPError struct {
