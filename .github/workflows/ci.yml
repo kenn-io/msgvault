@@ -18,10 +18,15 @@ on:
         type: choice
         options: ['4', '8']
         default: '4'
+      windows_only:
+        description: Run only Windows jobs during runner comparison
+        type: boolean
+        default: false
   schedule:
     - cron: '23 8 * * 1'
 jobs:
   release-linux-smoke:
+    if: ${{ !inputs.windows_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -83,6 +88,7 @@ jobs:
           echo "$SMOKE_OUT" | grep -q "$VERSION" || { echo "FATAL: version output doesn't match CI build version"; exit 1; }
 
   test:
+    if: ${{ !inputs.windows_only }}
     runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -134,6 +140,7 @@ jobs:
   # binary — scripts/test-package-shards.sh, the Linux twin of the Windows
   # lane's script — on its own runner.
   test-sharded:
+    if: ${{ !inputs.windows_only }}
     name: test-sharded (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -166,7 +173,7 @@ jobs:
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m
 
   test-macos-15:
-    if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    if: ${{ !inputs.windows_only && (github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))) }}
     runs-on: namespace-profile-mac-6cpu
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -185,6 +192,7 @@ jobs:
         run: make test
 
   frontend:
+    if: ${{ !inputs.windows_only }}
     runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     container:
       image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
@@ -248,6 +256,7 @@ jobs:
           if-no-files-found: ignore
 
   web-e2e:
+    if: ${{ !inputs.windows_only }}
     runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     container:
       image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
@@ -306,7 +315,7 @@ jobs:
           if-no-files-found: ignore
 
   large-archive-benchmark:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: ${{ !inputs.windows_only && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: namespace-profile-mac-6cpu
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -360,18 +369,12 @@ jobs:
       # external copy, and --allow-multiple-definition lets MinGW's ld
       # pick the first and continue instead of erroring on the
       # duplicates that flag produces.
-      - name: Install MinGW and SQLite development headers
-        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        with:
-          location: C:\
-          msystem: MINGW64
-          update: false
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
-          path-type: inherit
-
-      - name: Add MinGW to PATH
+      - name: Install SQLite development headers
         shell: pwsh
-        run: '"C:\msys64\mingw64\bin" >> $env:GITHUB_PATH'
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
 
       - name: Build
         shell: pwsh
@@ -437,18 +440,12 @@ jobs:
         with:
           cache: go
 
-      - name: Install MinGW and SQLite development headers
-        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        with:
-          location: C:\
-          msystem: MINGW64
-          update: false
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
-          path-type: inherit
-
-      - name: Add MinGW to PATH
+      - name: Install SQLite development headers
         shell: pwsh
-        run: '"C:\msys64\mingw64\bin" >> $env:GITHUB_PATH'
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
 
       - name: Test slow packages
         shell: pwsh
@@ -500,18 +497,12 @@ jobs:
         with:
           cache: go
 
-      - name: Install MinGW and SQLite development headers
-        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        with:
-          location: C:\
-          msystem: MINGW64
-          update: false
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
-          path-type: inherit
-
-      - name: Add MinGW to PATH
+      - name: Install SQLite development headers
         shell: pwsh
-        run: '"C:\msys64\mingw64\bin" >> $env:GITHUB_PATH'
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
 
       - name: Test package in isolated shards
         shell: pwsh
@@ -547,18 +538,12 @@ jobs:
         with:
           cache: go
 
-      - name: Install MinGW and SQLite development headers
-        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        with:
-          location: C:\
-          msystem: MINGW64
-          update: false
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
-          path-type: inherit
-
-      - name: Add MinGW to PATH
+      - name: Install SQLite development headers
         shell: pwsh
-        run: '"C:\msys64\mingw64\bin" >> $env:GITHUB_PATH'
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
 
       - name: Measure packed and loose restore layouts
         shell: pwsh
@@ -585,6 +570,7 @@ jobs:
   # tag is required; without it these files compile out and ship no tests,
   # so this code would otherwise have zero CI coverage.
   test-pgvector:
+    if: ${{ !inputs.windows_only }}
     runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     services:
       postgres:
@@ -638,6 +624,7 @@ jobs:
   # unique constraints) surface here rather than slipping past a single
   # pass.
   test-postgres:
+    if: ${{ !inputs.windows_only }}
     runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     services:
       postgres:
@@ -694,6 +681,7 @@ jobs:
   # one package per job, each with its own PostgreSQL service so four shards'
   # connections never compete with the rest of the suite.
   test-postgres-sharded:
+    if: ${{ !inputs.windows_only }}
     name: test-postgres-sharded (${{ matrix.name }})
     strategy:
       fail-fast: false
