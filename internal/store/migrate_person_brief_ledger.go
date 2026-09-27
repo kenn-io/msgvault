@@ -254,14 +254,16 @@ func sqliteColumnPresent(ctx context.Context, tx *loggedTx, table, column string
 	return false, nil
 }
 
-// countPersonFactClaimForeignKeyViolations checks the rebuilt table and its
-// referencing tables. Unrelated legacy violations must not block this migration.
+// countPersonFactClaimForeignKeyViolations checks references from and to the
+// rebuilt table. Unrelated legacy violations must not block this migration.
 func countPersonFactClaimForeignKeyViolations(ctx context.Context, tx *sql.Tx) (int, error) {
 	var violations int
 	err := tx.QueryRowContext(ctx, `SELECT
 		(SELECT COUNT(*) FROM pragma_foreign_key_check('person_fact_claims')) +
-		(SELECT COUNT(*) FROM pragma_foreign_key_check('person_fact_claim_evidence')) +
-		(SELECT COUNT(*) FROM pragma_foreign_key_check('person_fact_decisions'))
+		(SELECT COUNT(*) FROM pragma_foreign_key_check('person_fact_claim_evidence')
+		 WHERE parent = 'person_fact_claims') +
+		(SELECT COUNT(*) FROM pragma_foreign_key_check('person_fact_decisions')
+		 WHERE parent = 'person_fact_claims')
 	`).Scan(&violations)
 	if err != nil {
 		return 0, fmt.Errorf("check person fact claim references: %w", err)

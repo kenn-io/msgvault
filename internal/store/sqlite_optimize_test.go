@@ -250,6 +250,12 @@ func messagePlannerStatisticCount(t *testing.T, s *Store) int {
 	t.Helper()
 	var count int
 	require.NoError(t, s.db.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_schema WHERE name = 'sqlite_stat1'
+	`).Scan(&count))
+	if count == 0 {
+		return 0
+	}
+	require.NoError(t, s.db.QueryRow(`
 		SELECT COUNT(*)
 		FROM sqlite_stat1
 		WHERE tbl = 'messages'
@@ -472,6 +478,9 @@ func TestCloseOptimizesWithoutDrainingSQLitePool(t *testing.T) {
 	s, err := OpenForTest(dbPath)
 	require.NoError(err)
 	require.NoError(s.InitSchema())
+	// Startup maintenance is best-effort and may leave no statistics table.
+	_, err = s.db.ExecContext(t.Context(), "DROP TABLE IF EXISTS sqlite_stat1")
+	require.NoError(err)
 	seedLiveMessages(t, s, 100)
 	assert.Zero(messagePlannerStatisticCount(t, s))
 	s.db.SetMaxOpenConns(2)

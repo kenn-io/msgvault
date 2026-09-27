@@ -239,6 +239,7 @@ func TestPersonFactClaimOriginMigrationScopesForeignKeyChecks(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		corruptSQL string
+		unrelated  string
 		wantError  bool
 	}{
 		{
@@ -246,11 +247,41 @@ func TestPersonFactClaimOriginMigrationScopesForeignKeyChecks(t *testing.T) {
 			corruptSQL: `CREATE TABLE legacy_parent (id INTEGER PRIMARY KEY);
 				CREATE TABLE legacy_child (parent_id INTEGER REFERENCES legacy_parent(id));
 				INSERT INTO legacy_child VALUES (1)`,
+			unrelated: "legacy_child",
+		},
+		{
+			name:       "unrelated evidence reference",
+			corruptSQL: `UPDATE person_fact_claim_evidence SET evidence_id = 1000000`,
+			unrelated:  "person_fact_claim_evidence",
+		},
+		{
+			name: "unrelated decision resolution reference",
+			corruptSQL: `INSERT INTO person_fact_decisions
+				(person_id, resolution_id, claim_id, decision_key, action, reason, score_json)
+				SELECT person_id, 1000000, id, 'decision', 'invalid', 'malformed-value', '{}'
+				FROM person_fact_claims`,
+			unrelated: "person_fact_decisions",
 		},
 		{
 			name:       "claim parent reference",
 			corruptSQL: `UPDATE person_fact_claims SET generation_id = 1000000`,
 			wantError:  true,
+		},
+		{
+			name: "decision claim reference",
+			corruptSQL: `INSERT INTO person_fact_decisions
+				(person_id, resolution_id, claim_id, decision_key, action, reason, score_json)
+				SELECT person_id, 1000000, 1000000, 'decision', 'invalid', 'malformed-value', '{}'
+				FROM person_fact_claims`,
+			wantError: true,
+		},
+		{
+			name: "decision competing claim reference",
+			corruptSQL: `INSERT INTO person_fact_decisions
+				(person_id, resolution_id, competing_claim_id, decision_key, action, reason, score_json)
+				SELECT person_id, 1000000, 1000000, 'decision', 'invalid', 'malformed-value', '{}'
+				FROM person_fact_claims`,
+			wantError: true,
 		},
 		{
 			name:       "evidence claim reference",
@@ -292,7 +323,7 @@ func TestPersonFactClaimOriginMigrationScopesForeignKeyChecks(t *testing.T) {
 				require.NoError(insertBriefOriginClaim(t.Context(), f.store, f.personID, "brief-after"))
 				var violations int
 				require.NoError(f.store.DB().QueryRowContext(t.Context(),
-					`SELECT COUNT(*) FROM pragma_foreign_key_check('legacy_child')`).Scan(&violations))
+					`SELECT COUNT(*) FROM pragma_foreign_key_check(?)`, tc.unrelated).Scan(&violations))
 				assert.Equal(1, violations, "unrelated data must remain unchanged")
 			}
 			_, err = f.store.DB().ExecContext(t.Context(), st1000ClaimEvidenceInsert(f.store))
