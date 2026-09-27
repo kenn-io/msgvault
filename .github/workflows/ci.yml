@@ -3,6 +3,10 @@ name: CI
 permissions:
   contents: read
 
+# The | separator falls back to the module's source repo on any proxy error, not just 404/410.
+env:
+  GOPROXY: https://proxy.golang.org|direct
+
 on:
   workflow_call:
   push:

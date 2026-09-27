@@ -26,6 +26,9 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 
 WORKDIR /src
 
+# Fall back to the module's source repo on any proxy error, not just 404/410.
+ENV GOPROXY=https://proxy.golang.org|direct
+
 # Download dependencies first (layer caching)
 COPY go.mod go.sum ./
 RUN go mod download
