@@ -228,9 +228,14 @@ docker exec msgvault msgvault add-account you@gmail.com
 
 ## Rate Limiting
 
-If you hit Gmail API rate limits during large syncs:
+If you hit Gmail API rate limits during large syncs, the sync error names
+the refusal, for example `quota exceeded (403): rateLimitExceeded; Quota
+exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per
+user'`. A full sync waits out the quota pause and retries the page a bounded
+number of times before failing; a failed run resumes from its checkpoint.
 
-1. Reduce `rate_limit_qps` in config (default: 5)
+1. Reduce `rate_limit_qps` in config (default: 5, which spends the full
+   per-user allowance; `3` leaves headroom)
 2. Use `--limit` during initial testing
 3. Wait and retry. Rate limits reset over time
 

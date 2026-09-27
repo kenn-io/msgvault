@@ -2,6 +2,7 @@ package gmail
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -358,4 +359,76 @@ func TestGetDraftAllowsSlowRawTransfer(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []byte("test"), draft.Message.Raw)
 	})
+}
+
+func TestListMessagesDeadlineReportsLastResponse(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		requests := 0
+		c := newDeadlineClient(t, func(r *http.Request) (*http.Response, error) {
+			requests++
+			// Each attempt costs a few seconds so the 30s budget, not
+			// maxRetries, ends the loop regardless of backoff jitter.
+			select {
+			case <-r.Context().Done():
+				return nil, r.Context().Err()
+			case <-time.After(3 * time.Second):
+			}
+			resp := deadlineResponse(http.StatusTooManyRequests,
+				`{"error":{"code":429,"message":"User-rate limit exceeded. Retry after 2026-09-26T22:23:39Z",`+
+					`"errors":[{"reason":"rateLimitExceeded","domain":"usageLimits"}],"status":"RESOURCE_EXHAUSTED"}}`)
+			resp.Header.Set("Retry-After", "7")
+			return resp, nil
+		})
+		list, err := c.ListMessages(context.Background(), "", "")
+		require.ErrorIs(err, context.DeadlineExceeded, "the deadline must stay matchable")
+		assert.Nil(list)
+		assert.GreaterOrEqual(requests, 2, "the failure must follow at least one retry")
+		_, throttled := errors.AsType[*ThrottledError](err)
+		assert.True(throttled, "callers must be able to recognise the throttle")
+		assert.Contains(err.Error(), "context deadline exceeded after ")
+		assert.Contains(err.Error(), "last response: rate limited (429): rateLimitExceeded; "+
+			"User-rate limit exceeded. Retry after 2026-09-26T22:23:39Z; Retry-After 7")
+	})
+}
+
+func TestGetProfileDeadlineWithoutResponseStaysBare(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := newDeadlineClient(t, func(r *http.Request) (*http.Response, error) {
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		})
+		profile, err := c.GetProfile(context.Background())
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Nil(t, profile)
+		assert.NotContains(t, err.Error(), "last response",
+			"a stalled request has no upstream response to report")
+	})
+}
+
+func TestGmailErrorDetail(t *testing.T) {
+	withRetryAfter := http.Header{"Retry-After": []string{"30"}}
+	for _, tc := range []struct {
+		name   string
+		header http.Header
+		body   string
+		want   string
+	}{
+		{"reason and message", nil,
+			`{"error":{"message":"Quota exceeded for quota metric","errors":[{"reason":"userRateLimitExceeded"}]}}`,
+			"userRateLimitExceeded; Quota exceeded for quota metric"},
+		{"message only", nil, `{"error":{"message":"Too many concurrent requests"}}`, "Too many concurrent requests"},
+		{"unfamiliar body", withRetryAfter, "upstream proxy failure", "Retry-After 30"},
+		{"empty body with header", withRetryAfter, "", "Retry-After 30"},
+		{"empty", nil, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			header := tc.header
+			if header == nil {
+				header = http.Header{}
+			}
+			assert.Equal(t, tc.want, gmailErrorDetail(header, []byte(tc.body)))
+		})
+	}
 }

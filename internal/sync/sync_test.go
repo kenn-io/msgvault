@@ -848,6 +848,66 @@ func TestFullSyncCanceledFailsRunAndKeepsCheckpointResumable(t *testing.T) {
 	assertMessageCount(t, env.Store, 4)
 }
 
+// throttledListAPI answers ListMessages with a Gmail quota refusal for the
+// configured number of calls before delegating to the mock. The refusal is
+// wrapped the way the production client reports an exhausted retry budget.
+type throttledListAPI struct {
+	*gmail.MockAPI
+
+	throttleCalls int
+	calls         int
+}
+
+func (a *throttledListAPI) ListMessages(ctx context.Context, query, pageToken string) (*gmail.MessageListResponse, error) {
+	a.calls++
+	if a.calls <= a.throttleCalls {
+		return nil, fmt.Errorf("%w after 5 attempt(s); last response: %w", context.DeadlineExceeded,
+			&gmail.ThrottledError{Summary: "quota exceeded (403)", Detail: "rateLimitExceeded; Units per minute per user"})
+	}
+	return a.MockAPI.ListMessages(ctx, query, pageToken)
+}
+
+func TestFullSyncRetriesThrottledPageListing(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12345
+	seedPagedMessages(env, 4)
+
+	api := &throttledListAPI{MockAPI: env.Mock, throttleCalls: 2}
+	env.Syncer = New(api, env.Store, nil)
+	summary, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "throttled page listing must be retried once the quota pause passes")
+	assert.Equal(int64(4), summary.MessagesAdded)
+	assert.Equal(2+2, api.calls, "two refusals, then both pages")
+	assertMessageCount(t, env.Store, 4)
+}
+
+func TestFullSyncFailsWhenThrottlingOutlastsPageRetries(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12345
+	seedPagedMessages(env, 4)
+
+	api := &throttledListAPI{MockAPI: env.Mock, throttleCalls: 100}
+	env.Syncer = New(api, env.Store, nil)
+	_, err := env.Syncer.Full(env.Context, testEmail)
+	require.Error(err)
+	_, throttled := errors.AsType[*gmail.ThrottledError](err)
+	assert.True(throttled, "the quota reason must survive: %v", err)
+	require.ErrorIs(err, context.DeadlineExceeded)
+	assert.Equal(1+maxThrottledPageRetries, api.calls, "one attempt plus the bounded retries")
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err)
+	run, err := env.Store.GetLatestSync(source.ID)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusFailed, run.Status)
+}
+
 func TestFullSyncRestartsWhenCheckpointRequestDiffers(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)
@@ -2206,6 +2266,51 @@ func TestRecoverExpiredHistoryMarksOnlyMissingSourceMetadata(t *testing.T) {
 	assertDeletedFromSource(t, env.Store, "present", false)
 	assertDeletedFromSource(t, env.Store, "missing", true)
 	assertRawDataExists(t, env.Store, "missing")
+}
+
+// throttledSnapshotAPI answers ListCompleteMessageSnapshot with a Gmail quota
+// refusal for the configured number of calls before delegating to the mock.
+type throttledSnapshotAPI struct {
+	*gmail.MockAPI
+
+	throttleCalls int
+	calls         int
+}
+
+func (a *throttledSnapshotAPI) ListCompleteMessageSnapshot(ctx context.Context, pageToken string) (*gmail.MessageListResponse, error) {
+	a.calls++
+	if a.calls <= a.throttleCalls {
+		return nil, fmt.Errorf("%w after 5 attempt(s); last response: %w", context.DeadlineExceeded,
+			&gmail.ThrottledError{Summary: "quota exceeded (403)", Detail: "rateLimitExceeded; Units per minute per user"})
+	}
+	return a.MockAPI.ListCompleteMessageSnapshot(ctx, pageToken)
+}
+
+func TestRecoverExpiredHistoryRetriesThrottledSnapshotPage(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	seedMessages(env, 2, 1000, "present", "missing")
+	runFullSync(t, env)
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+
+	delete(env.Mock.Messages, "missing")
+	env.Mock.MessagePages = [][]string{{"present"}}
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 2000
+	env.Mock.HistoryID = 2000
+
+	api := &throttledSnapshotAPI{MockAPI: env.Mock, throttleCalls: 2}
+	env.Syncer = New(api, env.Store, nil)
+	_, err = env.Syncer.RecoverExpiredHistory(env.Context, source)
+	require.NoError(err, "a throttled snapshot page must be retried, not abort recovery")
+	assert.Equal(2+1, api.calls, "two refusals, then the single snapshot page")
+
+	assertDeletedFromSource(t, env.Store, "present", false)
+	assertDeletedFromSource(t, env.Store, "missing", true)
 }
 
 type recoveryProfileSequenceAPI struct {

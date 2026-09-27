@@ -545,7 +545,7 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 
 | Key | Default | Description |
 |---|---|---|
-| `rate_limit_qps` | `5` | Gmail API requests per second |
+| `rate_limit_qps` | `5` | Gmail API budget scale. `5` spends Gmail's full per-user allowance of 250 quota units per second, which equals the default 15,000 units-per-minute quota with no headroom. Lower it (for example `3`) if full syncs report `Units per minute per user` quota errors |
 | `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
 | `trusted_imap_sent_mailboxes` | `{}` | Per-IMAP-account Sent-folder names (keyed by the ACCOUNT identifier from `msgvault list-accounts`) that enable edited-copy snapshot refresh for servers without advertised special-use roles |
 
