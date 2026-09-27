@@ -34,6 +34,7 @@ import (
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -2674,6 +2675,34 @@ func (a *storeAPIAdapter) CreatePersonFromParticipantContext(
 
 func (a *storeAPIAdapter) GetPersonContext(ctx context.Context, id int64) (*store.Person, error) {
 	return a.store.GetPersonContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) EnsurePersonInferenceProfile(ctx context.Context, profile peoplesweep.ProviderProfile) (bool, error) {
+	return a.store.EnsurePersonInferenceProfile(ctx, profile)
+}
+
+func (a *storeAPIAdapter) RecordPersonInferenceCheck(ctx context.Context, check store.PersonInferenceCheck) error {
+	return a.store.RecordPersonInferenceCheck(ctx, check)
+}
+
+func (a *storeAPIAdapter) HasSuccessfulPersonInferenceCheck(ctx context.Context, fingerprint string) (bool, error) {
+	return a.store.HasSuccessfulPersonInferenceCheck(ctx, fingerprint)
+}
+
+func (a *storeAPIAdapter) InvalidatePersonInferenceCheck(ctx context.Context, fingerprint string) (bool, error) {
+	return a.store.InvalidatePersonInferenceCheck(ctx, fingerprint)
+}
+
+func (a *storeAPIAdapter) GrantPersonInferenceConsent(ctx context.Context, fingerprint, actor string) (*store.PersonInferenceConsent, bool, error) {
+	return a.store.GrantPersonInferenceConsent(ctx, fingerprint, actor)
+}
+
+func (a *storeAPIAdapter) HasActivePersonInferenceConsent(ctx context.Context, fingerprint string) (bool, error) {
+	return a.store.HasActivePersonInferenceConsent(ctx, fingerprint)
+}
+
+func (a *storeAPIAdapter) RevokePersonInferenceConsent(ctx context.Context, fingerprint, actor string) (bool, error) {
+	return a.store.RevokePersonInferenceConsent(ctx, fingerprint, actor)
 }
 
 func (a *storeAPIAdapter) GetPersonTrackingContext(

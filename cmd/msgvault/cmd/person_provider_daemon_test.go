@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/personenrollment"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -365,3 +366,63 @@ func mustJSON(t *testing.T, value any) []byte {
 var _ api.CLIRunner = (*inProcessPersonProviderDaemonStore)(nil)
 var _ api.MessageStore = (*inProcessPersonProviderDaemonStore)(nil)
 var _ personProviderStore = (*store.Store)(nil)
+
+// Exercise the adapter installed by serve, not just the underlying Store.
+func TestPeopleInferenceSettingsWithDaemonStore(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/v1/chat/completions", r.URL.Path)
+		_, _ = io.WriteString(w, `{"model":"test-model","choices":[{"message":{"content":"{\"ok\":true}"},"finish_reason":"stop"}]}`)
+	}))
+	defer providerServer.Close()
+	configured := config.NewDefaultConfig()
+	configured.HomeDir = t.TempDir()
+	configured.Data.DataDir = configured.HomeDir
+	require.NoError(configured.Save())
+	st := testutil.NewSQLiteTestStore(t)
+	before, err := config.ReadConfigFile(configured.ConfigFilePath())
+	require.NoError(err)
+	provider := configuredPersonProvider(personProviderTestConfig())
+	provider.Endpoint = providerServer.URL + "/v1"
+	provider.Auth, provider.Credential, provider.CredentialEnv = peoplesweep.AuthNone, peoplesweep.CredentialNone, ""
+	created, err := personenrollment.NewService(configured.ConfigFilePath(), st).CreateProfile(before.ETag, "local", provider)
+	require.NoError(err)
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: configured, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler),
+		OperationGate: api.NewSerialOperationGate(),
+	})
+	const profilePath = "/api/v1/settings/people-inference/providers/local"
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.RemoteAddr = "127.0.0.1:12345"
+		r.Header.Set("If-Match", created.ETag)
+		r.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, r)
+		return response
+	}
+	checked := request(http.MethodPost, profilePath+"/check", "")
+	require.Equal(http.StatusOK, checked.Code, checked.Body.String())
+	consented := request(http.MethodPost, profilePath+"/consent", fmt.Sprintf(`{"confirmed":true,"fingerprint":%q}`, created.Fingerprint))
+	require.Equal(http.StatusOK, consented.Code, consented.Body.String())
+	var status api.PeopleInferenceSettingsResponse
+	require.NoError(json.Unmarshal(consented.Body.Bytes(), &status))
+	var local *api.PeopleInferenceProfileSetting
+	for i := range status.Profiles {
+		if status.Profiles[i].Name == "local" {
+			local = &status.Profiles[i]
+		}
+	}
+	require.NotNil(local)
+	assert.True(local.Checked)
+	assert.True(local.ConsentActive)
+	removed := request(http.MethodDelete, profilePath, "")
+	require.Equal(http.StatusOK, removed.Code, removed.Body.String())
+	active, err := st.HasActivePersonInferenceConsent(t.Context(), created.Fingerprint)
+	require.NoError(err)
+	assert.False(active)
+	verified, err := st.HasSuccessfulPersonInferenceCheck(t.Context(), created.Fingerprint)
+	require.NoError(err)
+	assert.False(verified)
+}
