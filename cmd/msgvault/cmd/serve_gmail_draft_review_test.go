@@ -302,6 +302,48 @@ func TestGmailDraftCreateAndSendAsUseLocalBehavior(t *testing.T) {
 	assert.True(sendAs.Entries[0].ConfirmedIdentity)
 }
 
+func TestGmailDraftReplyInfersConfirmedSender(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	var events []api.CLIRunEvent
+	err := fixture.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--all", "--body", "reply", "--json"},
+	}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	var created gmailDraftReplyOutput
+	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &created))
+	message, err := fixture.store.GetMessageContext(t.Context(), created.MessageID)
+	requirements.NoError(err)
+	assertions.Equal("owner@example.test", message.From)
+	assertions.Equal([]string{"Sender <sender@example.test>"}, message.To)
+	assertions.Equal("gmail-thread-1", created.ThreadID)
+}
+
+func TestGmailDraftRejectsComposeAndCrossSourceReply(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	other, err := fixture.store.GetOrCreateSource("gmail", "other@example.test")
+	requirements.NoError(err)
+	requirements.NoError(fixture.store.AddAccountIdentity(other.ID, other.Identifier, "manual"))
+	fixture.adapter.gmailDraftPolicy = append(fixture.adapter.gmailDraftPolicy,
+		config.GmailDraftSource{SourceID: other.ID, Enabled: true})
+	err = fixture.adapter.runCLIComposeDraft(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-compose", "--source-id", strconv.FormatInt(fixture.source.ID, 10), "--to", "recipient@example.test"},
+	}, nil)
+	requirements.ErrorContains(err, "draft_disabled")
+	err = fixture.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--source-id", strconv.FormatInt(other.ID, 10), "--body", "reply"},
+	}, nil)
+	requirements.ErrorContains(err, "draft_disabled")
+	assertions.Zero(fixture.client.createCalls)
+}
+
 func TestGmailDraftSendAsFailureIsReportedLocally(t *testing.T) {
 	fixture := newGmailDraftTestFixture(t)
 	fixture.client.sendAsErr = errors.New("send-as unavailable")

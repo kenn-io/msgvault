@@ -329,7 +329,9 @@ import (
 // 2.31.0 adds analytics query freshness, accepted cache-build jobs, and a
 // cache-build status endpoint, plus archive-only SQL for MCP. Existing query
 // requests remain valid.
-const APISchemaVersion = "2.31.0"
+// 2.32.0 adds frozen sender keys to agent-token source views and optional
+// sender selections to owner token issuance.
+const APISchemaVersion = "2.32.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

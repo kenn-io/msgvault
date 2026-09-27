@@ -176,6 +176,22 @@ func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int) ([]A
 // callers can use errors.Is to distinguish absence from real DB errors.
 var ErrMessageNotFound = errors.New("message not found")
 
+// GetMessageSourceContext resolves only the source attached to one message.
+// Callers use it to authorize access before reading message content.
+func (s *Store) GetMessageSourceContext(ctx context.Context, messageID int64) (*Source, error) {
+	var sourceID int64
+	err := s.db.QueryRowContext(ctx,
+		s.Rebind(`SELECT source_id FROM messages WHERE id = ?`), messageID,
+	).Scan(&sourceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("message %d: %w", messageID, ErrMessageNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get message %d source: %w", messageID, err)
+	}
+	return s.GetSourceByIDContext(ctx, sourceID)
+}
+
 // GetMessage returns a single message with full details.
 // Only this method accesses message_bodies (single PK lookup).
 func (s *Store) GetMessage(id int64) (*APIMessage, error) {

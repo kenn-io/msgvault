@@ -218,3 +218,36 @@ func mustKnownPermission(t *testing.T, name string) Permission {
 	require.True(t, ok)
 	return permission
 }
+
+func TestGrantSenderKeysAreFrozenAndDeepCopied(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	r := NewRegistry()
+	senders := []string{"alice@example.com", "alias@example.com"}
+	source := SourceRef{ID: 5, Type: "imap", Identifier: "imap://alice@example.com", SenderKeys: senders}
+	id, secret, issued, err := r.Issue("sender-test", []Permission{PermissionDraftCreate}, []SourceRef{source})
+	requirements.NoError(err)
+	senders[0] = "changed@example.com"
+	issued.Sources[0].SenderKeys[0] = "mutated@example.com"
+
+	lookup, ok := r.Lookup(secret)
+	requirements.True(ok)
+	assertions.Equal("alice@example.com", lookup.Sources[0].SenderKeys[0])
+	assertions.True(lookup.AllowsSender(PermissionDraftCreate, SourceRef{Type: source.Type, Identifier: source.Identifier}, "alice@example.com"))
+	assertions.False(lookup.AllowsSender(PermissionDraftCreate, source, "changed@example.com"))
+
+	listed := r.List()
+	listed[0].Sources[0].SenderKeys[0] = "list-mutated@example.com"
+	again, ok := r.Lookup(secret)
+	requirements.True(ok)
+	assertions.Equal("alice@example.com", again.Sources[0].SenderKeys[0])
+	assertions.Equal(id, again.ID)
+}
+
+func TestGrantWithNoSenderKeysHasNoSenderAuthority(t *testing.T) {
+	g := Grant{
+		Permissions: []Permission{PermissionDraftCreate},
+		Sources:     []SourceRef{{Type: "imap", Identifier: "imap://alice@example.com"}},
+	}
+	assert.False(t, g.AllowsSender(PermissionDraftCreate, SourceRef{Type: "imap", Identifier: "imap://alice@example.com"}, "alice@example.com"))
+}

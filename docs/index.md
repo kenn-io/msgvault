@@ -59,7 +59,7 @@ limit an archive view.
 | Verify stored mail | [Archive verification](guides/verification.md) |
 | Hide duplicate copies | [Deduplication](usage/deduplication.md) |
 | Remove mail from a provider | [Deletion staging and execution](usage/deletion.md) |
-| Prepare an email for review in a mail client | [Managed IMAP drafts](usage/imap.md#reply-drafts) |
+| Prepare an email for review in a mail client | [Managed IMAP drafts](usage/imap.md#drafts) |
 | Keep a recoverable copy | [Backup and restore](usage/backup.md) |
 | Take data elsewhere | [Exporting](usage/exporting.md) |
 | Diagnose a problem | [Troubleshooting](troubleshooting.md) and [FAQ](faq.md) |

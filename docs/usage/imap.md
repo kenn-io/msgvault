@@ -179,11 +179,12 @@ msgvault sync-full you@example.com --noresume
 Leave out folder filters for a complete account scan. `repair-labels` cannot
 recover memberships that the archive has never observed.
 
-## Reply drafts
+## Drafts
 
-Create a reply in your IMAP Drafts folder, then review and send it from your
-usual mail application. Msgvault never sends email. Draft creation is disabled
-until an operator grants it for one exact IMAP source on the daemon host.
+Create a fresh message or a reply in your IMAP Drafts folder, then review and
+send it from your usual mail application. Msgvault never sends email. Draft
+creation is disabled until an operator grants it for one exact IMAP source on
+the daemon host.
 
 1. Run `msgvault list-accounts` to find the source ID. Confirm the Drafts
     folder's exact name with `msgvault list-folders <account>`.
@@ -214,18 +215,36 @@ until an operator grants it for one exact IMAP source on the daemon host.
     If your address is missing, confirm it with
     `msgvault identity add --source-id 42 you@example.com`.
 
-1. Find the parent email's local message ID with search, then create the draft:
+1. Find the parent email's local message ID with search, then create a reply:
 
     ```bash
-    msgvault draft-reply 123 --from you@example.com \
+    msgvault draft-reply 123 --all --from you@example.com \
       --body 'Thanks for the update. I will review it tomorrow.' --json
     ```
 
-The parent must belong to the granted IMAP source and have its original email
-stored in the archive. Msgvault composes a plain-text reply using the parent's
-threading headers. `--from` must be a confirmed identity for that source, and
-`--body` is required; `--body=` creates an empty draft. The IMAP server must
-support UIDPLUS, which returns a receipt that identifies the stored draft.
+    Omit `--all` for a direct reply. Use `--account <account>` or
+    `--source-id <id>` to select a different live IMAP destination. An offline
+    parent requires one of those selectors.
+
+1. Create a new message by selecting its live source and repeating recipient
+    flags as needed:
+
+    ```bash
+    msgvault draft-compose --source-id 42 --from you@example.com \
+      --to recipient@example.com --cc copy@example.com \
+      --bcc private@example.com --subject 'Project update' --body 'Draft text'
+    ```
+
+The parent must have its original email stored in the archive. Reply-all uses
+Reply-To or From, then visible To and Cc recipients. It removes confirmed
+identities for the selected destination and never reads a parent's Bcc as a
+reply recipient. `--from` must be a confirmed identity for that source, and it
+can be omitted when one eligible identity remains. The IMAP server must support
+UIDPLUS, which returns a receipt that identifies the stored draft.
+
+For delegated callers, the token freezes the allowed sender identities when an
+owner issues it. A draft From header is a local choice and does not prove
+provider send-as permission.
 
 A successful result reports `status: "created"`, the archived `message_id`, and
 the remote mailbox receipt. The draft is marked `\Draft` and stored locally with

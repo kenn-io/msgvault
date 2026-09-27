@@ -158,7 +158,7 @@ func (a *storeAPIAdapter) runGmailReplyDraft(
 	if err != nil {
 		return draftReplyError(gmailReadErrorCode(err), err)
 	}
-	if err := validateGmailSendAs(sendAs, intent.From); err != nil {
+	if err := validateGmailSendAs(sendAs, reply.Parsed.From[0].Email); err != nil {
 		return err
 	}
 	draft, err := client.CreateDraft(ctx, reply.Raw, target.parent.SourceConversationID)
@@ -1169,11 +1169,13 @@ func (a *storeAPIAdapter) runCLIDraftSendAs(ctx context.Context, req api.CLIRunR
 		return draftReplyError("invalid_from", err)
 	}
 	output := gmailSendAsOutput{SourceID: source.ID, Account: source.Identifier, Entries: make([]gmailSendAsRow, len(entries))}
+	confirmed, _ := confirmedDraftIdentities(identities)
 	for i, entry := range entries {
+		_, isConfirmed := confirmed[store.NormalizeIdentifierForCompare(entry.Email)]
 		output.Entries[i] = gmailSendAsRow{
 			Email: entry.Email, DisplayName: entry.DisplayName, Primary: entry.Primary,
 			Default: entry.Default, VerificationStatus: entry.VerificationStatus,
-			ConfirmedIdentity: hasConfirmedSourceIdentity(identities, entry.Email),
+			ConfirmedIdentity: isConfirmed,
 		}
 	}
 	if emit == nil {
