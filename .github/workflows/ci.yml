@@ -335,6 +335,20 @@ jobs:
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: go build -tags "fts5 sqlite_vec" -o msgvault.exe ./cmd/msgvault
 
+      # windows-latest has no make, so this mirrors `make custom-gcl` directly.
+      - name: Lint
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+          CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
+          CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
+          GOFLAGS: "-buildvcs=false"
+        run: |
+          $version = (Select-String -Path .custom-gcl.yml -Pattern '^version: (\S+)').Matches[0].Groups[1].Value
+          go run "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$version" custom --destination "$env:RUNNER_TEMP" --name custom-gcl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/custom-gcl.exe" run ./...
+
       - name: Test
         shell: pwsh
         env:
