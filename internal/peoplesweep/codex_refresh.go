@@ -83,7 +83,7 @@ func codexAccountIdentityFromAuth(contents []byte) (codexAccountIdentity, error)
 }
 
 func readPrivateCodexAuth(directory string) ([]byte, os.FileInfo, error) {
-	dirInfo, err := os.Lstat(directory) //nolint:gosec // The daemon-selected auth directory is checked for private mode and ownership below.
+	dirInfo, err := os.Lstat(directory) // #nosec G703 -- The daemon-selected auth directory is checked for private mode and ownership below.
 	if err != nil || !dirInfo.IsDir() || dirInfo.Mode().Perm()&0o077 != 0 || !codexAuthOwnedByDaemon(dirInfo) {
 		return nil, nil, ErrCodexAuthRefreshUnsafe
 	}

@@ -40,13 +40,12 @@ func (s *Server) codexLoginManager() (*peopleCodexLogins, error) {
 				return
 			}
 		}
-		client, err := peoplesweep.NewCodexEnrollmentClient("codex", filepath.Join(tokensDir, "people-codex"),
+		var client peoplesweep.CodexEnrollment
+		client, s.peopleCodexLoginInitErr = peoplesweep.NewCodexEnrollmentClient("codex", filepath.Join(tokensDir, "people-codex"),
 			peoplesweep.EnrollmentDraftLifetime)
-		if err != nil {
-			s.peopleCodexLoginInitErr = err
-			return
+		if s.peopleCodexLoginInitErr == nil {
+			s.peopleCodexLogins = newPeopleCodexLogins(client, time.Now)
 		}
-		s.peopleCodexLogins = newPeopleCodexLogins(client, time.Now)
 	})
 	if s.peopleCodexLoginInitErr != nil {
 		return nil, s.peopleCodexLoginInitErr
