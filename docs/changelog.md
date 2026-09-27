@@ -50,6 +50,10 @@ All notable changes to msgvault, grouped by release.
   requests now log the upstream status, with body excerpts available at DEBUG. See
   [CardDAV contacts](usage/people-carddav.md#google-contacts) for the
   Google Contacts CardDAV API that your Google Cloud project must enable.
+- `add-o365 --graph` syncs a Microsoft 365 or Outlook.com mailbox through the
+  Microsoft Graph mail API, for a mailbox that has IMAP turned off. Each folder
+  becomes a label, and later syncs fetch only the changes, including moves and
+  deletes. See [Microsoft Graph mail sync](guides/oauth-setup.md#microsoft-graph-mail-sync).
 - Saved View MCP tools publish canonical_state as a schema object, so MCP clients that validate tools/list strictly, such as those built on the official TypeScript SDK, load msgvault's tools.
 - `add-o365 --headless` and `add-teams --headless` sign in with a Microsoft
   device code, so no local browser is needed.

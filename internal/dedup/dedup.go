@@ -132,7 +132,7 @@ type Config struct {
 
 // DefaultSourcePreference is the default source-type authority order.
 var DefaultSourcePreference = []string{
-	"gmail", "imap", "mbox", "emlx", "hey",
+	"gmail", "imap", "msmail", "mbox", "emlx", "hey",
 }
 
 // remoteSourceTypes lists source types whose messages can be deleted

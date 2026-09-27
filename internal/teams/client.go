@@ -2,212 +2,39 @@ package teams
 
 import (
 	"context"
-	"encoding/json/v2"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"strings"
-	"time"
 
-	"go.kenn.io/msgvault/internal/httpretry"
-	"golang.org/x/time/rate"
+	"go.kenn.io/msgvault/internal/msgraph"
 )
 
 // ErrMediaTooLarge classifies hosted media that exceeds its configured cap.
-var ErrMediaTooLarge = errors.New("teams hosted media exceeds the configured size cap")
+var ErrMediaTooLarge = msgraph.ErrTooLarge
 
-var errGraphNotFound = errors.New("graph resource not found")
-
-const (
-	maxRetries    = 8
-	maxRetryAfter = httpretry.ProviderMaxRetryAfter
-)
+var errGraphNotFound = msgraph.ErrNotFound
 
 // TokenFunc returns a bearer token for a Graph API request.
-type TokenFunc func(context.Context) (string, error)
+type TokenFunc = msgraph.TokenFunc
 
-// Client is a minimal Microsoft Graph REST client supporting paging and
-// Retry-After back-off.
+// Client adds the Teams endpoints to the shared Graph transport.
 type Client struct {
-	baseURL string
-	token   TokenFunc
-	http    *http.Client
-	limiter *rate.Limiter
+	*msgraph.Client
 }
 
 // NewClient creates a Client. baseURL is injected so tests can point at
 // httptest servers. qps controls the token-bucket rate limit (default 5).
 func NewClient(baseURL string, token TokenFunc, qps float64) *Client {
-	if qps <= 0 {
-		qps = 5
-	}
-	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
-		http:    &http.Client{Timeout: 60 * time.Second},
-		limiter: rate.NewLimiter(rate.Limit(qps), 1),
-	}
+	return &Client{msgraph.NewClient(baseURL, token, qps)}
 }
 
-// get fetches rawURL, respecting the rate limiter and retrying on 429/5xx with
-// Retry-After or exponential back-off.
-func (c *Client) get(ctx context.Context, rawURL string) ([]byte, error) {
-	return c.getLimited(ctx, rawURL, 0)
-}
-
-func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
-	reqURL, err := c.resolveRequestURL(rawURL)
-	if err != nil {
-		return nil, err
-	}
-	for attempt := range maxRetries {
-		if err := c.limiter.Wait(ctx); err != nil {
-			return nil, fmt.Errorf("wait for graph rate limit: %w", err)
-		}
-		tok, err := c.token(ctx)
-		if err != nil {
-			return nil, err
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+tok)
-		req.Header.Set("Accept", "application/json")
-		resp, err := c.http.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode == http.StatusOK && maxBytes > 0 && resp.ContentLength > maxBytes {
-			_ = resp.Body.Close()
-			return nil, ErrMediaTooLarge
-		}
-		reader := io.Reader(resp.Body)
-		if maxBytes > 0 {
-			reader = io.LimitReader(resp.Body, maxBytes+1)
-		}
-		body, readErr := io.ReadAll(reader)
-		closeErr := resp.Body.Close()
-		if readErr != nil {
-			return nil, fmt.Errorf("graph GET %s: read body: %w", reqURL, readErr)
-		}
-		if closeErr != nil {
-			return nil, fmt.Errorf("graph GET %s: close body: %w", reqURL, closeErr)
-		}
-		switch {
-		case resp.StatusCode == http.StatusOK:
-			if maxBytes > 0 && int64(len(body)) > maxBytes {
-				return nil, ErrMediaTooLarge
-			}
-			return body, nil
-		case resp.StatusCode == http.StatusNotFound:
-			return nil, fmt.Errorf("graph GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), errGraphNotFound)
-		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-			wait := httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, maxRetryAfter)
-			timer := time.NewTimer(wait)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return nil, ctx.Err()
-			case <-timer.C:
-			}
-			continue
-		default:
-			return nil, fmt.Errorf("graph GET %s: status %d: %s", reqURL, resp.StatusCode, string(body))
-		}
-	}
-	return nil, fmt.Errorf("graph GET %s: exhausted %d retries", reqURL, maxRetries)
-}
-
-func (c *Client) resolveRequestURL(rawURL string) (string, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "", fmt.Errorf("graph GET %q: parse URL: %w", rawURL, err)
-	}
-	if !u.IsAbs() {
-		return c.baseURL + rawURL, nil
-	}
-	base, err := url.Parse(c.baseURL)
-	if err != nil {
-		return "", fmt.Errorf("graph base URL %q: %w", c.baseURL, err)
-	}
-	if !strings.EqualFold(u.Scheme, base.Scheme) || !strings.EqualFold(u.Host, base.Host) {
-		return "", fmt.Errorf("graph GET %s: off-origin absolute URL", rawURL)
-	}
-	return u.String(), nil
-}
-
-// GetRaw fetches url and returns the raw response bytes. url should be a
-// path-relative string (e.g. "/me/chats/.../hostedContents/1/$value"); it is
-// prefixed with the client's baseURL automatically by the underlying get method.
-func (c *Client) GetRaw(ctx context.Context, url string) ([]byte, error) {
-	return c.get(ctx, url)
-}
-
-// GetRawLimited fetches raw hosted media while enforcing a response-byte cap.
-func (c *Client) GetRawLimited(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
-	return c.getLimited(ctx, url, maxBytes)
-}
-
-// BaseURL returns the client's configured base URL (scheme + host, no trailing slash).
-// Importers use this to rewrite absolute graph.microsoft.com URLs to the configured
-// host (supporting both production and httptest servers).
-func (c *Client) BaseURL() string {
-	return c.baseURL
-}
-
-// getJSON fetches url and unmarshals the JSON body into out.
 func (c *Client) getJSON(ctx context.Context, url string, out any) error {
-	body, err := c.get(ctx, url)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(body, out)
+	return c.GetJSON(ctx, url, out)
 }
 
-// pageThrough follows @odata.nextLink, decoding each page into []T, calling fn.
-// Returns the terminal @odata.deltaLink (empty for non-delta endpoints).
 func pageThrough[T any](ctx context.Context, c *Client, startURL string, fn func([]T)) (string, error) {
-	delta, _, err := pageThroughLimit(ctx, c, startURL, 0, fn)
-	return delta, err
+	return msgraph.PageThrough(ctx, c.Client, startURL, fn)
 }
 
-// pageThroughLimit is pageThrough with an optional item cap. When limit is
-// positive, it stops before fetching a nextLink once enough items have been
-// delivered and reports whether unread items/pages remain.
 func pageThroughLimit[T any](ctx context.Context, c *Client, startURL string, limit int, fn func([]T)) (string, bool, error) {
-	url := startURL
-	delivered := 0
-	for {
-		var page listResponse[T]
-		if err := c.getJSON(ctx, url, &page); err != nil {
-			return "", false, err
-		}
-		values := page.Value
-		if limit > 0 {
-			remaining := limit - delivered
-			if remaining <= 0 {
-				return "", true, nil
-			}
-			if len(values) > remaining {
-				fn(values[:remaining])
-				return "", true, nil
-			}
-			if len(values) == remaining && page.NextLink != "" {
-				fn(values)
-				return "", true, nil
-			}
-		}
-		fn(values)
-		delivered += len(values)
-		if page.NextLink != "" {
-			url = page.NextLink
-			continue
-		}
-		return page.DeltaLink, false, nil
-	}
+	return msgraph.PageThroughLimit(ctx, c.Client, startURL, limit, fn)
 }
 
 // SelfChatID is the Teams chat a user holds with themselves. Graph never

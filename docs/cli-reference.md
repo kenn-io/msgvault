@@ -396,8 +396,11 @@ Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAu
 | `--tenant` | `common` | Azure AD tenant ID (restricts which accounts can authorize) |
 | `--headless` | `false` | Sign in with a device code instead of a local browser |
 | `--no-default-identity` | `false` | Do not auto-confirm the email address as this account's "me" identity |
+| `--graph` | `false` | Sync through the Microsoft Graph mail API instead of IMAP. Creates an `msmail` account. Needs the `Mail.Read` permission |
 
-After adding the account, sync it with `msgvault sync-full`.
+After adding the account, sync it with `msgvault sync-full`. For a `--graph`
+account, use `msgvault sync`. See
+[Microsoft Graph mail sync](/docs/guides/oauth-setup/#microsoft-graph-mail-sync).
 
 ---
 
