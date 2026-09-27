@@ -2,13 +2,16 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // runHybridSearch executes vector or hybrid search through the configured
@@ -83,7 +86,17 @@ func outputHybridResultsTable(resp *daemonclient.CLIHybridSearch, explain bool) 
 		return nil
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	if err := writeHybridResultsTable(os.Stdout, resp.Results, explain); err != nil {
+		return err
+	}
+	fmt.Printf("\n%s (generation #%d %s, fingerprint=%q)\n",
+		formatShowingResults(len(resp.Results)), resp.Generation.ID, resp.Generation.State, resp.Generation.Fingerprint)
+	outputHybridTimings(resp, explain)
+	return nil
+}
+
+func writeHybridResultsTable(out io.Writer, results []daemonclient.CLIHybridSearchResult, explain bool) error {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if explain {
 		_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT\tRRF\tBM25\tVEC")
 		_, _ = fmt.Fprintln(w, "──\t────\t────\t───────\t───\t────\t───")
@@ -91,10 +104,14 @@ func outputHybridResultsTable(resp *daemonclient.CLIHybridSearch, explain bool) 
 		_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT")
 		_, _ = fmt.Fprintln(w, "──\t────\t────\t───────")
 	}
-	for _, r := range resp.Results {
+	for _, r := range results {
 		date := r.SentAt.Format("2006-01-02")
-		from := truncate(r.FromEmail, 30)
-		subject := truncate(r.Subject, 50)
+		from := r.FromEmail
+		if strings.TrimSpace(from) == "" {
+			from = summaryFromDisplay(r.Message)
+		}
+		from = truncateDisplay(strings.Join(strings.Fields(textutil.SanitizeTerminal(from)), " "), 30)
+		subject := summaryTextDisplay(r.Subject, r.Message.Snippet, 50)
 		if r.SubjectBoosted {
 			subject += " *"
 		}
@@ -112,9 +129,6 @@ func outputHybridResultsTable(resp *daemonclient.CLIHybridSearch, explain bool) 
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flush table output: %w", err)
 	}
-	fmt.Printf("\n%s (generation #%d %s, fingerprint=%q)\n",
-		formatShowingResults(len(resp.Results)), resp.Generation.ID, resp.Generation.State, resp.Generation.Fingerprint)
-	outputHybridTimings(resp, explain)
 	return nil
 }
 

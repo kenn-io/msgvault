@@ -3,17 +3,86 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/query"
 )
+
+func TestWriteHybridResultsTableFallsBackToMessageSnippet(t *testing.T) {
+	sentAt := time.Date(2026, 8, 18, 14, 47, 41, 0, time.UTC)
+	tests := []struct {
+		name     string
+		result   daemonclient.CLIHybridSearchResult
+		contains []string
+	}{
+		{
+			name: "chat hit uses sanitized snippet and display name",
+			result: daemonclient.CLIHybridSearchResult{
+				ID: 201, SentAt: sentAt,
+				Message: query.MessageSummary{ID: 201, FromName: "Carol\x1b[31m Example", Snippet: "how many\n\x1b]0;bad\a songs are unreleased"},
+			},
+			contains: []string{"Carol Example", "how many songs are unreleased"},
+		},
+		{
+			name: "subject wins and boost marker remains",
+			result: daemonclient.CLIHybridSearchResult{
+				ID: 202, SentAt: sentAt, FromEmail: "dave@example.com", Subject: "Tour dates", SubjectBoosted: true,
+				Message: query.MessageSummary{Snippet: "ignored"},
+			},
+			contains: []string{"dave@example.com", "Tour dates *"},
+		},
+		{
+			name: "zero Message keeps top-level fields",
+			result: daemonclient.CLIHybridSearchResult{
+				ID: 203, SentAt: sentAt, FromEmail: "erin@example.com", Subject: "Hello",
+			},
+			contains: []string{"erin@example.com", "Hello"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			require.NoError(t, writeHybridResultsTable(&buf, []daemonclient.CLIHybridSearchResult{tt.result}, false))
+			lines := strings.Split(buf.String(), "\n")
+			require.GreaterOrEqual(t, len(lines), 3)
+			for _, want := range tt.contains {
+				assert.Contains(t, lines[2], want)
+			}
+			assert.NotContains(t, buf.String(), "\x1b")
+		})
+	}
+}
+
+func TestWriteHybridResultsTableExplainKeepsScores(t *testing.T) {
+	rrf, bm25, vec := 0.5, 1.25, 0.75
+	result := daemonclient.CLIHybridSearchResult{
+		ID: 204, SentAt: time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC),
+		FromEmail: "frank@example.com", Subject: "Album", SubjectBoosted: true,
+		RRFScore: &rrf, BM25Score: &bm25, VectorScore: &vec,
+	}
+	var buf bytes.Buffer
+	require.NoError(t, writeHybridResultsTable(&buf, []daemonclient.CLIHybridSearchResult{result}, true))
+	assert.Contains(t, buf.String(), "ID")
+	assert.Contains(t, buf.String(), "RRF")
+	assert.Contains(t, buf.String(), "BM25")
+	assert.Contains(t, buf.String(), "VEC")
+	assert.Contains(t, buf.String(), "Album *")
+	assert.Contains(t, buf.String(), "0.5000")
+	assert.Contains(t, buf.String(), "1.2500")
+	assert.Contains(t, buf.String(), "0.7500")
+}
 
 func TestSearchCmd_VectorModeUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
 	require := require.New(t)

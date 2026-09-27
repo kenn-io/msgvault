@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- `msgvault search` shows snippets for subjectless chat hits, keeps Unicode characters whole when truncating, and shows `-` when a message has no recorded size.
 - Query published analytics while the daemon refreshes the cache in the
   background. `query --fresh` waits for current results; HTTP and MCP callers
   can track refresh jobs. The new `query_sql` MCP tool restricts SQL to archive

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -8,9 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -21,6 +24,69 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestSummaryTextDisplay(t *testing.T) {
+	tests := []struct {
+		name, subject, snippet, want string
+	}{
+		{"subject wins", "Quarterly review", "When: tomorrow", "Quarterly review"},
+		{"chat uses snippet", "", "are we still on for Friday", "are we still on for Friday"},
+		{"blank subject uses snippet", "   ", "see attached", "see attached"},
+		{"whitespace collapses", "", "line one\n\tline two  ", "line one line two"},
+		{"terminal controls removed", "", "hi\x1b]0;bad title\a there\x1b[31m!", "hi there!"},
+		{"empty", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, summaryTextDisplay(tt.subject, tt.snippet, 50))
+		})
+	}
+}
+
+func TestTruncateDisplayKeepsRunesWhole(t *testing.T) {
+	assert := assert.New(t)
+	got := truncateDisplay(strings.Repeat("кино 🎸 ", 20), 50)
+	assert.True(utf8.ValidString(got))
+	assert.Equal(50, utf8.RuneCountInString(got))
+	assert.True(strings.HasSuffix(got, "..."))
+	assert.Equal("ки", truncateDisplay("кино", 2))
+}
+
+func TestFormatSummarySize(t *testing.T) {
+	assert.Equal(t, "-", formatSummarySize(0))
+	assert.Equal(t, "-", formatSummarySize(-1))
+	assert.Equal(t, "1.0K", formatSummarySize(1043))
+}
+
+func TestWriteSearchResultsTableShowsChatSnippetAndUnknownSize(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	results := []query.MessageSummary{
+		{ID: 101, SentAt: time.Date(2026, 11, 5, 17, 0, 0, 0, time.UTC), FromEmail: "alice@example.com", Subject: "Concert tickets", Snippet: "When: Nov 5", SizeEstimate: 1043},
+		{ID: 102, SentAt: time.Date(2026, 8, 11, 15, 46, 5, 0, time.UTC), FromName: "Bob\x1b[31m Example", Snippet: "this is the\nband", HasAttachments: true, AttachmentCount: 1},
+	}
+	var buf bytes.Buffer
+	require.NoError(writeSearchResultsTable(&buf, results))
+	lines := strings.Split(buf.String(), "\n")
+	require.GreaterOrEqual(len(lines), 4)
+	assert.Contains(lines[2], "Concert tickets")
+	assert.Contains(lines[2], "1.0K")
+	assert.Contains(lines[3], "this is the band")
+	assert.Contains(lines[3], "Bob Example")
+	assert.NotContains(lines[3], "0B")
+	assert.NotContains(buf.String(), "\x1b")
+	assert.True(strings.HasSuffix(strings.TrimRight(lines[3], " "), " -"))
+	assert.Contains(buf.String(), "Showing 2 results")
+}
+
+type failingSearchWriter struct{}
+
+func (failingSearchWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestWriteSearchResultsTableReturnsWriterError(t *testing.T) {
+	err := writeSearchResultsTable(failingSearchWriter{}, []query.MessageSummary{{ID: 1}})
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+}
 
 // captureStdout redirects os.Stdout to a pipe and returns a function
 // that restores the original stdout and returns captured output.

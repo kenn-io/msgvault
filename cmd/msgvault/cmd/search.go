@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -12,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var (
@@ -243,24 +245,49 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 	return outputSearchResultsTable(resp.Results)
 }
 
-// nil error return mirrors outputSearchResultsJSON so callers can return
-// either uniformly; tabwriter output never fails.
 func outputSearchResultsTable(results []query.MessageSummary) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	return writeSearchResultsTable(os.Stdout, results)
+}
+
+func writeSearchResultsTable(out io.Writer, results []query.MessageSummary) error {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT\tSIZE")
 	_, _ = fmt.Fprintln(w, "──\t────\t────\t───────\t────")
 
 	for _, msg := range results {
 		date := msg.SentAt.Format("2006-01-02")
-		from := truncate(summaryFromDisplay(msg), 30)
-		subject := truncate(msg.Subject, 50)
-		size := formatSize(msg.SizeEstimate)
+		from := truncateDisplay(strings.Join(strings.Fields(textutil.SanitizeTerminal(summaryFromDisplay(msg))), " "), 30)
+		subject := summaryTextDisplay(msg.Subject, msg.Snippet, 50)
+		size := formatSummarySize(msg.SizeEstimate)
 		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", msg.ID, date, from, subject, size)
 	}
 
-	_ = w.Flush()
-	fmt.Printf("\n%s\n", formatShowingResults(len(results)))
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flush search table: %w", err)
+	}
+	if _, err := fmt.Fprintf(out, "\n%s\n", formatShowingResults(len(results))); err != nil {
+		return fmt.Errorf("write search result count: %w", err)
+	}
 	return nil
+}
+
+func summaryTextDisplay(subject, snippet string, maxRunes int) string {
+	text := subject
+	if strings.TrimSpace(text) == "" {
+		text = snippet
+	}
+	return truncateDisplay(strings.Join(strings.Fields(textutil.SanitizeTerminal(text)), " "), maxRunes)
+}
+
+func truncateDisplay(s string, maxRunes int) string {
+	return textutil.TruncateRunes(s, maxRunes)
+}
+
+func formatSummarySize(size int64) string {
+	if size <= 0 {
+		return "-"
+	}
+	return formatSize(size)
 }
 
 func summaryFromDisplay(msg query.MessageSummary) string {
