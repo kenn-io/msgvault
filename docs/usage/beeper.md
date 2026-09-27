@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-09-26"
 title: Beeper
 description: Archive every chat network connected to Beeper Desktop via its local API.
 ---
@@ -273,6 +273,24 @@ enabled = true
 schedule = "*/30 * * * *"
 ```
 
+A scheduled run keeps other sources on their cadence:
+
+- **Bounded runs.** One scheduled Beeper job works for at most 3 minutes
+  across all accounts. It also stops early when another scheduled source has
+  waited for it for a minute. It stops at a chat or history-page boundary,
+  completes the run, and the next run continues from the saved cursors.
+- **Account rotation.** After stopping within an account, the next run starts
+  with the following account. Each account retains its own progress.
+- **New messages first.** Chats with only new messages sync before chats
+  still backfilling history. Completed chats are skipped until the current
+  discovery cycle finishes, so later chats also get a turn.
+- **Fetch errors.** A transient page-fetch failure is retried twice. If it
+  still fails, the run completes with an error count and the scheduler reports
+  `partial Beeper sync: N fetch error(s)`. Healthy chats keep their progress,
+  and the failed chats are retried on the next run.
+
+Manual `msgvault sync-beeper` runs have no time budget.
+
 ## Configuration
 
 ```toml
@@ -316,7 +334,10 @@ resolving to the same person).
   chats) on every run; ordinary churn like deleting an anchored chat is
   tolerated, and only when no anchor survives are recently archived messages
   checked against the source. If the installation was rebuilt, the sync stops
-  with an error; remove and re-add the Beeper sources in that case.
+  with an error and marks the account. Scheduled runs then skip that account
+  with one warning instead of failing every run. After repairing Beeper
+  Desktop, run `msgvault sync-beeper --account <id>` to verify again and clear
+  the mark, or remove and re-add the Beeper source.
 - **Remote daemons**: the Beeper API is loopback-only, so the msgvault daemon
   must run on the same machine as Beeper Desktop.
 - **iMessage**: Beeper only carries iMessage on macOS, so archiving it this way

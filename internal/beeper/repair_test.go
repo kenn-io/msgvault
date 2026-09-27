@@ -2,6 +2,7 @@ package beeper
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -178,6 +179,60 @@ func TestRepairArchiveRollsBackDerivedTextTogether(t *testing.T) {
 		JOIN message_bodies b ON b.message_id = m.id
 		WHERE m.source_message_id = 'html1'`).Scan(&body))
 	assert.Equal("hello there", body)
+}
+
+func TestRepairSourceResumesFromLastSuccessfulRowAfterFailure(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite trigger injects a row-level repair failure")
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(shareAndHTMLChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	sourceID := beeperSourceID(t, st)
+
+	rows, err := st.DB().Query(st.Rebind(
+		`SELECT id FROM messages WHERE source_id = ? ORDER BY id`), sourceID)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var messageIDs []int64
+	for rows.Next() {
+		var id int64
+		require.NoError(rows.Scan(&id))
+		messageIDs = append(messageIDs, id)
+	}
+	require.NoError(rows.Err())
+	require.NoError(rows.Close())
+	require.Len(messageIDs, 3)
+	failID := messageIDs[1]
+	_, err = st.DB().Exec(fmt.Sprintf(`CREATE TRIGGER fail_middle_repair
+		BEFORE UPDATE OF snippet ON messages
+		WHEN OLD.id = %d
+		BEGIN SELECT RAISE(ABORT, 'injected row failure'); END`, failID))
+	require.NoError(err)
+
+	sum, err := imp.RepairSource(t.Context(), sourceID, nil)
+	require.NoError(err, "a row failure is reported in the summary so the sync can continue")
+	assert.Equal(int64(2), sum.MessagesScanned, "repair stops at the first failed row")
+	assert.Equal(int64(1), sum.Errors)
+	source, err := st.GetSourceByID(sourceID)
+	require.NoError(err)
+	assert.JSONEq(fmt.Sprintf(`{"repair_version":"%s","repair_after_id":%d}`,
+		rederiveVersion, messageIDs[0]), source.SyncConfig.String,
+		"checkpoint stays on the last row whose repair committed")
+
+	_, err = st.DB().Exec(`DROP TRIGGER fail_middle_repair`)
+	require.NoError(err)
+	sum, err = imp.RepairSource(t.Context(), sourceID, nil)
+	require.NoError(err)
+	assert.Equal(int64(2), sum.MessagesScanned, "the successful prefix is not rescanned")
+	assert.Zero(sum.Errors)
+	source, err = st.GetSourceByID(sourceID)
+	require.NoError(err)
+	assert.Equal("{}", source.SyncConfig.String, "only a completed repair clears its checkpoint")
 }
 
 func TestRepairArchiveRefreshesSnippetAndFTSWhenBodyIsCurrent(t *testing.T) {
@@ -421,4 +476,27 @@ func beeperSourceID(t *testing.T, st *store.Store) int64 {
 	require.NoError(t, st.DB().QueryRow(
 		`SELECT id FROM sources WHERE source_type = 'beeper'`).Scan(&id))
 	return id
+}
+
+func TestRepairSourceResumesAfterCanceledBatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeBeeper(t)
+	f.addChat(budgetTestChat("!repair:beeper.local", repairBatchSize+1, time.Now().Add(-72*time.Hour)))
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	_, err = st.DB().Exec(`UPDATE message_bodies SET body_text = 'stale'`)
+	require.NoError(err)
+	sourceID := beeperSourceID(t, st)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	sum, err := imp.RepairSource(ctx, sourceID, func(string) { cancel() })
+	require.ErrorIs(err, context.Canceled)
+	assert.EqualValues(repairBatchSize, sum.BodiesRewritten)
+	sum, err = imp.RepairSource(t.Context(), sourceID, nil)
+	require.NoError(err)
+	assert.EqualValues(1, sum.MessagesScanned, "resume starts after the committed batch")
+	assert.EqualValues(1, sum.BodiesRewritten, "the final row gets repaired")
 }

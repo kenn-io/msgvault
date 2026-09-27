@@ -198,7 +198,7 @@ func (s *Syncer) incrementalCalendar(ctx context.Context, src *store.Source, cal
 	if completeErr != nil {
 		return fail(fmt.Errorf("complete sync: %w", completeErr))
 	}
-	_ = s.store.CheckpointWAL()
+	_ = s.store.CheckpointWALPassive(ctx)
 	s.logger.Info("calendar incremental sync complete",
 		"calendar", cal.ID, "events_processed", cp.MessagesProcessed,
 		"events_added", cp.MessagesAdded, "events_cancelled", cp.MessagesUpdated,

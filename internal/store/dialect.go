@@ -319,6 +319,12 @@ type Dialect interface {
 
 	// CheckpointWAL checkpoints the WAL (SQLite) or is a no-op (PostgreSQL).
 	CheckpointWAL(db *sql.DB) error
+	// CheckpointWALContext checkpoints the WAL using ctx to interrupt a busy
+	// SQLite checkpoint, or is a no-op for PostgreSQL.
+	CheckpointWALContext(ctx context.Context, db *sql.DB) error
+	// CheckpointWALPassive checkpoints without waiting on readers or writers
+	// (SQLite) or is a no-op (PostgreSQL). ctx bounds pool acquisition and PRAGMA.
+	CheckpointWALPassive(ctx context.Context, db *sql.DB) error
 
 	// Schema migration
 

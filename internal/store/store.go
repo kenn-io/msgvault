@@ -73,7 +73,16 @@ type Store struct {
 	cardDAVPersonOperationsMu sync.Mutex
 	cardDAVPersonOperations   map[int64]*cardDAVPersonOperation
 
-	sqliteOptimizeMu          sync.Mutex
+	sqliteOptimizeMu sync.Mutex
+	// syncOptimizeMu guards lastSyncOptimize, which throttles the planner
+	// maintenance a successful sync triggers (see optimizeAfterSync).
+	syncOptimizeMu   sync.Mutex
+	lastSyncOptimize time.Time
+	// syncOptimizeNow and checkpointRetryBackoff are test seams, nil in
+	// production.
+	syncOptimizeNow           func() time.Time
+	syncOptimizeHook          func()
+	checkpointRetryBackoff    []time.Duration
 	documentVectorOperationMu sync.Mutex
 	// Test-only seams into migration, backfill, and transaction paths, nil in
 	// production and settable only from test files. They belong to the
@@ -163,10 +172,19 @@ const testSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=OF
 // If dbPath is a postgres:// or postgresql:// URL, opens a PostgreSQL connection.
 // Otherwise, opens a SQLite database at the file path.
 func Open(dbPath string) (*Store, error) {
-	if IsPostgresURL(dbPath) {
-		return openPostgres(dbPath)
+	return OpenContext(context.Background(), dbPath)
+}
+
+// OpenContext opens or creates a database at dbPath and cancels connection
+// setup and capability probes when ctx is canceled.
+func OpenContext(ctx context.Context, dbPath string) (*Store, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return openSQLite(dbPath, defaultSQLiteParams)
+	if IsPostgresURL(dbPath) {
+		return openPostgresContext(ctx, dbPath)
+	}
+	return openSQLiteContext(ctx, dbPath, defaultSQLiteParams)
 }
 
 // OpenForTest opens or creates a database tuned for test use: ephemeral,
@@ -185,6 +203,13 @@ func OpenForTest(dbPath string) (*Store, error) {
 // openSQLite opens a SQLite database at the given file path with the
 // supplied DSN parameters appended.
 func openSQLite(dbPath, params string) (*Store, error) {
+	return openSQLiteContext(context.Background(), dbPath, params)
+}
+
+func openSQLiteContext(ctx context.Context, dbPath, params string) (*Store, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	normalizedDSN, filesystemPath, err := sqliteutil.ResolveDSN(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve SQLite database path: %w", err)
@@ -204,7 +229,7 @@ func openSQLite(dbPath, params string) (*Store, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	if err := db.PingContext(context.Background()); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
@@ -225,6 +250,10 @@ func openSQLite(dbPath, params string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("init connection: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	s := &Store{
 		db:                   newLoggedDB(db, dialect.Rebind),
@@ -240,15 +269,13 @@ func openSQLite(dbPath, params string) (*Store, error) {
 	// database still gets the right answer; a caller that opens an already
 	// initialized one no longer has to run InitSchema to learn it.
 	//
-	// As in OpenReadOnly, this constructor takes no context, so the probe
-	// cannot be cancelled; its error is still checked rather than dropped.
-	available, err := dialect.FTSAvailable(context.Background(), db)
+	available, err := dialect.FTSAvailable(ctx, db)
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("probe FTS availability: %w", err)
 	}
 	s.fts5Available = available
-	if err := s.detectDirectoryProjectionReadiness(context.Background()); err != nil {
+	if err := s.detectDirectoryProjectionReadiness(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -268,12 +295,19 @@ func appendSQLiteParams(dsn, params string) string {
 
 // openPostgres opens a PostgreSQL database using the given connection URL.
 func openPostgres(dbURL string) (*Store, error) {
+	return openPostgresContext(context.Background(), dbURL)
+}
+
+func openPostgresContext(ctx context.Context, dbURL string) (*Store, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	db, cleanup, err := openPostgresDB(dbURL, false)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := db.PingContext(context.Background()); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		cleanup()
 		return nil, fmt.Errorf("ping PostgreSQL: %w", err)
@@ -290,6 +324,11 @@ func openPostgres(dbURL string) (*Store, error) {
 		cleanup()
 		return nil, fmt.Errorf("init PostgreSQL connection: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		_ = db.Close()
+		cleanup()
+		return nil, err
+	}
 
 	s := &Store{
 		db:                 newLoggedDB(db, dialect.Rebind),
@@ -301,14 +340,14 @@ func openPostgres(dbURL string) (*Store, error) {
 
 	// See openSQLite: availability is a property of the database, not of
 	// whether this caller happened to run InitSchema.
-	available, err := dialect.FTSAvailable(context.Background(), db)
+	available, err := dialect.FTSAvailable(ctx, db)
 	if err != nil {
 		_ = db.Close()
 		cleanup()
 		return nil, fmt.Errorf("probe FTS availability: %w", err)
 	}
 	s.fts5Available = available
-	if err := s.detectDirectoryProjectionReadiness(context.Background()); err != nil {
+	if err := s.detectDirectoryProjectionReadiness(ctx); err != nil {
 		_ = db.Close()
 		cleanup()
 		return nil, err
@@ -338,8 +377,17 @@ func (s *Store) detectDirectoryProjectionReadiness(ctx context.Context) error {
 // same database concurrently. Does not create the database, run migrations,
 // or checkpoint WAL on close.
 func OpenReadOnly(dbPath string) (*Store, error) {
+	return OpenReadOnlyContext(context.Background(), dbPath)
+}
+
+// OpenReadOnlyContext opens an existing database for queries and cancels
+// connection setup and capability probes when ctx is canceled.
+func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if IsPostgresURL(dbPath) {
-		return openPostgresReadOnly(dbPath)
+		return openPostgresReadOnly(ctx, dbPath)
 	}
 
 	normalizedDSN, filesystemPath, err := sqliteutil.ResolveDSN(dbPath)
@@ -363,7 +411,7 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("open database (read-only): %w", err)
 	}
 
-	if err := db.PingContext(context.Background()); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
@@ -385,16 +433,13 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 		syncExecutionLocks:   newSyncExecutionLockState(),
 	}
 
-	// OpenReadOnly takes no context, so the probe cannot be cancelled and its
-	// error is only ever ctx's; it is still checked rather than dropped, so a
-	// context-carrying form of this constructor cannot inherit a swallowed one.
-	available, err := dialect.FTSAvailable(context.Background(), db)
+	available, err := dialect.FTSAvailable(ctx, db)
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("probe FTS availability: %w", err)
 	}
 	s.fts5Available = available
-	if err := s.detectDirectoryProjectionReadiness(context.Background()); err != nil {
+	if err := s.detectDirectoryProjectionReadiness(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -410,13 +455,13 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 // `db.Exec("SET ...")` on a pooled *sql.DB only affects whichever connection
 // happened to serve the Exec — subsequent operations on a different pooled
 // connection would run as writable.
-func openPostgresReadOnly(dbURL string) (*Store, error) {
+func openPostgresReadOnly(ctx context.Context, dbURL string) (*Store, error) {
 	db, cleanup, err := openPostgresDB(dbURL, true)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := db.PingContext(context.Background()); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		cleanup()
 		return nil, fmt.Errorf("ping PostgreSQL: %w", err)
@@ -442,16 +487,14 @@ func openPostgresReadOnly(dbURL string) (*Store, error) {
 		syncExecutionLocks: newSyncExecutionLockState(),
 	}
 
-	// As in OpenReadOnly: no context to honour here, but the error is checked
-	// rather than dropped.
-	available, err := dialect.FTSAvailable(context.Background(), db)
+	available, err := dialect.FTSAvailable(ctx, db)
 	if err != nil {
 		_ = db.Close()
 		cleanup()
 		return nil, fmt.Errorf("probe FTS availability: %w", err)
 	}
 	s.fts5Available = available
-	if err := s.detectDirectoryProjectionReadiness(context.Background()); err != nil {
+	if err := s.detectDirectoryProjectionReadiness(ctx); err != nil {
 		_ = db.Close()
 		cleanup()
 		return nil, err
@@ -550,11 +593,23 @@ func (s *Store) CheckpointWAL() error {
 	return s.dialect.CheckpointWAL(s.db.DB)
 }
 
+// CheckpointWALContext forces a WAL checkpoint using ctx. SQLite checkpoints
+// can wait for readers, so scheduled maintenance should pass its job context.
+func (s *Store) CheckpointWALContext(ctx context.Context) error {
+	return s.dialect.CheckpointWALContext(ctx, s.db.DB)
+}
+
 // optimizeSQLite refreshes persistent query-planner statistics when SQLite
 // decides they are missing or stale. The 0x10000 bit makes SQLite consider all
 // tables instead of relying on query history from whichever pooled connection
 // database/sql selects. PostgreSQL maintains planner statistics server-side.
 func (s *Store) optimizeSQLite(ctx context.Context) error {
+	return s.optimizeSQLiteWithin(ctx, sqliteOptimizeTimeout)
+}
+
+// optimizeSQLiteWithin is optimizeSQLite with a caller-chosen budget covering
+// both the pool reservation and the statistics refresh.
+func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration) error {
 	if s.IsPostgreSQL() || s.readOnly {
 		return nil
 	}
@@ -564,7 +619,7 @@ func (s *Store) optimizeSQLite(ctx context.Context) error {
 		return nil
 	}
 	defer s.sqliteOptimizeMu.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, sqliteOptimizeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// Reserve every pool slot before refreshing statistics. ANALYZE loads its
@@ -587,6 +642,13 @@ func (s *Store) optimizeSQLite(ctx context.Context) error {
 		connections = append(connections, conn)
 	}
 
+	// Bound each ANALYZE to a sample so a large archive refreshes its
+	// statistics in milliseconds rather than scanning every index.
+	for _, conn := range connections {
+		if _, err := conn.ExecContext(ctx, "PRAGMA analysis_limit=1000"); err != nil {
+			return fmt.Errorf("limit SQLite planner statistics analysis: %w", err)
+		}
+	}
 	if _, err := connections[0].ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
 		return fmt.Errorf("optimize SQLite planner statistics: %w", err)
 	}
@@ -602,11 +664,52 @@ func (s *Store) optimizeSQLiteBestEffort(ctx context.Context, trigger string) {
 	logSQLiteOptimizeError(trigger, s.optimizeSQLite(ctx))
 }
 
+// syncOptimizeInterval throttles the planner maintenance successful syncs
+// trigger; the daemon's daily SQLite maintenance job covers the rest.
+const syncOptimizeInterval = 6 * time.Hour
+
+// optimizeAfterSync runs planner maintenance after a successful sync at most
+// once per syncOptimizeInterval, so busy archives do not pay a full pool
+// reservation after every sync.
+func (s *Store) optimizeAfterSync(ctx context.Context) {
+	now := time.Now()
+	if s.syncOptimizeNow != nil {
+		now = s.syncOptimizeNow()
+	}
+	s.syncOptimizeMu.Lock()
+	due := s.lastSyncOptimize.IsZero() || now.Sub(s.lastSyncOptimize) >= syncOptimizeInterval
+	if due {
+		s.lastSyncOptimize = now
+	}
+	s.syncOptimizeMu.Unlock()
+	if due {
+		if s.syncOptimizeHook != nil {
+			s.syncOptimizeHook()
+		}
+		s.optimizeSQLiteBestEffort(ctx, "successful sync")
+	}
+}
+
+// isSQLiteContention reports errors that mean the database was busy rather
+// than broken: expected on a loaded archive and retried later.
+func isSQLiteContention(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if sqliteErr, ok := errors.AsType[sqlite3.Error](err); ok {
+		switch sqliteErr.Code {
+		case sqlite3.ErrBusy, sqlite3.ErrLocked, sqlite3.ErrInterrupt:
+			return true
+		}
+	}
+	return false
+}
+
 func logSQLiteOptimizeError(trigger string, err error) {
 	if err == nil {
 		return
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if isSQLiteContention(err) {
 		slog.Debug("SQLite planner statistics maintenance interrupted",
 			"trigger", trigger,
 			"error", err.Error(),

@@ -995,7 +995,7 @@ func (s *Store) CompleteSyncContext(ctx context.Context, syncID int64, finalHist
 		return nil
 	})
 	if err == nil {
-		completionStore.optimizeSQLiteBestEffort(ctx, "successful sync")
+		completionStore.optimizeAfterSync(ctx)
 	}
 	return completionStore.finalizeSyncExecution(syncID, err)
 }
@@ -1098,7 +1098,7 @@ func (s *Store) completeSyncAndUpdateSourceContext(
 		return nil
 	})
 	if err == nil {
-		completionStore.optimizeSQLiteBestEffort(ctx, "successful sync")
+		completionStore.optimizeAfterSync(ctx)
 	}
 	return completionStore.finalizeSyncExecution(syncID, err)
 }
@@ -1171,7 +1171,12 @@ func lockSyncSourceTx(ctx context.Context, tx *loggedTx, sourceID int64) error {
 
 // FailSync marks a sync as failed with an error message.
 func (s *Store) FailSync(syncID int64, errMsg string) error {
-	_, err := s.db.Exec(fmt.Sprintf(`
+	return s.FailSyncContext(context.Background(), syncID, errMsg)
+}
+
+// FailSyncContext marks a sync as failed using ctx for the terminal write.
+func (s *Store) FailSyncContext(ctx context.Context, syncID int64, errMsg string) error {
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE sync_runs
 		SET status = 'failed',
 		    completed_at = %s,

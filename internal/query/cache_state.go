@@ -81,6 +81,11 @@ type CacheSyncState struct {
 	PersonDisplayNameRevision int64     `json:"person_display_name_revision,omitzero"`
 	PublishedAt               time.Time `json:"published_at"`
 	DatasetFingerprint        string    `json:"dataset_fingerprint"`
+	// FullRebuildRequired marks a publication whose export snapshot missed
+	// rows committed while it ran (a sync finished mid-export). Rows related
+	// to messages already inside LastMessageID may be absent, so the next
+	// build must be full no matter what else changed.
+	FullRebuildRequired bool `json:"full_rebuild_required,omitempty"`
 
 	ConversationParticipantsFingerprint string `json:"conversation_participants_fingerprint,omitempty"`
 	// ConversationTypesFingerprint hashes (id, conversation_type, title) for

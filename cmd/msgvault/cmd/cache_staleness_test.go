@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"database/sql"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +14,73 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestCacheNeedsBuildContextCanceledDoesNotRequestBuild(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got := cacheNeedsBuildContext(ctx, filepath.Join(t.TempDir(), "msgvault.db"), t.TempDir())
+
+	assert.False(t, got.NeedsBuild, "cancellation is not evidence that the cache is stale: %+v", got)
+}
+
+func TestCacheStalenessQueriesRespectCancellation(t *testing.T) {
+	st, err := store.OpenForTest(filepath.Join(t.TempDir(), "msgvault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = readCacheSyncCountersContext(ctx, st.DB())
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = sourceConversationParticipantsFingerprint(ctx, st.DB(), 0)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// Cancel after the cache lock is held and a real database revision query has
+// started. A cancellation before entry cannot catch a dropped scan context.
+func TestCacheStalenessCanceledDuringInspection(t *testing.T) {
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	analyticsDir := filepath.Join(tmp, "analytics")
+	_, err := buildCache(dbPath, analyticsDir, true)
+	require.NoError(t, err)
+
+	checks := []struct {
+		name    string
+		inspect func(context.Context, string, string) (cacheStaleness, error)
+	}{
+		{"background", func(ctx context.Context, dbPath, analyticsDir string) (cacheStaleness, error) {
+			return cacheNeedsBuildContext(ctx, dbPath, analyticsDir), ctx.Err()
+		}},
+		{"query", cacheNeedsBuildForQuery},
+		{"serving", cacheNeedsBuildForServing},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			require := require.New(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			previous := slog.Default()
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			slog.SetDefault(slog.New(slog.NewTextHandler(&strings.Builder{}, &slog.HandlerOptions{
+				Level: slog.LevelDebug,
+				ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+					if attr.Key == "stmt" && strings.Contains(attr.Value.String(), "SELECT value FROM archive_metadata") {
+						cancel()
+					}
+					return attr
+				},
+			})))
+
+			got, err := check.inspect(ctx, dbPath, analyticsDir)
+
+			require.ErrorIs(ctx.Err(), context.Canceled, "inspection must reach the database before cancellation")
+			require.ErrorIs(err, context.Canceled)
+			assert.Equal(t, cacheStaleness{}, got, "a canceled inspection must not publish a partial staleness result")
+		})
+	}
+}
 
 func TestCacheNeedsBuildInterruptedStateOnlyCache(t *testing.T) {
 	tmpDir := setupTestSQLiteEmpty(t)

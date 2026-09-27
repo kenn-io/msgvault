@@ -111,18 +111,33 @@ func hiddenSinceBuildCountSQL() string {
 // SQLite-shaped queries against pgx (which would fail on the ?
 // placeholders and the sqlite_master probe).
 func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
+	return cacheNeedsBuildContext(context.Background(), dbPath, analyticsDir)
+}
+
+func cacheNeedsBuildContext(ctx context.Context, dbPath, analyticsDir string) cacheStaleness {
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
 	if store.IsPostgresURL(dbPath) {
 		return cacheStaleness{}
 	}
-	buildLock, err := acquireCacheBuildLock(analyticsDir)
+	buildLock, err := acquireCacheBuildLock(ctx, analyticsDir)
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot acquire cache recovery lock",
-		}
+		return cacheStalenessFailure(ctx, "cannot acquire cache recovery lock")
 	}
 	defer func() { _ = buildLock.Unlock() }()
-	return cacheNeedsBuildLocked(dbPath, analyticsDir)
+	return cacheNeedsBuildLocked(ctx, dbPath, analyticsDir)
+}
+
+func cacheStalenessFailure(ctx context.Context, reason string) cacheStaleness {
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
+	return cacheStaleness{
+		NeedsBuild:  true,
+		FullRebuild: true,
+		Reason:      reason,
+	}
 }
 
 // cacheNeedsBuildForQuery inspects the committed publication without waiting
@@ -149,7 +164,8 @@ func inspectCacheForQuery(ctx context.Context, dbPath, analyticsDir string, full
 		return cacheStaleness{}, err
 	}
 	defer release()
-	return cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir, full), nil
+	result := cacheNeedsBuildLockedWithConversationHashes(ctx, dbPath, analyticsDir, full)
+	return result, ctx.Err()
 }
 
 // cacheNeedsBuildLocked performs readiness inspection while the caller holds
@@ -157,17 +173,20 @@ func inspectCacheForQuery(ctx context.Context, dbPath, analyticsDir string, full
 // marker cannot change mid-inspection. Incomplete marker-last
 // publication is detected as drift and rebuilt; publication does not
 // maintain a recovery journal.
-func cacheNeedsBuildLocked(dbPath, analyticsDir string) cacheStaleness {
-	return cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir, true)
+func cacheNeedsBuildLocked(ctx context.Context, dbPath, analyticsDir string) cacheStaleness {
+	return cacheNeedsBuildLockedWithConversationHashes(ctx, dbPath, analyticsDir, true)
 }
 
-func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, full bool) cacheStaleness {
+func cacheNeedsBuildLockedWithConversationHashes(ctx context.Context, dbPath, analyticsDir string, full bool) cacheStaleness {
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot inspect cache status",
-		}
+		return cacheStalenessFailure(ctx, "cannot inspect cache status")
 	}
 	switch readiness {
 	case query.CacheAbsent:
@@ -193,12 +212,15 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 	case query.CacheReady:
 	}
 
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
 	state, err := query.ReadCacheSyncState(analyticsDir)
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot read cache state",
-		}
+		return cacheStalenessFailure(ctx, "cannot read cache state")
 	}
 
 	// A cache written under a different Parquet schema layout is stale even
@@ -213,26 +235,26 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 		}
 	}
 
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
 	// Inspection must not checkpoint the WAL on close: an active export can
 	// hold a read snapshot, making that checkpoint wait for the busy timeout.
-	db, err := store.OpenReadOnly(dbPath)
+	db, err := store.OpenReadOnlyContext(ctx, dbPath)
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify cache status",
-		}
+		return cacheStalenessFailure(ctx, "cannot verify cache status")
 	}
 	defer func() { _ = db.Close() }()
 
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
 	var maxLiveID int64
-	err = db.DB().QueryRow(`
+	err = db.DB().QueryRowContext(ctx, `
 		SELECT COALESCE(MAX(id), 0) FROM messages
-		WHERE ` + cacheLiveMessageWhere("")).Scan(&maxLiveID)
+		WHERE `+cacheLiveMessageWhere("")).Scan(&maxLiveID)
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify cache status",
-		}
+		return cacheStalenessFailure(ctx, "cannot verify cache status")
 	}
 
 	// Collect staleness signals without short-circuiting so a mixed
@@ -242,6 +264,12 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 		HasUsablePublication: true,
 		PublishedAt:          state.PublishedAt,
 		Generation:           state.DatasetFingerprint,
+	}
+
+	if state.FullRebuildRequired {
+		result.HasUpdated = true
+		result.FullRebuild = true
+		reasons = append(reasons, "previous build published a partial snapshot")
 	}
 
 	if maxLiveID > state.LastMessageID {
@@ -254,12 +282,12 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 
 	syncAtStr := state.LastSyncAt.UTC().Format("2006-01-02 15:04:05")
 	var deletedSinceBuild int64
-	err = db.DB().QueryRow(deletedSinceBuildCountSQL(), syncAtStr).Scan(&deletedSinceBuild)
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
+	err = db.DB().QueryRowContext(ctx, deletedSinceBuildCountSQL(), syncAtStr).Scan(&deletedSinceBuild)
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify deletion state",
-		}
+		return cacheStalenessFailure(ctx, "cannot verify deletion state")
 	}
 	if deletedSinceBuild > 0 {
 		result.HasDeleted = true
@@ -277,12 +305,12 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 	// both source-deleted and dedup-hidden after LastSyncAt is reported
 	// once (as a deletion), not double-counted in the reason string.
 	var hiddenSinceBuild int64
-	err = db.DB().QueryRow(hiddenSinceBuildCountSQL(), syncAtStr).Scan(&hiddenSinceBuild)
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
+	err = db.DB().QueryRowContext(ctx, hiddenSinceBuildCountSQL(), syncAtStr).Scan(&hiddenSinceBuild)
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify dedup state",
-		}
+		return cacheStalenessFailure(ctx, "cannot verify dedup state")
 	}
 	if hiddenSinceBuild > 0 {
 		result.HasDeleted = true
@@ -292,24 +320,24 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 	}
 
 	var hasSyncRunsTable int
-	err = db.DB().QueryRow(`
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
+	err = db.DB().QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'table' AND name = 'sync_runs'
 	`).Scan(&hasSyncRunsTable)
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify sync history",
-		}
+		return cacheStalenessFailure(ctx, "cannot verify sync history")
 	}
 	if hasSyncRunsTable > 0 {
-		counters, counterErr := readCacheSyncCounters(db.DB())
+		if ctx.Err() != nil {
+			return cacheStaleness{}
+		}
+		counters, counterErr := readCacheSyncCountersContext(ctx, db.DB())
 		err = counterErr
 		if err != nil {
-			return cacheStaleness{
-				NeedsBuild: true, FullRebuild: true,
-				Reason: "cannot verify sync history",
-			}
+			return cacheStalenessFailure(ctx, "cannot verify sync history")
 		}
 		if counters.updates != state.LastCacheUpdateCount {
 			result.HasUpdated = true
@@ -351,12 +379,12 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 		}
 	}
 
-	derivedDataRevision, err := db.DerivedDataRevision()
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
+	derivedDataRevision, err := db.DerivedDataRevisionContext(ctx)
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify derived-data revision",
-		}
+		return cacheStalenessFailure(ctx, "cannot verify derived-data revision")
 	}
 	if derivedDataRevision != state.DerivedDataRevision {
 		result.HasDerivedDataDrift = true
@@ -376,12 +404,12 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 	// independently of it, so derivedDriftOnly (build_cache.go) never
 	// mistakes this for the cheap-refresh case even though the same
 	// mutation also bumps identity_revision below.
-	accountIdentityRevision, err := db.AccountIdentityRevision()
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
+	accountIdentityRevision, err := db.AccountIdentityRevisionContext(ctx)
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify account identity revision",
-		}
+		return cacheStalenessFailure(ctx, "cannot verify account identity revision")
 	}
 	if accountIdentityRevision != state.AccountIdentityRevision {
 		result.HasAccountIdentityDrift = true
@@ -395,47 +423,47 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 	// rebuild: the index-only refresh (refreshDerivedDatasetsOnly) handles
 	// it, and a full rebuild triggered by any other signal (including
 	// HasAccountIdentityDrift above) refreshes it naturally.
-	identityRevision, err := db.IdentityRevision()
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
+	identityRevision, err := db.IdentityRevisionContext(ctx)
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify identity revision",
-		}
+		return cacheStalenessFailure(ctx, "cannot verify identity revision")
 	}
 	if identityRevision != state.IdentityRevision {
 		result.HasIdentityDrift = true
 		reasons = append(reasons, "identity revision changed")
 	}
 
-	participantIdentifierRevision, err := db.ParticipantIdentifierRevision()
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
+	participantIdentifierRevision, err := db.ParticipantIdentifierRevisionContext(ctx)
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify participant identifier revision",
-		}
+		return cacheStalenessFailure(ctx, "cannot verify participant identifier revision")
 	}
 	if participantIdentifierRevision != state.ParticipantIdentifierRevision {
 		result.HasParticipantIdentifierDrift = true
 		reasons = append(reasons, "participant identifiers changed")
 	}
 
-	participantDisplayNameRevision, err := db.ParticipantDisplayNameRevision()
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
+	participantDisplayNameRevision, err := db.ParticipantDisplayNameRevisionContext(ctx)
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify participant display-name revision",
-		}
+		return cacheStalenessFailure(ctx, "cannot verify participant display-name revision")
 	}
 	if participantDisplayNameRevision != state.ParticipantDisplayNameRevision {
 		result.HasParticipantDisplayNameDrift = true
 		reasons = append(reasons, "participant display names changed")
 	}
-	personDisplayNameRevision, err := db.PersonDisplayNameRevision()
+	if ctx.Err() != nil {
+		return cacheStaleness{}
+	}
+	personDisplayNameRevision, err := db.PersonDisplayNameRevisionContext(ctx)
 	if err != nil {
-		return cacheStaleness{
-			NeedsBuild: true, FullRebuild: true,
-			Reason: "cannot verify person display-name revision",
-		}
+		return cacheStalenessFailure(ctx, "cannot verify person display-name revision")
 	}
 	if personDisplayNameRevision != state.PersonDisplayNameRevision {
 		result.HasPersonDisplayNameDrift = true
@@ -443,30 +471,32 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 	}
 
 	if full {
+		if ctx.Err() != nil {
+			return cacheStaleness{}
+		}
 		conversationFingerprint, err := sourceConversationParticipantsFingerprint(
+			ctx,
 			db.DB(),
 			state.LastMessageID,
 		)
 		if err != nil {
-			return cacheStaleness{
-				NeedsBuild: true, FullRebuild: true,
-				Reason: "cannot verify conversation participants",
-			}
+			return cacheStalenessFailure(ctx, "cannot verify conversation participants")
 		}
 		if conversationFingerprint != state.ConversationParticipantsFingerprint {
 			result.HasConversationParticipantDrift = true
 			reasons = append(reasons, "conversation participants changed")
 		}
 
+		if ctx.Err() != nil {
+			return cacheStaleness{}
+		}
 		typesFingerprint, err := sourceConversationTypesFingerprint(
+			ctx,
 			db.DB(),
 			state.LastMessageID,
 		)
 		if err != nil {
-			return cacheStaleness{
-				NeedsBuild: true, FullRebuild: true,
-				Reason: "cannot verify conversation metadata",
-			}
+			return cacheStalenessFailure(ctx, "cannot verify conversation metadata")
 		}
 		if typesFingerprint != state.ConversationTypesFingerprint {
 			result.HasConversationTypeDrift = true
@@ -499,10 +529,11 @@ func cacheNeedsBuildLockedWithConversationHashes(dbPath, analyticsDir string, fu
 // fingerprintConversationTypesFromSnapshot so an unchanged database always
 // reproduces the stamped fingerprint.
 func sourceConversationTypesFingerprint(
+	ctx context.Context,
 	db *sql.DB,
 	lastMessageID int64,
 ) (string, error) {
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(ctx, `
 		SELECT c.id, COALESCE(c.conversation_type, 'email_thread'),
 		       COALESCE(c.title, '')
 		FROM conversations c
@@ -527,10 +558,11 @@ func sourceConversationTypesFingerprint(
 }
 
 func sourceConversationParticipantsFingerprint(
+	ctx context.Context,
 	db *sql.DB,
 	lastMessageID int64,
 ) (string, error) {
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(ctx, `
 		SELECT cp.conversation_id, cp.participant_id
 		FROM conversation_participants cp
 		WHERE EXISTS (

@@ -18,6 +18,12 @@ func (s *Store) PersonDisplayNameRevision() (int64, error) {
 	return readPersonDisplayNameRevision(s.db)
 }
 
+// PersonDisplayNameRevisionContext is the request-aware form of
+// PersonDisplayNameRevision.
+func (s *Store) PersonDisplayNameRevisionContext(ctx context.Context) (int64, error) {
+	return readArchiveMetadataRevisionContext(ctx, s.db, personDisplayNameRevisionKey, "person display-name")
+}
+
 func readPersonDisplayNameRevision(q rowQuerier) (int64, error) {
 	var value string
 	err := q.QueryRow(

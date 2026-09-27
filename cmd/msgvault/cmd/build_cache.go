@@ -50,11 +50,46 @@ const (
 	buildCacheModeScheduledAuto
 )
 
+// contextMutex serializes cache work while letting callers stop waiting when
+// their context is canceled. Lock preserves the context-free behavior for
+// synchronous CLI paths; daemon paths use LockContext.
+type contextMutex struct {
+	locked chan struct{}
+}
+
+func newContextMutex() *contextMutex {
+	return &contextMutex{locked: make(chan struct{}, 1)}
+}
+
+func (m *contextMutex) Lock() {
+	_ = m.LockContext(context.Background())
+}
+
+func (m *contextMutex) LockContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case m.locked <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-m.locked
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *contextMutex) Unlock() {
+	<-m.locked
+}
+
 // buildCacheMu serializes concurrent buildCache calls. The scheduler may
 // trigger syncs for multiple accounts in parallel, each of which calls
 // buildCache on completion. Without this lock, concurrent writes to shared
 // files (_last_sync.json, parquet directories) can corrupt the cache.
-var buildCacheMu sync.Mutex
+var buildCacheMu = newContextMutex()
 
 // cacheBuildFileLock returns the reader-coordination lock (see
 // query.CacheBuildLockPath): DuckDB readers hold it shared per query, and
@@ -118,7 +153,7 @@ func invalidateSyncStateFile(stateFile string) error {
 // self-deadlock on a second file descriptor). A destructive mutation must
 // not proceed when any protection step fails.
 func lockCacheAndInvalidateSyncState(analyticsDir string) (func() error, error) {
-	builderLock, err := acquireCacheBuildLock(analyticsDir)
+	builderLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("serialize against cache builders: %w", err)
 	}
@@ -242,8 +277,22 @@ type sqlRunner interface {
 }
 
 func readCacheSyncCounters(db sqlRowQuerier) (cacheSyncCounters, error) {
+	return readCacheSyncCountersWithRow(db.QueryRow)
+}
+
+type contextSQLRowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func readCacheSyncCountersContext(ctx context.Context, db contextSQLRowQuerier) (cacheSyncCounters, error) {
+	return readCacheSyncCountersWithRow(func(query string, args ...any) *sql.Row {
+		return db.QueryRowContext(ctx, query, args...)
+	})
+}
+
+func readCacheSyncCountersWithRow(queryRow func(string, ...any) *sql.Row) (cacheSyncCounters, error) {
 	var counters cacheSyncCounters
-	err := db.QueryRow(`
+	err := queryRow(`
 		SELECT
 			COALESCE(SUM(COALESCE(sr.messages_added, 0)), 0),
 			COALESCE(SUM(COALESCE(sr.messages_updated, 0)), 0),
@@ -495,7 +544,7 @@ func buildCacheDerivedOnly(
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
-	buildLock, err := acquireCacheBuildLock(analyticsDir)
+	buildLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
 	if err != nil {
 		return nil, err
 	}
@@ -693,13 +742,13 @@ func buildCacheScheduled(
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
-	buildLock, err := acquireCacheBuildLock(analyticsDir)
+	buildLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = buildLock.Unlock() }()
 
-	staleness := cacheNeedsBuildLocked(dbPath, analyticsDir)
+	staleness := cacheNeedsBuildLocked(context.Background(), dbPath, analyticsDir)
 	if !staleness.NeedsBuild {
 		return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 	}
@@ -732,7 +781,7 @@ func buildCacheImpl(
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
 
-	buildLock, err := acquireCacheBuildLock(analyticsDir)
+	buildLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
 	if err != nil {
 		return nil, err
 	}
@@ -751,7 +800,7 @@ func buildCacheImpl(
 // staging and index construction across processes. Readers are NOT excluded
 // by this lock — they keep querying the committed generation until the
 // publication step briefly takes the reader-coordination lock.
-func acquireCacheBuildLock(analyticsDir string) (*flock.Flock, error) {
+func acquireCacheBuildLock(ctx context.Context, analyticsDir string) (*flock.Flock, error) {
 	buildLock, err := cacheBuilderFileLock(analyticsDir)
 	if err != nil {
 		return nil, err
@@ -760,7 +809,7 @@ func acquireCacheBuildLock(analyticsDir string) (*flock.Flock, error) {
 		return nil, fmt.Errorf("acquire cache build lock: %w", err)
 	} else if !locked {
 		fmt.Println("Waiting for another msgvault process to finish a cache build...")
-		if err := buildLock.Lock(); err != nil {
+		if _, err := buildLock.TryLockContext(ctx, 50*time.Millisecond); err != nil {
 			return nil, fmt.Errorf("acquire cache build lock: %w", err)
 		}
 	}
@@ -880,7 +929,7 @@ func buildCacheLocked(
 		return nil, err
 	}
 	if recheckStaleness {
-		staleness := cacheNeedsBuildLocked(dbPath, analyticsDir)
+		staleness := cacheNeedsBuildLocked(context.Background(), dbPath, analyticsDir)
 		if !staleness.NeedsBuild {
 			return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 		}
@@ -906,6 +955,9 @@ func buildCacheLocked(
 		if state.SchemaVersion != cacheSchemaVersion {
 			fmt.Printf("Cache schema version mismatch (have v%d, need v%d). Forcing full rebuild.\n",
 				state.SchemaVersion, cacheSchemaVersion)
+			fullRebuild = true
+		} else if state.FullRebuildRequired {
+			fmt.Println("Previous build published a partial snapshot. Forcing full rebuild...")
 			fullRebuild = true
 		} else {
 			previousState = state
@@ -1004,7 +1056,8 @@ func buildCacheLocked(
 	// Record the freshness boundary immediately before the first source read.
 	// A sync or deletion that finishes after this instant may not be represented
 	// by the snapshot and must invalidate the cache on the next check.
-	cacheWatermark := time.Now().UTC().Truncate(time.Second)
+	exportStarted := time.Now()
+	cacheWatermark := exportStarted.UTC().Truncate(time.Second)
 
 	var maxMessageID sql.NullInt64
 	var lastCompletedSyncRunID int64
@@ -1575,6 +1628,7 @@ func buildCacheLocked(
 	if buildCacheBeforeStateWriteHook != nil {
 		buildCacheBeforeStateWriteHook()
 	}
+	partialSnapshot := false
 	if hasSyncRunsTable > 0 {
 		checkDB, openErr := sql.Open("sqlite3", dbPath+"?mode=ro")
 		if openErr != nil {
@@ -1589,13 +1643,17 @@ func buildCacheLocked(
 			return nil, fmt.Errorf("close sqlite after cache consistency check: %w", closeErr)
 		}
 		if currentCounters != syncCounters {
-			return nil, fmt.Errorf(
-				"sync counters changed during cache export (additions %d→%d, updates %d→%d, failed runs count %d→%d, id sum %d→%d); retry",
-				syncCounters.additions, currentCounters.additions,
-				syncCounters.updates, currentCounters.updates,
-				syncCounters.failedRunCount, currentCounters.failedRunCount,
-				syncCounters.failedRunIDSum, currentCounters.failedRunIDSum,
-			)
+			// The snapshot is internally consistent but may hold a parent row
+			// whose related rows committed after it. Publishing it beats
+			// discarding the whole export; the flag makes the next build full,
+			// so no later incremental build can skip those rows.
+			partialSnapshot = true
+			logger.Warn("sync counters changed during cache export; published snapshot, next build will be full",
+				"additions", fmt.Sprintf("%d→%d", syncCounters.additions, currentCounters.additions),
+				"updates", fmt.Sprintf("%d→%d", syncCounters.updates, currentCounters.updates),
+				"failed_runs", fmt.Sprintf("%d→%d", syncCounters.failedRunCount, currentCounters.failedRunCount),
+				"failed_run_id_sum", fmt.Sprintf("%d→%d", syncCounters.failedRunIDSum, currentCounters.failedRunIDSum),
+				"elapsed", time.Since(exportStarted).Round(time.Second))
 		}
 	}
 
@@ -1619,6 +1677,7 @@ func buildCacheLocked(
 		ConversationParticipantsFingerprint: derived.ConversationParticipantsFingerprint,
 		ConversationTypesFingerprint:        typesFingerprint,
 		Stats:                               derived.Stats,
+		FullRebuildRequired:                 partialSnapshot,
 	}
 	stateData, err := json.Marshal(state, json.Deterministic(true))
 	if err != nil {
@@ -2247,7 +2306,9 @@ func buildCacheSubprocess(ctx context.Context, fullRebuild, auto bool) error {
 func buildCacheSubprocessMode(ctx context.Context, mode buildCacheMode) error {
 	// Serialize with each other so parallel per-account syncs in the
 	// daemon don't spawn concurrent cache builds racing on shared files.
-	buildCacheMu.Lock()
+	if err := buildCacheMu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer buildCacheMu.Unlock()
 
 	cmd, err := newBuildCacheSubprocessCommand(ctx, mode)
@@ -2284,7 +2345,9 @@ func buildCacheSubprocessStream(
 	fullRebuild, auto bool,
 	emit func(api.CLICacheBuildEvent) error,
 ) error {
-	buildCacheMu.Lock()
+	if err := buildCacheMu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer buildCacheMu.Unlock()
 
 	mode := buildCacheModeDefault
@@ -2459,6 +2522,11 @@ func globalConfigFlagArgs() []string {
 // PostgreSQL DSNs. The build runs in a subprocess (see buildCacheSubprocess)
 // to keep DuckDB's bundled SQLite library out of a long-lived daemon's
 // address space (issue #379).
+//
+// Readiness and throttle checks run in the background refresher, away from
+// the scheduler's operation gate. The caller returns as soon as the request
+// is queued; the refresher validates the committed shard fingerprint before
+// deciding whether a recent publication can be throttled.
 func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) error {
 	if !cfg.Analytics.AutoBuildCache {
 		// AutoBuildCache opts out of automatic daemon rebuilds, even when startup
@@ -2469,8 +2537,32 @@ func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) erro
 	if store.IsPostgresURL(dbPath) {
 		return nil
 	}
+	if refresher := daemonCacheRefresher; refresher != nil {
+		refresher.Request(identifier)
+		return nil
+	}
+	return rebuildCacheNow(ctx, identifier, nil)
+}
+
+// rebuildCacheNow runs the locked staleness check and, when a build is due
+// and not throttled, the build subprocess.
+func rebuildCacheNow(
+	ctx context.Context,
+	identifier string,
+	scheduleRetry func(time.Duration, string),
+) error {
+	if !cfg.Analytics.AutoBuildCache {
+		return nil
+	}
+	dbPath := cfg.DatabaseDSN()
+	if store.IsPostgresURL(dbPath) {
+		return nil
+	}
 	analyticsDir := cfg.AnalyticsDir()
-	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	staleness := cacheNeedsBuildContext(ctx, dbPath, analyticsDir)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !staleness.NeedsBuild {
 		return nil
 	}
@@ -2484,6 +2576,11 @@ func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) erro
 			"min_rebuild_interval", cfg.Analytics.MinRebuildInterval.String(),
 			"published_at", staleness.PublishedAt,
 			"remaining", remaining.String())
+		if scheduleRetry != nil {
+			// Readiness was checked authoritatively off the operation gate. Keep
+			// one retry for the first point at which the publication can rebuild.
+			scheduleRetry(remaining, identifier)
+		}
 		return nil
 	}
 	logger.Info("rebuilding cache after sync",
@@ -2492,6 +2589,33 @@ func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) erro
 	if err := runScheduledBuildCacheSubprocess(ctx); err != nil {
 		logger.Error("cache build failed", "error", err)
 		return fmt.Errorf("refresh analytics cache: %w", err)
+	}
+	staleness = cacheNeedsBuildContext(ctx, dbPath, analyticsDir)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if staleness.NeedsBuild {
+		if remaining, throttle := scheduledCacheBuildDelay(
+			staleness,
+			cfg.Analytics.MinRebuildInterval,
+			scheduledCacheBuildNow(),
+		); throttle {
+			if scheduleRetry != nil {
+				logger.Info("cache rebuild was superseded by a newer publication; retrying after minimum interval",
+					"identifier", identifier,
+					"published_at", staleness.PublishedAt,
+					"remaining", remaining.String())
+				scheduleRetry(remaining, identifier)
+			} else {
+				logger.Warn("cache remains stale under minimum rebuild interval; no retry scheduler is available",
+					"identifier", identifier,
+					"published_at", staleness.PublishedAt,
+					"remaining", remaining.String())
+			}
+			return nil
+		}
+		logger.Warn("cache remains stale after scheduled rebuild", "reason", staleness.Reason)
+		return nil
 	}
 	logger.Info("cache build completed")
 	return nil

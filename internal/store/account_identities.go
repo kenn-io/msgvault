@@ -28,6 +28,12 @@ func (s *Store) AccountIdentityRevision() (int64, error) {
 	return readAccountIdentityRevision(s.db)
 }
 
+// AccountIdentityRevisionContext is the request-aware form of
+// AccountIdentityRevision.
+func (s *Store) AccountIdentityRevisionContext(ctx context.Context) (int64, error) {
+	return readArchiveMetadataRevisionContext(ctx, s.db, accountIdentityRevisionKey, "account identity")
+}
+
 // readAccountIdentityRevision reads the archive_metadata account-identity
 // revision through q (0 if the row does not exist yet), mirroring
 // readIdentityRevision in participant_links.go.

@@ -14,6 +14,25 @@ All notable changes to msgvault, grouped by release.
   analytics data. These API additions require schema 2.31.0. See
   [SQL queries](usage/querying.md) and [cache freshness](configuration.md#analytics).
 - Repeated `import-emlx` runs no longer rewrite Apple Mail partial messages whose archived copy already holds every cached attachment, and the summary counts only attachments the run added to the archive.
+- **Frequent schedules keep their cadence on large archives.**
+  - Scheduled syncs no longer run attachment packing, cache rebuilds or SQLite
+    maintenance inline. Packing follows new blobs through a 6-hourly
+    `attachment-pack` job. Cache rebuilds run in the background. SQLite
+    statistics and WAL truncation move to a daily `sqlite-maintenance` job.
+  - A long job is asked to yield after a minute when other syncs are waiting,
+    and overlapping ticks are kept as one follow-up run.
+  - Scheduled Beeper runs are bounded to 3 minutes, sync new messages before
+    history, retry page fetches, and skip an account whose message IDs were
+    reassigned instead of failing every run.
+  - Restarts within `min_rebuild_interval` serve the existing analytics cache.
+    A cache build that overlaps a sync publishes instead of discarding its
+    work.
+  - `/api/v1/stats` and `/api/v1/cli/accounts` answer from their previous
+    counts when fresh ones are slow.
+  - `/api/v1/scheduler/status` reports queued and pending runs.
+  See [Beeper scheduled sync](usage/beeper.md#scheduled-sync) and
+  [analytics configuration](configuration.md#analytics).
+
 - Saved View MCP tools publish canonical_state as a schema object, so MCP clients that validate tools/list strictly, such as those built on the official TypeScript SDK, load msgvault's tools.
 - `add-o365 --headless` and `add-teams --headless` sign in with a Microsoft
   device code, so no local browser is needed.

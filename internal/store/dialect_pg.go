@@ -2221,6 +2221,12 @@ func (d *PostgreSQLDialect) SchemaFiles() []string {
 // CheckpointWAL is a no-op for PostgreSQL (no WAL checkpoint needed).
 func (d *PostgreSQLDialect) CheckpointWAL(db *sql.DB) error { return nil }
 
+// CheckpointWALContext is a no-op for PostgreSQL.
+func (d *PostgreSQLDialect) CheckpointWALContext(ctx context.Context, db *sql.DB) error { return nil }
+
+// CheckpointWALPassive is a no-op for PostgreSQL.
+func (d *PostgreSQLDialect) CheckpointWALPassive(ctx context.Context, db *sql.DB) error { return nil }
+
 // SchemaStaleCheck returns the SQL to check whether migrations are needed.
 // PostgreSQL uses information_schema instead of pragma_table_info.
 func (d *PostgreSQLDialect) SchemaStaleCheck() string {

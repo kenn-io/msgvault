@@ -208,7 +208,7 @@ func TestBuilderLockDoesNotBlockReaders(t *testing.T) {
 	analyticsDir := filepath.Join(t.TempDir(), "analytics")
 	requirements.NoError(os.MkdirAll(analyticsDir, 0o755))
 
-	builderLock, err := acquireCacheBuildLock(analyticsDir)
+	builderLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
 	requirements.NoError(err, "acquire builder lock")
 
 	readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

@@ -1504,11 +1504,11 @@ func (s *Syncer) full(
 		return nil, err
 	}
 
-	// Checkpoint WAL after sync to fold it back into the main database.
-	// This prevents WAL accumulation across long sync sessions and ensures
-	// readers (e.g. build-cache) see a consistent database state.
-	if err := s.store.CheckpointWAL(); err != nil {
-		s.logger.Warn("wal checkpoint after sync failed", "error", err)
+	// Fold what the WAL can give back without waiting on readers or writers.
+	// A busy archive usually leaves frames behind; the daemon's daily SQLite
+	// maintenance truncates the WAL off-peak.
+	if err := s.store.CheckpointWALPassive(ctx); err != nil {
+		s.logger.Debug("wal checkpoint after sync incomplete", "error", err)
 	}
 
 	// Build summary

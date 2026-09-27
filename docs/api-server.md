@@ -132,8 +132,9 @@ returning `200` while created manifests return `201`.
 
 The HTTP listener, health endpoint, and API routing start before analytics cache
 maintenance. With `engine = "auto"`, aggregate requests initially use live SQL
-while the cache is built or opened, then switch to DuckDB after success. A
-failed automatic build or open keeps the daemon on live SQL. With
+while the cache is built or opened, then switch to DuckDB after success. If no
+usable cache can be opened, the daemon stays on live SQL. A failed automatic
+refresh keeps the last usable publication. With
 `engine = "duckdb"`, analytics remain unavailable until the required cache is
 ready, so analytics routes return `503` during initialization; the daemon does
 not fall back to SQL. Cache-dependent routes also return a structured `503`
@@ -564,6 +565,18 @@ lane initializes or fails. Public and delegated health responses omit them.
 Archive statistics. When vector search is configured on the server,
 the response also includes a `vector_search` sub-object describing
 the state of the index.
+
+Stats answer within about 2 seconds while a sync or cache build loads the
+archive:
+
+- If fresh counts are not ready by then, the response reuses the previous
+  counts and sets `"stale": true`, with `as_of` giving when they were
+  computed. The fresh counts replace them when they finish.
+- Vector statistics get 3 seconds. After that, the response sets
+  `"vector_stats_unavailable": true` instead of failing.
+
+`GET /api/v1/cli/accounts` bounds its message counts the same way, reporting
+`stale` and `as_of` at the top level.
 
 **Response (vector search disabled):**
 
@@ -1834,6 +1847,21 @@ Scheduler state and per-account schedule details.
 }
 ```
 
+The daemon runs scheduled work one job at a time. While a sync waits for
+another job to finish, its entry reports `"queued": true`. While it runs,
+`started_at` gives when it began. A schedule tick that fires during a run
+sets `"pending": true`, and the scheduler runs the sync once more when the
+current run ends. Account syncs (Gmail, IMAP, Teams, and Discord), Slack, and
+Beeper support preemption: after holding the gate for a minute while others
+are queued, they are asked to stop at their next safe point. If they are
+still running five seconds later, the scheduler cancels their context. An
+interrupted run goes back behind waiting jobs immediately; it does not wait
+for another schedule tick. Maintenance and other jobs without resumable
+checkpoints keep their own runtime budgets. Waiting API requests can still
+interrupt scheduled work. `GET /api/v1/sources/status` reports the same
+state for every scheduled source as `scheduler_queued`, `scheduler_pending`,
+and `scheduler_started_at`.
+
 ---
 
 ### Preflight an analytical selection {#post-apiv1explorepreflight}
@@ -2370,7 +2398,7 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 |---|---|---|
 | `engine` | `auto` | Aggregate engine for Web UI, TUI, and aggregate HTTP views: `auto`, `sql`, or `duckdb` |
 | `auto_build_cache` | `true` | Refresh a stale or missing cache at startup, after scheduled or manual syncs, and when a query finds it due; `false` skips automatic builds |
-| `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a sync or query may queue an automatic rebuild |
+| `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a sync, query, or daemon restart may queue an automatic rebuild |
 | `builder_memory_limit` | `2GB` | DuckDB memory limit for cache builds, such as `4GB` or `512MiB` |
 | `builder_threads` | min(CPUs, 2) | DuckDB threads for cache builds; zero keeps the default |
 | `builder_temp_limit` | `32GB` | Maximum spill-to-disk size for cache builds |
@@ -2380,15 +2408,17 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 
 `engine = "sql"` forces live SQL for aggregate views. `engine = "duckdb"`
 requires a usable Parquet cache and keeps analytics unavailable until it is
-ready; a build or open failure is fatal rather than a silent SQL fallback.
+ready. Startup fails if no usable cache can be built or opened. A failed
+automatic refresh keeps the last usable publication available.
 `auto_build_cache = false` leaves cache rebuilds to explicit
 `msgvault build-cache`, `query --fresh`, or sync `--build-cache` requests.
 These settings replace the TUI/MCP analytics flags deprecated in 0.17.0; see [Configuration: analytics](/docs/configuration/#analytics).
 
-`min_rebuild_interval` applies to automatic refreshes requested by syncs and
-queries. Explicit refreshes, startup maintenance, and unusable-cache recovery
-are not delayed by it. See [Configuration: analytics](configuration.md#analytics)
-for the cache freshness policy and deletion visibility. Changes under
+`min_rebuild_interval` applies to automatic refreshes requested by syncs,
+queries, and daemon startup, including usable partial snapshots. Explicit
+refreshes and unusable-cache recovery are not delayed by it. See
+[Configuration: analytics](configuration.md#analytics) for the cache freshness
+policy and deletion visibility. Changes under
 `[analytics]` take effect after the daemon restarts.
 
 ### `[[accounts]]`

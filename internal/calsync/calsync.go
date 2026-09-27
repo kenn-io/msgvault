@@ -340,7 +340,7 @@ func (s *Syncer) syncCalendarFull(
 	if completeErr != nil {
 		return fail(fmt.Errorf("complete sync: %w", completeErr))
 	}
-	_ = s.store.CheckpointWAL()
+	_ = s.store.CheckpointWALPassive(ctx)
 	s.logger.Info("calendar full sync complete",
 		"calendar", cal.ID, "events_processed", cp.MessagesProcessed,
 		"events_added", cp.MessagesAdded, "events_cancelled", cp.MessagesUpdated)

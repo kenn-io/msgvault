@@ -215,10 +215,31 @@ type ImportOptions struct {
 	// Progress, if non-nil, is called after each chat with a human-readable
 	// status line. Safe to leave nil (silent mode).
 	Progress func(msg string) `json:"-"`
+	// ShouldStop, if non-nil, is polled during chat enumeration and at message
+	// page boundaries in backfill, incremental, reconciliation, and tail-probe
+	// walks. Once it reports true the run stops at that boundary, checkpoints
+	// its cursors, keeps unvisited chats discoverable, and completes normally so
+	// the next run resumes. Scheduled runs use it for their time budget and to
+	// yield to queued work.
+	ShouldStop func() bool `json:"-"`
+	// StopAt bounds each provider request for scheduled imports. The parent
+	// import context remains live so a spent budget completes as resumable work.
+	StopAt time.Time `json:"-"`
+	// Scheduled keeps a source's re-anchor marker in place after verification;
+	// only a successful manual verification may clear that operator-visible
+	// marker.
+	Scheduled bool `json:"-"`
+}
+
+func (o ImportOptions) stopRequested() bool {
+	return (!o.StopAt.IsZero() && !time.Now().Before(o.StopAt)) || (o.ShouldStop != nil && o.ShouldStop())
 }
 
 type ImportSummary struct {
-	Duration          time.Duration
+	Duration time.Duration
+	// Stopped reports that ShouldStop ended the run before every chat was
+	// visited; the remaining work resumes on the next run.
+	Stopped           bool
 	SourceID          int64
 	ChatsProcessed    int64
 	MessagesProcessed int64

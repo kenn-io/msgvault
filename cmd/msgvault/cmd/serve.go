@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/granola"
 	imaplib "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -256,7 +257,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	resourceCleanupSafe := true
 	defer func() {
 		if !resourceCleanupSafe {
-			logger.Warn("archive database cleanup skipped", "error", "HTTP shutdown did not complete")
+			logger.Warn("archive database cleanup skipped", "error", "daemon shutdown did not complete safely")
 			return
 		}
 		if err := closeDaemonStoreAfterInitializers(s, analyticsInit, vectorInit); err != nil {
@@ -316,6 +317,29 @@ func runServe(cmd *cobra.Command, args []string) error {
 			_ = attachmentMaint.close()
 		}
 	}()
+	var initialAnalyticsEngine query.Engine
+	analyticsServerStarted := false
+	defer func() {
+		if resourceCleanupSafe && !analyticsServerStarted && initialAnalyticsEngine != nil {
+			_ = initialAnalyticsEngine.Close()
+		}
+	}()
+	// Due analytics cache rebuilds run here, off the scheduled job that asked
+	// for them, so a sync never holds the operation gate for a cache build.
+	cacheRefresher := newBackgroundCacheRefresher(ctx, nil, idleTracker)
+	daemonCacheRefresher = cacheRefresher
+	defer func() { daemonCacheRefresher = nil }()
+	cacheRefresherShutdown := false
+	defer func() {
+		if cacheRefresherShutdown {
+			return
+		}
+		if err := shutdownBackgroundCacheRefresher(cacheRefresher); err != nil {
+			resourceCleanupSafe = false
+			return
+		}
+		cacheRefresherShutdown = true
+	}()
 	blobStore := attachmentMaint.blob
 
 	// Vector misconfiguration still fails startup fast; the expensive
@@ -352,13 +376,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 		return engineErr
 	}
-	initialAnalyticsEngine := engine
-	analyticsServerStarted := false
-	defer func() {
-		if resourceCleanupSafe && !analyticsServerStarted && initialAnalyticsEngine != nil {
-			_ = initialAnalyticsEngine.Close()
-		}
-	}()
+	initialAnalyticsEngine = engine
 	if !analyticsAsync {
 		logger.Info("daemon startup step complete", "step", "init_analytics_engine")
 	}
@@ -378,6 +396,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Create and configure scheduler
 	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate)
+	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
+		return scheduledSyncPreemptible(s, identifier)
+	})
 	cardDAVController, err := api.NewCardDAVController(cfg, s, logger)
 	if err != nil {
 		return fmt.Errorf("configure CardDAV: %w", err)
@@ -462,6 +483,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := registerAttachmentMaintenanceJob(sched, attachmentMaint); err != nil {
 		return fmt.Errorf("schedule attachment maintenance: %w", err)
 	}
+	if err := registerAttachmentPackJob(sched, attachmentMaint); err != nil {
+		return fmt.Errorf("schedule attachment packing: %w", err)
+	}
+	if err := registerSQLiteMaintenanceJob(sched, s); err != nil {
+		return fmt.Errorf("schedule SQLite maintenance: %w", err)
+	}
 	if err := configureDocumentReconcileJob(
 		ctx, sched, s, cfg.Attachments.Documents.Enabled,
 	); err != nil {
@@ -513,8 +540,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if cfg.Slack.Enabled && cfg.Slack.Schedule != "" {
 		if err := sched.AddJob(scheduler.Job{
-			Name:     api.SlackJobName,
-			Schedule: cfg.Slack.Schedule,
+			Name:        api.SlackJobName,
+			Schedule:    cfg.Slack.Schedule,
+			Preemptible: true,
 			Run: func(ctx context.Context) error {
 				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
 					return runConfiguredSlackSync(ctx, s)
@@ -791,6 +819,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if shutdownErr == nil {
 		resourceCleanupSafe = true
+	}
+	if err := cacheRefresher.Shutdown(shutdownCtx); err != nil {
+		logger.Warn("analytics cache refresh did not stop within the shutdown drain timeout", "error", err)
+		if retryErr := shutdownBackgroundCacheRefresher(cacheRefresher); retryErr != nil {
+			resourceCleanupSafe = false
+		} else {
+			cacheRefresherShutdown = true
+		}
+	} else {
+		cacheRefresherShutdown = true
 	}
 	// Wait for the background vector init regardless of the shutdown
 	// outcome: the deferred s.Close() must not run under a still-running
@@ -1185,10 +1223,32 @@ func openDaemonAnalyticsEngine(
 
 	dbPath := c.DatabaseDSN()
 	analyticsDir := c.AnalyticsDir()
-	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	staleness := cacheNeedsBuildContext(ctx, dbPath, analyticsDir)
+	if err := ctx.Err(); err != nil {
+		return nil, "", startupCacheBuildOutcomeNone, err
+	}
 	outcome := startupCacheBuildOutcomeNone
-	shouldBuild := intent != startupCacheBuildIntentNone ||
-		(staleness.NeedsBuild && c.Analytics.AutoBuildCache)
+	automaticBuild := intent == startupCacheBuildIntentNone &&
+		staleness.NeedsBuild && c.Analytics.AutoBuildCache
+	if automaticBuild {
+		// A restart must not force the full rebuild the post-sync path is
+		// throttling: serve the recent publication and refresh once the
+		// interval has elapsed.
+		if remaining, throttle := scheduledCacheBuildDelay(
+			staleness, c.Analytics.MinRebuildInterval, scheduledCacheBuildNow(),
+		); throttle {
+			logger.Info("serving existing analytics cache; rebuild deferred by min_rebuild_interval",
+				"published_at", staleness.PublishedAt,
+				"remaining", remaining.String(),
+				"reason", staleness.Reason)
+			if refresher := daemonCacheRefresher; refresher != nil {
+				refresher.RequestAfter(remaining, "startup")
+			}
+			automaticBuild = false
+		}
+	}
+	shouldBuild := intent != startupCacheBuildIntentNone || automaticBuild
+	var automaticBuildErr error
 	if shouldBuild {
 		// Build the cache before serving rather than starting on live-SQL
 		// fallback: incremental rebuilds take seconds, and startup progress
@@ -1212,6 +1272,15 @@ func openDaemonAnalyticsEngine(
 		} else {
 			buildErr = buildCacheSubprocessForRun(ctx, staleness.FullRebuild)
 		}
+		if err := ctx.Err(); err != nil {
+			if intent != startupCacheBuildIntentNone {
+				outcome = startupCacheBuildOutcomeFailed
+				if engineMode == config.AnalyticsEngineDuckDB {
+					outcome = startupCacheBuildOutcomeFatal
+				}
+			}
+			return nil, "", outcome, err
+		}
 		if buildErr != nil {
 			if intent != startupCacheBuildIntentNone {
 				outcome = startupCacheBuildOutcomeFailed
@@ -1221,25 +1290,43 @@ func openDaemonAnalyticsEngine(
 				"reason", reason,
 				"full_rebuild", fullBuild,
 				"error", buildErr)
-			if engineMode == config.AnalyticsEngineDuckDB {
-				if intent != startupCacheBuildIntentNone {
-					outcome = startupCacheBuildOutcomeFatal
-				}
-				return nil, "", outcome, fmt.Errorf("build analytics cache: %w", buildErr)
-			}
 			if intent != startupCacheBuildIntentNone {
+				if engineMode == config.AnalyticsEngineDuckDB {
+					outcome = startupCacheBuildOutcomeFatal
+					return nil, "", outcome, fmt.Errorf("build analytics cache: %w", buildErr)
+				}
 				return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback, outcome, nil
 			}
+			// A usable publication can still be served below, including a
+			// partial snapshot awaiting a full repair.
+			automaticBuildErr = buildErr
 		} else {
 			logger.Info("daemon startup step complete",
 				"step", "build_analytics_cache",
 				"reason", reason,
 				"full_rebuild", fullBuild)
 		}
-		staleness = cacheNeedsBuild(dbPath, analyticsDir)
+		staleness = cacheNeedsBuildContext(ctx, dbPath, analyticsDir)
+		if err := ctx.Err(); err != nil {
+			if intent != startupCacheBuildIntentNone {
+				outcome = startupCacheBuildOutcomeFailed
+				if engineMode == config.AnalyticsEngineDuckDB {
+					outcome = startupCacheBuildOutcomeFatal
+				}
+			}
+			return nil, "", outcome, err
+		}
 	}
 
-	if !staleness.NeedsBuild {
+	// A stale but usable publication is still served while automatic refresh
+	// is on (the post-sync path throttles rebuilds the same way at runtime),
+	// and always for engine="duckdb", which never falls back to live SQL.
+	servesStale := staleness.HasUsablePublication &&
+		(c.Analytics.AutoBuildCache || engineMode == config.AnalyticsEngineDuckDB)
+	if !staleness.NeedsBuild || servesStale {
+		if err := ctx.Err(); err != nil {
+			return nil, "", outcome, err
+		}
 		duckEngine, err := openDaemonDuckDBEngineForRun(c, s)
 		if err != nil {
 			if intent != startupCacheBuildIntentNone {
@@ -1268,12 +1355,18 @@ func openDaemonAnalyticsEngine(
 		return duckEngine, api.AnalyticsModeDuckDB, outcome, nil
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, "", outcome, err
+	}
 	if intent != startupCacheBuildIntentNone {
 		outcome = startupCacheBuildOutcomeFailed
 	}
 	if engineMode == config.AnalyticsEngineDuckDB {
 		if intent != startupCacheBuildIntentNone {
 			outcome = startupCacheBuildOutcomeFatal
+		}
+		if automaticBuildErr != nil {
+			return nil, "", outcome, fmt.Errorf("build analytics cache: %w", automaticBuildErr)
 		}
 		reason := staleness.Reason
 		if reason == "" {
@@ -2247,6 +2340,12 @@ func (a *storeAPIAdapter) BackupDatabase(dst string) error {
 
 func (a *storeAPIAdapter) BackupDatabaseContext(ctx context.Context, dst string) error {
 	return a.store.BackupDatabaseContext(ctx, dst)
+}
+
+// CountMessagesBySourceContext counts every source's messages in one pass
+// for account listings.
+func (a *storeAPIAdapter) CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error) {
+	return a.store.CountMessagesBySourceContext(ctx)
 }
 
 func (a *storeAPIAdapter) CountMessagesForSource(sourceID int64) (int64, error) {
@@ -3517,6 +3616,9 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	if len(srcs) == 0 {
 		startTime := time.Now()
 		summary, syncErr := runScheduledGmailSync(ctx, identifier, nil, s, getOAuthMgr)
+		if scheduledSyncYielded(ctx) {
+			return scheduledSyncYieldResult(ctx, syncErr)
+		}
 		if syncErr == nil {
 			logger.Info("sync completed",
 				"identifier", identifier,
@@ -3556,6 +3658,12 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 		default:
 			err = fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler", identifier, sourceType)
 		}
+		if scheduledSyncYielded(ctx) {
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s (%s): %w", identifier, sourceType, err))
+			}
+			return scheduledSyncYieldResult(ctx, errs...)
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s (%s): %w", identifier, sourceType, err))
 			continue
@@ -3582,6 +3690,17 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 		errs = append(errs, err)
 	}
 
+	return errors.Join(errs...)
+}
+
+func scheduledSyncYielded(ctx context.Context) bool {
+	return jobctx.YieldedToWaiter(ctx) || jobctx.PreemptionRequested(ctx)
+}
+
+func scheduledSyncYieldResult(ctx context.Context, errs ...error) error {
+	if jobctx.YieldedToWaiter(ctx) {
+		errs = append(errs, scheduler.ErrYieldedToWaiter)
+	}
 	return errors.Join(errs...)
 }
 
@@ -3651,6 +3770,27 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 		}
 	}
 	return result, nil
+}
+
+// scheduledSyncPreemptible disables scheduler-job preemption when an account
+// dispatch includes a full IMAP pass, whose offset-based paging cannot resume
+// after the syncer stops. An unavailable source lookup also takes the safe
+// path and lets the current pass finish.
+func scheduledSyncPreemptible(s *store.Store, identifier string) bool {
+	sources, err := findScheduledSyncSources(s, identifier)
+	if err != nil {
+		logger.Warn("could not determine scheduled sync preemption safety; allowing current pass to finish",
+			"identifier", identifier,
+			"error", err,
+		)
+		return false
+	}
+	for _, source := range sources {
+		if source.SourceType == sourceTypeIMAP {
+			return false
+		}
+	}
+	return true
 }
 
 // runScheduledGmailSync runs an incremental Gmail sync for the daemon.

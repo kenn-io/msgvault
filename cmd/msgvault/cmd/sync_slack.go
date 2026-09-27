@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -222,33 +225,94 @@ func runConfiguredSlackSync(ctx context.Context, s *store.Store) error {
 	if err != nil {
 		return err
 	}
-	var errs []error
-	attempted := 0
-	for _, src := range sources {
-		if ctx.Err() != nil {
+	return runScheduledSlackAttempts(ctx, sources, scheduledSlackRotation,
+		func(src *store.Source) (bool, error) {
+			teamID, userID, ok := splitSlackIdentifier(src.Identifier)
+			if !ok {
+				return false, fmt.Errorf("slack %s: malformed identifier", src.Identifier)
+			}
+			token, terr := slack.LoadToken(cfg.TokensDir(), teamID, userID)
+			if terr != nil {
+				return false, fmt.Errorf("slack %s: %w", teamID, terr)
+			}
+			imp := slack.NewImporter(s, slack.NewClient("", token), teamID)
+			if _, serr := imp.Import(ctx, slackImportOptions(teamID, userID)); serr != nil {
+				return true, fmt.Errorf("slack %s: %w", teamID, serr)
+			}
+			return true, nil
+		}, func() error {
+			// Rebuild analytics after any import attempt: even a failed or
+			// canceled attempt may have committed messages from healthy channels.
+			return rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "slack")
+		})
+}
+
+// scheduledSlackRotation remembers where a preempted scheduled sync stopped,
+// so one long-running workspace cannot starve workspaces later in store order.
+var scheduledSlackRotation = &slackWorkspaceRotation{}
+
+type slackWorkspaceRotation struct {
+	mu   sync.Mutex
+	next string
+}
+
+func (r *slackWorkspaceRotation) order(sources []*store.Source) []*store.Source {
+	r.mu.Lock()
+	next := r.next
+	r.mu.Unlock()
+	start := -1
+	for idx, src := range sources {
+		if src.Identifier == next {
+			start = idx
 			break
 		}
-		teamID, userID, ok := splitSlackIdentifier(src.Identifier)
-		if !ok {
-			errs = append(errs, fmt.Errorf("slack %s: malformed identifier", src.Identifier))
-			continue
+	}
+	if start <= 0 {
+		return slices.Clone(sources)
+	}
+	return append(slices.Clone(sources[start:]), sources[:start]...)
+}
+
+func (r *slackWorkspaceRotation) resumeAt(identifier string) {
+	r.mu.Lock()
+	r.next = identifier
+	r.mu.Unlock()
+}
+
+// runScheduledSlackAttempts isolates workspace failures, rebuilds analytics
+// after import attempts, and resumes after the workspace interrupted by a
+// scheduler yield. A cooperative preemption request also ends the current run
+// after the current workspace has had a chance to checkpoint.
+func runScheduledSlackAttempts(
+	ctx context.Context,
+	sources []*store.Source,
+	rotation *slackWorkspaceRotation,
+	attempt func(*store.Source) (bool, error),
+	rebuild func() error,
+) error {
+	var errs []error
+	attempted := false
+	resumeAt := ""
+	ordered := rotation.order(sources)
+	for idx, src := range ordered {
+		if ctx.Err() != nil || jobctx.PreemptionRequested(ctx) {
+			resumeAt = src.Identifier
+			break
 		}
-		token, terr := slack.LoadToken(cfg.TokensDir(), teamID, userID)
-		if terr != nil {
-			errs = append(errs, fmt.Errorf("slack %s: %w", teamID, terr))
-			continue
+		started, err := attempt(src)
+		attempted = attempted || started
+		if err != nil {
+			errs = append(errs, err)
 		}
-		attempted++
-		imp := slack.NewImporter(s, slack.NewClient("", token), teamID)
-		if _, serr := imp.Import(ctx, slackImportOptions(teamID, userID)); serr != nil {
-			errs = append(errs, fmt.Errorf("slack %s: %w", teamID, serr))
+		if ctx.Err() != nil || jobctx.PreemptionRequested(ctx) {
+			resumeAt = ordered[(idx+1)%len(ordered)].Identifier
+			break
 		}
 	}
-	// Rebuild analytics after any attempt: even a failed or canceled attempt
-	// may have committed messages from healthy conversations.
-	if attempted > 0 {
-		if rerr := rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "slack"); rerr != nil {
-			errs = append(errs, rerr)
+	rotation.resumeAt(resumeAt)
+	if attempted {
+		if err := rebuild(); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	if ctx.Err() != nil {

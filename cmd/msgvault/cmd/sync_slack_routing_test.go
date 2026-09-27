@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -86,6 +87,38 @@ func TestRunConfiguredSlackSyncIsolatesBrokenWorkspaces(t *testing.T) {
 	err = runConfiguredSlackSync(context.Background(), st)
 	require.ErrorContains(err, "malformed identifier")
 	require.ErrorContains(err, "no Slack token for UME in workspace T09")
+}
+
+func TestScheduledSlackAttemptsResumeAfterInterruptedWorkspace(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	for _, identifier := range []string{"T01:U01", "T02:U02", "T03:U03"} {
+		_, err := st.GetOrCreateSource(sourceTypeSlack, identifier)
+		require.NoError(err)
+	}
+	sources, err := resolveSlackSyncSources(st, "")
+	require.NoError(err)
+	rotation := &slackWorkspaceRotation{}
+	ctx, cancel := context.WithCancel(context.Background())
+	var first []string
+	err = runScheduledSlackAttempts(ctx, sources, rotation, func(src *store.Source) (bool, error) {
+		first = append(first, src.Identifier)
+		cancel() // the scheduler's hard yield interrupted this workspace
+		return true, context.Canceled
+	}, func() error { return nil })
+	require.ErrorIs(err, context.Canceled)
+	assert.Equal([]string{sources[0].Identifier}, first)
+
+	var resumed []string
+	err = runScheduledSlackAttempts(context.Background(), sources, rotation,
+		func(src *store.Source) (bool, error) {
+			resumed = append(resumed, src.Identifier)
+			return true, nil
+		}, func() error { return nil })
+	require.NoError(err)
+	assert.Equal(append(append([]string{}, sources[1].Identifier, sources[2].Identifier), sources[0].Identifier), resumed,
+		"the next scheduler run resumes after the interrupted workspace")
 }
 
 func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {

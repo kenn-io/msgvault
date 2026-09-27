@@ -2,10 +2,7 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
-	"strconv"
 )
 
 const derivedDataRevisionKey = "derived_data_revision"
@@ -15,21 +12,12 @@ const derivedDataRevisionKey = "derived_data_revision"
 // message and attachment Parquet; a mismatch requires a full rebuild because
 // incremental publication cannot rewrite already-exported rows.
 func (s *Store) DerivedDataRevision() (int64, error) {
-	var value string
-	err := s.db.QueryRow(
-		`SELECT value FROM archive_metadata WHERE key = ?`, derivedDataRevisionKey,
-	).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, fmt.Errorf("read derived-data revision: %w", err)
-	}
-	revision, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse derived-data revision %q: %w", value, err)
-	}
-	return revision, nil
+	return s.DerivedDataRevisionContext(context.Background())
+}
+
+// DerivedDataRevisionContext is the request-aware form of DerivedDataRevision.
+func (s *Store) DerivedDataRevisionContext(ctx context.Context) (int64, error) {
+	return readArchiveMetadataRevisionContext(ctx, s.db, derivedDataRevisionKey, "derived-data")
 }
 
 func (s *Store) bumpDerivedDataRevision(tx *loggedTx) error {

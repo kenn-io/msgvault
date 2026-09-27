@@ -875,6 +875,77 @@ func TestImportPicksUpHistoryBackfilledAfterChatCompleted(t *testing.T) {
 	assert.Equal("ancient one", text)
 }
 
+func TestTailScanVisitsChatsCompletedInInterruptedDiscoveryCycle(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	base := time.Now().Add(-60 * 24 * time.Hour).UTC().Truncate(time.Second)
+	recent := time.Now().Add(-30 * time.Minute).UTC().Truncate(time.Second)
+	f := newFakeBeeper(t)
+	visitedID := "!visited:beeper.local"
+	otherID := "!other:beeper.local"
+	visited := budgetTestChat(visitedID, 2, base)
+	visited.LastActivity = recent
+	other := budgetTestChat(otherID, 2, base.Add(time.Hour))
+	other.LastActivity = recent.Add(time.Minute)
+	f.addChat(visited)
+	f.addChat(other)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	src, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
+	require.NoError(err)
+	loadState := func() (*store.SyncRun, *SyncState) {
+		run, runErr := st.GetLastSuccessfulSync(src.ID)
+		require.NoError(runErr)
+		state, stateErr := LoadSyncState(run.CursorAfter.String)
+		require.NoError(stateErr)
+		return run, state
+	}
+	saveState := func(runID int64, state *SyncState) {
+		blob, marshalErr := state.Marshal()
+		require.NoError(marshalErr)
+		_, updateErr := st.DB().Exec(st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, runID)
+		require.NoError(updateErr)
+	}
+
+	// Stop a normal discovery cycle after the first chat. This leaves its
+	// Visited checkpoint for the next run while the daily tail scan is not due.
+	completed := 0
+	sum, err := imp.Import(context.Background(), ImportOptions{
+		AccountID:  "signal",
+		ShouldStop: func() bool { return completed >= 1 },
+		Progress:   func(string) { completed++ },
+	})
+	require.NoError(err)
+	require.True(sum.Stopped)
+	run, state := loadState()
+	require.True(state.Chats[visitedID].Visited)
+	require.Empty(state.TailScanStarted)
+
+	// Advance the tail-scan clock and add old history to the visited chat.
+	// The next run must probe it even though the interrupted discovery cycle
+	// already completed its ordinary incremental work.
+	state.LastTailScan = formatWatermark(time.Now().Add(-25 * time.Hour))
+	saveState(run.ID, state)
+	f.prependMsgs(visitedID, fakeMsg{
+		ID: "late-history", SortKey: -1, Timestamp: base.Add(-time.Hour), Text: "backfilled after interruption",
+		SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+	})
+
+	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	var archived int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE message_type = 'beeper' AND source_message_id = ?`,
+	), "late-history").Scan(&archived))
+	assert.Equal(1, archived, "a due tail scan must still probe chats marked visited by an interrupted discovery cycle")
+}
+
 func TestImportTailOnlyCursorlessChatStillChecksForBackfill(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1161,6 +1232,63 @@ func TestImportTailScanThrottled(t *testing.T) {
 	assert.Zero(sum.ChatsReopened, "a scan within the interval must not re-probe completed chats")
 }
 
+func TestImportResumesActiveTailScanWithinThrottleInterval(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	oldInterval := tailScanInterval
+	tailScanInterval = 24 * time.Hour
+	t.Cleanup(func() { tailScanInterval = oldInterval })
+
+	base := time.Now().Add(-60 * 24 * time.Hour).UTC().Truncate(time.Second)
+	recent := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	quietID := "!quiet-active-tail:beeper.local"
+	f := newFakeBeeper(t)
+	f.addChat(&fakeChat{
+		ID: quietID, AccountID: "signal", Network: "Signal", Title: "Quiet", Type: "single",
+		LastActivity: base,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{{
+			ID: "quiet-tail-message", SortKey: 1, Timestamp: base, Text: "quiet history",
+			SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		}},
+	})
+	f.addChat(&fakeChat{
+		ID: "!active-tail:beeper.local", AccountID: "signal", Network: "Signal", Title: "Active", Type: "single",
+		LastActivity: recent,
+		Participants: []map[string]any{{"id": "@me:beeper.local", "isSelf": true}},
+		Msgs: []fakeMsg{{
+			ID: "active-tail-message", SortKey: 1, Timestamp: recent, Text: "recent activity",
+			SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		}},
+	})
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	src, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
+	require.NoError(err)
+	run, err := st.GetLastSuccessfulSync(src.ID)
+	require.NoError(err)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(err)
+	require.NotNil(state.Chats[quietID])
+	state.LastTailScan = formatWatermark(time.Now())
+	state.TailScanStarted = tailScanCycleID(time.Now().Add(time.Hour))
+	state.Chats[quietID].Visited = true
+	blob, err := state.Marshal()
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
+	require.NoError(err)
+
+	f.resetRequests()
+	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.True(slices.ContainsFunc(f.requests(), func(req string) bool {
+		return strings.Contains(req, "/v1/chats/"+quietID+"/messages") && strings.Contains(req, "direction=before")
+	}), "a persisted active tail scan must include quiet chats even when the last completed scan is recent")
+}
+
 func TestTailScanDue(t *testing.T) {
 	assert := assert.New(t)
 	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
@@ -1418,20 +1546,25 @@ func TestImportWatermarkHeldOnFetchError(t *testing.T) {
 	f.setMessageListFailure("!e2e:beeper.local", true)
 	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
 	require.ErrorContains(err, "partial Beeper sync")
+	var partial *PartialSyncError
+	require.ErrorAs(err, &partial, "fetch errors are reported as a typed partial result")
+	require.Positive(partial.FetchErrors)
 
-	// The failure is reported only after the healthy chat is processed and
-	// the resumable state is checkpointed. Monitoring sees a failed run while
-	// successful work from the same attempt remains archived.
+	// The failure is reported only after the healthy chat is processed. The
+	// run completes, so the failed-run watermark the analytics cache tracks
+	// does not move, while the error count keeps it visible.
 	var healthyCount int
 	require.NoError(st.DB().QueryRow(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = 'o1'`).Scan(&healthyCount))
 	require.Equal(1, healthyCount, "healthy chats must continue after another chat fails")
 	var status string
-	var cursorBefore sql.NullString
+	var errorsCount int
+	var cursorAfter sql.NullString
 	require.NoError(st.DB().QueryRow(`
-		SELECT status, cursor_before FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status, &cursorBefore))
-	require.Equal(store.SyncStatusFailed, status)
-	require.True(cursorBefore.Valid, "partial progress must remain checkpointed for retry")
+		SELECT status, errors_count, cursor_after FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status, &errorsCount, &cursorAfter))
+	require.Equal(store.SyncStatusCompleted, status)
+	require.Positive(errorsCount, "a partial run records its fetch errors")
+	require.True(cursorAfter.Valid, "partial progress is kept for the next run")
 
 	// Healed: the held-back watermark keeps the chat discoverable and the
 	// missed message is archived.

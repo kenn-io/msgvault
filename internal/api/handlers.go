@@ -74,7 +74,23 @@ type StatsResponse struct {
 	// "still initializing" from "not configured" instead of permanently
 	// omitting the visual tool after a transient 503.
 	VectorVisualStatus string `json:"vector_visual_status,omitempty"`
+	// Stale reports that the archive counts come from an earlier snapshot
+	// because a fresh count did not finish in time; AsOf says when that
+	// snapshot was taken.
+	Stale bool      `json:"stale,omitempty"`
+	AsOf  time.Time `json:"as_of,omitzero"`
+	// VectorStatsUnavailable reports that vector statistics did not answer
+	// within their deadline; vector_search is then partial or absent.
+	VectorStatsUnavailable bool `json:"vector_stats_unavailable,omitempty"`
 }
+
+// Stats latency bounds: how long a request waits for fresh archive counts
+// before serving the previous snapshot, and how long vector statistics may
+// take before the response omits them.
+const (
+	statsSnapshotWait  = 2 * time.Second
+	vectorStatsTimeout = 3 * time.Second
+)
 
 // APIMessage is an alias for store.APIMessage — single source of truth for
 // the message DTO shared between the store and API layers.
@@ -116,6 +132,12 @@ type SourceStatus struct {
 	Schedule              string         `json:"schedule,omitempty"`
 	NextSyncAt            *string        `json:"next_sync_at"`
 	SchedulerLastError    string         `json:"scheduler_last_error,omitempty"`
+	// SchedulerQueued reports a scheduled run waiting for another job to
+	// finish; SchedulerPending a follow-up run requested while one executes;
+	// SchedulerStartedAt when the executing run began.
+	SchedulerQueued    bool    `json:"scheduler_queued,omitempty"`
+	SchedulerPending   bool    `json:"scheduler_pending,omitempty"`
+	SchedulerStartedAt *string `json:"scheduler_started_at,omitempty"`
 }
 
 // SyncRunStatus represents the API-visible details for a sync run.
@@ -566,7 +588,9 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := s.getStats(r.Context())
+	stats, asOf, stale, err := s.statsSnapshots.get(
+		r.Context(), s.importContext, "", s.statsSnapshotWait, s.getStats,
+	)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -576,15 +600,21 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Vector stats are best-effort: log errors but still include
-	// whatever partial stats came back.
+	// Vector stats are best-effort and bounded: log errors but still
+	// include whatever partial stats came back.
 	_, backend, _ := s.vectorComponents()
-	vs, vsErr := vector.CollectStats(r.Context(), backend)
+	vectorCtx, cancelVector := context.WithTimeout(r.Context(), s.vectorStatsTimeout)
+	vs, vsErr := vector.CollectStats(vectorCtx, backend)
+	vectorTimedOut := errors.Is(vectorCtx.Err(), context.DeadlineExceeded)
+	cancelVector()
 	if vsErr != nil {
 		s.logger.Warn("vector stats", "error", vsErr)
 	}
 
 	resp := statsResponseFromStore(stats)
+	resp.Stale = stale
+	resp.AsOf = asOf
+	resp.VectorStatsUnavailable = vectorTimedOut
 	resp.VectorSearch = vs
 	s.refreshVectorStatus(r.Context())
 	if status, _ := s.VectorStatus(); status != VectorStatusDisabled {
@@ -1518,6 +1548,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 				if !scheduled.NextRun.IsZero() {
 					status.NextSyncAt = nullableTimePtr(scheduled.NextRun)
 				}
+				applySchedulerQueueState(&status, scheduled.Queued, scheduled.Pending, scheduled.StartedAt)
 				break
 			}
 		case sourceScheduleNonSchedulable:
@@ -1573,9 +1604,18 @@ func (s *Server) applyGenericJobStatus(status *SourceStatus, jobName string) boo
 		if !job.NextRun.IsZero() {
 			status.NextSyncAt = nullableTimePtr(job.NextRun)
 		}
+		applySchedulerQueueState(status, job.Queued, job.Pending, job.StartedAt)
 		return job.Running
 	}
 	return false
+}
+
+func applySchedulerQueueState(status *SourceStatus, queued, pending bool, startedAt time.Time) {
+	status.SchedulerQueued = queued
+	status.SchedulerPending = pending
+	if !startedAt.IsZero() {
+		status.SchedulerStartedAt = nullableTimePtr(startedAt)
+	}
 }
 
 func (s *Server) hydrateSyncRunStatus(ctx context.Context, statusStore SourceStatusStore, status *SyncRunStatus) error {

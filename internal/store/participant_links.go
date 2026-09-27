@@ -197,6 +197,11 @@ func (s *Store) IdentityRevision() (int64, error) {
 	return readIdentityRevision(s.db)
 }
 
+// IdentityRevisionContext is the request-aware form of IdentityRevision.
+func (s *Store) IdentityRevisionContext(ctx context.Context) (int64, error) {
+	return readArchiveMetadataRevisionContext(ctx, s.db, identityRevisionKey, "identity")
+}
+
 // currentIdentityRevisionTx reads the revision inside tx without bumping
 // it, for idempotent Link/Unlink calls that made no change.
 func (s *Store) currentIdentityRevisionTx(tx *loggedTx) (int64, error) {

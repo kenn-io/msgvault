@@ -1489,7 +1489,7 @@ func TestCLIRequestDurationPolicy(t *testing.T) {
 				handler := srv.timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 					select {
 					case <-time.After(40 * time.Millisecond):
-						handlerResult <- nil
+						handlerResult <- r.Context().Err()
 					case <-r.Context().Done():
 						handlerResult <- r.Context().Err()
 					}

@@ -453,6 +453,8 @@ func conversationParticipantsFingerprint(
 	db sqlExecutor,
 	path string,
 ) (string, error) {
+	// FingerprintConversationParticipants consumes these rows and checks rows.Err.
+	//nolint:rowserrcheck // the helper owns iteration and error checking
 	rows, err := db.QueryContext(ctx, `
 		SELECT conversation_id::BIGINT, participant_id::BIGINT
 		FROM read_parquet(?)
@@ -463,11 +465,7 @@ func conversationParticipantsFingerprint(
 	}
 	defer func() { _ = rows.Close() }()
 
-	fingerprint, err := FingerprintConversationParticipants(rows)
-	if rowsErr := rows.Err(); rowsErr != nil && err == nil {
-		return "", fmt.Errorf("iterate conversation participant fingerprint rows: %w", rowsErr)
-	}
-	return fingerprint, err
+	return FingerprintConversationParticipants(rows)
 }
 
 func collectCacheStats(

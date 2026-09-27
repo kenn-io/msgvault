@@ -36,6 +36,12 @@ func (s *Store) ParticipantIdentifierRevision() (int64, error) {
 	return revision, nil
 }
 
+// ParticipantIdentifierRevisionContext is the request-aware form of
+// ParticipantIdentifierRevision.
+func (s *Store) ParticipantIdentifierRevisionContext(ctx context.Context) (int64, error) {
+	return readArchiveMetadataRevisionContext(ctx, s.db, participantIdentifierRevisionKey, "participant identifier")
+}
+
 // bumpParticipantIdentifierRevision increments the participant-identifier
 // revision inside tx, seeding the row with 0 first if it does not exist yet,
 // following bumpAccountIdentityRevision's approach.

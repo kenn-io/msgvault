@@ -646,14 +646,26 @@ func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 	sentinel := errors.New("cache build sentinel")
 	tests := []struct {
-		name        string
-		publishedAt time.Time
-		buildErr    error
-		wantBuilds  int
+		name                string
+		publishedAt         time.Time
+		fullRebuildRequired bool
+		buildErr            error
+		wantBuilds          int
 	}{
 		{
 			name:        "recent publication suppresses build",
 			publishedAt: now.Add(-time.Hour),
+		},
+		{
+			name:                "recent partial publication suppresses build",
+			publishedAt:         now.Add(-time.Hour),
+			fullRebuildRequired: true,
+		},
+		{
+			name:                "elapsed partial publication permits repair",
+			publishedAt:         now.Add(-7 * time.Hour),
+			fullRebuildRequired: true,
+			wantBuilds:          1,
 		},
 		{
 			name:        "elapsed interval permits build",
@@ -686,6 +698,7 @@ func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
 			state, err := query.ReadCacheSyncState(analyticsDir)
 			requirements.NoError(err)
 			state.PublishedAt = tt.publishedAt
+			state.FullRebuildRequired = tt.fullRebuildRequired
 			stateData, err := json.Marshal(state)
 			requirements.NoError(err)
 			requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), stateData, 0o600))
@@ -1404,4 +1417,207 @@ func TestDerivedOnlyStaleSchemaRequiresAndCompletesFullRebuild(t *testing.T) {
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
 	requirements.NoError(err)
 	assertions.Equal(query.CacheReady, readiness)
+}
+
+// setupScheduledRefreshFixture publishes a usable cache marker at publishedAt
+// and adds one message after it, so the cache is stale.
+func setupScheduledRefreshFixture(t *testing.T, now, publishedAt time.Time) string {
+	t.Helper()
+	tmpDir := setupTestSQLiteEmpty(t)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+	writeSyncStateAt(t, analyticsDir, 0, now.Add(-24*time.Hour))
+	createFakeParquet(t, analyticsDir)
+	state, err := query.ReadCacheSyncState(analyticsDir)
+	require.NoError(t, err)
+	state.PublishedAt = publishedAt
+	stateData, err := json.Marshal(state)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), stateData, 0o600))
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (1, 1, 'new-message', ?)`, now)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	savedCfg := cfg
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir, DatabaseURL: dbPath},
+		Analytics: config.AnalyticsConfig{
+			AutoBuildCache:     true,
+			MinRebuildInterval: 6 * time.Hour,
+		},
+	}
+	t.Cleanup(func() { cfg = savedCfg })
+	oldNow := scheduledCacheBuildNow
+	scheduledCacheBuildNow = func() time.Time { return now }
+	t.Cleanup(func() { scheduledCacheBuildNow = oldNow })
+	return analyticsDir
+}
+
+func TestRebuildAfterSyncRunsThrottleCheckOffOperationGate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	analyticsDir := setupScheduledRefreshFixture(t, now, now.Add(-time.Hour))
+	buildLock, err := cacheBuilderFileLock(analyticsDir)
+	require.NoError(err)
+	require.NoError(buildLock.Lock(), "simulate a cache build in progress")
+	t.Cleanup(func() { _ = buildLock.Unlock() })
+
+	oldRunBuild := runScheduledBuildCacheSubprocess
+	runScheduledBuildCacheSubprocess = func(context.Context) error {
+		return errors.New("unexpected scheduled cache build")
+	}
+	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
+
+	checked := make(chan struct{}, 1)
+	var delays []time.Duration
+	refresher := newBackgroundCacheRefresher(context.Background(), nil, nil)
+	run := refresher.run
+	refresher.run = func(ctx context.Context, id string) error {
+		err := run(ctx, id)
+		checked <- struct{}{}
+		return err
+	}
+	refresher.afterFunc = func(d time.Duration, fn func()) *time.Timer {
+		delays = append(delays, d)
+		return time.AfterFunc(24*time.Hour, fn)
+	}
+	oldRefresher := daemonCacheRefresher
+	daemonCacheRefresher = refresher
+	t.Cleanup(func() {
+		require.NoError(shutdownBackgroundCacheRefresher(refresher))
+		daemonCacheRefresher = oldRefresher
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- rebuildCacheAfterScheduledSync(context.Background(), "test-source") }()
+	select {
+	case err := <-done:
+		require.NoError(err)
+	case <-time.After(10 * time.Second):
+		require.FailNow("post-sync check waited on the builder lock")
+	}
+	require.NoError(buildLock.Unlock())
+	select {
+	case <-checked:
+	case <-time.After(10 * time.Second):
+		require.FailNow("background readiness check did not run")
+	}
+	refresher.mu.Lock()
+	hasDelayedRequest := refresher.delayed != nil
+	refresher.mu.Unlock()
+	require.True(hasDelayedRequest, "a throttled authoritative check should retain one delayed retry")
+	assert.Equal([]time.Duration{5 * time.Hour}, delays,
+		"a throttled check schedules one refresh for when the interval ends")
+}
+
+func TestRebuildAfterSyncDoesNotThrottleDriftedPublication(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	analyticsDir := setupScheduledRefreshFixture(t, now, now.Add(-time.Hour))
+	// Keep a shard in every dataset while changing the committed file set.
+	// The old fast check saw only the marker and shard presence, so it could
+	// incorrectly throttle this damaged publication as recent.
+	for _, dataset := range query.RequiredParquetDirs {
+		require.NoError(os.WriteFile(filepath.Join(analyticsDir, dataset, "new-shard.parquet"), []byte("new shard"), 0o600))
+	}
+
+	builds := 0
+	oldRunBuild := runScheduledBuildCacheSubprocess
+	runScheduledBuildCacheSubprocess = func(context.Context) error {
+		builds++
+		return nil
+	}
+	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
+	oldRefresher := daemonCacheRefresher
+	daemonCacheRefresher = nil
+	t.Cleanup(func() { daemonCacheRefresher = oldRefresher })
+
+	require.NoError(rebuildCacheAfterScheduledSync(context.Background(), "test-source"))
+	assert.Equal(1, builds, "a changed shard set must bypass the interval throttle")
+}
+
+func TestRebuildAfterSyncSchedulesRetryWhenBuildIsSuperseded(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	analyticsDir := setupScheduledRefreshFixture(t, now, now.Add(-7*time.Hour))
+
+	oldRunBuild := runScheduledBuildCacheSubprocess
+	runScheduledBuildCacheSubprocess = func(context.Context) error {
+		// The child rechecks staleness under the builder lock and can defer
+		// inside the interval after a concurrent publisher advances the marker.
+		state, err := query.ReadCacheSyncState(analyticsDir)
+		require.NoError(err)
+		state.PublishedAt = now.Add(-time.Hour)
+		stateData, err := json.Marshal(state)
+		require.NoError(err)
+		require.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), stateData, 0o600))
+		return nil // the child deferred its rebuild because the publication is recent
+	}
+	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
+
+	var retryDelay time.Duration
+	var retryID string
+	require.NoError(rebuildCacheNow(context.Background(), "test-source", func(delay time.Duration, id string) {
+		retryDelay, retryID = delay, id
+	}))
+	assert.Equal(5*time.Hour, retryDelay,
+		"staleness left after the child skips must retry when the newer publication leaves its throttle window")
+	assert.Equal("test-source", retryID)
+}
+
+func TestRebuildAfterSyncHandsOffToRefresher(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	setupScheduledRefreshFixture(t, now, now.Add(-7*time.Hour))
+
+	oldRunBuild := runScheduledBuildCacheSubprocess
+	runScheduledBuildCacheSubprocess = func(context.Context) error {
+		return errors.New("post-sync path must not build inline")
+	}
+	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
+
+	requested := make(chan string, 1)
+	refresher := newBackgroundCacheRefresher(context.Background(), func(_ context.Context, id string) error {
+		requested <- id
+		return nil
+	}, nil)
+	oldRefresher := daemonCacheRefresher
+	daemonCacheRefresher = refresher
+	t.Cleanup(func() {
+		daemonCacheRefresher = oldRefresher
+		require.NoError(t, refresher.Shutdown(context.Background()))
+	})
+
+	require.NoError(t, rebuildCacheAfterScheduledSync(context.Background(), "test-source"))
+	select {
+	case id := <-requested:
+		assert.Equal(t, "test-source", id)
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "due rebuild was not handed to the refresher")
+	}
+}
+
+func TestCacheRefresherShutdownWhileWaitingForBuilderLock(t *testing.T) {
+	require := require.New(t)
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	analyticsDir := setupScheduledRefreshFixture(t, now, now.Add(-time.Hour))
+	buildLock, err := cacheBuilderFileLock(analyticsDir)
+	require.NoError(err)
+	require.NoError(buildLock.Lock())
+	refresher := newBackgroundCacheRefresher(context.Background(), nil, nil)
+	t.Cleanup(func() {
+		require.NoError(buildLock.Unlock())
+		require.NoError(refresher.Shutdown(context.Background()))
+	})
+
+	require.True(refresher.Request("sync"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	assert.NoError(t, refresher.Shutdown(ctx), "shutdown cancels a readiness check blocked behind another builder")
 }

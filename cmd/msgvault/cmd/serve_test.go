@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
 	imaplib "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/query"
@@ -1260,6 +1261,30 @@ func TestManualSyncRefreshQueuesOnlyWhenForcedInsideInterval(t *testing.T) {
 	}
 }
 
+func TestRunDaemonSQLQueryReturnsCancellationWhenCachePublicationIsLocked(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	engine := query.NewEngine(s.DB(), false)
+	defer func() { _ = engine.Close() }()
+
+	publicationLock, err := cacheBuildFileLock(c.AnalyticsDir())
+	require.NoError(err)
+	require.NoError(publicationLock.Lock())
+	t.Cleanup(func() { _ = publicationLock.Unlock() })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	jobs := newCacheBuildJobs(t.Context(), nil, func(context.Context, buildCacheMode) error {
+		return errors.New("canceled query must not start a rebuild")
+	})
+	_, accepted, err := runDaemonSQLQueryWithJobs(ctx, c, s, engine, "select 1", daemonSQLQueryOptions{}, jobs)
+
+	require.ErrorIs(err, context.Canceled)
+	assert.Nil(accepted)
+	assert.False(jobs.active(), "a canceled query must stop before starting a cache rebuild")
+}
+
 func TestOpenDaemonAnalyticsEngineForceSQLSkipsCacheBuild(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1302,6 +1327,31 @@ func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
 	assert.IsType(&query.SQLiteEngine{}, engine)
 	assert.Equal(api.AnalyticsModeSQLFallback, mode, "auto mode without a cache is a fallback")
 	assert.Equal(startupCacheBuildOutcomeNone, outcome, "no explicit intent has no outcome")
+}
+
+func TestOpenDaemonAnalyticsEngineReturnsCancellationWhenCacheBuilderIsLocked(t *testing.T) {
+	require := require.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = false
+
+	buildLock, err := cacheBuilderFileLock(c.AnalyticsDir())
+	require.NoError(err)
+	require.NoError(buildLock.Lock())
+	t.Cleanup(func() { _ = buildLock.Unlock() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	engine, _, _, err := openDaemonAnalyticsEngine(
+		ctx, c, s, startupCacheBuildIntentNone,
+	)
+	if engine != nil {
+		_ = engine.Close()
+	}
+
+	require.ErrorIs(err, context.Canceled)
+	require.Nil(engine, "canceled startup must not open an analytics engine")
 }
 
 func TestOpenDaemonAnalyticsEngineWarnsWhenDuckDBRefreshDisabled(t *testing.T) {
@@ -1437,6 +1487,158 @@ func TestOpenDaemonAnalyticsEngineAutoFallsBackWhenStartupBuildFails(t *testing.
 	assert.Equal(startupCacheBuildOutcomeNone, outcome, "automatic failures have no explicit outcome")
 	assert.Contains(logs.String(), `msg="daemon startup step failed"`)
 	assert.Contains(logs.String(), "step=build_analytics_cache")
+}
+
+// publishStaleTestCache builds a cache for the fixture archive, then adds a
+// message so the publication is usable but stale.
+func publishStaleTestCache(t *testing.T, c *config.Config, s *store.Store) {
+	t.Helper()
+	_, err := s.DB().Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+			VALUES (1, 1, 'thread1', 'email_thread', 'Hello');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet)
+			VALUES (1, 1, 1, 'msg1', 'email', '2024-01-15 10:00:00', 'Hello', 'Preview');
+	`)
+	require.NoError(t, err, "insert published data")
+	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(t, err, "publish cache")
+	_, err = s.DB().Exec(`
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet)
+			VALUES (2, 1, 1, 'msg2', 'email', '2024-01-16 10:00:00', 'Later', 'Arrived after publication');
+	`)
+	require.NoError(t, err, "insert unpublished message")
+}
+
+func TestOpenDaemonAnalyticsEngineDefersThrottledStartupBuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = true
+	c.Analytics.MinRebuildInterval = 6 * time.Hour
+	publishStaleTestCache(t, c, s)
+	var logs bytes.Buffer
+	oldLogger := logger
+	logger = slog.New(slog.NewTextHandler(&logs, nil))
+	t.Cleanup(func() { logger = oldLogger })
+	builds := 0
+	stubBuildCacheSubprocess(t, func(context.Context, bool) error {
+		builds++
+		return errors.New("startup must not build within the rebuild interval")
+	})
+
+	engine, mode, _, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentNone,
+	)
+	require.NoError(err)
+	defer func() { _ = engine.Close() }()
+
+	assert.Zero(builds, "a recent usable publication defers the startup build")
+	assert.Equal(api.AnalyticsModeDuckDB, mode, "the existing publication is served")
+	assert.Contains(logs.String(), "rebuild deferred by min_rebuild_interval")
+}
+
+func TestOpenDaemonAnalyticsEngineServesPartialPublication(t *testing.T) {
+	for _, mode := range []string{config.AnalyticsEngineAuto, config.AnalyticsEngineDuckDB} {
+		for _, interval := range []time.Duration{0, 6 * time.Hour} {
+			t.Run(fmt.Sprintf("%s/%s", mode, interval), func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				c, s := openTestDaemonAnalyticsStore(t)
+				c.Analytics.Engine = mode
+				c.Analytics.AutoBuildCache = true
+				c.Analytics.MinRebuildInterval = interval
+				publishStaleTestCache(t, c, s)
+				state, err := query.ReadCacheSyncState(c.AnalyticsDir())
+				require.NoError(err)
+				state.FullRebuildRequired = true
+				stateData, err := json.Marshal(state)
+				require.NoError(err)
+				require.NoError(os.WriteFile(query.CacheStatePath(c.AnalyticsDir()), stateData, 0o600))
+
+				builds := 0
+				stubBuildCacheSubprocess(t, func(_ context.Context, full bool) error {
+					builds++
+					assert.True(full, "the next build repairs the partial snapshot in full")
+					return errors.New("simulated repair failure")
+				})
+				engine, gotMode, _, err := openDaemonAnalyticsEngine(
+					context.Background(), c, s, startupCacheBuildIntentNone,
+				)
+				require.NoError(err, "a usable partial publication keeps startup available")
+				defer func() { _ = engine.Close() }()
+				assert.Equal(api.AnalyticsModeDuckDB, gotMode)
+				stats, err := engine.GetTotalStats(context.Background(), query.StatsOptions{})
+				require.NoError(err)
+				assert.Equal(int64(1), stats.MessageCount, "analytics still query the published snapshot")
+				if interval > 0 {
+					assert.Zero(builds, "a recent partial publication honors the rebuild interval")
+				} else {
+					assert.Equal(1, builds, "a due publication still attempts its full repair")
+				}
+			})
+		}
+	}
+}
+
+func TestOpenDaemonAnalyticsEngineServesUsablePublicationWhenStartupBuildFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = true
+	publishStaleTestCache(t, c, s)
+	builds := 0
+	stubBuildCacheSubprocess(t, func(context.Context, bool) error {
+		builds++
+		return errors.New("simulated build failure")
+	})
+
+	engine, mode, _, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentNone,
+	)
+	require.NoError(err)
+	defer func() { _ = engine.Close() }()
+
+	assert.Equal(1, builds, "without a rebuild interval the startup build runs")
+	assert.Equal(api.AnalyticsModeDuckDB, mode,
+		"a failed build keeps serving the last usable publication, not live SQL")
+}
+
+func TestOpenDaemonAnalyticsEngineDuckDBServesUsablePublicationWhenStartupBuildFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineDuckDB
+	c.Analytics.AutoBuildCache = true
+	publishStaleTestCache(t, c, s)
+	stubBuildCacheSubprocess(t, func(context.Context, bool) error {
+		return errors.New("simulated build failure")
+	})
+
+	engine, mode, _, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentNone,
+	)
+	require.NoError(err, "a usable publication keeps engine=duckdb startable after a failed build")
+	defer func() { _ = engine.Close() }()
+	assert.Equal(api.AnalyticsModeDuckDB, mode)
+}
+
+func TestOpenDaemonAnalyticsEngineDuckDBServesStalePublicationWithoutAutoBuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineDuckDB
+	c.Analytics.AutoBuildCache = false
+	publishStaleTestCache(t, c, s)
+
+	engine, mode, _, err := openDaemonAnalyticsEngine(
+		context.Background(), c, s, startupCacheBuildIntentNone,
+	)
+	require.NoError(err, "engine=duckdb serves a usable publication even when stale")
+	defer func() { _ = engine.Close() }()
+	assert.Equal(api.AnalyticsModeDuckDB, mode)
 }
 
 func TestOpenDaemonAnalyticsEngineDuckDBRequiresCacheBuild(t *testing.T) {
@@ -2829,6 +3031,109 @@ func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) 
 	assert.Equal(1, rebuilds)
 }
 
+func TestRunScheduledSyncStopsAfterYield(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t)
+	source, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+	require.NoError(err)
+
+	originalImport := importDiscordSourceForScheduledRun
+	originalRebuild := rebuildCacheAfterScheduledSourceRun
+	t.Cleanup(func() {
+		importDiscordSourceForScheduledRun = originalImport
+		rebuildCacheAfterScheduledSourceRun = originalRebuild
+	})
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(scheduler.ErrYieldedToWaiter)
+	imports, rebuilds := 0, 0
+	importDiscordSourceForScheduledRun = func(ctx context.Context, _ *store.Store, _ *store.Source,
+		_ discordCommandDeps, _ bool, _ time.Time, _ func(string),
+	) (*discord.ImportSummary, error) {
+		imports++
+		return nil, ctx.Err()
+	}
+	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error {
+		rebuilds++
+		return nil
+	}
+
+	err = runScheduledSync(ctx, source.Identifier, st.Store, func(string) (*oauth.Manager, error) {
+		return nil, errors.New("unexpected Gmail OAuth resolution")
+	})
+	require.ErrorIs(err, scheduler.ErrYieldedToWaiter)
+	assert.Equal(1, imports)
+	assert.Zero(rebuilds, "a yielded run releases the gate before cache rebuilding")
+}
+
+func TestScheduledSyncYieldResultPreservesCollectedErrors(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(scheduler.ErrYieldedToWaiter)
+
+	sourceErr := errors.New("synthetic earlier source failure")
+	err := scheduledSyncYieldResult(ctx, sourceErr)
+
+	require.ErrorIs(t, err, sourceErr)
+	require.ErrorIs(t, err, scheduler.ErrYieldedToWaiter)
+}
+
+func TestRunScheduledSyncCooperativePreemptionPreservesSourceResult(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		sourceErr error
+	}{
+		{name: "successful source"},
+		{name: "source error", sourceErr: errors.New("synthetic Discord import failure")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := storetest.New(t)
+			source, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+			require.NoError(err)
+
+			originalImport := importDiscordSourceForScheduledRun
+			originalRebuild := rebuildCacheAfterScheduledSourceRun
+			t.Cleanup(func() {
+				importDiscordSourceForScheduledRun = originalImport
+				rebuildCacheAfterScheduledSourceRun = originalRebuild
+			})
+			importDiscordSourceForScheduledRun = func(
+				context.Context, *store.Store, *store.Source,
+				discordCommandDeps, bool, time.Time, func(string),
+			) (*discord.ImportSummary, error) {
+				return &discord.ImportSummary{}, tt.sourceErr
+			}
+			rebuilds := 0
+			rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error {
+				rebuilds++
+				return nil
+			}
+
+			ctx, requestPreemption := jobctx.WithPreemption(context.Background())
+			requestPreemption()
+			err = runScheduledSync(ctx, source.Identifier, st.Store, func(string) (*oauth.Manager, error) {
+				require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
+				return nil, errors.New("unreachable Gmail OAuth resolution")
+			})
+
+			if tt.sourceErr == nil {
+				require.NoError(err, "successful cooperative yield is not a callback error")
+			} else {
+				require.ErrorIs(err, tt.sourceErr, "cooperative yield preserves the source error")
+			}
+			assert.Zero(rebuilds, "a cooperative yield releases the gate before cache rebuilding")
+		})
+	}
+}
+
+func TestScheduledSyncYieldedForCooperativePreemption(t *testing.T) {
+	ctx, requestPreemption := jobctx.WithPreemption(context.Background())
+	requestPreemption()
+	require.True(t, scheduledSyncYielded(ctx))
+}
+
 func TestRunScheduledSyncLogsDiscordImportIssues(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -2883,6 +3188,20 @@ func TestRunScheduledSyncLogsDiscordImportIssues(t *testing.T) {
 	assert.Contains(output, "kind=unknown_channel")
 	assert.Contains(output, "status_code=404")
 	assert.NotContains(output, "private-response-secret")
+}
+
+func TestScheduledSyncPreemptibleRequiresResumableSources(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t)
+	gmail, err := st.Store.GetOrCreateSource(sourceTypeGmail, "reader@example.test")
+	require.NoError(err)
+	imap, err := st.Store.GetOrCreateSource(sourceTypeIMAP, "imaps://reader@example.test:993")
+	require.NoError(err)
+
+	assert.True(scheduledSyncPreemptible(st.Store, gmail.Identifier))
+	assert.False(scheduledSyncPreemptible(st.Store, imap.Identifier), "IMAP uses a full pass with non-resumable offsets")
+	assert.True(scheduledSyncPreemptible(st.Store, "new-reader@example.test"), "missing source rows use the resumable Gmail fallback")
 }
 
 func TestScheduledDiscordGuildFailureDoesNotBlockLaterGuild(t *testing.T) {
