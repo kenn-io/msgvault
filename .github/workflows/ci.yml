@@ -12,6 +12,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      runner_cpus:
+        description: Namespace runner CPUs for comparison
+        type: choice
+        options: ['4', '8']
+        default: '4'
   schedule:
     - cron: '23 8 * * 1'
 jobs:
@@ -21,12 +27,12 @@ jobs:
       matrix:
         include:
           - goarch: amd64
-            runner: ubuntu-latest
+            runner: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
             go_arch_name: amd64
           - goarch: arm64
-            runner: ubuntu-24.04-arm
+            runner: nscloud-ubuntu-24.04-arm64-4x8
             go_arch_name: arm64
-    runs-on: ${{ contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.runner) && github.repository == 'kenn-io/msgvault' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || matrix.runner }}
+    runs-on: ${{ matrix.runner }}
     container:
       image: ubuntu:22.04
     steps:
@@ -76,18 +82,23 @@ jobs:
           echo "$SMOKE_OUT"
           echo "$SMOKE_OUT" | grep -q "$VERSION" || { echo "FATAL: version output doesn't match CI build version"; exit 1; }
 
-  # Hosted Ubuntu, like the PostgreSQL lanes: on the managed Linux runners the
-  # unsharded packages alone take over 30 minutes and the largest packages
-  # hit go test's one-hour timeout, while hosted runners finish in minutes.
   test:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Install SQLite development headers
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Configure Namespace Go cache
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1
+        with:
+          cache: go
 
       - name: Check PostgreSQL build coverage
         run: make pg-shipped-only-check
@@ -134,34 +145,47 @@ jobs:
             package: ./internal/store
           - name: api
             package: ./internal/api
-    runs-on: ubuntu-24.04
+    runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Install SQLite development headers
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Configure Namespace Go cache
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1
+        with:
+          cache: go
 
       - name: Test package in isolated shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m
 
   test-macos-15:
-    if: github.repository == 'kenn-io/msgvault' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: macos-15
+    if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    runs-on: namespace-profile-mac-6cpu
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Configure Namespace Go cache
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1
+        with:
+          cache: go
 
       - name: Test
         run: make test
 
   frontend:
-    runs-on: ${{ github.repository == 'kenn-io/msgvault' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-24.04' }}
+    runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     container:
       image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
     steps:
@@ -192,7 +216,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: ${{ github.repository == 'kenn-io/msgvault' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
+          cache: 'true'
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -224,7 +248,7 @@ jobs:
           if-no-files-found: ignore
 
   web-e2e:
-    runs-on: ${{ github.repository == 'kenn-io/msgvault' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-24.04' }}
+    runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     container:
       image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
     steps:
@@ -233,7 +257,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: ${{ github.repository == 'kenn-io/msgvault' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
+          cache: 'true'
 
       - name: Install container build tools
         # Mirror hiccups have hung plain apt-get for 15+ minutes; bounded
@@ -283,14 +307,19 @@ jobs:
 
   large-archive-benchmark:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: macos-15
+    runs-on: namespace-profile-mac-6cpu
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Configure Namespace Go cache
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1
+        with:
+          cache: go
 
       - name: Run mixed-archive analytical reference benchmark
         run: |
@@ -306,18 +335,23 @@ jobs:
           if-no-files-found: error
 
   test-windows:
-    runs-on: windows-latest
+    runs-on: ${{ format('namespace-profile-windows-{0}cpu', inputs.runner_cpus || '4') }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Configure Namespace Go cache
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1
+        with:
+          cache: go
 
       # sqlite-vec's CGo bindings #include <sqlite3.h>, which isn't on
-      # the default windows-latest include path. Install it from MSYS2
-      # (already present on the runner) and point CGO_CFLAGS at it.
+      # the default include path. Install it with MinGW through MSYS2
+      # and point CGO_CFLAGS at it.
       #
       # arrow-go/v18's cdata helpers.h declares its helpers as plain
       # `inline` (not `static inline`). Under C99 that requires exactly
@@ -326,10 +360,18 @@ jobs:
       # external copy, and --allow-multiple-definition lets MinGW's ld
       # pick the first and continue instead of erroring on the
       # duplicates that flag produces.
-      - name: Install sqlite3 dev headers
+      - name: Install MinGW and SQLite development headers
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          location: C:\
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
+          path-type: inherit
+
+      - name: Add MinGW to PATH
         shell: pwsh
-        run: |
-          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
+        run: '"C:\msys64\mingw64\bin" >> $env:GITHUB_PATH'
 
       - name: Build
         shell: pwsh
@@ -339,7 +381,7 @@ jobs:
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: go build -tags "fts5 sqlite_vec" -o msgvault.exe ./cmd/msgvault
 
-      # windows-latest has no make, so this mirrors `make custom-gcl` directly.
+      # Run the same custom linter as `make custom-gcl` from PowerShell.
       - name: Lint
         shell: pwsh
         env:
@@ -381,19 +423,32 @@ jobs:
           path: msgvault.exe
 
   test-windows-slow-packages:
-    runs-on: windows-latest
+    runs-on: ${{ format('namespace-profile-windows-{0}cpu', inputs.runner_cpus || '4') }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
 
-      - name: Install sqlite3 dev headers
+      - name: Configure Namespace Go cache
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1
+        with:
+          cache: go
+
+      - name: Install MinGW and SQLite development headers
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          location: C:\
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
+          path-type: inherit
+
+      - name: Add MinGW to PATH
         shell: pwsh
-        run: |
-          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
+        run: '"C:\msys64\mingw64\bin" >> $env:GITHUB_PATH'
 
       - name: Test slow packages
         shell: pwsh
@@ -431,19 +486,32 @@ jobs:
           - name: vector-sqlite
             package: ./internal/vector/sqlitevec
             timeout: 60m
-    runs-on: windows-latest
+    runs-on: ${{ format('namespace-profile-windows-{0}cpu', inputs.runner_cpus || '4') }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
 
-      - name: Install sqlite3 dev headers
+      - name: Configure Namespace Go cache
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1
+        with:
+          cache: go
+
+      - name: Install MinGW and SQLite development headers
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          location: C:\
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
+          path-type: inherit
+
+      - name: Add MinGW to PATH
         shell: pwsh
-        run: |
-          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
+        run: '"C:\msys64\mingw64\bin" >> $env:GITHUB_PATH'
 
       - name: Test package in isolated shards
         shell: pwsh
@@ -464,7 +532,7 @@ jobs:
           }
 
   test-windows-pack-restore:
-    runs-on: windows-latest
+    runs-on: ${{ format('namespace-profile-windows-{0}cpu', inputs.runner_cpus || '4') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -472,12 +540,25 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
 
-      - name: Install sqlite3 dev headers
+      - name: Configure Namespace Go cache
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1
+        with:
+          cache: go
+
+      - name: Install MinGW and SQLite development headers
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          location: C:\
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3
+          path-type: inherit
+
+      - name: Add MinGW to PATH
         shell: pwsh
-        run: |
-          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
+        run: '"C:\msys64\mingw64\bin" >> $env:GITHUB_PATH'
 
       - name: Measure packed and loose restore layouts
         shell: pwsh
@@ -504,7 +585,7 @@ jobs:
   # tag is required; without it these files compile out and ship no tests,
   # so this code would otherwise have zero CI coverage.
   test-pgvector:
-    runs-on: ubuntu-latest
+    runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -528,7 +609,15 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Install SQLite development headers
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Configure Namespace Go cache
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1
+        with:
+          cache: go
 
       - name: Enable pgvector extension
         run: |
@@ -549,7 +638,7 @@ jobs:
   # unique constraints) surface here rather than slipping past a single
   # pass.
   test-postgres:
-    runs-on: ubuntu-latest
+    runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     services:
       postgres:
         image: postgres:16
@@ -573,7 +662,15 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Install SQLite development headers
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Configure Namespace Go cache
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1
+        with:
+          cache: go
 
       # This lane uses a stock postgres:16 image (no pgvector extension), so it
       # must NOT build the pgvector tag — those tests CREATE EXTENSION "vector"
@@ -608,7 +705,7 @@ jobs:
             package: ./internal/store
           - name: api
             package: ./internal/api
-    runs-on: ubuntu-latest
+    runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     services:
       postgres:
         image: postgres:16
@@ -632,7 +729,15 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Install SQLite development headers
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Configure Namespace Go cache
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1
+        with:
+          cache: go
 
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.

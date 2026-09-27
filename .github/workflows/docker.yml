@@ -1,6 +1,7 @@
 name: Docker
 
 on:
+  workflow_dispatch:
   workflow_call:
 
 permissions: read-all
@@ -8,7 +9,7 @@ permissions: read-all
 jobs:
   # PR validation: build and smoke-test only, no registry access
   validate:
-    runs-on: ${{ github.repository == 'kenn-io/msgvault' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: namespace-profile-linux-4cpu
     permissions:
       contents: read
 
