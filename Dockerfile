@@ -45,13 +45,17 @@ ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 
 # Note: Module path must match go.mod (go.kenn.io/msgvault)
-RUN CGO_ENABLED=1 go build \
+RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+        -o /msgvault-codex-bridge ./cmd/msgvault-codex-bridge \
+    && bridge_digest=$(sha256sum /msgvault-codex-bridge | cut -d' ' -f1) \
+    && CGO_ENABLED=1 go build \
     -tags "fts5 sqlite_vec" \
     -trimpath \
     -ldflags="-s -w \
         -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${VERSION} \
         -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=${COMMIT} \
-        -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=${BUILD_DATE}" \
+        -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=${BUILD_DATE} \
+        -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=${bridge_digest}" \
     -o /msgvault \
     ./cmd/msgvault
 
@@ -64,6 +68,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     tzdata \
     wget \
     libstdc++6 \
+    bubblewrap \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -72,6 +77,7 @@ RUN groupadd --gid 1000 msgvault \
 
 # Copy binary from builder
 COPY --from=builder /msgvault /usr/local/bin/msgvault
+COPY --from=builder --chown=msgvault:msgvault /msgvault-codex-bridge /usr/local/bin/msgvault-codex-bridge
 
 # Set up data directory with correct ownership
 ENV MSGVAULT_HOME=/data
