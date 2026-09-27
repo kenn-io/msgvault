@@ -67,12 +67,13 @@ func record(t *testing.T) {
 	}
 	r.NoError(os.WriteFile(filepath.Join(dir, "fixture_test.go"), []byte(source.String()), 0o600))
 
-	run := func(t *testing.T, timeout, fail string) (string, string, error) {
+	run := func(t *testing.T, timeout, fail string, extra ...string) (string, string, error) {
 		t.Helper()
 		output := t.TempDir()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, pwsh, "-NoProfile", "-File", script, "-Package", ".", "-ShardCount", "4", "-Tags", "fts5 sqlite_vec", "-Timeout", timeout)
+		args := append([]string{"-NoProfile", "-File", script, "-Package", ".", "-ShardCount", "4", "-Tags", "fts5 sqlite_vec", "-Timeout", timeout}, extra...)
+		cmd := exec.CommandContext(ctx, pwsh, args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "GOWORK=off", "SHARD_OUTPUT="+output, "SHARD_FAIL="+fail)
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -139,6 +140,28 @@ func record(t *testing.T) {
 		output, result, err := run(t, "30s", "")
 		require.NoError(err, result)
 		require.FileExists(filepath.Join(output, "released"))
+	})
+	t.Run("parts", func(t *testing.T) {
+		require := require.New(t)
+		var got []string
+		for part := 1; part <= 3; part++ {
+			output, result, err := run(t, "1m30s", "", "-PartIndex", strconv.Itoa(part), "-PartCount", "3")
+			require.NoError(err, result)
+			files, err := os.ReadDir(output)
+			require.NoError(err)
+			for _, file := range files {
+				data, err := os.ReadFile(filepath.Join(output, file.Name()))
+				require.NoError(err)
+				for _, name := range strings.Fields(string(data))[1:] {
+					index, err := strconv.Atoi(name[4:8])
+					require.NoError(err)
+					require.Equal(part-1, index%3, "each part must run only its own tests")
+					got = append(got, name)
+				}
+			}
+		}
+		sort.Strings(got)
+		require.Equal(want, got, "the parts together must run every test exactly once")
 	})
 	t.Run("later batch failure", func(t *testing.T) {
 		require := require.New(t)

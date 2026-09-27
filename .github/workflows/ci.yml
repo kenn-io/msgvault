@@ -413,17 +413,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: cli
-            package: ./cmd/msgvault/cmd
-            # Windows SQLite I/O makes this package's aggregate shard duration
-            # exceed one hour: the passing shard alone ran 406 tests in 3373.8s
-            # (~56m) and the next shard timed out at 60m while still actively
-            # executing schema setup (no deadlock; tests kept progressing).
-            # Give only this package the larger per-shard budget.
-            timeout: 120m
-          - name: store
-            package: ./internal/store
-            timeout: 60m
+          # A 4-core runner is already saturated by one package's shards, so the
+          # two slowest packages each split across 3 runners.
+          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 60m }
+          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 60m }
+          - { name: cli-3, package: ./cmd/msgvault/cmd, part: 3, parts: 3, timeout: 60m }
+          - { name: store-1, package: ./internal/store, part: 1, parts: 3, timeout: 60m }
+          - { name: store-2, package: ./internal/store, part: 2, parts: 3, timeout: 60m }
+          - { name: store-3, package: ./internal/store, part: 3, parts: 3, timeout: 60m }
           - name: sync-vector-embed
             package: ./internal/sync
             package2: ./internal/vector/embed
@@ -459,7 +456,9 @@ jobs:
               -Package $package `
               -ShardCount 4 `
               -Tags "fts5 sqlite_vec" `
-              -Timeout ${{ matrix.timeout }}
+              -Timeout ${{ matrix.timeout }} `
+              -PartIndex ${{ matrix.part || 1 }} `
+              -PartCount ${{ matrix.parts || 1 }}
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 

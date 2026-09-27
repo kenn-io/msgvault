@@ -7,11 +7,22 @@ param(
 
     [string]$Tags = "",
 
-    [string]$Timeout = "20m"
+    [string]$Timeout = "20m",
+
+    # Runs only part PartIndex of PartCount so several machines can split one package.
+    [ValidateRange(1, 64)]
+    [int]$PartCount = 1,
+
+    [ValidateRange(1, 64)]
+    [int]$PartIndex = 1
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+if ($PartIndex -gt $PartCount) {
+    throw "PartIndex $PartIndex exceeds PartCount $PartCount"
+}
 
 # Go accepts compound durations, including fractional units and zero to disable the timeout.
 $units = @{ ns = 1e-9; us = 1e-6; 'µs' = 1e-6; ms = 1e-3; s = 1; m = 60; h = 3600 }
@@ -55,6 +66,10 @@ try {
     $testNames = @(& $testBinary "-test.list=^(Test|Example|Fuzz)")
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
+    }
+    if ($PartCount -gt 1) {
+        $testNames = @(for ($i = $PartIndex - 1; $i -lt $testNames.Count; $i += $PartCount) { $testNames[$i] })
+        Write-Host "Running part $PartIndex of $PartCount"
     }
     if ($testNames.Count -eq 0) {
         Write-Host "No tests found in $Package"
