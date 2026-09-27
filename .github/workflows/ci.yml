@@ -18,15 +18,16 @@ on:
         type: choice
         options: ['4', '8']
         default: '4'
-      windows_only:
-        description: Run only Windows jobs during runner comparison
-        type: boolean
-        default: false
+      subset:
+        description: Jobs to run during runner comparison
+        type: choice
+        options: ['all', 'windows', 'web-e2e']
+        default: all
   schedule:
     - cron: '23 8 * * 1'
 jobs:
   release-linux-smoke:
-    if: ${{ !inputs.windows_only }}
+    if: ${{ inputs.subset != 'windows' && inputs.subset != 'web-e2e' }}
     strategy:
       fail-fast: false
       matrix:
@@ -88,7 +89,7 @@ jobs:
           echo "$SMOKE_OUT" | grep -q "$VERSION" || { echo "FATAL: version output doesn't match CI build version"; exit 1; }
 
   test:
-    if: ${{ !inputs.windows_only }}
+    if: ${{ inputs.subset != 'windows' && inputs.subset != 'web-e2e' }}
     runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -140,7 +141,7 @@ jobs:
   # binary — scripts/test-package-shards.sh, the Linux twin of the Windows
   # lane's script — on its own runner.
   test-sharded:
-    if: ${{ !inputs.windows_only }}
+    if: ${{ inputs.subset != 'windows' && inputs.subset != 'web-e2e' }}
     name: test-sharded (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -173,7 +174,7 @@ jobs:
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m
 
   test-macos-15:
-    if: ${{ !inputs.windows_only && (github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))) }}
+    if: ${{ inputs.subset != 'windows' && inputs.subset != 'web-e2e' && (github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))) }}
     runs-on: namespace-profile-mac-6cpu
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -192,7 +193,7 @@ jobs:
         run: make test
 
   frontend:
-    if: ${{ !inputs.windows_only }}
+    if: ${{ inputs.subset != 'windows' && inputs.subset != 'web-e2e' }}
     runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     container:
       image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
@@ -256,7 +257,7 @@ jobs:
           if-no-files-found: ignore
 
   web-e2e:
-    if: ${{ !inputs.windows_only }}
+    if: inputs.subset != 'windows'
     runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     container:
       image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
@@ -305,6 +306,11 @@ jobs:
       - name: Run accessibility, keyboard, security, and mixed-archive gates
         run: make web-e2e
 
+      - name: Repeat meeting fixture checks
+        if: inputs.subset == 'web-e2e'
+        working-directory: web
+        run: bunx playwright test tests/e2e/meeting-intelligence.spec.ts --grep 'production imports expose|rapid search scope changes' --repeat-each=10
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
@@ -315,7 +321,7 @@ jobs:
           if-no-files-found: ignore
 
   large-archive-benchmark:
-    if: ${{ !inputs.windows_only && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ inputs.subset != 'windows' && inputs.subset != 'web-e2e' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: namespace-profile-mac-6cpu
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -344,6 +350,7 @@ jobs:
           if-no-files-found: error
 
   test-windows:
+    if: inputs.subset != 'web-e2e'
     runs-on: ${{ format('namespace-profile-windows-{0}cpu', inputs.runner_cpus || '4') }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -427,6 +434,7 @@ jobs:
           path: msgvault.exe
 
   test-windows-slow-packages:
+    if: inputs.subset != 'web-e2e'
     runs-on: ${{ format('namespace-profile-windows-{0}cpu', inputs.runner_cpus || '4') }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -462,6 +470,7 @@ jobs:
             ./scripts
 
   test-windows-sharded:
+    if: inputs.subset != 'web-e2e'
     name: test-windows-sharded (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -526,6 +535,7 @@ jobs:
           }
 
   test-windows-pack-restore:
+    if: inputs.subset != 'web-e2e'
     runs-on: ${{ format('namespace-profile-windows-{0}cpu', inputs.runner_cpus || '4') }}
     timeout-minutes: 20
     steps:
@@ -574,7 +584,7 @@ jobs:
   # tag is required; without it these files compile out and ship no tests,
   # so this code would otherwise have zero CI coverage.
   test-pgvector:
-    if: ${{ !inputs.windows_only }}
+    if: ${{ inputs.subset != 'windows' && inputs.subset != 'web-e2e' }}
     runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     services:
       postgres:
@@ -628,7 +638,7 @@ jobs:
   # unique constraints) surface here rather than slipping past a single
   # pass.
   test-postgres:
-    if: ${{ !inputs.windows_only }}
+    if: ${{ inputs.subset != 'windows' && inputs.subset != 'web-e2e' }}
     runs-on: ${{ format('namespace-profile-linux-{0}cpu', inputs.runner_cpus || '4') }}
     services:
       postgres:
@@ -685,7 +695,7 @@ jobs:
   # one package per job, each with its own PostgreSQL service so four shards'
   # connections never compete with the rest of the suite.
   test-postgres-sharded:
-    if: ${{ !inputs.windows_only }}
+    if: ${{ inputs.subset != 'windows' && inputs.subset != 'web-e2e' }}
     name: test-postgres-sharded (${{ matrix.name }})
     strategy:
       fail-fast: false

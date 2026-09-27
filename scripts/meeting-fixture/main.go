@@ -88,6 +88,14 @@ func seed(ctx context.Context, dataDir string) (*manifest, error) {
 	if err := st.MarkMessageDeleted(out.Meetings["circleback"].SourceID, "meeting:circleback-provider"); err != nil {
 		return nil, err
 	}
+	// This is a historical source deletion. Keep it before the cache build's
+	// whole-second watermark; using the current second can mark a fresh cache
+	// stale when fixture setup finishes within that same second.
+	if _, err := st.DB().ExecContext(ctx, `
+		UPDATE messages SET deleted_from_source_at = '2026-01-02 11:00:00'
+		WHERE id = ?`, out.Meetings["circleback"].MessageID); err != nil {
+		return nil, fmt.Errorf("set fixture source deletion time: %w", err)
+	}
 	recipients, err := st.GetMessageRecipientsContext(ctx, out.Meetings["granola"].MessageID, "to")
 	if err != nil {
 		return nil, err
