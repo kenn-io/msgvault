@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -67,6 +66,8 @@ func openServePGSchema(t *testing.T) (*sql.DB, string) {
 // must succeed against a postgres:// DSN and wire up the backend, hybrid
 // engine, and worker. Runs only with a live PG (MSGVAULT_TEST_DB).
 func TestSetupVectorFeatures_SucceedsOnPostgres(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -88,6 +89,8 @@ func TestSetupVectorFeatures_SucceedsOnPostgres(t *testing.T) {
 	db := st.DB()
 
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Vector.Enabled = true
 	cfg.Vector.Backend = "sqlite-vec" // Validate's backend gate; PG is selected from the DSN
 	cfg.Vector.Embeddings.Endpoint = "http://localhost:11434/v1/embeddings"
@@ -95,7 +98,7 @@ func TestSetupVectorFeatures_SucceedsOnPostgres(t *testing.T) {
 	cfg.Vector.Embeddings.Dimension = 768
 	cfg.Vector.Embeddings.BatchSize = 32
 
-	vf, err := setupVectorFeatures(context.Background(), st, dsn, false)
+	vf, err := setupVectorFeatures(testCtx, st, dsn, false)
 	require.NoError(
 		err, "setupVectorFeatures on postgres DSN must succeed with pgvector built in")
 

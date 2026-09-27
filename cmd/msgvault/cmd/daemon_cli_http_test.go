@@ -302,23 +302,18 @@ func daemonCLIRunTestHandler(
 	}
 }
 
-func configureRemoteDaemonForTest(t *testing.T, url string) {
+func configureRemoteDaemonForTest(t *testing.T, url string, configs ...*config.Config) context.Context {
 	t.Helper()
-
-	savedCfg := cfg
-	savedUseLocal := useLocal
-	t.Cleanup(func() {
-		cfg = savedCfg
-		useLocal = savedUseLocal
-	})
-	cfg = &config.Config{
-		HomeDir: t.TempDir(),
-		Remote: config.RemoteConfig{
-			URL:           url,
-			AllowInsecure: true,
-		},
+	cfg := &config.Config{}
+	if len(configs) > 0 && configs[0] != nil {
+		cfg = configs[0]
 	}
-	useLocal = false
+	if cfg.HomeDir == "" {
+		cfg.HomeDir = t.TempDir()
+	}
+	cfg.Remote.URL = url
+	cfg.Remote.AllowInsecure = true
+	return testInvocationContext(t.Context(), cfg, invocationOptions{})
 }
 
 func TestDaemonCLIArgsFromCobraForwardsCommandFlagsAndPositionals(t *testing.T) {
@@ -369,10 +364,12 @@ func TestRunDaemonCLICommandHTTPOmitsCallerCwdForConfiguredRemote(t *testing.T) 
 		assert.Equal([]string{"import-mbox", "alice@example.com", "export.mbox"}, req.Args, "args")
 		assert.Empty(req.Cwd, "configured remote must not receive caller-local cwd")
 	}, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	cmd := &cobra.Command{Use: "import-mbox"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	require.NoError(runDaemonCLICommandHTTPFromCobra(cmd, []string{"alice@example.com", "export.mbox"}), "run daemon command")
 	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
 }

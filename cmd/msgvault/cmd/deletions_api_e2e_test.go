@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -19,6 +18,8 @@ import (
 )
 
 func TestDeletionStagingEndToEnd(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -26,6 +27,8 @@ func TestDeletionStagingEndToEnd(t *testing.T) {
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{Data: config.DataConfig{DataDir: tmpDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
 	s, err := store.Open(tmpDir + "/msgvault.db")
 	require.NoError(err, "open store")
@@ -48,8 +51,8 @@ func TestDeletionStagingEndToEnd(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 
 	srv := api.NewServerWithOptions(api.ServerOptions{
-		Config: &config.Config{Data: config.DataConfig{DataDir: tmpDir}},
-		Store:  &storeAPIAdapter{store: s},
+		Config: cfg,
+		Store:  &storeAPIAdapter{store: s, config: cfg},
 		Engine: engine,
 		Logger: slog.New(slog.DiscardHandler),
 	})
@@ -74,8 +77,8 @@ func TestDeletionStagingEndToEnd(t *testing.T) {
 
 	// The persisted manifest must carry the account delete-staged
 	// executes against.
-	adapter := &storeAPIAdapter{store: s}
-	persisted, _, err := adapter.GetDeletionManifest(context.Background(), staged.ID)
+	adapter := &storeAPIAdapter{store: s, config: cfg}
+	persisted, _, err := adapter.GetDeletionManifest(testCtx, staged.ID)
 	require.NoError(err, "load persisted manifest")
 	assert.Equal("alice@example.com", persisted.Filters.Account, "manifest account")
 

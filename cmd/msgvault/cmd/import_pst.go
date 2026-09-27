@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -41,6 +42,12 @@ Examples:
 `,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
+		logger := state.logger
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
@@ -96,7 +103,7 @@ Examples:
 			}
 		}()
 
-		st, cleanup, err := openWritableStoreAndInitForIngest()
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 		if err != nil {
 			return err
 		}
@@ -114,13 +121,13 @@ Examples:
 			NoResume:           importPstNoResume,
 			CheckpointInterval: importPstCheckpointInterval,
 			AttachmentsDir:     attachmentsDir,
-			RemoteImages:       configuredRemoteImageFetcher(),
+			RemoteImages:       configuredRemoteImageFetcher(cfg),
 			Logger:             logger,
 		})
 		if err != nil {
 			return err
 		}
-		if err := runPstPostImportMigrations(cmd.OutOrStdout(), st, summary, importPstSourceType, identifier); err != nil {
+		if err := runPstPostImportMigrations(cmd.OutOrStdout(), st, summary, importPstSourceType, identifier, state); err != nil {
 			return err
 		}
 
@@ -172,18 +179,22 @@ func runPstPostImportMigrations(
 	summary *importer.PstImportSummary,
 	sourceType string,
 	identifier string,
+	state *invocation,
 ) error {
 	if summary == nil || summary.SourceID == 0 {
 		return nil
+	}
+	if state == nil || state.logger == nil {
+		return errors.New("invocation state is required")
 	}
 	// Auto-default-identity must run BEFORE the legacy migration retry
 	// whenever the migration will run, including interrupted or hard-error
 	// imports, so migrated legacy [identity] rows cannot suppress the
 	// source's own account identifier on a later resume.
 	if store.SourceTypeUsesEmailIdentity(sourceType) {
-		confirmDefaultIdentity(out, st, summary.SourceID, identifier, identifier, "account-identifier")
+		confirmDefaultIdentity(out, st, summary.SourceID, identifier, identifier, "account-identifier", state.logger)
 	}
-	if err := runPostSourceCreateMigrations(st); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 	return nil

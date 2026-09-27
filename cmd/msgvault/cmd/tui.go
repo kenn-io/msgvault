@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/logging"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/tui"
@@ -75,13 +76,23 @@ HTTP Mode:
   Otherwise it starts or reuses the local daemon. Use --local to force the local
   daemon when a remote is configured.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		backend, err := openTUIBackend(cmd.Context())
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		currentCfg := state.cfg
+		currentLogResult := state.logResult
+		local, err := cmd.Flags().GetBool(localValue)
+		if err != nil {
+			return fmt.Errorf("read --local flag: %w", err)
+		}
+		backend, err := openTUIBackendWithLocal(withInvocation(cmd.Context(), state), local)
 		if err != nil {
 			return err
 		}
 		defer backend.cleanup()
 		if backend.info.Kind == HTTPStoreConfiguredRemote {
-			fmt.Printf("Connected to remote: %s\n", cfg.Remote.URL)
+			fmt.Printf("Connected to remote: %s\n", currentCfg.Remote.URL)
 		}
 
 		// The shipped daemon engine provides Texts directly. People uses the
@@ -98,8 +109,8 @@ HTTP Mode:
 		semanticSearch := tuiSemanticSearcher(cmd.Context(), backend.client, backend.engine)
 		collectionScopes := tuiCollectionScopes(cmd.Context(), backend.client, backend.engine)
 		model := tui.New(backend.engine, tui.Options{
-			DataDir:               cfg.Data.DataDir,
-			ExportDir:             cfg.ExportDir(),
+			DataDir:               currentCfg.Data.DataDir,
+			ExportDir:             currentCfg.ExportDir(),
 			Version:               Version,
 			TextEngine:            textEngine,
 			PeopleBackend:         peopleBackend,
@@ -128,18 +139,27 @@ HTTP Mode:
 		// the render. The daily log file still receives
 		// everything, so 'msgvault logs -f' in another pane
 		// continues to work for diagnostics.
-		prevLogger := slog.Default()
-		if logResult != nil {
-			slog.SetDefault(logResult.FileOnlyLogger())
-		}
-		defer slog.SetDefault(prevLogger)
-
-		if _, err := p.Run(); err != nil {
-			return fmt.Errorf("run tui: %w", err)
+		if err := withTUIFileLogger(currentLogResult, func() error {
+			_, err := p.Run()
+			if err != nil {
+				return fmt.Errorf("run tui: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
 
 		return nil
 	},
+}
+
+func withTUIFileLogger(result *logging.Result, run func() error) error {
+	previous := slog.Default()
+	if result != nil {
+		slog.SetDefault(result.FileOnlyLogger())
+	}
+	defer slog.SetDefault(previous)
+	return run()
 }
 
 func tuiSemanticSearcher(
@@ -294,10 +314,22 @@ func refreshAnalyticsCacheNotice(
 }
 
 func openTUIBackend(ctx context.Context) (*tuiBackend, error) {
-	if forceLocalTUI {
-		previousUseLocal := useLocal
-		useLocal = true
-		defer func() { useLocal = previousUseLocal }()
+	state := invocationFromContext(ctx)
+	if state == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
+	return openTUIBackendWithLocal(ctx, forceLocalTUI)
+}
+
+func openTUIBackendWithLocal(ctx context.Context, forceLocal bool) (*tuiBackend, error) {
+	if forceLocal {
+		inv := invocationFromContext(ctx)
+		if inv == nil {
+			return nil, errors.New("configuration is unavailable")
+		}
+		local := *inv
+		local.options.useLocal = true
+		ctx = withInvocation(ctx, &local)
 	}
 
 	st, info, err := OpenHTTPStore(ctx)

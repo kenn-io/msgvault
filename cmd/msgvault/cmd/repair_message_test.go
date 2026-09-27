@@ -221,7 +221,7 @@ func TestRepairMessageCommandUsesDedicatedRemoteEndpoint(t *testing.T) {
 				}
 			}))
 			t.Cleanup(server.Close)
-			configureRemoteSyncTest(t, server.URL)
+			testCtx := configureRemoteSyncTest(t, server.URL)
 			deps := defaultRepairMessageCommandDeps()
 			deps.preflightReauth = func(context.Context, *daemonclient.Client, HTTPStoreInfo, int64) error {
 				preflightCalls.Add(1)
@@ -235,6 +235,7 @@ func TestRepairMessageCommandUsesDedicatedRemoteEndpoint(t *testing.T) {
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
 			command := newRepairMessageCmd(deps)
+			command.SetContext(testCtx)
 			command.SetOut(&stdout)
 			command.SetErr(&stderr)
 			command.SetArgs(test.args)

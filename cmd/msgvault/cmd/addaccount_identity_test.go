@@ -80,6 +80,9 @@ func gmailProfileContext(t *testing.T, email string) context.Context {
 // A cached token must prove mailbox ownership before add-account creates a
 // source or changes its display name, even if its OAuth client is correct.
 func TestAddAccountCachedTokenIdentity(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	for _, existing := range []bool{false, true} {
 		for _, legacy := range []bool{false, true} {
 			for _, profile := range []string{"user@example.com", "other@example.com", "unavailable"} {
@@ -118,8 +121,10 @@ func TestAddAccountCachedTokenIdentity(t *testing.T) {
 							Transport: gmailProfileTransport{statusCode: http.StatusServiceUnavailable},
 						})
 					}
+					ctx = testInvocationContext(ctx, cfg, invocationOptions{})
 					cmd := &cobra.Command{Use: addAccountUse, RunE: runAddAccountLocal}
 					registerAddAccountFlags(cmd)
+					cmd.SetContext(ctx)
 					cmd.SetArgs([]string{"user@example.com", "--display-name", "Updated", "--no-default-identity"})
 					err = cmd.ExecuteContext(ctx)
 					if profile == "user@example.com" {

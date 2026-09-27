@@ -28,11 +28,12 @@ func TestRepairEncodingUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) 
 	}))
 	t.Cleanup(server.Close)
 
-	configureRemoteSyncTest(t, server.URL)
+	testCtx := configureRemoteSyncTest(t, server.URL)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd := &cobra.Command{Use: repairEncodingCmd.Use, Args: repairEncodingCmd.Args, RunE: repairEncodingCmd.RunE}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 

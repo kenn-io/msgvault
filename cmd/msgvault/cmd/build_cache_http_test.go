@@ -27,9 +27,9 @@ func TestBuildCacheAutostartFulfilledSkipsRedundantHTTPRequest(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(server.Close)
-	stubBuildCacheDaemonAutostart(t, server, startupCacheBuildOutcomeFulfilled, nil)
+	testCtx := stubBuildCacheDaemonAutostart(t, server, startupCacheBuildOutcomeFulfilled, nil)
 
-	cmd, stdout := buildCacheHTTPTestCommand()
+	cmd, stdout := buildCacheHTTPTestCommand(testCtx)
 	var err error
 	captureStderrDuring(t, func() {
 		err = runBuildCacheHTTP(cmd, false)
@@ -53,9 +53,9 @@ func TestBuildCacheAutostartFailedReturnsErrorWithoutRetry(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	logPath := filepath.Join(t.TempDir(), "serve.log")
-	stubBuildCacheDaemonAutostart(t, server, startupCacheBuildOutcomeFailed, &logPath)
+	testCtx := stubBuildCacheDaemonAutostart(t, server, startupCacheBuildOutcomeFailed, &logPath)
 
-	cmd, _ := buildCacheHTTPTestCommand()
+	cmd, _ := buildCacheHTTPTestCommand(testCtx)
 	var err error
 	captureStderrDuring(t, func() {
 		err = runBuildCacheHTTP(cmd, false)
@@ -78,9 +78,9 @@ func TestBuildCacheAutostartFatalDuckDBFailureDoesNotReportSQLFallback(t *testin
 	}))
 	t.Cleanup(server.Close)
 	logPath := filepath.Join(t.TempDir(), "serve.log")
-	stubBuildCacheDaemonAutostart(t, server, startupCacheBuildOutcomeFatal, &logPath)
+	testCtx := stubBuildCacheDaemonAutostart(t, server, startupCacheBuildOutcomeFatal, &logPath)
 
-	cmd, _ := buildCacheHTTPTestCommand()
+	cmd, _ := buildCacheHTTPTestCommand(testCtx)
 	var err error
 	captureStderrDuring(t, func() {
 		err = runBuildCacheHTTP(cmd, false)
@@ -104,9 +104,9 @@ func TestBuildCacheAutostartUnconsumedUsesHTTPRequest(t *testing.T) {
 		_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
 	}))
 	t.Cleanup(server.Close)
-	stubBuildCacheDaemonAutostart(t, server, startupCacheBuildOutcomeUnconsumed, nil)
+	testCtx := stubBuildCacheDaemonAutostart(t, server, startupCacheBuildOutcomeUnconsumed, nil)
 
-	cmd, stdout := buildCacheHTTPTestCommand()
+	cmd, stdout := buildCacheHTTPTestCommand(testCtx)
 	var err error
 	captureStderrDuring(t, func() {
 		err = runBuildCacheHTTP(cmd, false)
@@ -123,10 +123,10 @@ func TestBuildCacheFullRebuildPassesFullStartupIntent(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	var gotIntent startupCacheBuildIntent
-	stubBuildCacheDaemonAutostart(t, server, startupCacheBuildOutcomeFulfilled, nil,
+	testCtx := stubBuildCacheDaemonAutostart(t, server, startupCacheBuildOutcomeFulfilled, nil,
 		func(intent startupCacheBuildIntent) { gotIntent = intent })
 
-	cmd, _ := buildCacheHTTPTestCommand()
+	cmd, _ := buildCacheHTTPTestCommand(testCtx)
 	var err error
 	captureStderrDuring(t, func() {
 		err = runBuildCacheHTTP(cmd, true)
@@ -137,6 +137,8 @@ func TestBuildCacheFullRebuildPassesFullStartupIntent(t *testing.T) {
 }
 
 func TestBuildCacheUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
+	logger := testLoggerValue()
+
 	assert := assert.New(t)
 
 	var requests atomic.Int32
@@ -155,7 +157,7 @@ func TestBuildCacheUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote: config.RemoteConfig{
@@ -174,6 +176,7 @@ func TestBuildCacheUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd := &cobra.Command{Use: buildCacheCmd.Use, RunE: buildCacheCmd.RunE}
+	cmd.SetContext(testCtx)
 	cmd.Flags().BoolVar(&fullRebuild, "full-rebuild", false, "Rebuild all cache files from scratch")
 	cmd.SetArgs([]string{"--full-rebuild"})
 	cmd.SetOut(&stdout)
@@ -210,7 +213,8 @@ func TestBuildCacheRunningLocalDaemonUsesSingleHTTPRequest(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	_ = testCtx
 	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint(""))
 	_, err := daemonRuntimeStore(dataDir).Write(rt.Record)
 	require.NoError(err, "write running daemon record")
@@ -222,7 +226,7 @@ func TestBuildCacheRunningLocalDaemonUsesSingleHTTPRequest(t *testing.T) {
 		return nil, errors.New("unreachable daemon restart")
 	})
 
-	cmd, stdout := buildCacheHTTPTestCommand()
+	cmd, stdout := buildCacheHTTPTestCommand(testCtx)
 	err = runBuildCacheHTTP(cmd, false)
 
 	require.NoError(err)
@@ -230,10 +234,10 @@ func TestBuildCacheRunningLocalDaemonUsesSingleHTTPRequest(t *testing.T) {
 	assert.Equal("Built through running daemon.\n", stdout.String())
 }
 
-func buildCacheHTTPTestCommand() (*cobra.Command, *bytes.Buffer) {
+func buildCacheHTTPTestCommand(ctx context.Context) (*cobra.Command, *bytes.Buffer) {
 	stdout := &bytes.Buffer{}
 	cmd := &cobra.Command{Use: "build-cache"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(ctx)
 	cmd.SetOut(stdout)
 	cmd.SetErr(&bytes.Buffer{})
 	return cmd, stdout
@@ -245,10 +249,11 @@ func stubBuildCacheDaemonAutostart(
 	outcome startupCacheBuildOutcome,
 	logPathOverride *string,
 	observeIntent ...func(startupCacheBuildIntent),
-) {
+) context.Context {
 	t.Helper()
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	_ = testCtx
 	waitCh := make(chan error)
 	logPath := filepath.Join(dataDir, "serve.log")
 	if logPathOverride != nil {
@@ -274,4 +279,5 @@ func stubBuildCacheDaemonAutostart(
 		rt.Record.Metadata[runtimeStartupCacheBuildOutcome] = string(outcome)
 		return rt, true, nil
 	})
+	return testCtx
 }

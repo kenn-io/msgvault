@@ -35,6 +35,8 @@ func newPurgeMediaFixture(t *testing.T) purgeMediaFixture {
 		Data:   config.DataConfig{DataDir: dataDir},
 		Beeper: config.BeeperConfig{MediaScope: string(attachmentpolicy.ScopeDirect)},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
 	require.NoError(t, err)
 	newMessage := func(sourceMessageID, conversationType string, participants int) int64 {
@@ -237,6 +239,8 @@ func TestPurgeExcludedMediaRetainsUnresolvedRostersUnderParticipantLimit(t *test
 		Data:  config.DataConfig{DataDir: t.TempDir()},
 		Teams: config.TeamsConfig{MediaMaxParticipants: 4, MaxMediaMB: 1},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	source, err := st.GetOrCreateSource(sourceTypeTeams, "me@example.com")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "team/channel", "channel", "Releases")

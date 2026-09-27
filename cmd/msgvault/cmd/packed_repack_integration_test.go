@@ -157,10 +157,11 @@ func assertBlobReadSurfaces(
 		URL: httpServer.URL, AllowInsecure: true,
 	})
 	require.NoError(err)
-	configureRemoteDaemonForTest(t, httpServer.URL)
-	mcpOpts := daemonMCPServeOptions(context.Background(), client)
+	testCtx := configureRemoteDaemonForTest(t, httpServer.URL)
+	_ = testCtx
+	mcpOpts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	require.NotNil(mcpOpts.AttachmentReader)
-	mcpData, err := mcpOpts.AttachmentReader.ReadAttachment(context.Background(), hash)
+	mcpData, err := mcpOpts.AttachmentReader.ReadAttachment(testCtx, hash)
 	require.NoError(err)
 	assert.Equal(content, mcpData, "daemon-backed MCP attachment reader follows packed authority")
 
@@ -176,14 +177,15 @@ func assertBlobReadSurfaces(
 	exportAttachmentBase64 = false
 	exportAttachmentOutput = filepath.Join(t.TempDir(), "single-export.bin")
 	cmd := &cobra.Command{Use: "export-attachment"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	require.NoError(runExportAttachmentHTTP(cmd, hash))
 	single, err := os.ReadFile(exportAttachmentOutput)
 	require.NoError(err)
 	assert.Equal(content, single)
 
 	directory := t.TempDir()
-	dirResult := exportAttachmentsFromHTTP(context.Background(), client, directory,
+	dirResult := exportAttachmentsFromHTTP(testCtx, client, directory,
 		[]query.AttachmentInfo{{
 			Filename: filename, ContentHash: hash, Size: int64(len(content)),
 		}})

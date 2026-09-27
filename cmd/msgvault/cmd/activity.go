@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -45,7 +46,13 @@ func newActivityCommand() *cobra.Command {
 }
 
 func runActivityBuildLocal(cmd *cobra.Command, backstop bool) error {
-	st, cleanup, err := openWritableStoreAndInit()
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
+	st, cleanup, err := openWritableStoreAndInitForInvocation(state)
 	if err != nil {
 		return err
 	}

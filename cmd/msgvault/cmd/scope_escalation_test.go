@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -112,26 +111,19 @@ const gmailCalendarDriveTokenJSON = `{
 func seedTokenEnv(t *testing.T, tokenJSON string) (tokenPath string, restore func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
+	t.Setenv("MSGVAULT_HOME", tmpDir)
 
 	secretsPath := filepath.Join(tmpDir, "client_secret.json")
 	require.NoError(t, os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600), "write client secrets")
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.toml"),
+		[]byte("[oauth]\nclient_secrets = \""+filepath.ToSlash(secretsPath)+"\"\n"), 0600), "write test config")
 
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(t, os.MkdirAll(tokensDir, 0700), "mkdir tokens")
 	tokenPath = filepath.Join(tokensDir, scopeEscalationAccount+".json")
 	require.NoError(t, os.WriteFile(tokenPath, []byte(tokenJSON), 0600), "write token")
 
-	savedCfg, savedLogger := cfg, logger
-	cfg = &config.Config{
-		HomeDir: tmpDir,
-		Data:    config.DataConfig{DataDir: tmpDir},
-		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
-	}
-	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
-
-	return tokenPath, func() {
-		cfg, logger = savedCfg, savedLogger
-	}
+	return tokenPath, func() {}
 }
 
 // TestPromptScopeEscalation_PreservesTokenOnFailedReauth is the regression for
@@ -141,6 +133,8 @@ func seedTokenEnv(t *testing.T, tokenJSON string) (tokenPath string, restore fun
 // scheduled (e.g. Gmail) sync. The flow must leave the old token intact when
 // re-auth does not succeed.
 func TestPromptScopeEscalation_PreservesTokenOnFailedReauth(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -183,10 +177,15 @@ func TestDeletionEscalationScopesForAccountPreservesCalendarGrant(t *testing.T) 
 	require := require.New(t)
 	assert := assert.New(t)
 
-	_, restore := seedTokenEnv(t, gmailCalendarTokenJSON)
+	tokenPath, restore := seedTokenEnv(t, gmailCalendarTokenJSON)
 	defer restore()
+	cfg := testConfigValue()
+	cfg.HomeDir = filepath.Dir(filepath.Dir(tokenPath))
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	scopes, err := deletionEscalationScopesForAccount(scopeEscalationAccount, true, cfg.OAuth.ClientSecrets)
+	scopes, err := deletionEscalationScopesForAccount(scopeEscalationAccount, true, cfg.OAuth.ClientSecrets, invocationFromContext(testCtx))
 
 	require.NoError(err)
 	assert.ElementsMatch([]string{
@@ -201,10 +200,15 @@ func TestCalendarEscalationScopesForAccountPreservesDriveGrant(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	_, restore := seedTokenEnv(t, gmailDriveTokenJSON)
+	tokenPath, restore := seedTokenEnv(t, gmailDriveTokenJSON)
 	defer restore()
+	cfg := testConfigValue()
+	cfg.HomeDir = filepath.Dir(filepath.Dir(tokenPath))
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	scopes, err := calendarEscalationScopesForAccount(scopeEscalationAccount, cfg.OAuth.ClientSecrets)
+	scopes, err := calendarEscalationScopesForAccount(scopeEscalationAccount, cfg.OAuth.ClientSecrets, invocationFromContext(testCtx))
 
 	require.NoError(err)
 	assert.ElementsMatch([]string{
@@ -219,10 +223,15 @@ func TestCalendarEscalationScopesForAccountDoesNotAddGmailToDriveOnlyToken(t *te
 	require := require.New(t)
 	assert := assert.New(t)
 
-	_, restore := seedTokenEnv(t, driveOnlyTokenJSON)
+	tokenPath, restore := seedTokenEnv(t, driveOnlyTokenJSON)
 	defer restore()
+	cfg := testConfigValue()
+	cfg.HomeDir = filepath.Dir(filepath.Dir(tokenPath))
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	scopes, err := calendarEscalationScopesForAccount(scopeEscalationAccount, cfg.OAuth.ClientSecrets)
+	scopes, err := calendarEscalationScopesForAccount(scopeEscalationAccount, cfg.OAuth.ClientSecrets, invocationFromContext(testCtx))
 
 	require.NoError(err)
 	assert.ElementsMatch([]string{
@@ -235,10 +244,15 @@ func TestCalendarEscalationScopesForAccountPreservesLegacyTokenAsGmail(t *testin
 	require := require.New(t)
 	assert := assert.New(t)
 
-	_, restore := seedTokenEnv(t, legacyTokenJSON)
+	tokenPath, restore := seedTokenEnv(t, legacyTokenJSON)
 	defer restore()
+	cfg := testConfigValue()
+	cfg.HomeDir = filepath.Dir(filepath.Dir(tokenPath))
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	scopes, err := calendarEscalationScopesForAccount(scopeEscalationAccount, cfg.OAuth.ClientSecrets)
+	scopes, err := calendarEscalationScopesForAccount(scopeEscalationAccount, cfg.OAuth.ClientSecrets, invocationFromContext(testCtx))
 
 	require.NoError(err)
 	assert.ElementsMatch([]string{
@@ -282,10 +296,15 @@ func TestDeletionEscalationScopesForAccountPreservesDriveGrant(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	_, restore := seedTokenEnv(t, gmailCalendarDriveTokenJSON)
+	tokenPath, restore := seedTokenEnv(t, gmailCalendarDriveTokenJSON)
 	defer restore()
+	cfg := testConfigValue()
+	cfg.HomeDir = filepath.Dir(filepath.Dir(tokenPath))
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	scopes, err := deletionEscalationScopesForAccount(scopeEscalationAccount, true, cfg.OAuth.ClientSecrets)
+	scopes, err := deletionEscalationScopesForAccount(scopeEscalationAccount, true, cfg.OAuth.ClientSecrets, invocationFromContext(testCtx))
 
 	require.NoError(err)
 	assert.ElementsMatch([]string{
@@ -301,10 +320,15 @@ func TestDeletionEscalationScopesForAccountPreservesGmailScopesWithoutCalendar(t
 	require := require.New(t)
 	assert := assert.New(t)
 
-	_, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
+	tokenPath, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
 	defer restore()
+	cfg := testConfigValue()
+	cfg.HomeDir = filepath.Dir(filepath.Dir(tokenPath))
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	scopes, err := deletionEscalationScopesForAccount(scopeEscalationAccount, true, cfg.OAuth.ClientSecrets)
+	scopes, err := deletionEscalationScopesForAccount(scopeEscalationAccount, true, cfg.OAuth.ClientSecrets, invocationFromContext(testCtx))
 
 	require.NoError(err)
 	assert.ElementsMatch([]string{
@@ -329,12 +353,17 @@ func TestAddCalendarHeadless_PrintsInstructionsAndPreservesToken(t *testing.T) {
 	require.NoError(err, "read seeded token")
 
 	addCmd := newAddCalendarLocalCmd()
-	addCmd.SetContext(context.Background())
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = os.Getenv("MSGVAULT_HOME")
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	addCmd.SetContext(testCtx)
 	addCmd.SetArgs([]string{"--headless", scopeEscalationAccount})
 	defer func() { calAddHeadless = false }()
 
 	getOutput := captureStdout(t)
-	execErr := addCmd.Execute()
+	execErr := addCmd.ExecuteContext(testCtx)
 	out := getOutput()
 
 	require.NoError(execErr, "headless add-calendar must not error or hang")
@@ -352,15 +381,20 @@ func TestPlanCLIAddCalendarRequiresScopeEscalationForGmailOnlyToken(t *testing.T
 	assert := assert.New(t)
 	require := require.New(t)
 
-	_, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
+	tokenPath, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
 	defer restore()
+	cfg := testConfigValue()
+	cfg.HomeDir = filepath.Dir(filepath.Dir(tokenPath))
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
 	st, err := store.Open(cfg.DatabaseDSN())
 	require.NoError(err, "open store")
 	defer func() { _ = st.Close() }()
 	require.NoError(st.InitSchema(), "init schema")
 
-	plan, err := planCLIAddCalendar(context.Background(), st, api.CLIAddCalendarPlanRequest{
+	plan, err := planCLIAddCalendar(testCtx, st, api.CLIAddCalendarPlanRequest{
 		Email: scopeEscalationAccount,
 	})
 
@@ -378,8 +412,13 @@ func TestPlanCLIAddCalendarRequiresScopeEscalationForNonReusableGmailOnlyToken(t
 	assert := assert.New(t)
 	require := require.New(t)
 
-	_, restore := seedTokenEnv(t, gmailOnlyOtherClientTokenJSON)
+	tokenPath, restore := seedTokenEnv(t, gmailOnlyOtherClientTokenJSON)
 	defer restore()
+	cfg := testConfigValue()
+	cfg.HomeDir = filepath.Dir(filepath.Dir(tokenPath))
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	cfg.OAuth.Apps = map[string]config.OAuthApp{
 		"acme": {ClientSecrets: cfg.OAuth.ClientSecrets},
 	}
@@ -389,7 +428,7 @@ func TestPlanCLIAddCalendarRequiresScopeEscalationForNonReusableGmailOnlyToken(t
 	defer func() { _ = st.Close() }()
 	require.NoError(st.InitSchema(), "init schema")
 
-	plan, err := planCLIAddCalendar(context.Background(), st, api.CLIAddCalendarPlanRequest{
+	plan, err := planCLIAddCalendar(testCtx, st, api.CLIAddCalendarPlanRequest{
 		Email:            scopeEscalationAccount,
 		OAuthApp:         "acme",
 		OAuthAppExplicit: true,

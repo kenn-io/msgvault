@@ -144,7 +144,7 @@ func localPersonProviderDeps(
 		openReadStore: func() (personProviderStore, func(), error) {
 			return st, func() {}, nil
 		},
-		newChecker: func(peoplesweep.Config, personProviderStore) (personProviderChecker, error) {
+		newChecker: func(peoplesweep.Config, personProviderStore, personProviderSetupDeps) (personProviderChecker, error) {
 			return checker, nil
 		},
 		isDaemonSubprocess: func() bool { return true },
@@ -966,7 +966,7 @@ func TestPersonProviderCheckAcceptsAProfileName(t *testing.T) {
 		ModelVersion:      "beta-model-v1",
 	}}
 	deps := localPersonProviderDeps(config, st, checker)
-	deps.newChecker = func(got peoplesweep.Config, _ personProviderStore) (personProviderChecker, error) {
+	deps.newChecker = func(got peoplesweep.Config, _ personProviderStore, _ personProviderSetupDeps) (personProviderChecker, error) {
 		assert := newAssert(t)
 		assert.Equal("beta", got.Provider.Name)
 		return checker, nil
@@ -1328,6 +1328,8 @@ func TestPersonProviderUseAndRemoveRecommendDaemonRestartWhenDaemonKeepsStartupC
 // selection. The daemon is faked with the same responding ping endpoint and
 // runtime record pattern the restore-into-live-home guard tests use.
 func TestPersonProviderUseAndRemoveNoticeLiveIncompatibleDaemon(t *testing.T) {
+	cfg := testConfigValue()
+
 	newAssert := assert.New
 	newRequire := require.New
 	require := require.New(t)
@@ -1366,6 +1368,8 @@ func TestPersonProviderUseAndRemoveNoticeLiveIncompatibleDaemon(t *testing.T) {
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	defaults := defaultPersonProviderCommandDeps()
 
 	for _, operation := range []struct {
@@ -1385,7 +1389,7 @@ func TestPersonProviderUseAndRemoveNoticeLiveIncompatibleDaemon(t *testing.T) {
 				return defaultOwnership(ctx)
 			}
 			deps.daemonAliveForRestartNotice = defaults.daemonAliveForRestartNotice
-			output, err := executePersonProviderCommand(t, deps, operation.verb, "beta")
+			output, err := executePersonProviderCommandContext(testCtx, t, deps, operation.verb, "beta")
 			require.NoError(err)
 			assert.Contains(output, operation.success)
 			assert.Contains(output, "running daemon")
@@ -1543,7 +1547,7 @@ func unreleasedCodexCommandDeps(
 ) personProviderCommandDeps {
 	t.Helper()
 	deps := localPersonProviderDeps(config, st, nil)
-	deps.newChecker = func(config peoplesweep.Config, st personProviderStore) (personProviderChecker, error) {
+	deps.newChecker = func(config peoplesweep.Config, st personProviderStore, _ personProviderSetupDeps) (personProviderChecker, error) {
 		registry, err := peoplesweep.NewDriverRegistry(nil, starter, peoplesweep.NewReleasedCodexIsolationGate())
 		if err != nil {
 			return nil, err

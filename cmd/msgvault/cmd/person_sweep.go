@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
@@ -32,6 +33,7 @@ type personSweepCommandStore interface {
 }
 
 type personSweepCommandDeps struct {
+	bind               func(context.Context) personSweepCommandDeps
 	config             func() peoplesweep.Config
 	openStore          func() (personSweepCommandStore, func(), error)
 	newRunner          func(peoplesweep.Config, personSweepCommandStore) (personSweepRunner, error)
@@ -101,18 +103,45 @@ type personSweepHistoryOutput struct {
 
 func defaultPersonSweepCommandDeps() personSweepCommandDeps {
 	return personSweepCommandDeps{
-		config: func() peoplesweep.Config { return cfg.People.Sweep },
+		bind: func(ctx context.Context) personSweepCommandDeps {
+			deps := defaultPersonSweepCommandDeps()
+			state := invocationFromContext(ctx)
+			var currentCfg *config.Config
+			if state != nil && state.cfg != nil {
+				currentCfg = state.cfg
+			}
+			deps.config = func() peoplesweep.Config {
+				if currentCfg == nil {
+					return peoplesweep.Config{}
+				}
+				return currentCfg.People.Sweep
+			}
+			deps.newRunner = func(sweepConfig peoplesweep.Config, commandStore personSweepCommandStore) (personSweepRunner, error) {
+				if currentCfg == nil {
+					return nil, errors.New("configuration is unavailable")
+				}
+				st, ok := commandStore.(*store.Store)
+				if !ok {
+					return nil, errors.New("people sweep production store is unavailable")
+				}
+				productionConfig := *currentCfg
+				productionConfig.People.Sweep = sweepConfig
+				return newProductionPersonSweepWorker(&productionConfig, st)
+			}
+			deps.openStore = func() (personSweepCommandStore, func(), error) {
+				return openWritableStoreAndInitForInvocation(state)
+			}
+			return deps
+		},
+		config: func() peoplesweep.Config { return peoplesweep.Config{} },
 		openStore: func() (personSweepCommandStore, func(), error) {
-			return openWritableStoreAndInit()
+			return nil, nil, errors.New("configuration is unavailable")
 		},
 		newRunner: func(config peoplesweep.Config, commandStore personSweepCommandStore) (personSweepRunner, error) {
-			st, ok := commandStore.(*store.Store)
-			if !ok {
+			if _, ok := commandStore.(*store.Store); !ok {
 				return nil, errors.New("people sweep production store is unavailable")
 			}
-			productionConfig := *cfg
-			productionConfig.People.Sweep = config
-			return newProductionPersonSweepWorker(&productionConfig, st)
+			return nil, errors.New("configuration is unavailable")
 		},
 		isDaemonSubprocess: isDaemonCLISubprocess,
 		lookupEnv:          os.LookupEnv,
@@ -139,6 +168,9 @@ func newPersonSweepRunCommand(deps personSweepCommandDeps) *cobra.Command {
 	command := &cobra.Command{
 		Use: "run", Short: "Run bounded person maintenance", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			if invocationFromContext(command.Context()) != nil && deps.bind != nil {
+				deps = deps.bind(command.Context())
+			}
 			config := deps.config()
 			personSet := command.Flags().Changed("person")
 			if personSet && personID <= 0 {
@@ -200,6 +232,9 @@ func newPersonSweepStatusCommand(deps personSweepCommandDeps) *cobra.Command {
 	command := &cobra.Command{
 		Use: statusValue, Short: "Show redacted person maintenance state", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			if invocationFromContext(command.Context()) != nil && deps.bind != nil {
+				deps = deps.bind(command.Context())
+			}
 			if !deps.isDaemonSubprocess() {
 				return deps.proxy(command, args, nil)
 			}
@@ -246,6 +281,9 @@ func newPersonSweepHistoryCommand(deps personSweepCommandDeps) *cobra.Command {
 	command := &cobra.Command{
 		Use: "history", Short: "Show redacted person maintenance history", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			if invocationFromContext(command.Context()) != nil && deps.bind != nil {
+				deps = deps.bind(command.Context())
+			}
 			if !deps.isDaemonSubprocess() {
 				return deps.proxy(command, args, nil)
 			}

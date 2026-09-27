@@ -299,15 +299,13 @@ func TestCacheBuildJobsShutdownSettlesPendingAndQuietsCancellation(t *testing.T)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		var logs bytes.Buffer
-		oldLogger := logger
-		logger = slog.New(slog.NewTextHandler(&logs, nil))
-		t.Cleanup(func() { logger = oldLogger })
 		var calls int
 		jobs := newCacheBuildJobs(ctx, nil, func(ctx context.Context, _ buildCacheMode) error {
 			calls++
 			<-ctx.Done()
 			return errors.New("subprocess terminated")
 		})
+		jobs.logger = slog.New(slog.NewTextHandler(&logs, nil))
 		first, err := jobs.accept(buildCacheModeAuto)
 		require.NoError(err)
 		synctest.Wait()
@@ -334,12 +332,10 @@ func TestCacheBuildJobsLogsFailureWhileDaemonRunning(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		var logs bytes.Buffer
-		oldLogger := logger
-		logger = slog.New(slog.NewTextHandler(&logs, nil))
-		t.Cleanup(func() { logger = oldLogger })
 		jobs := newCacheBuildJobs(t.Context(), nil, func(context.Context, buildCacheMode) error {
 			return errors.New("synthetic disk failure")
 		})
+		jobs.logger = slog.New(slog.NewTextHandler(&logs, nil))
 		job, err := jobs.accept(buildCacheModeAuto)
 		require.NoError(err)
 		synctest.Wait()

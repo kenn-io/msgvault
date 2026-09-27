@@ -44,14 +44,14 @@ func authorizeGmailDraft(policy []config.GmailDraftSource, sourceID int64, sourc
 	return draftReplyError("draft_disabled", fmt.Errorf("source %d has no enabled [[gmail.drafts]] grant", sourceID))
 }
 
-func gmailDraftScopeGate(source *store.Source, accepted []string) error {
+func gmailDraftScopeGate(ctx context.Context, cfg *config.Config, source *store.Source, accepted []string) error {
 	if source == nil {
 		return draftReplyError("invalid_source", errors.New("missing Gmail source"))
 	}
 	if cfg != nil && cfg.OAuth.ServiceAccountKeyFor(sourceOAuthApp(source)) != "" {
 		return nil
 	}
-	manager, err := oauthManagerCache()(sourceOAuthApp(source))
+	manager, err := oauthManagerCache(invocationFromContext(ctx))(sourceOAuthApp(source))
 	if err != nil {
 		return draftReplyError("invalid_source", err)
 	}
@@ -68,7 +68,7 @@ func gmailDraftScopeGate(source *store.Source, accepted []string) error {
 }
 
 func defaultGmailDraftClientFactory(ctx context.Context, source *store.Source) (gmail.DraftAPI, error) {
-	client, err := buildAPIClient(ctx, source, oauthManagerCache(), nil)
+	client, err := buildAPIClient(ctx, source, oauthManagerCache(invocationFromContext(ctx)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -111,10 +111,14 @@ func (a *storeAPIAdapter) runGmailReplyDraft(
 	messageIDValue string,
 	emit func(api.CLIRunEvent) error,
 ) error {
-	if err := gmailDraftScopeGate(target.source, oauth.ScopesGmailDraftWrite); err != nil {
+	logger := a.logger
+	if logger == nil {
+		logger = loggerFromContext(ctx)
+	}
+	if err := gmailDraftScopeGate(ctx, a.config, target.source, oauth.ScopesGmailDraftWrite); err != nil {
 		return err
 	}
-	if err := gmailDraftScopeGate(target.source, oauth.ScopesGmailSendAsList); err != nil {
+	if err := gmailDraftScopeGate(ctx, a.config, target.source, oauth.ScopesGmailSendAsList); err != nil {
 		return err
 	}
 	execution, err := a.store.AcquireSyncExecutionContext(ctx, target.source.ID)
@@ -384,7 +388,7 @@ func gmailDraftMessagePersistDataWithAttachments(
 	}
 }
 
-func gmailDraftAttachmentWrites(attachments []msgmime.Attachment) ([]store.AttachmentWrite, error) {
+func gmailDraftAttachmentWrites(cfg *config.Config, attachments []msgmime.Attachment) ([]store.AttachmentWrite, error) {
 	attachmentsDir := ""
 	if cfg != nil {
 		attachmentsDir = cfg.AttachmentsDir()
@@ -733,6 +737,10 @@ func (a *storeAPIAdapter) retryConfirmedGmailDraftDelete(
 	draft store.GmailDraft,
 	emit func(api.CLIRunEvent) error,
 ) error {
+	logger := a.logger
+	if logger == nil {
+		logger = loggerFromContext(ctx)
+	}
 	source, err := a.loadManagedGmailDraftSource(ctx, draft)
 	if err != nil {
 		return err
@@ -824,7 +832,11 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 	if err != nil {
 		return err
 	}
-	if err := gmailDraftScopeGate(source, oauth.ScopesGmailDraftWrite); err != nil {
+	logger := a.logger
+	if logger == nil {
+		logger = loggerFromContext(ctx)
+	}
+	if err := gmailDraftScopeGate(ctx, a.config, source, oauth.ScopesGmailDraftWrite); err != nil {
 		return err
 	}
 	execution, err := a.store.AcquireSyncExecutionContext(ctx, source.ID)
@@ -919,7 +931,7 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		participants := gmailDraftParticipants(parsed)
 		var attachmentWrites *[]store.AttachmentWrite
 		if len(parsed.Attachments) > 0 {
-			writes, attachmentErr := gmailDraftAttachmentWrites(parsed.Attachments)
+			writes, attachmentErr := gmailDraftAttachmentWrites(a.config, parsed.Attachments)
 			if attachmentErr != nil {
 				return draftReplyError("local_persistence_failed", attachmentErr)
 			}
@@ -1148,7 +1160,7 @@ func (a *storeAPIAdapter) runCLIDraftSendAs(ctx context.Context, req api.CLIRunR
 	if err != nil {
 		return draftReplyError("invalid_source", err)
 	}
-	if err := gmailDraftScopeGate(source, oauth.ScopesGmailSendAsList); err != nil {
+	if err := gmailDraftScopeGate(ctx, a.config, source, oauth.ScopesGmailSendAsList); err != nil {
 		return err
 	}
 	clientFactory := a.gmailDraftClientFactory

@@ -83,6 +83,12 @@ Examples:
   msgvault add-imap --host mail.example.com --username user@example.com --starttls
   msgvault add-imap --host mail.example.com --username user@example.com --no-tls`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
+			logger := state.logger
 			if imapHost == "" {
 				return usageErr(cmd, errors.New("--host is required"))
 			}
@@ -126,7 +132,7 @@ Examples:
 			}
 			fmt.Printf("Connected successfully as %s\n", profile.EmailAddress)
 
-			s, cleanup, err := openWritableStoreAndInitForIngest()
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 			if err != nil {
 				return err
 			}
@@ -162,9 +168,9 @@ Examples:
 			// Auto-default-identity must run BEFORE the legacy migration
 			// retry — see comment in account_identity.go.
 			if !noDefaultIdentityAddImap {
-				confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, imapUsername, imapUsername, "account-identifier")
+				confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, imapUsername, imapUsername, "account-identifier", state.logger)
 			}
-			if err := runPostSourceCreateMigrations(s); err != nil {
+			if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 				return fmt.Errorf("post-source-create migrations: %w", err)
 			}
 

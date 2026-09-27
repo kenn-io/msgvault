@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -63,22 +64,38 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 	case "start":
 		cmd.Short = "Start msgvault daemon in the background"
 		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-			return runServeStart(cmd, cfg)
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			return runServeStart(cmd, state.cfg)
 		}
 	case statusValue:
 		cmd.Short = "Show msgvault daemon status"
 		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-			return runServeStatusWithAPIKey(cmd, cfg.Data.DataDir, cfg.Server.APIKey)
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			return runServeStatusWithAPIKey(cmd, state.cfg.Data.DataDir, state.cfg.Server.APIKey)
 		}
 	case "stop":
 		cmd.Short = "Stop msgvault daemon"
 		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-			return runServeStopWithAPIKey(cmd, cfg.Data.DataDir, cfg.Server.APIKey)
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			return runServeStopWithAPIKey(cmd, state.cfg.Data.DataDir, state.cfg.Server.APIKey)
 		}
 	case "restart":
 		cmd.Short = "Restart msgvault daemon in the background"
 		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-			return runServeRestart(cmd, cfg)
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			return runServeRestart(cmd, state.cfg)
 		}
 	default:
 		panic("unknown daemon lifecycle command: " + name)
@@ -248,18 +265,20 @@ type backgroundDaemonStartPreparation struct {
 type backgroundServeStartOptions struct {
 	ExecutablePath   string
 	CacheBuildIntent startupCacheBuildIntent
+	Invocation       *invocationOptions
 }
 
 func prepareBackgroundDaemonStart(
 	c *config.Config,
 	restartPolicy string,
 	incompatibleGuidance string,
+	logger *slog.Logger,
 ) (backgroundDaemonStartPreparation, error) {
 	if rt := findDaemonRuntime(c.Data.DataDir); rt != nil {
 		if !shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, restartPolicy) {
 			return backgroundDaemonStartPreparation{Reusable: rt}, nil
 		}
-		if err := stopDaemonRuntimeForUpgrade(*c, rt); err != nil {
+		if err := stopDaemonRuntimeForUpgrade(*c, rt, logger); err != nil {
 			return backgroundDaemonStartPreparation{}, fmt.Errorf("stop older daemon before restart: %w", err)
 		}
 	}
@@ -271,7 +290,7 @@ func prepareBackgroundDaemonStart(
 		if !shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt, Version, restartPolicy) {
 			return backgroundDaemonStartPreparation{}, incompatibleDaemonError(compatErr, incompatibleGuidance)
 		}
-		if err := stopDaemonRuntimeForUpgrade(*c, rt); err != nil {
+		if err := stopDaemonRuntimeForUpgrade(*c, rt, logger); err != nil {
 			return backgroundDaemonStartPreparation{}, fmt.Errorf("stop older daemon before restart: %w", err)
 		}
 	}
@@ -296,7 +315,7 @@ func prepareBackgroundDaemonStart(
 					legacyCompatErr, incompatibleGuidance,
 				)
 			}
-			if err := stopDaemonRuntimeForUpgrade(*c, legacy); err != nil {
+			if err := stopDaemonRuntimeForUpgrade(*c, legacy, logger); err != nil {
 				return backgroundDaemonStartPreparation{}, fmt.Errorf("stop older daemon before restart: %w", err)
 			}
 		}
@@ -325,6 +344,9 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 	if c == nil {
 		return errors.New("nil config")
 	}
+	if inv := invocationFromCommand(cmd); inv != nil {
+		opts.Invocation = &inv.options
+	}
 	if err := os.MkdirAll(c.Data.DataDir, 0o700); err != nil {
 		return fmt.Errorf("create data directory: %w", err)
 	}
@@ -336,7 +358,7 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 	}
 	defer func() { _ = launchLock.Unlock() }()
 
-	prep, err := prepareBackgroundDaemonStart(c, c.Server.DaemonAutoRestart, "run `msgvault daemon stop` before starting this version")
+	prep, err := prepareBackgroundDaemonStart(c, c.Server.DaemonAutoRestart, "run `msgvault daemon stop` before starting this version", loggerFromContext(cmd.Context()))
 	if err != nil {
 		return err
 	}
@@ -403,6 +425,7 @@ func stopLiveDaemons(cmd *cobra.Command, dataDir string, quietNoDaemon bool) err
 }
 
 func stopLiveDaemonsWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string, quietNoDaemon bool) error {
+	logger := loggerFromContext(cmd.Context())
 	records, err := listLiveDaemonRuntimeRecords(dataDir)
 	if err != nil {
 		return err
@@ -416,7 +439,7 @@ func stopLiveDaemonsWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string
 	stopped := 0
 	skipped := 0
 	for _, rec := range records {
-		if err := stopDaemonRuntimeRecord(cmd.OutOrStdout(), dataDir, rec, apiKey, serveStopGraceTimeout); err != nil {
+		if err := stopDaemonRuntimeRecord(cmd.OutOrStdout(), dataDir, rec, apiKey, serveStopGraceTimeout, logger); err != nil {
 			if !errors.Is(err, errDaemonIdentityUnconfirmed) {
 				return fmt.Errorf("stop pid %d: %w", rec.PID, err)
 			}
@@ -436,12 +459,12 @@ func stopLiveDaemonsWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string
 	return nil
 }
 
-func stopDaemonRuntimeForUpgradeImpl(c config.Config, rt *DaemonRuntime) error {
+func stopDaemonRuntimeForUpgradeImpl(c config.Config, rt *DaemonRuntime, logger *slog.Logger) error {
 	if rt == nil {
 		return nil
 	}
 	if err := stopDaemonRuntimeRecord(os.Stdout, c.Data.DataDir, rt.Record,
-		c.Server.APIKey, serveStopGraceTimeout); err != nil {
+		c.Server.APIKey, serveStopGraceTimeout, logger); err != nil {
 		return fmt.Errorf("stop pid %d: %w", rt.Record.PID, err)
 	}
 	return nil
@@ -453,10 +476,11 @@ func stopDaemonRuntimeRecord(
 	rec daemon.RuntimeRecord,
 	apiKey string,
 	grace time.Duration,
+	logger *slog.Logger,
 ) error {
 	switch runtimeRecordIdentity(rec) {
 	case createTimeMatch:
-		return stopDaemonProcess(out, rec, apiKey, grace)
+		return stopDaemonProcess(out, rec, apiKey, grace, logger)
 	case createTimeMismatch:
 		proof, err := probeDaemonRuntimeIdentity(context.Background(), rec)
 		if err != nil {
@@ -510,7 +534,8 @@ func processIdentityConfirmed(rec daemon.RuntimeRecord) bool {
 	return processCreateTimeMatches(rec.PID, rec.Metadata[runtimeCreateTime])
 }
 
-func stopDaemonProcess(out io.Writer, rec daemon.RuntimeRecord, apiKey string, grace time.Duration) error {
+func stopDaemonProcess(out io.Writer, rec daemon.RuntimeRecord, apiKey string, grace time.Duration, logger *slog.Logger) error {
+	logger = repairLogger(logger)
 	if !processIdentityConfirmed(rec) {
 		return fmt.Errorf("cannot confirm pid %d is the recorded msgvault daemon", rec.PID)
 	}
@@ -862,7 +887,11 @@ func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOpti
 	}
 	defer func() { _ = devNull.Close() }()
 
-	child := newServeBackgroundCommandForRun(exe, serveBackgroundChildArgs()...)
+	var childOptions invocationOptions
+	if opts.Invocation != nil {
+		childOptions = *opts.Invocation
+	}
+	child := newServeBackgroundCommandForRun(exe, serveBackgroundChildArgs(childOptions)...)
 	child.Env = withStartupCacheBuildIntent(
 		append(os.Environ(), "MSGVAULT_HOME="+c.HomeDir, serveBackgroundChildEnv+"=1"),
 		opts.CacheBuildIntent,
@@ -955,31 +984,35 @@ func stopBackgroundServeStartup(proc *backgroundServeProcess, grace time.Duratio
 	}
 }
 
-func serveBackgroundChildArgs() []string {
+func serveBackgroundChildArgs(options ...invocationOptions) []string {
+	var o invocationOptions
+	if len(options) > 0 {
+		o = options[0]
+	}
 	args := make([]string, 0, 16)
-	if cfgFile != "" {
-		args = append(args, "--config", cfgFile)
+	if o.cfgFile != "" {
+		args = append(args, "--config", o.cfgFile)
 	}
-	if homeDir != "" {
-		args = append(args, "--home", homeDir)
+	if o.homeDir != "" {
+		args = append(args, "--home", o.homeDir)
 	}
-	if verbose {
+	if o.verbose {
 		args = append(args, "--verbose")
 	}
-	if logFile != "" {
-		args = append(args, "--log-file", logFile)
+	if o.logFile != "" {
+		args = append(args, "--log-file", o.logFile)
 	}
-	if logLevel != "" {
-		args = append(args, "--log-level", logLevel)
+	if o.logLevel != "" {
+		args = append(args, "--log-level", o.logLevel)
 	}
-	if noLogFile {
+	if o.noLogFile {
 		args = append(args, "--no-log-file")
 	}
-	if logSQL {
+	if o.logSQL {
 		args = append(args, "--log-sql")
 	}
-	if logSQLSlow != 0 {
-		args = append(args, "--log-sql-slow-ms", strconv.FormatInt(logSQLSlow, 10))
+	if o.logSQLSlow != 0 {
+		args = append(args, "--log-sql-slow-ms", strconv.FormatInt(o.logSQLSlow, 10))
 	}
 	return append(args, "serve")
 }

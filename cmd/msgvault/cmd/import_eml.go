@@ -42,6 +42,12 @@ duplicate messages receive every mailbox label where they appear.`,
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
+			logger := state.logger
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
 			}
@@ -51,7 +57,7 @@ duplicate messages receive every mailbox label where they appear.`,
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			st, cleanup, err := openWritableStoreAndInitForIngest()
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 			if err != nil {
 				return err
 			}
@@ -68,17 +74,17 @@ duplicate messages receive every mailbox label where they appear.`,
 				NoResume:           flags.noResume,
 				CheckpointInterval: flags.checkpointInterval,
 				AttachmentsDir:     attachmentsDir,
-				RemoteImages:       configuredRemoteImageFetcher(),
+				RemoteImages:       configuredRemoteImageFetcher(cfg),
 				Logger:             logger,
 			})
 			if importErr != nil {
-				return errors.Join(importErr, rebuildCacheAfterWrite(dbPath))
+				return errors.Join(importErr, rebuildCacheAfterWrite(dbPath, state))
 			}
 
 			if err := runEMLPostImportMigrations(
-				cmd.OutOrStdout(), st, summary, flags,
+				cmd.OutOrStdout(), st, summary, flags, state,
 			); err != nil {
-				return errors.Join(err, rebuildCacheAfterWrite(dbPath))
+				return errors.Join(err, rebuildCacheAfterWrite(dbPath, state))
 			}
 
 			out := cmd.OutOrStdout()
@@ -93,7 +99,7 @@ duplicate messages receive every mailbox label where they appear.`,
 			if resultErr == nil && summary.HardErrors {
 				resultErr = fmt.Errorf("import completed with %d errors", summary.Errors)
 			}
-			return errors.Join(resultErr, rebuildCacheAfterWrite(dbPath))
+			return errors.Join(resultErr, rebuildCacheAfterWrite(dbPath, state))
 		},
 	}
 
@@ -122,9 +128,14 @@ func runEMLPostImportMigrations(
 	st *store.Store,
 	summary *importer.EMLImportSummary,
 	flags importEMLFlags,
+	state *invocation,
 ) error {
 	if summary == nil || summary.SourceID == 0 {
 		return nil
+	}
+	state = invocationState(context.Background(), state)
+	if state == nil || state.logger == nil {
+		return errors.New("invocation state is required")
 	}
 	// Establish the source identifier before retrying the legacy migration,
 	// including after a partial import. Otherwise migrated legacy identities
@@ -133,9 +144,10 @@ func runEMLPostImportMigrations(
 		confirmDefaultIdentity(
 			out, st, summary.SourceID,
 			flags.identifier, flags.identifier, "account-identifier",
+			state.logger,
 		)
 	}
-	if err := runPostSourceCreateMigrations(st); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 	return nil

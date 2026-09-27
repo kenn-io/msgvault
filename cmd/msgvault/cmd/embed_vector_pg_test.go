@@ -20,6 +20,8 @@ import (
 // messages table (clean exit path). Skips when MSGVAULT_TEST_DB is unset
 // or not a postgres DSN.
 func TestRunEmbed_PG_OpenAndZeroPending(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -63,6 +65,8 @@ func TestRunEmbed_PG_OpenAndZeroPending(t *testing.T) {
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Vector.Enabled = true
 	cfg.Vector.Embeddings.Model = "test-model"
 	cfg.Vector.Embeddings.Dimension = 4

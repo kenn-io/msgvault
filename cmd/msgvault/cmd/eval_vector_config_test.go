@@ -45,10 +45,11 @@ func TestAttachVector_RejectsUnusableEmbeddingConfig(t *testing.T) {
 	f, _, _ := setupScopeFixture(t)
 
 	c := evalVectorConfig(t, "voyage", "voyage-context-4")
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
-	ev := &evaluator{ctx: context.Background()}
-	cleanup, err := ev.attachVector(context.Background(), f.Store)
+	ev := &evaluator{ctx: testCtx}
+	cleanup, err := ev.attachVector(testCtx, f.Store)
 	require.Error(err, "an unsupported api_format must not fall back to the OpenAI-compatible client")
 	assert.Nil(cleanup)
 	assert.Contains(err.Error(), "api_format")
@@ -89,8 +90,6 @@ func seedActiveGeneration(t *testing.T, dataDir, mainPath string, mainDB *sql.DB
 func TestAttachVector_EmbedsQueriesThroughConfiguredAPIFormat(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
-
 	dataDir := t.TempDir()
 	s := seedRankingDivergenceArchiveIn(t, dataDir)
 	rec, endpoint := embedTestServer(t, `{"data":[{"index":0,"data":[{"index":0,"embedding":[0.25,0.5,0.75]}]}]}`)
@@ -99,7 +98,7 @@ func TestAttachVector_EmbedsQueriesThroughConfiguredAPIFormat(t *testing.T) {
 	c.Data.DataDir = dataDir
 	c.Vector.Embeddings.Endpoint = endpoint
 	c.Vector.Embeddings.Dimension = 3
-	withTestConfig(t, c)
+	ctx := withTestConfig(t, c)
 	seedActiveGeneration(t, dataDir, c.DatabaseDSN(), s.DB(), c.Vector)
 
 	ev := &evaluator{ctx: ctx, diag: &runDiagnostics{}}
@@ -125,17 +124,17 @@ func TestAttachVector_RejectsContextualModelMismatch(t *testing.T) {
 	assert := assert.New(t)
 	f, _, _ := setupScopeFixture(t)
 
-	withTestConfig(t, evalVectorConfig(t, vector.APIFormatVoyageContextual, "voyage-large-4"))
+	testCtx := withTestConfig(t, evalVectorConfig(t, vector.APIFormatVoyageContextual, "voyage-large-4"))
+	_ = testCtx
 
-	ev := &evaluator{ctx: context.Background()}
-	_, err := ev.attachVector(context.Background(), f.Store)
+	ev := &evaluator{ctx: testCtx}
+	_, err := ev.attachVector(testCtx, f.Store)
 	require.Error(err)
 	assert.Contains(err.Error(), "voyage-large-4")
 }
 
 func TestAttachVector_HonorsSQLiteAcceleratorMode(t *testing.T) {
 	req := require.New(t)
-	ctx := t.Context()
 	dataDir := t.TempDir()
 	s := seedRankingDivergenceArchiveIn(t, dataDir)
 	_, endpoint := embedTestServer(t, `{"data":[{"index":0,"embedding":[1,0,0,0]}]}`)
@@ -143,7 +142,9 @@ func TestAttachVector_HonorsSQLiteAcceleratorMode(t *testing.T) {
 	c.Data.DataDir = dataDir
 	c.Vector.Embeddings.Endpoint = endpoint
 	c.Vector.Embeddings.Dimension = 4
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
+	ctx := testCtx
 	seedActiveGeneration(t, dataDir, c.DatabaseDSN(), s.DB(), c.Vector)
 
 	vectorPath := filepath.Join(dataDir, "vectors.db")

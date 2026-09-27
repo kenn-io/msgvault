@@ -20,6 +20,12 @@ func newAuthorizeGoogleCardDAVCmd() *cobra.Command {
 		Long:  "Authorize Google Contacts on this machine. Reuse a matching Google authorization when available, or store separate CardDAV credentials. Then select Google Contacts in CardDAV settings. For a remote daemon, copy the token to that host using the same OAuth client configuration.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
+			logger := state.logger
 			email := strings.ToLower(strings.TrimSpace(args[0]))
 			address, err := mail.ParseAddress(email)
 			if err != nil || address.Address != email {
@@ -31,7 +37,7 @@ func newAuthorizeGoogleCardDAVCmd() *cobra.Command {
 			}
 			mgr, err := carddav.NewGoogleOAuthManager(secrets, cfg.TokensDir(), app, email, logger)
 			if err != nil {
-				return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err))
+				return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), cfg)
 			}
 			if mgr.HasToken(email) && !mgr.HasScopeMetadata(email) {
 				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Warning: existing Google permissions are not recorded. This sign-in requests Contacts access; Gmail or Calendar may need separate reauthorization afterward."); err != nil {

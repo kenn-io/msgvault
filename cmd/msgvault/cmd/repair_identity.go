@@ -42,10 +42,15 @@ Examples:
   msgvault repair-identity --type imap`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
-			s, cleanup, err := openWritableStoreAndInitForIngest()
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 			if err != nil {
 				return err
 			}
@@ -56,7 +61,7 @@ Examples:
 				only = strings.TrimSpace(args[0])
 			}
 			repaired, rerr := repairIdentities(cmd.Context(), s, repairIdentityType, only, cmd.OutOrStdout())
-			cacheErr := rebuildCacheAfterWrite(cfg.DatabaseDSN())
+			cacheErr := rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
 			if rerr != nil {
 				return errors.Join(rerr, cacheErr)
 			}

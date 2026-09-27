@@ -137,12 +137,14 @@ func TestGoogleCardDAVSchedulerWaitsForAuthorization(t *testing.T) {
 	secrets := filepath.Join(dir, "client.json")
 	required.NoError(os.WriteFile(secrets, []byte(`{"web":{"client_id":"synthetic-client","client_secret":"synthetic-secret","redirect_uris":["https://archive.example/"]}}`), 0600))
 	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.HomeDir, cfg.Data.DataDir = dir, dir
 	cfg.OAuth.ClientSecrets = secrets
 	cfg.CardDAV = config.CardDAVConfig{Provider: "google", BaseURL: carddav.GoogleDiscoveryURL, Username: "person@example.com", Enabled: true, Schedule: "0 1 * * *"}
 	required.NoError(cfg.Save())
 	st := testutil.NewTestStore(t)
-	_, _, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+	_, _, err := st.ReplaceCardDAVDiscoveryContext(testCtx, store.CardDAVDiscoveryInput{
 		BaseURL: cfg.CardDAV.BaseURL, Username: cfg.CardDAV.Username,
 		PrincipalURL: "https://www.googleapis.com/principal/", HomeURL: "https://www.googleapis.com/contacts/",
 	})
@@ -160,13 +162,13 @@ func TestGoogleCardDAVSchedulerWaitsForAuthorization(t *testing.T) {
 		return reconcileCardDAVSchedulerJob(sched, settings, service, logger)
 	})
 	required.NoError(controller.ReconcileSchedule())
-	status, err := controller.Status(t.Context())
+	status, err := controller.Status(testCtx)
 	required.NoError(err)
 	assertions.Equal("google_authorization_required", status.RepairReason)
 	assertions.False(sched.IsJobScheduled(api.CardDAVJobName), "startup must skip an unauthorized Google account")
 
 	request := api.CardDAVAccountRequest{Provider: "google", Username: cfg.CardDAV.Username, Enabled: new(true), Schedule: "0 2 * * *"}
-	_, err = controller.Save(t.Context(), request)
+	_, err = controller.Save(testCtx, request)
 	required.NoError(err)
 	assertions.False(sched.IsJobScheduled(api.CardDAVJobName), "schedule-only saves must also skip missing authorization")
 
@@ -175,7 +177,7 @@ func TestGoogleCardDAVSchedulerWaitsForAuthorization(t *testing.T) {
 	token := fmt.Sprintf(`{"access_token":"synthetic-access","refresh_token":"synthetic-refresh","client_id":"synthetic-client","scopes":[%q]}`, oauth.ScopeCardDAV)
 	required.NoError(os.WriteFile(tokenPath, []byte(token), 0600))
 	request.Schedule = "0 3 * * *"
-	_, err = controller.Save(t.Context(), request)
+	_, err = controller.Save(testCtx, request)
 	required.NoError(err)
 	assertions.True(sched.IsJobScheduled(api.CardDAVJobName))
 	jobs := sched.JobStatus()
@@ -184,7 +186,7 @@ func TestGoogleCardDAVSchedulerWaitsForAuthorization(t *testing.T) {
 
 	required.NoError(os.Remove(tokenPath))
 	request.Schedule = "0 4 * * *"
-	_, err = controller.Save(t.Context(), request)
+	_, err = controller.Save(testCtx, request)
 	required.NoError(err)
 	assertions.False(sched.IsJobScheduled(api.CardDAVJobName), "saving after credentials are removed must unschedule the account")
 }

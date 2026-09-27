@@ -63,10 +63,11 @@ func TestDiscordCommandsRouteThroughDaemonCLIRunner(t *testing.T) {
 				assert.Equal(t, tt.wantArgs, req.Args)
 				assert.Equal(t, tt.wantEnv, req.Env)
 			}, `{"type":"complete"}`)
-			configureRemoteDaemonForTest(t, server.URL)
+			testCtx := configureRemoteDaemonForTest(t, server.URL)
 			t.Setenv(daemonCLISubprocessEnv, "")
 
 			cmd := tt.command(discordCommandDeps{})
+			cmd.SetContext(testCtx)
 			cmd.SetIn(strings.NewReader(tt.stdin))
 			cmd.SetArgs(tt.args)
 			require.NoError(t, cmd.Execute())

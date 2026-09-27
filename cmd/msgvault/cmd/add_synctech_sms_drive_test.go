@@ -24,10 +24,12 @@ func TestAddSynctechSMSDriveWritesConfigWithoutSecrets(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	home := t.TempDir()
-	cfg = config.NewDefaultConfig()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	cfg.HomeDir = home
 	cfg.Data.DataDir = home
 	cmd := newTestRootCmd()
+	cmd.SetContext(testCtx)
 	cmd.AddCommand(newAddSynctechSMSDriveCmd())
 	cmd.SetArgs([]string{
 		"add-synctech-sms-drive", "pixel",
@@ -56,7 +58,8 @@ func TestSynctechSMSDriveRunUsesSingleOuterSyncRun(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	home := t.TempDir()
-	cfg = config.NewDefaultConfig()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	cfg.HomeDir = home
 	cfg.Data.DataDir = home
 	f := storetest.New(t)
@@ -77,7 +80,7 @@ func TestSynctechSMSDriveRunUsesSingleOuterSyncRun(t *testing.T) {
 		},
 	}
 
-	summary, err := runSynctechSMSDriveSourceWithClient(context.Background(), f.Store, src, synctechImportOptions(src), client)
+	summary, err := runSynctechSMSDriveSourceWithClient(testCtx, f.Store, src, synctechImportOptions(src, invocationFromContext(testCtx).cfg), client)
 	require.NoError(err, "runSynctechSMSDriveSourceWithClient")
 	require.Len(summary.MessageIDs, 1, "summary message IDs")
 
@@ -101,11 +104,8 @@ func TestSynctechSMSDriveRunSetsUpIdentityAndPostSourceMigration(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	home := t.TempDir()
-	savedCfg := cfg
-	t.Cleanup(func() {
-		cfg = savedCfg
-	})
-	cfg = config.NewDefaultConfig()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	cfg.HomeDir = home
 	cfg.Data.DataDir = home
 	cfg.Identity.Addresses = []string{"legacy@example.com"}
@@ -116,7 +116,7 @@ func TestSynctechSMSDriveRunSetsUpIdentityAndPostSourceMigration(t *testing.T) {
 	src := synctechDriveTestSource()
 	client := fakeSynctechDriveClient{}
 
-	_, err = runSynctechSMSDriveSourceWithClient(context.Background(), st, src, synctechImportOptions(src), client)
+	_, err = runSynctechSMSDriveSourceWithClient(testCtx, st, src, synctechImportOptions(src, invocationFromContext(testCtx).cfg), client)
 	require.NoError(err, "runSynctechSMSDriveSourceWithClient")
 
 	synctechSource := getSynctechSource(t, st, src.OwnerPhone)
@@ -141,7 +141,8 @@ func TestSynctechSMSDriveRunRecordsZeroSelectedPoll(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	home := t.TempDir()
-	cfg = config.NewDefaultConfig()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	cfg.HomeDir = home
 	cfg.Data.DataDir = home
 	f := storetest.New(t)
@@ -157,7 +158,7 @@ func TestSynctechSMSDriveRunRecordsZeroSelectedPoll(t *testing.T) {
 		}},
 	}
 
-	_, err := runSynctechSMSDriveSourceWithClient(context.Background(), f.Store, src, synctechImportOptions(src), client)
+	_, err := runSynctechSMSDriveSourceWithClient(testCtx, f.Store, src, synctechImportOptions(src, invocationFromContext(testCtx).cfg), client)
 	require.NoError(err, "runSynctechSMSDriveSourceWithClient")
 
 	source := getSynctechSource(t, f.Store, src.OwnerPhone)
@@ -174,7 +175,9 @@ func TestSynctechSMSDriveRunMarksOuterSyncFailedOnDownloadError(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	home := t.TempDir()
-	cfg = config.NewDefaultConfig()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.HomeDir = home
 	cfg.Data.DataDir = home
 	f := storetest.New(t)
@@ -191,7 +194,7 @@ func TestSynctechSMSDriveRunMarksOuterSyncFailedOnDownloadError(t *testing.T) {
 		downloadErr: downloadErr,
 	}
 
-	_, err := runSynctechSMSDriveSourceWithClient(context.Background(), f.Store, src, synctechImportOptions(src), client)
+	_, err := runSynctechSMSDriveSourceWithClient(testCtx, f.Store, src, synctechImportOptions(src, invocationFromContext(testCtx).cfg), client)
 	require.ErrorIs(err, downloadErr, "runSynctechSMSDriveSourceWithClient")
 
 	source := getSynctechSource(t, f.Store, src.OwnerPhone)
@@ -208,12 +211,16 @@ func TestSynctechSMSDriveRunMarksOuterSyncFailedOnDownloadError(t *testing.T) {
 }
 
 func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	home := t.TempDir()
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.HomeDir = home
 	cfg.Data.DataDir = home
 	st := testutil.NewSQLiteTestStore(t)
@@ -259,7 +266,7 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
   <sms`,
 		},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testCtx)
 	cancel()
 	err := runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx, st, src, client)
 	require.Error(err, "runConfiguredSynctechSMSSourceWithStoreDriveClient")
@@ -288,16 +295,19 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
 }
 
 func TestRunConfiguredSynctechSMSSourceLeavesManualSyncMessagesUnstamped(t *testing.T) {
+	cfg := testConfigValue()
+
 	stubScheduledCacheBuild(t)
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
 	home := t.TempDir()
 	savedCfg := cfg
 	t.Cleanup(func() {
 		cfg = savedCfg
 	})
 	cfg = config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	ctx := testCtx
 	cfg.HomeDir = home
 	cfg.Data.DataDir = home
 	cfg.Vector.Enabled = true
@@ -338,6 +348,8 @@ func TestRunConfiguredSynctechSMSSourceLeavesManualSyncMessagesUnstamped(t *test
 }
 
 func TestConfiguredSynctechSMSCompletesAfterImport(t *testing.T) {
+	cfg := testConfigValue()
+
 	stubScheduledCacheBuild(t)
 	require := require.New(t)
 	assert := assert.New(t)
@@ -345,6 +357,8 @@ func TestConfiguredSynctechSMSCompletesAfterImport(t *testing.T) {
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.HomeDir = home
 	cfg.Data.DataDir = home
 
@@ -357,7 +371,7 @@ func TestConfiguredSynctechSMSCompletesAfterImport(t *testing.T) {
 	src.Backend = localValue
 	src.Path = xmlPath
 
-	err := runConfiguredSynctechSMSSourceWithStore(context.Background(), f.Store, src)
+	err := runConfiguredSynctechSMSSourceWithStore(testCtx, f.Store, src)
 
 	require.NoError(err, "configured synctech-sms import")
 	source := getSynctechSource(t, f.Store, src.OwnerPhone)

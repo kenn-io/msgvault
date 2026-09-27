@@ -25,17 +25,19 @@ import (
 )
 
 func TestOpenTUIEngineUsesConfiguredRemoteHTTP(t *testing.T) {
+	cfg := lifecycleTestConfig(t.TempDir())
+
 	assert := assert.New(t)
 	require := require.New(t)
 
 	var requests atomic.Int32
 	srv := httptest.NewServer(tuiAccountsHandler(&requests, "remote@example.com"))
 	t.Cleanup(srv.Close)
-	withTUIConfig(t, lifecycleTestConfig(t.TempDir()))
+	ctx := withTUIConfig(t, cfg)
 	cfg.Remote.URL = srv.URL
 	cfg.Remote.AllowInsecure = true
 
-	backend, err := openTUIBackend(context.Background())
+	backend, err := openTUIBackend(ctx)
 	require.NoError(
 		err, "openTUIBackend")
 
@@ -67,7 +69,7 @@ func TestOpenTUIEngineLocalFlagUsesLocalDaemonHTTP(t *testing.T) {
 	localCfg.Remote.URL = "http://configured-daemonclient.example:8080"
 	localCfg.Remote.AllowInsecure = true
 	localCfg.Server.APIKey = "local-daemon-secret"
-	withTUIConfig(t, localCfg)
+	ctx := withTUIConfig(t, localCfg)
 	forceLocalTUI = true
 
 	var requests atomic.Int32
@@ -99,7 +101,7 @@ func TestOpenTUIEngineLocalFlagUsesLocalDaemonHTTP(t *testing.T) {
 	require.NoError(
 		err, "write runtime")
 
-	backend, err := openTUIBackend(context.Background())
+	backend, err := openTUIBackend(ctx)
 	require.NoError(
 		err, "openTUIBackend")
 
@@ -121,19 +123,14 @@ func TestOpenTUIEngineLocalFlagUsesLocalDaemonHTTP(t *testing.T) {
 	assert.Equal(int32(1), requests.Load())
 }
 
-func withTUIConfig(t *testing.T, c *config.Config) {
+func withTUIConfig(t *testing.T, c *config.Config) context.Context {
 	t.Helper()
-	oldCfg := cfg
-	oldUseLocal := useLocal
 	oldForceLocalTUI := forceLocalTUI
-	cfg = c
-	useLocal = false
 	forceLocalTUI = false
 	t.Cleanup(func() {
-		cfg = oldCfg
-		useLocal = oldUseLocal
 		forceLocalTUI = oldForceLocalTUI
 	})
+	return testInvocationContext(t.Context(), c, invocationOptions{})
 }
 
 func tuiAccountsHandler(requests *atomic.Int32, email string) http.Handler {

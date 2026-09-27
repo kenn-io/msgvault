@@ -41,7 +41,7 @@ func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		HomeDir: t.TempDir(),
 		Data: config.DataConfig{
 			DataDir: filepath.Join(t.TempDir(), "missing-parent", "data"),
@@ -61,10 +61,11 @@ func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 		mcpHTTPAllowInsecure = savedAllowInsecure
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testCtx)
 	cancel()
 
 	cmd := mcpCmd
+	cmd.SetContext(testCtx)
 	cmd.SetContext(ctx)
 	err := cmd.RunE(cmd, nil)
 
@@ -93,7 +94,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	t.Cleanup(daemon.Close)
 
 	home := t.TempDir()
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		HomeDir: home,
 		Data:    config.DataConfig{DataDir: t.TempDir()},
 		Server:  config.ServerConfig{APIKey: "mcp-http-key"},
@@ -131,7 +132,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 		return wantErr
 	}
 
-	mcpCmd.SetContext(context.Background())
+	mcpCmd.SetContext(testCtx)
 	err := mcpCmd.RunE(mcpCmd, nil)
 
 	require.ErrorIs(err, wantErr)
@@ -178,9 +179,10 @@ func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
 }
 
 func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
+	_ = testCtx
 	tests := []struct {
 		name       string
 		health     string
@@ -216,7 +218,7 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 				_, _ = w.Write([]byte(tt.health))
 			})
 
-			opts := daemonMCPServeOptions(t.Context(), client)
+			opts := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
 			assert.Equal(tt.wantText, opts.HybridSearcher != nil, "semantic search")
 			assert.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
 			assert.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
@@ -228,7 +230,7 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
 
@@ -249,8 +251,8 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 		http.Error(w, `{"error":"vector_initializing","message":"Vector search is initializing"}`, http.StatusServiceUnavailable)
 	})
 
-	opts := daemonMCPServeOptions(context.Background(), client)
-	_, err := opts.HybridSearcher.SearchHybrid(context.Background(), mcpserver.HybridSearchRequest{
+	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	_, err := opts.HybridSearcher.SearchHybrid(testCtx, mcpserver.HybridSearchRequest{
 		Query: "term",
 		Mode:  "hybrid",
 	})
@@ -264,9 +266,10 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 }
 
 func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
+	_ = testCtx
 	tests := []struct {
 		name           string
 		schemaVersion  string
@@ -310,7 +313,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 				}
 			})
 
-			opts := daemonMCPServeOptions(t.Context(), client)
+			opts := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
 			if tt.wantPeople {
 				assert.NotNil(opts.PeopleBackend)
 			} else {
@@ -330,14 +333,20 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 }
 
 func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) {
+	logger := testLoggerValue()
+
 	assert := assert.New(t)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
 	var logs bytes.Buffer
 	previousLogger := logger
 	logger = slog.New(slog.NewTextHandler(&logs, nil))
+	inv := invocationFromContext(testCtx)
+	previousInvocationLogger := inv.logger
+	inv.logger = logger
 	t.Cleanup(func() { logger = previousLogger })
+	t.Cleanup(func() { inv.logger = previousInvocationLogger })
 
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
@@ -347,7 +356,7 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 		http.NotFound(w, r)
 	})
 
-	opts := daemonMCPServeOptions(t.Context(), client)
+	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	assert.Nil(opts.PeopleBackend)
 	assert.Nil(opts.DirectoryBackend)
 	assert.Nil(opts.ArchiveSQLQuerier)
@@ -355,8 +364,10 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 }
 
 func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
+	logger := testLoggerValue()
+
 	assert := assert.New(t)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
 	var logs bytes.Buffer
@@ -384,7 +395,7 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 		}
 	})
 
-	opts := daemonMCPServeOptions(t.Context(), client)
+	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	assert.NotNil(opts.PeopleBackend)
 	assert.NotNil(opts.DirectoryBackend)
 	assert.NotNil(opts.SavedViews)
@@ -398,7 +409,7 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) {
 	require := require.New(t)
 
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
 
@@ -419,11 +430,11 @@ func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) 
 		}
 	})
 
-	opts := daemonMCPServeOptions(context.Background(), client)
+	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	require.NotNil(opts.ManifestSaver, "manifest saver")
 
 	manifest := deletion.NewManifest("mcp test", []string{"gmail-001"})
-	err := opts.ManifestSaver.SaveManifest(context.Background(), manifest)
+	err := opts.ManifestSaver.SaveManifest(testCtx, manifest)
 	require.NoError(err)
 	assert.Equal(t, int32(1), manifestRequests.Load(), "manifest requests")
 }

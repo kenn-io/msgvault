@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -17,6 +18,12 @@ This command creates all necessary tables for storing messages, attachments,
 labels, and sync state. It is safe to run multiple times - tables are only
 created if they don't already exist.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
+		logger := state.logger
 		dbPath := cfg.DatabaseDSN()
 		logger.Info("initializing database", "path", dbPath)
 

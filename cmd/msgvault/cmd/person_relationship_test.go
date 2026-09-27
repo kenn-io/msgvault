@@ -53,7 +53,7 @@ func TestPersonRelationshipAddPostsTheDeclaredEdge(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
 
@@ -65,6 +65,7 @@ func TestPersonRelationshipAddPostsTheDeclaredEdge(t *testing.T) {
 	command := &cobra.Command{
 		Use: personRelationshipAddCmd.Use, Args: personRelationshipAddCmd.Args, RunE: personRelationshipAddCmd.RunE,
 	}
+	command.SetContext(testCtx)
 	command.SetOut(&output)
 	command.SetArgs([]string{"3", "parent", "4"})
 
@@ -107,7 +108,7 @@ func TestPersonRelationshipListRendersBothDirections(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
 
@@ -119,6 +120,7 @@ func TestPersonRelationshipListRendersBothDirections(t *testing.T) {
 	command := &cobra.Command{
 		Use: personRelationshipListCmd.Use, Args: personRelationshipListCmd.Args, RunE: personRelationshipListCmd.RunE,
 	}
+	command.SetContext(testCtx)
 	command.SetOut(&output)
 	command.SetArgs([]string{"3"})
 
@@ -164,7 +166,7 @@ func TestPersonRelationshipEndSendsIfMatchFromTheCurrentRevision(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
 
@@ -176,6 +178,7 @@ func TestPersonRelationshipEndSendsIfMatchFromTheCurrentRevision(t *testing.T) {
 	command := &cobra.Command{
 		Use: personRelationshipEndCmd.Use, Args: personRelationshipEndCmd.Args, RunE: personRelationshipEndCmd.RunE,
 	}
+	command.SetContext(testCtx)
 	command.SetOut(&output)
 	command.SetArgs([]string{"11", "2023-05"})
 
@@ -218,7 +221,7 @@ func TestRelationshipTypeUpdateUsesCurrentRevisionETag(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
 
@@ -235,6 +238,7 @@ func TestRelationshipTypeUpdateUsesCurrentRevisionETag(t *testing.T) {
 	command := &cobra.Command{
 		Use: relationshipTypeUpdateCmd.Use, Args: relationshipTypeUpdateCmd.Args, RunE: relationshipTypeUpdateCmd.RunE,
 	}
+	command.SetContext(testCtx)
 	command.Flags().AddFlagSet(relationshipTypeUpdateCmd.Flags())
 	command.SetOut(&output)
 	command.SetArgs([]string{"9", "--forward-label", "guide"})
@@ -254,13 +258,14 @@ func TestRelationshipTypeCreateRejectsAnEmptyReverseLabel(t *testing.T) {
 		called = true
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
 
 	command := &cobra.Command{
 		Use: relationshipTypeCreateCmd.Use, Args: relationshipTypeCreateCmd.Args, RunE: relationshipTypeCreateCmd.RunE,
 	}
+	command.SetContext(testCtx)
 	command.SetOut(&bytes.Buffer{})
 	command.SetErr(&bytes.Buffer{})
 	command.SetArgs([]string{"mentor", "mentor", "  "})

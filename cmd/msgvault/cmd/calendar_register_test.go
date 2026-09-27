@@ -59,6 +59,8 @@ func TestRegisterCalendarsAndReport_NoMatchIsNotAnError(t *testing.T) {
 // configured with a service account: it resolves the binding and reports that
 // no consent/escalation round trip is needed.
 func TestPlanCLIAddCalendar_ServiceAccountAppNeedsNoConsent(t *testing.T) {
+	cfg := testConfigValue()
+
 	st := testutil.NewTestStore(t)
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
@@ -70,8 +72,10 @@ func TestPlanCLIAddCalendar_ServiceAccountAppNeedsNoConsent(t *testing.T) {
 			},
 		},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
-	plan, err := planCLIAddCalendar(context.Background(), st, api.CLIAddCalendarPlanRequest{
+	plan, err := planCLIAddCalendar(testCtx, st, api.CLIAddCalendarPlanRequest{
 		Email: "bob@example.com", OAuthApp: "sa", OAuthAppExplicit: true,
 	})
 	require.NoError(t, err, "service-account apps have no client_secrets and must not be asked for one")

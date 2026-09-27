@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"io"
 	"os"
@@ -99,6 +98,7 @@ func runWhatsAppIdentityCommand(
 	noDefaultIdentity bool,
 ) (string, error) {
 	t.Helper()
+	cfg := testConfigValue()
 
 	oldCfg := cfg
 	oldNoDefaultIdentity := noDefaultIdentityImportWhatsApp
@@ -117,7 +117,7 @@ func runWhatsAppIdentityCommand(
 		importDisplayName = oldImportDisplayName
 	})
 
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		HomeDir: home,
 		Data: config.DataConfig{
 			DataDir: home,
@@ -136,7 +136,8 @@ func runWhatsAppIdentityCommand(
 
 	var output strings.Builder
 	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&output)
 	cmd.SetErr(io.Discard)
 	oldStdout := os.Stdout

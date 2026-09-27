@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -106,11 +107,20 @@ official release over a dev build.`,
 		if err := performUpdateWithDaemonLifecycle(
 			info,
 			progressFn,
-			loadDaemonConfigForUpdate,
-			stopLocalDaemonsForUpdate,
+			func() (*config.Config, error) {
+				inv := invocationFromCommand(cmd)
+				if inv == nil {
+					return nil, errors.New("configuration is unavailable")
+				}
+				options := inv.options
+				return loadDaemonConfigForUpdate(options)
+			},
+			func(c *config.Config) (updateDaemonStopResult, error) {
+				return stopLocalDaemonsForUpdate(c, invocationFromCommand(cmd).logger)
+			},
 			update.PerformUpdate,
 			func(c *config.Config, result updateDaemonStopResult) error {
-				return restartDaemonAfterUpdate(c, result, installExecutablePath)
+				return restartDaemonAfterUpdate(c, result, installExecutablePath, invocationFromCommand(cmd))
 			},
 		); err != nil {
 			return err
@@ -177,8 +187,8 @@ func performUpdateWithDaemonLifecycle(
 	return nil
 }
 
-func loadDaemonConfigForUpdate() (*config.Config, error) {
-	c, err := config.Load(cfgFile, homeDir)
+func loadDaemonConfigForUpdate(options invocationOptions) (*config.Config, error) {
+	c, err := config.Load(options.cfgFile, options.homeDir)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +198,7 @@ func loadDaemonConfigForUpdate() (*config.Config, error) {
 	return c, nil
 }
 
-func stopLocalDaemonsForUpdate(c *config.Config) (updateDaemonStopResult, error) {
+func stopLocalDaemonsForUpdate(c *config.Config, logger *slog.Logger) (updateDaemonStopResult, error) {
 	var result updateDaemonStopResult
 	if c == nil {
 		return result, errors.New("nil config")
@@ -199,7 +209,7 @@ func stopLocalDaemonsForUpdate(c *config.Config) (updateDaemonStopResult, error)
 	}
 	for _, rec := range records {
 		rt := daemonRuntimeFromRecord(rec)
-		if err := stopDaemonRuntimeForUpgrade(*c, rt); err != nil {
+		if err := stopDaemonRuntimeForUpgrade(*c, rt, logger); err != nil {
 			return result, err
 		}
 		result.Stopped = true
@@ -207,14 +217,18 @@ func stopLocalDaemonsForUpdate(c *config.Config) (updateDaemonStopResult, error)
 	return result, nil
 }
 
-func restartDaemonAfterUpdate(c *config.Config, result updateDaemonStopResult, executablePath string) error {
+func restartDaemonAfterUpdate(c *config.Config, result updateDaemonStopResult, executablePath string, state *invocation) error {
 	if !result.Stopped {
 		return nil
 	}
 	cmd := &cobra.Command{Use: "msgvault update daemon-restart"}
 	// A command that never runs through ExecuteC has no context, and the
 	// readiness wait dereferences the one it is given.
-	cmd.SetContext(context.Background())
+	ctx := context.Background()
+	if state != nil {
+		ctx = withInvocation(ctx, state)
+	}
+	cmd.SetContext(ctx)
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	return runServeStartWithOptions(cmd, c, backgroundServeStartOptions{ExecutablePath: executablePath})

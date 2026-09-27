@@ -14,6 +14,9 @@ import (
 )
 
 func TestListSendersUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -40,7 +43,10 @@ func TestListSendersUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	aggLimit = 50
 	aggAfter = ""
 	aggBefore = ""
@@ -48,6 +54,7 @@ func TestListSendersUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 
 	done := captureStdout(t)
 	cmd := &cobra.Command{Use: "list-senders", RunE: listSendersCmd.RunE}
+	cmd.SetContext(testCtx)
 
 	err := cmd.Execute()
 	out := done()

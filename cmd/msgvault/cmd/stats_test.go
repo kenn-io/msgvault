@@ -50,6 +50,10 @@ func TestStatsCommand_AccountAndCollectionMutuallyExclusive(t *testing.T) {
 // SourceIDs() returned an empty slice, and GetStatsForScope treats
 // an empty slice as unscoped/global.
 func TestStatsCommand_EmptyCollectionRejected(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+	useLocal := false
+
 	require := require.New(t)
 	dataDir := t.TempDir()
 	st := testutil.NewTestStore(t)
@@ -78,8 +82,11 @@ func TestStatsCommand_EmptyCollectionRejected(t *testing.T) {
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	statsCollection = "empty"
 
 	testCmd := &cobra.Command{Use: "stats", RunE: statsCmd.RunE}
@@ -87,6 +94,7 @@ func TestStatsCommand_EmptyCollectionRejected(t *testing.T) {
 	testCmd.Flags().StringVar(&statsCollection, "collection", "empty", "")
 
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(testCmd)
 	root.SetArgs([]string{"stats", "--collection", "empty"})
 
@@ -96,6 +104,10 @@ func TestStatsCommand_EmptyCollectionRejected(t *testing.T) {
 }
 
 func TestStatsCommand_ScopedUsesLocalDaemonHTTPAndPreservesLocalOutput(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+	useLocal := false
+
 	require := require.New(t)
 	assertions := assert.New(t)
 	dataDir := t.TempDir()
@@ -122,12 +134,14 @@ func TestStatsCommand_ScopedUsesLocalDaemonHTTPAndPreservesLocalOutput(t *testin
 	cfg = testCfg
 	logger = slog.New(slog.DiscardHandler)
 	useLocal = true
+	testCtx := testInvocationContext(t.Context(), testCfg, invocationOptions{useLocal: true})
 	statsAccount = ""
 	statsCollection = "Important"
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd := &cobra.Command{Use: "stats", RunE: runStats}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 
@@ -149,6 +163,10 @@ Note: Size is global (not scoped).
 }
 
 func TestStatsCommand_UnscopedUsesLocalDaemonHTTPAndPreservesLocalOutput(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+	useLocal := false
+
 	require := require.New(t)
 	assertions := assert.New(t)
 	dataDir := t.TempDir()
@@ -175,12 +193,14 @@ func TestStatsCommand_UnscopedUsesLocalDaemonHTTPAndPreservesLocalOutput(t *test
 	cfg = testCfg
 	logger = slog.New(slog.DiscardHandler)
 	useLocal = true
+	testCtx := testInvocationContext(t.Context(), testCfg, invocationOptions{useLocal: true})
 	statsAccount = ""
 	statsCollection = ""
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd := &cobra.Command{Use: "stats", RunE: runStats}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 

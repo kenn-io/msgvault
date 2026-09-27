@@ -35,13 +35,19 @@ Examples:
   msgvault backfill-teams-media user@company.com --only-incomplete`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
+		logger := state.logger
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 
 		email := args[0]
 
-		s, cleanup, err := openWritableStoreAndInitForIngest()
+		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 		if err != nil {
 			return err
 		}
@@ -101,7 +107,7 @@ Examples:
 		})
 		if ctx.Err() != nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run backfill-teams-media to resume (idempotent).")
-			return rebuildCacheAfterWrite(dbPath)
+			return rebuildCacheAfterWrite(dbPath, state)
 		}
 		if err != nil {
 			return fmt.Errorf("teams inline-media backfill failed: %w", err)
@@ -109,7 +115,7 @@ Examples:
 
 		writeTeamsMediaBackfillSummary(cmd.OutOrStdout(), sum)
 
-		return rebuildCacheAfterWrite(dbPath)
+		return rebuildCacheAfterWrite(dbPath, state)
 	},
 }
 

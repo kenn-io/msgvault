@@ -319,6 +319,8 @@ func TestSchedulerWithConfig(t *testing.T) {
 			{Email: "test3@gmail.com", Schedule: "invalid", Enabled: true},
 		},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
 	var syncCalls []string
 	sched := scheduler.New(func(ctx context.Context, email string) error {
@@ -367,6 +369,8 @@ func TestServeOAuthValidationReportsNoProviders(t *testing.T) {
 }
 
 func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
+	cfg := testConfigValue()
+
 	oldCfg := cfg
 	dataDir := t.TempDir()
 	cfg = lifecycleTestConfig(dataDir)
@@ -376,7 +380,7 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cmd := &cobra.Command{Use: serveCmd.Use}
-	cmd.SetContext(ctx)
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- runServe(cmd, nil)
@@ -394,6 +398,8 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 }
 
 func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	oldCfg := cfg
@@ -417,7 +423,7 @@ func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	cmd := &cobra.Command{Use: serveCmd.Use}
-	cmd.SetContext(ctx)
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
 	errCh := make(chan error, 1)
 	go func() { errCh <- runServe(cmd, nil) }()
 	waitForServeHealth(t, c.Server.APIPort, errCh)
@@ -440,6 +446,8 @@ func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
 }
 
 func TestRunServeImmediateCancellationWaitsForAPIStart(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	oldCfg := cfg
 	dataDir := t.TempDir()
@@ -470,7 +478,7 @@ func TestRunServeImmediateCancellationWaitsForAPIStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	cmd := &cobra.Command{Use: "serve"}
-	cmd.SetContext(ctx)
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
 	errCh := make(chan error, 1)
 	go func() { errCh <- runServe(cmd, nil) }()
 
@@ -496,6 +504,8 @@ func TestRunServeImmediateCancellationWaitsForAPIStart(t *testing.T) {
 }
 
 func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -508,7 +518,7 @@ func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cmd := &cobra.Command{Use: serveCmd.Use}
-	cmd.SetContext(ctx)
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
 	errCh := make(chan error, 1)
 	serveDone := make(chan struct{})
 	go func() {
@@ -550,6 +560,8 @@ func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
 }
 
 func TestRunServeServesHealthWhileAnalyticsBuildBlocked(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	oldCfg := cfg
@@ -573,7 +585,7 @@ func TestRunServeServesHealthWhileAnalyticsBuildBlocked(t *testing.T) {
 	defer cancel()
 	t.Cleanup(cancel)
 	cmd := &cobra.Command{Use: "serve"}
-	cmd.SetContext(ctx)
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- runServe(cmd, nil)
@@ -619,6 +631,8 @@ func TestRunServeServesHealthWhileAnalyticsBuildBlocked(t *testing.T) {
 }
 
 func TestRunServeDuckDBReportsInitializingWithoutSQLFallback(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	oldCfg := cfg
@@ -642,7 +656,7 @@ func TestRunServeDuckDBReportsInitializingWithoutSQLFallback(t *testing.T) {
 	defer cancel()
 	t.Cleanup(cancel)
 	cmd := &cobra.Command{Use: serveCmd.Use}
-	cmd.SetContext(ctx)
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
 	errCh := make(chan error, 1)
 	go func() { errCh <- runServe(cmd, nil) }()
 
@@ -706,6 +720,8 @@ func TestRunServeDuckDBReportsInitializingWithoutSQLFallback(t *testing.T) {
 }
 
 func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	oldCfg := cfg
@@ -735,7 +751,7 @@ func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
 	})
 
 	cmd := &cobra.Command{Use: serveCmd.Use}
-	cmd.SetContext(ctx)
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
 	errCh := make(chan error, 1)
 	go func() { errCh <- runServe(cmd, nil) }()
 
@@ -794,6 +810,8 @@ func TestListenServeAPIHonorsAvailableExplicitPort(t *testing.T) {
 }
 
 func TestRunServeFailsBeforeArchiveWorkWhenAPIPortInUse(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -810,7 +828,7 @@ func TestRunServeFailsBeforeArchiveWorkWhenAPIPortInUse(t *testing.T) {
 	t.Cleanup(func() { cfg = oldCfg })
 
 	cmd := &cobra.Command{Use: "serve"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testInvocationContext(context.Background(), cfg, invocationOptions{}))
 	err = runServe(cmd, nil)
 
 	require.Error(err, "runServe")
@@ -936,9 +954,7 @@ func TestRebuildCacheAfterManualSyncDefersUsableStaleCache(t *testing.T) {
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.AutoBuildCache = true
 	c.Analytics.MinRebuildInterval = 6 * time.Hour
-	previousCfg := cfg
-	cfg = c
-	t.Cleanup(func() { cfg = previousCfg })
+	state := &invocation{cfg: c}
 	_, err := s.DB().Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
@@ -964,7 +980,7 @@ func TestRebuildCacheAfterManualSyncDefersUsableStaleCache(t *testing.T) {
 	require.True(locked)
 	t.Cleanup(func() { require.NoError(builderLock.Unlock()) })
 	done := make(chan error, 1)
-	go func() { done <- rebuildCacheAfterManualSync(c.DatabaseDSN()) }()
+	go func() { done <- rebuildCacheAfterManualSync(c.DatabaseDSN(), state) }()
 	select {
 	case err := <-done:
 		require.NoError(err, "manual sync must finish while the builder lock is held")
@@ -1185,9 +1201,6 @@ func TestManualSyncRefreshQueuesOnlyWhenForcedInsideInterval(t *testing.T) {
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.AutoBuildCache = true
 	c.Analytics.MinRebuildInterval = 6 * time.Hour
-	previousCfg := cfg
-	cfg = c
-	t.Cleanup(func() { cfg = previousCfg })
 	_, err := s.DB().Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
@@ -1234,7 +1247,7 @@ func TestManualSyncRefreshQueuesOnlyWhenForcedInsideInterval(t *testing.T) {
 				defer stop()
 				require.True(jobs.waitContext(cleanupCtx), "cache worker stopped")
 			})
-			adapter := &storeAPIAdapter{store: s, cacheJobs: jobs}
+			adapter := &storeAPIAdapter{store: s, config: c, cacheJobs: jobs}
 			runnerCalled := false
 			err := adapter.runCLICommandWithRunner(t.Context(), api.CLIRunRequest{Args: test.args}, nil,
 				func(_ context.Context, args []string, _ map[string]string, _ string, _ func(string, string) error) error {
@@ -1365,12 +1378,14 @@ func TestOpenDaemonAnalyticsEngineWarnsWhenDuckDBRefreshDisabled(t *testing.T) {
 	staleness := cacheNeedsBuild(c.DatabaseDSN(), c.AnalyticsDir())
 	require.False(staleness.NeedsBuild, "test cache must be ready: %+v", staleness)
 	var logs bytes.Buffer
-	oldLogger := logger
-	logger = slog.New(slog.NewTextHandler(&logs, nil))
-	t.Cleanup(func() { logger = oldLogger })
+	analyticsCtx := testInvocationContext(context.Background(), c, invocationOptions{})
+	inv := invocationFromContext(analyticsCtx)
+	oldLogger := inv.logger
+	inv.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	t.Cleanup(func() { inv.logger = oldLogger })
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentNone,
+		analyticsCtx, c, s, startupCacheBuildIntentNone,
 	)
 	require.NoError(err, "openDaemonAnalyticsEngine")
 	defer func() { _ = engine.Close() }()
@@ -1468,15 +1483,17 @@ func TestOpenDaemonAnalyticsEngineAutoFallsBackWhenStartupBuildFails(t *testing.
 	c.Analytics.Engine = config.AnalyticsEngineAuto
 	c.Analytics.AutoBuildCache = true
 	var logs bytes.Buffer
-	oldLogger := logger
-	logger = slog.New(slog.NewTextHandler(&logs, nil))
-	t.Cleanup(func() { logger = oldLogger })
+	analyticsCtx := testInvocationContext(context.Background(), c, invocationOptions{})
+	inv := invocationFromContext(analyticsCtx)
+	oldLogger := inv.logger
+	inv.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	t.Cleanup(func() { inv.logger = oldLogger })
 	stubBuildCacheSubprocess(t, func(context.Context, bool) error {
 		return errors.New("simulated build failure")
 	})
 
 	engine, mode, outcome, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentNone,
+		analyticsCtx, c, s, startupCacheBuildIntentNone,
 	)
 	require.NoError(err, "a failed auto-mode build must not fail daemon startup")
 	defer func() { _ = engine.Close() }()
@@ -1519,9 +1536,9 @@ func TestOpenDaemonAnalyticsEngineDefersThrottledStartupBuild(t *testing.T) {
 	c.Analytics.MinRebuildInterval = 6 * time.Hour
 	publishStaleTestCache(t, c, s)
 	var logs bytes.Buffer
-	oldLogger := logger
-	logger = slog.New(slog.NewTextHandler(&logs, nil))
-	t.Cleanup(func() { logger = oldLogger })
+	state := testInvocationWithConfig(c)
+	state.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	testCtx := withInvocation(t.Context(), state)
 	builds := 0
 	stubBuildCacheSubprocess(t, func(context.Context, bool) error {
 		builds++
@@ -1529,7 +1546,7 @@ func TestOpenDaemonAnalyticsEngineDefersThrottledStartupBuild(t *testing.T) {
 	})
 
 	engine, mode, _, err := openDaemonAnalyticsEngine(
-		context.Background(), c, s, startupCacheBuildIntentNone,
+		testCtx, c, s, startupCacheBuildIntentNone,
 	)
 	require.NoError(err)
 	defer func() { _ = engine.Close() }()
@@ -2023,6 +2040,11 @@ func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {
 }
 
 func TestDaemonCLIRunCannotUseServerRemoteDeleteConfigOrEnvironment(t *testing.T) {
+	cfg := testConfigValue()
+	cfgFile := ""
+	homeDir := ""
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -2080,7 +2102,7 @@ remote_enabled = true
 
 	daemon := api.NewServerWithOptions(api.ServerOptions{
 		Config: serverCfg,
-		Store:  &storeAPIAdapter{store: st},
+		Store:  &storeAPIAdapter{store: st, config: serverCfg, options: invocationOptions{cfgFile: configPath}},
 		Logger: slog.New(slog.DiscardHandler),
 	})
 	body, err := json.Marshal(api.CLIRunRequest{
@@ -2704,17 +2726,24 @@ func TestStoreAPIAdapterServesCLIDeleteDeduped(t *testing.T) {
 // cfg.Vector.Enabled is false, setupVectorFeatures returns (nil, nil)
 // regardless of build tag. Runs under both tagged and untagged builds.
 func TestSetupVectorFeatures_Disabled(t *testing.T) {
+	cfg := testConfigValue()
+
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Vector.Enabled = false
 
-	vf, err := setupVectorFeatures(context.Background(), nil, "", false)
+	vf, err := setupVectorFeatures(testCtx, nil, "", false)
 	require.NoError(t, err, "setupVectorFeatures")
 	assert.Nil(t, vf, "setupVectorFeatures should be nil when disabled")
 }
 
 func TestRunScheduledGmailSync_ReauthGuidance(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	for _, tc := range []struct {
 		name, scope, flags string
 	}{
@@ -2726,12 +2755,15 @@ func TestRunScheduledGmailSync_ReauthGuidance(t *testing.T) {
 			require := require.New(t)
 			// An expired token without a refresh token fails locally, without
 			// contacting Google or opening an authorization flow.
-			_, restore := seedTokenEnv(t, fmt.Sprintf(`{"access_token":"expired","expiry":"2000-01-01T00:00:00Z","scopes":[%q]}`, tc.scope))
+			tokenPath, restore := seedTokenEnv(t, fmt.Sprintf(`{"access_token":"expired","expiry":"2000-01-01T00:00:00Z","scopes":[%q]}`, tc.scope))
 			defer restore()
+			cfg = testConfigValue()
+			cfg.OAuth.ClientSecrets = filepath.Join(filepath.Dir(filepath.Dir(tokenPath)), "client_secret.json")
 			mgr, err := oauth.NewManager(cfg.OAuth.ClientSecrets, cfg.TokensDir(), logger)
 			require.NoError(err)
-			_, err = runScheduledGmailSync(t.Context(), scopeEscalationAccount, nil, nil,
-				func(string) (*oauth.Manager, error) { return mgr, nil })
+			scheduledCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			_, err = runScheduledGmailSync(scheduledCtx, scopeEscalationAccount, nil, nil,
+				func(string) (*oauth.Manager, error) { return mgr, nil }, invocationFromContext(scheduledCtx))
 			require.Error(err)
 			assert.Contains(err.Error(), "msgvault add-account user@example.com"+tc.flags+" --force")
 			assert.Contains(err.Error(), "msgvault add-account user@example.com"+tc.flags+" --headless")
@@ -2745,11 +2777,15 @@ func TestRunScheduledGmailSync_ReauthGuidance(t *testing.T) {
 // rather than the misleading "oauth2: token expired and refresh token
 // is not set" message reported in #329.
 func TestRunScheduledIMAPSync_NoCredentials(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Data.DataDir = t.TempDir()
 
 	s, err := store.Open(filepath.Join(cfg.Data.DataDir, "msgvault.db"))
@@ -2770,7 +2806,7 @@ func TestRunScheduledIMAPSync_NoCredentials(t *testing.T) {
 		return nil, nil //nolint:nilnil // unreachable guard, see comment above
 	}
 
-	err = runScheduledSync(context.Background(), imapID, s, getOAuthMgr)
+	err = runScheduledSync(testCtx, imapID, s, getOAuthMgr, invocationFromContext(testCtx))
 	require.Error(err, "runScheduledSync(imap, no creds) want credentials error")
 	msg := err.Error()
 	assert.False(strings.Contains(msg, "refresh token") || strings.Contains(msg, "token may be expired"),
@@ -2786,11 +2822,15 @@ func TestRunScheduledIMAPSync_NoCredentials(t *testing.T) {
 // matched against identifier, so config-driven scheduled syncs fell
 // through to the Gmail OAuth path (#329).
 func TestRunScheduledIMAPSync_DispatchByDisplayName(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Data.DataDir = t.TempDir()
 
 	s, err := store.Open(filepath.Join(cfg.Data.DataDir, "msgvault.db"))
@@ -2816,7 +2856,7 @@ func TestRunScheduledIMAPSync_DispatchByDisplayName(t *testing.T) {
 	// Pass the email (as config.toml `email = "..."` would supply it),
 	// not the imaps:// identifier. Dispatch must still land on the
 	// IMAP path; absence of credentials produces an IMAP-shaped error.
-	err = runScheduledSync(context.Background(), imapEmail, s, getOAuthMgr)
+	err = runScheduledSync(testCtx, imapEmail, s, getOAuthMgr, invocationFromContext(testCtx))
 	require.Error(err, "runScheduledSync(email, no creds) want IMAP credentials error")
 	msg := err.Error()
 	assert.False(strings.Contains(msg, "refresh token") || strings.Contains(msg, "token may be expired"),
@@ -2831,11 +2871,15 @@ func TestRunScheduledIMAPSync_DispatchByDisplayName(t *testing.T) {
 // would inject e.g. "imaps://user@host:993" into account_identities
 // when the user had cleared their identities.
 func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Data.DataDir = t.TempDir()
 
 	s, err := store.Open(filepath.Join(cfg.Data.DataDir, "msgvault.db"))
@@ -2867,7 +2911,7 @@ func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
 
 	// Expected to fail at the IMAP connection; what matters is that
 	// confirmDefaultIdentity ran first with the display_name.
-	_ = runScheduledSync(context.Background(), imapID, s, getOAuthMgr)
+	_ = runScheduledSync(testCtx, imapID, s, getOAuthMgr, invocationFromContext(testCtx))
 
 	identities, err := s.ListAccountIdentities(src.ID)
 	require.NoError(err, "ListAccountIdentities")
@@ -2970,6 +3014,8 @@ func TestFindScheduledSyncSources(t *testing.T) {
 }
 
 func TestScheduledTeamsImportOptionsApplyMediaPolicy(t *testing.T) {
+	cfg := testConfigValue()
+
 	oldConfig := cfg
 	t.Cleanup(func() { cfg = oldConfig })
 	enabled := true
@@ -2982,8 +3028,10 @@ func TestScheduledTeamsImportOptionsApplyMediaPolicy(t *testing.T) {
 			},
 		},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
-	opts := scheduledTeamsImportOptions("user@example.com")
+	opts := scheduledTeamsImportOptions("user@example.com", cfg)
 	assert.Equal(t, cfg.Teams.MediaPolicy("user@example.com"), opts.MediaPolicy)
 	assert.Equal(t, cfg.AttachmentsDir(), opts.AttachmentsDir)
 	assert.True(t, opts.IncludeChannels)
@@ -2992,6 +3040,8 @@ func TestScheduledTeamsImportOptionsApplyMediaPolicy(t *testing.T) {
 func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	st := storetest.New(t)
 	source, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
 	require.NoError(err)
@@ -3022,10 +3072,10 @@ func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) 
 		return nil
 	}
 
-	err = runScheduledSync(context.Background(), source.Identifier, st.Store, func(string) (*oauth.Manager, error) {
+	err = runScheduledSync(testCtx, source.Identifier, st.Store, func(string) (*oauth.Manager, error) {
 		require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
 		return nil, errors.New("unreachable Gmail OAuth resolution")
-	})
+	}, invocationFromContext(testCtx))
 	require.ErrorContains(err, "synthetic Discord import failure")
 	assert.Equal([]int64{source.ID}, imported)
 	assert.Equal(1, rebuilds)
@@ -3061,7 +3111,7 @@ func TestRunScheduledSyncStopsAfterYield(t *testing.T) {
 
 	err = runScheduledSync(ctx, source.Identifier, st.Store, func(string) (*oauth.Manager, error) {
 		return nil, errors.New("unexpected Gmail OAuth resolution")
-	})
+	}, testInvocationWithConfig(testConfigValue()))
 	require.ErrorIs(err, scheduler.ErrYieldedToWaiter)
 	assert.Equal(1, imports)
 	assert.Zero(rebuilds, "a yielded run releases the gate before cache rebuilding")
@@ -3116,7 +3166,7 @@ func TestRunScheduledSyncCooperativePreemptionPreservesSourceResult(t *testing.T
 			err = runScheduledSync(ctx, source.Identifier, st.Store, func(string) (*oauth.Manager, error) {
 				require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
 				return nil, errors.New("unreachable Gmail OAuth resolution")
-			})
+			}, testInvocationWithConfig(testConfigValue()))
 
 			if tt.sourceErr == nil {
 				require.NoError(err, "successful cooperative yield is not a callback error")
@@ -3137,17 +3187,20 @@ func TestScheduledSyncYieldedForCooperativePreemption(t *testing.T) {
 func TestRunScheduledSyncLogsDiscordImportIssues(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	inv := invocationFromContext(testCtx)
 	st := storetest.New(t)
 	source, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
 	require.NoError(err)
 
 	originalImport := importDiscordSourceForScheduledRun
 	originalRebuild := rebuildCacheAfterScheduledSourceRun
-	originalLogger := logger
+	originalLogger := inv.logger
 	t.Cleanup(func() {
 		importDiscordSourceForScheduledRun = originalImport
 		rebuildCacheAfterScheduledSourceRun = originalRebuild
-		logger = originalLogger
+		inv.logger = originalLogger
 	})
 	importDiscordSourceForScheduledRun = func(
 		context.Context, *store.Store, *store.Source,
@@ -3168,14 +3221,15 @@ func TestRunScheduledSyncLogsDiscordImportIssues(t *testing.T) {
 	}
 	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
 	var logs bytes.Buffer
-	logger = slog.New(slog.NewTextHandler(&logs, nil))
+	inv.logger = slog.New(slog.NewTextHandler(&logs, nil))
 
 	require.NoError(runScheduledSync(
-		context.Background(), source.Identifier, st.Store,
+		testCtx, source.Identifier, st.Store,
 		func(string) (*oauth.Manager, error) {
 			require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
 			return nil, errors.New("unreachable")
 		},
+		inv,
 	))
 	output := logs.String()
 	assert.Contains(output, "discord catalog issue")
@@ -3199,14 +3253,15 @@ func TestScheduledSyncPreemptibleRequiresResumableSources(t *testing.T) {
 	imap, err := st.Store.GetOrCreateSource(sourceTypeIMAP, "imaps://reader@example.test:993")
 	require.NoError(err)
 
-	assert.True(scheduledSyncPreemptible(st.Store, gmail.Identifier))
-	assert.False(scheduledSyncPreemptible(st.Store, imap.Identifier), "IMAP uses a full pass with non-resumable offsets")
-	assert.True(scheduledSyncPreemptible(st.Store, "new-reader@example.test"), "missing source rows use the resumable Gmail fallback")
+	assert.True(scheduledSyncPreemptible(st.Store, gmail.Identifier, testDiscardLogger()))
+	assert.False(scheduledSyncPreemptible(st.Store, imap.Identifier, testDiscardLogger()), "IMAP uses a full pass with non-resumable offsets")
+	assert.True(scheduledSyncPreemptible(st.Store, "new-reader@example.test", testDiscardLogger()), "missing source rows use the resumable Gmail fallback")
 }
 
 func TestScheduledDiscordGuildFailureDoesNotBlockLaterGuild(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
+	cfg := config.NewDefaultConfig()
 	st := storetest.New(t)
 	first, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
 	require.NoError(err)
@@ -3239,9 +3294,10 @@ func TestScheduledDiscordGuildFailureDoesNotBlockLaterGuild(t *testing.T) {
 
 	completed := make(chan string, 2)
 	sched := scheduler.New(func(ctx context.Context, identifier string) error {
-		err := runScheduledSync(ctx, identifier, st.Store, func(string) (*oauth.Manager, error) {
+		scheduledCtx := testInvocationContext(ctx, cfg, invocationOptions{})
+		err := runScheduledSync(scheduledCtx, identifier, st.Store, func(string) (*oauth.Manager, error) {
 			return nil, errors.New("unreachable Gmail OAuth resolution")
-		})
+		}, invocationFromContext(scheduledCtx))
 		completed <- identifier
 		return err
 	})

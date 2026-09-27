@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -17,7 +18,7 @@ import (
 //
 // The lock is taken non-blocking, so there is no context parameter: a writer
 // either claims the free SQLite archive immediately or is told who holds it.
-func acquireDirectSQLiteWriteLock(cfg *config.Config) (func(), error) {
+func acquireDirectSQLiteWriteLock(cfg *config.Config, state *invocation) (func(), error) {
 	if cfg == nil {
 		return nil, errors.New("nil config")
 	}
@@ -36,7 +37,8 @@ func acquireDirectSQLiteWriteLock(cfg *config.Config) (func(), error) {
 	}
 	return func() {
 		if cerr := lock.Close(); cerr != nil {
-			logger.Warn("release write-owner lock", "error", cerr)
+			_, currentLogger := invocationConfigLogger(state)
+			currentLogger.Warn("release write-owner lock", "error", cerr)
 		}
 	}, nil
 }
@@ -102,13 +104,12 @@ func daemonAutostartPreflight(cfg *config.Config) error {
 	return nil
 }
 
-// openStoreAndInitWith opens the local archive and initializes schema while the
-// caller owns the direct-writer lock. store.Open + InitSchema create the
-// database file on first use, which is the right behavior for a
-// freshly-installed CLI; init-db remains the explicit setup command for users
-// who want to pre-create the DB.
-func openStoreAndInitWith(migrate func(*store.Store) error) (*store.Store, error) {
-	dbPath := cfg.DatabaseDSN()
+func openStoreAndInitWithInvocation(state *invocation, migrate func(*store.Store) error) (*store.Store, error) {
+	currentCfg, _ := invocationConfigLogger(state)
+	if currentCfg == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
+	dbPath := currentCfg.DatabaseDSN()
 	st, err := store.Open(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -124,21 +125,27 @@ func openStoreAndInitWith(migrate func(*store.Store) error) (*store.Store, error
 	return st, nil
 }
 
-func openWritableStoreAndInit() (*store.Store, func(), error) {
-	return openWritableStoreAndInitWith(runStartupMigrations)
+func openWritableStoreAndInitForInvocation(state *invocation) (*store.Store, func(), error) {
+	return openWritableStoreAndInitWithInvocation(state, func(s *store.Store) error {
+		return runStartupMigrationsContext(context.Background(), s, state)
+	})
 }
 
-func openWritableStoreAndInitForIngest() (*store.Store, func(), error) {
-	return openWritableStoreAndInitWith(runStartupMigrationsForIngest)
+func openWritableStoreAndInitForIngestInvocation(state *invocation) (*store.Store, func(), error) {
+	return openWritableStoreAndInitWithInvocation(state, runStartupMigrationsForIngest)
 }
 
-func openWritableStoreAndInitWith(migrate func(*store.Store) error) (*store.Store, func(), error) {
-	release, err := acquireDirectSQLiteWriteLock(cfg)
+func openWritableStoreAndInitWithInvocation(state *invocation, migrate func(*store.Store) error) (*store.Store, func(), error) {
+	currentCfg, _ := invocationConfigLogger(state)
+	if currentCfg == nil {
+		return nil, nil, errors.New("configuration is unavailable")
+	}
+	release, err := acquireDirectSQLiteWriteLock(currentCfg, state)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	st, err := openStoreAndInitWith(migrate)
+	st, err := openStoreAndInitWithInvocation(state, migrate)
 	if err != nil {
 		release()
 		return nil, nil, err

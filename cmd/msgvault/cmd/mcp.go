@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -45,6 +47,11 @@ Add to Claude Desktop config:
 	    }
 	  }`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
 		st, info, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("open daemon: %w", err)
@@ -58,7 +65,7 @@ Add to Claude Desktop config:
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 
-		opts := daemonMCPServeOptions(ctx, st)
+		opts := daemonMCPServeOptions(ctx, st, state)
 		opts.AllowProfileWrites = mcpAllowProfileWrites
 
 		if mcpHTTPAddr != "" {
@@ -99,16 +106,29 @@ const vectorLaneHealthMinAPISchemaVersion = "2.28.0"
 // Schema 2.4.0 added the visual attachment search route.
 const visualSearchMinAPISchemaVersion = "2.4.0"
 
-func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) mcpserver.ServeOptions {
+func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *invocation) mcpserver.ServeOptions {
+	if state == nil {
+		state = invocationFromContext(ctx)
+	}
+	var cfg *config.Config
+	log := slog.New(slog.DiscardHandler)
+	if state != nil {
+		cfg = state.cfg
+		if state.logger != nil {
+			log = state.logger
+		}
+	}
 	engine := daemonclient.NewEngineAdapter(st)
 	opts := mcpserver.ServeOptions{
 		Engine:             engine,
-		AttachmentsDir:     cfg.AttachmentsDir(),
 		AttachmentReader:   st,
 		ManifestSaver:      daemonMCPManifestSaver{client: st},
 		DocumentSearcher:   st,
 		PersonFileSearcher: daemonMCPPersonFileSearcher{client: st},
-		DataDir:            cfg.Data.DataDir,
+	}
+	if cfg != nil {
+		opts.AttachmentsDir = cfg.AttachmentsDir()
+		opts.DataDir = cfg.Data.DataDir
 	}
 	health, capabilityErr := st.Health(ctx)
 	var schemaVersion string
@@ -127,7 +147,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) mcpserv
 		}
 	}
 	if capabilityErr != nil {
-		logger.Warn("people tools disabled because the daemon capability probe failed", "error", capabilityErr)
+		log.Warn("people tools disabled because the daemon capability probe failed", "error", capabilityErr)
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, peopleMinAPISchemaVersion) {
 		people := daemonclient.NewPeopleBrowser(engine)
 		if daemonclient.APISchemaVersionAtLeast(schemaVersion, directoryPeopleMinAPISchemaVersion) {
@@ -138,12 +158,12 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) mcpserv
 	// The daemon executes Saved Views itself, so the tools need a daemon that
 	// serves the run endpoint; an older daemon simply omits them.
 	if capabilityErr != nil {
-		logger.Warn("Saved View tools disabled because the daemon capability probe failed", "error", capabilityErr)
+		log.Warn("Saved View tools disabled because the daemon capability probe failed", "error", capabilityErr)
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, savedViewsMinAPISchemaVersion) {
 		opts.SavedViews = st
 	}
 	if capabilityErr != nil {
-		logger.Warn("meeting tools disabled because the daemon capability probe failed", "error", capabilityErr)
+		log.Warn("meeting tools disabled because the daemon capability probe failed", "error", capabilityErr)
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
 		opts.Meetings = st
 	}

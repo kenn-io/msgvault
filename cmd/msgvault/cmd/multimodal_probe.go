@@ -43,6 +43,11 @@ then run 'msgvault multimodal build --yes' to consent to exactly that
 capability profile.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
 		if strings.TrimSpace(multimodalProbeSeeds) == "" {
 			return usageErr(cmd, errors.New("--seeds is required: a private directory holding synthetic image_webp.webp, image_webp_alt.webp, video_mp4.mp4, and video_mp4_alt.mp4 seeds"))
 		}

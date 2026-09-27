@@ -14,6 +14,9 @@ import (
 )
 
 func TestListAccountsUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -33,11 +36,15 @@ func TestListAccountsUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	listAccountsJSON = false
 
 	done := captureStdout(t)
 	cmd := &cobra.Command{Use: "list-accounts", RunE: listAccountsCmd.RunE}
+	cmd.SetContext(testCtx)
 
 	err := cmd.Execute()
 	out := done()

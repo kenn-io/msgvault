@@ -60,6 +60,9 @@ accepted as a command-line flag. When the bot can access one guild, that guild
 is selected automatically; otherwise repeat --guild with the desired guild IDs.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if invocationFromContext(cmd.Context()) != nil && deps.bind != nil {
+				deps = deps.bind(cmd.Context())
+			}
 			return runAddDiscord(cmd, deps, opts)
 		},
 	}

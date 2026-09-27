@@ -17,6 +17,12 @@ import (
 )
 
 func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
+	cfg := testConfigValue()
+	cfgFile := ""
+	homeDir := ""
+	logger := testLoggerValue()
+	verbose := false
+
 	assert := assert.New(t)
 	require := require.New(t)
 	markDaemonCLISubprocessForTest(t)
@@ -50,6 +56,7 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 		voice,
 	})
 	require.NoError(rootCmd.ExecuteContext(context.Background()))
+	runCfg := invocationFromCommand(rootCmd).cfg
 
 	st, err := store.Open(filepath.Join(home, "msgvault.db"))
 	require.NoError(err)
@@ -94,7 +101,7 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 	))
 	// An interrupted subprocess can persist the import before CLI finalization.
 	// Retrying identical input must still refresh the published attachment data.
-	client, err := gvoice.NewClient(voice, gvoice.WithAttachmentsDir(cfg.AttachmentsDir()))
+	client, err := gvoice.NewClient(voice, gvoice.WithAttachmentsDir(runCfg.AttachmentsDir()))
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	source, err := st.GetOrCreateSource("google_voice", client.Identifier())
@@ -108,8 +115,9 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 		voice,
 	})
 	require.NoError(rootCmd.ExecuteContext(context.Background()))
+	runCfg = invocationFromCommand(rootCmd).cfg
 
-	engine, err := query.NewDuckDBEngine(cfg.AnalyticsDir(), "", nil)
+	engine, err := query.NewDuckDBEngine(runCfg.AnalyticsDir(), "", nil)
 	require.NoError(err)
 	result, queryErr := engine.QuerySQL(context.Background(), `
 		SELECT size FROM attachments

@@ -273,7 +273,9 @@ func (a *storeAPIAdapter) refreshDraftCache(ctx context.Context, source *store.S
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		logger.Error("draft analytics cache refresh failed", "source_id", source.ID, "error", err)
+		if a.logger != nil {
+			a.logger.Error("draft analytics cache refresh failed", "source_id", source.ID, "error", err)
+		}
 	}
 }
 
@@ -352,7 +354,7 @@ func (a *storeAPIAdapter) resolveDraftReplyTarget(ctx context.Context, intent dr
 }
 
 func defaultDraftClientFactory(ctx context.Context, source *store.Source) (*imaplib.Client, error) {
-	client, err := buildAPIClient(ctx, source, oauthManagerCache(), nil)
+	client, err := buildAPIClient(ctx, source, oauthManagerCache(invocationFromContext(ctx)), nil)
 	if err != nil {
 		return nil, err
 	}

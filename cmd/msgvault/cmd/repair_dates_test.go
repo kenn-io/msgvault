@@ -32,7 +32,8 @@ func TestRepairDatesAlwaysProxiesThroughDaemonCLIRunner(t *testing.T) {
 		`{"type":"stdout","data":"Repaired 1 message(s).\n"}`,
 		`{"type":"complete"}`,
 	)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	t.Setenv(daemonCLISubprocessEnv, "")
 
 	var apply bool
@@ -40,6 +41,7 @@ func TestRepairDatesAlwaysProxiesThroughDaemonCLIRunner(t *testing.T) {
 	cmd := &cobra.Command{
 		Use: repairDatesCmd.Use, Args: repairDatesCmd.Args, RunE: repairDatesCmd.RunE,
 	}
+	cmd.SetContext(testCtx)
 	cmd.Flags().BoolVar(&apply, "apply", false, "write repaired dates")
 	cmd.SetArgs([]string{"--apply"})
 	cmd.SetOut(&stdout)
@@ -50,6 +52,8 @@ func TestRepairDatesAlwaysProxiesThroughDaemonCLIRunner(t *testing.T) {
 }
 
 func TestRunRepairDatesLocalDryRunApplyAndIdempotency(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -58,6 +62,8 @@ func TestRunRepairDatesLocalDryRunApplyAndIdempotency(t *testing.T) {
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
@@ -119,7 +125,7 @@ func TestRunRepairDatesLocalDryRunApplyAndIdempotency(t *testing.T) {
 	now := time.Date(2026, 7, 23, 12, 0, 0, 123, time.UTC)
 	var dryRunOut bytes.Buffer
 	dryRunCmd := &cobra.Command{}
-	dryRunCmd.SetContext(context.Background())
+	dryRunCmd.SetContext(testCtx)
 	dryRunCmd.SetOut(&dryRunOut)
 	require.NoError(runRepairDatesLocal(dryRunCmd, false, now))
 	assert.Contains(dryRunOut.String(), "Repairable: 2")
@@ -145,7 +151,7 @@ func TestRunRepairDatesLocalDryRunApplyAndIdempotency(t *testing.T) {
 
 	var applyOut bytes.Buffer
 	applyCmd := &cobra.Command{}
-	applyCmd.SetContext(context.Background())
+	applyCmd.SetContext(testCtx)
 	applyCmd.SetOut(&applyOut)
 	require.NoError(runRepairDatesLocal(applyCmd, true, now))
 	assert.Contains(applyOut.String(), "Repaired 2 message(s)")
@@ -179,12 +185,12 @@ func TestRunRepairDatesLocalDryRunApplyAndIdempotency(t *testing.T) {
 
 	st, err = store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(err)
-	pending, err := st.ListActivityProjectionQueueContext(t.Context(), 10)
+	pending, err := st.ListActivityProjectionQueueContext(testCtx, 10)
 	require.NoError(err)
 	assert.Len(pending, 2,
 		"date repair must leave both changed messages queued for real projection")
 	projectDateRepairActivity(t, st)
-	pending, err = st.ListActivityProjectionQueueContext(t.Context(), 10)
+	pending, err = st.ListActivityProjectionQueueContext(testCtx, 10)
 	require.NoError(err)
 	assert.Empty(pending)
 	require.NoError(st.Close())
@@ -192,7 +198,7 @@ func TestRunRepairDatesLocalDryRunApplyAndIdempotency(t *testing.T) {
 
 	var secondApplyOut bytes.Buffer
 	secondApplyCmd := &cobra.Command{}
-	secondApplyCmd.SetContext(context.Background())
+	secondApplyCmd.SetContext(testCtx)
 	secondApplyCmd.SetOut(&secondApplyOut)
 	require.NoError(runRepairDatesLocal(secondApplyCmd, true, now))
 	assert.Contains(secondApplyOut.String(), "Nothing to repair")
@@ -204,6 +210,8 @@ func TestRunRepairDatesLocalDryRunApplyAndIdempotency(t *testing.T) {
 }
 
 func TestRunRepairDatesLocalReportsUnresolvedReasons(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -212,6 +220,8 @@ func TestRunRepairDatesLocalReportsUnresolvedReasons(t *testing.T) {
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
@@ -267,7 +277,7 @@ func TestRunRepairDatesLocalReportsUnresolvedReasons(t *testing.T) {
 	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 	var dryRunOut bytes.Buffer
 	dryRunCmd := &cobra.Command{}
-	dryRunCmd.SetContext(context.Background())
+	dryRunCmd.SetContext(testCtx)
 	dryRunCmd.SetOut(&dryRunOut)
 	require.NoError(runRepairDatesLocal(dryRunCmd, false, now))
 
@@ -397,6 +407,8 @@ func TestDateRepairUsesAnalyticsCacheOnlyForSQLite(t *testing.T) {
 }
 
 func TestRunRepairDatesLocalInvalidatesAndUnlocksCacheWhenApplyFails(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	dataDir := t.TempDir()
 	savedCfg := cfg
@@ -404,6 +416,8 @@ func TestRunRepairDatesLocalInvalidatesAndUnlocksCacheWhenApplyFails(t *testing.
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
@@ -447,7 +461,8 @@ func TestRunRepairDatesLocalInvalidatesAndUnlocksCacheWhenApplyFails(t *testing.
 	require.NoError(os.WriteFile(statePath, []byte("{}\n"), 0o600))
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&bytes.Buffer{})
 	err = runRepairDatesLocal(
 		cmd,
@@ -467,6 +482,8 @@ func TestRunRepairDatesLocalInvalidatesAndUnlocksCacheWhenApplyFails(t *testing.
 }
 
 func TestRunRepairDatesLocalReportsCommittedRepairWhenContactInvalidationFails(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -475,6 +492,8 @@ func TestRunRepairDatesLocalReportsCommittedRepairWhenContactInvalidationFails(t
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
@@ -516,7 +535,8 @@ func TestRunRepairDatesLocalReportsCommittedRepairWhenContactInvalidationFails(t
 	require.NoError(st.Close())
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&bytes.Buffer{})
 	err = runRepairDatesLocal(
 		cmd,
@@ -530,7 +550,7 @@ func TestRunRepairDatesLocalReportsCommittedRepairWhenContactInvalidationFails(t
 		"the repair committed before invalidation failed")
 	st, err = store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(err)
-	pending, err := st.ListActivityProjectionQueueContext(t.Context(), 10)
+	pending, err := st.ListActivityProjectionQueueContext(testCtx, 10)
 	require.NoError(err)
 	require.Len(pending, 1)
 	assert.Equal(messageID, pending[0].MessageID,

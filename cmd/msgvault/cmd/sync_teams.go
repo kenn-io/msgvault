@@ -40,13 +40,19 @@ Examples:
   msgvault sync-teams user@company.com --full`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil || state.logger == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
+		logger := state.logger
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 
 		email := args[0]
 
-		s, cleanup, err := openWritableStoreAndInitForIngest()
+		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 		if err != nil {
 			return err
 		}
@@ -109,7 +115,7 @@ Examples:
 		sum, err := imp.Import(ctx, opts)
 		if ctx.Err() != nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-teams to resume.")
-			return rebuildCacheAfterManualSync(dbPath)
+			return rebuildCacheAfterManualSync(dbPath, state)
 		}
 		if err != nil {
 			return fmt.Errorf("teams sync failed: %w", err)
@@ -117,7 +123,7 @@ Examples:
 
 		writeTeamsSyncSummary(cmd.OutOrStdout(), sum)
 
-		return rebuildCacheAfterManualSync(dbPath)
+		return rebuildCacheAfterManualSync(dbPath, state)
 	},
 }
 

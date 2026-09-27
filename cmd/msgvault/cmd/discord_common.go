@@ -20,6 +20,7 @@ import (
 const sourceTypeDiscord = "discord"
 
 type discordCommandDeps struct {
+	bind                 func(context.Context) discordCommandDeps
 	openStore            func() (*store.Store, func(), error)
 	tokenManager         func() *discord.TokenManager
 	apiBaseURL           func() string
@@ -32,18 +33,58 @@ type discordCommandDeps struct {
 }
 
 func defaultDiscordCommandDeps() discordCommandDeps {
+	return defaultDiscordCommandDepsForContext(context.Background())
+}
+
+func defaultDiscordCommandDepsForContext(ctx context.Context) discordCommandDeps {
+	state := invocationFromContext(ctx)
+	var currentCfg *config.Config
+	if state != nil {
+		currentCfg = state.cfg
+	}
 	return discordCommandDeps{
-		openStore:    openWritableStoreAndInitForIngest,
-		tokenManager: func() *discord.TokenManager { return discord.NewTokenManager(cfg.TokensDir()) },
-		apiBaseURL:   func() string { return discord.DefaultBaseURL },
-		providerConfig: func() config.DiscordConfig {
-			return cfg.Discord
+		bind: defaultDiscordCommandDepsForContext,
+		openStore: func() (*store.Store, func(), error) {
+			if state == nil || currentCfg == nil {
+				return nil, nil, errors.New("configuration is unavailable")
+			}
+			return openWritableStoreAndInitForIngestInvocation(state)
 		},
-		attachmentsDir:       func() string { return cfg.AttachmentsDir() },
-		databaseDSN:          func() string { return cfg.DatabaseDSN() },
-		rebuildCache:         rebuildCacheAfterManualSync,
-		postSourceMigrations: runPostSourceCreateMigrations,
-		registerGuild:        registerDiscordGuild,
+		tokenManager: func() *discord.TokenManager {
+			if currentCfg == nil {
+				return discord.NewTokenManager("")
+			}
+			return discord.NewTokenManager(currentCfg.TokensDir())
+		},
+		apiBaseURL: func() string { return discord.DefaultBaseURL },
+		providerConfig: func() config.DiscordConfig {
+			if currentCfg == nil {
+				return config.DiscordConfig{}
+			}
+			return currentCfg.Discord
+		},
+		attachmentsDir: func() string {
+			if currentCfg == nil {
+				return ""
+			}
+			return currentCfg.AttachmentsDir()
+		},
+		databaseDSN: func() string {
+			if currentCfg == nil {
+				return ""
+			}
+			return currentCfg.DatabaseDSN()
+		},
+		rebuildCache: func(dbPath string) error {
+			if currentCfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			return rebuildCacheAfterManualSync(dbPath, state)
+		},
+		postSourceMigrations: func(st *store.Store) error {
+			return runPostSourceCreateMigrationsForInvocation(st, state)
+		},
+		registerGuild: registerDiscordGuild,
 	}
 }
 

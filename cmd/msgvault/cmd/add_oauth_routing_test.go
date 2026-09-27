@@ -22,10 +22,12 @@ func TestAddAccountUsesDaemonRunner(t *testing.T) {
 			"alice@example.com",
 		}, req.Args, "args")
 	}, `{"type":"stdout","data":"Account authorized\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	var stdout bytes.Buffer
 	cmd := newAddAccountCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{
 		"alice@example.com",
@@ -52,10 +54,12 @@ func TestAddO365UsesDaemonRunner(t *testing.T) {
 			"alice@example.com",
 		}, req.Args, "args")
 	}, `{"type":"stdout","data":"Microsoft 365 account added\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	var stdout bytes.Buffer
 	cmd := newAddO365Cmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"alice@example.com", "--tenant", "acme", "--no-default-identity"})
 
@@ -76,10 +80,12 @@ func TestAddTeamsUsesDaemonRunner(t *testing.T) {
 			"alice@example.com",
 		}, req.Args, "args")
 	}, `{"type":"stdout","data":"Microsoft Teams account authorized\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	var stdout bytes.Buffer
 	cmd := newAddTeamsCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"alice@example.com", "--tenant", "acme", "--no-default-identity"})
 
@@ -111,10 +117,12 @@ func TestAddCalendarUsesDaemonRunner(t *testing.T) {
 			"alice@example.com",
 		}, req.Args, "args")
 	}, `{"type":"stdout","data":"Registered 2 calendars\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	var stdout bytes.Buffer
 	cmd := newAddCalendarCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{
 		"alice@example.com",
@@ -153,10 +161,12 @@ func TestSyncCalendarUsesDaemonRunner(t *testing.T) {
 			"alice@example.com",
 		}, req.Args, "args")
 	}, `{"type":"stdout","data":"Calendar sync complete\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	var stdout bytes.Buffer
 	cmd := newSyncCalendarCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{
 		"alice@example.com",
@@ -201,10 +211,12 @@ func TestAddCalendarPromptsScopeEscalationBeforeDaemonRunner(t *testing.T) {
 			"alice@example.com",
 		}, req.Args, "args")
 	}, `{"type":"stdout","data":"Registered 1 calendar\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	var stdout bytes.Buffer
 	cmd := newAddCalendarCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetIn(bytes.NewBufferString("y\n"))
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"alice@example.com"})

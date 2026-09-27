@@ -38,7 +38,10 @@ const notionMeetingsConfigHint = `Add to your config.toml:
   enabled = true
   # schedule = "15 */6 * * *"         # optional daemon schedule`
 
-func resolveNotionMeetingsSource(args []string) (*config.NotionMeetingsSource, error) {
+func resolveNotionMeetingsSource(args []string, cfg *config.Config) (*config.NotionMeetingsSource, error) {
+	if cfg == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
 	if len(cfg.NotionMeetings) == 0 {
 		return nil, errors.New("no [[notion_meetings]] sources configured\n\n" + notionMeetingsConfigHint)
 	}
@@ -61,9 +64,12 @@ func resolveNotionMeetingsSource(args []string) (*config.NotionMeetingsSource, e
 	return &source, nil
 }
 
-func resolveNotionMeetingsSources(args []string, probe bool) ([]config.NotionMeetingsSource, error) {
+func resolveNotionMeetingsSources(args []string, probe bool, cfg *config.Config) ([]config.NotionMeetingsSource, error) {
+	if cfg == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
 	if probe || len(args) > 0 || len(cfg.NotionMeetings) == 1 {
-		source, err := resolveNotionMeetingsSource(args)
+		source, err := resolveNotionMeetingsSource(args, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -133,10 +139,15 @@ var addNotionMeetingsCmd = &cobra.Command{
 	Short: "Register and validate a Notion AI Meeting Notes source",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		source, err := resolveNotionMeetingsSource(args)
+		source, err := resolveNotionMeetingsSource(args, cfg)
 		if err != nil {
 			return err
 		}
@@ -151,7 +162,7 @@ var addNotionMeetingsCmd = &cobra.Command{
 		if err := runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), client); err != nil {
 			return err
 		}
-		st, cleanup, err := openWritableStoreAndInitForIngest()
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 		if err != nil {
 			return err
 		}
@@ -160,7 +171,7 @@ var addNotionMeetingsCmd = &cobra.Command{
 			source.Identifier, accountEmail); err != nil {
 			return err
 		}
-		if err := runPostSourceCreateMigrations(st); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNotion meeting source %s registered.\n", source.Identifier)
@@ -180,10 +191,15 @@ a local visible-set filter. --limit caps discovery work but not due transcript
 maintenance. --probe validates access without printing meeting content.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		sources, err := resolveNotionMeetingsSources(args, syncNotionMeetingsProbe)
+		sources, err := resolveNotionMeetingsSources(args, syncNotionMeetingsProbe, cfg)
 		if err != nil {
 			return err
 		}
@@ -210,7 +226,7 @@ maintenance. --probe validates access without printing meeting content.`,
 				newNotionMeetingsClient(notionmeetings.DefaultBaseURL, source.Token))
 		}
 
-		st, cleanup, err := openWritableStoreAndInitForIngest()
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 		if err != nil {
 			return err
 		}
@@ -230,12 +246,12 @@ maintenance. --probe validates access without printing meeting content.`,
 			})
 			accumulateNotionMeetingsWrites(pendingWrites, summary)
 			if err := finishNotionMeetingsImport(source.Identifier, pendingWrites, importErr,
-				func() error { return rebuildNotionMeetingsCacheAfterWrite(dbPath) }); err != nil {
+				func() error { return rebuildNotionMeetingsCacheAfterWrite(dbPath, state) }); err != nil {
 				return err
 			}
 			writeNotionMeetingsSummary(cmd.OutOrStdout(), summary)
 		}
-		return rebuildNotionMeetingsCacheAfterWrite(dbPath)
+		return rebuildNotionMeetingsCacheAfterWrite(dbPath, state)
 	},
 }
 

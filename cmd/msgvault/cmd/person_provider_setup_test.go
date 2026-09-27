@@ -1233,36 +1233,28 @@ func providerSetupCommandDeps(
 	return deps
 }
 
-// TestPersonProviderDefaultDependenciesResolveCredentialsAfterConfigLoad
-// reproduces the real command lifecycle: the provider command and its default
-// dependencies are constructed during init, before PersistentPreRunE loads the
-// selected config. Stored credentials must therefore resolve from the live
-// config at execution time rather than from the init-time nil cfg.
+func newPersonProviderInvocationTestRoot() *cobra.Command {
+	root := &cobra.Command{Use: "msgvault", PersistentPreRunE: func(command *cobra.Command, _ []string) error {
+		state := prepareInvocation(command)
+		loadedConfig, err := config.Load(state.options.cfgFile, state.options.homeDir)
+		if err != nil {
+			return err
+		}
+		state.cfg = loadedConfig
+		return nil
+	}}
+	registerRootFlags(root)
+	registerAgentFlags(root)
+	return root
+}
+
+// Construct dependencies before config load to exercise invocation binding.
 func TestPersonProviderDefaultDependenciesResolveCredentialsAfterConfigLoad(t *testing.T) {
 	newAssert := assert.New
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
-	previousConfig := cfg
-	previousConfigFile := cfgFile
-	previousHomeDir := homeDir
-	previousLogger := logger
-	previousLogResult := logResult
-	t.Cleanup(func() {
-		if logResult != nil && logResult != previousLogResult {
-			logResult.Close()
-		}
-		cfg = previousConfig
-		cfgFile = previousConfigFile
-		homeDir = previousHomeDir
-		logger = previousLogger
-		logResult = previousLogResult
-	})
-	path, loaded := providerSetupConfigFile(t)
-	cfg = nil
-	cfgFile = path
-	homeDir = ""
-	logResult = nil
+	path, _ := providerSetupConfigFile(t)
+	t.Setenv("LIVE_PROVIDER_KEY", providerSetupSecretCanary)
 	deps := defaultPersonProviderCommandDeps()
 
 	st := testutil.NewSQLiteTestStore(t)
@@ -1272,7 +1264,7 @@ func TestPersonProviderDefaultDependenciesResolveCredentialsAfterConfigLoad(t *t
 	}}
 	deps.openStore = func() (personProviderStore, func(), error) { return st, func() {}, nil }
 	deps.openReadStore = func() (personProviderStore, func(), error) { return st, func() {}, nil }
-	deps.newChecker = func(peoplesweep.Config, personProviderStore) (personProviderChecker, error) {
+	deps.newChecker = func(peoplesweep.Config, personProviderStore, personProviderSetupDeps) (personProviderChecker, error) {
 		return checker, nil
 	}
 	deps.isDaemonSubprocess = func() bool { return true }
@@ -1290,7 +1282,76 @@ func TestPersonProviderDefaultDependenciesResolveCredentialsAfterConfigLoad(t *t
 		}, nil
 	}
 
-	root := &cobra.Command{Use: "msgvault", PersistentPreRunE: rootCmd.PersistentPreRunE}
+	root := newPersonProviderInvocationTestRoot()
+	person := &cobra.Command{Use: "person"}
+	person.AddCommand(newPersonProviderCommand(deps))
+	root.AddCommand(person)
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetErr(&output)
+	root.SetArgs([]string{
+		"--config", path,
+		"person", "provider", "add", "live-stored", "--custom",
+		"--protocol", "openai_chat", "--endpoint", "https://live.example.test/v1",
+		"--model", "live-model", "--auth", "bearer", "--credential-env", "LIVE_PROVIDER_KEY",
+		"--retention-posture", "zero_retention", "--training-posture", "no_training",
+		"--source", "conversation_text", "--source-since", "2025-01-01", "--yes",
+	})
+	require.NoError(root.ExecuteContext(t.Context()))
+	assert.NotContains(output.String(), providerSetupSecretCanary)
+
+	configData, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.NotContains(string(configData), providerSetupSecretCanary)
+	assert.Contains(string(configData), `credential = "env"`)
+	assert.Contains(string(configData), `credential_env = "LIVE_PROVIDER_KEY"`)
+
+	removeRoot := newPersonProviderInvocationTestRoot()
+	removePerson := &cobra.Command{Use: "person"}
+	removePerson.AddCommand(newPersonProviderCommand(deps))
+	removeRoot.AddCommand(removePerson)
+	removeRoot.SetOut(&output)
+	removeRoot.SetErr(&output)
+	removeRoot.SetArgs([]string{"--config", path, "person", "provider", "remove", "live-stored"})
+	require.NoError(removeRoot.ExecuteContext(t.Context()))
+	assert.Contains(output.String(), `Removed people provider profile "live-stored"`)
+	configData, err = os.ReadFile(path)
+	require.NoError(err)
+	assert.NotContains(string(configData), "live-stored")
+}
+
+func TestPersonProviderDefaultDependenciesResolveStoredCredentialsAfterConfigLoad(t *testing.T) {
+	requireStoredCredentialStorePlatform(t)
+	assert := assert.New(t)
+	require := require.New(t)
+	path, loaded := providerSetupConfigFile(t)
+	deps := defaultPersonProviderCommandDeps()
+
+	st := testutil.NewSQLiteTestStore(t)
+	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
+		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
+		ModelVersion: "live-model-v1",
+	}}
+	deps.openStore = func() (personProviderStore, func(), error) { return st, func() {}, nil }
+	deps.openReadStore = func() (personProviderStore, func(), error) { return st, func() {}, nil }
+	deps.newChecker = func(peoplesweep.Config, personProviderStore, personProviderSetupDeps) (personProviderChecker, error) {
+		return checker, nil
+	}
+	deps.isDaemonSubprocess = func() bool { return true }
+	deps.setup.catalog = nil
+	deps.setup.negotiate = func(
+		_ context.Context,
+		_ peoplesweep.ProviderConfig,
+		credential peoplesweep.Credential,
+	) (peoplesweep.NegotiatedCapabilities, error) {
+		assert.Equal(providerSetupSecretCanary, credential.Value())
+		return peoplesweep.NegotiatedCapabilities{
+			OutputMode: peoplesweep.OutputModeJSONObject, TokenLimitParameter: "max_tokens",
+			DriverVersion: peoplesweep.OpenAIChatProviderVersion,
+		}, nil
+	}
+
+	root := newPersonProviderInvocationTestRoot()
 	person := &cobra.Command{Use: "person"}
 	person.AddCommand(newPersonProviderCommand(deps))
 	root.AddCommand(person)
@@ -1299,6 +1360,7 @@ func TestPersonProviderDefaultDependenciesResolveCredentialsAfterConfigLoad(t *t
 	root.SetOut(&output)
 	root.SetErr(&output)
 	root.SetArgs([]string{
+		"--config", path,
 		"person", "provider", "add", "live-stored", "--custom",
 		"--protocol", "openai_chat", "--endpoint", "https://live.example.test/v1",
 		"--model", "live-model", "--auth", "bearer", "--api-key-stdin",
@@ -1325,13 +1387,13 @@ func TestPersonProviderDefaultDependenciesResolveCredentialsAfterConfigLoad(t *t
 	assert.NotContains(string(configData), providerSetupSecretCanary)
 	assert.Contains(string(configData), `credential = "stored"`)
 
-	removeRoot := &cobra.Command{Use: "msgvault", PersistentPreRunE: rootCmd.PersistentPreRunE}
+	removeRoot := newPersonProviderInvocationTestRoot()
 	removePerson := &cobra.Command{Use: "person"}
 	removePerson.AddCommand(newPersonProviderCommand(deps))
 	removeRoot.AddCommand(removePerson)
 	removeRoot.SetOut(&output)
 	removeRoot.SetErr(&output)
-	removeRoot.SetArgs([]string{"person", "provider", "remove", "live-stored"})
+	removeRoot.SetArgs([]string{"--config", path, "person", "provider", "remove", "live-stored"})
 	require.NoError(removeRoot.ExecuteContext(t.Context()))
 	assert.Contains(output.String(), `Removed people provider profile "live-stored"`)
 	_, err = peoplesweep.NewFileCredentialStore(loaded.TokensDir()).Load("live-stored")
@@ -1340,6 +1402,27 @@ func TestPersonProviderDefaultDependenciesResolveCredentialsAfterConfigLoad(t *t
 	require.NoError(err)
 	assert.Zero(tombstoneInfo.Size())
 	assert.Equal(os.FileMode(0o600), tombstoneInfo.Mode().Perm())
+}
+
+func TestPersonProviderBoundCheckerUsesBoundSetup(t *testing.T) {
+	require := require.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = cfg.HomeDir
+	peopleConfig := personProviderTestConfig()
+	provider := peopleConfig.Providers["default"]
+	provider.Credential = peoplesweep.CredentialStored
+	provider.CredentialEnv = ""
+	peopleConfig.Providers["default"] = provider
+	cfg.People.Sweep = peopleConfig
+	ctx := withTestConfig(t, cfg)
+
+	deps := defaultPersonProviderCommandDeps()
+	deps.setup.credentials = peoplesweep.NewFileCredentialStore(t.TempDir())
+	deps = personProviderDepsForContext(ctx, deps)
+	checker, err := deps.newChecker(peopleConfig, testutil.NewSQLiteTestStore(t), deps.setup)
+	require.NoError(err)
+	require.NotNil(checker)
 }
 
 // TestPersonProviderAddCustomStdinKeepsSecretLocal catches an add operation

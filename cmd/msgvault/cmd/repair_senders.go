@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/mime"
@@ -49,6 +50,11 @@ type senderRepairPlan struct {
 const senderRepairScanBatchSize = 100
 
 func runRepairSendersLocal(cmd *cobra.Command, apply bool) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	ctx := cmd.Context()
 	var (
 		st      *store.Store
@@ -56,7 +62,7 @@ func runRepairSendersLocal(cmd *cobra.Command, apply bool) error {
 		err     error
 	)
 	if apply {
-		st, cleanup, err = openWritableStoreAndInit()
+		st, cleanup, err = openWritableStoreAndInitForInvocation(state)
 	} else {
 		st, err = store.OpenReadOnly(cfg.DatabaseDSN())
 		cleanup = func() { _ = st.Close() }
@@ -66,7 +72,7 @@ func runRepairSendersLocal(cmd *cobra.Command, apply bool) error {
 	}
 	defer cleanup()
 
-	plan, err := scanAndPlanSenderRepairs(ctx, st)
+	plan, err := scanAndPlanSenderRepairs(ctx, st, state.logger)
 	if err != nil {
 		return err
 	}
@@ -102,7 +108,7 @@ func runRepairSendersLocal(cmd *cobra.Command, apply bool) error {
 		failures = append(failures, fmt.Errorf("write sender repair result: %w", err))
 	}
 	if repaired > 0 {
-		if err := rebuildCacheAfterWrite(cfg.DatabaseDSN()); err != nil {
+		if err := rebuildCacheAfterWrite(cfg.DatabaseDSN(), state); err != nil {
 			failures = append(failures, err)
 		}
 	}
@@ -112,7 +118,9 @@ func runRepairSendersLocal(cmd *cobra.Command, apply bool) error {
 func scanAndPlanSenderRepairs(
 	ctx context.Context,
 	st *store.Store,
+	logger *slog.Logger,
 ) (*senderRepairPlan, error) {
+	logger = repairLogger(logger)
 	plan := &senderRepairPlan{}
 	var afterMessageID int64
 	for {

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -25,6 +26,12 @@ Use --local to use the local daemon even when a remote is configured.`,
 }
 
 func runStats(cmd *cobra.Command, _ []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	out := cmd.OutOrStdout()
 	scoped := statsAccount != "" || statsCollection != ""
 

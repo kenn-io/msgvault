@@ -14,17 +14,21 @@ import (
 )
 
 func TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable(t *testing.T) {
+	cfg := testConfigValue()
+
 	previous := cfg
 	t.Cleanup(func() { cfg = previous })
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	cfg = config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	status := newDocumentsCmd(documentsCommandDeps{})
 	var output bytes.Buffer
 	status.SetOut(&output)
 	status.SetArgs([]string{documentVectorsSubcommand, statusValue, "--json"})
-	require.NoError(t, status.ExecuteContext(t.Context()))
+	require.NoError(t, status.ExecuteContext(testCtx))
 	assert.JSONEq(t, `{"enabled":false}`, output.String())
 
-	_, err := runConfiguredDocumentVectorGeneration(t.Context(), nil, 1, 1)
+	_, err := runConfiguredDocumentVectorGeneration(testCtx, nil, 1, 1)
 	require.ErrorContains(t, err, "rebuild with sqlite_vec or pgvector support")
 }

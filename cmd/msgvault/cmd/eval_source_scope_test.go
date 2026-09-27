@@ -203,12 +203,12 @@ func TestRunEval_StopsOnCrossSourceIDCollisions(t *testing.T) {
 
 	dir := t.TempDir()
 	seedTwoSourceArchiveIn(t, dir, true)
-	configureEvalRun(t, dir,
+	testCtx := configureEvalRun(t, dir,
 		"q1 0 <shared@example.com> 1\n",
 		"q1\trenewal\n")
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(t.Context())
+	cmd.SetContext(testCtx)
 
 	err := runEval(cmd, nil)
 	require.Error(err, "the run must stop rather than print a number it cannot justify")

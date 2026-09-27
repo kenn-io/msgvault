@@ -13,6 +13,12 @@ import (
 )
 
 func TestImportMboxCmd_GoogleGroupsTakeout(t *testing.T) {
+	cfg := testConfigValue()
+	cfgFile := ""
+	homeDir := ""
+	logger := testLoggerValue()
+	verbose := false
+
 	markDaemonCLISubprocessForTest(t)
 
 	require := require.New(t)

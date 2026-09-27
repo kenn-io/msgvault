@@ -68,6 +68,9 @@ func TestOutputMessageJSONShowsDeletedFromSourceOnlyWhenPresent(t *testing.T) {
 }
 
 func TestShowMessageUsesLocalDaemonHTTPAndPreservesTextOutput(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -87,11 +90,15 @@ func TestShowMessageUsesLocalDaemonHTTPAndPreservesTextOutput(t *testing.T) {
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	showMessageJSON = false
 
 	done := captureStdout(t)
 	cmd := &cobra.Command{Use: "show-message", RunE: showMessageCmd.RunE, Args: showMessageCmd.Args}
+	cmd.SetContext(testCtx)
 	cmd.SetArgs([]string{"remote-42"})
 
 	err := cmd.Execute()
@@ -107,6 +114,9 @@ func TestShowMessageUsesLocalDaemonHTTPAndPreservesTextOutput(t *testing.T) {
 }
 
 func TestShowMessageHTTPNotFoundPreservesCLIError(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -126,11 +136,15 @@ func TestShowMessageHTTPNotFoundPreservesCLIError(t *testing.T) {
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	showMessageJSON = false
 
 	done := captureStdout(t)
 	cmd := &cobra.Command{Use: "show-message", RunE: showMessageCmd.RunE, Args: showMessageCmd.Args}
+	cmd.SetContext(testCtx)
 	cmd.SetArgs([]string{"missing"})
 
 	err := cmd.Execute()
@@ -258,6 +272,9 @@ func TestOutputMessageLabelsSanitizedOnlyForText(t *testing.T) {
 }
 
 func TestShowMessageJSONPreservesRFCMessageIDFromDaemon(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	assert, require := assert.New(t), require.New(t)
 	dataDir := t.TempDir()
 	server, _ := messageHTTPDaemon(t)
@@ -265,9 +282,12 @@ func TestShowMessageJSONPreservesRFCMessageIDFromDaemon(t *testing.T) {
 	oldCfg, oldLocal, oldJSON := cfg, useLocal, showMessageJSON
 	t.Cleanup(func() { cfg, useLocal, showMessageJSON = oldCfg, oldLocal, oldJSON })
 	cfg = &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal, showMessageJSON = true, true
 	done := captureStdout(t)
 	cmd := &cobra.Command{Use: "show-message", RunE: showMessageCmd.RunE, Args: showMessageCmd.Args}
+	cmd.SetContext(testCtx)
 	cmd.SetArgs([]string{"remote-42"})
 	err := cmd.Execute()
 	output := done()

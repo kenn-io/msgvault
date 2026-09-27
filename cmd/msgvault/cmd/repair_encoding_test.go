@@ -29,7 +29,7 @@ func TestRepairDisplayNamesBumpsParticipantRevisionWithTheRepair(t *testing.T) {
 	require.NoError(err)
 
 	stats := &repairStats{}
-	require.NoError(repairDisplayNames(st, stats))
+	require.NoError(repairDisplayNames(st, stats, testDiscardLogger()))
 	after, err := st.ParticipantDisplayNameRevision()
 	require.NoError(err)
 	assert.Equal(before+1, after,
@@ -73,7 +73,7 @@ func TestRepairOtherStrings_LogsScanErrors(t *testing.T) {
 	require.NoError(err, "insert bad label")
 
 	stats := &repairStats{}
-	require.NoError(repairOtherStrings(st, stats), "repairOtherStrings")
+	require.NoError(repairOtherStrings(st, stats, testDiscardLogger()), "repairOtherStrings")
 
 	// Before fix: skippedRows == 0 (scan error silently swallowed)
 	// After fix: skippedRows == 1 (scan error counted)
@@ -108,7 +108,7 @@ func TestRepairDisplayNames_LogsScanErrors(t *testing.T) {
 	require.NoError(err, "insert bad participant")
 
 	stats := &repairStats{}
-	require.NoError(repairDisplayNames(st, stats), "repairDisplayNames")
+	require.NoError(repairDisplayNames(st, stats, testDiscardLogger()), "repairDisplayNames")
 
 	// Before fix: skippedRows == 0 (scan error silently swallowed)
 	// After fix: skippedRows == 1 (scan error counted)
@@ -123,10 +123,10 @@ func TestRepairEncoding_NoScanErrors(t *testing.T) {
 
 	stats := &repairStats{}
 
-	_, err := repairMessageFields(st, stats)
+	_, err := repairMessageFields(st, stats, testDiscardLogger())
 	require.NoError(err, "repairMessageFields")
-	require.NoError(repairDisplayNames(st, stats), "repairDisplayNames")
-	require.NoError(repairOtherStrings(st, stats), "repairOtherStrings")
+	require.NoError(repairDisplayNames(st, stats, testDiscardLogger()), "repairDisplayNames")
+	require.NoError(repairOtherStrings(st, stats, testDiscardLogger()), "repairOtherStrings")
 
 	assert.Zero(t, stats.skippedRows, "skippedRows should be 0 for valid data")
 }
@@ -189,7 +189,7 @@ func TestRepairMessageFields_ReturnsReembedNeededIDs(t *testing.T) {
 	}
 
 	stats := &repairStats{}
-	ids, err := repairMessageFields(st, stats)
+	ids, err := repairMessageFields(st, stats, testDiscardLogger())
 	require.NoError(err, "repairMessageFields")
 
 	gotSet := map[int64]bool{}
@@ -236,7 +236,7 @@ func TestRepairOtherStrings_FixesNewColumns(t *testing.T) {
 	require.NoError(err, "insert participant")
 
 	stats := &repairStats{}
-	require.NoError(repairOtherStrings(st, stats), "repairOtherStrings")
+	require.NoError(repairOtherStrings(st, stats, testDiscardLogger()), "repairOtherStrings")
 
 	assert.Equal(1, stats.convSourceIDs, "convSourceIDs")
 	assert.Equal(1, stats.emailAddrs, "emailAddrs")
@@ -268,14 +268,14 @@ func TestRepairConversationPreviews_RestoresPreviewStrandedByEarlierRepair(t *te
 	require.NoError(err, "insert previously repaired message")
 
 	stats := &repairStats{}
-	require.NoError(repairConversationPreviews(st, stats), "repair stranded conversation preview")
+	require.NoError(repairConversationPreviews(st, stats, testDiscardLogger()), "repair stranded conversation preview")
 	var got string
 	require.NoError(db.QueryRow(`SELECT last_message_preview FROM conversations WHERE id = 1`).Scan(&got),
 		"read repaired conversation preview")
 	assert.Equal(want, got, "preview is rederived from the previously repaired latest message")
 	assert.Equal(1, stats.convPreviews, "convPreviews")
 
-	require.NoError(repairConversationPreviews(st, stats), "rerun preview repair")
+	require.NoError(repairConversationPreviews(st, stats, testDiscardLogger()), "rerun preview repair")
 	assert.Equal(1, stats.convPreviews, "rerun is idempotent")
 }
 
@@ -308,9 +308,9 @@ func TestRepairConversationPreviews_UsesLatestMessageAfterCollidingRepairs(t *te
 	require.NoError(err, "insert message bodies")
 
 	stats := &repairStats{}
-	_, err = repairMessageFields(st, stats)
+	_, err = repairMessageFields(st, stats, testDiscardLogger())
 	require.NoError(err, "repair colliding message snippets")
-	require.NoError(repairConversationPreviews(st, stats), "repair conversation preview")
+	require.NoError(repairConversationPreviews(st, stats, testDiscardLogger()), "repair conversation preview")
 
 	var older, latest, preview string
 	require.NoError(db.QueryRow(`SELECT snippet FROM messages WHERE id = 10`).Scan(&older), "read older snippet")
@@ -377,9 +377,9 @@ func TestRepairMessageFields_RegeneratesOnlyInvalidCalendarSnippetFromCanonicalB
 	require.NoError(err, "store unrelated conversation preview")
 
 	stats := &repairStats{}
-	reembedNeededIDs, err := repairMessageFields(st, stats)
+	reembedNeededIDs, err := repairMessageFields(st, stats, testDiscardLogger())
 	require.NoError(err, "repair message fields")
-	require.NoError(repairConversationPreviews(st, stats), "repair copied conversation preview")
+	require.NoError(repairConversationPreviews(st, stats, testDiscardLogger()), "repair copied conversation preview")
 
 	got := make(map[int64]string)
 	resultRows, err := db.Query(`SELECT id, snippet FROM messages WHERE id IN (10, 20, 30, 40, 50, 60, 70)`)
@@ -451,7 +451,7 @@ func TestRepairOtherStrings_RefreshesOwnershipAtomicallyPerBatch(t *testing.T) {
 	revisionBefore, err := st.AccountIdentityRevision()
 	require.NoError(err)
 	stats := &repairStats{}
-	require.NoError(repairOtherStrings(st, stats), "repairOtherStrings")
+	require.NoError(repairOtherStrings(st, stats, testDiscardLogger()), "repairOtherStrings")
 	assert.Equal(broken, stats.emailAddrs)
 
 	revisionAfter, err := st.AccountIdentityRevision()

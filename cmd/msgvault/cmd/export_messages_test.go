@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -32,7 +33,7 @@ func TestExportMessagesCommandWritesContractOrderAndCounts(t *testing.T) {
 	)
 
 	cmd := newExportMessagesLocalCmd(exportMessagesDeps{
-		openStore: func() (*store.Store, func(), error) {
+		openStore: func(context.Context) (*store.Store, func(), error) {
 			return st, func() {}, nil
 		},
 	})
@@ -92,7 +93,7 @@ func TestExportMessagesCommandNormalizesFilters(t *testing.T) {
 	require.NoError(err)
 
 	cmd := newExportMessagesLocalCmd(exportMessagesDeps{
-		openStore: func() (*store.Store, func(), error) {
+		openStore: func(context.Context) (*store.Store, func(), error) {
 			return st, func() {}, nil
 		},
 	})
@@ -173,7 +174,7 @@ func TestExportMessagesCommandRejectsPreflightErrorsWithoutOutput(t *testing.T) 
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			cmd := newExportMessagesLocalCmd(exportMessagesDeps{
-				openStore: func() (*store.Store, func(), error) {
+				openStore: func(context.Context) (*store.Store, func(), error) {
 					return st, func() {}, nil
 				},
 			})
@@ -215,7 +216,7 @@ func TestExportMessagesCommandOmitsCompletionAfterStreamFailure(t *testing.T) {
 	)
 
 	cmd := newExportMessagesLocalCmd(exportMessagesDeps{
-		openStore: func() (*store.Store, func(), error) {
+		openStore: func(context.Context) (*store.Store, func(), error) {
 			return st, func() {}, nil
 		},
 	})
@@ -248,10 +249,12 @@ func TestExportMessagesCommandRoutesThroughDaemon(t *testing.T) {
 		"{\"type\":\"stdout\",\"data\":\"{\\\"record_type\\\":\\\"complete\\\"}\\n\"}\n"+
 			"{\"type\":\"complete\"}\n",
 	)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	t.Setenv(daemonCLISubprocessEnv, "")
 
 	cmd := newExportMessagesCmd(exportMessagesDeps{})
+	cmd.SetContext(testCtx)
 	var output bytes.Buffer
 	cmd.SetOut(&output)
 	cmd.SetErr(io.Discard)
@@ -369,7 +372,7 @@ func TestExportMessagesCommandPersonScopeUsesBoundParticipants(t *testing.T) {
 		t.Run(selector, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			cmd := newExportMessagesLocalCmd(exportMessagesDeps{openStore: func() (*store.Store, func(), error) { return st, func() {}, nil }})
+			cmd := newExportMessagesLocalCmd(exportMessagesDeps{openStore: func(context.Context) (*store.Store, func(), error) { return st, func() {}, nil }})
 			var output bytes.Buffer
 			cmd.SetOut(&output)
 			cmd.SetErr(io.Discard)

@@ -16,6 +16,9 @@ import (
 )
 
 func TestUpdateAccountUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -63,7 +66,10 @@ func TestUpdateAccountUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	updateDisplayName = "Work"
 
 	var stdout bytes.Buffer
@@ -73,6 +79,7 @@ func TestUpdateAccountUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 		Args: updateAccountCmd.Args,
 		RunE: updateAccountCmd.RunE,
 	}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"alice@example.com"})
@@ -86,6 +93,9 @@ func TestUpdateAccountUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestUpdateAccountSourceIDUsesTypedDaemonRequest(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -133,9 +143,13 @@ func TestUpdateAccountSourceIDUsesTypedDaemonRequest(t *testing.T) {
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote:  config.RemoteConfig{URL: server.URL},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 
 	cmd := newUpdateAccountCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetArgs([]string{"--source-id", "42", "--display-name", "Work"})
 	require.NoError(cmd.Execute())
 	assert.Equal(int32(1), requests.Load())

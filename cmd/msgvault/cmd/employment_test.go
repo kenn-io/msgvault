@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -32,8 +33,9 @@ func TestEmploymentAddSendsPartialDatesAndOmitsUndecidedPrimary(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output := runEmploymentCommand(t, employmentAddCmd, []string{"--person", "3", "--organization", "4", "--title", "Staff Engineer", "--start", "2019-04"})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_ = testCtx
+	output := runEmploymentCommand(testCtx, t, employmentAddCmd, []string{"--person", "3", "--organization", "4", "--title", "Staff Engineer", "--start", "2019-04"})
 	require.NoError(decodeErr)
 	assert.Equal(json.Number("3"), body["person_id"])
 	assert.Equal(json.Number("4"), body["organization_id"])
@@ -80,8 +82,9 @@ func TestEmploymentEndReadsRevisionAndSendsEndDate(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output := runEmploymentCommand(t, employmentEndCmd, []string{"9", "--end", "2026-06"})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_ = testCtx
+	output := runEmploymentCommand(testCtx, t, employmentEndCmd, []string{"9", "--end", "2026-06"})
 	require.NoError(decodeErr)
 	assert.Equal(`"employment-9-r2"`, ifMatch)
 	assert.Equal("2026-06", body["end_date"])
@@ -114,8 +117,9 @@ func TestEmploymentSetPreservesFieldsNotPassedAsFlags(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output := runEmploymentCommand(t, employmentSetCmd, []string{"9", "--title", "Principal Engineer"})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_ = testCtx
+	output := runEmploymentCommand(testCtx, t, employmentSetCmd, []string{"9", "--title", "Principal Engineer"})
 	require.NoError(decodeErr)
 	assert.Equal(`"employment-9-r2"`, ifMatch)
 	assert.Equal("Principal Engineer", body["title"])
@@ -153,8 +157,9 @@ func TestEmploymentSetEndingAPrimaryEmploymentDemotesIt(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	runEmploymentCommand(t, employmentSetCmd, []string{"9", "--end", "2026-06"})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_ = testCtx
+	runEmploymentCommand(testCtx, t, employmentSetCmd, []string{"9", "--end", "2026-06"})
 	require.NoError(decodeErr)
 	assert.Equal(false, body["is_current"])
 	assert.Equal(false, body["is_primary"],
@@ -170,8 +175,9 @@ func TestEmploymentSetRejectsPrimaryCombinedWithNotCurrent(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 	command := cloneEmploymentCommand(employmentSetCmd)
+	command.SetContext(testCtx)
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&output)
@@ -192,8 +198,9 @@ func TestEmploymentListPrintsHistoryAndProjection(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output := runEmploymentCommand(t, employmentListCmd, []string{"--person", "3"})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_ = testCtx
+	output := runEmploymentCommand(testCtx, t, employmentListCmd, []string{"--person", "3"})
 	assert.Contains(output, "Staff Engineer")
 	assert.Contains(output, "Junior Engineer")
 	assert.Contains(output, "2018-06")
@@ -223,8 +230,9 @@ func TestEmploymentSetReactivatesEndedEmploymentWithClearEnd(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	runEmploymentCommand(t, employmentSetCmd, []string{"9", "--current", "--clear-end"})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_ = testCtx
+	runEmploymentCommand(testCtx, t, employmentSetCmd, []string{"9", "--current", "--clear-end"})
 	require.NoError(decodeErr)
 	assert.Equal(true, body["is_current"],
 		"an ended employment must be reactivatable")
@@ -240,7 +248,7 @@ func TestEmploymentSetRejectsEmptyAndConflictingStateFlags(t *testing.T) {
 		assert.NoError(t, err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 	for _, test := range []struct {
 		name string
 		args []string
@@ -257,6 +265,7 @@ func TestEmploymentSetRejectsEmptyAndConflictingStateFlags(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			command := cloneEmploymentCommand(employmentSetCmd)
+			command.SetContext(testCtx)
 			var output bytes.Buffer
 			command.SetOut(&output)
 			command.SetErr(&output)
@@ -280,8 +289,9 @@ func TestEmploymentListByOrganizationShowsPersonColumn(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output := runEmploymentCommand(t, employmentListCmd,
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_ = testCtx
+	output := runEmploymentCommand(testCtx, t, employmentListCmd,
 		[]string{"--organization", "4", "--limit", "25", "--offset", "50"})
 	assert.Contains(rawQuery, "limit=25", "pagination must reach the server")
 	assert.Contains(rawQuery, "offset=50")
@@ -315,12 +325,13 @@ func cloneEmploymentCommand(template *cobra.Command) *cobra.Command {
 	})
 	return command
 }
-func runEmploymentCommand(t *testing.T, template *cobra.Command, args []string) string {
+func runEmploymentCommand(ctx context.Context, t *testing.T, template *cobra.Command, args []string) string {
 	t.Helper()
 	saved := employmentJSON
 	employmentJSON = false
 	t.Cleanup(func() { employmentJSON = saved })
 	command := cloneEmploymentCommand(template)
+	command.SetContext(ctx)
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&output)

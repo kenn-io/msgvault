@@ -177,6 +177,12 @@ func init() {
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	// Validate security posture before doing any work
 	if err := cfg.Server.ValidateSecure(); err != nil {
 		return err
@@ -302,7 +308,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// (which may open files and run migrations) respects Ctrl+C.
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
-	idleTracker := newDaemonIdleTracker(cfg, cancel)
+	idleTracker := newDaemonIdleTracker(cfg, cancel, logger)
 	operationGate := api.NewSerialOperationGate()
 	// Closed on shutdown so cached pack readers don't hold attachment pack
 	// files open past the daemon's lifetime (blocks deletion on Windows).
@@ -346,7 +352,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// backend open/migrate/backfill runs in the background after the API
 	// server is listening (startVectorInit below), so the TUI and other
 	// clients are not blocked by vector maintenance.
-	if err := precheckVectorFeatures(dbPath); err != nil {
+	if err := precheckVectorFeatures(dbPath, cfg); err != nil {
 		return fmt.Errorf("vector features: %w", err)
 	}
 	if !cfg.Vector.AnyLaneEnabled() {
@@ -381,7 +387,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Info("daemon startup step complete", "step", "init_analytics_engine")
 	}
 
-	getOAuthMgr := oauthManagerCache()
+	getOAuthMgr := oauthManagerCache(invocationFromCommand(cmd))
 
 	// Create sync function for the scheduler. Under scan-and-fill the
 	// Syncer no longer needs an enqueuer — newly-ingested messages get
@@ -389,15 +395,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// by the background startVectorInit) discovers them on its next run, so
 	// the sync path no longer threads the vector features.
 	syncFunc := func(ctx context.Context, email string) error {
+		ctx = withInvocation(ctx, state)
 		return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
-			return runScheduledSync(ctx, email, s, getOAuthMgr)
+			return runScheduledSync(ctx, email, s, getOAuthMgr, state)
 		})
 	}
 
 	// Create and configure scheduler
 	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate)
 	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
-		return scheduledSyncPreemptible(s, identifier)
+		return scheduledSyncPreemptible(s, identifier, logger)
 	})
 	cardDAVController, err := api.NewCardDAVController(cfg, s, logger)
 	if err != nil {
@@ -435,11 +442,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if err := sched.AddJob(scheduler.Job{
 			Name:     jobName,
 			Schedule: source.Schedule,
-			Run: func(ctx context.Context) error {
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
 					return runConfiguredSynctechSMSSourceWithStore(ctx, s, source)
 				})
-			},
+			}),
 		}); err != nil {
 			logger.Error("failed to schedule synctech-sms source", "source", source.Name, "error", err)
 		} else {
@@ -469,11 +476,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if err := sched.AddJob(scheduler.Job{
 			Name:     jobName,
 			Schedule: source.Schedule,
-			Run: func(ctx context.Context) error {
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
 					return runConfiguredGCalSync(ctx, s, source)
 				})
-			},
+			}),
 		}); err != nil {
 			logger.Error("failed to schedule gcal source", "source", source.Name, "error", err)
 		} else {
@@ -525,9 +532,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 			"hint", `set a cron schedule (e.g. "*/30 * * * *") on the [beeper] entry`)
 	}
 	if cfg.Beeper.Enabled && cfg.Beeper.Schedule != "" {
-		if err := registerScheduledBeeperJob(sched, cfg.Beeper.Schedule, attachmentMaint, func(ctx context.Context) error {
+		if err := registerScheduledBeeperJob(sched, cfg.Beeper.Schedule, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
 			return runConfiguredBeeperSync(ctx, s)
-		}); err != nil {
+		})); err != nil {
 			logger.Error("failed to schedule beeper sync", "error", err)
 		} else {
 			logger.Info("scheduled beeper sync", "schedule", cfg.Beeper.Schedule)
@@ -543,11 +550,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Name:        api.SlackJobName,
 			Schedule:    cfg.Slack.Schedule,
 			Preemptible: true,
-			Run: func(ctx context.Context) error {
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
 					return runConfiguredSlackSync(ctx, s)
 				})
-			},
+			}),
 		}); err != nil {
 			logger.Error("failed to schedule slack sync", "error", err)
 		} else {
@@ -577,9 +584,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if err := sched.AddJob(scheduler.Job{
 			Name:     jobName,
 			Schedule: source.Schedule,
-			Run: func(ctx context.Context) error {
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 				return runConfiguredGranolaSync(ctx, s, source)
-			},
+			}),
 		}); err != nil {
 			logger.Error("failed to schedule granola source", "source", source.Identifier, "error", err)
 		} else {
@@ -606,9 +613,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if err := sched.AddJob(scheduler.Job{
 			Name:     jobName,
 			Schedule: source.Schedule,
-			Run: func(ctx context.Context) error {
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 				return runConfiguredCirclebackSync(ctx, s, source)
-			},
+			}),
 		}); err != nil {
 			logger.Error("failed to schedule circleback source", "source", source.Identifier, "error", err)
 		} else {
@@ -632,9 +639,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if err := sched.AddJob(scheduler.Job{
 			Name:     jobName,
 			Schedule: source.Schedule,
-			Run: func(ctx context.Context) error {
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 				return runConfiguredNotionMeetingsSync(ctx, s, source)
-			},
+			}),
 		}); err != nil {
 			logger.Error("failed to schedule notion meeting source", "source", source.Identifier, "error", err)
 		} else {
@@ -657,13 +664,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	meetingImporter := meetingimport.NewImporter(s, meetingimport.Hooks{
 		AfterSourceSetup: func() error {
-			return runPostSourceCreateMigrations(s)
+			return runPostSourceCreateMigrationsForInvocation(s, state)
 		},
 		RefreshCache: refreshCacheAfterWrite,
 	}).WithLogger(logger)
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
+	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
+		config:                 cfg,
+		options:                state.options,
+		logger:                 logger,
 		draftPolicy:            snapshotIMAPDraftPolicy(cfg),
 		gmailDraftPolicy:       snapshotGmailDraftPolicy(cfg),
 		draftCacheRefresh:      refreshCacheAfterWrite,
@@ -840,7 +851,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if vectorInit != nil {
 		if vectorInit.WaitContext(shutdownCtx) {
 			if resourceCleanupSafe {
-				vectorInit.CloseFeatures()
+				vectorInit.CloseFeatures(logger)
 			}
 		} else {
 			logger.Warn("vector init did not stop within the shutdown drain timeout; skipping vectors.db close")
@@ -1199,6 +1210,7 @@ func openDaemonAnalyticsEngine(
 		return nil, "", startupCacheBuildOutcomeNone,
 			errors.New("daemon analytics engine unavailable")
 	}
+	logger := loggerFromContext(ctx)
 	if s.IsPostgreSQL() {
 		outcome := startupCacheBuildOutcomeNone
 		if intent != startupCacheBuildIntentNone {
@@ -1429,10 +1441,11 @@ func hasServeOAuthConfig(c *config.Config) bool {
 	return c.OAuth.HasAnyConfig() || c.Microsoft.ClientID != ""
 }
 
-func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc) *api.IdleTracker {
+func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
 	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" {
 		return nil
 	}
+	logger = repairLogger(logger)
 	timeout := c.Server.DaemonIdleTimeout
 	if raw := os.Getenv(daemonIdleTimeoutEnv); raw != "" {
 		parsed, err := time.ParseDuration(raw)
@@ -1459,6 +1472,9 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc) *api.IdleTr
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
 	store                   *store.Store
+	config                  *config.Config
+	options                 invocationOptions
+	logger                  *slog.Logger
 	draftPolicy             []config.IMAPDraftSource
 	draftClientFactory      func(context.Context, *store.Source) (*imaplib.Client, error)
 	gmailDraftPolicy        []config.GmailDraftSource
@@ -1474,6 +1490,19 @@ type storeAPIAdapter struct {
 	cacheJobs              *cacheBuildJobs
 	personEnrichmentConfig personenrichment.Config
 	lookupEnv              personenrichment.CredentialLookup
+}
+
+func (a *storeAPIAdapter) invocationContext(ctx context.Context) context.Context {
+	if a == nil {
+		return ctx
+	}
+	state := newInvocation()
+	state.cfg = a.config
+	state.options = a.options
+	if a.logger != nil {
+		state.logger = a.logger
+	}
+	return withInvocation(ctx, state)
 }
 
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
@@ -1641,6 +1670,7 @@ func (a *storeAPIAdapter) SearchDocuments(
 	ctx context.Context,
 	request store.DocumentSearchRequest,
 ) (store.DocumentSearchResponse, error) {
+	ctx = a.invocationContext(ctx)
 	if err := reconcileDocumentOccurrencesForSearch(ctx, a.store); err != nil {
 		return store.DocumentSearchResponse{}, err
 	}
@@ -1648,6 +1678,7 @@ func (a *storeAPIAdapter) SearchDocuments(
 }
 
 func (a *storeAPIAdapter) ReconcileDocumentOccurrences(ctx context.Context) error {
+	ctx = a.invocationContext(ctx)
 	return reconcileDocumentOccurrencesForSearch(ctx, a.store)
 }
 
@@ -1837,6 +1868,7 @@ func (a *storeAPIAdapter) BuildCLICache(
 	fullRebuild bool,
 	emit func(api.CLICacheBuildEvent) error,
 ) error {
+	ctx = a.invocationContext(ctx)
 	return buildCacheSubprocessStream(ctx, fullRebuild, false, emit)
 }
 
@@ -1845,6 +1877,7 @@ func (a *storeAPIAdapter) RunCLISync(
 	req api.CLISyncRequest,
 	emit func(api.CLISyncEvent) error,
 ) error {
+	ctx = a.invocationContext(ctx)
 	return a.runCLISyncOperationWithRunner(ctx, req, emit, runDaemonCLISubprocessStream)
 }
 
@@ -1972,6 +2005,7 @@ func (a *storeAPIAdapter) RunCLIVerify(
 	req api.CLIVerifyRequest,
 	emit func(api.CLIVerifyEvent) error,
 ) error {
+	ctx = a.invocationContext(ctx)
 	return runDaemonCLISubprocessStream(ctx, cliVerifySubprocessArgs(req), func(stream, data string) error {
 		if emit == nil {
 			return nil
@@ -1999,6 +2033,7 @@ func (a *storeAPIAdapter) RunCLIRepairEncoding(
 	ctx context.Context,
 	emit func(api.CLIRepairEncodingEvent) error,
 ) error {
+	ctx = a.invocationContext(ctx)
 	return runDaemonCLISubprocessStream(ctx, []string{"repair-encoding"}, func(stream, data string) error {
 		if emit == nil {
 			return nil
@@ -2012,6 +2047,7 @@ func (a *storeAPIAdapter) RunCLIRepairMessage(
 	req api.CLIRepairMessageRequest,
 	emit func(api.CLIRepairMessageEvent) error,
 ) error {
+	ctx = a.invocationContext(ctx)
 	return a.runCLIRepairMessageWithRunner(ctx, req, emit, runDaemonCLISubprocessStream)
 }
 
@@ -2066,6 +2102,7 @@ func (a *storeAPIAdapter) RunCLICommand(
 	req api.CLIRunRequest,
 	emit func(api.CLIRunEvent) error,
 ) error {
+	ctx = a.invocationContext(ctx)
 	return a.runCLICommandWithRunner(ctx, req, emit, runDaemonCLISubprocessStreamWithEnv)
 }
 
@@ -2210,6 +2247,7 @@ func (a *storeAPIAdapter) PlanCLIAddCalendar(
 	ctx context.Context,
 	req api.CLIAddCalendarPlanRequest,
 ) (api.CLIAddCalendarPlanResponse, error) {
+	ctx = a.invocationContext(ctx)
 	return planCLIAddCalendar(ctx, a.store, req)
 }
 
@@ -2217,6 +2255,7 @@ func (a *storeAPIAdapter) PlanCLIEmbeddings(
 	ctx context.Context,
 	req api.CLIEmbeddingsPlanRequest,
 ) (api.CLIEmbeddingsPlanResponse, error) {
+	ctx = a.invocationContext(ctx)
 	return planCLIEmbeddings(ctx, req)
 }
 
@@ -2224,11 +2263,15 @@ func (a *storeAPIAdapter) PlanCLIDeleteStaged(
 	ctx context.Context,
 	req api.CLIDeleteStagedPlanRequest,
 ) (api.CLIDeleteStagedPlanResponse, error) {
+	ctx = a.invocationContext(ctx)
 	return planCLIDeleteStaged(ctx, a.store, req)
 }
 
 func (a *storeAPIAdapter) deletionManager() (*deletion.Manager, error) {
-	mgr, err := deletion.NewManager(filepath.Join(cfg.Data.DataDir, "deletions"))
+	if a.config == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
+	mgr, err := deletion.NewManager(filepath.Join(a.config.Data.DataDir, "deletions"))
 	if err != nil {
 		return nil, fmt.Errorf("create deletion manager: %w", err)
 	}
@@ -2282,6 +2325,7 @@ func (a *storeAPIAdapter) PlanCLIDeduplicate(
 	ctx context.Context,
 	req api.CLIDeduplicatePlanRequest,
 ) (api.CLIDeduplicatePlanResponse, error) {
+	ctx = a.invocationContext(ctx)
 	return planCLIDeduplicate(ctx, a.store, req)
 }
 
@@ -3602,7 +3646,15 @@ func (a *schedulerAdapter) StartJob(name string) error {
 // this is the email address, for IMAP it's the full
 // `imaps://user@host:port` URL recorded by `add-imap`, for Teams it is
 // the UPN/email recorded by `add-o365`.
-func runScheduledSync(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error)) error {
+func runScheduledSync(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), state *invocation) error {
+	if state == nil {
+		state = invocationFromContext(ctx)
+	}
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return errors.New("configuration is unavailable")
+	}
+	logger := state.logger
+	ctx = withInvocation(ctx, state)
 	logger.Info("starting scheduled sync", "identifier", identifier)
 
 	srcs, srcErr := findScheduledSyncSources(s, identifier)
@@ -3615,7 +3667,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	// row exists).
 	if len(srcs) == 0 {
 		startTime := time.Now()
-		summary, syncErr := runScheduledGmailSync(ctx, identifier, nil, s, getOAuthMgr)
+		summary, syncErr := runScheduledGmailSync(ctx, identifier, nil, s, getOAuthMgr, state)
 		if scheduledSyncYielded(ctx) {
 			return scheduledSyncYieldResult(ctx, syncErr)
 		}
@@ -3644,17 +3696,17 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 		)
 		switch sourceType {
 		case sourceTypeGmail:
-			summary, err = runScheduledGmailSync(ctx, identifier, src, s, getOAuthMgr)
+			summary, err = runScheduledGmailSync(ctx, identifier, src, s, getOAuthMgr, state)
 		case sourceTypeIMAP:
-			summary, err = runScheduledIMAPSync(ctx, src, s)
+			summary, err = runScheduledIMAPSync(ctx, src, s, state)
 		case sourceTypeTeams:
-			err = runScheduledTeamsSync(ctx, src, s)
+			err = runScheduledTeamsSync(ctx, src, s, state)
 		case sourceTypeDiscord:
 			var discordSummary *discord.ImportSummary
 			discordSummary, err = importDiscordSourceForScheduledRun(
-				ctx, s, src, defaultDiscordCommandDeps(), false, time.Time{}, nil,
+				ctx, s, src, defaultDiscordCommandDeps().bind(ctx), false, time.Time{}, nil,
 			)
-			logScheduledDiscordIssues(identifier, discordSummary)
+			logScheduledDiscordIssues(identifier, discordSummary, logger)
 		default:
 			err = fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler", identifier, sourceType)
 		}
@@ -3704,7 +3756,8 @@ func scheduledSyncYieldResult(ctx context.Context, errs ...error) error {
 	return errors.Join(errs...)
 }
 
-func logScheduledDiscordIssues(identifier string, summary *discord.ImportSummary) {
+func logScheduledDiscordIssues(identifier string, summary *discord.ImportSummary, logger *slog.Logger) {
+	logger = repairLogger(logger)
 	if summary == nil {
 		return
 	}
@@ -3776,7 +3829,7 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 // dispatch includes a full IMAP pass, whose offset-based paging cannot resume
 // after the syncer stops. An unavailable source lookup also takes the safe
 // path and lets the current pass finish.
-func scheduledSyncPreemptible(s *store.Store, identifier string) bool {
+func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Logger) bool {
 	sources, err := findScheduledSyncSources(s, identifier)
 	if err != nil {
 		logger.Warn("could not determine scheduled sync preemption safety; allowing current pass to finish",
@@ -3798,7 +3851,15 @@ func scheduledSyncPreemptible(s *store.Store, identifier string) bool {
 // getTokenSourceWithReauth) because serve runs as a daemon and cannot
 // open a browser for OAuth — the error path tells the user how to
 // re-authorize from a terminal.
-func runScheduledGmailSync(ctx context.Context, email string, src *store.Source, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error)) (*gmail.SyncSummary, error) {
+func runScheduledGmailSync(ctx context.Context, email string, src *store.Source, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), state *invocation) (*gmail.SyncSummary, error) {
+	if state == nil {
+		state = invocationFromContext(ctx)
+	}
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	appName := ""
 	if src != nil {
 		appName = sourceOAuthApp(src)
@@ -3847,7 +3908,7 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	opts := sync.DefaultOptions()
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 
-	syncer := newMessageSyncer(client, s, opts).WithLogger(logger)
+	syncer := newMessageSyncer(client, s, opts, state).WithLogger(logger)
 
 	source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 	if err != nil {
@@ -3857,8 +3918,8 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	// — see comment in account_identity.go. serve is a daemon, so the
 	// confirmation message has no terminal; discard it. Helper logs any
 	// failure path through its own logger.Warn.
-	confirmDefaultIdentity(io.Discard, s, source.ID, email, email, "account-identifier")
-	if err := runPostSourceCreateMigrations(s); err != nil {
+	confirmDefaultIdentity(io.Discard, s, source.ID, email, email, "account-identifier", logger)
+	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -3881,8 +3942,16 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 // and relying on the store to dedupe by message-id. NoResume is forced
 // on because IMAP page tokens are numeric offsets that don't survive
 // across processes (see syncfull.go).
-func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store) (*gmail.SyncSummary, error) {
-	imapOpts := imapFolderStateOptions(s, src, false)
+func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation) (*gmail.SyncSummary, error) {
+	if state == nil {
+		state = invocationFromContext(ctx)
+	}
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
+	imapOpts := imapFolderStateOptions(s, src, false, cfg, logger)
 	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build IMAP client: %w", err)
@@ -3894,7 +3963,7 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 	opts.NoResume = true
 
-	syncer := newMessageSyncer(apiClient, s, opts).WithLogger(logger)
+	syncer := newMessageSyncer(apiClient, s, opts, state).WithLogger(logger)
 
 	// runPostSourceCreateMigrations is keyed off Gmail-only legacy
 	// state, so it's a no-op for fresh IMAP installs; we still call it
@@ -3909,8 +3978,8 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	// row with NULL display_name skips the write rather than re-injecting
 	// the URL.
 	displayName := src.DisplayName.String
-	confirmDefaultIdentity(io.Discard, s, src.ID, displayName, displayName, "account-identifier")
-	if err := runPostSourceCreateMigrations(s); err != nil {
+	confirmDefaultIdentity(io.Discard, s, src.ID, displayName, displayName, "account-identifier", logger)
+	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -3931,7 +4000,15 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 }
 
 // runScheduledTeamsSync runs a Teams sync for the daemon.
-func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Store) error {
+func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation) error {
+	if state == nil {
+		state = invocationFromContext(ctx)
+	}
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	email := src.Identifier
 
 	// Seed the default identity and converge legacy migrations before
@@ -3941,8 +4018,8 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 	// "me" identity. Auto-default-identity must run BEFORE the legacy
 	// migration retry (see account_identity.go); serve is a daemon, so
 	// the confirmation message has no terminal and is discarded.
-	confirmDefaultIdentity(io.Discard, s, src.ID, email, email, "account-identifier")
-	if err := runPostSourceCreateMigrations(s); err != nil {
+	confirmDefaultIdentity(io.Discard, s, src.ID, email, email, "account-identifier", logger)
+	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -3956,12 +4033,12 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 		qps = 5
 	}
 	client := teams.NewClient("https://graph.microsoft.com/v1.0", teams.TokenFunc(tokenFn), qps)
-	opts := scheduledTeamsImportOptions(email)
+	opts := scheduledTeamsImportOptions(email, cfg)
 	_, err = teams.NewImporter(s, client).Import(ctx, opts)
 	return err
 }
 
-func scheduledTeamsImportOptions(email string) teams.ImportOptions {
+func scheduledTeamsImportOptions(email string, cfg *config.Config) teams.ImportOptions {
 	return teams.ImportOptions{
 		Email:           email,
 		AttachmentsDir:  cfg.AttachmentsDir(),

@@ -479,6 +479,8 @@ training_posture = "opted-out"
 }
 
 func TestSetupProvidersResolvesUnknownDocumentPostures(t *testing.T) {
+	cfg := testConfigValue()
+
 	for _, enabled := range []bool{false, true} {
 		for _, explicit := range []bool{false, true} {
 			t.Run(fmt.Sprintf("enabled=%t/explicit=%t", enabled, explicit), func(t *testing.T) {
@@ -512,7 +514,8 @@ training_posture = %q
 					previous := cfg
 					cfg = loaded
 					t.Cleanup(func() { cfg = previous })
-					_, _, _, _, err := configuredDocumentProfile(writeCommandCapabilityManifest(t, loaded.Attachments.Documents.MaxPagesPerDocument))
+					testCtx := testInvocationContext(t.Context(), loaded, invocationOptions{})
+					_, _, _, _, err := configuredDocumentProfile(writeCommandCapabilityManifest(t, loaded.Attachments.Documents.MaxPagesPerDocument), invocationFromContext(testCtx))
 					require.NoError(err)
 				}
 			})
@@ -565,6 +568,8 @@ func TestEmbeddingProviderNameUsesURLHost(t *testing.T) {
 }
 
 func TestSetupProvidersPostgresRequiresCompiledBackend(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`database_url = "postgres://localhost/setup_test"`)
@@ -579,7 +584,7 @@ func TestSetupProvidersPostgresRequiresCompiledBackend(t *testing.T) {
 	previous := cfg
 	cfg = loaded
 	t.Cleanup(func() { cfg = previous })
-	require.NoError(precheckVectorFeatures(loaded.DatabaseDSN()))
+	require.NoError(precheckVectorFeatures(loaded.DatabaseDSN(), loaded))
 	if !pgvector.Available() {
 		var result setupProvidersOutput
 		require.NoError(json.Unmarshal([]byte(output), &result))
@@ -589,6 +594,8 @@ func TestSetupProvidersPostgresRequiresCompiledBackend(t *testing.T) {
 }
 
 func TestSetupStatusConfiguredVectorLanesRequireCompiledBackend(t *testing.T) {
+	cfg := testConfigValue()
+
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
 	fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
@@ -607,7 +614,7 @@ func TestSetupStatusConfiguredVectorLanesRequireCompiledBackend(t *testing.T) {
 				lookupEnv: fixture.lookupEnv, fileExists: func(path string) bool { return fixture.files[path] },
 				consent: &setupConsentState{Documents: true, Visual: true, PersonSemantic: true, DocumentEmbedding: true, QueryEmbedding: true},
 			})
-			startupErr := precheckVectorFeatures(loaded.DatabaseDSN())
+			startupErr := precheckVectorFeatures(loaded.DatabaseDSN(), loaded)
 			for _, name := range []string{laneTextSearch, lanePersonSearch, laneVisualSearch, laneDocumentVectors} {
 				lane := findLane(t, report, name)
 				if startupErr != nil {
@@ -1263,7 +1270,7 @@ func TestSetupProvidersRollbackPreservesConcurrentConfig(t *testing.T) {
 	var concurrent config.ConfigFile
 	deps.personProvider = func() personProviderCommandDeps {
 		provider := fixture.personProviderDeps(t)
-		provider.newChecker = func(peoplesweep.Config, personProviderStore) (personProviderChecker, error) {
+		provider.newChecker = func(peoplesweep.Config, personProviderStore, personProviderSetupDeps) (personProviderChecker, error) {
 			return callbackPersonProviderChecker(func(context.Context) (peoplesweep.StructuredResponse, error) {
 				before, err := config.ReadConfigFile(fixture.path)
 				require.NoError(t, err)

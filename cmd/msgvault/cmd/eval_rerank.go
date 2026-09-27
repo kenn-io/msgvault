@@ -349,8 +349,8 @@ func readEvalRerankOptions(cmd *cobra.Command) (evalRerankOptions, error) {
 		return opts, errors.New("TYPESAFE_API_KEY is required when --rerank-jev is enabled")
 	}
 	opts.APIKey = key
-	if cfg != nil {
-		vectorConfig := cfg.Vector
+	if state := invocationFromCommand(cmd); state != nil && state.cfg != nil {
+		vectorConfig := state.cfg.Vector
 		vectorConfig.ApplyDefaults()
 		opts.Preprocess = embeddingPreprocessConfig(vectorConfig)
 	}

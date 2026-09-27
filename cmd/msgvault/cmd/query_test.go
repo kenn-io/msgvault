@@ -22,6 +22,10 @@ import (
 )
 
 func TestQueryCommand_UsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -45,6 +49,8 @@ func TestQueryCommand_UsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.DiscardHandler)
 	useLocal = true
 	queryFormat = outputFormatJSON
@@ -57,6 +63,7 @@ func TestQueryCommand_UsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
 		Args: queryCmd.Args,
 		RunE: queryCmd.RunE,
 	}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"SELECT subject FROM messages"})
@@ -146,15 +153,12 @@ func TestQueryCommandWaitsForAcceptedBuild(t *testing.T) {
 			server := httptest.NewServer(mux)
 			t.Cleanup(server.Close)
 			writeStatsHTTPDaemonRuntime(t, dataDir, server)
-			savedCfg, savedLogger, savedUseLocal := cfg, logger, useLocal
 			savedFormat, savedFresh := queryFormat, queryFresh
 			t.Cleanup(func() {
-				cfg, logger, useLocal = savedCfg, savedLogger, savedUseLocal
 				queryFormat, queryFresh = savedFormat, savedFresh
 			})
-			cfg = &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
-			logger = slog.New(slog.DiscardHandler)
-			useLocal = true
+			cfg := &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+			testCtx := testInvocationContext(ctx, cfg, invocationOptions{useLocal: true})
 			queryFormat, queryFresh = outputFormatJSON, test.fresh
 			var stdout, stderr bytes.Buffer
 			cmd := &cobra.Command{
@@ -163,8 +167,9 @@ func TestQueryCommandWaitsForAcceptedBuild(t *testing.T) {
 			}
 			cmd.SetOut(&stdout)
 			cmd.SetErr(&stderr)
+			cmd.SetContext(testCtx)
 			cmd.SetArgs([]string{"SELECT id FROM messages"})
-			err := cmd.ExecuteContext(ctx)
+			err := cmd.Execute()
 			if test.outcome == "published" {
 				require.NoError(err)
 				assert.JSONEq(`{"columns":["id"],"rows":[[9007199254740993]],"row_count":1}`, stdout.String())

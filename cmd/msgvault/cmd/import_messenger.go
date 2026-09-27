@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -58,6 +59,12 @@ Examples:
 }
 
 func runImportMessenger(cmd *cobra.Command, rootDir string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	if info, err := os.Stat(rootDir); err != nil {
 		return fmt.Errorf("source directory not found: %w", err)
 	} else if !info.IsDir() {
@@ -65,7 +72,7 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 	}
 
 	dbPath := cfg.DatabaseDSN()
-	s, cleanup, err := openWritableStoreAndInitForIngest()
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 	if err != nil {
 		return err
 	}
@@ -105,12 +112,12 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 	if err != nil {
 		if ctx.Err() != nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nImport interrupted. Re-run to continue.")
-			return rebuildCacheAfterWrite(dbPath)
+			return rebuildCacheAfterWrite(dbPath, state)
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
 
-	if err := runPostSourceCreateMigrations(s); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -138,7 +145,7 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 			importMessengerMe, fbmessenger.Slug(fbmessenger.StripDomain(importMessengerMe)))
 	}
 
-	return rebuildCacheAfterWrite(dbPath)
+	return rebuildCacheAfterWrite(dbPath, state)
 }
 
 func init() {

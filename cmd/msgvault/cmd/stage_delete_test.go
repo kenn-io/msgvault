@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding/json"
 	"net/http"
@@ -41,7 +42,7 @@ func issue769CommandArgs(t *testing.T, dryRun bool) []string {
 	return nil
 }
 
-func newRegisteredStageDeleteTestRoot(t *testing.T) *cobra.Command {
+func newRegisteredStageDeleteTestRoot(t *testing.T, contexts ...context.Context) *cobra.Command {
 	t.Helper()
 	registered, _, err := rootCmd.Find([]string{"stage-delete"})
 	require.NoError(t, err, "find registered stage-delete command")
@@ -54,6 +55,10 @@ func newRegisteredStageDeleteTestRoot(t *testing.T) *cobra.Command {
 	require.NoError(t, registered.Flags().Set("ids", ""))
 	registered.Flags().Lookup("ids").Changed = false
 	root := &cobra.Command{Use: "msgvault"}
+	if len(contexts) > 0 {
+		root.SetContext(contexts[0])
+		registered.SetContext(contexts[0])
+	}
 	root.AddCommand(registered)
 	return root
 }
@@ -123,12 +128,12 @@ func TestStageDeleteCommand(t *testing.T) {
 				wantSource = []int64{tt.wantSource}
 			}
 			server, routes := newStageDeleteTestServer(t, tt.wantQuery, tt.dryRun, tt.status, wantSource...)
-			withStoreResolverConfig(t, &config.Config{
+			testCtx := withStoreResolverConfig(t, &config.Config{
 				Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 			})
 
 			var stdout bytes.Buffer
-			root := newRegisteredStageDeleteTestRoot(t)
+			root := newRegisteredStageDeleteTestRoot(t, testCtx)
 			root.SetOut(&stdout)
 			args := append([]string{"stage-delete"}, tt.query...)
 			args = append(args, tt.flags...)
@@ -143,12 +148,12 @@ func TestStageDeleteCommand(t *testing.T) {
 
 	t.Run("configured_remote_routing", func(t *testing.T) {
 		server, routes := newStageDeleteTestServer(t, "from:bob@example.com", false, http.StatusCreated)
-		withStoreResolverConfig(t, &config.Config{
+		testCtx := withStoreResolverConfig(t, &config.Config{
 			Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 		})
 
 		var stdout bytes.Buffer
-		root := newRegisteredStageDeleteTestRoot(t)
+		root := newRegisteredStageDeleteTestRoot(t, testCtx)
 		root.SetOut(&stdout)
 		root.SetArgs([]string{"stage-delete", "from:bob@example.com"})
 
@@ -178,11 +183,11 @@ func TestStageDeleteCommand(t *testing.T) {
 					requests++
 				}))
 				defer server.Close()
-				withStoreResolverConfig(t, &config.Config{
+				testCtx := withStoreResolverConfig(t, &config.Config{
 					Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 				})
 
-				root := newRegisteredStageDeleteTestRoot(t)
+				root := newRegisteredStageDeleteTestRoot(t, testCtx)
 				root.SetArgs(append([]string{"stage-delete"}, tt.args...))
 				err := root.Execute()
 
@@ -210,11 +215,11 @@ func TestStageDeleteCommand(t *testing.T) {
 			}
 		}))
 		defer server.Close()
-		withStoreResolverConfig(t, &config.Config{
+		testCtx := withStoreResolverConfig(t, &config.Config{
 			Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 		})
 
-		root := newRegisteredStageDeleteTestRoot(t)
+		root := newRegisteredStageDeleteTestRoot(t, testCtx)
 		root.SetArgs([]string{"stage-delete", "subject:receipt"})
 		err := root.Execute()
 
@@ -288,12 +293,12 @@ func TestStageDeleteCommand(t *testing.T) {
 					}
 				}))
 				defer server.Close()
-				withStoreResolverConfig(t, &config.Config{
+				testCtx := withStoreResolverConfig(t, &config.Config{
 					Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 				})
 
 				var stdout bytes.Buffer
-				root := newRegisteredStageDeleteTestRoot(t)
+				root := newRegisteredStageDeleteTestRoot(t, testCtx)
 				root.SetOut(&stdout)
 				root.SetArgs(append([]string{"stage-delete", "subject:receipt"}, boolFlag(tt.dryRun, "--dry-run")...))
 
@@ -347,11 +352,11 @@ func TestStageDeleteCommand(t *testing.T) {
 					}
 				}))
 				defer server.Close()
-				withStoreResolverConfig(t, &config.Config{
+				testCtx := withStoreResolverConfig(t, &config.Config{
 					Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 				})
 
-				root := newRegisteredStageDeleteTestRoot(t)
+				root := newRegisteredStageDeleteTestRoot(t, testCtx)
 				root.SetArgs([]string{"stage-delete", "from:alice@example.com"})
 				err := root.Execute()
 
@@ -380,11 +385,11 @@ func TestStageDeleteCommand(t *testing.T) {
 			}
 		}))
 		defer server.Close()
-		withStoreResolverConfig(t, &config.Config{
+		testCtx := withStoreResolverConfig(t, &config.Config{
 			Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 		})
 
-		root := newRegisteredStageDeleteTestRoot(t)
+		root := newRegisteredStageDeleteTestRoot(t, testCtx)
 		root.SetArgs([]string{"stage-delete", "subject:receipt"})
 		err := root.Execute()
 
@@ -418,11 +423,11 @@ func TestStageDeleteCommand(t *testing.T) {
 					}
 				}))
 				defer server.Close()
-				withStoreResolverConfig(t, &config.Config{
+				testCtx := withStoreResolverConfig(t, &config.Config{
 					Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 				})
 
-				root := newRegisteredStageDeleteTestRoot(t)
+				root := newRegisteredStageDeleteTestRoot(t, testCtx)
 				root.SetArgs([]string{"stage-delete", tt.query})
 				err := root.Execute()
 
@@ -469,11 +474,11 @@ func TestStageDeleteCommand(t *testing.T) {
 				} else {
 					defer server.Close()
 				}
-				withStoreResolverConfig(t, &config.Config{
+				testCtx := withStoreResolverConfig(t, &config.Config{
 					Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 				})
 
-				root := newRegisteredStageDeleteTestRoot(t)
+				root := newRegisteredStageDeleteTestRoot(t, testCtx)
 				root.SetArgs([]string{"stage-delete", "list:announce.example.org"})
 				err := root.Execute()
 
@@ -487,11 +492,11 @@ func TestStageDeleteCommand(t *testing.T) {
 	t.Run("newer_daemon_and_ordinary_query", func(t *testing.T) {
 		t.Run("newer_daemon", func(t *testing.T) {
 			server, routes, healthRequests := newStageDeleteTestServerWithSchema(t, "list:announce.example.org", false, http.StatusCreated, "2.18.0")
-			withStoreResolverConfig(t, &config.Config{
+			testCtx := withStoreResolverConfig(t, &config.Config{
 				Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 			})
 
-			root := newRegisteredStageDeleteTestRoot(t)
+			root := newRegisteredStageDeleteTestRoot(t, testCtx)
 			root.SetArgs([]string{"stage-delete", "list:announce.example.org"})
 			require.NoError(t, root.Execute())
 			assert.Equal(t, []string{"/api/v1/cli/search", "/api/v1/explore", "/api/v1/explore/preflight", "/api/v1/deletions"}, *routes)
@@ -501,11 +506,11 @@ func TestStageDeleteCommand(t *testing.T) {
 
 		t.Run("ordinary_query_checks_contract", func(t *testing.T) {
 			server, routes, healthRequests := newStageDeleteTestServerWithSchema(t, "subject:test", false, http.StatusCreated, "2.18.0")
-			withStoreResolverConfig(t, &config.Config{
+			testCtx := withStoreResolverConfig(t, &config.Config{
 				Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 			})
 
-			root := newRegisteredStageDeleteTestRoot(t)
+			root := newRegisteredStageDeleteTestRoot(t, testCtx)
 			root.SetArgs([]string{"stage-delete", "subject:test"})
 			require.NoError(t, root.Execute())
 			assert.Equal(t, []string{"/api/v1/cli/search", "/api/v1/explore", "/api/v1/explore/preflight", "/api/v1/deletions"}, *routes)
@@ -698,12 +703,12 @@ func TestStageDeleteCommandByIDs(t *testing.T) {
 			})
 		}))
 		defer server.Close()
-		withStoreResolverConfig(t, &config.Config{
+		testCtx := withStoreResolverConfig(t, &config.Config{
 			Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 		})
 
 		var stdout bytes.Buffer
-		root := newRegisteredStageDeleteTestRoot(t)
+		root := newRegisteredStageDeleteTestRoot(t, testCtx)
 		root.SetOut(&stdout)
 		root.SetArgs(issue769CommandArgs(t, false))
 
@@ -736,12 +741,12 @@ func TestStageDeleteCommandByIDs(t *testing.T) {
 			})
 		}))
 		defer server.Close()
-		withStoreResolverConfig(t, &config.Config{
+		testCtx := withStoreResolverConfig(t, &config.Config{
 			Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 		})
 
 		var stdout bytes.Buffer
-		root := newRegisteredStageDeleteTestRoot(t)
+		root := newRegisteredStageDeleteTestRoot(t, testCtx)
 		root.SetOut(&stdout)
 		root.SetArgs(issue769CommandArgs(t, true))
 
@@ -768,11 +773,11 @@ func TestStageDeleteCommandByIDs(t *testing.T) {
 			})
 		}))
 		defer server.Close()
-		withStoreResolverConfig(t, &config.Config{
+		testCtx := withStoreResolverConfig(t, &config.Config{
 			Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 		})
 
-		root := newRegisteredStageDeleteTestRoot(t)
+		root := newRegisteredStageDeleteTestRoot(t, testCtx)
 		root.SetArgs([]string{"stage-delete", "--ids", "123,456"})
 		err := root.Execute()
 
@@ -806,11 +811,11 @@ func TestStageDeleteCommandByIDs(t *testing.T) {
 				requests++
 			}))
 			defer server.Close()
-			withStoreResolverConfig(t, &config.Config{
+			testCtx := withStoreResolverConfig(t, &config.Config{
 				Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 			})
 
-			root := newRegisteredStageDeleteTestRoot(t)
+			root := newRegisteredStageDeleteTestRoot(t, testCtx)
 			root.SetArgs(append([]string{"stage-delete"}, tt.args...))
 			err := root.Execute()
 

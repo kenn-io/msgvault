@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,6 +19,8 @@ import (
 // gained real PG vector support; this pins that no remaining code path
 // emits it under this tag combo.
 func TestSetupVectorFeatures_PostgresWithoutPgvectorTag(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -27,6 +28,8 @@ func TestSetupVectorFeatures_PostgresWithoutPgvectorTag(t *testing.T) {
 	defer func() { cfg = savedCfg }()
 
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Vector.Enabled = true
 	cfg.Vector.Backend = "sqlite-vec"
 	cfg.Vector.Embeddings.Endpoint = "http://localhost:11434/v1/embeddings"
@@ -43,7 +46,7 @@ func TestSetupVectorFeatures_PostgresWithoutPgvectorTag(t *testing.T) {
 
 	t.Cleanup(func() { _ = st.Close() })
 
-	_, err = setupVectorFeatures(context.Background(), st, "postgres://user@host/db", false)
+	_, err = setupVectorFeatures(testCtx, st, "postgres://user@host/db", false)
 	require.Error(err, "setupVectorFeatures with postgres DSN and no pgvector tag")
 	assert. // Must come from the stub, not the removed up-front refusal.
 		Contains(err.Error(), "pgvector support not compiled in",
@@ -69,9 +72,10 @@ func TestPrecheckVectorFeatures_PostgresWithoutPgvectorTag(t *testing.T) {
 	c.Vector.Embeddings.Endpoint = "http://localhost:11434/v1/embeddings"
 	c.Vector.Embeddings.Model = "test-model"
 	c.Vector.Embeddings.Dimension = 768
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
-	err := precheckVectorFeatures("postgres://user@host/db")
+	err := precheckVectorFeatures("postgres://user@host/db", c)
 	require.Error(err, "precheck must fail fast for postgres mainPath without pgvector tag")
 	assert.Contains(err.Error(), "pgvector",
 		"error should point at the missing pgvector build tag")

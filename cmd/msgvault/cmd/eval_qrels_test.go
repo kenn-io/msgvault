@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -24,12 +25,10 @@ const evalTestMode = "fts"
 // command's package-level config and flag variables are snapshotted and put
 // back when the test ends, so a test that drives runEval directly cannot leak
 // its settings into whatever runs next.
-func configureEvalRun(t *testing.T, dir, qrels, topics string) {
+func configureEvalRun(t *testing.T, dir, qrels, topics string) context.Context {
 	t.Helper()
-
-	savedCfg := cfg
-	t.Cleanup(func() { cfg = savedCfg })
-	cfg = config.NewDefaultConfig()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	cfg.Data.DataDir = dir
 
 	savedQrels, savedTopics, savedModes := evalQrels, evalTopics, evalModes
@@ -45,6 +44,7 @@ func configureEvalRun(t *testing.T, dir, qrels, topics string) {
 	evalDocKey = "message"
 	evalLimit = 10
 	evalJSON = true
+	return testCtx
 }
 
 // TestRunEval_ScoresATopicJudgedEntirelyNonRelevant is the regression for
@@ -70,14 +70,14 @@ func TestRunEval_ScoresATopicJudgedEntirelyNonRelevant(t *testing.T) {
 
 	dir := t.TempDir()
 	seedRankingDivergenceArchiveIn(t, dir)
-	configureEvalRun(t, dir,
+	testCtx := configureEvalRun(t, dir,
 		"q1 0 <m1@example.com> 1\n"+
 			"q2 0 <m1@example.com> 0\n"+
 			"q2 0 <m2@example.com> 0\n",
 		"q1\trenewal\nq2\trenewal\nq3\trenewal\n")
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(t.Context())
+	cmd.SetContext(testCtx)
 
 	done := captureStdout(t)
 	err := runEval(cmd, nil)
@@ -114,10 +114,10 @@ func TestRunEval_FailsWhenNoTopicIsJudged(t *testing.T) {
 
 	dir := t.TempDir()
 	seedRankingDivergenceArchiveIn(t, dir)
-	configureEvalRun(t, dir, "other-1 0 <m1@example.com> 0\n", "q1\trenewal\n")
+	testCtx := configureEvalRun(t, dir, "other-1 0 <m1@example.com> 0\n", "q1\trenewal\n")
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(t.Context())
+	cmd.SetContext(testCtx)
 
 	err := runEval(cmd, nil)
 	require.Error(err, "no topic was judged, so there is nothing to report")

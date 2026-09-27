@@ -320,10 +320,12 @@ func enableSQLiteWAL(t *testing.T, dbPath string) {
 // account_identities before that ingest's confirmDefaultIdentity would
 // suppress the source's own address.
 func TestRunBuildCacheLocalSkipsDeferredIdentityMigration(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
-	withTUIConfig(t, c)
+	testCtx := withTUIConfig(t, c)
 	cfg.Identity.Addresses = []string{"legacy@example.com"}
 	_, err := s.DB().Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
@@ -334,7 +336,10 @@ func TestRunBuildCacheLocalSkipsDeferredIdentityMigration(t *testing.T) {
 	`)
 	require.NoError(err, "insert test data")
 
-	require.NoError(runBuildCacheLocal(false, false), "runBuildCacheLocal")
+	require.NoError(
+		runBuildCacheLocal(false, false, invocationFromContext(testCtx)),
+		"runBuildCacheLocal",
+	)
 
 	var identities int
 	require.NoError(s.DB().QueryRow("SELECT COUNT(*) FROM account_identities").Scan(&identities))
@@ -4102,14 +4107,6 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 // config resolution are forwarded to the build-cache subprocess so it
 // loads identical configuration to the daemon that spawned it.
 func TestGlobalConfigFlagArgs(t *testing.T) {
-	// Save and restore the package globals these flags bind to.
-	origCfg, origHome, origLocal := cfgFile, homeDir, useLocal
-	origLevel, origVerbose, origSQL, origSlow := logLevel, verbose, logSQL, logSQLSlow
-	t.Cleanup(func() {
-		cfgFile, homeDir, useLocal = origCfg, origHome, origLocal
-		logLevel, verbose, logSQL, logSQLSlow = origLevel, origVerbose, origSQL, origSlow
-	})
-
 	tests := []struct {
 		name       string
 		cfgFile    string
@@ -4147,9 +4144,12 @@ func TestGlobalConfigFlagArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfgFile, homeDir, useLocal = tt.cfgFile, tt.homeDir, tt.local
-			logLevel, verbose, logSQL, logSQLSlow = tt.logLevel, tt.verbose, tt.logSQL, tt.logSQLSlow
-			assert.Equal(t, tt.want, globalConfigFlagArgs())
+			options := invocationOptions{
+				cfgFile: tt.cfgFile, homeDir: tt.homeDir, useLocal: tt.local,
+				logLevel: tt.logLevel, verbose: tt.verbose, logSQL: tt.logSQL,
+				logSQLSlow: tt.logSQLSlow,
+			}
+			assert.Equal(t, tt.want, globalConfigFlagArgs(options))
 		})
 	}
 }

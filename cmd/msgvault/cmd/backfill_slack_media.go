@@ -26,6 +26,11 @@ Examples:
   msgvault backfill-slack-media T0123456789`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
@@ -34,7 +39,7 @@ Examples:
 			if len(args) > 0 {
 				flagTeam = args[0]
 			}
-			s, cleanup, err := openWritableStoreAndInitForIngest()
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 			if err != nil {
 				return err
 			}
@@ -62,7 +67,7 @@ Examples:
 					continue
 				}
 				imp := slack.NewImporter(s, slack.NewClient("", token), teamID)
-				sum, berr := imp.BackfillMedia(ctx, slackImportOptions(teamID, userID))
+				sum, berr := imp.BackfillMedia(ctx, slackImportOptions(teamID, userID, state.cfg))
 				if ctx.Err() != nil {
 					break
 				}
@@ -75,7 +80,7 @@ Examples:
 			return slackMediaBackfillExit(
 				ctx.Err(),
 				runErrors,
-				rebuildCacheAfterWrite(cfg.DatabaseDSN()),
+				rebuildCacheAfterWrite(cfg.DatabaseDSN(), state),
 			)
 		},
 	}

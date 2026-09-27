@@ -77,7 +77,11 @@ type embeddingAcceleratorRow struct {
 // live == embedded + blank + missing holds. The backend handle is passed
 // in by the caller (which already opened it for the generation listing).
 func fillFullCoverage(ctx context.Context, backend vector.Backend, scope vector.BuildScope, row *embeddingGenerationRow) error {
-	s, err := store.Open(cfg.DatabaseDSN())
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	s, err := store.Open(state.cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open main db for coverage: %w", err)
 	}
@@ -103,8 +107,12 @@ func fillFullCoverage(ctx context.Context, backend vector.Backend, scope vector.
 // column) gets the column added before any management command reads
 // embed_gen via CoverageCounts. Mirrors the serve.go / runEmbed pattern.
 // Cheap and idempotent on an already-current schema; harmless on PG.
-func ensureMainSchema() error {
-	s, err := store.Open(cfg.DatabaseDSN())
+func ensureMainSchema(state *invocation) error {
+	state = invocationState(context.Background(), state)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	s, err := store.Open(state.cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open main db: %w", err)
 	}
@@ -116,16 +124,21 @@ func ensureMainSchema() error {
 }
 
 func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
-	release, err := acquireDirectSQLiteWriteLock(cfg)
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	release, err := acquireDirectSQLiteWriteLock(cfg, state)
 	if err != nil {
 		return err
 	}
 	defer release()
 
-	if err := ensureMainSchema(); err != nil {
+	if err := ensureMainSchema(state); err != nil {
 		return err
 	}
-	if err := ensureEmbedScopeResolved(); err != nil {
+	if err := ensureEmbedScopeResolved(state); err != nil {
 		return err
 	}
 	db, rebind, closeDB, err := openEmbeddingsMetadataDB(cmd.Context())
@@ -222,13 +235,18 @@ func runEmbeddingsPruneCommand(cmd *cobra.Command, args []string) error {
 }
 
 func runEmbeddingsPrune(cmd *cobra.Command, _ []string) error {
-	release, err := acquireDirectSQLiteWriteLock(cfg)
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	release, err := acquireDirectSQLiteWriteLock(cfg, state)
 	if err != nil {
 		return err
 	}
 	defer release()
 
-	if err := ensureMainSchema(); err != nil {
+	if err := ensureMainSchema(state); err != nil {
 		return err
 	}
 	backend, closeBackend, err := openEmbeddingsBackend(cmd.Context())
@@ -260,16 +278,21 @@ func errRetireActiveGeneration(gen vector.GenerationID) error {
 }
 
 func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	gen, err := parseGenerationID(args[0])
 	if err != nil {
 		return err
 	}
-	release, err := acquireDirectSQLiteWriteLock(cfg)
+	release, err := acquireDirectSQLiteWriteLock(cfg, state)
 	if err != nil {
 		return err
 	}
 	defer release()
-	if err := ensureMainSchema(); err != nil {
+	if err := ensureMainSchema(state); err != nil {
 		return err
 	}
 
@@ -347,19 +370,24 @@ func runEmbeddingsRetireHTTP(cmd *cobra.Command, args []string) error {
 }
 
 func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	gen, err := parseGenerationID(args[0])
 	if err != nil {
 		return err
 	}
-	release, err := acquireDirectSQLiteWriteLock(cfg)
+	release, err := acquireDirectSQLiteWriteLock(cfg, state)
 	if err != nil {
 		return err
 	}
 	defer release()
-	if err := ensureMainSchema(); err != nil {
+	if err := ensureMainSchema(state); err != nil {
 		return err
 	}
-	if err := ensureEmbedScopeResolved(); err != nil {
+	if err := ensureEmbedScopeResolved(state); err != nil {
 		return err
 	}
 
@@ -516,7 +544,7 @@ func planCLIEmbeddingsRetire(
 	gen vector.GenerationID,
 	forceActive bool,
 ) (api.CLIEmbeddingsPlanResponse, error) {
-	if err := ensureMainSchema(); err != nil {
+	if err := ensureMainSchema(invocationFromContext(ctx)); err != nil {
 		return api.CLIEmbeddingsPlanResponse{}, err
 	}
 	db, rebind, closeDB, err := openEmbeddingsMetadataDB(ctx)
@@ -549,13 +577,13 @@ func planCLIEmbeddingsActivate(
 	gen vector.GenerationID,
 	force bool,
 ) (api.CLIEmbeddingsPlanResponse, error) {
-	if err := ensureMainSchema(); err != nil {
+	if err := ensureMainSchema(invocationFromContext(ctx)); err != nil {
 		return api.CLIEmbeddingsPlanResponse{}, err
 	}
 	// This runs on daemon HTTP handler goroutines, so the account scope is
 	// resolved into a per-request config copy — mutating the shared global
 	// cfg here would race with concurrent plan requests.
-	vecCfg, err := openResolvedVectorConfig()
+	vecCfg, err := openResolvedVectorConfig(invocationFromContext(ctx))
 	if err != nil {
 		return api.CLIEmbeddingsPlanResponse{}, err
 	}
@@ -616,7 +644,11 @@ func requireConfiguredConvergence(ctx context.Context, vecCfg vector.Config, gen
 }
 
 func configuredConvergenceState(ctx context.Context, vecCfg vector.Config, gen vector.GenerationID) (scheduler.ConvergenceResult, error) {
-	mainStore, err := store.Open(cfg.DatabaseDSN())
+	inv := invocationFromContext(ctx)
+	if inv == nil || inv.cfg == nil {
+		return scheduler.ConvergenceResult{}, errors.New("configuration is unavailable")
+	}
+	mainStore, err := store.Open(inv.cfg.DatabaseDSN())
 	if err != nil {
 		return scheduler.ConvergenceResult{}, fmt.Errorf("open main db for convergence: %w", err)
 	}
@@ -627,7 +659,7 @@ func configuredConvergenceState(ctx context.Context, vecCfg vector.Config, gen v
 	}
 	defer closeBackend()
 	personGate := vector.NewPinnedExactSemanticPersonEmbeddingGate(
-		vecCfg, currentSemanticPersonVectorConfigSource(), mainStore,
+		vecCfg, currentSemanticPersonVectorConfigSource(inv), mainStore,
 	)
 	checker, err := newConvergenceChecker(vecCfg, mainStore, backend, personGate)
 	if err != nil {
@@ -657,6 +689,11 @@ func remainingCoverageHint(gen vector.GenerationID, remaining int64) string {
 // rebind converts ? placeholders to $1, $2, … for PostgreSQL; it is the
 // identity function for SQLite so all query helpers can use it unconditionally.
 func openEmbeddingsMetadataDB(ctx context.Context) (*sql.DB, func(string) string, func(), error) {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return nil, nil, nil, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	dsn := cfg.DatabaseDSN()
 	if store.IsPostgresURL(dsn) {
 		// Use the store-level PG opener so that connection runtime params
@@ -718,6 +755,11 @@ func openEmbeddingsMetadataDB(ctx context.Context) (*sql.DB, func(string) string
 // Returns the backend and a close callback. On a build without the relevant
 // vector tag the package stubs' Open returns ErrNotBuilt.
 func openEmbeddingsBackend(ctx context.Context) (vector.Backend, func(), error) {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return nil, nil, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	dsn := cfg.DatabaseDSN()
 	if store.IsPostgresURL(dsn) {
 		db, cleanup, err := store.OpenPostgresDB(dsn)

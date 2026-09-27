@@ -79,14 +79,19 @@ func newRelocationFixture(t *testing.T) relocationFixture {
 
 func (f relocationFixture) sync(t *testing.T, extra ...imap.Option) (*imap.Client, error) {
 	t.Helper()
-	opts := append(imapFolderStateOptions(f.st, f.source, false), extra...)
+	testCtx := scriptedSyncTestContext(t)
+	var cfg *config.Config
+	if state := invocationFromContext(testCtx); state != nil {
+		cfg = state.cfg
+	}
+	opts := append(imapFolderStateOptions(f.st, f.source, false, cfg, testDiscardLogger()), extra...)
 	client := newScriptedRFC7162Client(t, f.addr, opts...)
 	options := msgsync.DefaultOptions()
 	options.SourceType = sourceTypeIMAP
 	options.NoResume = true
-	summary, err := newMessageSyncer(client, f.st, options).WithLogger(slog.New(slog.DiscardHandler)).FullWithFinalizer(
-		t.Context(), f.source, func(summary *gmail.SyncSummary) error {
-			return saveIMAPFolderStates(t.Context(), f.st, f.source, client, summary, options.Limit)
+	summary, err := newMessageSyncer(client, f.st, options, invocationFromContext(testCtx)).WithLogger(slog.New(slog.DiscardHandler)).FullWithFinalizer(
+		testCtx, f.source, func(summary *gmail.SyncSummary) error {
+			return saveIMAPFolderStates(testCtx, f.st, f.source, client, summary, options.Limit)
 		})
 	if err == nil && summary.Errors != 0 {
 		err = fmt.Errorf("relocation sync completed with %d errors", summary.Errors)
@@ -521,11 +526,15 @@ func TestIMAPRelocationSkipsSameCompositeForcedCandidate(t *testing.T) {
 // external senders cannot produce; every other adoption keeps the canonical
 // snapshot and only rekeys the location, matching pre-relocation behavior.
 func TestIMAPRelocationForgedSurvivorPreservesSnapshot(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Sync.ArchiveRemoteImages = true
 	victim := newScriptedRFC7162Message(1, "forged-survivor@example.test", imapapi.FlagSeen)
 	victim.Body = "victimoriginalword"
@@ -822,20 +831,22 @@ func forgerWithUID(message scriptedRFC7162Message, uid imapapi.UID) scriptedRFC7
 func runScriptedRelocationSync(
 	t *testing.T, st *store.Store, identifier, addr string,
 	mod func(*msgsync.Options),
+	contexts ...context.Context,
 ) (*imap.Client, *store.Source, error) {
 	t.Helper()
+	testCtx := scriptedSyncTestContext(t, contexts...)
 	source, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
 	require.NoError(t, err)
-	client := newScriptedRFC7162Client(t, addr, imapFolderStateOptions(st, source, false)...)
+	client := newScriptedRFC7162Client(t, addr, imapFolderStateOptionsForTest(testCtx, st, source, false)...)
 	options := msgsync.DefaultOptions()
 	options.SourceType = sourceTypeIMAP
 	options.NoResume = true
 	if mod != nil {
 		mod(options)
 	}
-	summary, err := newMessageSyncer(client, st, options).
+	summary, err := newMessageSyncer(client, st, options, invocationFromContext(testCtx)).
 		WithLogger(slog.New(slog.DiscardHandler)).
-		Full(t.Context(), identifier)
+		Full(testCtx, identifier)
 	if err != nil {
 		return client, source, err
 	}
@@ -844,7 +855,7 @@ func runScriptedRelocationSync(
 			"scripted IMAP sync completed with %d errors", summary.Errors)
 	}
 	return client, source, saveIMAPFolderStates(
-		context.Background(), st, source, client, summary, options.Limit)
+		testCtx, st, source, client, summary, options.Limit)
 }
 
 func scriptedOutgoingRaw(
@@ -976,12 +987,16 @@ func TestIMAPRelocationDraftsSentAllMailTopology(t *testing.T) {
 // trusted_imap_sent_mailboxes configuration restores the edited-copy
 // refresh through the same production wiring.
 func TestIMAPRelocationConfiguredTrustedOutgoingMailbox(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	const identifier = "imap://configured-trust@example.test"
 	cfg = config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Sync.TrustedIMAPSentMailboxes = map[string][]string{
 		identifier: {"Gesendete Elemente"},
 	}
@@ -997,7 +1012,7 @@ func TestIMAPRelocationConfiguredTrustedOutgoingMailbox(t *testing.T) {
 	}}
 	addr, server := startScriptedRFC7162Server(t, baseline)
 	st := testutil.NewTestStore(t)
-	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
+	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr, testCtx)
 	require.NoError(first.Close())
 	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
 	require.NoError(err)
@@ -1012,7 +1027,7 @@ func TestIMAPRelocationConfiguredTrustedOutgoingMailbox(t *testing.T) {
 	edited.Mailboxes[1].ChangedUIDs = []imapapi.UID{1}
 	edited.Mailboxes[1].Messages = []scriptedRFC7162Message{sent}
 	server.setSnapshot(edited)
-	second, _, err := runScriptedRFC7162Sync(t, st, identifier, addr)
+	second, _, err := runScriptedRFC7162Sync(t, st, identifier, addr, testCtx)
 	require.NoError(err)
 	require.NoError(second.Close())
 	message, err := st.GetMessage(id)
@@ -1096,15 +1111,16 @@ func runScriptedRelocationResync(
 	t *testing.T, st *store.Store, identifier, addr string,
 ) (*imap.Client, error) {
 	t.Helper()
+	testCtx := scriptedSyncTestContext(t)
 	source, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
 	require.NoError(t, err)
-	client := newScriptedRFC7162Client(t, addr, imapFolderStateOptions(st, source, true)...)
+	client := newScriptedRFC7162Client(t, addr, imapFolderStateOptionsForTest(testCtx, st, source, true)...)
 	options := msgsync.DefaultOptions()
 	options.SourceType = sourceTypeIMAP
 	options.NoResume = true
-	summary, err := newMessageSyncer(client, st, options).
+	summary, err := newMessageSyncer(client, st, options, invocationFromContext(testCtx)).
 		WithLogger(slog.New(slog.DiscardHandler)).
-		Full(t.Context(), identifier)
+		Full(testCtx, identifier)
 	if err != nil {
 		return client, err
 	}
@@ -1113,7 +1129,7 @@ func runScriptedRelocationResync(
 			"scripted IMAP resync completed with %d errors", summary.Errors)
 	}
 	return client, saveIMAPFolderStates(
-		context.Background(), st, source, client, summary, options.Limit)
+		testCtx, st, source, client, summary, options.Limit)
 }
 
 // Force-full rescans and realistic mailbox rebuilds — including an All Mail
@@ -1264,6 +1280,8 @@ func TestIMAPRelocationRescanOrderingKeepsEditedSent(t *testing.T) {
 // conflicting advertised role or the INBOX name: those placements are denied
 // exactly as when they are advertised without configuration.
 func TestIMAPRelocationConfiguredConflictDenied(t *testing.T) {
+	cfg := testConfigValue()
+
 	for _, mode := range []string{"sent-plus-all", "all-only", "inbox"} {
 		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)
@@ -1271,6 +1289,7 @@ func TestIMAPRelocationConfiguredConflictDenied(t *testing.T) {
 			savedCfg := cfg
 			t.Cleanup(func() { cfg = savedCfg })
 			cfg = config.NewDefaultConfig()
+			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
 			draft := newScriptedRFC7162Message(1, "configured-conflict@example.test", imapapi.FlagDraft)
 			draft.Body = "draftoriginalword"
@@ -1296,7 +1315,7 @@ func TestIMAPRelocationConfiguredConflictDenied(t *testing.T) {
 			}}
 			addr, server := startScriptedRFC7162Server(t, baseline)
 			st := testutil.NewTestStore(t)
-			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
+			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr, testCtx)
 			require.NoError(first.Close())
 			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
 			require.NoError(err)
@@ -1311,7 +1330,7 @@ func TestIMAPRelocationConfiguredConflictDenied(t *testing.T) {
 			edited.Mailboxes[1].ChangedUIDs = []imapapi.UID{1}
 			edited.Mailboxes[1].Messages = []scriptedRFC7162Message{sent}
 			server.setSnapshot(edited)
-			second, _, err := runScriptedRFC7162Sync(t, st, identifier, addr)
+			second, _, err := runScriptedRFC7162Sync(t, st, identifier, addr, testCtx)
 			require.NoError(err)
 			require.NoError(second.Close())
 
@@ -1335,20 +1354,21 @@ func runScriptedRelocationSyncSummary(
 	t *testing.T, st *store.Store, identifier, addr string,
 ) (*gmail.SyncSummary, error) {
 	t.Helper()
+	testCtx := scriptedSyncTestContext(t)
 	source, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
 	require.NoError(t, err)
-	client := newScriptedRFC7162Client(t, addr, imapFolderStateOptions(st, source, false)...)
+	client := newScriptedRFC7162Client(t, addr, imapFolderStateOptionsForTest(testCtx, st, source, false)...)
 	options := msgsync.DefaultOptions()
 	options.SourceType = sourceTypeIMAP
 	options.NoResume = true
-	summary, err := newMessageSyncer(client, st, options).
+	summary, err := newMessageSyncer(client, st, options, invocationFromContext(testCtx)).
 		WithLogger(slog.New(slog.DiscardHandler)).
-		Full(t.Context(), identifier)
+		Full(testCtx, identifier)
 	if err != nil {
 		return summary, err
 	}
 	return summary, saveIMAPFolderStates(
-		context.Background(), st, source, client, summary, options.Limit)
+		testCtx, st, source, client, summary, options.Limit)
 }
 
 // A persistently failing relocation target must not starve unrelated mail:
@@ -1618,11 +1638,12 @@ func TestIMAPRelocationDeferredTargetInterruptedRunRestart(t *testing.T) {
 	source2, err := st.GetSourceByIdentifier(identifier)
 	require.NoError(err)
 	interrupted := &cancelOnSecondListIMAP{Client: newScriptedRFC7162Client(
-		t, addr, imapFolderStateOptions(st, source2, false)...)}
+		t, addr, imapFolderStateOptions(st, source2, false, testConfigValue(), testDiscardLogger())...)}
 	options := msgsync.DefaultOptions()
 	options.SourceType = sourceTypeIMAP
 	options.NoResume = true
-	_, err = newMessageSyncer(interrupted, st, options).
+	_, err = newMessageSyncer(interrupted, st, options,
+		testInvocationWithConfig(testConfigValue())).
 		WithLogger(slog.New(slog.DiscardHandler)).
 		Full(t.Context(), identifier)
 	require.ErrorIs(err, context.Canceled)
@@ -1639,8 +1660,9 @@ func TestIMAPRelocationDeferredTargetInterruptedRunRestart(t *testing.T) {
 	// is deferred, and the guarded row is untouched.
 	resumableOptions := msgsync.DefaultOptions()
 	resumableOptions.SourceType = sourceTypeIMAP
-	resumable := newScriptedRFC7162Client(t, addr, imapFolderStateOptions(st, source2, false)...)
-	summary, err := newMessageSyncer(resumable, st, resumableOptions).
+	resumable := newScriptedRFC7162Client(t, addr, imapFolderStateOptions(st, source2, false, testConfigValue(), testDiscardLogger())...)
+	summary, err := newMessageSyncer(resumable, st, resumableOptions,
+		testInvocationWithConfig(testConfigValue())).
 		WithLogger(slog.New(slog.DiscardHandler)).
 		Full(t.Context(), identifier)
 	require.NoError(err, "the retry attempt completes with per-item errors")
@@ -1909,11 +1931,12 @@ func TestIMAPRelocationUntrustedAdoptionKeepsOldKeyOnLabelFailure(t *testing.T) 
 		src, srcErr := st.GetSourceByIdentifier(identifier)
 		require.NoError(srcErr)
 		client := &immediateLabelScriptedIMAP{Client: newScriptedRFC7162Client(
-			t, addr, imapFolderStateOptions(st, src, false)...)}
+			t, addr, imapFolderStateOptions(st, src, false, testConfigValue(), testDiscardLogger())...)}
 		options := msgsync.DefaultOptions()
 		options.SourceType = sourceTypeIMAP
 		options.NoResume = true
-		summary, err := newMessageSyncer(client, st, options).
+		summary, err := newMessageSyncer(client, st, options,
+			testInvocationWithConfig(testConfigValue())).
 			WithLogger(slog.New(slog.DiscardHandler)).
 			Full(t.Context(), identifier)
 		if closeErr := client.Close(); err == nil {
@@ -2041,20 +2064,22 @@ func TestIMAPRelocationFullEnumerationRefreshesEditedSent(t *testing.T) {
 func runScriptedSourceSync(
 	t *testing.T, st *store.Store, identifier, addr string,
 	mod func(*msgsync.Options),
+	contexts ...context.Context,
 ) (*imap.Client, *store.Source, error) {
 	t.Helper()
+	testCtx := scriptedSyncTestContext(t, contexts...)
 	source, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
 	require.NoError(t, err)
-	client := newScriptedRFC7162Client(t, addr, imapFolderStateOptions(st, source, false)...)
+	client := newScriptedRFC7162Client(t, addr, imapFolderStateOptionsForTest(testCtx, st, source, false)...)
 	options := msgsync.DefaultOptions()
 	options.SourceType = sourceTypeIMAP
 	options.NoResume = true
 	if mod != nil {
 		mod(options)
 	}
-	summary, err := newMessageSyncer(client, st, options).
+	summary, err := newMessageSyncer(client, st, options, invocationFromContext(testCtx)).
 		WithLogger(slog.New(slog.DiscardHandler)).
-		Full(t.Context(), identifier)
+		Full(testCtx, identifier)
 	if err != nil {
 		return client, source, err
 	}
@@ -2063,7 +2088,7 @@ func runScriptedSourceSync(
 			"scripted IMAP sync completed with %d errors", summary.Errors)
 	}
 	return client, source, saveIMAPFolderStates(
-		context.Background(), st, source, client, summary, options.Limit)
+		testCtx, st, source, client, summary, options.Limit)
 }
 
 // Sent-folder trust is scoped to the exact IMAP source identifier: two
@@ -2074,11 +2099,15 @@ func runScriptedSourceSync(
 // snapshot, its raw MIME, participants, attachments, or search content, and
 // rejected bytes never reach remote-image processing.
 func TestIMAPRelocationSentTrustIsSourceScoped(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Sync.ArchiveRemoteImages = true
 	const identifierA = "imap://scoped-a@example.test"
 	const identifierB = "imap://scoped-b@example.test"
@@ -2101,7 +2130,7 @@ func TestIMAPRelocationSentTrustIsSourceScoped(t *testing.T) {
 	addrA, serverA := startScriptedRFC7162Server(t, baselineA)
 	stA := testutil.NewTestStore(t)
 	withAttachments := func(o *msgsync.Options) { o.AttachmentsDir = t.TempDir() }
-	firstA, sourceA, err := runScriptedSourceSync(t, stA, identifierA, addrA, withAttachments)
+	firstA, sourceA, err := runScriptedSourceSync(t, stA, identifierA, addrA, withAttachments, testCtx)
 	require.NoError(err)
 	require.NoError(firstA.Close())
 	idA, err := stA.GetMessageIDByRFC822ID(sourceA.ID, "<"+draftA.MessageID+">")
@@ -2119,7 +2148,7 @@ func TestIMAPRelocationSentTrustIsSourceScoped(t *testing.T) {
 	editedA.Mailboxes[2].UIDNext = 2
 	editedA.Mailboxes[2].Messages = []scriptedRFC7162Message{sentA}
 	serverA.setSnapshot(editedA)
-	secondA, _, err := runScriptedSourceSync(t, stA, identifierA, addrA, withAttachments)
+	secondA, _, err := runScriptedSourceSync(t, stA, identifierA, addrA, withAttachments, testCtx)
 	require.NoError(err)
 	require.NoError(secondA.Close())
 	messageA, err := stA.GetMessage(idA)
@@ -2150,7 +2179,7 @@ func TestIMAPRelocationSentTrustIsSourceScoped(t *testing.T) {
 	}}
 	addrB, serverB := startScriptedRFC7162Server(t, baselineB)
 	stB := testutil.NewTestStore(t)
-	firstB, sourceB, err := runScriptedSourceSync(t, stB, identifierB, addrB, withAttachments)
+	firstB, sourceB, err := runScriptedSourceSync(t, stB, identifierB, addrB, withAttachments, testCtx)
 	require.NoError(err)
 	require.NoError(firstB.Close())
 	idB, err := stB.GetMessageIDByRFC822ID(sourceB.ID, "<"+victimB.MessageID+">")
@@ -2170,7 +2199,7 @@ func TestIMAPRelocationSentTrustIsSourceScoped(t *testing.T) {
 	replacedB.Mailboxes[1].ChangedUIDs = []imapapi.UID{2}
 	replacedB.Mailboxes[1].Messages = []scriptedRFC7162Message{forgerB}
 	serverB.setSnapshot(replacedB)
-	secondB, _, err := runScriptedSourceSync(t, stB, identifierB, addrB, withAttachments)
+	secondB, _, err := runScriptedSourceSync(t, stB, identifierB, addrB, withAttachments, testCtx)
 	require.NoError(err)
 	require.NoError(secondB.Close())
 
@@ -2202,11 +2231,15 @@ func TestIMAPRelocationSentTrustIsSourceScoped(t *testing.T) {
 // account's Sent folder and grant its duplicate copies the trusted dedup
 // bypass that would let a stale draft downgrade a fresh snapshot.
 func TestIMAPRelocationConfiguredDraftsRoleNotSent(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	const identifier = "imap://configured-drafts@example.test"
 	cfg.Sync.TrustedIMAPSentMailboxes = map[string][]string{
 		identifier: {"My Drafts"},
@@ -2259,6 +2292,8 @@ func TestIMAPRelocationConfiguredDraftsRoleNotSent(t *testing.T) {
 // placements never gain that precedence, and a later stale Drafts copy must
 // not downgrade the refreshed snapshot.
 func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
+	cfg := testConfigValue()
+
 	for _, mode := range []string{"qresync", "full enumeration", "configured localized sent", "removed sent mailbox", "removed sent mailbox full enumeration"} {
 		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)
@@ -2266,6 +2301,7 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 			savedCfg := cfg
 			t.Cleanup(func() { cfg = savedCfg })
 			cfg = config.NewDefaultConfig()
+			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 			draft := newScriptedRFC7162Message(1, "sent-precedence@example.test", imapapi.FlagDraft)
 			draft.Body = "draftoriginalword"
 			sent := newScriptedRFC7162Message(1, draft.MessageID, imapapi.FlagSeen)
@@ -2291,7 +2327,7 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 			addr, server := startScriptedRFC7162Server(t, baseline)
 			st := testutil.NewTestStore(t)
 			const identifier = "imap://sent-precedence@example.test"
-			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
+			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr, testCtx)
 			require.NoError(first.Close())
 			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
 			require.NoError(err)
@@ -2309,7 +2345,7 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 			edited.Mailboxes[1].ChangedUIDs = []imapapi.UID{1}
 			edited.Mailboxes[1].Messages = []scriptedRFC7162Message{sent}
 			server.setSnapshot(edited)
-			second, _, err := runScriptedRFC7162Sync(t, st, identifier, addr)
+			second, _, err := runScriptedRFC7162Sync(t, st, identifier, addr, testCtx)
 			require.NoError(err)
 			require.NoError(second.Close())
 
@@ -2337,7 +2373,7 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 			// A repeated run must not let the surviving stale Drafts copy
 			// downgrade the refreshed snapshot.
 			server.setSnapshot(edited)
-			third, _, err := runScriptedRFC7162Sync(t, st, identifier, addr)
+			third, _, err := runScriptedRFC7162Sync(t, st, identifier, addr, testCtx)
 			require.NoError(err)
 			require.NoError(third.Close())
 			message, err = st.GetMessage(id)
@@ -2361,7 +2397,7 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 			}
 			for range 2 {
 				server.setSnapshot(edited)
-				client, _, err := runScriptedRFC7162Sync(t, st, identifier, addr)
+				client, _, err := runScriptedRFC7162Sync(t, st, identifier, addr, testCtx)
 				require.NoError(err)
 				require.NoError(client.Close())
 				message, err = st.GetMessage(id)
@@ -2385,11 +2421,15 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 // yields to a genuine Sent copy, while never itself gaining the Sent
 // placement's dedup bypass.
 func TestIMAPRelocationConfiguredDraftsCanonicalStillYieldsToSent(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	const identifier = "imap://configured-drafts-canonical@example.test"
 	cfg.Sync.TrustedIMAPSentMailboxes = map[string][]string{
 		identifier: {"My Drafts"},
@@ -2477,6 +2517,8 @@ func seedLegacyDraftsCanonicalWithSentMembership(
 // it must neither authorize snapshot replacement nor gain the Sent placement
 // precedence or dedup bypass, including when the account lists it explicitly.
 func TestIMAPRelocationDualSentDraftsRoleDenied(t *testing.T) {
+	cfg := testConfigValue()
+
 	for _, mode := range []string{"advertised", "advertised and configured"} {
 		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)

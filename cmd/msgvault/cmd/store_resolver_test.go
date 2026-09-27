@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,7 @@ import (
 )
 
 func TestOpenHTTPStoreUsesConfiguredRemoteWithoutDaemonAutostart(t *testing.T) {
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{
 			URL:           "http://daemonclient.example:8080",
 			AllowInsecure: true,
@@ -38,7 +39,7 @@ func TestOpenHTTPStoreUsesConfiguredRemoteWithoutDaemonAutostart(t *testing.T) {
 		return nil, errors.New("unreachable")
 	})
 
-	st, info, err := OpenHTTPStore(context.Background())
+	st, info, err := OpenHTTPStore(testCtx)
 	require.NoError(t, err, "OpenHTTPStore")
 	t.Cleanup(func() { _ = st.Close() })
 
@@ -50,7 +51,7 @@ func TestOpenHTTPStoreDisabledAutoStartKeepsConfiguredRemote(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{
 			URL:           "http://daemonclient.example:8080",
 			AllowInsecure: true,
@@ -62,7 +63,7 @@ func TestOpenHTTPStoreDisabledAutoStartKeepsConfiguredRemote(t *testing.T) {
 		return nil, errors.New("unreachable")
 	})
 
-	st, info, err := OpenHTTPStore(context.Background())
+	st, info, err := OpenHTTPStore(testCtx)
 	require.NoError(err, "OpenHTTPStore")
 	t.Cleanup(func() { _ = st.Close() })
 
@@ -84,7 +85,7 @@ func TestOpenHTTPStoreUsesCLIModeForConfiguredRemote(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{
 			URL:           srv.URL,
 			APIKey:        "remote-daemon-secret",
@@ -92,12 +93,12 @@ func TestOpenHTTPStoreUsesCLIModeForConfiguredRemote(t *testing.T) {
 		},
 	})
 
-	st, _, err := OpenHTTPStore(context.Background())
+	st, _, err := OpenHTTPStore(testCtx)
 	require.NoError(err, "OpenHTTPStore")
 	t.Cleanup(func() { _ = st.Close() })
 
 	assert.Zero(st.Timeout(), "configured remote operations use caller duration")
-	_, err = st.GetHealth(context.Background())
+	_, err = st.GetHealth(testCtx)
 	require.NoError(err, "GetHealth")
 	assert.Equal(apiprotocol.ClientClassCLI, marker.Load())
 }
@@ -128,12 +129,12 @@ func TestOpenHTTPStoreRootContextCancelsLocalDaemonRequest(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	rt := daemonRuntimeForHTTPServer(t, srv, daemonAPIKeyFingerprint(""))
 	_, err := daemonRuntimeStore(dataDir).Write(rt.Record)
 	require.NoError(err, "write daemon runtime")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testCtx)
 	t.Cleanup(cancel)
 	st, _, err := OpenHTTPStore(ctx)
 	require.NoError(err, "OpenHTTPStore")
@@ -164,7 +165,7 @@ func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
 	assert := assert.New(t)
 
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	waitCh := make(chan error)
 	var started bool
 	stubStartServeBackgroundProcess(t, func(c *config.Config, _ backgroundServeStartOptions) (*backgroundServeProcess, error) {
@@ -193,7 +194,7 @@ func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
 		}, true, nil
 	})
 
-	st, info, err := OpenHTTPStore(context.Background())
+	st, info, err := OpenHTTPStore(testCtx)
 	require.NoError(t, err, "OpenHTTPStore")
 	t.Cleanup(func() { _ = st.Close() })
 	assert.True(started, "local daemon should be started")
@@ -208,17 +209,17 @@ func TestOpenHTTPStoreDisabledAutoStartDoesNotStartDaemon(t *testing.T) {
 	dataDir := t.TempDir()
 	c := lifecycleTestConfig(dataDir)
 	c.Server.DaemonAutoStart = new(false)
-	withStoreResolverConfig(t, c)
+	testCtx := withStoreResolverConfig(t, c)
 	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		require.FailNow("disabled auto-start must not start a local daemon")
 		return nil, errors.New("unreachable")
 	})
-	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime) error {
+	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
 		require.FailNow("disabled auto-start must not stop a daemon")
 		return errors.New("unreachable")
 	})
 
-	st, _, err := OpenHTTPStore(context.Background())
+	st, _, err := OpenHTTPStore(testCtx)
 	assert.Nil(st)
 	require.ErrorIs(err, errLocalDaemonAutoStartDisabled)
 	assert.Contains(err.Error(), dataDir)
@@ -227,7 +228,7 @@ func TestOpenHTTPStoreDisabledAutoStartDoesNotStartDaemon(t *testing.T) {
 	held, err := daemonOwnerLockHeld(dataDir)
 	require.NoError(err, "check daemon ownership")
 	assert.False(held, "disabled auto-start must leave daemon ownership free")
-	owner, err := claimServeOwnership(context.Background(), c, "127.0.0.1", 8123, "v-test")
+	owner, err := claimServeOwnership(testCtx, c, "127.0.0.1", 8123, "v-test")
 	require.NoError(err, "supervised serve should claim ownership")
 	require.NoError(owner.Close(), "release supervised ownership")
 }
@@ -241,7 +242,7 @@ func TestOpenHTTPStoreDisabledAutoStartReusesOlderDaemonWithoutRestart(t *testin
 	c := lifecycleTestConfig(dataDir)
 	c.Server.DaemonAutoStart = new(false)
 	c.Server.DaemonAutoRestart = config.DaemonAutoRestartAlways
-	withStoreResolverConfig(t, c)
+	testCtx := withStoreResolverConfig(t, c)
 	ping := httptestPingDaemon(t)
 	portText := strconv.Itoa(ping.Port)
 	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
@@ -261,7 +262,7 @@ func TestOpenHTTPStoreDisabledAutoStartReusesOlderDaemonWithoutRestart(t *testin
 	})
 	require.NoError(err, "write runtime")
 
-	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime) error {
+	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
 		require.FailNow("disabled auto-start must not stop an older daemon")
 		return errors.New("unreachable")
 	})
@@ -270,7 +271,7 @@ func TestOpenHTTPStoreDisabledAutoStartReusesOlderDaemonWithoutRestart(t *testin
 		return nil, errors.New("unreachable")
 	})
 
-	st, info, err := OpenHTTPStore(context.Background())
+	st, info, err := OpenHTTPStore(testCtx)
 	require.NoError(err, "OpenHTTPStore")
 	t.Cleanup(func() { _ = st.Close() })
 
@@ -287,7 +288,7 @@ func TestOpenHTTPStoreDisabledAutoStartReportsIncompatibleDaemonWithoutStopping(
 	c := lifecycleTestConfig(dataDir)
 	c.Server.DaemonAutoStart = new(false)
 	c.Server.DaemonAutoRestart = config.DaemonAutoRestartAlways
-	withStoreResolverConfig(t, c)
+	testCtx := withStoreResolverConfig(t, c)
 	ping := httptestPingDaemon(t)
 	portText := strconv.Itoa(ping.Port)
 	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
@@ -306,7 +307,7 @@ func TestOpenHTTPStoreDisabledAutoStartReportsIncompatibleDaemonWithoutStopping(
 	})
 	require.NoError(err, "write runtime")
 
-	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime) error {
+	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
 		require.FailNow("disabled auto-start must not stop an incompatible daemon")
 		return errors.New("unreachable")
 	})
@@ -315,7 +316,7 @@ func TestOpenHTTPStoreDisabledAutoStartReportsIncompatibleDaemonWithoutStopping(
 		return nil, errors.New("unreachable")
 	})
 
-	st, info, err := OpenHTTPStore(context.Background())
+	st, info, err := OpenHTTPStore(testCtx)
 	assert.Nil(st)
 	require.Error(err, "OpenHTTPStore")
 	assert.Equal(HTTPStoreInfo{}, info)
@@ -333,7 +334,7 @@ func TestOpenHTTPStoreDisabledAutoStartWaitsForStartingDaemon(t *testing.T) {
 	dataDir := t.TempDir()
 	c := lifecycleTestConfig(dataDir)
 	c.Server.DaemonAutoStart = new(false)
-	withStoreResolverConfig(t, c)
+	testCtx := withStoreResolverConfig(t, c)
 	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID:     os.Getpid(),
 		Network: daemon.NetworkTCP,
@@ -354,7 +355,7 @@ func TestOpenHTTPStoreDisabledAutoStartWaitsForStartingDaemon(t *testing.T) {
 		return nil, errors.New("unreachable")
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(testCtx, 300*time.Millisecond)
 	t.Cleanup(cancel)
 	var st *daemonclient.Client
 	var info HTTPStoreInfo
@@ -380,14 +381,13 @@ func TestOpenHTTPStoreDisabledAutoStartLocalFlagStaysLocal(t *testing.T) {
 	c.Remote.URL = "http://daemonclient.example:8080"
 	c.Remote.AllowInsecure = true
 	c.Server.DaemonAutoStart = new(false)
-	withStoreResolverConfig(t, c)
-	useLocal = true
+	ctx := testInvocationContext(t.Context(), c, invocationOptions{useLocal: true})
 	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		require.FailNow("--local must not start a daemon when auto-start is disabled")
 		return nil, errors.New("unreachable")
 	})
 
-	st, info, err := OpenHTTPStore(context.Background())
+	st, info, err := OpenHTTPStore(ctx)
 	assert.Nil(st)
 	require.ErrorIs(err, errLocalDaemonAutoStartDisabled)
 	assert.Equal(HTTPStoreInfo{}, info)
@@ -397,7 +397,7 @@ func TestOpenHTTPStoreReportsFulfilledStartupCacheBuild(t *testing.T) {
 	assert := assert.New(t)
 
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	waitCh := make(chan error)
 	var gotIntent startupCacheBuildIntent
 	stubStartServeBackgroundProcess(t, func(
@@ -443,7 +443,7 @@ func TestOpenHTTPStoreReportsFulfilledStartupCacheBuild(t *testing.T) {
 	var err error
 	captureStderrDuring(t, func() {
 		st, info, err = openHTTPStoreWithStartupCacheIntent(
-			context.Background(), startupCacheBuildIntentDefault,
+			testCtx, startupCacheBuildIntentDefault,
 		)
 	})
 	require.NoError(t, err)
@@ -534,7 +534,7 @@ func TestOpenHTTPStoreReportsLocalDaemonStartupToStderr(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	waitCh := make(chan error)
 	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		return &backgroundServeProcess{
@@ -560,7 +560,7 @@ func TestOpenHTTPStoreReportsLocalDaemonStartupToStderr(t *testing.T) {
 	var st *daemonclient.Client
 	var err error
 	stderr := captureStderrDuring(t, func() {
-		st, _, err = OpenHTTPStore(context.Background())
+		st, _, err = OpenHTTPStore(testCtx)
 	})
 	require.NoError(err, "OpenHTTPStore")
 	t.Cleanup(func() { _ = st.Close() })
@@ -577,7 +577,7 @@ func TestOpenHTTPStoreIncludesLastDaemonLogWhenStartupExits(t *testing.T) {
 	require := require.New(t)
 
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	logPath := filepath.Join(dataDir, "serve.log")
 	require.NoError(os.WriteFile(logPath, []byte("Error: API server address unavailable at 127.0.0.1:8080\n"), 0o600), "write serve log")
 	waitCh := make(chan error)
@@ -597,7 +597,7 @@ func TestOpenHTTPStoreIncludesLastDaemonLogWhenStartupExits(t *testing.T) {
 		return nil, false, errors.New("exit status 1")
 	})
 
-	st, _, err := OpenHTTPStore(context.Background())
+	st, _, err := OpenHTTPStore(testCtx)
 	if st != nil {
 		t.Cleanup(func() { _ = st.Close() })
 	}
@@ -610,7 +610,7 @@ func TestOpenHTTPStoreIncludesLastDaemonLogWhenStartupExits(t *testing.T) {
 
 func TestCommandAwareDaemonAutostartCancellationStopsStartedDaemon(t *testing.T) {
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	waitCh := make(chan error)
 	proc := &backgroundServeProcess{
 		PID:     4242,
@@ -620,7 +620,7 @@ func TestCommandAwareDaemonAutostartCancellationStopsStartedDaemon(t *testing.T)
 	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		return proc, nil
 	})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testCtx)
 	stubWaitForBackgroundServeReady(t, func(
 		context.Context,
 		string,
@@ -650,7 +650,7 @@ func TestCommandAwareDaemonAutostartCancellationStopsStartedDaemon(t *testing.T)
 
 func TestOrdinaryDaemonAutostartCancellationLeavesDetachedDaemonRunning(t *testing.T) {
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	waitCh := make(chan error)
 	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		return &backgroundServeProcess{
@@ -659,7 +659,7 @@ func TestOrdinaryDaemonAutostartCancellationLeavesDetachedDaemonRunning(t *testi
 			Wait:    waitCh,
 		}, nil
 	})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testCtx)
 	stubWaitForBackgroundServeReady(t, func(
 		context.Context,
 		string,
@@ -689,7 +689,7 @@ func TestOpenHTTPStoreTakesOverWhenConcurrentDaemonStartExits(t *testing.T) {
 	require := require.New(t)
 
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	heldLock, ok := acquireBackgroundLaunchLock(dataDir)
 	require.True(ok, "test should hold background launch lock")
 	t.Cleanup(func() { _ = heldLock.Unlock() })
@@ -721,7 +721,7 @@ func TestOpenHTTPStoreTakesOverWhenConcurrentDaemonStartExits(t *testing.T) {
 		}, true, nil
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(testCtx, 2*time.Second)
 	defer cancel()
 	st, info, err := OpenHTTPStore(ctx)
 	require.NoError(err, "OpenHTTPStore")
@@ -743,7 +743,7 @@ func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
 	dataDir := t.TempDir()
 	localCfg := lifecycleTestConfig(dataDir)
 	localCfg.Server.APIKey = "local-daemon-secret"
-	withStoreResolverConfig(t, localCfg)
+	testCtx := withStoreResolverConfig(t, localCfg)
 
 	var gotAPIKey string
 	mux := http.NewServeMux()
@@ -792,7 +792,7 @@ func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
 	require.NoError(
 		err, "write runtime")
 
-	st, info, err := OpenHTTPStore(context.Background())
+	st, info, err := OpenHTTPStore(testCtx)
 	require.NoError(
 		err, "OpenHTTPStore")
 
@@ -819,7 +819,7 @@ func TestOpenHTTPStoreReadsFromProvedDaemonWithMismatchedCreateTime(t *testing.T
 			dataDir := t.TempDir()
 			localCfg := lifecycleTestConfig(dataDir)
 			localCfg.Server.APIKey = apiKey
-			withStoreResolverConfig(t, localCfg)
+			testCtx := withStoreResolverConfig(t, localCfg)
 			stubProcessCreateTimeMillis(t, func(int) (int64, bool) { return 1_000, true })
 			stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 				require.FailNow("proved clock-stepped daemon must not be restarted")
@@ -883,7 +883,7 @@ func TestOpenHTTPStoreReadsFromProvedDaemonWithMismatchedCreateTime(t *testing.T
 			})
 			require.NoError(err, "write runtime")
 
-			st, info, err := OpenHTTPStore(context.Background())
+			st, info, err := OpenHTTPStore(testCtx)
 			require.NoError(err, "OpenHTTPStore")
 			t.Cleanup(func() { _ = st.Close() })
 			stats, err := st.GetStats()
@@ -903,7 +903,7 @@ func TestOpenHTTPStoreRejectsLocalDaemonWithStaleServerAPIKey(t *testing.T) {
 	dataDir := t.TempDir()
 	localCfg := lifecycleTestConfig(dataDir)
 	localCfg.Server.APIKey = "new-local-daemon-secret"
-	withStoreResolverConfig(t, localCfg)
+	testCtx := withStoreResolverConfig(t, localCfg)
 
 	var statsCalled bool
 	mux := http.NewServeMux()
@@ -942,7 +942,7 @@ func TestOpenHTTPStoreRejectsLocalDaemonWithStaleServerAPIKey(t *testing.T) {
 	})
 	require.NoError(err, "write runtime")
 
-	st, _, err := OpenHTTPStore(context.Background())
+	st, _, err := OpenHTTPStore(testCtx)
 	if st != nil {
 		t.Cleanup(func() { _ = st.Close() })
 	}
@@ -960,7 +960,7 @@ func TestOpenHTTPStoreRejectsLocalDaemonWithChangedServerAPIKeyFingerprint(t *te
 	dataDir := t.TempDir()
 	localCfg := lifecycleTestConfig(dataDir)
 	localCfg.Server.APIKey = "new-local-daemon-secret"
-	withStoreResolverConfig(t, localCfg)
+	testCtx := withStoreResolverConfig(t, localCfg)
 
 	var statsCalled bool
 	mux := http.NewServeMux()
@@ -997,7 +997,7 @@ func TestOpenHTTPStoreRejectsLocalDaemonWithChangedServerAPIKeyFingerprint(t *te
 	})
 	require.NoError(err, "write runtime")
 
-	st, _, err := OpenHTTPStore(context.Background())
+	st, _, err := OpenHTTPStore(testCtx)
 	if st != nil {
 		t.Cleanup(func() { _ = st.Close() })
 	}
@@ -1014,7 +1014,7 @@ func TestOpenHTTPStoreRejectsLegacyLocalDaemonAfterServerAPIKeyRemoved(t *testin
 
 	dataDir := t.TempDir()
 	localCfg := lifecycleTestConfig(dataDir)
-	withStoreResolverConfig(t, localCfg)
+	testCtx := withStoreResolverConfig(t, localCfg)
 
 	var statsCalled bool
 	mux := http.NewServeMux()
@@ -1052,7 +1052,7 @@ func TestOpenHTTPStoreRejectsLegacyLocalDaemonAfterServerAPIKeyRemoved(t *testin
 	})
 	require.NoError(err, "write runtime")
 
-	st, _, err := OpenHTTPStore(context.Background())
+	st, _, err := OpenHTTPStore(testCtx)
 	if st != nil {
 		t.Cleanup(func() { _ = st.Close() })
 	}
@@ -1191,7 +1191,7 @@ func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
 	dataDir := t.TempDir()
 	localCfg := lifecycleTestConfig(dataDir)
 	localCfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNever
-	withStoreResolverConfig(t, localCfg)
+	testCtx := withStoreResolverConfig(t, localCfg)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
@@ -1238,7 +1238,7 @@ func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
 		return nil, errors.New("unreachable")
 	})
 
-	st, info, err := OpenHTTPStore(context.Background())
+	st, info, err := OpenHTTPStore(testCtx)
 	require.NoError(
 		err, "OpenHTTPStore")
 
@@ -1259,8 +1259,7 @@ func TestOpenHTTPStoreLocalFlagUsesLocalDaemonInsteadOfConfiguredRemote(t *testi
 	c := lifecycleTestConfig(dataDir)
 	c.Remote.URL = "http://daemonclient.example:8080"
 	c.Remote.AllowInsecure = true
-	withStoreResolverConfig(t, c)
-	useLocal = true
+	ctx := testInvocationContext(t.Context(), c, invocationOptions{useLocal: true})
 
 	waitCh := make(chan error)
 	var started bool
@@ -1290,7 +1289,7 @@ func TestOpenHTTPStoreLocalFlagUsesLocalDaemonInsteadOfConfiguredRemote(t *testi
 		}, true, nil
 	})
 
-	st, info, err := OpenHTTPStore(context.Background())
+	st, info, err := OpenHTTPStore(ctx)
 	require.NoError(t, err, "OpenHTTPStore")
 	t.Cleanup(func() { _ = st.Close() })
 	assert.True(started, "--local should start/use the local daemon")
@@ -1413,16 +1412,9 @@ func TestWaitForUsableBackgroundRuntimeTakesOverUpgradeEligibleDaemon(t *testing
 	_ = lock.Unlock()
 }
 
-func withStoreResolverConfig(t *testing.T, c *config.Config) {
+func withStoreResolverConfig(t *testing.T, c *config.Config) context.Context {
 	t.Helper()
-	oldCfg := cfg
-	oldUseLocal := useLocal
-	cfg = c
-	useLocal = false
-	t.Cleanup(func() {
-		cfg = oldCfg
-		useLocal = oldUseLocal
-	})
+	return testInvocationContext(t.Context(), c, invocationOptions{})
 }
 
 func captureStderrDuring(t *testing.T, fn func()) string {

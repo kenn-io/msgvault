@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -33,7 +34,12 @@ To go back to loose files (e.g., before downgrading msgvault), run
 }
 
 func runPackAttachmentsLocal(cmd *cobra.Command) error {
-	s, cleanup, err := openWritableStoreAndInit()
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	s, cleanup, err := openWritableStoreAndInitForInvocation(state)
 	if err != nil {
 		return err
 	}

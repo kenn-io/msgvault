@@ -51,7 +51,12 @@ func refuseUnpackWithLiveDaemon(dataDir string) error {
 }
 
 func runUnpackAttachmentsLocal(cmd *cobra.Command) (runErr error) {
-	if IsRemoteMode() {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	if IsRemoteMode(state) {
 		return errors.New(
 			"unpack-attachments is local-only; run it on the archive host, " +
 				"or pass --local to select this machine's local archive intentionally")
@@ -71,7 +76,7 @@ func runUnpackAttachmentsLocal(cmd *cobra.Command) (runErr error) {
 	if err := refuseUnpackWithLiveDaemon(cfg.Data.DataDir); err != nil {
 		return err
 	}
-	s, cleanup, err := openWritableStoreAndInit()
+	s, cleanup, err := openWritableStoreAndInitForInvocation(state)
 	if err != nil {
 		return err
 	}

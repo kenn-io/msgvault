@@ -40,7 +40,10 @@ const granolaConfigHint = `Add to your config.toml:
 // resolveGranolaSource picks the [[granola]] entry for an optional CLI
 // argument: an explicit identifier must match a configured entry; with no
 // argument there must be exactly one entry.
-func resolveGranolaSource(args []string) (*config.GranolaSource, error) {
+func resolveGranolaSource(args []string, cfg *config.Config) (*config.GranolaSource, error) {
+	if cfg == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
 	if len(cfg.Granola) == 0 {
 		return nil, errors.New("no [[granola]] sources configured\n\n" + granolaConfigHint)
 	}
@@ -76,11 +79,16 @@ Examples:
   msgvault add-granola you@example.com`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 
-		src, err := resolveGranolaSource(args)
+		src, err := resolveGranolaSource(args, cfg)
 		if err != nil {
 			return err
 		}
@@ -98,7 +106,7 @@ Examples:
 			return fmt.Errorf("validate Granola API key: %w", err)
 		}
 
-		s, cleanup, err := openWritableStoreAndInitForIngest()
+		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 		if err != nil {
 			return err
 		}
@@ -109,7 +117,7 @@ Examples:
 		); err != nil {
 			return err
 		}
-		if err := runPostSourceCreateMigrations(s); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 
@@ -139,13 +147,18 @@ Examples:
   msgvault sync-granola --full --after 2024-01-01`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 
 		var sources []config.GranolaSource
 		if len(args) > 0 || len(cfg.Granola) == 1 {
-			src, err := resolveGranolaSource(args)
+			src, err := resolveGranolaSource(args, cfg)
 			if err != nil {
 				return err
 			}
@@ -183,7 +196,7 @@ Examples:
 			})
 		}
 
-		s, cleanup, err := openWritableStoreAndInitForIngest()
+		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 		if err != nil {
 			return err
 		}
@@ -225,11 +238,11 @@ Examples:
 			if ctx.Err() != nil {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-granola to resume.")
 				return finishGranolaImport(src.Identifier, pendingCacheWrites, ctx.Err(), func() error {
-					return rebuildGranolaCacheAfterWrite(dbPath)
+					return rebuildGranolaCacheAfterWrite(dbPath, state)
 				})
 			}
 			if finishErr := finishGranolaImport(src.Identifier, pendingCacheWrites, err, func() error {
-				return rebuildGranolaCacheAfterWrite(dbPath)
+				return rebuildGranolaCacheAfterWrite(dbPath, state)
 			}); finishErr != nil {
 				return finishErr
 			}
@@ -244,7 +257,7 @@ Examples:
 			}
 		}
 
-		return rebuildGranolaCacheAfterWrite(dbPath)
+		return rebuildGranolaCacheAfterWrite(dbPath, state)
 	},
 }
 

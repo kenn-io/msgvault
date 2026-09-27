@@ -357,7 +357,8 @@ func setupVectorFeaturesFixture(
 		apply(c)
 	}
 	require.NoError(t, c.Save())
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
 	s, err := store.Open(mainPath)
 	require.NoError(t, err)
@@ -366,10 +367,10 @@ func setupVectorFeaturesFixture(
 	if c.Vector.People.Enabled {
 		semanticProfile, err := c.Vector.SemanticPersonEmbeddingProfile()
 		require.NoError(t, err)
-		_, err = s.EnsurePersonSemanticEmbeddingProfile(t.Context(), semanticProfile)
+		_, err = s.EnsurePersonSemanticEmbeddingProfile(testCtx, semanticProfile)
 		require.NoError(t, err)
 		_, _, err = s.GrantPersonSemanticEmbeddingConsent(
-			t.Context(), semanticProfile.Fingerprint, "test",
+			testCtx, semanticProfile.Fingerprint, "test",
 		)
 		require.NoError(t, err)
 	}
@@ -380,22 +381,22 @@ func setupVectorFeaturesFixture(
 		RetentionPosture: "standard", TrainingPosture: "opted-out",
 		AllowedMediaTypes: []string{"application/pdf"}, PolicyJSON: []byte(`{"policy":1}`),
 	}
-	_, err = s.EnsureDocumentExtractionProfile(t.Context(), profile)
+	_, err = s.EnsureDocumentExtractionProfile(testCtx, profile)
 	require.NoError(t, err)
 	_, err = s.DB().Exec(s.Rebind(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), profile.ID)
 	require.NoError(t, err)
-	spec, err := configuredDocumentVectorSpec(t.Context(), s)
+	spec, err := configuredDocumentVectorSpec(testCtx, s)
 	require.NoError(t, err)
-	documentConsent, err := configuredDocumentVectorConsentSpec(spec)
+	documentConsent, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx))
 	require.NoError(t, err)
-	queryConsent, err := configuredDocumentVectorQueryConsentSpec(spec)
+	queryConsent, err := configuredDocumentVectorQueryConsentSpec(spec, invocationFromContext(testCtx))
 	require.NoError(t, err)
 	for _, consentSpec := range []store.DocumentVectorConsentSpec{documentConsent, queryConsent} {
-		_, _, err = s.RecordDocumentVectorConsent(t.Context(), consentSpec, time.Now())
+		_, _, err = s.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())
 		require.NoError(t, err)
 	}
 
-	vf, err := setupVectorFeatures(t.Context(), s, mainPath, readOnly)
+	vf, err := setupVectorFeatures(testCtx, s, mainPath, readOnly)
 	require.NoError(t, err)
 	require.NotNil(t, vf)
 	t.Cleanup(func() { _ = vf.Close() })
@@ -571,7 +572,9 @@ func TestSetupVectorFeaturesUsesStoredCredentialSnapshotWithoutEnvironment(t *te
 	}))
 	t.Cleanup(provider.Close)
 	var storedETag string
+	var tokensDir string
 	vf := setupVectorFeaturesFixture(t, vector.APIFormatOpenAI, false, func(c *config.Config) {
+		tokensDir = c.TokensDir()
 		c.Vector.Embeddings.Endpoint = provider.URL
 		c.Vector.Embeddings.APIKeyEnv = "TEXT_EMBEDDING_KEY"
 		empty, err := providercredentials.Read(c.TokensDir())
@@ -581,7 +584,7 @@ func TestSetupVectorFeaturesUsesStoredCredentialSnapshotWithoutEnvironment(t *te
 		require.NoError(t, err)
 		storedETag = stored.ETag
 	})
-	_, err := providercredentials.Put(cfg.TokensDir(), storedETag,
+	_, err := providercredentials.Put(tokensDir, storedETag,
 		providercredentials.VectorEmbeddingsID, provider.URL, "stored-after-startup")
 	require.NoError(t, err)
 

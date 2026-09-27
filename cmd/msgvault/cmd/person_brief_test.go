@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 // wire shapes the daemon serves.
 type personBriefTestDaemon struct {
 	t        *testing.T
+	ctx      context.Context
 	requests atomic.Int32
 	method   string
 	path     string
@@ -46,13 +48,14 @@ func newPersonBriefTestDaemon(t *testing.T, response string) *personBriefTestDae
 		_, _ = w.Write([]byte(daemon.response))
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
+	daemon.ctx = testCtx
 	return daemon
 }
 
-func runPersonBriefCommand(t *testing.T, args ...string) (string, error) {
+func runPersonBriefCommand(ctx context.Context, t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	root := &cobra.Command{Use: "msgvault"}
 	person := &cobra.Command{Use: personValue}
@@ -62,7 +65,7 @@ func runPersonBriefCommand(t *testing.T, args ...string) (string, error) {
 	root.SetOut(&output)
 	root.SetErr(&output)
 	root.SetArgs(append([]string{personValue, "brief"}, args...))
-	err := root.Execute()
+	err := root.ExecuteContext(ctx)
 	return output.String(), err
 }
 
@@ -101,7 +104,7 @@ func TestPersonBriefShowPrintsParagraphVersionLineAndEvidenceDates(t *testing.T)
 	requirements := require.New(t)
 	daemon := newPersonBriefTestDaemon(t, personBriefCLIPayload)
 
-	output, err := runPersonBriefCommand(t, "show", "7")
+	output, err := runPersonBriefCommand(daemon.ctx, t, "show", "7")
 	requirements.NoError(err)
 	assertions.Equal(http.MethodGet, daemon.method)
 	assertions.Equal("/api/v1/people/7/brief", daemon.path)
@@ -117,9 +120,9 @@ func TestPersonBriefShowPrintsParagraphVersionLineAndEvidenceDates(t *testing.T)
 func TestPersonBriefShowJSONPassesTheDaemonBodyThrough(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	newPersonBriefTestDaemon(t, personBriefCLIPayload)
+	daemon := newPersonBriefTestDaemon(t, personBriefCLIPayload)
 
-	output, err := runPersonBriefCommand(t, "show", "7", "--json")
+	output, err := runPersonBriefCommand(daemon.ctx, t, "show", "7", "--json")
 	requirements.NoError(err)
 	var decoded map[string]any
 	requirements.NoError(json.Unmarshal([]byte(output), &decoded))
@@ -134,7 +137,7 @@ func TestPersonBriefShowReportsAMissingVersion(t *testing.T) {
 		`{"error":"person_brief_not_found","message":"Person brief not found"}`)
 	daemon.status = http.StatusNotFound
 
-	_, err := runPersonBriefCommand(t, "show", "7")
+	_, err := runPersonBriefCommand(daemon.ctx, t, "show", "7")
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "Person brief not found")
 }
@@ -154,7 +157,7 @@ func TestPersonBriefHistoryPrintsOneLinePerVersion(t *testing.T) {
 		 "program_version":"v1","provider":"openai_chat","model":"gpt-test",
 		 "rejected_at":null,"rejected_reason":"","superseded_at":"2026-08-29T18:42:10Z"}]}`)
 
-	output, err := runPersonBriefCommand(t, "history", "7")
+	output, err := runPersonBriefCommand(daemon.ctx, t, "history", "7")
 	requirements.NoError(err)
 	assertions.Equal("/api/v1/people/7/brief/versions", daemon.path)
 	lines := strings.Split(strings.TrimSpace(output), "\n")
@@ -169,7 +172,7 @@ func TestPersonBriefHistoryPrintsOneLinePerVersion(t *testing.T) {
 func TestPersonBriefHistoryHonorsLimit(t *testing.T) {
 	daemon := newPersonBriefTestDaemon(t, `{"versions":[]}`)
 
-	output, err := runPersonBriefCommand(t, "history", "7", "--limit", "5")
+	output, err := runPersonBriefCommand(daemon.ctx, t, "history", "7", "--limit", "5")
 	require.NoError(t, err)
 	assert.Equal(t, "/api/v1/people/7/brief/versions?limit=5", daemon.path)
 	assert.Contains(t, output, "VERSION")
@@ -186,7 +189,7 @@ func TestPersonBriefRejectSendsTheReason(t *testing.T) {
 		"rejected_at":"2026-08-30T09:00:00Z","rejected_reason":"wrong thread",
 		"superseded_at":null}`)
 
-	output, err := runPersonBriefCommand(t, "reject", "7", "--reason", "wrong thread")
+	output, err := runPersonBriefCommand(daemon.ctx, t, "reject", "7", "--reason", "wrong thread")
 	requirements.NoError(err)
 	assertions.Equal(http.MethodPost, daemon.method)
 	assertions.Equal("/api/v1/people/7/brief/reject", daemon.path)
@@ -202,7 +205,7 @@ func TestPersonBriefGenerateReportsTheRunAndWarnsAboutSpend(t *testing.T) {
 		`{"run_id":"run-1","attempt_id":"attempt-1","brief_version":3,
 		  "brief_failure_class":""}`)
 
-	output, err := runPersonBriefCommand(t, "generate", "7")
+	output, err := runPersonBriefCommand(daemon.ctx, t, "generate", "7")
 	requirements.NoError(err)
 	assertions.Equal(http.MethodPost, daemon.method)
 	assertions.Equal("/api/v1/people/7/brief/generate", daemon.path)
@@ -210,18 +213,18 @@ func TestPersonBriefGenerateReportsTheRunAndWarnsAboutSpend(t *testing.T) {
 	assertions.Contains(output, "attempt-1")
 	assertions.Contains(output, "version 3")
 
-	help, err := runPersonBriefCommand(t, "generate", "--help")
+	help, err := runPersonBriefCommand(daemon.ctx, t, "generate", "--help")
 	requirements.NoError(err)
 	assertions.Contains(help, "extraction page")
 	assertions.Contains(help, "budget")
 }
 
 func TestPersonBriefGenerateReportsADeferredBrief(t *testing.T) {
-	newPersonBriefTestDaemon(t,
+	daemon := newPersonBriefTestDaemon(t,
 		`{"run_id":"run-2","attempt_id":"attempt-2","brief_version":0,
 		  "brief_failure_class":"budget"}`)
 
-	output, err := runPersonBriefCommand(t, "generate", "7")
+	output, err := runPersonBriefCommand(daemon.ctx, t, "generate", "7")
 	require.NoError(t, err)
 	assert.Contains(t, output, "no new version")
 	assert.Contains(t, output, "budget")
@@ -233,7 +236,7 @@ func TestPersonBriefEnrollAndUnenrollReplaceState(t *testing.T) {
 	daemon := newPersonBriefTestDaemon(t,
 		`{"person_id":7,"enrolled":true,"enabled_at":"2026-08-29T18:42:10Z","actor":"api"}`)
 
-	output, err := runPersonBriefCommand(t, "enroll", "7", "--track")
+	output, err := runPersonBriefCommand(daemon.ctx, t, "enroll", "7", "--track")
 	requirements.NoError(err)
 	assertions.Equal(http.MethodPut, daemon.method)
 	assertions.Equal("/api/v1/people/7/brief-enrollment", daemon.path)
@@ -241,17 +244,17 @@ func TestPersonBriefEnrollAndUnenrollReplaceState(t *testing.T) {
 	assertions.Contains(output, "Person 7 brief: enrolled")
 
 	daemon.response = `{"person_id":7,"enrolled":true,"enabled_at":"2026-08-29T18:42:10Z","actor":"api"}`
-	_, err = runPersonBriefCommand(t, "enroll", "7")
+	_, err = runPersonBriefCommand(daemon.ctx, t, "enroll", "7")
 	requirements.NoError(err)
 	assertions.JSONEq(`{"enrolled":true,"track":false}`, daemon.body)
 
 	daemon.response = `{"person_id":7,"enrolled":false,"enabled_at":null,"actor":""}`
-	output, err = runPersonBriefCommand(t, "unenroll", "7")
+	output, err = runPersonBriefCommand(daemon.ctx, t, "unenroll", "7")
 	requirements.NoError(err)
 	assertions.JSONEq(`{"enrolled":false,"track":false}`, daemon.body)
 	assertions.Contains(output, "Person 7 brief: not enrolled")
 
-	jsonOutput, err := runPersonBriefCommand(t, "unenroll", "7", "--json")
+	jsonOutput, err := runPersonBriefCommand(daemon.ctx, t, "unenroll", "7", "--json")
 	requirements.NoError(err)
 	assertions.JSONEq(
 		`{"person_id":7,"enrolled":false,"enabled_at":null,"actor":""}`, jsonOutput)
@@ -263,7 +266,7 @@ func TestPersonBriefEnrollReportsAnUntrackedPerson(t *testing.T) {
 		"`msgvault person track 7`"+` first, or enroll with --track"}`)
 	daemon.status = http.StatusConflict
 
-	_, err := runPersonBriefCommand(t, "enroll", "7")
+	_, err := runPersonBriefCommand(daemon.ctx, t, "enroll", "7")
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "msgvault person track")
 }
@@ -272,7 +275,7 @@ func TestPersonBriefRejectsInvalidPersonIDBeforeNetwork(t *testing.T) {
 	daemon := newPersonBriefTestDaemon(t, `{}`)
 
 	for _, name := range []string{"show", "history", "generate", "reject", "enroll", "unenroll"} {
-		_, err := runPersonBriefCommand(t, name, "0")
+		_, err := runPersonBriefCommand(daemon.ctx, t, name, "0")
 		require.Error(t, err, name)
 		require.ErrorContains(t, err, "positive integer", name)
 	}

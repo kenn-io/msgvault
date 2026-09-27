@@ -68,6 +68,8 @@ func seedGenWithEmbeddingsPG(t *testing.T, pgb *pgvector.Backend, ids ...int64) 
 // raw-SQL helper that only updated state, leaving the retired gen's vectors in
 // the shared HNSW graph.
 func TestRunEmbeddingsRetire_PG_DeletesEmbeddings(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -85,13 +87,14 @@ func TestRunEmbeddingsRetire_PG_DeletesEmbeddings(t *testing.T) {
 		embeddingsRetireYes, embeddingsRetireForceActive = savedYes, savedForce
 	}()
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	cfg.Data.DatabaseURL = dsn
 	cfg.Vector.Embeddings.Dimension = 4
 	embeddingsRetireYes = true
 	embeddingsRetireForceActive = true
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(ctx)
+	cmd.SetContext(testCtx)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	require.NoError(
@@ -111,6 +114,8 @@ func TestRunEmbeddingsRetire_PG_DeletesEmbeddings(t *testing.T) {
 // of cf-2: activating a new generation auto-retires the previously-active one,
 // and that auto-retire must delete the demoted generation's embeddings on PG.
 func TestRunEmbeddingsActivate_PG_AutoRetireDeletesPrevious(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -133,6 +138,7 @@ func TestRunEmbeddingsActivate_PG_AutoRetireDeletesPrevious(t *testing.T) {
 		embeddingsActivateYes, embeddingsActivateForce = savedYes, savedForce
 	}()
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	cfg.Data.DatabaseURL = dsn
 	cfg.Vector.Embeddings.Dimension = 4
 	cfg.Vector.Embeddings.Model = "test-model"
@@ -140,7 +146,7 @@ func TestRunEmbeddingsActivate_PG_AutoRetireDeletesPrevious(t *testing.T) {
 	embeddingsActivateForce = true // skip fingerprint/seeded gating in the run func
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(ctx)
+	cmd.SetContext(testCtx)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	require.NoError(
@@ -232,6 +238,8 @@ func TestListEmbeddingGenerations_PG(t *testing.T) {
 // production query helpers can use. The cfg-global swap mirrors
 // TestSetupVectorFeatures_SucceedsOnPostgres.
 func TestOpenEmbeddingsMetadataDB_PG(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -245,9 +253,10 @@ func TestOpenEmbeddingsMetadataDB_PG(t *testing.T) {
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	cfg.Data.DatabaseURL = dsn
 
-	mdb, rebind, closeDB, err := openEmbeddingsMetadataDB(ctx)
+	mdb, rebind, closeDB, err := openEmbeddingsMetadataDB(testCtx)
 	require.NoError(
 		err, "openEmbeddingsMetadataDB on a migrated PG schema must succeed")
 
@@ -271,6 +280,8 @@ func TestOpenEmbeddingsMetadataDB_PG(t *testing.T) {
 // friendly, build-pointing error rather than leaking a raw
 // `relation "index_generations" does not exist (SQLSTATE 42P01)`.
 func TestOpenEmbeddingsMetadataDB_PG_FriendlyErrorWhenUnmigrated(t *testing.T) {
+	cfg := testConfigValue()
+
 	// Use a search_path scoped to ONLY the fresh isolated schema (no
 	// "public") so to_regclass cannot resolve against tables that prior
 	// non-isolated test runs may have left in public — the schema genuinely
@@ -280,9 +291,10 @@ func TestOpenEmbeddingsMetadataDB_PG_FriendlyErrorWhenUnmigrated(t *testing.T) {
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	cfg.Data.DatabaseURL = dsn
 
-	_, _, closeDB, err := openEmbeddingsMetadataDB(context.Background())
+	_, _, closeDB, err := openEmbeddingsMetadataDB(testCtx)
 	if closeDB != nil {
 		closeDB()
 	}

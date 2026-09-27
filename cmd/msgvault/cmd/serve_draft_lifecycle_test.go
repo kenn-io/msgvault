@@ -21,16 +21,18 @@ func TestDraftLifecycleEndToEnd(t *testing.T) {
 	adapter := fixture.grantedAdapter()
 	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{HomeDir: t.TempDir()}, Store: adapter, Logger: slog.New(slog.DiscardHandler)}).Router())
 	t.Cleanup(server.Close)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	run := func(args ...string) (string, error) {
 		root := &cobra.Command{Use: "msgvault"}
+		root.SetContext(testCtx)
 		root.AddCommand(newDraftReplyCommand(), newDraftGetCommand(), newDraftEditCommand(), newDraftDeleteCommand())
 		silenceUsageInRunE(root)
 		var stdout, stderr bytes.Buffer
 		root.SetOut(&stdout)
 		root.SetErr(&stderr)
 		root.SetArgs(args)
-		err := root.ExecuteContext(t.Context())
+		err := root.ExecuteContext(testCtx)
 		requirements.Empty(stderr.String())
 		return stdout.String(), err
 	}

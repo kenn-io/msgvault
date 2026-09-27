@@ -67,6 +67,8 @@ func TestResolveSlackSyncSourcesFiltersByTeam(t *testing.T) {
 }
 
 func TestRunConfiguredSlackSyncIsolatesBrokenWorkspaces(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -85,8 +87,10 @@ func TestRunConfiguredSlackSyncIsolatesBrokenWorkspaces(t *testing.T) {
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
-	err = runConfiguredSlackSync(context.Background(), st)
+	err = runConfiguredSlackSync(testCtx, st)
 	require.ErrorContains(err, "malformed identifier")
 	require.ErrorContains(err, "no Slack token for UME in workspace T09")
 }
@@ -124,6 +128,8 @@ func TestScheduledSlackAttemptsResumeAfterInterruptedWorkspace(t *testing.T) {
 }
 
 func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
@@ -141,8 +147,10 @@ func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
 			MaxMediaMB:      7,
 		},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
-	opts := slackImportOptions("T01", "UME")
+	opts := slackImportOptions("T01", "UME", cfg)
 	assert.Equal("T01", opts.TeamID)
 	assert.Equal("UME", opts.UserID)
 	assert.False(opts.NoMedia, "persistent config is represented by typed policy, not the one-run flag")
@@ -232,10 +240,12 @@ func TestSyncSlackCommandUsesDaemonRunner(t *testing.T) {
 			"T0123456789",
 		}, req.Args, "args")
 	}, `{"type":"stdout","data":"Syncing Slack workspace T0123456789\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	var stdout bytes.Buffer
 	cmd := newSyncSlackCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stdout)
 	cmd.SetArgs([]string{
@@ -259,11 +269,13 @@ func TestAddSlackCommandForwardsTokenEnv(t *testing.T) {
 		assert.Equal([]string{"add-slack"}, req.Args, "args")
 		assert.Equal("xoxp-test-123", req.Env[clirun.EnvSlackToken], "token env forwarded")
 	}, `{"type":"stdout","data":"Added Slack workspace Testers\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	t.Setenv(clirun.EnvSlackToken, "xoxp-test-123")
 
 	var stdout bytes.Buffer
 	cmd := newAddSlackCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stdout)
 	cmd.SetArgs([]string{})

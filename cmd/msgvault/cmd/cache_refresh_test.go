@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,8 @@ func TestDerivedOnlyRefusesStaleSchemaBeforeCreatingStaging(t *testing.T) {
 }
 
 func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
+	cfg := testConfigValue()
+
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 
@@ -68,8 +71,12 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 	t.Run("full build", func(t *testing.T) {
 		tmp := setupTestSQLite(t)
 		configure(tmp, filepath.Join(tmp, "test.db"))
+		testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-		err := runBuildCacheLocalMode(buildCacheModeFull)
+		err := runBuildCacheLocalMode(
+			buildCacheModeFull,
+			invocationFromContext(testCtx),
+		)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "memory_limit")
@@ -82,8 +89,12 @@ func TestProductionCacheBuilderOpenSitesUseConfiguredOverrides(t *testing.T) {
 		_, err := buildCache(dbPath, analyticsDir, true)
 		require.NoError(t, err)
 		configure(tmp, dbPath)
+		testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-		err = runBuildCacheLocalMode(buildCacheModeDerived)
+		err = runBuildCacheLocalMode(
+			buildCacheModeDerived,
+			invocationFromContext(testCtx),
+		)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "memory_limit")
@@ -325,6 +336,8 @@ func snapshotMessagesDatasetBytes(t *testing.T, root string) map[string]string {
 }
 
 func TestRebuildCacheAfterWriteReturnsError(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
@@ -336,17 +349,21 @@ func TestRebuildCacheAfterWriteReturnsError(t *testing.T) {
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
 	sentinel := errors.New("cache export sentinel")
 	buildCacheBeforeMessagesExportHook = func() error { return sentinel }
 	t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
 
-	err = rebuildCacheAfterWrite(dbPath)
+	err = rebuildCacheAfterWrite(dbPath, invocationFromContext(testCtx))
 	require.ErrorIs(err, sentinel)
 	require.ErrorContains(err, "refresh analytics cache")
 }
 
 func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
@@ -355,7 +372,11 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	analyticsDir := cfg.AnalyticsDir()
+	var logs strings.Builder
+	invocationFromContext(testCtx).logger = slog.New(slog.NewTextHandler(&logs, nil))
 
 	st, err := store.Open(dbPath)
 	require.NoError(err)
@@ -437,7 +458,7 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	st, err = store.Open(dbPath)
 	require.NoError(err)
 	sum, err := rederive.Run(
-		context.Background(), st, "beeper", source.Identifier, source.ID, nil,
+		testCtx, st, "beeper", source.Identifier, source.ID, nil,
 	)
 	require.NoError(err)
 	require.Zero(sum.Errors)
@@ -449,7 +470,9 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	assert.True(staleness.FullRebuild,
 		"an incremental append cannot replace already-cached repaired rows")
 
-	require.NoError(rebuildCacheAfterWrite(dbPath))
+	require.NoError(rebuildCacheAfterWrite(dbPath, invocationFromContext(testCtx)))
+	assert.Contains(logs.String(), "cache rebuilt")
+	assert.Contains(logs.String(), "exported=")
 	repairedState, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
 	assert.Equal(int64(3), repairedState.DerivedDataRevision,
@@ -461,6 +484,8 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 }
 
 func TestRebuildCacheAfterMixedBeeperMetadataRefreshRebuildsExistingRows(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
@@ -468,7 +493,10 @@ func TestRebuildCacheAfterMixedBeeperMetadataRefreshRebuildsExistingRows(t *test
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	analyticsDir := cfg.AnalyticsDir()
+	invocationFromContext(testCtx).logger = testDiscardLogger()
 
 	st, err := store.Open(dbPath)
 	require.NoError(err)
@@ -517,10 +545,10 @@ func TestRebuildCacheAfterMixedBeeperMetadataRefreshRebuildsExistingRows(t *test
 	require.True(staleness.NeedsBuild)
 	assert.True(staleness.HasDerivedDataDrift)
 	assert.True(staleness.FullRebuild)
-	require.NoError(rebuildCacheAfterWrite(dbPath))
+	require.NoError(rebuildCacheAfterWrite(dbPath, invocationFromContext(testCtx)))
 	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
 	require.NoError(err)
-	result, err := engine.QuerySQL(context.Background(), `
+	result, err := engine.QuerySQL(testCtx, `
 		SELECT m.source_message_id, a.attachment_metadata
 		FROM messages m JOIN attachments a ON a.message_id = m.id
 		WHERE m.source_message_id IN ('mixed-old', 'mixed-new')
@@ -535,6 +563,8 @@ func TestRebuildCacheAfterMixedBeeperMetadataRefreshRebuildsExistingRows(t *test
 }
 
 func TestScheduledCacheRefreshSkipsWhenAutoBuildCacheDisabled(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
@@ -548,6 +578,8 @@ func TestScheduledCacheRefreshSkipsWhenAutoBuildCacheDisabled(t *testing.T) {
 			AutoBuildCache: false,
 		},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
 	builds := 0
 	oldRunBuild := runScheduledBuildCacheSubprocess
@@ -557,7 +589,7 @@ func TestScheduledCacheRefreshSkipsWhenAutoBuildCacheDisabled(t *testing.T) {
 	}
 	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
 
-	err := rebuildCacheAfterScheduledSync(context.Background(), "disabled")
+	err := rebuildCacheAfterScheduledSync(testCtx, "disabled")
 	require.NoError(err)
 	assert.Zero(builds, "disabled auto_build_cache must not start a cache build")
 }
@@ -643,6 +675,8 @@ func TestScheduledCacheBuildDelay(t *testing.T) {
 }
 
 func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
+	cfg := testConfigValue()
+
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 	sentinel := errors.New("cache build sentinel")
 	tests := []struct {
@@ -725,6 +759,7 @@ func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
 				},
 			}
 			t.Cleanup(func() { cfg = savedCfg })
+			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
 			oldNow := scheduledCacheBuildNow
 			scheduledCacheBuildNow = func() time.Time { return now }
@@ -738,7 +773,7 @@ func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
 			}
 			t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
 
-			err = rebuildCacheAfterScheduledSync(context.Background(), "test-source")
+			err = rebuildCacheAfterScheduledSync(testCtx, "test-source")
 			if tt.buildErr != nil {
 				requirements.ErrorIs(err, tt.buildErr)
 			} else {
@@ -754,11 +789,14 @@ func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
 }
 
 func TestRepairEncodingReturnsCacheRefreshError(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	tmpDir := t.TempDir()
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	stateFile := filepath.Join(cfg.AnalyticsDir(), "_last_sync.json")
 	require.NoError(os.MkdirAll(cfg.AnalyticsDir(), 0o755))
 	require.NoError(os.WriteFile(stateFile, []byte(`{"schema_version":18}`), 0o600))
@@ -767,7 +805,9 @@ func TestRepairEncodingReturnsCacheRefreshError(t *testing.T) {
 	buildCacheBeforeMessagesExportHook = func() error { return sentinel }
 	t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
 
-	err := runRepairEncodingLocal(&cobra.Command{})
+	cmd := &cobra.Command{}
+	cmd.SetContext(testCtx)
+	err := runRepairEncodingLocal(cmd)
 	require.ErrorIs(err, sentinel)
 	require.ErrorContains(err, "encoding repair completed")
 	require.ErrorContains(err, "analytics cache refresh failed")
@@ -776,6 +816,8 @@ func TestRepairEncodingReturnsCacheRefreshError(t *testing.T) {
 }
 
 func TestScheduledCacheRefreshFailurePreservesCompletedSyncRun(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
@@ -806,6 +848,8 @@ func TestScheduledCacheRefreshFailurePreservesCompletedSyncRun(t *testing.T) {
 			AutoBuildCache: true,
 		},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
 	sentinel := errors.New("scheduled cache sentinel")
 	oldRunBuild := runScheduledBuildCacheSubprocess
@@ -815,7 +859,7 @@ func TestScheduledCacheRefreshFailurePreservesCompletedSyncRun(t *testing.T) {
 	getOAuthMgr := func(string) (*oauth.Manager, error) {
 		return nil, errors.New("unexpected Gmail OAuth path")
 	}
-	err = runScheduledSync(context.Background(), identifier, st, getOAuthMgr)
+	err = runScheduledSync(testCtx, identifier, st, getOAuthMgr, invocationFromContext(testCtx))
 	require.ErrorIs(err, sentinel, "cache failure must reach the scheduled job result")
 	require.ErrorContains(err, "refresh analytics cache")
 
@@ -1255,12 +1299,16 @@ func TestIncrementalBuildRepairsParticipantIdentifierDriftWithNewMessages(t *tes
 }
 
 func TestRepairEncodingRebuildsCacheWithRegeneratedCalendarSnippet(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
 	dbPath := cfg.DatabaseDSN()
 	st, err := store.Open(dbPath)
@@ -1288,7 +1336,8 @@ func TestRepairEncodingRebuildsCacheWithRegeneratedCalendarSnippet(t *testing.T)
 	require.NoError(st.Close(), "close fixture store")
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	require.NoError(runRepairEncodingLocal(cmd), "run local encoding repair")
 
 	st, err = store.Open(dbPath)
@@ -1421,7 +1470,7 @@ func TestDerivedOnlyStaleSchemaRequiresAndCompletesFullRebuild(t *testing.T) {
 
 // setupScheduledRefreshFixture publishes a usable cache marker at publishedAt
 // and adds one message after it, so the cache is stale.
-func setupScheduledRefreshFixture(t *testing.T, now, publishedAt time.Time) string {
+func setupScheduledRefreshFixture(t *testing.T, now, publishedAt time.Time) (string, context.Context) {
 	t.Helper()
 	tmpDir := setupTestSQLiteEmpty(t)
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -1441,8 +1490,7 @@ func setupScheduledRefreshFixture(t *testing.T, now, publishedAt time.Time) stri
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
-	savedCfg := cfg
-	cfg = &config.Config{
+	cfg := &config.Config{
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir, DatabaseURL: dbPath},
 		Analytics: config.AnalyticsConfig{
@@ -1450,18 +1498,17 @@ func setupScheduledRefreshFixture(t *testing.T, now, publishedAt time.Time) stri
 			MinRebuildInterval: 6 * time.Hour,
 		},
 	}
-	t.Cleanup(func() { cfg = savedCfg })
 	oldNow := scheduledCacheBuildNow
 	scheduledCacheBuildNow = func() time.Time { return now }
 	t.Cleanup(func() { scheduledCacheBuildNow = oldNow })
-	return analyticsDir
+	return analyticsDir, testInvocationContext(t.Context(), cfg, invocationOptions{})
 }
 
 func TestRebuildAfterSyncRunsThrottleCheckOffOperationGate(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
-	analyticsDir := setupScheduledRefreshFixture(t, now, now.Add(-time.Hour))
+	analyticsDir, testCtx := setupScheduledRefreshFixture(t, now, now.Add(-time.Hour))
 	buildLock, err := cacheBuilderFileLock(analyticsDir)
 	require.NoError(err)
 	require.NoError(buildLock.Lock(), "simulate a cache build in progress")
@@ -1475,7 +1522,7 @@ func TestRebuildAfterSyncRunsThrottleCheckOffOperationGate(t *testing.T) {
 
 	checked := make(chan struct{}, 1)
 	var delays []time.Duration
-	refresher := newBackgroundCacheRefresher(context.Background(), nil, nil)
+	refresher := newBackgroundCacheRefresher(testCtx, nil, nil)
 	run := refresher.run
 	refresher.run = func(ctx context.Context, id string) error {
 		err := run(ctx, id)
@@ -1494,7 +1541,7 @@ func TestRebuildAfterSyncRunsThrottleCheckOffOperationGate(t *testing.T) {
 	})
 
 	done := make(chan error, 1)
-	go func() { done <- rebuildCacheAfterScheduledSync(context.Background(), "test-source") }()
+	go func() { done <- rebuildCacheAfterScheduledSync(testCtx, "test-source") }()
 	select {
 	case err := <-done:
 		require.NoError(err)
@@ -1519,7 +1566,7 @@ func TestRebuildAfterSyncDoesNotThrottleDriftedPublication(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
-	analyticsDir := setupScheduledRefreshFixture(t, now, now.Add(-time.Hour))
+	analyticsDir, testCtx := setupScheduledRefreshFixture(t, now, now.Add(-time.Hour))
 	// Keep a shard in every dataset while changing the committed file set.
 	// The old fast check saw only the marker and shard presence, so it could
 	// incorrectly throttle this damaged publication as recent.
@@ -1538,7 +1585,7 @@ func TestRebuildAfterSyncDoesNotThrottleDriftedPublication(t *testing.T) {
 	daemonCacheRefresher = nil
 	t.Cleanup(func() { daemonCacheRefresher = oldRefresher })
 
-	require.NoError(rebuildCacheAfterScheduledSync(context.Background(), "test-source"))
+	require.NoError(rebuildCacheAfterScheduledSync(testCtx, "test-source"))
 	assert.Equal(1, builds, "a changed shard set must bypass the interval throttle")
 }
 
@@ -1546,7 +1593,7 @@ func TestRebuildAfterSyncSchedulesRetryWhenBuildIsSuperseded(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
-	analyticsDir := setupScheduledRefreshFixture(t, now, now.Add(-7*time.Hour))
+	analyticsDir, testCtx := setupScheduledRefreshFixture(t, now, now.Add(-7*time.Hour))
 
 	oldRunBuild := runScheduledBuildCacheSubprocess
 	runScheduledBuildCacheSubprocess = func(context.Context) error {
@@ -1564,7 +1611,7 @@ func TestRebuildAfterSyncSchedulesRetryWhenBuildIsSuperseded(t *testing.T) {
 
 	var retryDelay time.Duration
 	var retryID string
-	require.NoError(rebuildCacheNow(context.Background(), "test-source", func(delay time.Duration, id string) {
+	require.NoError(rebuildCacheNow(testCtx, "test-source", func(delay time.Duration, id string) {
 		retryDelay, retryID = delay, id
 	}))
 	assert.Equal(5*time.Hour, retryDelay,
@@ -1574,7 +1621,7 @@ func TestRebuildAfterSyncSchedulesRetryWhenBuildIsSuperseded(t *testing.T) {
 
 func TestRebuildAfterSyncHandsOffToRefresher(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
-	setupScheduledRefreshFixture(t, now, now.Add(-7*time.Hour))
+	_, testCtx := setupScheduledRefreshFixture(t, now, now.Add(-7*time.Hour))
 
 	oldRunBuild := runScheduledBuildCacheSubprocess
 	runScheduledBuildCacheSubprocess = func(context.Context) error {
@@ -1583,7 +1630,7 @@ func TestRebuildAfterSyncHandsOffToRefresher(t *testing.T) {
 	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldRunBuild })
 
 	requested := make(chan string, 1)
-	refresher := newBackgroundCacheRefresher(context.Background(), func(_ context.Context, id string) error {
+	refresher := newBackgroundCacheRefresher(testCtx, func(_ context.Context, id string) error {
 		requested <- id
 		return nil
 	}, nil)
@@ -1594,7 +1641,7 @@ func TestRebuildAfterSyncHandsOffToRefresher(t *testing.T) {
 		require.NoError(t, refresher.Shutdown(context.Background()))
 	})
 
-	require.NoError(t, rebuildCacheAfterScheduledSync(context.Background(), "test-source"))
+	require.NoError(t, rebuildCacheAfterScheduledSync(testCtx, "test-source"))
 	select {
 	case id := <-requested:
 		assert.Equal(t, "test-source", id)
@@ -1606,11 +1653,11 @@ func TestRebuildAfterSyncHandsOffToRefresher(t *testing.T) {
 func TestCacheRefresherShutdownWhileWaitingForBuilderLock(t *testing.T) {
 	require := require.New(t)
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
-	analyticsDir := setupScheduledRefreshFixture(t, now, now.Add(-time.Hour))
+	analyticsDir, testCtx := setupScheduledRefreshFixture(t, now, now.Add(-time.Hour))
 	buildLock, err := cacheBuilderFileLock(analyticsDir)
 	require.NoError(err)
 	require.NoError(buildLock.Lock())
-	refresher := newBackgroundCacheRefresher(context.Background(), nil, nil)
+	refresher := newBackgroundCacheRefresher(testCtx, nil, nil)
 	t.Cleanup(func() {
 		require.NoError(buildLock.Unlock())
 		require.NoError(refresher.Shutdown(context.Background()))

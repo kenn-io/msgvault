@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,8 +60,13 @@ explicitly opt out of the backup. This command never deletes remote messages.`,
 }
 
 func runGCLocal(cmd *cobra.Command, options gcOptions) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	ctx := cmd.Context()
-	st, cleanup, err := openWritableStoreAndInit()
+	st, cleanup, err := openWritableStoreAndInitForInvocation(state)
 	if err != nil {
 		return err
 	}
@@ -146,6 +152,11 @@ func runGCLocal(cmd *cobra.Command, options gcOptions) error {
 func purgeGCMessages(
 	cmd *cobra.Command, st *store.Store, plan store.GCPlan, noBackup bool,
 ) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 	if !noBackup {

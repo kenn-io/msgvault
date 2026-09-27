@@ -21,6 +21,11 @@ func newImportSynctechSMSCmd() *cobra.Command {
 SMS Backup & Restore by SyncTech Pty Ltd.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
 			if opts.OwnerPhone == "" {
 				return errors.New("--owner-phone is required")
 			}
@@ -28,7 +33,7 @@ SMS Backup & Restore by SyncTech Pty Ltd.`,
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
 			opts.AttachmentsDir = cfg.AttachmentsDir()
-			st, cleanup, err := openWritableStoreAndInitForIngest()
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 			if err != nil {
 				return err
 			}

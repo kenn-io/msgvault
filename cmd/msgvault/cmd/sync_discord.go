@@ -40,6 +40,9 @@ argument is supplied. Guilds run sequentially in stable source order, and one
 guild failure does not prevent later guilds from running.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if invocationFromContext(cmd.Context()) != nil && deps.bind != nil {
+				deps = deps.bind(cmd.Context())
+			}
 			selector := ""
 			if len(args) == 1 {
 				selector = args[0]

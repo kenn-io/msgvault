@@ -122,12 +122,10 @@ func newSQLiteGmailDraftTestFixture(t *testing.T) gmailDraftTestFixture {
 
 func newGmailDraftTestFixtureWithStore(t *testing.T, newStore func(*testing.T) *store.Store) gmailDraftTestFixture {
 	t.Helper()
-	previousCfg := cfg
-	cfg = &config.Config{
+	cfg := &config.Config{
 		Data:  config.DataConfig{DataDir: t.TempDir()},
 		OAuth: config.OAuthConfig{ServiceAccountKey: "synthetic-service-account"},
 	}
-	t.Cleanup(func() { cfg = previousCfg })
 
 	st := newStore(t)
 	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
@@ -171,6 +169,8 @@ func newGmailDraftTestFixtureWithStore(t *testing.T, newStore func(*testing.T) *
 	}
 	adapter := &storeAPIAdapter{
 		store:            st,
+		config:           cfg,
+		logger:           testLoggerValue(),
 		gmailDraftPolicy: []config.GmailDraftSource{{SourceID: source.ID, Enabled: true}},
 		gmailDraftClientFactory: func(context.Context, *store.Source) (gmail.DraftAPI, error) {
 			return client, nil

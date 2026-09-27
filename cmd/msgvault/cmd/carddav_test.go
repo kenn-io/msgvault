@@ -90,7 +90,7 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	home := t.TempDir()
-	withStoreResolverConfig(t, &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	testCtx := withStoreResolverConfig(t, &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 
 	readEnd, writeEnd, err := os.Pipe()
 	require.NoError(err)
@@ -101,6 +101,7 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 	os.Stdin = readEnd
 	t.Cleanup(func() { os.Stdin = originalStdin; _ = readEnd.Close() })
 	add := newAddCardDAVCmd()
+	add.SetContext(testCtx)
 	add.SetOut(&bytes.Buffer{})
 	add.SetArgs([]string{"https://contacts.example/dav", "alice", "--schedule", "0 3 * * *"})
 	require.NoError(add.Execute())
@@ -121,6 +122,7 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 		{cmd: newPersonCardDAVCommand("unpublish", false), args: []string{"11"}},
 	} {
 		out := &bytes.Buffer{}
+		invocation.cmd.SetContext(testCtx)
 		invocation.cmd.SetOut(out)
 		invocation.cmd.SetErr(&bytes.Buffer{})
 		invocation.cmd.SetArgs(invocation.args)
@@ -174,13 +176,14 @@ func TestCardDAVConflictShowPrintsSafeSummariesWithoutRawVCardFields(t *testing.
 	}))
 	t.Cleanup(server.Close)
 	home := t.TempDir()
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		HomeDir: home, Data: config.DataConfig{DataDir: home},
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
 
 	var stdout bytes.Buffer
 	cmd := newCardDAVCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"conflicts", "show", "7"})
 	require.NoError(cmd.Execute())
@@ -231,13 +234,14 @@ func TestCardDAVBooksSanitizesTerminalControls(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	home := t.TempDir()
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		HomeDir: home, Data: config.DataConfig{DataDir: home},
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
 
 	var stdout bytes.Buffer
 	cmd := newCardDAVCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"books"})
 	require.NoError(cmd.Execute())
@@ -262,13 +266,14 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	home := t.TempDir()
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		HomeDir: home,
 		Data:    config.DataConfig{DataDir: home},
 		Remote:  config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
 	var stdout bytes.Buffer
 	cmd := newSyncCardDAVCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"--full"})
 	require.NoError(t, cmd.Execute())

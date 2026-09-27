@@ -107,11 +107,17 @@ func TestBuildCalendarClientRejectsLegacyTokenWithoutCalendarScope(t *testing.T)
 
 	tokenPath, restore := seedTokenEnv(t, legacyTokenJSON)
 	defer restore()
+	configHome := filepath.Dir(filepath.Dir(tokenPath))
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = configHome
+	cfg.Data.DataDir = configHome
+	cfg.OAuth.ClientSecrets = filepath.Join(configHome, "client_secret.json")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
 	before, err := os.ReadFile(tokenPath)
 	require.NoError(err, "read seeded token")
 
-	client, err := buildCalendarClient(context.Background(), scopeEscalationAccount, "", false)
+	client, err := buildCalendarClient(testCtx, scopeEscalationAccount, "", false)
 	if client != nil {
 		defer func() { _ = client.Close() }()
 	}
@@ -195,6 +201,9 @@ func TestCalendarAddOAuthAppDecisionKeepsCalendarDefaultOverGmailBinding(t *test
 }
 
 func TestAddCalendarHeadlessNormalizesAccountEmail(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -213,13 +222,15 @@ func TestAddCalendarHeadlessNormalizesAccountEmail(t *testing.T) {
 		Data:    config.DataConfig{DataDir: tmpDir},
 		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	addCmd := newAddCalendarLocalCmd()
+	addCmd.SetContext(testCtx)
 	addCmd.SetArgs([]string{"--headless", "Alice.Example@Example.COM"})
 
 	getOutput := captureStdout(t)
-	err := addCmd.Execute()
+	err := addCmd.ExecuteContext(testCtx)
 	out := getOutput()
 
 	require.NoError(err)
@@ -304,6 +315,9 @@ func TestCalendarSyncOAuthAppDecisionKeepsCalendarDefaultOverGmailBinding(t *tes
 }
 
 func TestCalendarAddTokenReusableRejectsMismatchedInheritedClient(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -312,7 +326,7 @@ func TestCalendarAddTokenReusableRejectsMismatchedInheritedClient(t *testing.T) 
 	require.NoError(os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600))
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700))
-	writeCalendarToken(t, tokensDir, "user@acme.com", "wrong-client.apps.googleusercontent.com")
+	writeCalendarToken(t, tokensDir, "user-a@example.com", "wrong-client.apps.googleusercontent.com")
 
 	savedCfg, savedLogger := cfg, logger
 	defer func() { cfg, logger = savedCfg, savedLogger }()
@@ -325,13 +339,19 @@ func TestCalendarAddTokenReusableRejectsMismatchedInheritedClient(t *testing.T) 
 			},
 		},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	mgr, err := newCalendarOAuthManager(secretsPath, "user@acme.com")
+	mgr, err := newCalendarOAuthManager(
+		secretsPath,
+		"user-a@example.com",
+		invocationFromContext(testCtx),
+	)
 	require.NoError(err)
 	decision := calendarAddOAuthApp{OAuthApp: "acme", NeedsClientCheck: true}
 
-	assert.False(calendarAddTokenReusable(mgr, "user@acme.com", decision),
+	assert.False(calendarAddTokenReusable(mgr, "user-a@example.com", decision),
 		"a calendar token minted by another OAuth client must force reauthorization")
 }
 

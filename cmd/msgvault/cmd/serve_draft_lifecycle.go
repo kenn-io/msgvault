@@ -366,7 +366,9 @@ func localDraftEvidenceContext(ctx context.Context) (context.Context, context.Ca
 
 func (a *storeAPIAdapter) releaseDraftSourceAndRefreshCache(ctx context.Context, source *store.Source, execution *store.SyncExecution) {
 	if err := execution.Release(); err != nil {
-		logger.Error("release source after draft write", "source_id", source.ID, "error", err)
+		if a.logger != nil {
+			a.logger.Error("release source after draft write", "source_id", source.ID, "error", err)
+		}
 	}
 	// Committed changes must reach the cache even if cleanup or output fails.
 	refreshCtx, cancel := localDraftEvidenceContext(ctx)

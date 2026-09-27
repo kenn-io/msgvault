@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -46,6 +47,11 @@ func init() {
 }
 
 func runSetup(cmd *cobra.Command, args []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	reader := bufio.NewReader(cmd.InOrStdin())
 
 	fmt.Println("Welcome to msgvault setup!")
@@ -57,13 +63,13 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 1: Find or prompt for OAuth credentials
-	secretsPath, err := setupOAuthSecrets(reader)
+	secretsPath, err := setupOAuthSecrets(reader, cfg)
 	if err != nil {
 		return err
 	}
 
 	// Step 2: Optionally configure remote NAS
-	remoteURL, remoteAPIKey, err := setupRemoteServer(reader, secretsPath)
+	remoteURL, remoteAPIKey, err := setupRemoteServer(reader, secretsPath, cfg)
 	if err != nil {
 		return err
 	}
@@ -149,7 +155,7 @@ func printSetupNextSteps(w io.Writer, addAccountCmd string, hasRemote, bundleHas
 	_, _ = io.WriteString(w, b.String())
 }
 
-func setupOAuthSecrets(reader *bufio.Reader) (string, error) {
+func setupOAuthSecrets(reader *bufio.Reader, cfg *config.Config) (string, error) {
 	fmt.Println("Step 1: Google OAuth Credentials (Optional)")
 	fmt.Println("--------------------------------------------")
 
@@ -196,7 +202,7 @@ func setupOAuthSecrets(reader *bufio.Reader) (string, error) {
 	return path, nil
 }
 
-func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string) (string, string, error) {
+func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *config.Config) (string, string, error) {
 	fmt.Println()
 	fmt.Println("Step 2: Remote NAS Server (Optional)")
 	fmt.Println("-------------------------------------")

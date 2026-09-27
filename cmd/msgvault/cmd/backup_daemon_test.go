@@ -38,14 +38,14 @@ func TestNewBackupFreezerUsesCommandContextAndCLIMode(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	rt := daemonRuntimeForHTTPServer(t, srv, daemonAPIKeyFingerprint(""))
 	_, err := daemonRuntimeStore(dataDir).Write(rt.Record)
 	require.NoError(err, "write daemon runtime")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testCtx)
 	defer cancel()
-	freezer, closeFreezer, err := newBackupFreezer(ctx)
+	freezer, closeFreezer, err := newBackupFreezer(ctx, invocationFromContext(testCtx).cfg)
 	require.NoError(err, "newBackupFreezer")
 	t.Cleanup(closeFreezer)
 
@@ -102,20 +102,20 @@ func TestNewBackupFreezerEndsFreezeAfterCommandCancellation(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	rt := daemonRuntimeForHTTPServer(t, srv, daemonAPIKeyFingerprint(""))
 	_, err := daemonRuntimeStore(dataDir).Write(rt.Record)
 	require.NoError(err, "write daemon runtime")
 
-	commandCtx, cancelCommand := context.WithCancel(context.Background())
-	freezer, closeFreezer, err := newBackupFreezer(commandCtx)
+	commandCtx, cancelCommand := context.WithCancel(testCtx)
+	freezer, closeFreezer, err := newBackupFreezer(commandCtx, invocationFromContext(testCtx).cfg)
 	require.NoError(err, "newBackupFreezer")
 	t.Cleanup(closeFreezer)
 
 	require.NoError(freezer.Begin(commandCtx), "begin freeze")
 	cancelCommand()
 
-	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 2*time.Second)
+	cleanupCtx, cancelCleanup := context.WithTimeout(testCtx, 2*time.Second)
 	defer cancelCleanup()
 	require.NoError(freezer.End(cleanupCtx), "end freeze after command cancellation")
 	assert.Equal(apiprotocol.ClientClassCLI, beginMarker.Load())

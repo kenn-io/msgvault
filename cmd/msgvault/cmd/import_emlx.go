@@ -62,6 +62,11 @@ Examples:
 	`,
 	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
@@ -150,7 +155,7 @@ Examples:
 			}
 		}()
 
-		st, cleanup, err := openWritableStoreAndInitForIngest()
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 		if err != nil {
 			return err
 		}
@@ -171,7 +176,7 @@ Examples:
 			importErr = importAutoAccounts(ctx, cmd, st, mailDir, attachmentsDir)
 		}
 
-		return errors.Join(importErr, rebuildCacheAfterWrite(dbPath))
+		return errors.Join(importErr, rebuildCacheAfterWrite(dbPath, state))
 	},
 }
 
@@ -181,6 +186,12 @@ func importSingleAccount(
 	st *store.Store,
 	mailDir, identifier, attachmentsDir string,
 ) error {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	summary, err := importer.ImportEmlxDir(
 		ctx, st, mailDir, importer.EmlxImportOptions{
 			SourceType:         importEmlxSourceType,
@@ -188,7 +199,7 @@ func importSingleAccount(
 			NoResume:           importEmlxNoResume,
 			CheckpointInterval: importEmlxCheckpointInterval,
 			AttachmentsDir:     attachmentsDir,
-			RemoteImages:       configuredRemoteImageFetcher(),
+			RemoteImages:       configuredRemoteImageFetcher(cfg),
 			Logger:             logger,
 		},
 	)
@@ -200,7 +211,7 @@ func importSingleAccount(
 	// retry — see comment in account_identity.go.
 	if ctx.Err() == nil && !summary.HardErrors && !noDefaultIdentityImportEmlx {
 		if summary.SourceID != 0 {
-			confirmDefaultIdentity(cmd.OutOrStdout(), st, summary.SourceID, identifier, identifier, "account-identifier")
+			confirmDefaultIdentity(cmd.OutOrStdout(), st, summary.SourceID, identifier, identifier, "account-identifier", state.logger)
 		} else {
 			logger.Warn("auto-default-identity: missing source id", "identifier", identifier)
 		}
@@ -216,7 +227,7 @@ func importSingleAccount(
 		// next invocation retries and prints the summary then. UX
 		// polish tracked separately in
 		// private/drafts/2026-05-02-issue-import-migration-error-ux.md.
-		if err := runPostSourceCreateMigrations(st); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 	}
@@ -231,6 +242,12 @@ func importAutoAccounts(
 	st *store.Store,
 	mailDir, attachmentsDir string,
 ) error {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	accountsDBPath := importEmlxAccountsDB
 	if strings.HasPrefix(accountsDBPath, "~/") {
 		home, _ := os.UserHomeDir()
@@ -322,7 +339,7 @@ func importAutoAccounts(
 				NoResume:           importEmlxNoResume,
 				CheckpointInterval: importEmlxCheckpointInterval,
 				AttachmentsDir:     attachmentsDir,
-				RemoteImages:       configuredRemoteImageFetcher(),
+				RemoteImages:       configuredRemoteImageFetcher(cfg),
 				Logger:             logger,
 			},
 		)
@@ -344,7 +361,7 @@ func importAutoAccounts(
 				accountDisplay = account.Email
 			}
 			if summary.SourceID != 0 {
-				confirmDefaultIdentity(cmd.OutOrStdout(), st, summary.SourceID, accountDisplay, identifier, "account-identifier")
+				confirmDefaultIdentity(cmd.OutOrStdout(), st, summary.SourceID, accountDisplay, identifier, "account-identifier", state.logger)
 			} else {
 				logger.Warn("auto-default-identity: missing source id", "identifier", identifier)
 			}
@@ -356,7 +373,7 @@ func importAutoAccounts(
 			// above. UX polish tracked in
 			// private/drafts/2026-05-02-issue-import-migration-error-ux.md
 			// for a follow-up PR.
-			if err := runPostSourceCreateMigrations(st); err != nil {
+			if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
 				importErrors = append(importErrors, fmt.Errorf("%s: post-source-create migrations: %w", identifier, err))
 				continue
 			}

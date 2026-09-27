@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,13 +15,17 @@ import (
 // config but builds the binary without -tags sqlite_vec. Runs only
 // under the untagged build, which is where this error path exists.
 func TestSetupVectorFeatures_EnabledWithoutTag(t *testing.T) {
+	cfg := testConfigValue()
+
 	prev := cfg
 	t.Cleanup(func() { cfg = prev })
 
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Vector.Enabled = true
 
-	vf, err := setupVectorFeatures(context.Background(), nil, "", false)
+	vf, err := setupVectorFeatures(testCtx, nil, "", false)
 	require.Error(t, err, "setupVectorFeatures with Enabled=true but no tag")
 	assert.Nil(t, vf, "vf should be nil when error is returned")
 	msg := err.Error()
@@ -37,12 +40,13 @@ func TestSetupVectorFeatures_EnabledWithoutTag(t *testing.T) {
 func TestPrecheckVectorFeatures_Stub(t *testing.T) {
 	c := &config.Config{}
 	c.Vector.Enabled = false
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
-	assert.NoError(t, precheckVectorFeatures("/tmp/x.db"), "disabled: precheck should be a no-op")
+	assert.NoError(t, precheckVectorFeatures("/tmp/x.db", c), "disabled: precheck should be a no-op")
 
 	c.Vector.Enabled = true
-	err := precheckVectorFeatures("/tmp/x.db")
+	err := precheckVectorFeatures("/tmp/x.db", c)
 	require.Error(t, err, "enabled without vector build tags")
 	assert.Contains(t, err.Error(), "sqlite_vec")
 }

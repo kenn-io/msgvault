@@ -30,7 +30,7 @@ import (
 // runAgentTokenCommand runs a single agent-token subcommand with the supplied
 // args and returns its combined stdout/stderr output.
 func runAgentTokenCommand(
-	t *testing.T, template *cobra.Command, args ...string,
+	ctx context.Context, t *testing.T, template *cobra.Command, args ...string,
 ) (string, error) {
 	t.Helper()
 	var output bytes.Buffer
@@ -43,7 +43,8 @@ func runAgentTokenCommand(
 	cmd.SetOut(&output)
 	cmd.SetErr(&output)
 	cmd.SetArgs(args)
-	err := cmd.Execute()
+	cmd.SetContext(ctx)
+	err := cmd.ExecuteContext(ctx)
 	return output.String(), err
 }
 
@@ -220,11 +221,12 @@ func TestAgentTokenIssueOutputsSecret(t *testing.T) {
 		_, _ = w.Write([]byte(agentTokenIssueResponseJSON(wantSecret)))
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
+	_ = testCtx
 
-	output, err := runAgentTokenCommand(t, agentTokenIssueCmd,
+	output, err := runAgentTokenCommand(testCtx, t, agentTokenIssueCmd,
 		"--label", "Test Agent",
 		"--permissions", "draft.create",
 		"--source-ids", "1",
@@ -238,7 +240,7 @@ func TestAgentTokenIssueOutputsSecret(t *testing.T) {
 	assert.Contains(output, "tok_abc123")
 	assert.Contains(output, "Test Agent")
 	assert.Contains(output, wantSecret, "one-time secret must appear in issue output")
-	output, err = runAgentTokenCommand(t, agentTokenIssueCmd,
+	output, err = runAgentTokenCommand(testCtx, t, agentTokenIssueCmd,
 		"--label", "Test Agent", "--permissions", "draft.create", "--source-ids", "1", "--json")
 	require.NoError(err)
 	assert.True(strings.HasSuffix(output, "\n"), "JSON output must end with a newline")
@@ -260,11 +262,12 @@ func TestAgentTokenListFormatsTable(t *testing.T) {
 		_, _ = w.Write([]byte(agentTokenListResponseJSON()))
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
+	_ = testCtx
 
-	output, err := runAgentTokenCommand(t, agentTokenListCmd)
+	output, err := runAgentTokenCommand(testCtx, t, agentTokenListCmd)
 	require.NoError(err)
 
 	assert.Equal(http.MethodGet, gotMethod)
@@ -290,11 +293,12 @@ func TestAgentTokenRevokeCallsDelete(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
+	_ = testCtx
 
-	output, err := runAgentTokenCommand(t, agentTokenRevokeCmd, "tok_abc123")
+	output, err := runAgentTokenCommand(testCtx, t, agentTokenRevokeCmd, "tok_abc123")
 	require.NoError(err)
 
 	assert.Equal(http.MethodDelete, gotMethod)
@@ -332,18 +336,15 @@ func TestOpenAgentDelegatedStore(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret+"\n"), 0o600))
 
-	// Set package-level flags.
-	oldURL, oldFile, oldInsecure := agentURL, agentTokenFile, agentAllowInsecure
-	agentURL = server.URL
-	agentTokenFile = tokenFile
-	agentAllowInsecure = true
-	t.Cleanup(func() {
-		agentURL = oldURL
-		agentTokenFile = oldFile
-		agentAllowInsecure = oldInsecure
+	ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
+		agentURL:           server.URL,
+		agentTokenFile:     tokenFile,
+		agentAllowInsecure: true,
+		agentURLChanged:    true,
+		agentTokenChanged:  true,
 	})
 
-	client, info, err := OpenHTTPStore(t.Context())
+	client, info, err := OpenHTTPStore(ctx)
 	require.NoError(err)
 	require.NotNil(client)
 	t.Cleanup(func() { _ = client.Close() })
@@ -361,17 +362,15 @@ func TestOpenAgentDelegatedStoreRejectsLocalFlag(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	require.NoError(t, os.WriteFile(tokenFile, []byte("mva1_abc"), 0o600))
 
-	oldURL, oldFile, oldUseLocal := agentURL, agentTokenFile, useLocal
-	agentURL = "http://daemon:8080"
-	agentTokenFile = tokenFile
-	useLocal = true
-	t.Cleanup(func() {
-		agentURL = oldURL
-		agentTokenFile = oldFile
-		useLocal = oldUseLocal
+	ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
+		agentURL:          "http://daemon:8080",
+		agentTokenFile:    tokenFile,
+		useLocal:          true,
+		agentURLChanged:   true,
+		agentTokenChanged: true,
 	})
 
-	_, _, err := OpenHTTPStore(t.Context())
+	_, _, err := OpenHTTPStore(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "incompatible", err.Error())
 }
@@ -384,23 +383,23 @@ func TestOpenAgentDelegatedStoreRequiresBothFlags(t *testing.T) {
 	require.NoError(t, os.WriteFile(tokenFile, []byte("mva1_abc"), 0o600))
 
 	t.Run("agent-url alone errors", func(t *testing.T) {
-		oldURL, oldFile := agentURL, agentTokenFile
-		agentURL = "http://daemon:8080"
-		agentTokenFile = ""
-		t.Cleanup(func() { agentURL = oldURL; agentTokenFile = oldFile })
+		ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
+			agentURL:        "http://daemon:8080",
+			agentURLChanged: true,
+		})
 
-		_, _, err := openAgentDelegatedStore(t.Context())
+		_, _, err := openAgentDelegatedStore(ctx, invocationFromContext(ctx))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "--agent-token-file")
 	})
 
 	t.Run("agent-token-file alone errors", func(t *testing.T) {
-		oldURL, oldFile := agentURL, agentTokenFile
-		agentURL = ""
-		agentTokenFile = tokenFile
-		t.Cleanup(func() { agentURL = oldURL; agentTokenFile = oldFile })
+		ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
+			agentTokenFile:    tokenFile,
+			agentTokenChanged: true,
+		})
 
-		_, _, err := openAgentDelegatedStore(t.Context())
+		_, _, err := openAgentDelegatedStore(ctx, invocationFromContext(ctx))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "--agent-url")
 	})
@@ -414,8 +413,7 @@ func TestOpenHTTPStoreRejectsExplicitEmptyAgentFlags(t *testing.T) {
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			require := require.New(t)
-			withAgentFlags(t, "", "")
-			withStoreResolverConfig(t, &config.Config{
+			ctx := withStoreResolverConfig(t, &config.Config{
 				Remote: config.RemoteConfig{URL: "https://daemon.example", APIKey: "owner-test-key"},
 			})
 			for _, name := range []string{"agent-url", "agent-token-file"} {
@@ -424,11 +422,15 @@ func TestOpenHTTPStoreRejectsExplicitEmptyAgentFlags(t *testing.T) {
 				flag.Changed = false
 				t.Cleanup(func() { flag.Changed = changed })
 			}
+			root := &cobra.Command{Use: "msgvault"}
+			root.PersistentFlags().AddFlagSet(rootCmd.PersistentFlags())
 			cmd := &cobra.Command{Use: "draft-reply"}
-			cmd.Flags().AddFlagSet(rootCmd.PersistentFlags())
+			root.AddCommand(cmd)
+			cmd.SetContext(ctx)
 			require.NoError(cmd.ParseFlags(args))
+			prepareInvocation(cmd)
 
-			client, info, err := OpenHTTPStore(t.Context())
+			client, info, err := OpenHTTPStore(cmd.Context())
 			if client != nil {
 				t.Cleanup(func() { _ = client.Close() })
 			}
@@ -440,18 +442,16 @@ func TestOpenHTTPStoreRejectsExplicitEmptyAgentFlags(t *testing.T) {
 // TestAgentModeRejectsConfigFlag verifies that --config is rejected in
 // agent-delegated mode for a delegated-capable command.
 func TestAgentModeRejectsConfigFlag(t *testing.T) {
-	oldURL, oldFile := agentURL, agentTokenFile
-	oldCfg := cfgFile
-	agentURL = "http://daemon:8080"
-	agentTokenFile = "/tmp/token"
-	cfgFile = "/tmp/config.toml"
-	t.Cleanup(func() {
-		agentURL = oldURL
-		agentTokenFile = oldFile
-		cfgFile = oldCfg
+	ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
+		agentURL:          "http://daemon:8080",
+		agentTokenFile:    "/tmp/token",
+		agentURLChanged:   true,
+		agentTokenChanged: true,
+		cfgFile:           "/tmp/config.toml",
 	})
 
 	cmd := &cobra.Command{Use: "draft-reply"}
+	cmd.SetContext(ctx)
 	err := rootCmd.PersistentPreRunE(cmd, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--config")
@@ -460,18 +460,16 @@ func TestAgentModeRejectsConfigFlag(t *testing.T) {
 // TestAgentModeRejectsHomeFlag verifies that --home is rejected in
 // agent-delegated mode for a delegated-capable command.
 func TestAgentModeRejectsHomeFlag(t *testing.T) {
-	oldURL, oldFile := agentURL, agentTokenFile
-	oldHome := homeDir
-	agentURL = "http://daemon:8080"
-	agentTokenFile = "/tmp/token"
-	homeDir = "/tmp/home"
-	t.Cleanup(func() {
-		agentURL = oldURL
-		agentTokenFile = oldFile
-		homeDir = oldHome
+	ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
+		agentURL:          "http://daemon:8080",
+		agentTokenFile:    "/tmp/token",
+		agentURLChanged:   true,
+		agentTokenChanged: true,
+		homeDir:           "/tmp/home",
 	})
 
 	cmd := &cobra.Command{Use: "draft-reply"}
+	cmd.SetContext(ctx)
 	err := rootCmd.PersistentPreRunE(cmd, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--home")
@@ -480,12 +478,14 @@ func TestAgentModeRejectsHomeFlag(t *testing.T) {
 // TestOpenAgentDelegatedStoreRejectsNonexistentTokenFile verifies that a missing
 // token file produces a clear error (P3: token-file read-error branch).
 func TestOpenAgentDelegatedStoreRejectsNonexistentTokenFile(t *testing.T) {
-	oldURL, oldFile := agentURL, agentTokenFile
-	agentURL = "https://daemon:8080"
-	agentTokenFile = filepath.Join(t.TempDir(), "does-not-exist.token")
-	t.Cleanup(func() { agentURL = oldURL; agentTokenFile = oldFile })
+	ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
+		agentURL:          "https://daemon:8080",
+		agentTokenFile:    filepath.Join(t.TempDir(), "does-not-exist.token"),
+		agentURLChanged:   true,
+		agentTokenChanged: true,
+	})
 
-	_, _, err := openAgentDelegatedStore(t.Context())
+	_, _, err := openAgentDelegatedStore(ctx, invocationFromContext(ctx))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read agent token file")
 }
@@ -497,24 +497,28 @@ func TestOpenAgentDelegatedStoreRejectsEmptyTokenFile(t *testing.T) {
 
 	t.Run("empty file", func(t *testing.T) {
 		require.NoError(t, os.WriteFile(tokenFile, []byte(""), 0o600))
-		oldURL, oldFile := agentURL, agentTokenFile
-		agentURL = "https://daemon:8080"
-		agentTokenFile = tokenFile
-		t.Cleanup(func() { agentURL = oldURL; agentTokenFile = oldFile })
+		ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
+			agentURL:          "https://daemon:8080",
+			agentTokenFile:    tokenFile,
+			agentURLChanged:   true,
+			agentTokenChanged: true,
+		})
 
-		_, _, err := openAgentDelegatedStore(t.Context())
+		_, _, err := openAgentDelegatedStore(ctx, invocationFromContext(ctx))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "is empty")
 	})
 
 	t.Run("whitespace only", func(t *testing.T) {
 		require.NoError(t, os.WriteFile(tokenFile, []byte("   \n\t  \n"), 0o600))
-		oldURL, oldFile := agentURL, agentTokenFile
-		agentURL = "https://daemon:8080"
-		agentTokenFile = tokenFile
-		t.Cleanup(func() { agentURL = oldURL; agentTokenFile = oldFile })
+		ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
+			agentURL:          "https://daemon:8080",
+			agentTokenFile:    tokenFile,
+			agentURLChanged:   true,
+			agentTokenChanged: true,
+		})
 
-		_, _, err := openAgentDelegatedStore(t.Context())
+		_, _, err := openAgentDelegatedStore(ctx, invocationFromContext(ctx))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "is empty")
 	})

@@ -47,6 +47,11 @@ Examples:
 }
 
 func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	// Validate source file exists.
 	if _, err := os.Stat(sourcePath); err != nil {
 		return fmt.Errorf("source file not found: %w", err)
@@ -67,7 +72,7 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 		}
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngest()
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 	if err != nil {
 		return err
 	}
@@ -113,7 +118,7 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted. Run again to continue.")
-			return rebuildCacheAfterWrite(dbPath)
+			return rebuildCacheAfterWrite(dbPath, state)
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
@@ -121,11 +126,11 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 	// Auto-default-identity must run BEFORE the legacy migration
 	// retry — see comment in account_identity.go.
 	if !noDefaultIdentityImportWhatsApp && summary.SourceID != 0 {
-		confirmDefaultIdentity(cmd.OutOrStdout(), s, summary.SourceID, importPhone, importPhone, "phone-e164")
+		confirmDefaultIdentity(cmd.OutOrStdout(), s, summary.SourceID, importPhone, importPhone, "phone-e164", state.logger)
 	}
 
 	if summary.SourceID != 0 {
-		if err := runPostSourceCreateMigrations(s); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 	}
@@ -163,7 +168,7 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 		fmt.Printf("  Rate:           %.0f messages/sec\n", rate)
 	}
 
-	return rebuildCacheAfterWrite(dbPath)
+	return rebuildCacheAfterWrite(dbPath, state)
 }
 
 // ImportCLIProgress implements whatsapp.ImportProgress for terminal output.

@@ -294,7 +294,7 @@ func TestIMAPFolderStateOptions_RoundTripSkipsUnchangedFolders(t *testing.T) {
 	beforeMemberships := imapMembershipRowCount(t, st, src.ID)
 	require.NotZero(beforeMemberships)
 
-	opts := imapFolderStateOptions(st, src, false)
+	opts := imapFolderStateOptions(st, src, false, testConfigValue(), testDiscardLogger())
 	require.NotEmpty(opts, "saved states must produce a client option")
 
 	second := listedIMAPClient(t, addr, opts...)
@@ -332,7 +332,7 @@ func TestIMAPFolderStateOptions_ForceRescanRetainsStatesAndEnumerates(t *testing
 		context.Background(), st, src, first, completedIMAPSyncSummary(t, st, src), 0))
 	require.NoError(first.Close())
 
-	opts := imapFolderStateOptions(st, src, true)
+	opts := imapFolderStateOptions(st, src, true, testConfigValue(), testDiscardLogger())
 
 	second := listedIMAPClient(t, addr, opts...)
 	ctx, cancel := context.WithTimeout(
@@ -619,7 +619,7 @@ func TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount(t *testing.
 	// skipped, and reading it again restores both the membership and the
 	// message.
 	hideUID(false)
-	third, thirdLabels := syncedIMAPClient(t, addr, imapFolderStateOptions(st, src, false)...)
+	third, thirdLabels := syncedIMAPClient(t, addr, imapFolderStateOptions(st, src, false, testConfigValue(), testDiscardLogger())...)
 	// The recovery is the count check, not another republish. The saved
 	// baseline holds one UID and the server reports two, so the mailbox is
 	// read again and the one missing UID is diffed back in.

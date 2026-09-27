@@ -256,7 +256,11 @@ func TestConfiguredCirclebackMissingRegisteredSourceStopsBeforeConnect(t *testin
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testInvocationContext(
+		context.Background(),
+		config.NewDefaultConfig(),
+		invocationOptions{},
+	))
 	cancel()
 
 	err := runConfiguredCirclebackSync(ctx, st, config.CirclebackSource{
@@ -295,15 +299,19 @@ func TestAddCirclebackIdentityConfirmsPrimaryWhenAliasExists(t *testing.T) {
 }
 
 func TestAddCirclebackConfiguredRemoteRejectsHostLocalOAuthBeforeProxy(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	cfg.Circleback = []config.CirclebackSource{{
 		Identifier:   "work",
 		AccountEmail: "user-a@example.com",
 	}}
 	cmd := newAddCirclebackCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetArgs([]string{"work"})
 
 	err := cmd.Execute()
@@ -316,13 +324,19 @@ func TestAddCirclebackConfiguredRemoteRejectsHostLocalOAuthBeforeProxy(t *testin
 }
 
 func TestAddCirclebackLocalOverrideAllowsHostLocalOAuth(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	savedCfg, savedUseLocal := cfg, useLocal
 	t.Cleanup(func() {
 		cfg = savedCfg
 		useLocal = savedUseLocal
 	})
 	cfg = &config.Config{Remote: config.RemoteConfig{URL: "https://remote.example.com"}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 
-	require.NoError(t, validateAddCirclebackOAuthRouting())
+	require.NoError(t, validateAddCirclebackOAuthRouting(invocationFromContext(testCtx)))
 }

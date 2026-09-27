@@ -174,7 +174,6 @@ func seedTwoGenerations(
 func TestAttachVector_CountsOnlyTheActiveGenerationsVectors(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := t.Context()
 
 	dataDir := t.TempDir()
 	s := seedRankingDivergenceArchiveIn(t, dataDir)
@@ -182,7 +181,9 @@ func TestAttachVector_CountsOnlyTheActiveGenerationsVectors(t *testing.T) {
 	c := evalVectorConfig(t, vector.APIFormatOpenAI, "test-model")
 	c.Data.DataDir = dataDir
 	c.Vector.Embeddings.Dimension = 3
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
+	ctx := testCtx
 
 	total, active := seedTwoGenerations(t, dataDir, c.DatabaseDSN(), s.DB(), c.Vector)
 	require.EqualValues(4, total, "the retired generation's rows are retained")

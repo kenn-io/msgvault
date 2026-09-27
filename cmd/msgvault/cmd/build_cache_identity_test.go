@@ -28,7 +28,7 @@ func TestBuildCache_SlackDefaultIdentityResolvesOwnerParticipant(t *testing.T) {
 
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
-	confirmDefaultSlackIdentity(io.Discard, st, src.ID, "T01", "UME")
+	confirmDefaultSlackIdentity(io.Discard, st, src.ID, "T01", "UME", testDiscardLogger())
 	ownerID, err := st.EnsureParticipantByIdentifier("slack", "T01:UME", "Me")
 	require.NoError(err)
 	convID, err := st.EnsureConversationWithType(src.ID, "D01", "direct_chat", "Alice")

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -116,6 +115,9 @@ func TestExportAttachmentBinaryDownloadPreservesExistingFileOnCloseError(t *test
 }
 
 func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesFileOutput(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -142,7 +144,10 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesFileOutput(t *testing.T)
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	t.Chdir(dataDir)
 	exportAttachmentOutput = "attachment.bin"
 	exportAttachmentJSON = false
@@ -150,7 +155,8 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesFileOutput(t *testing.T)
 
 	doneErr := captureStderr(t)
 	cmd := &cobra.Command{Use: "export-attachment"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 
 	err := runExportAttachment(cmd, []string{contentHash})
 	stderr := doneErr()
@@ -166,6 +172,9 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesFileOutput(t *testing.T)
 }
 
 func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -192,14 +201,18 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T)
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	exportAttachmentOutput = ""
 	exportAttachmentJSON = true
 	exportAttachmentBase64 = false
 
 	done := captureStdout(t)
 	cmd := &cobra.Command{Use: "export-attachment"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 
 	err := runExportAttachment(cmd, []string{contentHash})
 	out := done()
@@ -218,6 +231,9 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T)
 }
 
 func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesBase64Output(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -244,14 +260,18 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesBase64Output(t *testing.
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	exportAttachmentOutput = ""
 	exportAttachmentJSON = false
 	exportAttachmentBase64 = true
 
 	done := captureStdout(t)
 	cmd := &cobra.Command{Use: "export-attachment"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 
 	err := runExportAttachment(cmd, []string{contentHash})
 	out := done()

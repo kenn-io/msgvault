@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -94,6 +95,12 @@ var (
 )
 
 func runDeduplicate(cmd *cobra.Command, _ []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	if !isDaemonCLISubprocess() {
 		if deduplicateCanUseDaemonRunner() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, nil)
@@ -101,7 +108,7 @@ func runDeduplicate(cmd *cobra.Command, _ []string) error {
 		return runDeduplicateInteractiveHTTP(cmd)
 	}
 
-	st, cleanup, err := openWritableStoreAndInit()
+	st, cleanup, err := openWritableStoreAndInitForInvocation(state)
 	if err != nil {
 		return err
 	}
@@ -193,7 +200,7 @@ func runDeduplicate(cmd *cobra.Command, _ []string) error {
 	if len(scope.SourceIDs) == 0 {
 		// Per-source path constructs its own scoped engines per
 		// source, so no top-level engine is needed here.
-		return runDeduplicatePerSource(cmd, st, dbPath, config)
+		return runDeduplicatePerSource(cmd, st, dbPath, config, logger)
 	}
 
 	// Single-account/single-collection path uses one engine shared
@@ -465,6 +472,12 @@ func planCLIDeduplicate(
 	st *store.Store,
 	req api.CLIDeduplicatePlanRequest,
 ) (api.CLIDeduplicatePlanResponse, error) {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return api.CLIDeduplicatePlanResponse{}, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	preference := deduplicateSourcePreference(req.Prefer, nil)
 	deletionsDir := filepath.Join(cfg.Data.DataDir, "deletions")
 	scope, err := resolveDeduplicateScope(st, deduplicateScopeRequest{
@@ -507,6 +520,11 @@ func planCLIDeduplicatePerSource(
 	st *store.Store,
 	base dedup.Config,
 ) (api.CLIDeduplicatePlanResponse, error) {
+	state := invocationFromContext(ctx)
+	if state == nil || state.logger == nil {
+		return api.CLIDeduplicatePlanResponse{}, errors.New("configuration is unavailable")
+	}
+	logger := state.logger
 	sources, err := st.ListSources("")
 	if err != nil {
 		return api.CLIDeduplicatePlanResponse{}, fmt.Errorf("list sources: %w", err)
@@ -698,7 +716,9 @@ func runDeduplicatePerSource(
 	st *store.Store,
 	dbPath string,
 	cfgBase dedup.Config,
+	logger *slog.Logger,
 ) error {
+	logger = repairLogger(logger)
 	sources, err := st.ListSources("")
 	if err != nil {
 		return fmt.Errorf("list sources: %w", err)

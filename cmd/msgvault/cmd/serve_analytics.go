@@ -147,6 +147,7 @@ func prepareDaemonAnalyticsEngine(
 		return nil, "", startupCacheBuildOutcomeNone, false,
 			errors.New("daemon analytics engine unavailable")
 	}
+	logger := loggerFromContext(ctx)
 
 	engineMode := c.Analytics.Engine
 	if engineMode == "" {
@@ -202,6 +203,7 @@ func startDaemonAnalyticsInitializer(
 	h := newDaemonAnalyticsInitHandle()
 	apiServer.SetAnalyticsInitializationActive(true)
 	go func() {
+		logger := loggerFromContext(ctx)
 		defer close(h.done)
 		defer apiServer.SetAnalyticsInitializationActive(false)
 		if tracker != nil {

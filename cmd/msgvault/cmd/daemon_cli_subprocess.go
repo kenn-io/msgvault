@@ -119,7 +119,7 @@ func newDaemonCLISubprocessCommand(ctx context.Context, commandArgs []string, en
 	if err != nil {
 		return nil, fmt.Errorf("locate msgvault executable: %w", err)
 	}
-	args := globalConfigFlagArgs()
+	args := globalConfigFlagArgs(optionsFromContext(ctx))
 	args = append(args, "--no-log-file")
 	args = append(args, commandArgs...)
 

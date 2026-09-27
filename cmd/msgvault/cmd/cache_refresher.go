@@ -140,7 +140,7 @@ func shutdownBackgroundCacheRefresher(r *backgroundCacheRefresher) error {
 	ctx, cancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer cancel()
 	if err := r.Shutdown(ctx); err != nil {
-		logger.Warn("analytics cache refresh did not stop during cleanup", "error", err)
+		loggerFromContext(r.ctx).Warn("analytics cache refresh did not stop during cleanup", "error", err)
 		return err
 	}
 	return nil
@@ -172,7 +172,7 @@ func (r *backgroundCacheRefresher) runOnce(identifier string) {
 		defer done()
 	}
 	if err := r.run(r.ctx, identifier); err != nil && r.ctx.Err() == nil {
-		logger.Warn("background analytics cache refresh failed",
+		loggerFromContext(r.ctx).Warn("background analytics cache refresh failed",
 			"identifier", identifier, "error", err)
 	}
 }

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +18,9 @@ import (
 )
 
 func TestExportEMLUsesLocalDaemonHTTPAndPreservesFileOutput(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -37,12 +39,16 @@ func TestExportEMLUsesLocalDaemonHTTPAndPreservesFileOutput(t *testing.T) {
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 
 	outputPath := filepath.Join(dataDir, "message.eml")
 	var out bytes.Buffer
 	cmd := &cobra.Command{Use: "export-eml"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&out)
 
 	err := runExportEML(cmd, "gmail-raw", outputPath)
@@ -57,6 +63,9 @@ func TestExportEMLUsesLocalDaemonHTTPAndPreservesFileOutput(t *testing.T) {
 }
 
 func TestExportEMLHTTPNotFoundPreservesCLIError(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -74,11 +83,15 @@ func TestExportEMLHTTPNotFoundPreservesCLIError(t *testing.T) {
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 
 	var out bytes.Buffer
 	cmd := &cobra.Command{Use: "export-eml"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&out)
 
 	err := runExportEML(cmd, "missing", filepath.Join(dataDir, "missing.eml"))

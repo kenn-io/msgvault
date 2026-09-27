@@ -14,6 +14,9 @@ import (
 )
 
 func TestListFoldersCmd_NoIMAPAccounts(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
@@ -41,9 +44,12 @@ func TestListFoldersCmd_NoIMAPAccounts(t *testing.T) {
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(newListFoldersCmd())
 	root.SetArgs([]string{"list-folders"})
 
@@ -53,6 +59,9 @@ func TestListFoldersCmd_NoIMAPAccounts(t *testing.T) {
 }
 
 func TestListFoldersCmd_GmailIdentifier(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
@@ -79,9 +88,12 @@ func TestListFoldersCmd_GmailIdentifier(t *testing.T) {
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(newListFoldersCmd())
 	root.SetArgs([]string{"list-folders", "g@example.com"})
 
@@ -91,6 +103,9 @@ func TestListFoldersCmd_GmailIdentifier(t *testing.T) {
 }
 
 func TestListFoldersCmd_IMAPNoCredentials(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
@@ -122,12 +137,15 @@ func TestListFoldersCmd_IMAPNoCredentials(t *testing.T) {
 		Data:    config.DataConfig{DataDir: tmpDir},
 		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	// Capture stdout
 	getOutput := captureStdout(t)
 
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(newListFoldersCmd())
 	root.SetArgs([]string{"list-folders", "i@example.com"})
 
@@ -140,6 +158,9 @@ func TestListFoldersCmd_IMAPNoCredentials(t *testing.T) {
 }
 
 func TestListFoldersCmd_ListAllPrintsEachSource(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
@@ -173,12 +194,15 @@ func TestListFoldersCmd_ListAllPrintsEachSource(t *testing.T) {
 		Data:    config.DataConfig{DataDir: tmpDir},
 		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	// Both sources should have "Credentials not found" in stdout
 	getOutput := captureStdout(t)
 
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(newListFoldersCmd())
 	root.SetArgs([]string{"list-folders"})
 
@@ -192,6 +216,9 @@ func TestListFoldersCmd_ListAllPrintsEachSource(t *testing.T) {
 }
 
 func TestListFoldersCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
@@ -225,11 +252,14 @@ func TestListFoldersCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 		Data:    config.DataConfig{DataDir: tmpDir},
 		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	getOutput := captureStdout(t)
 
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(newListFoldersCmd())
 	root.SetArgs([]string{"list-folders"})
 

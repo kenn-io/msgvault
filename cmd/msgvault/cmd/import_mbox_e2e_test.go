@@ -19,6 +19,12 @@ import (
 )
 
 func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
+	cfg := testConfigValue()
+	cfgFile := ""
+	homeDir := ""
+	logger := testLoggerValue()
+	verbose := false
+
 	markDaemonCLISubprocessForTest(t)
 
 	require := require.New(t)
@@ -126,6 +132,12 @@ func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 }
 
 func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
+	cfg := testConfigValue()
+	cfgFile := ""
+	homeDir := ""
+	logger := testLoggerValue()
+	verbose := false
+
 	markDaemonCLISubprocessForTest(t)
 
 	tmp := t.TempDir()
@@ -199,6 +211,12 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 }
 
 func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
+	cfg := testConfigValue()
+	cfgFile := ""
+	homeDir := ""
+	logger := testLoggerValue()
+	verbose := false
+
 	markDaemonCLISubprocessForTest(t)
 
 	tmp := t.TempDir()
@@ -280,6 +298,12 @@ func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
 }
 
 func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
+	cfg := testConfigValue()
+	cfgFile := ""
+	homeDir := ""
+	logger := testLoggerValue()
+	verbose := false
+
 	markDaemonCLISubprocessForTest(t)
 
 	require := require.New(t)

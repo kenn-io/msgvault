@@ -25,15 +25,34 @@ const (
 )
 
 type purgeExcludedMediaDeps struct {
+	bind       func(context.Context) purgeExcludedMediaDeps
 	openStore  func() (*store.Store, func(), error)
 	config     func() *config.Config
 	removeFile func(string) error
 }
 
-func defaultPurgeExcludedMediaDeps() purgeExcludedMediaDeps {
+func defaultPurgeExcludedMediaDeps(contexts ...context.Context) purgeExcludedMediaDeps {
+	if len(contexts) > 0 {
+		deps := defaultPurgeExcludedMediaDeps()
+		if deps.bind != nil {
+			return deps.bind(contexts[0])
+		}
+	}
 	return purgeExcludedMediaDeps{
-		openStore:  openWritableStoreAndInitForIngest,
-		config:     func() *config.Config { return cfg },
+		bind: func(ctx context.Context) purgeExcludedMediaDeps {
+			deps := defaultPurgeExcludedMediaDeps()
+			if state := invocationFromContext(ctx); state != nil && state.cfg != nil {
+				deps.config = func() *config.Config { return state.cfg }
+				deps.openStore = func() (*store.Store, func(), error) {
+					return openWritableStoreAndInitForIngestInvocation(state)
+				}
+			}
+			return deps
+		},
+		openStore: func() (*store.Store, func(), error) {
+			return nil, nil, errors.New("configuration is unavailable")
+		},
+		config:     func() *config.Config { return nil },
 		removeFile: os.Remove,
 	}
 }
@@ -84,6 +103,9 @@ Applying the purge requires an interactive confirmation or --yes. This command
 never deletes media from a provider.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if invocationFromContext(cmd.Context()) != nil && deps.bind != nil {
+				deps = deps.bind(cmd.Context())
+			}
 			dryRun, err := cmd.Flags().GetBool("dry-run")
 			if err != nil {
 				return fmt.Errorf("read --dry-run flag: %w", err)

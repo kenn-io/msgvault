@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -52,6 +53,11 @@ Examples:
   MSGVAULT_SLACK_TOKEN="xoxp-..." msgvault add-slack`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
 			if !isDaemonCLISubprocess() {
 				token, err := readAddSlackToken(cmd)
 				if err != nil {
@@ -81,7 +87,7 @@ Examples:
 				return fmt.Errorf("save slack token: %w", err)
 			}
 
-			s, cleanup, err := openWritableStoreAndInitForIngest()
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 			if err != nil {
 				return err
 			}
@@ -97,9 +103,9 @@ Examples:
 				return fmt.Errorf("set display name for %s: %w", identifier, err)
 			}
 			if !noDefaultIdentityAddSlack {
-				confirmDefaultSlackIdentity(cmd.OutOrStdout(), s, source.ID, auth.TeamID, auth.UserID)
+				confirmDefaultSlackIdentity(cmd.OutOrStdout(), s, source.ID, auth.TeamID, auth.UserID, state.logger)
 			}
-			if err := runPostSourceCreateMigrations(s); err != nil {
+			if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 				return fmt.Errorf("post-source-create migrations: %w", err)
 			}
 
@@ -119,9 +125,9 @@ func writeAddedSlackWorkspace(out io.Writer, team, teamID, identifier string) {
 		textutil.SanitizeTerminal(team), teamID, identifier)
 }
 
-func confirmDefaultSlackIdentity(out io.Writer, s *store.Store, sourceID int64, teamID, userID string) {
+func confirmDefaultSlackIdentity(out io.Writer, s *store.Store, sourceID int64, teamID, userID string, logger *slog.Logger) {
 	account := teamID + ":" + userID
-	confirmDefaultIdentity(out, s, sourceID, account, account, "account-identifier")
+	confirmDefaultIdentity(out, s, sourceID, account, account, "account-identifier", logger)
 }
 
 // readAddSlackToken resolves the user token: env var, then --token-file,

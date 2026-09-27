@@ -5,6 +5,7 @@ package cmd
 import (
 	"context"
 
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -14,7 +15,7 @@ import (
 // run. The real implementation lives in repair_encoding_vector.go (built with
 // sqlite_vec or pgvector). repair-encoding still resets embed_gen on the main
 // DB column, which is harmless when vector search is unavailable.
-func openVectorBackendForRepair(_ context.Context, _ *store.Store) (vector.Backend, func() error, error) {
+func openVectorBackendForRepair(_ context.Context, _ *store.Store, _ *config.Config) (vector.Backend, func() error, error) {
 	return nil, nil, nil
 }
 

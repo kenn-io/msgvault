@@ -17,18 +17,19 @@ import (
 func TestRunConfiguredDocumentVectorGenerationCleansRetiredWhenEmbeddingsDisabled(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	fixture, spec := documentVectorCommandFixture(t)
+	fixture, spec, testCtx := documentVectorCommandFixture(t)
+	cfg := invocationFromContext(testCtx).cfg
 	vectorPath := filepath.Join(t.TempDir(), "vectors.db")
 	cfg.Vector.DBPath = vectorPath
 
-	generation, _, err := fixture.Store.EnsureDocumentVectorGeneration(t.Context(), spec)
+	generation, _, err := fixture.Store.EnsureDocumentVectorGeneration(testCtx, spec)
 	require.NoError(err)
 	token := strings.Repeat("9", 64)
-	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+	backend, err := sqlitevec.Open(testCtx, sqlitevec.Options{
 		Path: vectorPath, Dimension: spec.Dimension,
 	})
 	require.NoError(err)
-	require.NoError(backend.DocumentBackend().PutUnpublished(t.Context(), vectordocument.GenerationID(generation.ID), spec.Dimension, []vectordocument.Embedding{{
+	require.NoError(backend.DocumentBackend().PutUnpublished(testCtx, vectordocument.GenerationID(generation.ID), spec.Dimension, []vectordocument.Embedding{{
 		Token: token, Vector: []float32{1, 0, 0},
 	}}))
 	require.NoError(backend.Close())
@@ -41,20 +42,20 @@ func TestRunConfiguredDocumentVectorGenerationCleansRetiredWhenEmbeddingsDisable
 		"disabled-cleanup-extraction", spec.TargetExtractionProfileID, strings.Repeat("a", 64),
 		"original", 1, "disabled-cleanup-chunk", "disabled-cleanup-checksum", 1, token)
 	require.NoError(err)
-	retired, err := fixture.Store.RetireDocumentVectorGeneration(t.Context(), generation.ID, time.Now())
+	retired, err := fixture.Store.RetireDocumentVectorGeneration(testCtx, generation.ID, time.Now())
 	require.NoError(err)
 	require.True(retired)
 	cfg.Vector.Enabled = false
 
-	result, err := runConfiguredDocumentVectorGeneration(t.Context(), fixture.Store, generation.ID, 1)
+	result, err := runConfiguredDocumentVectorGeneration(testCtx, fixture.Store, generation.ID, 1)
 
 	require.NoError(err)
 	assert.True(result.Purged)
 	assert.True(result.Converged)
-	_, err = fixture.Store.GetDocumentVectorGeneration(t.Context(), generation.ID)
+	_, err = fixture.Store.GetDocumentVectorGeneration(testCtx, generation.ID)
 	require.ErrorContains(err, "not found")
 
-	backend, err = sqlitevec.Open(t.Context(), sqlitevec.Options{Path: vectorPath})
+	backend, err = sqlitevec.Open(testCtx, sqlitevec.Options{Path: vectorPath})
 	require.NoError(err)
 	t.Cleanup(func() { _ = backend.Close() })
 	var remaining int

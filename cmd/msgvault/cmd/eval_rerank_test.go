@@ -80,13 +80,11 @@ func (r *recordingReranker) Rerank(ctx context.Context, request rerank.Request) 
 
 func preserveEvalRerankGlobals(t *testing.T) {
 	t.Helper()
-	oldCfg := cfg
 	oldQrels, oldTopics, oldModes, oldDocKey := evalQrels, evalTopics, evalModes, evalDocKey
 	oldLimit, oldJSON := evalLimit, evalJSON
 	oldJev, oldTop, oldMaxRequests := evalRerankJev, evalRerankTop, evalRerankMaxRequests
 	oldCost, oldInput, oldOutput := evalRerankCostStopUSD, evalRerankInputUSDPerM, evalRerankOutputUSDPerM
 	t.Cleanup(func() {
-		cfg = oldCfg
 		evalQrels, evalTopics, evalModes, evalDocKey = oldQrels, oldTopics, oldModes, oldDocKey
 		evalLimit, evalJSON = oldLimit, oldJSON
 		evalRerankJev, evalRerankTop, evalRerankMaxRequests = oldJev, oldTop, oldMaxRequests
@@ -116,7 +114,7 @@ func prepareEvalRerankRun(t *testing.T, shapes string, topicCount int) (*cobra.C
 	preserveEvalRerankGlobals(t)
 	dir := t.TempDir()
 	seedRankingDivergenceArchiveIn(t, dir)
-	cfg = config.NewDefaultConfig()
+	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = dir
 	evalModes, evalDocKey, evalLimit, evalJSON = "fts", "message", 10, true
 	evalRerankJev, evalRerankTop, evalRerankMaxRequests = shapes, 2, 1000
@@ -131,7 +129,9 @@ func prepareEvalRerankRun(t *testing.T, shapes string, topicCount int) (*cobra.C
 	evalQrels = writeEvalFile(t, dir, "qrels.txt", qrels.String())
 	evalTopics = writeEvalFile(t, dir, "topics.tsv", topics.String())
 	out := &bytes.Buffer{}
-	return newEvalRerankTestCommand(t, out, true, true), out
+	cmd := newEvalRerankTestCommand(t, out, true, true)
+	cmd.SetContext(testInvocationContext(cmd.Context(), cfg, invocationOptions{}))
+	return cmd, out
 }
 
 func TestRunEvalReranksFTSCandidates(t *testing.T) {
@@ -193,6 +193,8 @@ func TestRunEvalReranksFTSCandidates(t *testing.T) {
 
 func TestRunEvalJevSlowRequestWaves(t *testing.T) {
 	cmd, out := prepareEvalRerankRun(t, "per-candidate", 2)
+	state := invocationFromContext(cmd.Context())
+	cfg := state.cfg
 	evalLimit, evalRerankTop = 30, 30
 	s, err := store.Open(cfg.DatabaseDSN())
 	require.NoError(t, err)
@@ -217,7 +219,7 @@ func TestRunEvalJevSlowRequestWaves(t *testing.T) {
 		}))
 	}
 	synctest.Test(t, func(t *testing.T) {
-		cmd.SetContext(t.Context())
+		cmd.SetContext(withInvocation(t.Context(), state))
 		require.NoError(t, runEvalWithRerankerFactory(cmd, nil, factory))
 	})
 	var report struct {
@@ -319,6 +321,7 @@ func TestRunEvalRerankFailureKeepsCompleteBaseline(t *testing.T) {
 
 func TestRunEvalRerankQualityMetricsFollowProviderScoresAcrossModes(t *testing.T) {
 	cmd, out := prepareEvalRerankRun(t, "batched", 1)
+	cfg := invocationFromContext(cmd.Context()).cfg
 	dataDir := cfg.Data.DataDir
 	evalQrels = writeEvalFile(t, dataDir, "quality-qrels.txt", "q1 0 <m2@example.com> 1\n")
 	evalModes = "fts,vector,hybrid"
@@ -327,7 +330,9 @@ func TestRunEvalRerankQualityMetricsFollowProviderScoresAcrossModes(t *testing.T
 	c.Vector.Embeddings.Dimension = 3
 	_, endpoint := embedTestServer(t, `{"data":[{"index":0,"embedding":[1,0,0]}]}`)
 	c.Vector.Embeddings.Endpoint = endpoint
+	invocationFromContext(cmd.Context()).cfg = c
 	cfg = c
+	cmd.SetContext(testInvocationContext(cmd.Context(), cfg, invocationOptions{}))
 	s, err := store.Open(c.DatabaseDSN())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
@@ -383,7 +388,7 @@ func TestValidateJevRequestEstimate(t *testing.T) {
 func TestRunEvalPreflightsJevRequestEstimateBeforeOpeningArchive(t *testing.T) {
 	preserveEvalRerankGlobals(t)
 	dir := t.TempDir()
-	cfg = config.NewDefaultConfig()
+	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = dir
 	evalModes, evalDocKey, evalLimit, evalJSON = "fts,vector,hybrid", "message", 100, true
 	evalRerankJev, evalRerankTop, evalRerankMaxRequests = "per-candidate,batched", 30, 1000
@@ -398,6 +403,7 @@ func TestRunEvalPreflightsJevRequestEstimateBeforeOpeningArchive(t *testing.T) {
 	evalQrels = writeEvalFile(t, dir, "qrels.txt", qrels.String())
 	evalTopics = writeEvalFile(t, dir, "topics.tsv", topics.String())
 	cmd := newEvalRerankTestCommand(t, &bytes.Buffer{}, true, true)
+	cmd.SetContext(testInvocationContext(cmd.Context(), cfg, invocationOptions{}))
 	recorder := &evalRerankRecorder{}
 	err := runEvalWithRerankerFactory(cmd, nil, recorder.makeReranker)
 	require.ErrorContains(t, err, "conservative request estimate")
@@ -450,12 +456,13 @@ func TestReadEvalRerankOptionsRejectsInvalidInputs(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			preserveEvalRerankGlobals(t)
-			cfg = config.NewDefaultConfig()
+			cfg := config.NewDefaultConfig()
 			evalDocKey, evalLimit = "message", 10
 			evalRerankJev, evalRerankTop, evalRerankMaxRequests = "batched", 2, 100
 			evalRerankCostStopUSD, evalRerankInputUSDPerM, evalRerankOutputUSDPerM = 1, 1, 1
 			t.Setenv("TYPESAFE_API_KEY", tc.key)
 			cmd := newEvalRerankTestCommand(t, &bytes.Buffer{}, tc.inputPrice, tc.outputPrice)
+			cmd.SetContext(testInvocationContext(cmd.Context(), cfg, invocationOptions{}))
 			if tc.mutate != nil {
 				tc.mutate()
 			}

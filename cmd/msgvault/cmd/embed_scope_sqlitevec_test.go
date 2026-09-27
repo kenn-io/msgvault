@@ -4,7 +4,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -100,6 +99,8 @@ func embedGenByID(t *testing.T, dataDir string) map[int64]sql.NullInt64 {
 // activates, and a follow-up run scoped differently is refused by the
 // fingerprint mismatch with the scope visible in the error.
 func TestRunEmbed_AccountScopedBuildActivatesScopedGeneration(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -118,6 +119,7 @@ func TestRunEmbed_AccountScopedBuildActivatesScopedGeneration(t *testing.T) {
 	c.Vector.Embeddings.Dimension = 4
 	c.Data.DataDir = dataDir
 	cfg = c
+	testCtx := testInvocationContext(t.Context(), c, invocationOptions{})
 
 	oldRebuild, oldYes := embedFullRebuild, embedYes
 	oldAccounts, oldCollections := embedAccounts, embedCollections
@@ -133,7 +135,7 @@ func TestRunEmbed_AccountScopedBuildActivatesScopedGeneration(t *testing.T) {
 
 	newCmd := func() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 		cmd := &cobra.Command{}
-		cmd.SetContext(context.Background())
+		cmd.SetContext(testCtx)
 		out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 		cmd.SetOut(out)
 		cmd.SetErr(errOut)
@@ -220,7 +222,8 @@ func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T
 	}))
 	t.Cleanup(provider.Close)
 	configured.Vector.Embeddings.Endpoint = provider.URL
-	withTestConfig(t, configured)
+	testCtx := withTestConfig(t, configured)
+	_ = testCtx
 	require.NoError(configured.Save())
 
 	seedTwoAccountMainDB(t, dataDir)
@@ -228,10 +231,10 @@ func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T
 	require.NoError(err)
 	profile, err := configured.Vector.SemanticPersonEmbeddingProfile()
 	require.NoError(err)
-	_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(t.Context(), profile)
+	_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(testCtx, profile)
 	require.NoError(err)
 	_, _, err = mainStore.GrantPersonSemanticEmbeddingConsent(
-		t.Context(), profile.Fingerprint, "test",
+		testCtx, profile.Fingerprint, "test",
 	)
 	require.NoError(err)
 	for _, personSeed := range []struct {
@@ -245,10 +248,10 @@ func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T
 			"email", personSeed.email, "Observed "+personSeed.name,
 		)
 		require.NoError(err)
-		person, _, err := mainStore.CreatePersonFromParticipantContext(t.Context(), participantID)
+		person, _, err := mainStore.CreatePersonFromParticipantContext(testCtx, participantID)
 		require.NoError(err)
 		_, err = mainStore.UpdatePersonDisplayNameContext(
-			t.Context(), person.ID, person.Revision, &personSeed.name,
+			testCtx, person.ID, person.Revision, &personSeed.name,
 		)
 		require.NoError(err)
 	}
@@ -268,7 +271,8 @@ func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T
 	embedAccounts = nil
 	embedCollections = nil
 	command := &cobra.Command{}
-	command.SetContext(t.Context())
+	command.SetContext(testCtx)
+	command.SetContext(testCtx)
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	command.SetOut(stdout)
 	command.SetErr(stderr)
@@ -295,7 +299,7 @@ func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T
 	require.NoError(mainStore.Close())
 	embedFullRebuild = false
 	resume := &cobra.Command{}
-	resume.SetContext(t.Context())
+	resume.SetContext(testCtx)
 	resumeOut, resumeErr := &bytes.Buffer{}, &bytes.Buffer{}
 	resume.SetOut(resumeOut)
 	resume.SetErr(resumeErr)
@@ -313,6 +317,8 @@ func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T
 // remaining == 0 and activate an empty generation, retiring the working
 // index. The run must fail instead of activating.
 func TestRunEmbed_AccountScopedRebuildRefusesEmptyScope(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -336,6 +342,7 @@ func TestRunEmbed_AccountScopedRebuildRefusesEmptyScope(t *testing.T) {
 	c.Vector.Embeddings.Dimension = 4
 	c.Data.DataDir = dataDir
 	cfg = c
+	testCtx := testInvocationContext(t.Context(), c, invocationOptions{})
 
 	oldRebuild, oldYes := embedFullRebuild, embedYes
 	oldAccounts, oldCollections := embedAccounts, embedCollections
@@ -352,7 +359,7 @@ func TestRunEmbed_AccountScopedRebuildRefusesEmptyScope(t *testing.T) {
 	embedAccounts = []string{"c@example.com"}
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(errOut)

@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -14,15 +15,30 @@ import (
 func newMCPStatusCommand() *cobra.Command {
 	var jsonOutput bool
 	command := &cobra.Command{
-		Use:               "status",
-		Short:             "List running HTTP MCP listeners",
-		Args:              cobra.NoArgs,
-		PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
+		Use:   "status",
+		Short: "List running HTTP MCP listeners",
+		Args:  cobra.NoArgs,
+		PersistentPreRunE: func(command *cobra.Command, _ []string) error {
+			inv := prepareInvocation(command)
+			if inv == nil {
+				return errors.New("missing invocation state")
+			}
+			// MCP status is intentionally a config reader. It must not run the
+			// root owner lifecycle, create the home directory, or initialize
+			// logging just to inspect listener records.
+			command.SilenceUsage = true
+			return nil
+		},
 		RunE: func(command *cobra.Command, _ []string) error {
-			cfg, err := config.Load(cfgFile, homeDir)
+			inv := invocationFromCommand(command)
+			if inv == nil {
+				return errors.New("missing invocation state")
+			}
+			cfg, err := config.Load(inv.options.cfgFile, inv.options.homeDir)
 			if err != nil {
 				return err
 			}
+			inv.cfg = cfg
 			directory := filepath.Join(cfg.HomeDir, "mcp")
 			endpoints, err := mcpdiscovery.List(directory)
 			if err != nil {

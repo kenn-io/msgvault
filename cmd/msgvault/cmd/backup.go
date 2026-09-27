@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/kit/packstore"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/backupapp"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -103,7 +104,7 @@ var backupRestoreCmd = &cobra.Command{
 // resolveBackupRepo applies the standard --repo precedence for every backup
 // subcommand: an explicit flag wins, else the configured [backup] repo,
 // else an error naming both ways to set it.
-func resolveBackupRepo(flagValue string) (string, error) {
+func resolveBackupRepo(flagValue string, cfg *config.Config) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
@@ -114,7 +115,11 @@ func resolveBackupRepo(flagValue string) (string, error) {
 }
 
 func runBackupInit(cmd *cobra.Command, _ []string) error {
-	repo, err := resolveBackupRepo(backupInitRepo)
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	repo, err := resolveBackupRepo(backupInitRepo, state.cfg)
 	if err != nil {
 		return err
 	}
@@ -130,7 +135,11 @@ func runBackupInit(cmd *cobra.Command, _ []string) error {
 }
 
 func runBackupList(cmd *cobra.Command, _ []string) error {
-	repo, err := resolveBackupRepo(backupListRepo)
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	repo, err := resolveBackupRepo(backupListRepo, state.cfg)
 	if err != nil {
 		return err
 	}
@@ -177,7 +186,11 @@ func printBackupSnapshots(w io.Writer, snapshots []*backup.Manifest) error {
 }
 
 func runBackupVerify(cmd *cobra.Command, args []string) error {
-	repo, err := resolveBackupRepo(backupVerifyRepo)
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	repo, err := resolveBackupRepo(backupVerifyRepo, state.cfg)
 	if err != nil {
 		return err
 	}
@@ -223,7 +236,12 @@ func runBackupVerify(cmd *cobra.Command, args []string) error {
 // result. Like verify, it never proxies through the daemon: it reads only
 // the repository and writes only the target, never the live archive.
 func runBackupRestore(cmd *cobra.Command, args []string) error {
-	repo, err := resolveBackupRepo(backupRestoreRepo)
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	repo, err := resolveBackupRepo(backupRestoreRepo, cfg)
 	if err != nil {
 		return err
 	}
@@ -231,14 +249,14 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening backup repository: %w", err)
 	}
-	if err := refuseRestoreIntoLiveDaemonHome(backupRestoreTarget); err != nil {
+	if err := refuseRestoreIntoLiveDaemonHome(backupRestoreTarget, cfg); err != nil {
 		return err
 	}
 	if backupRestoreAfterDaemonPreflight != nil {
 		backupRestoreAfterDaemonPreflight()
 	}
 	targetCoordinator, coordinatedTarget, err := backupRestoreTargetCoordinator(
-		backupRestoreTarget, backupRestoreOverwrite,
+		backupRestoreTarget, backupRestoreOverwrite, cfg,
 	)
 	if err != nil {
 		return err
@@ -309,6 +327,7 @@ func backupRestorePackedContentTarget(loose bool) backup.PackedContentTarget {
 func backupRestoreTargetCoordinator(
 	target string,
 	overwrite bool,
+	cfg *config.Config,
 ) (*daemonRestoreTargetCoordinator, bool, error) {
 	if cfg == nil || target == "" || cfg.Data.DataDir == "" {
 		return nil, false, nil
@@ -712,8 +731,8 @@ func printBackupRestoreSummary(w io.Writer, target string, res *backup.RestoreRe
 // like any other directory. Target and home are compared as filesystem
 // objects, not path strings, so a case-variant or symlinked spelling of the
 // home is refused too.
-func refuseRestoreIntoLiveDaemonHome(target string) error {
-	configuredHome, err := restoreTargetsConfiguredArchive(target)
+func refuseRestoreIntoLiveDaemonHome(target string, cfg *config.Config) error {
+	configuredHome, err := restoreTargetsConfiguredArchive(target, cfg)
 	if err != nil {
 		return err
 	}
@@ -737,7 +756,7 @@ func refuseRestoreIntoLiveDaemonHome(target string) error {
 	return nil
 }
 
-func restoreTargetsConfiguredArchive(target string) (bool, error) {
+func restoreTargetsConfiguredArchive(target string, cfg *config.Config) (bool, error) {
 	if cfg == nil || target == "" || cfg.Data.DataDir == "" {
 		return false, nil
 	}
@@ -867,7 +886,7 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 // sensitive. The flag-named plaintext guard lives here so users see their
 // CLI flags in the error; the engine's own sensitive-source guard is the
 // backstop.
-func backupExtrasSpec() (backup.ExtrasSpec, error) {
+func backupExtrasSpec(cfg *config.Config) (backup.ExtrasSpec, error) {
 	if (backupCreateIncludeConfig || backupCreateIncludeTokens) && !backupCreateAllowPlaintextSecrets {
 		var flag string
 		switch {
@@ -897,7 +916,12 @@ func backupExtrasSpec() (backup.ExtrasSpec, error) {
 }
 
 func runBackupCreateLocal(cmd *cobra.Command) error {
-	repo, err := resolveBackupRepo(backupCreateRepo)
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	repo, err := resolveBackupRepo(backupCreateRepo, cfg)
 	if err != nil {
 		return err
 	}
@@ -930,7 +954,7 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 	}
 	defer func() { _ = blobs.Close() }()
 
-	freezer, closeFreezer, err := newBackupFreezer(cmd.Context())
+	freezer, closeFreezer, err := newBackupFreezer(cmd.Context(), cfg)
 	if err != nil {
 		return err
 	}
@@ -948,7 +972,7 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 	renderer := newBackupProgressRenderer(cmd.OutOrStdout(), mode)
 	defer renderer.finish()
 
-	extras, err := backupExtrasSpec()
+	extras, err := backupExtrasSpec(cfg)
 	if err != nil {
 		return err
 	}
@@ -988,7 +1012,10 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 // freezeViaDaemon coordinator over it. backup create must never scan a
 // live-daemon-owned SQLite file unfrozen, so a daemon that cannot be
 // resolved here is a hard failure rather than a silent unfrozen fallback.
-func newBackupFreezer(ctx context.Context) (backup.FreezeCoordinator, func(), error) {
+func newBackupFreezer(ctx context.Context, cfg *config.Config) (backup.FreezeCoordinator, func(), error) {
+	if cfg == nil {
+		return nil, func() {}, errors.New("configuration is unavailable")
+	}
 	rt := findDaemonRuntime(cfg.Data.DataDir)
 	if rt == nil {
 		return nil, func() {}, errors.New(

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -18,7 +19,7 @@ import (
 const messageExportSchema = "msgvault-message-export/1"
 
 type exportMessagesDeps struct {
-	openStore func() (*store.Store, func(), error)
+	openStore func(context.Context) (*store.Store, func(), error)
 }
 
 type exportMessagesOptions struct {
@@ -154,7 +155,9 @@ func (s exportMessagesJSONLSink) Message(message store.MessageExportMessage) err
 }
 
 func defaultExportMessagesDeps() exportMessagesDeps {
-	return exportMessagesDeps{openStore: openWritableStoreAndInitForIngest}
+	return exportMessagesDeps{openStore: func(ctx context.Context) (*store.Store, func(), error) {
+		return openWritableStoreAndInitForIngestInvocation(invocationFromContext(ctx))
+	}}
 }
 
 func newExportMessagesCmd(deps exportMessagesDeps) *cobra.Command {
@@ -216,7 +219,7 @@ func runExportMessages(
 	if deps.openStore == nil {
 		return errors.New("open message archive is not configured")
 	}
-	st, cleanup, err := deps.openStore()
+	st, cleanup, err := deps.openStore(cmd.Context())
 	if err != nil {
 		return err
 	}

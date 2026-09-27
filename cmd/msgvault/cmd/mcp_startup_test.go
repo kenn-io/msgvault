@@ -182,11 +182,12 @@ func runMCPStartupChild(t *testing.T) {
 	require.NotEmpty(t, home)
 	loaded, err := config.Load("", home)
 	require.NoError(t, err)
-	cfg = loaded
+	cfg := loaded
 	remoteAPISchemaCheckEnabled = true
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	ctx = testInvocationContext(ctx, cfg, invocationOptions{})
 	mcpCmd.SetContext(ctx)
 	err = mcpCmd.RunE(mcpCmd, nil)
 	if err != nil && !errors.Is(err, context.Canceled) {

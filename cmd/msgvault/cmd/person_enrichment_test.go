@@ -696,6 +696,7 @@ func testPersonEnrichmentCommandDeps(
 	t *testing.T, enrichment personenrichment.Config, st *store.Store,
 ) personEnrichmentCommandDeps {
 	t.Helper()
+	cfg := testConfigValue()
 	saved := cfg
 	t.Cleanup(func() { cfg = saved })
 	cfg = providerCredentialTestConfig(t)

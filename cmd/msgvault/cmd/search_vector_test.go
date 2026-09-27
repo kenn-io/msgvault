@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -102,11 +103,12 @@ func TestSearchCmd_VectorModeUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testin
 	})
 	writeStatsHTTPDaemonRuntime(t, dataDir, srv)
 
-	restore := configureVectorSearchHTTPTest(t, dataDir, true, "")
+	testCtx, restore := configureVectorSearchHTTPTest(t, dataDir, true, "")
 	defer restore()
 
 	done := captureStdout(t)
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(searchCmd)
 	root.SetArgs([]string{
 		"search", "--mode", "vector", "--json",
@@ -146,12 +148,13 @@ func TestSearchCmd_VectorModeCollectionUsesLocalDaemonHTTPAndPreservesBanner(t *
 	})
 	writeStatsHTTPDaemonRuntime(t, dataDir, srv)
 
-	restore := configureVectorSearchHTTPTest(t, dataDir, true, "")
+	testCtx, restore := configureVectorSearchHTTPTest(t, dataDir, true, "")
 	defer restore()
 
 	doneOut := captureStdout(t)
 	doneErr := captureStderr(t)
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(searchCmd)
 	root.SetArgs([]string{
 		"search", "--mode", "vector",
@@ -185,10 +188,11 @@ func TestSearchCmd_VectorModeUnknownAccountUsesDaemonError(t *testing.T) {
 	})
 	writeStatsHTTPDaemonRuntime(t, dataDir, srv)
 
-	restore := configureVectorSearchHTTPTest(t, dataDir, true, "")
+	testCtx, restore := configureVectorSearchHTTPTest(t, dataDir, true, "")
 	defer restore()
 
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(searchCmd)
 	root.SetArgs([]string{
 		"search", "--mode", "vector",
@@ -211,11 +215,12 @@ func TestSearchCmd_HybridModeUsesConfiguredRemoteHTTP(t *testing.T) {
 		writeVectorSearchResponse(t, w, "alice@example.com", "", 0)
 	})
 
-	restore := configureVectorSearchHTTPTest(t, t.TempDir(), false, srv.URL)
+	testCtx, restore := configureVectorSearchHTTPTest(t, t.TempDir(), false, srv.URL)
 	defer restore()
 
 	done := captureStdout(t)
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(searchCmd)
 	root.SetArgs([]string{"search", "--mode", "hybrid", "--explain", "--json", "lunch"})
 
@@ -245,8 +250,10 @@ func vectorSearchHTTPDaemon(
 	return srv
 }
 
-func configureVectorSearchHTTPTest(t *testing.T, dataDir string, local bool, remoteURL string) func() {
+func configureVectorSearchHTTPTest(t *testing.T, dataDir string, local bool, remoteURL string) (context.Context, func()) {
 	t.Helper()
+	cfg := testConfigValue()
+	useLocal := false
 	savedCfg := cfg
 	savedUseLocal := useLocal
 	cfg = &config.Config{
@@ -257,12 +264,14 @@ func configureVectorSearchHTTPTest(t *testing.T, dataDir string, local bool, rem
 			AllowInsecure: true,
 		},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	invocationFromContext(testCtx).options.useLocal = local
 	if local {
 		cfg.Remote.URL = "http://configured-daemonclient.invalid"
 	}
 	useLocal = local
 	resetSearchFlags()
-	return func() {
+	return testCtx, func() {
 		cfg = savedCfg
 		useLocal = savedUseLocal
 		resetSearchFlags()

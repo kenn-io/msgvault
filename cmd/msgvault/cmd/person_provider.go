@@ -60,11 +60,12 @@ type personProviderCodexClient interface {
 }
 
 type personProviderCommandDeps struct {
+	bind                       func(personProviderCommandDeps, context.Context) personProviderCommandDeps
 	config                     func() peoplesweep.Config
 	vectorConfig               func() vector.Config
 	openStore                  func() (personProviderStore, func(), error)
 	openReadStore              func() (personProviderStore, func(), error)
-	newChecker                 func(peoplesweep.Config, personProviderStore) (personProviderChecker, error)
+	newChecker                 func(peoplesweep.Config, personProviderStore, personProviderSetupDeps) (personProviderChecker, error)
 	newCodexClient             func(peoplesweep.Config) (personProviderCodexClient, error)
 	isDaemonSubprocess         func() bool
 	providerStoreOwnedByDaemon func(context.Context) (bool, error)
@@ -174,41 +175,89 @@ type personSemanticProviderRevokeAllOutput struct {
 	Profiles []personSemanticProviderStatusOutput `json:"profiles"`
 }
 
-func defaultPersonProviderCommandDeps() personProviderCommandDeps {
+func defaultPersonProviderCommandDeps(contexts ...context.Context) personProviderCommandDeps {
 	setup := defaultPersonProviderSetupDeps()
 	setup.openCredentialStore = func() (peoplesweep.CredentialStore, error) {
-		if cfg == nil {
-			return nil, errors.New("configuration is unavailable")
-		}
-		return peoplesweep.NewFileCredentialStore(cfg.TokensDir()), nil
+		return nil, errors.New("configuration is unavailable")
 	}
-	return personProviderCommandDeps{
-		config: func() peoplesweep.Config {
-			if cfg == nil {
-				return peoplesweep.Config{}
+	deps := personProviderCommandDeps{
+		bind: func(deps personProviderCommandDeps, ctx context.Context) personProviderCommandDeps {
+			state := invocationFromContext(ctx)
+			var currentCfg *config.Config
+			if state != nil && state.cfg != nil {
+				currentCfg = state.cfg
 			}
-			return cfg.People.Sweep
+			deps.config = func() peoplesweep.Config {
+				if currentCfg == nil {
+					return peoplesweep.Config{}
+				}
+				return currentCfg.People.Sweep
+			}
+			deps.vectorConfig = func() vector.Config {
+				if currentCfg == nil {
+					return vector.Config{}
+				}
+				return currentCfg.Vector
+			}
+			deps.openReadStore = func() (personProviderStore, func(), error) {
+				if currentCfg == nil {
+					return nil, nil, errors.New("configuration is unavailable")
+				}
+				st, err := store.OpenReadOnly(currentCfg.DatabaseDSN())
+				if err != nil {
+					return nil, nil, err
+				}
+				return st, func() { _ = st.Close() }, nil
+			}
+			deps.openStore = func() (personProviderStore, func(), error) {
+				return openWritableStoreAndInitForInvocation(state)
+			}
+			deps.setup.openCredentialStore = func() (peoplesweep.CredentialStore, error) {
+				if currentCfg == nil {
+					return nil, errors.New("configuration is unavailable")
+				}
+				return peoplesweep.NewFileCredentialStore(currentCfg.TokensDir()), nil
+			}
+			deps.remoteConfigured = func() bool { return IsRemoteMode(state) }
+			deps.readConfigFile = func() (config.ConfigFile, error) {
+				if currentCfg == nil {
+					return config.ConfigFile{}, errors.New("configuration is unavailable")
+				}
+				return config.ReadConfigFile(currentCfg.ConfigFilePath())
+			}
+			deps.configHomeDir = func() string {
+				if currentCfg == nil {
+					return ""
+				}
+				return currentCfg.HomeDir
+			}
+			deps.editConfigTables = func(ifMatch string, edits []config.TableEdit) (config.ConfigFile, error) {
+				if currentCfg == nil {
+					return config.ConfigFile{}, errors.New("configuration is unavailable")
+				}
+				return config.EditConfigTables(currentCfg.ConfigFilePath(), ifMatch, edits)
+			}
+			deps.restoreConfigFile = func(published, before config.ConfigFile) (config.ConfigFile, error) {
+				if currentCfg == nil {
+					return config.ConfigFile{}, errors.New("configuration is unavailable")
+				}
+				return config.RestoreConfigFile(currentCfg.ConfigFilePath(), published, before)
+			}
+			return deps
+		},
+		config: func() peoplesweep.Config {
+			return peoplesweep.Config{}
 		},
 		vectorConfig: func() vector.Config {
-			if cfg == nil {
-				return vector.Config{}
-			}
-			return cfg.Vector
+			return vector.Config{}
 		},
 		openStore: func() (personProviderStore, func(), error) {
-			return openWritableStoreAndInit()
+			return nil, nil, errors.New("configuration is unavailable")
 		},
 		openReadStore: func() (personProviderStore, func(), error) {
-			if cfg == nil {
-				return nil, nil, errors.New("configuration is unavailable")
-			}
-			st, err := store.OpenReadOnly(cfg.DatabaseDSN())
-			if err != nil {
-				return nil, nil, err
-			}
-			return st, func() { _ = st.Close() }, nil
+			return nil, nil, errors.New("configuration is unavailable")
 		},
-		newChecker: func(config peoplesweep.Config, st personProviderStore) (personProviderChecker, error) {
+		newChecker: func(config peoplesweep.Config, st personProviderStore, setup personProviderSetupDeps) (personProviderChecker, error) {
 			registry, err := peoplesweep.NewDriverRegistry(
 				http.DefaultClient,
 				peoplesweep.NewCodexCommandStarter(),
@@ -260,23 +309,25 @@ func defaultPersonProviderCommandDeps() personProviderCommandDeps {
 		},
 		isDaemonSubprocess: isDaemonCLISubprocess,
 		providerStoreOwnedByDaemon: func(ctx context.Context) (bool, error) {
-			if IsRemoteMode() {
+			state := invocationFromContext(ctx)
+			if IsRemoteMode(state) {
 				return true, nil
 			}
-			if cfg == nil {
+			if state == nil || state.cfg == nil {
 				return false, errors.New("configuration is unavailable")
 			}
-			runtime, err := findCompatibleDaemonRuntimeContext(ctx, cfg.Data.DataDir)
+			runtime, err := findCompatibleDaemonRuntimeContext(ctx, state.cfg.Data.DataDir)
 			return runtime != nil, err
 		},
 		daemonAliveForRestartNotice: func(ctx context.Context) (bool, error) {
-			if cfg == nil {
+			state := invocationFromContext(ctx)
+			if state == nil || state.cfg == nil {
 				return false, errors.New("configuration is unavailable")
 			}
-			return findAnyDaemonRuntimeContext(ctx, cfg.Data.DataDir) != nil, nil
+			return findAnyDaemonRuntimeContext(ctx, state.cfg.Data.DataDir) != nil, nil
 		},
 		lookupEnv:        os.LookupEnv,
-		remoteConfigured: IsRemoteMode,
+		remoteConfigured: func() bool { return false },
 		proxy: func(command *cobra.Command, args []string, env map[string]string) error {
 			if len(env) == 0 {
 				return runDaemonCLICommandHTTPFromCobra(command, args)
@@ -284,31 +335,35 @@ func defaultPersonProviderCommandDeps() personProviderCommandDeps {
 			return runDaemonCLICommandHTTPFromCobraWithEnv(command, args, env)
 		},
 		readConfigFile: func() (config.ConfigFile, error) {
-			if cfg == nil {
-				return config.ConfigFile{}, errors.New("configuration is unavailable")
-			}
-			return config.ReadConfigFile(cfg.ConfigFilePath())
+			return config.ConfigFile{}, errors.New("configuration is unavailable")
 		},
 		configHomeDir: func() string {
-			if cfg == nil {
-				return ""
-			}
-			return cfg.HomeDir
+			return ""
 		},
 		editConfigTables: func(ifMatch string, edits []config.TableEdit) (config.ConfigFile, error) {
-			if cfg == nil {
-				return config.ConfigFile{}, errors.New("configuration is unavailable")
-			}
-			return config.EditConfigTables(cfg.ConfigFilePath(), ifMatch, edits)
+			return config.ConfigFile{}, errors.New("configuration is unavailable")
 		},
 		restoreConfigFile: func(published, before config.ConfigFile) (config.ConfigFile, error) {
-			if cfg == nil {
-				return config.ConfigFile{}, errors.New("configuration is unavailable")
-			}
-			return config.RestoreConfigFile(cfg.ConfigFilePath(), published, before)
+			return config.ConfigFile{}, errors.New("configuration is unavailable")
 		},
 		setup: setup,
 	}
+	if len(contexts) > 0 {
+		return personProviderDepsForContext(contexts[0], deps)
+	}
+	return deps
+}
+
+func defaultPersonProviderCommandDepsForContext(ctx context.Context) personProviderCommandDeps {
+	deps := defaultPersonProviderCommandDeps()
+	return personProviderDepsForContext(ctx, deps)
+}
+
+func personProviderDepsForContext(ctx context.Context, deps personProviderCommandDeps) personProviderCommandDeps {
+	if invocationFromContext(ctx) == nil || deps.bind == nil {
+		return deps
+	}
+	return deps.bind(deps, ctx)
 }
 
 func newPersonProviderCommand(deps personProviderCommandDeps) *cobra.Command {
@@ -342,6 +397,7 @@ func newPersonProviderReverifyCommand(deps personProviderCommandDeps) *cobra.Com
 		Short: "Re-run the exact provider check and consent",
 		Args:  optionalPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			if !deps.isDaemonSubprocess() {
 				return deps.proxy(command, args, nil)
 			}
@@ -387,6 +443,7 @@ func newPersonProviderStatusCommand(deps personProviderCommandDeps) *cobra.Comma
 		Short: "Show the exact people inference policy and consent state",
 		Args:  optionalPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			if !deps.isDaemonSubprocess() {
 				return deps.proxy(command, args, nil)
 			}
@@ -418,6 +475,7 @@ func newPersonProviderListCommand(deps personProviderCommandDeps) *cobra.Command
 		Short: "List named people inference provider profiles",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			if !deps.isDaemonSubprocess() {
 				return deps.proxy(command, args, nil)
 			}
@@ -435,6 +493,7 @@ func newPersonProviderUseCommand(deps personProviderCommandDeps) *cobra.Command 
 		Short: "Select an exactly checked people inference provider profile",
 		Args:  exactPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			return runPersonProviderUse(command, deps, args[0], jsonOutput)
 		},
 	}
@@ -449,6 +508,7 @@ func newPersonProviderRemoveCommand(deps personProviderCommandDeps) *cobra.Comma
 		Short: "Remove a named people inference provider profile",
 		Args:  exactPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			return runPersonProviderRemove(command, deps, args[0], jsonOutput)
 		},
 	}
@@ -986,6 +1046,7 @@ func newPersonProviderConsentCommand(deps personProviderCommandDeps) *cobra.Comm
 		Short: "Consent to the exact people inference policy",
 		Args:  optionalPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			if !deps.isDaemonSubprocess() {
 				return deps.proxy(command, args, nil)
 			}
@@ -1021,6 +1082,7 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 		Short: "Revoke consent for the exact people inference policy",
 		Args:  optionalPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			if fingerprint != "" {
 				if err := validatePersonProviderFingerprint(fingerprint); err != nil {
 					return err
@@ -1103,6 +1165,7 @@ func newPersonProviderHistoryCommand(deps personProviderCommandDeps) *cobra.Comm
 		Short: "Show redacted sweep history for an optional provider profile",
 		Args:  optionalPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			if !deps.isDaemonSubprocess() {
 				return deps.proxy(command, args, nil)
 			}
@@ -1156,6 +1219,7 @@ func newPersonProviderCheckCommand(deps personProviderCommandDeps) *cobra.Comman
 		Short: "Run a fixed synthetic request through the people inference provider",
 		Args:  optionalPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			if !deps.isDaemonSubprocess() {
 				if deps.providerStoreOwnedByDaemon != nil {
 					owned, err := deps.providerStoreOwnedByDaemon(command.Context())
@@ -1193,6 +1257,7 @@ func newPersonProviderLoginCommand(deps personProviderCommandDeps) *cobra.Comman
 		Short: "Start Codex ChatGPT device-code login",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			return runPersonProviderLogin(command, deps, jsonOutput)
 		},
 	}
@@ -1207,6 +1272,7 @@ func newPersonProviderModelsCommand(deps personProviderCommandDeps) *cobra.Comma
 		Short: "List Codex models and reasoning efforts",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			return runPersonProviderModels(command, deps, jsonOutput)
 		},
 	}
@@ -1631,7 +1697,7 @@ func checkPersonProvider(
 		return personProviderCheckOutput{}, err
 	}
 	defer cleanup()
-	checker, err := deps.newChecker(config, st)
+	checker, err := deps.newChecker(config, st, deps.setup)
 	if err != nil {
 		return personProviderCheckOutput{}, err
 	}

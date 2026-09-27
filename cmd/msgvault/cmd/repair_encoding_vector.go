@@ -4,9 +4,11 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/pgvector"
@@ -30,7 +32,10 @@ import (
 //
 // This file is compiled only with a vector backend build tag; the no-tag build
 // uses the stub in repair_encoding_vector_stub.go.
-func openVectorBackendForRepair(ctx context.Context, s *store.Store) (vector.Backend, func() error, error) {
+func openVectorBackendForRepair(ctx context.Context, s *store.Store, cfg *config.Config) (vector.Backend, func() error, error) {
+	if cfg == nil {
+		return nil, nil, errors.New("configuration is unavailable")
+	}
 	if !cfg.Vector.Enabled {
 		// Vector search disabled: nothing to open. No-op.
 		return nil, nil, nil

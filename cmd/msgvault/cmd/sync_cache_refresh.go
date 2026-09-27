@@ -75,7 +75,15 @@ func manualSyncCacheFlagValues(args []string) (force, skip bool) {
 // queueCacheRefreshAfterManualSync runs in the daemon, after its CLI child
 // returns. It may inspect cache metadata, but it never waits for a builder.
 func (a *storeAPIAdapter) queueCacheRefreshAfterManualSync(force, skip bool) error {
-	if a.cacheJobs == nil || skip || (!force && !cfg.Analytics.AutoBuildCache) {
+	if a == nil || a.cacheJobs == nil || skip {
+		return nil
+	}
+	if a.config == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := a.config
+	logger := repairLogger(a.logger)
+	if !force && !cfg.Analytics.AutoBuildCache {
 		return nil
 	}
 	if a.cacheJobs.ctx.Err() != nil {

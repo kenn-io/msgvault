@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -333,6 +334,10 @@ The cache files are stored in ~/.msgvault/analytics/:
 By default, this performs an incremental update (only adding new messages).
 	Use --full-rebuild to recreate all cache files from scratch.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
 		mode, err := requestedBuildCacheMode(
 			fullRebuild,
 			buildCacheAutoFlag,
@@ -343,7 +348,7 @@ By default, this performs an incremental update (only adding new messages).
 			return err
 		}
 		if isDaemonBuildCacheChild() {
-			return runBuildCacheLocalMode(mode)
+			return runBuildCacheLocalMode(mode, state)
 		}
 		if mode == buildCacheModeDerived || mode == buildCacheModeAuto || mode == buildCacheModeScheduledAuto {
 			return errors.New("--auto, --scheduled-auto, and --derived-only are internal daemon-child modes")
@@ -428,15 +433,20 @@ func runBuildCacheHTTP(cmd *cobra.Command, fullRebuild bool) error {
 	})
 }
 
-func runBuildCacheLocal(fullRebuild, auto bool) error {
+func runBuildCacheLocal(fullRebuild, auto bool, state *invocation) error {
 	mode, err := requestedBuildCacheMode(fullRebuild, auto, false, false)
 	if err != nil {
 		return err
 	}
-	return runBuildCacheLocalMode(mode)
+	return runBuildCacheLocalMode(mode, state)
 }
 
-func runBuildCacheLocalMode(mode buildCacheMode) error {
+func runBuildCacheLocalMode(mode buildCacheMode, state *invocation) error {
+	state = invocationState(context.Background(), state)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	dbDSN := cfg.DatabaseDSN()
 	analyticsDir := cfg.AnalyticsDir()
 	builderOverrides := analyticsBuilderOverrides(cfg.Analytics)
@@ -456,7 +466,7 @@ func runBuildCacheLocalMode(mode buildCacheMode) error {
 		return fmt.Errorf("database not found: %s\nRun 'msgvault init-db' first", dbPath)
 	}
 
-	release, err := acquireBuildCacheWriteLock(cfg)
+	release, err := acquireBuildCacheWriteLock(cfg, state)
 	if err != nil {
 		return err
 	}
@@ -558,11 +568,11 @@ func buildCacheDerivedOnly(
 	)
 }
 
-func acquireBuildCacheWriteLock(cfg *config.Config) (func(), error) {
+func acquireBuildCacheWriteLock(cfg *config.Config, state *invocation) (func(), error) {
 	if isDaemonBuildCacheChild() {
 		return func() {}, nil
 	}
-	return acquireDirectSQLiteWriteLock(cfg)
+	return acquireDirectSQLiteWriteLock(cfg, state)
 }
 
 func isDaemonBuildCacheChild() bool {
@@ -1648,7 +1658,7 @@ func buildCacheLocked(
 			// discarding the whole export; the flag makes the next build full,
 			// so no later incremental build can skip those rows.
 			partialSnapshot = true
-			logger.Warn("sync counters changed during cache export; published snapshot, next build will be full",
+			slog.Warn("sync counters changed during cache export; published snapshot, next build will be full",
 				"additions", fmt.Sprintf("%d→%d", syncCounters.additions, currentCounters.additions),
 				"updates", fmt.Sprintf("%d→%d", syncCounters.updates, currentCounters.updates),
 				"failed_runs", fmt.Sprintf("%d→%d", syncCounters.failedRunCount, currentCounters.failedRunCount),
@@ -2214,7 +2224,12 @@ func exportToCSV(db sqlRunner, query string, dest string) error {
 // rebuildCacheAfterWrite refreshes the SQLite-backed analytics cache after a
 // write operation. Cache maintenance is part of the operation result: SQLite
 // remains authoritative, but callers must surface any refresh failure.
-func rebuildCacheAfterWrite(dbPath string) error {
+func rebuildCacheAfterWrite(dbPath string, state *invocation) error {
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := repairLogger(state.logger)
 	if store.IsPostgresURL(dbPath) {
 		return nil
 	}
@@ -2240,7 +2255,12 @@ func rebuildCacheAfterWrite(dbPath string) error {
 // rebuildCacheAfterManualSync applies the same minimum interval as scheduled
 // syncs. A usable committed cache stays available after a small import; an
 // absent or incompatible cache still recovers immediately.
-func rebuildCacheAfterManualSync(dbPath string) error {
+func rebuildCacheAfterManualSync(dbPath string, state *invocation) error {
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := repairLogger(state.logger)
 	if isDaemonCLISubprocess() {
 		// The parent daemon inspects the durable result and owns any detached
 		// refresh. A CLI child must not keep its HTTP caller waiting on a build.
@@ -2266,7 +2286,7 @@ func rebuildCacheAfterManualSync(dbPath string) error {
 			"remaining", remaining.String(), "published_at", staleness.PublishedAt)
 		return nil
 	}
-	return rebuildCacheAfterWrite(dbPath)
+	return rebuildCacheAfterWrite(dbPath, state)
 }
 
 // buildCacheSubprocess runs `msgvault build-cache` as a child process
@@ -2412,7 +2432,7 @@ func newBuildCacheSubprocessCommand(ctx context.Context, mode buildCacheMode) (*
 		return nil, fmt.Errorf("locate msgvault executable: %w", err)
 	}
 
-	args := globalConfigFlagArgs()
+	args := globalConfigFlagArgs(optionsFromContext(ctx))
 	args = append(args, "--no-log-file", "build-cache")
 	switch mode {
 	case buildCacheModeDefault:
@@ -2488,31 +2508,35 @@ func buildCacheDaemonChildEnv(base []string, parentPID int) []string {
 // globalConfigFlagArgs reconstructs the persistent flags that affect
 // configuration resolution so a child process loads the same config as
 // the running one.
-func globalConfigFlagArgs() []string {
+func globalConfigFlagArgs(options ...invocationOptions) []string {
+	if len(options) == 0 {
+		return nil
+	}
+	o := options[0]
 	var args []string
-	if cfgFile != "" {
-		args = append(args, "--config", cfgFile)
+	if o.cfgFile != "" {
+		args = append(args, "--config", o.cfgFile)
 	}
-	if homeDir != "" {
-		args = append(args, "--home", homeDir)
+	if o.homeDir != "" {
+		args = append(args, "--home", o.homeDir)
 	}
-	if useLocal {
+	if o.useLocal {
 		args = append(args, "--local")
 	}
 	// Forward the logging flags so an explicit level survives into subprocesses.
 	// The daemon CLI subprocess otherwise quiets to WARN, defeating a user's
 	// explicit --log-level/--verbose/--log-sql request.
-	if logLevel != "" {
-		args = append(args, "--log-level", logLevel)
+	if o.logLevel != "" {
+		args = append(args, "--log-level", o.logLevel)
 	}
-	if verbose {
+	if o.verbose {
 		args = append(args, "--verbose")
 	}
-	if logSQL {
+	if o.logSQL {
 		args = append(args, "--log-sql")
 	}
-	if logSQLSlow != 0 {
-		args = append(args, "--log-sql-slow-ms", strconv.FormatInt(logSQLSlow, 10))
+	if o.logSQLSlow != 0 {
+		args = append(args, "--log-sql-slow-ms", strconv.FormatInt(o.logSQLSlow, 10))
 	}
 	return args
 }
@@ -2528,6 +2552,11 @@ func globalConfigFlagArgs() []string {
 // is queued; the refresher validates the committed shard fingerprint before
 // deciding whether a recent publication can be throttled.
 func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) error {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	if !cfg.Analytics.AutoBuildCache {
 		// AutoBuildCache opts out of automatic daemon rebuilds, even when startup
 		// selected a usable DuckDB cache; engine = "sql" is the live-data choice.
@@ -2551,6 +2580,12 @@ func rebuildCacheNow(
 	identifier string,
 	scheduleRetry func(time.Duration, string),
 ) error {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := repairLogger(state.logger)
 	if !cfg.Analytics.AutoBuildCache {
 		return nil
 	}

@@ -8,11 +8,12 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
-func currentSemanticPersonVectorConfigSource() vector.SemanticPersonEmbeddingConfigSource {
+func currentSemanticPersonVectorConfigSource(state *invocation) vector.SemanticPersonEmbeddingConfigSource {
 	return func() (vector.Config, error) {
-		if cfg == nil {
+		if state == nil || state.cfg == nil {
 			return vector.Config{}, errors.New("semantic person embedding runtime configuration is unavailable")
 		}
+		cfg := state.cfg
 		configPath := strings.TrimSpace(cfg.ConfigFilePath())
 		if configPath == "" {
 			return vector.Config{}, errors.New("semantic person embedding runtime configuration path is unavailable")

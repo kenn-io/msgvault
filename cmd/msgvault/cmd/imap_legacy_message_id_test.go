@@ -34,7 +34,8 @@ func TestIMAPLegacyMessageIDFullSyncPersistsMemberships(t *testing.T) {
 			initial := newScriptedRFC7162Client(t, addr, imaplib.WithFolderFilter([]string{"INBOX"}, nil))
 			initialOptions := msgsync.DefaultOptions()
 			initialOptions.SourceType = sourceTypeIMAP
-			initialSummary, err := newMessageSyncer(initial, st, initialOptions).Full(t.Context(), source.Identifier)
+			initialSummary, err := newMessageSyncer(initial, st, initialOptions,
+				testInvocationWithConfig(testConfigValue())).Full(t.Context(), source.Identifier)
 			require.NoError(err)
 			require.Zero(initialSummary.Errors)
 			require.NoError(initial.Close())
@@ -42,11 +43,12 @@ func TestIMAPLegacyMessageIDFullSyncPersistsMemberships(t *testing.T) {
 			// After a filtered import, both a full scan and a repeated refresh must
 			// publish the same two mailbox memberships for a single archive row.
 			for attempt := range 2 {
-				client := newScriptedRFC7162Client(t, addr, imapFolderStateOptions(st, source, true)...)
+				client := newScriptedRFC7162Client(t, addr, imapFolderStateOptions(st, source, true, testConfigValue(), testDiscardLogger())...)
 				options := msgsync.DefaultOptions()
 				options.SourceType = sourceTypeIMAP
 				options.NoResume = true
-				summary, err := newMessageSyncer(client, st, options).
+				summary, err := newMessageSyncer(client, st, options,
+					testInvocationWithConfig(testConfigValue())).
 					FullWithFinalizer(t.Context(), source, func(summary *gmail.SyncSummary) error {
 						return saveIMAPFolderStates(t.Context(), st, source, client, summary, 0)
 					})

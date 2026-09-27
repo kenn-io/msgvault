@@ -59,7 +59,7 @@ func TestImportSlackdumpCommandForwardsFlagsAndPath(t *testing.T) {
 
 func TestRunImportSlackdumpRejectsMissingSourcePath(t *testing.T) {
 	command := &cobra.Command{Use: "import-slackdump"}
-	command.SetContext(context.Background())
+	command.SetContext(testInvocationContext(context.Background(), config.NewDefaultConfig(), invocationOptions{}))
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
 
@@ -69,9 +69,13 @@ func TestRunImportSlackdumpRejectsMissingSourcePath(t *testing.T) {
 }
 
 func TestResolveSlackdumpMediaPolicyPreservesWorkspaceRulesAndOverridesOnlySize(t *testing.T) {
+	cfg := testConfigValue()
+
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	disabled := false
 	cfg.Slack = config.SlackConfig{
 		Media:                &disabled,
@@ -89,7 +93,7 @@ func TestResolveSlackdumpMediaPolicyPreservesWorkspaceRulesAndOverridesOnlySize(
 		MaxBytes:        7 << 20,
 		DisabledReason:  attachmentpolicy.SkipPolicyScope,
 	}
-	assert.Equal(t, want, resolveSlackdumpMediaPolicy("T001", 0))
+	assert.Equal(t, want, resolveSlackdumpMediaPolicy("T001", 0, cfg))
 	want.MaxBytes = 3 << 20
-	assert.Equal(t, want, resolveSlackdumpMediaPolicy("T001", 3))
+	assert.Equal(t, want, resolveSlackdumpMediaPolicy("T001", 3, cfg))
 }

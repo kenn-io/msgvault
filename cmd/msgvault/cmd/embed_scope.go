@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -22,7 +23,12 @@ import (
 // them. Unknown identifiers are a hard error: a silently skipped account
 // would quietly widen the embedded corpus beyond what the operator asked
 // for.
-func resolveEmbedScopeSourceIDs(s *store.Store) error {
+func resolveEmbedScopeSourceIDs(s *store.Store, state *invocation) error {
+	state = invocationState(context.Background(), state)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	var ids []int64
 	switch {
 	case len(embedAccounts) > 0 || len(embedCollections) > 0:
@@ -131,7 +137,12 @@ func resolveEmbedAccountList(s *store.Store, accounts []string, requireIdentifie
 // vector.ErrScopeUnresolvable so callers latch vector search stale instead
 // of retrying forever against cached source IDs; transient failures (a busy
 // database) pass through unwrapped for retry.
-func configuredEmbedBuildScope(s *store.Store) (vector.BuildScope, error) {
+func configuredEmbedBuildScope(s *store.Store, state *invocation) (vector.BuildScope, error) {
+	state = invocationState(context.Background(), state)
+	if state == nil || state.cfg == nil {
+		return vector.BuildScope{}, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	messageTypes := cfg.Vector.Embed.Scope.MessageTypes
 	if len(cfg.Vector.Embed.Scope.Accounts) == 0 {
 		return vector.NewBuildScope(messageTypes, nil), nil
@@ -151,10 +162,14 @@ func configuredEmbedBuildScope(s *store.Store) (vector.BuildScope, error) {
 // compare generation fingerprints against short-lived stores of their own.
 // A no-op when no accounts are configured.
 //
-// It mutates the package-global cfg, so it may only run in short-lived
-// single-goroutine CLI processes. Daemon code paths (HTTP handlers, the
-// background vector init) must use resolvedVectorConfig instead.
-func ensureEmbedScopeResolved() error {
+// It mutates the invocation's config, so daemon code paths (HTTP handlers,
+// the background vector init) must use resolvedVectorConfig instead.
+func ensureEmbedScopeResolved(state *invocation) error {
+	state = invocationState(context.Background(), state)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	if len(cfg.Vector.Embed.Scope.Accounts) == 0 {
 		return nil
 	}
@@ -163,7 +178,7 @@ func ensureEmbedScopeResolved() error {
 		return fmt.Errorf("open main db for embed scope resolution: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	return resolveEmbedScopeSourceIDs(s)
+	return resolveEmbedScopeSourceIDs(s, state)
 }
 
 // resolvedVectorConfig returns a copy of the vector config with the
@@ -192,7 +207,12 @@ func resolvedVectorConfig(s *store.Store, vecCfg vector.Config) (vector.Config, 
 
 // openResolvedVectorConfig is resolvedVectorConfig for callers without an
 // open store, such as the daemon's CLI-plan HTTP handlers.
-func openResolvedVectorConfig() (vector.Config, error) {
+func openResolvedVectorConfig(state *invocation) (vector.Config, error) {
+	state = invocationState(context.Background(), state)
+	if state == nil || state.cfg == nil {
+		return vector.Config{}, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	if len(cfg.Vector.Embed.Scope.Accounts) == 0 && len(cfg.Vector.Multimodal.Scope.Accounts) == 0 {
 		return cfg.Vector, nil
 	}

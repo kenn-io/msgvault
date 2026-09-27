@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -34,16 +35,22 @@ func newAddO365Cmd() *cobra.Command {
 // before proxying, so the daemon subprocess never opens a browser or waits
 // on human consent while holding the operation gate.
 func preflightAddO365Authorize(cmd *cobra.Command, email string) error {
-	if IsRemoteMode() {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
+	if IsRemoteMode(state) {
 		// Tokens live on the remote host; authorization must happen there.
 		return nil
 	}
-	if err := requireMicrosoftOAuthConfig(); err != nil {
+	if err := requireMicrosoftOAuthConfig(cfg); err != nil {
 		return err
 	}
 	msMgr := microsoft.NewManager(
 		cfg.Microsoft.ClientID,
-		microsoftTenantID(o365TenantID),
+		microsoftTenantID(o365TenantID, cfg),
 		cfg.Microsoft.EffectiveRedirectURI(),
 		cfg.TokensDir(),
 		logger,
@@ -91,15 +98,21 @@ Examples:
 }
 
 func runAddO365Local(cmd *cobra.Command, args []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	email := args[0]
 
-	if err := requireMicrosoftOAuthConfig(); err != nil {
+	if err := requireMicrosoftOAuthConfig(cfg); err != nil {
 		return err
 	}
 
 	msMgr := microsoft.NewManager(
 		cfg.Microsoft.ClientID,
-		microsoftTenantID(o365TenantID),
+		microsoftTenantID(o365TenantID, cfg),
 		cfg.Microsoft.EffectiveRedirectURI(),
 		cfg.TokensDir(),
 		logger,
@@ -135,7 +148,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 		AuthMethod: imapclient.AuthXOAuth2,
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngest()
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 	if err != nil {
 		return err
 	}
@@ -186,9 +199,9 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	// Auto-default-identity must run BEFORE the legacy migration
 	// retry — see comment in account_identity.go.
 	if !noDefaultIdentityAddO365 {
-		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier")
+		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 	}
-	if err := runPostSourceCreateMigrations(s); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 

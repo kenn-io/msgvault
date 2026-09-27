@@ -40,11 +40,16 @@ Examples:
   msgvault repair-derived --source-type beeper --identifier instagramgo`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
 
-			s, cleanup, err := openWritableStoreAndInitForIngest()
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 			if err != nil {
 				return err
 			}
@@ -69,12 +74,12 @@ Examples:
 				sum, rerr := rederive.Run(ctx, s, src.SourceType, src.Identifier, src.ID, progress)
 				if ctx.Err() != nil {
 					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run repair-derived to finish (idempotent).")
-					return rebuildCacheAfterWrite(cfg.DatabaseDSN())
+					return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
 				}
 				if rerr != nil {
 					return errors.Join(
 						fmt.Errorf("repair failed for %s: %w", label, rerr),
-						rebuildCacheAfterWrite(cfg.DatabaseDSN()),
+						rebuildCacheAfterWrite(cfg.DatabaseDSN(), state),
 					)
 				}
 				_, _ = fmt.Fprint(cmd.OutOrStdout(), formatRepairDerivedSummary(label, sum))
@@ -86,7 +91,7 @@ Examples:
 				}
 			}
 
-			return rebuildCacheAfterWrite(cfg.DatabaseDSN())
+			return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
 		},
 	}
 	cmd.Flags().StringArrayVar(&repairDerivedSourceTypes, "source-type", nil,

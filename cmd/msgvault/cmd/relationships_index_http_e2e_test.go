@@ -136,6 +136,8 @@ func (f relationshipIndexHTTPFixture) newServer(t *testing.T, disableLegacyViews
 		Data:    config.DataConfig{DataDir: filepath.Dir(f.dbPath)},
 		Server:  config.ServerConfig{APIPort: 8080},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	server := api.NewServerWithOptions(api.ServerOptions{
 		Config: cfg,
 		Store: &storeAPIAdapter{

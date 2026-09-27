@@ -68,6 +68,7 @@ type ollamaProbeResult struct {
 // environment, the config file, the archive, the daemon, and the people
 // provider onboarding machinery are all injectable.
 type setupProvidersDeps struct {
+	bind              func(context.Context) setupProvidersDeps
 	lookupEnv         func(string) (string, bool)
 	fileExists        func(string) bool
 	readConfigFile    func() (config.ConfigFile, error)
@@ -83,39 +84,67 @@ type setupProvidersDeps struct {
 	now               func() time.Time
 }
 
-func defaultSetupProvidersDeps() setupProvidersDeps {
+func defaultSetupProvidersDeps(contexts ...context.Context) setupProvidersDeps {
+	if len(contexts) > 0 {
+		deps := defaultSetupProvidersDeps()
+		if deps.bind != nil {
+			return deps.bind(contexts[0])
+		}
+	}
 	return setupProvidersDeps{
+		bind: func(ctx context.Context) setupProvidersDeps {
+			deps := defaultSetupProvidersDeps()
+			state := invocationFromContext(ctx)
+			var currentCfg *config.Config
+			if state != nil && state.cfg != nil {
+				currentCfg = state.cfg
+			}
+			deps.readConfigFile = func() (config.ConfigFile, error) {
+				if currentCfg == nil {
+					return config.ConfigFile{}, errors.New("configuration is unavailable")
+				}
+				return config.ReadConfigFile(currentCfg.ConfigFilePath())
+			}
+			deps.editConfigTables = func(ifMatch string, edits []config.TableEdit) (config.ConfigFile, error) {
+				if currentCfg == nil {
+					return config.ConfigFile{}, errors.New("configuration is unavailable")
+				}
+				return config.EditConfigTables(currentCfg.ConfigFilePath(), ifMatch, edits)
+			}
+			deps.loadConfig = func(snapshot config.ConfigFile) (*config.Config, error) {
+				if currentCfg == nil {
+					return nil, errors.New("configuration is unavailable")
+				}
+				return loadSetupConfig(snapshot, currentCfg.HomeDir)
+			}
+			deps.remoteConfigured = func() bool { return isRemoteModeFor(state) }
+			deps.personProvider = func() personProviderCommandDeps {
+				return defaultPersonProviderCommandDepsForContext(ctx)
+			}
+			return deps
+		},
 		lookupEnv:  os.LookupEnv,
 		fileExists: defaultFileExists,
 		readConfigFile: func() (config.ConfigFile, error) {
-			if cfg == nil {
-				return config.ConfigFile{}, errors.New("configuration is unavailable")
-			}
-			return config.ReadConfigFile(cfg.ConfigFilePath())
+			return config.ConfigFile{}, errors.New("configuration is unavailable")
 		},
 		editConfigTables: func(ifMatch string, edits []config.TableEdit) (config.ConfigFile, error) {
-			if cfg == nil {
-				return config.ConfigFile{}, errors.New("configuration is unavailable")
-			}
-			return config.EditConfigTables(cfg.ConfigFilePath(), ifMatch, edits)
+			return config.ConfigFile{}, errors.New("configuration is unavailable")
 		},
 		restoreConfigFile: func(published, before config.ConfigFile) (config.ConfigFile, error) {
 			return config.RestoreConfigFile(before.LogicalPath, published, before)
 		},
 		loadConfig: func(snapshot config.ConfigFile) (*config.Config, error) {
-			if cfg == nil {
-				return nil, errors.New("configuration is unavailable")
-			}
-			return loadSetupConfig(snapshot, cfg.HomeDir)
+			return nil, errors.New("configuration is unavailable")
 		},
-		remoteConfigured: IsRemoteMode,
+		remoteConfigured: func() bool { return false },
 		isTerminal:       commandStdinIsTerminal,
 		probeOllama:      probeOllamaServer,
 		consentState:     readSetupConsentState,
 		daemonAlive: func(ctx context.Context, loaded *config.Config) bool {
 			return findAnyDaemonRuntimeContext(ctx, loaded.Data.DataDir) != nil
 		},
-		personProvider: defaultPersonProviderCommandDeps,
+		personProvider: func() personProviderCommandDeps { return defaultPersonProviderCommandDeps() },
 		now:            time.Now,
 	}
 }
@@ -865,6 +894,9 @@ sensitive details and may be used to infer sensitive personal attributes.
 --yes accepts provider prompts but does not grant this separate opt-in.`,
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
+			if invocationFromContext(command.Context()) != nil && deps.bind != nil {
+				deps = deps.bind(command.Context())
+			}
 			return runSetupProviders(command, deps, options)
 		},
 	}

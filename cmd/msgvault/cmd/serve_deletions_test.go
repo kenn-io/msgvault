@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,18 +11,22 @@ import (
 )
 
 func TestStoreAPIAdapterDeletionManifests(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
-	adapter := &storeAPIAdapter{}
+	adapter := &storeAPIAdapter{config: cfg}
 	var _ api.DeletionManifestLister = adapter
 	var _ api.DeletionManifestCanceller = adapter
 
-	ctx := context.Background()
+	ctx := testCtx
 
 	// Save through the existing saver path.
 	m := deletion.NewManifest("adapter test", []string{"gm-1"})

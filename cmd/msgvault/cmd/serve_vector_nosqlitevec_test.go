@@ -28,9 +28,10 @@ func TestPrecheckVectorFeatures_SQLiteWithoutSqliteVecTag(t *testing.T) {
 	c.Vector.Embeddings.Endpoint = "http://localhost:11434/v1/embeddings"
 	c.Vector.Embeddings.Model = "test-model"
 	c.Vector.Embeddings.Dimension = 768
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
-	err := precheckVectorFeatures("msgvault.db")
+	err := precheckVectorFeatures("msgvault.db", c)
 	require.Error(err, "precheck must fail fast for sqlite mainPath without sqlite_vec tag")
 	assert.Contains(err.Error(), "sqlite-vec",
 		"error should point at the missing sqlite_vec build tag")

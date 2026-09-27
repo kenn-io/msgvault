@@ -10,6 +10,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 // Vars rather than consts so tests can shorten them. The quiet window keeps
@@ -26,9 +27,14 @@ var (
 // The returned stop func erases the line; call it before printing results.
 func startSearchStatus(ctx context.Context, prefix string, info HTTPStoreInfo) func() {
 	line := &searchStatusLine{
-		out:     os.Stderr,
-		prefix:  prefix,
-		fetchOp: daemonOperationFetcher(info.URL, httpStoreAPIKey(info)),
+		out:    os.Stderr,
+		prefix: prefix,
+		fetchOp: daemonOperationFetcher(info.URL, httpStoreAPIKey(info, func() *config.Config {
+			if state := invocationFromContext(ctx); state != nil {
+				return state.cfg
+			}
+			return nil
+		}())),
 		tty: isatty.IsTerminal(os.Stderr.Fd()) ||
 			isatty.IsCygwinTerminal(os.Stderr.Fd()),
 		start: time.Now(),
@@ -127,7 +133,7 @@ func daemonOperationFetcher(baseURL, apiKey string) func(context.Context) *api.O
 
 // httpStoreAPIKey returns the API key for the endpoint OpenHTTPStore
 // selected, for auxiliary requests (health polling) beside the main client.
-func httpStoreAPIKey(info HTTPStoreInfo) string {
+func httpStoreAPIKey(info HTTPStoreInfo, cfg *config.Config) string {
 	if cfg == nil {
 		return ""
 	}

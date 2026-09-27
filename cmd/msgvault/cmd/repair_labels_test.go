@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"testing"
 
@@ -20,24 +19,28 @@ import (
 // issue #748 gap directly: an add-only label merge leaves a label no
 // imap_message_memberships row backs.
 func TestRunRepairLabelsLocalDryRunApplyAndNoop(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	dataDir := t.TempDir()
 	savedCfg := cfg
 	cfg = &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
-	messageID := newLabelRepairArchive(t, "labels@example.test")
+	messageID := newLabelRepairArchive(t, "labels@example.test", cfg)
 	_, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
 	require.NoError(err)
-	beforeRevision := labelRepairArchiveRevision(t)
+	beforeRevision := labelRepairArchiveRevision(t, cfg)
 	beforeCacheState, err := query.ReadCacheSyncState(cfg.AnalyticsDir())
 	require.NoError(err)
 	assert.Equal(beforeRevision, beforeCacheState.DerivedDataRevision)
 
 	var dryRunOut bytes.Buffer
 	dryRunCmd := &cobra.Command{}
-	dryRunCmd.SetContext(context.Background())
+	dryRunCmd.SetContext(testCtx)
 	dryRunCmd.SetOut(&dryRunOut)
 	require.NoError(runRepairLabelsLocal(dryRunCmd, "", false))
 	assert.Equal(
@@ -45,50 +48,54 @@ func TestRunRepairLabelsLocalDryRunApplyAndNoop(t *testing.T) {
 			"Label repair dry run: scanned=2 changed=1\n"+
 			"Dry run: no rows were modified. Re-run with --apply to write repairs.\n",
 		dryRunOut.String())
-	assert.Equal([]string{"INBOX", "Stray"}, labelRepairArchiveLabels(t, messageID))
-	assert.Equal(beforeRevision, labelRepairArchiveRevision(t))
+	assert.Equal([]string{"INBOX", "Stray"}, labelRepairArchiveLabels(t, messageID, cfg))
+	assert.Equal(beforeRevision, labelRepairArchiveRevision(t, cfg))
 
 	var applyOut bytes.Buffer
 	applyCmd := &cobra.Command{}
-	applyCmd.SetContext(context.Background())
+	applyCmd.SetContext(testCtx)
 	applyCmd.SetOut(&applyOut)
 	require.NoError(runRepairLabelsLocal(applyCmd, "", true))
 	assert.Equal(
 		"  labels@example.test: scanned=2 changed=1\n"+
 			"Label repair applied: scanned=2 changed=1\n",
 		applyOut.String())
-	assert.Equal([]string{"INBOX"}, labelRepairArchiveLabels(t, messageID))
-	assert.Equal(beforeRevision+1, labelRepairArchiveRevision(t))
+	assert.Equal([]string{"INBOX"}, labelRepairArchiveLabels(t, messageID, cfg))
+	assert.Equal(beforeRevision+1, labelRepairArchiveRevision(t, cfg))
 	afterCacheState, err := query.ReadCacheSyncState(cfg.AnalyticsDir())
 	require.NoError(err)
 	assert.Equal(beforeRevision+1, afterCacheState.DerivedDataRevision)
 
 	var noChangeOut bytes.Buffer
 	noChangeCmd := &cobra.Command{}
-	noChangeCmd.SetContext(context.Background())
+	noChangeCmd.SetContext(testCtx)
 	noChangeCmd.SetOut(&noChangeOut)
 	require.NoError(runRepairLabelsLocal(noChangeCmd, "", true))
 	assert.Equal(
 		"  labels@example.test: scanned=2 changed=0\n"+
 			"Label repair applied: scanned=2 changed=0\n",
 		noChangeOut.String())
-	assert.Equal(beforeRevision+1, labelRepairArchiveRevision(t))
+	assert.Equal(beforeRevision+1, labelRepairArchiveRevision(t, cfg))
 }
 
 // TestRunRepairLabelsLocalUnknownIdentifierErrors catches a repair command
 // that silently matches no source instead of failing loudly when the given
 // identifier does not resolve to one.
 func TestRunRepairLabelsLocalUnknownIdentifierErrors(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	dataDir := t.TempDir()
 	savedCfg := cfg
 	cfg = &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
-	newLabelRepairArchive(t, "one@example.test")
+	newLabelRepairArchive(t, "one@example.test", cfg)
 
 	repairCmd := &cobra.Command{}
-	repairCmd.SetContext(context.Background())
+	repairCmd.SetContext(testCtx)
 	repairCmd.SetOut(&bytes.Buffer{})
 	err := runRepairLabelsLocal(repairCmd, "someone-else@example.test", true)
 	require.Error(err)
@@ -100,11 +107,15 @@ func TestRunRepairLabelsLocalUnknownIdentifierErrors(t *testing.T) {
 // its imaps://user@host:port connection string, not the email a person types
 // on the command line — the display name carries that email.
 func TestRunRepairLabelsLocalIdentifierScopesByDisplayName(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	dataDir := t.TempDir()
 	savedCfg := cfg
 	cfg = &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
@@ -120,7 +131,7 @@ func TestRunRepairLabelsLocalIdentifierScopesByDisplayName(t *testing.T) {
 
 	var out bytes.Buffer
 	repairCmd := &cobra.Command{}
-	repairCmd.SetContext(context.Background())
+	repairCmd.SetContext(testCtx)
 	repairCmd.SetOut(&out)
 	require.NoError(runRepairLabelsLocal(repairCmd, "scoped@example.test", true))
 	assert.Equal(
@@ -158,25 +169,29 @@ func (w *errAfterNWriter) Write(p []byte) (int, error) {
 // is that a real, already-committed change is not lost from the cache just
 // because the command as a whole reports an error.
 func TestRunRepairLabelsLocalRebuildsCacheDespitePartialFailure(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	dataDir := t.TempDir()
 	savedCfg := cfg
 	cfg = &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
-	newLabelRepairArchive(t, "one@example.test")
-	newLabelRepairArchive(t, "two@example.test")
+	newLabelRepairArchive(t, "one@example.test", cfg)
+	newLabelRepairArchive(t, "two@example.test", cfg)
 	_, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
 	require.NoError(err)
-	beforeRevision := labelRepairArchiveRevision(t)
+	beforeRevision := labelRepairArchiveRevision(t, cfg)
 
 	// The first source's per-source line is the only Write call allowed to
 	// succeed; the second source's own repair still runs and commits before
 	// its line fails to print.
 	out := &errAfterNWriter{n: 1}
 	repairCmd := &cobra.Command{}
-	repairCmd.SetContext(context.Background())
+	repairCmd.SetContext(testCtx)
 	repairCmd.SetOut(out)
 	err = runRepairLabelsLocal(repairCmd, "", true)
 	require.ErrorContains(err, "write label repair line")
@@ -184,7 +199,7 @@ func TestRunRepairLabelsLocalRebuildsCacheDespitePartialFailure(t *testing.T) {
 	// Both sources actually committed (the stray label from each is gone),
 	// bumping the revision twice, and the cache rebuild ran anyway and
 	// caught up to it — despite the command itself returning an error.
-	assert.Equal(beforeRevision+2, labelRepairArchiveRevision(t))
+	assert.Equal(beforeRevision+2, labelRepairArchiveRevision(t, cfg))
 	cacheState, err := query.ReadCacheSyncState(cfg.AnalyticsDir())
 	require.NoError(err)
 	assert.Equal(beforeRevision+2, cacheState.DerivedDataRevision)
@@ -200,10 +215,12 @@ func TestRepairLabelsCommandRoutesThroughDaemonCLIRunner(t *testing.T) {
 		`{"type":"stdout","data":"Label repair applied: scanned=1 changed=1\n"}`,
 		`{"type":"complete"}`,
 	)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	t.Setenv(daemonCLISubprocessEnv, "")
 
 	cmd := newRepairLabelsCmd()
+	cmd.SetContext(testCtx)
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"--apply"})
@@ -239,8 +256,13 @@ func TestRepairLabelsCommandHelpAndFlagValidation(t *testing.T) {
 // then reproduces the issue #748 gap: an add-only label merge on the first
 // message leaves a "Stray" label no membership row backs. Returns that
 // message's ID.
-func newLabelRepairArchive(t *testing.T, identifier string) int64 {
+func newLabelRepairArchive(t *testing.T, identifier string, configs ...*config.Config) int64 {
 	t.Helper()
+	cfg := testConfigValue()
+	if len(configs) > 0 && configs[0] != nil {
+		cfg = configs[0]
+	}
+
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(t, err)
 	require.NoError(t, st.InitSchema())
@@ -280,8 +302,13 @@ func newLabelRepairArchive(t *testing.T, identifier string) int64 {
 	return messageID1
 }
 
-func labelRepairArchiveLabels(t *testing.T, messageID int64) []string {
+func labelRepairArchiveLabels(t *testing.T, messageID int64, configs ...*config.Config) []string {
 	t.Helper()
+	cfg := testConfigValue()
+	if len(configs) > 0 && configs[0] != nil {
+		cfg = configs[0]
+	}
+
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
@@ -304,8 +331,13 @@ func labelRepairArchiveLabels(t *testing.T, messageID int64) []string {
 	return labels
 }
 
-func labelRepairArchiveRevision(t *testing.T) int64 {
+func labelRepairArchiveRevision(t *testing.T, configs ...*config.Config) int64 {
 	t.Helper()
+	cfg := testConfigValue()
+	if len(configs) > 0 && configs[0] != nil {
+		cfg = configs[0]
+	}
+
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })

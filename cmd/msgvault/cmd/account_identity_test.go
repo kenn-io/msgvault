@@ -21,7 +21,7 @@ func TestConfirmDefaultIdentity_HappyPath(t *testing.T) {
 
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
-	confirmDefaultIdentity(io.Discard, s, src.ID, "alice@example.com", "alice@example.com", "account-identifier")
+	confirmDefaultIdentity(io.Discard, s, src.ID, "alice@example.com", "alice@example.com", "account-identifier", slog.New(slog.DiscardHandler))
 	rows, err := s.ListAccountIdentities(src.ID)
 	require.NoError(err)
 	require.Len(rows, 1, "got %+v", rows)
@@ -39,12 +39,14 @@ func TestConfirmDefaultIdentity_EmptyIdentifierIsNoOp(t *testing.T) {
 
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
-	confirmDefaultIdentity(io.Discard, s, src.ID, "alice@example.com", "", "account-identifier")
+	confirmDefaultIdentity(io.Discard, s, src.ID, "alice@example.com", "", "account-identifier", slog.New(slog.DiscardHandler))
 	rows, _ := s.ListAccountIdentities(src.ID)
 	assert.Empty(t, rows, "want empty, got %+v", rows)
 }
 
 func TestConfirmDefaultIdentity_StoreErrorDoesNotPanic(t *testing.T) {
+	logger := testLoggerValue()
+
 	tmpDir := t.TempDir()
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
 	require.NoError(t, err)
@@ -61,7 +63,7 @@ func TestConfirmDefaultIdentity_StoreErrorDoesNotPanic(t *testing.T) {
 
 	// sourceID 99999 does not exist; FK violation returns an error
 	// from AddAccountIdentity. The helper must swallow it.
-	confirmDefaultIdentity(io.Discard, s, 99999, "ghost@example.com", "ghost@example.com", "account-identifier")
+	confirmDefaultIdentity(io.Discard, s, 99999, "ghost@example.com", "ghost@example.com", "account-identifier", slog.New(slog.DiscardHandler))
 }
 
 // TestConfirmDefaultIdentity_LegacyMigrationOverridesNoDefault pins the

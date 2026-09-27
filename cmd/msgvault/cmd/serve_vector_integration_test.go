@@ -23,6 +23,8 @@ import (
 // seam is overridden to block until daemon shutdown, so a passing test
 // proves the API listener comes up independently of vector maintenance.
 func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	oldCfg := cfg
@@ -49,7 +51,7 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cmd := &cobra.Command{Use: "serve"}
-	cmd.SetContext(ctx)
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- runServe(cmd, nil)
@@ -92,6 +94,8 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 }
 
 func TestRunServeStartsVectorWhileAnalyticsInitializationBlocked(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	oldCfg := cfg
 	dataDir := t.TempDir()
@@ -124,7 +128,7 @@ func TestRunServeStartsVectorWhileAnalyticsInitializationBlocked(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cmd := &cobra.Command{Use: "serve"}
-	cmd.SetContext(ctx)
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
 	errCh := make(chan error, 1)
 	go func() { errCh <- runServe(cmd, nil) }()
 

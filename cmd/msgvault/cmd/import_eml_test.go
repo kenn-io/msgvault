@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/importer"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -17,6 +19,7 @@ import (
 func TestImportEMLCommandRequiresIdentifier(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	cmd := newImportEMLCommand()
+	cmd.SetContext(testInvocationContext(context.Background(), config.NewDefaultConfig(), invocationOptions{}))
 	cmd.SetArgs([]string{t.TempDir()})
 
 	err := cmd.Execute()
@@ -39,7 +42,7 @@ func TestImportEMLCommandRefreshesCacheAfterPostMigrationFailure(t *testing.T) {
 	dataDir := t.TempDir()
 	testCfg := lifecycleTestConfig(dataDir)
 	testCfg.Identity.Addresses = []string{"legacy@example.com"}
-	withStoreResolverConfig(t, testCfg)
+	testCtx := withStoreResolverConfig(t, testCfg)
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 
 	st, err := store.Open(testCfg.DatabaseDSN())
@@ -68,6 +71,7 @@ func TestImportEMLCommandRefreshesCacheAfterPostMigrationFailure(t *testing.T) {
 	t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
 
 	cmd := newImportEMLCommand()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs([]string{
@@ -86,7 +90,7 @@ func TestRunEMLPostImportMigrationsConfirmsIdentityAfterHardErrors(t *testing.T)
 	require := require.New(t)
 	testCfg := lifecycleTestConfig(t.TempDir())
 	testCfg.Identity.Addresses = []string{"legacy@example.com"}
-	withStoreResolverConfig(t, testCfg)
+	testCtx := withStoreResolverConfig(t, testCfg)
 
 	st, err := store.Open(testCfg.DatabaseDSN())
 	require.NoError(err, "open store")
@@ -101,7 +105,7 @@ func TestRunEMLPostImportMigrationsConfirmsIdentityAfterHardErrors(t *testing.T)
 	}, importEMLFlags{
 		identifier: "archive@example.com",
 		sourceType: "eml",
-	})
+	}, invocationFromContext(testCtx))
 	require.NoError(err, "post-import migrations")
 
 	identities, err := st.ListAccountIdentities(src.ID)
@@ -115,7 +119,8 @@ func TestRunEMLPostImportMigrationsConfirmsIdentityAfterHardErrors(t *testing.T)
 func TestRunEMLPostImportMigrationsSkipsDefaultIdentityForNonEmailSource(t *testing.T) {
 	require := require.New(t)
 	testCfg := lifecycleTestConfig(t.TempDir())
-	withStoreResolverConfig(t, testCfg)
+	testCtx := withStoreResolverConfig(t, testCfg)
+	_ = testCtx
 
 	st, err := store.Open(testCfg.DatabaseDSN())
 	require.NoError(err, "open store")
@@ -129,7 +134,7 @@ func TestRunEMLPostImportMigrationsSkipsDefaultIdentityForNonEmailSource(t *test
 	}, importEMLFlags{
 		identifier: "+15550001111",
 		sourceType: "whatsapp",
-	})
+	}, invocationFromContext(testCtx))
 	require.NoError(err, "post-import migrations")
 
 	identities, err := st.ListAccountIdentities(src.ID)

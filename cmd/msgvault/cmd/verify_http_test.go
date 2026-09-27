@@ -32,12 +32,13 @@ func TestVerifyUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	configureRemoteSyncTest(t, server.URL)
+	testCtx := configureRemoteSyncTest(t, server.URL)
 	resetVerifyFlagsForTest(t)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd := &cobra.Command{Use: verifyCmd.Use, Args: verifyCmd.Args, RunE: verifyCmd.RunE}
+	cmd.SetContext(testCtx)
 	cmd.Flags().IntVar(&verifySampleSize, "sample", 100, "Number of messages to sample for MIME verification")
 	cmd.Flags().BoolVar(&verifySkipDBCheck, "skip-db-check", false, "Skip SQLite integrity check")
 	cmd.Flags().BoolVar(&verifyJSON, flagJSON, false, "Output as JSON")

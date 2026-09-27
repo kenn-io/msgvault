@@ -18,12 +18,16 @@ import (
 )
 
 func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	markDaemonCLISubprocessForTest(t)
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Data.DataDir = filepath.Join(t.TempDir(), "data")
 	cfg.Activity.Timezone = "Pacific/Kiritimati"
 	cfg.Activity.BatchSize = 1
@@ -86,7 +90,8 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 
 	var output bytes.Buffer
 	command := newActivityCommand()
-	command.SetContext(t.Context())
+	command.SetContext(testCtx)
+	command.SetContext(testCtx)
 	command.SetOut(&output)
 	command.SetArgs([]string{"build"})
 	require.NoError(command.Execute())
@@ -95,7 +100,7 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 	st, err = store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(err)
 	var timezone, localDate string
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(testCtx, st.Rebind(`
 		SELECT timezone, local_date
 		FROM activity_events
 		WHERE message_id = ?
@@ -122,21 +127,22 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 		assert.Equal([]string{"co_presence", "co_presence"}, evidence,
 			"configured max_direct_counterparts=1 must classify two recipients as broadcast")
 	}()
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
+	_, err = st.DB().ExecContext(testCtx, st.Rebind(
 		`DELETE FROM activity_events WHERE message_id = ?`), messageID)
 	require.NoError(err)
 	require.NoError(st.Close())
 
 	output.Reset()
 	command = newActivityCommand()
-	command.SetContext(t.Context())
+	command.SetContext(testCtx)
+	command.SetContext(testCtx)
 	command.SetOut(&output)
 	command.SetArgs([]string{"build"})
 	require.NoError(command.Execute())
 	st, err = store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(err)
 	var count int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+	require.NoError(st.DB().QueryRowContext(testCtx, st.Rebind(
 		`SELECT COUNT(*) FROM activity_events WHERE message_id = ?`),
 		messageID).Scan(&count))
 	assert.Zero(count, "ordinary build must not force-scan below the watermark")
@@ -144,7 +150,8 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 
 	output.Reset()
 	command = newActivityCommand()
-	command.SetContext(t.Context())
+	command.SetContext(testCtx)
+	command.SetContext(testCtx)
 	command.SetOut(&output)
 	command.SetArgs([]string{"build", "--backstop"})
 	require.NoError(command.Execute())
@@ -152,13 +159,15 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 	st, err = store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+	require.NoError(st.DB().QueryRowContext(testCtx, st.Rebind(
 		`SELECT COUNT(*) FROM activity_events WHERE message_id = ?`),
 		messageID).Scan(&count))
 	assert.Equal(1, count)
 }
 
 func TestActivityBuildProxiesThroughDaemonCLIRunner(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -169,11 +178,13 @@ func TestActivityBuildProxiesThroughDaemonCLIRunner(t *testing.T) {
 		`{"type":"stdout","data":"Projected 2 event(s) in 1 batch(es); touched 1 and recomputed 1 person(s); watermark 2.\n"}`,
 		`{"type":"complete"}`,
 	)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	cfg.Data.DataDir = t.TempDir()
 
 	var stdout bytes.Buffer
 	root := &cobra.Command{Use: "msgvault"}
+	root.SetContext(testCtx)
 	root.AddCommand(newActivityCommand())
 	root.SetOut(&stdout)
 	root.SetArgs([]string{"activity", "build", "--backstop"})

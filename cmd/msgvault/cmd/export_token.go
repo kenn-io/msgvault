@@ -196,7 +196,12 @@ func (e *tokenExporter) addAccount(baseURL, apiKey, email string) {
 	}
 }
 
-func runExportToken(_ *cobra.Command, args []string) error {
+func runExportToken(cmd *cobra.Command, args []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	email := args[0]
 
 	// Resolution order: flag > env var > config file

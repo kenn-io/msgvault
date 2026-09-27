@@ -20,11 +20,13 @@ func TestRepairSendersAlwaysProxiesThroughDaemonCLIRunner(t *testing.T) {
 		`{"type":"stdout","data":"Repaired: 1\n"}`,
 		`{"type":"complete"}`,
 	)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	t.Setenv(daemonCLISubprocessEnv, "")
 
 	var stdout bytes.Buffer
 	cmd := newRepairSendersCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetArgs([]string{"--apply"})
 	cmd.SetOut(&stdout)
 
@@ -34,6 +36,8 @@ func TestRepairSendersAlwaysProxiesThroughDaemonCLIRunner(t *testing.T) {
 }
 
 func TestRunRepairSendersLocalDryRunAndApply(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	dataDir := t.TempDir()
@@ -42,6 +46,8 @@ func TestRunRepairSendersLocalDryRunAndApply(t *testing.T) {
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
@@ -81,32 +87,32 @@ func TestRunRepairSendersLocalDryRunAndApply(t *testing.T) {
 
 	var dryRunOut bytes.Buffer
 	dryRunCmd := &cobra.Command{}
-	dryRunCmd.SetContext(t.Context())
+	dryRunCmd.SetContext(testCtx)
 	dryRunCmd.SetOut(&dryRunOut)
 	require.NoError(runRepairSendersLocal(dryRunCmd, false))
 	assert.Contains(dryRunOut.String(), "Candidates: 3")
 	assert.Contains(dryRunOut.String(), "Repairable: 1")
 	assert.Contains(dryRunOut.String(), "Unresolved: 2")
 	assert.Contains(dryRunOut.String(), "Dry run: no rows were modified")
-	assert.False(readRepairSenderID(t, repairable).Valid,
+	assert.False(readRepairSenderID(t, repairable, cfg).Valid,
 		"dry run must not set sender_id")
 
 	var applyOut bytes.Buffer
 	applyCmd := &cobra.Command{}
-	applyCmd.SetContext(t.Context())
+	applyCmd.SetContext(testCtx)
 	applyCmd.SetOut(&applyOut)
 	require.NoError(runRepairSendersLocal(applyCmd, true))
 	assert.Contains(applyOut.String(), "Candidates: 3")
 	assert.Contains(applyOut.String(), "Repairable: 1")
 	assert.Contains(applyOut.String(), "Unresolved: 2")
 	assert.Contains(applyOut.String(), "Repaired: 1")
-	require.True(readRepairSenderID(t, repairable).Valid,
+	require.True(readRepairSenderID(t, repairable, cfg).Valid,
 		"apply must set sender_id")
-	assert.False(readRepairSenderID(t, headerless).Valid,
+	assert.False(readRepairSenderID(t, headerless, cfg).Valid,
 		"headerless MIME must remain unresolved")
-	assert.False(readRepairSenderID(t, uninstallable).Valid,
+	assert.False(readRepairSenderID(t, uninstallable, cfg).Valid,
 		"a recovered but invalid address must stay unresolved instead of failing apply")
-	assert.False(readRepairSenderID(t, chat).Valid,
+	assert.False(readRepairSenderID(t, chat, cfg).Valid,
 		"non-email messages must remain untouched")
 
 	check, err := store.OpenForTest(cfg.DatabaseDSN())
@@ -123,8 +129,13 @@ func TestRunRepairSendersLocalDryRunAndApply(t *testing.T) {
 	assert.Equal(1, fromCount)
 }
 
-func readRepairSenderID(t *testing.T, messageID int64) sql.NullInt64 {
+func readRepairSenderID(t *testing.T, messageID int64, configs ...*config.Config) sql.NullInt64 {
 	t.Helper()
+	cfg := testConfigValue()
+	if len(configs) > 0 && configs[0] != nil {
+		cfg = configs[0]
+	}
+
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(t, err, "open sender check store")
 	defer func() { _ = st.Close() }()

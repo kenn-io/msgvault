@@ -14,6 +14,9 @@ import (
 )
 
 func TestRebuildFTSUsesLocalDaemonHTTPAndPreservesStderr(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -45,10 +48,14 @@ func TestRebuildFTSUsesLocalDaemonHTTPAndPreservesStderr(t *testing.T) {
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 
 	doneErr := captureStderr(t)
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(&cobra.Command{
 		Use:   rebuildFTSCmd.Use,
 		Short: rebuildFTSCmd.Short,

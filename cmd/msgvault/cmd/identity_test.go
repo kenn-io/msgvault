@@ -158,6 +158,9 @@ func TestRenderIdentityDiscoverProgressWrapsWriterError(t *testing.T) {
 }
 
 func TestIdentityDiscoverProviderSourceIDApplyConfirmJSONUsesHTTPAndSuppressesProgress(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	dataDir := t.TempDir()
@@ -210,10 +213,14 @@ func TestIdentityDiscoverProviderSourceIDApplyConfirmJSONUsesHTTPAndSuppressesPr
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 
 	var stdout, stderr bytes.Buffer
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
 	root.AddCommand(identityCmd)
@@ -397,6 +404,9 @@ func TestIdentityImportJSONFileApplyUsesSourceIDAndStableOutput(t *testing.T) {
 // identity subcommand tests.  Returns (store, root, stdout buffer, stderr buffer).
 func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+	useLocal := false
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
@@ -484,12 +494,16 @@ func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buff
 		Data:    config.DataConfig{DataDir: tmpDir},
 		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	logger = slog.New(slog.DiscardHandler)
 	startStoreAPIDaemon(t, tmpDir, s, nil)
 
 	var stdout, stderr bytes.Buffer
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
 	root.AddCommand(identityCmd)
@@ -498,6 +512,9 @@ func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buff
 }
 
 func TestIdentityListUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -518,12 +535,16 @@ func TestIdentityListUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	identityListJSON = false
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd := &cobra.Command{Use: "list", RunE: runIdentityList}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 
@@ -540,6 +561,9 @@ func TestIdentityListUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestIdentityShowUsesLocalDaemonHTTPAndPreservesHint(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -560,7 +584,10 @@ func TestIdentityShowUsesLocalDaemonHTTPAndPreservesHint(t *testing.T) {
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	identityShowJSON = false
 
 	var stdout bytes.Buffer
@@ -570,6 +597,7 @@ func TestIdentityShowUsesLocalDaemonHTTPAndPreservesHint(t *testing.T) {
 		Args: identityShowCmd.Args,
 		RunE: runIdentityShow,
 	}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"empty@example.com"})
@@ -584,6 +612,9 @@ func TestIdentityShowUsesLocalDaemonHTTPAndPreservesHint(t *testing.T) {
 }
 
 func TestIdentityAddUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -604,7 +635,10 @@ func TestIdentityAddUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 	identityAddSignal = "manual"
 
 	var stdout bytes.Buffer
@@ -614,6 +648,7 @@ func TestIdentityAddUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 		Args: identityAddCmd.Args,
 		RunE: runIdentityAdd,
 	}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"alice@example.com", "extra@example.com"})
@@ -629,6 +664,9 @@ func TestIdentityAddUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestIdentityRemoveUsesLocalDaemonHTTPAndPreservesWarning(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
@@ -647,7 +685,10 @@ func TestIdentityRemoveUsesLocalDaemonHTTPAndPreservesWarning(t *testing.T) {
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = true
+	invocationFromContext(testCtx).options.useLocal = true
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -656,6 +697,7 @@ func TestIdentityRemoveUsesLocalDaemonHTTPAndPreservesWarning(t *testing.T) {
 		Args: identityRemoveCmd.Args,
 		RunE: runIdentityRemove,
 	}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"alice@example.com", "alice@example.com"})

@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/store"
@@ -20,6 +22,7 @@ import (
 )
 
 type repairMessageCommandDeps struct {
+	bind               func(context.Context) repairMessageCommandDeps
 	isDaemonSubprocess func() bool
 	openHTTPStore      func(context.Context) (*daemonclient.Client, HTTPStoreInfo, error)
 	preflightReauth    func(context.Context, *daemonclient.Client, HTTPStoreInfo, int64) error
@@ -30,29 +33,78 @@ type repairMessageCommandDeps struct {
 	attachmentsDir     string
 }
 
-func defaultRepairMessageCommandDeps() repairMessageCommandDeps {
+func defaultRepairMessageCommandDeps(contexts ...context.Context) repairMessageCommandDeps {
+	if len(contexts) > 0 {
+		deps := defaultRepairMessageCommandDeps()
+		if deps.bind != nil {
+			return deps.bind(contexts[0])
+		}
+	}
 	return repairMessageCommandDeps{
+		bind:               defaultRepairMessageCommandDepsForContext,
 		isDaemonSubprocess: isDaemonCLISubprocess,
 		openHTTPStore:      OpenHTTPStore,
 		preflightReauth: func(
 			ctx context.Context, client *daemonclient.Client, info HTTPStoreInfo, sourceID int64,
 		) error {
-			return preflightReauth(ctx, buildSyncPreflight(client, info), "", sourceID)
+			return preflightReauth(ctx, buildSyncPreflight(client, info, invocationFromContext(ctx)), "", sourceID)
 		},
-		openWritableStore: openWritableStoreAndInit,
+		openWritableStore: func() (*store.Store, func(), error) {
+			return nil, nil, errors.New("configuration is unavailable")
+		},
 		openReadOnlyStore: func() (*store.Store, func(), error) {
-			st, err := store.OpenReadOnly(cfg.DatabaseDSN())
+			return nil, nil, errors.New("configuration is unavailable")
+		},
+		newGmailClient: func(ctx context.Context, source *store.Source) (gmail.API, error) {
+			return buildAPIClient(ctx, source, oauthManagerCache(invocationFromContext(ctx)), nil)
+		},
+		refreshCache: func() error { return errors.New("configuration is unavailable") },
+	}
+}
+
+func defaultRepairMessageCommandDepsForContext(ctx context.Context) repairMessageCommandDeps {
+	state := invocationFromContext(ctx)
+	var currentCfg *config.Config
+	if state != nil && state.cfg != nil {
+		currentCfg = state.cfg
+	}
+	return repairMessageCommandDeps{
+		bind:               defaultRepairMessageCommandDepsForContext,
+		isDaemonSubprocess: isDaemonCLISubprocess,
+		openHTTPStore:      OpenHTTPStore,
+		preflightReauth: func(
+			ctx context.Context, client *daemonclient.Client, info HTTPStoreInfo, sourceID int64,
+		) error {
+			return preflightReauth(ctx, buildSyncPreflight(client, info, state), "", sourceID)
+		},
+		openWritableStore: func() (*store.Store, func(), error) {
+			return openWritableStoreAndInitForInvocation(state)
+		},
+		openReadOnlyStore: func() (*store.Store, func(), error) {
+			if currentCfg == nil {
+				return nil, nil, errors.New("configuration is unavailable")
+			}
+			st, err := store.OpenReadOnly(currentCfg.DatabaseDSN())
 			if err != nil {
 				return nil, nil, fmt.Errorf("open database read-only: %w", err)
 			}
 			return st, func() { _ = st.Close() }, nil
 		},
 		newGmailClient: func(ctx context.Context, source *store.Source) (gmail.API, error) {
-			return buildAPIClient(ctx, source, oauthManagerCache(), nil)
+			return buildAPIClient(ctx, source, oauthManagerCache(state), nil)
 		},
 		refreshCache: func() error {
-			return rebuildCacheAfterWrite(cfg.DatabaseDSN())
+			if currentCfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			return rebuildCacheAfterWrite(currentCfg.DatabaseDSN(), state)
 		},
+		attachmentsDir: func() string {
+			if currentCfg == nil {
+				return ""
+			}
+			return currentCfg.AttachmentsDir()
+		}(),
 	}
 }
 
@@ -71,6 +123,9 @@ func newRepairMessageCmd(deps repairMessageCommandDeps) *cobra.Command {
 		Short: "Repair one Gmail message snapshot or audit stored Gmail MIME",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if invocationFromContext(cmd.Context()) != nil && deps.bind != nil {
+				deps = deps.bind(cmd.Context())
+			}
 			if audit {
 				if len(args) != 0 {
 					return usageErr(cmd, errors.New("--audit does not accept a message reference"))
@@ -206,10 +261,18 @@ func runRepairMessageLocal(
 		defer func() { _ = closer.Close() }()
 	}
 	attachmentsDir := deps.attachmentsDir
-	if attachmentsDir == "" && cfg != nil {
-		attachmentsDir = cfg.AttachmentsDir()
+	state := invocationFromCommand(cmd)
+	var logger *slog.Logger
+	if state != nil {
+		logger = state.logger
 	}
-	service := syncer.New(client, st, &syncer.Options{AttachmentsDir: attachmentsDir}).WithLogger(logger)
+	if attachmentsDir == "" && state != nil && state.cfg != nil {
+		attachmentsDir = state.cfg.AttachmentsDir()
+	}
+	service := syncer.New(client, st, &syncer.Options{AttachmentsDir: attachmentsDir})
+	if logger != nil {
+		service = service.WithLogger(logger)
+	}
 	result, err := service.RepairMessage(cmd.Context(), syncer.RepairRequest{
 		Reference: reference,
 		SourceID:  sourceID,

@@ -110,11 +110,12 @@ func TestPersonAttributesSetCoercesScalarAndForwardsMetadata(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
+	_ = testCtx
 
-	output, err := runAttributeCommand(t, personAttributesSetCmd,
+	output, err := runAttributeCommand(testCtx, t, personAttributesSetCmd,
 		"7", "primary_channel", "--value", "chat",
 		"--source", "extraction", "--source-ref", "message:1234",
 		"--confidence", "0.62", "--actor", "extractor",
@@ -142,13 +143,14 @@ func TestPersonAttributesSetRejectsExplicitNonPositiveExpectedValueID(t *testing
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
+	_ = testCtx
 
 	for _, expectedID := range []string{"0", "-1"} {
 		t.Run(expectedID, func(t *testing.T) {
-			_, err := runAttributeCommand(t, personAttributesSetCmd,
+			_, err := runAttributeCommand(testCtx, t, personAttributesSetCmd,
 				"7", "primary_channel", "--value", "chat",
 				"--expected-value-id", expectedID)
 			require.Error(err)
@@ -179,11 +181,12 @@ func TestPersonAttributesClearForwardsOrdinalAndExpectedValueID(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
+	_ = testCtx
 
-	output, err := runAttributeCommand(t, personAttributesClearCmd,
+	output, err := runAttributeCommand(testCtx, t, personAttributesClearCmd,
 		"7", "ask_me_about", "--ordinal", "1", "--expected-value-id", "11")
 	require.NoError(err)
 	assert.Contains(query, "ordinal=1")

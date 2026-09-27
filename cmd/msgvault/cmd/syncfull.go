@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gmail"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/microsoft"
@@ -83,18 +85,24 @@ func validateSyncFullFlags(cmd *cobra.Command) error {
 }
 
 func runSyncFullLocal(cmd *cobra.Command, args []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	selector, selectorSet, err := syncSourceSelector(cmd, args)
 	if err != nil {
 		return usageErr(cmd, err)
 	}
-	s, cleanup, err := openWritableStoreAndInit()
+	s, cleanup, err := openWritableStoreAndInitForInvocation(state)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 	dbPath := cfg.DatabaseDSN()
 
-	getOAuthMgr := oauthManagerCache()
+	getOAuthMgr := oauthManagerCache(invocationFromCommand(cmd))
 
 	// Determine which sources to sync
 	var sources []*store.Source
@@ -153,7 +161,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 					}
 				}
 			case sourceTypeIMAP:
-				skipMsg, parseErr := imapSkipReason(src)
+				skipMsg, parseErr := imapSkipReason(src, cfg, logger)
 				if parseErr != nil {
 					syncErrors = append(syncErrors, fmt.Sprintf("%s: malformed sync_config: %v", src.Identifier, parseErr))
 					continue
@@ -210,14 +218,14 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if err := runFullSync(ctx, s, getOAuthMgr, src); err != nil {
+		if err := runFullSync(ctx, s, getOAuthMgr, src, state); err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 			continue
 		}
 	}
 
 	// Rebuild analytics cache.
-	cacheErr := rebuildCacheAfterManualSync(dbPath)
+	cacheErr := rebuildCacheAfterManualSync(dbPath, state)
 
 	if len(syncErrors) > 0 {
 		fmt.Println()
@@ -241,6 +249,12 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 // oauth.ScopesDeletion (or another set) for workflows that need elevated
 // access.
 func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(string) (*oauth.Manager, error), saScopes []string, imapOpts ...imaplib.Option) (gmail.API, error) {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	switch src.SourceType {
 	case sourceTypeGmail, "":
 		appName := sourceOAuthApp(src)
@@ -347,7 +361,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 // accounts: another source with a same-named mailbox gets no entry. Nil-safe
 // because several command tests run without a loaded global config; a
 // missing entry means no explicit trust.
-func configuredTrustedSentMailboxes(identifier string) []string {
+func configuredTrustedSentMailboxes(identifier string, cfg *config.Config) []string {
 	if cfg == nil {
 		return nil
 	}
@@ -383,6 +397,8 @@ func imapFolderStateOptions(
 	s *store.Store,
 	src *store.Source,
 	forceRescan bool,
+	cfg *config.Config,
+	logger *slog.Logger,
 ) []imaplib.Option {
 	if src.SourceType != sourceTypeIMAP {
 		return nil
@@ -391,7 +407,7 @@ func imapFolderStateOptions(
 	var opts []imaplib.Option
 	states, err := loadIMAPFolderStates(s, src.ID)
 	if err != nil {
-		logger.Warn("failed to load IMAP folder states", "source", src.Identifier, "error", err)
+		repairLogger(logger).Warn("failed to load IMAP folder states", "source", src.Identifier, "error", err)
 	} else if len(states) > 0 {
 		opts = append(opts, imaplib.WithFolderStates(states))
 	}
@@ -417,7 +433,7 @@ func imapFolderStateOptions(
 			}
 			return result, nil
 		}),
-		imaplib.WithTrustedSentMailboxes(configuredTrustedSentMailboxes(src.Identifier)))
+		imaplib.WithTrustedSentMailboxes(configuredTrustedSentMailboxes(src.Identifier, cfg)))
 	if forceRescan {
 		opts = append(opts, imaplib.WithForceFullEnumeration())
 	}
@@ -545,13 +561,21 @@ func saveIMAPFolderStates(
 	return nil
 }
 
-func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), src *store.Source) error {
+func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), src *store.Source, state *invocation) error {
+	if state == nil {
+		state = invocationFromContext(ctx)
+	}
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	progress := &CLIProgress{}
 
 	// --noresume promises a fresh sync, so it must also bypass the
 	// saved folder high water marks and re-enumerate every mailbox. A clean
 	// completed run still saves fresh high water marks afterwards.
-	imapOpts := imapFolderStateOptions(s, src, syncNoResume)
+	imapOpts := imapFolderStateOptions(s, src, syncNoResume, cfg, logger)
 
 	// Pass CLI folder filter strings to the IMAP client. The IMAP
 	// client selects the effective include list (CLI --folder when
@@ -608,7 +632,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	}
 
 	// Create syncer with progress reporter
-	syncer := newMessageSyncer(apiClient, s, opts).
+	syncer := newMessageSyncer(apiClient, s, opts, state).
 		WithLogger(logger).
 		WithProgress(progress)
 
@@ -936,7 +960,10 @@ func (p *CLIProgress) OnError(err error) {
 //   - ("", nil)     — credentials present, source is ready
 //   - ("msg", nil)  — credentials absent; print the message and skip
 //   - ("", err)     — sync_config is malformed; add to the error list
-func imapSkipReason(src *store.Source) (string, error) {
+func imapSkipReason(src *store.Source, cfg *config.Config, logger *slog.Logger) (string, error) {
+	if cfg == nil {
+		return "", errors.New("configuration is unavailable")
+	}
 	if !src.SyncConfig.Valid || src.SyncConfig.String == "" {
 		if !imaplib.HasCredentials(cfg.TokensDir(), src.Identifier) {
 			return fmt.Sprintf("Skipping %s (no credentials — run 'add-imap' or 'add-o365' first)", src.Identifier), nil
@@ -957,7 +984,7 @@ func imapSkipReason(src *store.Source) (string, error) {
 			cfg.Microsoft.EffectiveTenantID(),
 			cfg.Microsoft.EffectiveRedirectURI(),
 			cfg.TokensDir(),
-			logger,
+			repairLogger(logger),
 		)
 		if !msMgr.HasToken(imapCfg.Username) {
 			return fmt.Sprintf("Skipping %s (no Microsoft token — run 'add-o365' first)", src.Identifier), nil

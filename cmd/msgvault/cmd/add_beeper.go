@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/clirun"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 var (
@@ -47,6 +48,11 @@ Examples:
   MSGVAULT_BEEPER_TOKEN="..." msgvault add-beeper`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
 			if !isDaemonCLISubprocess() {
 				token, err := readAddBeeperToken(cmd)
 				if err != nil {
@@ -56,13 +62,13 @@ Examples:
 				// when the daemon shares this machine so problems fail fast;
 				// with a remote daemon, validation happens daemon-side against
 				// the Beeper Desktop running there.
-				if IsRemoteMode() {
+				if IsRemoteMode(state) {
 					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Remote daemon configured: it must run beside its own Beeper Desktop, which will validate the token.")
 				} else {
 					// A token check, not discovery: the daemon subprocess below
 					// does the real enumeration, so this stays the single
 					// cheapest authenticated request.
-					accounts, err := beeperClient(token).ListAccounts(cmd.Context())
+					accounts, err := beeperClient(cfg, token).ListAccounts(cmd.Context())
 					if err != nil {
 						return err
 					}
@@ -77,7 +83,7 @@ Examples:
 			if token == "" {
 				return errors.New("missing Beeper token in daemon subprocess (set MSGVAULT_BEEPER_TOKEN)")
 			}
-			accounts, err := beeperClient(token).DiscoverAccounts(cmd.Context())
+			accounts, err := beeperClient(cfg, token).DiscoverAccounts(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -85,7 +91,7 @@ Examples:
 				return fmt.Errorf("save beeper token: %w", err)
 			}
 
-			s, cleanup, err := openWritableStoreAndInitForIngest()
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 			if err != nil {
 				return err
 			}
@@ -106,13 +112,13 @@ Examples:
 				}
 				if !noDefaultIdentityAddBeeper {
 					confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID,
-						acct.AccountID, beeperSelfIdentity(acct), "account-identifier")
+						acct.AccountID, beeperSelfIdentity(acct), "account-identifier", state.logger)
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Added %s (%s)%s\n",
 					acct.AccountID, beeperSourceDisplayName(acct), beeperAccountOrigin(acct))
 				added++
 			}
-			if err := runPostSourceCreateMigrations(s); err != nil {
+			if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 				return fmt.Errorf("post-source-create migrations: %w", err)
 			}
 
@@ -129,7 +135,7 @@ Examples:
 
 // beeperClient builds a Beeper Desktop API client from the configured URL and
 // rate limit with a static token.
-func beeperClient(token string) *beeper.Client {
+func beeperClient(cfg *config.Config, token string) *beeper.Client {
 	// An empty URL selects the client's loopback default.
 	return beeper.NewClient(cfg.Beeper.URL,
 		func(context.Context) (string, error) { return token, nil },

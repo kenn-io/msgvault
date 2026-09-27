@@ -66,8 +66,6 @@ func seedEmbeddedGeneration(
 func TestAttachVector_ReportsScopedCorpusSeparatelyFromTheArchive(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
-
 	dataDir := t.TempDir()
 	s := seedTwoSourceArchiveIn(t, dataDir, false)
 
@@ -75,7 +73,7 @@ func TestAttachVector_ReportsScopedCorpusSeparatelyFromTheArchive(t *testing.T) 
 	c.Data.DataDir = dataDir
 	c.Vector.Embeddings.Dimension = 3
 	c.Vector.Embed.Scope.SourceIDs = []int64{1}
-	withTestConfig(t, c)
+	ctx := withTestConfig(t, c)
 
 	seedEmbeddedGeneration(t, dataDir, c.DatabaseDSN(), s, c.Vector, 1, 2)
 
@@ -105,8 +103,6 @@ func TestAttachVector_ReportsScopedCorpusSeparatelyFromTheArchive(t *testing.T) 
 func TestAttachVector_CorpusScopeFilterExcludesOutOfScopeStampedMessages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
-
 	dataDir := t.TempDir()
 	s := seedTwoSourceArchiveIn(t, dataDir, false)
 
@@ -114,7 +110,7 @@ func TestAttachVector_CorpusScopeFilterExcludesOutOfScopeStampedMessages(t *test
 	c.Data.DataDir = dataDir
 	c.Vector.Embeddings.Dimension = 3
 	c.Vector.Embed.Scope.SourceIDs = []int64{1}
-	withTestConfig(t, c)
+	ctx := withTestConfig(t, c)
 
 	seedEmbeddedGeneration(t, dataDir, c.DatabaseDSN(), s, c.Vector, 1, 2, 3)
 
@@ -137,7 +133,6 @@ func TestAttachVector_CorpusScopeFilterExcludesOutOfScopeStampedMessages(t *test
 func TestAttachVector_MatchesArchiveCorpusWhenScopeCoversIt(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
 
 	dataDir := t.TempDir()
 	s := seedRankingDivergenceArchiveIn(t, dataDir)
@@ -145,7 +140,7 @@ func TestAttachVector_MatchesArchiveCorpusWhenScopeCoversIt(t *testing.T) {
 	c := evalVectorConfig(t, vector.APIFormatOpenAI, "test-model")
 	c.Data.DataDir = dataDir
 	c.Vector.Embeddings.Dimension = 3
-	withTestConfig(t, c)
+	ctx := withTestConfig(t, c)
 
 	// seedRankingDivergenceArchiveIn's two live messages (1 and 2) sit in
 	// separate conversations; message 3 is deleted from its source and
@@ -174,7 +169,6 @@ func TestAttachVector_MatchesArchiveCorpusWhenScopeCoversIt(t *testing.T) {
 func TestAttachVector_CorpusScopeNormalizesMessageTypeCase(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
 
 	dataDir := t.TempDir()
 	s := seedRankingDivergenceArchiveIn(t, dataDir)
@@ -183,7 +177,7 @@ func TestAttachVector_CorpusScopeNormalizesMessageTypeCase(t *testing.T) {
 	c.Data.DataDir = dataDir
 	c.Vector.Embeddings.Dimension = 3
 	c.Vector.Embed.Scope.MessageTypes = []string{"EMAIL"}
-	withTestConfig(t, c)
+	ctx := withTestConfig(t, c)
 
 	seedEmbeddedGeneration(t, dataDir, c.DatabaseDSN(), s, c.Vector, 1, 2)
 
@@ -208,7 +202,6 @@ func TestAttachVector_CorpusScopeNormalizesMessageTypeCase(t *testing.T) {
 func TestAttachVector_CorpusIncludesMessagesWithStaleEmbedGenStamp(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
 
 	dataDir := t.TempDir()
 	s := seedRankingDivergenceArchiveIn(t, dataDir)
@@ -216,7 +209,7 @@ func TestAttachVector_CorpusIncludesMessagesWithStaleEmbedGenStamp(t *testing.T)
 	c := evalVectorConfig(t, vector.APIFormatOpenAI, "test-model")
 	c.Data.DataDir = dataDir
 	c.Vector.Embeddings.Dimension = 3
-	withTestConfig(t, c)
+	ctx := withTestConfig(t, c)
 
 	seedEmbeddedGeneration(t, dataDir, c.DatabaseDSN(), s, c.Vector, 1, 2)
 

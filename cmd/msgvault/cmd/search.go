@@ -147,6 +147,11 @@ Examples:
 }
 
 func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.logger == nil {
+		return errors.New("invocation state is unavailable")
+	}
+	logger := state.logger
 	s, info, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)

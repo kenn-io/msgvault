@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ type cacheBuildJobs struct {
 	mu                  sync.Mutex
 	ctx                 context.Context
 	idle                *api.IdleTracker
+	logger              *slog.Logger
 	run                 func(context.Context, buildCacheMode) error
 	current             string
 	pending             string
@@ -156,7 +158,7 @@ func (m *cacheBuildJobs) execute(id string, mode buildCacheMode, done func()) {
 		if m.ctx.Err() != nil {
 			failure = "daemon is shutting down"
 		} else {
-			logger.Error("background analytics cache build failed", "job_id", id, "error", err)
+			repairLogger(m.logger).Error("background analytics cache build failed", "job_id", id, "error", err)
 		}
 		if mode == buildCacheModeScheduledAuto {
 			m.lastVerification = time.Time{}
@@ -182,7 +184,7 @@ func (m *cacheBuildJobs) execute(id string, mode buildCacheMode, done func()) {
 			if startErr := m.startLocked(pending, pendingMode); startErr != nil {
 				m.finishLocked(pending, startErr.Error(), finishedAt)
 				if m.ctx.Err() == nil {
-					logger.Error("queue follow-up analytics cache build failed", "error", startErr)
+					repairLogger(m.logger).Error("queue follow-up analytics cache build failed", "error", startErr)
 				}
 			}
 		}

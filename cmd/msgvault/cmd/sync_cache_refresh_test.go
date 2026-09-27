@@ -17,9 +17,6 @@ func TestManualSyncRefreshVerifiesConversationOnlyChangesInBackground(t *testing
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.AutoBuildCache = true
 	c.Analytics.MinRebuildInterval = 0
-	previousCfg := cfg
-	cfg = c
-	t.Cleanup(func() { cfg = previousCfg })
 	source, err := s.GetOrCreateSource("gmail", "user@example.test")
 	require.NoError(err)
 	conversationID, err := s.EnsureConversationWithType(source.ID, "thread-1", "email_thread", "Original title")
@@ -49,7 +46,7 @@ func TestManualSyncRefreshVerifiesConversationOnlyChangesInBackground(t *testing
 		defer stop()
 		require.True(jobs.waitContext(waitCtx), "background verification must finish before store cleanup")
 	})
-	adapter := &storeAPIAdapter{store: s, cacheJobs: jobs}
+	adapter := &storeAPIAdapter{store: s, config: c, cacheJobs: jobs}
 	require.NoError(adapter.queueCacheRefreshAfterManualSync(false, false))
 	waitCtx, stop := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
 	defer stop()

@@ -27,7 +27,7 @@ func TestRunEval_LabelsMAPAndMRRAtTheRetrievalDepth(t *testing.T) {
 
 	dir := t.TempDir()
 	seedRankingDivergenceArchiveIn(t, dir)
-	configureEvalRun(t, dir, "q1 0 <m1@example.com> 1\n", "q1\trenewal\n")
+	testCtx := configureEvalRun(t, dir, "q1 0 <m1@example.com> 1\n", "q1\trenewal\n")
 	evalLimit = 5
 
 	var report struct {
@@ -35,7 +35,7 @@ func TestRunEval_LabelsMAPAndMRRAtTheRetrievalDepth(t *testing.T) {
 		Results map[string]map[string]any `json:"results"`
 	}
 	cmd := &cobra.Command{}
-	cmd.SetContext(t.Context())
+	cmd.SetContext(testCtx)
 	done := captureStdout(t)
 	err := runEval(cmd, nil)
 	out := done()
@@ -62,12 +62,12 @@ func TestEvalReport_TableLabelsMAPAndMRRAtTheRetrievalDepth(t *testing.T) {
 
 	dir := t.TempDir()
 	seedRankingDivergenceArchiveIn(t, dir)
-	configureEvalRun(t, dir, "q1 0 <m1@example.com> 1\n", "q1\trenewal\n")
+	testCtx := configureEvalRun(t, dir, "q1 0 <m1@example.com> 1\n", "q1\trenewal\n")
 	evalLimit = 5
 	evalJSON = false
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(t.Context())
+	cmd.SetContext(testCtx)
 	done := captureStdout(t)
 	err := runEval(cmd, nil)
 	out := done()

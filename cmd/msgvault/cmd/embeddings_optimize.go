@@ -53,18 +53,23 @@ func runEmbeddingsOptimizeCommand(cmd *cobra.Command, args []string) error {
 }
 
 func runEmbeddingsOptimize(cmd *cobra.Command, args []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	if !cfg.Vector.Enabled {
 		return errors.New("vector search not enabled; add [vector] enabled=true to config.toml first")
 	}
 	if store.IsPostgresURL(cfg.DatabaseDSN()) {
 		return errors.New("embeddings optimize is only needed for SQLite; PostgreSQL uses its native vector index")
 	}
-	release, err := acquireDirectSQLiteWriteLock(cfg)
+	release, err := acquireDirectSQLiteWriteLock(cfg, state)
 	if err != nil {
 		return err
 	}
 	defer release()
-	if err := ensureMainSchema(); err != nil {
+	if err := ensureMainSchema(state); err != nil {
 		return err
 	}
 	backend, closeBackend, err := openEmbeddingsBackend(cmd.Context())

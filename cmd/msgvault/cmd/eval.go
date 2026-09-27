@@ -680,6 +680,11 @@ func runEval(cmd *cobra.Command, args []string) error {
 }
 
 func runEvalWithRerankerFactory(cmd *cobra.Command, _ []string, makeReranker evalRerankerFactory) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	registry := newDocKeyRegistry()
 	keySpec, ok := registry[evalDocKey]
 	if !ok {
@@ -772,7 +777,7 @@ func runEvalWithRerankerFactory(cmd *cobra.Command, _ []string, makeReranker eva
 	if err := s.InitSchemaContext(ctx); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
-	if err := runStartupMigrationsContext(ctx, s); err != nil {
+	if err := runStartupMigrationsContext(ctx, s, state); err != nil {
 		return fmt.Errorf("startup migrations: %w", err)
 	}
 	if err := requireFTS5ForModes(modes, s.FTS5Available()); err != nil {
@@ -1026,6 +1031,11 @@ func requireFTS5ForModes(modes []string, fts5Available bool) error {
 // the registered driver's unicode_lower hook), and routing every DB operation
 // through the Store is this repo's rule.
 func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (func(), error) {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	if !cfg.Vector.Enabled {
 		return nil, errors.New("vector/hybrid modes need [vector].enabled = true in config")
 	}

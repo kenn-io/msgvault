@@ -80,9 +80,11 @@ func TestEmbeddingsListUsesDaemonRunner(t *testing.T) {
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
 		assert.Equal([]string{embeddingsCommandName, "list"}, req.Args, "args")
 	}, `{"type":"stdout","data":"ID\tSTATE\n1\tactive\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	root := &cobra.Command{Use: daemonService}
+	root.SetContext(testCtx)
 	embeddings := &cobra.Command{Use: embeddingsCommandName}
 	list := &cobra.Command{
 		Use:  cmdUseList,
@@ -107,9 +109,11 @@ func TestEmbeddingsPruneUsesDaemonRunner(t *testing.T) {
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
 		assert.Equal([]string{embeddingsCommandName, "prune"}, req.Args, "args")
 	}, `{"type":"stdout","data":"Pruned 2 orphan message embedding(s).\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	root := &cobra.Command{Use: daemonService}
+	root.SetContext(testCtx)
 	embeddings := &cobra.Command{Use: embeddingsCommandName}
 	prune := &cobra.Command{
 		Use:  "prune",
@@ -142,9 +146,11 @@ func TestEmbeddingsBuildPromptsBeforeDaemonRunner(t *testing.T) {
 			"--yes",
 		}, req.Args, "args")
 	}, `{"type":"stderr","data":"Building generation 2\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	root := &cobra.Command{Use: daemonService}
+	root.SetContext(testCtx)
 	embeddings := &cobra.Command{Use: embeddingsCommandName}
 	build := newEmbeddingsBuildCmd("build")
 	embeddings.AddCommand(build)
@@ -170,9 +176,11 @@ func TestEmbeddingsResumeUsesDaemonRunner(t *testing.T) {
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
 		assert.Equal([]string{embeddingsCommandName, "resume", "--backstop"}, req.Args, "args")
 	}, `{"type":"stdout","data":"Scanned: 1, succeeded: 1, failed: 0, truncated: 0\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	root := &cobra.Command{Use: daemonService}
+	root.SetContext(testCtx)
 	embeddings := &cobra.Command{Use: embeddingsCommandName}
 	resume := &cobra.Command{
 		Use:  "resume",
@@ -210,9 +218,11 @@ func TestEmbeddingsRetirePromptsBeforeDaemonRunner(t *testing.T) {
 	}, func(req daemonCLIRunTestRequest) {
 		assert.Equal([]string{embeddingsCommandName, "retire", "--force-active", "--yes", "2"}, req.Args, "args")
 	}, `{"type":"stdout","data":"Generation 2 retired.\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	root := &cobra.Command{Use: daemonService}
+	root.SetContext(testCtx)
 	embeddings := &cobra.Command{Use: embeddingsCommandName}
 	retire := &cobra.Command{
 		Use:  "retire <generation-id>",
@@ -255,9 +265,11 @@ func TestEmbeddingsActivatePromptsBeforeDaemonRunner(t *testing.T) {
 	}, func(req daemonCLIRunTestRequest) {
 		assert.Equal([]string{embeddingsCommandName, "activate", "--force", "--yes", "3"}, req.Args, "args")
 	}, `{"type":"stdout","data":"Generation 3 activated.\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	root := &cobra.Command{Use: daemonService}
+	root.SetContext(testCtx)
 	embeddings := &cobra.Command{Use: embeddingsCommandName}
 	activate := &cobra.Command{
 		Use:  "activate <generation-id>",
@@ -287,6 +299,8 @@ func TestEmbeddingsActivatePromptsBeforeDaemonRunner(t *testing.T) {
 // must leave embedBackstop exactly as the operator set it, so
 // `embeddings resume --backstop` actually runs a backstop pass.
 func TestRunEmbeddingsResume_PreservesBackstopFlag(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 
 	// Save and restore all three globals so the test is hermetic.
@@ -301,11 +315,14 @@ func TestRunEmbeddingsResume_PreservesBackstopFlag(t *testing.T) {
 	embedBackstop = true
 	oldCfg := cfg
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	t.Cleanup(func() { cfg = oldCfg })
 
 	cmd := embeddingsResumeCmd
+	cmd.SetContext(testCtx)
 	oldCtx := cmd.Context()
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
 	t.Cleanup(func() { cmd.SetContext(oldCtx) })
 
 	// Errors because vector is not enabled — that's fine; we only assert the
@@ -349,14 +366,14 @@ func TestRunEmbeddingsActivateRefusesMissingWithoutForce(t *testing.T) {
 	// Main DB with one live, unembedded message -> coverage reports
 	// missing=1 for generation 2.
 	seedMainDBWithLiveMessage(t, dataDir)
-	withEmbeddingCommandConfigDataDir(t, dbPath, dataDir)
+	testCtx, _ := withEmbeddingCommandConfigDataDir(t, dbPath, dataDir)
 
 	oldYes := embeddingsActivateYes
 	embeddingsActivateYes = true
 	t.Cleanup(func() { embeddingsActivateYes = oldYes })
 	cmd := embeddingsActivateCmd
 	oldCtx := cmd.Context()
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
 	t.Cleanup(func() { cmd.SetContext(oldCtx) })
 	err := runEmbeddingsActivate(cmd, []string{"2"})
 
@@ -376,7 +393,7 @@ func TestRetireEmbeddingGenerationRefusesActiveWithoutForce_PreCheck(t *testing.
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := newEmbeddingMetadataTestDBFile(t)
-	withEmbeddingCommandConfig(t, dbPath)
+	testCtx := withEmbeddingCommandConfig(t, dbPath)
 
 	oldYes := embeddingsRetireYes
 	oldForce := embeddingsRetireForceActive
@@ -389,7 +406,7 @@ func TestRetireEmbeddingGenerationRefusesActiveWithoutForce_PreCheck(t *testing.
 
 	cmd := embeddingsRetireCmd
 	oldCtx := cmd.Context()
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
 	t.Cleanup(func() { cmd.SetContext(oldCtx) })
 
 	err := runEmbeddingsRetire(cmd, []string{"1"})
@@ -482,25 +499,21 @@ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message
 	require.NoError(t, err)
 }
 
-func withEmbeddingCommandConfig(t *testing.T, vecPath string) {
+func withEmbeddingCommandConfig(t *testing.T, vecPath string) context.Context {
 	t.Helper()
-	oldCfg := cfg
 	c := newTestConfigForFingerprint(vecPath)
 	c.Data.DataDir = filepath.Dir(vecPath)
-	cfg = c
-	t.Cleanup(func() { cfg = oldCfg })
+	return testInvocationContext(t.Context(), c, invocationOptions{})
 }
 
 // withEmbeddingCommandConfigDataDir is like withEmbeddingCommandConfig but
 // also sets Data.DataDir so DatabaseDSN() resolves to a real main DB (used
 // by the coverage gate).
-func withEmbeddingCommandConfigDataDir(t *testing.T, vecPath, dataDir string) {
+func withEmbeddingCommandConfigDataDir(t *testing.T, vecPath, dataDir string) (context.Context, *config.Config) {
 	t.Helper()
-	oldCfg := cfg
 	c := newTestConfigForFingerprint(vecPath)
 	c.Data.DataDir = dataDir
-	cfg = c
-	t.Cleanup(func() { cfg = oldCfg })
+	return testInvocationContext(t.Context(), c, invocationOptions{}), c
 }
 
 func newTestConfigForFingerprint(vecPath string) *config.Config {
@@ -529,6 +542,8 @@ func mustGetEmbeddingGeneration(ctx context.Context, t *testing.T, db *sql.DB, g
 }
 
 func TestEmbeddingsBuildForwardsAPIKeyEnvToDaemonRunner(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	oldFull, oldYes := embedFullRebuild, embedYes
@@ -541,10 +556,11 @@ func TestEmbeddingsBuildForwardsAPIKeyEnvToDaemonRunner(t *testing.T) {
 		assert.Equal([]string{embeddingsCommandName, "build"}, req.Args, "args")
 		assert.Equal("secret-token", req.Env[keyEnv], "caller API key forwarded to subprocess env")
 	}, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL, cfg)
 	cfg.Vector.Embeddings.APIKeyEnv = keyEnv
 
 	root := &cobra.Command{Use: daemonService}
+	root.SetContext(testCtx)
 	embeddings := &cobra.Command{Use: embeddingsCommandName}
 	build := &cobra.Command{
 		Use:  "build",
@@ -559,13 +575,17 @@ func TestEmbeddingsBuildForwardsAPIKeyEnvToDaemonRunner(t *testing.T) {
 }
 
 func TestEmbeddingsForwardEnvSkipsUnsetKey(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
-	assert.Nil(embeddingsForwardEnv(), "no api_key_env configured")
+	assert.Nil(embeddingsForwardEnv(invocationFromContext(testCtx)), "no api_key_env configured")
 
 	cfg.Vector.Embeddings.APIKeyEnv = "MSGVAULT_TEST_EMBED_KEY_UNSET"
-	assert.Nil(embeddingsForwardEnv(), "configured env var not set in caller environment")
+	assert.Nil(embeddingsForwardEnv(invocationFromContext(testCtx)), "configured env var not set in caller environment")
 }

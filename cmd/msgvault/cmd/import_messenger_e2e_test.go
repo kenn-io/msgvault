@@ -16,6 +16,12 @@ import (
 
 func saveMessengerState(t *testing.T) func() {
 	t.Helper()
+	cfg := testConfigValue()
+	cfgFile := ""
+	homeDir := ""
+	logger := testLoggerValue()
+	verbose := false
+
 	prevCfg := cfg
 	prevLogger := logger
 	prevMe := importMessengerMe
@@ -120,7 +126,7 @@ func TestImportMessengerRunsPostSourceMigrationWithoutMessengerIdentity(t *testi
 	t.Cleanup(saveMessengerState(t))
 	testCfg := lifecycleTestConfig(tmp)
 	testCfg.Identity.Addresses = []string{"legacy@example.com"}
-	withStoreResolverConfig(t, testCfg)
+	testCtx := withStoreResolverConfig(t, testCfg)
 
 	st, err := store.Open(testCfg.DatabaseDSN())
 	require.NoError(err, "open seed store")
@@ -137,7 +143,8 @@ func TestImportMessengerRunsPostSourceMigrationWithoutMessengerIdentity(t *testi
 
 	var stdout bytes.Buffer
 	cmd := &cobra.Command{Use: "import-messenger"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(io.Discard)
 

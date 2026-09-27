@@ -169,6 +169,8 @@ func TestNewVisualRuntimeUsesStoredCredentialSnapshotAndRejectsRedirectReplay(t 
 	require.NoError(t, writeVisualCapabilityManifest(manifestPath, manifest))
 
 	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.Data.DataDir = dir
 	cfg.Vector.Multimodal.Enabled = true
 	cfg.Vector.Multimodal.CapabilitiesFile = manifestPath
@@ -212,11 +214,11 @@ func TestNewVisualRuntimeUsesStoredCredentialSnapshotAndRejectsRedirectReplay(t 
 	)}
 
 	runtime, err := newVisualRuntime(
-		t.Context(), cfg.Vector, mainStore, backend, unavailableVisualCredentialOpener{},
+		testCtx, cfg.Vector, mainStore, backend, unavailableVisualCredentialOpener{},
 		visualRuntimeCredential{APIKey: apiKey, HTTPClient: httpClient},
 	)
 	require.NoError(t, err)
-	_, _, err = runtime.Provider.EmbedQuery(t.Context(), visual.QueryInput{Text: "private query"})
+	_, _, err = runtime.Provider.EmbedQuery(testCtx, visual.QueryInput{Text: "private query"})
 	require.Error(t, err)
 	assert.Equal(t, "Bearer stored-at-startup", authorization)
 	assert.Empty(t, redirectedAuthorization)

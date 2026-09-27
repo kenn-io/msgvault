@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -50,7 +51,7 @@ const testPersonNotesWriteJSON = `{
 }`
 
 func executePersonNotesCommand(
-	t *testing.T, input string, args ...string,
+	ctx context.Context, t *testing.T, input string, args ...string,
 ) (string, error) {
 	t.Helper()
 	root := &cobra.Command{Use: "person"}
@@ -77,6 +78,7 @@ func executePersonNotesCommand(
 	root.SetOut(&output)
 	root.SetErr(&output)
 	root.SetArgs(append([]string{"notes"}, args...))
+	root.SetContext(ctx)
 	err := root.Execute()
 	return output.String(), err
 }
@@ -93,11 +95,10 @@ func TestPersonNotesGetRoutesThroughDaemonAndPrintsOnlyText(t *testing.T) {
 		assert.NoError(t, err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
-	output, err := executePersonNotesCommand(t, "", "get", "7")
+	output, err := executePersonNotesCommand(testCtx, t, "", "get", "7")
 	require.NoError(t, err)
 	assert.Equal(t, "Private\ncontext\n", output)
 }
@@ -111,11 +112,10 @@ func TestPersonNotesGetJSONEmitsFullCurrentValue(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
-	output, err := executePersonNotesCommand(t, "", "get", "7", "--json")
+	output, err := executePersonNotesCommand(testCtx, t, "", "get", "7", "--json")
 	require.NoError(err)
 	var value map[string]any
 	require.NoError(json.Unmarshal([]byte(output), &value))
@@ -149,11 +149,10 @@ func TestPersonNotesSetForwardsTypedTextAndOptionalCAS(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
-	output, err := executePersonNotesCommand(t, "", "set", "7",
+	output, err := executePersonNotesCommand(testCtx, t, "", "set", "7",
 		"--text", "Replacement", "--expected-value-id", "71", "--json")
 	require.NoError(err)
 	assert.Equal(map[string]any{"text": "Replacement", "type": "text"}, body["value"])
@@ -189,11 +188,10 @@ func TestPersonNotesSetReadsFileWithoutDiscardingMultilineText(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
-	_, err := executePersonNotesCommand(t, "", "set", "7", "--text", "@"+path)
+	_, err := executePersonNotesCommand(testCtx, t, "", "set", "7", "--text", "@"+path)
 	require.NoError(err)
 	value, ok := body["value"].(map[string]any)
 	require.True(ok)
@@ -214,11 +212,10 @@ func TestPersonNotesAppendPreservesMultilineStdinAndUsesAtomicRoute(t *testing.T
 		assert.NoError(t, err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
-	_, err := executePersonNotesCommand(t, "First line\nSeñor 🌍\n", "append", "7", "--text", "-")
+	_, err := executePersonNotesCommand(testCtx, t, "First line\nSeñor 🌍\n", "append", "7", "--text", "-")
 	require.NoError(t, err)
 	assert.Equal(t, "First line\nSeñor 🌍\n", body["text"])
 	assert.Equal(t, "user", body["source"])
@@ -230,10 +227,9 @@ func TestPersonNotesRejectsBlankTextBeforeDaemonRequest(t *testing.T) {
 		requests.Add(1)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
 	for _, test := range []struct {
 		name  string
 		input string
@@ -243,7 +239,7 @@ func TestPersonNotesRejectsBlankTextBeforeDaemonRequest(t *testing.T) {
 		{name: "stdin", input: " \n\t\n", args: []string{"append", "7", "--text", "-"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := executePersonNotesCommand(t, test.input, test.args...)
+			_, err := executePersonNotesCommand(testCtx, t, test.input, test.args...)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, "notes text must not be blank")
 		})

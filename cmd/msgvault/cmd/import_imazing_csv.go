@@ -88,6 +88,11 @@ there.`,
 }
 
 func runImportIMazingCSV(cmd *cobra.Command, exportDir string, opts imazingcsv.Options) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	info, err := os.Stat(exportDir)
 	if err != nil {
 		return fmt.Errorf("inspect iMazing export directory: %w", err)
@@ -96,7 +101,7 @@ func runImportIMazingCSV(cmd *cobra.Command, exportDir string, opts imazingcsv.O
 		return fmt.Errorf("iMazing export path is not a directory: %s", exportDir)
 	}
 	dbPath := cfg.DatabaseDSN()
-	st, cleanup, err := openWritableStoreAndInitForIngest()
+	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 	if err != nil {
 		return err
 	}
@@ -108,13 +113,13 @@ func runImportIMazingCSV(cmd *cobra.Command, exportDir string, opts imazingcsv.O
 		// analytics cache even though the import as a whole failed.
 		return errors.Join(
 			fmt.Errorf("import iMazing CSV: %w", err),
-			rebuildCacheAfterWrite(dbPath),
+			rebuildCacheAfterWrite(dbPath, state),
 		)
 	}
-	if err := runPostSourceCreateMigrations(st); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
 		return errors.Join(
 			fmt.Errorf("post-source-create migrations: %w", err),
-			rebuildCacheAfterWrite(dbPath),
+			rebuildCacheAfterWrite(dbPath, state),
 		)
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import complete")
@@ -131,7 +136,7 @@ func runImportIMazingCSV(cmd *cobra.Command, exportDir string, opts imazingcsv.O
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Contacts matched:    %d of %d\n",
 			summary.ContactsMatched, summary.ContactsTotal)
 	}
-	return rebuildCacheAfterWrite(dbPath)
+	return rebuildCacheAfterWrite(dbPath, state)
 }
 
 func init() {

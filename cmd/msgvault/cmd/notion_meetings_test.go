@@ -38,6 +38,8 @@ func (f fakeNotionProbe) ListUsers(context.Context, string) (*notionmeetings.Use
 }
 
 func TestResolveNotionMeetingsSource(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	previous := cfg
@@ -46,17 +48,21 @@ func TestResolveNotionMeetingsSource(t *testing.T) {
 		{Identifier: "personal", Token: "secret-1"},
 		{Identifier: "work", Token: "secret-2"},
 	}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
-	_, err := resolveNotionMeetingsSource(nil)
+	_, err := resolveNotionMeetingsSource(nil, cfg)
 	require.Error(err)
 	assert.Contains(err.Error(), "multiple [[notion_meetings]]")
 
-	source, err := resolveNotionMeetingsSource([]string{"work"})
+	source, err := resolveNotionMeetingsSource([]string{"work"}, cfg)
 	require.NoError(err)
 	assert.Equal("work", source.Identifier)
 }
 
 func TestResolveNotionMeetingsSourcesRequiresProbeIdentifierForMultipleSources(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	previous := cfg
@@ -65,12 +71,14 @@ func TestResolveNotionMeetingsSourcesRequiresProbeIdentifierForMultipleSources(t
 		{Identifier: "personal", Token: "secret-1"},
 		{Identifier: "work", Token: "secret-2"},
 	}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
-	_, err := resolveNotionMeetingsSources(nil, true)
+	_, err := resolveNotionMeetingsSources(nil, true, cfg)
 	require.Error(err)
 	assert.Contains(err.Error(), "multiple [[notion_meetings]]")
 
-	sources, err := resolveNotionMeetingsSources([]string{"work"}, true)
+	sources, err := resolveNotionMeetingsSources([]string{"work"}, true, cfg)
 	require.NoError(err)
 	require.Len(sources, 1)
 	assert.Equal("work", sources[0].Identifier)

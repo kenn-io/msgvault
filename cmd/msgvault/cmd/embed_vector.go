@@ -24,10 +24,15 @@ import (
 )
 
 func runEmbed(cmd *cobra.Command) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
-	release, err := acquireDirectSQLiteWriteLock(cfg)
+	release, err := acquireDirectSQLiteWriteLock(cfg, state)
 	if err != nil {
 		return err
 	}
@@ -53,7 +58,7 @@ func runEmbed(cmd *cobra.Command) error {
 	// --account/--collection flags (or [vector.embed.scope] accounts)
 	// become source IDs here, and unknown identifiers fail the run loudly
 	// rather than silently widening the embedded corpus.
-	if err := resolveEmbedScopeSourceIDs(s); err != nil {
+	if err := resolveEmbedScopeSourceIDs(s, state); err != nil {
 		return err
 	}
 
@@ -154,7 +159,7 @@ func runEmbed(cmd *cobra.Command) error {
 	}
 	totalPending := int(missing)
 	personGate := vector.NewPinnedExactSemanticPersonEmbeddingGate(
-		cfg.Vector, currentSemanticPersonVectorConfigSource(), s,
+		cfg.Vector, currentSemanticPersonVectorConfigSource(state), s,
 	)
 	credentialSnapshot, err := providercredentials.Read(cfg.TokensDir())
 	if err != nil {

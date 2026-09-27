@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -40,21 +41,21 @@ func TestPersonAgendaCommandsUseDaemonKataContract(t *testing.T) {
 		assert.NoError(json.NewEncoder(w).Encode(map[string]any{"item": agendaCLIItem("task-1", "Ask")}))
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 
-	output, err := executePersonAgendaCommand(t, "list", "7", "--json")
+	output, err := executePersonAgendaCommand(testCtx, t, "list", "7", "--json")
 	require.NoError(err)
 	assert.Contains(output, `"project":"msgvault"`)
 
-	output, err = executePersonAgendaCommand(t, "create", "7", "--title", "Ask", "--body", "Context", "--priority", "0", "--idempotency-key", "retry-1", "--json")
+	output, err = executePersonAgendaCommand(testCtx, t, "create", "7", "--title", "Ask", "--body", "Context", "--priority", "0", "--idempotency-key", "retry-1", "--json")
 	require.NoError(err)
 	assert.Contains(output, `"ref":"task-1"`)
 
-	_, err = executePersonAgendaCommand(t, "link", "7", "task-1", "--list", "gift ideas")
+	_, err = executePersonAgendaCommand(testCtx, t, "link", "7", "task-1", "--list", "gift ideas")
 	require.NoError(err)
-	_, err = executePersonAgendaCommand(t, "edit", "7", "task-1", "--list", "gift ideas")
+	_, err = executePersonAgendaCommand(testCtx, t, "edit", "7", "task-1", "--list", "gift ideas")
 	require.NoError(err)
-	_, err = executePersonAgendaCommand(t, "unlink", "7", "task-1")
+	_, err = executePersonAgendaCommand(testCtx, t, "unlink", "7", "task-1")
 	require.NoError(err)
 
 	require.Len(requests, 5)
@@ -77,20 +78,21 @@ func TestPersonAgendaCreateGeneratesRetryKey(t *testing.T) {
 		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"item": agendaCLIItem("task-1", "Ask")}))
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output, err := executePersonAgendaCommand(t, "create", "7", "--title", "Ask")
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	output, err := executePersonAgendaCommand(testCtx, t, "create", "7", "--title", "Ask")
 	require.NoError(t, err)
 	require.NotEmpty(t, key)
 	assert.Contains(t, output, key, "the generated key must be available for a retry")
 }
 
-func executePersonAgendaCommand(t *testing.T, args ...string) (string, error) {
+func executePersonAgendaCommand(ctx context.Context, t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	command := newPersonAgendaCommand()
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&output)
 	command.SetArgs(args)
+	command.SetContext(ctx)
 	err := command.Execute()
 	return output.String(), err
 }
@@ -109,9 +111,9 @@ func TestPersonAgendaListTextShowsVirtualHierarchy(t *testing.T) {
 		assert.NoError(t, err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 
-	output, err := executePersonAgendaCommand(t, "list", "7")
+	output, err := executePersonAgendaCommand(testCtx, t, "list", "7")
 	require.NoError(t, err)
 	assert.True(t, strings.Contains(output, "gift ideas") && strings.Contains(output, "task-1") && strings.Contains(output, "Ask"), output)
 	assert.Contains(t, output, "More open tasks are linked to this person.")

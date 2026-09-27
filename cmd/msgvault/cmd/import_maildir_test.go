@@ -17,7 +17,7 @@ func TestImportMaildirCommandArchivesMail(t *testing.T) {
 	require := require.New(t)
 	dataDir := t.TempDir()
 	testCfg := lifecycleTestConfig(dataDir)
-	withStoreResolverConfig(t, testCfg)
+	testCtx := withStoreResolverConfig(t, testCfg)
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	root := filepath.Join(dataDir, "mail")
 	for _, dir := range []string{"new", "cur", "tmp"} {
@@ -25,6 +25,7 @@ func TestImportMaildirCommandArchivesMail(t *testing.T) {
 	}
 	require.NoError(os.WriteFile(filepath.Join(root, "new", "one"), []byte("From: alice@example.com\r\nSubject: Maildir CLI\r\n\r\nbody"), 0600))
 	command := newImportMaildirCommand()
+	command.SetContext(testCtx)
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
 	command.SetArgs([]string{root, "--identifier", "alice@example.com"})

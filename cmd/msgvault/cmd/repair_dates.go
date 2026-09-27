@@ -78,7 +78,12 @@ func runRepairDatesLocal(
 	now time.Time,
 ) (runErr error) {
 	ctx := cmd.Context()
-	st, cleanup, err := openWritableStoreAndInit()
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	st, cleanup, err := openWritableStoreAndInitForInvocation(state)
 	if err != nil {
 		return err
 	}

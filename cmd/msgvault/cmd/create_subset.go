@@ -67,6 +67,11 @@ func init() {
 }
 
 func runCreateSubset(cmd *cobra.Command, args []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	if !isDaemonCLISubprocess() {
 		return runDaemonCLICommandHTTPFromCobra(cmd, args)
 	}
@@ -94,7 +99,7 @@ func runCreateSubset(cmd *cobra.Command, args []string) error {
 		)
 	}
 
-	release, err := acquireDirectSQLiteWriteLock(cfg)
+	release, err := acquireDirectSQLiteWriteLock(cfg, state)
 	if err != nil {
 		return err
 	}

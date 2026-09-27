@@ -54,6 +54,9 @@ func newExportDiscordLocalCmd(deps discordCommandDeps) *cobra.Command {
 		Short: "Export bounded Discord history from the local archive",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if invocationFromContext(cmd.Context()) != nil && deps.bind != nil {
+				deps = deps.bind(cmd.Context())
+			}
 			return runExportDiscord(cmd, deps, args[0], opts)
 		},
 	}

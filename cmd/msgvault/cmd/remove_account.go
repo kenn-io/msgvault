@@ -122,6 +122,12 @@ func confirmRemoveAccount(r io.Reader, w io.Writer) (bool, error) {
 }
 
 func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	yes, err := cmd.Flags().GetBool("yes")
 	if err != nil {
 		return fmt.Errorf("read --yes flag: %w", err)
@@ -135,7 +141,7 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		return usageErr(cmd, err)
 	}
 
-	s, cleanup, err := openWritableStoreAndInit()
+	s, cleanup, err := openWritableStoreAndInitForInvocation(state)
 	if err != nil {
 		return err
 	}

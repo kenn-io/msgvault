@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
@@ -49,6 +50,11 @@ Examples:
   msgvault sync-slack --full`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
@@ -57,7 +63,7 @@ Examples:
 			if len(args) > 0 {
 				flagTeam = args[0]
 			}
-			s, cleanup, err := openWritableStoreAndInitForIngest()
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 			if err != nil {
 				return err
 			}
@@ -86,7 +92,7 @@ Examples:
 					continue
 				}
 				imp := slack.NewImporter(s, slack.NewClient("", token), teamID)
-				opts := slackImportOptions(teamID, userID)
+				opts := slackImportOptions(teamID, userID, cfg)
 				applySlackConversationOverrides(cmd, &opts, syncDMs, syncGroupDMs)
 				opts.Limit = syncSlackLimit
 				opts.Full = syncSlackFull
@@ -109,7 +115,7 @@ Examples:
 
 			// Successful workspaces' messages must reach the analytics cache
 			// regardless of interruptions or per-workspace failures.
-			cacheErr := rebuildCacheAfterManualSync(cfg.DatabaseDSN())
+			cacheErr := rebuildCacheAfterManualSync(cfg.DatabaseDSN(), state)
 			if ctx.Err() != nil {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-slack to resume.")
 			} else if len(syncErrors) > 0 {
@@ -215,7 +221,7 @@ func slackSyncExit(ctxErr error, syncErrors []string, cacheErr error) error {
 
 // slackImportOptions builds the config-derived import options shared by the
 // CLI and scheduler paths (flag overlays are applied by the CLI caller).
-func slackImportOptions(teamID, userID string) slack.ImportOptions {
+func slackImportOptions(teamID, userID string, cfg *config.Config) slack.ImportOptions {
 	policy := cfg.Slack.MediaPolicy(teamID)
 	return slack.ImportOptions{
 		TeamID:          teamID,
@@ -234,6 +240,11 @@ func slackImportOptions(teamID, userID string) slack.ImportOptions {
 // sync of every registered Slack workspace. Per-workspace failures are
 // collected so one broken workspace does not starve the others.
 func runConfiguredSlackSync(ctx context.Context, s *store.Store) error {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	sources, err := resolveSlackSyncSources(s, "")
 	if err != nil {
 		return err
@@ -249,7 +260,7 @@ func runConfiguredSlackSync(ctx context.Context, s *store.Store) error {
 				return false, fmt.Errorf("slack %s: %w", teamID, terr)
 			}
 			imp := slack.NewImporter(s, slack.NewClient("", token), teamID)
-			if _, serr := imp.Import(ctx, slackImportOptions(teamID, userID)); serr != nil {
+			if _, serr := imp.Import(ctx, slackImportOptions(teamID, userID, cfg)); serr != nil {
 				return true, fmt.Errorf("slack %s: %w", teamID, serr)
 			}
 			return true, nil

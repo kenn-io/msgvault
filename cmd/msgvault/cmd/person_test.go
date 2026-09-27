@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,7 +67,7 @@ func TestPersonPromoteAcceptsCreatedResponse(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
 
@@ -80,6 +81,7 @@ func TestPersonPromoteAcceptsCreatedResponse(t *testing.T) {
 		Args: personPromoteCmd.Args,
 		RunE: personPromoteCmd.RunE,
 	}
+	command.SetContext(testCtx)
 	command.SetOut(&output)
 	command.SetArgs([]string{"42"})
 
@@ -122,7 +124,7 @@ func TestPersonSetDisplayNameClearSendsNull(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
 
@@ -138,6 +140,7 @@ func TestPersonSetDisplayNameClearSendsNull(t *testing.T) {
 		Args: personSetDisplayNameCmd.Args,
 		RunE: personSetDisplayNameCmd.RunE,
 	}
+	command.SetContext(testCtx)
 	command.Flags().BoolVar(&personClearDisplayName, "clear", false, "")
 	command.SetOut(&output)
 	command.SetArgs([]string{"7", "--clear"})
@@ -174,7 +177,7 @@ func TestPersonDeleteSendsIfMatchFromLatestRead(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
 
@@ -184,6 +187,7 @@ func TestPersonDeleteSendsIfMatchFromLatestRead(t *testing.T) {
 		Args: personDeleteCmd.Args,
 		RunE: personDeleteCmd.RunE,
 	}
+	command.SetContext(testCtx)
 	command.SetOut(&output)
 	command.SetArgs([]string{"7"})
 
@@ -192,12 +196,13 @@ func TestPersonDeleteSendsIfMatchFromLatestRead(t *testing.T) {
 	assert.Contains(output.String(), "Deleted person 7")
 }
 
-func executePersonMergeCLI(t *testing.T, command *cobra.Command, args ...string) string {
+func executePersonMergeCLI(ctx context.Context, t *testing.T, command *cobra.Command, args ...string) string {
 	t.Helper()
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&output)
 	command.SetArgs(args)
+	command.SetContext(ctx)
 	require.NoError(t, command.Execute(), output.String())
 	return output.String()
 }
@@ -298,52 +303,51 @@ func TestPersonMergeCommandsUseConfiguredRemote(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
-	mergeJSONOutput := executePersonMergeCLI(t, newPersonMergeCommand(), "7", "9",
+	mergeJSONOutput := executePersonMergeCLI(testCtx, t, newPersonMergeCommand(), "7", "9",
 		"--survivor-revision", "3", "--absorbed-revision", "2",
 		"--idempotency-key", "remote-merge", "--json")
 	assertions.Contains(mergeJSONOutput, `"review_candidates":[]`)
-	mergeOutput := executePersonMergeCLI(t, newPersonMergeCommand(), "7", "9",
+	mergeOutput := executePersonMergeCLI(testCtx, t, newPersonMergeCommand(), "7", "9",
 		"--survivor-revision", "3", "--absorbed-revision", "2",
 		"--idempotency-key", "remote-merge")
 	assertions.Contains(mergeOutput, "Merge: 12")
 	assertions.Contains(mergeOutput, "Absorbed UID: absorbed-uid")
 	assertions.Contains(mergeOutput, "Identity revision: 42")
 	assertions.Contains(mergeOutput, "Cache state: ready")
-	splitJSONOutput := executePersonMergeCLI(t, newPersonSplitCommand(), "7", "--merge-id", "12",
+	splitJSONOutput := executePersonMergeCLI(testCtx, t, newPersonSplitCommand(), "7", "--merge-id", "12",
 		"--participant", "90", "--revision", "4",
 		"--idempotency-key", "remote-split", "--json")
 	assertions.Contains(splitJSONOutput, `"ambiguous_rows":[]`)
-	splitOutput := executePersonMergeCLI(t, newPersonSplitCommand(), "7", "--merge-id", "12",
+	splitOutput := executePersonMergeCLI(testCtx, t, newPersonSplitCommand(), "7", "--merge-id", "12",
 		"--participant", "90", "--revision", "4",
 		"--idempotency-key", "remote-split")
 	assertions.Contains(splitOutput, "Split: 13")
 	assertions.Contains(splitOutput, "Exact reversal: true")
 	assertions.Contains(splitOutput, "Identity revision: 43")
 	assertions.Contains(splitOutput, "Cache state: stale")
-	rootSplitOutput := executePersonMergeCLI(t, newPersonSplitCommand(), "7", "--merge-id", "12",
+	rootSplitOutput := executePersonMergeCLI(testCtx, t, newPersonSplitCommand(), "7", "--merge-id", "12",
 		"--revision", "4", "--idempotency-key", "remote-root-split", "--json")
 	assertions.Contains(rootSplitOutput, `"exact_reversal":true`)
 	assertions.Equal([][]int64{{90}, {90}, nil}, splitParticipants)
-	executePersonMergeCLI(t, newPersonMergeHistoryCommand(), "7", "--json")
-	assertions.Contains(executePersonMergeCLI(t, newPersonMergeHistoryCommand(), "7"), "MERGE")
-	detailJSONOutput := executePersonMergeCLI(t, newPersonMergeShowCommand(), "12", "--json")
+	executePersonMergeCLI(testCtx, t, newPersonMergeHistoryCommand(), "7", "--json")
+	assertions.Contains(executePersonMergeCLI(testCtx, t, newPersonMergeHistoryCommand(), "7"), "MERGE")
+	detailJSONOutput := executePersonMergeCLI(testCtx, t, newPersonMergeShowCommand(), "12", "--json")
 	for _, field := range []string{"participants", "rows", "splits", "review_candidates"} {
 		assertions.Contains(detailJSONOutput, `"`+field+`":[]`)
 	}
-	assertions.Contains(executePersonMergeCLI(t, newPersonMergeShowCommand(), "12"), "Merge: 12")
-	snapshot := executePersonMergeCLI(t, newPersonMergeShowCommand(), "12", "--snapshot", "--json")
+	assertions.Contains(executePersonMergeCLI(testCtx, t, newPersonMergeShowCommand(), "12"), "Merge: 12")
+	snapshot := executePersonMergeCLI(testCtx, t, newPersonMergeShowCommand(), "12", "--snapshot", "--json")
 	assertions.JSONEq(`{"persons":[{"id":7}],"rows":{"person_names":[1]}}`,
 		string(extractPersonMergeSnapshot(t, snapshot)))
 	assertions.Contains(
-		executePersonMergeCLI(t, newPersonMergeShowCommand(), "12", "--snapshot"),
+		executePersonMergeCLI(testCtx, t, newPersonMergeShowCommand(), "12", "--snapshot"),
 		`Snapshot: {"persons":[{"id":7}],"rows":{"person_names":[1]}}`)
-	executePersonMergeCLI(t, newPersonMergeCandidateCommand(), "21",
+	executePersonMergeCLI(testCtx, t, newPersonMergeCandidateCommand(), "21",
 		"--person-id", "7", "--revision", "4", "--decision", "rejected", "--json")
-	candidateOutput := executePersonMergeCLI(t, newPersonMergeCandidateCommand(), "21",
+	candidateOutput := executePersonMergeCLI(testCtx, t, newPersonMergeCandidateCommand(), "21",
 		"--person-id", "7", "--revision", "4", "--decision", "rejected")
 	assertions.Contains(candidateOutput, "State: rejected")
 	assertions.Contains(candidateOutput, `Person ETag: "person-7-r5"`)
@@ -392,7 +396,7 @@ func TestPersonMergeCommandUsesExistingLocalDaemon(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	runtime := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint(""))
 	_, err := daemonRuntimeStore(dataDir).Write(runtime.Record)
 	require.NoError(t, err)
@@ -402,14 +406,14 @@ func TestPersonMergeCommandUsesExistingLocalDaemon(t *testing.T) {
 			return nil, errors.New("unreachable")
 		})
 
-	output := executePersonMergeCLI(t, newPersonMergeHistoryCommand(), "7", "--json")
+	output := executePersonMergeCLI(testCtx, t, newPersonMergeHistoryCommand(), "7", "--json")
 	assert.JSONEq(t, `[]`, output)
 	assert.Equal(t, 1, requests)
 }
 
 func TestPersonMergeCLIValidationHappensBeforeOpeningStore(t *testing.T) {
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	testCtx := withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	tests := []struct {
 		name    string
 		command *cobra.Command
@@ -432,6 +436,7 @@ func TestPersonMergeCLIValidationHappensBeforeOpeningStore(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			test.command.SetArgs(test.args)
+			test.command.SetContext(testCtx)
 			err := test.command.Execute()
 			require.ErrorContains(t, err, test.want)
 		})

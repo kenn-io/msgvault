@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"path/filepath"
 	"testing"
@@ -41,7 +40,7 @@ func TestImportPstRunsPostSourceMigrationForEligibleSourceTypes(t *testing.T) {
 	t.Cleanup(saveImportPstState(t))
 	testCfg := lifecycleTestConfig(tmp)
 	testCfg.Identity.Addresses = []string{"legacy@example.com"}
-	withStoreResolverConfig(t, testCfg)
+	testCtx := withStoreResolverConfig(t, testCfg)
 
 	st, err := store.Open(testCfg.DatabaseDSN())
 	require.NoError(
@@ -68,7 +67,8 @@ func TestImportPstRunsPostSourceMigrationForEligibleSourceTypes(t *testing.T) {
 
 	var stdout bytes.Buffer
 	cmd := &cobra.Command{Use: "import-pst"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(io.Discard)
 
@@ -115,7 +115,8 @@ func TestRunPstPostImportMigrationsConfirmsDefaultIdentityBeforeHardErrorMigrati
 	tmp := t.TempDir()
 	testCfg := lifecycleTestConfig(tmp)
 	testCfg.Identity.Addresses = []string{"legacy@example.com"}
-	withStoreResolverConfig(t, testCfg)
+	testCtx := withStoreResolverConfig(t, testCfg)
+	_ = testCtx
 
 	st, err := store.Open(testCfg.DatabaseDSN())
 	require.NoError(
@@ -132,7 +133,7 @@ func TestRunPstPostImportMigrationsConfirmsDefaultIdentityBeforeHardErrorMigrati
 	err = runPstPostImportMigrations(io.Discard, st, &importer.PstImportSummary{
 		SourceID:   src.ID,
 		HardErrors: true,
-	}, "mbox", "archive@example.com")
+	}, "mbox", "archive@example.com", invocationFromContext(testCtx))
 	require.NoError(
 		err, "post-import migrations")
 

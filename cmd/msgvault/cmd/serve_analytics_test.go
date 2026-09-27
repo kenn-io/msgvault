@@ -42,6 +42,8 @@ func TestPrepareDaemonAnalyticsEngineAutoStartsWithSQLFallback(t *testing.T) {
 }
 
 func TestRunServeAllowsDeletionIDsWhileAnalyticsBuildBlocked(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	oldCfg := cfg
@@ -64,7 +66,7 @@ func TestRunServeAllowsDeletionIDsWhileAnalyticsBuildBlocked(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	cmd := &cobra.Command{Use: serveCmd.Use}
-	cmd.SetContext(ctx)
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
 	errCh := make(chan error, 1)
 	go func() { errCh <- runServe(cmd, nil) }()
 

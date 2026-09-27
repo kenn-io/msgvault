@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -200,12 +201,12 @@ func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 	require.NoError(err, "write runtime")
 
 	var stoppedPID int
-	stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime) error {
+	stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime, _ *slog.Logger) error {
 		stoppedPID = rt.Record.PID
 		return nil
 	})
 
-	result, err := stopLocalDaemonsForUpdate(lifecycleTestConfig(dataDir))
+	result, err := stopLocalDaemonsForUpdate(lifecycleTestConfig(dataDir), testDiscardLogger())
 
 	require.NoError(err, "stop local daemons")
 	assert.True(result.Stopped, "stopped")
@@ -244,7 +245,7 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 		}, true, nil
 	})
 
-	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, installedExe)
+	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, installedExe, testInvocationWithConfig(cfg))
 
 	require.NoError(err, "restart daemon")
 	assert.Equal(installedExe, gotExecutable, "restart executable")
@@ -285,7 +286,7 @@ func TestRestartDaemonAfterUpdatePassesUsableContext(t *testing.T) {
 		}, true, nil
 	})
 
-	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, installedExe)
+	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, installedExe, testInvocationWithConfig(cfg))
 
 	require.NoError(err, "restart daemon")
 	require.NotNil(gotCtx, "readiness wait received a nil context")

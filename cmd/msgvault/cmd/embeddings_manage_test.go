@@ -31,18 +31,19 @@ func TestRunEmbeddingsPruneRemovesOrphansWithoutEmbeddingCalls(t *testing.T) {
 	c.Vector.DBPath = vectorPath
 	c.Vector.Embeddings.Model = "test-model"
 	c.Vector.Embeddings.Dimension = 4
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
 	mainStore, err := store.Open(mainPath)
 	require.NoError(t, err)
 	require.NoError(t, mainStore.InitSchema())
-	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+	backend, err := sqlitevec.Open(testCtx, sqlitevec.Options{
 		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
 	})
 	require.NoError(t, err)
-	generation, err := backend.CreateGeneration(t.Context(), "test-model", 4, "test:4")
+	generation, err := backend.CreateGeneration(testCtx, "test-model", 4, "test:4")
 	require.NoError(t, err)
-	require.NoError(t, backend.Upsert(t.Context(), generation, []vector.Chunk{
+	require.NoError(t, backend.Upsert(testCtx, generation, []vector.Chunk{
 		{MessageID: 9001, Vector: []float32{1, 0, 0, 0}},
 	}))
 	require.NoError(t, backend.Close())
@@ -50,17 +51,18 @@ func TestRunEmbeddingsPruneRemovesOrphansWithoutEmbeddingCalls(t *testing.T) {
 
 	var output bytes.Buffer
 	command := &cobra.Command{Use: "prune"}
-	command.SetContext(t.Context())
+	command.SetContext(testCtx)
+	command.SetContext(testCtx)
 	command.SetOut(&output)
 	require.NoError(t, runEmbeddingsPrune(command, nil))
 	assert.Equal(t, "Pruned 1 orphan message embedding(s).\n", output.String())
 
-	reopened, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+	reopened, err := sqlitevec.Open(testCtx, sqlitevec.Options{
 		Path: vectorPath, MainPath: mainPath, Dimension: 4,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
-	stats, err := reopened.Stats(t.Context(), generation)
+	stats, err := reopened.Stats(testCtx, generation)
 	require.NoError(t, err)
 	assert.Zero(t, stats.EmbeddingCount)
 }
@@ -77,22 +79,23 @@ func TestRunEmbeddingsOptimizeBuildsFromStoredVectorsWithoutProvider(t *testing.
 	c.Vector.Embeddings.Model = "test-model"
 	c.Vector.Embeddings.Dimension = 4
 	c.Vector.Search.ANNThreads = 1
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
 	mainStore, err := store.Open(mainPath)
 	require.NoError(t, err)
 	require.NoError(t, mainStore.InitSchema())
-	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+	backend, err := sqlitevec.Open(testCtx, sqlitevec.Options{
 		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
 	})
 	require.NoError(t, err)
-	generation, err := backend.CreateGeneration(t.Context(), "test-model", 4, "test:4")
+	generation, err := backend.CreateGeneration(testCtx, "test-model", 4, "test:4")
 	require.NoError(t, err)
 	chunks := make([]vector.Chunk, 512)
 	for i := range chunks {
 		chunks[i] = vector.Chunk{MessageID: int64(i + 1), Vector: []float32{float32(i % 17), 1, 2, 3}}
 	}
-	require.NoError(t, backend.Upsert(t.Context(), generation, chunks))
+	require.NoError(t, backend.Upsert(testCtx, generation, chunks))
 	require.NoError(t, backend.Close())
 	require.NoError(t, mainStore.Close())
 
@@ -106,33 +109,34 @@ func TestRunEmbeddingsOptimizeBuildsFromStoredVectorsWithoutProvider(t *testing.
 
 	var stdout, stderr bytes.Buffer
 	command := &cobra.Command{Use: "optimize"}
+	command.SetContext(testCtx)
 	command.Flags().Bool("drop", false, "")
-	command.SetContext(t.Context())
+	command.SetContext(testCtx)
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)
 	require.NoError(t, runEmbeddingsOptimize(command, []string{strconv.FormatInt(int64(generation), 10)}))
 	assert.Contains(t, stdout.String(), "accelerator ready (512 vectors)")
 	assert.Contains(t, stderr.String(), "Training accelerator")
 
-	reopened, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: vectorPath, Dimension: 4})
+	reopened, err := sqlitevec.Open(testCtx, sqlitevec.Options{Path: vectorPath, Dimension: 4})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
-	status, err := reopened.Accelerator(t.Context(), generation)
+	status, err := reopened.Accelerator(testCtx, generation)
 	require.NoError(t, err)
 	require.NotNil(t, status)
 	assert.Equal(t, sqlitevec.AcceleratorReady, status.State)
 	assert.Equal(t, int64(512), status.IndexedCount)
 	assert.NotNil(t, status.CompletedAt)
 
-	require.NoError(t, reopened.RetireGeneration(t.Context(), generation, false))
+	require.NoError(t, reopened.RetireGeneration(testCtx, generation, false))
 	require.NoError(t, command.Flags().Set("drop", "true"))
 	stdout.Reset()
 	require.NoError(t, runEmbeddingsOptimize(command, []string{strconv.FormatInt(int64(generation), 10)}))
 	assert.Contains(t, stdout.String(), "accelerator dropped")
-	status, err = reopened.Accelerator(t.Context(), generation)
+	status, err = reopened.Accelerator(testCtx, generation)
 	require.NoError(t, err)
 	assert.Nil(t, status)
-	stats, err := reopened.Stats(t.Context(), generation)
+	stats, err := reopened.Stats(testCtx, generation)
 	require.NoError(t, err)
 	assert.Equal(t, int64(512), stats.EmbeddingCount)
 }
@@ -231,7 +235,8 @@ func TestRunEmbeddingsActivate_ContextualRequiresConvergenceUnlessForced(t *test
 	c.Vector.Embeddings.Endpoint = "https://example.invalid/v1"
 	c.Vector.Embeddings.Model = "voyage-context-4"
 	c.Vector.Embeddings.Dimension = 4
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
 	mainStore, err := store.Open(mainPath)
 	require.NoError(err)
@@ -239,14 +244,14 @@ func TestRunEmbeddingsActivate_ContextualRequiresConvergenceUnlessForced(t *test
 	_, err = mainStore.DB().Exec(`UPDATE embedding_change_clock SET sequence = 2 WHERE singleton = 1`)
 	require.NoError(err)
 	require.NoError(sqlitevec.RegisterExtension())
-	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+	backend, err := sqlitevec.Open(testCtx, sqlitevec.Options{
 		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
 	})
 	require.NoError(err)
-	gen, err := backend.CreateGeneration(t.Context(), c.Vector.Embeddings.Model, 4, c.Vector.GenerationFingerprint())
+	gen, err := backend.CreateGeneration(testCtx, c.Vector.Embeddings.Model, 4, c.Vector.GenerationFingerprint())
 	require.NoError(err)
-	require.NoError(backend.AdvanceDocumentChangeWatermark(t.Context(), gen, 1))
-	require.NoError(backend.SetDocumentReconcileCursor(t.Context(), gen, "done:2"))
+	require.NoError(backend.AdvanceDocumentChangeWatermark(testCtx, gen, 1))
+	require.NoError(backend.SetDocumentReconcileCursor(testCtx, gen, "done:2"))
 	require.NoError(backend.Close())
 	require.NoError(mainStore.Close())
 
@@ -256,7 +261,7 @@ func TestRunEmbeddingsActivate_ContextualRequiresConvergenceUnlessForced(t *test
 	embeddingsActivateForce = false
 	cmd := embeddingsActivateCmd
 	previousContext := cmd.Context()
-	cmd.SetContext(t.Context())
+	cmd.SetContext(testCtx)
 	t.Cleanup(func() { cmd.SetContext(previousContext) })
 	var output bytes.Buffer
 	cmd.SetOut(&output)
@@ -292,7 +297,8 @@ func TestRunEmbeddingsActivateOpenAIBlocksMissingPersonCoverage(t *testing.T) {
 	c.Vector.People = vector.PeopleConfig{
 		Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
 	}
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 	require.NoError(c.Save())
 
 	mainStore, err := store.Open(mainPath)
@@ -300,21 +306,21 @@ func TestRunEmbeddingsActivateOpenAIBlocksMissingPersonCoverage(t *testing.T) {
 	require.NoError(mainStore.InitSchema())
 	semanticProfile, err := c.Vector.SemanticPersonEmbeddingProfile()
 	require.NoError(err)
-	_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(t.Context(), semanticProfile)
+	_, err = mainStore.EnsurePersonSemanticEmbeddingProfile(testCtx, semanticProfile)
 	require.NoError(err)
 	_, _, err = mainStore.GrantPersonSemanticEmbeddingConsent(
-		t.Context(), semanticProfile.Fingerprint, "test",
+		testCtx, semanticProfile.Fingerprint, "test",
 	)
 	require.NoError(err)
 	_, err = mainStore.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)`,
 		"urn:uuid:00000000-0000-0000-0000-000000000002", "Synthetic Missing Person")
 	require.NoError(err)
 	require.NoError(sqlitevec.RegisterExtension())
-	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+	backend, err := sqlitevec.Open(testCtx, sqlitevec.Options{
 		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
 	})
 	require.NoError(err)
-	gen, err := backend.CreateGeneration(t.Context(), c.Vector.Embeddings.Model, 4, c.Vector.GenerationFingerprint())
+	gen, err := backend.CreateGeneration(testCtx, c.Vector.Embeddings.Model, 4, c.Vector.GenerationFingerprint())
 	require.NoError(err)
 	require.NoError(backend.Close())
 	require.NoError(mainStore.Close())
@@ -324,7 +330,7 @@ func TestRunEmbeddingsActivateOpenAIBlocksMissingPersonCoverage(t *testing.T) {
 	embeddingsActivateYes = true
 	embeddingsActivateForce = false
 	previousContext := embeddingsActivateCmd.Context()
-	embeddingsActivateCmd.SetContext(t.Context())
+	embeddingsActivateCmd.SetContext(testCtx)
 	t.Cleanup(func() { embeddingsActivateCmd.SetContext(previousContext) })
 
 	err = runEmbeddingsActivate(embeddingsActivateCmd,
@@ -352,7 +358,8 @@ func setupManualContextualGeneration(t *testing.T, fingerprint string, retire bo
 	c.Vector.Embeddings.Endpoint = "https://example.invalid/v1"
 	c.Vector.Embeddings.Model = "voyage-context-4"
 	c.Vector.Embeddings.Dimension = 4
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 	if fingerprint == "" {
 		fingerprint = c.Vector.GenerationFingerprint()
 	}
@@ -361,14 +368,14 @@ func setupManualContextualGeneration(t *testing.T, fingerprint string, retire bo
 	require.NoError(t, err)
 	require.NoError(t, mainStore.InitSchema())
 	require.NoError(t, sqlitevec.RegisterExtension())
-	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+	backend, err := sqlitevec.Open(testCtx, sqlitevec.Options{
 		Path: vectorPath, MainPath: mainPath, Dimension: 4, MainDB: mainStore.DB(),
 	})
 	require.NoError(t, err)
-	gen, err := backend.CreateGeneration(t.Context(), c.Vector.Embeddings.Model, 4, fingerprint)
+	gen, err := backend.CreateGeneration(testCtx, c.Vector.Embeddings.Model, 4, fingerprint)
 	require.NoError(t, err)
 	if retire {
-		require.NoError(t, backend.RetireGeneration(t.Context(), gen, false))
+		require.NoError(t, backend.RetireGeneration(testCtx, gen, false))
 	}
 	require.NoError(t, backend.Close())
 	require.NoError(t, mainStore.Close())
@@ -378,17 +385,18 @@ func setupManualContextualGeneration(t *testing.T, fingerprint string, retire bo
 	embeddingsActivateYes = true
 	embeddingsActivateForce = false
 	previousContext := embeddingsActivateCmd.Context()
-	embeddingsActivateCmd.SetContext(t.Context())
+	embeddingsActivateCmd.SetContext(testCtx)
 	t.Cleanup(func() { embeddingsActivateCmd.SetContext(previousContext) })
 	return gen
 }
 
 func assertManualGenerationState(t *testing.T, gen vector.GenerationID, want vector.GenerationState) {
 	t.Helper()
-	db, rebind, closeDB, err := openEmbeddingsMetadataDB(t.Context())
+	ctx := embeddingsActivateCmd.Context()
+	db, rebind, closeDB, err := openEmbeddingsMetadataDB(ctx)
 	require.NoError(t, err)
 	defer closeDB()
-	row, err := getEmbeddingGeneration(t.Context(), db, rebind, gen)
+	row, err := getEmbeddingGeneration(ctx, db, rebind, gen)
 	require.NoError(t, err)
 	assert.Equal(t, want, row.State)
 }

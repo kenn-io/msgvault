@@ -21,12 +21,14 @@ func TestRepackAttachmentsAlwaysProxiesThroughDaemonCLIRunner(t *testing.T) {
 		`{"type":"stdout","data":"Repacked 0 blob(s) (0B) from 0 pack(s) into 0 pack(s); removed 0 old pack(s).\n"}`,
 		`{"type":"complete"}`,
 	)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	var stdout bytes.Buffer
 	cmd := &cobra.Command{
 		Use: repackAttachmentsCmd.Use, Args: repackAttachmentsCmd.Args, RunE: repackAttachmentsCmd.RunE,
 	}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	require.NoError(cmd.Execute())
 	assert.Equal(1, int(requests.Load()))

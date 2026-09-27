@@ -87,6 +87,11 @@ func documentVectorRunResultFromOperationRun(run *operations.Run) (vectordocumen
 }
 
 func runConfiguredDocumentVectorGeneration(ctx context.Context, st *store.Store, generationID int64, limit int) (vectordocument.ReconcileResult, error) {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return vectordocument.ReconcileResult{}, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	if limit < 1 || limit > 1000 {
 		return vectordocument.ReconcileResult{}, errors.New("document vector operation limit must be between 1 and 1000")
 	}
@@ -118,6 +123,11 @@ func runConfiguredDocumentVectorGeneration(ctx context.Context, st *store.Store,
 }
 
 func openDocumentVectorCleanupBackend(ctx context.Context, st *store.Store, mainPath string) (vectordocument.Backend, func() error, error) {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return nil, nil, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	if store.IsPostgresURL(mainPath) {
 		backend, err := pgvector.DocumentBackendForDB(st.DB())
 		if err != nil {
@@ -140,6 +150,11 @@ func runDocumentVectorWithFeatures(
 	ctx context.Context, st *store.Store, vf *vectorFeatures, generationID int64, limit int,
 	scope operations.PassScope,
 ) (vectordocument.ReconcileResult, error) {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return vectordocument.ReconcileResult{}, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	limit = min(limit, max(1, vf.Cfg.Embeddings.BatchSize))
 	generation, err := st.GetDocumentVectorGeneration(ctx, generationID)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -33,6 +34,11 @@ func newAddSynctechSMSDriveCmd() *cobra.Command {
 		Short: "Configure a Google Drive SMS Backup & Restore source",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
 			if opts.OwnerPhone == "" {
 				return errors.New("--owner-phone is required")
 			}
@@ -46,7 +52,7 @@ func newAddSynctechSMSDriveCmd() *cobra.Command {
 				// Complete OAuth in this process — which owns the user's
 				// browser — before proxying; the daemon subprocess's
 				// idempotent token check then skips the browser flow.
-				if !opts.SkipAuthForTest && !IsRemoteMode() {
+				if !opts.SkipAuthForTest && !IsRemoteMode(state) {
 					if err := ensureSynctechSMSDriveToken(cmd.Context(), opts.GoogleAccount, opts.OAuthApp); err != nil {
 						return err
 					}
@@ -105,6 +111,11 @@ func newSyncSynctechSMSCmd() *cobra.Command {
 		Short: "Run one configured synctech-sms source now",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			state := invocationFromCommand(cmd)
+			if state == nil || state.cfg == nil {
+				return errors.New("configuration is unavailable")
+			}
+			cfg := state.cfg
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
@@ -118,7 +129,11 @@ func newSyncSynctechSMSCmd() *cobra.Command {
 }
 
 func runConfiguredSynctechSMSSource(ctx context.Context, src config.SynctechSMSSource) error {
-	st, cleanup, err := openWritableStoreAndInitForIngest()
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 	if err != nil {
 		return err
 	}
@@ -132,7 +147,7 @@ func runConfiguredSynctechSMSSourceWithStore(ctx context.Context, st *store.Stor
 }
 
 func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st *store.Store, src config.SynctechSMSSource, driveClient synctechsms.DriveClient) error {
-	opts := synctechImportOptions(src)
+	opts := synctechImportOptions(src, invocationFromContext(ctx).cfg)
 	if opts.OwnerPhone == "" {
 		return fmt.Errorf("synctech-sms source %q owner_phone is required", src.Name)
 	}
@@ -142,7 +157,7 @@ func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st 
 		if src.Path == "" {
 			return fmt.Errorf("synctech-sms source %q path is required for local backend", src.Name)
 		}
-		if _, err := ensureConfiguredSynctechSMSSource(st, src, opts); err != nil {
+		if _, err := ensureConfiguredSynctechSMSSource(st, src, opts, invocationFromContext(ctx)); err != nil {
 			return err
 		}
 		_, err = synctechsms.NewImporter(st, opts).ImportPath(src.Path)
@@ -163,7 +178,7 @@ func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st 
 	return errors.Join(err, refreshErr)
 }
 
-func ensureConfiguredSynctechSMSSource(st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions) (*store.Source, error) {
+func ensureConfiguredSynctechSMSSource(st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions, state *invocation) (*store.Source, error) {
 	if opts.OwnerPhone == "" {
 		return nil, fmt.Errorf("synctech-sms source %q owner_phone is required", src.Name)
 	}
@@ -171,8 +186,11 @@ func ensureConfiguredSynctechSMSSource(st *store.Store, src config.SynctechSMSSo
 	if err != nil {
 		return nil, fmt.Errorf("get source: %w", err)
 	}
-	confirmDefaultIdentity(io.Discard, st, source.ID, src.Name, opts.OwnerPhone, "account-identifier")
-	if err := runPostSourceCreateMigrations(st); err != nil {
+	if state == nil || state.logger == nil {
+		return nil, errors.New("invocation state is unavailable")
+	}
+	confirmDefaultIdentity(io.Discard, st, source.ID, src.Name, opts.OwnerPhone, "account-identifier", state.logger)
+	if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
 		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 	return source, nil
@@ -206,7 +224,13 @@ func runSynctechSMSDriveSourceWithClient(ctx context.Context, st *store.Store, s
 	if err := validateSynctechSMSDriveSource(src); err != nil {
 		return summary, err
 	}
-	source, err := ensureConfiguredSynctechSMSSource(st, src, opts)
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return summary, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
+	source, err := ensureConfiguredSynctechSMSSource(st, src, opts, state)
 	if err != nil {
 		return summary, err
 	}
@@ -325,11 +349,16 @@ func importOneDriveBackup(ctx context.Context, st *store.Store, imp *synctechsms
 }
 
 func newSynctechSMSDriveClient(ctx context.Context, src config.SynctechSMSSource) (synctechsms.DriveClient, error) {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	clientSecrets, err := cfg.OAuth.ClientSecretsFor(src.OAuthApp)
 	if err != nil {
 		return nil, err
 	}
-	mgr, err := newSynctechSMSDriveOAuthManager(clientSecrets)
+	mgr, err := newSynctechSMSDriveOAuthManager(cfg, state.logger, clientSecrets)
 	if err != nil {
 		return nil, err
 	}
@@ -348,11 +377,16 @@ func newSynctechSMSDriveClient(ctx context.Context, src config.SynctechSMSSource
 }
 
 func ensureSynctechSMSDriveToken(ctx context.Context, googleAccount, oauthApp string) error {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	clientSecrets, err := cfg.OAuth.ClientSecretsFor(oauthApp)
 	if err != nil {
 		return err
 	}
-	mgr, err := newSynctechSMSDriveOAuthManager(clientSecrets)
+	mgr, err := newSynctechSMSDriveOAuthManager(cfg, state.logger, clientSecrets)
 	if err != nil {
 		return err
 	}
@@ -362,7 +396,7 @@ func ensureSynctechSMSDriveToken(ctx context.Context, googleAccount, oauthApp st
 	return mgr.Authorize(ctx, googleAccount)
 }
 
-func newSynctechSMSDriveOAuthManager(clientSecrets string) (*oauth.Manager, error) {
+func newSynctechSMSDriveOAuthManager(cfg *config.Config, logger *slog.Logger, clientSecrets string) (*oauth.Manager, error) {
 	// The current OAuth manager validates account identity through Gmail's
 	// profile endpoint, so request a read-only Gmail scope alongside Drive.
 	return oauth.NewManagerWithScopes(clientSecrets, cfg.TokensDir(), logger, []string{
@@ -371,10 +405,14 @@ func newSynctechSMSDriveOAuthManager(clientSecrets string) (*oauth.Manager, erro
 	})
 }
 
-func synctechImportOptions(src config.SynctechSMSSource) synctechsms.ImportOptions {
+func synctechImportOptions(src config.SynctechSMSSource, cfg *config.Config) synctechsms.ImportOptions {
+	attachmentsDir := ""
+	if cfg != nil {
+		attachmentsDir = cfg.AttachmentsDir()
+	}
 	return synctechsms.ImportOptions{
 		OwnerPhone:         src.OwnerPhone,
-		AttachmentsDir:     cfg.AttachmentsDir(),
+		AttachmentsDir:     attachmentsDir,
 		IncludeSMS:         src.IncludeSMS,
 		IncludeMMS:         src.IncludeMMS,
 		IncludeCalls:       src.IncludeCalls,

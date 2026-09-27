@@ -454,6 +454,9 @@ func TestRegisterScheduledBeeperJobDefersPackToPackJob(t *testing.T) {
 }
 
 func TestRegisterAttachmentMaintenanceJobAndTrigger(t *testing.T) {
+	logger := testLoggerValue()
+	_ = logger
+
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newAttachmentMaintenanceFixture(t)

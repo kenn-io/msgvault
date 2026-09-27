@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"net/url"
 	"os"
@@ -24,11 +25,13 @@ func TestGCAlwaysProxiesThroughDaemonCLIRunner(t *testing.T) {
 		`{"type":"stdout","data":"Deleted 2 source-deleted message(s).\n"}`,
 		`{"type":"complete"}`,
 	)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	t.Setenv(daemonCLISubprocessEnv, "")
 
 	var stdout bytes.Buffer
 	cmd := newGCCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetArgs([]string{"--yes", "--no-backup"})
 	cmd.SetOut(&stdout)
 
@@ -44,11 +47,13 @@ func TestGCConfirmsBeforeProxyingToDaemon(t *testing.T) {
 		},
 		`{"type":"complete"}`,
 	)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	t.Setenv(daemonCLISubprocessEnv, "")
 
 	var stdout bytes.Buffer
 	cmd := newGCCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetArgs([]string{"--no-backup"})
 	cmd.SetIn(strings.NewReader("y\n"))
 	cmd.SetOut(&stdout)
@@ -60,11 +65,13 @@ func TestGCConfirmsBeforeProxyingToDaemon(t *testing.T) {
 
 func TestGCCancelledConfirmationDoesNotProxy(t *testing.T) {
 	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	t.Setenv(daemonCLISubprocessEnv, "")
 
 	var stdout bytes.Buffer
 	cmd := newGCCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetIn(strings.NewReader("n\n"))
 	cmd.SetOut(&stdout)
 
@@ -75,10 +82,10 @@ func TestGCCancelledConfirmationDoesNotProxy(t *testing.T) {
 
 func TestRunGCLocalCancellationWritesNothing(t *testing.T) {
 	assert := assert.New(t)
-	deletedID, _, _ := seedGCCommandArchive(t)
+	deletedID, _, _, testCtx, cfg := seedGCCommandArchive(t)
 	var output bytes.Buffer
 	cmd := &cobra.Command{}
-	cmd.SetContext(t.Context())
+	cmd.SetContext(testCtx)
 	cmd.SetIn(strings.NewReader("n\n"))
 	cmd.SetOut(&output)
 
@@ -93,15 +100,15 @@ func TestRunGCLocalCancellationWritesNothing(t *testing.T) {
 func TestRunGCLocalBacksUpBeforeDeleteAndCompacts(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	deletedID, activeID, dedupID := seedGCCommandArchive(t)
+	deletedID, activeID, dedupID, testCtx, cfg := seedGCCommandArchive(t)
 	var output bytes.Buffer
 	cmd := &cobra.Command{}
-	cmd.SetContext(t.Context())
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&output)
 
-	orphanBlob := seedGCLooseBlob(t, deletedID, strings.Repeat("0a", 32))
-	sharedBlob := seedGCLooseBlob(t, deletedID, strings.Repeat("0b", 32))
-	seedGCAttachmentRow(t, activeID, strings.Repeat("0b", 32))
+	orphanBlob := seedGCLooseBlob(t, cfg, deletedID, strings.Repeat("0a", 32))
+	sharedBlob := seedGCLooseBlob(t, cfg, deletedID, strings.Repeat("0b", 32))
+	seedGCAttachmentRow(t, cfg, activeID, strings.Repeat("0b", 32))
 
 	require.NoError(runGCLocal(cmd, gcOptions{yes: true}))
 	assert.Contains(output.String(), "Source-deleted messages to purge: 1")
@@ -136,9 +143,9 @@ func TestRunGCLocalBacksUpBeforeDeleteAndCompacts(t *testing.T) {
 func TestRunGCLocalSweepsOrphanBlobsWhenNothingToPurge(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	_, activeID, _ := seedGCCommandArchive(t)
+	_, activeID, _, testCtx, cfg := seedGCCommandArchive(t)
 	firstRun := &cobra.Command{}
-	firstRun.SetContext(t.Context())
+	firstRun.SetContext(testCtx)
 	firstRun.SetOut(&bytes.Buffer{})
 	require.NoError(runGCLocal(firstRun, gcOptions{yes: true, noBackup: true}))
 
@@ -148,11 +155,11 @@ func TestRunGCLocalSweepsOrphanBlobsWhenNothingToPurge(t *testing.T) {
 	orphanBlob := filepath.Join(cfg.AttachmentsDir(), orphanHash[:2], orphanHash)
 	require.NoError(os.MkdirAll(filepath.Dir(orphanBlob), 0o755), "create blob dir")
 	require.NoError(os.WriteFile(orphanBlob, []byte("orphan"), 0o600), "write orphan blob")
-	sharedBlob := seedGCLooseBlob(t, activeID, strings.Repeat("0d", 32))
+	sharedBlob := seedGCLooseBlob(t, cfg, activeID, strings.Repeat("0d", 32))
 
 	var output bytes.Buffer
 	rerun := &cobra.Command{}
-	rerun.SetContext(t.Context())
+	rerun.SetContext(testCtx)
 	rerun.SetOut(&output)
 	require.NoError(runGCLocal(rerun, gcOptions{yes: true}))
 
@@ -173,7 +180,7 @@ func TestRunGCLocalSweepsOrphanBlobsWhenNothingToPurge(t *testing.T) {
 func TestRunGCLocalBacksUpFileURIDatabaseBesideArchive(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	deletedID, _, _ := seedGCCommandArchive(t)
+	deletedID, _, _, testCtx, cfg := seedGCCommandArchive(t)
 	dbPath := cfg.DatabaseDSN()
 	cfg.Data.DatabaseURL = (&url.URL{
 		Scheme: "file",
@@ -182,7 +189,7 @@ func TestRunGCLocalBacksUpFileURIDatabaseBesideArchive(t *testing.T) {
 
 	var output bytes.Buffer
 	cmd := &cobra.Command{}
-	cmd.SetContext(t.Context())
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&output)
 
 	require.NoError(runGCLocal(cmd, gcOptions{yes: true}))
@@ -195,7 +202,7 @@ func TestRunGCLocalBacksUpFileURIDatabaseBesideArchive(t *testing.T) {
 	assert.NotContains(filepath.Base(backups[0]), "?")
 }
 
-func seedGCCommandArchive(t *testing.T) (deletedID, activeID, dedupID int64) {
+func seedGCCommandArchive(t *testing.T) (deletedID, activeID, dedupID int64, testCtx context.Context, cfg *config.Config) {
 	t.Helper()
 	require := require.New(t)
 	dataDir := t.TempDir()
@@ -205,6 +212,7 @@ func seedGCCommandArchive(t *testing.T) (deletedID, activeID, dedupID int64) {
 		Data:    config.DataConfig{DataDir: dataDir},
 	}
 	t.Cleanup(func() { cfg = savedCfg })
+	testCtx = testInvocationContext(t.Context(), cfg, invocationOptions{})
 
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(err, "OpenForTest")
@@ -238,14 +246,14 @@ func seedGCCommandArchive(t *testing.T) (deletedID, activeID, dedupID int64) {
 		sql.NullString{String: strings.Repeat("deleted payload ", 100_000), Valid: true},
 		sql.NullString{}), "store deleted payload")
 	require.NoError(st.Close(), "close seed store")
-	return deletedID, activeID, dedupID
+	return deletedID, activeID, dedupID, testCtx, cfg
 }
 
 // seedGCLooseBlob writes a loose content-addressed blob file and attaches it
 // to messageID, returning the blob's filesystem path.
-func seedGCLooseBlob(t *testing.T, messageID int64, hash string) string {
+func seedGCLooseBlob(t *testing.T, cfg *config.Config, messageID int64, hash string) string {
 	t.Helper()
-	seedGCAttachmentRow(t, messageID, hash)
+	seedGCAttachmentRow(t, cfg, messageID, hash)
 	fullPath := filepath.Join(
 		cfg.AttachmentsDir(), hash[:2], hash,
 	)
@@ -255,7 +263,7 @@ func seedGCLooseBlob(t *testing.T, messageID int64, hash string) string {
 	return fullPath
 }
 
-func seedGCAttachmentRow(t *testing.T, messageID int64, hash string) {
+func seedGCAttachmentRow(t *testing.T, cfg *config.Config, messageID int64, hash string) {
 	t.Helper()
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(t, err, "open store for attachment seed")

@@ -213,12 +213,14 @@ func TestAddIMAPUsesDaemonRunnerAndForwardsPasswordEnv(t *testing.T) {
 		imapSTARTTLS = savedStartTLS
 		noDefaultIdentityAddImap = savedNoDefaultIdentity
 	})
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	t.Setenv("MSGVAULT_IMAP_PASSWORD", "secret")
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd := newAddIMAPCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{

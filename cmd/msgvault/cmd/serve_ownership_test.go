@@ -39,7 +39,9 @@ func TestServeOwnershipEnsureRuntimeRecordRepublishesMissingRecord(t *testing.T)
 
 	dataDir := t.TempDir()
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
-	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
+	owner, err := claimServeOwnership(testCtx, cfg, "127.0.0.1", 8123, "v-test")
 	require.NoError(err, "claimServeOwnership")
 	t.Cleanup(func() { require.NoError(owner.Close(), "close ownership") })
 
@@ -119,14 +121,16 @@ func TestRuntimeRecordHeartbeatSerializesStartupPhaseUpdates(t *testing.T) {
 
 	dataDir := t.TempDir()
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
-	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
+	owner, err := claimServeOwnership(testCtx, cfg, "127.0.0.1", 8123, "v-test")
 	require.NoError(err, "claimServeOwnership")
 	t.Cleanup(func() { require.NoError(owner.Close(), "close ownership") })
 
 	path, err := daemonRuntimeStore(dataDir).Path(owner.record.PID)
 	require.NoError(err, "runtime record path")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testCtx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -156,8 +160,10 @@ func TestClaimServeOwnershipLocksAndPublishesRuntime(t *testing.T) {
 
 	dataDir := t.TempDir()
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
-	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	owner, err := claimServeOwnership(testCtx, cfg, "127.0.0.1", 8123, "v-test")
 	require.NoError(
 		err, "claimServeOwnership")
 
@@ -194,7 +200,9 @@ func TestServeOwnershipStartupPhaseUpdatesRuntimeRecord(t *testing.T) {
 
 	dataDir := t.TempDir()
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
-	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
+	owner, err := claimServeOwnership(testCtx, cfg, "127.0.0.1", 8123, "v-test")
 	require.NoError(err, "claimServeOwnership")
 	t.Cleanup(func() { require.NoError(owner.Close(), "close ownership") })
 
@@ -225,7 +233,9 @@ func TestServeOwnershipStartupCacheBuildOutcomeUpdatesRuntimeRecord(t *testing.T
 
 	dataDir := t.TempDir()
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
-	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
+	owner, err := claimServeOwnership(testCtx, cfg, "127.0.0.1", 8123, "v-test")
 	require.NoError(err, "claimServeOwnership")
 	t.Cleanup(func() { require.NoError(owner.Close(), "close ownership") })
 
@@ -251,12 +261,14 @@ func TestServeOwnershipStartupCacheBuildOutcomeUpdatesRuntimeRecord(t *testing.T
 func TestClaimServeOwnershipRejectsSecondOwner(t *testing.T) {
 	dataDir := t.TempDir()
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
 	first, err := tryAcquireWriteOwnerLock(dataDir)
 	require.NoError(t, err, "pre-held lock")
 	t.Cleanup(func() { require.NoError(t, first.Close(), "close pre-held lock") })
 
-	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	owner, err := claimServeOwnership(testCtx, cfg, "127.0.0.1", 8123, "v-test")
 	assert.Nil(t, owner, "ownership")
 	require.ErrorAs(t, err, &writeOwnerLockHeldError{}, "error type")
 }
@@ -269,8 +281,10 @@ func TestClaimServeOwnershipSkipsSQLiteLockForPostgreSQL(t *testing.T) {
 		DataDir:     dataDir,
 		DatabaseURL: "postgres://user:pass@example.com:5432/msgvault",
 	}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
-	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	owner, err := claimServeOwnership(testCtx, cfg, "127.0.0.1", 8123, "v-test")
 	require.NoError(
 		err, "claimServeOwnership")
 
@@ -299,14 +313,16 @@ func TestClaimServeOwnershipRejectsSecondPostgreSQLDaemon(t *testing.T) {
 		DataDir:     dataDir,
 		DatabaseURL: "postgres://user:pass@example.com:5432/msgvault",
 	}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 
-	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
+	owner, err := claimServeOwnership(testCtx, cfg, "127.0.0.1", 8123, "v-test")
 	require.NoError(
 		err, "claimServeOwnership")
 
 	t.Cleanup(func() { require.NoError(owner.Close(), "close ownership") })
 
-	second, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8124, "v-test")
+	second, err := claimServeOwnership(testCtx, cfg, "127.0.0.1", 8124, "v-test")
 	assert.Nil(second, "second owner")
 	require.Error(err, "second PostgreSQL daemon should be rejected")
 	assert.Contains(err.Error(), "daemon", "error names daemon ownership")

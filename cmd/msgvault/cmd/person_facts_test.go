@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -68,16 +69,16 @@ func TestPersonFactsGeneratedPinsResponseDecodesBadPersonID(t *testing.T) {
 		assertions.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
 
-	client, _, err := OpenHTTPStore(t.Context())
+	client, _, err := OpenHTTPStore(testCtx)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	generatedClient, err := client.GeneratedClient()
 	requirements.NoError(err)
-	response, err := generatedClient.ListPersonFactPinsWithResponse(t.Context(),
+	response, err := generatedClient.ListPersonFactPinsWithResponse(testCtx,
 		&generated.ListPersonFactPinsRequestOptions{
 			PathParams: &generated.ListPersonFactPinsPath{ID: 7},
 		})
@@ -100,16 +101,15 @@ func TestPersonFactsCatalogUsesGeneratedClientPathAndRendersJSONAndTable(t *test
 		assertions.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
-	table, err := runPersonFactsCommand(t, "catalog")
+	table, err := runPersonFactsCommand(testCtx, t, "catalog")
 	requirements.NoError(err)
 	assertions.Contains(table, "KIND")
 	assertions.Contains(table, "primary_channel")
 
-	jsonOutput, err := runPersonFactsCommand(t, "catalog", "--include-sensitive", "--json")
+	jsonOutput, err := runPersonFactsCommand(testCtx, t, "catalog", "--include-sensitive", "--json")
 	requirements.NoError(err)
 	assertions.JSONEq(personFactCatalogResponse, jsonOutput)
 	requirements.Len(queries, 2)
@@ -166,10 +166,9 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
 	for _, test := range []struct {
 		command string
 		header  string
@@ -179,7 +178,7 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 		{command: "claims", header: "CLAIM KEY", path: "/api/v1/people/7/fact-claims"},
 		{command: "decisions", header: "ACTION", path: "/api/v1/people/7/fact-decisions"},
 	} {
-		output, err := runPersonFactsCommand(t, test.command, "7",
+		output, err := runPersonFactsCommand(testCtx, t, test.command, "7",
 			"--target", personFactEmploymentTarget, "--limit", "4", "--offset", "2")
 		requirements.NoError(err)
 		assertions.Contains(output, test.header)
@@ -189,13 +188,13 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 		assertions.Equal("2", query.Get("offset"))
 	}
 
-	pins, err := runPersonFactsCommand(t, "pins", "7")
+	pins, err := runPersonFactsCommand(testCtx, t, "pins", "7")
 	requirements.NoError(err)
 	assertions.Contains(pins, "PINNED")
 	assertions.Contains(pins, "true")
 	assertions.Contains(pins, personFactEmploymentTarget)
 
-	jsonOutput, err := runPersonFactsCommand(t, "claims", "7", "--json")
+	jsonOutput, err := runPersonFactsCommand(testCtx, t, "claims", "7", "--json")
 	requirements.NoError(err)
 	assertions.JSONEq(`[{
 		"id":8,"generation_id":6,"claim_key":"claim-key",
@@ -238,11 +237,10 @@ func TestPersonFactsClaimsTableRetainsMalformedPersistedTargets(t *testing.T) {
 		assertions.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
-	output, err := runPersonFactsCommand(t, "claims", "7")
+	output, err := runPersonFactsCommand(testCtx, t, "claims", "7")
 	requirements.NoError(err)
 	assertions.Contains(output, "candidate:legacy:key:legacy-revision")
 	assertions.Contains(output, "legacy-claim")
@@ -266,11 +264,10 @@ func TestPersonFactsEvidenceStatusForwardsFalseFilterAndRendersNewestFirst(t *te
 		]}`))
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
-	output, err := runPersonFactsCommand(t, "evidence-status", "7",
+	output, err := runPersonFactsCommand(testCtx, t, "evidence-status", "7",
 		"--evidence-key", "evidence-key", "--supported=false", "--limit", "5", "--offset", "1")
 	requirements.NoError(err)
 	assertions.Contains(output, "SUPPORTED")
@@ -305,10 +302,9 @@ func TestPersonFactsPinAndUnpinSendExactBodyWithoutActorAndRenderProjection(t *t
 		}`))
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
 	for _, test := range []struct {
 		command string
 		pinned  bool
@@ -316,7 +312,7 @@ func TestPersonFactsPinAndUnpinSendExactBodyWithoutActorAndRenderProjection(t *t
 		{command: "pin", pinned: true},
 		{command: "unpin", pinned: false},
 	} {
-		output, err := runPersonFactsCommand(t, test.command, "7", "attribute", "target key")
+		output, err := runPersonFactsCommand(testCtx, t, test.command, "7", "attribute", "target key")
 		requirements.NoError(err)
 		assertions.Contains(output, "person_attribute_value:11")
 	}
@@ -335,10 +331,9 @@ func TestPersonFactsCommandsRejectInvalidInputsBeforeNetwork(t *testing.T) {
 		requests.Add(1)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
 	for _, args := range [][]string{
 		{"evidence", "0"},
 		{"claims", "7", "--limit", "201"},
@@ -348,19 +343,20 @@ func TestPersonFactsCommandsRejectInvalidInputsBeforeNetwork(t *testing.T) {
 		{"pin", "7", "candidate", "target-key"},
 		{"unpin", "7", "attribute", " "},
 	} {
-		_, err := runPersonFactsCommand(t, args...)
+		_, err := runPersonFactsCommand(testCtx, t, args...)
 		require.Error(t, err, args)
 	}
 	assert.Zero(t, requests.Load())
 }
 
-func runPersonFactsCommand(t *testing.T, args ...string) (string, error) {
+func runPersonFactsCommand(ctx context.Context, t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	command := newPersonFactsCommand()
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&output)
 	command.SetArgs(args)
+	command.SetContext(ctx)
 	err := command.Execute()
 	return output.String(), err
 }

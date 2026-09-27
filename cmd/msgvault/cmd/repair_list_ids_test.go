@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"os"
 	"testing"
@@ -20,44 +19,48 @@ import (
 // cache revision for an already-current archive. The fixture uses the archive's
 // real zlib MIME rows rather than a repair stub.
 func TestRunRepairListIDsLocalDryRunApplyAndNoop(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	dataDir := t.TempDir()
 	savedCfg := cfg
 	cfg = &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
-	messageIDs := newListIDRepairArchive(t)
+	messageIDs := newListIDRepairArchive(t, cfg)
 	_, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
 	require.NoError(err)
 	const pendingMigration = "person_sweep_change_triggers_v5"
-	markListIDRepairMigrationPending(t, pendingMigration)
-	assert.False(listIDRepairMigrationApplied(t, pendingMigration))
-	beforeRevision := listIDRepairArchiveRevision(t)
+	markListIDRepairMigrationPending(t, pendingMigration, cfg)
+	assert.False(listIDRepairMigrationApplied(t, pendingMigration, cfg))
+	beforeRevision := listIDRepairArchiveRevision(t, cfg)
 	beforeCacheState, err := query.ReadCacheSyncState(cfg.AnalyticsDir())
 	require.NoError(err)
 	assert.Equal(beforeRevision, beforeCacheState.DerivedDataRevision)
 
 	var dryRunOut bytes.Buffer
 	dryRunCmd := &cobra.Command{}
-	dryRunCmd.SetContext(context.Background())
+	dryRunCmd.SetContext(testCtx)
 	dryRunCmd.SetOut(&dryRunOut)
 	require.NoError(runRepairListIDsLocal(dryRunCmd, false))
 	assert.Equal(
 		"List-Id repair dry run: scanned=3 found=1 changed=2 undecodable=1\n"+
 			"Dry run: no rows were modified. Re-run with --apply to write repairs.\n",
 		dryRunOut.String())
-	assert.Equal(sql.NullString{}, listIDRepairArchiveValue(t, messageIDs.missing))
+	assert.Equal(sql.NullString{}, listIDRepairArchiveValue(t, messageIDs.missing, cfg))
 	assert.Equal(
 		sql.NullString{String: "<stale.example.test>", Valid: true},
-		listIDRepairArchiveValue(t, messageIDs.stale))
-	assert.Equal(beforeRevision, listIDRepairArchiveRevision(t))
-	assert.False(listIDRepairMigrationApplied(t, pendingMigration),
+		listIDRepairArchiveValue(t, messageIDs.stale, cfg))
+	assert.Equal(beforeRevision, listIDRepairArchiveRevision(t, cfg))
+	assert.False(listIDRepairMigrationApplied(t, pendingMigration, cfg),
 		"dry run must not initialize schema or apply pending migrations")
 
 	var applyOut bytes.Buffer
 	applyCmd := &cobra.Command{}
-	applyCmd.SetContext(context.Background())
+	applyCmd.SetContext(testCtx)
 	applyCmd.SetOut(&applyOut)
 	require.NoError(runRepairListIDsLocal(applyCmd, true))
 	assert.Equal(
@@ -65,48 +68,58 @@ func TestRunRepairListIDsLocalDryRunApplyAndNoop(t *testing.T) {
 		applyOut.String())
 	assert.Equal(
 		sql.NullString{String: "<announce.example.test>", Valid: true},
-		listIDRepairArchiveValue(t, messageIDs.missing))
-	assert.Equal(sql.NullString{}, listIDRepairArchiveValue(t, messageIDs.stale))
-	assert.Equal(beforeRevision+1, listIDRepairArchiveRevision(t))
+		listIDRepairArchiveValue(t, messageIDs.missing, cfg))
+	assert.Equal(sql.NullString{}, listIDRepairArchiveValue(t, messageIDs.stale, cfg))
+	assert.Equal(beforeRevision+1, listIDRepairArchiveRevision(t, cfg))
 	afterCacheState, err := query.ReadCacheSyncState(cfg.AnalyticsDir())
 	require.NoError(err)
 	assert.Equal(beforeRevision+1, afterCacheState.DerivedDataRevision)
 
 	var noChangeOut bytes.Buffer
 	noChangeCmd := &cobra.Command{}
-	noChangeCmd.SetContext(context.Background())
+	noChangeCmd.SetContext(testCtx)
 	noChangeCmd.SetOut(&noChangeOut)
 	require.NoError(runRepairListIDsLocal(noChangeCmd, true))
 	assert.Equal(
 		"List-Id repair applied: scanned=3 found=1 changed=0 undecodable=1\n",
 		noChangeOut.String())
-	assert.Equal(beforeRevision+1, listIDRepairArchiveRevision(t))
+	assert.Equal(beforeRevision+1, listIDRepairArchiveRevision(t, cfg))
 }
 
 func TestRunRepairListIDsLocalApplySurfacesCacheRefreshFailure(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	dataDir := t.TempDir()
 	savedCfg := cfg
 	cfg = &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	t.Cleanup(func() { cfg = savedCfg })
 
-	messageIDs := newListIDRepairArchive(t)
+	messageIDs := newListIDRepairArchive(t, cfg)
 	require.NoError(os.WriteFile(cfg.AnalyticsDir(), []byte("not a directory"), 0o600))
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&bytes.Buffer{})
 	err := runRepairListIDsLocal(cmd, true)
 	require.Error(err)
 	require.ErrorContains(err, "refresh analytics cache")
 	assert.Equal(
 		sql.NullString{String: "<announce.example.test>", Valid: true},
-		listIDRepairArchiveValue(t, messageIDs.missing))
+		listIDRepairArchiveValue(t, messageIDs.missing, cfg))
 }
 
-func markListIDRepairMigrationPending(t *testing.T, migration string) {
+func markListIDRepairMigrationPending(t *testing.T, migration string, configs ...*config.Config) {
 	t.Helper()
+	cfg := testConfigValue()
+	if len(configs) > 0 && configs[0] != nil {
+		cfg = configs[0]
+	}
+
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(t, err)
 	_, err = st.DB().Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), migration)
@@ -114,8 +127,13 @@ func markListIDRepairMigrationPending(t *testing.T, migration string) {
 	require.NoError(t, st.Close())
 }
 
-func listIDRepairMigrationApplied(t *testing.T, migration string) bool {
+func listIDRepairMigrationApplied(t *testing.T, migration string, configs ...*config.Config) bool {
 	t.Helper()
+	cfg := testConfigValue()
+	if len(configs) > 0 && configs[0] != nil {
+		cfg = configs[0]
+	}
+
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(t, err)
 	applied, err := st.IsMigrationApplied(migration)
@@ -134,10 +152,12 @@ func TestRepairListIDsCommandRoutesThroughDaemonCLIRunner(t *testing.T) {
 		`{"type":"stdout","data":"List-Id repair applied: scanned=1 found=1 changed=1 undecodable=0\n"}`,
 		`{"type":"complete"}`,
 	)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	t.Setenv(daemonCLISubprocessEnv, "")
 
 	cmd := newRepairListIDsCmd()
+	cmd.SetContext(testCtx)
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"--apply"})
@@ -174,8 +194,13 @@ type listIDRepairArchiveMessageIDs struct {
 	stale   int64
 }
 
-func newListIDRepairArchive(t *testing.T) listIDRepairArchiveMessageIDs {
+func newListIDRepairArchive(t *testing.T, configs ...*config.Config) listIDRepairArchiveMessageIDs {
 	t.Helper()
+	cfg := testConfigValue()
+	if len(configs) > 0 && configs[0] != nil {
+		cfg = configs[0]
+	}
+
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(t, err)
 	require.NoError(t, st.InitSchema())
@@ -211,8 +236,13 @@ func newListIDRepairArchive(t *testing.T) listIDRepairArchiveMessageIDs {
 	return listIDRepairArchiveMessageIDs{missing: missing, stale: stale}
 }
 
-func listIDRepairArchiveValue(t *testing.T, messageID int64) sql.NullString {
+func listIDRepairArchiveValue(t *testing.T, messageID int64, configs ...*config.Config) sql.NullString {
 	t.Helper()
+	cfg := testConfigValue()
+	if len(configs) > 0 && configs[0] != nil {
+		cfg = configs[0]
+	}
+
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
@@ -221,8 +251,13 @@ func listIDRepairArchiveValue(t *testing.T, messageID int64) sql.NullString {
 	return value
 }
 
-func listIDRepairArchiveRevision(t *testing.T) int64 {
+func listIDRepairArchiveRevision(t *testing.T, configs ...*config.Config) int64 {
 	t.Helper()
+	cfg := testConfigValue()
+	if len(configs) > 0 && configs[0] != nil {
+		cfg = configs[0]
+	}
+
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })

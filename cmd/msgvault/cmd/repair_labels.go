@@ -49,12 +49,17 @@ Examples:
 }
 
 func runRepairLabelsLocal(cmd *cobra.Command, only string, apply bool) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	// A dry run still needs a writable connection: RepairIMAPSourceLabels
 	// plans by writing inside a transaction and rolling it back, the same
 	// idiom the store package uses elsewhere for a dry-run plan (see
 	// errAttributeDryRun) — a read-only connection would reject the writes
 	// outright before rollback ever came into it.
-	st, cleanup, err := openWritableStoreAndInit()
+	st, cleanup, err := openWritableStoreAndInitForInvocation(state)
 	if err != nil {
 		return fmt.Errorf("open archive for label repair: %w", err)
 	}
@@ -122,7 +127,7 @@ func runRepairLabelsLocal(cmd *cobra.Command, only string, apply bool) error {
 	if !apply {
 		return runErr
 	}
-	if cacheErr := rebuildCacheAfterWrite(cfg.DatabaseDSN()); cacheErr != nil {
+	if cacheErr := rebuildCacheAfterWrite(cfg.DatabaseDSN(), state); cacheErr != nil {
 		return errors.Join(runErr, cacheErr)
 	}
 	return runErr

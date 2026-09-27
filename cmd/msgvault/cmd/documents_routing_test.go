@@ -10,6 +10,8 @@ import (
 )
 
 func TestDocumentVectorCommandsRouteWithConfiguredRemote(t *testing.T) {
+	cfg := testConfigValue()
+
 	const (
 		apiKeyEnv = "MSGVAULT_VECTOR_TEST_KEY"
 		apiKey    = "synthetic-vector-key"
@@ -40,21 +42,25 @@ func TestDocumentVectorCommandsRouteWithConfiguredRemote(t *testing.T) {
 					assert.Empty(req.Env)
 				}
 			}, `{"type":"complete"}`)
-			configureRemoteDaemonForTest(t, server.URL)
+			testCtx := configureRemoteDaemonForTest(t, server.URL)
+			cfg = invocationFromContext(testCtx).cfg
 			cfg.Vector.Embeddings.APIKeyEnv = apiKeyEnv
 			t.Setenv(apiKeyEnv, apiKey)
 
 			root := &cobra.Command{Use: "msgvault"}
 			root.AddCommand(newDocumentsCmd(documentsCommandDeps{}))
+			root.SetContext(testCtx)
 			root.SetArgs(test.args)
 
-			require.NoError(t, root.ExecuteContext(t.Context()))
+			require.NoError(t, root.ExecuteContext(testCtx))
 			assert.Equal(1, int(requests.Load()))
 		})
 	}
 }
 
 func TestDocumentMutationsRouteSafelyWithConfiguredRemote(t *testing.T) {
+	cfg := testConfigValue()
+
 	const (
 		apiKeyEnv = "MSGVAULT_DOCUMENT_TEST_KEY"
 		apiKey    = "synthetic-document-key"
@@ -128,7 +134,8 @@ func TestDocumentMutationsRouteSafelyWithConfiguredRemote(t *testing.T) {
 					assert.Empty(req.Env)
 				}
 			}, `{"type":"complete"}`)
-			configureRemoteDaemonForTest(t, server.URL)
+			testCtx := configureRemoteDaemonForTest(t, server.URL)
+			cfg = invocationFromContext(testCtx).cfg
 			documentsConfig := documentindex.DefaultDocumentsConfig()
 			documentsConfig.APIKeyEnv = apiKeyEnv
 			cfg.Attachments.Documents = documentsConfig
@@ -136,9 +143,10 @@ func TestDocumentMutationsRouteSafelyWithConfiguredRemote(t *testing.T) {
 
 			root := &cobra.Command{Use: "msgvault"}
 			root.AddCommand(newDocumentsCmd(documentsCommandDeps{}))
+			root.SetContext(testCtx)
 			root.SetArgs(test.args)
 
-			err := root.ExecuteContext(t.Context())
+			err := root.ExecuteContext(testCtx)
 			if test.localFile {
 				require.ErrorContains(err, "run it on the daemon host with --local")
 				assert.Equal(0, int(requests.Load()))

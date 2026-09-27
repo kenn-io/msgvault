@@ -29,7 +29,8 @@ func TestRunEmbeddingsListRetiredOnlySucceedsWithoutSQLiteVec(t *testing.T) {
 	c.Vector.DBPath = vectorPath
 	c.Vector.Embeddings.Model = "test-model"
 	c.Vector.Embeddings.Dimension = 4
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
 	mainStore, err := store.Open(c.DatabaseDSN())
 	require.NoError(err)
@@ -60,7 +61,8 @@ func TestRunEmbeddingsListRetiredOnlySucceedsWithoutSQLiteVec(t *testing.T) {
 
 	var output bytes.Buffer
 	command := &cobra.Command{Use: "list"}
-	command.SetContext(t.Context())
+	command.SetContext(testCtx)
+	command.SetContext(testCtx)
 	command.SetOut(&output)
 	require.NoError(runEmbeddingsList(command, nil),
 		"retired-only listing must not require the sqlite_vec backend")

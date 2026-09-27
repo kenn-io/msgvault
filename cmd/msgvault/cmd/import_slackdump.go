@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -55,6 +56,11 @@ func newImportSlackdumpCmd() *cobra.Command {
 }
 
 func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLIOptions) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	info, err := os.Stat(sourcePath)
 	if err != nil {
 		return fmt.Errorf("source path not found: %w", err)
@@ -64,7 +70,7 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 	}
 
 	dbPath := cfg.DatabaseDSN()
-	st, cleanup, err := openWritableStoreAndInitForIngest()
+	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 	if err != nil {
 		return err
 	}
@@ -79,12 +85,12 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 		Limit:          opts.Limit,
 		AttachmentsDir: cfg.AttachmentsDir(),
 		MediaPolicyForTeam: func(teamID string) attachmentpolicy.Policy {
-			return resolveSlackdumpMediaPolicy(teamID, opts.MaxMediaMB)
+			return resolveSlackdumpMediaPolicy(teamID, opts.MaxMediaMB, cfg)
 		},
 		Progress: func(line string) { writeSlackProgress(cmd.OutOrStdout(), line) },
 	})
 	postImportErr := runSlackdumpPostImportMigrations(
-		cmd.OutOrStdout(), st, summary, opts.NoDefaultIdentity,
+		cmd.OutOrStdout(), st, summary, opts.NoDefaultIdentity, state,
 	)
 	if importErr != nil {
 		if ctx.Err() != nil {
@@ -93,11 +99,11 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 		return errors.Join(
 			fmt.Errorf("import Slackdump: %w", importErr),
 			postImportErr,
-			rebuildCacheAfterWrite(dbPath),
+			rebuildCacheAfterWrite(dbPath, state),
 		)
 	}
 	if postImportErr != nil {
-		return errors.Join(postImportErr, rebuildCacheAfterWrite(dbPath))
+		return errors.Join(postImportErr, rebuildCacheAfterWrite(dbPath, state))
 	}
 
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nImport complete!")
@@ -110,7 +116,7 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 	if summary.Errors > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Errors:        %d\n", summary.Errors)
 	}
-	return rebuildCacheAfterWrite(dbPath)
+	return rebuildCacheAfterWrite(dbPath, state)
 }
 
 func runSlackdumpPostImportMigrations(
@@ -118,9 +124,13 @@ func runSlackdumpPostImportMigrations(
 	st *store.Store,
 	summary *slack.SlackdumpImportSummary,
 	noDefaultIdentity bool,
+	state *invocation,
 ) error {
 	if summary == nil || summary.SourceID == 0 {
 		return nil
+	}
+	if state == nil || state.logger == nil {
+		return errors.New("invocation state is required")
 	}
 	var identityErr error
 	if !noDefaultIdentity {
@@ -131,17 +141,21 @@ func runSlackdumpPostImportMigrations(
 			confirmDefaultIdentity(
 				out, st, source.ID,
 				source.Identifier, source.Identifier, "account-identifier",
+				state.logger,
 			)
 		}
 	}
-	migrationErr := runPostSourceCreateMigrations(st)
+	migrationErr := runPostSourceCreateMigrationsForInvocation(st, state)
 	if migrationErr != nil {
 		migrationErr = fmt.Errorf("post-source-create migrations: %w", migrationErr)
 	}
 	return errors.Join(identityErr, migrationErr)
 }
 
-func resolveSlackdumpMediaPolicy(teamID string, overrideMB int64) attachmentpolicy.Policy {
+func resolveSlackdumpMediaPolicy(teamID string, overrideMB int64, cfg *config.Config) attachmentpolicy.Policy {
+	if cfg == nil {
+		return attachmentpolicy.Policy{}
+	}
 	policy := cfg.Slack.MediaPolicy(teamID)
 	if overrideMB > 0 {
 		policy.MaxBytes = overrideMB << 20

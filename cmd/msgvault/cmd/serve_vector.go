@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"go.kenn.io/docbank/document/voyage"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -16,6 +15,9 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/docbank/document/voyage"
+
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -427,7 +429,10 @@ func newConvergenceChecker(
 // pgvector tag, a SQLite path needs the sqlite_vec tag. Without this,
 // setupVectorFeatures would only discover the gap later inside the
 // background init goroutine.
-func precheckVectorFeatures(mainPath string) error {
+func precheckVectorFeatures(mainPath string, cfg *config.Config) error {
+	if cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
 	if !cfg.Vector.AnyLaneEnabled() {
 		return nil
 	}
@@ -483,6 +488,12 @@ func precheckVectorFeatures(mainPath string) error {
 // those writes); Migrate still runs there because it only touches the
 // separate vectors.db, which is read-write regardless.
 func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath string, readOnly bool, openers ...visual.StreamOpener) (*vectorFeatures, error) {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := loggerFromContext(ctx)
 	if !cfg.Vector.AnyLaneEnabled() {
 		return nil, nil //nolint:nilnil // vector disabled: callers nil-check vf; (nil, nil) means "no features, no error"
 	}
@@ -611,7 +622,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	}
 	if vecCfg.Enabled {
 		personGate := vector.NewPinnedExactSemanticPersonEmbeddingGate(
-			vecCfg, currentSemanticPersonVectorConfigSource(), mainStore,
+			vecCfg, currentSemanticPersonVectorConfigSource(state), mainStore,
 		)
 		runtime, err := newEmbeddingRuntime(vecCfg, embeddingRuntimeDeps{
 			Backend: backend, VectorsDB: vectorsDB, MainDB: mainDB, Store: mainStore,

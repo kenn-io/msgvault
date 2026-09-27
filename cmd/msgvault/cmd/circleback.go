@@ -39,7 +39,10 @@ Then run 'msgvault add-circleback <identifier>' to authorize via browser`
 // resolveCirclebackSource picks the [[circleback]] entry for an optional CLI
 // argument: an explicit identifier must match a configured entry; with no
 // argument there must be exactly one entry.
-func resolveCirclebackSource(args []string) (*config.CirclebackSource, error) {
+func resolveCirclebackSource(args []string, cfg *config.Config) (*config.CirclebackSource, error) {
+	if cfg == nil {
+		return nil, errors.New("configuration is unavailable")
+	}
 	if len(cfg.Circleback) == 0 {
 		return nil, errors.New("no [[circleback]] sources configured\n\n" + circlebackConfigHint)
 	}
@@ -61,8 +64,12 @@ func resolveCirclebackSource(args []string) (*config.CirclebackSource, error) {
 	return &src, nil
 }
 
-func circlebackManager(src *config.CirclebackSource) *circleback.Manager {
-	return circleback.NewManager(src.Endpoint, cfg.TokensDir(), logger)
+func circlebackManager(src *config.CirclebackSource, state *invocation) *circleback.Manager {
+	state = invocationState(context.Background(), state)
+	if state == nil || state.cfg == nil {
+		return circleback.NewManager(src.Endpoint, "", nil)
+	}
+	return circleback.NewManager(src.Endpoint, state.cfg.TokensDir(), state.logger)
 }
 
 func newAddCirclebackCmd() *cobra.Command {
@@ -84,10 +91,14 @@ func newAddCirclebackCmd() *cobra.Command {
 // waits on human consent while holding the operation gate (add-teams
 // pattern).
 func preflightAddCirclebackAuthorize(cmd *cobra.Command, args []string) error {
-	if err := validateAddCirclebackOAuthRouting(); err != nil {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	if err := validateAddCirclebackOAuthRouting(state); err != nil {
 		return err
 	}
-	src, err := resolveCirclebackSource(args)
+	src, err := resolveCirclebackSource(args, state.cfg)
 	if err != nil {
 		return err
 	}
@@ -95,7 +106,7 @@ func preflightAddCirclebackAuthorize(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	fmt.Printf("Authorizing %s with Circleback...\n", src.Identifier)
-	if err := circlebackManager(src).Authorize(cmd.Context(), src.Identifier); err != nil {
+	if err := circlebackManager(src, state).Authorize(cmd.Context(), src.Identifier); err != nil {
 		return fmt.Errorf("authorize Circleback: %w", err)
 	}
 	if err := cmd.Flags().Set(oauthPreflightedFlag, "true"); err != nil {
@@ -104,8 +115,8 @@ func preflightAddCirclebackAuthorize(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func validateAddCirclebackOAuthRouting() error {
-	if !IsRemoteMode() {
+func validateAddCirclebackOAuthRouting(state *invocation) error {
+	if !IsRemoteMode(state) {
 		return nil
 	}
 	return errors.New("add-circleback cannot run through a configured remote: the localhost OAuth callback would run on the daemon host; run msgvault add-circleback on the daemon host, or use --local to authorize a local account")
@@ -132,7 +143,12 @@ Examples:
 }
 
 func runAddCirclebackLocal(cmd *cobra.Command, args []string) error {
-	src, err := resolveCirclebackSource(args)
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	src, err := resolveCirclebackSource(args, cfg)
 	if err != nil {
 		return err
 	}
@@ -147,12 +163,12 @@ func runAddCirclebackLocal(cmd *cobra.Command, args []string) error {
 	}
 	if !preflighted {
 		fmt.Printf("Authorizing %s with Circleback...\n", src.Identifier)
-		if err := circlebackManager(src).Authorize(cmd.Context(), src.Identifier); err != nil {
+		if err := circlebackManager(src, state).Authorize(cmd.Context(), src.Identifier); err != nil {
 			return fmt.Errorf("authorize Circleback: %w", err)
 		}
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngest()
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 	if err != nil {
 		return err
 	}
@@ -163,7 +179,7 @@ func runAddCirclebackLocal(cmd *cobra.Command, args []string) error {
 	); err != nil {
 		return err
 	}
-	if err := runPostSourceCreateMigrations(s); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -198,13 +214,18 @@ Examples:
   msgvault sync-circleback --probe`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 
 		var sources []config.CirclebackSource
 		if len(args) > 0 || len(cfg.Circleback) == 1 {
-			src, err := resolveCirclebackSource(args)
+			src, err := resolveCirclebackSource(args, cfg)
 			if err != nil {
 				return err
 			}
@@ -230,7 +251,7 @@ Examples:
 			return probeCircleback(cmd, &src)
 		}
 
-		s, cleanup, err := openWritableStoreAndInitForIngest()
+		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 		if err != nil {
 			return err
 		}
@@ -257,21 +278,21 @@ Examples:
 			accountEmail, err := src.EffectiveAccountEmail()
 			if err != nil {
 				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() error {
-					return rebuildCacheAfterManualSync(dbPath)
+					return rebuildCacheAfterManualSync(dbPath, state)
 				})
 			}
 			if ctx.Err() != nil {
 				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, nil, func() error {
-					return rebuildCacheAfterManualSync(dbPath)
+					return rebuildCacheAfterManualSync(dbPath, state)
 				})
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Circleback for %s\n\n", src.Identifier)
 
-			mgr := circlebackManager(&src)
+			mgr := circlebackManager(&src, state)
 			session, err := circleback.Connect(ctx, mgr.Endpoint(), mgr.Handler(src.Identifier))
 			if err != nil {
 				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() error {
-					return rebuildCacheAfterManualSync(dbPath)
+					return rebuildCacheAfterManualSync(dbPath, state)
 				})
 			}
 			imp := circleback.NewImporter(s, session)
@@ -289,7 +310,7 @@ Examples:
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-circleback to resume.")
 			}
 			if finishErr := finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() error {
-				return rebuildCacheAfterManualSync(dbPath)
+				return rebuildCacheAfterManualSync(dbPath, state)
 			}); finishErr != nil {
 				return finishErr
 			}
@@ -299,10 +320,10 @@ Examples:
 
 		if ctx.Err() != nil {
 			return finishCirclebackImport(ctx, sources[len(sources)-1].Identifier, pendingCacheWrites, nil, func() error {
-				return rebuildCacheAfterManualSync(dbPath)
+				return rebuildCacheAfterManualSync(dbPath, state)
 			})
 		}
-		return rebuildCacheAfterManualSync(dbPath)
+		return rebuildCacheAfterManualSync(dbPath, state)
 	},
 }
 
@@ -358,7 +379,7 @@ func writeCirclebackSummary(out io.Writer, sum *circleback.ImportSummary) {
 // probeCircleback prints the MCP tool inventory and one raw SearchMeetings
 // result so field-name drift can be diagnosed without touching the archive.
 func probeCircleback(cmd *cobra.Command, src *config.CirclebackSource) error {
-	mgr := circlebackManager(src)
+	mgr := circlebackManager(src, invocationFromCommand(cmd))
 	session, err := circleback.Connect(cmd.Context(), mgr.Endpoint(), mgr.Handler(src.Identifier))
 	if err != nil {
 		return err
@@ -406,6 +427,10 @@ func runCirclebackProbe(ctx context.Context, out io.Writer, session circlebackPr
 // runConfiguredCirclebackSync is the daemon-scheduler entry point for one
 // [[circleback]] source.
 func runConfiguredCirclebackSync(ctx context.Context, st *store.Store, src config.CirclebackSource) error {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
 	registered, err := st.ListSources(circleback.SourceType)
 	if err != nil {
 		return fmt.Errorf("list registered Circleback sources: %w", err)
@@ -425,7 +450,7 @@ func runConfiguredCirclebackSync(ctx context.Context, st *store.Store, src confi
 	if err != nil {
 		return err
 	}
-	mgr := circleback.NewManager(src.Endpoint, cfg.TokensDir(), logger)
+	mgr := circleback.NewManager(src.Endpoint, state.cfg.TokensDir(), state.logger)
 	session, err := circleback.Connect(ctx, mgr.Endpoint(), mgr.Handler(src.Identifier))
 	if err != nil {
 		return err

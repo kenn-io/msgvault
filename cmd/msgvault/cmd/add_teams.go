@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -31,16 +32,22 @@ func newAddTeamsCmd() *cobra.Command {
 // process before proxying, so the daemon subprocess never opens a browser
 // or waits on human consent while holding the operation gate.
 func preflightAddTeamsAuthorize(cmd *cobra.Command, email string) error {
-	if IsRemoteMode() {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
+	if IsRemoteMode(state) {
 		// Tokens live on the remote host; authorization must happen there.
 		return nil
 	}
-	if err := requireMicrosoftOAuthConfig(); err != nil {
+	if err := requireMicrosoftOAuthConfig(cfg); err != nil {
 		return err
 	}
 	mgr := microsoft.NewGraphManager(
 		cfg.Microsoft.ClientID,
-		microsoftTenantID(teamsTenantID),
+		microsoftTenantID(teamsTenantID, cfg),
 		cfg.Microsoft.EffectiveRedirectURI(),
 		cfg.TokensDir(),
 		logger,
@@ -88,9 +95,15 @@ Examples:
 }
 
 func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	email := args[0]
 
-	if err := requireMicrosoftOAuthConfig(); err != nil {
+	if err := requireMicrosoftOAuthConfig(cfg); err != nil {
 		return err
 	}
 
@@ -101,7 +114,7 @@ func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
 	if !preflighted {
 		mgr := microsoft.NewGraphManager(
 			cfg.Microsoft.ClientID,
-			microsoftTenantID(teamsTenantID),
+			microsoftTenantID(teamsTenantID, cfg),
 			cfg.Microsoft.EffectiveRedirectURI(),
 			cfg.TokensDir(),
 			logger,
@@ -115,7 +128,7 @@ func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngest()
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 	if err != nil {
 		return err
 	}
@@ -130,9 +143,9 @@ func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	if !noDefaultIdentityAddTeams {
-		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier")
+		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 	}
-	if err := runPostSourceCreateMigrations(s); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 

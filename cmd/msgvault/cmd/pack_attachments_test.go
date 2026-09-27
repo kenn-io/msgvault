@@ -21,7 +21,8 @@ func TestPackAttachmentsProxiesThroughDaemonCLIRunner(t *testing.T) {
 		`{"type":"stdout","data":"Packed 0 blob(s) (0B) into 0 pack(s).\n"}`,
 		`{"type":"complete"}`,
 	)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	var stdout bytes.Buffer
 	cmd := &cobra.Command{
@@ -29,6 +30,7 @@ func TestPackAttachmentsProxiesThroughDaemonCLIRunner(t *testing.T) {
 		Args: packAttachmentsCmd.Args,
 		RunE: packAttachmentsCmd.RunE,
 	}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 
 	require.NoError(cmd.Execute(), "pack-attachments")

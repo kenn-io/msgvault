@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -24,7 +23,7 @@ func TestRunEmbeddingsRetire_ForceActive(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := newEmbeddingMetadataTestDBFile(t)
-	withEmbeddingCommandConfig(t, dbPath)
+	testCtx := withEmbeddingCommandConfig(t, dbPath)
 
 	oldYes := embeddingsRetireYes
 	oldForce := embeddingsRetireForceActive
@@ -37,7 +36,7 @@ func TestRunEmbeddingsRetire_ForceActive(t *testing.T) {
 
 	cmd := embeddingsRetireCmd
 	oldCtx := cmd.Context()
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
 	t.Cleanup(func() { cmd.SetContext(oldCtx) })
 
 	require.NoError(runEmbeddingsRetire(cmd, []string{"1"}),
@@ -53,13 +52,13 @@ func TestRunEmbeddingsRetire_ForceActive(t *testing.T) {
 func TestFillFullCoverageUsesEmbeddingScopeForEmbeddedCount(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
 	dataDir := t.TempDir()
 	dbPath := newEmbeddingMetadataTestDBFileAt(t, filepath.Join(dataDir, "vectors.db"))
 	seedMainDBWithScopedFullCoverageMessages(t, dataDir)
-	withEmbeddingCommandConfigDataDir(t, dbPath, dataDir)
+	testCtx, cfg := withEmbeddingCommandConfigDataDir(t, dbPath, dataDir)
 	cfg.Vector.Embed.Scope.MessageTypes = []string{"sms"}
 
+	ctx := testCtx
 	backend, closeBackend, err := openEmbeddingsBackend(ctx)
 	require.NoError(err, "open embeddings backend")
 	t.Cleanup(closeBackend)

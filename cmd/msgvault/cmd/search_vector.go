@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -18,6 +19,11 @@ import (
 // remote server or local daemon. It preserves the historical CLI renderer while
 // keeping vector backend ownership inside the daemon.
 func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.logger == nil {
+		return errors.New("invocation state is unavailable")
+	}
+	logger := state.logger
 	s, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)

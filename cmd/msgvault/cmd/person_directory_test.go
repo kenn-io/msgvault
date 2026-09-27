@@ -41,7 +41,7 @@ func TestPersonDirectoryProductionCommandRegistrationAndFlags(t *testing.T) {
 	require.Error(command.Args(command, []string{"unexpected"}))
 }
 
-func personDirectoryTestResponse(t *testing.T, status int, payload string) <-chan *http.Request {
+func personDirectoryTestResponse(t *testing.T, status int, payload string) (<-chan *http.Request, context.Context) {
 	t.Helper()
 	requests := make(chan *http.Request, 8)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,16 +51,26 @@ func personDirectoryTestResponse(t *testing.T, status int, payload string) <-cha
 		_, _ = io.WriteString(w, payload)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	return requests
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	return requests, testCtx
 }
 
 func runPersonDirectoryCommand(ctx context.Context, t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	root := &cobra.Command{Use: "msgvault", SilenceErrors: true, SilenceUsage: true}
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		prepareInvocation(cmd)
+		return nil
+	}
 	localFlag := rootCmd.PersistentFlags().Lookup("local")
+	savedValue := localFlag.Value.String()
 	savedChanged := localFlag.Changed
-	t.Cleanup(func() { localFlag.Changed = savedChanged })
+	_ = localFlag.Value.Set(localFlag.DefValue)
+	localFlag.Changed = false
+	t.Cleanup(func() {
+		_ = localFlag.Value.Set(savedValue)
+		localFlag.Changed = savedChanged
+	})
 	root.PersistentFlags().AddFlag(localFlag)
 	person := &cobra.Command{Use: personValue}
 	person.AddCommand(newPersonDirectoryCommand())
@@ -74,6 +84,9 @@ func runPersonDirectoryCommand(ctx context.Context, t *testing.T, args ...string
 }
 
 func TestPersonDirectoryCommandMapsDirectoryQueryParameters(t *testing.T) {
+	cfg := testConfigValue()
+	_ = cfg
+
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -111,8 +124,8 @@ func TestPersonDirectoryCommandMapsDirectoryQueryParameters(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			requests := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`)
-			output, err := runPersonDirectoryCommand(t.Context(), t, append(tc.args, "--json")...)
+			requests, testCtx := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`)
+			output, err := runPersonDirectoryCommand(testCtx, t, append(tc.args, "--json")...)
 			require.NoError(err)
 			require.Len(requests, 1)
 			request := <-requests
@@ -128,13 +141,13 @@ func TestPersonDirectoryCommandMapsDirectoryQueryParameters(t *testing.T) {
 			t.Run(flag+"="+invalid, func(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
-				requests := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`)
-				output, err := runPersonDirectoryCommand(t.Context(), t, flag, invalid, "--json")
+				requests, testCtx := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`)
+				output, err := runPersonDirectoryCommand(testCtx, t, flag, invalid, "--json")
 				require.ErrorContains(err, flag+": must be YYYY-MM-DD or RFC3339")
 				assert.Empty(requests)
 				assert.Empty(output)
 				cfg = nil
-				_, err = runPersonDirectoryCommand(t.Context(), t, flag, invalid)
+				_, err = runPersonDirectoryCommand(testCtx, t, flag, invalid)
 				assert.ErrorContains(err, flag+": must be YYYY-MM-DD or RFC3339")
 			})
 		}
@@ -157,11 +170,11 @@ func TestPersonDirectoryCommandForwardsCursorAndPrintsNextCursor(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	first, err := runPersonDirectoryCommand(t.Context(), t)
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	first, err := runPersonDirectoryCommand(testCtx, t)
 	require.NoError(err)
 	assert.Contains(first, "Next cursor: "+cursor+"\n")
-	second, err := runPersonDirectoryCommand(t.Context(), t, "--cursor", cursor)
+	second, err := runPersonDirectoryCommand(testCtx, t, "--cursor", cursor)
 	require.NoError(err)
 	assert.NotContains(second, "Next cursor")
 	assert.Equal([]string{"", cursor}, cursors)
@@ -192,8 +205,8 @@ func TestPersonDirectoryCommandJSONPreservesAbsentLastContact(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			personDirectoryTestResponse(t, http.StatusOK, tc.payload)
-			output, err := runPersonDirectoryCommand(t.Context(), t, "--json")
+			_, testCtx := personDirectoryTestResponse(t, http.StatusOK, tc.payload)
+			output, err := runPersonDirectoryCommand(testCtx, t, "--json")
 			require.NoError(err)
 			decode := func(raw string) any {
 				decoder := json.NewDecoder(strings.NewReader(raw))
@@ -210,11 +223,11 @@ func TestPersonDirectoryCommandJSONPreservesAbsentLastContact(t *testing.T) {
 func TestPersonDirectoryCommandHumanOutputShowsRecentContactFields(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	personDirectoryTestResponse(t, http.StatusOK, personDirectoryCLIPayload)
+	_, testCtx := personDirectoryTestResponse(t, http.StatusOK, personDirectoryCLIPayload)
 	savedJSON := personJSON
 	personJSON = true
 	t.Cleanup(func() { personJSON = savedJSON })
-	output, err := runPersonDirectoryCommand(t.Context(), t)
+	output, err := runPersonDirectoryCommand(testCtx, t)
 	require.NoError(err)
 	assert.True(personJSON)
 	lines := strings.Split(strings.TrimSpace(output), "\n")
@@ -236,8 +249,8 @@ func TestPersonDirectoryCommandSanitizesDaemonSuppliedText(t *testing.T) {
 		}],
 		"next_cursor": "\u001b]8;;https://example.test\u0007opaque\u001b]8;;\u0007\u001b[31m-cursor\u001b[0m\r\n"
 	}`
-	personDirectoryTestResponse(t, http.StatusOK, payload)
-	output, err := runPersonDirectoryCommand(t.Context(), t)
+	_, testCtx := personDirectoryTestResponse(t, http.StatusOK, payload)
+	output, err := runPersonDirectoryCommand(testCtx, t)
 	require.NoError(err)
 	for _, control := range []string{"\x1b", "\r", "\a", "\u009b"} {
 		assert.NotContains(output, control)
@@ -246,7 +259,7 @@ func TestPersonDirectoryCommandSanitizesDaemonSuppliedText(t *testing.T) {
 	assert.Contains(strings.Join(strings.Fields(output), " "), "Alice Example")
 	assert.True(strings.HasSuffix(strings.TrimSpace(output), "Next cursor: opaque-cursor"))
 	assert.Len(strings.Split(strings.TrimSpace(output), "\n"), 3)
-	jsonOutput, err := runPersonDirectoryCommand(t.Context(), t, "--json")
+	jsonOutput, err := runPersonDirectoryCommand(testCtx, t, "--json")
 	require.NoError(err)
 	assert.JSONEq(payload, jsonOutput)
 }
@@ -296,7 +309,7 @@ func TestPersonDirectoryCLIDaemonRouting(t *testing.T) {
 			if mode != "local default" {
 				localCfg.Remote = config.RemoteConfig{URL: remote.URL, APIKey: "remote-directory-secret", AllowInsecure: true}
 			}
-			withStoreResolverConfig(t, localCfg)
+			testCtx := withStoreResolverConfig(t, localCfg)
 			stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 				starts.Add(1)
 				return nil, errors.New("unexpected daemon start")
@@ -308,7 +321,7 @@ func TestPersonDirectoryCLIDaemonRouting(t *testing.T) {
 			if mode == "unreachable remote" {
 				remote.Close()
 			}
-			output, err := runPersonDirectoryCommand(t.Context(), t, args...)
+			output, err := runPersonDirectoryCommand(testCtx, t, args...)
 			switch mode {
 			case "unreachable remote":
 				require.Error(err)
@@ -356,8 +369,8 @@ func TestPersonDirectoryCLICancellation(t *testing.T) {
 				t.Cleanup(remote.Close)
 				localCfg.Remote = config.RemoteConfig{URL: remote.URL, AllowInsecure: true}
 			}
-			withStoreResolverConfig(t, localCfg)
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			testCtx := withStoreResolverConfig(t, localCfg)
+			ctx, cancel := context.WithTimeout(testCtx, 30*time.Second)
 			defer cancel()
 			go func() {
 				select {
@@ -381,14 +394,16 @@ func TestPersonDirectoryCLICancellation(t *testing.T) {
 
 func TestPersonDirectoryCommandRejectsInvalidSortBeforeRequest(t *testing.T) {
 	assert := assert.New(t)
-	requests := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`)
-	output, err := runPersonDirectoryCommand(t.Context(), t, "--sort", "oldest", "--json")
+	requests, testCtx := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`)
+	output, err := runPersonDirectoryCommand(testCtx, t, "--sort", "oldest", "--json")
 	require.ErrorContains(t, err, "--sort: must be name, last_contact_desc, or last_contact_asc")
 	assert.Empty(requests)
 	assert.Empty(output)
 
-	cfg = nil
-	_, err = runPersonDirectoryCommand(t.Context(), t, "--sort", "oldest")
+	state := invocationFromContext(testCtx)
+	require.NotNil(t, state)
+	state.cfg = nil
+	_, err = runPersonDirectoryCommand(testCtx, t, "--sort", "oldest")
 	assert.ErrorContains(err, "--sort:")
 }
 
@@ -422,8 +437,8 @@ func TestPersonDirectoryCommandReturnsDaemonQueryErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			requests := personDirectoryTestResponse(t, tc.status, `{"error":"`+tc.code+`","message":"Daemon rejected Directory query"}`)
-			output, err := runPersonDirectoryCommand(t.Context(), t, append(tc.args, "--json")...)
+			requests, testCtx := personDirectoryTestResponse(t, tc.status, `{"error":"`+tc.code+`","message":"Daemon rejected Directory query"}`)
+			output, err := runPersonDirectoryCommand(testCtx, t, append(tc.args, "--json")...)
 			var apiErr *daemonclient.APIError
 			require.ErrorAs(err, &apiErr)
 			assert.Equal(tc.status, apiErr.Status)
@@ -447,8 +462,8 @@ func TestPersonDirectoryCommandReturnsResponseErrors(t *testing.T) {
 		{name: "invalid timestamp", status: http.StatusOK, payload: `{"people":[{"last_contact_at":"\u001b[31mnow"}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			requests := personDirectoryTestResponse(t, tc.status, tc.payload)
-			output, err := runPersonDirectoryCommand(t.Context(), t, "--json")
+			requests, testCtx := personDirectoryTestResponse(t, tc.status, tc.payload)
+			output, err := runPersonDirectoryCommand(testCtx, t, "--json")
 			require.Error(t, err)
 			assert.Empty(t, output)
 			assert.Len(t, requests, 1)

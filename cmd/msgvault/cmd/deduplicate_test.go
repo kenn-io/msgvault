@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -24,7 +25,7 @@ func TestPlanCLIDeduplicateRequiresConfirmationForDerivableBackfill(t *testing.T
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
-	withDeduplicateTestConfig(t)
+	testCtx := withDeduplicateTestConfig(t)
 
 	readyID := f.CreateMessage("ready-metadata")
 	require.NoError(f.Store.UpsertMessageRaw(readyID, []byte(
@@ -33,7 +34,7 @@ func TestPlanCLIDeduplicateRequiresConfirmationForDerivableBackfill(t *testing.T
 	require.NoError(f.Store.UpsertMessageRaw(failedID, []byte(
 		"From: sender@example.test\r\nSubject: no identifier\r\n\r\nBody")))
 
-	plan, err := planCLIDeduplicate(t.Context(), f.Store, api.CLIDeduplicatePlanRequest{
+	plan, err := planCLIDeduplicate(testCtx, f.Store, api.CLIDeduplicatePlanRequest{
 		Account: f.Source.Identifier,
 	})
 
@@ -51,13 +52,13 @@ func TestPlanCLIDeduplicateMalformedOnlyBackfillDoesNotRequireConfirmation(t *te
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
-	withDeduplicateTestConfig(t)
+	testCtx := withDeduplicateTestConfig(t)
 
 	messageID := f.CreateMessage("malformed-only")
 	require.NoError(f.Store.UpsertMessageRaw(messageID, []byte(
 		"From: sender@example.test\r\nSubject: no identifier\r\n\r\nBody")))
 
-	plan, err := planCLIDeduplicate(t.Context(), f.Store, api.CLIDeduplicatePlanRequest{
+	plan, err := planCLIDeduplicate(testCtx, f.Store, api.CLIDeduplicatePlanRequest{
 		Account: f.Source.Identifier,
 	})
 
@@ -201,7 +202,7 @@ func TestDeduplicateSingleAndMultiSourceBackfillOnlyOmitUndo(t *testing.T) {
 		cmd.SetContext(t.Context())
 
 		done := captureStdout(t)
-		err = runDeduplicatePerSource(cmd, f.Store, "", dedup.Config{})
+		err = runDeduplicatePerSource(cmd, f.Store, "", dedup.Config{}, testDiscardLogger())
 		out := done()
 
 		require.NoError(err)
@@ -266,7 +267,7 @@ func TestDeduplicateLocalAndPerSourceMergeOutputIncludesBatch(t *testing.T) {
 		cmd.SetContext(t.Context())
 
 		done := captureStdout(t)
-		err = runDeduplicatePerSource(cmd, f.Store, "", dedup.Config{})
+		err = runDeduplicatePerSource(cmd, f.Store, "", dedup.Config{}, testDiscardLogger())
 		out := done()
 
 		require.NoError(err)
@@ -319,16 +320,21 @@ func TestDeduplicateLocalAndDaemonPromptDescribeDerivationFence(t *testing.T) {
 		serverCfg := config.NewDefaultConfig()
 		serverCfg.Data.DataDir = t.TempDir()
 		apiServer := api.NewServerWithOptions(api.ServerOptions{
-			Config:        serverCfg,
-			Store:         &storeAPIAdapter{store: f.Store},
+			Config: serverCfg,
+			Store: &storeAPIAdapter{
+				store:  f.Store,
+				config: serverCfg,
+				logger: slog.New(slog.DiscardHandler),
+			},
 			Logger:        slog.New(slog.DiscardHandler),
 			DaemonVersion: Version,
 		})
 		httpServer := httptest.NewServer(apiServer.Router())
 		t.Cleanup(httpServer.Close)
-		configureRemoteDaemonForTest(t, httpServer.URL)
+		testCtx := configureRemoteDaemonForTest(t, httpServer.URL)
 
 		cmd := newDeduplicateRoutingTestCommand()
+		cmd.SetContext(testCtx)
 		var stdout bytes.Buffer
 		cmd.SetOut(&stdout)
 		cmd.SetIn(strings.NewReader("n\n"))
@@ -355,7 +361,7 @@ func TestDeduplicateLocalAndDaemonPromptDescribeDerivationFence(t *testing.T) {
 		cmd.SetIn(strings.NewReader("n\n"))
 
 		done := captureStdout(t)
-		err := runDeduplicatePerSource(cmd, f.Store, "", dedup.Config{})
+		err := runDeduplicatePerSource(cmd, f.Store, "", dedup.Config{}, testDiscardLogger())
 		out := done()
 
 		require.NoError(err)
@@ -384,7 +390,7 @@ func TestDeduplicateLocalAndDaemonPromptDescribeDerivationFence(t *testing.T) {
 		cmd.SetIn(strings.NewReader("n\nn\n"))
 
 		done := captureStdout(t)
-		err = runDeduplicatePerSource(cmd, f.Store, "", dedup.Config{})
+		err = runDeduplicatePerSource(cmd, f.Store, "", dedup.Config{}, testDiscardLogger())
 		out := done()
 
 		require.NoError(err)
@@ -469,12 +475,12 @@ func TestDeduplicatePlanChangedOutputReportsCommitAndNoBatch(t *testing.T) {
 	assert.Zero(hidden, "plan fence hides no messages")
 }
 
-func withDeduplicateTestConfig(t *testing.T) {
+func withDeduplicateTestConfig(t *testing.T) context.Context {
 	t.Helper()
-	savedCfg := cfg
-	t.Cleanup(func() { cfg = savedCfg })
-	cfg = config.NewDefaultConfig()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	cfg.Data.DataDir = t.TempDir()
+	return testCtx
 }
 
 func createPendingRFC822Message(
@@ -543,9 +549,10 @@ func TestDeduplicateNonInteractiveFormsUseDaemonRunner(t *testing.T) {
 			server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
 				assert.Equal(tt.want, req.Args, "args")
 			}, `{"type":"stdout","data":`+string(stdoutJSON)+`}`, `{"type":"complete"}`)
-			configureRemoteDaemonForTest(t, server.URL)
+			testCtx := configureRemoteDaemonForTest(t, server.URL)
 
 			cmd := newDeduplicateRoutingTestCommand()
+			cmd.SetContext(testCtx)
 			var stdout bytes.Buffer
 			cmd.SetOut(&stdout)
 			cmd.SetArgs(tt.args)
@@ -586,9 +593,11 @@ func TestDeduplicateInteractiveAccountPlansPromptsAndExecutesThroughDaemon(t *te
 			"--yes",
 		}, req.Args, "runner args")
 	}, `{"type":"stdout","data":"Merging duplicates...\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	cmd := newDeduplicateRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetIn(strings.NewReader("y\n"))
@@ -617,9 +626,11 @@ func TestDeduplicateInteractiveAccountCancelDoesNotExecute(t *testing.T) {
 			},
 		},
 	}, nil)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	cmd := newDeduplicateRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetIn(strings.NewReader("n\n"))
@@ -660,9 +671,11 @@ func TestDeduplicateInteractivePerSourcePromptsShareInput(t *testing.T) {
 		assert.Contains(req.Args, "--dedup-source-plan=101:fp-alice", "alice approval")
 		assert.Contains(req.Args, "--dedup-source-plan=202:fp-bob", "bob approval")
 	}, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	cmd := newDeduplicateRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetIn(strings.NewReader("y\ny\n"))

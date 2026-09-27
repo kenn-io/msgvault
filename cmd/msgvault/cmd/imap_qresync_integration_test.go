@@ -18,6 +18,7 @@ import (
 	imapapi "github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
 	msgsync "go.kenn.io/msgvault/internal/sync"
@@ -464,17 +465,19 @@ func runScriptedRFC7162Sync(
 	st *store.Store,
 	identifier string,
 	addr string,
+	contexts ...context.Context,
 ) (*imap.Client, *store.Source, error) {
 	t.Helper()
+	testCtx := scriptedSyncTestContext(t, contexts...)
 	source, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
 	require.NoError(t, err)
-	client := newScriptedRFC7162Client(t, addr, imapFolderStateOptions(st, source, false)...)
+	client := newScriptedRFC7162Client(t, addr, imapFolderStateOptionsForTest(testCtx, st, source, false)...)
 	options := msgsync.DefaultOptions()
 	options.SourceType = sourceTypeIMAP
 	options.NoResume = true
-	summary, err := newMessageSyncer(client, st, options).
+	summary, err := newMessageSyncer(client, st, options, invocationFromContext(testCtx)).
 		WithLogger(slog.New(slog.DiscardHandler)).
-		Full(t.Context(), identifier)
+		Full(testCtx, identifier)
 	if err != nil {
 		return client, source, err
 	}
@@ -483,7 +486,31 @@ func runScriptedRFC7162Sync(
 			"scripted IMAP sync completed with %d errors", summary.Errors)
 	}
 	return client, source, saveIMAPFolderStates(
-		context.Background(), st, source, client, summary, options.Limit)
+		testCtx, st, source, client, summary, options.Limit)
+}
+
+func scriptedSyncTestContext(t *testing.T, contexts ...context.Context) context.Context {
+	t.Helper()
+	if len(contexts) > 0 && contexts[0] != nil {
+		if invocationFromContext(contexts[0]) != nil {
+			return contexts[0]
+		}
+		return testInvocationContext(contexts[0], config.NewDefaultConfig(), invocationOptions{})
+	}
+	return testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{})
+}
+
+func imapFolderStateOptionsForTest(
+	testCtx context.Context,
+	st *store.Store,
+	source *store.Source,
+	forceRescan bool,
+) []imap.Option {
+	var cfg *config.Config
+	if state := invocationFromContext(testCtx); state != nil {
+		cfg = state.cfg
+	}
+	return imapFolderStateOptions(st, source, forceRescan, cfg, testDiscardLogger())
 }
 
 func requireScriptedRFC7162Sync(
@@ -491,9 +518,10 @@ func requireScriptedRFC7162Sync(
 	st *store.Store,
 	identifier string,
 	addr string,
+	contexts ...context.Context,
 ) (*imap.Client, *store.Source) {
 	t.Helper()
-	client, source, err := runScriptedRFC7162Sync(t, st, identifier, addr)
+	client, source, err := runScriptedRFC7162Sync(t, st, identifier, addr, contexts...)
 	require.NoError(t, err)
 	return client, source
 }
@@ -791,11 +819,12 @@ func TestIMAPQresyncEndToEndRetiresChangedMailboxTopology(t *testing.T) {
 			Mailboxes:    []scriptedRFC7162Mailbox{},
 		})
 		second := newScriptedRFC7162Client(
-			t, addr, imapFolderStateOptions(st, source, false)...)
+			t, addr, imapFolderStateOptions(st, source, false, testConfigValue(), testDiscardLogger())...)
 		options := msgsync.DefaultOptions()
 		options.SourceType = sourceTypeIMAP
 		options.NoResume = true
-		summary, err := newMessageSyncer(second, st, options).
+		summary, err := newMessageSyncer(second, st, options,
+			testInvocationWithConfig(testConfigValue())).
 			WithLogger(slog.New(slog.DiscardHandler)).
 			Full(t.Context(), identifier)
 		requirements.NoError(err)
@@ -890,12 +919,13 @@ func TestIMAPQresyncEndToEndLimitedRunPreservesOverlappingMailboxLabels(t *testi
 		},
 	})
 	limitedClient := newScriptedRFC7162Client(
-		t, addr, imapFolderStateOptions(st, source, false)...)
+		t, addr, imapFolderStateOptions(st, source, false, testConfigValue(), testDiscardLogger())...)
 	options := msgsync.DefaultOptions()
 	options.SourceType = sourceTypeIMAP
 	options.NoResume = true
 	options.Limit = 1
-	summary, err := newMessageSyncer(limitedClient, st, options).
+	summary, err := newMessageSyncer(limitedClient, st, options,
+		testInvocationWithConfig(testConfigValue())).
 		WithLogger(slog.New(slog.DiscardHandler)).Full(t.Context(), identifier)
 	requirements.NoError(err)
 	requirements.NoError(saveIMAPFolderStates(
@@ -1006,11 +1036,12 @@ func TestIMAPQresyncEndToEndReplaysAfterFailedApplication(t *testing.T) {
 		Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{changed},
 	})
 	failedClient := newScriptedRFC7162Client(
-		t, addr, imapFolderStateOptions(st, source, false)...)
+		t, addr, imapFolderStateOptions(st, source, false, testConfigValue(), testDiscardLogger())...)
 	options := msgsync.DefaultOptions()
 	options.SourceType = sourceTypeIMAP
 	options.NoResume = true
-	summary, err := newMessageSyncer(failedClient, st, options).
+	summary, err := newMessageSyncer(failedClient, st, options,
+		testInvocationWithConfig(testConfigValue())).
 		WithLogger(slog.New(slog.DiscardHandler)).Full(t.Context(), identifier)
 	requirements.NoError(err)
 	_, err = st.DB().Exec(st.Rebind(`
@@ -1060,11 +1091,12 @@ func TestIMAPQresyncEndToEndFailedMoveApplyPreservesBaselineLabels(t *testing.T)
 		},
 	})
 	failedClient := newScriptedRFC7162Client(
-		t, addr, imapFolderStateOptions(st, source, false)...)
+		t, addr, imapFolderStateOptions(st, source, false, testConfigValue(), testDiscardLogger())...)
 	options := msgsync.DefaultOptions()
 	options.SourceType = sourceTypeIMAP
 	options.NoResume = true
-	summary, err := newMessageSyncer(failedClient, st, options).
+	summary, err := newMessageSyncer(failedClient, st, options,
+		testInvocationWithConfig(testConfigValue())).
 		WithLogger(slog.New(slog.DiscardHandler)).Full(t.Context(), identifier)
 	requirements.NoError(err)
 	installScriptedRFC7162ApplyFailureTrigger(t, st)

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
 	extOAuth2 "golang.org/x/oauth2"
 )
@@ -24,7 +25,7 @@ func TestSanitizeArgsDraftBody(t *testing.T) {
 
 func TestErrOAuthNotConfigured(t *testing.T) {
 	assert := assert.New(t)
-	err := errOAuthNotConfigured()
+	err := errOAuthNotConfigured(config.NewDefaultConfig())
 	require.Error(t, err, "errOAuthNotConfigured()")
 
 	msg := err.Error()
@@ -48,7 +49,7 @@ func TestErrOAuthNotConfigured(t *testing.T) {
 func TestWrapOAuthError_NotExist(t *testing.T) {
 	originalErr := fmt.Errorf("open /path/to/secrets.json: %w", os.ErrNotExist)
 
-	wrapped := wrapOAuthError(originalErr)
+	wrapped := wrapOAuthError(originalErr, config.NewDefaultConfig())
 
 	msg := wrapped.Error()
 
@@ -61,7 +62,7 @@ func TestWrapOAuthError_NotExist(t *testing.T) {
 func TestWrapOAuthError_Permission(t *testing.T) {
 	originalErr := fmt.Errorf("open /path/to/secrets.json: %w", os.ErrPermission)
 
-	wrapped := wrapOAuthError(originalErr)
+	wrapped := wrapOAuthError(originalErr, config.NewDefaultConfig())
 
 	msg := wrapped.Error()
 
@@ -74,7 +75,7 @@ func TestWrapOAuthError_Permission(t *testing.T) {
 func TestWrapOAuthError_OtherError(t *testing.T) {
 	originalErr := errors.New("some other error")
 
-	wrapped := wrapOAuthError(originalErr)
+	wrapped := wrapOAuthError(originalErr, config.NewDefaultConfig())
 
 	// Should return the original error unchanged
 	assert.Equal(t, originalErr, wrapped, "wrapOAuthError() changed unrelated error")
@@ -85,7 +86,7 @@ func TestWrapOAuthError_NestedNotExist(t *testing.T) {
 	innerErr := fmt.Errorf("file error: %w", os.ErrNotExist)
 	outerErr := fmt.Errorf("oauth manager: %w", innerErr)
 
-	wrapped := wrapOAuthError(outerErr)
+	wrapped := wrapOAuthError(outerErr, config.NewDefaultConfig())
 
 	msg := wrapped.Error()
 
@@ -99,6 +100,13 @@ func newTestRootCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "msgvault",
 		Short: "Offline email, chat, and meeting archive tool",
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if prepareInvocation(cmd) == nil {
+				return errors.New("missing invocation state")
+			}
+			cmd.SetContext(cmd.Root().Context())
+			return nil
+		},
 	}
 }
 
@@ -644,17 +652,14 @@ func TestGetTokenSourceWithReauthUsesScopePreservingReauth(t *testing.T) {
 	assert.Equal(0, m.authorizeManualCount, "plain reauth call count")
 }
 
-// withAgentFlags sets the global agent-mode flags and restores them on
-// test cleanup.
-func withAgentFlags(t *testing.T, url, tokenFile string) {
+// withAgentFlags binds agent-mode options to the test invocation.
+func withAgentFlags(t *testing.T, url, tokenFile string) context.Context {
 	t.Helper()
-	old := agentURL
-	oldTF := agentTokenFile
-	agentURL = url
-	agentTokenFile = tokenFile
-	t.Cleanup(func() {
-		agentURL = old
-		agentTokenFile = oldTF
+	return testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
+		agentURL:          url,
+		agentTokenFile:    tokenFile,
+		agentURLChanged:   url != "",
+		agentTokenChanged: tokenFile != "",
 	})
 }
 
@@ -662,17 +667,20 @@ func withAgentFlags(t *testing.T, url, tokenFile string) {
 // command (draft-reply) with agent flags passes the PersistentPreRunE
 // early-return path (returns nil without loading config).
 func TestAgentDelegatedCapableCommandSucceeds(t *testing.T) {
-	withAgentFlags(t, "http://daemon.example:8080", "/tmp/token")
+	ctx := withAgentFlags(t, "http://daemon.example:8080", "/tmp/token")
 
 	cmd := &cobra.Command{Use: "draft-reply"}
+	cmd.SetContext(ctx)
 	err := rootCmd.PersistentPreRunE(cmd, nil)
 	require.NoError(t, err, "draft-reply with agent flags should succeed in PersistentPreRunE")
 }
 
 func TestAgentDelegatedRecoveryCommandSucceeds(t *testing.T) {
-	withAgentFlags(t, "http://daemon.example:8080", "/tmp/token")
+	ctx := withAgentFlags(t, "http://daemon.example:8080", "/tmp/token")
 
-	err := rootCmd.PersistentPreRunE(&cobra.Command{Use: "draft-recover"}, nil)
+	cmd := &cobra.Command{Use: "draft-recover"}
+	cmd.SetContext(ctx)
+	err := rootCmd.PersistentPreRunE(cmd, nil)
 	require.NoError(t, err)
 }
 
@@ -680,9 +688,10 @@ func TestAgentDelegatedRecoveryCommandSucceeds(t *testing.T) {
 // not in the delegated-capable set (serve) returns "not available in
 // agent-delegated mode" when agent flags are present.
 func TestAgentDelegatedNonCapableCommandReturnsError(t *testing.T) {
-	withAgentFlags(t, "http://daemon.example:8080", "/tmp/token")
+	ctx := withAgentFlags(t, "http://daemon.example:8080", "/tmp/token")
 
 	cmd := &cobra.Command{Use: "serve"}
+	cmd.SetContext(ctx)
 	err := rootCmd.PersistentPreRunE(cmd, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not available in agent-delegated mode")

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -30,13 +31,18 @@ works entirely offline and never contacts a provider.`,
 }
 
 func runRepairListIDsLocal(cmd *cobra.Command, apply bool) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
 	var (
 		st      *store.Store
 		cleanup func()
 		err     error
 	)
 	if apply {
-		st, cleanup, err = openWritableStoreAndInit()
+		st, cleanup, err = openWritableStoreAndInitForInvocation(state)
 	} else {
 		st, err = store.OpenReadOnly(cfg.DatabaseDSN())
 		cleanup = func() { _ = st.Close() }
@@ -67,7 +73,7 @@ func runRepairListIDsLocal(cmd *cobra.Command, apply bool) error {
 		}
 	}
 	if apply && summary.Changed > 0 {
-		if err := rebuildCacheAfterWrite(cfg.DatabaseDSN()); err != nil {
+		if err := rebuildCacheAfterWrite(cfg.DatabaseDSN(), state); err != nil {
 			return err
 		}
 	}

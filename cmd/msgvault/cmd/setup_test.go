@@ -104,10 +104,12 @@ func runSetupForTest(t *testing.T, answers string) (string, string) {
 	c := config.NewDefaultConfig()
 	c.HomeDir = home
 	c.Data.DataDir = home
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
 	var out bytes.Buffer
 	cmd := &cobra.Command{}
+	cmd.SetContext(testCtx)
 	cmd.SetIn(strings.NewReader(answers))
 	cmd.SetOut(&out)
 	require.NoError(t, runSetup(cmd, nil))

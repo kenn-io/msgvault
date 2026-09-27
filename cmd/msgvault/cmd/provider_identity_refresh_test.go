@@ -29,6 +29,8 @@ func (i *scheduledProviderInventory) ListIdentityRecords(context.Context) ([]fas
 }
 
 func TestAutomaticProviderIdentityRefreshIsOptInAndRunsAfterIMAPCompletion(t *testing.T) {
+	cfg := testConfigValue()
+
 	st := testutil.NewTestStore(t)
 	const sourceIdentifier = "imaps://user@example.test@imap.example.test:993"
 	source, err := st.GetOrCreateSource(sourceTypeIMAP, sourceIdentifier)
@@ -47,13 +49,14 @@ func TestAutomaticProviderIdentityRefreshIsOptInAndRunsAfterIMAPCompletion(t *te
 		cfg = &config.Config{Fastmail: []config.FastmailSource{{
 			SourceID: source.ID, APIToken: "not-called-token",
 		}}}
+		testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 		calls := 0
 		fastmailIdentityInventoryFactory = func(string) provideridentity.Inventory {
 			calls++
 			return &scheduledProviderInventory{}
 		}
 
-		summary := runAutomaticProviderSync(t, st, sourceIdentifier)
+		summary := runAutomaticProviderSync(testCtx, t, st, sourceIdentifier)
 
 		requirements.NotNil(summary)
 		assertions.Zero(calls)
@@ -65,6 +68,7 @@ func TestAutomaticProviderIdentityRefreshIsOptInAndRunsAfterIMAPCompletion(t *te
 		cfg = &config.Config{Fastmail: []config.FastmailSource{{
 			SourceID: source.ID, APIToken: "provider-token", AutoConfirmIdentities: true,
 		}}}
+		testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 		fastmailIdentityInventoryFactory = func(string) provideridentity.Inventory {
 			return &scheduledProviderInventory{records: []fastmail.Record{
 				{Identifier: "old@example.test", State: "disabled", Kind: "masked-email"},
@@ -72,7 +76,7 @@ func TestAutomaticProviderIdentityRefreshIsOptInAndRunsAfterIMAPCompletion(t *te
 			}}
 		}
 
-		summary := runAutomaticProviderSync(t, st, sourceIdentifier)
+		summary := runAutomaticProviderSync(testCtx, t, st, sourceIdentifier)
 
 		requirements.NotNil(summary)
 		identities, err := st.ListAccountIdentities(source.ID)
@@ -89,8 +93,9 @@ func TestAutomaticProviderIdentityRefreshIsOptInAndRunsAfterIMAPCompletion(t *te
 func setUpScheduledProviderIdentityRefresh(
 	t *testing.T,
 	st *store.Store,
-) (*store.Source, *scheduledProviderInventory) {
+) (*store.Source, *scheduledProviderInventory, context.Context) {
 	t.Helper()
+	cfg := testConfigValue()
 	const sourceIdentifier = "gmail-user@example.test"
 	source, err := st.GetOrCreateSource(sourceTypeGmail, sourceIdentifier)
 	require.NoError(t, err)
@@ -106,18 +111,20 @@ func setUpScheduledProviderIdentityRefresh(
 	cfg = &config.Config{Fastmail: []config.FastmailSource{{
 		SourceID: source.ID, APIToken: "provider-token", AutoConfirmIdentities: true,
 	}}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	inventory := &scheduledProviderInventory{records: []fastmail.Record{{
 		Identifier: "historical@example.test", State: "deleted", Kind: "masked-email",
 	}}}
 	fastmailIdentityInventoryFactory = func(string) provideridentity.Inventory {
 		return inventory
 	}
-	return source, inventory
+	return source, inventory, testCtx
 }
 
 // runNoOpIncrementalProviderSync drives one incremental sync whose cursor
 // already equals the mailbox's current history, so the run is a no-op.
 func runNoOpIncrementalProviderSync(
+	ctx context.Context,
 	t *testing.T,
 	st *store.Store,
 	source *store.Source,
@@ -126,8 +133,8 @@ func runNoOpIncrementalProviderSync(
 	client := gmail.NewMockAPI()
 	client.Profile = &gmail.Profile{EmailAddress: source.Identifier, HistoryID: 100}
 	options := msgsync.DefaultOptions()
-	syncer := newMessageSyncer(client, st, options).WithLogger(slog.New(slog.DiscardHandler))
-	summary, err := syncer.Incremental(t.Context(), source)
+	syncer := newMessageSyncer(client, st, options, invocationFromContext(ctx)).WithLogger(slog.New(slog.DiscardHandler))
+	summary, err := syncer.Incremental(ctx, source)
 	require.NoError(t, err)
 	require.NotNil(t, summary)
 	return summary
@@ -141,11 +148,11 @@ func TestAutomaticProviderIdentityRefreshSkipsProviderInventoryOnNoOpIncremental
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
-	source, inventory := setUpScheduledProviderIdentityRefresh(t, st)
-	requirements.NoError(st.RecordProviderIdentityRefreshOutcomeContext(t.Context(), source.ID, nil),
+	source, inventory, testCtx := setUpScheduledProviderIdentityRefresh(t, st)
+	requirements.NoError(st.RecordProviderIdentityRefreshOutcomeContext(testCtx, source.ID, nil),
 		"the previous refresh succeeded recently")
 
-	runNoOpIncrementalProviderSync(t, st, source)
+	runNoOpIncrementalProviderSync(testCtx, t, st, source)
 
 	assertions.Zero(inventory.calls,
 		"an unchanged mailbox with a fresh inventory must not cost a provider round trip")
@@ -161,9 +168,9 @@ func TestAutomaticProviderIdentityRefreshRunsOnNoOpIncrementalSyncWhenNeverRefre
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
-	source, inventory := setUpScheduledProviderIdentityRefresh(t, st)
+	source, inventory, testCtx := setUpScheduledProviderIdentityRefresh(t, st)
 
-	runNoOpIncrementalProviderSync(t, st, source)
+	runNoOpIncrementalProviderSync(testCtx, t, st, source)
 
 	assertions.Equal(1, inventory.calls,
 		"a source that has never refreshed owes an inventory read even without mailbox history")
@@ -172,7 +179,7 @@ func TestAutomaticProviderIdentityRefreshRunsOnNoOpIncrementalSyncWhenNeverRefre
 	requirements.Len(identities, 1)
 	assertions.Equal("historical@example.test", identities[0].Address)
 
-	runNoOpIncrementalProviderSync(t, st, source)
+	runNoOpIncrementalProviderSync(testCtx, t, st, source)
 
 	assertions.Equal(1, inventory.calls,
 		"the successful refresh is recorded, so the next no-op sync skips the provider")
@@ -185,12 +192,12 @@ func TestAutomaticProviderIdentityRefreshRetriesOnNoOpIncrementalSyncAfterFailur
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
-	source, inventory := setUpScheduledProviderIdentityRefresh(t, st)
+	source, inventory, testCtx := setUpScheduledProviderIdentityRefresh(t, st)
 	requirements.NoError(st.RecordProviderIdentityRefreshOutcomeContext(
-		t.Context(), source.ID, errors.New("provider unavailable"),
+		testCtx, source.ID, errors.New("provider unavailable"),
 	), "the previous refresh failed")
 
-	runNoOpIncrementalProviderSync(t, st, source)
+	runNoOpIncrementalProviderSync(testCtx, t, st, source)
 
 	assertions.Equal(1, inventory.calls,
 		"a failed refresh owes a retry on the next sync, no-op or not")
@@ -204,15 +211,15 @@ func TestAutomaticProviderIdentityRefreshRunsAfterIncrementalGmailCompletion(t *
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
-	source, inventory := setUpScheduledProviderIdentityRefresh(t, st)
+	source, inventory, testCtx := setUpScheduledProviderIdentityRefresh(t, st)
 
 	client := gmail.NewMockAPI()
 	client.Profile = &gmail.Profile{EmailAddress: source.Identifier, HistoryID: 200}
 	client.HistoryID = 200
 	options := msgsync.DefaultOptions()
-	syncer := newMessageSyncer(client, st, options).WithLogger(slog.New(slog.DiscardHandler))
+	syncer := newMessageSyncer(client, st, options, invocationFromContext(testCtx)).WithLogger(slog.New(slog.DiscardHandler))
 
-	summary, err := syncer.Incremental(t.Context(), source)
+	summary, err := syncer.Incremental(testCtx, source)
 
 	requirements.NoError(err)
 	requirements.NotNil(summary)
@@ -225,6 +232,7 @@ func TestAutomaticProviderIdentityRefreshRunsAfterIncrementalGmailCompletion(t *
 }
 
 func runAutomaticProviderSync(
+	ctx context.Context,
 	t *testing.T,
 	st *store.Store,
 	sourceIdentifier string,
@@ -234,8 +242,8 @@ func runAutomaticProviderSync(
 	client.Profile = &gmail.Profile{EmailAddress: "user@example.test", HistoryID: 100}
 	options := msgsync.DefaultOptions()
 	options.SourceType = sourceTypeIMAP
-	syncer := newMessageSyncer(client, st, options).WithLogger(slog.New(slog.DiscardHandler))
-	summary, err := syncer.Full(t.Context(), sourceIdentifier)
+	syncer := newMessageSyncer(client, st, options, invocationFromContext(ctx)).WithLogger(slog.New(slog.DiscardHandler))
+	summary, err := syncer.Full(ctx, sourceIdentifier)
 	require.NoError(t, err)
 	return summary
 }

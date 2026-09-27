@@ -104,9 +104,15 @@ Examples:
 }
 
 func runVerifyLocal(cmd *cobra.Command, args []string) error {
+	state := invocationFromCommand(cmd)
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
 	email := args[0]
 
-	release, err := acquireDirectSQLiteWriteLock(cfg)
+	release, err := acquireDirectSQLiteWriteLock(cfg, state)
 	if err != nil {
 		return err
 	}
@@ -137,7 +143,7 @@ func runVerifyLocal(cmd *cobra.Command, args []string) error {
 	if err := s.InitSchema(); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
-	if err := runStartupMigrations(s); err != nil {
+	if err := runStartupMigrationsContext(cmd.Context(), s, state); err != nil {
 		return fmt.Errorf("startup migrations: %w", err)
 	}
 
@@ -194,7 +200,7 @@ func runVerifyLocal(cmd *cobra.Command, args []string) error {
 	}
 
 	if !cfg.OAuth.HasAnyConfig() {
-		return errOAuthNotConfigured()
+		return errOAuthNotConfigured(cfg)
 	}
 
 	// Set up context with cancellation
@@ -230,7 +236,7 @@ func runVerifyLocal(cmd *cobra.Command, args []string) error {
 		}
 		oauthMgr, mgrErr := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
 		if mgrErr != nil {
-			return wrapOAuthError(fmt.Errorf("create oauth manager: %w", mgrErr))
+			return wrapOAuthError(fmt.Errorf("create oauth manager: %w", mgrErr), cfg)
 		}
 		// Machine-readable mode must not enter an interactive OAuth
 		// flow that writes prompts to stdout before the JSON object.

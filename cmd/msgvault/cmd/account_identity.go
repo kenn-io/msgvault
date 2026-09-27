@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -40,7 +41,7 @@ const noDefaultIdentityHelp = "Suppress auto-default-identity at account creatio
 //
 // account is the user-facing account name shown in the confirmation message.
 // Callers should gate this behind the per-command --no-default-identity flag.
-func confirmDefaultIdentity(out io.Writer, s *store.Store, sourceID int64, account, identifier, signal string) {
+func confirmDefaultIdentity(out io.Writer, s *store.Store, sourceID int64, account, identifier, signal string, logger *slog.Logger) {
 	id := strings.TrimSpace(identifier)
 	if id == "" {
 		return

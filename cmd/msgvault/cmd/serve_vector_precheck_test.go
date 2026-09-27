@@ -16,9 +16,10 @@ import (
 func TestPrecheckVectorFeaturesDisabled(t *testing.T) {
 	c := config.NewDefaultConfig()
 	c.Vector.Enabled = false
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
-	assert.NoError(t, precheckVectorFeatures(precheckTestMainPath))
+	assert.NoError(t, precheckVectorFeatures(precheckTestMainPath, c))
 }
 
 // TestPrecheckVectorFeaturesRejectsBadCron verifies the precheck validates
@@ -31,9 +32,10 @@ func TestPrecheckVectorFeaturesRejectsBadCron(t *testing.T) {
 	c.Vector.Embeddings.Model = "test-model"
 	c.Vector.Embeddings.Dimension = 768
 	c.Vector.Embed.Schedule.Cron = "not a cron"
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
-	err := precheckVectorFeatures(precheckTestMainPath)
+	err := precheckVectorFeatures(precheckTestMainPath, c)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cron")
 }
@@ -46,9 +48,10 @@ func TestPrecheckVectorFeaturesRejectsInvalidConfig(t *testing.T) {
 	c.Vector.Enabled = true
 	// Leave required embeddings fields (endpoint, model, dimension) empty
 	// so Validate() fails.
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
-	assert.Error(t, precheckVectorFeatures(precheckTestMainPath))
+	assert.Error(t, precheckVectorFeatures(precheckTestMainPath, c))
 }
 
 // TestPrecheckVectorFeaturesAcceptsValidConfig verifies the precheck
@@ -59,7 +62,8 @@ func TestPrecheckVectorFeaturesAcceptsValidConfig(t *testing.T) {
 	c.Vector.Embeddings.Endpoint = "http://localhost:11434/v1/embeddings"
 	c.Vector.Embeddings.Model = "test-model"
 	c.Vector.Embeddings.Dimension = 768
-	withTestConfig(t, c)
+	testCtx := withTestConfig(t, c)
+	_ = testCtx
 
-	assert.NoError(t, precheckVectorFeatures(precheckTestMainPath))
+	assert.NoError(t, precheckVectorFeatures(precheckTestMainPath, c))
 }

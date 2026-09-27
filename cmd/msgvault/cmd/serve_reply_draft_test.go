@@ -71,6 +71,8 @@ func TestRunCLIReplyDraftUsesTypedRoute(t *testing.T) {
 
 func TestDraftPolicySnapshotRequiresDaemonRestart(t *testing.T) {
 	cfg := config.Config{IMAP: config.IMAPConfig{Drafts: []config.IMAPDraftSource{{SourceID: 42, Enabled: true, Mailbox: "Drafts"}}}}
+	testCtx := testInvocationContext(t.Context(), &cfg, invocationOptions{})
+	_ = testCtx
 	snapshot := snapshotIMAPDraftPolicy(&cfg)
 	cfg.IMAP.Drafts[0].Enabled = false
 	assert.True(t, snapshot[0].Enabled)
@@ -501,8 +503,9 @@ func TestDraftReplyCLIFailureOutput(t *testing.T) {
 					Logger: slog.New(slog.DiscardHandler),
 				}).Router())
 				t.Cleanup(server.Close)
-				configureRemoteDaemonForTest(t, server.URL)
+				testCtx := configureRemoteDaemonForTest(t, server.URL)
 				root := &cobra.Command{Use: "msgvault"}
+				root.SetContext(testCtx)
 				root.AddCommand(newDraftReplyCommand())
 				silenceUsageInRunE(root)
 				var stdout, stderr bytes.Buffer
@@ -513,7 +516,7 @@ func TestDraftReplyCLIFailureOutput(t *testing.T) {
 					args = append(args, "--json")
 				}
 				root.SetArgs(args)
-				requirements.Error(root.ExecuteContext(t.Context()))
+				requirements.Error(root.ExecuteContext(testCtx))
 				assertions.Empty(stdout.String())
 				assertions.Len(strings.Split(strings.TrimSpace(stderr.String()), "\n"), 1, stderr.String())
 				switch failure {

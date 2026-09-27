@@ -100,15 +100,19 @@ func TestDaemonAndServeLifecycleCommandSurfaces(t *testing.T) {
 }
 
 func TestDaemonAndServeStatusHaveIdenticalBehavior(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	dataDir := t.TempDir()
 	oldCfg := cfg
 	cfg = lifecycleTestConfig(dataDir)
 	t.Cleanup(func() { cfg = oldCfg })
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
 	run := func(args ...string) (string, error) {
 		root := newTestRootCmd()
+		root.SetContext(testCtx)
 		root.SilenceUsage = true
 		root.AddCommand(newDaemonCommand())
 		compatServe := &cobra.Command{Use: "serve"}
@@ -118,7 +122,7 @@ func TestDaemonAndServeStatusHaveIdenticalBehavior(t *testing.T) {
 		root.SetOut(&stdout)
 		root.SetErr(io.Discard)
 		root.SetArgs(args)
-		err := root.ExecuteContext(context.Background())
+		err := root.ExecuteContext(testCtx)
 		return stdout.String(), err
 	}
 
@@ -249,6 +253,8 @@ func TestRunServeStatusIncludesVectorHealth(t *testing.T) {
 }
 
 func TestServeStatusCommandUsesAuthenticatedHealthForOperationDetails(t *testing.T) {
+	cfg := testConfigValue()
+
 	assert := assert.New(t)
 	require := require.New(t)
 	dataDir := t.TempDir()
@@ -304,7 +310,7 @@ func TestServeStatusCommandUsesAuthenticatedHealthForOperationDetails(t *testing
 	t.Cleanup(func() { cfg = oldCfg })
 
 	cmd, stdout, stderr := lifecycleTestCommand()
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testInvocationContext(context.Background(), cfg, invocationOptions{}))
 	statusCmd, _, err := serveCmd.Find([]string{"status"})
 	require.NoError(err, "find serve status")
 	require.NoError(statusCmd.RunE(cmd, nil), "serve status")
@@ -514,7 +520,7 @@ func TestStopDaemonRuntimeRecordRejectsUnprovedCreateTimeMismatch(t *testing.T) 
 				},
 			}
 
-			err = stopDaemonRuntimeRecord(io.Discard, dataDir, rec, "configured-api-key", 10*time.Millisecond)
+			err = stopDaemonRuntimeRecord(io.Discard, dataDir, rec, "configured-api-key", 10*time.Millisecond, testDiscardLogger())
 
 			require.ErrorIs(err, errDaemonIdentityUnconfirmed, "unproved mismatch must be rejected")
 			assert.Positive(proofRequests.Load(), "mismatched endpoint is challenged")
@@ -701,7 +707,7 @@ func TestStopDaemonRuntimeRecordNeverSignalsProvedCreateTimeMismatchOnShutdownFa
 				},
 			}
 
-			err = stopDaemonRuntimeRecord(io.Discard, dataDir, rec, "configured-api-key", 10*time.Millisecond)
+			err = stopDaemonRuntimeRecord(io.Discard, dataDir, rec, "configured-api-key", 10*time.Millisecond, testDiscardLogger())
 
 			require.Error(err, "failed authenticated shutdown remains an error")
 			require.ErrorContains(err, tt.wantError)
@@ -1029,7 +1035,7 @@ func TestRunServeStartDoesNotDowngradeNewerDaemon(t *testing.T) {
 	require.NoError(
 		err, "write runtime")
 
-	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime) error {
+	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
 		require.Fail("older CLI must not stop a newer daemon")
 		return nil
 	})
@@ -1073,7 +1079,7 @@ func TestRunServeStartUpgradesOlderDaemon(t *testing.T) {
 		err, "write runtime")
 
 	var stoppedPID int
-	stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime) error {
+	stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime, _ *slog.Logger) error {
 		stoppedPID = rt.Record.PID
 		return nil
 	})
@@ -1132,7 +1138,7 @@ func TestRunServeStartIgnoresDisabledDaemonAutoStart(t *testing.T) {
 	require.NoError(err, "write runtime")
 
 	var stoppedPID int
-	stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime) error {
+	stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime, _ *slog.Logger) error {
 		stoppedPID = rt.Record.PID
 		return nil
 	})
@@ -1194,7 +1200,7 @@ func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
 	require.NoError(
 		err, "write runtime")
 
-	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime) error {
+	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
 		require.FailNow("never policy must not stop a compatible daemon")
 		return errors.New("unreachable")
 	})
@@ -1239,7 +1245,7 @@ func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {
 		err, "write runtime")
 
 	var stoppedPID int
-	stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime) error {
+	stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime, _ *slog.Logger) error {
 		stoppedPID = rt.Record.PID
 		return nil
 	})
@@ -1298,7 +1304,7 @@ func TestRunServeStartRefusesNewerIncompatibleDaemon(t *testing.T) {
 	require.NoError(
 		err, "write runtime")
 
-	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime) error {
+	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
 		require.FailNow("older CLI must not stop a newer incompatible daemon")
 		return errors.New("unreachable")
 	})
@@ -1570,7 +1576,7 @@ func TestNewDaemonIdleTrackerOnlyRunsForBackgroundServeChild(t *testing.T) {
 
 	tracker := newDaemonIdleTracker(cfg, func() {
 		require.FailNow(t, "foreground serve must not arm idle shutdown")
-	})
+	}, testDiscardLogger())
 
 	assert.Nil(t, tracker)
 }
@@ -1581,7 +1587,7 @@ func TestNewDaemonIdleTrackerUsesServerConfigTimeout(t *testing.T) {
 	cfg.Server.DaemonIdleTimeout = 20 * time.Millisecond
 	fired := make(chan struct{})
 
-	tracker := newDaemonIdleTracker(cfg, func() { close(fired) })
+	tracker := newDaemonIdleTracker(cfg, func() { close(fired) }, testDiscardLogger())
 	require.NotNil(t, tracker)
 
 	go tracker.Run(t.Context())
@@ -1601,7 +1607,7 @@ func TestNewDaemonIdleTrackerEnvOverrideDisables(t *testing.T) {
 
 	tracker := newDaemonIdleTracker(cfg, func() {
 		require.FailNow(t, "idle tracker fired despite env disable")
-	})
+	}, testDiscardLogger())
 
 	assert.Nil(t, tracker)
 }
@@ -1631,7 +1637,7 @@ func withTestVersion(t *testing.T, version string) {
 
 func stubStopDaemonRuntimeForUpgrade(
 	t *testing.T,
-	fn func(config.Config, *DaemonRuntime) error,
+	fn func(config.Config, *DaemonRuntime, *slog.Logger) error,
 ) {
 	t.Helper()
 	old := stopDaemonRuntimeForUpgrade

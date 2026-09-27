@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -36,8 +37,8 @@ func TestOrganizationCreateSendsNormalizedBodyAndPrintsResult(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output := runOrganizationCommand(t, organizationCreateCmd, []string{"Example Org", "--kind", "company", "--domain", "Example.com"})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	output := runOrganizationCommand(testCtx, t, organizationCreateCmd, []string{"Example Org", "--kind", "company", "--domain", "Example.com"})
 	require.NoError(decodeErr)
 	assert.Equal("Example Org", received.Name)
 	assert.Equal("company", received.Kind)
@@ -74,8 +75,8 @@ func TestOrganizationSetReadsCurrentRevisionAndSendsIfMatch(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output := runOrganizationCommand(t, organizationSetCmd, []string{"4", "--name", "Example Group"})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	output := runOrganizationCommand(testCtx, t, organizationSetCmd, []string{"4", "--name", "Example Group"})
 	require.NoError(decodeErr)
 	assert.Equal(int32(2), requests.Load())
 	assert.Equal(`"organization-4-r3"`, ifMatch)
@@ -122,11 +123,11 @@ func TestOrganizationLifecycleCommandsPreserveRootFields(t *testing.T) {
 				}
 			}))
 			t.Cleanup(server.Close)
-			withStoreResolverConfig(t, &config.Config{
+			testCtx := withStoreResolverConfig(t, &config.Config{
 				Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 			})
 
-			runOrganizationCommand(t, test.command, []string{"4"})
+			runOrganizationCommand(testCtx, t, test.command, []string{"4"})
 			require.NoError(decodeErr)
 			assert.Equal("example.com", body["primary_domain"])
 			assert.Equal("Synthetic description.", body["description"])
@@ -150,8 +151,9 @@ func TestOrganizationDeleteReportsEmploymentConflict(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 	command := cloneOrganizationCommand(organizationDeleteCmd)
+	command.SetContext(testCtx)
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&output)
@@ -173,8 +175,8 @@ func TestOrganizationListSendsQueryParametersAndRendersTable(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output := runOrganizationCommand(t, organizationListCmd, []string{"--limit", "25", "--query", "example", "--include-retired"})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	output := runOrganizationCommand(testCtx, t, organizationListCmd, []string{"--limit", "25", "--query", "example", "--include-retired"})
 	assert.Contains(rawQuery, "limit=25")
 	assert.Contains(rawQuery, "q=example")
 	assert.Contains(rawQuery, "include_retired=true")
@@ -193,8 +195,8 @@ func TestOrganizationShowHistoryPrintsSupersededRows(t *testing.T) {
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output := runOrganizationCommand(t, organizationShowCmd, []string{"4", "--history"})
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	output := runOrganizationCommand(testCtx, t, organizationShowCmd, []string{"4", "--history"})
 	assert.Contains(output, "Earlier Org")
 	assert.Contains(output, "active until 2026-07-30T12:01:00Z")
 }
@@ -216,11 +218,10 @@ func TestOrganizationAttributeSetTransmitsOptionalExpectedValueID(t *testing.T) 
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
-	output := runOrganizationCommand(t, organizationAttributeSetCmd, []string{
+	output := runOrganizationCommand(testCtx, t, organizationAttributeSetCmd, []string{
 		"4", "--definition", "industry_focus", "--text", "information retrieval",
 		"--expected-value-id", "7", "--ordinal", "2",
 	})
@@ -252,11 +253,10 @@ func TestOrganizationAttributeClearForwardsOrdinalExpectedValueIDAndDryRun(t *te
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
 	})
-
-	output := runOrganizationCommand(t, organizationAttributeClearCmd, []string{
+	output := runOrganizationCommand(testCtx, t, organizationAttributeClearCmd, []string{
 		"4", "industry_focus", "--ordinal", "2", "--expected-value-id", "8", "--dry-run",
 	})
 	require.NotEmpty(output)
@@ -272,7 +272,7 @@ func cloneOrganizationCommand(template *cobra.Command) *cobra.Command {
 	})
 	return command
 }
-func runOrganizationCommand(t *testing.T, template *cobra.Command, args []string) string {
+func runOrganizationCommand(ctx context.Context, t *testing.T, template *cobra.Command, args []string) string {
 	t.Helper()
 	saved := organizationJSON
 	organizationJSON = false
@@ -282,6 +282,7 @@ func runOrganizationCommand(t *testing.T, template *cobra.Command, args []string
 	command.SetOut(&output)
 	command.SetErr(&output)
 	command.SetArgs(args)
+	command.SetContext(ctx)
 	require.NoError(t, command.Execute())
 	return output.String()
 }

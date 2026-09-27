@@ -129,12 +129,12 @@ func TestManualGranolaPartialImportRefreshesCacheBeforeReturningError(t *testing
 		AccountEmail: "user-a@example.com",
 		APIKey:       "grn_test",
 	}}
-	withStoreResolverConfig(t, testCfg)
+	testCtx := withStoreResolverConfig(t, testCfg)
 
 	savedRefresh := rebuildGranolaCacheAfterWrite
 	refreshes := 0
 	refreshSawWrite := false
-	rebuildGranolaCacheAfterWrite = func(dbPath string) error {
+	rebuildGranolaCacheAfterWrite = func(dbPath string, _ *invocation) error {
 		refreshes++
 		st, openErr := store.Open(dbPath)
 		require.NoError(openErr)
@@ -152,7 +152,8 @@ func TestManualGranolaPartialImportRefreshesCacheBeforeReturningError(t *testing
 		syncGranolaLimit, syncGranolaAfter, syncGranolaFull = oldLimit, oldAfter, oldFull
 	})
 	cmd := &cobra.Command{Use: "sync-granola"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 
@@ -174,11 +175,12 @@ func TestManualGranolaCancellationReturnsError(t *testing.T) {
 	testCfg.Granola = []config.GranolaSource{{
 		Identifier: "work", AccountEmail: "user-a@example.com", APIKey: "grn_test",
 	}}
-	withStoreResolverConfig(t, testCfg)
+	testCtx := withStoreResolverConfig(t, testCfg)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testCtx)
 	cancel()
 	cmd := &cobra.Command{Use: "sync-granola"}
+	cmd.SetContext(testCtx)
 	cmd.SetContext(ctx)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
@@ -275,12 +277,12 @@ func TestManualGranolaLaterFailureRefreshesEarlierSourceWrites(t *testing.T) {
 		{Identifier: "first", AccountEmail: "user-a@example.com", APIKey: "grn_clean"},
 		{Identifier: "second", AccountEmail: "user-b@example.com", APIKey: "grn_partial"},
 	}
-	withStoreResolverConfig(t, testCfg)
+	testCtx := withStoreResolverConfig(t, testCfg)
 
 	savedRefresh := rebuildGranolaCacheAfterWrite
 	refreshes := 0
 	refreshSawWrite := false
-	rebuildGranolaCacheAfterWrite = func(dbPath string) error {
+	rebuildGranolaCacheAfterWrite = func(dbPath string, _ *invocation) error {
 		refreshes++
 		st, openErr := store.Open(dbPath)
 		require.NoError(openErr)
@@ -298,7 +300,8 @@ func TestManualGranolaLaterFailureRefreshesEarlierSourceWrites(t *testing.T) {
 		syncGranolaLimit, syncGranolaAfter, syncGranolaFull = oldLimit, oldAfter, oldFull
 	})
 	cmd := &cobra.Command{Use: "sync-granola"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 
@@ -328,10 +331,11 @@ func TestManualGranolaPrevalidatesAllSourcesBeforeImport(t *testing.T) {
 		{Identifier: "first", AccountEmail: "user-a@example.com", APIKey: "grn_clean"},
 		{Identifier: "second", AccountEmail: "user-b@example.com"},
 	}
-	withStoreResolverConfig(t, testCfg)
+	testCtx := withStoreResolverConfig(t, testCfg)
 
 	cmd := &cobra.Command{Use: "sync-granola"}
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx)
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 

@@ -16,6 +16,8 @@ import (
 )
 
 func TestInitDBUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
+	logger := testLoggerValue()
+
 	assert := assert.New(t)
 
 	var requests atomic.Int32
@@ -40,7 +42,7 @@ func TestInitDBUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	dataDir := t.TempDir()
-	withStoreResolverConfig(t, &config.Config{
+	testCtx := withStoreResolverConfig(t, &config.Config{
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
 		Remote: config.RemoteConfig{
@@ -55,6 +57,7 @@ func TestInitDBUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd := &cobra.Command{Use: initDBCmd.Use, RunE: initDBCmd.RunE}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 

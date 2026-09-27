@@ -24,11 +24,13 @@ func TestLogsCommandUsesDaemonRunner(t *testing.T) {
 			"--run-id=abc123",
 		}, req.Args, "args")
 	}, `{"type":"stdout","data":"12:00:00 WARN abc123 sync failed\n"}`, `{"type":"stderr","data":"tail warning\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd := newLogsRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"os"
 
@@ -12,13 +13,33 @@ import (
 // setupStatusDeps isolates the report from the process so tests can drive it
 // from a temp config and a fixed environment.
 type setupStatusDeps struct {
+	bind        func(context.Context) setupStatusDeps
 	config      func() *config.Config
 	environment func(*cobra.Command, *config.Config) setupEnvironment
 }
 
 func defaultSetupStatusDeps() setupStatusDeps {
 	return setupStatusDeps{
-		config: func() *config.Config { return cfg },
+		bind: func(ctx context.Context) setupStatusDeps {
+			state := invocationFromContext(ctx)
+			var currentCfg *config.Config
+			if state != nil && state.cfg != nil {
+				currentCfg = state.cfg
+			}
+			return setupStatusDeps{
+				config: func() *config.Config { return currentCfg },
+				environment: func(command *cobra.Command, loaded *config.Config) setupEnvironment {
+					credentials, _ := providercredentials.Read(loaded.TokensDir())
+					return setupEnvironment{
+						lookupEnv:   os.LookupEnv,
+						fileExists:  defaultFileExists,
+						consent:     readSetupConsentState(command.Context(), loaded),
+						credentials: credentials,
+					}
+				},
+			}
+		},
+		config: func() *config.Config { return nil },
 		environment: func(command *cobra.Command, loaded *config.Config) setupEnvironment {
 			// Read retains any load error in the snapshot so each lane can report it.
 			credentials, _ := providercredentials.Read(loaded.TokensDir())
@@ -47,11 +68,18 @@ The report reads config.toml, the process environment, stored provider
 credentials, and the local archive's consent records. It never contacts a provider.`,
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			loaded := deps.config()
+			bound := deps
+			if invocationFromContext(command.Context()) != nil && bound.bind != nil {
+				bound = bound.bind(command.Context())
+			}
+			loaded := bound.config()
+			if inv := invocationFromCommand(command); inv != nil && inv.cfg != nil {
+				loaded = inv.cfg
+			}
 			if loaded == nil {
 				return errors.New("configuration is unavailable")
 			}
-			report := buildLaneReport(loaded, deps.environment(command, loaded))
+			report := buildLaneReport(loaded, bound.environment(command, loaded))
 			return writeLaneReport(command.OutOrStdout(), report, jsonOutput)
 		},
 	}

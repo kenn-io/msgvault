@@ -145,6 +145,7 @@ func newPersonProviderAddCommand(deps personProviderCommandDeps) *cobra.Command 
 		Short: "Add and check a named people inference provider profile",
 		Args:  exactPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			return runPersonProviderAdd(command, deps, args[0], options)
 		},
 	}
@@ -179,6 +180,7 @@ func newPersonProviderSetCommand(deps personProviderCommandDeps) *cobra.Command 
 		Short: "Update and check a named people inference provider profile",
 		Args:  exactPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			deps := personProviderDepsForContext(command.Context(), deps)
 			return runPersonProviderSet(command, deps, args[0], options)
 		},
 	}

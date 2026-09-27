@@ -45,6 +45,9 @@ func runSyncFullLocalForTest(cmd *cobra.Command, args []string) error {
 // scaffolding so the test exercises runIncrementalSync, not just
 // the OAuth manager setup.
 func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
@@ -89,6 +92,8 @@ func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
 		Data:    config.DataConfig{DataDir: tmpDir},
 		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	testCmd := &cobra.Command{
@@ -98,6 +103,7 @@ func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(testCmd)
 	root.SetArgs([]string{"sync", "shared@example.com"})
 
@@ -147,6 +153,9 @@ func TestResolveSyncSourcesSourceIDIsExact(t *testing.T) {
 }
 
 func TestSyncFullSourceIDTreatsLegacyEmptyTypeAsGmail(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
@@ -167,10 +176,13 @@ func TestSyncFullSourceIDTreatsLegacyEmptyTypeAsGmail(t *testing.T) {
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	command := &cobra.Command{}
-	command.SetContext(t.Context())
+	command.SetContext(testCtx)
+	command.SetContext(testCtx)
 	command.Flags().Int64("source-id", 0, "")
 	require.NoError(command.Flags().Set("source-id", strconv.FormatInt(legacy.ID, 10)))
 	err = runSyncFullLocal(command, nil)
@@ -204,6 +216,9 @@ func TestResolveSyncSourcesNumericTokenDoesNotBecomeSourceID(t *testing.T) {
 // TestSyncCmd_SingleSourceNoAmbiguity verifies that a single
 // source for an identifier works without the legacy fallback.
 func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
@@ -228,6 +243,8 @@ func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	testCmd := &cobra.Command{
@@ -237,6 +254,7 @@ func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(testCmd)
 	root.SetArgs([]string{"sync", "solo@example.com"})
 
@@ -267,6 +285,9 @@ func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
 // returns a clear error instead of falling back to the legacy
 // Gmail path.
 func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -289,6 +310,8 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	// Test both sync and sync-full commands.
@@ -307,6 +330,7 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 			}
 
 			root := newTestRootCmd()
+			root.SetContext(testCtx)
 			root.AddCommand(testCmd)
 			root.SetArgs([]string{
 				tc.name, "imported@example.com",
@@ -323,6 +347,9 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 // mixed Gmail+IMAP setup without OAuth configured, sync-full skips
 // the Gmail source and still syncs the IMAP source.
 func TestSyncFullCmd_OAuthSkipDoesNotBlockIMAP(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
@@ -350,6 +377,8 @@ func TestSyncFullCmd_OAuthSkipDoesNotBlockIMAP(t *testing.T) {
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	testCmd := &cobra.Command{
@@ -359,6 +388,7 @@ func TestSyncFullCmd_OAuthSkipDoesNotBlockIMAP(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(testCmd)
 	root.SetArgs([]string{"sync-full"})
 
@@ -386,6 +416,9 @@ func TestSyncFullCmd_OAuthSkipDoesNotBlockIMAP(t *testing.T) {
 // the no-args discovery path. The OAuth error should be reported
 // after IMAP work completes.
 func TestSyncCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	for _, tc := range []struct {
 		name string
 		runE func(*cobra.Command, []string) error
@@ -442,6 +475,8 @@ func TestSyncCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 			logger = slog.New(
 				slog.NewTextHandler(os.Stderr, nil),
 			)
+			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			invocationFromContext(testCtx).logger = logger
 
 			testCmd := &cobra.Command{
 				Use:  tc.name + " [email]",
@@ -450,6 +485,7 @@ func TestSyncCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 			}
 
 			root := newTestRootCmd()
+			root.SetContext(testCtx)
 			root.AddCommand(testCmd)
 			root.SetArgs([]string{tc.name})
 
@@ -484,6 +520,9 @@ func TestSyncCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 // even in a mixed Gmail+IMAP setup where Gmail would otherwise
 // succeed first.
 func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
@@ -526,6 +565,8 @@ func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
 		Data:    config.DataConfig{DataDir: tmpDir},
 		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	syncAfter = "not-a-date"
@@ -537,6 +578,7 @@ func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
+	root.SetContext(testCtx)
 	root.AddCommand(testCmd)
 	root.SetArgs([]string{"sync-full"})
 
@@ -555,6 +597,9 @@ func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
 // --after/--before flags produce a clear error for IMAP sources
 // instead of silently syncing the entire mailbox.
 func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
@@ -585,6 +630,8 @@ func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	for _, tc := range []struct {
@@ -608,6 +655,7 @@ func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
 			}
 
 			root := newTestRootCmd()
+			root.SetContext(testCtx)
 			root.AddCommand(testCmd)
 			root.SetArgs([]string{
 				"sync-full", "i@example.com",
@@ -625,6 +673,9 @@ func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
 // only Gmail sources exist and OAuth is broken, the actual error is
 // returned, not "no accounts are ready to sync".
 func TestSyncCmd_GmailOnlyBrokenOAuthSurfacesError(t *testing.T) {
+	cfg := testConfigValue()
+	logger := testLoggerValue()
+
 	for _, tc := range []struct {
 		name string
 		runE func(*cobra.Command, []string) error
@@ -672,6 +723,8 @@ func TestSyncCmd_GmailOnlyBrokenOAuthSurfacesError(t *testing.T) {
 			logger = slog.New(
 				slog.NewTextHandler(os.Stderr, nil),
 			)
+			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			invocationFromContext(testCtx).logger = logger
 
 			testCmd := &cobra.Command{
 				Use:  tc.name + " [email]",
@@ -680,6 +733,7 @@ func TestSyncCmd_GmailOnlyBrokenOAuthSurfacesError(t *testing.T) {
 			}
 
 			root := newTestRootCmd()
+			root.SetContext(testCtx)
 			root.AddCommand(testCmd)
 			root.SetArgs([]string{tc.name})
 

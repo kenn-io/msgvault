@@ -65,10 +65,11 @@ func TestDeletionManifestCommandsUseDaemonRunner(t *testing.T) {
 			server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
 				requestAssert.Equal(tt.want, req.Args, "args")
 			}, `{"type":"stdout","data":`+string(stdoutJSON)+`}`, `{"type":"complete"}`)
-			configureRemoteDaemonForTest(t, server.URL)
+			testCtx := configureRemoteDaemonForTest(t, server.URL)
 
 			var stdout bytes.Buffer
 			cmd := tt.cmd()
+			cmd.SetContext(testCtx)
 			cmd.SetOut(&stdout)
 			cmd.SetArgs(tt.args)
 
@@ -112,9 +113,11 @@ func TestDeleteStagedTrashPromptsBeforeDaemonRunner(t *testing.T) {
 		}, req.Args, "args")
 		assert.Equal(map[string]string{remoteDeleteEnvVar: "1"}, req.Env, "env")
 	}, `{"type":"stdout","data":"Deletion complete!\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	var stdout bytes.Buffer
 	cmd.SetIn(bytes.NewBufferString("y\n"))
 	cmd.SetOut(&stdout)
@@ -129,6 +132,8 @@ func TestDeleteStagedTrashPromptsBeforeDaemonRunner(t *testing.T) {
 }
 
 func TestDeleteStagedConfigConsentReachesRemotePlanAndExecution(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	resetDeleteStagedRoutingGlobals(t)
@@ -146,10 +151,12 @@ func TestDeleteStagedConfigConsentReachesRemotePlanAndExecution(t *testing.T) {
 	}, func(req daemonCLIRunTestRequest) {
 		assert.Equal(map[string]string{remoteDeleteEnvVar: "1"}, req.Env, "config consent becomes the synthetic marker")
 	}, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL, cfg)
+	_ = testCtx
 	cfg.Deletion.RemoteEnabled = true
 
 	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	cmd.SetArgs([]string{"--yes", "batch-123"})
 
 	require.NoError(cmd.Execute(), "delete-staged")
@@ -158,6 +165,8 @@ func TestDeleteStagedConfigConsentReachesRemotePlanAndExecution(t *testing.T) {
 }
 
 func TestDeleteStagedDisabledConfigBlocksBeforeRemoteExecution(t *testing.T) {
+	cfg := testConfigValue()
+
 	require := require.New(t)
 	assert := assert.New(t)
 	resetDeleteStagedRoutingGlobals(t)
@@ -175,10 +184,12 @@ func TestDeleteStagedDisabledConfigBlocksBeforeRemoteExecution(t *testing.T) {
 		"plan_fingerprint":      "fp-disabled",
 		"remote_delete_env_var": remoteDeleteEnvVar,
 	}, nil)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL, cfg)
+	_ = testCtx
 	cfg.Deletion.RemoteEnabled = false
 
 	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	cmd.SetArgs([]string{"--yes", "batch-123"})
 	err := cmd.Execute()
 
@@ -217,9 +228,11 @@ func TestDeleteStagedDisplayNamePlanPinsSourceIDForDaemonRunner(t *testing.T) {
 			"--yes",
 		}, req.Args, "args")
 	}, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	cmd.SetArgs([]string{"--account", "Work", "--yes"})
 
 	require.NoError(cmd.Execute(), "delete-staged")
@@ -257,9 +270,11 @@ func TestDeleteStagedPermanentPromptsBeforeDaemonRunner(t *testing.T) {
 		}, req.Args, "args")
 		assert.Equal(map[string]string{remoteDeleteEnvVar: "1"}, req.Env, "env")
 	}, `{"type":"stdout","data":"Deletion complete!\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	var stdout bytes.Buffer
 	cmd.SetIn(bytes.NewBufferString("delete\n"))
 	cmd.SetOut(&stdout)
@@ -302,9 +317,11 @@ func TestDeleteStagedWithoutBatchPinsPlannedBatchesForDaemonRunner(t *testing.T)
 		}, req.Args, "args")
 		assert.Equal(map[string]string{remoteDeleteEnvVar: "1"}, req.Env, "env")
 	}, `{"type":"stdout","data":"Deletion complete!\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"--yes"})
@@ -349,9 +366,11 @@ func TestDeleteStagedScopeEscalationPromptsBeforeDaemonRunner(t *testing.T) {
 		}, req.Args, "args")
 		assert.Equal(map[string]string{remoteDeleteEnvVar: "1"}, req.Env, "env")
 	}, `{"type":"stdout","data":"Deletion complete!\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	var stdout bytes.Buffer
 	cmd.SetIn(bytes.NewBufferString("y\n"))
 	cmd.SetOut(&stdout)
@@ -393,9 +412,11 @@ func TestDeleteStagedConfirmationAndScopePromptsShareInput(t *testing.T) {
 			"--skip-prelude",
 		}, req.Args, "args")
 	}, `{"type":"stdout","data":"Deletion complete!\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	var stdout bytes.Buffer
 	cmd.SetIn(bytes.NewBufferString("delete\ny\n"))
 	cmd.SetOut(&stdout)
@@ -418,9 +439,11 @@ func TestCancelDeletionUsageErrorBeforeDaemonRunner(t *testing.T) {
 	})
 
 	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	cmd := newCancelDeletionRoutingTestCommand()
+	cmd.SetContext(testCtx)
 	cmd.SetArgs([]string{"--all", "batch-123"})
 
 	err := cmd.Execute()

@@ -27,6 +27,7 @@ import (
 func TestArchiveRemoteImagesRequiresTrackingConsentBeforeDispatch(t *testing.T) {
 	require := require.New(t)
 	command := newArchiveRemoteImagesCmd()
+	command.SetContext(testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{}))
 	require.ErrorContains(command.RunE(command, nil), "--allow-tracking")
 	require.NoError(command.Flags().Set("allow-tracking", "true"))
 	require.NoError(command.Flags().Set("limit", "-1"))
@@ -71,20 +72,18 @@ func TestArchivedRemoteImagesThroughDaemonAdapter(t *testing.T) {
 
 func TestConfiguredRemoteImageFetcherDefaultsOff(t *testing.T) {
 	assert := assert.New(t)
-	previous := cfg
-	t.Cleanup(func() { cfg = previous })
-	cfg = config.NewDefaultConfig()
-	assert.Nil(configuredRemoteImageFetcher())
+	cfg := config.NewDefaultConfig()
+	assert.Nil(configuredRemoteImageFetcher(cfg))
 	cfg.Sync.ArchiveRemoteImages = true
-	assert.NotNil(configuredRemoteImageFetcher())
+	assert.NotNil(configuredRemoteImageFetcher(cfg))
 	cfg.Sync.ArchiveRemoteImages = false
-	assert.Nil(configuredRemoteImageFetcher())
+	assert.Nil(configuredRemoteImageFetcher(cfg))
 }
 
 func TestArchiveRemoteImagesRefreshesExistingCacheOnReuse(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	configuration := lifecycleTestConfig(t.TempDir())
-	withStoreResolverConfig(t, configuration)
+	testCtx := withStoreResolverConfig(t, configuration)
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 
 	st, err := store.Open(configuration.DatabaseDSN())
@@ -115,7 +114,7 @@ func TestArchiveRemoteImagesRefreshesExistingCacheOnReuse(t *testing.T) {
 	content := []byte("\x89PNG\r\n\x1a\nimage")
 	receipt, err := export.StoreAttachmentFileDurable(configuration.AttachmentsDir(), &mime.Attachment{ContentType: "image/png", Content: content})
 	require.NoError(err)
-	require.NoError(st.UpsertRemoteImageAttachment(t.Context(), id, store.AttachmentWrite{
+	require.NoError(st.UpsertRemoteImageAttachment(testCtx, id, store.AttachmentWrite{
 		Filename: "image.png", MIMEType: "image/png", StoragePath: receipt.StoragePath, ContentHash: receipt.ContentHash,
 		Size: int64(len(content)), SourceAttachmentID: key, SourcePartKey: key, ContentID: key,
 		Role: store.AttachmentRoleInline, RoleSource: store.AttachmentRoleSourceImporterSemantics,
@@ -123,14 +122,17 @@ func TestArchiveRemoteImagesRefreshesExistingCacheOnReuse(t *testing.T) {
 	require.NoError(st.Close())
 
 	command := newArchiveRemoteImagesCmd()
+	command.SetContext(testCtx)
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
 	command.SetArgs([]string{"--allow-tracking"})
-	require.NoError(command.Execute())
+	require.NotNil(invocationFromCommand(command))
+	require.Same(configuration, invocationFromCommand(command).cfg)
+	require.NoError(command.ExecuteContext(testCtx))
 
 	engine, err := query.NewDuckDBEngine(configuration.AnalyticsDir(), "", nil)
 	require.NoError(err)
-	result, queryErr := engine.QuerySQL(t.Context(), `
+	result, queryErr := engine.QuerySQL(testCtx, `
 		SELECT m.attachment_count, m.has_attachments, COUNT(a.attachment_id)
 		FROM messages m LEFT JOIN attachments a ON a.message_id = m.id
 		GROUP BY m.id, m.attachment_count, m.has_attachments`)

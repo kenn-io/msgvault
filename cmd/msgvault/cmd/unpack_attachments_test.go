@@ -69,6 +69,9 @@ func TestRefuseUnpackWithLiveDaemon(t *testing.T) {
 }
 
 func TestRunUnpackAttachmentsLocalRejectsConfiguredRemote(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	savedCfg := cfg
 	savedUseLocal := useLocal
@@ -82,8 +85,11 @@ func TestRunUnpackAttachmentsLocalRejectsConfiguredRemote(t *testing.T) {
 		Data:   config.DataConfig{DataDir: dataDir},
 		Remote: config.RemoteConfig{URL: "https://vault.example.com"},
 	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = false
 	cmd := &cobra.Command{}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(io.Discard)
 
 	err := runUnpackAttachmentsLocal(cmd)
@@ -98,6 +104,9 @@ func TestRunUnpackAttachmentsLocalRejectsConfiguredRemote(t *testing.T) {
 }
 
 func TestRunUnpackAttachmentsLocalHoldsDaemonLeaseBeforePostgresStoreOpen(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	savedCfg := cfg
 	savedUseLocal := useLocal
@@ -113,6 +122,8 @@ func TestRunUnpackAttachmentsLocalHoldsDaemonLeaseBeforePostgresStoreOpen(t *tes
 		DataDir:     dataDir,
 		DatabaseURL: "postgres://user:pass@example.com:5432/msgvault",
 	}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = false
 	server := httptest.NewServer(daemon.NewPingHandler(daemon.PingHandlerOptions{
 		Service: daemonService,
@@ -139,6 +150,7 @@ func TestRunUnpackAttachmentsLocalHoldsDaemonLeaseBeforePostgresStoreOpen(t *tes
 		<-release
 	}
 	cmd := &cobra.Command{}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(io.Discard)
 	errCh := make(chan error, 1)
 	go func() { errCh <- runUnpackAttachmentsLocal(cmd) }()
@@ -158,6 +170,9 @@ func TestRunUnpackAttachmentsLocalHoldsDaemonLeaseBeforePostgresStoreOpen(t *tes
 }
 
 func TestRunUnpackAttachmentsLocalReportsHeldDaemonLease(t *testing.T) {
+	cfg := testConfigValue()
+	useLocal := false
+
 	require := require.New(t)
 	savedCfg := cfg
 	savedUseLocal := useLocal
@@ -170,11 +185,14 @@ func TestRunUnpackAttachmentsLocalReportsHeldDaemonLease(t *testing.T) {
 		DataDir:     dataDir,
 		DatabaseURL: "postgres://user:pass@example.com:5432/msgvault",
 	}}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	useLocal = false
 	owner, err := tryAcquireDaemonOwnerLock(dataDir)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(owner.Close()) })
 	cmd := &cobra.Command{}
+	cmd.SetContext(testCtx)
 	cmd.SetOut(io.Discard)
 
 	err = runUnpackAttachmentsLocal(cmd)

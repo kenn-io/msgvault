@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 // oauthPreflightedFlag marks that the frontend CLI already completed the
@@ -28,8 +29,8 @@ func oauthPreflighted(cmd *cobra.Command) (bool, error) {
 	return preflighted, nil
 }
 
-func requireMicrosoftOAuthConfig() error {
-	if cfg.Microsoft.ClientID == "" {
+func requireMicrosoftOAuthConfig(cfg *config.Config) error {
+	if cfg == nil || cfg.Microsoft.ClientID == "" {
 		return errors.New("microsoft OAuth not configured\n\n" +
 			"Add to your config.toml:\n\n" +
 			"  [microsoft]\n" +
@@ -41,9 +42,12 @@ func requireMicrosoftOAuthConfig() error {
 
 // microsoftTenantID resolves the tenant, letting a per-command flag
 // override the configured default.
-func microsoftTenantID(flagTenant string) string {
+func microsoftTenantID(flagTenant string, cfg *config.Config) string {
 	if flagTenant != "" {
 		return flagTenant
+	}
+	if cfg == nil {
+		return ""
 	}
 	return cfg.Microsoft.EffectiveTenantID()
 }

@@ -147,18 +147,20 @@ func TestDraftReplyHumanLifecycleHandle(t *testing.T) {
 	adapter := fixture.grantedAdapter()
 	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{HomeDir: t.TempDir()}, Store: adapter, Logger: slog.New(slog.DiscardHandler)}).Router())
 	t.Cleanup(server.Close)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	root := &cobra.Command{Use: "msgvault"}
+	root.SetContext(testCtx)
 	root.AddCommand(newDraftReplyCommand())
 	silenceUsageInRunE(root)
 	var stdout bytes.Buffer
 	root.SetOut(&stdout)
 	root.SetArgs([]string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--from", testutil.IMAPTestUsername, "--body", "handle"})
-	requirements.NoError(root.ExecuteContext(t.Context()))
+	requirements.NoError(root.ExecuteContext(testCtx))
 	var draftID string
 	requirements.NoError(fixture.store.DB().QueryRow("SELECT draft_id FROM imap_drafts").Scan(&draftID))
 	assertions.Contains(stdout.String(), "draft "+draftID+" revision 1")
-	draft, err := fixture.store.GetIMAPDraftContext(t.Context(), draftID)
+	draft, err := fixture.store.GetIMAPDraftContext(testCtx, draftID)
 	requirements.NoError(err)
 	assertions.Equal(int64(1), draft.Revision)
 }
@@ -337,8 +339,9 @@ func TestDraftLifecycleAcceptedReadFailureEvidence(t *testing.T) {
 				}
 				server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{HomeDir: t.TempDir()}, Store: fixture.adapter, Logger: slog.New(slog.DiscardHandler)}).Router())
 				t.Cleanup(server.Close)
-				configureRemoteDaemonForTest(t, server.URL)
+				testCtx := configureRemoteDaemonForTest(t, server.URL)
 				root := &cobra.Command{Use: "msgvault"}
+				root.SetContext(testCtx)
 				root.AddCommand(newDraftEditCommand())
 				silenceUsageInRunE(root)
 				var stdout, stderr bytes.Buffer
@@ -349,7 +352,7 @@ func TestDraftLifecycleAcceptedReadFailureEvidence(t *testing.T) {
 					args = append(args, "--json")
 				}
 				root.SetArgs(args)
-				err := root.ExecuteContext(t.Context())
+				err := root.ExecuteContext(testCtx)
 				requirements.NoError(faultErr)
 				requirements.ErrorContains(err, "accepted_local_failed")
 				assertions.Empty(stdout.String())
@@ -410,15 +413,17 @@ func TestDraftLifecyclePublicationFailure(t *testing.T) {
 
 	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{HomeDir: t.TempDir()}, Store: adapter, Logger: slog.New(slog.DiscardHandler)}).Router())
 	t.Cleanup(server.Close)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	root := &cobra.Command{Use: "msgvault"}
+	root.SetContext(testCtx)
 	root.AddCommand(newDraftEditCommand())
 	silenceUsageInRunE(root)
 	var stdout, stderr bytes.Buffer
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
 	root.SetArgs([]string{api.CLIRunDraftEditCommand, created.DraftID, "--revision", "1", "--body", "candidate", "--json"})
-	err = root.ExecuteContext(t.Context())
+	err = root.ExecuteContext(testCtx)
 	assertions.Empty(stdout.String())
 	events := []api.CLIRunEvent{{Type: cliStreamStderr, Data: stderr.String()}}
 	requirements.Error(err)
@@ -465,8 +470,10 @@ func TestDraftLifecycleHumanAcknowledgedReceiptWhenRecordFails(t *testing.T) {
 		Logger: slog.New(slog.DiscardHandler),
 	}).Router())
 	t.Cleanup(server.Close)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	root := &cobra.Command{Use: "msgvault"}
+	root.SetContext(testCtx)
 	root.AddCommand(newDraftEditCommand())
 	silenceUsageInRunE(root)
 	var stdout, stderr bytes.Buffer
@@ -474,7 +481,7 @@ func TestDraftLifecycleHumanAcknowledgedReceiptWhenRecordFails(t *testing.T) {
 	root.SetErr(&stderr)
 	root.SetArgs([]string{api.CLIRunDraftEditCommand, created.DraftID,
 		"--revision", "1", "--body", "candidate"})
-	err = root.ExecuteContext(t.Context())
+	err = root.ExecuteContext(testCtx)
 	requirements.Error(err)
 	assertions.Equal("accepted_local_failed", err.Error())
 	assertions.Empty(stdout.String())
@@ -490,7 +497,7 @@ func TestDraftLifecycleHumanAcknowledgedReceiptWhenRecordFails(t *testing.T) {
 	assertions.NotContains(stderr.String(), "pending receipt:")
 	assertions.NotContains(stderr.String(), "Error: accepted_local_failed")
 
-	pending, err := fixture.store.GetIMAPDraftContext(context.Background(), created.DraftID)
+	pending, err := fixture.store.GetIMAPDraftContext(testCtx, created.DraftID)
 	requirements.NoError(err)
 	requirements.Equal(int64(1), pending.Revision)
 	requirements.NotNil(pending.Pending)
@@ -498,11 +505,11 @@ func TestDraftLifecycleHumanAcknowledgedReceiptWhenRecordFails(t *testing.T) {
 	requirements.Equal(uint32(1), pending.Pending.OriginalReceipt.UID)
 	requirements.Contains(string(pending.Pending.Raw), "candidate")
 	provider := imaplib.NewClient(fixture.config, testutil.IMAPTestPassword)
-	oldObservation, err := provider.InspectDraft(t.Context(), imaplib.DraftReceipt{
+	oldObservation, err := provider.InspectDraft(testCtx, imaplib.DraftReceipt{
 		Mailbox: "Drafts", UIDValidity: 1, UID: 1,
 	})
 	requirements.NoError(err)
-	newObservation, err := provider.InspectDraft(t.Context(), imaplib.DraftReceipt{
+	newObservation, err := provider.InspectDraft(testCtx, imaplib.DraftReceipt{
 		Mailbox: "Drafts", UIDValidity: 1, UID: 2,
 	})
 	requirements.NoError(err)
@@ -576,8 +583,10 @@ func TestDraftLifecycleHumanUnknownAppendThroughHTTP(t *testing.T) {
 		Logger: slog.New(slog.DiscardHandler),
 	}).Router())
 	t.Cleanup(server.Close)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	root := &cobra.Command{Use: "msgvault"}
+	root.SetContext(testCtx)
 	root.AddCommand(newDraftEditCommand())
 	silenceUsageInRunE(root)
 	var stdout, stderr bytes.Buffer
@@ -585,7 +594,7 @@ func TestDraftLifecycleHumanUnknownAppendThroughHTTP(t *testing.T) {
 	root.SetErr(&stderr)
 	root.SetArgs([]string{api.CLIRunDraftEditCommand, fixture.draft.DraftID,
 		"--revision", "1", "--body", "candidate"})
-	err := root.ExecuteContext(t.Context())
+	err := root.ExecuteContext(testCtx)
 	requirements.Error(err)
 	assertions.Equal("remote_unknown", err.Error())
 	assertions.Empty(stdout.String())
@@ -996,8 +1005,10 @@ func TestDraftLifecycleHumanCleanupPartialThroughHTTP(t *testing.T) {
 		Logger: slog.New(slog.DiscardHandler),
 	}).Router())
 	t.Cleanup(server.Close)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	root := &cobra.Command{Use: "msgvault"}
+	root.SetContext(testCtx)
 	root.AddCommand(newDraftDeleteCommand())
 	silenceUsageInRunE(root)
 	var stdout, stderr bytes.Buffer
@@ -1007,7 +1018,7 @@ func TestDraftLifecycleHumanCleanupPartialThroughHTTP(t *testing.T) {
 		"--revision", "1"})
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- root.ExecuteContext(t.Context()) }()
+	go func() { errCh <- root.ExecuteContext(testCtx) }()
 	<-barrier.stored
 	_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
 		UPDATE imap_drafts SET revision = 2 WHERE draft_id = ?
@@ -1102,7 +1113,8 @@ func TestDraftLifecycleSyncProjection(t *testing.T) {
 	syncOptions := msgsync.DefaultOptions()
 	syncOptions.SourceType = "imap"
 	syncOptions.NoResume = true
-	summary, err := newMessageSyncer(syncClient, fixture.store, syncOptions).
+	summary, err := newMessageSyncer(syncClient, fixture.store, syncOptions,
+		testInvocationWithConfig(testConfigValue())).
 		WithLogger(slog.New(slog.DiscardHandler)).
 		FullWithFinalizer(t.Context(), fixture.source, func(summary *gmail.SyncSummary) error {
 			return saveIMAPFolderStates(t.Context(), fixture.store, fixture.source, syncClient, summary, syncOptions.Limit)

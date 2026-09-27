@@ -11,10 +11,13 @@ import (
 
 func TestImportSynctechSMSRequiresOwnerPhone(t *testing.T) {
 	dir := t.TempDir()
-	cfg = config.NewDefaultConfig()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = cfg.HomeDir
 	cmd := newTestRootCmd()
+	cmd.SetContext(testCtx)
 	cmd.AddCommand(newImportSynctechSMSCmd())
 	cmd.SetArgs([]string{"import-synctech-sms", dir})
 	err := cmd.Execute()
@@ -29,10 +32,13 @@ func TestImportSynctechSMSCommandRuns(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "sms.xml")
 	err := os.WriteFile(input, []byte(`<smses count="1"><sms address="+15551234567" date="1717214400000" type="1" body="hello" read="1" status="-1"/></smses>`), 0o600)
 	require.NoError(t, err, "write fixture")
-	cfg = config.NewDefaultConfig()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	_ = testCtx
 	cfg.HomeDir = home
 	cfg.Data.DataDir = home
 	cmd := newTestRootCmd()
+	cmd.SetContext(testCtx)
 	cmd.AddCommand(newImportSynctechSMSCmd())
 	cmd.SetArgs([]string{"import-synctech-sms", "--owner-phone", "+15550000001", input})
 	require.NoError(t, cmd.Execute(), "Execute")

@@ -45,6 +45,7 @@ func (s *inProcessPersonProviderDaemonStore) RunCLICommand(
 	deps.newChecker = func(
 		config peoplesweep.Config,
 		consent personProviderStore,
+		_ personProviderSetupDeps,
 	) (personProviderChecker, error) {
 		registry, err := peoplesweep.NewDriverRegistry(s.httpClient, nil, nil)
 		if err != nil {
@@ -124,8 +125,8 @@ func TestSavedPersonProviderCheckForwardsExactCredentialThroughDaemon(t *testing
 	frontend := *daemonConfig
 	frontend.People.Sweep = peopleConfig
 	frontend.Remote = config.RemoteConfig{URL: server.URL, AllowInsecure: true}
-	withStoreResolverConfig(t, &frontend)
-	deps := defaultPersonProviderCommandDeps()
+	testCtx := withStoreResolverConfig(t, &frontend)
+	deps := defaultPersonProviderCommandDeps(testCtx)
 	callerHasKey := false
 	deps.setup.lookupEnv = func(name string) (string, bool) {
 		assert.Equal(keyName, name)
@@ -133,7 +134,8 @@ func TestSavedPersonProviderCheckForwardsExactCredentialThroughDaemon(t *testing
 	}
 	var output bytes.Buffer
 	command := &cobra.Command{Use: "setup"}
-	command.SetContext(t.Context())
+	command.SetContext(testCtx)
+	command.SetContext(testCtx)
 	command.SetOut(&output)
 	command.SetErr(&output)
 	require.Error(executeSavedPersonProviderCheck(command, deps, "onboarded", "", &output))
@@ -236,20 +238,20 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 
 	frontendConfig := *daemonConfig
 	frontendConfig.Remote = config.RemoteConfig{URL: daemonHTTP.URL, AllowInsecure: true}
-	withStoreResolverConfig(t, &frontendConfig)
+	testCtx := withStoreResolverConfig(t, &frontendConfig)
 	const environmentSecretCanary = "caller-key-never-in-daemon-request"
 	t.Setenv("TEST_PROVIDER_KEY", environmentSecretCanary)
 	deps := defaultPersonProviderCommandDeps()
 
-	reverifyOutput, err := executePersonProviderCommand(t, deps, "reverify", "--yes")
+	reverifyOutput, err := executePersonProviderCommandContext(testCtx, t, deps, "reverify", "--yes")
 	require.NoError(err)
 	assert.Contains(reverifyOutput, "People inference provider disclosure")
 	assert.Contains(reverifyOutput, provider.URL+"/v1")
 	captured := <-requests
-	consentOutput, err := executePersonProviderCommand(t, deps, "consent", "--yes", "--json")
+	consentOutput, err := executePersonProviderCommandContext(testCtx, t, deps, "consent", "--yes", "--json")
 	require.NoError(err)
 	assert.Contains(consentOutput, `"active":true`)
-	output, err := executePersonProviderCommand(t, deps, "check", "--json")
+	output, err := executePersonProviderCommandContext(testCtx, t, deps, "check", "--json")
 	require.NoError(err)
 	assert.JSONEq(`{
 		"ok":true,
@@ -279,9 +281,9 @@ func TestPersonProviderRealDaemonSyntheticCheckAndRevoke(t *testing.T) {
 	assert.NotContains(daemonLogs.String(), environmentSecretCanary)
 	<-requests
 
-	_, err = executePersonProviderCommand(t, deps, "revoke", "--json")
+	_, err = executePersonProviderCommandContext(testCtx, t, deps, "revoke", "--json")
 	require.NoError(err)
-	output, err = executePersonProviderCommand(t, deps, "check", "--json")
+	output, err = executePersonProviderCommandContext(testCtx, t, deps, "check", "--json")
 	require.NoError(err)
 	assert.JSONEq(`{
 		"ok":true,
@@ -338,9 +340,9 @@ func TestPersonProviderStoredCheckKeepsSecretOutOfDaemonMetadata(t *testing.T) {
 
 	frontendConfig := *daemonConfig
 	frontendConfig.Remote = config.RemoteConfig{URL: daemonHTTP.URL, AllowInsecure: true}
-	withStoreResolverConfig(t, &frontendConfig)
+	testCtx := withStoreResolverConfig(t, &frontendConfig)
 	deps := defaultPersonProviderCommandDeps()
-	output, err := executePersonProviderCommand(t, deps, "check", "stored", "--json")
+	output, err := executePersonProviderCommandContext(testCtx, t, deps, "check", "stored", "--json")
 	require.NoError(err)
 	assert.NotContains(output, secretCanary)
 

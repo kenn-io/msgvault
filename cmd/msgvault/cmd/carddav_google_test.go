@@ -14,7 +14,12 @@ import (
 
 func TestAuthorizeGoogleCardDAVValidatesEmailAndExplainsMissingSecrets(t *testing.T) {
 	dir := t.TempDir()
-	withStoreResolverConfig(t, &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}, OAuth: config.OAuthConfig{ClientSecrets: filepath.Join(dir, "missing.json")}})
+	cfg := &config.Config{
+		HomeDir: dir,
+		Data:    config.DataConfig{DataDir: dir},
+		OAuth:   config.OAuthConfig{ClientSecrets: filepath.Join(dir, "missing.json")},
+	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	for _, tc := range []struct{ email, wantError string }{
 		{"person name@example.com", "invalid email address"},
 		{"Person <person@example.com>", "invalid email address"},
@@ -22,6 +27,7 @@ func TestAuthorizeGoogleCardDAVValidatesEmailAndExplainsMissingSecrets(t *testin
 	} {
 		t.Run(tc.email, func(t *testing.T) {
 			cmd := newAuthorizeGoogleCardDAVCmd()
+			cmd.SetContext(testCtx)
 			err := cmd.RunE(cmd, []string{tc.email})
 			require.ErrorContains(t, err, tc.wantError)
 		})
@@ -33,7 +39,12 @@ func TestAuthorizeGoogleCardDAVAllowsClientRotation(t *testing.T) {
 	dir := t.TempDir()
 	secrets := filepath.Join(dir, "client.json")
 	required.NoError(os.WriteFile(secrets, []byte(`{"installed":{"client_id":"selected-client","client_secret":"synthetic-secret","auth_uri":"https://accounts.example/authorize","token_uri":"https://accounts.example/token","redirect_uris":["http://localhost"]}}`), 0600))
-	withStoreResolverConfig(t, &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}, OAuth: config.OAuthConfig{ClientSecrets: secrets}})
+	cfg := &config.Config{
+		HomeDir: dir,
+		Data:    config.DataConfig{DataDir: dir},
+		OAuth:   config.OAuthConfig{ClientSecrets: secrets},
+	}
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	mgr, err := carddav.NewGoogleOAuthManager(secrets, cfg.TokensDir(), "", "person@example.com", nil)
 	required.NoError(err)
 	required.NoError(os.MkdirAll(filepath.Dir(mgr.TokenPath("person@example.com")), 0700))
@@ -44,7 +55,7 @@ func TestAuthorizeGoogleCardDAVAllowsClientRotation(t *testing.T) {
 			required := require.New(t)
 			cmd := newAuthorizeGoogleCardDAVCmd()
 			required.NoError(cmd.Flags().Set("no-browser", manual))
-			ctx, cancel := context.WithCancel(t.Context())
+			ctx, cancel := context.WithCancel(testCtx)
 			cancel()
 			cmd.SetContext(ctx)
 			required.ErrorIs(cmd.RunE(cmd, []string{"person@example.com"}), context.Canceled)

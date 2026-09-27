@@ -25,11 +25,11 @@ func TestResolveBeeperSyncAccountsValidatesAndDeduplicatesExplicitIDs(t *testing
 	_, err = st.GetOrCreateSource(sourceTypeBeeper, "telegram")
 	require.NoError(err)
 
-	accounts, err := resolveBeeperSyncAccounts(st, []string{"signal", "signal", "telegram"})
+	accounts, err := resolveBeeperSyncAccounts(st, []string{"signal", "signal", "telegram"}, testConfigValue())
 	require.NoError(err)
 	assert.Equal([]string{"signal", "telegram"}, accounts)
 
-	_, err = resolveBeeperSyncAccounts(st, []string{"signal", "typo"})
+	_, err = resolveBeeperSyncAccounts(st, []string{"signal", "typo"}, testConfigValue())
 	require.ErrorContains(err, `beeper account "typo" is not registered`)
 }
 
@@ -216,10 +216,12 @@ func TestSyncBeeperCommandUsesDaemonRunner(t *testing.T) {
 			"--limit=25",
 		}, req.Args, "args")
 	}, `{"type":"stdout","data":"Syncing Beeper account signal\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 
 	var stdout bytes.Buffer
 	cmd := newSyncBeeperCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stdout)
 	cmd.SetArgs([]string{
@@ -241,11 +243,13 @@ func TestAddBeeperCommandForwardsTokenEnv(t *testing.T) {
 		assert.Equal([]string{"add-beeper"}, req.Args, "args")
 		assert.Equal("test-token-123", req.Env[clirun.EnvBeeperToken], "token env forwarded")
 	}, `{"type":"stdout","data":"Added signal\n"}`, `{"type":"complete"}`)
-	configureRemoteDaemonForTest(t, server.URL)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
 	t.Setenv(clirun.EnvBeeperToken, "test-token-123")
 
 	var stdout bytes.Buffer
 	cmd := newAddBeeperCmd()
+	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stdout)
 	cmd.SetArgs([]string{})
