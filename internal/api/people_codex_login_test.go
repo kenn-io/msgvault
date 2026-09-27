@@ -109,18 +109,16 @@ func TestPeopleCodexLoginsBlockSecondLoginWhileCompletedSessionUnconsumed(t *tes
 	manager := newPeopleCodexLogins(completedCodexLoginClient{}, time.Now)
 	draft, err := manager.Start("browser-a", "codex-main", nil)
 	require.NoError(err)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		status, err := manager.Get("browser-a", draft.ID)
-		require.NoError(err)
-		if status.state == "complete" {
-			break
-		}
-		if time.Now().After(deadline) {
-			require.FailNow("device login did not complete")
-		}
-		time.Sleep(time.Millisecond)
+	status, err := manager.Get("browser-a", draft.ID)
+	require.NoError(err)
+	select {
+	case <-status.done:
+	case <-time.After(5 * time.Second):
+		require.FailNow("device login did not complete")
 	}
+	status, err = manager.Get("browser-a", draft.ID)
+	require.NoError(err)
+	assert.Equal("complete", status.state)
 	preparationCalls := 0
 	_, err = manager.Start("browser-b", "codex-other", func() error {
 		preparationCalls++

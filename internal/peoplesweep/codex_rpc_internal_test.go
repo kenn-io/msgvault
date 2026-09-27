@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -58,26 +59,28 @@ func TestCodexForcedCleanupReportsAuthRefreshFailure(t *testing.T) {
 }
 
 func TestCodexCleanExitWaitsForAuthCommitBeforeRemovingWorkRoot(t *testing.T) {
-	assertChecks := assert.New(t)
-	requireChecks := require.New(t)
-	workRoot := t.TempDir()
-	child := &countingExitCodexProcess{}
-	child.finishedCodexProcess = finishedCodexProcess{
-		stdin:  discardCodexWriteCloser{Writer: io.Discard},
-		stdout: io.NopCloser(bytes.NewReader(nil)), stderr: io.NopCloser(bytes.NewReader(nil)),
-	}
-	process := &codexOwnedProcess{
-		RPCProcess: child, workRoot: workRoot, childExited: make(chan struct{}),
-		refreshCommit: func() error {
-			time.Sleep(150 * time.Millisecond)
-			return nil
-		},
-	}
-	client := &CodexRPCClient{Process: process}
-	requireChecks.NoError(client.initialize())
-	requireChecks.NoError(finishCodexProcess(t.Context(), process, client, false))
-	assertChecks.Zero(child.kills.Load())
-	assertChecks.NoDirExists(workRoot)
+	synctest.Test(t, func(t *testing.T) {
+		assertChecks := assert.New(t)
+		requireChecks := require.New(t)
+		workRoot := t.TempDir()
+		child := &countingExitCodexProcess{}
+		child.finishedCodexProcess = finishedCodexProcess{
+			stdin:  discardCodexWriteCloser{Writer: io.Discard},
+			stdout: io.NopCloser(bytes.NewReader(nil)), stderr: io.NopCloser(bytes.NewReader(nil)),
+		}
+		process := &codexOwnedProcess{
+			RPCProcess: child, workRoot: workRoot, childExited: make(chan struct{}),
+			refreshCommit: func() error {
+				synctest.Sleep(150 * time.Millisecond)
+				return nil
+			},
+		}
+		client := &CodexRPCClient{Process: process}
+		requireChecks.NoError(client.initialize())
+		requireChecks.NoError(finishCodexProcess(t.Context(), process, client, false))
+		assertChecks.Zero(child.kills.Load())
+		assertChecks.NoDirExists(workRoot)
+	})
 }
 
 func (p finishedCodexProcess) Stdin() io.WriteCloser { return p.stdin }
