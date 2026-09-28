@@ -43,8 +43,9 @@ All notable changes to msgvault, grouped by release.
   See [configuration](configuration.md).
 - Beeper, Slack, and Teams imports record body bytes as a size estimate.
   Beeper and Slack also count reported attachment bytes. Teams counts downloaded
-  inline-image bytes on import and media backfill. Earlier rows retain their
-  recorded size until reimported or backfilled.
+  inline-image bytes on import and media backfill. Explore counts these
+  attachment bytes once in group and selection totals. Earlier rows retain
+  their recorded size until reimported or backfilled.
 - Gmail sources can create, retrieve, edit, and delete reviewable reply drafts
   through `draft-reply`, `draft-get`, `draft-edit`, and `draft-delete`. Gmail
   `draft-edit` supports plain-text drafts and refuses HTML, multipart, or

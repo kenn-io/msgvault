@@ -34,6 +34,44 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 	assertions.NotEmpty(result.CacheRevision)
 }
 
+func TestExploreAttachmentByteEstimates(t *testing.T) {
+	for _, tt := range []struct {
+		name, sourceType, messageType string
+		sizeEstimate, wantBytes       int64
+	}{
+		{"beeper includes attachments", "beeper", "whatsapp", 12, 12},
+		{"slack includes attachments", "slack", "slack", 12, 12},
+		{"teams includes attachments", "teams", "teams", 12, 12},
+		{"known attachments bound incomplete estimates", "teams", "teams", 0, 7},
+		{"body-only chat adds attachments", "imessage", "imessage", 5, 12},
+		{"email accounting is unchanged", "gmail", "email", 100, 107},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			b := NewTestDataBuilder(t)
+			source := b.AddSourceWithType("archive@example.com", tt.sourceType)
+			message := b.AddMessage(MessageOpt{
+				SourceID: source, MessageType: tt.messageType,
+				SizeEstimate: tt.sizeEstimate, HasAttachments: true,
+			})
+			b.AddAttachment(message, 7, "image.png")
+			engine := b.BuildEngine()
+
+			groups, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
+				Dimension: "source", Page: PageSpec{Limit: 10},
+			})
+			requirements.NoError(err)
+			requirements.Len(groups.Rows, 1)
+			assertions.Equal(tt.wantBytes, groups.Rows[0].EstimatedBytes)
+
+			selection, err := engine.ExploreSelectionStats(t.Context(), ExploreSelectionRequest{})
+			requirements.NoError(err)
+			assertions.Equal(tt.wantBytes, selection.EstimatedBytes)
+		})
+	}
+}
+
 // TestExploreGroupsMailingListsPreserveAggregateDrillPopulation catches a
 // mailing-list dimension that drops empty values, splits case variants into
 // separate rows, or applies a broader-than-exact drill predicate.
