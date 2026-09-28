@@ -203,9 +203,9 @@ What you need:
   processing request.
 - WAV or MP3 audio. msgvault checks the bytes and sends them as `audio/wav` or
   `audio/mpeg`, whatever type the provider reported. Docbank accepts no other
-  codec, so OGG/Opus, M4A and other formats stay local with the
-  `unsupported_media` code. msgvault never converts audio or runs speech
-  recognition.
+  codec, so OGG/Opus, M4A and other formats stay local. Attachments identified
+  as audio receive the `unsupported_media` code when full verification finds
+  an unsupported format. msgvault never converts audio or runs speech recognition.
 - The route consumes WAV or MP3 bytes from every captured source, including
   Beeper, messaging providers, email importers and future providers. An
   importer must have captured the bytes and a stable part identity first; this
@@ -268,9 +268,11 @@ What happens:
   Missing or corrupt local bytes, or a temporary upload copy that can't be
   written, wait as `source_unavailable` and retry after five minutes.
   For other sources, an unreadable attachment needs an audio type or WAV/MP3
-  filename to enter that retry queue. Attachments without those hints wait for
-  the next full scan. Discovery reads only their header; upload preparation
-  verifies the complete audio before sending it.
+  filename to enter that retry queue. Without those hints or a recognized
+  header, discovery leaves the attachment undecided and rechecks it in the
+  next daily full scan. It creates no media mapping or processing request.
+  Discovery reads only the header; upload preparation verifies the complete
+  audio before sending it.
 - A processed delivery reaches `done` only after Docbank reports coverage
   for its own processing request, not for another transcript of the same
   audio. A failed Docbank job or a failed processing request ends as `done`

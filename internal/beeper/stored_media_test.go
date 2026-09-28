@@ -44,6 +44,7 @@ func TestStoredMediaNonAudioProbe(t *testing.T) {
 			}
 			for range 2 {
 				runPasses(t, worker, 1)
+				assert.Empty(occurrenceRows(t, world.st, "non-audio"))
 				assert.Empty(deliveryRows(t, world.st, "non-audio"))
 				_, ready, err := world.st.NextBeeperMediaOperation(t.Context(), "non-audio", time.Now().Add(time.Hour))
 				require.NoError(err)
@@ -52,6 +53,42 @@ func TestStoredMediaNonAudioProbe(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStoredMediaUnhintedAudioHeaderRecovery(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	world := importVoiceChat(t)
+	wav := syntheticWAV(800, 71)
+	hash := addStoredMediaSource(t, world, "gmail", "test@example.com", "unhinted-audio", wav,
+		"attachment.bin", "application/octet-stream", "", store.AttachmentRoleStandalone, "", nil, "part", "part")
+	path := filepath.Join(world.dir, hash[:2], hash)
+	corrupt := append([]byte(nil), wav...)
+	corrupt[0] ^= 1
+	require.NoError(os.WriteFile(path, corrupt, 0o600))
+	docbank := newFakeDocbank(t)
+	server := newTestDocbankServer(t, docbank)
+	defer server.Close()
+	destination := "unhinted-header"
+	worker := world.submitter(t, server, destination).WithASRProfile("asr")
+	runPasses(t, worker, 1)
+	assert.Empty(occurrenceRows(t, world.st, destination))
+	assert.Empty(deliveryRows(t, world.st, destination))
+
+	require.NoError(os.WriteFile(path, wav, 0o600))
+	scan, err := world.st.LoadBeeperMediaScan(t.Context(), destination)
+	require.NoError(err)
+	due := scan
+	due.NextFullScanAt = time.Now().UTC().Add(-time.Hour)
+	changed, err := world.st.AdvanceBeeperMediaScan(t.Context(), destination, scan, due)
+	require.NoError(err)
+	require.True(changed)
+	runPasses(t, worker, 4)
+	docbank.mu.Lock()
+	assert.Equal([][]byte{wav}, docbank.uploads)
+	docbank.mu.Unlock()
+	deliveries := deliveryRows(t, world.st, destination)
+	require.Len(deliveries, 1)
+	assert.Equal("done", deliveries[0].Phase)
 }
 
 func TestStoredMediaUsesMessageTimestampWithoutRawRead(t *testing.T) {
@@ -249,20 +286,15 @@ func TestStoredMediaEmailFallback(t *testing.T) {
 	local := NewMediaSubmitter(world.st, world.blobs, nil, destination, world.dir).WithASRProfile("email-asr")
 	runPasses(t, local, 1)
 	rows := occurrenceRows(t, world.st, destination)
-	require.Len(rows, 2)
+	require.Len(rows, 1)
 	states := make(map[string]string, len(rows))
 	for _, row := range rows {
 		states[row.MessageID] = row.State + ":" + row.ErrorCode
 		assert.Equal("gmail", row.SourceType)
 	}
 	assert.Equal(map[string]string{
-		"mail-audio-1": "pending:", "mail-document-1": "blocked:unsupported_media",
+		"mail-audio-1": "pending:",
 	}, states)
-	var documentOperationID string
-	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
-		SELECT retention_operation_id FROM beeper_media_occurrences
-		WHERE destination_key = ? AND source_message_id = 'mail-document-1'`), destination).Scan(&documentOperationID))
-	assert.Empty(documentOperationID)
 
 	docbank := newFakeDocbank(t)
 	server := newTestDocbankServer(t, docbank)
@@ -275,7 +307,7 @@ func TestStoredMediaEmailFallback(t *testing.T) {
 		states[row.MessageID] = row.State + ":" + row.ErrorCode
 	}
 	assert.Equal(map[string]string{
-		"mail-audio-1": "retained:", "mail-document-1": "blocked:unsupported_media",
+		"mail-audio-1": "retained:",
 	}, states)
 	docbank.mu.Lock()
 	assert.Equal([][]byte{wav}, docbank.uploads)

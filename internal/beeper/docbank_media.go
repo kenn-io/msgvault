@@ -326,7 +326,7 @@ func (w *MediaSubmitter) mappingForCandidate(
 		}
 		if !eligible {
 			if !definitive {
-				// Without bytes or an audio hint, leave discovery to the next full scan.
+				// Without a recognized header or audio hint, recheck on the next full scan.
 				return store.BeeperMediaMapping{}, nil
 			}
 			return fallbackMediaMappingCode(w.destination, candidate, archiveUID, errBeeperMediaUnsupported.Error()), nil
@@ -376,7 +376,8 @@ func (w *MediaSubmitter) probeStoredMedia(
 	if closeErr != nil && !errors.Is(closeErr, pack.ErrVerificationIncomplete) {
 		return audioHint, false, nil
 	}
-	return audioHint || supportedStoredMediaHeader(header[:n]), true, nil
+	// An unrecognized header cannot distinguish non-audio from damaged audio.
+	return audioHint || supportedStoredMediaHeader(header[:n]), false, nil
 }
 
 func supportedStoredMediaHeader(header []byte) bool {
