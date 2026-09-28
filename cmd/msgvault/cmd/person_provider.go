@@ -70,7 +70,7 @@ type personProviderCommandDeps struct {
 	openStore                  func() (personProviderStore, func(), error)
 	openReadStore              func() (personProviderStore, func(), error)
 	newChecker                 func(peoplesweep.Config, personProviderStore, personProviderSetupDeps) (personProviderChecker, error)
-	newCodexClient             func(peoplesweep.Config) (personProviderCodexClient, error)
+	newCodexClient             func(peoplesweep.Config, personProviderSetupDeps) (personProviderCodexClient, error)
 	isDaemonSubprocess         func() bool
 	providerStoreOwnedByDaemon func(context.Context) (bool, error)
 	// daemonAliveForRestartNotice reports whether any daemon process in
@@ -192,6 +192,10 @@ func defaultPersonProviderCommandDeps(contexts ...context.Context) personProvide
 			if state != nil && state.cfg != nil {
 				currentCfg = state.cfg
 			}
+			deps.setup.codexAuthHome = ""
+			if currentCfg != nil {
+				deps.setup.codexAuthHome = filepath.Join(currentCfg.TokensDir(), "people-codex")
+			}
 			deps.config = func() peoplesweep.Config {
 				if currentCfg == nil {
 					return peoplesweep.Config{}
@@ -267,7 +271,7 @@ func defaultPersonProviderCommandDeps(contexts ...context.Context) personProvide
 				http.DefaultClient,
 				peoplesweep.NewCodexCommandStarter(),
 				peoplesweep.NewReleasedCodexIsolationGate(),
-				personProviderCodexAuthHome(),
+				setup.codexAuthHome,
 			)
 			if err != nil {
 				return nil, err
@@ -290,7 +294,7 @@ func defaultPersonProviderCommandDeps(contexts ...context.Context) personProvide
 				peoplesweep.NewCredentialResolver(credentialStore, os.LookupEnv),
 			)
 		},
-		newCodexClient: func(config peoplesweep.Config) (personProviderCodexClient, error) {
+		newCodexClient: func(config peoplesweep.Config, setup personProviderSetupDeps) (personProviderCodexClient, error) {
 			if !peoplesweep.CodexReleaseAvailable() {
 				return nil, peoplesweep.ErrCodexIsolationUnreleased
 			}
@@ -302,7 +306,7 @@ func defaultPersonProviderCommandDeps(contexts ...context.Context) personProvide
 				http.DefaultClient,
 				peoplesweep.NewCodexCommandStarter(),
 				peoplesweep.NewReleasedCodexIsolationGate(),
-				personProviderCodexAuthHome(),
+				setup.codexAuthHome,
 			)
 			if err != nil {
 				return nil, err
@@ -375,13 +379,6 @@ func personProviderDepsForContext(ctx context.Context, deps personProviderComman
 		return deps
 	}
 	return deps.bind(deps, ctx)
-}
-
-func personProviderCodexAuthHome() string {
-	if cfg == nil {
-		return ""
-	}
-	return filepath.Join(cfg.TokensDir(), "people-codex")
 }
 
 func newPersonProviderCommand(deps personProviderCommandDeps) *cobra.Command {
@@ -1060,20 +1057,22 @@ func restoreRemovedPersonProviderConfig(
 // include the policy captured by the daemon at startup. Never auto-start or
 // fall back to a local write if the owning daemon cannot perform the removal.
 func removePersonProviderWithDaemon(ctx context.Context, name, ifMatch string) error {
-	if cfg == nil {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
-	runtime, err := findCompatibleDaemonRuntimeContext(ctx, cfg.Data.DataDir)
+	currentCfg := state.cfg
+	runtime, err := findCompatibleDaemonRuntimeContext(ctx, currentCfg.Data.DataDir)
 	if err != nil {
 		return err
 	}
 	if runtime == nil {
 		return errors.New("people provider daemon is unavailable; retry after stopping or restarting it")
 	}
-	if err := probeLocalDaemonAuth(ctx, runtime, cfg); err != nil {
+	if err := probeLocalDaemonAuth(ctx, runtime, currentCfg); err != nil {
 		return err
 	}
-	client, err := localDaemonAPIClient(urlFromDaemonRuntime(runtime), cfg.Server.APIKey)
+	client, err := localDaemonAPIClient(urlFromDaemonRuntime(runtime), currentCfg.Server.APIKey)
 	if err != nil {
 		return err
 	}
@@ -1888,7 +1887,7 @@ func currentPersonProviderCodexClient(
 	if deps.newCodexClient == nil {
 		return nil, errors.New("codex app-server operations are unavailable")
 	}
-	return deps.newCodexClient(config)
+	return deps.newCodexClient(config, deps.setup)
 }
 
 func openPersonProviderProfile(

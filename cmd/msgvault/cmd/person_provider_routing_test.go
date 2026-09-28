@@ -154,7 +154,7 @@ func TestPersonProviderLoginAndModelsNeverProxy(t *testing.T) {
 					proxied = true
 					return nil
 				},
-				newCodexClient: func(peoplesweep.Config) (personProviderCodexClient, error) {
+				newCodexClient: func(peoplesweep.Config, personProviderSetupDeps) (personProviderCodexClient, error) {
 					return nil, assert.AnError
 				},
 			}

@@ -138,7 +138,6 @@ func TestSavedPersonProviderCheckForwardsExactCredentialThroughDaemon(t *testing
 	var output bytes.Buffer
 	command := &cobra.Command{Use: "setup"}
 	command.SetContext(testCtx)
-	command.SetContext(testCtx)
 	command.SetOut(&output)
 	command.SetErr(&output)
 	require.Error(executeSavedPersonProviderCheck(command, deps, "onboarded", "", &output))
@@ -478,9 +477,7 @@ func TestPersonProviderRemoveRevokesRunningPolicyThroughDaemon(t *testing.T) {
 	daemon := httptest.NewServer(srv.Router())
 	defer daemon.Close()
 	writeStatsHTTPDaemonRuntime(t, startup.Data.DataDir, daemon)
-	previous := cfg
-	t.Cleanup(func() { cfg = previous })
-	cfg = &saved
+	testCtx := withStoreResolverConfig(t, &saved)
 	deps := defaultPersonProviderCommandDeps()
 	// Execute the old subprocess route in-process if removal still uses it.
 	// Both paths use the real command/store; the test never launches a host daemon.
@@ -507,17 +504,18 @@ func TestPersonProviderRemoveRevokesRunningPolicyThroughDaemon(t *testing.T) {
 	before, err := config.ReadConfigFile(saved.ConfigFilePath())
 	require.NoError(err)
 	require.NoError(os.WriteFile(saved.ConfigFilePath(), append(before.Content, []byte("\n# concurrent edit\n")...), 0o600))
-	readCurrent := deps.readConfigFile
-	deps.readConfigFile = func() (config.ConfigFile, error) { return before, nil }
-	_, err = executePersonProviderCommand(t, deps, "remove", "beta")
+	deps.removeWithDaemon = func(ctx context.Context, name, _ string) error {
+		return removePersonProviderWithDaemon(ctx, name, before.ETag)
+	}
+	_, err = executePersonProviderCommandContext(testCtx, t, deps, "remove", "beta")
 	require.ErrorContains(err, "config file changed")
 	for _, profile := range []peoplesweep.ProviderProfile{runningProfile, savedProfile} {
 		active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
 		require.NoError(err)
 		assert.True(active, profile.Model)
 	}
-	deps.readConfigFile = readCurrent
-	output, err := executePersonProviderCommand(t, deps, "remove", "beta", "--json")
+	deps.removeWithDaemon = removePersonProviderWithDaemon
+	output, err := executePersonProviderCommandContext(testCtx, t, deps, "remove", "beta", "--json")
 	require.NoError(err)
 	var removed personProviderRemoveOutput
 	require.NoError(json.Unmarshal([]byte(output), &removed))

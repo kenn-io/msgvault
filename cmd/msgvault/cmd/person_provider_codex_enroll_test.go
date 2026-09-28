@@ -219,7 +219,7 @@ func TestCodexProductionClientsRefuseUnreleasedBuild(t *testing.T) {
 	if peoplesweep.CodexReleaseAvailable() {
 		t.Skip("Codex release has been approved")
 	}
-	_, err := defaultPersonProviderCommandDeps().newCodexClient(peoplesweep.Config{})
+	_, err := defaultPersonProviderCommandDeps().newCodexClient(peoplesweep.Config{}, personProviderSetupDeps{})
 	require.ErrorIs(t, err, peoplesweep.ErrCodexIsolationUnreleased)
 	_, _, err = defaultCodexEnrollDeps().openBackend(t.Context())
 	require.ErrorIs(t, err, peoplesweep.ErrCodexIsolationUnreleased)

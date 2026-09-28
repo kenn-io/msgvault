@@ -1347,6 +1347,8 @@ func TestPersonProviderDefaultDependenciesResolveCredentialsAfterConfigLoad(t *t
 	assert.Contains(string(configData), `credential = "env"`)
 	assert.Contains(string(configData), `credential_env = "LIVE_PROVIDER_KEY"`)
 
+	deps.isDaemonSubprocess = func() bool { return false }
+	deps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return false, nil }
 	removeRoot := newPersonProviderInvocationTestRoot()
 	removePerson := &cobra.Command{Use: "person"}
 	removePerson.AddCommand(newPersonProviderCommand(deps))

@@ -27,6 +27,7 @@ type personProviderSetupDeps struct {
 	negotiate           func(context.Context, peoplesweep.ProviderConfig, peoplesweep.Credential) (peoplesweep.NegotiatedCapabilities, error)
 	credentials         peoplesweep.CredentialStore
 	openCredentialStore func() (peoplesweep.CredentialStore, error)
+	codexAuthHome       string
 	lookupEnv           peoplesweep.CredentialLookup
 	isTerminal          func(uintptr) bool
 	readMasked          func(*os.File, int) ([]byte, error)

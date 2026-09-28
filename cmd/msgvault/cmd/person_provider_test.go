@@ -1574,7 +1574,7 @@ func unreleasedCodexCommandDeps(
 		return peoplesweep.NewRunner(config, st, registry,
 			peoplesweep.NewCredentialResolver(nil, os.LookupEnv))
 	}
-	deps.newCodexClient = func(config peoplesweep.Config) (personProviderCodexClient, error) {
+	deps.newCodexClient = func(config peoplesweep.Config, _ personProviderSetupDeps) (personProviderCodexClient, error) {
 		provider := configuredPersonProvider(config)
 		registry, err := peoplesweep.NewDriverRegistry(nil, starter, peoplesweep.NewReleasedCodexIsolationGate())
 		if err != nil {
@@ -1878,7 +1878,7 @@ func codexCommandDeps(
 		opens.Add(1)
 		return nil, func() {}, errors.New("archive store must not be opened")
 	}
-	deps.newCodexClient = func(config peoplesweep.Config) (personProviderCodexClient, error) {
+	deps.newCodexClient = func(config peoplesweep.Config, _ personProviderSetupDeps) (personProviderCodexClient, error) {
 		return peoplesweep.NewCodexAppServerDriver(
 			configuredPersonProvider(config), starter, commandCodexGate{},
 		)
