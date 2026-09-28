@@ -511,6 +511,35 @@ func TestResourceEnvelopeDerivesFullNameFromContactPointsWhenNameMissing(t *test
 	}
 }
 
+func TestResourceEnvelopeTelephoneFallbackRespectsValueType(t *testing.T) {
+	for _, tc := range []struct{ name, property, want string }{
+		{"text", "TEL;VALUE=text:tel:+15551234567", "tel:+15551234567"},
+		{"uri", "TEL;VALUE=uri:tel:+15551234567", "+15551234567"},
+	} {
+		for _, version := range []Version{Version30, Version40} {
+			t.Run(tc.name+"/"+string(version), func(t *testing.T) {
+				require := require.New(t)
+				envelope, err := ParseResourceEnvelope(
+					[]byte("BEGIN:VCARD\r\nVERSION:4.0\r\n" + tc.property + "\r\nEND:VCARD\r\n"),
+				)
+				require.NoError(err)
+				note, err := NewProperty("", "NOTE", "edited")
+				require.NoError(err)
+				envelope, err = envelope.MergeProperties([]PropertyEdit{{Property: note}})
+				require.NoError(err)
+				body, err := envelope.RenderView(version)
+				require.NoError(err)
+				rendered, err := ParseResourceEnvelope(body)
+				require.NoError(err)
+				fullName := propertyByNameAndGroup(rendered.PropertyTree, "FN", "")
+				name, err := UnescapeText(fullName.Property.RawValue)
+				require.NoError(err)
+				assert.Equal(t, tc.want, name)
+			})
+		}
+	}
+}
+
 func TestResourceEnvelopeMovesLegacyReferencedMediaTypeToMediatype(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

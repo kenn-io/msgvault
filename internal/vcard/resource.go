@@ -505,7 +505,8 @@ func ensureRenderedFullName(properties []Property, version Version) ([]Property,
 				val = strings.TrimSpace(val)
 				if scheme, value, ok := strings.Cut(val, ":"); ok &&
 					(propName == "EMAIL" && strings.EqualFold(scheme, "mailto") ||
-						propName == "TEL" && strings.EqualFold(scheme, "tel")) {
+						propName == "TEL" && semanticValueType(version, property) == valueTypeURI &&
+							strings.EqualFold(scheme, "tel")) {
 					val = value
 				}
 				if val != "" {

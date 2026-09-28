@@ -10,8 +10,11 @@ import (
 	"unicode"
 )
 
-// valueTypeText is the VALUE parameter value for free text (RFC 6350 §5.2).
-const valueTypeText = "text"
+// VALUE parameter types used by rendering (RFC 6350 §5.2).
+const (
+	valueTypeText = "text"
+	valueTypeURI  = "uri"
+)
 
 // propertyRender carries one property through its conversion to the target
 // wire version together with the facts lifted out of its source parameters.
@@ -524,12 +527,12 @@ func (r *propertyRender) v3ValueType() string {
 	case isInlineMediaName(name):
 		return r.v3MediaValueType(name)
 	case r.mediaURI:
-		return "uri"
+		return valueTypeURI
 	case name == "TEL" && r.valueType != valueTypeText &&
-		(r.valueType == "uri" || IsURIValue(r.property.RawValue)):
+		(r.valueType == valueTypeURI || IsURIValue(r.property.RawValue)):
 		// A tel URI the v3 respelling could not unescape stays a URI. A
 		// declared-text value is never one, however URI-shaped it looks.
-		return "uri"
+		return valueTypeURI
 	default:
 		return v3ValueTypeName(r.valueType)
 	}
@@ -542,7 +545,7 @@ func (r *propertyRender) v3MediaValueType(name string) string {
 		// parameter 3.0 would read the value as inline binary.
 		return valueTypeText
 	case r.mediaURI || IsURIValue(r.property.RawValue):
-		return "uri"
+		return valueTypeURI
 	default:
 		return v3ValueTypeName(r.valueType)
 	}
@@ -570,13 +573,13 @@ func (r *propertyRender) v4ValueType() string {
 	case r.mediaURI:
 		// A decoded legacy binary on any other property is a URI, which is
 		// not that property's default type.
-		return "uri"
+		return valueTypeURI
 	case name == "UID" || name == "RELATED":
 		if r.valueType == valueTypeText || !IsURIValue(r.property.RawValue) {
 			return valueTypeText
 		}
 		return ""
-	case r.valueType == "uri" && v4URIValueByDefault(name):
+	case r.valueType == valueTypeURI && v4URIValueByDefault(name):
 		return ""
 	default:
 		return r.valueType

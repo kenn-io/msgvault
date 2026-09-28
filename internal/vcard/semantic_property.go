@@ -63,10 +63,10 @@ func semanticValueType(version Version, property Property) string {
 	}
 	name := strings.ToUpper(property.Name)
 	if version == Version40 && v4URIProperties[name] {
-		return "uri"
+		return valueTypeURI
 	}
 	if legacyURIProperties[name] {
-		return "uri"
+		return valueTypeURI
 	}
 	if textProperties[name] {
 		return "text"
@@ -79,7 +79,7 @@ func canonicalSemanticValue(version Version, property Property) string {
 	switch semanticValueType(version, property) {
 	case "text":
 		return canonicalTextEscapes(value)
-	case "uri":
+	case valueTypeURI:
 		return canonicalURI(value)
 	case "boolean", "language-tag":
 		return strings.ToLower(value)
