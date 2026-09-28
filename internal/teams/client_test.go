@@ -2,6 +2,7 @@ package teams
 
 import (
 	"context"
+	"go.kenn.io/msgvault/internal/msgraph"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,7 +31,7 @@ func TestClientGetJSONPaging(t *testing.T) {
 
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "test-token", nil }, 50)
 	var got []Chat
-	delta, err := pageThrough[Chat](context.Background(), c, "/me/chats", func(page []Chat) { got = append(got, page...) })
+	delta, err := msgraph.PageThrough[Chat](context.Background(), c.Client, "/me/chats", func(page []Chat) { got = append(got, page...) })
 	require.NoError(t, err)
 	assert.Equal(t, "DELTA", delta)
 	assert.Len(t, got, 2)
@@ -85,7 +86,7 @@ func TestClientGetRawLimitedRejectsDeclaredAndStreamedOversizeBodies(t *testing.
 			defer srv.Close()
 			client := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
 			_, err := client.GetRawLimited(context.Background(), "/hostedContents/1/$value", 10)
-			assert.ErrorIs(t, err, ErrMediaTooLarge)
+			assert.ErrorIs(t, err, msgraph.ErrTooLarge)
 		})
 	}
 }
@@ -123,7 +124,7 @@ func TestClientRetryAfter(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
-	_, err := pageThrough[Chat](context.Background(), c, "/x", func([]Chat) {})
+	_, err := msgraph.PageThrough[Chat](context.Background(), c.Client, "/x", func([]Chat) {})
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, calls.Load())
 }

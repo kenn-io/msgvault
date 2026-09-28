@@ -98,7 +98,7 @@ Examples:
 		if qps <= 0 {
 			qps = 5
 		}
-		client := teams.NewClient("https://graph.microsoft.com/v1.0", teams.TokenFunc(tokenFn), qps)
+		client := teams.NewClient("https://graph.microsoft.com/v1.0", tokenFn, qps)
 		imp := teams.NewImporter(s, client)
 
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Microsoft Teams for %s\n\n", email)

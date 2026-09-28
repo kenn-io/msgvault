@@ -122,6 +122,11 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if len(sources) == 0 {
+			for _, src := range allMatches {
+				if src.SourceType == sourceTypeMSMail {
+					return fmt.Errorf("use 'msgvault sync --source-id %d' for initial and later Microsoft Graph mail downloads", src.ID)
+				}
+			}
 			if len(allMatches) > 0 {
 				// Identifier exists but has no syncable source types.
 				return fmt.Errorf("%s exists but its source type cannot be synced (only gmail and imap are supported)", syncSelectorLabel(selector))

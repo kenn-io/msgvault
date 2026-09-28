@@ -44,6 +44,7 @@ type fakeGraph struct {
 	attachmentBody map[string]string // message ID -> base64 file content
 	broken         map[string]bool   // message IDs whose MIME does not parse
 	goneOnValue    map[string]bool   // message IDs deleted just before their $value
+	badLookup      map[string]bool   // message IDs whose metadata lookup answers 400
 	badValue       map[string]bool   // message IDs whose $value answers 400
 	attachDir      string            // attachments directory; a fresh one when empty
 	throttle       bool              // answer the next $value with 429 once
@@ -172,6 +173,10 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(body)) //nolint:gosec // local test server returns fixture MIME
 	case strings.HasPrefix(p, "/me/messages/"):
 		id := strings.TrimPrefix(p, "/me/messages/")
+		if f.badLookup[id] {
+			http.Error(w, "bad lookup", http.StatusBadRequest)
+			return
+		}
 		folder, ok := f.folder[id]
 		if !ok {
 			http.Error(w, `{"error":{"code":"ErrorItemNotFound"}}`, http.StatusNotFound)
@@ -807,7 +812,8 @@ func TestImportRefreshWithBrokenMIMEKeepsAttachments(t *testing.T) {
 
 // A retry whose download fails keeps its marker. The marker here comes from a
 // sync that failed later, so no completed sync holds it, and the checkpoint of
-// the failed retry is the only place left for it.
+// the failed run is the only place left for it. The next run can complete
+// while retaining the marker for a failed download.
 func TestImportFailedRetryKeepsMarker(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -826,11 +832,130 @@ func TestImportFailedRetryKeepsMarker(t *testing.T) {
 
 	f.attachDir = ""
 	f.badValue["m1"] = true
-	_, err = f.sync(t, st)
-	require.Error(err)
+	sum, err := f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(1, sum.Errors)
 
 	f.badValue["m1"] = false
 	_, err = f.sync(t, st)
 	require.NoError(err)
 	assert.Equal([2]int{1, 1}, attachments(t, st))
+}
+
+// Failed new and refreshed messages remain retryable after a completed sync,
+// while other messages and later folders continue to advance.
+func TestImportDownloadFailureDoesNotBlockAccount(t *testing.T) {
+	for _, archived := range []bool{false, true} {
+		t.Run(fmt.Sprint("archived=", archived), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			f := newFakeGraph(t)
+			f.put("bad", "inbox")
+			if archived {
+				_, err := f.sync(t, st)
+				require.NoError(err)
+				f.version["bad"] = 1
+				f.put("bad", "inbox")
+			}
+			f.badValue["bad"] = true
+			f.put("good1", "inbox")
+			f.put("good2", "archive")
+			sum, err := f.sync(t, st)
+			require.NoError(err)
+			assert.Equal(1, sum.Errors)
+			assert.Equal("Archive", state(t, st)["good2"])
+			assert.Equal("Inbox", state(t, st)["good1"])
+
+			f.put("good3", "archive")
+			sum, err = f.sync(t, st)
+			require.NoError(err)
+			assert.Equal(1, sum.Errors)
+			assert.Equal("Archive", state(t, st)["good3"])
+
+			f.badLookup = map[string]bool{"bad": true}
+			f.put("good4", "archive")
+			sum, err = f.sync(t, st)
+			require.NoError(err)
+			assert.Equal(1, sum.Errors)
+			assert.Equal("Archive", state(t, st)["good4"])
+
+			f.badLookup["bad"] = false
+			f.badValue["bad"] = false
+			f.folder["bad"] = "archive" // Retry must find its current folder, without a delta entry.
+			sum, err = f.sync(t, st)
+			require.NoError(err)
+			assert.Zero(sum.Errors)
+			assert.Equal("Archive", state(t, st)["bad"])
+			want := "body bad v0"
+			if archived {
+				want = "body bad v1"
+			}
+			assert.Equal(want, snippets(t, st)["bad"])
+			var hasDate bool
+			require.NoError(st.DB().QueryRow(`SELECT internal_date IS NOT NULL FROM messages WHERE source_message_id = 'bad'`).Scan(&hasDate))
+			assert.True(hasDate)
+
+			f.mimeCalls.Store(0)
+			_, err = f.sync(t, st)
+			require.NoError(err)
+			assert.Zero(f.mimeCalls.Load(), "successful retries clear their markers")
+		})
+	}
+}
+
+func TestImportCanceledDownloadDoesNotAdvance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.put("m1", "inbox")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/$value") {
+			cancel()
+			<-r.Context().Done()
+			return
+		}
+		f.serve(w, r)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000)
+	_, err := Import(ctx, st, c, Options{Email: "me@example.com", AttachmentsDir: t.TempDir()}, slog.Default())
+	require.ErrorIs(err, context.Canceled)
+	assert.Empty(state(t, st))
+	sum, err := f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(1, sum.Added)
+}
+
+func TestImportRetryDeletionErrorKeepsMarker(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses a SQLite trigger to fail a deletion write")
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	blocker := filepath.Join(t.TempDir(), "file")
+	require.NoError(os.WriteFile(blocker, nil, 0o600))
+	f.attachDir = filepath.Join(blocker, "attachments")
+	f.withAttachment["m1"] = true
+	f.put("m1", "inbox")
+	f.put("m2", "inbox")
+	f.put("m3", "inbox")
+	f.stopAt = 2
+	_, err := f.sync(t, st)
+	require.Error(err)
+
+	f.goneOnValue["m1"] = true
+	_, err = st.DB().Exec(`CREATE TRIGGER reject_delete BEFORE UPDATE OF deleted_from_source_at ON messages
+ WHEN NEW.source_message_id = 'm1' BEGIN SELECT RAISE(ABORT, 'deletion failed'); END`)
+	require.NoError(err)
+	sum, err := f.sync(t, st)
+	require.ErrorContains(err, "deletion failed")
+	run, err := st.GetLatestCheckpointedSync(sum.SourceID)
+	require.NoError(err)
+	require.NotNil(run)
+	var cursors map[string]string
+	require.NoError(json.Unmarshal([]byte(run.CursorBefore.String), &cursors))
+	assert.Equal(t, "inbox", cursors["retry:m1"])
 }

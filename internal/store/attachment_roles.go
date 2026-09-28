@@ -536,3 +536,29 @@ func (s *Store) replaceMIMEAttachmentsWith(
 	}
 	return nil
 }
+
+// AttachmentPartsStoredContext reports whether every part key and content hash
+// pair has a stored row for the message. An empty key matches NULL or empty keys.
+func (s *Store) AttachmentPartsStoredContext(ctx context.Context, messageID int64, parts []AttachmentRef) (bool, error) {
+	want := make(map[[2]string]struct{}, len(parts))
+	for _, p := range parts {
+		want[[2]string{p.SourcePartKey, p.ContentHash}] = struct{}{}
+	}
+	if len(want) == 0 {
+		return true, nil
+	}
+	args := []any{messageID}
+	match := make([]string, 0, len(want))
+	for kh := range want {
+		match = append(match, "(COALESCE(source_part_key, '') = ? AND content_hash = ?)")
+		args = append(args, kh[0], kh[1])
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT COALESCE(source_part_key, '') || ':' || content_hash) FROM attachments
+		WHERE message_id = ? AND (`+strings.Join(match, " OR ")+`)`, args...).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("check stored attachment parts: %w", err)
+	}
+	return n == len(want), nil
+}

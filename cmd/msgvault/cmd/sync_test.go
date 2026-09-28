@@ -841,3 +841,23 @@ func TestTrimFolderFilter_DoesNotBlockOnErrorInSyncFull(t *testing.T) {
 	require.NotPanics(func() { parseFolderFilter([]string{"  ", "   "}) })
 	require.NotPanics(func() { parseFolderFilter([]string{"", "  ", ""}) })
 }
+
+func TestSyncFullGraphAccountPointsToSync(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "msgvault.db"))
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	src, err := st.GetOrCreateSource(sourceTypeMSMail, "mail@example.com")
+	require.NoError(err)
+	require.NoError(st.Close())
+	cfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}
+	cmd := &cobra.Command{}
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	cmd.Flags().Int64("source-id", 0, "")
+	require.NoError(cmd.Flags().Set("source-id", strconv.FormatInt(src.ID, 10)))
+	err = runSyncFullLocal(cmd, nil)
+	require.Error(err)
+	assert.Contains(err.Error(), "msgvault sync --source-id "+strconv.FormatInt(src.ID, 10))
+}

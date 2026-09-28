@@ -102,7 +102,7 @@ func (c *Client) DeltaPage(ctx context.Context, pageURL string) (*msgraph.ListRe
 
 // GetMIME returns the full RFC 5322 source of a message.
 func (c *Client) GetMIME(ctx context.Context, id string) ([]byte, error) {
-	return c.GetRaw(ctx, "/me/messages/"+url.PathEscape(id)+"/$value")
+	return c.GetRawWithTimeout(ctx, "/me/messages/"+url.PathEscape(id)+"/$value", 10*time.Minute)
 }
 
 // MessageInfo is where a message is now and when it arrived.

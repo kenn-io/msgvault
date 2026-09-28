@@ -5,10 +5,12 @@ package msgraph
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -75,7 +77,14 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 		return nil, err
 	}
 	var lastErr error
+	var retryAfter string
 	for attempt := range maxRetries {
+		if attempt > 0 {
+			if err := sleepCtx(ctx, httpretry.RetryAfter(retryAfter, attempt-1, maxRetryAfter)); err != nil {
+				return nil, err
+			}
+		}
+		retryAfter = ""
 		if err := c.limiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("wait for graph rate limit: %w", err)
 		}
@@ -97,10 +106,13 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			lastErr = err
-			if err := sleepCtx(ctx, httpretry.RetryAfter("", attempt, maxRetryAfter)); err != nil {
+			if dnsErr, ok := errors.AsType[*net.DNSError](err); ok && dnsErr.IsNotFound {
 				return nil, err
 			}
+			if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
+				return nil, err
+			}
+			lastErr = err
 			continue
 		}
 		if resp.StatusCode == http.StatusOK && maxBytes > 0 && resp.ContentLength > maxBytes {
@@ -116,9 +128,6 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 		if readErr != nil {
 			// A connection that breaks mid-body is transient, like a 5xx.
 			lastErr = fmt.Errorf("graph GET %s: read body: %w", reqURL, readErr)
-			if err := sleepCtx(ctx, httpretry.RetryAfter("", attempt, maxRetryAfter)); err != nil {
-				return nil, err
-			}
 			continue
 		}
 		if closeErr != nil {
@@ -136,9 +145,7 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 			return nil, fmt.Errorf("graph GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), ErrGone)
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			lastErr = fmt.Errorf("graph GET %s: status %d", reqURL, resp.StatusCode)
-			if err := sleepCtx(ctx, httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, maxRetryAfter)); err != nil {
-				return nil, err
-			}
+			retryAfter = resp.Header.Get("Retry-After")
 			continue
 		default:
 			return nil, fmt.Errorf("graph GET %s: status %d: %s", reqURL, resp.StatusCode, string(body))
@@ -181,6 +188,16 @@ func (c *Client) resolveRequestURL(rawURL string) (string, error) {
 // prefixed with the client's baseURL automatically by the underlying get method.
 func (c *Client) GetRaw(ctx context.Context, url string) ([]byte, error) {
 	return c.get(ctx, url)
+}
+
+// GetRawWithTimeout fetches raw bytes with a per-attempt deadline, including
+// reading the body. Other requests on the client retain their usual timeout.
+func (c *Client) GetRawWithTimeout(ctx context.Context, url string, timeout time.Duration) ([]byte, error) {
+	client := *c
+	httpClient := *c.http
+	httpClient.Timeout = timeout
+	client.http = &httpClient
+	return client.GetRaw(ctx, url)
 }
 
 // GetRawLimited fetches raw bytes while enforcing a response-byte cap.

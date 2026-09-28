@@ -6076,3 +6076,35 @@ func (s *Store) ReplaceMessageLinkAttachments(messageID int64, refs []Attachment
 		`(storage_path LIKE 'http://%' OR storage_path LIKE 'https://%')
 		 AND COALESCE(source_attachment_id, '') NOT LIKE 'teams:inline:%'`, false, refs)
 }
+
+// LabelIDContext finds a label by its provider ID within a source.
+func (s *Store) LabelIDContext(ctx context.Context, sourceID int64, sourceLabelID string) (int64, error) {
+	var id int64
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM labels WHERE source_id = ? AND source_label_id = ?`, sourceID, sourceLabelID).Scan(&id); err != nil {
+		return 0, fmt.Errorf("look up source label: %w", err)
+	}
+	return id, nil
+}
+
+// MessageIDsWithLabelContext returns source message IDs and archive IDs for
+// messages in a label that have not been marked deleted at the source.
+func (s *Store) MessageIDsWithLabelContext(ctx context.Context, sourceID, labelID int64) (map[string]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT m.source_message_id, m.id FROM messages m
+		JOIN message_labels ml ON ml.message_id = m.id
+		WHERE m.source_id = ? AND ml.label_id = ? AND m.deleted_from_source_at IS NULL`, sourceID, labelID)
+	if err != nil {
+		return nil, fmt.Errorf("list messages in label: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	ids := map[string]int64{}
+	for rows.Next() {
+		var sourceMsgID string
+		var id int64
+		if err := rows.Scan(&sourceMsgID, &id); err != nil {
+			return nil, fmt.Errorf("scan message in label: %w", err)
+		}
+		ids[sourceMsgID] = id
+	}
+	return ids, rows.Err()
+}

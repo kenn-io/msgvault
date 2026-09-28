@@ -4090,7 +4090,7 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 	if qps <= 0 {
 		qps = 5
 	}
-	client := teams.NewClient("https://graph.microsoft.com/v1.0", teams.TokenFunc(tokenFn), qps)
+	client := teams.NewClient("https://graph.microsoft.com/v1.0", tokenFn, qps)
 	opts := scheduledTeamsImportOptions(email, cfg)
 	_, err = teams.NewImporter(s, client).Import(ctx, opts)
 	return err

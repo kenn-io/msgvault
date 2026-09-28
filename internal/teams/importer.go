@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"go.kenn.io/msgvault/internal/msgraph"
 	"net/url"
 	"regexp"
 	"strings"
@@ -353,7 +354,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 // user, chatMembers leaves the roster unresolved so a later sync can retry it.
 func (imp *Importer) selfChat(ctx context.Context, email string) ([]Chat, []ChatMember, error) {
 	msgs, _, err := imp.client.ListChatMessages(ctx, SelfChatID, "", 50)
-	if errors.Is(err, errGraphNotFound) {
+	if errors.Is(err, msgraph.ErrNotFound) {
 		return nil, nil, nil
 	}
 	if err != nil {
@@ -1210,7 +1211,7 @@ func (imp *Importer) downloadInlineImages(ctx context.Context, messageID int64, 
 		data, derr := imp.client.GetRawLimited(ctx, fetchPath, maxBytes)
 		if derr != nil || len(data) == 0 {
 			replacementComplete = false
-			if errors.Is(derr, ErrMediaTooLarge) {
+			if errors.Is(derr, msgraph.ErrTooLarge) {
 				marker.Size = attachmentpolicy.OversizeMarkerSize(maxBytes, int64(marker.Size))
 				marker.State = attachmentpolicy.StateSkipped
 				marker.SkipReason = attachmentpolicy.SkipSizeCap
