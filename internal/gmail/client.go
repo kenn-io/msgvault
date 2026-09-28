@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net/http"
 	"net/http/httptrace"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"go.kenn.io/msgvault/internal/httpretry"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/errgroup"
@@ -230,9 +233,11 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 			// Log at Debug level since rate limiting is expected during high-volume syncs
 			// and the retry logic handles it automatically
 			detail := gmailErrorDetail(resp.Header, respBody)
-			c.logger.Debug("rate limited, backing off 30s", "path", path, "attempt", attempt, "detail", detail)
+			// The caller's context bounds the wait; don't shorten Gmail's Retry-After.
+			pause := max(30*time.Second, httpretry.RetryAfter(resp.Header.Get("Retry-After"), 0, math.MaxInt64))
+			c.logger.Debug("rate limited, backing off", "pause", pause, "path", path, "attempt", attempt, "detail", detail)
 			// Throttle the rate limiter to back off
-			c.rateLimiter.Throttle(30 * time.Second)
+			c.rateLimiter.Throttle(pause)
 			if remoteMutation {
 				return nil, newStatusError(resp.StatusCode, respBody)
 			}
@@ -244,9 +249,10 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 				// Log at Debug level since quota throttling is expected during high-volume syncs
 				// and the retry logic handles it automatically
 				detail := gmailErrorDetail(resp.Header, respBody)
-				c.logger.Debug("quota exceeded, backing off 60s", "path", path, "attempt", attempt, "detail", detail)
+				pause := max(time.Minute, httpretry.RetryAfter(resp.Header.Get("Retry-After"), 0, math.MaxInt64))
+				c.logger.Debug("quota exceeded, backing off", "pause", pause, "path", path, "attempt", attempt, "detail", detail)
 				// Throttle the rate limiter - quota errors need longer backoff
-				c.rateLimiter.Throttle(60 * time.Second)
+				c.rateLimiter.Throttle(pause)
 				if remoteMutation {
 					return nil, newStatusError(resp.StatusCode, respBody)
 				}
