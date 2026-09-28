@@ -136,6 +136,76 @@ func TestStoredMediaProfileChangeRecoversPreparedProcessReceipt(t *testing.T) {
 	docbank.mu.Unlock()
 }
 
+func TestStoredMediaPreparedProcessAfterRevocation(t *testing.T) {
+	for _, change := range []string{"deleted", "replaced"} {
+		t.Run(change, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			world := importVoiceChat(t, voiceSpec{id: "prepared-revocation", asset: "mxc://beeper.local/prepared-revocation",
+				mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 72)})
+			docbank := newFakeDocbank(t)
+			docbank.coverage = "pending"
+			server := newTestDocbankServer(t, docbank)
+			defer server.Close()
+			destination := "stored-prepared-revocation"
+			worker := world.submitter(t, server, destination).WithASRProfile("asr")
+			operation := nextPendingProcess(t, worker, destination)
+			archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+			require.NoError(err)
+			// A backup can prevent saving the receipt after Docbank accepts the request.
+			worker.WithOperationGate(func(context.Context) (func(), bool) {
+				docbank.mu.Lock()
+				defer docbank.mu.Unlock()
+				return func() {}, len(docbank.processOps) == 0
+			})
+			require.ErrorIs(worker.process(t.Context(), t.Context(), archiveUID, operation), errBeeperMediaGateBusy)
+			worker.WithOperationGate(nil)
+			identities := processDeliveryIdentities(t, world.st, destination)
+			require.Len(identities, 1)
+			prepared := identities[0]
+			require.NotEmpty(prepared.operationID)
+			require.NotEmpty(prepared.frozenRequest)
+
+			if change == "deleted" {
+				var sourceID int64
+				require.NoError(world.st.DB().QueryRow(`SELECT source_id FROM messages WHERE source_message_id = 'prepared-revocation'`).Scan(&sourceID))
+				require.NoError(world.st.MarkMessageDeleted(sourceID, "prepared-revocation"))
+			} else {
+				_, err := world.st.DB().Exec(world.st.Rebind(`UPDATE attachments SET content_hash = ?`), strings.Repeat("f", 64))
+				require.NoError(err)
+			}
+			require.NoError(world.st.UnregisterAttachmentChangeConsumer(t.Context(), store.BeeperMediaAttachmentConsumerKey))
+			runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, destination, world.dir).WithASRProfile("asr"), 1)
+			_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries
+				SET next_action_at = ? WHERE destination_key = ? AND processing_key = ?`),
+				time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), destination, operation.ProcessingKey)
+			require.NoError(err)
+			replay, ok, err := world.st.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
+			require.NoError(err)
+			require.True(ok)
+			require.True(replay.PreparedReplay)
+			assert.Equal(prepared.operationID, replay.OperationID)
+			assert.Equal(prepared.frozenRequest, replay.FrozenRequestJSON)
+			require.NoError(worker.process(t.Context(), t.Context(), archiveUID, replay))
+			docbank.mu.Lock()
+			assert.Equal([]string{prepared.operationID}, docbank.processOps)
+			assert.Equal(1, docbank.replays)
+			docbank.coverage = "transcribed"
+			docbank.mu.Unlock()
+			rows := deliveryRows(t, world.st, destination)
+			for _, row := range rows {
+				if row.ProcessingOperationID != prepared.operationID {
+					continue
+				}
+				assert.Equal("observing", row.Phase)
+				status := replay
+				status.Kind, status.JobID = store.BeeperMediaOperationStatus, row.JobID
+				require.NoError(worker.status(t.Context(), t.Context(), status))
+			}
+			assert.Equal("done", findProcessDelivery(t, processDeliveryIdentities(t, world.st, destination), operation.ProcessingKey).phase)
+		})
+	}
+}
+
 func TestStoredMediaProfileChangeRetiresUnpreparedProcess(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "profile-unprepared", asset: "mxc://beeper.local/profile-unprepared",
@@ -656,8 +726,8 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 			assert.Empty(docbank.processOps)
 			docbank.mu.Unlock()
 			identity := findProcessDelivery(t, processDeliveryIdentities(t, world.st, destination), operation.ProcessingKey)
-			assert.Equal("blocked", identity.phase)
-			assert.Equal("source_raw_invalid", identity.errorCode)
+			assert.Equal("pending-process", identity.phase)
+			assert.Empty(identity.errorCode)
 			assert.Equal(beforeOperationID, identity.operationID)
 			assert.Equal(beforeInput, identity.suppliedInputID)
 			assert.Equal(beforeFrozen, identity.frozenRequest)
@@ -675,6 +745,12 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 			require.NotNil(gap)
 			assert.Equal("revoked", revoked.State)
 			assert.Equal("blocked", gap.State)
+			replay, ok, err := world.st.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
+			require.NoError(err)
+			require.True(ok)
+			require.True(replay.PreparedReplay)
+			assert.Equal(beforeOperationID, replay.OperationID)
+			require.NoError(worker.process(t.Context(), t.Context(), archiveUID, replay))
 		})
 	}
 
@@ -1101,29 +1177,9 @@ func TestBeeperMediaProcessDescriptorRefresh(t *testing.T) {
 			assert.Equal(beforeOperationID, oldIdentity.operationID)
 			assert.Equal(beforeInput, oldIdentity.suppliedInputID)
 			assert.Equal(beforeFrozen, oldIdentity.frozenRequest)
-			rows := occurrenceRows(t, world.st, destination)
-			if tc.keyChanges {
-				assert.Equal("blocked", oldIdentity.phase)
-				assert.Equal("no_live_occurrence", oldIdentity.errorCode)
-				var current *occurrenceRow
-				for i := range rows {
-					if rows[i].Revision != beforeMapping.Revision {
-						current = &rows[i]
-					}
-				}
-				require.NotNil(current)
-				assert.Equal("pending", current.State)
-				assert.NotEqual(beforeMapping.ProcessingKey, current.ProcessingKey)
-				for _, identity := range identities {
-					if identity.key != beforeMapping.ProcessingKey {
-						assert.NotEqual(beforeOperationID, identity.operationID)
-					}
-				}
-				return
-			}
-
 			assert.Equal("pending-process", oldIdentity.phase)
 			assert.Empty(oldIdentity.errorCode)
+			rows := occurrenceRows(t, world.st, destination)
 			var current *occurrenceRow
 			for i := range rows {
 				if rows[i].Revision != beforeMapping.Revision {
@@ -1132,25 +1188,23 @@ func TestBeeperMediaProcessDescriptorRefresh(t *testing.T) {
 			}
 			require.NotNil(current)
 			assert.Equal("pending", current.State)
-			assert.Equal(beforeMapping.ProcessingKey, current.ProcessingKey)
-
-			_, err = worker.RunBatch(t.Context())
-			require.NoError(err)
-			rows = occurrenceRows(t, world.st, destination)
-			for _, row := range rows {
-				if row.Revision == current.Revision {
-					assert.Equal("retained", row.State)
+			if tc.keyChanges {
+				assert.NotEqual(beforeMapping.ProcessingKey, current.ProcessingKey)
+				for _, identity := range identities {
+					if identity.key != beforeMapping.ProcessingKey {
+						assert.NotEqual(beforeOperationID, identity.operationID)
+					}
 				}
+			} else {
+				assert.Equal(beforeMapping.ProcessingKey, current.ProcessingKey)
 			}
-			identities = processDeliveryIdentities(t, world.st, destination)
-			oldIdentity = findProcessDelivery(t, identities, beforeMapping.ProcessingKey)
-			assert.Equal(beforeOperationID, oldIdentity.operationID)
-			assert.Equal(beforeInput, oldIdentity.suppliedInputID)
-			assert.Equal(beforeFrozen, oldIdentity.frozenRequest)
+
+			// The saved request can finish before the replacement is retained.
 			operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
 			require.NoError(err)
 			require.True(ok)
 			require.Equal(store.BeeperMediaOperationProcess, operation.Kind)
+			require.True(operation.PreparedReplay)
 			assert.Equal(beforeOperationID, operation.OperationID)
 			require.NoError(worker.process(t.Context(), t.Context(), archiveUID, operation))
 			docbank.mu.Lock()

@@ -420,8 +420,8 @@ func (s *Store) ReconcileBeeperMediaMapping(ctx context.Context, mapping BeeperM
 
 const errBeeperMediaNoLiveOccurrenceCode = "no_live_occurrence"
 
-// retireBeeperMediaDeliveries blocks an unstarted transcript delivery of this
-// occurrence once no pending or retained occurrence can supply its audio.
+// retireBeeperMediaDeliveries blocks unprepared work once no occurrence can
+// supply its audio. Prepared processing may have reached Docbank already.
 func (s *Store) retireBeeperMediaDeliveries(q boundQuerier, destination, occurrenceRef, code string) error {
 	if !slices.Contains(beeperMediaLocalGapCodes, any(code)) {
 		return nil
@@ -430,7 +430,10 @@ func (s *Store) retireBeeperMediaDeliveries(q boundQuerier, destination, occurre
 		UPDATE beeper_media_deliveries
 		SET phase = 'blocked', next_action_at = NULL, error_code = ?, updated_at = `+s.dialect.Now()+`
 		WHERE destination_key = ?
-		  AND (phase = 'pending-artifact' OR (phase = 'pending-process' AND COALESCE(job_id, '') = ''))
+		  AND (phase = 'pending-artifact' OR (phase = 'pending-process' AND COALESCE(job_id, '') = '' AND
+		       (COALESCE(pending_operation_id, '') = '' OR COALESCE(frozen_request_json, '') = '' OR
+		        COALESCE(source_id, '') = '' OR COALESCE(source_version_id, '') = '' OR
+		        COALESCE(content_version_id, '') = '' OR COALESCE(donor_occurrence_id, '') = '')))
 		  AND processing_key IN (
 			SELECT processing_key FROM beeper_media_occurrences
 			WHERE destination_key = ? AND occurrence_ref = ? AND processing_key <> '')
@@ -711,12 +714,11 @@ func (s *Store) NextBeeperMediaOperation(
 			    AND COALESCE(d.source_version_id, '') <> '' AND COALESCE(d.content_version_id, '') <> ''
 			    AND d.donor_occurrence_id <> ''
 			    AND EXISTS (
-				SELECT 1 FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
-				  AND o.destination_key = d.destination_key AND o.occurrence_id = d.donor_occurrence_id
+				SELECT 1 FROM beeper_media_occurrences o
+				WHERE o.destination_key = d.destination_key AND o.occurrence_id = d.donor_occurrence_id
 				  AND o.source_id = d.source_id AND o.source_version_id = d.source_version_id
 				  AND o.content_version_id = d.content_version_id AND o.source_sha256 = d.source_sha256
-				  AND o.byte_length = d.byte_length AND o.vault_uid <> ''
-				  AND o.retention_state = 'retained'))
+				  AND o.byte_length = d.byte_length AND o.vault_uid <> ''))
 			OR (d.phase = 'observing' AND d.job_id <> '' AND d.donor_occurrence_id <> '' AND EXISTS (
 				SELECT 1 FROM beeper_media_occurrences o
 				WHERE o.destination_key = d.destination_key AND o.occurrence_id = d.donor_occurrence_id

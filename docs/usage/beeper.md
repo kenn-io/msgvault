@@ -253,8 +253,10 @@ What happens:
 - A hidden, source-deleted, removed or replaced message loses its mapping
   (`revoked`), including audio still waiting to be sent. Other messages
   sharing the audio keep theirs. Reaction changes leave the mapping live.
-  If no live or pending occurrence can supply the recording, an unstarted
-  transcript delivery stops waiting; restoring an occurrence reopens it.
+  If no live or pending occurrence can supply the recording, unprepared
+  processing stops waiting; restoring an occurrence reopens it. Prepared
+  requests keep their saved identity and retry even after revocation, since
+  Docbank may have accepted them before msgvault saved the receipt.
   msgvault decides which occurrences are live; Docbank keeps the shared evidence.
 - Network errors, HTTP 429 and 5xx responses retry after five minutes with the
   same operation ID. So does a request that runs out of time: each request
