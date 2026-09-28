@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-26"
+last_edited: "2026-09-27"
 title: SQL Queries
 description: Run read-only DuckDB queries against the analytics cache.
 ---
@@ -64,12 +64,25 @@ These map directly to the Parquet files in `~/.msgvault/analytics/`.
 | `conversations` | id, source_conversation_id, title, conversation_type |
 | `sources` | id, source_type |
 
+`messages.rfc822_message_id` is NULL when the stored identifier contains invalid
+UTF-8. The archive retains the original bytes; `repair-encoding` reports these
+IDs without rewriting them. See the [encoding repair limits](../cli-reference.md#repair-encoding).
+
 `message_recipients.email_address` is the recipient's address: the address
 written in the message header when one was recorded, otherwise the
-participant's current address. It is NULL only for participants without an
-email address, such as phone-number contacts. `envelope_address` is the header
-address exactly as written and is NULL when none was recorded, which covers
-chat and calendar rows and mail imported before v0.19.0.
+participant's current address. It is NULL for participants without an
+email address, such as phone-number contacts, and for addresses whose
+stored bytes are invalid UTF-8. `envelope_address` is the header
+address exactly as written, NULL when none was recorded (chat and
+calendar rows, mail imported before v0.19.0), and NULL when its stored
+bytes are invalid UTF-8. A recorded envelope is authoritative even when
+damaged: the participant's current address is never substituted for it,
+so `email_address` stays NULL instead. Damaged addresses export as
+unknown rather than as a repaired value, so a broken byte sequence
+cannot be mistaken for a different real address. `msgvault repair-encoding`
+does not repair recorded envelope addresses. They need separate recovery
+from verified original values before `msgvault build-cache --full-rebuild`
+can include them. See the [encoding repair limits](../cli-reference.md#repair-encoding).
 
 ### Convenience views
 

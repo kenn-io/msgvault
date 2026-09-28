@@ -40,6 +40,11 @@ For each invalid field, it:
 2. If re-parsing fails, attempts charset detection (Windows-1252, Latin-1, etc.)
 3. As a last resort, replaces invalid bytes with the replacement character
 
+Invalid RFC 822 Message-ID values are reported and left unchanged because
+replacing bytes could make distinct identifiers collide. Recover their
+original values separately from a verified source. The analytics cache
+exports invalid Message-IDs as NULL.
+
 This is useful after a sync that may have produced invalid UTF-8 due to
 charset detection issues in the MIME parser.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -185,6 +190,7 @@ func repairResetEmbeddings(ctx context.Context, s *store.Store, reembedNeededIDs
 
 // repairStats tracks repair statistics.
 type repairStats struct {
+	unrepairedIDs int
 	subjects      int
 	bodyTexts     int
 	bodyHTMLs     int
@@ -241,11 +247,14 @@ func repairEncoding(s *store.Store, logger *slog.Logger) (reembedNeededIDs []int
 	}
 
 	// Summary
+	if stats.unrepairedIDs > 0 {
+		fmt.Fprintf(os.Stderr, "Warning: %d RFC 822 Message-ID value(s) contain invalid UTF-8 and were left unchanged to avoid identifier collisions. Recover their original values separately from a verified source; the analytics cache exports them as NULL.\n", stats.unrepairedIDs)
+	}
 	total := stats.subjects + stats.bodyTexts + stats.bodyHTMLs + stats.snippets +
 		stats.displayNames + stats.labels + stats.filenames + stats.convTitles +
 		stats.convSourceIDs + stats.convPreviews + stats.emailAddrs + stats.domains
 	if total == 0 {
-		fmt.Println("No encoding repairs needed.")
+		fmt.Println("No text fields needed repair.")
 		return nil, nil
 	}
 
@@ -301,7 +310,8 @@ func repairMessageFields(s *store.Store, stats *repairStats, logger *slog.Logger
 
 	// Query all messages with their raw data
 	rows, err := db.Query(`
-		SELECT m.id, m.message_type, m.subject, mb.body_text, mb.body_html, m.snippet,
+		SELECT m.id, m.message_type, m.subject, m.rfc822_message_id,
+		       mb.body_text, mb.body_html, m.snippet,
 		       mr.raw_data, mr.compression
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
@@ -401,11 +411,11 @@ func repairMessageFields(s *store.Store, stats *repairStats, logger *slog.Logger
 	for rows.Next() {
 		var id int64
 		var messageType string
-		var subject, bodyText, bodyHTML, snippet sql.NullString
+		var subject, messageID, bodyText, bodyHTML, snippet sql.NullString
 		var rawData []byte
 		var compression sql.NullString
 
-		if err := rows.Scan(&id, &messageType, &subject, &bodyText, &bodyHTML, &snippet, &rawData, &compression); err != nil {
+		if err := rows.Scan(&id, &messageType, &subject, &messageID, &bodyText, &bodyHTML, &snippet, &rawData, &compression); err != nil {
 			logger.Warn("skipping message row with scan error", "error", err)
 			stats.skippedRows++
 			continue
@@ -421,6 +431,12 @@ func repairMessageFields(s *store.Store, stats *repairStats, logger *slog.Logger
 		repair.id = id
 		var parsed *mime.Message
 		needsRepair := false
+
+		// Message-ID is an identity key. Preserve its original bytes: both
+		// charset decoding and replacement characters can create collisions.
+		if messageID.Valid && !utf8.ValidString(messageID.String) {
+			stats.unrepairedIDs++
+		}
 
 		// Subject
 		if subject.Valid && !utf8.ValidString(subject.String) {
@@ -503,7 +519,7 @@ func repairMessageFields(s *store.Store, stats *repairStats, logger *slog.Logger
 	if totalRepaired > 0 {
 		fmt.Printf("Repaired %d messages\n", totalRepaired)
 	} else {
-		fmt.Println("No messages needed repair")
+		fmt.Println("No message text fields needed repair")
 	}
 	return reembedNeededIDs, nil
 }

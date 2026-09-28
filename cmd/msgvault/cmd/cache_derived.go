@@ -122,6 +122,10 @@ func refreshDerivedDatasetsOnly(
 		return nil, fmt.Errorf("open bounded DuckDB for derived refresh: %w", err)
 	}
 	defer func() { _ = duckDB.Close() }()
+	textRepairs := &cacheTextRepairs{}
+	if err := registerCacheTextFunctions(ctx, duckDB, textRepairs); err != nil {
+		return nil, err
+	}
 
 	sourceSnapshot, err := openCacheSourceSnapshot(duckDB, dbPath)
 	if err != nil {
@@ -171,7 +175,8 @@ func refreshDerivedDatasetsOnly(
 		return &buildResult{OutputDir: analyticsDir, IdentityOnly: true, Skipped: true}, nil
 	}
 
-	if err := exportDerivedOwnerParticipants(ctx, exportDB, staging.root); err != nil {
+	if err := exportDerivedOwnerParticipants(ctx, exportDB, staging.root,
+		sourceSnapshot.identityPresenceSQL("email_address", "primary_email_present")); err != nil {
 		return nil, err
 	}
 	if err := exportDerivedParticipantClusters(ctx, exportDB, clusters, staging.root); err != nil {
@@ -196,7 +201,7 @@ func refreshDerivedDatasetsOnly(
 		// participant_identifiers base dataset (relationship_people search
 		// values and label fallbacks), so a changed mapping must be re-staged
 		// and republished alongside the derived index.
-		if err := exportDerivedParticipantIdentifiers(ctx, exportDB, staging.root); err != nil {
+		if err := exportDerivedParticipantIdentifiers(ctx, sourceSnapshot, staging.root); err != nil {
 			return nil, err
 		}
 	}
@@ -206,14 +211,14 @@ func refreshDerivedDatasetsOnly(
 		// Participant identifiers can create participant rows, and display-name
 		// mutations change the row already present in participants.parquet. Both
 		// changes must replace that base dataset before rebuilding the directory.
-		if err := exportDerivedParticipants(ctx, exportDB, staging.root); err != nil {
+		if err := exportDerivedParticipants(ctx, sourceSnapshot, staging.root); err != nil {
 			return nil, err
 		}
 	}
 	personDisplayNamesChanged := personDisplayNameRevision != state.PersonDisplayNameRevision
 	identityChanged := identityRevision != state.IdentityRevision
 	if personDisplayNamesChanged || identityChanged {
-		if err := exportDerivedPersonDisplayNames(ctx, exportDB, staging.root); err != nil {
+		if err := exportDerivedPersonDisplayNames(ctx, sourceSnapshot, staging.root); err != nil {
 			return nil, err
 		}
 	}
@@ -225,7 +230,7 @@ func refreshDerivedDatasetsOnly(
 		// alongside the derived index.
 		if err := exportDerivedConversations(
 			ctx,
-			exportDB,
+			sourceSnapshot,
 			state.LastMessageID,
 			staging.root,
 		); err != nil {
@@ -270,6 +275,7 @@ func refreshDerivedDatasetsOnly(
 	if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
 		return nil, err
 	}
+	reportCacheTextRepairs(os.Stderr, textRepairs)
 	return &buildResult{OutputDir: analyticsDir, IdentityOnly: true}, nil
 }
 
@@ -304,9 +310,9 @@ func fingerprintConversationParticipantsFromSnapshot(
 // fingerprintConversationTypesFromSnapshot mirrors
 // sourceConversationTypesFingerprint over the export snapshot, so the stamp
 // written at publish time describes exactly the type/title metadata the staged
-// datasets baked. The normalizations match the staleness query (and the CSV
-// snapshot view), not the exported Parquet values; fingerprints only compare
-// against each other.
+// datasets baked. The query applies the same NULL defaults as the staleness
+// query. FingerprintConversationMetadata repairs invalid UTF-8 on both paths
+// before hashing.
 func fingerprintConversationTypesFromSnapshot(
 	ctx context.Context,
 	db sqlRunner,
@@ -343,7 +349,7 @@ func fingerprintConversationTypesFromSnapshot(
 // dataset the analytical view joins.
 func exportDerivedConversations(
 	ctx context.Context,
-	db sqlRunner,
+	source *cacheSourceSnapshot,
 	lastMessageID int64,
 	stagingRoot string,
 ) error {
@@ -352,11 +358,11 @@ func exportDerivedConversations(
 		return fmt.Errorf("create derived conversations directory: %w", err)
 	}
 	path := filepath.Join(dir, "conversations.parquet")
-	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+	_, err := source.DuckDB().ExecContext(ctx, fmt.Sprintf(`
 		COPY (
 			%s
 		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, conversationsExportSelectSQL(lastMessageID), quoteCacheSQL(path)))
+	`, source.conversationsExportSelectSQL(lastMessageID), quoteCacheSQL(path)))
 	if err != nil {
 		return fmt.Errorf("export derived conversations: %w", err)
 	}
@@ -366,7 +372,7 @@ func exportDerivedConversations(
 func exportDerivedOwnerParticipants(
 	ctx context.Context,
 	db sqlRunner,
-	stagingRoot string,
+	stagingRoot, primaryEmailPresence string,
 ) error {
 	dir := filepath.Join(stagingRoot, tableOwnerParticipants)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -376,7 +382,7 @@ func exportDerivedOwnerParticipants(
 	_, err := db.ExecContext(ctx, fmt.Sprintf(`
 		COPY (%s
 		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, ownerParticipantsSelectSQL, quoteCacheSQL(path)))
+	`, ownerParticipantsSelectSQL(primaryEmailPresence), quoteCacheSQL(path)))
 	if err != nil {
 		return fmt.Errorf("export derived owner participants: %w", err)
 	}
@@ -388,7 +394,7 @@ func exportDerivedOwnerParticipants(
 // existing row. The relationship directory reads this dataset directly.
 func exportDerivedParticipants(
 	ctx context.Context,
-	db sqlRunner,
+	source *cacheSourceSnapshot,
 	stagingRoot string,
 ) error {
 	dir := filepath.Join(stagingRoot, tableParticipants)
@@ -396,11 +402,11 @@ func exportDerivedParticipants(
 		return fmt.Errorf("create derived participants directory: %w", err)
 	}
 	path := filepath.Join(dir, "participants.parquet")
-	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+	_, err := source.DuckDB().ExecContext(ctx, fmt.Sprintf(`
 		COPY (
 			%s
 		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, participantsExportSelectSQL(), quoteCacheSQL(path)))
+	`, source.participantsExportSelectSQL(), quoteCacheSQL(path)))
 	if err != nil {
 		return fmt.Errorf("export derived participants: %w", err)
 	}
@@ -409,7 +415,7 @@ func exportDerivedParticipants(
 
 func exportDerivedPersonDisplayNames(
 	ctx context.Context,
-	db sqlRunner,
+	source *cacheSourceSnapshot,
 	stagingRoot string,
 ) error {
 	dir := filepath.Join(stagingRoot, tablePersonDisplayNames)
@@ -417,11 +423,11 @@ func exportDerivedPersonDisplayNames(
 		return fmt.Errorf("create derived person_display_names directory: %w", err)
 	}
 	path := filepath.Join(dir, "person_display_names.parquet")
-	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+	_, err := source.DuckDB().ExecContext(ctx, fmt.Sprintf(`
 		COPY (
 			%s
 		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, personDisplayNamesExportSelectSQL(), quoteCacheSQL(path)))
+	`, source.personDisplayNamesExportSelectSQL(), quoteCacheSQL(path)))
 	if err != nil {
 		return fmt.Errorf("export derived person_display_names: %w", err)
 	}
@@ -434,7 +440,7 @@ func exportDerivedPersonDisplayNames(
 // and republishes the dataset participant-label fallbacks join.
 func exportDerivedParticipantIdentifiers(
 	ctx context.Context,
-	db sqlRunner,
+	source *cacheSourceSnapshot,
 	stagingRoot string,
 ) error {
 	dir := filepath.Join(stagingRoot, tableParticipantIdentifiers)
@@ -442,11 +448,11 @@ func exportDerivedParticipantIdentifiers(
 		return fmt.Errorf("create derived participant identifiers directory: %w", err)
 	}
 	path := filepath.Join(dir, "participant_identifiers.parquet")
-	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+	_, err := source.DuckDB().ExecContext(ctx, fmt.Sprintf(`
 		COPY (
 			%s
 		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, participantIdentifiersExportSelectSQL(), quoteCacheSQL(path)))
+	`, source.participantIdentifiersExportSelectSQL(), quoteCacheSQL(path)))
 	if err != nil {
 		return fmt.Errorf("export derived participant identifiers: %w", err)
 	}

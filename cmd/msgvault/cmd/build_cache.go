@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofrs/flock"
 	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
@@ -31,6 +32,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var fullRebuild bool
@@ -596,108 +598,141 @@ type buildResult struct {
 // Without the primary-email guard a message could be cached as inbound while
 // its sender is globally marked the owner, and relationship/explore
 // materialization would drop the actual correspondent.
-const ownerParticipantsSelectSQL = `
+func ownerParticipantsSelectSQL(primaryEmailPresence string) string {
+	// Identity keys must be collision-free: DuckDB's SQLite scanner can pass
+	// stored invalid bytes through unchecked, so cacheIdentityTextSQL turns
+	// them into NULL before TRIM, lower, or equality sees the stored bytes.
+	// NULL never matches, so distinct invalid sequences cannot collapse onto
+	// one U+FFFD key and mis-attribute messages.
+	accountIdentities := "(SELECT source_id, " + cacheIdentityTextSQL("address") + " AS address FROM sqlite_db.account_identities) ai"
+	participants := "(SELECT id, " + cacheIdentityTextSQL("email_address") + " AS email_address, " +
+		primaryEmailPresence + " AS primary_email_present FROM sqlite_db.participants)"
+	identifiers := "(SELECT participant_id, " + cacheIdentityTextSQL("identifier_type") + " AS identifier_type, " +
+		cacheIdentityTextSQL("identifier_value") + " AS identifier_value FROM sqlite_db.participant_identifiers) pi"
+	return fmt.Sprintf(`
 		SELECT DISTINCT ai.source_id, p.id AS participant_id
-		FROM sqlite_db.account_identities ai
-		JOIN sqlite_db.participants p
+		FROM %s
+		JOIN %s p
 		  ON p.email_address IS NOT NULL
 		 AND TRIM(p.email_address) <> ''
 		 AND lower(p.email_address) = lower(ai.address)
 		UNION
 		SELECT DISTINCT ai.source_id, pi.participant_id
-		FROM sqlite_db.account_identities ai
-		JOIN sqlite_db.participant_identifiers pi
+		FROM %s
+		JOIN %s
 		  ON (pi.identifier_type = 'email'
 		      AND lower(pi.identifier_value) = lower(ai.address)
 		      AND NOT EXISTS (
-		          SELECT 1 FROM sqlite_db.participants guard
+		          SELECT 1 FROM %s guard
 		          WHERE guard.id = pi.participant_id
-		            AND guard.email_address IS NOT NULL
-		            AND TRIM(guard.email_address) <> ''
+		            AND guard.primary_email_present
 		      ))
-		  OR (pi.identifier_type != 'email' AND pi.identifier_value = ai.address)`
+		  OR (pi.identifier_type != 'email' AND pi.identifier_value = ai.address)`,
+		accountIdentities, participants, accountIdentities, identifiers, participants)
+}
 
 // messageCacheAttributionSQL is the cache-facing form of
 // store.messageIdentityAttributionMatch. Source-native provenance is always
 // authoritative. A non-empty From envelope is then the only identity surface
-// for that message; falling through to the participant's current aliases
-// would reclassify mail after a participant merge. Legacy and non-email rows
-// without an envelope use the participant's primary email and identifier rows
-// with the same per-type case rules as the store. The companion owner value
-// is an attribution candidate: consumers gate it on is_from_me, so it can be
+// for that message: presence is byte-level over the raw column, exactly like
+// the store's guard that the raw email_address is non-NULL and non-blank
+// after TRIM, so a present-but-invalid envelope never matches an identity
+// and still suppresses the participant fallback that would reclassify mail
+// after a participant merge. Legacy and non-email rows without an envelope
+// use the participant's primary email and identifier rows with the same
+// per-type case rules as the store. The companion owner value is an
+// attribution candidate: consumers gate it on is_from_me, so it can be
 // resolved independently without duplicating this predicate in the export.
 func messageCacheAttributionSQL(
 	sourceAttribution string,
 	hasSourceAttribution, hasEnvelope bool,
+	envelopePresence, primaryEmailPresence string,
 ) (string, string) {
-	participantFallback := `(
+	// Use the same valid-or-NULL keys as owner_participants so both derived
+	// datasets agree even when the SQLite snapshot contains invalid bytes:
+	// invalid identity text never matches on either path.
+	accountIdentities := "(SELECT source_id, " + cacheIdentityTextSQL("address") + " AS address FROM sqlite_db.account_identities) ai"
+	participants := "(SELECT id, " + cacheIdentityTextSQL("email_address") + " AS email_address, " +
+		primaryEmailPresence + " AS primary_email_present FROM sqlite_db.participants) sp"
+	identifiers := "(SELECT participant_id, " + cacheIdentityTextSQL("identifier_type") + " AS identifier_type, " +
+		cacheIdentityTextSQL("identifier_value") + " AS identifier_value FROM sqlite_db.participant_identifiers) spi"
+	recipients := "(SELECT message_id, participant_id, " + cacheIdentityTextSQL("recipient_type") + " AS recipient_type"
+	if hasEnvelope {
+		// envelopePresence decides byte-level presence (scanner: computed
+		// over the raw column; CSV: the snapshot's envelope_present view
+		// column), because the valid-or-NULL identity key cannot distinguish
+		// a damaged envelope from a missing one.
+		recipients += ", " + cacheIdentityTextSQL("email_address") + " AS email_address"
+		recipients += ", " + envelopePresence + " AS envelope_present"
+	}
+	recipients += " FROM sqlite_db.message_recipients) smr"
+	participantFallback := fmt.Sprintf(`(
 			EXISTS (
-				SELECT 1 FROM sqlite_db.account_identities ai
-				JOIN sqlite_db.participants sp ON sp.id = m.sender_id
+				SELECT 1 FROM %s
+				JOIN %s ON sp.id = m.sender_id
 				WHERE ai.source_id = m.source_id
 				  AND sp.email_address IS NOT NULL
 				  AND TRIM(sp.email_address) <> ''
 				  AND lower(sp.email_address) = lower(ai.address)
 			)
 			OR EXISTS (
-				SELECT 1 FROM sqlite_db.account_identities ai
-				JOIN sqlite_db.participant_identifiers spi ON spi.participant_id = m.sender_id
+				SELECT 1 FROM %s
+				JOIN %s ON spi.participant_id = m.sender_id
 				WHERE ai.source_id = m.source_id
 				  AND spi.identifier_type != 'email'
 				  AND spi.identifier_value = ai.address
 			)
 			OR (
 				NOT EXISTS (
-					SELECT 1 FROM sqlite_db.participants sp
+					SELECT 1 FROM %s
 					WHERE sp.id = m.sender_id
-					  AND sp.email_address IS NOT NULL
-					  AND TRIM(sp.email_address) <> ''
+					  AND sp.primary_email_present
 				)
 				AND EXISTS (
-					SELECT 1 FROM sqlite_db.account_identities ai
-					JOIN sqlite_db.participant_identifiers spi ON spi.participant_id = m.sender_id
+					SELECT 1 FROM %s
+					JOIN %s ON spi.participant_id = m.sender_id
 					WHERE ai.source_id = m.source_id
 					  AND spi.identifier_type = 'email'
 					  AND lower(spi.identifier_value) = lower(ai.address)
 				)
 			)
-		)`
-	singleFromParticipant := `(SELECT CASE
+		)`, accountIdentities, participants, accountIdentities, identifiers,
+		participants, accountIdentities, identifiers)
+	singleFromParticipant := fmt.Sprintf(`(SELECT CASE
 			WHEN COUNT(DISTINCT smr.participant_id) = 1 THEN MIN(smr.participant_id)
 			ELSE NULL
 		END
-		FROM sqlite_db.message_recipients smr
+		FROM %s
 		WHERE smr.message_id = m.id
-		  AND smr.recipient_type = 'from')`
+		  AND smr.recipient_type = 'from')`, recipients)
 	if !hasEnvelope {
 		attribution := "(" + sourceAttribution + " OR " + participantFallback + ")"
 		ownerParticipant := "COALESCE(m.sender_id, " + singleFromParticipant + ")"
 		return attribution, ownerParticipant
 	}
-	envelopePresent := `EXISTS (
-			SELECT 1 FROM sqlite_db.message_recipients smr
+	envelopePresent := fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM %s
 			WHERE smr.message_id = m.id
 			  AND smr.recipient_type = 'from'
-			  AND smr.email_address IS NOT NULL
-			  AND TRIM(smr.email_address) <> ''
-		)`
-	envelopeMatch := `EXISTS (
-			SELECT 1 FROM sqlite_db.account_identities ai
-			JOIN sqlite_db.message_recipients smr ON smr.message_id = m.id
+			  AND smr.envelope_present
+		)`, recipients)
+	envelopeMatch := fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM %s
+			JOIN %s ON smr.message_id = m.id
 			WHERE ai.source_id = m.source_id
 			  AND smr.recipient_type = 'from'
 			  AND smr.email_address IS NOT NULL
 			  AND TRIM(smr.email_address) <> ''
 			  AND lower(smr.email_address) = lower(ai.address)
-		)`
-	envelopeOwnerParticipant := `(SELECT MIN(smr.participant_id)
-			FROM sqlite_db.account_identities ai
-			JOIN sqlite_db.message_recipients smr ON smr.message_id = m.id
+		)`, accountIdentities, recipients)
+	envelopeOwnerParticipant := fmt.Sprintf(`(SELECT MIN(smr.participant_id)
+			FROM %s
+			JOIN %s ON smr.message_id = m.id
 			WHERE ai.source_id = m.source_id
 			  AND smr.recipient_type = 'from'
 			  AND smr.email_address IS NOT NULL
 			  AND TRIM(smr.email_address) <> ''
-			  AND lower(smr.email_address) = lower(ai.address))`
+			  AND lower(smr.email_address) = lower(ai.address))`, accountIdentities, recipients)
 	attribution := "(" + sourceAttribution + " OR (" + envelopeMatch + " OR (NOT " +
 		envelopePresent + " AND " + participantFallback + ")))"
 	sourceNativeAttribution := "FALSE"
@@ -831,53 +866,57 @@ func acquireCacheBuildLock(ctx context.Context, analyticsDir string) (*flock.Flo
 // with NULL-normalized string columns. Shared by the full/incremental export
 // and the derived-refresh re-staging (exportDerivedConversations) so the two
 // can never bake different rows for the same watermark.
-func conversationsExportSelectSQL(lastMessageID int64) string {
+func (s *cacheSourceSnapshot) conversationsExportSelectSQL(lastMessageID int64) string {
 	return fmt.Sprintf(`SELECT
 			id,
-			COALESCE(TRY_CAST(source_conversation_id AS VARCHAR), '') as source_conversation_id,
-			COALESCE(TRY_CAST(title AS VARCHAR), '') as title,
-			COALESCE(TRY_CAST(conversation_type AS VARCHAR), 'email') as conversation_type
+			COALESCE(%s, '') as source_conversation_id,
+			COALESCE(%s, '') as title,
+			COALESCE(%s, 'email') as conversation_type
 		FROM sqlite_db.conversations c
 		WHERE EXISTS (
 			SELECT 1 FROM sqlite_db.messages m
 			WHERE m.conversation_id = c.id
 			  AND %s
 			  AND TRY_CAST(m.id AS BIGINT) <= %d
-		)`, exportableMessageWhere("m"), lastMessageID)
+		)`, s.identityExportSQL("source_conversation_id"), s.textSQL("title"), s.textSQL("conversation_type"), exportableMessageWhere("m"), lastMessageID)
 }
 
 // participantIdentifiersExportSelectSQL renders the participant_identifiers
 // dataset export query. Shared by the full/incremental export and the
 // derived-refresh re-staging (exportDerivedParticipantIdentifiers) so the two
-// can never bake different rows.
-func participantIdentifiersExportSelectSQL() string {
-	return `SELECT participant_id,
-			COALESCE(TRY_CAST(identifier_type AS VARCHAR), '') AS identifier_type,
-			COALESCE(TRY_CAST(identifier_value AS VARCHAR), '') AS identifier_value,
-			COALESCE(TRY_CAST(display_value AS VARCHAR), '') AS display_value,
+// can never bake different rows. Identifier keys with invalid UTF-8 export as
+// the empty string (unknown) because repairing them could collide two
+// distinct keys.
+func (s *cacheSourceSnapshot) participantIdentifiersExportSelectSQL() string {
+	return fmt.Sprintf(`SELECT participant_id,
+			COALESCE(%s, '') AS identifier_type,
+			COALESCE(%s, '') AS identifier_value,
+			COALESCE(%s, '') AS display_value,
 			COALESCE(TRY_CAST(is_primary AS BOOLEAN), false) AS is_primary
-		FROM sqlite_db.participant_identifiers`
+		FROM sqlite_db.participant_identifiers`, s.identityExportSQL("identifier_type"), s.identityExportSQL("identifier_value"), s.textSQL("display_value"))
 }
 
 // participantsExportSelectSQL renders the participants dataset export. The
 // full and derived-only builders share this query so participant rows and
-// display names cannot drift between cache publication paths.
-func participantsExportSelectSQL() string {
-	return `SELECT
+// display names cannot drift between cache publication paths. The email
+// address is an identity key: invalid bytes export as the empty string
+// (unknown), not as a repaired value that could collide with another address.
+func (s *cacheSourceSnapshot) participantsExportSelectSQL() string {
+	return fmt.Sprintf(`SELECT
 			id,
-			COALESCE(TRY_CAST(email_address AS VARCHAR), '') AS email_address,
-			COALESCE(TRY_CAST(domain AS VARCHAR), '') AS domain,
-			COALESCE(TRY_CAST(display_name AS VARCHAR), '') AS display_name,
-			COALESCE(TRY_CAST(phone_number AS VARCHAR), '') AS phone_number
-		FROM sqlite_db.participants`
+			COALESCE(%s, '') AS email_address,
+			COALESCE(%s, '') AS domain,
+			COALESCE(%s, '') AS display_name,
+			COALESCE(%s, '') AS phone_number
+		FROM sqlite_db.participants`, s.identityExportSQL("email_address"), s.textSQL("domain"), s.textSQL("display_name"), s.textSQL("phone_number"))
 }
 
 // personDisplayNamesExportSelectSQL keeps full and derived-only exports identical.
-func personDisplayNamesExportSelectSQL() string {
-	return `SELECT pp.participant_id, pp.person_id,
-		COALESCE(TRY_CAST(p.display_name AS VARCHAR), '') AS display_name
+func (s *cacheSourceSnapshot) personDisplayNamesExportSelectSQL() string {
+	return fmt.Sprintf(`SELECT pp.participant_id, pp.person_id,
+		COALESCE(%s, '') AS display_name
 		FROM sqlite_db.person_participants pp
-		JOIN sqlite_db.persons p ON p.id = pp.person_id`
+		JOIN sqlite_db.persons p ON p.id = pp.person_id`, s.textSQL("p.display_name"))
 }
 
 // derivedDriftOnly reports whether participant-link, conversation-membership,
@@ -1057,6 +1096,10 @@ func buildCacheLocked(
 		return nil, err
 	}
 	defer func() { _ = db.Close() }()
+	textRepairs := &cacheTextRepairs{}
+	if err := registerCacheTextFunctions(context.Background(), db, textRepairs); err != nil {
+		return nil, err
+	}
 	sourceSnapshot, err := openCacheSourceSnapshot(db, dbPath)
 	if err != nil {
 		return nil, err
@@ -1248,33 +1291,45 @@ func buildCacheLocked(
 	recipientsFilter = junctionFilterFor("mr.message_id", recipientsFilter)
 	// Two address columns leave here. envelope_address is the header address
 	// exactly as the store recorded it (NULL when none was — chat, calendar,
-	// and mail ingested before the column existed); identity filters key on
+	// and mail ingested before the column existed; invalid UTF-8 also exports
+	// NULL so repaired identity keys cannot collide); identity filters key on
 	// its presence. email_address is the resolved recipient address: the
 	// envelope when present, otherwise the participant's current address, so
-	// an address filter over this dataset finds pre-upgrade mail too. Only a
-	// participant with no email address at all (phone or handle only) leaves
-	// email_address NULL. Databases from before the envelope column export
-	// NULL envelopes for every row.
-	recipientEnvelopeExpression := "NULL::VARCHAR"
+	// an address filter over this dataset finds pre-upgrade mail too.
+	// Presence is byte-level, not validity-level: an envelope whose bytes are
+	// invalid UTF-8 is present but unusable, so both columns export NULL
+	// rather than silently substituting the participant's current address,
+	// which would attribute the message to whoever the participant is today.
+	// Only a participant with no email address at all (phone or handle only)
+	// leaves email_address NULL. Databases from before the envelope column
+	// export NULL envelopes for every row.
+	recipientEnvelopeKey := "NULL::VARCHAR"
+	recipientPresence := "FALSE"
+	// NULLIF can evaluate its first argument twice. Check emptiness with the
+	// pure key so each unknown output value increments the counter only once.
+	recipientParticipantKey := "CASE WHEN " + cacheIdentityTextSQL("p.email_address") +
+		" = '' THEN NULL ELSE " + sourceSnapshot.identityExportSQL("p.email_address") + " END"
 	if sourceSnapshot.hasRecipientEnvelope {
-		recipientEnvelopeExpression = "NULLIF(TRY_CAST(mr.email_address AS VARCHAR), '')"
+		recipientEnvelopeKey = "CASE WHEN " + cacheIdentityTextSQL("mr.email_address") +
+			" = '' THEN NULL ELSE " + sourceSnapshot.identityExportSQL("mr.email_address") + " END"
+		recipientPresence = sourceSnapshot.identityPresenceSQL("mr.email_address", "mr.envelope_present")
 	}
 	if err := runExport("message_recipients", fmt.Sprintf(`
 	COPY (
 		SELECT
 			mr.message_id,
 			mr.participant_id,
-			mr.recipient_type,
-			COALESCE(TRY_CAST(mr.display_name AS VARCHAR), '') as display_name,
-			COALESCE(%[1]s, NULLIF(TRY_CAST(p.email_address AS VARCHAR), '')) as email_address,
+			%[2]s AS recipient_type,
+			COALESCE(%[3]s, '') as display_name,
+			CASE WHEN %[8]s THEN %[1]s ELSE %[4]s END as email_address,
 			%[1]s as envelope_address
 		FROM sqlite_db.message_recipients mr
-		LEFT JOIN sqlite_db.participants p ON p.id = mr.participant_id%[2]s
-	) TO '%[3]s/%[4]s' (
+		LEFT JOIN sqlite_db.participants p ON p.id = mr.participant_id%[5]s
+	) TO '%[6]s/%[7]s' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, recipientEnvelopeExpression, recipientsFilter, escapedRecipientsDir, junctionFile)); err != nil {
+	`, recipientEnvelopeKey, sourceSnapshot.identityExportSQL("mr.recipient_type"), sourceSnapshot.textSQL("mr.display_name"), recipientParticipantKey, recipientsFilter, escapedRecipientsDir, junctionFile, recipientPresence)); err != nil {
 		return nil, fmt.Errorf("export message_recipients: %w", err)
 	}
 
@@ -1310,11 +1365,11 @@ func buildCacheLocked(
 	attachmentsFilter = junctionFilter(attachmentsFilter)
 	attachmentMIMEExpression := "'' AS mime_type"
 	if sourceSnapshot.hasAttachmentMIME {
-		attachmentMIMEExpression = "COALESCE(TRY_CAST(mime_type AS VARCHAR), '') AS mime_type"
+		attachmentMIMEExpression = "COALESCE(" + sourceSnapshot.textSQL("mime_type") + ", '') AS mime_type"
 	}
 	attachmentMetadataExpression := "NULL::VARCHAR AS attachment_metadata"
 	if sourceSnapshot.hasAttachmentMetadata {
-		attachmentMetadataExpression = "TRY_CAST(attachment_metadata AS VARCHAR) AS attachment_metadata"
+		attachmentMetadataExpression = sourceSnapshot.textSQL("attachment_metadata") + " AS attachment_metadata"
 	}
 	if err := runExport(tableAttachments, fmt.Sprintf(`
 	COPY (
@@ -1322,7 +1377,7 @@ func buildCacheLocked(
 			id AS attachment_id,
 			message_id,
 			size,
-			COALESCE(TRY_CAST(filename AS VARCHAR), '') as filename,
+			COALESCE(%s, '') as filename,
 			%s,
 			%s
 		FROM sqlite_db.attachments%s
@@ -1330,7 +1385,7 @@ func buildCacheLocked(
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, attachmentMIMEExpression, attachmentMetadataExpression,
+	`, sourceSnapshot.textSQL("filename"), attachmentMIMEExpression, attachmentMetadataExpression,
 		attachmentsFilter, escapedAttachmentsDir, junctionFile)); err != nil {
 		return nil, fmt.Errorf("export attachments: %w", err)
 	}
@@ -1345,7 +1400,7 @@ func buildCacheLocked(
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, participantsExportSelectSQL(), escapedParticipantsDir)); err != nil {
+	`, sourceSnapshot.participantsExportSelectSQL(), escapedParticipantsDir)); err != nil {
 		return nil, fmt.Errorf("export participants: %w", err)
 	}
 
@@ -1358,14 +1413,14 @@ func buildCacheLocked(
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, participantIdentifiersExportSelectSQL(), escapedParticipantIdentifiersDir)); err != nil {
+	`, sourceSnapshot.participantIdentifiersExportSelectSQL(), escapedParticipantIdentifiersDir)); err != nil {
 		return nil, fmt.Errorf("export participant identifiers: %w", err)
 	}
 
 	personDisplayNamesDir := filepath.Join(staging.root, tablePersonDisplayNames)
 	if err := runExport(tablePersonDisplayNames, fmt.Sprintf(
 		`COPY (%s) TO '%s/person_display_names.parquet' (FORMAT PARQUET, COMPRESSION 'zstd')`,
-		personDisplayNamesExportSelectSQL(), quoteCacheSQL(personDisplayNamesDir))); err != nil {
+		sourceSnapshot.personDisplayNamesExportSelectSQL(), quoteCacheSQL(personDisplayNamesDir))); err != nil {
 		return nil, fmt.Errorf("export person names: %w", err)
 	}
 
@@ -1376,13 +1431,14 @@ func buildCacheLocked(
 	// recompute and independent of the message ID watermark.
 	ownerParticipantsDir := filepath.Join(staging.root, tableOwnerParticipants)
 	escapedOwnerParticipantsDir := strings.ReplaceAll(ownerParticipantsDir, "'", "''")
+	primaryEmailPresence := sourceSnapshot.identityPresenceSQL("email_address", "primary_email_present")
 	if err := runExport(tableOwnerParticipants, fmt.Sprintf(`
 	COPY (%s
 	) TO '%s/owner_participants.parquet' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, ownerParticipantsSelectSQL, escapedOwnerParticipantsDir)); err != nil {
+	`, ownerParticipantsSelectSQL(primaryEmailPresence), escapedOwnerParticipantsDir)); err != nil {
 		return nil, fmt.Errorf("export owner participants: %w", err)
 	}
 
@@ -1453,13 +1509,13 @@ func buildCacheLocked(
 	COPY (
 		SELECT
 			id,
-			COALESCE(TRY_CAST(name AS VARCHAR), '') as name
+			COALESCE(%s, '') as name
 		FROM sqlite_db.labels
 	) TO '%s/labels.parquet' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, escapedLabelsDir)); err != nil {
+	`, sourceSnapshot.textSQL("name"), escapedLabelsDir)); err != nil {
 		return nil, fmt.Errorf("export labels: %w", err)
 	}
 
@@ -1470,14 +1526,14 @@ func buildCacheLocked(
 	COPY (
 		SELECT
 			id,
-			identifier as account_email,
-			COALESCE(TRY_CAST(source_type AS VARCHAR), 'gmail') as source_type
+			COALESCE(%s, '') as account_email,
+			COALESCE(%s, 'gmail') as source_type
 		FROM sqlite_db.sources
 	) TO '%s/sources.parquet' (
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, escapedSourcesDir)); err != nil {
+	`, sourceSnapshot.identityExportSQL("identifier"), sourceSnapshot.textSQL("source_type"), escapedSourcesDir)); err != nil {
 		return nil, fmt.Errorf("export sources: %w", err)
 	}
 
@@ -1491,7 +1547,7 @@ func buildCacheLocked(
 		FORMAT PARQUET,
 		COMPRESSION 'zstd'
 	)
-	`, conversationsExportSelectSQL(maxID), escapedConversationsDir)); err != nil {
+	`, sourceSnapshot.conversationsExportSelectSQL(maxID), escapedConversationsDir)); err != nil {
 		return nil, fmt.Errorf("export conversations: %w", err)
 	}
 
@@ -1509,6 +1565,8 @@ func buildCacheLocked(
 		messageSourceAttribution,
 		sourceSnapshot.hasMessageSourceAttribution,
 		sourceSnapshot.hasRecipientEnvelope,
+		sourceSnapshot.identityPresenceSQL("email_address", "envelope_present"),
+		primaryEmailPresence,
 	)
 
 	if err := runExport(tableMessages, fmt.Sprintf(`
@@ -1516,11 +1574,11 @@ func buildCacheLocked(
 		SELECT
 			m.id,
 			m.source_id,
-			m.source_message_id,
-			TRY_CAST(m.rfc822_message_id AS VARCHAR) AS rfc822_message_id,
+			COALESCE(%s, '') AS source_message_id,
+			%s AS rfc822_message_id,
 			m.conversation_id,
-			CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(TRY_CAST(m.subject AS VARCHAR), '') END as subject,
-			CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(TRY_CAST(m.snippet AS VARCHAR), '') END as snippet,
+			CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(%s, '') END as subject,
+			CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(%s, '') END as snippet,
 			m.sent_at,
 			m.size_estimate,
 			m.has_attachments,
@@ -1528,8 +1586,8 @@ func buildCacheLocked(
 			m.deleted_from_source_at,
 			m.sender_id,
 			%s AS owner_participant_id,
-			COALESCE(TRY_CAST(m.message_type AS VARCHAR), '') as message_type,
-			TRY_CAST(m.list_id AS VARCHAR) AS list_id,
+			COALESCE(%s, '') as message_type,
+			%s AS list_id,
 			%s AS is_from_me,
 			CAST(EXTRACT(YEAR FROM m.sent_at) AS INTEGER) as year,
 			CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
@@ -1541,7 +1599,10 @@ func buildCacheLocked(
 		OVERWRITE_OR_IGNORE,
 		COMPRESSION 'zstd'
 	)
-	`, messageOwnerParticipant, messageAttribution, idFilter, escapedMessagesDir)); err != nil {
+	`, sourceSnapshot.identityExportSQL("m.source_message_id"), sourceSnapshot.identityExportSQL("m.rfc822_message_id"),
+		sourceSnapshot.textSQL("m.subject"), sourceSnapshot.textSQL("m.snippet"), messageOwnerParticipant,
+		sourceSnapshot.textSQL("m.message_type"), sourceSnapshot.identityExportSQL("m.list_id"), messageAttribution,
+		idFilter, escapedMessagesDir)); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
 	}
 
@@ -1566,11 +1627,11 @@ func buildCacheLocked(
 			SELECT
 				m.id,
 				m.source_id,
-				m.source_message_id,
-				TRY_CAST(m.rfc822_message_id AS VARCHAR) AS rfc822_message_id,
+				COALESCE(%s, '') AS source_message_id,
+				%s AS rfc822_message_id,
 				m.conversation_id,
-				CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(TRY_CAST(m.subject AS VARCHAR), '') END as subject,
-				CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(TRY_CAST(m.snippet AS VARCHAR), '') END as snippet,
+				CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(%s, '') END as subject,
+				CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(%s, '') END as snippet,
 				m.sent_at,
 				m.size_estimate,
 				m.has_attachments,
@@ -1578,14 +1639,17 @@ func buildCacheLocked(
 				m.deleted_from_source_at,
 				m.sender_id,
 				%s AS owner_participant_id,
-				COALESCE(TRY_CAST(m.message_type AS VARCHAR), '') as message_type,
-				TRY_CAST(m.list_id AS VARCHAR) AS list_id,
+				COALESCE(%s, '') as message_type,
+				%s AS list_id,
 				%s AS is_from_me,
 				CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 			FROM sqlite_db.messages m
 			WHERE 1 = 0
 		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-		`, messageOwnerParticipant, messageAttribution, escapedEmptyShard)); err != nil {
+		`, sourceSnapshot.identityExportSQL("m.source_message_id"), sourceSnapshot.identityExportSQL("m.rfc822_message_id"),
+			sourceSnapshot.textSQL("m.subject"), sourceSnapshot.textSQL("m.snippet"), messageOwnerParticipant,
+			sourceSnapshot.textSQL("m.message_type"), sourceSnapshot.identityExportSQL("m.list_id"), messageAttribution,
+			escapedEmptyShard)); err != nil {
 			return nil, fmt.Errorf("export empty messages shard: %w", err)
 		}
 	}
@@ -1696,6 +1760,7 @@ func buildCacheLocked(
 	if err := publishCache(staging, analyticsDir, publicationPlan, stateData, locking); err != nil {
 		return nil, err
 	}
+	reportCacheTextRepairs(os.Stderr, textRepairs)
 
 	return &buildResult{
 		ExportedCount: expectedTotalCount,
@@ -1909,12 +1974,34 @@ type cacheSourceSnapshot struct {
 	hasAttachmentMetadata       bool
 	hasMessageSourceAttribution bool
 	hasRecipientEnvelope        bool
+	// csvSnapshot records that the sqlite_db tables are CSV views exported
+	// from SQLite, not the attached database itself. It is set once at
+	// construction: prepareTables closes the SQLite transaction before the
+	// Parquet exports run, so sqliteTx cannot identify the path at that
+	// point. Address presence uses the snapshot's boolean columns instead
+	// of the raw email_address bytes.
+	csvSnapshot bool
 }
 
 type cacheSnapshotTable struct {
 	name          string
 	query         string
 	typeOverrides string
+	// identityCols lists query columns that attribution comparisons key on.
+	// The CSV fallback writes invalid UTF-8 in these columns as NULL instead
+	// of repairing it, matching cacheIdentityTextSQL on the sqlite_scanner
+	// path: two distinct invalid byte sequences must never collapse onto one
+	// repaired key and mis-attribute messages.
+	identityCols map[string]bool
+}
+
+// identityColumns builds the identityCols set for a cacheSnapshotTable.
+func identityColumns(columns ...string) map[string]bool {
+	set := make(map[string]bool, len(columns))
+	for _, column := range columns {
+		set[column] = true
+	}
+	return set
 }
 
 func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapshot, error) {
@@ -1965,6 +2052,7 @@ func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapsho
 	}
 	return &cacheSourceSnapshot{
 		duckDB: duckDB, sqliteDB: sqliteDB, sqliteTx: sqliteTx, tmpDir: tmpDir,
+		csvSnapshot: true,
 	}, nil
 }
 
@@ -1990,6 +2078,16 @@ func (s *cacheSourceSnapshot) DuckDB() sqlRunner {
 		return s.duckTx
 	}
 	return s.duckDB
+}
+
+// identityPresenceSQL preserves raw address presence independently of UTF-8
+// validity. CSV snapshots carry a boolean computed by SQLite before invalid
+// identity bytes become NULL; scanner snapshots still have the raw bytes.
+func (s *cacheSourceSnapshot) identityPresenceSQL(emailRef, presenceRef string) string {
+	if s.csvSnapshot {
+		return "COALESCE(" + presenceRef + ", FALSE)"
+	}
+	return cacheIdentityPresenceSQL(emailRef)
 }
 
 // Prepare materializes the CSV fallback after metadata has pinned the SQLite
@@ -2040,9 +2138,16 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 	// mr.email_address to derive both cache columns. NULL travels through
 	// the CSV fallback as the \N sentinel, so a row with no recorded header
 	// address stays distinguishable from one carrying an empty value.
+	// envelope_present records byte-level presence computed by SQLite over
+	// the raw bytes: invalid UTF-8 is already NULL in this CSV, so the
+	// identity key alone cannot distinguish a damaged envelope from a
+	// missing one.
 	recipientEnvelopeColumn := "NULL AS email_address"
+	recipientEnvelopePresence := "FALSE AS envelope_present"
+	const emailPresence = "CASE WHEN email_address IS NOT NULL AND TRIM(email_address) <> '' THEN TRUE ELSE FALSE END"
 	if s.hasRecipientEnvelope {
 		recipientEnvelopeColumn = "email_address"
+		recipientEnvelopePresence = emailPresence + " AS envelope_present"
 	}
 	messageColumns := "id, source_id, source_message_id, rfc822_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type, list_id, is_from_me"
 	messageTypes := "types={'id': 'BIGINT', 'source_id': 'BIGINT', 'source_message_id': 'VARCHAR', 'rfc822_message_id': 'VARCHAR', 'conversation_id': 'BIGINT', 'subject': 'VARCHAR', 'snippet': 'VARCHAR', 'sent_at': 'TIMESTAMP', 'size_estimate': 'BIGINT', 'has_attachments': 'BOOLEAN', 'attachment_count': 'INTEGER', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP', 'sender_id': 'BIGINT', 'message_type': 'VARCHAR', 'list_id': 'VARCHAR', 'is_from_me': 'BOOLEAN'"
@@ -2061,29 +2166,33 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 		// `deleted_at IS NULL` filter on this path the same way it does
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
 		// CSV view that lacks the column and the export fails on Windows.
-		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes},
-		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + " FROM message_recipients",
-			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR'}"},
+		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
+		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients",
+			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN'}",
+			identityColumns("recipient_type", "email_address")},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels",
-			"types={'message_id': 'BIGINT', 'label_id': 'BIGINT'}"},
+			"types={'message_id': 'BIGINT', 'label_id': 'BIGINT'}", nil},
 		{tableAttachments, attachmentQuery,
-			"types={'id': 'BIGINT', 'message_id': 'BIGINT', 'size': 'BIGINT', 'filename': 'VARCHAR', 'mime_type': 'VARCHAR', 'attachment_metadata': 'VARCHAR'}"},
-		{"persons", "SELECT id, display_name FROM persons", "types={'id': 'BIGINT', 'display_name': 'VARCHAR'}"},
-		{"person_participants", "SELECT person_id, participant_id FROM person_participants", "types={'person_id': 'BIGINT', 'participant_id': 'BIGINT'}"},
-		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number FROM participants",
-			"types={'id': 'BIGINT', 'email_address': 'VARCHAR', 'domain': 'VARCHAR', 'display_name': 'VARCHAR', 'phone_number': 'VARCHAR'}"},
+			"types={'id': 'BIGINT', 'message_id': 'BIGINT', 'size': 'BIGINT', 'filename': 'VARCHAR', 'mime_type': 'VARCHAR', 'attachment_metadata': 'VARCHAR'}", nil},
+		{"persons", "SELECT id, display_name FROM persons", "types={'id': 'BIGINT', 'display_name': 'VARCHAR'}", nil},
+		{"person_participants", "SELECT person_id, participant_id FROM person_participants", "types={'person_id': 'BIGINT', 'participant_id': 'BIGINT'}", nil},
+		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number, " + emailPresence + " AS primary_email_present FROM participants",
+			"types={'id': 'BIGINT', 'email_address': 'VARCHAR', 'domain': 'VARCHAR', 'display_name': 'VARCHAR', 'phone_number': 'VARCHAR', 'primary_email_present': 'BOOLEAN'}",
+			identityColumns("email_address")},
 		{"account_identities", "SELECT source_id, address FROM account_identities",
-			"types={'source_id': 'BIGINT', 'address': 'VARCHAR'}"},
+			"types={'source_id': 'BIGINT', 'address': 'VARCHAR'}",
+			identityColumns("address")},
 		{tableParticipantIdentifiers, "SELECT participant_id, identifier_type, identifier_value, display_value, is_primary FROM participant_identifiers",
-			"types={'participant_id': 'BIGINT', 'identifier_type': 'VARCHAR', 'identifier_value': 'VARCHAR', 'display_value': 'VARCHAR', 'is_primary': 'BOOLEAN'}"},
+			"types={'participant_id': 'BIGINT', 'identifier_type': 'VARCHAR', 'identifier_value': 'VARCHAR', 'display_value': 'VARCHAR', 'is_primary': 'BOOLEAN'}",
+			identityColumns("identifier_type", "identifier_value")},
 		{tableLabels, "SELECT id, name FROM labels",
-			"types={'id': 'BIGINT', 'name': 'VARCHAR'}"},
+			"types={'id': 'BIGINT', 'name': 'VARCHAR'}", nil},
 		{"sources", "SELECT id, identifier, source_type FROM sources",
-			"types={'id': 'BIGINT', 'identifier': 'VARCHAR', 'source_type': 'VARCHAR'}"},
+			"types={'id': 'BIGINT', 'identifier': 'VARCHAR', 'source_type': 'VARCHAR'}", identityColumns("identifier")},
 		{tableConversations, "SELECT id, source_conversation_id, title, COALESCE(conversation_type, 'email_thread') AS conversation_type FROM conversations",
-			"types={'id': 'BIGINT', 'source_conversation_id': 'VARCHAR', 'title': 'VARCHAR', 'conversation_type': 'VARCHAR'}"},
+			"types={'id': 'BIGINT', 'source_conversation_id': 'VARCHAR', 'title': 'VARCHAR', 'conversation_type': 'VARCHAR'}", identityColumns("source_conversation_id")},
 		{tableConversationParticipants, "SELECT conversation_id, participant_id FROM conversation_participants",
-			"types={'conversation_id': 'BIGINT', 'participant_id': 'BIGINT'}"},
+			"types={'conversation_id': 'BIGINT', 'participant_id': 'BIGINT'}", nil},
 	}
 }
 
@@ -2093,7 +2202,7 @@ func (s *cacheSourceSnapshot) prepareTables(tables []cacheSnapshotTable) error {
 	}
 	for _, t := range tables {
 		csvPath := filepath.Join(s.tmpDir, t.name+".csv")
-		if err := exportToCSV(s.sqliteTx, t.query, csvPath); err != nil {
+		if err := exportToCSV(s.sqliteTx, t.query, csvPath, t.identityCols); err != nil {
 			return fmt.Errorf("export %s to CSV: %w", t.name, err)
 		}
 	}
@@ -2113,7 +2222,7 @@ func (s *cacheSourceSnapshot) prepareTables(tables []cacheSnapshotTable) error {
 		escaped = strings.ReplaceAll(escaped, "'", "''")
 		csvOpts := "header=true, nullstr='\\N'"
 		if t.typeOverrides != "" {
-			csvOpts += ", " + t.typeOverrides
+			csvOpts += ", " + strings.TrimSuffix(t.typeOverrides, "}") + ", '__invalid_utf8': 'VARCHAR'}"
 		}
 		viewSQL := fmt.Sprintf(
 			`CREATE VIEW sqlite_db."%s" AS SELECT * FROM read_csv_auto('%s', %s)`,
@@ -2167,8 +2276,11 @@ func (s *cacheSourceSnapshot) Close() error {
 const csvNullStr = `\N`
 
 // exportToCSV exports the results of a SQL query to a CSV file.
-// NULL values are written as \N (PostgreSQL convention).
-func exportToCSV(db sqlRunner, query string, dest string) error {
+// NULL values are written as \N (PostgreSQL convention). Invalid UTF-8 in
+// identity columns is also written as NULL so attribution keys cannot
+// collide after repair; every other invalid value is repaired to U+FFFD and
+// marked for counting only when its output column is exported.
+func exportToCSV(db sqlRunner, query string, dest string, identityCols map[string]bool) error {
 	rows, err := db.Query(query)
 	if err != nil {
 		return err
@@ -2187,7 +2299,7 @@ func exportToCSV(db sqlRunner, query string, dest string) error {
 	if err != nil {
 		return err
 	}
-	if err := w.Write(cols); err != nil {
+	if err := w.Write(append(cols, "__invalid_utf8")); err != nil {
 		return err
 	}
 
@@ -2201,12 +2313,20 @@ func exportToCSV(db sqlRunner, query string, dest string) error {
 		if err := rows.Scan(ptrs...); err != nil {
 			return err
 		}
-		record := make([]string, len(cols))
+		record := make([]string, len(cols)+1)
 		for i, v := range values {
-			if v.Valid {
-				record[i] = v.String
-			} else {
+			if v.Valid && !utf8.ValidString(v.String) {
+				// Avoid CSV quotes even when the first damage is beyond the
+				// reader's sample window. Column names are fixed by tables().
+				record[len(cols)] += "|" + cols[i] + "|"
+			}
+			switch {
+			case !v.Valid:
 				record[i] = csvNullStr
+			case identityCols[cols[i]] && !utf8.ValidString(v.String):
+				record[i] = csvNullStr
+			default:
+				record[i] = textutil.SanitizeUTF8(v.String)
 			}
 		}
 		if err := w.Write(record); err != nil {

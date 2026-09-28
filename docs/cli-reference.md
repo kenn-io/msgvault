@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-26"
+last_edited: "2026-09-27"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1574,6 +1574,11 @@ msgvault repair-list-ids [--apply]
 The default is a dry run and does not modify the archive. Pass `--apply` to
 write changed values and mark derived analytics stale for the normal rebuild path.
 
+The analytics cache exports invalid UTF-8 List-IDs as NULL so mailing-list
+filters cannot match unrelated messages through replacement characters.
+Use `--apply` to recover these values when the stored raw MIME has an intact
+List-Id header. This cannot recover a header that is itself damaged.
+
 ---
 
 ## repair-labels
@@ -2480,6 +2485,15 @@ builds its own cache; use `--local` only to target this machine's local daemon.
 For automatic cache rebuilds after daemon-owned syncs, configure
 `[analytics].auto_build_cache` in `config.toml`.
 
+Build warnings count exported text values repaired with U+FFFD and identity
+values exported as unknown. Invalid source message IDs, source conversation
+IDs, and source identifiers export as empty strings; valid keys stay unchanged.
+Invalid List-IDs export as NULL; see [List-Id recovery](#repair-list-ids).
+The counts cover only datasets written by that build or refresh, on every
+platform. A source value written to two output
+columns counts twice; repeated identity comparisons do not add to the count.
+See [encoding repair limits](#repair-encoding) for archive recovery.
+
 ---
 
 ## activity
@@ -3357,6 +3371,17 @@ and [backup](usage/backup.md) before applying.
 Fix UTF-8 encoding issues in existing messages through the configured remote
 server or local daemon. The command streams the daemon's stdout/stderr back to
 the terminal, and the daemon serializes the repair with other archive mutations.
+For SQLite archives, it also rebuilds the analytics cache.
+It reports invalid RFC 822 Message-ID values and leaves their original bytes
+unchanged to avoid making distinct identifiers collide. The analytics cache
+exports these IDs as NULL. Recover the original values separately from a
+verified source before rebuilding the cache.
+
+It does not repair source message IDs, source identifiers, recorded
+sender/recipient envelope addresses, account identity addresses, or participant
+identifiers. Those fields need separate recovery from verified original
+values; rebuilding the analytics cache alone
+cannot recover them.
 
 ```bash
 msgvault repair-encoding

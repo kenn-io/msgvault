@@ -56,6 +56,17 @@ All notable changes to msgvault, grouped by release.
   searches look up matching people first instead of scanning every message.
   `%` and `_` in a `from:` domain now match literally, as they already did
   for `to:`.
+- **Damaged text no longer breaks fast search or cache builds.** The analytics
+  cache replaces invalid UTF-8 with U+FFFD in display and search text on every
+  platform; identity fields with invalid bytes are excluded from attribution
+  and export as unknown. The cache warning points to
+  `msgvault repair-encoding`, which reports invalid RFC 822 Message-ID values
+  and preserves their original bytes to avoid identifier collisions. These IDs
+  export as NULL. Building the cache itself does not modify the archive.
+  Older caches containing invalid UTF-8 report `cache_encoding_error`. Run
+  `msgvault build-cache --full-rebuild` to replace them.
+  Some identity fields need separate recovery; see the
+  [encoding repair limits](cli-reference.md#repair-encoding).
 - **Supervised daemons can own startup.** Set `[server].daemon_auto_start = false`
   when launchd, systemd, or Docker runs `msgvault serve`. CLI, TUI, and MCP
   commands then use the running daemon and fail instead of starting their own.

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -129,6 +130,45 @@ func TestRepairEncoding_NoScanErrors(t *testing.T) {
 	require.NoError(repairOtherStrings(st, stats, testDiscardLogger()), "repairOtherStrings")
 
 	assert.Zero(t, stats.skippedRows, "skippedRows should be 0 for valid data")
+}
+
+func TestRepairEncodingPreservesAndReportsInvalidMessageIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	testutil.SkipIfPostgres(t,
+		"inserts invalid UTF-8 bytes into a TEXT column; PostgreSQL rejects them")
+	st := testutil.NewTestStore(t)
+	db := st.DB()
+
+	_, err := db.Exec(`INSERT INTO sources
+		(id, source_type, identifier, created_at, updated_at)
+		VALUES (1, 'test', 'test@example.com', datetime('now'), datetime('now'))`)
+	require.NoError(err, "insert source")
+	_, err = db.Exec(`INSERT INTO conversations
+		(id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
+		VALUES (1, 1, 'conv-1', 'email_thread', 'title', datetime('now'), datetime('now'))`)
+	require.NoError(err, "insert conversation")
+	messageIDs := []string{"broken-\xff@example.test", "broken-\xfe@example.test", "broken-\uFFFD@example.test"}
+	for i, messageID := range messageIDs {
+		_, err = db.Exec(`INSERT INTO messages
+			(id, conversation_id, source_id, source_message_id, rfc822_message_id,
+			 message_type, sent_at, size_estimate)
+			VALUES (?, 1, 1, ?, ?, 'email', datetime('now'), 1000)`,
+			i+1, strconv.Itoa(i+1), messageID)
+		require.NoError(err, "insert message")
+	}
+
+	var reembedNeededIDs []int64
+	stderr := captureStderrDuring(t, func() { reembedNeededIDs, err = repairEncoding(st, testDiscardLogger()) })
+	require.NoError(err, "repair encoding")
+	for i, messageID := range messageIDs {
+		var got string
+		require.NoError(db.QueryRow(`SELECT rfc822_message_id FROM messages WHERE id = ?`, i+1).Scan(&got))
+		assert.Equal(messageID, got, "repair must preserve distinct identifiers")
+	}
+	assert.Contains(stderr, "2 RFC 822 Message-ID")
+	assert.Contains(stderr, "left unchanged")
+	assert.Empty(reembedNeededIDs, "Message-ID does not feed the message embedder")
 }
 
 // TestRepairMessageFields_ReturnsReembedNeededIDs guards the re-embedding
