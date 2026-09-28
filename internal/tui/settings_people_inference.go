@@ -64,6 +64,7 @@ type PeopleInferenceDisclosure struct {
 }
 
 type PeopleInferenceStatus struct {
+	ProfileCount          int
 	Configured            string
 	ConfiguredFingerprint string
 	ConfiguredEnabled     bool

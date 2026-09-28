@@ -353,6 +353,7 @@ func peopleInferenceHTTPError(operation string, response any, err error) error {
 
 func tuiPeopleInferenceStatus(response *generated.PeopleInferenceSettingsResponse) tui.PeopleInferenceStatus {
 	status := tui.PeopleInferenceStatus{
+		ProfileCount:      len(response.Profiles),
 		ConfiguredEnabled: response.ConfiguredEnabled, RunningEnabled: response.RunningEnabled,
 		PendingRestart: response.PendingRestart,
 	}

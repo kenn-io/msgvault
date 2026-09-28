@@ -153,7 +153,7 @@ func (m Model) handlePeopleInferenceControlKey(msg tea.KeyPressMsg) (tea.Model, 
 			s.confirmProfile = s.status.Configured
 		}
 	case "x":
-		if !s.status.ConfiguredEnabled && s.status.Configured != "" && s.status.ConfiguredFingerprint != "" {
+		if s.status.ProfileCount > 1 && !s.status.ConfiguredEnabled && s.status.Configured != "" && s.status.ConfiguredFingerprint != "" {
 			s.confirm = "remove"
 			s.confirmFingerprint = s.status.ConfiguredFingerprint
 			s.confirmProfile = s.status.Configured
@@ -254,7 +254,11 @@ func (m Model) renderPeopleInferenceControls() string {
 	} else {
 		actions := "[d] Disable  [v] Revoke consent"
 		if s.status != nil && !s.status.ConfiguredEnabled && s.status.ConfiguredFingerprint != "" {
-			actions += "  [x] Remove profile"
+			if s.status.ProfileCount > 1 {
+				actions += "  [x] Remove profile"
+			} else {
+				lines = append(lines, "Add another profile before removing this one.")
+			}
 		}
 		lines = append(lines, actions+"  [r] Refresh  [Esc] Back")
 	}

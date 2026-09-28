@@ -141,7 +141,7 @@ func TestTUIPeopleInferenceBackendUsesGeneratedStatusRoute(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/v1/settings/people-inference":
 			w.Header().Set("ETag", `"config-1"`)
-			_, _ = io.WriteString(w, `{"profiles":[],"configured_name":"old","configured_fingerprint":"fp-configured","running_name":"old","running_fingerprint":"fp-running","configured_enabled":true,"running_enabled":true,"pending_restart":false}`)
+			_, _ = io.WriteString(w, `{"profiles":[{"name":"old"},{"name":"backup"}],"configured_name":"old","configured_fingerprint":"fp-configured","running_name":"old","running_fingerprint":"fp-running","configured_enabled":true,"running_enabled":true,"pending_restart":false}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -151,6 +151,7 @@ func TestTUIPeopleInferenceBackendUsesGeneratedStatusRoute(t *testing.T) {
 
 	status, err := backend.LoadPeopleInferenceStatus(context.Background())
 	require.NoError(err)
+	assert.Equal(2, status.ProfileCount)
 	assert.Equal("old", status.Configured)
 	assert.Equal("old", status.Running)
 	assert.Equal("fp-configured", status.ConfiguredFingerprint)

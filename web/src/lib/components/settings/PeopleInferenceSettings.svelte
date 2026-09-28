@@ -147,13 +147,16 @@
               <Button disabled={controller.busy} onclick={() => void controller.revoke()} label="Revoke consent" />
             {/if}
             {#if removeConfirmationName !== controller.selectedName}
-              <Button disabled={controller.busy || (controller.status.configured_enabled && controller.status.configured_name === controller.selectedName)} onclick={() => removeConfirmationName = controller.selectedName} label="Remove profile" />
+              <Button disabled={controller.busy || controller.status.profiles.length < 2 || (controller.status.configured_enabled && controller.status.configured_name === controller.selectedName)} onclick={() => removeConfirmationName = controller.selectedName} label="Remove profile" />
             {/if}
           </div>
+          {#if controller.status.profiles.length < 2}
+            <p>Add another profile before removing this one.</p>
+          {/if}
           {#if removeConfirmationName === controller.selectedName}
             <div>
               <p>Removing {removeConfirmationName} removes its stored credential and saved policy. This cannot be undone.</p>
-              <Button disabled={controller.busy} onclick={() => {
+              <Button disabled={controller.busy || controller.status.profiles.length < 2} onclick={() => {
                 const target = removeConfirmationName;
                 removeConfirmationName = '';
                 void controller.remove(target);

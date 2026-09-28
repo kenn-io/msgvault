@@ -79,7 +79,7 @@ func TestSettingsPeopleControlsRemoveRequiresDisabledProfileAndConfirmation(t *t
 	assert := assert.New(t)
 	backend := &fakePeopleInferenceControlBackend{
 		loads:  []SettingsSnapshot{settingsFixture()},
-		status: PeopleInferenceStatus{Configured: "router", ConfiguredFingerprint: "fp-router", ConfiguredEnabled: true},
+		status: PeopleInferenceStatus{ProfileCount: 2, Configured: "router", ConfiguredFingerprint: "fp-router", ConfiguredEnabled: true},
 	}
 	model := loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend)
 	model.settingsBackend = backend
@@ -91,8 +91,21 @@ func TestSettingsPeopleControlsRemoveRequiresDisabledProfileAndConfirmation(t *t
 	assert.Empty(backend.removedProfile)
 
 	backend.status.ConfiguredEnabled = false
+	backend.status.ProfileCount = 1
 	model, refresh := sendKey(t, model, key('r'))
 	model = sendSettingsMsg(t, model, refresh())
+	assert.NotContains(stripANSI(model.renderView()), "[x] Remove profile")
+	assert.Contains(stripANSI(model.renderView()), "Add another profile before removing this one")
+	model, blocked = sendKey(t, model, key('x'))
+	assert.Nil(blocked)
+	model, blocked = sendKey(t, model, key('y'))
+	require.Nil(blocked)
+	assert.Empty(backend.removedProfile)
+
+	backend.status.ProfileCount = 2
+	model, refresh = sendKey(t, model, key('r'))
+	model = sendSettingsMsg(t, model, refresh())
+	assert.Contains(stripANSI(model.renderView()), "[x] Remove profile")
 	model, confirm := sendKey(t, model, key('x'))
 	assert.Nil(confirm)
 	view := stripANSI(model.renderView())
@@ -108,6 +121,7 @@ func TestSettingsPeopleControlsRemoveRequiresDisabledProfileAndConfirmation(t *t
 	assert.Equal("router", backend.removedProfile)
 	assert.Equal("fp-router", backend.removedFingerprint)
 	assert.Contains(stripANSI(model.renderView()), "Profile removed")
+	assert.NotContains(stripANSI(model.renderView()), "[x] Remove profile")
 	model, _ = sendKey(t, model, keyEsc())
 	assert.Contains(stripANSI(model.renderView()), "People inference: backup")
 }
@@ -160,6 +174,7 @@ func TestSettingsPeopleControlsWaitsForPendingMutationBeforeExit(t *testing.T) {
 			}
 			if operation == "remove" {
 				backend.status.ConfiguredEnabled = false
+				backend.status.ProfileCount = 2
 			}
 			model := loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend)
 			model.settingsBackend = backend
@@ -258,6 +273,7 @@ func (b *fakePeopleInferenceControlBackend) RevokePeopleInferenceConsent(_ conte
 
 func (b *fakePeopleInferenceControlBackend) RemovePeopleInferenceProfile(_ context.Context, profile, fingerprint string) (PeopleInferenceStatus, error) {
 	b.removedProfile, b.removedFingerprint = profile, fingerprint
+	b.status.ProfileCount--
 	b.status.Configured = "backup"
 	b.status.ConfiguredFingerprint = "fp-backup"
 	b.status.PendingRestart = true

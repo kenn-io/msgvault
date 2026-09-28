@@ -1,6 +1,52 @@
 import { expect, test } from '@playwright/test';
 import { installMixedArchive } from './e2e/fixtures/mixed-archive';
 
+test('People sweep keeps removal unavailable until another profile exists', async ({ page }) => {
+  await installMixedArchive(page);
+  const profile = {
+    name: 'router', protocol: 'openai_chat', model: 'model-one',
+    credential_source: 'env', credential_configured: true,
+    checked: true, consent_active: false, fingerprint: 'router-fingerprint',
+  };
+  const status = {
+    profiles: [profile], configured_name: 'router', configured_enabled: true,
+    running_enabled: false, pending_restart: false, stored_credentials_supported: true,
+  };
+  let removals = 0;
+  await page.route('**/api/v1/settings/people-inference', (route) => route.fulfill({
+    headers: { ETag: '"config-1"' }, json: status,
+  }));
+  await page.route('**/api/v1/settings/people-inference/disable', (route) => {
+    status.configured_enabled = false;
+    return route.fulfill({ headers: { ETag: '"config-2"' }, json: status });
+  });
+  await page.route('**/api/v1/settings/people-inference/providers/router', (route) => {
+    expect(route.request().method()).toBe('DELETE');
+    removals += 1;
+    status.profiles = status.profiles.filter((item) => item.name !== 'router');
+    status.configured_name = 'backup';
+    return route.fulfill({ headers: { ETag: '"config-3"' }, json: status });
+  });
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
+  await page.getByRole('button', { name: /^People sweep/ }).click();
+  const remove = page.getByRole('button', { name: 'Remove profile', exact: true });
+  await expect(remove).toBeDisabled();
+  await page.getByRole('button', { name: 'Disable people sweep', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Disable people sweep', exact: true })).toHaveCount(0);
+  await expect(remove).toBeDisabled();
+  await expect(page.getByText('Add another profile before removing this one.')).toBeVisible();
+  expect(removals).toBe(0);
+
+  status.profiles.push({ ...profile, name: 'backup', fingerprint: 'backup-fingerprint' });
+  await page.getByRole('button', { name: 'Reload people sweep settings' }).click();
+  await expect(remove).toBeEnabled();
+  await remove.click();
+  await page.getByRole('button', { name: 'Confirm removal' }).click();
+  await expect(page.getByText('Add another profile before removing this one.')).toBeVisible();
+  await expect(remove).toBeDisabled();
+  expect(removals).toBe(1);
+});
+
 for (const width of [390, 320]) {
   test(`People sweep setup fits a ${width}px viewport with disclosure open`, async ({ page }) => {
     await installMixedArchive(page);
