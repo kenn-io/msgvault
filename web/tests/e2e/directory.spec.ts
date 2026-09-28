@@ -196,8 +196,12 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   ]);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(maintenance.getByText('Time zone')).toBeVisible();
-  await maintenance.getByRole('button', { name: 'Show sensitive eligible fields' }).focus();
+  const drawerMaintenance = page.getByRole('dialog', { name: 'Person detail' }).getByRole('region', { name: 'Profile maintenance' });
+  await expect(drawerMaintenance.getByText('Time zone')).toBeVisible();
+  const drawerReveal = drawerMaintenance.getByRole('button', { name: 'Show sensitive eligible fields' });
+  await expect(drawerReveal).toBeEnabled();
+  await drawerReveal.focus();
+  await expect(drawerReveal).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(maintenance.getByText('Private note')).toBeVisible();
   const targetCards = maintenance.locator('li');
