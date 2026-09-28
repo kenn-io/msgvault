@@ -594,34 +594,6 @@ type inconclusiveLabelRefresh struct {
 	snapshotComplete bool
 }
 
-// maxThrottledPageRetries bounds how many times one page listing is retried
-// after Gmail throttles it. Each retry re-enters the client's rate limiter,
-// which holds the quota pause, so the loop waits out the window rather than
-// hammering it.
-const maxThrottledPageRetries = 5
-
-// listPageWithQuotaRetry runs one page listing, retrying when Gmail quota
-// throttling outlasts a single request's retry budget. The page token does
-// not change between attempts, so a retry never skips or repeats messages.
-// A per-minute quota window can stay closed longer than a metadata request
-// is allowed to keep retrying, which otherwise fails the whole sync.
-func (s *Syncer) listPageWithQuotaRetry(
-	ctx context.Context, listing string, list func() (*gmail.MessageListResponse, error),
-) (*gmail.MessageListResponse, error) {
-	for attempt := 0; ; attempt++ {
-		listResp, err := list()
-		if err == nil {
-			return listResp, nil
-		}
-		if _, throttled := errors.AsType[*gmail.ThrottledError](err); !throttled ||
-			ctx.Err() != nil || attempt >= maxThrottledPageRetries {
-			return nil, err
-		}
-		s.logger.Info("Gmail throttled page listing; retrying after quota pause",
-			"listing", listing, "attempt", attempt+1, "max", maxThrottledPageRetries, "error", err)
-	}
-}
-
 // processBatch processes a single batch of messages from a list response.
 func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listResp *gmail.MessageListResponse, labelMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (*batchResult, error) {
 	result := &batchResult{}
@@ -1408,9 +1380,7 @@ func (s *Syncer) full(
 
 	for {
 		// List messages
-		listResp, err := s.listPageWithQuotaRetry(ctx, "messages", func() (*gmail.MessageListResponse, error) {
-			return s.client.ListMessages(ctx, s.opts.Query, pageToken)
-		})
+		listResp, err := s.client.ListMessages(ctx, s.opts.Query, pageToken)
 		if err != nil {
 			s.failStoppedSync(state.syncID, err)
 			return nil, fmt.Errorf("list messages: %w", err)
@@ -1564,9 +1534,7 @@ func (s *Syncer) listCompleteMessageSnapshot(ctx context.Context) (map[string]st
 	present := make(map[string]struct{})
 	pageToken := ""
 	for {
-		response, err := s.listPageWithQuotaRetry(ctx, "complete snapshot", func() (*gmail.MessageListResponse, error) {
-			return lister.ListCompleteMessageSnapshot(ctx, pageToken)
-		})
+		response, err := lister.ListCompleteMessageSnapshot(ctx, pageToken)
 		if err != nil {
 			return nil, fmt.Errorf("list complete Gmail message snapshot: %w", err)
 		}

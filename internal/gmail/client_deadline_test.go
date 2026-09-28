@@ -73,7 +73,7 @@ func TestGetProfileRetryDeadline(t *testing.T) {
 						return nil, r.Context().Err()
 					case <-time.After(3 * time.Second):
 					}
-					return deadlineResponse(http.StatusTooManyRequests, `{"error":{"code":429}}`), nil
+					return deadlineResponse(http.StatusServiceUnavailable, `{"error":{"code":503}}`), nil
 				})
 				profile, err := c.GetProfile(ctx)
 				require.ErrorIs(err, context.DeadlineExceeded)
@@ -247,26 +247,79 @@ func TestGetProfileCancellationInterruptsRetry(t *testing.T) {
 	})
 }
 
-func TestGetProfileRecoversWithinDeadline(t *testing.T) {
+func TestReadRequestsRecoverAfterQuotaPause(t *testing.T) {
+	for _, op := range []struct {
+		name string
+		call func(*Client, context.Context) error
+	}{
+		{"profile", func(c *Client, ctx context.Context) error { _, err := c.GetProfile(ctx); return err }},
+		{"labels", func(c *Client, ctx context.Context) error { _, err := c.ListLabels(ctx); return err }},
+		{"messages", func(c *Client, ctx context.Context) error { _, err := c.ListMessages(ctx, "", "page-2"); return err }},
+		{"snapshot", func(c *Client, ctx context.Context) error {
+			_, err := c.ListCompleteMessageSnapshot(ctx, "page-2")
+			return err
+		}},
+		{"history", func(c *Client, ctx context.Context) error { _, err := c.ListHistory(ctx, 42, "page-2"); return err }},
+	} {
+		for _, quota := range []struct {
+			status int
+			pause  time.Duration
+		}{
+			{http.StatusForbidden, time.Minute},
+			{http.StatusTooManyRequests, 30 * time.Second},
+		} {
+			t.Run(op.name+"/"+http.StatusText(quota.status), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					start := time.Now()
+					requests := 0
+					var firstURL string
+					c := newDeadlineClient(t, func(r *http.Request) (*http.Response, error) {
+						requests++
+						if requests == 1 {
+							firstURL = r.URL.String()
+							return deadlineResponse(quota.status, `{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}`), nil
+						}
+						assert.Equal(t, firstURL, r.URL.String(), "retry the same page and query")
+						assert.GreaterOrEqual(t, time.Since(start), quota.pause, "do not send requests during the quota pause")
+						deadline, ok := r.Context().Deadline()
+						require.True(t, ok)
+						assert.Equal(t, 30*time.Second, time.Until(deadline), "start a fresh budget after the pause")
+						select {
+						case <-r.Context().Done():
+							return nil, r.Context().Err()
+						case <-time.After(20 * time.Second):
+						}
+						return deadlineResponse(http.StatusOK, `{}`), nil
+					})
+					require.NoError(t, op.call(c, context.Background()))
+					assert.Equal(t, 2, requests)
+				})
+			})
+		}
+	}
+}
+
+func TestGetProfileQuotaRetriesAreBounded(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		requests := 0
+		var lastRequest time.Time
 		c := newDeadlineClient(t, func(r *http.Request) (*http.Response, error) {
 			requests++
-			if requests == 1 {
-				return deadlineResponse(http.StatusTooManyRequests, ""), nil
+			if !lastRequest.IsZero() {
+				assert.GreaterOrEqual(time.Since(lastRequest), 30*time.Second)
 			}
-			return deadlineResponse(http.StatusOK, `{"emailAddress":"user@example.com","historyId":"42"}`), nil
+			lastRequest = time.Now()
+			return deadlineResponse(http.StatusTooManyRequests, `{"error":{"message":"Too many concurrent requests"}}`), nil
 		})
-		start := time.Now()
-		profile, err := c.GetProfile(context.Background())
-		require.NoError(err)
-		require.NotNil(profile)
-		assert.Equal("user@example.com", profile.EmailAddress)
-		assert.Equal(uint64(42), profile.HistoryID)
-		assert.Equal(2, requests)
-		assert.Less(time.Since(start), 30*time.Second)
+		_, err := c.GetProfile(context.Background())
+		require.Error(err)
+		throttled, ok := errors.AsType[*ThrottledError](err)
+		require.True(ok)
+		assert.Equal("Too many concurrent requests", throttled.Detail)
+		assert.Equal(6, requests, "one attempt and five quota retries")
+		assert.NotErrorIs(err, context.DeadlineExceeded, "quota exhaustion is not a context deadline")
 	})
 }
 
@@ -366,10 +419,11 @@ func TestListMessagesDeadlineReportsLastResponse(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		requests := 0
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		c := newDeadlineClient(t, func(r *http.Request) (*http.Response, error) {
 			requests++
-			// Each attempt costs a few seconds so the 30s budget, not
-			// maxRetries, ends the loop regardless of backoff jitter.
+			// The caller's deadline expires during the following quota pause.
 			select {
 			case <-r.Context().Done():
 				return nil, r.Context().Err()
@@ -381,16 +435,86 @@ func TestListMessagesDeadlineReportsLastResponse(t *testing.T) {
 			resp.Header.Set("Retry-After", "7")
 			return resp, nil
 		})
-		list, err := c.ListMessages(context.Background(), "", "")
+		list, err := c.ListMessages(ctx, "", "")
 		require.ErrorIs(err, context.DeadlineExceeded, "the deadline must stay matchable")
 		assert.Nil(list)
-		assert.GreaterOrEqual(requests, 2, "the failure must follow at least one retry")
+		assert.Equal(1, requests, "caller deadline interrupts the quota pause before another request")
 		_, throttled := errors.AsType[*ThrottledError](err)
 		assert.True(throttled, "callers must be able to recognise the throttle")
 		assert.Contains(err.Error(), "context deadline exceeded after ")
 		assert.Contains(err.Error(), "last response: rate limited (429): rateLimitExceeded; "+
 			"User-rate limit exceeded. Retry after 2026-09-26T22:23:39Z; Retry-After 7")
 	})
+}
+
+func TestGetProfileBodyDeadlinePreservesLastResponse(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		requests := 0
+		c := newDeadlineClient(t, func(r *http.Request) (*http.Response, error) {
+			requests++
+			if requests == 1 {
+				return deadlineResponse(http.StatusServiceUnavailable, ""), nil
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: &deadlineBody{ctx: r.Context()}}, nil
+		})
+		_, err := c.GetProfile(context.Background())
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Contains(t, err.Error(), "last response: server error (503)")
+		assert.Equal(t, 2, requests)
+	})
+}
+
+func TestGetProfileRetryHonorsSharedThrottle(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		requests := 0
+		var c *Client
+		c = newDeadlineClient(t, func(r *http.Request) (*http.Response, error) {
+			requests++
+			// Another request can pause the shared limiter during this retry budget.
+			c.rateLimiter.Throttle(time.Minute)
+			return deadlineResponse(http.StatusServiceUnavailable, ""), nil
+		})
+		start := time.Now()
+		_, err := c.GetProfile(context.Background())
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Contains(err.Error(), "last response: server error (503)")
+		assert.Equal(1, requests)
+		assert.Equal(30*time.Second, time.Since(start))
+	})
+}
+
+func TestGetProfileDeadlineAfterQuotaPausePreservesLastResponse(t *testing.T) {
+	for _, bodyRead := range []bool{false, true} {
+		name := "transport"
+		if bodyRead {
+			name = "body read"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				requests := 0
+				var retryStart time.Time
+				c := newDeadlineClient(t, func(r *http.Request) (*http.Response, error) {
+					requests++
+					if requests == 1 {
+						return deadlineResponse(http.StatusTooManyRequests, `{"error":{"message":"Too many concurrent requests"}}`), nil
+					}
+					retryStart = time.Now()
+					if bodyRead {
+						return &http.Response{StatusCode: http.StatusOK, Body: &deadlineBody{ctx: r.Context()}}, nil
+					}
+					<-r.Context().Done()
+					return nil, r.Context().Err()
+				})
+				_, err := c.GetProfile(context.Background())
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+				assert.Contains(err.Error(), "last response: rate limited (429): Too many concurrent requests")
+				assert.Equal(2, requests, "an I/O deadline must not start another quota retry")
+				assert.Equal(30*time.Second, time.Since(retryStart))
+			})
+		})
+	}
 }
 
 func TestGetProfileDeadlineWithoutResponseStaysBare(t *testing.T) {
