@@ -32,6 +32,7 @@ type fakeGraph struct {
 
 	mu      sync.Mutex
 	folders []string          // folder IDs, in list order
+	names   map[string]string // folder ID -> display name, when not derived from the ID
 	folder  map[string]string // message ID -> folder ID; absent when deleted
 	log     []change          // one entry per change
 	expired map[string]bool   // folder IDs whose next delta answers 410
@@ -120,7 +121,11 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 	case p == "/me/mailFolders":
 		var out []map[string]any
 		for _, id := range f.folders {
-			out = append(out, map[string]any{"id": id, "displayName": strings.ToUpper(id[:1]) + id[1:]})
+			name := f.names[id]
+			if name == "" {
+				name = strings.ToUpper(id[:1]) + id[1:]
+			}
+			out = append(out, map[string]any{"id": id, "displayName": name})
 		}
 		f.writeJSON(w, map[string]any{"value": out})
 	case strings.HasPrefix(p, "/me/mailFolders/") && strings.HasSuffix(p, "/messages/delta"):
@@ -714,6 +719,34 @@ func TestImportRemovedFolderIsRetired(t *testing.T) {
 	_, err = f.sync(t, st)
 	require.NoError(err)
 	assert.Equal(map[string]string{"m1": "deleted", "m2": "Inbox"}, state(t, st))
+}
+
+// A folder deleted and created again under the same name has a new ID. The
+// new folder takes over the old label by name, so the old ID is not retired.
+// The walk of the new folder still reconciles the old folder's messages.
+func TestImportRecreatedFolderReconcilesOldMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.names = map[string]string{"old": "Projects", "new": "Projects"}
+	f.folders = append(f.folders, "old")
+	f.put("m1", "old")
+	f.put("m2", "old")
+	f.put("m3", "old")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+
+	f.folders = []string{"inbox", "archive", "new"} // "old" is deleted, "new" created
+	f.remove("m1")
+	f.folder["m2"] = "inbox" // moved before the deletion, with no change log entry
+	f.folder["m3"] = "new"
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.Equal(map[string]string{"m1": "deleted", "m2": "Inbox", "m3": "Projects"}, state(t, st))
+	var sourceLabelID string
+	require.NoError(st.DB().QueryRow(`SELECT source_label_id FROM labels WHERE name = 'Projects'`).Scan(&sourceLabelID))
+	assert.Equal("new", sourceLabelID, "the new folder took over the old label")
 }
 
 // A known message that delta reports but that is deleted before its $value is
