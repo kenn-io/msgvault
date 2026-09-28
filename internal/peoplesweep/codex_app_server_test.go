@@ -366,8 +366,8 @@ func newSuccessfulCodexTransport(
 func TestCodexRegistryUsesOnlyExplicitAuthHome(t *testing.T) {
 	assertChecks := assert.New(t)
 	requireChecks := require.New(t)
-	if runtime.GOOS == "windows" {
-		t.Skip("codex auth home permission gates require Unix permission bits")
+	if runtime.GOOS != "linux" {
+		t.Skip("codex service proxy requires Linux")
 	}
 	authHome := t.TempDir()
 	requireChecks.NoError(os.Chmod(authHome, 0o700))
@@ -426,8 +426,8 @@ func TestCodexInferenceCopiesBackRefreshForSameAccount(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertChecks := assert.New(t)
 			requireChecks := require.New(t)
-			if runtime.GOOS == "windows" {
-				t.Skip("codex auth home permission gates require Unix permission bits")
+			if runtime.GOOS != "linux" {
+				t.Skip("codex service proxy requires Linux")
 			}
 			authHome := t.TempDir()
 			requireChecks.NoError(os.Chmod(authHome, 0o700))
@@ -482,8 +482,8 @@ func TestCodexInferenceCopiesBackRefreshForSameAccount(t *testing.T) {
 func TestCodexModelListingCopiesBackRefresh(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	if runtime.GOOS == "windows" {
-		t.Skip("codex auth home permission gates require Unix permission bits")
+	if runtime.GOOS != "linux" {
+		t.Skip("codex service proxy requires Linux")
 	}
 	authHome := t.TempDir()
 	require.NoError(os.Chmod(authHome, 0o700))
@@ -536,8 +536,8 @@ func TestCodexModelListingCopiesBackRefresh(t *testing.T) {
 func TestCodexInferenceRejectsChangedAccountDuringRefresh(t *testing.T) {
 	assertChecks := assert.New(t)
 	requireChecks := require.New(t)
-	if runtime.GOOS == "windows" {
-		t.Skip("codex auth home permission gates require Unix permission bits")
+	if runtime.GOOS != "linux" {
+		t.Skip("codex service proxy requires Linux")
 	}
 	authHome := t.TempDir()
 	requireChecks.NoError(os.Chmod(authHome, 0o700))
