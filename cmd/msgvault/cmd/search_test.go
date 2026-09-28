@@ -519,11 +519,8 @@ func searchHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 	return server, searchRequests
 }
 
-// TestSearchCmd_PrintsBackgroundIndexNote verifies the CLI caveats results
-// whenever the daemon reports the FTS index is not yet known complete: a
-// rebuild in progress (index_state="building") and an unfinished completeness
-// probe (index_state="checking") get distinct notes; a complete index gets
-// none.
+// TestSearchCmd_PrintsBackgroundIndexNote verifies only known index gaps
+// produce a caveat. An unfinished completeness probe alone stays silent.
 func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
 	cfg := testConfigValue()
 	useLocal := false
@@ -534,14 +531,14 @@ func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
 		wantNote   string
 	}{
 		{
-			name:       "building warns about the rebuild",
+			name:       "building warns about rebuilding or awaiting rebuild",
 			indexState: "building",
-			wantNote:   "the search index is being rebuilt in the background; results may be incomplete",
+			wantNote:   "the search index is rebuilding or awaiting a rebuild in the background; results may be incomplete",
 		},
 		{
-			name:       "checking warns the probe has not finished",
+			name:       "checking alone prints no note",
 			indexState: "checking",
-			wantNote:   "search index completeness is still being verified in the background; results may be incomplete",
+			wantNote:   "",
 		},
 		{
 			name:       "complete index prints no note",
@@ -606,7 +603,7 @@ func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
 
 			assert.Contains(out, "Lunch", "results still print")
 			if tt.wantNote == "" {
-				assert.NotContains(errOut, "Note:", "no index note for a complete index")
+				assert.NotContains(errOut, "Note:", "no index note without a known gap")
 			} else {
 				assert.Contains(errOut, tt.wantNote, "index state note")
 			}

@@ -1567,6 +1567,12 @@ terminals may wrap. An unknown message size appears as `-`.
 With `--json`, each result also includes `web_url` when the selected daemon can
 provide a browser link for that message.
 
+The daemon checks full-text index completeness in the background. The CLI
+warns that results may be incomplete when the daemon finds an index gap or
+is rebuilding the index. The warning also applies while a rebuild waits for
+other daemon work to finish. A completeness check alone prints no warning.
+API clients can still observe `index_state="checking"` while that check runs.
+
 ---
 
 ## repair-list-ids

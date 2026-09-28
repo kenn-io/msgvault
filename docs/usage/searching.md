@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-27"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -29,9 +29,10 @@ msgvault search <query>
 !!! note
     The full-text search index (FTS5) is populated automatically during sync.
     If an older archive needs an index backfill, msgvault checks and rebuilds
-    the index in the background. Search returns immediately from the index as
-    it exists now and reports when results may be incomplete while the daemon
-    is still checking or building.
+    the index in the background. Search uses the current index and warns about
+    incomplete results only for a known gap or rebuild, including a queued
+    rebuild. A completeness check alone stays quiet. See the
+    [CLI reference](../cli-reference.md#search) for details.
 
 ## Search Operators
 

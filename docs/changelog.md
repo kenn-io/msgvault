@@ -15,6 +15,11 @@ All notable changes to msgvault, grouped by release.
   CSV field, such as a display name with a comma, first appears deep in a large
   archive. The CSV snapshot now tells DuckDB the quote character instead of
   letting it guess from a sample.
+- Check default SQLite full-text indices for completeness through row IDs without
+  reading stored search content. Search warns about incomplete results only
+  for a known index gap or rebuild, including rebuilds awaiting other daemon
+  work; an unfinished completeness check alone stays silent.
+
 - Query published analytics while the daemon refreshes the cache in the
   background. `query --fresh` waits for current results; HTTP and MCP callers
   can track refresh jobs. The new `query_sql` MCP tool restricts SQL to archive

@@ -2546,6 +2546,17 @@ func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
 		synctest.Wait()
 		assert.Empty(backfillStarted, "backfill started while operation gate was occupied")
 
+		// The full probe found a gap, but rebuilding still waits for sync.
+		queuedReq := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+		queuedResp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(queuedResp, queuedReq)
+		require.Equal(http.StatusOK, queuedResp.Code)
+		var queued struct {
+			IndexState string `json:"index_state"`
+		}
+		require.NoError(json.NewDecoder(queuedResp.Body).Decode(&queued))
+		assert.Equal("building", queued.IndexState, "known gaps must be visible while rebuilding is queued")
+
 		releaseGate()
 		synctest.Wait()
 		assert.NotEmpty(backfillStarted, "backfill did not start after gate release")

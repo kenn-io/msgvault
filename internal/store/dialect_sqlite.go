@@ -489,34 +489,28 @@ func (d *SQLiteDialect) FTSAvailable(ctx context.Context, db *sql.DB) (bool, err
 	return err == nil || errors.Is(err, sql.ErrNoRows), nil
 }
 
-// FTSNeedsBackfill reports whether the FTS5 table needs population.
-// Probes for the existence of ANY message lacking an FTS entry, matching the
-// PostgreSQL EXISTS(search_fts IS NULL) semantics. The previous MAX(rowid)
-// vs MAX(id) heuristic missed a hole left at a LOW id while later ids were
-// indexed — reachable because UpsertFTS failures during sync are
-// warn-and-continue (sync.go) while the message row still commits, so id N can
-// be unindexed while N+1.. are indexed. messages_fts.rowid == messages.id and
-// there are no triggers, so the NOT EXISTS join is rowid-served and cheap on
-// FTS5 (no full body scan).
+const sqliteFTSNeedsBackfillDocsizeSQL = `SELECT EXISTS (SELECT 1 FROM messages m WHERE NOT EXISTS (SELECT 1 FROM messages_fts_docsize d WHERE d.id = m.id))`
+const sqliteFTSNeedsBackfillVirtualSQL = `SELECT EXISTS (SELECT 1 FROM messages m WHERE NOT EXISTS (SELECT 1 FROM messages_fts f WHERE f.rowid = m.id))`
+
+// FTSNeedsBackfill reports whether any message lacks an FTS5 entry. Probe
+// indexed row IDs through the docsize shadow table's integer primary key to
+// avoid reading stored FTS content. columnsize=0 indices have no docsize table
+// and fall back to the virtual table. Checking every message catches interior
+// holes left when indexing fails during sync but later messages are indexed.
 func (d *SQLiteDialect) FTSNeedsBackfill(db *sql.DB) bool {
 	var exists bool
-	if err := db.QueryRowContext(context.Background(),
-		`SELECT EXISTS (
-			SELECT 1 FROM messages m
-			 WHERE NOT EXISTS (
-			     SELECT 1 FROM messages_fts f WHERE f.rowid = m.id
-			 )
-		)`,
-	).Scan(&exists); err != nil {
-		return false
+	err := db.QueryRowContext(context.Background(), sqliteFTSNeedsBackfillDocsizeSQL).Scan(&exists)
+	if d.IsNoSuchTableError(err) {
+		err = db.QueryRowContext(context.Background(), sqliteFTSNeedsBackfillVirtualSQL).Scan(&exists)
 	}
-	return exists
+	return err == nil && exists
 }
 
-// FTSNeedsBackfillQuick compares MAX(id) against MAX(rowid) — two B-tree
-// lookups, instant at any archive size. It catches the dominant staleness
-// (tail of the messages table not yet indexed: fresh import, interrupted
-// backfill) but misses interior holes; FTSNeedsBackfill stays authoritative.
+// FTSNeedsBackfillQuick compares maximum message and indexed row IDs. The
+// docsize shadow table avoids stored-content reads; columnsize=0 indices fall
+// back to the virtual table. This catches unindexed tails after imports or
+// interrupted backfills but misses interior holes; FTSNeedsBackfill remains
+// authoritative.
 func (d *SQLiteDialect) FTSNeedsBackfillQuick(ctx context.Context, db *sql.DB) bool {
 	var msgMax int64
 	if err := db.QueryRowContext(ctx,
@@ -525,12 +519,15 @@ func (d *SQLiteDialect) FTSNeedsBackfillQuick(ctx context.Context, db *sql.DB) b
 		return false
 	}
 	var ftsMax int64
-	if err := db.QueryRowContext(ctx,
-		"SELECT COALESCE(MAX(rowid), 0) FROM messages_fts",
-	).Scan(&ftsMax); err != nil {
-		return false
+	err := db.QueryRowContext(ctx,
+		"SELECT COALESCE(MAX(id), 0) FROM messages_fts_docsize",
+	).Scan(&ftsMax)
+	if d.IsNoSuchTableError(err) {
+		err = db.QueryRowContext(ctx,
+			"SELECT COALESCE(MAX(rowid), 0) FROM messages_fts",
+		).Scan(&ftsMax)
 	}
-	return ftsMax < msgMax
+	return err == nil && ftsMax < msgMax
 }
 
 // FTSClearSQL returns the SQL to clear all FTS5 data.
