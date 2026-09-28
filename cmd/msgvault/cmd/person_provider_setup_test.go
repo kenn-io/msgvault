@@ -1428,6 +1428,8 @@ func TestPersonProviderDefaultDependenciesResolveStoredCredentialsAfterConfigLoa
 	assert.NotContains(string(configData), providerSetupSecretCanary)
 	assert.Contains(string(configData), `credential = "stored"`)
 
+	deps.isDaemonSubprocess = func() bool { return false }
+	deps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return false, nil }
 	removeRoot := newPersonProviderInvocationTestRoot()
 	removePerson := &cobra.Command{Use: "person"}
 	removePerson.AddCommand(newPersonProviderCommand(deps))
@@ -1688,12 +1690,14 @@ func TestPersonProviderLifecycleJSONOutput(t *testing.T) {
 		DaemonRestartRequired: true,
 	}, used)
 
+	deps.isDaemonSubprocess = func() bool { return false }
+	deps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return false, nil }
 	removeRaw, err := executePersonProviderCommand(t, deps, "remove", "default", "--json")
 	require.NoError(err)
 	var removed personProviderRemoveOutput
 	require.NoError(json.Unmarshal([]byte(removeRaw), &removed), removeRaw)
 	assert.Equal(personProviderRemoveOutput{
-		Name: "default", Removed: true, DaemonRestartRequired: true,
+		Name: "default", Removed: true, DaemonRestartRequired: false,
 	}, removed)
 }
 
@@ -1910,6 +1914,8 @@ func TestPersonProviderRemoveRevokesAndDeletesOnlyExactCredential(t *testing.T) 
 	}
 	deps.setup.credentials = credentialStore
 
+	deps.isDaemonSubprocess = func() bool { return false }
+	deps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return false, nil }
 	output, err := executePersonProviderCommand(t, deps, "remove", "old")
 	require.NoError(err)
 	assert.Contains(output, "old")
@@ -1946,6 +1952,8 @@ func TestPersonProviderRemoveRevokesAndDeletesOnlyExactCredential(t *testing.T) 
 	activeDeps.restoreConfigFile = func(published, before config.ConfigFile) (config.ConfigFile, error) {
 		return config.RestoreConfigFile(activePath, published, before)
 	}
+	activeDeps.isDaemonSubprocess = func() bool { return false }
+	activeDeps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return false, nil }
 	_, err = executePersonProviderCommand(t, activeDeps, "remove", "default")
 	require.ErrorContains(err, "active")
 }
@@ -2007,6 +2015,8 @@ func TestPersonProviderRemoveUsesOneFreshConfigSnapshotForAllSideEffects(t *test
 	}
 	deps.setup.credentials = credentialStore
 
+	deps.isDaemonSubprocess = func() bool { return false }
+	deps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return false, nil }
 	_, err = executePersonProviderCommand(t, deps, "remove", "old")
 	require.NoError(err)
 	stillActive, err := st.HasActivePersonInferenceConsent(t.Context(), staleProfile.Fingerprint)
@@ -2072,6 +2082,8 @@ func TestPersonProviderRemoveConfigConflictHasNoConsentOrCredentialSideEffects(t
 	}
 	deps.setup.credentials = credentialStore
 
+	deps.isDaemonSubprocess = func() bool { return false }
+	deps.providerStoreOwnedByDaemon = func(context.Context) (bool, error) { return false, nil }
 	_, err = executePersonProviderCommand(t, deps, "remove", "old")
 	require.ErrorIs(err, config.ErrConfigConflict)
 	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)

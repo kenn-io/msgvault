@@ -1050,15 +1050,6 @@ func verifyPersonProviderFingerprint(
 	return nil
 }
 
-func proxySavedPersonProviderRevoke(
-	command *cobra.Command,
-	deps personProviderCommandDeps,
-	name string,
-	fingerprint string,
-) error {
-	return proxySavedPersonProviderOperation(command, deps, "revoke", name, fingerprint, command.OutOrStdout())
-}
-
 func proxySavedPersonProviderRevokeFingerprint(
 	command *cobra.Command,
 	deps personProviderCommandDeps,

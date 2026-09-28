@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/personenrollment"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -1261,6 +1262,11 @@ func personProviderMutationNoticeFixture(
 			return config.RestoreConfigFile(path, published, before)
 		},
 		configHomeDir: func() string { return filepath.Dir(path) },
+		removeWithDaemon: func(ctx context.Context, name, etag string) error {
+			record("daemon-remove")
+			_, err := personenrollment.NewService(path, st).RemoveProfile(ctx, etag, name, "", "cli", nil)
+			return err
+		},
 		proxy: func(*cobra.Command, []string, map[string]string) error {
 			record("proxy")
 			return nil
@@ -1271,10 +1277,9 @@ func personProviderMutationNoticeFixture(
 
 // TestPersonProviderUseAndRemoveRecommendDaemonRestartWhenDaemonKeepsStartupConfig
 // pins the local half of the mutation boundary: a successful local config
-// mutation must tell the operator that a running daemon keeps the people
-// sweep configuration captured at startup, while the same mutation without
-// a running daemon stays silent. The daemon subprocess case keeps the
-// notice too: the parent daemon scheduled its sweep from startup config.
+// mutation reports a pending restart only when a daemon keeps its startup
+// config. Removal refuses subprocess execution because it needs the parent
+// daemon's running policy, and uses the Settings operation from the frontend.
 func TestPersonProviderUseAndRemoveRecommendDaemonRestartWhenDaemonKeepsStartupConfig(t *testing.T) {
 	scenarios := []struct {
 		name               string
@@ -1300,6 +1305,12 @@ func TestPersonProviderUseAndRemoveRecommendDaemonRestartWhenDaemonKeepsStartupC
 				deps, events := personProviderMutationNoticeFixture(
 					t, scenario.isDaemonSubprocess, scenario.daemonOwnsStore)
 				output, err := executePersonProviderCommand(t, deps, operation.verb, "beta")
+				if operation.verb == "remove" && scenario.isDaemonSubprocess {
+					require.ErrorContains(err, "cannot identify the running people provider policy")
+					assert.NotContains(*events, "store")
+					assert.NotContains(*events, "edit")
+					return
+				}
 				require.NoError(err)
 				assert.Contains(output, operation.success)
 				if scenario.wantNotice {
@@ -1309,10 +1320,8 @@ func TestPersonProviderUseAndRemoveRecommendDaemonRestartWhenDaemonKeepsStartupC
 					assert.NotContains(output, "restart")
 				}
 				if operation.verb == "remove" {
-					if scenario.isDaemonSubprocess {
-						assert.Contains(*events, "store")
-					} else if scenario.daemonOwnsStore {
-						assert.Contains(*events, "proxy")
+					if scenario.daemonOwnsStore {
+						assert.Contains(*events, "daemon-remove")
 					} else {
 						assert.Contains(*events, "store")
 						assert.NotContains(*events, "proxy")
@@ -1326,12 +1335,10 @@ func TestPersonProviderUseAndRemoveRecommendDaemonRestartWhenDaemonKeepsStartupC
 // TestPersonProviderUseAndRemoveNoticeLiveIncompatibleDaemon pins the
 // restart guidance for a daemon that responds but fails the API
 // compatibility check. The compatibility-sensitive ownership signal finds
-// no daemon, so the mutation stays local and nothing is proxied to the
-// incompatible daemon, yet that live process still serves the people sweep
-// config it captured at startup: use and remove must recommend a daemon
-// restart instead of silently letting scheduled sweeps keep the stale
-// selection. The daemon is faked with the same responding ping endpoint and
-// runtime record pattern the restore-into-live-home guard tests use.
+// no daemon, yet that live process still serves its startup policy. Use
+// recommends a restart. Removal must refuse because it cannot revoke the
+// running policy through the incompatible daemon. The test uses a responding
+// ping endpoint and the runtime record pattern from the restore guards.
 func TestPersonProviderUseAndRemoveNoticeLiveIncompatibleDaemon(t *testing.T) {
 	cfg := testConfigValue()
 
@@ -1395,6 +1402,13 @@ func TestPersonProviderUseAndRemoveNoticeLiveIncompatibleDaemon(t *testing.T) {
 			}
 			deps.daemonAliveForRestartNotice = defaults.daemonAliveForRestartNotice
 			output, err := executePersonProviderCommandContext(testCtx, t, deps, operation.verb, "beta")
+			if operation.verb == "remove" {
+				require.ErrorContains(err, "cannot identify the running people provider policy")
+				assert.NotContains(*events, "store")
+				assert.NotContains(*events, "edit")
+				assert.NotContains(*events, "daemon-remove")
+				return
+			}
 			require.NoError(err)
 			assert.Contains(output, operation.success)
 			assert.Contains(output, "running daemon")

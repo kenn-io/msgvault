@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -167,76 +166,6 @@ func TestPersonProviderLoginAndModelsNeverProxy(t *testing.T) {
 	}
 }
 
-func TestPersonProviderFrontendRemoveProxiesOnlyNamedRevoke(t *testing.T) {
-	assertAnError := assert.AnError
-	newRequire := require.New
-	assert := assert.New(t)
-	require := require.New(t)
-	configured := personProviderTestConfig()
-	beta := configuredPersonProvider(configured)
-	beta.Model = "beta-model"
-	configured.Providers["beta"] = beta
-	path, _ := retainedPersonProviderTestConfig(t, configured)
-	selected := configured
-	selected.Provider = peoplesweep.ProviderSelection{Name: "beta"}
-	profile, err := selected.Profile()
-	require.NoError(err)
-	st := testutil.NewSQLiteTestStore(t)
-	_, err = st.EnsurePersonInferenceProfile(t.Context(), profile)
-	require.NoError(err)
-	require.NoError(st.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{
-		ProfileFingerprint: profile.Fingerprint, CheckedAt: time.Now(),
-		DriverVersion: profile.DriverVersion, OutputMode: profile.OutputMode, ModelVersion: profile.Model,
-	}))
-	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "test")
-	require.NoError(err)
-	var gotArgs []string
-	var events []string
-	deps := personProviderCommandDeps{
-		config:             func() peoplesweep.Config { return configured },
-		isDaemonSubprocess: func() bool { return false },
-		proxy: func(command *cobra.Command, args []string, _ map[string]string) error {
-			events = append(events, "revoke")
-			var err error
-			gotArgs, err = daemonCLIArgsFromCobra(command, args)
-			if err != nil {
-				return err
-			}
-			_, err = executePersonProviderCommand(t, localPersonProviderDeps(configured, st, nil), gotArgs[2:]...)
-			return err
-		},
-		openStore: func() (personProviderStore, func(), error) {
-			require := newRequire(t)
-			require.FailNow("frontend remove must revoke through the daemon owner")
-			return nil, nil, assertAnError
-		},
-		readConfigFile: func() (config.ConfigFile, error) {
-			return config.ReadConfigFile(path)
-		},
-		editConfigTables: func(etag string, edits []config.TableEdit) (config.ConfigFile, error) {
-			events = append(events, "edit")
-			return config.EditConfigTables(path, etag, edits)
-		},
-		restoreConfigFile: func(published, before config.ConfigFile) (config.ConfigFile, error) {
-			return config.RestoreConfigFile(path, published, before)
-		},
-		configHomeDir: func() string { return filepath.Dir(path) },
-	}
-
-	_, err = executePersonProviderCommand(t, deps, "remove", "beta")
-	require.NoError(err)
-	assert.Equal([]string{
-		"person", "provider", "revoke", "--if-fingerprint=" + profile.Fingerprint, "beta",
-	}, gotArgs)
-	assert.Equal([]string{"revoke", "edit"}, events)
-	checked, err := st.HasSuccessfulPersonInferenceCheck(t.Context(), profile.Fingerprint)
-	require.NoError(err)
-	assert.False(checked, "proxied removal must discard the check in the daemon's store")
-	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
-	require.NoError(err)
-	assert.False(active)
-}
-
 func TestPersonProviderRemoveCompletesLocalPreflightBeforeRevoke(t *testing.T) {
 	for _, test := range []struct {
 		name       string
@@ -297,17 +226,12 @@ func TestPersonProviderRemoveCompletesLocalPreflightBeforeRevoke(t *testing.T) {
 			if test.mutateFile != nil {
 				test.mutateFile(t, path)
 			}
-			revokes := 0
 			edits := 0
 			deps := personProviderCommandDeps{
 				config:                     func() peoplesweep.Config { return test.configured },
 				isDaemonSubprocess:         func() bool { return false },
-				providerStoreOwnedByDaemon: func(context.Context) (bool, error) { return true, nil },
-				proxy: func(*cobra.Command, []string, map[string]string) error {
-					revokes++
-					return nil
-				},
-				readConfigFile: func() (config.ConfigFile, error) { return config.ReadConfigFile(path) },
+				providerStoreOwnedByDaemon: func(context.Context) (bool, error) { return false, nil },
+				readConfigFile:             func() (config.ConfigFile, error) { return config.ReadConfigFile(path) },
 				editConfigTables: func(etag string, planned []config.TableEdit) (config.ConfigFile, error) {
 					edits++
 					return config.EditConfigTables(path, etag, planned)
@@ -319,13 +243,12 @@ func TestPersonProviderRemoveCompletesLocalPreflightBeforeRevoke(t *testing.T) {
 
 			_, err := executePersonProviderCommand(t, deps, "remove", test.configured.Provider.Name)
 			require.ErrorContains(t, err, test.wantError)
-			assert.Zero(t, revokes)
 			assert.Zero(t, edits)
 		})
 	}
 }
 
-func TestPersonProviderDaemonRemovePreflightsStoredCredentialBeforeRevoke(t *testing.T) {
+func TestPersonProviderLocalRemovePreflightsStoredCredentialBeforeRevoke(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	requireStoredCredentialStorePlatform(t)
@@ -348,18 +271,12 @@ func TestPersonProviderDaemonRemovePreflightsStoredCredentialBeforeRevoke(t *tes
 	externalPath := filepath.Join(t.TempDir(), "external-credential")
 	require.NoError(os.WriteFile(externalPath, []byte("must-remain"), 0o600))
 	require.NoError(os.Symlink(externalPath, credentialPath))
-
-	revokes := 0
 	edits := 0
 	deps := personProviderCommandDeps{
 		config:                     func() peoplesweep.Config { return configured },
 		isDaemonSubprocess:         func() bool { return false },
-		providerStoreOwnedByDaemon: func(context.Context) (bool, error) { return true, nil },
-		proxy: func(*cobra.Command, []string, map[string]string) error {
-			revokes++
-			return nil
-		},
-		readConfigFile: func() (config.ConfigFile, error) { return config.ReadConfigFile(path) },
+		providerStoreOwnedByDaemon: func(context.Context) (bool, error) { return false, nil },
+		readConfigFile:             func() (config.ConfigFile, error) { return config.ReadConfigFile(path) },
 		editConfigTables: func(etag string, planned []config.TableEdit) (config.ConfigFile, error) {
 			edits++
 			return config.EditConfigTables(path, etag, planned)
@@ -372,7 +289,6 @@ func TestPersonProviderDaemonRemovePreflightsStoredCredentialBeforeRevoke(t *tes
 
 	output, err := executePersonProviderCommand(t, deps, "remove", "beta")
 	require.Error(err)
-	assert.Zero(revokes)
 	assert.Zero(edits)
 	assert.NotContains(output, providerSetupSecretCanary)
 	assert.NotContains(err.Error(), providerSetupSecretCanary)
@@ -387,7 +303,7 @@ func TestPersonProviderDaemonRemovePreflightsStoredCredentialBeforeRevoke(t *tes
 	assert.Contains(finalConfig.People.Sweep.Providers, "beta")
 }
 
-func TestPersonProviderDaemonRemoveMissingCredentialRootHasZeroSideEffects(t *testing.T) {
+func TestPersonProviderLocalRemoveMissingCredentialRootHasZeroSideEffects(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	requireStoredCredentialStorePlatform(t)
@@ -408,18 +324,12 @@ func TestPersonProviderDaemonRemoveMissingCredentialRootHasZeroSideEffects(t *te
 	require.NoError(statErr)
 	beforeEntries, readErr := os.ReadDir(tokensParent)
 	require.NoError(readErr)
-
-	revokes := 0
 	edits := 0
 	deps := personProviderCommandDeps{
 		config:                     func() peoplesweep.Config { return configured },
 		isDaemonSubprocess:         func() bool { return false },
-		providerStoreOwnedByDaemon: func(context.Context) (bool, error) { return true, nil },
-		proxy: func(*cobra.Command, []string, map[string]string) error {
-			revokes++
-			return nil
-		},
-		readConfigFile: func() (config.ConfigFile, error) { return config.ReadConfigFile(path) },
+		providerStoreOwnedByDaemon: func(context.Context) (bool, error) { return false, nil },
+		readConfigFile:             func() (config.ConfigFile, error) { return config.ReadConfigFile(path) },
 		editConfigTables: func(etag string, planned []config.TableEdit) (config.ConfigFile, error) {
 			edits++
 			return config.EditConfigTables(path, etag, planned)
@@ -432,7 +342,6 @@ func TestPersonProviderDaemonRemoveMissingCredentialRootHasZeroSideEffects(t *te
 
 	output, err := executePersonProviderCommand(t, deps, "remove", "beta")
 	require.ErrorContains(err, "preflight stored people provider credential deletion")
-	assert.Zero(revokes)
 	assert.Zero(edits)
 	assert.Zero(credentials.deletes)
 	assert.NotContains(output, providerSetupSecretCanary)
@@ -450,7 +359,7 @@ func TestPersonProviderDaemonRemoveMissingCredentialRootHasZeroSideEffects(t *te
 	assert.Contains(finalConfig.People.Sweep.Providers, "beta")
 }
 
-func TestPersonProviderDaemonRemoveValidReplacementRaceRollsBackExactConfig(t *testing.T) {
+func TestPersonProviderLocalRemoveValidReplacementRaceRollsBackExactConfig(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	requireStoredCredentialStorePlatform(t)
@@ -483,19 +392,15 @@ func TestPersonProviderDaemonRemoveValidReplacementRaceRollsBackExactConfig(t *t
 			return os.WriteFile(credentialPath, replacementContents, 0o600)
 		},
 	}
-
-	revokes := 0
 	edits := 0
 	restores := 0
+	st := testutil.NewSQLiteTestStore(t)
 	deps := personProviderCommandDeps{
 		config:                     func() peoplesweep.Config { return configured },
+		openStore:                  func() (personProviderStore, func(), error) { return st, func() {}, nil },
 		isDaemonSubprocess:         func() bool { return false },
-		providerStoreOwnedByDaemon: func(context.Context) (bool, error) { return true, nil },
-		proxy: func(*cobra.Command, []string, map[string]string) error {
-			revokes++
-			return nil
-		},
-		readConfigFile: func() (config.ConfigFile, error) { return config.ReadConfigFile(path) },
+		providerStoreOwnedByDaemon: func(context.Context) (bool, error) { return false, nil },
+		readConfigFile:             func() (config.ConfigFile, error) { return config.ReadConfigFile(path) },
 		editConfigTables: func(etag string, planned []config.TableEdit) (config.ConfigFile, error) {
 			edits++
 			return config.EditConfigTables(path, etag, planned)
@@ -510,7 +415,6 @@ func TestPersonProviderDaemonRemoveValidReplacementRaceRollsBackExactConfig(t *t
 	output, err := executePersonProviderCommand(t, deps, "remove", "beta")
 	require.ErrorContains(err, "credential changed during guarded deletion")
 	require.ErrorContains(err, "exact people provider consent remains revoked")
-	assert.Equal(1, revokes)
 	assert.Equal(1, edits)
 	assert.Equal(1, restores)
 	assert.NotContains(output, providerSetupSecretCanary)

@@ -1919,8 +1919,13 @@ commands accept `--limit` (1–200) and `--offset`. `sweep run --backstop`
 revisits older evidence in a bounded pass.
 
 Provider configuration edits run on the daemon host. Restart the daemon after
-changing its active provider or policy. For setup, privacy controls, budgets,
-and recovery, see [profile automation](/docs/usage/people-automation/).
+changing its active provider or policy. Profile removal uses the running daemon
+to revoke consent and clear checks for both the saved and running policies. If
+the daemon is incompatible, stop it before removing a profile. With no daemon,
+removal updates the local archive directly.
+
+For setup, privacy controls, budgets, and recovery, see
+[profile automation](/docs/usage/people-automation/).
 [Provider status](#person-provider-status), [reverify](#person-provider-reverify),
 [set](#person-provider-set), and [briefs](#person-brief) have additional details
 below.
