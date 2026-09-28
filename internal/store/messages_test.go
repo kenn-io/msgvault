@@ -1083,6 +1083,7 @@ func TestPersistRepairMessageReplacesCompleteSnapshotAtomically(t *testing.T) {
 	_, oldHits, err := fixture.Store.SearchMessages("original-target-token", 0, 10)
 	require.NoError(err)
 	assert.Zero(oldHits, "repair must remove the old FTS document")
+	waitForFeedPast(t, fixture.Store, after.ContentChangedAt.Time)
 	page, err := fixture.Store.ListChangedMessages(
 		t.Context(), store.ChangedMessagesFrom(fixture.Baseline.Add(time.Second)), 20)
 	require.NoError(err)
