@@ -115,7 +115,7 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 	// (buildIdentityFactConditions), so participant/domain filters become
 	// edge semi-joins — the aggregated participant list columns of the
 	// legacy view are never touched.
-	conditions, factArgs := buildIdentityFactConditions(explore, e.identityActivityPath())
+	conditions, factArgs := buildIdentityFactConditions(explore)
 	args := make([]any, 0, len(factArgs)+4)
 	args = append(args, request.CanonicalID)
 	args = append(args, factArgs...)
@@ -133,7 +133,6 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 
 	queryText := buildRelationshipTimelineSQL(
 		conditions,
-		e.identityActivityPath(),
 		quoteIdentitySQLPath(e.parquetGlob()),
 		quoteIdentitySQLPath(e.parquetPath(datasetConversations)),
 	)
@@ -260,9 +259,7 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 // (MIME structure at sync time), not attachment_count: extraction can lag
 // or fail, leaving the flag true with a zero count, and the indicator must
 // match what the message list shows for the same message.
-func buildRelationshipTimelineSQL(conditions, activityGlob, messagesGlob, conversationsGlob string) string {
-	activityScan := `read_parquet('` + activityGlob + `',
-        hive_partitioning=true, union_by_name=true)`
+func buildRelationshipTimelineSQL(conditions, messagesGlob, conversationsGlob string) string {
 	// The membership IN-subquery is a semi-join whose build side is the
 	// subject's bare message IDs (compact even for archive-scale clusters);
 	// the outer scan then folds per-message facts and owner presence into
@@ -280,10 +277,10 @@ WITH subject_facts AS (
         any_value(a.is_chat) AS is_chat,
         any_value(a.has_attachments) AS has_attachments,
         bool_or(a.is_owner AND a.is_direct) AS with_owner
-    FROM ` + activityScan + ` a
+    FROM relationship_activity_expanded a
     WHERE a.message_id IN (
         SELECT f.message_id
-        FROM ` + activityScan + ` f
+        FROM relationship_activity_expanded f
         WHERE f.canonical_id = ? AND (` + conditions + `)
     )
     GROUP BY a.message_id

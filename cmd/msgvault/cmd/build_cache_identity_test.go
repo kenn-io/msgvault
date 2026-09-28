@@ -71,6 +71,53 @@ func TestBuildCache_SlackDefaultIdentityResolvesOwnerParticipant(t *testing.T) {
 	assert.True(t, isFromMe, "owner resolution must feed Slack relationship analytics")
 }
 
+func TestBuildCache_FromRecipientChangeRefreshesOwner(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
+	analyticsDir := filepath.Join(t.TempDir(), "analytics")
+	st, err := store.Open(dbPath)
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema())
+	src, err := st.GetOrCreateSource("slack", "synthetic-owner")
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(src.ID, "thread", "direct_chat", "Synthetic")
+	require.NoError(err)
+	first, err := st.EnsureParticipant("first@example.test", "First", "example.test")
+	require.NoError(err)
+	second, err := st.EnsureParticipant("second@example.test", "Second", "example.test")
+	require.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{
+		ConversationID: conv, SourceID: src.ID, SourceMessageID: "message", MessageType: "slack",
+		IsFromMe: true, SentAt: sql.NullTime{Time: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{first}, []string{"First"}))
+	_, err = buildCacheAuto(dbPath, analyticsDir)
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{second}, []string{"Second"}))
+	var isFromMe bool
+	require.NoError(st.DB().QueryRow(`SELECT is_from_me FROM messages WHERE id = ?`, id).Scan(&isFromMe))
+	require.True(isFromMe)
+	assert.True(cacheNeedsBuild(dbPath, analyticsDir).FullRebuild)
+	_, err = buildCacheAuto(dbPath, analyticsDir)
+	require.NoError(err)
+	db, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+	var owner int64
+	require.NoError(db.QueryRow(`SELECT owner_participant_id FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
+		filepath.Join(analyticsDir, "messages", "**", "*.parquet"), id).Scan(&owner))
+	assert.Equal(second, owner)
+	var isSender, isOwner bool
+	require.NoError(db.QueryRow(`SELECT is_sender, is_owner FROM read_parquet(?, hive_partitioning=true)
+		WHERE message_id = ? AND canonical_id = ?`,
+		filepath.Join(analyticsDir, "relationship_activity", "**", "*.parquet"), id, second).Scan(&isSender, &isOwner))
+	assert.True(isSender)
+	assert.True(isOwner)
+}
+
 // TestBuildCache_DerivesIsFromMeAndIdentityDatasets verifies that:
 //   - messages Parquet gains a derived is_from_me column: true when the
 //     sender's participant email case-insensitively matches a confirmed

@@ -19,6 +19,9 @@ const (
 	ModeFull Mode = iota
 	ModeIncremental
 	ModeIndexOnly
+	// ModeAppendRepair rebuilds activity after old recipients change while
+	// reading committed and staged message shards together.
+	ModeAppendRepair
 )
 
 // BuildOptions identifies committed, staged, and output cache roots.
@@ -27,6 +30,8 @@ type BuildOptions struct {
 	CommittedRoot  string
 	StagedBaseRoot string
 	OutputRoot     string
+	// ReplacedBaseDatasets identifies complete child exports during an append.
+	ReplacedBaseDatasets map[string]bool
 	// EffectiveAt pins recency decay and future-event exclusion to the cache
 	// publication snapshot. A zero value falls back to the newest committed
 	// activity timestamp, which keeps direct package callers deterministic.
@@ -34,7 +39,8 @@ type BuildOptions struct {
 	Progress    func(dataset string, elapsed time.Duration)
 }
 
-// ActivityStats records the fan-out chosen by the flat activity grain.
+// ActivityStats records the rows built in this run. Incremental builds
+// report only their staged delta, so reporting does not rescan old activity.
 type ActivityStats struct {
 	DirectRows               int64
 	ConversationExpandedRows int64
@@ -55,9 +61,9 @@ type sqlExecutor interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// Build derives the four relationship datasets from schema-correct base
-// Parquet. Incremental mode writes an activity delta and rebuilds the compact
-// datasets over the committed population plus that delta.
+// Build derives the relationship datasets from schema-correct base Parquet.
+// Incremental mode writes an activity delta, merges compact contributions,
+// and refreshes the published summaries from those compact grains.
 func Build(
 	ctx context.Context,
 	db sqlExecutor,
@@ -69,7 +75,7 @@ func Build(
 	if err := validateBuildOptions(opts); err != nil {
 		return BuildResult{}, err
 	}
-	if opts.Mode > ModeIndexOnly {
+	if opts.Mode > ModeAppendRepair {
 		return BuildResult{}, fmt.Errorf("build relationship index: unknown mode %d", opts.Mode)
 	}
 
@@ -115,20 +121,15 @@ func Build(
 	); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.materializeBuildTable(
-		ctx,
-		temperatureBuildRelation,
-		buildRelationshipTemperatureDailySQL(activity, effectiveAt),
-		"relationship_temperature_daily",
-	); err != nil {
+	if err := b.materializeContributions(ctx, activity, effectiveAt); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.materializeBuildTable(
-		ctx,
-		logicalBuildRelation,
-		buildLogicalActivityMaterializationSQL(activity),
-		"logical_activity",
-	); err != nil {
+	if err := b.copyDataset(ctx, DatasetTemperatureContributions,
+		"SELECT * FROM "+temperatureBuildRelation); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.copyDataset(ctx, DatasetLogicalContributions,
+		"SELECT * FROM "+logicalBuildRelation); err != nil {
 		return BuildResult{}, err
 	}
 	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt)); err != nil {
@@ -140,10 +141,16 @@ func Build(
 	if err := b.copyDataset(ctx, DatasetRelationshipDaily, buildRelationshipDailySQL()); err != nil {
 		return BuildResult{}, err
 	}
+	validationActivity := activity
+	if opts.Mode == ModeIncremental {
+		// The committed generation was validated before publication. Appends
+		// use new message IDs, so only the staged edges need row validation.
+		validationActivity = b.deltaActivityRelation()
+	}
 	if err := Validate(ctx, db, ValidationOptions{
 		OutputRoot:             opts.OutputRoot,
 		RequiredOutputDatasets: RequiredDatasets,
-		ActivityPath:           activity,
+		ActivityRelation:       validationActivity,
 	}); err != nil {
 		return BuildResult{}, err
 	}
@@ -156,7 +163,11 @@ func Build(
 	if err != nil {
 		return BuildResult{}, err
 	}
-	activityStats, err := collectActivityStats(ctx, db, activity)
+	statsActivity := activity
+	if opts.Mode == ModeIncremental {
+		statsActivity = b.deltaActivityRelation()
+	}
+	activityStats, err := collectActivityStats(ctx, db, statsActivity)
 	if err != nil {
 		return BuildResult{}, err
 	}
@@ -205,40 +216,55 @@ func (b builder) committed(dataset string) string {
 	return parquetDatasetGlob(b.opts.CommittedRoot, dataset)
 }
 
-func (b builder) output(dataset string) string {
-	return parquetDatasetGlob(b.opts.OutputRoot, dataset)
+func (b builder) outputActivity() string {
+	return parquetDatasetGlob(b.opts.OutputRoot, DatasetActivity)
 }
 
 func (b builder) activityRelation() string {
-	paths := []string{b.output(DatasetActivity)}
+	paths := []string{b.outputActivity()}
 	if b.opts.Mode == ModeIncremental {
 		paths = append([]string{b.committed(DatasetActivity)}, paths...)
+	}
+	return b.expandedActivity(paths)
+}
+
+func (b builder) deltaActivityRelation() string {
+	return b.expandedActivity([]string{b.outputActivity()})
+}
+
+func (b builder) expandedActivity(paths []string) string {
+	return ExpandedActivityRelation(
+		readParquetRelation(paths, true),
+		readParquetRelation([]string{b.base("conversation_participants")}, false),
+		readParquetRelation([]string{b.base("participants")}, false),
+		readParquetRelation([]string{b.base("participant_clusters")}, false),
+		readParquetRelation([]string{b.base("owner_participants")}, false),
+	)
+}
+
+func (b builder) messageRelation() string {
+	paths := []string{b.base("messages")}
+	if b.opts.Mode == ModeAppendRepair {
+		paths = append([]string{b.committed("messages")}, paths...)
 	}
 	return readParquetRelation(paths, true)
 }
 
 func (b builder) statsRelations() cacheStatsRelations {
-	inputs := cacheStatsRelations{
-		messages:     readParquetRelation([]string{b.base("messages")}, true),
-		recipients:   readParquetRelation([]string{b.base("message_recipients")}, false),
+	relation := func(dataset string, hivePartitioning bool) string {
+		paths := []string{b.base(dataset)}
+		if (b.opts.Mode == ModeIncremental || b.opts.Mode == ModeAppendRepair) &&
+			!b.opts.ReplacedBaseDatasets[dataset] {
+			paths = append([]string{b.committed(dataset)}, paths...)
+		}
+		return readParquetRelation(paths, hivePartitioning)
+	}
+	return cacheStatsRelations{
+		messages:     relation("messages", true),
+		recipients:   relation("message_recipients", false),
 		participants: readParquetRelation([]string{b.base("participants")}, false),
-		attachments:  readParquetRelation([]string{b.base("attachments")}, false),
+		attachments:  relation("attachments", false),
 	}
-	if b.opts.Mode == ModeIncremental {
-		inputs.messages = readParquetRelation(
-			[]string{b.committed("messages"), b.base("messages")},
-			true,
-		)
-		inputs.recipients = readParquetRelation(
-			[]string{b.committed("message_recipients"), b.base("message_recipients")},
-			false,
-		)
-		inputs.attachments = readParquetRelation(
-			[]string{b.committed("attachments"), b.base("attachments")},
-			false,
-		)
-	}
-	return inputs
 }
 
 func (b builder) copyDataset(ctx context.Context, dataset, query string) error {
@@ -267,7 +293,7 @@ func (b builder) copyRelationshipActivity(ctx context.Context) error {
 	options := "FORMAT PARQUET, COMPRESSION 'zstd', PARTITION_BY (occurred_year), " +
 		"WRITE_PARTITION_COLUMNS true, OVERWRITE_OR_IGNORE"
 	for _, year := range years {
-		query := buildRelationshipActivitySQL(b.base, year)
+		query := buildSparseRelationshipActivitySQL(b.base, b.messageRelation(), year)
 		statement := "COPY (" + query + ") TO '" + quoteSQLString(output) +
 			"' (" + options + ")"
 		if _, err := b.db.ExecContext(ctx, statement); err != nil {
@@ -289,8 +315,7 @@ func (b builder) copyRelationshipActivity(ctx context.Context) error {
 func (b builder) relationshipActivityYears(ctx context.Context) ([]int64, error) {
 	query := `
 		SELECT DISTINCT year(sent_at)::BIGINT AS occurred_year
-		FROM read_parquet('` + quoteSQLString(b.base("messages")) + `',
-		                  hive_partitioning=true, union_by_name=true)
+		FROM ` + b.messageRelation() + `
 		ORDER BY occurred_year`
 	rows, err := b.db.QueryContext(ctx, query)
 	if err != nil {
@@ -322,7 +347,7 @@ func (b builder) copyEmptyRelationshipActivity(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(emptyOutput), 0o755); err != nil {
 		return fmt.Errorf("create empty %s partition: %w", DatasetActivity, err)
 	}
-	query := buildRelationshipActivitySQL(b.base, 0)
+	query := buildSparseRelationshipActivitySQL(b.base, b.messageRelation(), 0)
 	statement := "COPY (SELECT * FROM (" + query + ") WHERE false) TO '" +
 		quoteSQLString(emptyOutput) + "' (FORMAT PARQUET, COMPRESSION 'zstd')"
 	if _, err := b.db.ExecContext(ctx, statement); err != nil {

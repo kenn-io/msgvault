@@ -344,7 +344,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	}
 	conditions, args := buildExploreConditions(request.Explore)
 	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs, conditions,
-		e.parquetPath(datasetParticipantClusters), e.identityActivityPath())
+		e.parquetPath(datasetParticipantClusters))
 	args = append(args, entryArgs...)
 	// bestNameExpr is the shared cluster label policy (see person_label.go).
 	// Listing/search rows are canonical identities, so the label evaluates
@@ -556,7 +556,7 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 //     cluster (e.g. cc'ing a contact's work and personal addresses) is never
 //     double-counted. The clusters/canon CTEs remain only for the caller's
 //     label, search-match, and identifier subqueries.
-func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlob, activityGlob string) (string, []any) {
+func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlob string) (string, []any) {
 	if exactID == nil {
 		return fmt.Sprintf(`
 ), clusters AS (
@@ -565,7 +565,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 	SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
 	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
 ), person_entries AS (`, clustersGlob) +
-			sqlActivityEntryEdges(activityGlob,
+			sqlActivityEntryEdges(
 				"a.canonical_id AS person_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
 				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
 	}
@@ -595,7 +595,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 	FROM logical_entries
 	WHERE entry_key IN (
 		SELECT edge.entry_key FROM (` +
-			sqlActivityEntryEdges(activityGlob, "a.canonical_id AS person_id",
+			sqlActivityEntryEdges("a.canonical_id AS person_id",
 				"a.is_direct AND a.canonical_id IN "+memberList,
 				"(a.is_direct OR a.is_conversation_member) AND a.canonical_id IN "+memberList) + `
 		) AS edge
@@ -716,7 +716,7 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 	// as the index's domain entries do.
 	queryText := buildExploreLogicalSQLNoLists(conditions) + `
 ), domain_edges AS (` +
-		sqlActivityEntryEdges(e.identityActivityPath(),
+		sqlActivityEntryEdges(
 			"a.participant_domain AS domain, a.canonical_id AS person_id, "+
 				"a.is_direct AS is_direct, "+
 				"(le.entry_kind = 'conversation') AS is_chat_entry, "+

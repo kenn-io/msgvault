@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 // QueryResult holds raw SQL query results in a columnar format.
@@ -168,6 +170,9 @@ func RegisterViews(ctx context.Context, db *sql.DB, analyticsDir string) error {
 func RegisterViewsWithColumns(ctx context.Context, db *sql.DB, analyticsDir string, optCols map[string]map[string]bool) error {
 	if err := createBaseViews(ctx, db, analyticsDir, optCols); err != nil {
 		return fmt.Errorf("create base views: %w", err)
+	}
+	if err := createRelationshipActivityView(ctx, db, analyticsDir); err != nil {
+		return err
 	}
 	return createConvenienceViews(ctx, db)
 }
@@ -421,6 +426,37 @@ func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCo
 		stmt := buildViewSQL(d.def, probe)
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("create view %s: %w", d.def.name, err)
+		}
+	}
+	return nil
+}
+
+// The normalized relationship view is used by internal query paths even when
+// legacy analytical views are disabled.
+func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDir string) error {
+	activityFiles, err := filepath.Glob(filepath.Join(analyticsDir, identityindex.DatasetActivity, "*", "*.parquet"))
+	if err != nil {
+		return fmt.Errorf("find relationship activity: %w", err)
+	}
+	if len(activityFiles) > 0 {
+		parquet := func(dataset string, hive bool) string {
+			glob := filepath.Join(analyticsDir, dataset, "*.parquet")
+			options := ""
+			if hive {
+				glob = filepath.Join(analyticsDir, dataset, "**", "*.parquet")
+				options = ", hive_partitioning=true, union_by_name=true"
+			}
+			return "read_parquet('" + quoteIdentitySQLPath(glob) + "'" + options + ")"
+		}
+		relation := identityindex.ExpandedActivityRelation(
+			parquet(identityindex.DatasetActivity, true),
+			parquet(datasetConversationParticipants, false),
+			parquet(datasetParticipants, false),
+			parquet(datasetParticipantClusters, false),
+			parquet(datasetOwnerParticipants, false),
+		)
+		if _, err := db.ExecContext(ctx, "CREATE OR REPLACE VIEW relationship_activity_expanded AS SELECT * FROM "+relation); err != nil {
+			return fmt.Errorf("create relationship activity view: %w", err)
 		}
 	}
 	return nil

@@ -21,7 +21,7 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	if err != nil {
 		return nil, err
 	}
-	spec, err := exploreGroupExpressions(request.Dimension, e.identityActivityPath(),
+	spec, err := exploreGroupExpressions(request.Dimension,
 		e.parquetPath(identityindex.DatasetPeople))
 	if err != nil {
 		return nil, err
@@ -141,26 +141,24 @@ type groupExpressions struct {
 // participant callers pass "a.is_direct" for messages but must widen the
 // conversation branch with is_conversation_member. Either predicate may be
 // empty.
-func sqlActivityEntryEdges(activityGlob, selectExpr, messagePredicate, conversationPredicate string) string {
+func sqlActivityEntryEdges(selectExpr, messagePredicate, conversationPredicate string) string {
 	if messagePredicate != "" {
 		messagePredicate = " AND " + messagePredicate
 	}
 	if conversationPredicate != "" {
 		conversationPredicate = " AND " + conversationPredicate
 	}
-	activityScan := `read_parquet('` + activityGlob + `',
-		hive_partitioning=true, union_by_name=true)`
 	return `
 	SELECT le.entry_key, ` + selectExpr + `
 	FROM logical_entries le
-	JOIN ` + activityScan + ` a ON a.message_id = le.anchor_message_id
+	JOIN relationship_activity_expanded a ON a.message_id = le.anchor_message_id
 	WHERE le.entry_kind <> 'conversation'
 	  AND a.canonical_id IS NOT NULL` + messagePredicate + `
 	UNION
 	SELECT le.entry_key, ` + selectExpr + `
 	FROM logical_entries le
 	JOIN classified f ON f.conversation_id = le.conversation_id AND f.is_chat
-	JOIN ` + activityScan + ` a ON a.message_id = f.message_id
+	JOIN relationship_activity_expanded a ON a.message_id = f.message_id
 	WHERE le.entry_kind = 'conversation'
 	  AND a.canonical_id IS NOT NULL` + conversationPredicate + `
 `
@@ -203,7 +201,7 @@ func sqlMessageTypeGroupExpr() string {
 // aliases of one person collapses to a single (entry, canonical) row, so the
 // entry is never double-counted (entry_key is projected only to carry
 // per-entry uniqueness through that DISTINCT).
-func exploreGroupExpressions(dimension, activityGlob, peopleGlob string) (groupExpressions, error) {
+func exploreGroupExpressions(dimension, peopleGlob string) (groupExpressions, error) {
 	simple := func(key string) groupExpressions {
 		return groupExpressions{key: key, label: key, groupBy: key, source: "logical_entries"}
 	}
@@ -223,7 +221,7 @@ func exploreGroupExpressions(dimension, activityGlob, peopleGlob string) (groupE
 			noLists: true,
 			cte: `
 ), participant_entries AS (` +
-				sqlActivityEntryEdges(activityGlob,
+				sqlActivityEntryEdges(
 					"a.canonical_id AS person_id, le.occurred_at, le.estimated_bytes",
 					"a.is_direct", "(a.is_direct OR a.is_conversation_member)"),
 			source: "participant_entries",
@@ -237,7 +235,7 @@ func exploreGroupExpressions(dimension, activityGlob, peopleGlob string) (groupE
 			noLists: true,
 			cte: `
 ), domain_entries AS (` +
-				sqlActivityEntryEdges(activityGlob,
+				sqlActivityEntryEdges(
 					"a.participant_domain AS group_value, le.occurred_at, le.estimated_bytes",
 					"a.participant_domain <> ''", "a.participant_domain <> ''"),
 			source: "domain_entries",

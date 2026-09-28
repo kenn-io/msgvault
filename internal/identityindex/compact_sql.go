@@ -182,7 +182,8 @@ ORDER BY canonical_id, event_date`,
 }
 
 func activityRelation(path string, hivePartitioning bool) string {
-	if strings.HasPrefix(strings.TrimSpace(path), "read_parquet(") {
+	trimmed := strings.TrimSpace(path)
+	if strings.HasPrefix(trimmed, "read_parquet(") || strings.HasPrefix(trimmed, "(") {
 		return path
 	}
 	options := ""

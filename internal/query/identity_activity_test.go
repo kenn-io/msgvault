@@ -320,7 +320,7 @@ func TestIdentityActivityDateFiltersBindUTCWallClock(t *testing.T) {
 
 	_, args := buildIdentityFactConditions(ExploreRequest{
 		Context: Context{After: &after, Before: &before},
-	}, "unused-activity-path")
+	})
 	require.Len(t, args, 2)
 	assertionsForTest.Equal("2026-07-20 13:30:00", args[0])
 	assertionsForTest.Equal("2026-07-20 15:30:00", args[1])

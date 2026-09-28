@@ -27,6 +27,7 @@ func refreshDerivedDatasetsOnly(
 	ctx context.Context,
 	dbPath, analyticsDir string,
 	locking cachePublishLocking,
+	repairRelated bool,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
@@ -75,9 +76,17 @@ func refreshDerivedDatasetsOnly(
 		return nil, fmt.Errorf("read derived-data revision: %w", err)
 	}
 	if derivedDataRevision != state.DerivedDataRevision {
-		_ = st.Close()
-		return nil, fmt.Errorf("%w: derived-data revision changed",
-			ErrDerivedRefreshRequiresFullBuild)
+		relatedOnly, relatedErr := st.RelatedDerivedRevisionsOnly(ctx,
+			state.DerivedDataRevision, derivedDataRevision)
+		if relatedErr != nil {
+			_ = st.Close()
+			return nil, fmt.Errorf("classify derived-data revision: %w", relatedErr)
+		}
+		if !repairRelated || !relatedOnly {
+			_ = st.Close()
+			return nil, fmt.Errorf("%w: derived-data revision changed",
+				ErrDerivedRefreshRequiresFullBuild)
+		}
 	}
 	accountIdentityRevision, err := st.AccountIdentityRevision()
 	if err != nil {
@@ -132,7 +141,7 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 	defer func() { _ = sourceSnapshot.Close() }()
-	if err := sourceSnapshot.PrepareDatasets(
+	datasets := []string{
 		tableMessages,
 		tableConversations,
 		tableConversationParticipants,
@@ -140,7 +149,40 @@ func refreshDerivedDatasetsOnly(
 		tableParticipants,
 		tableParticipantIdentifiers,
 		"persons", "person_participants",
-	); err != nil {
+	}
+	var relatedChangeSeq int64
+	var relatedKinds relatedChangeKinds
+	if repairRelated {
+		if err := sourceSnapshot.QueryRow(`SELECT COALESCE((SELECT seq FROM sqlite_sequence
+			WHERE name = 'cache_related_change_journal'), 0)`).Scan(&relatedChangeSeq); err != nil {
+			return nil, fmt.Errorf("read related-change boundary: %w", err)
+		}
+		if err := inspectRelatedSnapshotColumns(sourceSnapshot); err != nil {
+			return nil, err
+		}
+		// The CSV fallback closes its SQLite transaction during preparation.
+		// Read journal metadata while that snapshot is still available.
+		var err error
+		relatedKinds, err = inspectRelatedChangeKinds(sourceSnapshot,
+			state.LastRelatedChangeSeq, relatedChangeSeq, state.LastMessageID)
+		if err != nil {
+			return nil, err
+		}
+		if relatedKinds.other {
+			return nil, fmt.Errorf("%w: unsupported related-row journal dataset",
+				ErrDerivedRefreshRequiresFullBuild)
+		}
+	}
+	relatedExports := make(map[string]int64)
+	relatedReplacements := make(map[string]bool)
+	for dataset, changed := range relatedKinds.datasets() {
+		if changed {
+			relatedExports[dataset] = 0
+			datasets = append(datasets, dataset)
+			relatedReplacements[dataset] = true
+		}
+	}
+	if err := sourceSnapshot.PrepareDatasets(datasets...); err != nil {
 		return nil, err
 	}
 	exportDB := sourceSnapshot.DuckDB()
@@ -162,7 +204,7 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 
-	if identityRevision == state.IdentityRevision &&
+	if !repairRelated && identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
 		personDisplayNameRevision == state.PersonDisplayNameRevision &&
@@ -173,6 +215,39 @@ func refreshDerivedDatasetsOnly(
 		// advance PublishedAt, invalidating readers' cache revision — and with
 		// it active pagination cursors — for no analytical difference.
 		return &buildResult{OutputDir: analyticsDir, IdentityOnly: true, Skipped: true}, nil
+	}
+	if repairRelated && !relatedKinds.recipients &&
+		identityRevision == state.IdentityRevision &&
+		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
+		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
+		personDisplayNameRevision == state.PersonDisplayNameRevision &&
+		conversationFingerprint == state.ConversationParticipantsFingerprint &&
+		typesFingerprint == state.ConversationTypesFingerprint {
+		// Labels and attachment metadata do not enter relationship_activity.
+		// Publish their child rows and marker directly, avoiding a scan of the
+		// expanded relationship population for a small metadata correction.
+		if err := exportRelatedDatasets(ctx, exportDB, sourceSnapshot,
+			state.LastMessageID, staging.root, relatedExports); err != nil {
+			return nil, err
+		}
+		if err := refreshRelatedCacheStats(ctx, exportDB, &state, relatedKinds); err != nil {
+			return nil, err
+		}
+		if err := sourceSnapshot.Close(); err != nil {
+			return nil, fmt.Errorf("close SQLite related-refresh snapshot: %w", err)
+		}
+		state.DerivedDataRevision = derivedDataRevision
+		state.LastRelatedChangeSeq = relatedChangeSeq
+		plan := cachePublishPlan{
+			Append:  map[string]bool{},
+			Replace: relatedReplacements,
+		}
+		if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
+			return nil, err
+		}
+		reportCacheTextRepairs(os.Stderr, textRepairs)
+		warnRelatedChangePrune(dbPath, relatedChangeSeq, derivedDataRevision)
+		return &buildResult{OutputDir: analyticsDir, IdentityOnly: true}, nil
 	}
 
 	if err := exportDerivedOwnerParticipants(ctx, exportDB, staging.root,
@@ -237,6 +312,14 @@ func refreshDerivedDatasetsOnly(
 			return nil, err
 		}
 	}
+	if repairRelated {
+		if err := exportRelatedDatasets(ctx, exportDB, sourceSnapshot, state.LastMessageID, staging.root, relatedExports); err != nil {
+			return nil, err
+		}
+		if err := refreshRelatedCacheStats(ctx, exportDB, &state, relatedKinds); err != nil {
+			return nil, err
+		}
+	}
 
 	derived, err := identityindex.Build(ctx, exportDB, identityindex.BuildOptions{
 		Mode:           identityindex.ModeIndexOnly,
@@ -258,13 +341,19 @@ func refreshDerivedDatasetsOnly(
 	}
 
 	state.IdentityRevision = identityRevision
+	if repairRelated {
+		state.DerivedDataRevision = derivedDataRevision
+	}
 	state.ParticipantIdentifierRevision = participantIdentifierRevision
 	state.ParticipantDisplayNameRevision = participantDisplayNameRevision
 	state.PersonDisplayNameRevision = personDisplayNameRevision
 	state.ConversationParticipantsFingerprint = conversationFingerprint
 	state.ConversationTypesFingerprint = typesFingerprint
-	// Stats describe the unchanged committed raw snapshot. Preserve them
-	// byte-for-byte instead of scanning Parquet again.
+	if repairRelated {
+		state.LastRelatedChangeSeq = relatedChangeSeq
+	}
+	// The message snapshot remains unchanged; child-row statistics were
+	// refreshed above when their source rows changed.
 	plan := derivedCachePublishPlan(
 		conversationChanged,
 		typesChanged,
@@ -272,10 +361,18 @@ func refreshDerivedDatasetsOnly(
 		identifiersChanged || displayNamesChanged,
 		personDisplayNamesChanged || identityChanged,
 	)
+	if repairRelated {
+		for dataset := range relatedReplacements {
+			plan.Replace[dataset] = true
+		}
+	}
 	if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
 		return nil, err
 	}
 	reportCacheTextRepairs(os.Stderr, textRepairs)
+	if repairRelated {
+		warnRelatedChangePrune(dbPath, relatedChangeSeq, derivedDataRevision)
+	}
 	return &buildResult{OutputDir: analyticsDir, IdentityOnly: true}, nil
 }
 
@@ -549,6 +646,8 @@ func derivedCachePublishPlan(
 		identityindex.DatasetPeople,
 		identityindex.DatasetDomains,
 		identityindex.DatasetRelationshipDaily,
+		identityindex.DatasetLogicalContributions,
+		identityindex.DatasetTemperatureContributions,
 	} {
 		plan.Replace[dataset] = true
 	}

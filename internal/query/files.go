@@ -282,7 +282,7 @@ func (e *DuckDBEngine) GroupFiles(ctx context.Context, request FileGroupRequest)
 	if err := validateFileMIMEFamilies(request.MIMEFamilies); err != nil {
 		return nil, err
 	}
-	spec, err := fileGroupExpressions(request.Dimension, e.identityActivityPath(),
+	spec, err := fileGroupExpressions(request.Dimension,
 		e.parquetPath(identityindex.DatasetPeople), e.parquetPath(datasetParticipants))
 	if err != nil {
 		return nil, err
@@ -564,7 +564,7 @@ func buildFileConditions(filenameQuery string, mimeFamilies []FileMIMEFamily) (s
 // rows but still receives file attributions here — so a base-participants
 // lookup backstops the people-dataset label before the constant fallback.
 func fileGroupExpressions(
-	dimension, activityGlob, peopleGlob, participantsGlob string,
+	dimension, peopleGlob, participantsGlob string,
 ) (groupExpressions, error) {
 	simple := func(key string) groupExpressions {
 		return groupExpressions{key: key, label: key, groupBy: key, source: "file_population"}
@@ -582,8 +582,7 @@ func fileGroupExpressions(
 , participant_files AS (
 	SELECT DISTINCT f.attachment_id, a.canonical_id AS person_id, f.occurred_at, f.size
 	FROM file_population f
-	JOIN read_parquet('` + activityGlob + `',
-		hive_partitioning=true, union_by_name=true) a ON a.message_id = f.message_id
+	JOIN relationship_activity_expanded a ON a.message_id = f.message_id
 	WHERE a.canonical_id IS NOT NULL
 	  AND (a.is_direct OR a.is_conversation_member)
 ), participant_file_labels AS (
@@ -603,8 +602,7 @@ func fileGroupExpressions(
 , domain_files AS (
 	SELECT DISTINCT f.attachment_id, a.participant_domain AS group_value, f.occurred_at, f.size
 	FROM file_population f
-	JOIN read_parquet('` + activityGlob + `',
-		hive_partitioning=true, union_by_name=true) a ON a.message_id = f.message_id
+	JOIN relationship_activity_expanded a ON a.message_id = f.message_id
 	WHERE a.participant_domain <> ''
 )`,
 			source: "domain_files",

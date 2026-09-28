@@ -152,8 +152,8 @@ func TestInspectCacheReadiness(t *testing.T) {
 	}
 }
 
-func TestCacheSchemaVersionIncludesPersonDisplayNames(t *testing.T) {
-	assert.Equal(t, 28, CacheSchemaVersion)
+func TestCacheSchemaVersionIncludesRelationshipContributions(t *testing.T) {
+	assert.Equal(t, 30, CacheSchemaVersion)
 }
 
 func TestInspectCacheReadinessNamesStaleSchemaAndDrift(t *testing.T) {
@@ -214,6 +214,9 @@ func TestCacheRevisionUsesOnlyCommittedStateWatermarks(t *testing.T) {
 	assert.NotEqual(revision, changed.Revision())
 	changed = state
 	changed.LastFailedSyncRunIDSum++
+	assert.NotEqual(revision, changed.Revision())
+	changed = state
+	changed.LastRelatedChangeSeq++
 	assert.NotEqual(revision, changed.Revision())
 	changed = state
 	changed.IdentityRevision++

@@ -34,12 +34,6 @@ func identityRequestIsSourceOnly(request ExploreRequest) bool {
 	return identityRequestIsUnfiltered(request)
 }
 
-// identityActivityPath returns the relationship_activity glob escaped for
-// direct embedding in trusted SQL text.
-func (e *DuckDBEngine) identityActivityPath() string {
-	return quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetActivity))
-}
-
 // buildIdentityLogicalSQL renders the context-filtered logical-entry
 // population with per-(entry, canonical) relationship facts as a closed
 // logical_people CTE: entry facts come from analytical_entries (one row per
@@ -66,8 +60,6 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 		return "", nil, err
 	}
 	conditions, args := buildExploreConditions(request)
-	activityScan := `read_parquet('` + e.identityActivityPath() + `',
-		hive_partitioning=true, union_by_name=true)`
 	// entry_num is a numeric logical-entry key: the anchor message ID for
 	// message entries, the (globally unique, NOT NULL) conversation ID
 	// negated for chat conversation entries so the two spaces cannot
@@ -85,7 +77,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	SELECT a.message_id, a.canonical_id,
 	       bool_or(a.is_author) AS is_author,
 	       bool_or(a.is_owner) AS is_owner
-	FROM ` + activityScan + ` a
+	FROM relationship_activity_expanded a
 	JOIN (
 		SELECT DISTINCT anchor_message_id FROM logical_entries
 		WHERE entry_kind <> 'conversation'
@@ -98,7 +90,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	       bool_or(a.is_author AND a.message_id = anchors.anchor_message_id) AS is_author,
 	       bool_or(a.is_owner) AS is_owner
 	FROM classified f
-	JOIN ` + activityScan + ` a ON a.message_id = f.message_id
+	JOIN relationship_activity_expanded a ON a.message_id = f.message_id
 	JOIN (
 		SELECT conversation_id, anchor_message_id FROM logical_entries
 		WHERE entry_kind = 'conversation'
@@ -156,9 +148,6 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 		return "", nil, err
 	}
 	conditions, args := buildExploreConditions(request)
-	activityGlob := e.identityActivityPath()
-	activityScan := `read_parquet('` + activityGlob + `',
-		hive_partitioning=true, union_by_name=true)`
 	// entry_num mirrors buildIdentityLogicalSQL: the per-(entry, domain)
 	// dedup hash stays numeric-keyed so a broad filter fits the interactive
 	// memory budget.
@@ -167,7 +156,7 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	SELECT le.anchor_message_id AS entry_num, a.participant_domain AS domain,
 	       le.occurred_at, le.attachment_count, le.source_type
 	FROM logical_entries le
-	JOIN ` + activityScan + ` a ON a.message_id = le.anchor_message_id
+	JOIN relationship_activity_expanded a ON a.message_id = le.anchor_message_id
 	WHERE le.entry_kind <> 'conversation'
 	  AND a.canonical_id IS NOT NULL
 	  AND a.participant_domain <> ''
@@ -176,14 +165,14 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	       le.occurred_at, le.attachment_count, le.source_type
 	FROM logical_entries le
 	JOIN classified f ON f.conversation_id = le.conversation_id AND f.is_chat
-	JOIN ` + activityScan + ` a ON a.message_id = f.message_id
+	JOIN relationship_activity_expanded a ON a.message_id = f.message_id
 	WHERE le.entry_kind = 'conversation'
 	  AND a.canonical_id IS NOT NULL
 	  AND a.participant_domain <> ''
 ), logical_person_domains AS (
 	SELECT DISTINCT a.participant_domain AS domain, a.canonical_id
 	FROM logical_entries le
-	JOIN ` + activityScan + ` a ON a.message_id = le.anchor_message_id
+	JOIN relationship_activity_expanded a ON a.message_id = le.anchor_message_id
 	WHERE le.entry_kind <> 'conversation'
 	  AND a.canonical_id IS NOT NULL
 	  AND a.participant_domain <> '' AND a.is_direct
@@ -191,7 +180,7 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	SELECT a.participant_domain AS domain, a.canonical_id
 	FROM logical_entries le
 	JOIN classified f ON f.conversation_id = le.conversation_id AND f.is_chat
-	JOIN ` + activityScan + ` a ON a.message_id = f.message_id
+	JOIN relationship_activity_expanded a ON a.message_id = f.message_id
 	WHERE le.entry_kind = 'conversation'
 	  AND a.canonical_id IS NOT NULL
 	  AND a.participant_domain <> ''
@@ -214,11 +203,10 @@ func (e *DuckDBEngine) narrowIdentityFactCandidates(
 		!identityRequestHasEdgeFilters(request) {
 		return request, nil
 	}
-	facts := e.identityActivityPath()
-	conditions, args := buildIdentityFactConditions(request, facts)
+	conditions, args := buildIdentityFactConditions(request)
 	queryText := `
 SELECT f.message_id
-FROM read_parquet('` + facts + `', hive_partitioning=true, union_by_name=true) f
+FROM relationship_activity_expanded f
 WHERE ` + conditions + `
 GROUP BY f.message_id
 LIMIT ?`
@@ -253,9 +241,8 @@ LIMIT ?`
 }
 
 // buildIdentityFactConditions renders the message-level filter for the alias
-// f over relationship_activity. activityPath is the SQL-escaped activity glob
-// used by the participant/domain edge semi-join predicates.
-func buildIdentityFactConditions(request ExploreRequest, activityPath string) (string, []any) {
+// f over the expanded relationship activity view.
+func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 	var conditions []string
 	var args []any
 	appendIntGroup := func(values []int64, expression string) {
@@ -280,15 +267,13 @@ func buildIdentityFactConditions(request ExploreRequest, activityPath string) (s
 	}
 	participantPredicate := `(EXISTS (
 		SELECT 1
-		FROM read_parquet('` + activityPath + `',
-			hive_partitioning=true, union_by_name=true) edge
+		FROM relationship_activity_expanded edge
 		WHERE edge.message_id = f.message_id
 		  AND edge.canonical_id = ?
 	))`
 	domainPredicate := `(EXISTS (
 		SELECT 1
-		FROM read_parquet('` + activityPath + `',
-			hive_partitioning=true, union_by_name=true) edge
+		FROM relationship_activity_expanded edge
 		WHERE edge.message_id = f.message_id
 		  AND lower(edge.participant_domain) = ?
 	))`

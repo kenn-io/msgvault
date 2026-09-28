@@ -566,6 +566,7 @@ func buildCacheDerivedOnly(
 		dbPath,
 		analyticsDir,
 		acquirePublishLock,
+		false,
 		builderOverrides...,
 	)
 }
@@ -583,6 +584,7 @@ func isDaemonBuildCacheChild() bool {
 
 type buildResult struct {
 	ExportedCount int64
+	StagedCount   int64
 	MaxMessageID  int64
 	OutputDir     string
 	Skipped       bool
@@ -808,6 +810,10 @@ func buildCacheScheduled(
 			builderOverrides...,
 		)
 	}
+	if relatedDriftOnly(staleness) {
+		return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
+			acquirePublishLock, true, builderOverrides...)
+	}
 	return buildCacheLocked(
 		dbPath,
 		analyticsDir,
@@ -937,7 +943,12 @@ func derivedDriftOnly(staleness cacheStaleness) bool {
 		staleness.HasParticipantDisplayNameDrift || staleness.HasPersonDisplayNameDrift) &&
 		!staleness.HasNew && !staleness.HasDeleted &&
 		!staleness.HasUpdated && !staleness.HasAccountIdentityDrift &&
-		!staleness.HasDerivedDataDrift
+		!staleness.HasDerivedDataDrift && !staleness.HasRelatedRowDrift
+}
+
+func relatedDriftOnly(staleness cacheStaleness) bool {
+	return staleness.HasUsablePublication && staleness.HasRelatedRowDrift &&
+		staleness.Reason == "related rows changed"
 }
 
 // refreshIdentityDatasetsOnly rebuilds every identity-derived dataset while
@@ -953,6 +964,7 @@ func refreshIdentityDatasetsOnly(
 		dbPath,
 		analyticsDir,
 		locking,
+		false,
 		builderOverrides...,
 	)
 }
@@ -984,6 +996,10 @@ func buildCacheLocked(
 		}
 		if derivedDriftOnly(staleness) {
 			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, locking, builderOverrides...)
+		}
+		if relatedDriftOnly(staleness) {
+			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
+				locking, true, builderOverrides...)
 		}
 		fullRebuild = staleness.FullRebuild
 	}
@@ -1114,6 +1130,7 @@ func buildCacheLocked(
 
 	var maxMessageID sql.NullInt64
 	var lastCompletedSyncRunID int64
+	var relatedChangeSeq int64
 	var syncCounters cacheSyncCounters
 	// Use indexed query: id is PRIMARY KEY, sent_at has an index
 	maxIDQuery := `SELECT MAX(id) FROM messages WHERE sent_at IS NOT NULL`
@@ -1142,6 +1159,21 @@ func buildCacheLocked(
 			return nil, fmt.Errorf("get cache sync counters: %w", err)
 		}
 	}
+	var hasRelatedChangeJournal int
+	if err := sourceSnapshot.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = 'cache_related_change_journal'
+	`).Scan(&hasRelatedChangeJournal); err != nil {
+		return nil, fmt.Errorf("check cache related-change journal: %w", err)
+	}
+	if hasRelatedChangeJournal > 0 {
+		if err := sourceSnapshot.QueryRow(`
+			SELECT COALESCE((SELECT seq FROM sqlite_sequence
+				WHERE name = 'cache_related_change_journal'), 0)
+		`).Scan(&relatedChangeSeq); err != nil {
+			return nil, fmt.Errorf("read cache related-change sequence: %w", err)
+		}
+	}
 	if !fullRebuild && hasPreviousState && hasSyncRunsTable > 0 {
 		updatesChanged := syncCounters.updates != previousState.LastCacheUpdateCount
 		coveredAdditionsChanged := syncCounters.additions != previousState.LastCacheAdditionCount &&
@@ -1155,6 +1187,27 @@ func buildCacheLocked(
 		}
 	}
 
+	var relatedKinds relatedChangeKinds
+	if hasPreviousState && !fullRebuild && relatedChangeSeq > previousState.LastRelatedChangeSeq {
+		relatedKinds, err = inspectRelatedChangeKinds(sourceSnapshot,
+			previousState.LastRelatedChangeSeq, relatedChangeSeq, previousState.LastMessageID)
+		if err != nil {
+			return nil, err
+		}
+		if relatedKinds.other {
+			fullRebuild = true
+			lastMessageID = 0
+			relatedKinds = relatedChangeKinds{}
+		}
+	}
+	repairRelated := relatedKinds.recipients || relatedKinds.labels || relatedKinds.attachments
+	if hasPreviousState && maxID <= lastMessageID && !fullRebuild && repairRelated {
+		if err := sourceSnapshot.Close(); err != nil {
+			return nil, fmt.Errorf("close SQLite snapshot before related repair: %w", err)
+		}
+		return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
+			locking, true, builderOverrides...)
+	}
 	if hasPreviousState && maxID <= lastMessageID && !fullRebuild {
 		if err := sourceSnapshot.Close(); err != nil {
 			return nil, fmt.Errorf("close SQLite snapshot after metadata check: %w", err)
@@ -1241,28 +1294,6 @@ func buildCacheLocked(
 		idFilter += fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) > %d", lastMessageID)
 	}
 
-	// Junction rows are searchable exactly when their parent message is
-	// exportable. This includes calendar invitees and meeting attendees while
-	// excluding hidden rows and messages without a timestamp.
-	exportableJunctionWhereFor := func(messageIDColumn string) string {
-		return fmt.Sprintf(
-			"TRY_CAST(%s AS BIGINT) IN (SELECT CAST(m.id AS BIGINT) FROM sqlite_db.messages m WHERE %s AND TRY_CAST(m.id AS BIGINT) <= %d)",
-			messageIDColumn, exportableMessageWhere("m"), maxID,
-		)
-	}
-	junctionFilterFor := func(messageIDColumn, incremental string) string {
-		where := exportableJunctionWhereFor(messageIDColumn)
-		if incremental != "" {
-			return incremental + " AND " + where
-		}
-		return " WHERE " + where
-	}
-	junctionFilter := func(incremental string) string {
-		return junctionFilterFor("message_id", incremental)
-	}
-
-	junctionFile := "data.parquet"
-
 	// runExport executes a COPY query and prints timing info.
 	runExport := func(label, copyQuery string) error {
 		start := time.Now()
@@ -1278,116 +1309,24 @@ func buildCacheLocked(
 	// Export each table separately - this is MUCH faster than joining during export
 	// because DuckDB can use SQLite indexes efficiently for simple queries
 
-	// 1. Export message_recipients (large junction table)
-	recipientsDir := filepath.Join(staging.root, "message_recipients")
-	escapedRecipientsDir := strings.ReplaceAll(recipientsDir, "'", "''")
-	// This export joins participants, so every column reference is alias
-	// qualified and the incremental predicate names mr.message_id rather
-	// than the bare column the shared junctionFilter helper produces.
-	recipientsFilter := ""
-	if !replaceAll && lastMessageID > 0 {
-		recipientsFilter = fmt.Sprintf(" WHERE mr.message_id > %d", lastMessageID)
+	publicationPlan := cachePublishPlanForMode(replaceAll)
+	for dataset, changed := range relatedKinds.datasets() {
+		if changed {
+			delete(publicationPlan.Append, dataset)
+			publicationPlan.Replace[dataset] = true
+		}
 	}
-	recipientsFilter = junctionFilterFor("mr.message_id", recipientsFilter)
-	// Two address columns leave here. envelope_address is the header address
-	// exactly as the store recorded it (NULL when none was — chat, calendar,
-	// and mail ingested before the column existed; invalid UTF-8 also exports
-	// NULL so repaired identity keys cannot collide); identity filters key on
-	// its presence. email_address is the resolved recipient address: the
-	// envelope when present, otherwise the participant's current address, so
-	// an address filter over this dataset finds pre-upgrade mail too.
-	// Presence is byte-level, not validity-level: an envelope whose bytes are
-	// invalid UTF-8 is present but unusable, so both columns export NULL
-	// rather than silently substituting the participant's current address,
-	// which would attribute the message to whoever the participant is today.
-	// Only a participant with no email address at all (phone or handle only)
-	// leaves email_address NULL. Databases from before the envelope column
-	// export NULL envelopes for every row.
-	recipientEnvelopeKey := "NULL::VARCHAR"
-	recipientPresence := "FALSE"
-	// NULLIF can evaluate its first argument twice. Check emptiness with the
-	// pure key so each unknown output value increments the counter only once.
-	recipientParticipantKey := "CASE WHEN " + cacheIdentityTextSQL("p.email_address") +
-		" = '' THEN NULL ELSE " + sourceSnapshot.identityExportSQL("p.email_address") + " END"
-	if sourceSnapshot.hasRecipientEnvelope {
-		recipientEnvelopeKey = "CASE WHEN " + cacheIdentityTextSQL("mr.email_address") +
-			" = '' THEN NULL ELSE " + sourceSnapshot.identityExportSQL("mr.email_address") + " END"
-		recipientPresence = sourceSnapshot.identityPresenceSQL("mr.email_address", "mr.envelope_present")
+	afterMessageIDs := make(map[string]int64)
+	for _, dataset := range []string{"message_recipients", "message_labels", tableAttachments, tableLabels} {
+		if publicationPlan.Append[dataset] {
+			afterMessageIDs[dataset] = lastMessageID
+		} else {
+			afterMessageIDs[dataset] = 0
+		}
 	}
-	if err := runExport("message_recipients", fmt.Sprintf(`
-	COPY (
-		SELECT
-			mr.message_id,
-			mr.participant_id,
-			%[2]s AS recipient_type,
-			COALESCE(%[3]s, '') as display_name,
-			CASE WHEN %[8]s THEN %[1]s ELSE %[4]s END as email_address,
-			%[1]s as envelope_address
-		FROM sqlite_db.message_recipients mr
-		LEFT JOIN sqlite_db.participants p ON p.id = mr.participant_id%[5]s
-	) TO '%[6]s/%[7]s' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, recipientEnvelopeKey, sourceSnapshot.identityExportSQL("mr.recipient_type"), sourceSnapshot.textSQL("mr.display_name"), recipientParticipantKey, recipientsFilter, escapedRecipientsDir, junctionFile, recipientPresence)); err != nil {
-		return nil, fmt.Errorf("export message_recipients: %w", err)
-	}
-
-	// 2. Export message_labels (large junction table)
-	messageLabelsDir := filepath.Join(staging.root, "message_labels")
-	escapedMessageLabelsDir := strings.ReplaceAll(messageLabelsDir, "'", "''")
-	messageLabelsFilter := ""
-	if !replaceAll && lastMessageID > 0 {
-		messageLabelsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
-	}
-	messageLabelsFilter = junctionFilter(messageLabelsFilter)
-	if err := runExport("message_labels", fmt.Sprintf(`
-	COPY (
-		SELECT
-			message_id,
-			label_id
-		FROM sqlite_db.message_labels%s
-	) TO '%s/%s' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, messageLabelsFilter, escapedMessageLabelsDir, junctionFile)); err != nil {
-		return nil, fmt.Errorf("export message_labels: %w", err)
-	}
-
-	// 3. Export attachments
-	attachmentsDir := filepath.Join(staging.root, tableAttachments)
-	escapedAttachmentsDir := strings.ReplaceAll(attachmentsDir, "'", "''")
-	attachmentsFilter := ""
-	if !replaceAll && lastMessageID > 0 {
-		attachmentsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
-	}
-	attachmentsFilter = junctionFilter(attachmentsFilter)
-	attachmentMIMEExpression := "'' AS mime_type"
-	if sourceSnapshot.hasAttachmentMIME {
-		attachmentMIMEExpression = "COALESCE(" + sourceSnapshot.textSQL("mime_type") + ", '') AS mime_type"
-	}
-	attachmentMetadataExpression := "NULL::VARCHAR AS attachment_metadata"
-	if sourceSnapshot.hasAttachmentMetadata {
-		attachmentMetadataExpression = sourceSnapshot.textSQL("attachment_metadata") + " AS attachment_metadata"
-	}
-	if err := runExport(tableAttachments, fmt.Sprintf(`
-	COPY (
-		SELECT
-			id AS attachment_id,
-			message_id,
-			size,
-			COALESCE(%s, '') as filename,
-			%s,
-			%s
-		FROM sqlite_db.attachments%s
-	) TO '%s/%s' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, sourceSnapshot.textSQL("filename"), attachmentMIMEExpression, attachmentMetadataExpression,
-		attachmentsFilter, escapedAttachmentsDir, junctionFile)); err != nil {
-		return nil, fmt.Errorf("export attachments: %w", err)
+	if err := exportRelatedDatasets(context.Background(), exportDB, sourceSnapshot,
+		maxID, staging.root, afterMessageIDs); err != nil {
+		return nil, err
 	}
 
 	// 4. Export participants
@@ -1500,23 +1439,6 @@ func buildCacheLocked(
 	)
 	`, maxID, escapedConversationParticipantsDir)); err != nil {
 		return nil, fmt.Errorf("export conversation participants: %w", err)
-	}
-
-	// 5. Export labels
-	labelsDir := filepath.Join(staging.root, tableLabels)
-	escapedLabelsDir := strings.ReplaceAll(labelsDir, "'", "''")
-	if err := runExport(tableLabels, fmt.Sprintf(`
-	COPY (
-		SELECT
-			id,
-			COALESCE(%s, '') as name
-		FROM sqlite_db.labels
-	) TO '%s/labels.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, sourceSnapshot.textSQL("name"), escapedLabelsDir)); err != nil {
-		return nil, fmt.Errorf("export labels: %w", err)
 	}
 
 	// 6. Export sources
@@ -1658,19 +1580,24 @@ func buildCacheLocked(
 	if replaceAll {
 		buildMode = identityindex.ModeFull
 	}
+	if relatedKinds.recipients && !replaceAll {
+		buildMode = identityindex.ModeAppendRepair
+		delete(publicationPlan.Append, identityindex.DatasetActivity)
+		publicationPlan.Replace[identityindex.DatasetActivity] = true
+	}
 	derived, err := identityindex.Build(context.Background(), exportDB, identityindex.BuildOptions{
-		Mode:           buildMode,
-		CommittedRoot:  analyticsDir,
-		StagedBaseRoot: staging.root,
-		OutputRoot:     staging.root,
-		EffectiveAt:    cacheWatermark,
-		Progress:       reportIdentityBuildProgress,
+		Mode:                 buildMode,
+		CommittedRoot:        analyticsDir,
+		StagedBaseRoot:       staging.root,
+		ReplacedBaseDatasets: publicationPlan.Replace,
+		OutputRoot:           staging.root,
+		EffectiveAt:          cacheWatermark,
+		Progress:             reportIdentityBuildProgress,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build identity index: %w", err)
 	}
 	reportRelationshipActivityStats(derived.Activity)
-	publicationPlan := cachePublishPlanForMode(replaceAll)
 
 	fmt.Printf("  %-25s %s\n", "Total:", time.Since(buildStart).Round(time.Millisecond))
 
@@ -1740,6 +1667,7 @@ func buildCacheLocked(
 		LastCompletedSyncRunID:              lastCompletedSyncRunID,
 		LastCacheAdditionCount:              syncCounters.additions,
 		LastCacheUpdateCount:                syncCounters.updates,
+		LastRelatedChangeSeq:                relatedChangeSeq,
 		LastFailedSyncRunCount:              syncCounters.failedRunCount,
 		LastFailedSyncRunIDSum:              syncCounters.failedRunIDSum,
 		IdentityRevision:                    identityRevision,
@@ -1761,9 +1689,13 @@ func buildCacheLocked(
 		return nil, err
 	}
 	reportCacheTextRepairs(os.Stderr, textRepairs)
+	if hasRelatedChangeJournal > 0 {
+		warnRelatedChangePrune(dbPath, relatedChangeSeq, derivedDataRevision)
+	}
 
 	return &buildResult{
 		ExportedCount: expectedTotalCount,
+		StagedCount:   stagedCount,
 		MaxMessageID:  maxID,
 		OutputDir:     analyticsDir,
 	}, nil
@@ -1783,13 +1715,6 @@ func reportRelationshipActivityStats(stats identityindex.ActivityStats) {
 		stats.FinalRows,
 		stats.ExpansionRatio,
 	)
-	if stats.ExpansionRatio > 4 {
-		fmt.Printf(
-			"  Warning: relationship membership fan-out is %.2fx; "+
-				"consider a normalized conversation-member index if this archive keeps growing\n",
-			stats.ExpansionRatio,
-		)
-	}
 }
 
 func countStagedMessages(db sqlRowQuerier, messagesDir string, requireShard bool) (int64, error) {
