@@ -424,6 +424,9 @@ func TestImportRefreshesChangedMessages(t *testing.T) {
 	sum, err := f.sync(t, st)
 	require.NoError(err)
 	assert.Equal(2, sum.Updated)
+	var runUpdated int64
+	require.NoError(st.DB().QueryRow(`SELECT messages_updated FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&runUpdated))
+	assert.EqualValues(2, runUpdated)
 	assert.EqualValues(2, f.mimeCalls.Load())
 	assert.Equal(map[string]string{"d1": "body d1 v1", "m1": "body m1 v1"}, snippets(t, st))
 

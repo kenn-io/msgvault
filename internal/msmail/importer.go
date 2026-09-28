@@ -96,6 +96,7 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 			PageToken:         string(blob),
 			MessagesProcessed: int64(sum.Added + sum.Updated + sum.Moved + sum.Deleted),
 			MessagesAdded:     int64(sum.Added),
+			MessagesUpdated:   int64(sum.Updated),
 			ErrorsCount:       int64(sum.Errors),
 		}
 	}
