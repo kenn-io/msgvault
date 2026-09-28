@@ -12,10 +12,11 @@ var ErrResourceOwnershipMismatch = errors.New("vCard resource ownership cannot b
 // used for confirmation of an outgoing artifact; an inbound refresh may drop
 // ownership whose original value is no longer present or distinguishable.
 func RebindResourceOwnership(prepared, canonical ResourceEnvelope, requireAll bool) (ResourceEnvelope, error) {
+	canonical = cloneResourceEnvelope(canonical)
 	preparedByIdentity := make(map[string]PropertyOccurrence)
 	preparedPosition := make(map[string]int)
 	preparedCount := make(map[string]int)
-	canonicalBySemantic := make(map[string][]PropertyOccurrence)
+	canonicalBySemantic := make(map[string][]int)
 	key := func(version Version, occurrence PropertyOccurrence) string {
 		encoded, _ := json.Marshal(NormalizeSemanticProperty(version, occurrence.Property), json.Deterministic(true)) // SemanticProperty holds only strings and string slices
 		return string(encoded)
@@ -26,9 +27,24 @@ func RebindResourceOwnership(prepared, canonical ResourceEnvelope, requireAll bo
 		preparedPosition[occurrence.Identity.Key()] = preparedCount[k]
 		preparedCount[k]++
 	}
-	for _, occurrence := range canonical.PropertyTree {
+	for index, occurrence := range canonical.PropertyTree {
 		k := key(canonical.RenderMetadata.StoredVersion, occurrence)
-		canonicalBySemantic[k] = append(canonicalBySemantic[k], occurrence)
+		canonicalBySemantic[k] = append(canonicalBySemantic[k], index)
+	}
+	for _, occurrence := range prepared.PropertyTree {
+		if !occurrence.GeneratedFullName {
+			continue
+		}
+		k := key(prepared.RenderMetadata.StoredVersion, occurrence)
+		matches := canonicalBySemantic[k]
+		if len(matches) != preparedCount[k] {
+			if requireAll {
+				return ResourceEnvelope{}, ErrResourceOwnershipMismatch
+			}
+			continue
+		}
+		index := matches[preparedPosition[occurrence.Identity.Key()]]
+		canonical.PropertyTree[index].GeneratedFullName = true
 	}
 	canonical.NativeMappings = nil
 	for _, mapping := range prepared.NativeMappings {
@@ -47,7 +63,8 @@ func RebindResourceOwnership(prepared, canonical ResourceEnvelope, requireAll bo
 		// The semantic key includes wire identity (group, PID, PROP-ID, ALTID).
 		// Equal duplicates retain their occurrence order, independently of the
 		// order in which native mappings are stored.
-		mapping.Identity = matches[preparedPosition[mapping.Identity.Key()]].Identity
+		index := matches[preparedPosition[mapping.Identity.Key()]]
+		mapping.Identity = canonical.PropertyTree[index].Identity
 		canonical.NativeMappings = append(canonical.NativeMappings, mapping)
 	}
 	canonical.Residue = ResidueWithMappings(canonical.PropertyTree, canonical.NativeMappings)

@@ -97,6 +97,68 @@ func TestProjectPersonEnvelopeDerivesFullNameOnlyWhenCardHasNone(t *testing.T) {
 	assert.Equal(1, strings.Count(string(again.StoredBody), "\r\nFN"))
 }
 
+func TestProjectPersonEnvelopeRefreshesGeneratedFullName(t *testing.T) {
+	for _, version := range []string{"3.0", "4.0"} {
+		for _, importedName := range []string{"", "FN:Imported Name\r\n", "FN;DERIVED=true:Imported Name\r\n"} {
+			t.Run(version+"/"+strings.TrimSpace(importedName), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				envelope := parseProjectEnvelope(t, []byte("BEGIN:VCARD\r\nVERSION:"+version+"\r\n"+
+					importedName+"EMAIL:old@example.com\r\nNOTE:keep\r\nEND:VCARD\r\n"))
+				envelope.NativeMappings = []vcard.NativeMapping{{
+					Identity: projectOccurrence(t, envelope, "EMAIL", 0).Identity, SourceRef: envelope.SourceRef,
+					Table: "person_contact_points", RowID: 5, Field: "original_value", Kind: vcard.HandlingNative,
+				}}
+				snapshot := store.PersonVCardSnapshot{Profile: store.PersonProfile{
+					Person: store.Person{ID: 1},
+					ContactPoints: []store.PersonContactPoint{{
+						Envelope:    store.ValueEnvelope{ID: 5, Source: store.ProvenanceUser},
+						AddressKind: store.ContactAddressEmail, OriginalValue: "old@example.com",
+					}},
+				}}
+				first, err := ProjectPersonEnvelope(snapshot, envelope)
+				require.NoError(err)
+				// Publication confirmation reparses server bytes and rebinds ownership.
+				first, err = vcard.RebindResourceOwnership(first, parseProjectEnvelope(t, first.StoredBody), true)
+				require.NoError(err)
+				metadata, err := vcard.MarshalResourceMetadata(first)
+				require.NoError(err)
+				restored, err := vcard.UnmarshalResourceMetadata(metadata)
+				require.NoError(err)
+				first.PropertyTree = restored.PropertyTree
+				unchanged, err := ProjectPersonEnvelope(snapshot, first)
+				require.NoError(err)
+				assert.Equal(first, unchanged, "unchanged projection must preserve the complete envelope")
+				for _, value := range []string{"new@example.com", ""} {
+					want := "FN;DERIVED=true:new@example.com\r\n"
+					if value == "" {
+						snapshot.Profile.ContactPoints = nil
+						want = "FN;DERIVED=true:Unnamed Contact\r\n"
+					} else {
+						snapshot.Profile.ContactPoints[0].OriginalValue = value
+					}
+					if importedName != "" {
+						want = importedName
+					}
+					first, err = ProjectPersonEnvelope(snapshot, first)
+					require.NoError(err)
+					assert.Contains(string(first.StoredBody), want)
+					assert.NotContains(string(first.StoredBody), "old@example.com")
+				}
+				snapshot.Profile.Person.DisplayName = new("Chosen Name")
+				named, err := ProjectPersonEnvelope(snapshot, first)
+				require.NoError(err)
+				want := "FN;DERIVED=true:Chosen Name\r\n"
+				if importedName != "" {
+					want = importedName
+				}
+				assert.Contains(string(named.StoredBody), want)
+				assert.Equal(1, strings.Count(string(named.StoredBody), "\r\nFN"))
+			})
+		}
+	}
+}
+
 func TestProjectPersonPropertiesPhoneticNameEmitsScriptOnce(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

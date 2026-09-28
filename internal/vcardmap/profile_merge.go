@@ -302,7 +302,7 @@ func hasUnclaimedFullName(tree []vcard.PropertyOccurrence, taken map[string]stru
 		if _, used := taken[occurrence.Identity.Key()]; used {
 			continue
 		}
-		if strings.EqualFold(occurrence.Property.Name, "FN") &&
+		if !occurrence.GeneratedFullName && strings.EqualFold(occurrence.Property.Name, "FN") &&
 			strings.TrimSpace(occurrence.Property.RawValue) != "" {
 			return true
 		}

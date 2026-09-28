@@ -484,6 +484,33 @@ func TestResourceEnvelopeDerivesFullNameForBothViewsWithoutV4OnlyParameter(t *te
 	assert.Contains(string(v4), "FN;DERIVED=true:Jane Doe\r\n")
 }
 
+func TestResourceEnvelopeDerivesFullNameFromContactPointsWhenNameMissing(t *testing.T) {
+	for _, tc := range []struct{ name, property, want string }{
+		{"phone", "TEL:+15551234567", "+15551234567"},
+		{"escaped organization", `ORG:Example\, Inc.`, "Example, Inc."},
+		{"escaped email", `EMAIL:contact\,team@example.com`, "contact,team@example.com"},
+		{"uppercase email scheme", "EMAIL:MAILTO:contact@example.com", "contact@example.com"},
+		{"mixed case phone scheme", "TEL:TeL:+15551234567", "+15551234567"},
+		{"literal organization prefix", "ORG:mailto:Example", "mailto:Example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			envelope, err := ParseResourceEnvelope(
+				[]byte("BEGIN:VCARD\r\nVERSION:3.0\r\n" + tc.property + "\r\nEND:VCARD\r\n"),
+			)
+			require.NoError(err)
+			v4, err := envelope.RenderView(Version40)
+			require.NoError(err)
+			rendered, err := ParseResourceEnvelope(v4)
+			require.NoError(err)
+			fullName := propertyByNameAndGroup(rendered.PropertyTree, "FN", "")
+			name, err := UnescapeText(fullName.Property.RawValue)
+			require.NoError(err)
+			assert.Equal(t, tc.want, name)
+		})
+	}
+}
+
 func TestResourceEnvelopeMovesLegacyReferencedMediaTypeToMediatype(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

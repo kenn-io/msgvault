@@ -831,16 +831,18 @@ func TestProjectPersonEnvelopeKeepsImportedFNWhenProfileHasNoName(t *testing.T) 
 	}}
 
 	projected, err := ProjectPersonEnvelope(snapshot, envelope)
-	require.NoError(err, "a profile with nothing to derive FN from must not block other semantic writes")
+	require.NoError(err, "a profile without a name must not block other semantic writes")
 	assert.Contains(string(projected.StoredBody), "FN:Imported Name\r\n")
 	assert.Contains(string(projected.StoredBody), "EMAIL:alice@example.com\r\n")
 	assert.NotContains(string(projected.StoredBody), "DERIVED")
 
-	// A card that has no FN anywhere is still refused, by rendering.
+	// Without an imported FN, rendering derives one from the email.
 	bare := parseProjectEnvelope(t, []byte("BEGIN:VCARD\r\nVERSION:4.0\r\n"+
 		"NOTE:no name here\r\nEND:VCARD\r\n"))
-	_, err = ProjectPersonEnvelope(snapshot, bare)
-	require.Error(err)
+	projected, err = ProjectPersonEnvelope(snapshot, bare)
+	require.NoError(err)
+	assert.Contains(string(projected.StoredBody), "FN;DERIVED=true:alice@example.com\r\n")
+	assert.Contains(string(projected.StoredBody), "EMAIL:alice@example.com\r\n")
 }
 
 func TestProjectPersonPropertiesCarriesUnstructuredPostalAddresses(t *testing.T) {

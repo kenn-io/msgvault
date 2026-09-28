@@ -152,6 +152,9 @@ func validateResourceMetadata(envelope ResourceEnvelope) error {
 	present := make(map[string]PropertyOccurrence, len(envelope.PropertyTree))
 	ordinals := make(map[int]struct{}, len(envelope.PropertyTree))
 	for _, occurrence := range envelope.PropertyTree {
+		if occurrence.GeneratedFullName && !strings.EqualFold(occurrence.Property.Name, "FN") {
+			return errors.New("generated full name marker belongs only on FN")
+		}
 		ordinal := occurrence.Identity.Ordinal
 		if ordinal < 0 {
 			return fmt.Errorf("negative vCard occurrence ordinal %d", ordinal)
