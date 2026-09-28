@@ -159,6 +159,74 @@ func TestProjectPersonEnvelopeRefreshesGeneratedFullName(t *testing.T) {
 	}
 }
 
+func TestProjectPersonEnvelopeEditsNameAfterReplacingGeneratedFullName(t *testing.T) {
+	for _, name := range []string{"old@example.com", "Chosen Name"} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			envelope := parseProjectEnvelope(t, []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nEND:VCARD\r\n"))
+			snapshot := store.PersonVCardSnapshot{Profile: store.PersonProfile{
+				Person: store.Person{ID: 1},
+				ContactPoints: []store.PersonContactPoint{{
+					Envelope:    store.ValueEnvelope{ID: 5, Source: store.ProvenanceUser},
+					AddressKind: store.ContactAddressEmail, OriginalValue: "old@example.com",
+				}},
+			}}
+			generated, err := ProjectPersonEnvelope(snapshot, envelope)
+			require.NoError(err)
+			snapshot.Profile.Person.DisplayName = new(name)
+			named, err := ProjectPersonEnvelope(snapshot, generated)
+			require.NoError(err)
+			assert.Equal(name, projectOccurrence(t, named, "FN", 0).Property.RawValue)
+
+			snapshot.Profile.Person.DisplayName = new("Updated Name")
+			renamed, err := ProjectPersonEnvelope(snapshot, named)
+			require.NoError(err)
+			assert.Equal("Updated Name", projectOccurrence(t, renamed, "FN", 0).Property.RawValue)
+
+			snapshot.Profile.Person.DisplayName = nil
+			snapshot.Profile.ContactPoints[0].OriginalValue = "new@example.com"
+			removed, err := ProjectPersonEnvelope(snapshot, renamed)
+			require.NoError(err)
+			assert.Equal("new@example.com", projectOccurrence(t, removed, "FN", 0).Property.RawValue)
+		})
+	}
+}
+
+func TestProjectPersonEnvelopeGeneratesMissingFullNameWithoutEdits(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		properties string
+		want       string
+	}{
+		{"missing", "", "Unnamed Contact"},
+		{"empty", "FN: \r\n", "Unnamed Contact"},
+		{"email", "EMAIL:user@example.com\r\n", "user@example.com"},
+		{"named", "FN:Known Name\r\n", "Known Name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			envelope := parseProjectEnvelope(t, []byte("BEGIN:VCARD\r\nVERSION:4.0\r\n"+
+				"UID:resource\r\n"+tc.properties+"NOTE:keep\r\nEND:VCARD\r\n"))
+			snapshot := store.PersonVCardSnapshot{Profile: store.PersonProfile{Person: store.Person{ID: 1}}}
+			projected, err := ProjectPersonEnvelope(snapshot, envelope)
+			require.NoError(err)
+			doc, err := vcard.Decode(strings.NewReader(string(projected.StoredBody)))
+			require.NoError(err)
+			assert.NoError(vcard.Validate(doc))
+			if tc.name == "named" {
+				assert.Equal(envelope.StoredBody, projected.StoredBody, "an existing name preserves the original bytes")
+			} else {
+				assert.Contains(string(projected.StoredBody), "FN;DERIVED=true:"+tc.want+"\r\n")
+			}
+			again, err := ProjectPersonEnvelope(snapshot, projected)
+			require.NoError(err)
+			assert.Equal(projected, again, "unchanged projection must preserve the complete envelope")
+		})
+	}
+}
+
 func TestProjectPersonPropertiesPhoneticNameEmitsScriptOnce(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -310,7 +310,7 @@ func indexPropertyEdits(edits []PropertyEdit) (map[string]PropertyEdit, error) {
 }
 
 // RenderView returns the requested wire-version view without mutating the
-// envelope. A no-op view returns StoredBody byte-for-byte.
+// envelope. A no-op view with a non-empty FN returns StoredBody byte-for-byte.
 func (e ResourceEnvelope) RenderView(version Version) ([]byte, error) {
 	if version == "" {
 		version = e.RenderMetadata.StoredVersion
@@ -318,7 +318,11 @@ func (e ResourceEnvelope) RenderView(version Version) ([]byte, error) {
 	if version == Version21 {
 		return nil, errors.New("vCard 2.1 is read-only and cannot be emitted")
 	}
-	if !e.RenderMetadata.RenderRequired && version == e.RenderMetadata.StoredVersion {
+	if !e.RenderMetadata.RenderRequired && version == e.RenderMetadata.StoredVersion &&
+		slices.ContainsFunc(e.PropertyTree, func(occurrence PropertyOccurrence) bool {
+			return strings.EqualFold(occurrence.Property.Name, "FN") &&
+				strings.TrimSpace(occurrence.Property.RawValue) != ""
+		}) {
 		return append([]byte(nil), e.StoredBody...), nil
 	}
 	if version != Version30 && version != Version40 {
@@ -935,6 +939,10 @@ func reconcilePropertyTree(stable, wire []PropertyOccurrence) []PropertyOccurren
 			strings.TrimSpace(occurrence.Property.RawValue) != ""
 	})
 	used := make([]bool, len(stable))
+	for index, occurrence := range stable {
+		// An explicit FN replaces the generated fallback and keeps its own owner.
+		used[index] = occurrence.GeneratedFullName && !generatedFullName
+	}
 	nextOrdinal := nextPropertyOrdinal(stable)
 	reconciled := make([]PropertyOccurrence, 0, len(wire))
 	for _, wireOccurrence := range wire {
