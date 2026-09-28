@@ -46,7 +46,7 @@ var agentTokenIssueCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		senderSelections, err := parseAgentTokenSenders(agentTokenSenders, cmd.Flags().Changed("sender"))
+		senderSelections, err := parseAgentTokenSenders(agentTokenSenders)
 		if err != nil {
 			return err
 		}
@@ -54,12 +54,7 @@ var agentTokenIssueCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		var result *generated.AgentTokenIssueResponse
-		if len(senderSelections) > 0 {
-			result, err = client.IssueAgentToken(cmd.Context(), agentTokenLabel, agentTokenPermissions, sourceIDs, senderSelections)
-		} else {
-			result, err = client.IssueAgentToken(cmd.Context(), agentTokenLabel, agentTokenPermissions, sourceIDs)
-		}
+		result, err := client.IssueAgentToken(cmd.Context(), agentTokenLabel, agentTokenPermissions, sourceIDs, senderSelections)
 		if err != nil {
 			return err
 		}
@@ -130,18 +125,12 @@ func parseAgentTokenSourceIDs(raw string) ([]int64, error) {
 	return ids, nil
 }
 
-func parseAgentTokenSenders(values []string, explicit bool) (map[int64][]string, error) {
-	result := make(map[int64][]string)
-	if explicit && len(values) == 0 {
-		return nil, errors.New("--sender must use SOURCE_ID=ADDRESS")
+func parseAgentTokenSenders(values []string) (map[int64][]string, error) {
+	if len(values) == 0 {
+		return nil, nil //nolint:nilnil // Omitted sender selections use the daemon's default.
 	}
+	result := make(map[int64][]string)
 	for _, value := range values {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) == "[]" {
-			if explicit {
-				return nil, errors.New("--sender must use SOURCE_ID=ADDRESS")
-			}
-			continue
-		}
 		sourceID, address, ok := strings.Cut(value, "=")
 		if !ok || strings.TrimSpace(address) == "" {
 			return nil, errors.New("--sender must use SOURCE_ID=ADDRESS")
@@ -151,9 +140,6 @@ func parseAgentTokenSenders(values []string, explicit bool) (map[int64][]string,
 			return nil, errors.New("invalid sender source ID " + strconv.Quote(sourceID))
 		}
 		result[id] = append(result[id], strings.TrimSpace(address))
-	}
-	if len(result) == 0 {
-		return map[int64][]string{}, nil
 	}
 	return result, nil
 }

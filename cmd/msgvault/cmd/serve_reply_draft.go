@@ -342,7 +342,10 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", fmt.Errorf("source %d sync config identifier does not match the source", source.ID))
 		}
 	case "gmail":
-		if parentSource == nil || parentSource.ID != source.ID {
+		if parentSource == nil {
+			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("draft-compose requires an IMAP source"))
+		}
+		if parentSource.ID != source.ID {
 			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("gmail draft replies must use the parent source"))
 		}
 		if err := authorizeGmailDraft(a.gmailDraftPolicy, source.ID, source.SourceType); err != nil {
@@ -395,10 +398,10 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	if err != nil {
 		return draftReplyError("invalid_reply_metadata", err)
 	}
-	if len(reply.Parsed.From) != 1 || len(reply.Parsed.To)+len(reply.Parsed.Cc)+len(reply.Parsed.Bcc) == 0 {
-		return draftReplyError("invalid_reply_metadata", errors.New("composed reply needs one From and at least one To address"))
-	}
 	if target.source.SourceType == "gmail" {
+		if len(reply.Parsed.From) != 1 || len(reply.Parsed.To)+len(reply.Parsed.Cc)+len(reply.Parsed.Bcc) == 0 {
+			return draftReplyError("invalid_reply_metadata", errors.New("composed reply needs one From and at least one recipient"))
+		}
 		messageIDValue := mime.NormalizeMessageID(reply.Parsed.MessageID)
 		if messageIDValue == "" {
 			return draftReplyError("invalid_reply_metadata", errors.New("composed reply has no usable Message-ID"))
@@ -454,6 +457,8 @@ func (a *storeAPIAdapter) createDraft(
 	}
 	messageIDValue = "<" + messageIDValue + ">"
 
+	// Hold the source's sync lock from APPEND through local publication so a
+	// concurrent sync cannot reconcile a stale mailbox snapshot over the draft.
 	execution, err := a.store.AcquireSyncExecutionContext(ctx, target.source.ID)
 	if err != nil {
 		if errors.Is(err, store.ErrSyncAlreadyActive) {
@@ -506,6 +511,7 @@ func (a *storeAPIAdapter) createDraft(
 	if err := emitDraftReplyOutput(emit, cliStreamStdout, asJSON, result); err != nil {
 		return draftReplyError("output_failed", err)
 	}
+	_ = client.Close()
 	return nil
 }
 

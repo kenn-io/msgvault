@@ -349,6 +349,7 @@ func TestGmailDraftRejectsComposeAndCrossSourceReply(t *testing.T) {
 		Args: []string{"draft-compose", "--source-id", strconv.FormatInt(fixture.source.ID, 10), "--to", "recipient@example.test"},
 	}, nil)
 	requirements.ErrorContains(err, "draft_disabled")
+	requirements.EqualError(errors.Unwrap(err), "draft-compose requires an IMAP source")
 	err = fixture.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--source-id", strconv.FormatInt(other.ID, 10), "--body", "reply"},
 	}, nil)

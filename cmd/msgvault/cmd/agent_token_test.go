@@ -37,7 +37,11 @@ func runAgentTokenCommand(
 	cmd := &cobra.Command{Use: template.Use, Args: template.Args, RunE: template.RunE}
 	cmd.Flags().AddFlagSet(template.Flags())
 	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
-		require.NoError(t, flag.Value.Set(flag.DefValue))
+		if value, ok := flag.Value.(pflag.SliceValue); ok && flag.DefValue == "[]" {
+			require.NoError(t, value.Replace(nil))
+		} else {
+			require.NoError(t, flag.Value.Set(flag.DefValue))
+		}
 		flag.Changed = false
 	})
 	cmd.SetOut(&output)
@@ -325,7 +329,7 @@ func TestOpenAgentDelegatedStore(t *testing.T) {
 	})
 	require.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{source.ID})
+	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{source.ID}, nil)
 	require.NoError(err)
 
 	// Write the token to a temp file.

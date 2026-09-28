@@ -3539,7 +3539,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `draft.create` for `draft-reply`; `draft.edit` and `draft.delete` for `draft-recover` only (see [draft recovery](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `draft.create` for `draft-reply` and `draft-compose`; `draft.edit` and `draft.delete` for `draft-recover` only (see [draft recovery](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
 

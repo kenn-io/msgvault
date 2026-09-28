@@ -83,9 +83,6 @@ See [Beeper audio](usage/beeper.md#send-audio-to-docbank).
 ## 0.20.0
 <small>2026-09-22</small>
 
-macOS analytics cache builds use the existing CSV export without the unusable
-SQLite extension download and warning.
-
 Manage people and relationships, search inside attachments, and bring more of
 your communications into the archive. Review the upgrade notes before updating
 an existing installation.
