@@ -416,7 +416,8 @@ func (s *syncer) retryAttachments(ctx context.Context) error {
 			delete(s.cursors, key)
 			continue
 		}
-		parent, err := s.c.ParentFolderID(ctx, id)
+		info, err := s.c.LookupMessage(ctx, id)
+		parent := info.ParentFolderID
 		if errors.Is(err, msgraph.ErrNotFound) || (err == nil && s.deletions != "" && parent == s.deletions) {
 			if err := s.st.MarkMessagesDeletedBatch(s.sourceID, []string{id}); err != nil {
 				return err
@@ -434,7 +435,7 @@ func (s *syncer) retryAttachments(ctx context.Context) error {
 		}
 		// download puts the marker back itself if an attachment fails again.
 		delete(s.cursors, key)
-		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, archiveID: known[id]}}); err != nil {
+		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, archiveID: known[id]}}); err != nil {
 			s.cursors[key] = parent
 			return err
 		}
@@ -494,7 +495,8 @@ func (s *syncer) reconcileWalk(ctx context.Context, folderLabel int64, seen map[
 func (s *syncer) relocate(ctx context.Context, msgs map[string]int64) error {
 	var gone []string
 	for id, msgID := range msgs {
-		parent, err := s.c.ParentFolderID(ctx, id)
+		info, err := s.c.LookupMessage(ctx, id)
+		parent := info.ParentFolderID
 		if errors.Is(err, msgraph.ErrNotFound) || (err == nil && s.deletions != "" && parent == s.deletions) {
 			gone = append(gone, id)
 			continue

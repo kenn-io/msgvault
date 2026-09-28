@@ -105,12 +105,16 @@ func (c *Client) GetMIME(ctx context.Context, id string) ([]byte, error) {
 	return c.GetRaw(ctx, "/me/messages/"+url.PathEscape(id)+"/$value")
 }
 
-// ParentFolderID returns the folder that holds a message now. It returns
+// MessageInfo is where a message is now and when it arrived.
+type MessageInfo struct {
+	ParentFolderID   string    `json:"parentFolderId"`
+	ReceivedDateTime time.Time `json:"receivedDateTime"`
+}
+
+// LookupMessage returns a message's folder and receipt time. It returns
 // msgraph.ErrNotFound when the message no longer exists.
-func (c *Client) ParentFolderID(ctx context.Context, id string) (string, error) {
-	var m struct {
-		ParentFolderID string `json:"parentFolderId"`
-	}
-	err := c.GetJSON(ctx, "/me/messages/"+url.PathEscape(id)+"?$select=parentFolderId", &m)
-	return m.ParentFolderID, err
+func (c *Client) LookupMessage(ctx context.Context, id string) (MessageInfo, error) {
+	var m MessageInfo
+	err := c.GetJSON(ctx, "/me/messages/"+url.PathEscape(id)+"?$select=parentFolderId,receivedDateTime", &m)
+	return m, err
 }

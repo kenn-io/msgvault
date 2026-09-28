@@ -172,7 +172,7 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":{"code":"ErrorItemNotFound"}}`, http.StatusNotFound)
 			return
 		}
-		f.writeJSON(w, map[string]any{"parentFolderId": folder})
+		f.writeJSON(w, map[string]any{"parentFolderId": folder, "receivedDateTime": "2024-01-01T10:00:00Z"})
 	default:
 		http.Error(w, "unexpected "+p, http.StatusBadRequest)
 	}
@@ -674,6 +674,9 @@ func TestImportNewMessageAttachmentWriteFails(t *testing.T) {
 	_, err = f.sync(t, st)
 	require.NoError(err)
 	assert.Equal([2]int{1, 1}, attachments(t, st))
+	var hasDate bool
+	require.NoError(st.DB().QueryRow(`SELECT internal_date IS NOT NULL FROM messages WHERE source_message_id = 'm1'`).Scan(&hasDate))
+	assert.True(hasDate, "the retry keeps the receipt time")
 }
 
 // Storage skips an empty attachment on purpose, so it does not fail the sync.
