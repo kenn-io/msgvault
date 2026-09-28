@@ -273,19 +273,20 @@ describe('PeopleInferenceSettings', () => {
     expect((screen.getByRole('button', { name: 'Check provider' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('revokes consent, disables sweeps, and confirms removal even for the final inactive profile', async () => {
+  it('revokes consent, disables sweeps, and confirms removal when another profile remains', async () => {
     const { client, requests } = fixture({ ...status, configured_name: 'routed', configured_enabled: true,
-      running_name: 'routed', running_enabled: true, profiles: [{ ...profile, consent_active: true }] });
+      running_name: 'routed', running_enabled: true,
+      profiles: [{ ...profile, consent_active: true }, { ...profile, name: 'backup' }] });
     render(PeopleInferenceSettings, { client });
     await screen.findByText('Granted for this profile');
     await fireEvent.click(screen.getByRole('button', { name: 'Revoke consent' }));
     await screen.findByText('Not granted');
     await fireEvent.click(screen.getByRole('button', { name: 'Disable people sweep' }));
-    await screen.findByRole('status');
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Remove profile' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Remove profile' }));
     expect(requests.some((request) => request.method === 'DELETE')).toBe(false);
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
-    await waitFor(() => expect(screen.queryByText('Profile setup')).toBeNull());
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /^Profile:/ }).textContent).toContain('backup'));
     expect(requests.at(-1)!.method).toBe('DELETE');
   });
 });
