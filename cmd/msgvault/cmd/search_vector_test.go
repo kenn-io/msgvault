@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -67,6 +68,7 @@ func TestWriteHybridResultsTableFallsBackToMessageSnippet(t *testing.T) {
 }
 
 func TestWriteHybridResultsTableExplainKeepsScores(t *testing.T) {
+	assert := assert.New(t)
 	rrf, bm25, vec := 0.5, 1.25, 0.75
 	result := daemonclient.CLIHybridSearchResult{
 		ID: 204, SentAt: time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC),
@@ -75,14 +77,35 @@ func TestWriteHybridResultsTableExplainKeepsScores(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	require.NoError(t, writeHybridResultsTable(&buf, []daemonclient.CLIHybridSearchResult{result}, true))
-	assert.Contains(t, buf.String(), "ID")
-	assert.Contains(t, buf.String(), "RRF")
-	assert.Contains(t, buf.String(), "BM25")
-	assert.Contains(t, buf.String(), "VEC")
-	assert.Contains(t, buf.String(), "Album *")
-	assert.Contains(t, buf.String(), "0.5000")
-	assert.Contains(t, buf.String(), "1.2500")
-	assert.Contains(t, buf.String(), "0.7500")
+	assert.Contains(buf.String(), "ID")
+	assert.Contains(buf.String(), "RRF")
+	assert.Contains(buf.String(), "BM25")
+	assert.Contains(buf.String(), "VEC")
+	assert.Contains(buf.String(), "Album *")
+	assert.Contains(buf.String(), "0.5000")
+	assert.Contains(buf.String(), "1.2500")
+	assert.Contains(buf.String(), "0.7500")
+}
+
+func TestSearchHybridFullTextInPipe(t *testing.T) {
+	from := strings.Repeat("sender", 10) + "@example.com"
+	text := strings.Repeat("complete text ", 10) + "final words"
+	for _, explain := range []bool{false, true} {
+		t.Run(strconv.FormatBool(explain), func(t *testing.T) {
+			assert := assert.New(t)
+			done := captureStdout(t)
+			err := outputHybridResultsTable(&daemonclient.CLIHybridSearch{Results: []daemonclient.CLIHybridSearchResult{
+				{ID: 1, FromEmail: from, Subject: "\x1b[31m" + text, SubjectBoosted: true},
+				{ID: 2, Message: query.MessageSummary{FromName: from, Snippet: text + "\n"}},
+			}}, explain)
+			output := done()
+			require.NoError(t, err)
+			assert.Contains(output, from)
+			assert.Contains(output, text+" *")
+			assert.NotContains(output, "\x1b")
+			assert.Equal(2, strings.Count(output, text))
+		})
+	}
 }
 
 func TestSearchCmd_VectorModeUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {

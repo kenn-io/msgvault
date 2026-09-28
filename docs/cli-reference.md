@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-26"
+last_edited: "2026-09-27"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1556,6 +1556,13 @@ filters. Values are case-insensitive literal substrings; quote values that
 contain spaces. Repeating either alias requires every value to match.
 
 `--mode vector` and `--mode hybrid` require at least one free-text term in the query (filter-only queries use `--mode fts`). They do not support pagination (`--offset` is rejected) or non-active deletion scopes because the vector index covers active messages only. Bump `--limit` to retrieve a larger candidate pool instead. See [Searching](/docs/usage/searching/) for the operator reference and [Vector Search](/docs/usage/vector-search/) for semantic setup.
+
+Search tables show the subject, or the message snippet when the subject is blank.
+Redirected or piped output keeps the full sender and subject/snippet on one line,
+with terminal controls removed and whitespace collapsed. Terminal tables fit the
+available width by shortening sender and subject text, including Unicode characters
+and emoji. Fixed IDs, dates, sizes and explanation scores stay complete; very narrow
+terminals may wrap. An unknown message size appears as `-`.
 
 With `--json`, each result also includes `web_url` when the selected daemon can
 provide a browser link for that message.

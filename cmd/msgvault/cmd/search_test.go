@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -25,31 +24,24 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func TestSummaryTextDisplay(t *testing.T) {
+func TestSummaryTableText(t *testing.T) {
 	tests := []struct {
 		name, subject, snippet, want string
 	}{
 		{"subject wins", "Quarterly review", "When: tomorrow", "Quarterly review"},
 		{"chat uses snippet", "", "are we still on for Friday", "are we still on for Friday"},
 		{"blank subject uses snippet", "   ", "see attached", "see attached"},
+		{"escape-only subject uses snippet", "\x1b[31m", "line one\n\tline two", "line one line two"},
+		{"control-only subject uses snippet", "\x00\x07", "see attached", "see attached"},
 		{"whitespace collapses", "", "line one\n\tline two  ", "line one line two"},
 		{"terminal controls removed", "", "hi\x1b]0;bad title\a there\x1b[31m!", "hi there!"},
 		{"empty", "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, summaryTextDisplay(tt.subject, tt.snippet, 50))
+			assert.Equal(t, tt.want, summaryTableText(tt.subject, tt.snippet))
 		})
 	}
-}
-
-func TestTruncateDisplayKeepsRunesWhole(t *testing.T) {
-	assert := assert.New(t)
-	got := truncateDisplay(strings.Repeat("кино 🎸 ", 20), 50)
-	assert.True(utf8.ValidString(got))
-	assert.Equal(50, utf8.RuneCountInString(got))
-	assert.True(strings.HasSuffix(got, "..."))
-	assert.Equal("ки", truncateDisplay("кино", 2))
 }
 
 func TestFormatSummarySize(t *testing.T) {
@@ -77,6 +69,25 @@ func TestWriteSearchResultsTableShowsChatSnippetAndUnknownSize(t *testing.T) {
 	assert.NotContains(buf.String(), "\x1b")
 	assert.True(strings.HasSuffix(strings.TrimRight(lines[3], " "), " -"))
 	assert.Contains(buf.String(), "Showing 2 results")
+}
+
+// These entry points write to a real pipe, so terminal-only limits must not apply.
+func TestSearchTableFullTextInPipe(t *testing.T) {
+	assert := assert.New(t)
+	from := strings.Repeat("sender", 10) + "@example.com"
+	subject := strings.Repeat("long subject ", 10) + "final words"
+	snippet := strings.Repeat("chat snippet ", 10) + "last words"
+	done := captureStdout(t)
+	err := outputSearchResultsTable([]query.MessageSummary{
+		{ID: 1, FromEmail: from, Subject: "\x1b[31m" + subject + "\n"},
+		{ID: 2, FromName: from, Snippet: "\t" + snippet + "\x1b[0m"},
+	})
+	output := done()
+	require.NoError(t, err)
+	assert.Contains(output, from)
+	assert.Contains(output, subject)
+	assert.Contains(output, snippet)
+	assert.NotContains(output, "\x1b")
 }
 
 type failingSearchWriter struct{}

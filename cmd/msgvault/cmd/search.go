@@ -5,15 +5,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
-	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var (
@@ -255,20 +254,22 @@ func outputSearchResultsTable(results []query.MessageSummary) error {
 }
 
 func writeSearchResultsTable(out io.Writer, results []query.MessageSummary) error {
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT\tSIZE")
-	_, _ = fmt.Fprintln(w, "──\t────\t────\t───────\t────")
+	return writeSearchResultsTableWidth(out, results, searchTableTerminalWidth(out))
+}
 
+func writeSearchResultsTableWidth(out io.Writer, results []query.MessageSummary, width int) error {
+	rows := make([][]searchTableCell, 0, len(results))
 	for _, msg := range results {
-		date := msg.SentAt.Format("2006-01-02")
-		from := truncateDisplay(strings.Join(strings.Fields(textutil.SanitizeTerminal(summaryFromDisplay(msg))), " "), 30)
-		subject := summaryTextDisplay(msg.Subject, msg.Snippet, 50)
-		size := formatSummarySize(msg.SizeEstimate)
-		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", msg.ID, date, from, subject, size)
+		rows = append(rows, []searchTableCell{
+			{text: strconv.FormatInt(msg.ID, 10)},
+			{text: msg.SentAt.Format("2006-01-02")},
+			{text: normalizeSearchTableText(summaryFromDisplay(msg))},
+			{text: summaryTableText(msg.Subject, msg.Snippet)},
+			{text: formatSummarySize(msg.SizeEstimate)},
+		})
 	}
-
-	if err := w.Flush(); err != nil {
-		return fmt.Errorf("flush search table: %w", err)
+	if err := writeSearchTable(out, []string{"ID", "DATE", "FROM", "SUBJECT", "SIZE"}, rows, width); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(out, "\n%s\n", formatShowingResults(len(results))); err != nil {
 		return fmt.Errorf("write search result count: %w", err)
@@ -276,16 +277,12 @@ func writeSearchResultsTable(out io.Writer, results []query.MessageSummary) erro
 	return nil
 }
 
-func summaryTextDisplay(subject, snippet string, maxRunes int) string {
-	text := subject
-	if strings.TrimSpace(text) == "" {
-		text = snippet
+func summaryTableText(subject, snippet string) string {
+	text := normalizeSearchTableText(subject)
+	if text == "" {
+		text = normalizeSearchTableText(snippet)
 	}
-	return truncateDisplay(strings.Join(strings.Fields(textutil.SanitizeTerminal(text)), " "), maxRunes)
-}
-
-func truncateDisplay(s string, maxRunes int) string {
-	return textutil.TruncateRunes(s, maxRunes)
+	return text
 }
 
 func formatSummarySize(size int64) string {

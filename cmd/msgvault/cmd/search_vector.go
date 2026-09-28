@@ -6,13 +6,12 @@ import (
 	"io"
 	"math"
 	"os"
+	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // runHybridSearch executes vector or hybrid search through the configured
@@ -102,40 +101,40 @@ func outputHybridResultsTable(resp *daemonclient.CLIHybridSearch, explain bool) 
 }
 
 func writeHybridResultsTable(out io.Writer, results []daemonclient.CLIHybridSearchResult, explain bool) error {
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	return writeHybridResultsTableWidth(out, results, explain, searchTableTerminalWidth(out))
+}
+
+func writeHybridResultsTableWidth(out io.Writer, results []daemonclient.CLIHybridSearchResult, explain bool, width int) error {
+	headers := []string{"ID", "DATE", "FROM", "SUBJECT"}
 	if explain {
-		_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT\tRRF\tBM25\tVEC")
-		_, _ = fmt.Fprintln(w, "──\t────\t────\t───────\t───\t────\t───")
-	} else {
-		_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT")
-		_, _ = fmt.Fprintln(w, "──\t────\t────\t───────")
+		headers = append(headers, "RRF", "BM25", "VEC")
 	}
+	rows := make([][]searchTableCell, 0, len(results))
 	for _, r := range results {
-		date := r.SentAt.Format("2006-01-02")
 		from := r.FromEmail
 		if strings.TrimSpace(from) == "" {
 			from = summaryFromDisplay(r.Message)
 		}
-		from = truncateDisplay(strings.Join(strings.Fields(textutil.SanitizeTerminal(from)), " "), 30)
-		subject := summaryTextDisplay(r.Subject, r.Message.Snippet, 50)
+		subject := searchTableCell{text: summaryTableText(r.Subject, r.Message.Snippet)}
 		if r.SubjectBoosted {
-			subject += " *"
+			subject.marker = " *"
+		}
+		row := []searchTableCell{
+			{text: strconv.FormatInt(r.ID, 10)},
+			{text: r.SentAt.Format("2006-01-02")},
+			{text: normalizeSearchTableText(from)},
+			subject,
 		}
 		if explain {
-			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				r.ID, date, from, subject,
-				formatOptionalScorePtr(r.RRFScore),
-				formatOptionalScorePtr(r.BM25Score),
-				formatOptionalScorePtr(r.VectorScore))
-		} else {
-			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\n",
-				r.ID, date, from, subject)
+			row = append(row,
+				searchTableCell{text: formatOptionalScorePtr(r.RRFScore)},
+				searchTableCell{text: formatOptionalScorePtr(r.BM25Score)},
+				searchTableCell{text: formatOptionalScorePtr(r.VectorScore)},
+			)
 		}
+		rows = append(rows, row)
 	}
-	if err := w.Flush(); err != nil {
-		return fmt.Errorf("flush table output: %w", err)
-	}
-	return nil
+	return writeSearchTable(out, headers, rows, width)
 }
 
 func outputHybridTimings(resp *daemonclient.CLIHybridSearch, explain bool) {
