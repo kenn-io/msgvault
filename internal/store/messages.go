@@ -5622,6 +5622,7 @@ func nullIfZero(n int64) sql.NullInt64 {
 // Callers preserve those rows while a current hosted-content replacement is
 // excluded or unfinished, so an ordinary resync cannot detach archived media.
 // URL-backed reference/recording attachments are always left untouched.
+// The size estimate includes the stored body and downloaded attachment bytes.
 func (s *Store) ReplaceMessageInlineAttachments(messageID int64, refs []AttachmentRef, preserveLegacy bool) error {
 	deleteWhere := `source_attachment_id LIKE 'teams:inline:%'`
 	if !preserveLegacy {
@@ -5636,7 +5637,26 @@ func (s *Store) ReplaceMessageInlineAttachments(messageID int64, refs []Attachme
 		  AND COALESCE(mime_type, '') = ''
 		)`
 	}
-	return s.replaceMessageAttachmentsWhere(messageID, deleteWhere, false, refs)
+	return s.withTx(func(tx *loggedTx) error {
+		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, deleteWhere, false, refs); err != nil {
+			return err
+		}
+		var body sql.NullString
+		err := tx.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read Teams message body for size estimate: %w", err)
+		}
+		_, err = tx.Exec(`
+			UPDATE messages SET size_estimate = ? + (
+				SELECT COALESCE(SUM(size), 0) FROM attachments
+				WHERE message_id = ? AND content_hash != ''
+			) WHERE id = ?
+		`, len(body.String), messageID, messageID)
+		if err != nil {
+			return fmt.Errorf("update Teams message size estimate: %w", err)
+		}
+		return nil
+	})
 }
 
 // MessageTeamsInlineAttachments returns Teams-managed inline media rows keyed

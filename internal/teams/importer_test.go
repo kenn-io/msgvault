@@ -186,6 +186,7 @@ func fakeChannelGraph(t *testing.T) *httptest.Server {
 }
 
 func TestInlineImageDownloaded(t *testing.T) {
+	require := require.New(t)
 	assert := assert.New(t)
 	serverURL := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -217,14 +218,22 @@ func TestInlineImageDownloaded(t *testing.T) {
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
 	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", AttachmentsDir: dir})
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.EqualValues(1, sum.InlineImagesCopied)
 	assert.EqualValues(0, sum.Errors)
 	var role, roleSource string
-	require.NoError(t, st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRow(`
 		SELECT attachment_role, role_source FROM attachments LIMIT 1`).Scan(&role, &roleSource))
 	assert.Equal("inline", role)
 	assert.Equal("importer_semantics", roleSource)
+	var sizeEstimate int64
+	require.NoError(st.DB().QueryRow(`SELECT size_estimate FROM messages LIMIT 1`).Scan(&sizeEstimate))
+	assert.EqualValues(7, sizeEstimate, "the downloaded image contributes its bytes")
+
+	_, err = imp.Import(context.Background(), ImportOptions{Email: "me@example.com", AttachmentsDir: dir, Full: true})
+	require.NoError(err)
+	require.NoError(st.DB().QueryRow(`SELECT size_estimate FROM messages LIMIT 1`).Scan(&sizeEstimate))
+	assert.EqualValues(7, sizeEstimate, "reimport retains cached image bytes without counting them twice")
 }
 
 func TestContentlessGraphAttachmentDoesNotSetMessageAttachmentStats(t *testing.T) {
@@ -331,6 +340,9 @@ func TestTeamsReimportRemovesStaleInlineAttachments(t *testing.T) {
 		messageID,
 	).Scan(&attachmentCount))
 	require.Equal(1, attachmentCount)
+	var sizeEstimate int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&sizeEstimate))
+	assert.EqualValues(7, sizeEstimate)
 
 	includeImage = false
 	_, err = imp.Import(context.Background(), ImportOptions{
@@ -353,6 +365,8 @@ func TestTeamsReimportRemovesStaleInlineAttachments(t *testing.T) {
 	assert.False(hasAttachments)
 	assert.Equal(0, denormalizedCount)
 	assert.Equal(0, attachmentCount)
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&sizeEstimate))
+	assert.EqualValues(6, sizeEstimate, "removing the image leaves only the edited body bytes")
 }
 
 // TestTeamsInlineMarkerSurvivesLinkAttachmentReplacement guards the ordering
@@ -421,6 +435,9 @@ func TestTeamsInlineMarkerSurvivesLinkAttachmentReplacement(t *testing.T) {
 	assert.Equal(attachmentpolicy.StateSkipped, markers[markerID].State)
 	assert.Equal(attachmentpolicy.SkipSizeCap, markers[markerID].SkipReason)
 	assert.Greater(markers[markerID].Size, 10, "the observed oversize must survive the link replacement")
+	var sizeEstimate int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&sizeEstimate))
+	assert.Zero(sizeEstimate, "an oversize marker does not report downloaded bytes")
 
 	var linkRows int
 	require.NoError(st.DB().QueryRow(st.Rebind(`
@@ -480,7 +497,7 @@ func TestBackfillInlineMedia(t *testing.T) {
 	require.NoError(err)
 	bodyHTML := `<div><img src="` + srv.URL + `/v1.0/chats/19:x@thread.v2/messages/m1/hostedContents/1/$value"></div>`
 	require.NoError(st.UpsertMessageBody(msgID,
-		sql.NullString{String: "hello", Valid: true},
+		sql.NullString{String: "café", Valid: true},
 		sql.NullString{String: bodyHTML, Valid: true}))
 
 	// baseURL carries the version segment, exactly like production, so the fix
@@ -511,6 +528,9 @@ func TestBackfillInlineMedia(t *testing.T) {
 	).Scan(&hasAttachments, &messageAttachmentCount))
 	assert.True(hasAttachments, "backfill should refresh the message attachment flag")
 	assert.Equal(1, messageAttachmentCount, "backfill should refresh the message attachment count")
+	var sizeEstimate int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), msgID).Scan(&sizeEstimate))
+	assert.EqualValues(12, sizeEstimate, "backfill includes five UTF-8 body bytes and seven image bytes")
 }
 
 func TestBackfillInlineMediaPolicySkipsChannelWithoutFetch(t *testing.T) {
