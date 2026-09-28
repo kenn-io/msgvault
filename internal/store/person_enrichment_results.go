@@ -34,7 +34,7 @@ const (
 )
 
 // PersonEnrichmentCitation is the bounded public citation metadata linked to
-// one provider attempt. It contains no credential or private identifier.
+// provider attempts. It contains no credential or private identifier.
 type PersonEnrichmentCitation struct {
 	ID           int64      `json:"id"`
 	PersonID     int64      `json:"person_id"`
@@ -1220,9 +1220,11 @@ func (s *Store) recheckPersonEnrichmentCatalogTx(
 func personEnrichmentCitationMatches(
 	stored PersonEnrichmentCitation, citation personenrichment.Citation,
 ) bool {
+	// The citation keeps its first retrieval time; each attempt's evidence
+	// records that attempt's retrieval time.
 	if stored.CitationKey != citation.Key || stored.CanonicalURL != citation.URL ||
 		stored.Title != citation.Title || stored.Publisher != citation.Publisher ||
-		stored.Excerpt != citation.Excerpt || !stored.RetrievedAt.Equal(citation.RetrievedAt) {
+		stored.Excerpt != citation.Excerpt {
 		return false
 	}
 	if citation.PublishedAt.IsZero() {

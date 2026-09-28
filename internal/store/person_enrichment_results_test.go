@@ -209,7 +209,7 @@ func (f *enrichmentResultFixture) reseal(t *testing.T) {
 	f.commit, err = personenrichment.NewClaimCommit(personenrichment.ClaimCommitInput{
 		AttemptID: f.attempt.ID, RunID: f.attempt.RunID, PersonID: f.person.ID,
 		LeaseFence: f.attempt.Token.Fence, ProfileFingerprint: f.profile.Fingerprint,
-		ProviderNamespace: f.profile.ProviderNamespace, RequestHash: strings.Repeat("2", 64),
+		ProviderNamespace: f.profile.ProviderNamespace, RequestHash: f.attempt.RequestHash,
 		IdentityAssessment: f.commit.IdentityAssessment,
 	}, f.result, hasher)
 	require.NoError(t, err)
@@ -614,6 +614,101 @@ func TestPersonEnrichmentResultDeduplicatesMetadataAndPreservesOpaqueIDs(t *test
 	identities, err := f.store.LoadProviderPersonIDs(t.Context(), f.person.ID, f.profile.ProviderNamespace)
 	requirements.NoError(err)
 	checks.Equal([]string{"Opaque ID/Not-A-URL:MiXeD?x=1#fragment"}, identities)
+}
+
+func TestCommitEnrichmentClaimsReusesCitationAcrossAttempts(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newEnrichmentResultFixture(t)
+	firstAttemptID := f.attempt.ID
+	firstRetrievedAt := f.result.Citations[0].RetrievedAt
+	_, err := f.store.CommitEnrichmentClaims(t.Context(), f.commit)
+	requirements.NoError(err)
+	firstCitations, err := f.store.ListPersonEnrichmentAttemptCitationsContext(t.Context(), firstAttemptID)
+	requirements.NoError(err)
+	requirements.Len(firstCitations, 1)
+
+	now := f.now.Add(f.profile.RefreshInterval)
+	SetPersonEnrichmentClockForTest(f.store, func() time.Time { return now })
+	run, _, err := f.store.StartRun(t.Context(), personenrichment.RunStart{
+		Kind: "scheduled", RequestedBy: "citation-refresh", RequestedAt: now,
+	})
+	requirements.NoError(err)
+	lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
+		RunID: run.ID, Owner: "result-worker", ProviderName: f.profile.Name,
+		Now: now, LeaseDuration: 5 * time.Minute,
+	})
+	requirements.NoError(err)
+	requirements.NotNil(lease)
+	person, err := f.store.GetPersonContext(t.Context(), f.person.ID)
+	requirements.NoError(err)
+	f.attempt, _, err = f.store.BeginAttempt(t.Context(), lease.Token, personenrichment.AttemptStart{
+		RunID: run.ID, PersonID: person.ID, ProfileFingerprint: f.profile.Fingerprint,
+		PayloadHash: strings.Repeat("1", 64), RequestHash: strings.Repeat("3", 64),
+		PersonRevision: person.Revision, Trigger: lease.Trigger,
+	})
+	requirements.NoError(err)
+	requirements.NoError(f.store.AuthorizeAttemptDispatch(t.Context(), f.attempt.Token))
+	f.result.RequestID = "refresh-request"
+	f.result.JobID = "refresh-job"
+	f.result.Citations[0].RetrievedAt = now
+	f.result.SourceAttempts[0].ObservedAt = now
+	f.reseal(t)
+
+	outcome, err := f.store.CommitEnrichmentClaims(t.Context(), f.commit)
+	requirements.NoError(err)
+	checks.Equal(personenrichment.ClaimApplied, outcome.Status)
+	attempt, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), f.attempt.ID)
+	requirements.NoError(err)
+	checks.Equal("succeeded", attempt.State)
+	checks.Nil(attempt.LeaseUntil)
+	secondCitations, err := f.store.ListPersonEnrichmentAttemptCitationsContext(t.Context(), f.attempt.ID)
+	requirements.NoError(err)
+	checks.Equal(firstCitations, secondCitations, "reuse the citation and preserve its first retrieval time")
+	checks.Equal(int64(1), enrichmentTableCount(t, f.store, "person_enrichment_citations"))
+	checks.Equal(int64(2), enrichmentTableCount(t, f.store, "person_enrichment_attempt_citations"))
+
+	evidence, err := f.store.ListPersonFactEvidenceContext(t.Context(), person.ID, personfacts.EvidenceFilter{})
+	requirements.NoError(err)
+	recordedTimes := make([]time.Time, 0, len(evidence))
+	for _, item := range evidence {
+		recordedTimes = append(recordedTimes, item.Input.RecordedTime)
+	}
+	checks.ElementsMatch([]time.Time{firstRetrievedAt, now}, recordedTimes)
+}
+
+func TestCommitEnrichmentClaimsRejectsChangedCitationMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*personenrichment.Citation)
+	}{
+		{"URL", func(c *personenrichment.Citation) { c.URL = "https://sources.example.test/other" }},
+		{"title", func(c *personenrichment.Citation) { c.Title = "Different title" }},
+		{"publisher", func(c *personenrichment.Citation) { c.Publisher = "Different publisher" }},
+		{"excerpt", func(c *personenrichment.Citation) { c.Excerpt = "Different excerpt" }},
+		{"published time", func(c *personenrichment.Citation) { c.PublishedAt = c.PublishedAt.Add(time.Hour) }},
+		{"missing published time", func(c *personenrichment.Citation) { c.PublishedAt = time.Time{} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
+			f := newEnrichmentResultFixture(t)
+			citation := f.result.Citations[0]
+			_, err := f.store.db.ExecContext(t.Context(), `INSERT INTO person_enrichment_citations
+				(person_id, citation_key, canonical_url, title, publisher, excerpt, published_at, retrieved_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, f.person.ID, citation.Key, citation.URL,
+				citation.Title, citation.Publisher, citation.Excerpt, citation.PublishedAt, citation.RetrievedAt)
+			requirements.NoError(err)
+			tc.change(&f.result.Citations[0])
+			f.reseal(t)
+
+			_, err = f.store.CommitEnrichmentClaims(t.Context(), f.commit)
+			requirements.ErrorContains(err, "citation key has different immutable metadata")
+			citations, err := f.store.ListPersonEnrichmentAttemptCitationsContext(t.Context(), f.attempt.ID)
+			requirements.NoError(err)
+			checks.Empty(citations)
+		})
+	}
 }
 
 func TestCommitEnrichmentClaimsRanksUnsupportedAggregatorEvidenceBelowThreshold(t *testing.T) {
