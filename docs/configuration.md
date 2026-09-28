@@ -847,7 +847,7 @@ capture and processing rules.
 enabled = true
 url = "http://127.0.0.1:8080"     # your Docbank daemon; the port is an example
 api_key_env = "DOCBANK_API_KEY"   # daemon environment variable with the key
-upload_consent = true             # allow archive audio to leave msgvault
+all_sources_upload_consent = true # allow audio from every captured source to leave msgvault
 # asr_profile = "asr"             # optional Docbank profile for audio without source text
 ```
 
@@ -856,13 +856,17 @@ upload_consent = true             # allow archive audio to leave msgvault
 | `enabled` | `false` | Schedule the stored-media job in `msgvault serve` |
 | `url` | — | Docbank base URL: HTTPS, or HTTP on a loopback address. User info, query strings and fragments are rejected |
 | `api_key_env` | — | Name of the daemon environment variable that holds the Docbank API key. It is read for each request and sent as `X-Api-Key` |
-| `upload_consent` | `false` | Allow stored audio and explicit source transcripts to be sent to `url`. Without it the job only records local state |
+| `all_sources_upload_consent` | `false` | Allow stored audio and explicit source transcripts from every captured source, including future providers, to be sent to `url`. Without it the job only records local state |
 | `asr_profile` | — | Optional Docbank processing profile for stored audio without usable source text. An empty value retains audio without requesting processing. Msgvault rejects `supplied-transcript`, which Docbank reserves for supplied transcript input. |
+
+The former Beeper-only `upload_consent` setting no longer enables uploads.
+Existing users must explicitly set `all_sources_upload_consent = true` to resume
+sending audio, including Beeper recordings.
 
 The daemon reads these settings at startup, so restart it after a change. A new
 `url` starts a separate delivery record; earlier rows stay. Disabling the route
 stops the job and keeps its rows. A failed setup, such as an invalid `url`,
-does the same and logs a warning. `upload_consent` covers transport only; the
+does the same and logs a warning. `all_sources_upload_consent` covers transport only; the
 Docbank daemon's processing consent still decides whether a configured profile
 may run. The route inspects stored CAS bytes, so MIME claims do not expand
 Docbank's WAV and MP3 capability. Capture gaps and unsupported formats remain

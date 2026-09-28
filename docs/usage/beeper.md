@@ -194,9 +194,10 @@ What you need:
 - A Docbank server with the media HTTP routes
   ([docbank#346](https://github.com/kenn-io/docbank/pull/346)). The Docbank
   library built into msgvault does not provide them.
-- `upload_consent = true`. It allows transport to that URL only. Docbank's own
-  processing consent decides whether a supplied transcript or configured ASR
-  profile is processed.
+- `all_sources_upload_consent = true`. It allows audio from every captured
+  source to be sent to that URL. See the [consent settings](/docs/configuration/#send-stored-audio-to-docbank)
+  when upgrading from the Beeper-only route. Docbank's own processing consent
+  decides whether a supplied transcript or configured ASR profile is processed.
 - An optional `asr_profile = "asr"` requests that Docbank process stored audio
   without usable source text. Leave it empty to retain the audio without a
   processing request.

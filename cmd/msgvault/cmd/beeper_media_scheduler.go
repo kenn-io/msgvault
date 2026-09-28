@@ -119,7 +119,7 @@ func addBeeperMediaRoute(
 	destination := beeperMediaDestinationKey(endpoint, archiveUID)
 	// Without upload consent the job only records local discovery.
 	var submitClient *docbankmedia.Client
-	if cfg.UploadConsent {
+	if cfg.AllSourcesUploadConsent {
 		submitClient = client
 		if err := withBeeperMediaGate(ctx, gate, func() error {
 			return st.ReconsiderBlockedBeeperMediaOperations(ctx, destination)

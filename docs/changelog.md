@@ -17,11 +17,12 @@ All notable changes to msgvault, grouped by release.
 - Send stored WAV and MP3 audio from any captured source, including email and
   messaging imports, to a separately running Docbank media service with the
   media HTTP routes. The daemon
-  backfills in small scheduled batches after `upload_consent` is set and can
+  backfills in small scheduled batches after `all_sources_upload_consent` is set and can
   use an optional `asr_profile` when no usable source transcript exists.
   Docbank's own consent still controls processing. msgvault keeps each live
   message mapped to its Docbank occurrence; search over processed audio is not
-  included yet.
+  included yet. Existing users must enable the new consent setting; the former
+  Beeper-only `upload_consent` setting no longer permits uploads.
 
 See [Beeper audio](usage/beeper.md#send-audio-to-docbank).
 

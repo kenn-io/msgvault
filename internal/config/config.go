@@ -119,11 +119,11 @@ type IntegrationsConfig struct {
 // DocbankIntegrationConfig configures the optional stored-media destination.
 // The API key stays in the daemon environment and is read when a request runs.
 type DocbankIntegrationConfig struct {
-	Enabled       bool   `toml:"enabled"`
-	URL           string `toml:"url"`
-	APIKeyEnv     string `toml:"api_key_env"`
-	UploadConsent bool   `toml:"upload_consent"`
-	ASRProfile    string `toml:"asr_profile"`
+	Enabled                 bool   `toml:"enabled"`
+	URL                     string `toml:"url"`
+	APIKeyEnv               string `toml:"api_key_env"`
+	AllSourcesUploadConsent bool   `toml:"all_sources_upload_consent"`
+	ASRProfile              string `toml:"asr_profile"`
 }
 
 func (d DocbankIntegrationConfig) validate() error {
