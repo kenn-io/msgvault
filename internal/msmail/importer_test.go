@@ -700,6 +700,26 @@ func TestImportEmptyAttachmentDoesNotFail(t *testing.T) {
 	require.NoError(err)
 }
 
+// A refreshed message whose file became empty loses the old attachment row,
+// because storage writes no row for an empty file.
+func TestImportRefreshDropsAttachmentThatBecameEmpty(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.withAttachment["m1"] = true
+	f.put("m1", "inbox")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+	assert.Equal([2]int{1, 1}, attachments(t, st))
+
+	f.attachmentBody["m1"] = "-"
+	f.put("m1", "inbox") // refresh
+	_, err = f.sync(t, st)
+	require.NoError(err)
+	assert.Equal([2]int{0, 0}, attachments(t, st))
+}
+
 // A folder removed from the mailbox is retired: its messages that moved get
 // their new folder, and the ones that are gone are marked deleted.
 func TestImportRemovedFolderIsRetired(t *testing.T) {

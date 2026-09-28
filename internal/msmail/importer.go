@@ -360,7 +360,9 @@ func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) err
 	}
 	keep := make([]string, 0, len(parsed.Attachments))
 	for _, a := range parsed.Attachments {
-		keep = append(keep, a.PartKey)
+		if len(a.Content) > 0 { // storage writes no row for an empty file
+			keep = append(keep, a.PartKey)
+		}
 	}
 	if err := s.st.DeleteMIMEAttachmentsExceptContext(ctx, msgID, keep); err != nil {
 		return err
