@@ -183,7 +183,9 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		return sum, err
 	}
 	cp := checkpoint()
-	if err = st.CompleteSync(syncID, cp.PageToken); err != nil {
+	// Complete through the source so last_sync_at moves. The cursors live in
+	// the run's checkpoint, so the source cursor stays unchanged.
+	if err = st.CompleteSyncAndPreserveSourceCursorContext(ctx, syncID, src.ID, cp.PageToken); err != nil {
 		return sum, err
 	}
 	sum.Duration = time.Since(start)

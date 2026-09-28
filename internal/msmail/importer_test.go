@@ -309,6 +309,10 @@ func TestImportFirstSyncThenNoChange(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT label_type FROM labels WHERE source_label_id = 'inbox'`).Scan(&labelType))
 	assert.Equal("system", labelType)
 
+	var synced bool
+	require.NoError(st.DB().QueryRow(`SELECT last_sync_at IS NOT NULL FROM sources`).Scan(&synced))
+	assert.True(synced, "a completed sync sets last_sync_at")
+
 	f.mimeCalls.Store(0)
 	sum, err = f.sync(t, st)
 	require.NoError(err)
