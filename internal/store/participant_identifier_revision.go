@@ -45,8 +45,7 @@ func (s *Store) ParticipantIdentifierRevisionContext(ctx context.Context) (int64
 // bumpParticipantIdentifierRevision increments the participant-identifier
 // revision inside tx, seeding the row with 0 first if it does not exist yet,
 // following bumpAccountIdentityRevision's approach.
-func (s *Store) bumpParticipantIdentifierRevision(tx *loggedTx) error {
-	ctx := context.Background()
+func (s *Store) bumpParticipantIdentifierRevision(ctx context.Context, tx *loggedTx) error {
 	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(
 		`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`),
 		participantIdentifierRevisionKey); err != nil {
@@ -62,7 +61,7 @@ func (s *Store) bumpParticipantIdentifierRevision(tx *loggedTx) error {
 }
 
 func (s *Store) bumpParticipantIdentifierRevisionIfChanged(
-	tx *loggedTx, result sql.Result,
+	ctx context.Context, tx *loggedTx, result sql.Result,
 ) error {
 	changed, err := result.RowsAffected()
 	if err != nil {
@@ -71,5 +70,5 @@ func (s *Store) bumpParticipantIdentifierRevisionIfChanged(
 	if changed == 0 {
 		return nil
 	}
-	return s.bumpParticipantIdentifierRevision(tx)
+	return s.bumpParticipantIdentifierRevision(ctx, tx)
 }

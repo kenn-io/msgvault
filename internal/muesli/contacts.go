@@ -33,15 +33,6 @@ const (
 
 const addressBookFile = "AddressBook-v22.abcddb"
 
-// DefaultContactsPath is where macOS keeps the Contacts stores.
-func DefaultContactsPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, "Library", "Application Support", "AddressBook")
-}
-
 // ContactCard is one person in Contacts: a card, or every card linked to it
 // across accounts. Phones are as typed in Contacts; see NormalizeContactPhone.
 type ContactCard struct {
@@ -144,6 +135,23 @@ func (c *Contacts) merge(other *Contacts) {
 		slices.Sort(existing.Emails)
 		slices.Sort(existing.Phones)
 	}
+}
+
+// sharedAddresses finds addresses claimed by more than one distinct Contacts
+// group. Normalize phones with the import's country code before comparing them.
+func (c *Contacts) sharedAddresses(countryCode string) map[string]bool {
+	owners := map[string]string{}
+	shared := map[string]bool{}
+	for key, card := range c.cards {
+		phones, _ := normalizedPhones(card.Phones, countryCode)
+		for _, address := range append(slices.Clone(card.Emails), phones...) {
+			if owner, ok := owners[address]; ok && owner != key {
+				shared[address] = true
+			}
+			owners[address] = key
+		}
+	}
+	return shared
 }
 
 // addressBookStores lists the store files under root. The second result is

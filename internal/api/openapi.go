@@ -872,6 +872,9 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 			email.Extensions["x-go-type-skip-optional-pointer"] = true
 			email.Extensions["x-omitempty"] = true
+			email.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+				"validate": "required_without=Phone",
+			}
 		}
 	}
 	if totals := schemas["DurationTotals"]; totals != nil {

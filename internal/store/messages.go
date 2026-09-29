@@ -4105,7 +4105,7 @@ func (s *Store) ensureParticipantByPhoneTx(
 		displayNameChanged := false
 		now := s.dialect.Now()
 		for range 3 {
-			insertResult, err := tx.Exec(fmt.Sprintf(`
+			insertResult, err := tx.ExecContext(ctx, fmt.Sprintf(`
 				INSERT INTO participants (phone_number, display_name, created_at, updated_at)
 				VALUES (?, ?, %s, %s)
 				ON CONFLICT (phone_number) WHERE phone_number IS NOT NULL
@@ -4119,12 +4119,12 @@ func (s *Store) ensureParticipantByPhoneTx(
 				return fmt.Errorf("check participant by phone insert: %w", err)
 			}
 			if inserted > 0 {
-				if err := s.bumpParticipantDisplayNameRevision(tx); err != nil {
+				if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
 					return err
 				}
 			}
 			if inserted == 0 && displayName != "" {
-				updateResult, err := tx.Exec(`
+				updateResult, err := tx.ExecContext(ctx, `
 					UPDATE participants SET display_name = ?
 					WHERE phone_number = ?
 					  AND COALESCE(NULLIF(TRIM(display_name), ''), '') = ''
@@ -4134,12 +4134,12 @@ func (s *Store) ensureParticipantByPhoneTx(
 				if err != nil {
 					return fmt.Errorf("backfill participant by phone: %w", err)
 				}
-				displayNameChanged, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, updateResult)
+				displayNameChanged, err = s.bumpParticipantDisplayNameRevisionIfChangedContext(ctx, tx, updateResult)
 				if err != nil {
 					return err
 				}
 			}
-			lookupErr := tx.QueryRow(
+			lookupErr := tx.QueryRowContext(ctx,
 				`SELECT id FROM participants WHERE phone_number = ?`+s.dialect.SelectForUpdate(),
 				phone,
 			).Scan(&id)
@@ -4158,13 +4158,13 @@ func (s *Store) ensureParticipantByPhoneTx(
 		// and attach service/scope metadata whenever the importer namespace is
 		// unambiguous. A repeat call repairs metadata but does not repoint the
 		// identifier away from its existing participant.
-		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(tx)
+		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(ctx, tx)
 		if err != nil {
 			return err
 		}
 		finish := func(result sql.Result) error {
 			if result != nil {
-				if err := s.bumpParticipantIdentifierRevisionIfChanged(tx, result); err != nil {
+				if err := s.bumpParticipantIdentifierRevisionIfChanged(ctx, tx, result); err != nil {
 					return err
 				}
 			}
@@ -4172,7 +4172,7 @@ func (s *Store) ensureParticipantByPhoneTx(
 				// Drop the generic row only once this participant really
 				// holds another row for the number; the insert above can
 				// yield to another participant's identifier.
-				removed, err := tx.Exec(`DELETE FROM participant_identifiers
+				removed, err := tx.ExecContext(ctx, `DELETE FROM participant_identifiers
 					WHERE participant_id = ? AND identifier_type = ? AND identifier_value = ?
 					  AND EXISTS (SELECT 1 FROM participant_identifiers other
 						WHERE other.participant_id = ? AND other.identifier_value = ?
@@ -4181,7 +4181,7 @@ func (s *Store) ensureParticipantByPhoneTx(
 				if err != nil {
 					return fmt.Errorf("replace generic phone identifier: %w", err)
 				}
-				if err := s.bumpParticipantIdentifierRevisionIfChanged(tx, removed); err != nil {
+				if err := s.bumpParticipantIdentifierRevisionIfChanged(ctx, tx, removed); err != nil {
 					return err
 				}
 			}
@@ -4197,7 +4197,7 @@ func (s *Store) ensureParticipantByPhoneTx(
 		// number, and a service row replaces it (see finish).
 		if identifierType == PhoneIdentifierType {
 			var existing int
-			if err := tx.QueryRow(`SELECT COUNT(*) FROM participant_identifiers
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM participant_identifiers
 				WHERE participant_id = ? AND identifier_value = ?`, id, phone).Scan(&existing); err != nil {
 				return fmt.Errorf("check participant identifiers: %w", err)
 			}
@@ -4206,7 +4206,7 @@ func (s *Store) ensureParticipantByPhoneTx(
 			}
 		}
 		if !classificationColumns {
-			result, err := tx.Exec(`INSERT INTO participant_identifiers (
+			result, err := tx.ExecContext(ctx, `INSERT INTO participant_identifiers (
 					participant_id, identifier_type, identifier_value, is_primary
 				) VALUES (?, ?, ?, TRUE)
 				ON CONFLICT (identifier_type, identifier_value) DO NOTHING`,
@@ -4219,7 +4219,7 @@ func (s *Store) ensureParticipantByPhoneTx(
 		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
 			identifierType, phone,
 		)
-		result, err := tx.Exec(`INSERT INTO participant_identifiers (
+		result, err := tx.ExecContext(ctx, `INSERT INTO participant_identifiers (
 				participant_id, identifier_type, identifier_value, is_primary,
 				service_id, scope_kind, scope_value
 			) VALUES (?, ?, ?, TRUE,
@@ -4420,7 +4420,7 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		if err := s.bumpAccountIdentityRevision(tx); err != nil {
 			return err
 		}
-		if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
+		if err := s.bumpParticipantIdentifierRevision(context.Background(), tx); err != nil {
 			return err
 		}
 		if err := rewritePersonMergeParticipantLineageTx(
@@ -4554,7 +4554,7 @@ func (s *Store) AdoptLegacyParticipantIdentifier(
 				identifierType, legacyValue); err != nil {
 				return fmt.Errorf("remove ambiguous legacy participant identifier: %w", err)
 			}
-			if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
+			if err := s.bumpParticipantIdentifierRevision(context.Background(), tx); err != nil {
 				return err
 			}
 			return nil
@@ -4566,7 +4566,7 @@ func (s *Store) AdoptLegacyParticipantIdentifier(
 			scopedValue, identifierType, legacyValue); err != nil {
 			return fmt.Errorf("migrate legacy participant identifier: %w", err)
 		}
-		if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
+		if err := s.bumpParticipantIdentifierRevision(context.Background(), tx); err != nil {
 			return err
 		}
 		adoptedID = legacyID
@@ -4629,7 +4629,7 @@ func (s *Store) SetParticipantIdentifier(participantID int64, identifierType, id
 		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
 			identifierType, identifierValue,
 		)
-		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(tx)
+		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(context.Background(), tx)
 		if err != nil {
 			return err
 		}
@@ -4665,7 +4665,7 @@ func (s *Store) SetParticipantIdentifier(participantID int64, identifierType, id
 		if setErr != nil {
 			return fmt.Errorf("set participant identifier: %w", setErr)
 		}
-		if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
+		if err := s.bumpParticipantIdentifierRevision(context.Background(), tx); err != nil {
 			return err
 		}
 		var ownerEvidence bool
@@ -4758,7 +4758,7 @@ func (s *Store) RepairParticipantEmailAddresses(repairs []ParticipantEmailRepair
 }
 
 func (s *Store) participantIdentifierClassificationColumnsTx(
-	tx *loggedTx,
+	ctx context.Context, tx *loggedTx,
 ) (bool, error) {
 	var count int
 	query := `SELECT COUNT(*) FROM pragma_table_info('participant_identifiers')
@@ -4769,7 +4769,7 @@ func (s *Store) participantIdentifierClassificationColumnsTx(
 			  AND table_name = 'participant_identifiers'
 			  AND column_name IN ('service_id', 'scope_kind', 'scope_value')`
 	}
-	if err := tx.QueryRow(query).Scan(&count); err != nil {
+	if err := tx.QueryRowContext(ctx, query).Scan(&count); err != nil {
 		return false, fmt.Errorf("inspect participant identifier classification schema: %w", err)
 	}
 	return count == 3, nil
@@ -4847,7 +4847,7 @@ func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, d
 		if err := s.bumpParticipantDisplayNameRevision(tx); err != nil {
 			return err
 		}
-		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(tx)
+		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(context.Background(), tx)
 		if err != nil {
 			return err
 		}
@@ -4876,7 +4876,7 @@ func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, d
 				return fmt.Errorf("insert participant identifier: %w", err)
 			}
 		}
-		return s.bumpParticipantIdentifierRevision(tx)
+		return s.bumpParticipantIdentifierRevision(context.Background(), tx)
 	})
 	if err != nil {
 		return 0, err

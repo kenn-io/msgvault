@@ -35,7 +35,9 @@ func (p Participant) archivePerson() meetingarchive.Person {
 			emails = append(emails, email)
 		}
 	}
-	person := meetingarchive.Person{Name: p.Name, Anchor: p.Anchor}
+	person := meetingarchive.Person{
+		Name: p.Name, Anchor: p.Anchor, LinkExcludedAddresses: p.LinkExcludedAddresses,
+	}
 	phones := slices.Clone(p.ContactPhones)
 	if len(emails) > 0 {
 		person.Email = emails[0]
@@ -63,12 +65,11 @@ func (p Participant) raw(person meetingarchive.Person) rawParticipant {
 	return raw
 }
 
-// resolveParticipants fills each participant's Contacts identities. When the
-// Contacts read is not complete, a participant that cannot be resolved keeps
-// the identities archived for it earlier, so a temporary outage never drops
-// attendees or their person activity.
+// resolveParticipants fills each participant's Contacts identities. A still
+// present participant whose card cannot be resolved keeps its earlier archived
+// identities, without asserting current ownership of those addresses.
 func (imp *Importer) resolveParticipants(
-	sourceID int64, meeting *Meeting, contacts *Contacts, countryCode string,
+	sourceID int64, meeting *Meeting, contacts *Contacts, countryCode string, sharedAddresses map[string]bool,
 ) error {
 	state := contacts.State()
 	meeting.ContactsState = state
@@ -88,11 +89,15 @@ func (imp *Importer) resolveParticipants(
 		if card, ok := contacts.Resolve(contactID, participant.Email); ok {
 			participant.ContactEmails = card.Emails
 			participant.ContactPhones, participant.SkippedPhones = normalizedPhones(card.Phones, countryCode)
+			addresses := append([]string{participant.Email}, participant.ContactEmails...)
+			addresses = append(addresses, participant.ContactPhones...)
+			for _, address := range addresses {
+				if sharedAddresses[address] {
+					participant.LinkExcludedAddresses = append(participant.LinkExcludedAddresses, address)
+				}
+			}
 			participant.Anchor = meetingarchive.Anchor("apple-contact", card.GroupKey)
 			participant.Resolution = resolutionResolved
-			continue
-		}
-		if state == ContactsComplete {
 			continue
 		}
 		if !loaded {

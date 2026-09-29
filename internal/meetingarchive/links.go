@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -90,6 +91,12 @@ func (a *Archiver) linkPerson(
 			return nil
 		}
 	}
+	identities = slices.DeleteFunc(identities, func(id identity) bool {
+		return slices.Contains(person.LinkExcludedAddresses, id.value)
+	})
+	if len(identities) == 0 {
+		return nil
+	}
 	settled, err := a.store.StableAnchorSettledContext(ctx, sourceID, anchor, anchorIdentities(identities))
 	if err != nil {
 		return err
@@ -143,7 +150,7 @@ func (a *Archiver) linkPerson(
 	seen := map[int64]bool{primary: true}
 	for _, observation := range observations {
 		other := observation.ParticipantID
-		if seen[other] {
+		if seen[other] || slices.Contains(person.LinkExcludedAddresses, observation.NormalizedValue) {
 			continue
 		}
 		seen[other] = true

@@ -2274,3 +2274,56 @@ func TestCountMessagesPerMailbox(t *testing.T) {
 	assert.Equal(int64(1), counts["Sent"], "Sent count")
 	assert.Equal(int64(1), counts["Drafts"], "Drafts count")
 }
+
+func TestEnsurePhoneParticipantContextCancelsBlockedNameBackfill(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL embedding-clock lock required")
+	}
+	const phone = "+12025550100"
+	participantID, err := st.EnsurePhoneParticipantContext(t.Context(), phone, "")
+	require.NoError(err)
+
+	// Embedding publication holds this exclusive lock; the production
+	// participant-update trigger requests its shared form.
+	blocker, err := st.DB().BeginTx(t.Context(), nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = blocker.Rollback() })
+	_, err = blocker.ExecContext(t.Context(), `SELECT pg_advisory_xact_lock(
+        hashtextextended('msgvault.embedding_change_clock', 0))`)
+	require.NoError(err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, err := st.EnsurePhoneParticipantContext(ctx, phone, "Taylor Example")
+		result <- err
+	}()
+	t.Cleanup(func() {
+		cancel()
+		_ = blocker.Rollback()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			assert.Fail(t, "phone participant write did not stop after releasing its blocker")
+		}
+	})
+	waitForPostgreSQLLockWait(t, st, "%UPDATE participants SET display_name =%")
+	cancel()
+	select {
+	case err := <-result:
+		require.ErrorIs(err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		require.FailNow("cancelled phone participant write kept waiting for the embedding lock")
+	}
+
+	var name string
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COALESCE(display_name, '') FROM participants WHERE id = ?`),
+		participantID).Scan(&name))
+	assert.Empty(t, name, "cancelled name backfill must roll back")
+}

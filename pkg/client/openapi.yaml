@@ -5827,6 +5827,8 @@ components:
           type: string
           x-go-type: string
           x-go-type-skip-optional-pointer: true
+          x-oapi-codegen-extra-tags:
+            validate: required_without=Phone
           x-omitempty: true
         id:
           description: Stable identifier for this person in the import source

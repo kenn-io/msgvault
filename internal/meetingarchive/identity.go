@@ -10,10 +10,11 @@ import (
 // the primary ones. The name is presentation data only.
 func (p Person) Normalized() Person {
 	out := Person{
-		Name:   strings.TrimSpace(p.Name),
-		Email:  normalizePersonEmail(p.Email),
-		Phone:  normalizePersonPhone(p.Phone),
-		Anchor: strings.TrimSpace(p.Anchor),
+		Name:                  strings.TrimSpace(p.Name),
+		Email:                 normalizePersonEmail(p.Email),
+		Phone:                 normalizePersonPhone(p.Phone),
+		Anchor:                strings.TrimSpace(p.Anchor),
+		LinkExcludedAddresses: p.LinkExcludedAddresses,
 	}
 	seenEmails := map[string]bool{out.Email: true}
 	for _, email := range p.OtherEmails {

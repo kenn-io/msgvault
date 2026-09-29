@@ -23,8 +23,10 @@ type Participant struct {
 	// or "carried_forward" when they are set.
 	ContactEmails []string
 	ContactPhones []string
-	Anchor        string
-	Resolution    string
+	// LinkExcludedAddresses remain meeting evidence but cannot assert ownership.
+	LinkExcludedAddresses []string
+	Anchor                string
+	Resolution            string
 	// SkippedPhones counts Contacts phones that could not become E.164.
 	SkippedPhones int
 }

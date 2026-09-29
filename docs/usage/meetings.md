@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-25"
+last_edited: "2026-09-28"
 title: Meeting Transcripts
 description: Archive AI meeting notes and transcripts from Granola, Circleback, Notion, and Muesli into your searchable local archive.
 ---
@@ -159,15 +159,18 @@ has never used with you:
 |---|---|---|
 | Granola, Circleback | One email | Not needed |
 | Notion AI Meeting Notes | The user's verified email | The Notion user ID, so a user whose email changes keeps one person |
-| Muesli | Email, or the emails and phones on the attendee's Apple Contacts card | The Contacts card |
+| Muesli | Email, or the emails and phones on the attendee's Apple Contacts card | The Contacts card, excluding addresses shared by unlinked cards |
 | Import API | `email` and `phone` | The person's `id` within the import source |
 
 These links follow the same rules as other automatic identity links:
 
 - Only a shared stable identifier links identities. Matching names never do.
+- Muesli excludes addresses shared by unlinked Contacts cards from automatic
+  linking, even when only one card appears in a meeting. The addresses remain
+  in the meeting evidence.
 - If the identities already belong to two different people, msgvault leaves
   them apart and records a conflict. So does an address that another card or
-  `id` from the same source already claims, such as a shared household phone.
+  `id` from the same source already claims in archived observations.
   Review conflicts in the Web [Directory review queues](/docs/web-ui/#directory-and-reviews).
 - Rejecting a proposed link keeps that pair apart. The same identities can
   still connect through another identity of the same person.
@@ -535,7 +538,9 @@ use a different support folder, such as `MuesliDev`; set `db_path` for those.
 
 People you tag in Muesli usually come from Apple Contacts. msgvault reads the
 Mac's Contacts stores read-only, finds each attendee's card by its Contacts ID
-or exact email, and links every email and phone on that card. A contact tagged
+or exact email, and links its unshared emails and phones. An address on multiple
+unlinked Contacts cards stays in the meeting evidence but does not create an
+identity link. A contact tagged
 with only a phone number therefore reaches the person you already chat with at
 that number.
 
@@ -548,8 +553,10 @@ that number.
 - When only some Contacts accounts can be read, msgvault still uses Contacts
   IDs but stops matching by email, because a hidden account could hold another
   card with the same email.
-- When Contacts is temporarily unreadable, attendees keep the identities from
-  the previous sync.
+- When Contacts is unreadable or a card disappears, an attendee still present
+  in Muesli keeps the identities archived for that meeting. Those retained
+  addresses do not assert current Contacts ownership. Removing the attendee
+  in Muesli removes its meeting association.
 - Set `contacts = false` to turn the lookup off.
 
 ```bash

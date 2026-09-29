@@ -5489,7 +5489,7 @@ func (m MeetingMetricsRequest) Validate() error {
 }
 
 type MeetingPerson struct {
-	Email string `json:"email,omitempty"`
+	Email string `json:"email,omitempty" validate:"required_without=Phone"`
 
 	// ID Stable identifier for this person in the import source
 	ID   *string `json:"id,omitzero" validate:"omitempty,max=200"`

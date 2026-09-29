@@ -41,7 +41,7 @@ const muesliConfigHint = `Add to your config.toml:
 
 // resolveMuesliSources picks [[muesli]] entries: an explicit identifier must
 // match one entry; with no argument every configured entry is returned.
-func resolveMuesliSources(args []string) ([]config.MuesliSource, error) {
+func resolveMuesliSources(args []string, cfg *config.Config) ([]config.MuesliSource, error) {
 	if len(cfg.Muesli) == 0 {
 		return nil, errors.New("no [[muesli]] sources configured\n\n" + muesliConfigHint)
 	}
@@ -86,10 +86,15 @@ Examples:
   msgvault add-muesli mac`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		sources, err := resolveMuesliSources(args)
+		sources, err := resolveMuesliSources(args, cfg)
 		if err != nil {
 			return err
 		}
@@ -115,7 +120,7 @@ Examples:
 					"Grant the msgvault daemon Full Disk Access so attendees picked from Contacts link to people.")
 			}
 		}
-		st, cleanup, err := openWritableStoreAndInitForIngest()
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 		if err != nil {
 			return err
 		}
@@ -124,7 +129,7 @@ Examples:
 			source.Identifier, accountEmail); err != nil {
 			return err
 		}
-		if err := runPostSourceCreateMigrations(st); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nMuesli source %s registered.\n", source.Identifier)
@@ -151,10 +156,15 @@ Examples:
   msgvault sync-muesli --full`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration is unavailable")
+		}
+		cfg := state.cfg
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		sources, err := resolveMuesliSources(args)
+		sources, err := resolveMuesliSources(args, cfg)
 		if err != nil {
 			return err
 		}
@@ -172,7 +182,7 @@ Examples:
 			}
 		}
 
-		st, cleanup, err := openWritableStoreAndInitForIngest()
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
 		if err != nil {
 			return err
 		}
@@ -207,12 +217,12 @@ Examples:
 				pendingWrites.MeetingsUpdated += summary.MeetingsUpdated
 			}
 			if err := finishMuesliImport(source.Identifier, pendingWrites, importErr,
-				func() error { return rebuildMuesliCacheAfterWrite(dbPath) }); err != nil {
+				func() error { return rebuildMuesliCacheAfterWrite(dbPath, state) }); err != nil {
 				return err
 			}
 			writeMuesliSummary(cmd.OutOrStdout(), summary)
 		}
-		return rebuildMuesliCacheAfterWrite(dbPath)
+		return rebuildMuesliCacheAfterWrite(dbPath, state)
 	},
 }
 

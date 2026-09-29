@@ -320,7 +320,7 @@ func (s *Store) RecordContactObservationContext(
 				return err
 			}
 			result.Created = true
-			if err := s.bumpParticipantIdentifierRevision(tx); err != nil {
+			if err := s.bumpParticipantIdentifierRevision(ctx, tx); err != nil {
 				return err
 			}
 			if providerContradicted {
@@ -490,7 +490,7 @@ func (s *Store) SupersedeParticipantObservationContext(
 		); err != nil {
 			return err
 		}
-		return s.bumpParticipantIdentifierRevision(tx)
+		return s.bumpParticipantIdentifierRevision(ctx, tx)
 	})
 }
 

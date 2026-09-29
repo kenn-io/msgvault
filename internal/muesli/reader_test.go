@@ -1,6 +1,7 @@
 package muesli
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -183,6 +184,8 @@ func TestReaderOpensWALWithoutSharedMemorySidecar(t *testing.T) {
 	require.FileExists(path + "-wal")
 	require.FileExists(path + "-shm")
 	require.NoError(os.Remove(path + "-shm"))
+	before, err := os.ReadFile(path)
+	require.NoError(err)
 
 	reader, err := Open(context.Background(), path)
 	require.NoError(err)
@@ -191,6 +194,10 @@ func TestReaderOpensWALWithoutSharedMemorySidecar(t *testing.T) {
 	require.NoError(err)
 	require.Len(meetings, 1)
 	assert.Equal(t, "Only in WAL", meetings[0].Title)
+	require.NoError(reader.Close())
+	after, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.True(t, bytes.Equal(before, after), "closing the reader must not checkpoint the source database")
 }
 
 func TestReaderConnectionRejectsWriteQueries(t *testing.T) {

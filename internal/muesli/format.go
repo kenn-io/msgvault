@@ -98,8 +98,8 @@ func parseCreatedAt(value string) (time.Time, error) {
 
 type rawParticipant struct {
 	// Ref is a short hash of Muesli's participant identifier. It lets a later
-	// sync carry this participant's Contacts identities forward while Contacts
-	// is unreadable, without storing the Contacts identifier.
+	// sync retain this participant's identities when its Contacts card cannot
+	// be resolved, without storing the Contacts identifier.
 	Ref    string `json:"ref,omitempty"`
 	Name   string `json:"name,omitempty"`
 	Email  string `json:"email,omitempty"`
@@ -318,6 +318,7 @@ func dedupeParticipants(participants []Participant) []Participant {
 				if out[at].Resolution == "" && person.Resolution != "" {
 					out[at].ContactEmails, out[at].ContactPhones = person.ContactEmails, person.ContactPhones
 					out[at].Anchor, out[at].Resolution = person.Anchor, person.Resolution
+					out[at].LinkExcludedAddresses = person.LinkExcludedAddresses
 				}
 				continue
 			}

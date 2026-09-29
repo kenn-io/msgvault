@@ -129,6 +129,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 	}
 	sum.ContactsState = contacts.State()
+	sharedAddresses := contacts.sharedAddresses(opts.PhoneCountryCode)
 
 	meetings, err := reader.ListMeetings(ctx)
 	if err != nil {
@@ -167,7 +168,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		sum.MeetingsProcessed++
 
-		if err := imp.resolveParticipants(source.ID, &meeting, contacts, opts.PhoneCountryCode); err != nil {
+		if err := imp.resolveParticipants(source.ID, &meeting, contacts, opts.PhoneCountryCode, sharedAddresses); err != nil {
 			return sum, err
 		}
 		snapshot, err := meeting.ArchiveSnapshot(source.ID, identifier, opts.AccountEmail)

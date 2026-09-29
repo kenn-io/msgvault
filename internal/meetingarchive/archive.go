@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"strings"
@@ -36,6 +37,9 @@ type Person struct {
 	// Anchor is a stable, provider-scoped identifier for this human, built
 	// with Anchor(). Empty means the provider asserts no stable identity.
 	Anchor string
+	// LinkExcludedAddresses are normalized addresses kept as meeting evidence
+	// but excluded from this anchor's automatic ownership assertions.
+	LinkExcludedAddresses []string
 }
 
 type Snapshot struct {
@@ -92,11 +96,12 @@ func (a *Archiver) Upsert(
 		return Result{}, err
 	}
 
-	existing, err := a.store.MessageExistsBatch(snapshot.SourceID, []string{snapshot.SourceMessageID})
+	existing, err := a.store.MessageMetadataBatch(snapshot.SourceID, []string{snapshot.SourceMessageID})
 	if err != nil {
 		return Result{}, fmt.Errorf("lookup existing meeting: %w", err)
 	}
-	existingMessageID, existed := existing[snapshot.SourceMessageID]
+	existingMessage, existed := existing[snapshot.SourceMessageID]
+	existingMessageID := existingMessage.ID
 
 	identities, err := meetingidentity.ForSource(a.store, snapshot.SourceID, snapshot.AccountEmail)
 	if err != nil {
@@ -116,7 +121,8 @@ func (a *Archiver) Upsert(
 	if existed && !opts.Force {
 		storedRaw, rawErr := a.store.GetMessageRaw(existingMessageID)
 		storedIsFromMe, attributionErr := a.store.GetMessageIsFromMe(existingMessageID)
-		if rawErr == nil && attributionErr == nil && bytes.Equal(storedRaw, snapshot.Raw) && storedIsFromMe == expectedIsFromMe {
+		if rawErr == nil && attributionErr == nil && bytes.Equal(storedRaw, snapshot.Raw) &&
+			storedIsFromMe == expectedIsFromMe && equalMetadata([]byte(existingMessage.Metadata.String), snapshot.Metadata) {
 			if err := a.store.RecomputeConversationStatsForMessageContext(ctx, existingMessageID); err != nil {
 				return Result{}, fmt.Errorf("recompute meeting conversation stats: %w", err)
 			}
@@ -248,6 +254,15 @@ func (a *Archiver) Upsert(
 		return result, fmt.Errorf("link meeting attendee identities: %w", err)
 	}
 	return result, nil
+}
+
+func equalMetadata(stored, incoming []byte) bool {
+	if bytes.Equal(stored, incoming) {
+		return true
+	}
+	// PostgreSQL JSONB changes object key order and whitespace on storage.
+	left, right := jsontext.Value(stored).Clone(), jsontext.Value(incoming).Clone()
+	return left.Canonicalize() == nil && right.Canonicalize() == nil && bytes.Equal(left, right)
 }
 
 func emailDomain(email string) string {

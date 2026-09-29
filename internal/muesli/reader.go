@@ -50,14 +50,14 @@ func Open(ctx context.Context, path string) (*Reader, error) {
 
 // openQueryOnly opens another app's live SQLite store without changing it.
 // url.URL escapes '#', '?', and '%' in the path so they cannot end the
-// filename early. query_only rejects write SQL while still letting SQLite
-// manage WAL sidecars. immutable=1 is deliberately absent: it would ignore
+// filename early. mode=ro prevents checkpointing on close; query_only rejects
+// write SQL. SQLite can still manage WAL sidecars. immutable=1 would ignore
 // rows the owning app has committed to the WAL.
 func openQueryOnly(abs string) (*sql.DB, error) {
 	dsn := (&url.URL{
 		Scheme:   "file",
 		Path:     sqliteURIPath(abs),
-		RawQuery: "_busy_timeout=5000&_query_only=1",
+		RawQuery: "mode=ro&_busy_timeout=5000&_query_only=1",
 	}).String()
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {

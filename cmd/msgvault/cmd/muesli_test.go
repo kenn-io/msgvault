@@ -6,8 +6,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
@@ -18,11 +20,8 @@ import (
 func TestResolveMuesliSources(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	previous := cfg
-	t.Cleanup(func() { cfg = previous })
-
-	cfg = &config.Config{}
-	_, err := resolveMuesliSources(nil)
+	cfg := &config.Config{}
+	_, err := resolveMuesliSources(nil, cfg)
 	require.Error(err)
 	assert.Contains(err.Error(), "[[muesli]]")
 
@@ -30,16 +29,16 @@ func TestResolveMuesliSources(t *testing.T) {
 		{Identifier: "mac", AccountEmail: "you@example.com"},
 		{Identifier: "studio", AccountEmail: "you@example.com"},
 	}}
-	all, err := resolveMuesliSources(nil)
+	all, err := resolveMuesliSources(nil, cfg)
 	require.NoError(err)
 	assert.Len(all, 2)
 
-	one, err := resolveMuesliSources([]string{"STUDIO"})
+	one, err := resolveMuesliSources([]string{"STUDIO"}, cfg)
 	require.NoError(err)
 	require.Len(one, 1)
 	assert.Equal("studio", one[0].Identifier)
 
-	_, err = resolveMuesliSources([]string{"laptop"})
+	_, err = resolveMuesliSources([]string{"laptop"}, cfg)
 	require.Error(err)
 	assert.Contains(err.Error(), "configured: mac, studio")
 }
@@ -116,4 +115,19 @@ func TestMuesliImportOptionsCarryContactsSettings(t *testing.T) {
 		Identifier: "mac", AccountEmail: "you@example.com", DBPath: "/tmp/muesli.db",
 		ContactsEnabled: false, ContactsPath: "/tmp/AddressBook", PhoneCountryCode: "44",
 	}, opts)
+}
+
+func TestMuesliCommandsUseInvocationConfiguration(t *testing.T) {
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	cfg := &config.Config{Muesli: []config.MuesliSource{{Identifier: "mac"}}}
+	for _, command := range []*cobra.Command{addMuesliCmd, syncMuesliCmd} {
+		t.Run(command.Name(), func(t *testing.T) {
+			cmd := &cobra.Command{}
+			cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+
+			err := command.RunE(cmd, []string{"missing"})
+
+			assert.ErrorContains(t, err, `no [[muesli]] entry with identifier "missing" (configured: mac)`)
+		})
+	}
 }
