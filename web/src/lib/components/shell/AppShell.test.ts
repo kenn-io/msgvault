@@ -452,6 +452,19 @@ describe('AppShell', () => {
       expect(window.history.length).toBe(length + 1);
     });
 
+    it('drops an unsubmitted search draft when the sidebar opens another workspace', async () => {
+      const state = shellState('sources');
+      render(AppShell, { client: exploreClient(), state, enabled: false });
+
+      const search = screen.getByRole('searchbox', { name: 'Search everything' }) as HTMLInputElement;
+      await fireEvent.input(search, { target: { value: 'pipeline' } });
+      await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Everything' }));
+
+      expect(state.current.workspace).toBe('everything');
+      expect(state.current.query).toBe('');
+      await waitFor(() => expect(search.value).toBe(''));
+    });
+
     it('updates Everything results as the global search is typed', async () => {
       const state = shellState('everything');
       render(AppShell, { client: exploreClient(), state, enabled: false });

@@ -1219,6 +1219,7 @@
         </span>
       {/if}
       <SearchBar
+        workspace={exploreState.current.workspace}
         query={exploreState.current.query}
         mode={exploreState.current.searchMode}
         live={exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files'}

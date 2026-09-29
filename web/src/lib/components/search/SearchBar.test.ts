@@ -1,12 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
+import { chooseSelectOption } from '../../../test/kit-ui';
 import SearchBar from './SearchBar.svelte';
 
 function setup(live: boolean) {
   const onDraft = vi.fn();
   const onSubmit = vi.fn();
-  render(SearchBar, { query: 'budget', mode: 'full_text', live, compact: false, onDraft, onSubmit });
+  render(SearchBar, { workspace: 'sources', query: 'budget', mode: 'full_text', live, compact: false, onDraft, onSubmit });
   return { onDraft, onSubmit, input: screen.getByRole('searchbox', { name: 'Search everything' }) };
 }
 
@@ -30,6 +31,7 @@ describe('SearchBar', () => {
   it('shows the committed query again when it changes', async () => {
     const onSubmit = vi.fn();
     const { rerender } = render(SearchBar, {
+      workspace: 'sources',
       query: 'budget',
       mode: 'full_text',
       live: false,
@@ -48,6 +50,7 @@ describe('SearchBar', () => {
 
   it('offers the search mode as a select when compact', () => {
     render(SearchBar, {
+      workspace: 'sources',
       query: '',
       mode: 'semantic',
       live: true,
@@ -57,5 +60,37 @@ describe('SearchBar', () => {
     });
     expect(screen.getByRole('combobox', { name: /^Search mode:/ })).toBeTruthy();
     expect(screen.queryByRole('radiogroup', { name: 'Search mode' })).toBeNull();
+  });
+
+  it.each([
+    [true, 1],
+    [false, 0]
+  ])('reports a compact mode choice only when live (live=%s)', async (live, calls) => {
+    const onDraft = vi.fn();
+    render(SearchBar, { workspace: 'sources', query: 'budget', mode: 'full_text', live, compact: true, onDraft, onSubmit: vi.fn() });
+
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^Search mode:/ }), 'Hybrid');
+
+    expect(onDraft).toHaveBeenCalledTimes(calls);
+    if (calls) expect(onDraft).toHaveBeenLastCalledWith('budget', 'hybrid');
+  });
+
+  it('keeps a non-live draft when only the committed mode changes', async () => {
+    const { rerender } = render(SearchBar, {
+      workspace: 'sources',
+      query: 'budget',
+      mode: 'full_text',
+      live: false,
+      compact: false,
+      onDraft: vi.fn(),
+      onSubmit: vi.fn()
+    });
+    const input = screen.getByRole('searchbox', { name: 'Search everything' }) as HTMLInputElement;
+    await fireEvent.input(input, { target: { value: 'pipeline' } });
+
+    await rerender({ mode: 'semantic' });
+
+    expect(input.value).toBe('pipeline');
+    expect(screen.getByRole('radio', { name: 'Semantic' }).getAttribute('aria-checked')).toBe('true');
   });
 });

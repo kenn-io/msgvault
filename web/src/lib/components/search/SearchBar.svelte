@@ -2,10 +2,11 @@
   import { Button, SearchInput, SelectDropdown } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
 
-  import type { ExploreSearchMode } from '../../explore/models';
+  import type { ExploreSearchMode, ExploreWorkspace } from '../../explore/models';
   import SearchModeControl from './SearchModeControl.svelte';
 
   interface Props {
+    workspace: ExploreWorkspace;
     query: string;
     mode: ExploreSearchMode;
     live: boolean;
@@ -15,14 +16,25 @@
     inputEl?: HTMLInputElement;
   }
 
-  let { query, mode, live, compact, onDraft, onSubmit, inputEl = $bindable() }: Props = $props();
+  let { workspace, query, mode, live, compact, onDraft, onSubmit, inputEl = $bindable() }: Props = $props();
 
   let draft = $state(untrack(() => query));
   let draftMode = $state<ExploreSearchMode>(untrack(() => mode));
 
+  // Deriveds re-run the effects below only when a value actually changes, so
+  // a workspace change discards an unsubmitted draft while a mode change alone
+  // keeps the typed query.
+  const committedWorkspace = $derived(workspace);
+  const committedQuery = $derived(query);
+  const committedMode = $derived(mode);
+
   $effect(() => {
-    draft = query;
-    draftMode = mode;
+    void committedWorkspace;
+    draft = committedQuery;
+  });
+  $effect(() => {
+    void committedWorkspace;
+    draftMode = committedMode;
   });
 
   const modeOptions = [
