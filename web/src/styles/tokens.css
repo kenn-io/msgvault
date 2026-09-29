@@ -79,6 +79,12 @@
   border-color: color-mix(in srgb, var(--accent-blue) 80%, var(--bg-primary));
 }
 
+/* Kit fades unchecked filter-menu items to half opacity, which drops their
+ * labels below AA contrast. The dot and check mark already show the state. */
+:root .kit-filter-dropdown__panel .kit-filter-dropdown__item:not(.active) {
+  opacity: 1;
+}
+
 :where([data-artifact]) {
   color: var(--artifact-ink);
 }
