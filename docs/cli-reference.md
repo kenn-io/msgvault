@@ -377,10 +377,11 @@ The command refuses a chat with an existing draft, attachments, unknown draft
 fields, or a merged chat. `get` reports the saved text and a separate current
 provider observation without adopting Desktop changes.
 
-Edit and clear compare the provider draft before writing. Beeper's current API
-has no conditional clear token, so a Desktop edit after that observation can
-still be cleared. A provider request whose result is unknown stays pending and
-blocks a new mutation until the evidence is resolved. After verifying that
+Create checks for an empty slot; edit and clear compare the provider draft.
+Beeper's current API has no conditional write token, so a Desktop change after
+either check can still be overwritten or cleared. A provider request whose
+result is unknown stays pending and blocks a new mutation until the evidence
+is resolved. After verifying that
 Desktop shows an explicit empty draft, run `clear` with the saved revision to
 retire the pending local binding without another PATCH. The saved candidate
 remains visible to the owner or a read-granted agent until that explicit

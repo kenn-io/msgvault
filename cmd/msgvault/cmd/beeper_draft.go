@@ -12,7 +12,7 @@ func newBeeperDraftCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "draft-beeper",
 		Short: "Manage native Beeper chat drafts",
-		Long:  "Manage text drafts in existing Beeper chats. Edit and clear compare the observed draft first; an edit made after that observation can still race an unconditional provider clear.",
+		Long:  "Manage text drafts in existing Beeper chats. Create checks for an empty slot; edit and clear compare the observed draft. Beeper writes are unconditional, so a Desktop change after either check can be overwritten or cleared.",
 	}
 	command.AddCommand(newBeeperDraftCreateCommand())
 	command.AddCommand(newBeeperDraftGetCommand())

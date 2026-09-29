@@ -171,7 +171,7 @@ type beeperDraftOutput struct {
 	RaceNote          string  `json:"race_note,omitempty"`
 }
 
-const beeperDraftRaceNote = "Edit and clear compare the observed draft before PATCH. Beeper has no conditional clear token, so a Desktop edit after that observation can still be cleared."
+const beeperDraftRaceNote = "Create checks for an empty draft; edit and clear compare the observed draft. Beeper has no conditional write token, so a Desktop change after either check can be overwritten or cleared."
 
 func beeperDraftOutputFromDraft(draft store.BeeperDraft, status string) beeperDraftOutput {
 	out := beeperDraftOutput{Status: status, DraftID: draft.DraftID, SourceID: draft.SourceID, AccountID: draft.AccountID, ChatID: draft.ChatID, Revision: draft.Revision, CommittedText: draft.CommittedText, RaceNote: beeperDraftRaceNote}
