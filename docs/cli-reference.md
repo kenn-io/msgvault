@@ -347,7 +347,16 @@ keeps the candidate content. Use `draft-delete` to finish discarding it.
 Recovery applies to IMAP drafts only. `draft-recover` refuses a Gmail draft ID
 with `not_supported`; Gmail reconciliation uses edit and delete retries.
 Delegated tokens with `draft.create` can create Gmail reply drafts.
-`draft-get`, `draft-edit`, `draft-delete`, and `draft-send-as` remain owner-only.
+For a Gmail draft, delegated `draft-get` accepts `draft.edit` or `draft.delete`
+on the draft's source. `draft.create` also allows retrieval when the draft's
+archived From sender is in the grant. `draft-edit` requires `draft.edit`,
+and `draft-delete` requires `draft.delete`. The grant must name the source's
+exact type and identifier. A missing command permission returns HTTP 400
+`command_not_allowed`. A permitted command targeting another source or an
+unknown draft ID streams `not_permitted` before revision checks,
+`[[gmail.drafts]]` policy, source locking, or any Gmail request. Delegated
+`draft-get`, `draft-edit`, and `draft-delete` on IMAP drafts, and
+`draft-send-as`, remain owner-only.
 For IMAP drafts, recovery resumes a pending operation from recorded receipts. It can publish a known replacement or finish
 confirmed removal without APPEND. Delegated recovery requires
 `draft.edit` for an edit or active repeat and `draft.delete` for a delete or
@@ -3727,7 +3736,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `draft.create` for `draft-reply` and `draft-compose`; `draft.edit` and `draft.delete` for `draft-recover` only (see [draft recovery](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `draft.create` for `draft-reply`, `draft-compose`, and Gmail `draft-get` with a matching sender; `draft.edit` for Gmail `draft-get` and `draft-edit` and for `draft-recover`; `draft.delete` for Gmail `draft-get` and `draft-delete` and for `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
 

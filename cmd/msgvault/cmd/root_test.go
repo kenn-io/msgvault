@@ -653,30 +653,43 @@ func TestGetTokenSourceWithReauthUsesScopePreservingReauth(t *testing.T) {
 }
 
 // withAgentFlags binds agent-mode options to the test invocation.
-func withAgentFlags(t *testing.T, url, tokenFile string) context.Context {
+func withAgentFlags(t *testing.T) context.Context {
 	t.Helper()
 	return testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
-		agentURL:          url,
-		agentTokenFile:    tokenFile,
-		agentURLChanged:   url != "",
-		agentTokenChanged: tokenFile != "",
+		agentURL:          "http://daemon.example:8080",
+		agentTokenFile:    "/tmp/token",
+		agentURLChanged:   true,
+		agentTokenChanged: true,
 	})
 }
 
-// TestAgentDelegatedCapableCommandSucceeds verifies that a delegated-capable
-// command (draft-reply) with agent flags passes the PersistentPreRunE
-// early-return path (returns nil without loading config).
+// TestAgentDelegatedCapableCommandSucceeds verifies that delegated-capable
+// draft commands with agent flags pass the PersistentPreRunE early-return path.
 func TestAgentDelegatedCapableCommandSucceeds(t *testing.T) {
-	ctx := withAgentFlags(t, "http://daemon.example:8080", "/tmp/token")
+	for _, name := range []string{
+		"draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover",
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := withAgentFlags(t)
+			cmd := &cobra.Command{Use: name}
+			cmd.SetContext(ctx)
+			err := rootCmd.PersistentPreRunE(cmd, nil)
+			require.NoError(t, err)
+		})
+	}
+}
 
-	cmd := &cobra.Command{Use: "draft-reply"}
+func TestAgentDelegatedSendAsCommandRefused(t *testing.T) {
+	ctx := withAgentFlags(t)
+	cmd := &cobra.Command{Use: "draft-send-as"}
 	cmd.SetContext(ctx)
 	err := rootCmd.PersistentPreRunE(cmd, nil)
-	require.NoError(t, err, "draft-reply with agent flags should succeed in PersistentPreRunE")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not available in agent-delegated mode")
 }
 
 func TestAgentDelegatedRecoveryCommandSucceeds(t *testing.T) {
-	ctx := withAgentFlags(t, "http://daemon.example:8080", "/tmp/token")
+	ctx := withAgentFlags(t)
 
 	cmd := &cobra.Command{Use: "draft-recover"}
 	cmd.SetContext(ctx)
@@ -688,7 +701,7 @@ func TestAgentDelegatedRecoveryCommandSucceeds(t *testing.T) {
 // not in the delegated-capable set (serve) returns "not available in
 // agent-delegated mode" when agent flags are present.
 func TestAgentDelegatedNonCapableCommandReturnsError(t *testing.T) {
-	ctx := withAgentFlags(t, "http://daemon.example:8080", "/tmp/token")
+	ctx := withAgentFlags(t)
 
 	cmd := &cobra.Command{Use: "serve"}
 	cmd.SetContext(ctx)

@@ -415,21 +415,179 @@ func TestGmailDraftRecoverIsNotSupported(t *testing.T) {
 	assert.Nil(latest.DiscardedAt)
 }
 
-func TestGmailDraftLifecycleRefusesDelegatedGrant(t *testing.T) {
-	fixture := newGmailDraftTestFixture(t)
-	draft := fixture.seedDraft(t)
-	grant := &agentgrant.Grant{
-		ID:          "gmail-grant",
-		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete},
-		Sources:     []agentgrant.SourceRef{{ID: fixture.source.ID, Type: fixture.source.SourceType, Identifier: fixture.source.Identifier}},
+func delegatedGmailDraftGrant(f gmailDraftTestFixture, permissions []agentgrant.Permission, sourceType, identifier string, senderKeys ...[]string) *agentgrant.Grant {
+	source := agentgrant.SourceRef{ID: f.source.ID, Type: sourceType, Identifier: identifier}
+	if len(senderKeys) > 0 {
+		source.SenderKeys = senderKeys[0]
 	}
-	for _, operation := range []string{api.CLIRunDraftGetCommand, api.CLIRunDraftEditCommand, api.CLIRunDraftDeleteCommand, api.CLIRunDraftRecoverCommand} {
-		t.Run(operation, func(t *testing.T) {
-			args := []string{operation, draft.DraftID}
-			if operation != api.CLIRunDraftGetCommand {
+	return &agentgrant.Grant{
+		ID:          "gmail-grant",
+		Permissions: permissions,
+		Sources:     []agentgrant.SourceRef{source},
+	}
+}
+
+func TestGmailDraftLifecycleDelegatedGrantManagesDraft(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		operation  string
+		permission agentgrant.Permission
+		body       string
+	}{
+		{name: "get with create", operation: api.CLIRunDraftGetCommand, permission: agentgrant.PermissionDraftCreate},
+		{name: "edit with edit", operation: api.CLIRunDraftEditCommand, permission: agentgrant.PermissionDraftEdit, body: "edited"},
+		{name: "delete with delete", operation: api.CLIRunDraftDeleteCommand, permission: agentgrant.PermissionDraftDelete},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			fixture := newGmailDraftTestFixture(t)
+			draft := fixture.seedDraft(t)
+			if tc.operation == api.CLIRunDraftEditCommand {
+				fixture.client.updateDraft = &gmail.Draft{
+					ID:      "gmail-draft-managed",
+					Message: gmail.RawMessage{ID: "gmail-message-edited", ThreadID: "gmail-thread-1"},
+				}
+			}
+			args := []string{tc.operation, draft.DraftID}
+			if tc.operation != api.CLIRunDraftGetCommand {
 				args = append(args, "--revision", strconv.FormatInt(draft.Revision, 10))
 			}
-			if operation == api.CLIRunDraftEditCommand {
+			if tc.body != "" {
+				args = append(args, "--body", tc.body)
+			}
+			args = append(args, "--json")
+			var senderKeys []string
+			if tc.operation == api.CLIRunDraftGetCommand {
+				senderKeys = []string{store.NormalizeIdentifierForCompare(fixture.source.Identifier)}
+			}
+			grant := delegatedGmailDraftGrant(fixture, []agentgrant.Permission{tc.permission}, fixture.source.SourceType, fixture.source.Identifier, senderKeys)
+			var events []api.CLIRunEvent
+			err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+				events = append(events, event)
+				return nil
+			})
+			require.NoError(err)
+			require.Len(events, 1)
+			var output gmailDraftLifecycleOutput
+			require.NoError(json.Unmarshal([]byte(events[0].Data), &output))
+			switch tc.operation {
+			case api.CLIRunDraftGetCommand:
+				assert.Contains(output.Content, "original")
+				assert.Equal("gmail", output.Provider)
+				assert.Zero(fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls)
+			case api.CLIRunDraftEditCommand:
+				assert.Equal("edited", output.Status)
+				assert.Equal(int64(2), output.Revision)
+				assert.Equal(1, fixture.client.getCalls)
+				assert.Equal(1, fixture.client.updateCalls)
+			case api.CLIRunDraftDeleteCommand:
+				assert.Equal("deleted", output.Status)
+				assert.Equal("discarded", output.Lifecycle)
+				assert.Equal(1, fixture.client.deleteCalls)
+			}
+		})
+	}
+}
+
+func TestGmailDraftGetDelegatedSenderScopeFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		senderKeys []string
+		raw        []byte
+	}{
+		{name: "different From on same source", senderKeys: []string{"owner@example.test"}, raw: []byte("From: other@example.test\r\nTo: sender@example.test\r\nSubject: Re: Question\r\n\r\noriginal\r\n")},
+		{name: "empty sender keys", senderKeys: []string{}},
+		{name: "absent From", senderKeys: []string{"owner@example.test"}, raw: []byte("To: sender@example.test\r\nSubject: Re: Question\r\n\r\noriginal\r\n")},
+		{name: "malformed From", senderKeys: []string{"owner@example.test"}, raw: []byte("From: not-an-address\r\nTo: sender@example.test\r\nSubject: Re: Question\r\n\r\noriginal\r\n")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			fixture := newGmailDraftTestFixture(t)
+			draft := fixture.seedDraft(t)
+			if tc.raw != nil {
+				require.NoError(fixture.store.UpsertMessageRaw(draft.CurrentMessageID, tc.raw))
+			}
+			factoryCalls := 0
+			factory := fixture.adapter.gmailDraftClientFactory
+			fixture.adapter.gmailDraftClientFactory = func(ctx context.Context, source *store.Source) (gmail.DraftAPI, error) {
+				factoryCalls++
+				return factory(ctx, source)
+			}
+			grant := delegatedGmailDraftGrant(fixture, []agentgrant.Permission{agentgrant.PermissionDraftCreate}, fixture.source.SourceType, fixture.source.Identifier, tc.senderKeys)
+			var events []api.CLIRunEvent
+			err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+				Args: []string{api.CLIRunDraftGetCommand, draft.DraftID, "--json"}, Grant: grant,
+			}, func(event api.CLIRunEvent) error {
+				events = append(events, event)
+				return nil
+			})
+			require.Error(err)
+			assert.Equal("not_permitted", err.Error())
+			assert.Empty(events)
+			assert.Zero(factoryCalls)
+			assert.Zero(fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls)
+		})
+	}
+}
+
+func TestGmailDraftLifecycleDelegatedDenialPrecedesProviderWork(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		operation     string
+		permissions   []agentgrant.Permission
+		sourceType    string
+		identifier    string
+		draftID       string
+		wrongRevision bool
+		emptyPolicy   bool
+	}{
+		{name: "edit with create", operation: api.CLIRunDraftEditCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}},
+		{name: "delete with edit", operation: api.CLIRunDraftDeleteCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit}},
+		{name: "get with wrong identifier", operation: api.CLIRunDraftGetCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, identifier: "other@example.test"},
+		{name: "edit with wrong source type", operation: api.CLIRunDraftEditCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit}, sourceType: "imap"},
+		{name: "edit with wrong permission and revision", operation: api.CLIRunDraftEditCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, wrongRevision: true},
+		{name: "edit with wrong permission and policy", operation: api.CLIRunDraftEditCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, emptyPolicy: true},
+		{name: "unknown draft ID", operation: api.CLIRunDraftGetCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, draftID: "draft-unknown"},
+		{name: "Gmail recovery", operation: api.CLIRunDraftRecoverCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			fixture := newGmailDraftTestFixture(t)
+			draft := fixture.seedDraft(t)
+			factoryCalls := 0
+			factory := fixture.adapter.gmailDraftClientFactory
+			fixture.adapter.gmailDraftClientFactory = func(ctx context.Context, source *store.Source) (gmail.DraftAPI, error) {
+				factoryCalls++
+				return factory(ctx, source)
+			}
+			if tc.emptyPolicy {
+				fixture.adapter.gmailDraftPolicy = nil
+			}
+			identifier := fixture.source.Identifier
+			if tc.identifier != "" {
+				identifier = tc.identifier
+			}
+			sourceType := fixture.source.SourceType
+			if tc.sourceType != "" {
+				sourceType = tc.sourceType
+			}
+			grant := delegatedGmailDraftGrant(fixture, tc.permissions, sourceType, identifier)
+			draftID := draft.DraftID
+			if tc.draftID != "" {
+				draftID = tc.draftID
+			}
+			args := []string{tc.operation, draftID}
+			if tc.operation != api.CLIRunDraftGetCommand {
+				revision := draft.Revision
+				if tc.wrongRevision {
+					revision++
+				}
+				args = append(args, "--revision", strconv.FormatInt(revision, 10))
+			}
+			if tc.operation == api.CLIRunDraftEditCommand {
 				args = append(args, "--body", "delegated")
 			}
 			var events []api.CLIRunEvent
@@ -437,18 +595,90 @@ func TestGmailDraftLifecycleRefusesDelegatedGrant(t *testing.T) {
 				events = append(events, event)
 				return nil
 			})
-			require.Error(t, err)
-			assert.Equal(t, "not_permitted", err.Error())
-			assert.Empty(t, events)
+			require.Error(err)
+			assert.Equal("not_permitted", err.Error())
+			assert.Empty(events)
+			assert.Equal(0, factoryCalls)
+			assert.Zero(fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls)
+			latest, loadErr := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+			require.NoError(loadErr)
+			assert.Equal(draft.Revision, latest.Revision)
+			assert.Nil(latest.DiscardedAt)
 		})
 	}
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	assertions.Zero(fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls)
+}
+
+func TestGmailDraftDelegatedUncertainEditStaysPending(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t)
+	fixture.client.updateErr = &gmail.DraftWriteError{
+		State: gmail.DraftStateRemoteUnknown, Code: "remote_unknown", Err: errors.New("response lost"),
+	}
+	grant := delegatedGmailDraftGrant(fixture, []agentgrant.Permission{agentgrant.PermissionDraftEdit}, fixture.source.SourceType, fixture.source.Identifier)
+	args := []string{api.CLIRunDraftEditCommand, draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10), "--body", "candidate", "--json"}
+	var events []api.CLIRunEvent
+	err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	require.Error(err)
+	assert.Equal("remote_unknown", err.Error())
+	require.Len(events, 1)
+	assert.Equal(cliStreamStderr, events[0].Type)
+	var pendingOutput gmailDraftLifecycleOutput
+	require.NoError(json.Unmarshal([]byte(events[0].Data), &pendingOutput))
+	assert.Equal("edit", pendingOutput.PendingOperation)
+	assert.Contains(pendingOutput.CandidateContent, "candidate")
+
 	latest, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
-	requirements.NoError(err)
-	assertions.Equal(draft.Revision, latest.Revision)
-	assertions.Nil(latest.DiscardedAt)
+	require.NoError(err)
+	require.NotNil(latest.Pending)
+	assert.Equal("edit", latest.Pending.Operation)
+	updateCalls := fixture.client.updateCalls
+	getArgs := []string{api.CLIRunDraftGetCommand, draft.DraftID, "--json"}
+	events = nil
+	err = fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: getArgs, Grant: grant}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	require.NoError(err)
+	require.Len(events, 1)
+	var getOutput gmailDraftLifecycleOutput
+	require.NoError(json.Unmarshal([]byte(events[0].Data), &getOutput))
+	assert.Equal("edit", getOutput.PendingOperation)
+	assert.Contains(getOutput.CandidateContent, "candidate")
+	assert.Equal(updateCalls, fixture.client.updateCalls)
+}
+
+func TestGmailDraftLifecycleDelegatedStaleRevisionStopsBeforeProvider(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t)
+	factoryCalls := 0
+	factory := fixture.adapter.gmailDraftClientFactory
+	fixture.adapter.gmailDraftClientFactory = func(ctx context.Context, source *store.Source) (gmail.DraftAPI, error) {
+		factoryCalls++
+		return factory(ctx, source)
+	}
+	grant := delegatedGmailDraftGrant(fixture, []agentgrant.Permission{agentgrant.PermissionDraftEdit}, fixture.source.SourceType, fixture.source.Identifier)
+	args := []string{api.CLIRunDraftEditCommand, draft.DraftID, "--revision", "2", "--body", "stale"}
+	var events []api.CLIRunEvent
+	err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	require.Error(err)
+	assert.Equal("revision_mismatch", err.Error())
+	assert.Empty(events)
+	assert.Zero(factoryCalls)
+	assert.Zero(fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls)
+	latest, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.Equal(draft.Revision, latest.Revision)
+	assert.Nil(latest.DiscardedAt)
 }
 
 func TestGmailDraftDeleteFinishFailureIsRetryableWithoutProviderMutation(t *testing.T) {
