@@ -751,10 +751,8 @@
     background: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-surface));
   }
 
-  /* Muted ink falls below AA on tinted selections, so metadata uses secondary ink there. */
   .data-row--selected {
-    --text-muted: var(--text-secondary);
-    background: color-mix(in srgb, var(--accent-teal) 12%, var(--bg-surface));
+    background: var(--selected-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue), inset 0 0 0 1px var(--selected-border);
   }
 
@@ -767,7 +765,6 @@
   /* The row open in the reading pane shares the app-wide selection
    * language: 2px accent inset bar over the selected surface. */
   .data-row--inspected {
-    --text-muted: var(--text-secondary);
     background: var(--selected-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }
