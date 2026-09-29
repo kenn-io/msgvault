@@ -6,7 +6,7 @@ import { createRawSnippet } from 'svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createAPIClient } from '../../api/client';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
-import { ExploreState, parseExploreURLState, serializeExploreURLState } from '../../explore/state.svelte';
+import { ExploreState, serializeExploreURLState } from '../../explore/state.svelte';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import AppShell from './AppShell.svelte';
 import { SIDEBAR_COLLAPSED_KEY } from './navigation';

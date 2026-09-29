@@ -306,7 +306,7 @@
     inset: 0 0 auto;
   }
 
-  /* Month markers speak the shared small-caps label voice (data-section-label)
+  /* Month markers speak the shared sentence-case label voice (data-section-label)
    * with a trailing hairline that rules the month across the pane. */
   .month-header {
     display: flex;

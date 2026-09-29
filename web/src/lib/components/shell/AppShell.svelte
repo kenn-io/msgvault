@@ -19,7 +19,6 @@
   } from '../../api/generated/models';
   import type {
     EntryRow,
-    ExploreColumn,
     ExploreGroupDimension,
     ExploreGroupRow,
     ExploreFileFact,
@@ -31,7 +30,7 @@
     FileSearchSort,
   } from '../../explore/models';
   import { attachmentSelection, parseAttachmentSelection } from '../../explore/attachment-authority';
-  import { filtersForGroup, parseGroupSelection } from '../../explore/group-context';
+  import { filtersForGroup } from '../../explore/group-context';
   import { ExploreLoader } from '../../explore/loader.svelte';
   import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';

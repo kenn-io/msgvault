@@ -675,7 +675,7 @@
     outline: none;
   }
 
-  /* Column headers speak the small-caps label voice; the sheen under the
+  /* Column headers use the small sentence-case label voice; the sheen under the
    * header hairline gives the sticky edge its machined depth. */
   .table-header {
     position: sticky;
