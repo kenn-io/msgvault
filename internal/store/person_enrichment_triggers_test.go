@@ -701,6 +701,68 @@ func TestPersonEnrichmentCatchUpDoesNotRepeatTerminalAttempts(t *testing.T) {
 	}
 }
 
+func TestPersonEnrichmentCatchUpConsumesExpiryWithHigherPriorityWork(t *testing.T) {
+	for _, kind := range []personenrichment.TriggerKind{personenrichment.TriggerManual, personenrichment.TriggerIdentity} {
+		t.Run(string(kind), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newEnrichmentWorkFixture(t)
+			insertProviderClaim(t, f.store, f.person.ID, f.profile.Fingerprint, "coalesced-expiry", f.now.Add(-time.Minute))
+			run := f.startRun(t, "coalesced-expiry")
+			trigger := personenrichment.Trigger{Kind: kind, Generation: "higher-priority"}
+			require.NoError(f.store.EnqueuePersonEnrichmentContext(t.Context(), store.EnrichmentTriggerInput{
+				PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint,
+				Kind: kind, Generation: trigger.Generation, DueAt: f.now,
+			}))
+			count, err := f.store.EnqueueDuePersonEnrichmentContext(t.Context(), f.now, 200, []string{f.profile.Fingerprint})
+			require.NoError(err)
+			require.Equal(1, count)
+			work := f.work(t)
+			require.Len(work, 1)
+			require.NotZero(work[0].TriggerMask & 4)
+			lease := f.claim(t, run.ID, "worker")
+			require.Equal(trigger, lease.Trigger)
+			start := testAttemptStart(&f, run.ID, "a")
+			start.Trigger = lease.Trigger
+			attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token, start)
+			require.NoError(err)
+			require.NoError(f.store.MarkTerminal(t.Context(), attempt.Token, personenrichment.SafeFailure{
+				Class: personenrichment.FailureInvalidOutput, Message: "invalid provider output",
+			}))
+			require.Empty(f.work(t))
+			for range 2 {
+				count, err = f.store.EnqueueDuePersonEnrichmentContext(t.Context(), f.now, 200, []string{f.profile.Fingerprint})
+				require.NoError(err)
+				assert.Zero(count)
+				assert.Empty(f.work(t))
+			}
+		})
+	}
+}
+
+func TestPersonEnrichmentCatchUpDoesNotConsumeFutureExpiry(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newEnrichmentWorkFixture(t)
+	expires := f.now.Add(time.Minute)
+	claimID := insertProviderClaim(t, f.store, f.person.ID, f.profile.Fingerprint, "future-expiry", expires)
+	run := f.startRun(t, "before-expiry")
+	f.enqueue(t)
+	lease := f.claim(t, run.ID, "worker")
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token, testAttemptStart(&f, run.ID, "a"))
+	require.NoError(err)
+	require.NoError(f.store.MarkTerminal(t.Context(), attempt.Token, personenrichment.SafeFailure{
+		Class: personenrichment.FailureInvalidOutput, Message: "invalid provider output",
+	}))
+	f.setNow(expires.Add(time.Minute))
+	count, err := f.store.EnqueueDuePersonEnrichmentContext(t.Context(), f.now, 200, []string{f.profile.Fingerprint})
+	require.NoError(err)
+	assert.Equal(1, count)
+	work := f.work(t)
+	require.Len(work, 1)
+	assert.Equal("claim:"+strconv.FormatInt(claimID, 10), work[0].TriggerGeneration)
+}
+
 func TestPersonEnrichmentCatchUpSerializesWithConsentRevocation(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

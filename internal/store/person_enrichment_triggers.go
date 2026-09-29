@@ -209,6 +209,9 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 		}
 		expiredArgs := append([]any(nil), profileArgs...)
 		expiredArgs = append(expiredArgs, now, expiryMask, now, limit)
+		// A lookup started after a claim expired consumes that expiry even when
+		// manual or identity work won trigger coalescing. The attempt that
+		// produced the claim cannot consume its own expiry.
 		expiredRows, err := tx.QueryContext(ctx, `
 			SELECT c.person_id, g.provider_policy_fingerprint, MAX(c.id)
 			FROM person_fact_claims c
@@ -225,6 +228,15 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			  AND c.valid_until IS NOT NULL
 			  AND c.valid_until <= ?
 			  AND NOT EXISTS (
+				SELECT 1 FROM person_enrichment_attempts attempted
+				WHERE attempted.person_id = c.person_id
+				  AND attempted.profile_fingerprint = g.provider_policy_fingerprint
+				  AND attempted.created_at >= c.valid_until
+				  AND attempted.created_at >= g.resolved_at
+				  AND (attempted.fact_generation_key IS NULL
+				       OR attempted.fact_generation_key <> g.generation_key)
+			  )
+			  AND NOT EXISTS (
 				SELECT 1 FROM person_fact_generations newer
 				WHERE newer.person_id = g.person_id
 				  AND newer.provider_policy_fingerprint = g.provider_policy_fingerprint
@@ -232,12 +244,6 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			  )
 			  AND (w.person_id IS NULL OR (w.trigger_mask & ?) = 0 OR w.due_at > ?)
 			GROUP BY c.person_id, g.provider_policy_fingerprint
-			HAVING 'claim:' || CAST(MAX(c.id) AS TEXT) NOT IN (
-				SELECT attempted.trigger_generation FROM person_enrichment_attempts attempted
-				WHERE attempted.person_id = c.person_id
-				  AND attempted.profile_fingerprint = g.provider_policy_fingerprint
-				  AND attempted.trigger_kind = 'claim_expiry'
-			)
 			ORDER BY c.person_id, g.provider_policy_fingerprint
 			LIMIT ?`, expiredArgs...)
 		if err != nil {

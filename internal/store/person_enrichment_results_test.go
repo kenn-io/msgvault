@@ -153,6 +153,19 @@ func newEnrichmentResultFixture(t *testing.T) *enrichmentResultFixture {
 	}
 }
 
+func TestPersonEnrichmentCatchUpDoesNotConsumeProducingAttempt(t *testing.T) {
+	require := require.New(t)
+	f := newEnrichmentResultFixture(t)
+	f.result.Claims[0].ValidUntil = new(f.now.Add(-time.Minute))
+	f.reseal(t)
+	outcome, err := f.store.CommitEnrichmentClaims(t.Context(), f.commit)
+	require.NoError(err)
+	require.Equal(personenrichment.ClaimApplied, outcome.Status)
+	count, err := f.store.EnqueueDuePersonEnrichmentContext(t.Context(), f.now, 200, []string{f.profile.Fingerprint})
+	require.NoError(err)
+	assert.Equal(t, 1, count, "a result already expired on arrival still needs an expiry lookup")
+}
+
 func TestPersonEnrichmentSynchronousResultCommitsFromStartingAttempt(t *testing.T) {
 	requirements := require.New(t)
 	checks := assert.New(t)
