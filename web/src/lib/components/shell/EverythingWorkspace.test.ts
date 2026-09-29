@@ -878,27 +878,13 @@ describe('EverythingWorkspace', () => {
   });
 
 
-  it('uses one analytical context for grouped, timeline, and files presentations', async () => {
+  it('uses one analytical context for grouped and timeline presentations', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/files/7')) return Response.json({
-        id: 7, message_id: 1, conversation_id: 11, filename: 'analysis.pdf',
-        mime_type: 'application/pdf', size_bytes: 2048,
-        content_state: 'missing_blob', content_available: false
-      });
-      if (path.endsWith('/explore/files')) return Response.json({
-        files: [{
-          id: 7, key: 'message:1:file:7', entry_key: 'message:1', message_id: 1, conversation_id: 11,
-          occurred_at: '2026-07-18T12:00:00Z', source_id: 1,
-          source_identifier: 'archive@example.com', title: 'Synthetic subject 1',
-          filename: 'analysis.pdf', mime_type: 'application/pdf', size: 2048
-        }],
-        total_count: 1, cache_revision: 'cache-1', search_provenance: {}
-      });
       return Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
     });
     const state = new ExploreState(window);
@@ -914,41 +900,7 @@ describe('EverythingWorkspace', () => {
     expect(new URL(requests.at(-1)!.url).pathname).toBe('/api/v1/explore');
 
     state.commitNavigation({ presentation: 'files' });
-    expect(await screen.findByRole('grid', { name: 'Files in current context' })).toBeDefined();
-    expect(await screen.findByText('analysis.pdf')).toBeDefined();
-    const filesRequest = requests.at(-1)!;
-    expect(new URL(filesRequest.url).pathname).toBe('/api/v1/explore/files');
-    await expect(filesRequest.clone().json()).resolves.toMatchObject({
-      predicate: { presentation: 'files' }
-    });
-    state.replaceTransient({
-      activeRow: 'message:1:file:7',
-      scrollAnchor: { key: 'message:1:file:7', offset: 4 }
-    });
-    const filesGrid = screen.getByRole('grid', { name: 'Files in current context' });
-    filesGrid.focus();
-    await fireEvent.keyDown(filesGrid, { key: 'Enter' });
-    await waitFor(() => expect(state.current.selectedRow).toBe('attachment:7'));
-    expect(await screen.findByRole('dialog', { name: 'View analysis.pdf' })).toBeDefined();
-    expect(state.current.selectedRow).toBe('attachment:7');
-    expect(parseExploreURLState(window.location.search).selectedRow).toBe('attachment:7');
-    await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'View analysis.pdf' })).toBeNull());
-    expect(state.current.selectedRow).toBeNull();
-    expect(document.activeElement).toBe(filesGrid);
-
-    await screen.findByText('analysis.pdf');
-    const restoredFilesGrid = screen.getByRole('grid', { name: 'Files in current context' });
-    await waitFor(() => expect(restoredFilesGrid.getAttribute('aria-activedescendant')).toContain('message-3a-1'));
-    restoredFilesGrid.focus();
-    await fireEvent.keyDown(restoredFilesGrid, { key: 'Enter' });
-    await waitFor(() => expect(state.current.selectedRow).toBe('attachment:7'));
-    expect(await screen.findByRole('dialog', { name: 'View analysis.pdf' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Open containing item' }));
-    expect(state.current.presentation).toBe('table');
-    expect(state.current.selectedRow).toBe('message:1');
-    expect(state.current.activeRow).toBeNull();
-    expect(state.current.scrollAnchor).toBeNull();
+    expect(state.current).toMatchObject({ workspace: 'files', presentation: 'files' });
     rendered.unmount();
     state.destroy();
   });
@@ -2477,7 +2429,7 @@ describe('EverythingWorkspace', () => {
     state.destroy();
   });
 
-  it.each(['semantic', 'hybrid'] as const)('discloses active-only scope for %s entry, group, and file results', async (searchMode) => {
+  it.each(['semantic', 'hybrid'] as const)('discloses active-only scope for %s entry and group results', async (searchMode) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -2485,11 +2437,6 @@ describe('EverythingWorkspace', () => {
       if (path.endsWith('/search/coverage')) return Response.json({
         status: 'ready', eligible_count: 2, embedded_count: 2, percentage: 100,
         vector_generation: 7, cache_revision: 'cache-1', actions: []
-      });
-      if (path.endsWith('/explore/files')) return Response.json({
-        files: [], total_count: 0, cache_revision: 'cache-1',
-        search_provenance: { vector_generation: 7 },
-        candidate_snapshot_id: 'snapshot-files', search_deletion_scope: 'active'
       });
       if (path.endsWith('/explore/groups')) return Response.json({
         rows: [{ key: '7', label: 'Example source', count: 2, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
@@ -2514,9 +2461,6 @@ describe('EverythingWorkspace', () => {
     state.commitNavigation({ groupingChain: ['source'] });
     await screen.findByText('Example source');
     expect(screen.getByText('Semantic search covers active messages only.')).toBeDefined();
-    state.commitNavigation({ groupingChain: [], presentation: 'files' });
-    await screen.findByText('No files match this view.');
-    expect(await screen.findByText('Semantic search covers active messages only.')).toBeDefined();
     rendered.unmount();
     state.destroy();
   });

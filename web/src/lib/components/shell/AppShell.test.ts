@@ -1454,6 +1454,37 @@ describe('AppShell', () => {
   });
 
 
+  it('opens an old Everything-as-Files link in Files with its attachment viewer', async () => {
+    window.history.replaceState(null, '', `/?workspace=everything&explore=${encodeURIComponent(JSON.stringify({
+      presentation: 'files', selectedRow: 'attachment:5'
+    }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/files/5')) return Response.json({
+        id: 5, message_id: 1, conversation_id: 11, filename: 'legacy-report.pdf',
+        mime_type: 'application/pdf', size_bytes: 2048,
+        content_state: 'missing_blob', content_available: false
+      });
+      if (path.endsWith('/explore/files')) return Response.json({
+        files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {}
+      });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      expect(await screen.findByRole('main', { name: 'Files' })).toBeDefined();
+      expect(await screen.findByRole('dialog', { name: 'View legacy-report.pdf' })).toBeDefined();
+      expect(state.current).toMatchObject({
+        workspace: 'files', presentation: 'files', selectedRow: 'attachment:5'
+      });
+      expect(window.location.search).toContain('workspace=files');
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
   it('keeps Relationships and shows its degraded state when the URL explicitly names it', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({

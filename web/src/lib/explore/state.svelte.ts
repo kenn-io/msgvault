@@ -397,6 +397,11 @@ function normalize(value: unknown): ExploreURLState {
     value.workspace === 'deletions' || value.workspace === 'operations'
     ? value.workspace
     : 'relationships';
+  const filesView = workspace === 'files' || (workspace === 'everything' && presentation === 'files');
+  const normalizedWorkspace = filesView ? 'files' : workspace;
+  const normalizedPresentation = filesView
+    ? 'files'
+    : presentation === 'files' ? defaultExploreURLState.presentation : presentation;
   const analysisTarget = typeof value.analysisTarget === 'string' &&
     (/^person:[1-9][0-9]*$/.test(value.analysisTarget) || /^domain:[a-z0-9.-]+$/.test(value.analysisTarget))
     ? value.analysisTarget : null;
@@ -449,7 +454,7 @@ function normalize(value: unknown): ExploreURLState {
       : typeof value.schemaVersion === 'number' && Number.isSafeInteger(value.schemaVersion)
         ? value.schemaVersion
         : defaultExploreURLState.schemaVersion,
-    workspace,
+    workspace: normalizedWorkspace,
     directoryQuery: typeof value.directoryQuery === 'string' ? value.directoryQuery : '',
     directoryContactState: typeof value.directoryContactState === 'string' ? value.directoryContactState : '',
     directoryCategory: typeof value.directoryCategory === 'string' ? value.directoryCategory : '',
@@ -466,7 +471,7 @@ function normalize(value: unknown): ExploreURLState {
     searchMode,
     filters: filters(value.filters),
     groupingChain: groups(value.groupingChain),
-    presentation,
+    presentation: normalizedPresentation,
     sort: sorts(value.sort),
     fileSort: fileSort(value.fileSort),
     fileFilenameQuery: value.schemaVersion === 2 && typeof value.fileFilenameQuery === 'string'
@@ -625,7 +630,24 @@ export class ExploreState {
     this.preferenceStorage = preferenceStorage;
     this.current = this.readURLState();
     this.committed = normalize(this.current);
+    this.rewriteLegacyFilesURL();
     browser.addEventListener('popstate', this.handlePopState);
+  }
+
+  // An Everything-as-Files link normalizes to the Files workspace; show that in
+  // the address bar without adding a history entry.
+  private rewriteLegacyFilesURL(): void {
+    const { location, history } = this.browser;
+    if (this.current.workspace !== 'files' || new URLSearchParams(location.search).get('workspace') === 'files') return;
+    const search = serializeExploreURLState(this.current, location.search);
+    history.replaceState(
+      {
+        ...(isRecord(history.state) ? history.state : {}),
+        ...historyEntry(search, this.current)
+      },
+      '',
+      `${location.pathname}${search}${location.hash}`
+    );
   }
 
   // The daemon-configured web.default_search_mode arrives asynchronously
@@ -799,9 +821,14 @@ export class ExploreState {
     mode: 'push' | 'replace'
   ): void {
     let effectivePatch = patch;
+    // Files owns the 'files' presentation, so leaving it must not carry it into Everything.
+    if (this.current.workspace === 'files' && patch.workspace !== undefined &&
+      patch.workspace !== 'files' && !('presentation' in patch)) {
+      effectivePatch = { ...patch, presentation: defaultExploreURLState.presentation };
+    }
     if (mode === 'push' && OPERATION_FILTER_FIELDS.some((key) =>
       key in patch && normalize({ ...this.current, ...patch })[key] !== this.current[key])) {
-      effectivePatch = { ...patch, operationRunID: null };
+      effectivePatch = { ...effectivePatch, operationRunID: null };
     }
     if (
       mode === 'push' ||
@@ -829,6 +856,10 @@ export class ExploreState {
     const keysToApply = OPERATION_FILTER_FIELDS.some((key) => key in effectivePatch)
       ? [...new Set([...patchKeys, ...OPERATION_FILTER_FIELDS, 'operationRunID'])]
       : patchKeys;
+    // Workspace and presentation normalize together (Files owns the 'files' presentation).
+    if (patchKeys.includes('workspace') || patchKeys.includes('presentation')) {
+      keysToApply.push('workspace', 'presentation');
+    }
     for (const key of keysToApply) {
       if (key in next) this.current[key] = next[key];
     }

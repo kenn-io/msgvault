@@ -318,7 +318,7 @@ describe('Explore URL state', () => {
         { dimension: 'after', values: ['2025-01-01'] }
       ],
       groupingChain: ['participant', 'year'],
-      presentation: 'table',
+      presentation: 'files',
       sort: [{ field: 'occurred_at', direction: 'desc' }],
       fileSort: { field: 'filename', direction: 'asc' },
       fileFilenameQuery: 'invoice',
@@ -332,6 +332,61 @@ describe('Explore URL state', () => {
     };
 
     expect(parseExploreURLState(serializeExploreURLState(state))).toEqual(state);
+  });
+
+  it('sends an Everything-as-Files link to the Files workspace with its context', () => {
+    const restored = parseExploreURLState(
+      `?workspace=everything&mode=hybrid&explore=${encodeURIComponent(JSON.stringify({
+        presentation: 'files', query: 'invoice', filters: [{ dimension: 'source', values: ['7'] }],
+        groupingChain: ['year'], columns: ['kind', 'title']
+      }))}`
+    );
+    expect(restored).toMatchObject({
+      workspace: 'files', presentation: 'files', searchMode: 'hybrid', query: 'invoice',
+      filters: [{ dimension: 'source', values: ['7'] }], groupingChain: ['year'], columns: ['kind', 'title']
+    });
+  });
+
+  it('keeps Files presentation in the Files workspace', () => {
+    const restored = parseExploreURLState(
+      `?workspace=files&explore=${encodeURIComponent(JSON.stringify({ presentation: 'table' }))}`
+    );
+    expect(restored.presentation).toBe('files');
+  });
+
+  it('restores Files for an old Everything-as-Files history entry', async () => {
+    window.history.replaceState(null, '', '/?workspace=sources');
+    const state = new ExploreState(window);
+    try {
+      window.history.pushState(
+        {
+          exploreSearch: '?workspace=everything',
+          exploreState: { workspace: 'everything', presentation: 'files', query: 'budget' }
+        },
+        '',
+        '/?workspace=everything'
+      );
+      window.history.pushState(null, '', '/?workspace=sources');
+      const restored = new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.back();
+      await restored;
+      expect(state.current).toMatchObject({ workspace: 'files', presentation: 'files', query: 'budget' });
+    } finally {
+      state.destroy();
+    }
+  });
+
+  it('leaves Files for Everything without carrying the Files presentation', () => {
+    window.history.replaceState(null, '', '/?workspace=files');
+    const state = new ExploreState(window);
+    try {
+      state.commitWorkspace('everything');
+      expect(state.current).toMatchObject({ workspace: 'everything', presentation: 'table' });
+      state.commitNavigation({ presentation: 'files' });
+      expect(state.current).toMatchObject({ workspace: 'files', presentation: 'files' });
+    } finally {
+      state.destroy();
+    }
   });
 
   it('restores an identity facet tuple from the URL', () => {
