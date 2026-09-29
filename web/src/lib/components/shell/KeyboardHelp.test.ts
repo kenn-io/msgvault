@@ -58,10 +58,10 @@ describe('keyboard command registry', () => {
   });
 
   it('documents extending a selection with Shift+Space', () => {
-    const handlers = Object.fromEntries(
-      COMMAND_DEFINITIONS.map(({ id }) => [id, () => undefined])
-    ) as CommandHandlers;
-    render(KeyboardHelp, { commands: createCommandRegistry(handlers), onclose: () => undefined });
+    render(KeyboardHelp, {
+      commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
+      onclose: vi.fn()
+    });
 
     expect(screen.getByText('Extend selection to focused row')).toBeTruthy();
   });

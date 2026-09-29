@@ -32,8 +32,8 @@
     onOpenInSource?: () => void;
   } = $props();
 
-  const exportReason = $derived(preflight?.unavailable_actions.find((item) => item.action === 'export')?.reason);
-  const openReason = $derived(preflight?.unavailable_actions.find((item) => item.action === 'open_in_source')?.reason);
+  const exportReason = $derived(preflight?.unavailable_actions?.find((item) => item.action === 'export')?.reason);
+  const openReason = $derived(preflight?.unavailable_actions?.find((item) => item.action === 'open_in_source')?.reason);
   const exportTarget = $derived(preflight?.action_targets?.find((item) => item.action === 'export'));
   const contextSelectionCount = $derived(
     meetingSelection?.mode === 'explicit'

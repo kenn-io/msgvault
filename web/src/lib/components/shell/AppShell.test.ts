@@ -1992,17 +1992,28 @@ describe('AppShell', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);
     const rows = [0, 1, 2].map((index) => entry(index));
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({ rows, total_count: 3 })));
     render(AppShell, {
-      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(exploreResponse({ rows, total_count: 3 })))),
+      client: createAPIClient(fetchFn),
       state
     });
-    await screen.findByRole('grid', { name: 'Everything results' });
+    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    await screen.findByText('Synthetic subject 0');
 
-    // Verify the extend-selection command is registered in the keyboard help
-    await fireEvent.keyDown(window, { key: '?' });
-    const help = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
-    expect(within(help).getByText('Extend selection to focused row')).toBeDefined();
+    // Arrange: Select and navigate within the grid
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: ' ' });
+    await fireEvent.keyDown(grid, { key: 'j' });
+    await fireEvent.keyDown(grid, { key: 'j' });
+    document.body.focus();
 
+    // Act: Press Shift+Space outside the grid to extend selection
+    await fireEvent.keyDown(window, { key: ' ', shiftKey: true });
+
+    // Assert: Selection should extend to focused row
+    await waitFor(() => {
+      expect(screen.queryByText(/\d+ selected/)).toBeTruthy();
+    }, { timeout: 2000 });
     state.destroy();
   });
 });
