@@ -11,19 +11,11 @@ import (
 )
 
 func matchForwardAttachmentRef(part msgmime.Attachment, refs []store.AttachmentRef, used []bool) int {
-	if part.PartKey != "" {
-		for i, ref := range refs {
-			if used[i] || ref.SourcePartKey == "" || ref.SourcePartKey != part.PartKey {
-				continue
-			}
-			return i
-		}
-	}
 	for i, ref := range refs {
 		if used[i] || ref.Filename != part.Filename || !strings.EqualFold(ref.ContentHash, part.ContentHash) {
 			continue
 		}
-		if ref.ContentID != "" && ref.ContentID != part.ContentID {
+		if ref.ContentID != part.ContentID {
 			continue
 		}
 		return i

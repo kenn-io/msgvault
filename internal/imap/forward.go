@@ -12,7 +12,6 @@ import (
 	"mime/quotedprintable"
 	"net/mail"
 	"net/textproto"
-	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -87,9 +86,6 @@ func BuildForward(options ForwardOptions, now time.Time, messageID string) (Repl
 		if err := validateForwardAttachment(attachment); err != nil {
 			return ReplyDraft{}, err
 		}
-	}
-	if err := validateForwardCIDReferences(quotedHTML, options.Attachments); err != nil {
-		return ReplyDraft{}, err
 	}
 
 	var body bytes.Buffer
@@ -394,51 +390,6 @@ func validateForwardParsedAttachments(parsed *msgmime.Message, expected []Forwar
 		used[match] = true
 	}
 	return nil
-}
-
-func validateForwardCIDReferences(htmlBody string, attachments []ForwardAttachment) error {
-	if htmlBody == "" {
-		return nil
-	}
-	counts := make(map[string]int, len(attachments))
-	for _, attachment := range attachments {
-		contentID := strings.Trim(attachment.ContentID, "<>")
-		if contentID != "" {
-			counts[contentID]++
-		}
-	}
-	lower := strings.ToLower(htmlBody)
-	for offset := 0; ; {
-		index := strings.Index(lower[offset:], "cid:")
-		if index < 0 {
-			return nil
-		}
-		if position := offset + index; position > 0 {
-			previous := lower[position-1]
-			if previous >= 'a' && previous <= 'z' || previous >= '0' && previous <= '9' || previous == '_' {
-				offset = position + len("cid:")
-				continue
-			}
-		}
-		start := offset + index + len("cid:")
-		end := start
-		for end < len(htmlBody) && !strings.ContainsRune("\t\r\n \"'<>)]", rune(htmlBody[end])) {
-			end++
-		}
-		contentID := htmlBody[start:end]
-		if contentID == "" {
-			return errors.New("forwarded HTML contains an empty Content-ID reference")
-		}
-		if counts[contentID] == 0 {
-			if decoded, decodeErr := url.PathUnescape(contentID); decodeErr == nil {
-				contentID = decoded
-			}
-		}
-		if counts[contentID] != 1 {
-			return fmt.Errorf("forwarded HTML Content-ID %q is missing or ambiguous", contentID)
-		}
-		offset = end
-	}
 }
 
 // BuildIMAPDraftReplacement updates the editable note of a generated forward.

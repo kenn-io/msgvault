@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	emersionimap "github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -335,6 +337,92 @@ func TestDraftForwardHTTPPublishesManagedDraft(t *testing.T) {
 	assertions.Equal(hash, editedRefs[0].ContentHash)
 }
 
+func TestDraftForwardCreatesDraftWithDistinctAttachmentPartKeys(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := newDraftReplyFixture(t)
+	firstContent := []byte("first archived bytes")
+	secondContent := []byte("second archived bytes")
+	parentRaw := []byte("From: Sender <sender@example.com>\r\n" +
+		"To: " + testutil.IMAPTestUsername + "\r\n" +
+		"Subject: Question\r\n" +
+		"Message-ID: <parent@example.com>\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=two-files\r\n\r\n" +
+		"--two-files\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"Parent body\r\n" +
+		"--two-files\r\n" +
+		"Content-Type: text/plain; name=first.txt\r\n" +
+		"Content-Disposition: attachment; filename=first.txt\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\n" +
+		base64.StdEncoding.EncodeToString(firstContent) + "\r\n" +
+		"--two-files\r\n" +
+		"Content-Type: application/octet-stream; name=second.bin\r\n" +
+		"Content-Disposition: attachment; filename=second.bin\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\n" +
+		base64.StdEncoding.EncodeToString(secondContent) + "\r\n" +
+		"--two-files--\r\n")
+	parsedParent, err := msgmime.Parse(parentRaw)
+	requirements.NoError(err)
+	requirements.Len(parsedParent.Attachments, 2)
+	requirements.NotEmpty(parsedParent.Attachments[0].PartKey)
+	requirements.NotEmpty(parsedParent.Attachments[1].PartKey)
+	requirements.NotEqual(parsedParent.Attachments[0].PartKey, parsedParent.Attachments[1].PartKey)
+	requirements.NoError(fixture.store.UpsertMessageRaw(fixture.parentID, parentRaw))
+	attachmentDir := t.TempDir()
+	hashes := make([]string, 2)
+	contents := [][]byte{firstContent, secondContent}
+	for i, content := range contents {
+		digest := sha256.Sum256(content)
+		hashes[i] = hex.EncodeToString(digest[:])
+		relativePath := filepath.Join(hashes[i][:2], hashes[i])
+		requirements.NoError(os.MkdirAll(filepath.Dir(filepath.Join(attachmentDir, relativePath)), 0o700))
+		requirements.NoError(os.WriteFile(filepath.Join(attachmentDir, relativePath), content, 0o600))
+		role, roleSource := store.AttachmentRoleFromMIME(
+			parsedParent.Attachments[i].Disposition, parsedParent.Attachments[i].IsInline, parsedParent.Attachments[i].ContentID,
+		)
+		requirements.NoError(fixture.store.UpsertAttachmentRecord(t.Context(), fixture.parentID, store.AttachmentWrite{
+			Filename: parsedParent.Attachments[i].Filename, MIMEType: parsedParent.Attachments[i].ContentType,
+			StoragePath: filepath.ToSlash(relativePath), ContentHash: hashes[i], Size: int64(len(content)),
+			Role: role, RoleSource: roleSource, SourcePartKey: parsedParent.Attachments[i].PartKey,
+			State: attachmentpolicy.StateStored,
+		}))
+	}
+	maintenance, err := newAttachmentMaintenance(fixture.store, attachmentDir, slog.New(slog.DiscardHandler), true)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = maintenance.close() })
+	adapter := fixture.grantedAdapter()
+	adapter.attachmentMaintenance = maintenance
+	var events []api.CLIRunEvent
+	err = adapter.runCLIForwardDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		"draft-forward", strconv.FormatInt(fixture.parentID, 10),
+		"--source-id", strconv.FormatInt(fixture.source.ID, 10),
+		"--from", testutil.IMAPTestUsername, "--to", "recipient@example.test", "--json",
+	}}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	var result draftReplyOutput
+	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &result))
+	assertions.Equal(draftReplyStatusCreated, result.Status)
+	draft, err := fixture.store.GetIMAPDraft(result.DraftID)
+	requirements.NoError(err)
+	_, fetchedRaw := fetchDraftMailboxMessage(t, fixture.config, draft.CurrentReceipt)
+	fetched, err := msgmime.Parse(fetchedRaw)
+	requirements.NoError(err)
+	requirements.Len(fetched.Attachments, 2)
+	assertions.Equal(firstContent, fetched.Attachments[0].Content)
+	assertions.Equal(secondContent, fetched.Attachments[1].Content)
+	refs, err := fixture.store.MessageAttachmentRefsContext(t.Context(), draft.CurrentMessageID)
+	requirements.NoError(err)
+	requirements.Len(refs, 2)
+	assertions.Equal(hashes[0], refs[0].ContentHash)
+	assertions.Equal(hashes[1], refs[1].ContentHash)
+}
+
 func TestDraftForwardRefusesMissingAttachmentBeforeAppend(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -396,6 +484,84 @@ func TestDraftForwardRefusesMissingAttachmentBeforeAppend(t *testing.T) {
 		"SELECT COUNT(*) FROM imap_drafts",
 	)).Scan(&drafts))
 	assertions.Zero(drafts)
+}
+
+func TestDraftForwardRefusesCorruptStoredAttachmentBeforeAppend(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := newDraftReplyFixture(t)
+	content := []byte("archived attachment")
+	corruptContent := bytes.Repeat([]byte("x"), len(content))
+	raw := []byte("From: Sender <sender@example.com>\r\n" +
+		"To: " + testutil.IMAPTestUsername + "\r\n" +
+		"Subject: Question\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=corrupt-boundary\r\n\r\n" +
+		"--corrupt-boundary\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"Parent body\r\n" +
+		"--corrupt-boundary\r\n" +
+		"Content-Type: text/plain; name=report.txt\r\n" +
+		"Content-Disposition: attachment; filename=report.txt\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\n" +
+		base64.StdEncoding.EncodeToString(content) + "\r\n" +
+		"--corrupt-boundary--\r\n")
+	parsed, err := msgmime.Parse(raw)
+	requirements.NoError(err)
+	requirements.Len(parsed.Attachments, 1)
+	requirements.NoError(fixture.store.UpsertMessageRaw(fixture.parentID, raw))
+	digest := sha256.Sum256(content)
+	hash := hex.EncodeToString(digest[:])
+	attachmentDir := t.TempDir()
+	relativePath := filepath.Join(hash[:2], hash)
+	requirements.NoError(os.MkdirAll(filepath.Dir(filepath.Join(attachmentDir, relativePath)), 0o700))
+	requirements.NoError(os.WriteFile(filepath.Join(attachmentDir, relativePath), corruptContent, 0o600))
+	role, roleSource := store.AttachmentRoleFromMIME(
+		parsed.Attachments[0].Disposition, parsed.Attachments[0].IsInline, parsed.Attachments[0].ContentID,
+	)
+	requirements.NoError(fixture.store.UpsertAttachmentRecord(t.Context(), fixture.parentID, store.AttachmentWrite{
+		Filename: parsed.Attachments[0].Filename, MIMEType: parsed.Attachments[0].ContentType,
+		StoragePath: filepath.ToSlash(relativePath), ContentHash: hash, Size: int64(len(content)),
+		Role: role, RoleSource: roleSource, SourcePartKey: parsed.Attachments[0].PartKey,
+		State: attachmentpolicy.StateStored,
+	}))
+	maintenance, err := newAttachmentMaintenance(fixture.store, attachmentDir, nil, true)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = maintenance.close() })
+	adapter := fixture.grantedAdapter()
+	adapter.attachmentMaintenance = maintenance
+	var events []api.CLIRunEvent
+	err = adapter.runCLIForwardDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		"draft-forward", strconv.FormatInt(fixture.parentID, 10),
+		"--source-id", strconv.FormatInt(fixture.source.ID, 10),
+		"--from", testutil.IMAPTestUsername, "--to", "to@example.test", "--json",
+	}}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	requirements.Error(err)
+	assertions.Equal("attachment_preflight_failed", err.Error())
+	requirements.Len(events, 1)
+	assertions.Equal(cliStreamStderr, events[0].Type)
+	var output draftForwardPreflightOutput
+	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &output))
+	requirements.Len(output.Problems, 1)
+	assertions.Equal("report.txt", output.Problems[0].Filename)
+	assertions.Equal("unreadable_file", output.Problems[0].Reason)
+	assertions.NotEmpty(output.Problems[0].Detail)
+	var drafts int
+	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(
+		"SELECT COUNT(*) FROM imap_drafts",
+	)).Scan(&drafts))
+	assertions.Zero(drafts)
+	client, err := imapclient.DialInsecure(fixture.config.Addr(), nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	requirements.NoError(client.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+	status, err := client.Status("Drafts", &emersionimap.StatusOptions{NumMessages: true}).Wait()
+	requirements.NoError(err)
+	requirements.NotNil(status.NumMessages)
+	assertions.Zero(*status.NumMessages)
 }
 
 func TestDraftForwardReportsLegacyAttachmentStateAndTextPreflight(t *testing.T) {

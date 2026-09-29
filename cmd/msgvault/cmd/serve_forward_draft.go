@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -256,7 +254,7 @@ func (a *storeAPIAdapter) readForwardAttachments(
 			problems = append(problems, draftForwardProblem{Filename: ref.Filename, PartKey: ref.SourcePartKey, Reason: "missing_stored_file"})
 			continue
 		}
-		reader, size, openErr := a.attachmentMaintenance.blob.OpenStream(ctx, ref.ContentHash)
+		reader, _, openErr := a.attachmentMaintenance.blob.OpenStream(ctx, ref.ContentHash)
 		if openErr != nil {
 			problems = append(problems, draftForwardProblem{Filename: ref.Filename, PartKey: ref.SourcePartKey, Reason: "unreadable_file", Detail: openErr.Error()})
 			continue
@@ -273,17 +271,8 @@ func (a *storeAPIAdapter) readForwardAttachments(
 			problems = append(problems, draftForwardProblem{Filename: ref.Filename, PartKey: ref.SourcePartKey, Reason: "unreadable_file", Detail: detail})
 			continue
 		}
-		if size >= 0 && int64(len(content)) != size {
-			problems = append(problems, draftForwardProblem{Filename: ref.Filename, PartKey: ref.SourcePartKey, Reason: "size_mismatch", Detail: fmt.Sprintf("reader reported %d bytes, read %d", size, len(content))})
-			continue
-		}
 		if (ref.Size > 0 || len(content) == 0) && int64(ref.Size) != int64(len(content)) {
 			problems = append(problems, draftForwardProblem{Filename: ref.Filename, PartKey: ref.SourcePartKey, Reason: "catalog_size_mismatch", Detail: fmt.Sprintf("catalog reports %d bytes, read %d", ref.Size, len(content))})
-			continue
-		}
-		digest := sha256.Sum256(content)
-		if hex.EncodeToString(digest[:]) != strings.ToLower(ref.ContentHash) {
-			problems = append(problems, draftForwardProblem{Filename: ref.Filename, PartKey: ref.SourcePartKey, Reason: "content_hash_mismatch", Detail: "read bytes do not match catalog hash"})
 			continue
 		}
 		attachments = append(attachments, imaplib.ForwardAttachment{

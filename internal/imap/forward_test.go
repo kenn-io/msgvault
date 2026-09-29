@@ -68,9 +68,24 @@ func TestBuildForwardPlainParentRetainsInlineFile(t *testing.T) {
 func TestBuildForwardVisibleCIDWord(t *testing.T) {
 	_, err := BuildForward(ForwardOptions{
 		From: "sender@example.test", To: []string{"recipient@example.test"},
-		QuotedHTML: "<p>Lucid: ideas</p>",
+		QuotedHTML: "<p>Lucid: ideas. Use cid:logo to reference an image.</p><!-- cid:missing -->",
 	}, time.Now(), "forward@example.test")
 	require.NoError(t, err)
+}
+
+func TestBuildForwardUnicodeBeforeCIDReference(t *testing.T) {
+	for _, quotedHTML := range []string{
+		`<p>İstanbul</p><img src="cid:logo@example.test">`,
+		`<style>.hero { background: url(cid:logo@example.test) }</style><p>İstanbul</p>`,
+	} {
+		draft, err := BuildForward(ForwardOptions{
+			From: "sender@example.test", To: []string{"recipient@example.test"},
+			QuotedHTML:  quotedHTML,
+			Attachments: []ForwardAttachment{{Filename: "logo.png", ContentType: "image/png", ContentID: "logo@example.test", IsInline: true, Content: []byte("logo")}},
+		}, time.Now(), "forward@example.test")
+		require.NoError(t, err)
+		require.Len(t, draft.Parsed.Attachments, 1)
+	}
 }
 
 func TestBuildForwardReplacementPreservesParts(t *testing.T) {
@@ -102,12 +117,15 @@ func TestBuildForwardRejectsUnsupportedParts(t *testing.T) {
 	_, err := BuildIMAPDraftReplacement([]byte("From: a@example.test\r\nTo: b@example.test\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n"), "changed", time.Now(), "")
 	assertions.Error(err)
 	assertions.True(strings.Contains(err.Error(), "multipart") || strings.Contains(err.Error(), "forward"))
-	_, err = BuildForward(ForwardOptions{
-		From: "sender@example.test", To: []string{"recipient@example.test"},
-		Subject: "Original", QuotedHTML: `<img src="cid:missing@example.test">`,
-	}, time.Now(), "forward@example.test")
-	assertions.Error(err)
-	assertions.Contains(err.Error(), "Content-ID")
 	_, err = BuildIMAPDraftReplacement([]byte("From: a@example.test\r\nTo: b@example.test\r\nX-Msgvault-Forward: 1\r\nContent-Type: multipart/signed; boundary=x\r\n\r\n--x--\r\n"), "changed", time.Now(), "")
 	assertions.ErrorContains(err, "does not support")
+}
+
+func TestBuildForwardKeepsUnresolvedParentCID(t *testing.T) {
+	draft, err := BuildForward(ForwardOptions{
+		From: "sender@example.test", To: []string{"recipient@example.test"},
+		QuotedHTML: `<img src="cid:missing@example.test">`,
+	}, time.Now(), "forward@example.test")
+	require.NoError(t, err)
+	assert.Contains(t, draft.Parsed.BodyHTML, "cid:missing@example.test")
 }
