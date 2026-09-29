@@ -797,6 +797,27 @@ describe('ExploreState history ownership', () => {
     explicit.destroy();
   });
 
+  it('commits a search into another workspace as one history entry', () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value)
+    };
+    window.history.replaceState(null, '', '/?workspace=sources&mode=full_text');
+    const state = new ExploreState(window, storage);
+    const before = window.history.length;
+
+    state.commitSearchIn('everything', 'quarterly report', 'hybrid');
+
+    expect(window.history.length).toBe(before + 1);
+    expect(state.current.workspace).toBe('everything');
+    expect(state.current.query).toBe('quarterly report');
+    expect(state.current.searchMode).toBe('hybrid');
+    expect(state.current.selectedRow).toBeNull();
+    expect(values.get(SEARCH_MODE_PREFERENCE_KEY)).toBe('hybrid');
+    state.destroy();
+  });
+
   it('adopts the configured default mode when URL and saved preference are silent', () => {
     const emptyStorage = {
       getItem: () => null,

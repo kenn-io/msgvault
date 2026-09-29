@@ -708,6 +708,23 @@ export class ExploreState {
     }, 'push');
   }
 
+  commitSearchIn(workspace: ExploreWorkspace, query: string, searchMode: ExploreSearchMode): void {
+    rememberSearchMode(searchMode, this.preferenceStorage);
+    this.navigate({
+      workspace,
+      query,
+      searchMode,
+      analysisTarget: null,
+      selectedIdentifier: null,
+      activeRow: null,
+      selectedRow: null,
+      conversationAnchor: null,
+      scrollAnchor: null,
+      operationStatus: '',
+      settingsAuthority: ''
+    }, 'push');
+  }
+
   commitNavigation(patch: Partial<ExploreURLState>): void {
     const selectionChanged = 'selectedRow' in patch && patch.selectedRow !== this.current.selectedRow;
     this.navigate(selectionChanged && !('conversationAnchor' in patch)
