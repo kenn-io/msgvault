@@ -53,11 +53,12 @@ type WorkStore interface {
 }
 
 type ClaimOptions struct {
-	RunID         int64
-	Owner         string
-	ProviderName  string
-	Now           time.Time
-	LeaseDuration time.Duration
+	ProfileFingerprint string
+	RunID              int64
+	Owner              string
+	ProviderName       string
+	Now                time.Time
+	LeaseDuration      time.Duration
 }
 
 type LeaseToken struct {

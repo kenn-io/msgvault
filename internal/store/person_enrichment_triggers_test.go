@@ -173,7 +173,7 @@ func TestPersonEnrichmentManualRunCompletedIdempotencyRejectsDifferentPerson(t *
 	requirements.NoError(err)
 	requirements.True(created)
 	lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-		RunID: run.ID, Owner: "manual-target-worker", ProviderName: f.profiles[0].Name,
+		RunID: run.ID, Owner: "manual-target-worker", ProviderName: f.profiles[0].Name, ProfileFingerprint: f.profiles[0].Fingerprint,
 		Now: f.now, LeaseDuration: time.Minute,
 	})
 	requirements.NoError(err)
@@ -507,7 +507,7 @@ func TestPersonEnrichmentTriggerCoalescingKeepsSelectedKindAndGenerationPaired(t
 				})
 				require.NoError(err)
 				lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-					RunID: run.ID, Owner: "pair-worker", ProviderName: f.profiles[0].Name,
+					RunID: run.ID, Owner: "pair-worker", ProviderName: f.profiles[0].Name, ProfileFingerprint: f.profiles[0].Fingerprint,
 					Now: f.now, LeaseDuration: time.Minute,
 				})
 				require.NoError(err)
@@ -816,7 +816,7 @@ func TestPersonEnrichmentCatchUpSerializesWithConsentRevocation(t *testing.T) {
 	assert.Empty(f.work(t, 0))
 }
 
-func TestPersonEnrichmentCatchUpDoesNotRecreateUnavailableProfileWork(t *testing.T) {
+func TestPersonEnrichmentCatchUpLeavesUnavailableProfileWorkQueued(t *testing.T) {
 	for _, expiredClaim := range []bool{false, true} {
 		t.Run("expired_claim="+strconv.FormatBool(expiredClaim), func(t *testing.T) {
 			requirements := require.New(t)
@@ -832,13 +832,13 @@ func TestPersonEnrichmentCatchUpDoesNotRecreateUnavailableProfileWork(t *testing
 			}
 			requirements.NoError(f.store.CancelPersonEnrichmentWorkOutsideProfilesContext(
 				t.Context(), []string{f.profiles[0].Fingerprint}))
-			checks.Empty(f.work(t, 1))
+			checks.Len(f.work(t, 1), 1)
 
 			count, err := f.store.EnqueueDuePersonEnrichmentContext(
 				t.Context(), f.now, 200, []string{f.profiles[0].Fingerprint})
 			requirements.NoError(err)
 			checks.Zero(count)
-			checks.Empty(f.work(t, 1))
+			checks.Len(f.work(t, 1), 1)
 		})
 	}
 }
@@ -917,7 +917,7 @@ func TestPersonEnrichmentTriggerConsentGrantAndRevocationCancelPendingWork(t *te
 	})
 	require.NoError(err)
 	lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-		RunID: run.ID, Owner: "test-worker", ProviderName: f.profiles[0].Name,
+		RunID: run.ID, Owner: "test-worker", ProviderName: f.profiles[0].Name, ProfileFingerprint: f.profiles[0].Fingerprint,
 		Now: f.now, LeaseDuration: time.Minute,
 	})
 	require.NoError(err)

@@ -175,7 +175,7 @@ func TestPersonEnrichmentEmploymentAdvancesGenerationAndPreservesFreshCompanyWor
 	})
 	require.NoError(err)
 	lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-		RunID: run.ID, Owner: "employment-worker", ProviderName: f.profile.Name,
+		RunID: run.ID, Owner: "employment-worker", ProviderName: f.profile.Name, ProfileFingerprint: f.profile.Fingerprint,
 		Now: f.now, LeaseDuration: time.Minute,
 	})
 	require.NoError(err)
@@ -273,7 +273,7 @@ func TestPersonEnrichmentClaimedPublicationFencesBeginAndPreservesExactWork(t *t
 	})
 	require.NoError(err)
 	lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-		RunID: run.ID, Owner: "claimed-publication-worker", ProviderName: f.profile.Name,
+		RunID: run.ID, Owner: "claimed-publication-worker", ProviderName: f.profile.Name, ProfileFingerprint: f.profile.Fingerprint,
 		Now: f.now, LeaseDuration: time.Minute,
 	})
 	require.NoError(err)
@@ -417,7 +417,7 @@ func claimUnboundInvalidationWork(
 	})
 	require.NoError(t, err)
 	lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-		RunID: run.ID, Owner: "unbound-" + suffix, ProviderName: f.profile.Name,
+		RunID: run.ID, Owner: "unbound-" + suffix, ProviderName: f.profile.Name, ProfileFingerprint: f.profile.Fingerprint,
 		Now: f.now, LeaseDuration: time.Minute,
 	})
 	require.NoError(t, err)
@@ -478,7 +478,7 @@ func prepareCurrentEnrichmentResult(
 	})
 	require.NoError(t, err)
 	lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-		RunID: run.ID, Owner: "invalidation-worker-" + suffix, ProviderName: f.profile.Name,
+		RunID: run.ID, Owner: "invalidation-worker-" + suffix, ProviderName: f.profile.Name, ProfileFingerprint: f.profile.Fingerprint,
 		Now: f.now, LeaseDuration: time.Minute,
 	})
 	require.NoError(t, err)

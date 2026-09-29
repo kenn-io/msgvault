@@ -67,7 +67,7 @@ func newBudgetClaims(t *testing.T, profile personenrichment.ProviderProfile) (*s
 			Trigger: personenrichment.Trigger{Kind: personenrichment.TriggerManual, Generation: generation}, DueAt: now,
 		}))
 		lease, claimErr := fixture.Store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-			RunID: run.ID, Owner: "worker-" + generation, ProviderName: profile.Name,
+			RunID: run.ID, Owner: "worker-" + generation, ProviderName: profile.Name, ProfileFingerprint: profile.Fingerprint,
 			Now: now, LeaseDuration: time.Minute,
 		})
 		require.NoError(t, claimErr)

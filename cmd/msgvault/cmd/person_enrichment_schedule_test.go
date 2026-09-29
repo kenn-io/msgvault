@@ -155,7 +155,7 @@ func TestPersonEnrichmentScheduleResumesRunningRunAfterCrash(t *testing.T) {
 	worker := scheduleEnrichmentWorkerFunc(func(ctx context.Context, runID int64) (bool, error) {
 		calls = append(calls, runID)
 		lease, claimErr := f.Store.ClaimWork(ctx, personenrichment.ClaimOptions{
-			RunID: runID, Owner: "recovery-worker", ProviderName: profile.Name,
+			RunID: runID, Owner: "recovery-worker", ProviderName: profile.Name, ProfileFingerprint: profile.Fingerprint,
 			Now: now, LeaseDuration: time.Minute,
 		})
 		if claimErr != nil || lease == nil {
@@ -486,7 +486,10 @@ func TestRegisterPersonEnrichmentJobCancelsWorkForUnavailableProfiles(t *testing
 				PersonID: person.ID, ProfileFingerprint: staleProfile.Fingerprint, Limit: 10,
 			})
 			requirements.NoError(err)
-			checks.Empty(work)
+			requirements.Len(work, 1)
+			checks.Nil(work[0].RunID)
+			checks.Nil(work[0].ActiveAttemptID)
+			checks.Nil(work[0].LeaseOwner)
 			requirements.NoError(f.Store.CompleteRun(t.Context(), run.ID, personenrichment.RunCompletion{
 				CompletedAt: now.Add(time.Second),
 			}))
@@ -556,10 +559,18 @@ func scheduleWorker(
 	require.NoError(t, err)
 	gate, err := personenrichment.NewEgressGate(st, st, hasher, credential)
 	require.NoError(t, err)
+	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
+	require.NoError(t, err)
+	fingerprints := make(map[string]string, len(configs))
+	for name, config := range configs {
+		profile, err := config.Profile(catalog)
+		require.NoError(t, err)
+		fingerprints[name] = profile.Fingerprint
+	}
 	worker, err := personenrichment.NewWorker(st, st, *gate, factories, personenrichment.WorkerOptions{
 		Owner: "schedule-real-worker", LeaseDuration: time.Minute, RenewEvery: 10 * time.Second,
 		Clock: func() time.Time { return now }, Jitter: func(delay time.Duration) time.Duration { return delay },
-		ProviderConfigs: configs,
+		ProviderConfigs: configs, ProviderFingerprints: fingerprints,
 	})
 	require.NoError(t, err)
 	return worker
@@ -661,7 +672,7 @@ func scheduleTestAttempt(
 ) *personenrichment.DurableAttempt {
 	t.Helper()
 	lease, err := st.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-		RunID: runID, Owner: owner, ProviderName: profile.Name,
+		RunID: runID, Owner: owner, ProviderName: profile.Name, ProfileFingerprint: profile.Fingerprint,
 		Now: now, LeaseDuration: time.Minute,
 	})
 	require.NoError(t, err)

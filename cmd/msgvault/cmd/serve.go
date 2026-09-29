@@ -3568,6 +3568,7 @@ func registerPersonEnrichmentJob(
 	}
 	factories := make(map[string]personenrichment.ProviderFactory)
 	providerConfigs := make(map[string]personenrichment.ProviderConfig)
+	providerFingerprints := make(map[string]string)
 	activeFingerprints := make([]string, 0, len(enrichmentConfig.Providers))
 	for _, configured := range enrichmentConfig.Providers {
 		provider := configured
@@ -3583,6 +3584,7 @@ func registerPersonEnrichmentJob(
 		}
 		activeFingerprints = append(activeFingerprints, profile.Fingerprint)
 		providerConfigs[provider.Name] = provider
+		providerFingerprints[provider.Name] = profile.Fingerprint
 		switch provider.Kind {
 		case personenrichment.ProviderExa:
 			factories[provider.Name] = func(config personenrichment.ProviderConfig, credential string) (personenrichment.Provider, error) {
@@ -3609,8 +3611,9 @@ func registerPersonEnrichmentJob(
 	worker, err := personenrichment.NewWorker(st, st, *gate, factories, personenrichment.WorkerOptions{
 		Owner: "daemon-person-enrichment", LeaseDuration: enrichmentConfig.LeaseDuration,
 		RenewEvery: enrichmentConfig.LeaseDuration / 4, Clock: time.Now,
-		Jitter:          func(delay time.Duration) time.Duration { return delay },
-		ProviderConfigs: providerConfigs,
+		Jitter:               func(delay time.Duration) time.Duration { return delay },
+		ProviderConfigs:      providerConfigs,
+		ProviderFingerprints: providerFingerprints,
 	})
 	if err != nil {
 		return fmt.Errorf("configure person enrichment worker: %w", err)

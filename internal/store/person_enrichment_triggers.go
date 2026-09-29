@@ -286,47 +286,36 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 		missingArgs := append([]any(nil), profileArgs...)
 		missingArgs = append(missingArgs, limit-count)
 		rows, err := tx.QueryContext(ctx, `
-			SELECT pt.person_id, c.profile_fingerprint, p.revision,
-			       attempted.id, attempted.person_revision, attempted.state,
-			       attempted.fact_generation_key, attempted.completed_at
+			SELECT pt.person_id, c.profile_fingerprint, p.revision
 			FROM person_tracking pt
 			JOIN persons p ON p.id = pt.person_id
 			CROSS JOIN person_enrichment_consents c
 			LEFT JOIN person_enrichment_work w
 			  ON w.person_id = pt.person_id
 			 AND w.profile_fingerprint = c.profile_fingerprint
-			LEFT JOIN person_enrichment_attempts attempted ON attempted.id = (
-				SELECT MAX(latest.id) FROM person_enrichment_attempts latest
-				WHERE latest.person_id = pt.person_id
-				  AND latest.profile_fingerprint = c.profile_fingerprint
-			)
 			WHERE c.revoked_at IS NULL
 			  AND c.profile_fingerprint IN (`+profilePlaceholders+`)
 			  AND w.person_id IS NULL
-			  AND (attempted.id IS NULL OR attempted.person_revision <> p.revision
-			       OR attempted.state = 'succeeded'
-			       OR (attempted.state = 'terminal' AND attempted.failure_class = 'profile_unavailable'))
+			  AND NOT EXISTS (
+				SELECT 1 FROM person_enrichment_attempts attempted
+				WHERE attempted.person_id = pt.person_id
+				  AND attempted.profile_fingerprint = c.profile_fingerprint
+				  AND attempted.person_revision = p.revision
+			  )
 			ORDER BY pt.person_id, c.profile_fingerprint
 			LIMIT ?`, missingArgs...)
 		if err != nil {
 			return fmt.Errorf("list missing person enrichment work: %w", err)
 		}
 		type missingWork struct {
-			personID        int64
-			fingerprint     string
-			revision        int64
-			attemptID       sql.NullInt64
-			attemptRevision sql.NullInt64
-			attemptState    sql.NullString
-			generation      sql.NullString
-			completedAt     nullableTimestamp
+			personID    int64
+			fingerprint string
+			revision    int64
 		}
 		missing := make([]missingWork, 0, limit-count)
 		for rows.Next() {
 			var item missingWork
-			if err := rows.Scan(&item.personID, &item.fingerprint, &item.revision,
-				&item.attemptID, &item.attemptRevision, &item.attemptState,
-				&item.generation, &item.completedAt); err != nil {
+			if err := rows.Scan(&item.personID, &item.fingerprint, &item.revision); err != nil {
 				_ = rows.Close()
 				return fmt.Errorf("scan missing person enrichment work: %w", err)
 			}
@@ -343,29 +332,11 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			s.personEnrichmentTxBarrier("catch_up_missing_snapshotted")
 		}
 		for _, item := range missing {
-			input := EnrichmentTriggerInput{
+			if err := s.putPersonEnrichmentWorkTx(ctx, tx, EnrichmentTriggerInput{
 				PersonID: item.personID, ProfileFingerprint: item.fingerprint,
 				Kind:       personenrichment.TriggerTracked,
 				Generation: "revision:" + strconv.FormatInt(item.revision, 10), DueAt: now,
-			}
-			if item.attemptID.Valid && item.attemptRevision.Int64 == item.revision {
-				if item.attemptState.String == personEnrichmentStateSucceeded {
-					// Cleanup can remove a successful lookup's queued refresh. Restore
-					// its original generation and due time, not the consumed request.
-					profile, err := s.loadPersonEnrichmentProfile(ctx, tx, item.fingerprint, false)
-					if err != nil {
-						return err
-					}
-					input.Kind = personenrichment.TriggerRefresh
-					input.Generation = "refresh:" + item.generation.String
-					input.DueAt = item.completedAt.Time.Add(profile.RefreshInterval)
-				} else {
-					// Profile cleanup canceled this attempt; re-enabling starts a
-					// fresh operation without replaying its terminal request hash.
-					input.Generation = "profile:" + strconv.FormatInt(item.attemptID.Int64, 10)
-				}
-			}
-			if err := s.putPersonEnrichmentWorkTx(ctx, tx, input); err != nil {
+			}); err != nil {
 				return err
 			}
 			count++

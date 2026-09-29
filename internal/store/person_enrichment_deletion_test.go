@@ -157,7 +157,7 @@ func newEnrichmentDeletionFixture(t *testing.T) enrichmentDeletionFixture {
 		DueAt:   f.now.Add(time.Minute),
 	}))
 	lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-		RunID: run.ID, Owner: "deletion-worker", ProviderName: f.profile.Name,
+		RunID: run.ID, Owner: "deletion-worker", ProviderName: f.profile.Name, ProfileFingerprint: f.profile.Fingerprint,
 		Now: f.now.Add(time.Minute), LeaseDuration: time.Minute,
 	})
 	require.NoError(t, err)

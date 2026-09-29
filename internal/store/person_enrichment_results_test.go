@@ -81,7 +81,7 @@ func newEnrichmentResultFixture(t *testing.T) *enrichmentResultFixture {
 		DueAt:   now,
 	}))
 	lease, err := st.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-		RunID: run.ID, Owner: "result-worker", ProviderName: profile.Name,
+		RunID: run.ID, Owner: "result-worker", ProviderName: profile.Name, ProfileFingerprint: profile.Fingerprint,
 		Now: now, LeaseDuration: 5 * time.Minute,
 	})
 	require.NoError(t, err)
@@ -166,7 +166,7 @@ func TestPersonEnrichmentCatchUpDoesNotConsumeProducingAttempt(t *testing.T) {
 	assert.Equal(t, 1, count, "a result already expired on arrival still needs an expiry lookup")
 }
 
-func TestPersonEnrichmentCatchUpRestoresRefreshAfterProfileReenabled(t *testing.T) {
+func TestPersonEnrichmentProfileCleanupPreservesRefresh(t *testing.T) {
 	for _, laterFailure := range []bool{false, true} {
 		t.Run("later_failure="+strconv.FormatBool(laterFailure), func(t *testing.T) {
 			require := require.New(t)
@@ -181,7 +181,7 @@ func TestPersonEnrichmentCatchUpRestoresRefreshAfterProfileReenabled(t *testing.
 			if laterFailure {
 				now = refreshAt
 				lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-					RunID: f.attempt.RunID, Owner: "refresh-worker", ProviderName: f.profile.Name,
+					RunID: f.attempt.RunID, Owner: "refresh-worker", ProviderName: f.profile.Name, ProfileFingerprint: f.profile.Fingerprint,
 					Now: now, LeaseDuration: time.Minute,
 				})
 				require.NoError(err)
@@ -213,7 +213,7 @@ func TestPersonEnrichmentCatchUpRestoresRefreshAfterProfileReenabled(t *testing.
 				assert.Empty(work, "re-enabling must not replay a failed refresh")
 				return
 			}
-			require.Equal(1, count)
+			require.Zero(count)
 			require.Len(work, 1)
 			assert.Equal(int64(8), work[0].TriggerMask)
 			assert.Equal("refresh:"+outcome.Generation.GenerationKey, work[0].TriggerGeneration)
@@ -222,7 +222,7 @@ func TestPersonEnrichmentCatchUpRestoresRefreshAfterProfileReenabled(t *testing.
 			require.NoError(err)
 			assert.Zero(count, "repeated catch-up must not republish the refresh")
 			lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-				RunID: f.attempt.RunID, Owner: "reenabled-worker", ProviderName: f.profile.Name,
+				RunID: f.attempt.RunID, Owner: "reenabled-worker", ProviderName: f.profile.Name, ProfileFingerprint: f.profile.Fingerprint,
 				Now: refreshAt, LeaseDuration: time.Minute,
 			})
 			require.NoError(err)
@@ -714,7 +714,7 @@ func TestCommitEnrichmentClaimsReusesCitationAcrossAttempts(t *testing.T) {
 	})
 	requirements.NoError(err)
 	lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-		RunID: run.ID, Owner: "result-worker", ProviderName: f.profile.Name,
+		RunID: run.ID, Owner: "result-worker", ProviderName: f.profile.Name, ProfileFingerprint: f.profile.Fingerprint,
 		Now: now, LeaseDuration: 5 * time.Minute,
 	})
 	requirements.NoError(err)

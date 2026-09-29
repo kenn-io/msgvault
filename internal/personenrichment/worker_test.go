@@ -113,7 +113,7 @@ func (f *workerFixture) options(configs map[string]personenrichment.ProviderConf
 	return personenrichment.WorkerOptions{
 		Owner: "worker-test", LeaseDuration: time.Minute, RenewEvery: 20 * time.Second,
 		Clock: time.Now, Jitter: func(time.Duration) time.Duration { return 0 },
-		ProviderConfigs: configs,
+		ProviderConfigs: configs, ProviderFingerprints: map[string]string{f.profile.Name: f.profile.Fingerprint},
 	}
 }
 
@@ -337,7 +337,11 @@ func TestWorkerCompletesSynchronousResultAndIsolatesProviderFailure(t *testing.T
 	configs := map[string]personenrichment.ProviderConfig{
 		failed.config.Name: failed.config, goodConfig.Name: goodConfig,
 	}
-	worker := failed.newWorker(t, factories, configs, func(string) (string, bool) { return "test-key", true })
+	options := failed.options(configs)
+	options.ProviderFingerprints[goodConfig.Name] = goodProfile.Fingerprint
+	worker, err := personenrichment.NewWorker(failed.store, failed.store,
+		failed.gate(t, func(string) (string, bool) { return "test-key", true }), factories, options)
+	requirements.NoError(err)
 
 	processed, err := worker.RunOnce(t.Context(), failed.run.ID)
 	requirements.NoError(err)
@@ -353,6 +357,50 @@ func TestWorkerCompletesSynchronousResultAndIsolatesProviderFailure(t *testing.T
 	requirements.Len(attempts, 2)
 	states := []string{attempts[0].State, attempts[1].State}
 	checks.ElementsMatch([]string{"succeeded", "terminal"}, states)
+}
+
+func TestWorkerPreservesQueuedWorkForUnavailableProfile(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newWorkerFixture(t, "profile-selection", nil)
+	f.enqueue(t)
+	replacementConfig := f.config
+	replacementConfig.Endpoint = "https://replacement.example.test/search"
+	replacement, err := replacementConfig.Profile(personfacts.Catalog{Targets: f.profile.Targets})
+	require.NoError(err)
+	_, err = f.store.EnsurePersonEnrichmentProfile(t.Context(), replacement)
+	require.NoError(err)
+	require.NoError(f.store.CancelPersonEnrichmentWorkOutsideProfilesContext(t.Context(), []string{replacement.Fingerprint}))
+	var starts atomic.Int64
+	factories := map[string]personenrichment.ProviderFactory{
+		f.config.Name: func(personenrichment.ProviderConfig, string) (personenrichment.Provider, error) {
+			return &functionProvider{start: func(context.Context, personenrichment.Request) (personenrichment.Attempt, error) {
+				starts.Add(1)
+				return personenrichment.Attempt{}, &personenrichment.ProviderError{Class: personenrichment.FailureInvalidOutput}
+			}}, nil
+		},
+	}
+	options := f.options(map[string]personenrichment.ProviderConfig{replacement.Name: replacementConfig})
+	options.ProviderFingerprints[replacement.Name] = replacement.Fingerprint
+	worker, err := personenrichment.NewWorker(f.store, f.store,
+		f.gate(t, func(string) (string, bool) { return "test-key", true }), factories, options)
+	require.NoError(err)
+	processed, err := worker.RunOnce(t.Context(), f.run.ID)
+	require.NoError(err)
+	assert.False(processed, "a replacement with the same name must leave the old profile's work queued")
+	assert.Zero(starts.Load())
+
+	require.NoError(f.store.CancelPersonEnrichmentWorkOutsideProfilesContext(t.Context(), []string{f.profile.Fingerprint}))
+	worker = f.newWorker(t, factories, map[string]personenrichment.ProviderConfig{f.config.Name: f.config},
+		func(string) (string, bool) { return "test-key", true })
+	processed, err = worker.RunOnce(t.Context(), f.run.ID)
+	require.NoError(err)
+	assert.True(processed, "re-enabling must resume the queued operation")
+	assert.Equal(int64(1), starts.Load())
+	processed, err = worker.RunOnce(t.Context(), f.run.ID)
+	require.NoError(err)
+	assert.False(processed, "a terminal failure must not be retried")
+	assert.Equal(int64(1), starts.Load())
 }
 
 func TestWorkerConcurrentRunOnceStartsProviderOnlyOnce(t *testing.T) {
@@ -2002,7 +2050,7 @@ func TestWorkerRejectsStaleCommitAfterLeaseReclaim(t *testing.T) {
 		ProgramFingerprint: workerProgramFingerprint(t, false, ""), Result: &result,
 	}
 	reclaimed, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
-		RunID: f.run.ID, Owner: "replacement-worker", ProviderName: f.config.Name,
+		RunID: f.run.ID, Owner: "replacement-worker", ProviderName: f.config.Name, ProfileFingerprint: f.profile.Fingerprint,
 		Now: claimTime.Add(80 * time.Millisecond), LeaseDuration: time.Minute,
 	})
 	requirements.NoError(err)

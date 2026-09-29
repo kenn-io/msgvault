@@ -768,6 +768,7 @@ func newPersonEnrichmentCLIWorker(
 	}
 	factories := make(map[string]personenrichment.ProviderFactory)
 	providerConfigs := make(map[string]personenrichment.ProviderConfig)
+	providerFingerprints := make(map[string]string)
 	for _, configured := range config.Providers {
 		provider := configured
 		if !provider.Enabled {
@@ -781,6 +782,7 @@ func newPersonEnrichmentCLIWorker(
 			return nil, err
 		}
 		providerConfigs[provider.Name] = provider
+		providerFingerprints[provider.Name] = profile.Fingerprint
 		switch provider.Kind {
 		case personenrichment.ProviderExa:
 			factories[provider.Name] = func(config personenrichment.ProviderConfig, credential string) (personenrichment.Provider, error) {
@@ -799,6 +801,8 @@ func newPersonEnrichmentCLIWorker(
 	return personenrichment.NewWorker(st, st, *gate, factories, personenrichment.WorkerOptions{
 		Owner: "daemon-person-enrichment-manual", LeaseDuration: config.LeaseDuration,
 		RenewEvery: config.LeaseDuration / 4, Clock: time.Now,
-		Jitter: func(delay time.Duration) time.Duration { return delay }, ProviderConfigs: providerConfigs,
+		Jitter:               func(delay time.Duration) time.Duration { return delay },
+		ProviderConfigs:      providerConfigs,
+		ProviderFingerprints: providerFingerprints,
 	})
 }
