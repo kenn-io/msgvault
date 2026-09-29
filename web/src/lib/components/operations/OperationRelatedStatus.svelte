@@ -161,7 +161,7 @@
 </section>
 
 <style>
-  .related-status { display: grid; align-content: start; gap: var(--space-4); min-height: 0; padding: var(--space-5) var(--space-6) var(--space-4); overflow: auto; }
+  .related-status { display: grid; align-content: start; gap: var(--space-4); min-height: 0; padding: var(--space-5) var(--page-gutter) var(--space-4); overflow: auto; }
   header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   h1, .summary p { margin: 0; }
   h1 { color: var(--text-primary); font-size: var(--font-size-xl); font-weight: 650; line-height: 1.25; }
@@ -169,5 +169,5 @@
   .summary p { display: flex; align-items: center; gap: var(--space-2); color: var(--text-muted); }
   .notice { padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
   .notice--error { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); border-color: var(--status-error-ink); background: var(--status-error-bg); color: var(--status-error-ink); }
-  @media (max-width: 760px) { .related-status { padding-inline: var(--space-4); } header { align-items: stretch; flex-direction: column; } }
+  @media (max-width: 760px) { header { align-items: stretch; flex-direction: column; } }
 </style>

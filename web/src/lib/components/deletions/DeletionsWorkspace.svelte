@@ -433,7 +433,7 @@
     flex: 1;
     flex-direction: column;
     gap: var(--space-4);
-    padding: var(--space-5) var(--space-6) var(--space-4);
+    padding: var(--space-5) var(--page-gutter) var(--space-4);
   }
   article,
   .actions,
@@ -490,9 +490,6 @@
     border-color: var(--accent-red);
   }
   @media (max-width: 760px) {
-    .deletions {
-      padding-inline: var(--space-4);
-    }
     article,
     .staging {
       align-items: stretch;

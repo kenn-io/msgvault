@@ -373,7 +373,7 @@
 </main>
 
 <style>
-  .operations-workspace { display: grid; align-content: start; gap: var(--space-4); min-width: 0; min-height: 0; padding: var(--space-5) var(--space-6) var(--space-4); overflow: auto; }
+  .operations-workspace { display: grid; align-content: start; gap: var(--space-4); min-width: 0; min-height: 0; padding: var(--space-5) var(--page-gutter) var(--space-4); overflow: auto; }
   .notice { margin: 0; }
   .filters { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
   .content { display: grid; min-width: 0; min-height: 0; }
@@ -385,7 +385,6 @@
   .focused-detail { min-height: 0; background: var(--bg-surface); }
 
   @media (max-width: 760px) {
-    .operations-workspace { padding-inline: var(--space-4); }
     .filters { align-items: stretch; flex-direction: column; }
     .filters :global(.kit-select-dropdown), .filters :global(.kit-date-range) { width: 100%; }
   }

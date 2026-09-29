@@ -728,12 +728,7 @@
     width: 100%;
   }
   .settings-header {
-    padding: var(--space-5) var(--space-6) var(--space-4);
-  }
-  @media (max-width: 760px) {
-    .settings-header {
-      padding-inline: var(--space-4);
-    }
+    padding: var(--space-5) var(--page-gutter) var(--space-4);
   }
   .settings :global(.kit-settings__nav-item--active),
   .settings :global(.kit-settings__nav-item--active:hover) {

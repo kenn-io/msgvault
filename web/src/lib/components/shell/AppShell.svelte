@@ -1582,13 +1582,9 @@
     min-height: var(--header-height);
     align-items: center;
     gap: var(--space-3);
-    padding: 0 var(--space-5);
+    padding: 0 var(--page-gutter);
     background: var(--bg-surface);
     border-bottom: 1px solid var(--border-default);
-  }
-
-  .app-shell--narrow .app-top-bar {
-    padding: 0 var(--space-3);
   }
 
   .app-top-bar__menu {
@@ -1617,7 +1613,7 @@
     flex: 1;
     flex-direction: column;
     gap: var(--space-4);
-    padding: var(--space-5) var(--space-6) var(--space-4);
+    padding: var(--space-5) var(--page-gutter) var(--space-4);
   }
 
   .files-count {
@@ -1625,9 +1621,4 @@
     font-size: var(--font-size-xs);
   }
 
-  @media (max-width: 760px) {
-    .files-shell {
-      padding-inline: var(--space-4);
-    }
-  }
 </style>

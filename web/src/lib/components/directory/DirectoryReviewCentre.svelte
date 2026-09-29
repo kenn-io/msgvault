@@ -251,7 +251,7 @@
 {/if}
 
 <style>
-  .review-centre { display: grid; gap: var(--space-5); padding: var(--space-5) var(--space-6) var(--space-4); }
+  .review-centre { display: grid; gap: var(--space-5); padding: var(--space-5) var(--page-gutter) var(--space-4); }
   .review-toolbar { display: flex; align-items: start; justify-content: space-between; gap: var(--space-5); flex-wrap: wrap; }
   .review-toolbar > div, .identity-review { display: grid; gap: var(--space-2); }
   h2, p { margin: 0; }
@@ -265,7 +265,6 @@
   .loading-overlay { position: sticky; z-index: 1; top: var(--space-2); display: flex; align-items: center; justify-content: center; gap: var(--space-2); width: fit-content; margin: 0 auto calc(-1 * var(--space-8)); padding: var(--space-2) var(--space-4); border: var(--border-width) solid var(--border-default); border-radius: var(--radius-pill); background: var(--bg-surface); box-shadow: var(--shadow-sm); color: var(--text-muted); }
   .pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-3); color: var(--text-muted); font-size: var(--font-size-sm); }
   @media (max-width: 760px) {
-    .review-centre { padding-inline: var(--space-4); }
     .review-toolbar :global(.kit-segmented) { width: 100%; }
   }
 </style>

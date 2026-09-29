@@ -188,7 +188,7 @@
 </main>
 
 <style>
-  .directory-workspace { padding: var(--space-5) var(--space-6) var(--space-4); display: grid; gap: var(--space-4); flex: 1; min-height: 0; grid-template-rows: auto auto auto minmax(0, 1fr); overflow: hidden; }
+  .directory-workspace { padding: var(--space-5) var(--page-gutter) var(--space-4); display: grid; gap: var(--space-4); flex: 1; min-height: 0; grid-template-rows: auto auto auto minmax(0, 1fr); overflow: hidden; }
   .filters { display: flex; gap: var(--space-3); align-items: center; justify-content: space-between; flex-wrap: wrap; }
   .filters { justify-content: stretch; } .filters :global(.kit-search-input) { min-width: min(100%, 300px); flex: 1; }
   .directory-content { display: grid; grid-row: 4; min-height: 0; overflow: hidden; }
@@ -196,5 +196,4 @@
   .directory-content.has-detail { grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.2fr); gap: var(--space-4); }
   .detail-pane { border-left: 1px solid var(--border-default); min-width: 0; min-height: 0; overflow: auto; }
   .promotion-error { padding: var(--space-3); background: var(--bg-inset); color: var(--text-secondary); }
-  @media (max-width: 760px) { .directory-workspace { padding-inline: var(--space-4); } }
 </style>

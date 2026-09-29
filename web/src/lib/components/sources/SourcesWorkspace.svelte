@@ -444,7 +444,7 @@
     flex: 1;
     flex-direction: column;
     gap: var(--space-4);
-    padding: var(--space-5) var(--space-6) var(--space-4);
+    padding: var(--space-5) var(--page-gutter) var(--space-4);
   }
   td span,
   td time {
@@ -512,10 +512,5 @@
   .notice--error {
     border-color: var(--accent-red);
     color: var(--text-danger);
-  }
-  @media (max-width: 760px) {
-    .sources {
-      padding-inline: var(--space-4);
-    }
   }
 </style>

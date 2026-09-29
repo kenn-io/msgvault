@@ -543,7 +543,7 @@
   }
 
   .hub-header {
-    padding: var(--space-5) var(--space-6) var(--space-4);
+    padding: var(--space-5) var(--page-gutter) var(--space-4);
   }
 
   .hub-body {
@@ -623,9 +623,4 @@
     background: var(--bg-surface);
   }
 
-  @media (max-width: 760px) {
-    .hub-header {
-      padding-inline: var(--space-4);
-    }
-  }
 </style>
