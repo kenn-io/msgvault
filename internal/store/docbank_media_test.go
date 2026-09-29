@@ -108,11 +108,11 @@ func TestBeeperMediaKeyChangeKeepsSharedDelivery(t *testing.T) {
 	require.NoError(err)
 	a.ProcessingKey = "new-key"
 	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), a))
-	operation, ready, err := f.Store.NextBeeperMediaOperation(t.Context(), "shared", time.Now().UTC())
+	mappings, err := f.Store.ListLiveBeeperMediaMappings(t.Context(), "shared", "old-key", 10)
 	require.NoError(err)
-	require.True(ready)
-	assert.Equal("old-key", operation.ProcessingKey)
-	assert.Equal(store.BeeperMediaOperationArtifact, operation.Kind)
+	require.Len(mappings, 1)
+	assert.Equal(b.OccurrenceRef, mappings[0].OccurrenceRef)
+	assert.Equal("pending-artifact", mappings[0].ProcessingPhase)
 }
 
 func liveMessageIDs(t *testing.T, st *store.Store) []string {
