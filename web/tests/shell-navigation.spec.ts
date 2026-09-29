@@ -71,6 +71,22 @@ test('Escape in the narrow menu leaves an open reading pane open', async ({ page
   await expect(page.getByRole('complementary', { name: /^Reading pane/ })).toBeVisible();
 });
 
+test('Escape closes the Columns menu before the reading pane', async ({ page }) => {
+  await page.goto('/?workspace=everything');
+  await page.getByRole('grid', { name: 'Everything results' }).getByRole('row').nth(1).click();
+  const readingPane = page.getByRole('complementary', { name: /^Reading pane/ });
+  await expect(readingPane).toBeVisible();
+  await page.getByRole('button', { name: 'Columns' }).click();
+  await expect(page.getByRole('button', { name: 'Size' })).toBeVisible();
+
+  await page.keyboard.press('Escape');
+
+  await expect(page.getByRole('button', { name: 'Size' })).toHaveCount(0);
+  await expect(readingPane).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(readingPane).toHaveCount(0);
+});
+
 test('global search from another workspace opens Everything', async ({ page }) => {
   await page.goto('/?workspace=sources');
   await page.getByRole('searchbox', { name: 'Search everything' }).fill('fixture');

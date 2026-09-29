@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createSavedView as generatedCreateSavedView } from '../../api/generated/api/api';
-  import { Button, Modal, TextInput } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, Modal, TextInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { SavedView } from '../../api/generated/models';
@@ -21,7 +21,11 @@
   let nameInput = $state<HTMLInputElement>();
   // Not TextInput's autofocus: it focuses before Modal's focus trap records the
   // element to restore on close, so closing would drop focus to the body.
-  onMount(() => nameInput?.focus());
+  // The dialog's own scope keeps Escape and the shell shortcuts away from the page behind it.
+  onMount(() => {
+    nameInput?.focus();
+    return appShortcuts.pushScope('save-view-dialog');
+  });
   let description = $state('');
   let saving = $state(false);
   let error = $state('');

@@ -874,6 +874,7 @@
   function changeConversationAnchor(anchorId: number): void {
     replaceCommittedNavigation({ conversationAnchor: String(anchorId) });
   }
+  let claimedEscape: KeyboardEvent | undefined;
   // The Relationships hub owns its own Esc layering (reading pane → timeline
   // → list) and only lets an Esc it didn't consume bubble here once it has
   // nothing left to close. This function's branches read/write state that
@@ -883,6 +884,7 @@
   // the user isn't even in (e.g. a groupingChain left behind by
   // commitWorkspace, which does not reset it).
   function handleEscape(event: KeyboardEvent): void {
+    if (event === claimedEscape) return;
     if (editableTarget(event.target)) return;
     if (exploreState.current.workspace === 'relationships') return;
     if (selectedAttachmentID !== undefined) {
@@ -1151,6 +1153,13 @@
     });
   }
   onMount(() => {
+    // Kit popovers close on Escape from a document listener and claim the key with preventDefault
+    // so outer layers stay open. The window shortcut listener prevents every key it handles, so
+    // note the claim first; this listener must be added before initShortcuts adds that one.
+    const noteClaimedEscape = (event: KeyboardEvent): void => {
+      claimedEscape = event.key === 'Escape' && event.defaultPrevented ? event : undefined;
+    };
+    window.addEventListener('keydown', noteClaimedEscape);
     const detachShortcuts = initShortcuts();
     let disposed = false;
     const resyncEditableScope = (): void => {
@@ -1190,6 +1199,7 @@
       document.removeEventListener('focusin', handleFocusIn, true);
       document.removeEventListener('focusout', handleFocusOut, true);
       document.removeEventListener('keydown', preserveNativeControlKey);
+      window.removeEventListener('keydown', noteClaimedEscape);
       window.removeEventListener('popstate', handleHistoryFocus);
       editableObserver.disconnect();
       editableScopeCleanup?.();

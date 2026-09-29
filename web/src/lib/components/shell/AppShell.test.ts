@@ -2626,4 +2626,110 @@ describe('AppShell', () => {
     rendered.unmount();
     state.destroy();
   });
+
+  describe('Escape over an open reading pane', () => {
+    const states: ExploreState[] = [];
+
+    afterEach(() => {
+      cleanup();
+      for (const state of states.splice(0)) state.destroy();
+      window.innerWidth = 1024;
+    });
+
+    async function openReadingPane(): Promise<ExploreState> {
+      window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+      const state = new ExploreState(window);
+      states.push(state);
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+        if (path.endsWith('/explore/preflight')) {
+          return Response.json({
+            count: 1, deletable_count: 1, estimated_bytes: 10, cache_revision: 'cache-1', search_provenance: {},
+            unavailable_actions: [{ action: 'open_in_source', reason: 'trusted_source_link_unavailable' }],
+            action_targets: []
+          });
+        }
+        return Response.json(exploreResponse({ rows: [entry(1), entry(2)], total_count: 2 }));
+      });
+      render(AppShell, { client: createAPIClient(fetchFn), state });
+      const grid = await screen.findByRole('grid', { name: 'Everything results' });
+      await screen.findByText('Synthetic subject 1');
+      grid.focus();
+      await fireEvent.keyDown(grid, { key: 'Enter' });
+      await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
+      return state;
+    }
+
+    async function clickFocused(button: HTMLElement): Promise<void> {
+      button.focus();
+      await fireEvent.click(button);
+    }
+
+    it.each([
+      {
+        layer: 'Columns',
+        open: () => clickFocused(screen.getByRole('button', { name: 'Columns' })),
+        isOpen: () => screen.queryByRole('button', { name: 'Size' }) !== null
+      },
+      {
+        layer: 'Sort',
+        open: () => clickFocused(screen.getByRole('combobox', { name: /^Sort:/ })),
+        isOpen: () => screen.queryByRole('listbox') !== null
+      },
+      {
+        layer: 'More selection actions',
+        open: async () => {
+          await fireEvent.keyDown(screen.getByRole('grid', { name: 'Everything results' }), { key: ' ' });
+          await clickFocused(await screen.findByRole('button', { name: 'More selection actions' }));
+          await waitFor(() => expect(document.activeElement?.getAttribute('role')).toBe('menuitem'));
+        },
+        isOpen: () => screen.queryByRole('menu', { name: 'More selection actions' }) !== null
+      },
+      {
+        layer: 'Display',
+        open: async () => {
+          await clickFocused(screen.getByRole('button', { name: 'Display' }));
+          await waitFor(() => expect(document.activeElement?.getAttribute('role')).toBe('menuitemradio'));
+        },
+        isOpen: () => screen.queryByRole('menu', { name: 'Display' }) !== null
+      },
+      {
+        layer: 'Save view',
+        open: async () => {
+          await clickFocused(screen.getByRole('button', { name: 'Save view…' }));
+          screen.getByRole('button', { name: 'Cancel' }).focus();
+        },
+        isOpen: () => screen.queryByRole('dialog', { name: 'Save view' }) !== null
+      }
+    ])('closes $layer first and leaves the reading pane for the next Escape', async ({ open, isOpen }) => {
+      const state = await openReadingPane();
+      await open();
+      expect(isOpen()).toBe(true);
+
+      await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+
+      await waitFor(() => expect(isOpen()).toBe(false));
+      expect(state.current.selectedRow).toBe('message:1');
+      expect(screen.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' })).toBeDefined();
+
+      await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+      await waitFor(() => expect(state.current.selectedRow).toBeNull());
+    });
+
+    it('closes the reading pane again once the narrow navigation menu is gone', async () => {
+      window.innerWidth = 480;
+      const state = await openReadingPane();
+      const opener = screen.getByRole('button', { name: 'Open navigation' });
+      await clickFocused(opener);
+      await screen.findByRole('dialog', { name: 'Navigation' });
+
+      await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull());
+      expect(state.current.selectedRow).toBe('message:1');
+      expect(appShortcuts.activeScope()).toBe('root');
+
+      await fireEvent.keyDown(opener, { key: 'Escape' });
+      await waitFor(() => expect(state.current.selectedRow).toBeNull());
+    });
+  });
 });

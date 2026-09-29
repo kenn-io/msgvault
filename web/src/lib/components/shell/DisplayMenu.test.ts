@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import DisplayMenu from './DisplayMenu.svelte';
@@ -51,7 +51,7 @@ describe('DisplayMenu', () => {
     expect(onUseDaemonTheme).toHaveBeenCalledOnce();
   });
 
-  it('closes on Escape without passing the key to window shortcuts', async () => {
+  it('closes on Escape and returns focus to its trigger', async () => {
     render(DisplayMenu, {
       density: 'compact',
       themeOverridden: false,
@@ -60,18 +60,12 @@ describe('DisplayMenu', () => {
     });
     const trigger = screen.getByRole('button', { name: 'Display' });
     await fireEvent.click(trigger);
-    const windowKeydown = vi.fn();
-    window.addEventListener('keydown', windowKeydown);
-    try {
-      await fireEvent.keyDown(screen.getByRole('menuitemradio', { name: 'Comfortable' }), {
-        key: 'Escape',
-      });
-    } finally {
-      window.removeEventListener('keydown', windowKeydown);
-    }
+    const item = await screen.findByRole('menuitemradio', { name: 'Comfortable' });
+    await waitFor(() => expect(document.activeElement).not.toBe(document.body));
 
-    expect(screen.queryByRole('menu', { name: 'Display' })).toBeNull();
+    await fireEvent.keyDown(item, { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('menu', { name: 'Display' })).toBeNull());
     expect(document.activeElement).toBe(trigger);
-    expect(windowKeydown).not.toHaveBeenCalled();
   });
 });

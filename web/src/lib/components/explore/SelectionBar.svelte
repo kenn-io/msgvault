@@ -57,17 +57,6 @@
   );
 
   let meetingOpen = $state(false);
-  let menuOpen = $state(false);
-  let menuRoot = $state<HTMLElement>();
-
-  // As in DisplayMenu: an open menu keeps Escape so the shell shortcut does not also clear the selection.
-  function closeMenuOnEscape(event: KeyboardEvent): void {
-    if (event.key !== 'Escape' || !menuOpen) return;
-    event.stopPropagation();
-    menuOpen = false;
-    menuRoot?.querySelector<HTMLElement>('[aria-haspopup]')?.focus();
-  }
-
   const message = $derived.by(() => {
     if (selection.mode === 'all_matching') {
       const total = totalCount === undefined ? 'matching' : totalCount.toLocaleString();
@@ -118,23 +107,21 @@
       />
     {/if}
     {#if openMenuVisible}
-      <span class="more-menu" role="none" bind:this={menuRoot} onkeydown={closeMenuOnEscape}>
-        <Menu align="end" bind:open={menuOpen}>
-          <MenuTrigger ariaLabel="More selection actions" title="More selection actions">
-            <Ellipsis size={16} aria-hidden="true" />
-          </MenuTrigger>
-          <MenuContent ariaLabel="More selection actions">
-            <MenuItem disabled={Boolean(openReason)} onselect={() => onOpenInSource?.()}>
-              Open selection in source
-            </MenuItem>
-            {#if openReason}
-              <span class="menu-reason" title={openReason}>
-                {preflightReasonLabel('open_in_source', openReason)}
-              </span>
-            {/if}
-          </MenuContent>
-        </Menu>
-      </span>
+      <Menu align="end">
+        <MenuTrigger ariaLabel="More selection actions" title="More selection actions">
+          <Ellipsis size={16} aria-hidden="true" />
+        </MenuTrigger>
+        <MenuContent ariaLabel="More selection actions">
+          <MenuItem disabled={Boolean(openReason)} onselect={() => onOpenInSource?.()}>
+            Open selection in source
+          </MenuItem>
+          {#if openReason}
+            <span class="menu-reason" title={openReason}>
+              {preflightReasonLabel('open_in_source', openReason)}
+            </span>
+          {/if}
+        </MenuContent>
+      </Menu>
     {/if}
     <Button size="sm" surface="soft" label="Clear selection" onclick={() => selection.clear()} />
     {#if client && meetingSelection && canExportMeetings && meetingOpen}
@@ -177,10 +164,6 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-3) var(--space-4);
-  }
-
-  .more-menu {
-    display: contents;
   }
 
   .menu-reason {
