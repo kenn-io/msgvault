@@ -129,28 +129,29 @@ func TestBeeperDraftRetirePendingPhasesAfterEmptyObservation(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%s/%s", tc.operation, tc.phase), func(t *testing.T) {
+			requirements := require.New(t)
 			chatID := fmt.Sprintf("!room:%d", i)
 			draft, err := st.BeginBeeperDraftCreateContext(t.Context(), source.ID, "signal", chatID, "hello")
-			require.NoError(t, err)
+			requirements.NoError(err)
 			if tc.operation == store.BeeperDraftOperationCreate {
 				advanceBeeperDraftPhase(t, st, draft, tc.phase)
 			} else {
-				require.NoError(t, st.RecordBeeperDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, store.BeeperDraftPhaseSetDispatched, "dispatching"))
+				requirements.NoError(st.RecordBeeperDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, store.BeeperDraftPhaseSetDispatched, "dispatching"))
 				finished, finishErr := st.FinishBeeperDraftContext(t.Context(), draft.DraftID, draft.Revision, new("rich hello"))
-				require.NoError(t, finishErr)
+				requirements.NoError(finishErr)
 				candidate := "updated"
 				if tc.operation == store.BeeperDraftOperationDelete {
 					candidate = ""
 				}
 				claimed, claimErr := st.ClaimBeeperDraftContext(t.Context(), draft.DraftID, finished.Revision, tc.operation, candidate)
-				require.NoError(t, claimErr)
+				requirements.NoError(claimErr)
 				advanceBeeperDraftEditOrDeletePhase(t, st, claimed, tc.phase)
 			}
 			before, loadErr := st.GetBeeperDraftContext(t.Context(), draft.DraftID)
-			require.NoError(t, loadErr)
-			require.NotNil(t, before.Pending)
+			requirements.NoError(loadErr)
+			requirements.NotNil(before.Pending)
 			retired, retireErr := st.RetireBeeperDraftAfterEmptyObservationContext(t.Context(), draft.DraftID, before.Revision)
-			require.NoError(t, retireErr)
+			requirements.NoError(retireErr)
 			assertions.Nil(retired.Pending)
 			assertions.Nil(retired.CommittedText)
 			assertions.Equal(before.Revision+1, retired.Revision)

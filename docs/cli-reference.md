@@ -383,13 +383,15 @@ still be cleared. A provider request whose result is unknown stays pending and
 blocks a new mutation until the evidence is resolved. After verifying that
 Desktop shows an explicit empty draft, run `clear` with the saved revision to
 retire the pending local binding without another PATCH. The saved candidate
-remains visible until that explicit retirement; repeating `create` for the same
-source and chat reports the pending draft ID and revision instead of replaying
+remains visible to the owner or a read-granted agent until that explicit
+retirement; repeating `create` for the same source and chat reports the pending
+draft ID and revision instead of replaying
 the provider write.
 
 Delegated agents need `draft.create`, `draft.read`, `draft.edit`, or
-`draft.delete` for the matching Beeper source. These commands accept no caller
-environment or working directory overrides.
+`draft.delete` for the matching Beeper source. Write-only grants receive recovery
+IDs and phases without stored, candidate, or native draft text. These commands
+accept no caller environment or working directory overrides.
 
 ## draft-send-as
 
@@ -3756,7 +3758,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `draft.create` for draft creation, `draft.read` for delegated Beeper `draft-beeper get`, `draft.edit` for edits, and `draft.delete` for clears or recovery (see [draft recovery](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `draft.create` for draft creation, `draft.read` for delegated Beeper draft text and `draft-beeper get`, `draft.edit` for edits, and `draft.delete` for clears or recovery (see [draft recovery](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
 

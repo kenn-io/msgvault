@@ -228,7 +228,7 @@ func TestBeeperDraftSetDisconnectLeavesPending(t *testing.T) {
 	var event api.CLIRunEvent
 	err := fixture.adapter.runCLIBeeperDraft(t.Context(), api.CLIRunRequest{Args: []string{
 		"draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(revision, 10), "--body", "updated",
-	}}, func(got api.CLIRunEvent) error {
+	}, Grant: &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: "signal"}}}}, func(got api.CLIRunEvent) error {
 		event = got
 		return nil
 	})
@@ -237,7 +237,10 @@ func TestBeeperDraftSetDisconnectLeavesPending(t *testing.T) {
 	assertions.Contains(event.Data, draftID)
 	assertions.Contains(event.Data, "revision "+strconv.FormatInt(revision+1, 10))
 	assertions.Contains(event.Data, "pending phase: remote_unknown")
-	assertions.Contains(event.Data, "candidate:\nupdated")
+	assertions.Contains(event.Data, "content: <withheld>")
+	assertions.Contains(event.Data, "native: <withheld>")
+	assertions.NotContains(event.Data, "hello")
+	assertions.NotContains(event.Data, "updated")
 	assertions.Equal(3, fixture.patches)
 	pending, err := fixture.store.GetBeeperDraftContext(t.Context(), draftID)
 	requirements.NoError(err)
@@ -809,9 +812,10 @@ END`)
 	assertions.Contains(pendingGetEvent.Data, "candidate:\nupdated")
 	assertions.Contains(pendingGetEvent.Data, "native:\nrich updated")
 	var event api.CLIRunEvent
+	createOnly := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: "signal"}}}
 	err = adapter.runCLIBeeperDraft(t.Context(), api.CLIRunRequest{Args: []string{
 		"draft-beeper", "create", "--source-id", sourceID, "--chat-id", "!room:beeper.local", "--body", "again", "--json",
-	}}, func(got api.CLIRunEvent) error {
+	}, Grant: createOnly}, func(got api.CLIRunEvent) error {
 		event = got
 		return nil
 	})
@@ -822,6 +826,38 @@ END`)
 	assertions.Equal(draftID, pendingOutput.DraftID)
 	assertions.Equal(pending.Revision, pendingOutput.Revision)
 	assertions.Equal(store.BeeperDraftPhaseAcceptedLocalFailed, pendingOutput.PendingPhase)
+	assertions.True(pendingOutput.ContentWithheld)
+	assertions.Nil(pendingOutput.CommittedText)
+	assertions.Empty(pendingOutput.CandidateText)
+	assertions.Empty(pendingOutput.NativeText)
+	assertions.NotContains(event.Data, "rich hello")
+	assertions.NotContains(event.Data, "updated")
+
+	err = adapter.runCLIBeeperDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		"draft-beeper", "create", "--source-id", sourceID, "--chat-id", "!room:beeper.local", "--body", "again",
+	}, Grant: createOnly}, func(got api.CLIRunEvent) error {
+		event = got
+		return nil
+	})
+	assertions.ErrorContains(err, "pending")
+	assertions.Contains(event.Data, "content: <withheld>")
+	assertions.Contains(event.Data, "native: <withheld>")
+	assertions.Contains(event.Data, draftID)
+	assertions.NotContains(event.Data, "rich hello")
+	assertions.NotContains(event.Data, "updated")
+
+	createRead := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftRead}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: "signal"}}}
+	err = adapter.runCLIBeeperDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		"draft-beeper", "create", "--source-id", sourceID, "--chat-id", "!room:beeper.local", "--body", "again", "--json",
+	}, Grant: createRead}, func(got api.CLIRunEvent) error {
+		event = got
+		return nil
+	})
+	assertions.ErrorContains(err, "pending")
+	requirements.NoError(json.Unmarshal([]byte(event.Data), &pendingOutput))
+	assertions.False(pendingOutput.ContentWithheld)
+	assertions.Equal("rich hello", *pendingOutput.CommittedText)
+	assertions.Equal("updated", pendingOutput.CandidateText)
 
 	err = run("draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(pending.Revision, 10), "--body", "updated")
 	assertions.ErrorContains(err, "pending")
