@@ -102,6 +102,10 @@ func TestBeeperMediaKeyChangeKeepsSharedDelivery(t *testing.T) {
 	b := second.mapping("shared", "revision", "old-key")
 	retainAudio(t, f.Store, a, "first-occurrence")
 	retainAudio(t, f.Store, b, "second-occurrence")
+	// Make the old delivery due first without depending on clock precision.
+	_, err := f.Store.DB().Exec(`UPDATE beeper_media_deliveries
+		SET next_action_at = '2000-01-01 00:00:00' WHERE processing_key = 'old-key'`)
+	require.NoError(err)
 	a.ProcessingKey = "new-key"
 	require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), a))
 	operation, ready, err := f.Store.NextBeeperMediaOperation(t.Context(), "shared", time.Now().UTC())
