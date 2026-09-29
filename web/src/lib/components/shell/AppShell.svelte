@@ -1348,7 +1348,7 @@
           onAnnounce={announceOperation}
         />
       {:else if exploreState.current.workspace === 'files'}
-        <div class="files-shell">
+        <main class="files-shell" aria-label="Files">
           <PageHeader title="Files">
             {#snippet actions()}
               {#if fileCount !== null && exploreState.current.groupingChain.length === 0}
@@ -1423,6 +1423,7 @@
           {:else}
             <FilesWorkspace
               {client}
+              embedded
               showHeader={false}
               bind:fileCount
               predicate={{ ...exploreState.predicate(), grouping: undefined }}
@@ -1462,7 +1463,7 @@
               onOpenConversation={openFileConversation}
             />
           {/if}
-        </div>
+        </main>
       {:else}
         <EverythingWorkspace
           {client}

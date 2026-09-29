@@ -281,7 +281,7 @@
     {/key}
   {:else if narrow && urlState.operationRunID !== null}
     <section class="focused-detail" aria-label="Operation detail focused content">
-      <PageHeader title="Operation detail" visuallyHiddenTitle>
+      <PageHeader title="Operation detail">
         {#snippet actions()}
           <Button size="sm" surface="soft" label="Back to operation history" onclick={() => void closeDetail()} />
         {/snippet}

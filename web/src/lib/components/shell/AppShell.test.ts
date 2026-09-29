@@ -404,6 +404,26 @@ describe('AppShell', () => {
       expect(heading.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
+    it.each([
+      ['ungrouped', []],
+      ['grouped', ['source']]
+    ])('keeps the %s Files title inside one Files main landmark', async (_case, groupingChain) => {
+      window.history.replaceState(
+        null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'files', groupingChain }))}`
+      );
+      const state = new ExploreState(window);
+      states.push(state);
+      render(AppShell, { client: exploreClient(), state, enabled: false });
+      const heading = await screen.findByRole('heading', { level: 1, name: 'Files' });
+      const mains = screen.getAllByRole('main', { name: 'Files' });
+      expect(mains).toHaveLength(1);
+      expect(mains[0]!.contains(heading)).toBe(true);
+      expect(screen.getAllByRole('main')).toHaveLength(1);
+      // testing-library maps every <header> to banner; browsers only do so outside sectioning content.
+      const banners = [...document.querySelectorAll('header')].filter((header) => !header.closest('main, section, article, aside, nav'));
+      expect(banners).toHaveLength(1);
+    });
+
     it('shows the file count beside the Files title without a second heading', async () => {
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const path = new URL(input instanceof Request ? input.url : String(input)).pathname;

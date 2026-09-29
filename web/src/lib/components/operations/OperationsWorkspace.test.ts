@@ -440,6 +440,22 @@ describe('OperationsWorkspace', () => {
     expect(onStateChange).toHaveBeenCalledWith({ operationRunID: null });
   });
 
+  it('shows one visible level-one heading in the narrow detail view', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    }));
+    render(OperationsWorkspace, {
+      controller: controller(snapshot({ detail: null, detailLoading: true })) as never,
+      state: urlState({ operationRunID: RUN_ONE })
+    });
+
+    const headings = screen.getAllByRole('heading', { level: 1 });
+    expect(headings.map((heading) => heading.textContent?.trim())).toEqual(['Operation detail']);
+    expect(headings[0]!.closest('.kit-sr-only')).toBeNull();
+  });
+
   it.each([
     ['detail loading', { detailLoading: true }, 'status', 'Operation detail loading'],
     ['detail failure', { detailError: 'Unable to load operation detail.' }, 'alert', 'Operation detail failure'],
