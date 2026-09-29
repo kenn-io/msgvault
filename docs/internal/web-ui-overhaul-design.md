@@ -1,6 +1,7 @@
 # Web UI overhaul
 
-Status: design approved 2026-09-28; not yet implemented. Delivery is four
+Status: in review. Design sections were approved 2026-09-28; this revision
+(2026-09-29) addresses review findings. Not yet implemented. Delivery is four
 stacked pull requests, described under [Delivery](#delivery). This record
 describes the intended end state; the current source remains authoritative
 until each pull request lands.
@@ -146,13 +147,30 @@ People comes first because Relationships is the default landing workspace.
 Icons come from `@lucide/svelte`, which is already a dependency; final icon
 choices may change during implementation.
 
-- **Layout.** kit `CollapsibleSidebar` provides the layout, narrow-screen
-  overlay, and resize behavior. Expanded, the sidebar is about 232px with group
-  headings. Collapsed, it is an icon rail; each item shows a tooltip and keeps
-  its full accessible name. The collapsed state is stored per browser in
-  localStorage `msgvault.sidebar.collapsed`.
-- **Narrow screens.** Below 900px the sidebar becomes a slide-out menu opened by
-  a menu button in the top bar, with a scrim that closes it.
+- **Layout.** PR 1 adds a local `AppSidebar` component and owns all of the
+  behavior below. kit `CollapsibleSidebar` is not used: its collapsed branch
+  renders only an expand toggle, and its narrow-screen overlay positions the
+  sidebar without a scrim or focus management. The sidebar has a fixed width
+  and no resize handle.
+- **Expanded and rail modes.** Expanded, the sidebar is about 232px with group
+  headings. Collapsed, it is an icon rail about 56px wide. Each rail item shows
+  a kit `Tooltip` with its label and keeps its full accessible name. A toggle at
+  the bottom of the sidebar switches modes. The mode is stored per browser in
+  localStorage `msgvault.sidebar.collapsed`. Group headings are hidden in the
+  rail; a divider separates the groups.
+- **Narrow screens.** Below 900px the sidebar is hidden and a menu button
+  labeled "Open navigation" appears at the start of the top bar. It opens the
+  expanded sidebar as a modal slide-out menu:
+  - A scrim covers the page. Selecting the scrim, pressing Escape, or choosing
+    a navigation item closes the menu.
+  - Focus moves to the current navigation item when the menu opens. kit
+    `trapFocus` keeps focus inside the menu while it is open, and the page
+    behind it is `inert`.
+  - Closing the menu returns focus to the menu button, except after choosing an
+    item, when focus follows the existing workspace-change focus rules.
+  - The narrow-screen menu ignores the rail setting and always shows labels.
+  - Escape closes the menu before any other Escape handler runs, so it never
+    also closes the reading pane or a grouping level.
 - **Footer.** The archive status indicator (dot plus "Local archive",
   "Searching", or "Attention") and a "Keyboard shortcuts" entry showing `?`
   move to the sidebar footer.
@@ -241,8 +259,10 @@ Full text: "network" ×   Source: example@example.com ×   Grouped by Year ×
 - **Context chips.** The query, filters, and groupings appear as removable chips
   with readable labels ("Full text", "Source"). Removing a grouping keeps the
   name "Remove {label} grouping".
-- **Selection dock.** The selection bar becomes a kit `BottomDock` that appears
-  only while at least one row is selected. It keeps "Select all N matching
+- **Selection bar.** The existing `SelectionBar` moves below the results as a
+  compact, sticky action strip. It appears only while at least one row is
+  selected. kit `BottomDock` is not used, because it is a resizable panel that
+  opens at half the viewport height. The bar keeps "Select all N matching
   items", "Export selection", meeting-context export, and "Clear selection".
   - It adds **Review for deletion…**, which starts the same flow as `d` (or `D`
     in all-matching mode): `openDeletionReview` switches to Deletions and runs
@@ -264,7 +284,24 @@ Files becomes the single file view.
   Table or Timeline opens Everything. Switching is symmetric and visible.
 - `explore/FilesPresentation.svelte` is deleted. Its per-row "Open containing
   item" action moves into the Files grid as a row action.
-- Saved views with `presentation: 'files'` open in the Files workspace.
+- **Existing links and history.** Explore state can encode
+  `workspace: 'everything'` with `presentation: 'files'` in shared links,
+  browser history entries, and saved views. `normalize()` in
+  `src/lib/explore/state.svelte.ts` maps that combination to
+  `workspace: 'files'` and keeps the query, search mode, filters, grouping
+  chain, and columns. URL parsing, every commit, popstate restoration, and
+  saved-view navigation all pass through `normalize()`, so one rule covers
+  every entry path:
+  - Opening an old link lands in Files with the same context. The address bar
+    is rewritten with a history replace, so no extra history entry appears.
+  - Back and Forward into an old history entry restore Files with the same
+    context and the entry's keyboard focus and scroll state.
+  - An attachment selection (`selectedRow` of the form `attachment:<id>`)
+    reopens the same file viewer in Files.
+  - In the Files workspace, `presentation` is always `files`. Choosing Table or
+    Timeline sets `workspace: 'everything'` with that presentation.
+- Saved views with `presentation: 'files'` open in the Files workspace through
+  the same rule.
 - **Toolbar.** Filename search, a **Type** menu, Filters, Show as, Group by, a
   **Sort** menu (Date, Filename, Size), and a **Visual search** toggle.
   - The Type menu replaces the eight raw MIME-family checkboxes with Images,
@@ -286,7 +323,9 @@ Files becomes the single file view.
 - **Save view…** is a header action in Everything and Files. It opens a dialog
   with Name and Description and saves the current view through the existing
   saved-views API. It keeps the field names "Name" and "Description" and the
-  submit button "Save".
+  submit button "Save". In Files, the dialog states: "Filename, type, and file
+  sort aren't saved with the view." This limitation goes away only with the
+  backend follow-up below.
 - The Saved views page becomes a library. Each view shows its name,
   description, a readable summary of its query, filters, grouping, and layout,
   and the actions "Open {name}", "Edit {name}", and "Delete {name}". The empty
@@ -311,8 +350,14 @@ Files becomes the single file view.
     `directoryCategory`, `directoryOrganization`, `directoryPrimaryChannel`,
     `directoryLastContactAfter`, `directoryLastContactBefore`) and API
     parameters are unchanged.
-  - "Last contacted" uses kit `DateRangePicker` instead of two free-text date
-    fields.
+  - "Last contacted after" and "Last contacted before" stay two independent
+    fields, because either boundary can be set alone today. Each becomes a
+    native `<input type="date">` with a clear button, keeping its accessible
+    name and URL key. The native input produces only valid `YYYY-MM-DD`
+    values, so invalid dates can no longer be silently ignored. kit
+    `DateRangePicker` is not used: it commits only completed custom ranges.
+  - A one-sided filter shows as one chip, such as "Last contacted after
+    Jan 5, 2024". Removing it clears only that boundary.
   - Sort keeps the three orders and the `directorySort` URL key.
   - Active filters show as removable chips.
 - **Person detail sections** (tablist "Person detail sections"):
@@ -328,8 +373,11 @@ Files becomes the single file view.
   | Maintenance | Profile-maintenance tracking, CardDAV publication, merge history and split |
 
 - **Header actions.**
-  - **Open relationship** opens the person's Relationships view when the person
-    has a linked participant.
+  - **Open relationship** opens the person's Relationships view through the
+    shell's existing `openRelationship(participantID)`, using the person's
+    `participant_ids` from the person response. It appears only when that list
+    is not empty. PR 3 confirms which entry opens the person's relationship
+    cluster when a person has several participants.
   - **Review facts** opens Reviews → Facts with `directoryPersonID` set.
   - An overflow menu holds "Rename person", "View profile history", and "Delete
     person". Rename and delete keep their existing confirmation steps and
@@ -419,10 +467,22 @@ Files becomes the single file view.
   - Controls that save through their own endpoints (provider credentials,
     enrichment providers, CardDAV account, People sweep) say "Saves
     immediately" beside their buttons.
-- **Appearance.** Saving `web.theme`, `web.density`, or
-  `web.default_search_mode` updates the open tab through a callback from
-  SettingsWorkspace to App. A note explains that the Display menu can override
-  the saved default in one tab.
+- **Appearance.** After a successful save, SettingsWorkspace passes the saved
+  `web.*` values to App through a callback, and App updates its defaults.
+  - **Theme and density** apply to the open tab right away, unless a Display
+    menu override is active in this tab. The override still wins, as it does
+    today; the note under Appearance explains that "Use daemon theme" and
+    "Density: Auto" return to the saved default.
+  - **Default search mode** changes only future searches, not the current one.
+    Search mode is resolved in this order: explicit URL mode, then this
+    browser's remembered mode (localStorage `msgvault-search-mode`), then the
+    daemon default. Saving does not change the open view's mode or its URL,
+    so results on screen and shared links stay stable. Saving does replace
+    this browser's remembered mode with the saved value, so the next tab
+    opened here without a mode in its link uses the new default. Other
+    browsers keep their remembered mode until someone changes the mode there.
+    The setting's description says: "Used when a tab opens without a search
+    mode in its link. Your current search keeps its mode."
 - The plain-HTTP warning stays as a compact kit `Notice`.
 
 ### Sign-in and boot screens
@@ -436,7 +496,7 @@ Every control not listed here keeps its location, label, and accessible name.
 
 | Control | Today | After |
 |---|---|---|
-| Workspace tabs | Top bar center, nav "Primary" | Sidebar, nav "Primary" |
+| Workspace tabs | Top bar center, nav "Primary" | Sidebar, nav "Primary"; icon rail when collapsed; modal menu below 900px |
 | Archive status | Top bar right | Sidebar footer |
 | Temporary density | Top bar combobox | Display menu radio group |
 | Use daemon theme | Top bar button | Display menu item |
@@ -446,17 +506,17 @@ Every control not listed here keeps its location, label, and accessible name.
 | Columns | `<details>` strip above the table | Toolbar menu |
 | Newest first | Button that only announces | Sort menu with the one supported order |
 | Keyboard hints | Everything footer, selection bar badges | Keyboard shortcuts dialog; sidebar footer entry |
-| Selection bar | Always visible above results | Bottom dock while a selection exists |
-| Stage deletion entry | `d` / `D` only | Also "Review for deletion…" in the dock |
-| Open selection in source | Selection bar, reason text | Dock overflow, disabled with sentence reason |
+| Selection bar | Always visible above results | Sticky strip below results while a selection exists |
+| Stage deletion entry | `d` / `D` only | Also "Review for deletion…" in the selection bar |
+| Open selection in source | Selection bar, reason text | Selection bar overflow, disabled with sentence reason |
 | Tasks for this message | Collapsed disclosure | Reading-pane header button with count |
 | Close reading pane | Text button | Icon button, same name |
-| Show as: Files | Everything-only files grid | Opens the Files workspace |
+| Show as: Files | Everything-only files grid | Opens the Files workspace; old links and history entries normalize there |
 | File type filter | Eight raw checkboxes | Type menu with readable names |
 | File sort | Column headers only | Sort menu and column headers |
 | Save this view | Saved Views page form | "Save view…" in Everything and Files headers |
 | Directory filters | Seven inline controls | Filters popover and Sort menu |
-| Directory date filters | Two `YYYY-MM-DD` text fields | Date range picker |
+| Directory date filters | Two `YYYY-MM-DD` text fields | Two independent native date fields in the Filters popover |
 | Person detail Overview sections | One long Overview | Overview, Profile, Maintenance sections |
 | Person "Relationships" tab | Record tab | Renamed "Connections" |
 | Rename, profile history, delete person | Structured profile section | Person header overflow menu |
@@ -485,9 +545,21 @@ Reviews Facts ("Review facts"), and a person picker in Facts.
     `e2e/accessibility`).
   - "View source operations" becomes "Sync history" (`operations`).
 - Each pull request adds tests for the behavior it changes: the Save view
-  dialog, the deletion entry in the dock, Files-view round trips, the Type and
-  Sort menus, the Directory filter popover, the Settings category URL, and the
-  Appearance save updating the open tab.
+  dialog and its Files note, the deletion entry in the selection bar, and the
+  Type and Sort menus. They also cover:
+  - Files round trips, including an old `everything` + `files` link, Back and
+    Forward into an old history entry, and an old saved view, each landing in
+    Files with the query, filters, grouping, and attachment selection intact.
+  - The narrow-screen menu: scrim, Escape, and item selection close it; focus
+    starts on the current item, stays inside while open, and returns to the
+    menu button; Escape does not also close the reading pane.
+  - The icon rail: each item keeps its accessible name, and the mode survives
+    a reload.
+  - Directory dates: setting and clearing each boundary alone.
+  - The Settings category URL.
+  - Appearance saves: theme and density update the open tab unless a Display
+    override is active; saving the default search mode leaves the open view's
+    mode and URL unchanged and changes the mode a new tab opens with.
 - `e2e/accessibility` (axe) runs on every workspace in both themes.
 - Each pull request includes before and after screenshots from the real daemon
   with the Enron docs fixture, at desktop and phone widths, in light and dark.
@@ -498,12 +570,15 @@ Reviews Facts ("Review facts"), and a person picker in Facts.
 
 Four stacked pull requests. Each leaves the application shippable.
 
-1. **Foundation and shell.** Palette, type, and status vocabulary; sidebar,
-   top bar, global search, Display menu; `PageHeader` applied to every
-   workspace; empty-state conventions; keyboard registry additions and footer
-   removal; tab titles; sign-in and boot screens.
+1. **Foundation and shell.** Palette, type, and status vocabulary; the local
+   `AppSidebar` with its icon rail, narrow-screen modal menu, scrim and Escape
+   dismissal, focus trap, and focus restoration; top bar, global search,
+   Display menu; `PageHeader` applied to every workspace; empty-state
+   conventions; keyboard registry additions and footer removal; tab titles;
+   sign-in and boot screens.
 2. **Everything, Files, and Saved views.** Toolbar, context chips, Sort and
-   Columns menus, selection dock, reading-pane header, Files unification and
+   Columns menus, selection bar, reading-pane header, Files unification with
+   the `normalize()` rule for old links, history, and saved views, Files
    fixes, Save view dialog, Saved views library.
 3. **People.** Relationships header, Directory filters and person sections,
    cross-links, Reviews structure and fact person picker.
