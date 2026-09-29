@@ -78,8 +78,7 @@ func BuildForward(options ForwardOptions, now time.Time, messageID string) (Repl
 	if strings.ContainsAny(headerSummary, "\x00") || !utf8.ValidString(headerSummary) {
 		return ReplyDraft{}, errors.New("invalid forwarded header summary")
 	}
-	if strings.Contains(options.Body, forwardHTMLStart) || strings.Contains(options.Body, forwardHTMLEnd) ||
-		strings.Contains(quotedHTML, forwardHTMLStart) || strings.Contains(quotedHTML, forwardHTMLEnd) {
+	if strings.Contains(quotedHTML, forwardHTMLStart) || strings.Contains(quotedHTML, forwardHTMLEnd) {
 		return ReplyDraft{}, errors.New("forward note markers are reserved")
 	}
 	for _, attachment := range options.Attachments {

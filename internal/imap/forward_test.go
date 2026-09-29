@@ -3,6 +3,7 @@ package imap
 import (
 	"bytes"
 	"encoding/base64"
+	"html"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -194,6 +195,87 @@ func TestBuildForwardReplacementPreservesParts(t *testing.T) {
 	assertions.Equal(1, strings.Count(replacement.Parsed.BodyHTML, "cid:logo@example.test"))
 	requirements.Len(replacement.Parsed.Attachments, 1)
 	assertions.Equal([]byte("file"), replacement.Parsed.Attachments[0].Content)
+}
+
+func TestBuildForwardMarkerTextSurvivesRepeatedEdits(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	markerText := "literal " + forwardHTMLStart + " and " + forwardHTMLEnd
+	quotedHTML := `<p>quoted content <img src="cid:logo@example.test"></p>`
+	attachment := []byte("attachment bytes")
+	options := ForwardOptions{
+		From: "sender@example.test", To: []string{"recipient@example.test"},
+		Subject: "Original", Body: markerText, QuotedHeader: "Subject: Original",
+		QuotedText: "quoted text", QuotedHTML: quotedHTML,
+		Attachments: []ForwardAttachment{{
+			Filename: "logo.png", ContentType: "image/png", ContentID: "logo@example.test",
+			IsInline: true, Content: attachment,
+		}},
+	}
+	draft, err := BuildForward(options, time.Now(), "forward@example.test")
+	requirements.NoError(err)
+	assertForwardRawMarkerPair(t, draft.Raw)
+	assertions.Equal(1, strings.Count(draft.Parsed.BodyHTML, forwardHTMLStart))
+	assertions.Equal(1, strings.Count(draft.Parsed.BodyHTML, forwardHTMLEnd))
+	assertions.Contains(draft.Parsed.BodyText, markerText)
+	assertions.Contains(draft.Parsed.BodyHTML, html.EscapeString(markerText))
+	assertions.Contains(draft.Parsed.BodyHTML, quotedHTML)
+	requirements.Len(draft.Parsed.Attachments, 1)
+	assertions.Equal(attachment, draft.Parsed.Attachments[0].Content)
+
+	editNote := "edited " + forwardHTMLStart + " and " + forwardHTMLEnd
+	replacement, err := BuildIMAPDraftReplacement(draft.Raw, editNote, time.Now(), "replacement@example.test")
+	requirements.NoError(err)
+	assertForwardRawMarkerPair(t, replacement.Raw)
+	assertions.Equal(1, strings.Count(replacement.Parsed.BodyHTML, forwardHTMLStart))
+	assertions.Equal(1, strings.Count(replacement.Parsed.BodyHTML, forwardHTMLEnd))
+	assertions.Contains(replacement.Parsed.BodyText, editNote)
+	assertions.Contains(replacement.Parsed.BodyHTML, html.EscapeString(editNote))
+	assertions.Contains(replacement.Parsed.BodyHTML, quotedHTML)
+	requirements.Len(replacement.Parsed.Attachments, 1)
+	assertions.Equal(attachment, replacement.Parsed.Attachments[0].Content)
+
+	ordinaryNote := "ordinary follow-up note"
+	final, err := BuildIMAPDraftReplacement(replacement.Raw, ordinaryNote, time.Now(), "final@example.test")
+	requirements.NoError(err)
+	assertForwardRawMarkerPair(t, final.Raw)
+	assertions.Equal(1, strings.Count(final.Parsed.BodyHTML, forwardHTMLStart))
+	assertions.Equal(1, strings.Count(final.Parsed.BodyHTML, forwardHTMLEnd))
+	assertions.Contains(final.Parsed.BodyText, ordinaryNote)
+	assertions.Contains(final.Parsed.BodyHTML, quotedHTML)
+	requirements.Len(final.Parsed.Attachments, 1)
+	assertions.Equal(attachment, final.Parsed.Attachments[0].Content)
+}
+
+func assertForwardRawMarkerPair(t *testing.T, raw []byte) {
+	t.Helper()
+	index := bytes.Index(raw, []byte("Content-Type: text/html"))
+	require.NotEqual(t, -1, index)
+	htmlPart := string(raw[index:])
+	assert.Equal(t, 1, strings.Count(htmlPart, forwardHTMLStart))
+	assert.Equal(t, 1, strings.Count(htmlPart, forwardHTMLEnd))
+}
+
+func TestBuildForwardPlainParentAllowsMarkerText(t *testing.T) {
+	note := "literal " + forwardHTMLStart + " and " + forwardHTMLEnd
+	draft, err := BuildForward(ForwardOptions{
+		From: "sender@example.test", To: []string{"recipient@example.test"},
+		Body: note, QuotedText: "plain parent",
+	}, time.Now(), "forward@example.test")
+	require.NoError(t, err)
+	assert.Contains(t, draft.Parsed.BodyText, note)
+}
+
+func TestBuildForwardRejectsRawMarkerInQuotedHTML(t *testing.T) {
+	for _, marker := range []string{forwardHTMLStart, forwardHTMLEnd} {
+		t.Run(marker, func(t *testing.T) {
+			_, err := BuildForward(ForwardOptions{
+				From: "sender@example.test", To: []string{"recipient@example.test"},
+				QuotedHTML: "<p>quoted " + marker + "</p>",
+			}, time.Now(), "forward@example.test")
+			require.ErrorContains(t, err, "forward note markers are reserved")
+		})
+	}
 }
 
 func TestBuildForwardRejectsUnsupportedParts(t *testing.T) {
