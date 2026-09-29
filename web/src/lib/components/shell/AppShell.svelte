@@ -336,6 +336,7 @@
   const narrow = $derived(viewportWidth < NARROW_WIDTH);
   let drawerOpen = $state(false);
   let drawerOpenerHost = $state<HTMLElement>();
+  let shellRoot = $state<HTMLElement>();
   let sidebarCollapsed = $state(readSidebarCollapsed());
 
   function readSidebarCollapsed(): boolean {
@@ -355,12 +356,22 @@
     }
   }
 
+  function drawerOpener(): HTMLElement | null {
+    return drawerOpenerHost?.querySelector('button') ?? null;
+  }
+
+  // Below NARROW_WIDTH the sidebar is not rendered, so the drawer opener
+  // stands in for the current navigation item.
+  function navigationFocusTarget(): HTMLElement | null {
+    return document.querySelector<HTMLElement>('button[aria-current="page"]') ?? drawerOpener();
+  }
+
   // trapFocus restores focus while the page column may still be inert, so
   // focus the opener again once the drawer has unmounted.
   async function closeDrawer(): Promise<void> {
     drawerOpen = false;
     await tick();
-    drawerOpenerHost?.querySelector('button')?.focus();
+    drawerOpener()?.focus();
   }
 
   $effect(() => {
@@ -459,6 +470,7 @@
   }
   let paletteOpen = $state(false);
   let keyboardHelpOpen = $state(false);
+  let keyboardHelpReturnFocus: HTMLElement | undefined;
   let keyboardHelpScopeCleanup: (() => void) | undefined;
   let sortNotice = $state(DEFAULT_SORT_NOTICE);
   let editableScopeCleanup: (() => void) | undefined;
@@ -710,7 +722,7 @@
       if (exploreState.current.selectedRow === null) focusGrid();
       return;
     }
-    document.querySelector<HTMLButtonElement>('button[aria-current="page"]')?.focus();
+    navigationFocusTarget()?.focus();
   }
   async function focusGridAfterUpdate(): Promise<void> {
     await tick();
@@ -752,7 +764,7 @@
     // Kit releases its focus trap during teardown; focus the surviving source
     // link after that cleanup (or the current workspace's own control).
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const target = archiveReturnFocus?.isConnected ? archiveReturnFocus : currentGrid() ?? document.querySelector<HTMLButtonElement>('button[aria-current="page"]');
+    const target = archiveReturnFocus?.isConnected ? archiveReturnFocus : currentGrid() ?? navigationFocusTarget();
     target?.focus();
   }
 
@@ -923,9 +935,7 @@
     'open-grouping': () => openContextControl('grouping'),
     'change-sort': () => openContextControl('sort'),
     'reverse-sort': fixedSortNotice,
-    'open-keyboard-help': () => {
-      keyboardHelpOpen = true;
-    },
+    'open-keyboard-help': openKeyboardHelp,
     'open-command-palette': (event) => {
       if (!editableTarget(event?.target ?? null)) paletteOpen = true;
     },
@@ -994,6 +1004,22 @@
   );
   function runPalette(command: PaletteCommand): void {
     commandRegistry.find(({ id }) => id === command.id)?.run();
+  }
+  // KeyboardHelp's search input takes focus before the Modal's trap records
+  // where focus came from, so the shell remembers the return target itself.
+  function openKeyboardHelp(): void {
+    const active = document.activeElement;
+    keyboardHelpReturnFocus = active instanceof HTMLElement && active !== document.body ? active : undefined;
+    keyboardHelpOpen = true;
+  }
+  async function closeKeyboardHelp(): Promise<void> {
+    keyboardHelpOpen = false;
+    await tick();
+    const target = keyboardHelpReturnFocus?.isConnected
+      ? keyboardHelpReturnFocus
+      : (shellRoot?.querySelector<HTMLElement>('button[aria-label="Keyboard shortcuts"]') ?? drawerOpener());
+    keyboardHelpReturnFocus = undefined;
+    target?.focus();
   }
   function applyTemporaryDensity(value: 'daemon' | DensityPreference): void {
     if (value === 'daemon') appearance.clearTemporary('density');
@@ -1167,7 +1193,7 @@
 
 <svelte:window bind:innerWidth={viewportWidth} />
 
-<div class="app-shell" class:app-shell--narrow={narrow}>
+<div class="app-shell" class:app-shell--narrow={narrow} bind:this={shellRoot}>
   <span class="kit-sr-only" role="status" aria-label="Operation status" aria-live="polite">
     {#key operationAnnouncement.key}<span>{operationAnnouncement.message}</span>{/key}
   </span>
@@ -1179,7 +1205,7 @@
       status={archiveStatus}
       onNavigate={openWorkspaceTab}
       onToggleCollapsed={toggleSidebar}
-      onOpenShortcuts={() => { keyboardHelpOpen = true; }}
+      onOpenShortcuts={openKeyboardHelp}
     />
   {/if}
   <div class="app-column" inert={drawerOpen}>
@@ -1471,9 +1497,7 @@
         }}
         onToggleCollapsed={() => undefined}
         onOpenShortcuts={() => {
-          void closeDrawer().then(() => {
-            keyboardHelpOpen = true;
-          });
+          void closeDrawer().then(openKeyboardHelp);
         }}
       />
     </NavigationDrawer>
@@ -1497,9 +1521,7 @@
 {#if keyboardHelpOpen}
   <KeyboardHelp
     commands={commandRegistry}
-    onclose={() => {
-      keyboardHelpOpen = false;
-    }}
+    onclose={() => void closeKeyboardHelp()}
   />
 {/if}
 

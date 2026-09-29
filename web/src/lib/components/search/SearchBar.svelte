@@ -75,7 +75,7 @@
     />
   {:else}
     <SearchModeControl requestedMode={draftMode} onchange={changeMode} />
-    <Button type="submit" label="Search" tone="info" surface="solid" />
+    <Button type="submit" label="Search" surface="soft" />
   {/if}
 </form>
 
