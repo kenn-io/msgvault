@@ -44,6 +44,48 @@ func TestBeeperDraftParser(t *testing.T) {
 
 	_, err = parseBeeperDraftArgs([]string{"draft-beeper", "clear", "beeper-draft-id", "--revision=0"})
 	assertions.Error(err)
+	for _, args := range [][]string{
+		{"draft-beeper", "create", "--source-id=42", "--chat-id=!room:beeper.local", "--body=hello", "--help"},
+		{"draft-beeper", "get", "beeper-draft-id", "--help"},
+		{"draft-beeper", "edit", "beeper-draft-id", "--revision=2", "--body=updated", "--help"},
+		{"draft-beeper", "clear", "beeper-draft-id", "--revision=2", "--help"},
+	} {
+		_, helpErr := parseBeeperDraftArgs(args)
+		assertions.ErrorContains(helpErr, "invalid_args")
+	}
+}
+
+func TestBeeperDraftHelpDoesNotMutate(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := newBeeperDraftCommandFixture(t, "")
+	sourceID := fixture.sourceID()
+	var events []api.CLIRunEvent
+	run := func(args ...string) error {
+		events = nil
+		return fixture.adapter.runCLIBeeperDraft(t.Context(), api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
+			events = append(events, event)
+			return nil
+		})
+	}
+	assertions.ErrorContains(run("draft-beeper", "create", "--source-id", sourceID, "--chat-id", "!room:beeper.local", "--body", "hello", "--help"), "invalid_args")
+	assertions.Empty(events)
+	assertions.Equal(0, fixture.patches)
+
+	requirements.NoError(fixture.run(t.Context(), "draft-beeper", "create", "--source-id", sourceID, "--chat-id", "!room:beeper.local", "--body", "hello"))
+	draftID, revision := latestBeeperDraft(t, fixture.store)
+	for _, args := range [][]string{
+		{"draft-beeper", "get", draftID, "--help"},
+		{"draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(revision, 10), "--body", "updated", "--help"},
+		{"draft-beeper", "clear", draftID, "--revision", strconv.FormatInt(revision, 10), "--help"},
+	} {
+		assertions.ErrorContains(run(args...), "invalid_args")
+		assertions.Empty(events)
+	}
+	assertions.Equal(1, fixture.patches)
+	stored, err := fixture.store.GetBeeperDraftContext(t.Context(), draftID)
+	requirements.NoError(err)
+	assertions.Equal(revision, stored.Revision)
 }
 
 func TestBeeperDraftDaemonRouting(t *testing.T) {
@@ -183,8 +225,19 @@ func TestBeeperDraftSetDisconnectLeavesPending(t *testing.T) {
 	requirements.NoError(fixture.run(t.Context(), "draft-beeper", "create", "--source-id", fixture.sourceID(), "--chat-id", "!room:beeper.local", "--body", "hello"))
 	draftID, revision := latestBeeperDraft(t, fixture.store)
 	fixture.disconnectSet = true
-	err := fixture.run(t.Context(), "draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(revision, 10), "--body", "updated")
+	var event api.CLIRunEvent
+	err := fixture.adapter.runCLIBeeperDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		"draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(revision, 10), "--body", "updated",
+	}}, func(got api.CLIRunEvent) error {
+		event = got
+		return nil
+	})
 	assertions.ErrorContains(err, "remote_unknown")
+	assertions.Equal(cliStreamStderr, event.Type)
+	assertions.Contains(event.Data, draftID)
+	assertions.Contains(event.Data, "revision "+strconv.FormatInt(revision+1, 10))
+	assertions.Contains(event.Data, "pending phase: remote_unknown")
+	assertions.Contains(event.Data, "candidate:\nupdated")
 	assertions.Equal(3, fixture.patches)
 	pending, err := fixture.store.GetBeeperDraftContext(t.Context(), draftID)
 	requirements.NoError(err)
@@ -461,6 +514,15 @@ func TestBeeperDraftCreateGet(t *testing.T) {
 	assertions.Equal("rich hello", *output.CommittedText)
 	assertions.Equal("desktop edit", output.NativeText)
 	assertions.Equal(1, patches)
+	requirements.NoError(adapter.runCLIBeeperDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		"draft-beeper", "get", draftID,
+	}}, func(got api.CLIRunEvent) error {
+		event = got
+		return nil
+	}))
+	assertions.Equal(cliStreamStdout, event.Type)
+	assertions.Contains(event.Data, "content:\nrich hello")
+	assertions.Contains(event.Data, "native:\ndesktop edit")
 	stored, err := st.GetBeeperDraftContext(t.Context(), draftID)
 	requirements.NoError(err)
 	assertions.Equal("rich hello", *stored.CommittedText)
@@ -708,8 +770,19 @@ BEGIN
   SELECT RAISE(FAIL, 'injected finish failure');
 END`)
 	requirements.NoError(err)
-	err = run("draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(revision, 10), "--body", "updated")
+	var failureEvent api.CLIRunEvent
+	err = adapter.runCLIBeeperDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		"draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(revision, 10), "--body", "updated",
+	}}, func(got api.CLIRunEvent) error {
+		failureEvent = got
+		return nil
+	})
 	assertions.ErrorContains(err, "remote_accepted_local_failed")
+	assertions.Equal(cliStreamStderr, failureEvent.Type)
+	assertions.Contains(failureEvent.Data, draftID)
+	assertions.Contains(failureEvent.Data, "revision "+strconv.FormatInt(revision+1, 10))
+	assertions.Contains(failureEvent.Data, "pending phase: accepted_local_failed")
+	assertions.Contains(failureEvent.Data, "candidate:\nupdated")
 	assertions.Equal(3, patches)
 	assertions.Equal("rich updated", nativeText)
 
@@ -723,6 +796,18 @@ END`)
 	assertions.Equal("updated", pending.Pending.Candidate)
 	requirements.NotNil(pending.CommittedText)
 	assertions.Equal("rich hello", *pending.CommittedText)
+	var pendingGetEvent api.CLIRunEvent
+	requirements.NoError(adapter.runCLIBeeperDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		"draft-beeper", "get", draftID,
+	}}, func(got api.CLIRunEvent) error {
+		pendingGetEvent = got
+		return nil
+	}))
+	assertions.Equal(cliStreamStdout, pendingGetEvent.Type)
+	assertions.Contains(pendingGetEvent.Data, "content:\nrich hello")
+	assertions.Contains(pendingGetEvent.Data, "pending phase: accepted_local_failed")
+	assertions.Contains(pendingGetEvent.Data, "candidate:\nupdated")
+	assertions.Contains(pendingGetEvent.Data, "native:\nrich updated")
 	var event api.CLIRunEvent
 	err = adapter.runCLIBeeperDraft(t.Context(), api.CLIRunRequest{Args: []string{
 		"draft-beeper", "create", "--source-id", sourceID, "--chat-id", "!room:beeper.local", "--body", "again", "--json",
