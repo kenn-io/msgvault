@@ -130,20 +130,22 @@ func TestAppendDraftEncodedSizeLimitStatusFailure(t *testing.T) {
 }
 
 func TestAppendDraftEncodedSizeLimitNilStatus(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	addr, _ := testutil.StartIMAPMemServerForDrafts(t, testutil.IMAPDraftServerOptions{
 		MessagesPerMailbox: map[string]int{"Drafts": 0},
 		Caps:               emersionimap.CapSet{emersionimap.CapIMAP4rev1: {}, emersionimap.CapUIDPlus: {}, emersionimap.CapAppendLimit: {}},
 	})
 	host, port, err := net.SplitHostPort(addr)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	portNumber, err := strconv.Atoi(port)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	client := NewClient(&Config{Host: host, Port: portNumber, Username: testutil.IMAPTestUsername}, testutil.IMAPTestPassword)
 	t.Cleanup(func() { _ = client.Close() })
 
 	result, err := client.AppendDraft(t.Context(), "Drafts", []byte("From: alice@example.com\r\n\r\nbody\r\n"))
-	require.NoError(t, err)
-	assert.Equal(t, DraftStateCreated, result.State)
+	requirements.NoError(err)
+	assertions.Equal(DraftStateCreated, result.State)
 }
 
 func TestAppendDraftEncodedSizeLimitFromStatus(t *testing.T) {
