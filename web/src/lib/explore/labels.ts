@@ -128,3 +128,33 @@ export function fileTypeLabel(
 export function preflightReasonLabel(action: string, reason: string): string {
   return REASONS[`${action}:${reason}`] ?? `${sentenceCase(reason)}.`;
 }
+
+export interface EntryKindPresentation {
+  icon: string;
+  /** Full name, used as the accessible label ("Email item"). */
+  label: string;
+  /** Short visible name ("Email"). */
+  name: string;
+}
+
+function kindPresentation(icon: string, label: string): EntryKindPresentation {
+  return { icon, label, name: label.replace(' item', '').replace('Archive', 'Item') };
+}
+
+// The server-assigned kind wins; the message type covers rows and archive messages without one.
+export function entryKindPresentation(kind: string, messageType = ''): EntryKindPresentation {
+  const normalizedKind = kind.toLowerCase();
+  if (normalizedKind === 'email') return kindPresentation('✉', 'Email item');
+  if (normalizedKind === 'conversation') return kindPresentation('◌', 'Conversation item');
+  if (normalizedKind === 'event') return kindPresentation('□', 'Calendar event');
+  if (normalizedKind === 'meeting') return kindPresentation('◫', 'Meeting item');
+  if (normalizedKind === 'file') return kindPresentation('▱', 'File item');
+  const normalized = messageType.toLowerCase();
+  if (normalized === 'email') return kindPresentation('✉', 'Email item');
+  if (normalized === 'chat' || normalized === 'text') {
+    return kindPresentation('◌', 'Conversation item');
+  }
+  if (normalized === 'calendar') return kindPresentation('□', 'Calendar event');
+  if (normalized === 'meeting') return kindPresentation('◫', 'Meeting item');
+  return kindPresentation('◇', 'Archive item');
+}

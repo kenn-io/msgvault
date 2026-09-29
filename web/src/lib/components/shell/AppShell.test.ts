@@ -918,7 +918,7 @@ describe('AppShell', () => {
     expect(row).not.toBeNull();
     await fireEvent.click(row!);
     await screen.findByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
-    await fireEvent.click(await screen.findByLabelText('Tasks for this message'));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Tasks for this message' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Open Settings' }));
 
     expect(await screen.findByRole('main', { name: 'Settings target fixture' })).toBeDefined();

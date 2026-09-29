@@ -62,6 +62,88 @@ describe('ReadingPane task gating', () => {
   });
 });
 
+describe('ReadingPane header', () => {
+  function taskFetch(tasks: unknown[]) {
+    return vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.url.endsWith('/integrations/tasks/status')) {
+        return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
+      }
+      return Response.json({ state: 'ready', complete: true, last_scan: '2026-07-19T01:00:00Z', tasks });
+    });
+  }
+
+  it('opens the linked tasks from a labelled button and shows the count once known', async () => {
+    const fetchFn = taskFetch([
+      { id: 'task-1', title: 'Follow up', revision: 'r1' },
+      { id: 'task-2', title: 'Reply', revision: 'r2' }
+    ]);
+    render(ReadingPane, {
+      props: {
+        client: createAPIClient(fetchFn),
+        selection: { kind: 'entry', row: entryRow() },
+        predicate: {} satisfies ExplorePredicate
+      }
+    });
+    const button = screen.getByRole('button', { name: 'Tasks for this message' });
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(button.textContent?.trim()).toBe('Tasks');
+
+    await fireEvent.click(button);
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(await screen.findByRole('region', { name: 'Linked tasks' })).toBeDefined();
+    await waitFor(() => expect(button.textContent?.trim()).toBe('Tasks 2'));
+  });
+
+  it('resets the count and closes the sheet when the selection changes', async () => {
+    const fetchFn = taskFetch([{ id: 'task-1', title: 'Follow up', revision: 'r1' }]);
+    const view = render(ReadingPane, {
+      props: {
+        client: createAPIClient(fetchFn),
+        selection: { kind: 'entry', row: entryRow() },
+        predicate: {} satisfies ExplorePredicate
+      }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Tasks for this message' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Tasks for this message' }).textContent?.trim()).toBe('Tasks 1'));
+
+    await view.rerender({ selection: { kind: 'entry', row: entryRow({ key: 'entry-2', anchor_message_id: 43 }) } });
+    const button = screen.getByRole('button', { name: 'Tasks for this message' });
+    expect(button.textContent?.trim()).toBe('Tasks');
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
+  });
+
+  it('closes from an icon-only button', async () => {
+    const onClose = vi.fn();
+    render(ReadingPane, {
+      props: {
+        client: createAPIClient(vi.fn<typeof fetch>()),
+        selection: { kind: 'entry', row: entryRow() },
+        predicate: {} satisfies ExplorePredicate,
+        onClose
+      }
+    });
+    const close = screen.getByRole('button', { name: 'Close reading pane' });
+    expect(close.textContent?.trim()).toBe('');
+    await fireEvent.click(close);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['email', 'message', 'Email'],
+    ['imessage', 'conversation', 'Conversation'],
+    ['calendar', 'event', 'Calendar event'],
+    ['meeting', 'meeting', 'Meeting']
+  ])('labels %s (%s) entries %s in the meta strip', (messageType, kind, name) => {
+    renderPane(entryRow({ message_type: messageType, kind, anchor_message_id: undefined }));
+    const meta = document.querySelector('.pane-meta')?.textContent ?? '';
+    expect(meta.startsWith(`${name} · `)).toBe(true);
+    expect(meta).not.toContain(messageType === 'email' ? 'email ·' : messageType);
+  });
+});
+
 describe('ReadingPane meeting evidence', () => {
   it('uses only an exact meeting transcript anchor for context and archived actions', async () => {
     const requests: Request[] = [];

@@ -1,27 +1,14 @@
 <script lang="ts">
+  import { entryKindPresentation } from '../../explore/labels';
+
   let { kind, messageType }: { kind: string; messageType: string } = $props();
 
-  const presentation = $derived.by(() => {
-    const normalizedKind = kind.toLowerCase();
-    if (normalizedKind === 'email') return { icon: '✉', label: 'Email item' };
-    if (normalizedKind === 'conversation') return { icon: '◌', label: 'Conversation item' };
-    if (normalizedKind === 'event') return { icon: '□', label: 'Calendar event' };
-    if (normalizedKind === 'meeting') return { icon: '◫', label: 'Meeting item' };
-    if (normalizedKind === 'file') return { icon: '▱', label: 'File item' };
-    const normalized = messageType.toLowerCase();
-    if (normalized === 'email') return { icon: '✉', label: 'Email item' };
-    if (normalized === 'chat' || normalized === 'text') {
-      return { icon: '◌', label: 'Conversation item' };
-    }
-    if (normalized === 'calendar') return { icon: '□', label: 'Calendar event' };
-    if (normalized === 'meeting') return { icon: '◫', label: 'Meeting item' };
-    return { icon: '◇', label: 'Archive item' };
-  });
+  const presentation = $derived(entryKindPresentation(kind, messageType));
 </script>
 
 <span class="row-kind" aria-label={presentation.label} title={presentation.label}>
   <span class="row-kind__icon" aria-hidden="true">{presentation.icon}</span>
-  <span class="row-kind__label">{presentation.label.replace(' item', '').replace('Archive', 'Item')}</span>
+  <span class="row-kind__label">{presentation.name}</span>
 </span>
 
 <style>
