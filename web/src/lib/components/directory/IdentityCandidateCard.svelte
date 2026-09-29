@@ -86,7 +86,7 @@
   h3, h4, p, dl, dd, ul { margin: 0; }
   h3 { font-size: var(--font-size-lg); color: var(--text-primary); }
   h4 { font-size: var(--font-size-sm); color: var(--text-secondary); }
-  .state { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold, 600); text-transform: uppercase; letter-spacing: 0.04em; }
+  .state { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold, 600); }
   .pending { color: var(--text-muted); font-size: var(--font-size-sm); }
   .endpoints { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: var(--space-3); }
   .endpoints :global(.kit-card__body) { display: grid; gap: var(--space-1); }

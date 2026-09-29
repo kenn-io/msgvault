@@ -58,7 +58,7 @@
   header { display: grid; gap: var(--space-1); }
   h3, p, dl, dd { margin: 0; }
   h3 { color: var(--text-primary); font-size: var(--font-size-lg); }
-  .state { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold, 600); text-transform: uppercase; letter-spacing: 0.04em; }
+  .state { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold, 600); }
   .metadata { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3) var(--space-5); }
   .metadata > div { display: grid; gap: var(--space-1); min-width: 0; }
   .raw-value { grid-column: 1 / -1; }

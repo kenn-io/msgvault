@@ -51,7 +51,7 @@
   .timeline { display: flex; min-height: 320px; flex-direction: column; gap: var(--space-3); }
   header { display: flex; align-items: end; justify-content: space-between; }
   header p, header h2 { margin: 0; }
-  header p { color: var(--accent-amber); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+  header p { color: var(--accent-amber); font-size: var(--font-size-2xs); font-weight: 600; }
   header h2 { font-size: var(--font-size-lg); }
   header span { color: var(--text-muted); font-size: var(--font-size-xs); }
 </style>

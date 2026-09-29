@@ -433,8 +433,6 @@
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
     font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
   }
 
   .numeric {

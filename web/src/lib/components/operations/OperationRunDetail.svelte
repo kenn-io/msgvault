@@ -149,7 +149,7 @@
   .detail { display: grid; align-content: start; gap: var(--space-4); min-width: 0; padding: var(--space-4); }
   header { display: flex; align-items: start; justify-content: space-between; gap: var(--space-3); }
   h2, h3, p, dl, dd { margin: 0; }
-  header p { color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+  header p { color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; }
   h2 { font-size: var(--font-size-lg); }
   h3 { margin-bottom: var(--space-2); font-size: var(--font-size-sm); }
   .facts, .counters { display: grid; gap: var(--space-2); }

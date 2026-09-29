@@ -356,7 +356,7 @@
               {#if source.scheduled}
                 {#if source.schedule}
                   <strong title={source.schedule}>{scheduleSummary(source.schedule)}</strong>
-                  <span class="schedule-expression" data-mono>{source.schedule}</span>
+                  <span class="schedule-expression" data-metadata>{source.schedule}</span>
                 {:else}
                   <strong>Schedule unavailable</strong>
                 {/if}
@@ -468,9 +468,7 @@
   header p {
     color: var(--status-warning-ink);
     font-size: var(--font-size-2xs);
-    font-weight: 800;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    font-weight: 600;
   }
   header span,
   td span,

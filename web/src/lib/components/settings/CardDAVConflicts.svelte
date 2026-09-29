@@ -305,7 +305,7 @@
   .summary, .summary dd, .summary li { overflow-wrap: anywhere; word-break: break-word; }
   .summary dl { display: grid; gap: var(--space-3); }
   .summary dl > div { display: grid; gap: var(--space-1); }
-  .summary dt { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold, 600); text-transform: uppercase; }
+  .summary dt { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold, 600); }
   .summary ul { margin: 0; padding-left: var(--space-5); }
   .state-text { color: var(--text-primary); font-weight: var(--font-weight-semibold, 600); }
   .truncated, .disclosure { color: var(--text-muted); font-size: var(--font-size-sm); }

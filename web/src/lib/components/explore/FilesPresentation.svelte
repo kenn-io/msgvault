@@ -354,7 +354,7 @@
   .file-grid { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); outline: none; }
   .file-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--focus-color); }
   .file-row { display: grid; grid-template-columns: 110px minmax(160px,1fr) minmax(180px,1.4fr) minmax(150px,1fr) 90px; align-items: center; gap: var(--space-3); min-height: var(--row-height); padding: 0 var(--space-3); }
-  .file-header { position: sticky; z-index: 1; top: 0; min-height: var(--table-header-height); flex: 0 0 auto; border-bottom: 1px solid var(--border-default); background: var(--bg-surface); box-shadow: 0 1px 0 var(--hairline-sheen); color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+  .file-header { position: sticky; z-index: 1; top: 0; min-height: var(--table-header-height); flex: 0 0 auto; border-bottom: 1px solid var(--border-default); background: var(--bg-surface); box-shadow: 0 1px 0 var(--hairline-sheen); color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; }
   .file-body { position: relative; min-height: 220px; flex: 0 0 auto; }
   .virtual-spacer { position: relative; }
   .virtual-window { position: absolute; inset: 0 0 auto; }

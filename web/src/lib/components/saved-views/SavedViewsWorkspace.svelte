@@ -356,9 +356,7 @@
   header p {
     color: var(--status-warning-ink);
     font-size: var(--font-size-2xs);
-    font-weight: 800;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    font-weight: 600;
   }
   article p {
     color: var(--text-muted);

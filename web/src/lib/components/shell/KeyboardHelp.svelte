@@ -74,8 +74,6 @@
     margin: 0 0 var(--space-2);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
   }
 
   dl {

@@ -1,3 +1,5 @@
+import '@kenn-io/kit-ui/theme.css';
+import '../palette.css';
 import './app.css';
 import { mount } from 'svelte';
 import App from './App.svelte';

@@ -374,7 +374,7 @@
   .workspace-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
   .focused-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   .workspace-header p, h1, .notice { margin: 0; }
-  .workspace-header p { color: var(--status-warning-ink); font-size: var(--font-size-2xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  .workspace-header p { color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; }
   .filters { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
   .content { display: grid; min-width: 0; min-height: 0; }
   .content.has-detail { grid-template-columns: minmax(520px, 1fr) minmax(340px, .6fr); gap: var(--space-4); }

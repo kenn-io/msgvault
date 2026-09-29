@@ -1,4 +1,3 @@
-@import '@kenn-io/kit-ui/theme.css';
 @import './styles/tokens.css';
 @import './styles/density.css';
 
@@ -23,4 +22,12 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+/* kit-ui has no token for chip case. If kit renames the class, this override
+ * stops applying; check it when bumping the kit pin. The :root prefix
+ * outranks kit's component-scoped selector regardless of stylesheet order. */
+:root .kit-chip {
+  text-transform: none;
+  letter-spacing: 0;
 }
