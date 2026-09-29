@@ -26,6 +26,12 @@ describe('application foundation', () => {
     expect(await screen.findByRole('form', { name: 'Log in' })).toBeDefined();
     expect(screen.queryByRole('main', { name: 'Relationships' })).toBeNull();
   });
+  it('titles the connecting screen msgvault', () => {
+    const session = createSessionController(() => new Promise<Response>(() => undefined));
+    render(App, { session });
+    expect(screen.getByRole('main', { name: 'Connecting' })).toBeDefined();
+    expect(document.title).toBe('msgvault');
+  });
   it('shows a bootstrap error with retry instead of the shell, and recovers on retry', async () => {
     let sessionCalls = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

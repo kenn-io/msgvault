@@ -14,7 +14,7 @@
 
 <main class="login" aria-label="Authentication">
   <form aria-label="Log in" onsubmit={submit}>
-    <p class="eyebrow">msgvault</p>
+    <p class="login__brand">msgvault</p>
     <h1>Log in</h1>
     <p>Enter the API key configured for this daemon.</p>
 
@@ -42,3 +42,51 @@
     />
   </form>
 </main>
+
+<style>
+  .login {
+    max-width: 24rem;
+    margin: 0 auto;
+    padding: var(--space-8) var(--space-6);
+    font-size: var(--font-size-md);
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-5);
+  }
+
+  form > :global(*) {
+    align-self: stretch;
+  }
+
+  form > :global(button) {
+    align-self: flex-start;
+  }
+
+  p,
+  h1 {
+    margin: 0;
+  }
+
+  h1 {
+    font-size: var(--font-size-xl);
+    font-weight: 650;
+  }
+
+  .login__brand {
+    color: var(--text-primary);
+    font-size: var(--font-size-md);
+    font-weight: 650;
+  }
+
+  p:not(.login__brand) {
+    color: var(--text-muted);
+  }
+
+  p[role='alert'] {
+    color: var(--text-danger);
+  }
+</style>
