@@ -3,17 +3,24 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json/v2"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/muesli"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -62,6 +69,69 @@ func TestRunConfiguredMuesliSyncRefusesUnregisteredSource(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "add-muesli removed")
+}
+
+func TestServeScheduledMuesliSyncCompletes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Server.APIPort = freeTCPPort(t)
+	cfg.Analytics.Engine = config.AnalyticsEngineSQL
+	cfg.Analytics.AutoBuildCache = false
+	cfg.Vector.Enabled = false
+	path := filepath.Join(t.TempDir(), "muesli.db")
+	db, err := sql.Open("sqlite3", path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec(`CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT, start_time TEXT, created_at TEXT, raw_transcript TEXT);
+		INSERT INTO meetings VALUES (1, 'Planning', '2026-09-01T14:00:00Z', '2026-09-01 14:00:03', 'Synthetic meeting notes')`)
+	require.NoError(err)
+	require.NoError(db.Close())
+	contacts := false
+	cfg.Muesli = []config.MuesliSource{{
+		Identifier: "mac", AccountEmail: "you@example.com", DBPath: path,
+		Contacts: &contacts, Enabled: true, Schedule: "0 0 1 1 *",
+	}}
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema())
+	_, err = st.GetOrCreateSource(muesli.SourceType, "mac")
+	require.NoError(err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cmd := &cobra.Command{Use: serveCmd.Use}
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServe(cmd, nil) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-errCh:
+			require.NoError(err)
+		case <-time.After(serveLifecycleTestTimeout):
+			require.FailNow("daemon did not stop")
+		}
+	})
+	waitForServeHealth(t, cfg.Server.APIPort, errCh)
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.APIPort)
+	client := &http.Client{Timeout: time.Second}
+	response, err := client.Post(baseURL+"/api/v1/sync/mac?source_type=muesli", "application/json", nil)
+	require.NoError(err)
+	require.NoError(response.Body.Close())
+	require.Equal(http.StatusAccepted, response.StatusCode)
+	var status api.SourceStatusResponse
+	require.Eventually(func() bool {
+		response, err := client.Get(baseURL + "/api/v1/sources/status?source_type=muesli")
+		if err != nil {
+			return false
+		}
+		defer func() { _ = response.Body.Close() }()
+		return json.UnmarshalRead(response.Body, &status) == nil && len(status.Sources) == 1 &&
+			status.Sources[0].LastSuccessfulSync != nil && status.Sources[0].CanSync
+	}, serveLifecycleTestTimeout, 20*time.Millisecond, "scheduled import did not finish")
+	assert.Equal(int64(1), status.Sources[0].LastSuccessfulSync.MessagesAdded)
+	assert.Empty(status.Sources[0].SchedulerLastError, "post-import cache refresh must receive the daemon configuration")
 }
 
 func TestFinishMuesliImportRefreshesCacheAfterPartialWrites(t *testing.T) {

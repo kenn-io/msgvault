@@ -667,9 +667,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if err := sched.AddJob(scheduler.Job{
 			Name:     jobName,
 			Schedule: source.Schedule,
-			Run: func(ctx context.Context) error {
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 				return runConfiguredMuesliSync(ctx, s, source)
-			},
+			}),
 		}); err != nil {
 			logger.Error("failed to schedule muesli source", "source", source.Identifier, "error", err)
 		} else {
