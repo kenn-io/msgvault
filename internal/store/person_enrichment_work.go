@@ -273,7 +273,7 @@ func (s *Store) CancelPersonEnrichmentWorkOutsideProfilesContext(
 					SET state = 'terminal', failure_class = ?, completed_at = ?, next_action_at = NULL,
 					    lease_owner = NULL, lease_until = NULL
 					WHERE id = ? AND state IN ('queued','starting','pending','retry_wait','uncertain_start')`,
-					personenrichment.FailurePolicy, completedAt, item.activeAttempt.Int64)
+					personenrichment.FailureProfileUnavailable, completedAt, item.activeAttempt.Int64)
 				if err != nil {
 					return fmt.Errorf("terminalize unavailable person enrichment attempt: %w", err)
 				}
@@ -1298,7 +1298,7 @@ func (s *Store) MarkTerminal(
 		state = "identity_rejected"
 	case personenrichment.FailureSuppressed:
 		state = "suppressed"
-	case personenrichment.FailurePolicy, personenrichment.FailureRateLimited,
+	case personenrichment.FailurePolicy, personenrichment.FailureProfileUnavailable, personenrichment.FailureRateLimited,
 		personenrichment.FailureTransient, personenrichment.FailureInvalidOutput,
 		personenrichment.FailureTerminal, personenrichment.FailureUncertainStart:
 		// The default terminal state is correct for every other safe failure.
@@ -1913,7 +1913,7 @@ func validateSafeFailure(failure personenrichment.SafeFailure) error {
 
 func validPersonEnrichmentFailureClass(class personenrichment.FailureClass) bool {
 	switch class {
-	case personenrichment.FailurePolicy, personenrichment.FailureSuppressed,
+	case personenrichment.FailurePolicy, personenrichment.FailureProfileUnavailable, personenrichment.FailureSuppressed,
 		personenrichment.FailureRateLimited, personenrichment.FailureTransient,
 		personenrichment.FailureInvalidOutput, personenrichment.FailureIdentityRejected,
 		personenrichment.FailureTerminal, personenrichment.FailureUncertainStart:

@@ -292,6 +292,29 @@ func TestPersonEnrichmentProfileCleanupRejectsAuthorizedDispatch(t *testing.T) {
 	requirements.NoError(err)
 	checks.Equal("terminal", stored.State)
 	checks.Empty(f.work(t))
+
+	// Re-enable the same profile after cleanup canceled the unfinished lookup.
+	requirements.NoError(f.store.CancelPersonEnrichmentWorkOutsideProfilesContext(
+		t.Context(), []string{f.profile.Fingerprint}))
+	queued, err := f.store.EnqueueDuePersonEnrichmentContext(
+		t.Context(), f.now, 200, []string{f.profile.Fingerprint})
+	requirements.NoError(err)
+	requirements.Equal(1, queued)
+	resumed := f.claim(t, run.ID, "reenabled-worker")
+	checks.NotEqual(lease.Trigger.Generation, resumed.Trigger.Generation)
+	start := testAttemptStart(&f, run.ID, "e")
+	start.Trigger = resumed.Trigger
+	restarted, created, err := f.store.BeginAttempt(t.Context(), resumed.Token, start)
+	requirements.NoError(err)
+	requirements.True(created)
+	checks.NotEqual(attempt.ID, restarted.ID)
+	requirements.NoError(f.store.MarkTerminal(t.Context(), restarted.Token, personenrichment.SafeFailure{
+		Class: personenrichment.FailureInvalidOutput, Message: "invalid provider output",
+	}))
+	queued, err = f.store.EnqueueDuePersonEnrichmentContext(
+		t.Context(), f.now, 200, []string{f.profile.Fingerprint})
+	requirements.NoError(err)
+	checks.Zero(queued, "a later provider failure must stay terminal")
 }
 
 func TestPersonEnrichmentProfileIdentityMutationInvalidatesProviderBindingAndAttempt(t *testing.T) {

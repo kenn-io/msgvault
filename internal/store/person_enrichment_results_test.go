@@ -166,6 +166,72 @@ func TestPersonEnrichmentCatchUpDoesNotConsumeProducingAttempt(t *testing.T) {
 	assert.Equal(t, 1, count, "a result already expired on arrival still needs an expiry lookup")
 }
 
+func TestPersonEnrichmentCatchUpRestoresRefreshAfterProfileReenabled(t *testing.T) {
+	for _, laterFailure := range []bool{false, true} {
+		t.Run("later_failure="+strconv.FormatBool(laterFailure), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newEnrichmentResultFixture(t)
+			outcome, err := f.store.CommitEnrichmentClaims(t.Context(), f.commit)
+			require.NoError(err)
+			require.Equal(personenrichment.ClaimApplied, outcome.Status)
+			refreshAt := f.now.Add(f.profile.RefreshInterval)
+			now := f.now.Add(time.Hour)
+			SetPersonEnrichmentClockForTest(f.store, func() time.Time { return now })
+			if laterFailure {
+				now = refreshAt
+				lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
+					RunID: f.attempt.RunID, Owner: "refresh-worker", ProviderName: f.profile.Name,
+					Now: now, LeaseDuration: time.Minute,
+				})
+				require.NoError(err)
+				require.NotNil(lease)
+				person, err := f.store.GetPersonContext(t.Context(), f.person.ID)
+				require.NoError(err)
+				attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token, personenrichment.AttemptStart{
+					RunID: lease.RunID, PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint,
+					PersonRevision: person.Revision, Trigger: lease.Trigger,
+					PayloadHash: strings.Repeat("3", 64), RequestHash: strings.Repeat("4", 64),
+				})
+				require.NoError(err)
+				require.NoError(f.store.MarkTerminal(t.Context(), attempt.Token, personenrichment.SafeFailure{
+					Class: personenrichment.FailureInvalidOutput, Message: "invalid provider output",
+				}))
+			}
+			require.NoError(f.store.CancelPersonEnrichmentWorkOutsideProfilesContext(t.Context(), nil))
+			_, err = f.store.EnsurePersonEnrichmentProfile(t.Context(), f.profile)
+			require.NoError(err)
+			require.NoError(f.store.CancelPersonEnrichmentWorkOutsideProfilesContext(t.Context(), []string{f.profile.Fingerprint}))
+			count, err := f.store.EnqueueDuePersonEnrichmentContext(t.Context(), now, 200, []string{f.profile.Fingerprint})
+			require.NoError(err)
+			work, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), PersonEnrichmentWorkFilter{
+				PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+			})
+			require.NoError(err)
+			if laterFailure {
+				assert.Zero(count)
+				assert.Empty(work, "re-enabling must not replay a failed refresh")
+				return
+			}
+			require.Equal(1, count)
+			require.Len(work, 1)
+			assert.Equal(int64(8), work[0].TriggerMask)
+			assert.Equal("refresh:"+outcome.Generation.GenerationKey, work[0].TriggerGeneration)
+			assert.True(refreshAt.Equal(work[0].DueAt), "keep the original refresh due time")
+			count, err = f.store.EnqueueDuePersonEnrichmentContext(t.Context(), refreshAt, 200, []string{f.profile.Fingerprint})
+			require.NoError(err)
+			assert.Zero(count, "repeated catch-up must not republish the refresh")
+			lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
+				RunID: f.attempt.RunID, Owner: "reenabled-worker", ProviderName: f.profile.Name,
+				Now: refreshAt, LeaseDuration: time.Minute,
+			})
+			require.NoError(err)
+			require.NotNil(lease)
+			assert.Equal(personenrichment.TriggerRefresh, lease.Trigger.Kind)
+		})
+	}
+}
+
 func TestPersonEnrichmentSynchronousResultCommitsFromStartingAttempt(t *testing.T) {
 	requirements := require.New(t)
 	checks := assert.New(t)

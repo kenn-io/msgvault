@@ -481,7 +481,7 @@ func TestRegisterPersonEnrichmentJobCancelsWorkForUnavailableProfiles(t *testing
 			requirements.NoError(err)
 			checks.Equal("terminal", stored.State)
 			requirements.NotNil(stored.FailureClass)
-			checks.Equal(string(personenrichment.FailurePolicy), *stored.FailureClass)
+			checks.Equal(string(personenrichment.FailureProfileUnavailable), *stored.FailureClass)
 			work, err := f.Store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
 				PersonID: person.ID, ProfileFingerprint: staleProfile.Fingerprint, Limit: 10,
 			})
