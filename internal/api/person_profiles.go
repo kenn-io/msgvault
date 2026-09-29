@@ -29,7 +29,9 @@ const (
 // PersonProfileStore is the feature-local capability for durable curated
 // people. The daemon adapter passes these calls directly to *store.Store.
 type PersonProfileStore interface {
-	CreatePersonFromParticipantContext(ctx context.Context, participantID int64) (*store.Person, bool, error)
+	CreatePersonFromParticipantWithDisplayNameContext(
+		ctx context.Context, participantID int64, displayName *string,
+	) (*store.Person, bool, error)
 	GetPersonContext(ctx context.Context, id int64) (*store.Person, error)
 	ListPersonsContext(ctx context.Context) ([]store.Person, error)
 	DirectoryPeoplePageContext(ctx context.Context, query store.DirectoryPeopleQuery) (*store.DirectoryPeoplePage, error)
@@ -51,7 +53,8 @@ type PersonProfileStore interface {
 }
 
 type CreatePersonRequest struct {
-	ParticipantID int64 `json:"participant_id"`
+	ParticipantID int64   `json:"participant_id"`
+	DisplayName   *string `json:"display_name,omitzero" nullable:"true"`
 }
 
 type PatchPersonRequest struct {
@@ -116,7 +119,10 @@ func (s *Server) registerPersonProfileRoutes(api huma.API) {
 
 	create := rawAPIV1Operation("createPerson", http.MethodPost, "/people", "Promote a participant cluster to a durable person")
 	create.Description = "Returns 201 when a new person is created, or 200 when the cluster is already " +
-		"represented by a person (idempotent re-promotion, which also binds any unbound cluster members)."
+		"represented by a person (idempotent re-promotion, which also binds any unbound cluster members). " +
+		"New profiles default to the first nonblank observed cluster name by participant ID. " +
+		"An explicit display_name takes precedence; an empty or whitespace-only string leaves the name unset. " +
+		"Omitted or null uses the default. Re-promotion preserves the existing name, including a cleared name."
 	create.RequestBody = jsonRequestBodyFor[CreatePersonRequest](api)
 	create.Responses = jsonResponsesFor[store.Person](api, http.StatusOK, http.StatusCreated)
 	addPersonETagHeader(create.Responses[httpStatusKey(http.StatusOK)])
@@ -252,7 +258,9 @@ func (s *Server) handleCreatePerson(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_participant_id", "participant_id must be a positive integer")
 		return
 	}
-	person, created, err := profiles.CreatePersonFromParticipantContext(r.Context(), request.ParticipantID)
+	person, created, err := profiles.CreatePersonFromParticipantWithDisplayNameContext(
+		r.Context(), request.ParticipantID, request.DisplayName,
+	)
 	if err != nil {
 		s.writePersonError(w, err)
 		return

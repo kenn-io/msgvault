@@ -335,7 +335,10 @@ import (
 // and provenance) and GET /api/v1/cli/message/thread (a complete,
 // chronological conversation listing with original-MIME availability).
 // Additive (minor bump): existing routes are unchanged.
-const APISchemaVersion = "2.33.0"
+// 2.34.0 adds optional display_name to person promotion requests and seeds
+// newly created profiles from observed participant cluster names by default.
+// Existing person edits, clears, and idempotent re-promotion are preserved.
+const APISchemaVersion = "2.34.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

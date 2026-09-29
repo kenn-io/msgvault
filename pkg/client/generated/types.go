@@ -2443,7 +2443,8 @@ func (c CreatePersonRelationshipRequest) Validate() error {
 }
 
 type CreatePersonRequest struct {
-	ParticipantID int64 `json:"participant_id"`
+	DisplayName   *string `json:"display_name,omitzero"`
+	ParticipantID int64   `json:"participant_id"`
 }
 
 type CreateRelationshipTypeRequest struct {

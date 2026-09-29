@@ -33,7 +33,7 @@ func TestPersonPromoteGetListUpdateAndRevisionConflict(t *testing.T) {
 	assert.Equal(revisionBeforePromotion+1, revisionAfterPromotion)
 	assert.Positive(created.ID)
 	assert.Regexp(`^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$`, created.VCardUID)
-	assert.Nil(created.DisplayName)
+	assert.Equal(new("alice"), created.DisplayName)
 	assert.Equal(int64(1), created.Revision)
 	assert.Equal([]int64{alice, alias}, created.ParticipantIDs)
 

@@ -2196,10 +2196,13 @@ msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-js
 msgvault person attributes clear <person-id> <slug> [flags]
 ```
 
-`promote` is idempotent. `set-display-name` preserves the profile's stable ID
-and vCard UID. `delete` permanently retires that UID and removes the profile's
-participant bindings. A person with active merge lineage cannot be deleted
-until that lineage is fully split.
+`promote` seeds a new profile with the first nonblank observed name in its
+linked cluster, ordered by participant ID. It leaves the name empty when no
+member has an observed name. Repeating promotion preserves the saved name,
+including an edited or cleared value. `set-display-name` preserves the
+profile's stable ID and vCard UID. `delete` permanently retires that UID and
+removes the profile's participant bindings. A person with active merge lineage
+cannot be deleted until that lineage is fully split.
 
 `merge` keeps the survivor's ID and vCard UID, moves the absorbed profile into
 it, and records a reversible merge packet. Profiles with active CardDAV

@@ -2365,7 +2365,7 @@ export const listPeople = (
   );
 };
 /**
- * Returns 201 when a new person is created, or 200 when the cluster is already represented by a person (idempotent re-promotion, which also binds any unbound cluster members).
+ * Returns 201 when a new person is created, or 200 when the cluster is already represented by a person (idempotent re-promotion, which also binds any unbound cluster members). New profiles default to the first nonblank observed cluster name by participant ID. An explicit display_name takes precedence; an empty or whitespace-only string leaves the name unset. Omitted or null uses the default. Re-promotion preserves the existing name, including a cleared name.
  * @summary Promote a participant cluster to a durable person
  */
 export const createPerson = (

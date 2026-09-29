@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +17,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -444,4 +447,37 @@ func TestPersonMergeCLIValidationHappensBeforeOpeningStore(t *testing.T) {
 	entries, err := os.ReadDir(dataDir)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "invalid commands must not initialize the archive")
+}
+
+func TestPersonPromoteSeedsNameThroughDaemonAdapter(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	id, err := st.EnsureParticipant("promotion@example.com", "Alex Example", "example.com")
+	require.NoError(err)
+	srv := api.NewServer(&config.Config{}, &storeAPIAdapter{store: st}, nil, slog.New(slog.DiscardHandler))
+	server := httptest.NewServer(srv.Router())
+	t.Cleanup(server.Close)
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	savedJSON := personJSON
+	personJSON = false
+	t.Cleanup(func() { personJSON = savedJSON })
+	var output bytes.Buffer
+	promote := &cobra.Command{Use: personPromoteCmd.Use, Args: personPromoteCmd.Args, RunE: personPromoteCmd.RunE}
+	promote.SetOut(&output)
+	promote.SetArgs([]string{fmt.Sprint(id)})
+	require.NoError(promote.ExecuteContext(testCtx))
+	assert.Contains(output.String(), "Display name: Alex Example")
+	person, err := st.PersonForParticipants([]int64{id})
+	require.NoError(err)
+	require.NotNil(person)
+	directory, err := runPersonDirectoryCommand(testCtx, t)
+	require.NoError(err)
+	assert.Contains(directory, "Alex Example")
+	output.Reset()
+	get := &cobra.Command{Use: personGetCmd.Use, Args: personGetCmd.Args, RunE: personGetCmd.RunE}
+	get.SetOut(&output)
+	get.SetArgs([]string{fmt.Sprint(person.ID)})
+	require.NoError(get.ExecuteContext(testCtx))
+	assert.Contains(output.String(), "Display name: Alex Example")
 }

@@ -2718,10 +2718,10 @@ func (a *storeAPIAdapter) DecideIdentityMatchCandidateContext(
 	return a.store.DecideIdentityMatchCandidateContext(ctx, candidateID, state, decidedBy, notes)
 }
 
-func (a *storeAPIAdapter) CreatePersonFromParticipantContext(
-	ctx context.Context, participantID int64,
+func (a *storeAPIAdapter) CreatePersonFromParticipantWithDisplayNameContext(
+	ctx context.Context, participantID int64, displayName *string,
 ) (*store.Person, bool, error) {
-	return a.store.CreatePersonFromParticipantContext(ctx, participantID)
+	return a.store.CreatePersonFromParticipantWithDisplayNameContext(ctx, participantID, displayName)
 }
 
 func (a *storeAPIAdapter) GetPersonContext(ctx context.Context, id int64) (*store.Person, error) {

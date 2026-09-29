@@ -29,9 +29,15 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.33.0**.
+it is separate from the binary release version. The current schema is **2.34.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.34.0 adds optional `display_name` to `POST /api/v1/people`.
+Omitted or null seeds a new profile with the first nonblank observed name in
+its linked participant cluster, ordered by participant ID. An explicit string
+takes precedence; empty or whitespace-only strings leave the name unset.
+Re-promotion preserves the saved name, including an edited or cleared value.
 
 Schema 2.33.0 adds `GET /api/v1/cli/message/original`, which returns one
 message's original MIME with its account and conversation, and

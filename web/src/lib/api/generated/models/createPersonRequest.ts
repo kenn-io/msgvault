@@ -3,5 +3,7 @@
  */
 
 export interface CreatePersonRequest {
+  /** @nullable */
+  display_name?: string | null;
   participant_id: number;
 }

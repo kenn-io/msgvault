@@ -45,7 +45,9 @@ create profiles when imported.
 Directory starts empty until you save profiles or import contacts. In
 **Relationships**, select a person, choose **Open in Directory**, then
 **Promote to person**. This creates a saved profile from the contact already
-observed in your archive.
+observed in your archive. The profile starts with the first nonblank observed
+name in the linked cluster, ordered by participant ID. A contact without an
+observed name keeps the `Person N` fallback.
 
 With the CLI, use the contact's participant ID. Replace `42` with that ID and
 `7` with the person ID returned by promotion:
@@ -57,11 +59,13 @@ msgvault person get 7
 msgvault person set-display-name 7 "Alex Example"
 ```
 
-Repeating promotion returns the same profile. Archive observation alone does
-not promote people. Sources that assert a stable identity link addresses
-automatically: Beeper user IDs, Notion user IDs, Apple Contacts cards for
-Muesli attendees, and person `id` values in meeting imports. See
-[how meetings connect to people](/docs/usage/meetings/#how-meetings-connect-to-people). Linking another cluster into a promoted one expands that
+You can edit or clear this saved name with `set-display-name`. Repeating
+promotion returns the same profile and preserves an edited or cleared name.
+Archive observation alone does not promote people. Sources that assert a stable
+identity link addresses automatically: Beeper user IDs, Notion user IDs, Apple
+Contacts cards for Muesli attendees, and person `id` values in meeting imports.
+See [how meetings connect to people](/docs/usage/meetings/#how-meetings-connect-to-people).
+Linking another cluster into a promoted one expands that
 profile's participant bindings. Linking two clusters that already belong to
 different profiles reports a conflict instead of silently merging curated
 data. Unlinking evidence does not move or delete profile bindings.
