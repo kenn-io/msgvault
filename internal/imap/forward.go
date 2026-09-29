@@ -339,11 +339,34 @@ func writeBinaryPart(writer *multipart.Writer, attachment ForwardAttachment) err
 	if err != nil {
 		return fmt.Errorf("create forwarded attachment: %w", err)
 	}
-	encoder := base64.NewEncoder(base64.StdEncoding, part)
-	if _, err := encoder.Write(attachment.Content); err != nil {
-		return err
+	return writeBase64MIME(part, attachment.Content)
+}
+
+func writeBase64MIME(dst io.Writer, content []byte) error {
+	var line [76]byte
+	for len(content) > 0 {
+		chunk := min(len(content), 57)
+		base64.StdEncoding.Encode(line[:], content[:chunk])
+		encoded := line[:base64.StdEncoding.EncodedLen(chunk)]
+		written, err := dst.Write(encoded)
+		if err != nil {
+			return err
+		}
+		if written != len(encoded) {
+			return io.ErrShortWrite
+		}
+		content = content[chunk:]
+		if len(content) > 0 {
+			written, err = dst.Write([]byte("\r\n"))
+			if err != nil {
+				return err
+			}
+			if written != 2 {
+				return io.ErrShortWrite
+			}
+		}
 	}
-	return encoder.Close()
+	return nil
 }
 
 func quotedTextWithHeader(headerSummary, text string) string {
@@ -700,11 +723,7 @@ func encodeTransfer(data []byte, encoding string) ([]byte, error) {
 	switch strings.ToLower(strings.TrimSpace(encoding)) {
 	case "base64":
 		var out bytes.Buffer
-		encoder := base64.NewEncoder(base64.StdEncoding, &out)
-		if _, err := encoder.Write(data); err != nil {
-			return nil, err
-		}
-		if err := encoder.Close(); err != nil {
+		if err := writeBase64MIME(&out, data); err != nil {
 			return nil, err
 		}
 		return out.Bytes(), nil

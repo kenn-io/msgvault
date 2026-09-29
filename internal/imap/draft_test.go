@@ -76,8 +76,9 @@ func TestAppendDraftEncodedSizeLimitBase64Expansion(t *testing.T) {
 	}, time.Now(), "forward@example.test")
 	requirements.NoError(err)
 	encoded := base64.StdEncoding.EncodeToString(content)
-	requirements.Contains(string(draft.Raw), encoded)
-	unencodedRaw := bytes.Replace(draft.Raw, []byte(encoded), content, 1)
+	wireEncoded := []byte(encoded[:76] + "\r\n" + encoded[76:])
+	requirements.Contains(string(draft.Raw), string(wireEncoded))
+	unencodedRaw := bytes.Replace(draft.Raw, wireEncoded, content, 1)
 	assertions.Len(encoded, base64.StdEncoding.EncodedLen(attachmentBytes))
 	assertions.Greater(len(draft.Raw), len(unencodedRaw))
 	limit := uint32(len(unencodedRaw))
@@ -105,7 +106,7 @@ func TestAppendDraftEncodedSizeLimitBase64Expansion(t *testing.T) {
 	requirements.NotNil(status.NumMessages)
 	assertions.Zero(*status.NumMessages)
 	assertions.Equal(emersionimap.UID(1), status.UIDNext)
-	t.Logf("base64 expansion: unencoded attachment bytes=%d, encoded bytes=%d, unencoded raw=%d, encoded raw=%d, limit=%d, APPEND messages=%d", attachmentBytes, len(encoded), len(unencodedRaw), len(draft.Raw), limit, *status.NumMessages)
+	t.Logf("base64 expansion: unencoded attachment bytes=%d, encoded bytes=%d, unencoded raw=%d, encoded raw=%d, limit=%d, APPEND messages=%d", attachmentBytes, len(wireEncoded), len(unencodedRaw), len(draft.Raw), limit, *status.NumMessages)
 }
 
 func TestAppendDraftEncodedSizeLimitStatusFailure(t *testing.T) {
