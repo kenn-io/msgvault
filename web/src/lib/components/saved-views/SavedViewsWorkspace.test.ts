@@ -58,7 +58,7 @@ describe('SavedViewsWorkspace', () => {
       const component = render(SavedViewsWorkspace, {
         client: createAPIClient(fetchFn), currentState: { ...currentState, query, searchMode }
       });
-      await screen.findByText('No Saved Views yet');
+      await screen.findByText('No saved views yet');
       await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Invoices' } });
       await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
       await screen.findByRole('heading', { name: 'Invoices' });
@@ -98,7 +98,7 @@ describe('SavedViewsWorkspace', () => {
       selection: { mode: 'all_matching', operationToken: 'session-secret' }
     });
 
-    await screen.findByText('No Saved Views yet');
+    await screen.findByText('No saved views yet');
     await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Invoices' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Quarterly review' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -213,12 +213,12 @@ describe('SavedViewsWorkspace', () => {
     expect(requests[1]!.headers.get('If-Match')).toBe('"saved-view-7-r3"');
 
     await fireEvent.click(screen.getByRole('button', { name: 'Delete Invoices 2026' }));
-    expect(screen.getByRole('dialog', { name: 'Delete Saved View?' })).toBeDefined();
+    expect(screen.getByRole('dialog', { name: 'Delete saved view?' })).toBeDefined();
     expect(requests).toHaveLength(2);
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
     await waitFor(() => expect(requests).toHaveLength(3));
     expect(requests[2]!.headers.get('If-Match')).toBe('"saved-view-7-r4"');
-    expect(await screen.findByText('No Saved Views yet')).toBeDefined();
+    expect(await screen.findByText('No saved views yet')).toBeDefined();
   });
 
   it('keeps incompatible schema records visible and offers confirmed removal, not migration', async () => {
@@ -238,7 +238,7 @@ describe('SavedViewsWorkspace', () => {
     expect(screen.getByRole('alert').textContent).toContain('Automatic migration is not supported');
     expect((screen.getByRole('button', { name: 'Open Invoices' }) as HTMLButtonElement).disabled).toBe(true);
     await fireEvent.click(screen.getByRole('button', { name: 'Remove incompatible Invoices' }));
-    expect(screen.getByRole('dialog', { name: 'Delete Saved View?' })).toBeDefined();
+    expect(screen.getByRole('dialog', { name: 'Delete saved view?' })).toBeDefined();
     expect(requests).toHaveLength(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
     await waitFor(() => expect(requests).toHaveLength(2));

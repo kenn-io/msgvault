@@ -9,6 +9,7 @@
   import { Button, Card, KbdBadge, Modal, appShortcuts } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
+  import PageHeader from '../shell/PageHeader.svelte';
   import type {
     DeletionManifestDetail as GeneratedDeletionManifestDetail,
     DeletionManifestSummary as GeneratedDeletionManifestSummary,
@@ -266,13 +267,10 @@
 </script>
 
 <main class="deletions" aria-label="Deletions">
-  <header>
-    <div>
-      <p>Archive workspace</p>
-      <h1>Deletions</h1>
-    </div>
-    <span>Staged manifest lifecycle</span>
-  </header>
+  <PageHeader
+    title="Deletions"
+    description="Deletions you've staged. Nothing is deleted until you run msgvault delete-staged."
+  />
   {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
 
   <Card padding="sm">
@@ -435,9 +433,8 @@
     flex: 1;
     flex-direction: column;
     gap: var(--space-4);
-    padding: var(--space-5) var(--space-6);
+    padding: var(--space-5) var(--space-6) var(--space-4);
   }
-  header,
   article,
   .actions,
   .staging {
@@ -445,21 +442,10 @@
     align-items: center;
     gap: var(--space-3);
   }
-  header {
-    justify-content: space-between;
-  }
-  header p,
-  h1,
   h2,
   .staging p {
     margin: 0;
   }
-  header p {
-    color: var(--status-warning-ink);
-    font-size: var(--font-size-2xs);
-    font-weight: 600;
-  }
-  header span,
   article span,
   .staging p,
   .actions span,
@@ -504,6 +490,9 @@
     border-color: var(--accent-red);
   }
   @media (max-width: 760px) {
+    .deletions {
+      padding-inline: var(--space-4);
+    }
     article,
     .staging {
       align-items: stretch;

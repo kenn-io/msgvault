@@ -103,6 +103,8 @@
     identityScope?: IdentityFileScope;
     expectedAuthority?: string;
     embedded?: boolean;
+    showHeader?: boolean;
+    fileCount?: number | null;
     sort: FileSearchSort;
     filenameQuery?: string;
     mimeFamilies?: FileMIMEFamily[];
@@ -128,6 +130,8 @@
     identityScope = undefined,
     expectedAuthority = undefined,
     embedded = false,
+    showHeader = true,
+    fileCount = $bindable(null),
     sort,
     filenameQuery = '',
     mimeFamilies = [],
@@ -152,6 +156,9 @@
   const OVERSCAN = 6;
   let rows = $state<WorkspaceFileRow[]>([]);
   let totalCount = $state(0);
+  $effect(() => {
+    fileCount = loading || error || unavailable ? null : totalCount;
+  });
   let nextCursor = $state<string>();
   let loading = $state(false);
   let loadingMore = $state(false);
@@ -720,14 +727,16 @@
 </script>
 
 <svelte:element this={embedded ? 'section' : 'main'} class="files-workspace" aria-label="Files">
-  <header class="workspace-header">
-    <div><h1>{personScoped ? 'Attachments' : 'Files'}</h1></div>
-    {#if !loading && !error && !unavailable}
-      <span aria-live="polite"
-        >{totalCount.toLocaleString()} {personPresentation === 'media' && personScoped ? 'media items' : 'files'}</span
-      >
-    {/if}
-  </header>
+  {#if showHeader}
+    <header class="workspace-header">
+      <div><h1>{personScoped ? 'Attachments' : 'Files'}</h1></div>
+      {#if !loading && !error && !unavailable}
+        <span aria-live="polite"
+          >{totalCount.toLocaleString()} {personPresentation === 'media' && personScoped ? 'media items' : 'files'}</span
+        >
+      {/if}
+    </header>
+  {/if}
 
   <div class="file-controls" aria-label="File filters">
     {#if personScoped}

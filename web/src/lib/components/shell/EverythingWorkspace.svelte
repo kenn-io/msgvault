@@ -37,6 +37,7 @@
   import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
+  import PageHeader from './PageHeader.svelte';
   import { exploreMeetingScope } from '../../meetings/scopes';
   import type { EverythingSessionState } from './EverythingSessionState.svelte';
 
@@ -575,11 +576,8 @@
 </script>
 
 <main class="everything-workspace" aria-label="Everything">
-  <header class="workspace-header">
-    <div>
-      <h1>Everything</h1>
-    </div>
-    <div class="workspace-view-controls">
+  <PageHeader title="Everything">
+    {#snippet actions()}
       {#if canPreviewRight}
         <div class="preview-position">
           <span>Preview position</span>
@@ -600,8 +598,8 @@
           Modality-neutral archive
         {/if}
       </p>
-    </div>
-  </header>
+    {/snippet}
+  </PageHeader>
 
   {#if loader.result?.candidatePoolSaturated}
     <div class="search-limit" role="status">
@@ -822,42 +820,21 @@
   .everything-workspace {
     display: flex;
     width: 100%;
-    max-width: 1760px;
     min-height: 0;
     flex: 1;
     flex-direction: column;
     gap: var(--space-4);
-    margin-inline: auto;
-    padding: var(--space-6) var(--space-7) var(--space-4);
+    padding: var(--space-5) var(--space-6) var(--space-4);
   }
 
   .meeting-overview { max-height: 42vh; overflow: auto; flex: none; border: 1px solid var(--border-muted); }
 
-  .workspace-header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-6);
-  }
-
-  .workspace-view-controls,
   .preview-position {
     display: flex;
     align-items: center;
     gap: var(--space-4);
-  }
-
-  .preview-position {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-  }
-
-  h1 {
-    margin: 0;
-    font-family: var(--font-sans);
-    font-size: var(--font-size-xl);
-    font-weight: 650;
-    line-height: 1.2;
   }
 
   .result-count {

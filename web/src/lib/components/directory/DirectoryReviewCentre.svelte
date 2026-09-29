@@ -13,6 +13,7 @@
   import IdentityDecisionModal from './IdentityDecisionModal.svelte';
   import FactReviewPanel from './FactReviewPanel.svelte';
   import RelationshipReviewQueue from './RelationshipReviewQueue.svelte';
+  import PageHeader from '../shell/PageHeader.svelte';
   import type { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
   import PersonBindingConflictModal from './PersonBindingConflictModal.svelte';
   import type { PersonMergeSuccess, ValidatedPersonMergeRequired } from '../../directory/person-merge';
@@ -127,19 +128,17 @@
 </script>
 
 <main class="review-centre" aria-label="Reviews">
-  <header class="page-header">
-    <div>
-      <h1>Reviews</h1>
-      <p>Inspect identity evidence and imported relationship review records.</p>
-    </div>
-    <SegmentedControl
-      options={reviewKindOptions}
-      value={controller.reviewKind}
-      onchange={selectReviewKind}
-      ariaLabel="Review type"
-      disabled={!!activeDecision}
-    />
-  </header>
+  <PageHeader title="Reviews" description="Decide which identities and facts belong together.">
+    {#snippet view()}
+      <SegmentedControl
+        options={reviewKindOptions}
+        value={controller.reviewKind}
+        onchange={selectReviewKind}
+        ariaLabel="Review type"
+        disabled={!!activeDecision}
+      />
+    {/snippet}
+  </PageHeader>
 
   {#if controller.reviewKind === 'identity'}
     <section class="identity-review" aria-labelledby="identity-review-heading">
@@ -252,11 +251,11 @@
 {/if}
 
 <style>
-  .review-centre { display: grid; gap: var(--space-5); padding: var(--space-5); }
-  .page-header, .review-toolbar { display: flex; align-items: start; justify-content: space-between; gap: var(--space-5); flex-wrap: wrap; }
-  .page-header > div, .review-toolbar > div, .identity-review { display: grid; gap: var(--space-2); }
-  h1, h2, p { margin: 0; }
-  .page-header p, .review-toolbar p { color: var(--text-muted); }
+  .review-centre { display: grid; gap: var(--space-5); padding: var(--space-5) var(--space-6) var(--space-4); }
+  .review-toolbar { display: flex; align-items: start; justify-content: space-between; gap: var(--space-5); flex-wrap: wrap; }
+  .review-toolbar > div, .identity-review { display: grid; gap: var(--space-2); }
+  h2, p { margin: 0; }
+  .review-toolbar p { color: var(--text-muted); }
   .identity-review { gap: var(--space-4); }
   .status { color: var(--text-secondary); }
   .loading { display: flex; align-items: center; gap: var(--space-2); color: var(--text-muted); }
@@ -266,7 +265,7 @@
   .loading-overlay { position: sticky; z-index: 1; top: var(--space-2); display: flex; align-items: center; justify-content: center; gap: var(--space-2); width: fit-content; margin: 0 auto calc(-1 * var(--space-8)); padding: var(--space-2) var(--space-4); border: var(--border-width) solid var(--border-default); border-radius: var(--radius-pill); background: var(--bg-surface); box-shadow: var(--shadow-sm); color: var(--text-muted); }
   .pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-3); color: var(--text-muted); font-size: var(--font-size-sm); }
   @media (max-width: 760px) {
-    .review-centre { padding: var(--space-4); }
-    .page-header :global(.kit-segmented), .review-toolbar :global(.kit-segmented) { width: 100%; }
+    .review-centre { padding-inline: var(--space-4); }
+    .review-toolbar :global(.kit-segmented) { width: 100%; }
   }
 </style>

@@ -257,6 +257,9 @@ describe('SettingsWorkspace', () => {
 
     expect(await screen.findByRole('heading', { name: 'Appearance' })).toBeDefined();
     expect(screen.getByRole('main', { name: 'Settings' })).toBeDefined();
+    const title = screen.getByRole('heading', { level: 1, name: 'Settings' });
+    expect(title.closest('.kit-sr-only')).toBeNull();
+    expect(screen.getAllByText('Settings')).toHaveLength(1);
     expect(screen.getByText('Changes apply right away.')).toBeDefined();
     expect(screen.queryByText(/Restart required/)).toBeNull();
     await openSettingsCategory('Daemon');

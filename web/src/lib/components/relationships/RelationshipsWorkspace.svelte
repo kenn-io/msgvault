@@ -30,6 +30,7 @@
   import RelationshipHeader from './RelationshipHeader.svelte';
   import RelationshipCalendar from './RelationshipCalendar.svelte';
   import RelationshipList from './RelationshipList.svelte';
+  import PageHeader from '../shell/PageHeader.svelte';
   import RelationshipTimeline from './RelationshipTimeline.svelte';
   import { localDayBoundsUTC, timelineRowToSelection } from './timeline-support';
 
@@ -485,46 +486,50 @@
   bind:this={rootElement}
   onkeydown={handleEscape}
 >
-  <h1 class="kit-sr-only">Relationships</h1>
-  {#if layout === 'narrow'}
-    <Button
-      class="drawer-toggle"
-      label="Contacts"
-      ariaLabel="Show relationship list"
-      ariaExpanded={mobileListOpen}
-      onclick={() => (mobileListOpen = !mobileListOpen)}
-    />
-    {@render centerAndReading()}
-    {#if mobileListOpen}
-      <DetailDrawer
-        title="Contacts"
-        ariaLabel="Relationship search and results"
-        width="min(390px, 100vw)"
-        onclose={closeDrawer}
+  <div class="hub-header">
+    <PageHeader title="Relationships" description="People and domains you've exchanged messages with." />
+  </div>
+  <div class="hub-body">
+    {#if layout === 'narrow'}
+      <Button
+        class="drawer-toggle"
+        label="Contacts"
+        ariaLabel="Show relationship list"
+        ariaExpanded={mobileListOpen}
+        onclick={() => (mobileListOpen = !mobileListOpen)}
+      />
+      {@render centerAndReading()}
+      {#if mobileListOpen}
+        <DetailDrawer
+          title="Contacts"
+          ariaLabel="Relationship search and results"
+          width="min(390px, 100vw)"
+          onclose={closeDrawer}
+        >
+          <div class="pane-list">
+            {@render listPane()}
+          </div>
+        </DetailDrawer>
+      {/if}
+    {:else}
+      <SplitPane
+        ariaLabel="Resize relationship list"
+        storageKey="msgvault.relationships.list-pane.size"
+        initialSize={300}
+        minPrimary={240}
+        maxPrimary={440}
       >
-        <div class="pane-list">
-          {@render listPane()}
-        </div>
-      </DetailDrawer>
+        {#snippet primary()}
+          <div class="pane-list">
+            {@render listPane()}
+          </div>
+        {/snippet}
+        {#snippet secondary()}
+          {@render centerAndReading()}
+        {/snippet}
+      </SplitPane>
     {/if}
-  {:else}
-    <SplitPane
-      ariaLabel="Resize relationship list"
-      storageKey="msgvault.relationships.list-pane.size"
-      initialSize={300}
-      minPrimary={240}
-      maxPrimary={440}
-    >
-      {#snippet primary()}
-        <div class="pane-list">
-          {@render listPane()}
-        </div>
-      {/snippet}
-      {#snippet secondary()}
-        {@render centerAndReading()}
-      {/snippet}
-    </SplitPane>
-  {/if}
+  </div>
 </main>
 
 <style>
@@ -533,7 +538,18 @@
     display: flex;
     min-height: 0;
     height: 100%;
+    flex-direction: column;
     background: var(--bg-canvas);
+  }
+
+  .hub-header {
+    padding: var(--space-5) var(--space-6) var(--space-4);
+  }
+
+  .hub-body {
+    display: flex;
+    min-height: 0;
+    flex: 1;
   }
 
   .pane-list {
@@ -605,5 +621,11 @@
   .pane-reading {
     height: 100%;
     background: var(--bg-surface);
+  }
+
+  @media (max-width: 760px) {
+    .hub-header {
+      padding-inline: var(--space-4);
+    }
   }
 </style>

@@ -8,6 +8,7 @@
   import { DirectoryController } from '../../directory/controller.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
   import DirectoryList from './DirectoryList.svelte';
+  import PageHeader from '../shell/PageHeader.svelte';
   import PersonDetail from './PersonDetail.svelte';
 
   interface Props {
@@ -129,12 +130,13 @@
 </script>
 
 <main class="directory-workspace" bind:this={root} aria-label="Directory">
-  <header class="directory-toolbar">
-    <div><h1>Directory</h1><p>Durable people and their recorded contact context.</p></div>
-    {#if promotionParticipantID !== undefined}
-      <Button label="Promote to person" tone="workflow" onclick={() => void promote()} />
-    {/if}
-  </header>
+  <PageHeader title="Directory" description="People you've saved, with profiles and contact details.">
+    {#snippet actions()}
+      {#if promotionParticipantID !== undefined}
+        <Button label="Promote to person" tone="workflow" onclick={() => void promote()} />
+      {/if}
+    {/snippet}
+  </PageHeader>
   <div class="filters">
     <SearchInput value={textFilters.directoryQuery} ariaLabel="Search directory" placeholder="Search people, email, or organization…" block oninput={(value) => editTextFilter('directoryQuery', value)} />
     <SelectDropdown title="Contact state" value={controller.contactState} options={contactStateOptions}
@@ -186,14 +188,13 @@
 </main>
 
 <style>
-  .directory-workspace { padding: var(--space-5); display: grid; gap: var(--space-4); flex: 1; min-height: 0; grid-template-rows: auto auto auto minmax(0, 1fr); overflow: hidden; }
-  .directory-toolbar, .filters { display: flex; gap: var(--space-3); align-items: center; justify-content: space-between; flex-wrap: wrap; }
-  h1, p { margin: 0; } .directory-toolbar p { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .directory-workspace { padding: var(--space-5) var(--space-6) var(--space-4); display: grid; gap: var(--space-4); flex: 1; min-height: 0; grid-template-rows: auto auto auto minmax(0, 1fr); overflow: hidden; }
+  .filters { display: flex; gap: var(--space-3); align-items: center; justify-content: space-between; flex-wrap: wrap; }
   .filters { justify-content: stretch; } .filters :global(.kit-search-input) { min-width: min(100%, 300px); flex: 1; }
   .directory-content { display: grid; grid-row: 4; min-height: 0; overflow: hidden; }
   .directory-content > :global(*) { min-height: 0; overflow: auto; }
   .directory-content.has-detail { grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.2fr); gap: var(--space-4); }
   .detail-pane { border-left: 1px solid var(--border-default); min-width: 0; min-height: 0; overflow: auto; }
   .promotion-error { padding: var(--space-3); background: var(--bg-inset); color: var(--text-secondary); }
-  @media (max-width: 760px) { .directory-workspace { padding: var(--space-3); } }
+  @media (max-width: 760px) { .directory-workspace { padding-inline: var(--space-4); } }
 </style>

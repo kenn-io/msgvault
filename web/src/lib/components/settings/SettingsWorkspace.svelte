@@ -46,6 +46,7 @@
     SettingsResponse as GeneratedSettingsResponse,
   } from '../../api/generated/models';
   import type { CardDAVSettingsRequest, SettingsNavigationTarget } from '../../carddav/navigation';
+  import PageHeader from '../shell/PageHeader.svelte';
   import CardDAVSettingsWorkspace from './CardDAVSettingsWorkspace.svelte';
   import PeopleInferenceSettings from './PeopleInferenceSettings.svelte';
   import CronField from './CronField.svelte';
@@ -606,14 +607,16 @@
 {/snippet}
 
 <main class="settings" bind:this={root} aria-label="Settings">
-  <h1 class="kit-sr-only">Settings</h1>
+  <div class="settings-header">
+    <PageHeader title="Settings" description="How this daemon and the web app behave." />
+  </div>
   {#if loading}
     <p class="state" role="status">Loading settings…</p>
   {:else}
     <SettingsLayout
       {categories}
       bind:active={activeCategory}
-      title="Settings"
+      title=""
       footer={activeCategory === 'carddav' || activeCategory === 'people' ? undefined : settingsFooter}
     >
       {#snippet panel(activeId)}
@@ -719,8 +722,17 @@
   .settings {
     display: flex;
     flex: 1;
+    flex-direction: column;
     min-height: 0;
     width: 100%;
+  }
+  .settings-header {
+    padding: var(--space-5) var(--space-6) var(--space-4);
+  }
+  @media (max-width: 760px) {
+    .settings-header {
+      padding-inline: var(--space-4);
+    }
   }
   .settings :global(.kit-settings__nav-item--active),
   .settings :global(.kit-settings__nav-item--active:hover) {

@@ -316,7 +316,7 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
 
     for (const [tab, label, workspace] of [
-      ['Saved views', 'Saved Views', 'saved_views'],
+      ['Saved views', 'Saved views', 'saved_views'],
       ['Sources', 'Sources', 'sources'],
       ['Operations', 'Operations', 'operations'],
       ['Deletions', 'Deletions', 'deletions']
@@ -374,6 +374,47 @@ describe('AppShell', () => {
       await waitFor(() => expect(document.title).toBe('Sources · msgvault'));
       await fireEvent.click(screen.getByRole('button', { name: 'Directory' }));
       await waitFor(() => expect(document.title).toBe('Directory · msgvault'));
+    });
+
+    it.each([
+      ['relationships', 'Relationships'], ['directory', 'Directory'], ['directory_review', 'Reviews'],
+      ['everything', 'Everything'], ['files', 'Files'], ['saved_views', 'Saved views'],
+      ['sources', 'Sources'], ['operations', 'Operations'], ['deletions', 'Deletions']
+    ])('shows one visible page title in %s', async (workspace, title) => {
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+        if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+        if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+        if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
+        if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
+        if (path.endsWith('/deletions')) return Response.json({ manifests: [] });
+        return Response.json(exploreResponse());
+      });
+      render(AppShell, { client: createAPIClient(fetchFn), state: shellState(workspace), enabled: false });
+      const headings = await screen.findAllByRole('heading', { level: 1 });
+      expect(headings.map((heading) => heading.textContent?.trim())).toEqual([title]);
+      expect(headings[0]!.closest('.kit-sr-only')).toBeNull();
+      expect(screen.queryByText(/archive workspace|archive operations/i)).toBeNull();
+    });
+
+    it('puts the Files title above the Everything context bar', async () => {
+      render(AppShell, { client: exploreClient(), state: shellState('files'), enabled: false });
+      const heading = await screen.findByRole('heading', { level: 1, name: 'Files' });
+      const bar = screen.getByRole('region', { name: 'Active analytical context' });
+      expect(heading.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('shows the file count beside the Files title without a second heading', async () => {
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+        if (path.endsWith('/files/search')) {
+          return Response.json({ files: [], total_count: 7, cache_revision: 'cache-1', search_provenance: {} });
+        }
+        return Response.json(exploreResponse());
+      });
+      render(AppShell, { client: createAPIClient(fetchFn), state: shellState('files'), enabled: false });
+      expect(await screen.findByText('7 files')).toBeDefined();
+      expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     });
 
     it('opens Everything with the query when searching from another workspace', async () => {

@@ -7,6 +7,7 @@
   } from '../../api/generated/api/api';
   import { Button, Card, EmptyState, Modal, TextInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
+  import PageHeader from '../shell/PageHeader.svelte';
   import type { APIClient } from '../../api/client';
   import type {
     SavedView as GeneratedSavedView,
@@ -43,10 +44,10 @@
     error = '';
     try {
       const { data, error: responseError } = await generatedListSavedViews(client);
-      if (!data) throw new Error(messageFor(responseError, 'Unable to load Saved Views.'));
+      if (!data) throw new Error(messageFor(responseError, 'Unable to load saved views.'));
       views = data.saved_views ?? [];
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Unable to load Saved Views.';
+      error = cause instanceof Error ? cause.message : 'Unable to load saved views.';
     } finally {
       loading = false;
     }
@@ -118,7 +119,7 @@
       );
       if (!data) {
         if (response.status === 409)
-          throw new Error('This Saved View changed in another session. Reload and review the latest revision.');
+          throw new Error('This saved view changed in another session. Reload and review the latest revision.');
         throw new Error(messageFor(responseError, 'Unable to update this view.'));
       }
       views = views.map((view) => (view.id === data.id ? data : view));
@@ -193,13 +194,8 @@
   }
 </script>
 
-<main class="saved-views" aria-label="Saved Views">
-  <header>
-    <div>
-      <p>Archive workspace</p>
-      <h1>Saved Views</h1>
-    </div>
-  </header>
+<main class="saved-views" aria-label="Saved views">
+  <PageHeader title="Saved views" description="Searches and layouts you've saved to reuse." />
 
   {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
 
@@ -224,11 +220,11 @@
   </Card>
 
   {#if loading}
-    <p role="status">Loading Saved Views…</p>
+    <p role="status">Loading saved views…</p>
   {:else if views.length === 0}
-    <EmptyState title="No Saved Views yet" description="Save the current archive context to reuse it later." />
+    <EmptyState title="No saved views yet" description="Save the current archive context to reuse it later." />
   {:else}
-    <section class="view-list" aria-label="Saved View library">
+    <section class="view-list" aria-label="Saved view library">
       {#each views as view (view.id)}
         {@const incompatibility = incompatibilityFor(view)}
         <article>
@@ -302,7 +298,7 @@
 
 {#if deleting}
   <Modal
-    title="Delete Saved View?"
+    title="Delete saved view?"
     tone="danger"
     onclose={() => {
       deleting = undefined;
@@ -332,31 +328,25 @@
   .saved-views {
     display: flex;
     width: 100%;
-    max-width: 1080px;
     min-height: 0;
     flex: 1;
     flex-direction: column;
     gap: var(--space-4);
-    margin-inline: auto;
-    padding: var(--space-5) var(--space-6);
+    padding: var(--space-5) var(--space-6) var(--space-4);
   }
-  header,
+  .saved-views > :global(:not(header)) {
+    width: 100%;
+    max-width: 960px;
+  }
   article,
   .actions {
     display: flex;
     align-items: center;
     gap: var(--space-3);
   }
-  header p,
-  h1,
   h2,
   article p {
     margin: 0;
-  }
-  header p {
-    color: var(--status-warning-ink);
-    font-size: var(--font-size-2xs);
-    font-weight: 600;
   }
   article p {
     color: var(--text-muted);
@@ -399,6 +389,9 @@
     color: var(--text-danger);
   }
   @media (max-width: 760px) {
+    .saved-views {
+      padding-inline: var(--space-4);
+    }
     .create {
       grid-template-columns: 1fr;
     }

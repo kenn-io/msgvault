@@ -26,6 +26,7 @@
   import OperationRelatedStatus from './OperationRelatedStatus.svelte';
   import OperationRunDetail from './OperationRunDetail.svelte';
   import OperationRunTable from './OperationRunTable.svelte';
+  import PageHeader from '../shell/PageHeader.svelte';
 
   type RelatedStatus = NonNullable<OperationRunDetailModel['related_status']>;
   type Controller = Pick<OperationsController, 'snapshot' | 'refresh' | 'loadMore' | 'restart' | 'runAction'>;
@@ -280,10 +281,11 @@
     {/key}
   {:else if narrow && urlState.operationRunID !== null}
     <section class="focused-detail" aria-label="Operation detail focused content">
-      <header class="focused-header">
-        <h1>Operation detail</h1>
-        <Button size="sm" surface="soft" label="Back to operation history" onclick={() => void closeDetail()} />
-      </header>
+      <PageHeader title="Operation detail" visuallyHiddenTitle>
+        {#snippet actions()}
+          <Button size="sm" surface="soft" label="Back to operation history" onclick={() => void closeDetail()} />
+        {/snippet}
+      </PageHeader>
       {@render operationNotices()}
       {#if current.detailLoading}
         <p role="status" aria-label="Operation detail loading">Loading operation detail…</p>
@@ -301,10 +303,11 @@
       {/if}
     </section>
   {:else}
-    <header class="workspace-header">
-      <div><p>Archive operations</p><h1>Operations</h1></div>
-      <Button size="sm" surface="soft" label="Refresh operations" disabled={current.backgroundLoading} onclick={() => void controller.refresh()} />
-    </header>
+    <PageHeader title="Operations" description="Background work and its history.">
+      {#snippet actions()}
+        <Button size="sm" surface="soft" label="Refresh operations" disabled={current.backgroundLoading} onclick={() => void controller.refresh()} />
+      {/snippet}
+    </PageHeader>
 
     {#if current.statusReadable}
       <OperationLaneCards
@@ -370,11 +373,8 @@
 </main>
 
 <style>
-  .operations-workspace { display: grid; align-content: start; gap: var(--space-4); min-width: 0; min-height: 0; padding: var(--space-5) var(--space-6); overflow: auto; }
-  .workspace-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
-  .focused-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  .workspace-header p, h1, .notice { margin: 0; }
-  .workspace-header p { color: var(--text-muted); font-size: var(--font-size-2xs); font-weight: 600; }
+  .operations-workspace { display: grid; align-content: start; gap: var(--space-4); min-width: 0; min-height: 0; padding: var(--space-5) var(--space-6) var(--space-4); overflow: auto; }
+  .notice { margin: 0; }
   .filters { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
   .content { display: grid; min-width: 0; min-height: 0; }
   .content.has-detail { grid-template-columns: minmax(520px, 1fr) minmax(340px, .6fr); gap: var(--space-4); }
@@ -385,8 +385,8 @@
   .focused-detail { min-height: 0; background: var(--bg-surface); }
 
   @media (max-width: 760px) {
-    .operations-workspace { padding: var(--space-3); }
-    .workspace-header, .filters { align-items: stretch; flex-direction: column; }
+    .operations-workspace { padding-inline: var(--space-4); }
+    .filters { align-items: stretch; flex-direction: column; }
     .filters :global(.kit-select-dropdown), .filters :global(.kit-date-range) { width: 100%; }
   }
 </style>

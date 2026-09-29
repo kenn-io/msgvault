@@ -68,6 +68,7 @@
   import DirectoryWorkspace from '../directory/DirectoryWorkspace.svelte';
   import DirectoryReviewWorkspace from '../directory/DirectoryReviewWorkspace.svelte';
   import KeyboardHelp from './KeyboardHelp.svelte';
+  import PageHeader from './PageHeader.svelte';
   import ArchivedMeetingReader from '../meetings/ArchivedMeetingReader.svelte';
   import { ArchiveMeetingNavigation, archiveMeetingSelection, parseArchiveMeetingSelection } from '../../meetings/archive-navigation.svelte';
   import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory } from '../../meetings/archive-selection';
@@ -108,6 +109,7 @@
   const archivedMeeting = new ArchiveMeetingNavigation(untrack(() => client));
   let archiveReturnFocus: HTMLElement | undefined;
   let archiveReturnSelection = $state<string | null>(null);
+  let fileCount = $state<number | null>(null);
   let archiveWasOpen = false;
   const archiveMeetingID = $derived(parseArchiveMeetingSelection(exploreState.current.selectedRow));
   const archiveNavigationFingerprint = $derived(canonicalFingerprint(exploreState.current));
@@ -1347,6 +1349,13 @@
         />
       {:else if exploreState.current.workspace === 'files'}
         <div class="files-shell">
+          <PageHeader title="Files">
+            {#snippet actions()}
+              {#if fileCount !== null && exploreState.current.groupingChain.length === 0}
+                <span class="files-count" aria-live="polite">{fileCount.toLocaleString()} files</span>
+              {/if}
+            {/snippet}
+          </PageHeader>
           <ContextBar
             {client}
             query={exploreState.current.query}
@@ -1414,6 +1423,8 @@
           {:else}
             <FilesWorkspace
               {client}
+              showHeader={false}
+              bind:fileCount
               predicate={{ ...exploreState.predicate(), grouping: undefined }}
               sort={exploreState.current.fileSort ?? { field: 'occurred_at', direction: 'desc' }}
               filenameQuery={exploreState.current.fileFilenameQuery}
@@ -1599,12 +1610,21 @@
   .files-shell {
     display: flex;
     width: 100%;
-    max-width: 1760px;
     min-height: 0;
     flex: 1;
     flex-direction: column;
     gap: var(--space-4);
-    margin-inline: auto;
-    padding: var(--space-6) var(--space-7) var(--space-4);
+    padding: var(--space-5) var(--space-6) var(--space-4);
+  }
+
+  .files-count {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  @media (max-width: 760px) {
+    .files-shell {
+      padding-inline: var(--space-4);
+    }
   }
 </style>
