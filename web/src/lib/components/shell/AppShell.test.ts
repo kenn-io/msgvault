@@ -1681,6 +1681,48 @@ describe('AppShell', () => {
     }
   });
 
+  it('opens an old attachment link with one Files page instead of paging to find it', async () => {
+    window.history.replaceState(null, '', `/?workspace=files&explore=${encodeURIComponent(JSON.stringify({
+      selectedRow: 'attachment:5'
+    }))}`);
+    let filePages = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/files/5')) return Response.json({
+        id: 5, message_id: 1, conversation_id: 11, filename: 'legacy-report.pdf',
+        mime_type: 'application/pdf', size_bytes: 2048,
+        content_state: 'missing_blob', content_available: false
+      });
+      if (path.endsWith('/files/search')) {
+        filePages += 1;
+        return Response.json({
+          files: [{
+            id: 100 + filePages, key: `file:${100 + filePages}`, entry_key: `message:${filePages}`,
+            message_id: filePages, conversation_id: filePages, occurred_at: '2026-07-18T12:00:00Z',
+            source_id: 1, source_type: 'synthetic', source_identifier: 'archive@example.com',
+            containing_title: 'Containing item', filename: `page-${filePages}.pdf`,
+            mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 1,
+            content_state: 'missing_blob', content_available: false
+          }],
+          total_count: 5, cache_revision: 'cache-1', search_provenance: {},
+          ...(filePages < 5 ? { next_cursor: `page-${filePages}` } : {})
+        });
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      expect(await screen.findByRole('dialog', { name: 'View legacy-report.pdf' })).toBeDefined();
+      expect(await screen.findByText('page-1.pdf')).toBeDefined();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(filePages).toBe(1);
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
   it('keeps Relationships and shows its degraded state when the URL explicitly names it', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({

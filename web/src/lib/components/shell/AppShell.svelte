@@ -1477,7 +1477,7 @@
               filenameQuery={exploreState.current.fileFilenameQuery}
               mimeFamilies={exploreState.current.fileMIMEFamilies}
               activeKey={exploreState.current.activeRow}
-              selectedKey={exploreState.current.selectedRow}
+              selectedKey={selectedAttachmentID === undefined ? exploreState.current.selectedRow : null}
               restorationEpoch={exploreState.restorationEpoch}
               onRestorationComplete={(epoch) => {
                 exploreState.acknowledgeRestoration(epoch);
