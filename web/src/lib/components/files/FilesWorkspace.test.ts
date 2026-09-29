@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -1038,4 +1038,99 @@ describe('FilesWorkspace', () => {
     expect(screen.queryByText(/stale cursor failure/)).toBeNull();
     expect(screen.getByRole('row', { name: /fresh.pdf/ })).toBeDefined();
   });
+
+  describe('controls and rows', () => {
+    function renderFiles(props: Record<string, unknown> = {}) {
+      const fetchFn = vi.fn<typeof fetch>(async () => Response.json(personResponse()));
+      return render(FilesWorkspace, {
+        client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+        sort: { field: 'occurred_at', direction: 'desc' }, ...props
+      });
+    }
+
+    async function typeMenuItems(): Promise<string[]> {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Type' }));
+      const labels = ['Images', 'PDFs', 'Audio', 'Video', 'Text', 'Documents', 'Archives', 'Other'];
+      return labels.filter((label) => screen.queryByRole('button', { name: label }) !== null);
+    }
+
+    it('filters by type from a Type menu that says which types are included', async () => {
+      const onMIMEFamiliesChange = vi.fn();
+      renderFiles({ onMIMEFamiliesChange });
+      await screen.findByText('fixture.pdf');
+
+      expect(screen.queryByRole('checkbox', { name: 'pdf' })).toBeNull();
+      expect(await typeMenuItems())
+        .toEqual(['Images', 'PDFs', 'Audio', 'Video', 'Text', 'Documents', 'Archives', 'Other']);
+      const pdfs = screen.getByRole('button', { name: 'PDFs' });
+      expect(describedBy(pdfs)).toBe('Not included');
+      await fireEvent.click(pdfs);
+      expect(onMIMEFamiliesChange).toHaveBeenCalledWith(['pdf']);
+    });
+
+    it('marks selected types as included', async () => {
+      renderFiles({ mimeFamilies: ['pdf'] });
+      await typeMenuItems();
+      expect(describedBy(screen.getByRole('button', { name: 'PDFs' }))).toBe('Included');
+      expect(describedBy(screen.getByRole('button', { name: 'Images' }))).toBe('Not included');
+    });
+
+    it.each([
+      ['media', ['Images', 'Video']],
+      ['files', ['PDFs', 'Audio', 'Text', 'Documents', 'Archives', 'Other']]
+    ] as const)('limits a person %s Type menu to its own families', async (personPresentation, expected) => {
+      renderFiles({ identityScope: { kind: 'person', id: 1 }, personPresentation });
+      expect(await typeMenuItems()).toEqual(expected);
+    });
+
+    it('shows a readable type and keeps the raw MIME type in the title', async () => {
+      renderFiles();
+      const row = await screen.findByRole('row', { name: /fixture.pdf/ });
+      const type = within(row).getByText('PDF');
+      expect(type.getAttribute('title')).toBe('application/pdf');
+      expect(within(row).queryByText('application/pdf')).toBeNull();
+    });
+
+    it('opens the containing item from its row without opening the viewer', async () => {
+      const onOpenItem = vi.fn();
+      const onSelectedKey = vi.fn();
+      renderFiles({ onOpenItem, onSelectedKey });
+      await screen.findByText('fixture.pdf');
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Open containing item Containing item' }));
+      expect(onOpenItem).toHaveBeenCalledWith('message:11');
+      expect(onSelectedKey).not.toHaveBeenCalled();
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+
+    it('shows the containing item as text when there is nowhere to open it', async () => {
+      renderFiles();
+      const row = await screen.findByRole('row', { name: /fixture.pdf/ });
+      expect(within(row).getByText('Containing item')).toBeDefined();
+      expect(within(row).queryByRole('button')).toBeNull();
+    });
+
+    it('names the visual search toggle plainly', async () => {
+      renderFiles();
+      expect(await screen.findByRole('switch', { name: 'Visual search' })).toBeDefined();
+      expect(screen.queryByRole('switch', { name: 'Hosted visual search' })).toBeNull();
+    });
+
+    it('leaves the landmark to the shell when embedded without a header', async () => {
+      renderFiles({ embedded: true, showHeader: false });
+      await screen.findByText('fixture.pdf');
+      expect(screen.queryByRole('region', { name: 'Files' })).toBeNull();
+      expect(screen.queryByRole('main', { name: 'Files' })).toBeNull();
+    });
+
+    it('keeps its own region when embedded with a header', async () => {
+      renderFiles({ embedded: true, identityScope: { kind: 'person', id: 1 } });
+      expect(await screen.findByRole('region', { name: 'Files' })).toBeDefined();
+    });
+  });
 });
+
+function describedBy(element: HTMLElement): string | undefined {
+  const id = element.getAttribute('aria-describedby');
+  return id ? document.getElementById(id)?.textContent?.trim() : undefined;
+}

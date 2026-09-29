@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { attachmentSelection, parseAttachmentSelection } from './attachment-authority';
+import { parseAttachmentSelection } from './attachment-authority';
 
 describe('attachment viewer authority', () => {
-  it('uses a distinct namespaced selection and round-trips positive safe IDs', () => {
-    expect(attachmentSelection(42)).toBe('attachment:42');
+  it('parses a namespaced positive safe ID', () => {
     expect(parseAttachmentSelection('attachment:42')).toBe(42);
   });
 

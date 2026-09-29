@@ -949,6 +949,8 @@ describe('EverythingWorkspace', () => {
 
     state.commitNavigation({ presentation: 'files' });
     expect(state.current).toMatchObject({ workspace: 'files', presentation: 'files' });
+    expect(await screen.findByRole('main', { name: 'Files' })).toBeDefined();
+    expect(screen.queryByRole('grid', { name: 'Files in current context' })).toBeNull();
     rendered.unmount();
     state.destroy();
   });

@@ -436,6 +436,7 @@ describe('AppShell', () => {
       const bar = screen.getByRole('region', { name: 'Active analytical context' });
       expect(await within(bar).findByText('7 files')).toBeDefined();
       expect(screen.getAllByText('7 files')).toHaveLength(1);
+      expect(screen.queryByText('Count pending')).toBeNull();
       expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     });
 
@@ -458,6 +459,89 @@ describe('AppShell', () => {
       await screen.findByRole('region', { name: 'Active analytical context' });
       expect(screen.queryByRole('combobox', { name: /^Sort:/ })).toBeNull();
       expect(screen.getByRole('combobox', { name: 'Group by: Add grouping' })).toBeDefined();
+    });
+
+    it('lists every file order in the Files Sort menu', async () => {
+      render(AppShell, { client: exploreClient(), state: shellState('files'), enabled: false });
+      await fireEvent.click(screen.getByRole('combobox', { name: 'Sort: Newest first' }));
+      const options = await screen.findAllByRole('option');
+      expect(options.map((option) => option.textContent?.trim())).toEqual([
+        'Newest first', 'Oldest first', 'Filename A–Z', 'Filename Z–A', 'Largest first', 'Smallest first'
+      ]);
+    });
+
+    it('moves between Everything and Files with Show as, keeping the query and filters', async () => {
+      const state = shellState('everything');
+      state.commitNavigation({ query: 'pasta', filters: [{ dimension: 'source', values: ['1'] }] });
+      render(AppShell, { client: exploreClient(), state, enabled: false });
+
+      await chooseSelectOption(screen.getByRole('combobox', { name: /^Show as:/ }), 'Files');
+      expect(await screen.findByRole('main', { name: 'Files' })).toBeDefined();
+      expect(state.current).toMatchObject({
+        workspace: 'files', presentation: 'files', query: 'pasta',
+        filters: [{ dimension: 'source', values: ['1'] }],
+        activeRow: null, selectedRow: null, scrollAnchor: null
+      });
+      expect(screen.queryByRole('grid', { name: 'Files in current context' })).toBeNull();
+
+      await chooseSelectOption(screen.getByRole('combobox', { name: /^Show as:/ }), 'Table');
+      expect(await screen.findByRole('main', { name: 'Everything' })).toBeDefined();
+      expect(state.current).toMatchObject({
+        workspace: 'everything', presentation: 'table', query: 'pasta',
+        filters: [{ dimension: 'source', values: ['1'] }]
+      });
+    });
+
+    it('searches Files live as the global search is typed', async () => {
+      const searches: Request[] = [];
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const request = input instanceof Request ? input : new Request(input);
+        if (new URL(request.url).pathname.endsWith('/files/search')) {
+          searches.push(request);
+          return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+        }
+        return Response.json(exploreResponse());
+      });
+      render(AppShell, { client: createAPIClient(fetchFn), state: shellState('files'), enabled: false });
+      await screen.findByRole('grid', { name: 'Files results' });
+
+      await fireEvent.input(screen.getByRole('searchbox', { name: 'Search everything' }), { target: { value: 'invoice' } });
+
+      await waitFor(async () => {
+        const body = await searches.at(-1)!.clone().json() as { predicate: { query?: string } };
+        expect(body.predicate.query).toBe('invoice');
+      });
+    });
+
+    it('does not flash the previous file count when returning to Files', async () => {
+      let resolveSearch = true;
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+        if (path.endsWith('/files/search')) {
+          if (!resolveSearch) return new Promise<Response>(() => {});
+          return Response.json({ files: [], total_count: 7, cache_revision: 'cache-1', search_provenance: {} });
+        }
+        return Response.json(exploreResponse());
+      });
+      const state = shellState('files');
+      render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+      expect(await screen.findByText('7 files')).toBeDefined();
+      const nav = screen.getByRole('navigation', { name: 'Primary' });
+      await fireEvent.click(within(nav).getByRole('button', { name: 'Everything' }));
+      await screen.findByRole('main', { name: 'Everything' });
+
+      resolveSearch = false;
+      const shown: string[] = [];
+      const observer = new MutationObserver((records) => {
+        for (const record of records) if (record.oldValue) shown.push(record.oldValue);
+      });
+      observer.observe(document.body, { subtree: true, characterData: true, characterDataOldValue: true });
+      await fireEvent.click(within(nav).getByRole('button', { name: 'Files' }));
+      const bar = await screen.findByRole('region', { name: 'Active analytical context' });
+      await waitFor(() => expect(within(bar).getByText('Counting…')).toBeDefined());
+      observer.disconnect();
+      expect(shown.filter((text) => /\d+ files?$/.test(text))).toEqual([]);
+      expect(within(bar).queryByText('7 files')).toBeNull();
     });
 
     it.each([
@@ -2102,13 +2186,14 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
       const input = await screen.findByLabelText('Filter filename');
-      const pdfCheckbox = await screen.findByRole('checkbox', { name: 'pdf' });
       await screen.findByRole('grid', { name: 'Files results' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Type' }));
+      const pdfs = await screen.findByRole('button', { name: 'PDFs' });
       const initialRequestCount = searchRequests.length;
       // Start a debounced filename-search patch (queued for 250ms) and then,
       // still inside that window, commit a navigation.
       await fireEvent.input(input, { target: { value: 'invoice' } });
-      await fireEvent.click(pdfCheckbox);
+      await fireEvent.click(pdfs);
       // The pending patch flushes immediately so the typed text is not lost;
       // the navigation commit applies on top and wins for fileMIMEFamilies.
       expect(state.current.fileFilenameQuery).toBe('invoice');

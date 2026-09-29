@@ -45,6 +45,7 @@ describe('explore labels', () => {
     ).toBe('Word document');
     expect(fileTypeLabel('', 'archive')).toBe('Archive');
     expect(fileTypeLabel(undefined, undefined)).toBe('Unknown type');
+    expect(fileTypeLabel('', 'unrecognized-family')).toBe('Unknown type');
   });
 
   it('turns every server preflight reason into a sentence', () => {

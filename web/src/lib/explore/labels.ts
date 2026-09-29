@@ -113,7 +113,7 @@ export function filterDimensionLabel(dimension: ExploreFilterDimension): string 
 
 export function fileTypeLabel(
   mimeType: string | undefined,
-  family: FileMIMEFamily | undefined
+  family: string | undefined
 ): string {
   const mime = mimeType?.toLowerCase().split(';')[0]?.trim() ?? '';
   const known = KNOWN_MIME[mime];
@@ -122,7 +122,9 @@ export function fileTypeLabel(
   if ((kind === 'image' || kind === 'audio' || kind === 'video') && subtype) {
     return `${subtype.replace(/^x-/, '').toUpperCase()} ${kind}`;
   }
-  return family ? FAMILY_SINGULAR[family] : 'Unknown type';
+  return family && Object.hasOwn(FAMILY_SINGULAR, family)
+    ? FAMILY_SINGULAR[family as FileMIMEFamily]
+    : 'Unknown type';
 }
 
 export function preflightReasonLabel(action: string, reason: string): string {

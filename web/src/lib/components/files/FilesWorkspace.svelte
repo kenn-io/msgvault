@@ -42,10 +42,19 @@
     searchParticipantFiles as generatedSearchParticipantFiles,
     searchPersonFiles as generatedSearchPersonFiles,
   } from '../../api/generated/exploration/exploration';
-  import { Button, Checkbox, SearchInput, SegmentedControl, Toggle, virtualSlice } from '@kenn-io/kit-ui';
+  import {
+    Button,
+    Checkbox,
+    FilterDropdown,
+    SearchInput,
+    SegmentedControl,
+    Toggle,
+    virtualSlice,
+  } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import { analyticalAuthority } from '../../explore/authority';
+  import { FILE_FAMILY_LABELS, fileTypeLabel } from '../../explore/labels';
   import type {
     ExploreCacheUnavailable,
     ExplorePredicate,
@@ -163,7 +172,7 @@
     fileCountLoading = loading;
   });
   let nextCursor = $state<string>();
-  let loading = $state(false);
+  let loading = $state(true);
   let loadingMore = $state(false);
   let error = $state('');
   let pageError = $state('');
@@ -220,6 +229,23 @@
     const selected = mimeFamilies.filter((family) => visibleMIMEFamilies.includes(family));
     return selected.length > 0 ? selected : visibleMIMEFamilies;
   });
+  const typeSections = $derived([
+    {
+      items: visibleMIMEFamilies.map((family) => {
+        const included = effectiveMIMEFamilies.includes(family);
+        return {
+          // The kit derives the description element id from item.id, so keep it unique on the page.
+          id: `file-type-${family}`,
+          label: FILE_FAMILY_LABELS[family],
+          active: included,
+          description: included ? 'Included' : 'Not included',
+          disabled: personScoped && included && effectiveMIMEFamilies.length === 1,
+          closeOnSelect: false,
+          onSelect: () => toggleMIME(family),
+        };
+      }),
+    },
+  ]);
   const mediaRows = $derived(rows as PersonFileSearchRow[]);
   $effect(() => {
     personPresentation = providedPersonPresentation;
@@ -729,7 +755,11 @@
   }
 </script>
 
-<svelte:element this={embedded ? 'section' : 'main'} class="files-workspace" aria-label="Files">
+<svelte:element
+  this={embedded ? (showHeader ? 'section' : 'div') : 'main'}
+  class="files-workspace"
+  aria-label={embedded && !showHeader ? undefined : 'Files'}
+>
   {#if showHeader}
     <header class="workspace-header">
       <div><h1>{personScoped ? 'Attachments' : 'Files'}</h1></div>
@@ -776,7 +806,12 @@
         oninput={(value) => onFilenameQueryChange?.(value)}
       />
     </label>
-    <Toggle bind:checked={hostedVisualSearch} label="Hosted visual search" />
+    <FilterDropdown
+      label="Type"
+      badgeCount={mimeFamilies.filter((family) => visibleMIMEFamilies.includes(family)).length}
+      sections={typeSections}
+    />
+    <Toggle bind:checked={hostedVisualSearch} label="Visual search" />
     {#if hostedVisualSearch}
       <label>
         Visual query
@@ -801,11 +836,6 @@
       {/if}
       <span class="hosted-disclosure">The query is sent to the configured visual embedding provider.</span>
     {/if}
-    <div class="mime-controls" aria-label="MIME families">
-      {#each visibleMIMEFamilies as family}
-        <Checkbox checked={effectiveMIMEFamilies.includes(family)} label={family} onchange={() => toggleMIME(family)} />
-      {/each}
-    </div>
   </div>
 
   {#if personScoped && personPresentation === 'media'}
@@ -936,12 +966,26 @@
                       <strong>{row.filename || '(unnamed)'}</strong>
                       {#if row.search_explain}<small>RRF {row.search_explain.rrf.toFixed(4)}</small>{/if}
                     </span>
-                    <span role="gridcell">{row.mime_type || row.mime_family}</span>
+                    <span role="gridcell" title={row.mime_type || row.mime_family}
+                      >{fileTypeLabel(row.mime_type, row.mime_family)}</span
+                    >
                     <span role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
                     {#if personScoped}<span role="gridcell">{relationship(row)}</span>{/if}
                     <span role="gridcell">{people(row)}</span>
                     <span role="gridcell">{row.source_identifier}</span>
-                    <span role="gridcell">{row.containing_title || row.entry_key}</span>
+                    <span role="gridcell">
+                      {#if onOpenItem}
+                        {@const openItem = onOpenItem}
+                        <button
+                          type="button"
+                          class="containing-link"
+                          aria-label={`Open containing item ${row.containing_title || row.entry_key}`}
+                          onclick={() => openItem(row.entry_key)}>{row.containing_title || row.entry_key}</button
+                        >
+                      {:else}
+                        {row.containing_title || row.entry_key}
+                      {/if}
+                    </span>
                     <span role="gridcell">{availability(row)}</span>
                   </div>
                 {/each}
@@ -1041,7 +1085,6 @@
     font-size: var(--font-size-xs);
   }
   .file-controls,
-  .mime-controls,
   .direction-controls {
     display: flex;
     align-items: center;
@@ -1136,6 +1179,22 @@
     font: inherit;
     text-align: left;
     text-transform: inherit;
+  }
+  .containing-link {
+    max-width: 100%;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    background: transparent;
+    color: var(--accent-blue);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .containing-link:hover {
+    text-decoration: underline;
   }
   .table-body {
     position: relative;

@@ -29,7 +29,7 @@
     FileViewerTarget,
     FileSearchSort,
   } from '../../explore/models';
-  import { attachmentSelection, parseAttachmentSelection } from '../../explore/attachment-authority';
+  import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
   import { ExploreLoader } from '../../explore/loader.svelte';
   import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
@@ -104,12 +104,17 @@
   }: Props = $props();
   const ownsState = untrack(() => providedState === undefined);
   const exploreState = untrack(() => providedState ?? new ExploreState());
-  const ATTACHMENT_HISTORY_MARKER = 'msgvaultAttachmentViewer';
   const archivedMeeting = new ArchiveMeetingNavigation(untrack(() => client));
   let archiveReturnFocus: HTMLElement | undefined;
   let archiveReturnSelection = $state<string | null>(null);
   let fileCount = $state<number | null>(null);
   let fileCountLoading = $state(false);
+  // Reset before the next render so returning to Files never shows the count it had when it was left.
+  $effect.pre(() => {
+    void exploreState.current.workspace;
+    fileCount = null;
+    fileCountLoading = false;
+  });
   const FILE_SORTS: Array<FileSearchSort & { label: string }> = [
     { field: 'occurred_at', direction: 'desc', label: 'Newest first' },
     { field: 'occurred_at', direction: 'asc', label: 'Oldest first' },
@@ -766,7 +771,7 @@
   }
   function currentGrid(): HTMLElement | null {
     return document.querySelector<HTMLElement>(
-      '[role="grid"][aria-label="Everything results"], [role="grid"][aria-label^="Everything grouped by"], [role="grid"][aria-label="Files in current context"]',
+      '[role="grid"][aria-label="Everything results"], [role="grid"][aria-label^="Everything grouped by"]',
     );
   }
   function relayGridKey(event: KeyboardEvent, key: string, init: KeyboardEventInit = {}): void {
@@ -854,27 +859,7 @@
       scrollAnchor: null,
     });
   }
-  function openContextualFile(file: ExploreFileFact): void {
-    contextualViewerReturnFocus = currentGrid() ?? undefined;
-    contextualViewerFile = viewerTargetFromFact(file);
-    commitNavigation({
-      selectedRow: attachmentSelection(file.id),
-      conversationAnchor: null,
-    });
-    window.history.replaceState(
-      {
-        ...(window.history.state && typeof window.history.state === 'object' ? window.history.state : {}),
-        [ATTACHMENT_HISTORY_MARKER]: file.id,
-      },
-      '',
-      window.location.href,
-    );
-  }
   async function closeContextualViewer(): Promise<void> {
-    if (window.history.state?.[ATTACHMENT_HISTORY_MARKER] === selectedAttachmentID) {
-      window.history.back();
-      return;
-    }
     replaceCommittedNavigation({ selectedRow: null });
     contextualViewerFile = undefined;
     await tick();
@@ -1533,8 +1518,6 @@
           {focusGrid}
           {openRow}
           {drillGroup}
-          {openFileItem}
-          {openContextualFile}
           closeReadingPane={() => void closeReadingPane()}
           {openRelationship}
           {changeConversationAnchor}

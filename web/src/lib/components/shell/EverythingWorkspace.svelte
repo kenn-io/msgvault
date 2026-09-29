@@ -12,7 +12,6 @@
     EntryRow,
     AllMatchingExploreSelection,
     ExploreCacheUnavailable,
-    ExploreFileFact,
     ExploreGroupDimension,
     ExploreGroupRow,
     ExploreSearchMode,
@@ -29,7 +28,6 @@
   import ColumnsMenu from '../explore/ColumnsMenu.svelte';
   import ContextBar from '../explore/ContextBar.svelte';
   import EverythingTable from '../explore/EverythingTable.svelte';
-  import FilesPresentation from '../explore/FilesPresentation.svelte';
   import GroupTable from '../explore/GroupTable.svelte';
   import SelectionBar from '../explore/SelectionBar.svelte';
   import SplitPane from '../layout/SplitPane.svelte';
@@ -67,8 +65,6 @@
     focusGrid: () => void;
     openRow: (row: EntryRow) => void;
     drillGroup: (row: ExploreGroupRow) => void;
-    openFileItem: (entryKey: string) => void;
-    openContextualFile: (file: ExploreFileFact) => void;
     closeReadingPane: () => void;
     openRelationship: (participantID: number) => void;
     changeConversationAnchor: (anchorId: number) => void;
@@ -98,8 +94,6 @@
     focusGrid,
     openRow,
     drillGroup,
-    openFileItem,
-    openContextualFile,
     closeReadingPane,
     openRelationship,
     changeConversationAnchor,
@@ -457,7 +451,6 @@
     }
     if (
       !currentResult ||
-      exploreState.current.presentation === 'files' ||
       !predicate.query ||
       (predicate.search_mode !== 'full_text' && predicate.search_mode !== 'hybrid') ||
       loader.resultFingerprint !== predicateFingerprint(predicate) ||
@@ -618,6 +611,7 @@
     presentation={exploreState.current.presentation}
     onPresentationChange={(presentation) =>
       commitNavigation({
+        ...(presentation === 'files' ? { workspace: 'files' as const } : {}),
         presentation,
         activeRow: null,
         selectedRow: null,
@@ -730,27 +724,6 @@
               onLoadThroughEnd={loader.loadThroughEnd}
               onActiveKey={(activeRow) => exploreState.replaceTransient({ activeRow })}
               onScrollAnchor={(key, offset) => exploreState.replaceTransient({ scrollAnchor: { key, offset } })}
-              onRetry={loader.retry}
-            />
-          {:else if exploreState.current.presentation === 'files'}
-            <FilesPresentation
-              files={loader.fileFacts}
-              loading={loader.loading}
-              loadingMore={loader.loadingMore}
-              hasMore={Boolean(loader.nextCursor)}
-              totalCount={loader.result?.totalCount}
-              generation={loader.resultGeneration}
-              error={loader.error}
-              pageError={loader.pageError}
-              unavailable={loader.unavailable}
-              focusedKey={exploreState.current.activeRow}
-              scrollAnchor={exploreState.current.scrollAnchor}
-              restoring={loader.restoring}
-              onOpenFile={openContextualFile}
-              onOpenItem={openFileItem}
-              onActiveKey={(activeRow) => exploreState.replaceTransient({ activeRow })}
-              onScrollAnchor={(key, offset) => exploreState.replaceTransient({ scrollAnchor: { key, offset } })}
-              onLoadMore={loader.loadMore}
               onRetry={loader.retry}
             />
           {:else}
