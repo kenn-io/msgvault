@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -31,7 +32,7 @@ func prepareIMAPDraftAttachmentWrites(ctx context.Context, parsed *msgmime.Messa
 		return nil, err
 	}
 	if parsed == nil {
-		return nil, fmt.Errorf("parse generated draft before preparing attachments")
+		return nil, errors.New("parse generated draft before preparing attachments")
 	}
 	writes := make([]store.AttachmentWrite, 0, len(parsed.Attachments))
 	used := make([]bool, len(refs))

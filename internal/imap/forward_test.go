@@ -114,11 +114,19 @@ func TestBuildForwardReplacementPreservesParts(t *testing.T) {
 
 func TestBuildForwardRejectsUnsupportedParts(t *testing.T) {
 	assertions := assert.New(t)
+	requirements := require.New(t)
 	_, err := BuildIMAPDraftReplacement([]byte("From: a@example.test\r\nTo: b@example.test\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n"), "changed", time.Now(), "")
-	assertions.Error(err)
+	requirements.Error(err)
 	assertions.True(strings.Contains(err.Error(), "multipart") || strings.Contains(err.Error(), "forward"))
 	_, err = BuildIMAPDraftReplacement([]byte("From: a@example.test\r\nTo: b@example.test\r\nX-Msgvault-Forward: 1\r\nContent-Type: multipart/signed; boundary=x\r\n\r\n--x--\r\n"), "changed", time.Now(), "")
-	assertions.ErrorContains(err, "does not support")
+	requirements.ErrorContains(err, "does not support")
+}
+
+func TestBuildIMAPDraftReplacementWithoutContentType(t *testing.T) {
+	raw := []byte("From: sender@example.test\r\nTo: recipient@example.test\r\nSubject: Draft\r\n\r\nOriginal body\r\n")
+	draft, err := BuildIMAPDraftReplacement(raw, "Updated body", time.Now(), "updated@example.test")
+	require.NoError(t, err)
+	assert.Contains(t, draft.Parsed.BodyText, "Updated body")
 }
 
 func TestBuildForwardKeepsUnresolvedParentCID(t *testing.T) {

@@ -149,11 +149,11 @@ func parseDraftReplyArgs(args []string) (draftReplyIntent, error) {
 				return invalidDraftReplyArgs("--json accepts no value")
 			}
 			intent.JSON, jsonSet = true, true
-		case "log-level", "verbose", "log-sql", "log-sql-slow-ms":
+		case "log-level", flagVerbose, flagLogSQL, "log-sql-slow-ms":
 			// The client forwards root logging flags to every daemon command.
 			// This route runs in-process on the daemon's logger, so the flag
 			// has nothing to configure. Consume its value and move on.
-			if !hasValue && name != "verbose" && name != "log-sql" && len(rest) > 0 {
+			if !hasValue && name != flagVerbose && name != flagLogSQL && len(rest) > 0 {
 				rest = rest[1:]
 			}
 		default:

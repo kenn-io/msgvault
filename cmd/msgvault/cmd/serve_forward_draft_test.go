@@ -64,7 +64,7 @@ func TestDraftForwardConversationKeyUsesProviderReceipt(t *testing.T) {
 	parent, err := fixture.store.GetMessageContext(t.Context(), fixture.parentID)
 	requirements.NoError(err)
 	target := draftReplyTarget{source: fixture.source, parent: parent, parentSource: fixture.source, forward: true}
-	build := func(receipt store.IMAPDraftReceipt, messageID string) imaplib.ReplyDraft {
+	build := func(messageID string) imaplib.ReplyDraft {
 		draft, buildErr := imaplib.BuildForward(imaplib.ForwardOptions{
 			From: "alice@example.test", To: []string{"recipient@example.test"}, Subject: "Question", Body: "forward",
 		}, time.Now(), messageID)
@@ -73,8 +73,8 @@ func TestDraftForwardConversationKeyUsesProviderReceipt(t *testing.T) {
 	}
 	receipt1 := store.IMAPDraftReceipt{SourceID: fixture.source.ID, Mailbox: "Drafts", UIDValidity: 4, UID: 1}
 	receipt2 := store.IMAPDraftReceipt{SourceID: fixture.source.ID, Mailbox: "Drafts", UIDValidity: 4, UID: 2}
-	data1 := draftReplyPersistData(target, build(receipt1, "forward-1@example.test"), receipt1, "forward-1@example.test", []int64{1, 2})
-	data2 := draftReplyPersistData(target, build(receipt2, "forward-2@example.test"), receipt2, "forward-2@example.test", []int64{1, 2})
+	data1 := draftReplyPersistData(target, build("forward-1@example.test"), receipt1, "forward-1@example.test", []int64{1, 2})
+	data2 := draftReplyPersistData(target, build("forward-2@example.test"), receipt2, "forward-2@example.test", []int64{1, 2})
 	requirements.NotNil(data1.Conversation)
 	requirements.NotNil(data2.Conversation)
 	assertions.NotEqual(data1.Conversation.SourceConversationID, data2.Conversation.SourceConversationID)
@@ -473,7 +473,7 @@ func TestDraftForwardRefusesMissingAttachmentBeforeAppend(t *testing.T) {
 	requirements.Error(err)
 	assertions.Equal("attachment_preflight_failed", err.Error())
 	var coded *api.CLIRunCodedError
-	requirements.True(errors.As(err, &coded))
+	requirements.ErrorAs(err, &coded)
 	assertions.Len(events, 1)
 	assertions.Equal(cliStreamStderr, events[0].Type)
 	assertions.Contains(events[0].Data, "report.txt")
@@ -797,7 +797,7 @@ func TestDraftForwardAttachmentsSurviveParentRemoval(t *testing.T) {
 		}
 	})
 	requirements.NoError(err)
-	requirements.NotZero(draft.DraftID)
+	requirements.NotEmpty(draft.DraftID)
 	_, err = fixture.maintenance.pack(t.Context(), 0)
 	requirements.NoError(err)
 	_, err = fixture.store.DB().Exec(fixture.store.Rebind("DELETE FROM messages WHERE id = ?"), fixture.messageID)

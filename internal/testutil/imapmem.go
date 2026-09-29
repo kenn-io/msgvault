@@ -56,6 +56,7 @@ type receiptlessAppendSession struct {
 
 type appendLimitSession struct {
 	imapserver.Session
+
 	limit uint32
 }
 
@@ -65,6 +66,7 @@ func (s *appendLimitSession) AppendLimit() uint32 {
 
 type statusAppendLimitSession struct {
 	imapserver.Session
+
 	mailbox string
 	limit   uint32
 }
@@ -75,7 +77,7 @@ func (s *statusAppendLimitSession) Status(
 ) (*imap.StatusData, error) {
 	data, err := s.Session.Status(mailbox, options)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("status %q: %w", mailbox, err)
 	}
 	if mailbox == s.mailbox && options.AppendLimit {
 		data.AppendLimit = &s.limit

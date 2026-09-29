@@ -706,7 +706,7 @@ func registerRootFlags(root *cobra.Command) {
 	flags := root.PersistentFlags()
 	flags.String("config", "", "config file (default: ~/.msgvault/config.toml)")
 	flags.String("home", "", "home directory (overrides MSGVAULT_HOME)")
-	flags.BoolP("verbose", "v", false, "verbose output (implies --log-level=debug)")
+	flags.BoolP(flagVerbose, "v", false, "verbose output (implies --log-level=debug)")
 	flags.Bool(localValue, false, "use local daemon instead of configured remote")
 	flags.String("log-file", "",
 		"override log file path (default: <data dir>/logs/msgvault-YYYY-MM-DD.log)")
@@ -714,7 +714,7 @@ func registerRootFlags(root *cobra.Command) {
 		"log level: debug, info, warn, error (default: info)")
 	flags.Bool("no-log-file", false,
 		"disable the log file for this run (stderr output stays on)")
-	flags.Bool("log-sql", false,
+	flags.Bool(flagLogSQL, false,
 		"log every SQL query at info level (verbose; for debugging)")
 	flags.Int64("log-sql-slow-ms", 0,
 		"threshold in ms above which a SQL query is logged as slow "+

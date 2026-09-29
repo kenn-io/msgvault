@@ -250,14 +250,17 @@ func writeTextPart(writer *multipart.Writer, contentType, value, encoding string
 	}
 	part, err := writer.CreatePart(header)
 	if err != nil {
-		return err
+		return fmt.Errorf("create text part: %w", err)
 	}
 	qp := quotedprintable.NewWriter(part)
 	_, err = qp.Write([]byte(value))
 	if err != nil {
-		return err
+		return fmt.Errorf("write text part: %w", err)
 	}
-	return qp.Close()
+	if err := qp.Close(); err != nil {
+		return fmt.Errorf("close text part: %w", err)
+	}
+	return nil
 }
 
 func writeQuotedRelated(writer *multipart.Writer, quotedText, quotedHTML, headerSummary string, attachments []ForwardAttachment, note string) error {
@@ -271,7 +274,7 @@ func writeQuotedRelated(writer *multipart.Writer, quotedText, quotedHTML, header
 		return err
 	}
 	if err := alternativeWriter.Close(); err != nil {
-		return err
+		return fmt.Errorf("close forward alternatives: %w", err)
 	}
 	var nested bytes.Buffer
 	nestedWriter := multipart.NewWriter(&nested)
@@ -280,7 +283,7 @@ func writeQuotedRelated(writer *multipart.Writer, quotedText, quotedHTML, header
 	rootHeader.Set("Content-Disposition", "inline")
 	root, err := nestedWriter.CreatePart(rootHeader)
 	if err != nil {
-		return err
+		return fmt.Errorf("create forward alternatives: %w", err)
 	}
 	if _, err := root.Write(alternative.Bytes()); err != nil {
 		return err
@@ -294,14 +297,14 @@ func writeQuotedRelated(writer *multipart.Writer, quotedText, quotedHTML, header
 		}
 	}
 	if err := nestedWriter.Close(); err != nil {
-		return err
+		return fmt.Errorf("close forward related content: %w", err)
 	}
 	header := textproto.MIMEHeader{}
 	header.Set("Content-Type", `multipart/related; boundary="`+nestedWriter.Boundary()+`"`)
 	header.Set("Content-Disposition", "inline")
 	part, err := writer.CreatePart(header)
 	if err != nil {
-		return err
+		return fmt.Errorf("create forward related content: %w", err)
 	}
 	_, err = part.Write(nested.Bytes())
 	return err
@@ -334,7 +337,7 @@ func writeBinaryPart(writer *multipart.Writer, attachment ForwardAttachment) err
 	header.Set("Content-Transfer-Encoding", "base64")
 	part, err := writer.CreatePart(header)
 	if err != nil {
-		return err
+		return fmt.Errorf("create forwarded attachment: %w", err)
 	}
 	encoder := base64.NewEncoder(base64.StdEncoding, part)
 	if _, err := encoder.Write(attachment.Content); err != nil {
@@ -400,7 +403,11 @@ func BuildIMAPDraftReplacement(currentRaw []byte, body string, now time.Time, me
 	if err != nil {
 		return ReplyDraft{}, fmt.Errorf("read draft headers: %w", err)
 	}
-	mediaType, params, err := mime.ParseMediaType(message.Header.Get("Content-Type"))
+	contentType := message.Header.Get("Content-Type")
+	if contentType == "" {
+		return BuildDraftReplacement(currentRaw, body, now, messageID)
+	}
+	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
 		return ReplyDraft{}, fmt.Errorf("invalid draft Content-Type: %w", err)
 	}
@@ -476,14 +483,14 @@ func rewriteForwardMultipart(body io.Reader, boundary, note string) ([]byte, str
 	header.Set("Content-Transfer-Encoding", "quoted-printable")
 	part, err := writer.CreatePart(header)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("create forward note: %w", err)
 	}
 	qp := quotedprintable.NewWriter(part)
 	if _, err := qp.Write([]byte(note)); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("write forward note: %w", err)
 	}
 	if err := qp.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("close forward note: %w", err)
 	}
 	second, err := reader.NextRawPart()
 	if err != nil {
@@ -509,7 +516,7 @@ func rewriteForwardMultipart(body io.Reader, boundary, note string) ([]byte, str
 	}
 	part, err = writer.CreatePart(secondHeader)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("create quoted forward content: %w", err)
 	}
 	if _, err := part.Write(secondBody); err != nil {
 		return nil, "", err
@@ -531,14 +538,14 @@ func rewriteForwardMultipart(body io.Reader, boundary, note string) ([]byte, str
 		}
 		part, err = writer.CreatePart(cloneMIMEHeader(next.Header))
 		if err != nil {
-			return nil, "", err
+			return nil, "", fmt.Errorf("create forwarded attachment: %w", err)
 		}
 		if _, err := part.Write(nextBody); err != nil {
 			return nil, "", err
 		}
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("close forwarded MIME: %w", err)
 	}
 	return out.Bytes(), writer.Boundary(), nil
 }
@@ -554,7 +561,7 @@ func rewriteForwardRelated(body []byte, boundary, note string) ([]byte, string, 
 			break
 		}
 		if err != nil {
-			return nil, "", err
+			return nil, "", fmt.Errorf("read related part: %w", err)
 		}
 		partBody, err := io.ReadAll(part)
 		if err != nil {
@@ -578,7 +585,7 @@ func rewriteForwardRelated(body []byte, boundary, note string) ([]byte, string, 
 		}
 		created, err := writer.CreatePart(header)
 		if err != nil {
-			return nil, "", err
+			return nil, "", fmt.Errorf("create related forward part: %w", err)
 		}
 		if _, err := created.Write(partBody); err != nil {
 			return nil, "", err
@@ -586,7 +593,7 @@ func rewriteForwardRelated(body []byte, boundary, note string) ([]byte, string, 
 		partIndex++
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("close related forward content: %w", err)
 	}
 	if partIndex == 0 {
 		return nil, "", errors.New("forward draft related content is incomplete")
@@ -628,7 +635,7 @@ func rewriteForwardAlternative(body []byte, boundary, note string) ([]byte, stri
 		}
 		created, err := writer.CreatePart(header)
 		if err != nil {
-			return nil, "", err
+			return nil, "", fmt.Errorf("create forward alternative: %w", err)
 		}
 		if _, err := created.Write(partBody); err != nil {
 			return nil, "", err
@@ -638,7 +645,7 @@ func rewriteForwardAlternative(body []byte, boundary, note string) ([]byte, stri
 		return nil, "", errors.New("forward draft has extra alternative parts")
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("close forward alternatives: %w", err)
 	}
 	return out.Bytes(), writer.Boundary(), nil
 }
@@ -705,10 +712,10 @@ func encodeTransfer(data []byte, encoding string) ([]byte, error) {
 		var out bytes.Buffer
 		qp := quotedprintable.NewWriter(&out)
 		if _, err := qp.Write(data); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("encode quoted-printable part: %w", err)
 		}
 		if err := qp.Close(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("close quoted-printable part: %w", err)
 		}
 		return out.Bytes(), nil
 	default:

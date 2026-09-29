@@ -78,7 +78,7 @@ func TestAppendDraftEncodedSizeLimitBase64Expansion(t *testing.T) {
 	encoded := base64.StdEncoding.EncodeToString(content)
 	requirements.Contains(string(draft.Raw), encoded)
 	unencodedRaw := bytes.Replace(draft.Raw, []byte(encoded), content, 1)
-	assertions.Equal(base64.StdEncoding.EncodedLen(attachmentBytes), len(encoded))
+	assertions.Len(encoded, base64.StdEncoding.EncodedLen(attachmentBytes))
 	assertions.Greater(len(draft.Raw), len(unencodedRaw))
 	limit := uint32(len(unencodedRaw))
 	assertions.Less(len(content), int(limit))

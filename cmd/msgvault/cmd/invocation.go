@@ -129,8 +129,8 @@ func prepareInvocation(cmd *cobra.Command) *invocation {
 	if flags.Lookup("home") != nil {
 		inv.options.homeDir = invocationStringFlag(flags, "home")
 	}
-	if flags.Lookup("verbose") != nil {
-		inv.options.verbose = invocationBoolFlag(flags, "verbose")
+	if flags.Lookup(flagVerbose) != nil {
+		inv.options.verbose = invocationBoolFlag(flags, flagVerbose)
 	}
 	if flags.Lookup(localValue) != nil {
 		inv.options.useLocal = invocationBoolFlag(flags, localValue)
@@ -144,8 +144,8 @@ func prepareInvocation(cmd *cobra.Command) *invocation {
 	if flags.Lookup("no-log-file") != nil {
 		inv.options.noLogFile = invocationBoolFlag(flags, "no-log-file")
 	}
-	if flags.Lookup("log-sql") != nil {
-		inv.options.logSQL = invocationBoolFlag(flags, "log-sql")
+	if flags.Lookup(flagLogSQL) != nil {
+		inv.options.logSQL = invocationBoolFlag(flags, flagLogSQL)
 	}
 	if flags.Lookup("log-sql-slow-ms") != nil {
 		inv.options.logSQLSlow = invocationInt64Flag(flags, "log-sql-slow-ms")
@@ -167,12 +167,12 @@ func prepareInvocation(cmd *cobra.Command) *invocation {
 	}
 	inv.options.cfgFileChanged = invocationFlagChanged(flags, "config")
 	inv.options.homeDirChanged = invocationFlagChanged(flags, "home")
-	inv.options.verboseChanged = invocationFlagChanged(flags, "verbose")
+	inv.options.verboseChanged = invocationFlagChanged(flags, flagVerbose)
 	inv.options.useLocalChanged = invocationFlagChanged(flags, localValue)
 	inv.options.logFileChanged = invocationFlagChanged(flags, "log-file")
 	inv.options.logLevelChanged = invocationFlagChanged(flags, "log-level")
 	inv.options.noLogChanged = invocationFlagChanged(flags, "no-log-file")
-	inv.options.logSQLChanged = invocationFlagChanged(flags, "log-sql")
+	inv.options.logSQLChanged = invocationFlagChanged(flags, flagLogSQL)
 	inv.options.logSlowChanged = invocationFlagChanged(flags, "log-sql-slow-ms")
 
 	// Cobra retains a leaf's context between Execute calls. Refresh it from
@@ -227,8 +227,8 @@ func clearInvocationFlags(root *cobra.Command) {
 		return
 	}
 	for _, name := range []string{
-		"config", "home", "verbose", localValue, "log-file", "log-level",
-		"no-log-file", "log-sql", "log-sql-slow-ms", "agent-url",
+		"config", "home", flagVerbose, localValue, "log-file", "log-level",
+		"no-log-file", flagLogSQL, "log-sql-slow-ms", "agent-url",
 		"agent-token-file", "agent-allow-insecure",
 	} {
 		if flag := root.PersistentFlags().Lookup(name); flag != nil {

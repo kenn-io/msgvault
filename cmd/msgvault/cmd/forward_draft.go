@@ -11,9 +11,7 @@ func newDraftForwardCommand() *cobra.Command {
 		Use:   "draft-forward <message-id>",
 		Short: "Create an IMAP draft forwarding an archived message",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDaemonCLICommandHTTPFromCobra(cmd, args)
-		},
+		RunE:  runDaemonCLICommandHTTPFromCobra,
 	}
 	command.Flags().String(draftFromFlag, "", "confirmed destination source identity for the draft")
 	command.Flags().StringArray("to", nil, "recipient address, repeatable")

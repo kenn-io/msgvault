@@ -26,8 +26,8 @@ const (
 // on the client is honored by the daemon-spawned CLI subprocess.
 var loggingPassthroughFlags = map[string]bool{
 	"log-level":       true,
-	"verbose":         true,
-	"log-sql":         true,
+	flagVerbose:       true,
+	flagLogSQL:        true,
 	"log-sql-slow-ms": true,
 }
 

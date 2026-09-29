@@ -106,8 +106,8 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 				return invalidDraftComposeArgs("--json accepts one flag without a value")
 			}
 			intent.JSON, jsonSet = true, true
-		case "log-level", "verbose", "log-sql", "log-sql-slow-ms":
-			if !hasValue && name != "verbose" && name != "log-sql" && len(rest) > 0 {
+		case "log-level", flagVerbose, flagLogSQL, "log-sql-slow-ms":
+			if !hasValue && name != flagVerbose && name != flagLogSQL && len(rest) > 0 {
 				rest = rest[1:]
 			}
 		default:

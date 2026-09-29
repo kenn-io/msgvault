@@ -43,6 +43,11 @@ const (
 // the format value can change independently.
 const flagJSON = "json"
 
+const (
+	flagVerbose = "verbose"
+	flagLogSQL  = "log-sql"
+)
+
 // cmdUseList is the shared Cobra use/name for list subcommands.
 const cmdUseList = "list"
 
