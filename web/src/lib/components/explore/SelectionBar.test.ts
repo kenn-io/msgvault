@@ -186,14 +186,16 @@ describe('SelectionBar', () => {
         ),
       ),
       meetingSelection,
+      canExportMeetings: true,
     });
 
     expect(screen.getByText('Export unavailable: Selection contains items without exportable files.')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Select meetings only');
   });
 
-  it('explains an explicit selection over the 100-meeting context limit before request', () => {
+  it('explains an explicit selection over the 100-meeting context limit before request', async () => {
     const rowKeys = Array.from({ length: 101 }, (_, index) => `message:${index + 1}`);
     const selection = new ExploreSelectionState();
     selection.selectVisible(rowKeys);
@@ -202,6 +204,7 @@ describe('SelectionBar', () => {
       selection,
       totalCount: rowKeys.length,
       client: createAPIClient(fetchFn),
+      canExportMeetings: true,
       meetingSelection: {
         mode: 'explicit',
         predicate: { filters: [], presentation: 'table' },
@@ -211,8 +214,49 @@ describe('SelectionBar', () => {
       } satisfies GeneratedExploreSelection,
     });
 
+    await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
     expect(screen.getByText('Meeting context accepts at most 100 meetings.')).toBeDefined();
     expect((screen.getByRole('button', { name: 'Export meeting context' }) as HTMLButtonElement).disabled).toBe(true);
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  describe('meeting context', () => {
+    const meetingSelection: GeneratedExploreSelection = {
+      mode: 'explicit',
+      predicate: { filters: [], presentation: 'table' },
+      row_keys: ['message:1'],
+      cache_revision: 'cache-1',
+      search_provenance: {},
+    };
+    const renderBar = (canExportMeetings?: boolean) => {
+      const selection = new ExploreSelectionState();
+      selection.selectVisible(['message:1']);
+      render(SelectionBar, {
+        selection,
+        totalCount: 2,
+        client: createAPIClient(vi.fn<typeof fetch>()),
+        meetingSelection,
+        canExportMeetings,
+      });
+    };
+
+    it('hides meeting export for selections that cannot contain meetings', () => {
+      renderBar(false);
+
+      expect(screen.queryByRole('button', { name: 'Meeting context…' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Export meeting context' })).toBeNull();
+    });
+
+    it('reveals the export controls from a disclosure button for meeting selections', async () => {
+      renderBar(true);
+
+      expect(screen.queryByRole('button', { name: 'Export meeting context' })).toBeNull();
+      const toggle = screen.getByRole('button', { name: 'Meeting context…' });
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      await fireEvent.click(toggle);
+
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      expect(screen.getByRole('button', { name: 'Export meeting context' })).toBeDefined();
+    });
   });
 });

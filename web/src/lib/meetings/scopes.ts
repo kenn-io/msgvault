@@ -1,6 +1,6 @@
 import type { MeetingScopeRequest } from '../api/generated/models';
 import type { GroupDetailAuthority } from '../explore/group-detail';
-import type { ExplorePredicate } from '../explore/models';
+import type { EntryRow, ExplorePredicate } from '../explore/models';
 import type { MeetingPanelScope } from './controller.svelte';
 
 export function exploreMeetingScope(predicate: ExplorePredicate, authority: GroupDetailAuthority): Extract<MeetingPanelScope, { kind: 'explore' }> {
@@ -10,6 +10,12 @@ export function exploreMeetingScope(predicate: ExplorePredicate, authority: Grou
     candidate_snapshot_id: authority.candidateSnapshotId
   } };
 }
+
+export const isMeetingTranscript = (row: Pick<EntryRow, 'message_type'>): boolean =>
+  row.message_type === 'meeting_transcript';
+
+export const filtersToMeetingTranscripts = (predicate: ExplorePredicate): boolean =>
+  predicate.filters?.some((filter) => filter.dimension === 'message_type' && filter.values.includes('meeting_transcript')) ?? false;
 
 const unsupportedFilters = () => new Error('Meeting activity cannot represent these relationship filters exactly. Adjust the filters to load meeting activity.');
 

@@ -21,6 +21,7 @@
     preflight = undefined,
     client = undefined,
     meetingSelection = undefined,
+    canExportMeetings = false,
     onExport = undefined,
     onOpenInSource = undefined,
     onReviewDeletion = undefined,
@@ -31,6 +32,7 @@
     preflight?: Preflight;
     client?: APIClient;
     meetingSelection?: GeneratedExploreSelection;
+    canExportMeetings?: boolean;
     onExport?: () => void;
     onOpenInSource?: () => void;
     onReviewDeletion?: (mode: 'explicit' | 'all_matching') => void;
@@ -54,6 +56,7 @@
       : '',
   );
 
+  let meetingOpen = $state(false);
   let menuOpen = $state(false);
   let menuRoot = $state<HTMLElement>();
 
@@ -97,11 +100,13 @@
         Export unavailable: {preflightReasonLabel('export', exportReason)}
       </span>
     {/if}
-    {#if client && meetingSelection}
-      <MeetingContextExport
-        {client}
-        request={{ selection: meetingSelection }}
-        disabledReason={contextDisabledReason}
+    {#if client && meetingSelection && canExportMeetings}
+      <Button
+        size="sm"
+        surface="soft"
+        label="Meeting context…"
+        ariaExpanded={meetingOpen}
+        onclick={() => (meetingOpen = !meetingOpen)}
       />
     {/if}
     {#if onReviewDeletion}
@@ -132,6 +137,15 @@
       </span>
     {/if}
     <Button size="sm" surface="soft" label="Clear selection" onclick={() => selection.clear()} />
+    {#if client && meetingSelection && canExportMeetings && meetingOpen}
+      <div class="meeting-row">
+        <MeetingContextExport
+          {client}
+          request={{ selection: meetingSelection }}
+          disabledReason={contextDisabledReason}
+        />
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -155,6 +169,14 @@
   [role='status'] {
     margin-right: auto;
     font-weight: 600;
+  }
+
+  .meeting-row {
+    display: flex;
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3) var(--space-4);
   }
 
   .more-menu {

@@ -39,7 +39,7 @@
   import type { SearchCoverageAction } from '../../search/modes';
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
   import PageHeader from './PageHeader.svelte';
-  import { exploreMeetingScope } from '../../meetings/scopes';
+  import { exploreMeetingScope, filtersToMeetingTranscripts, isMeetingTranscript } from '../../meetings/scopes';
   import type { EverythingSessionState } from './EverythingSessionState.svelte';
 
   type ExplorePreflight = GeneratedExplorePreflightResponse;
@@ -349,6 +349,12 @@
       });
   });
 
+  const canExportMeetings = $derived(
+    selection.mode === 'all_matching'
+      ? filtersToMeetingTranscripts(exploreState.predicate())
+      : loader.rows.some((row) => selection.isSelected(row.key) && isMeetingTranscript(row)),
+  );
+
   let meetingReloadRequestedAt: number | undefined;
   const meetingPredicateFingerprint = $derived(predicateFingerprint(exploreState.predicate()));
   const meetingScope = $derived(session.meetingOverview?.fingerprint === meetingPredicateFingerprint
@@ -361,8 +367,7 @@
     const loading = loader.loading;
     const generation = loader.resultGeneration;
     const resultFingerprint = loader.resultFingerprint;
-    const isMeetingView = exploreState.current.workspace === 'everything' &&
-      predicate.filters?.some((filter) => filter.dimension === 'message_type' && filter.values.includes('meeting_transcript'));
+    const isMeetingView = exploreState.current.workspace === 'everything' && filtersToMeetingTranscripts(predicate);
     untrack(() => {
       if (!isMeetingView || session.meetingOverview?.fingerprint !== fingerprint) session.meetingOverview = undefined;
       if (!isMeetingView || !result || loading || resultFingerprint !== fingerprint) return;
@@ -811,6 +816,7 @@
               preflight={selectionPreflight}
               {client}
               {meetingSelection}
+              {canExportMeetings}
               onExport={exportSelection}
               {onReviewDeletion}
             />

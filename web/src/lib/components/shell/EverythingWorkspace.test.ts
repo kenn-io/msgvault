@@ -471,6 +471,46 @@ describe('EverythingWorkspace', () => {
   });
 
 
+  it('offers meeting export only when the selection includes a meeting', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/preflight')) {
+        return Response.json({
+          count: 1, deletable_count: 1, estimated_bytes: 10, cache_revision: 'cache-1', search_provenance: {},
+          unavailable_actions: [], action_targets: [],
+          operation_token: 'operation-1', expires_at: '2026-09-12T17:00:00Z',
+        });
+      }
+      return Response.json(exploreResponse({
+        rows: [
+          { ...entry(1), message_type: 'email', anchor_message_id: 101 },
+          { ...entry(2), message_type: 'meeting_transcript', anchor_message_id: 102 },
+        ],
+        total_count: 2,
+      }));
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    await screen.findByText('Synthetic subject 2');
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: ' ' });
+    expect(await screen.findByText('1 selected')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Meeting context…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Export meeting context' })).toBeNull();
+
+    await fireEvent.keyDown(grid, { key: 'j' });
+    await fireEvent.keyDown(grid, { key: ' ' });
+
+    expect(await screen.findByText('2 selected')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
+    expect(screen.getByRole('button', { name: 'Export meeting context' })).toBeDefined();
+    rendered.unmount();
+    state.destroy();
+  });
+
   it('exports exact explicit meeting row keys retained while later pages load', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const contextRequests: Request[] = [];
@@ -535,6 +575,7 @@ describe('EverythingWorkspace', () => {
     await fireEvent.pointerDown(secondRow);
     await fireEvent.keyDown(grid, { key: ' ' });
     expect(await screen.findByText('2 selected')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
 
     await waitFor(() => expect(contextRequests).toHaveLength(1));
@@ -575,6 +616,8 @@ describe('EverythingWorkspace', () => {
           { status: 400 },
         );
       }
+      const meetingResponse = meetingFixtureResponse(path);
+      if (meetingResponse) return meetingResponse;
       return Response.json(exploreResponse({
         rows: [
           { ...entry(7), message_type: 'meeting_transcript', anchor_message_id: 107 },
@@ -587,7 +630,10 @@ describe('EverythingWorkspace', () => {
       }));
     });
     const state = new ExploreState(window);
-    state.replaceTransient({ query: 'planning', searchMode: 'hybrid' });
+    state.replaceTransient({
+      query: 'planning', searchMode: 'hybrid',
+      filters: [{ dimension: 'message_type', values: ['meeting_transcript'] }]
+    });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     const grid = await screen.findByRole('grid', { name: 'Everything results' });
     await screen.findByText('Synthetic subject 8');
@@ -595,6 +641,7 @@ describe('EverythingWorkspace', () => {
     await fireEvent.keyDown(grid, { key: 'A' });
     await fireEvent.click(screen.getByRole('button', { name: 'Select all 5 matching items' }));
     await fireEvent.keyDown(grid, { key: ' ' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('Select meetings only');
