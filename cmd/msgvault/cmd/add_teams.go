@@ -142,6 +142,9 @@ func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("set display name: %w", err)
 	}
 
+	if err := setDefaultIdentityOptOut(s, source.ID, noDefaultIdentityAddTeams); err != nil {
+		return err
+	}
 	if !noDefaultIdentityAddTeams {
 		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 	}

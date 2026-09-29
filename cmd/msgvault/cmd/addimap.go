@@ -167,6 +167,9 @@ Examples:
 
 			// Auto-default-identity must run BEFORE the legacy migration
 			// retry — see comment in account_identity.go.
+			if err := setDefaultIdentityOptOut(s, source.ID, noDefaultIdentityAddImap); err != nil {
+				return err
+			}
 			if !noDefaultIdentityAddImap {
 				confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, imapUsername, imapUsername, "account-identifier", state.logger)
 			}

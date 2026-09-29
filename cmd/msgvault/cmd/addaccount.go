@@ -601,6 +601,9 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		// [identity] block contains the same address. Reverse order
 		// would leave the source without its own account identifier
 		// because confirmDefaultIdentity skips on any existing rows.
+		if err := setDefaultIdentityOptOut(s, source.ID, noDefaultIdentityAddAccount); err != nil {
+			return err
+		}
 		if !noDefaultIdentityAddAccount {
 			confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 		}
@@ -657,6 +660,9 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	}
 	// Auto-default-identity must run BEFORE the legacy migration
 	// retry — see comment on the token-reusable path above.
+	if err := setDefaultIdentityOptOut(s, source.ID, noDefaultIdentityAddAccount); err != nil {
+		return err
+	}
 	if !noDefaultIdentityAddAccount {
 		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 	}

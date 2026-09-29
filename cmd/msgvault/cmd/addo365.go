@@ -194,6 +194,9 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 
 	// Auto-default-identity must run BEFORE the legacy migration
 	// retry — see comment in account_identity.go.
+	if err := setDefaultIdentityOptOut(s, source.ID, noDefaultIdentityAddO365); err != nil {
+		return err
+	}
 	if !noDefaultIdentityAddO365 {
 		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 	}
