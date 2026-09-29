@@ -64,9 +64,14 @@ func TestBeeperDraftWireFailuresAreSingleAttempt(t *testing.T) {
 				attempts++
 				if tc.disconnect {
 					hijacker, ok := w.(http.Hijacker)
-					requirements.True(ok)
+					if !assertions.True(ok) {
+						http.Error(w, "hijack unavailable", http.StatusInternalServerError)
+						return
+					}
 					connection, _, hijackErr := hijacker.Hijack()
-					requirements.NoError(hijackErr)
+					if !assertions.NoError(hijackErr) {
+						return
+					}
 					_ = connection.Close()
 					return
 				}
@@ -103,7 +108,7 @@ func TestBeeperDraftWireReadsFullSuccessfulChat(t *testing.T) {
 		}{ID: "!room:beeper.local", AccountID: "signal", Title: largeTitle, Draft: struct {
 			Text string `json:"text"`
 		}{Text: "rich text"}})
-		requirements.NoError(err)
+		assertions.NoError(err)
 		_, _ = w.Write(body)
 	}))
 	defer srv.Close()

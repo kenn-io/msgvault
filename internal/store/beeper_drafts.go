@@ -26,9 +26,9 @@ const (
 )
 
 var (
-	ErrBeeperDraftNotFound = errors.New("Beeper draft not found")
-	ErrBeeperDraftRevision = errors.New("Beeper draft revision mismatch")
-	ErrBeeperDraftPending  = errors.New("Beeper draft has a pending operation")
+	ErrBeeperDraftNotFound = errors.New("beeper draft not found")
+	ErrBeeperDraftRevision = errors.New("beeper draft revision mismatch")
+	ErrBeeperDraftPending  = errors.New("beeper draft has a pending operation")
 	ErrBeeperDraftState    = errors.New("invalid Beeper draft state")
 )
 
@@ -68,7 +68,7 @@ func validateBeeperDraftID(id string) error {
 
 func validateBeeperDraftText(text string) error {
 	if text == "" || strings.ContainsAny(text, "\x00") {
-		return errors.New("Beeper draft text must be non-empty")
+		return errors.New("beeper draft text must be non-empty")
 	}
 	return nil
 }
@@ -155,7 +155,7 @@ func (s *Store) GetBeeperDraftForSourceChatContext(ctx context.Context, sourceID
 }
 
 func loadBeeperDraft(ctx context.Context, q interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }, lockClause, draftID string) (BeeperDraft, error) {
 	var draft BeeperDraft
 	var committed, operation, phase, candidate, outcome sql.NullString

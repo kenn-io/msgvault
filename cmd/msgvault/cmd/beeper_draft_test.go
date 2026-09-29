@@ -43,7 +43,7 @@ func TestBeeperDraftParser(t *testing.T) {
 	assertions.False(read.JSON)
 
 	_, err = parseBeeperDraftArgs([]string{"draft-beeper", "clear", "beeper-draft-id", "--revision=0"})
-	assertions.Error(err)
+	requirements.Error(err)
 	for _, args := range [][]string{
 		{"draft-beeper", "create", "--source-id=42", "--chat-id=!room:beeper.local", "--body=hello", "--help"},
 		{"draft-beeper", "get", "beeper-draft-id", "--help"},
@@ -51,7 +51,7 @@ func TestBeeperDraftParser(t *testing.T) {
 		{"draft-beeper", "clear", "beeper-draft-id", "--revision=2", "--help"},
 	} {
 		_, helpErr := parseBeeperDraftArgs(args)
-		assertions.ErrorContains(helpErr, "invalid_args")
+		requirements.ErrorContains(helpErr, "invalid_args")
 	}
 }
 
@@ -68,7 +68,7 @@ func TestBeeperDraftHelpDoesNotMutate(t *testing.T) {
 			return nil
 		})
 	}
-	assertions.ErrorContains(run("draft-beeper", "create", "--source-id", sourceID, "--chat-id", "!room:beeper.local", "--body", "hello", "--help"), "invalid_args")
+	requirements.ErrorContains(run("draft-beeper", "create", "--source-id", sourceID, "--chat-id", "!room:beeper.local", "--body", "hello", "--help"), "invalid_args")
 	assertions.Empty(events)
 	assertions.Equal(0, fixture.patches)
 
@@ -79,7 +79,7 @@ func TestBeeperDraftHelpDoesNotMutate(t *testing.T) {
 		{"draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(revision, 10), "--body", "updated", "--help"},
 		{"draft-beeper", "clear", draftID, "--revision", strconv.FormatInt(revision, 10), "--help"},
 	} {
-		assertions.ErrorContains(run(args...), "invalid_args")
+		requirements.ErrorContains(run(args...), "invalid_args")
 		assertions.Empty(events)
 	}
 	assertions.Equal(1, fixture.patches)
@@ -114,15 +114,14 @@ func TestBeeperDraftDaemonRouting(t *testing.T) {
 }
 
 func TestBeeperDraftAuthorization(t *testing.T) {
-	assertions := assert.New(t)
 	requirements := require.New(t)
 	source := &store.Source{ID: 42, SourceType: "beeper", Identifier: "signal"}
 	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: "signal"}}}
 	requirements.NoError(authorizeBeeperDraft([]config.BeeperDraftSource{{SourceID: 42}}, source, grant, agentgrant.PermissionDraftEdit))
-	assertions.ErrorContains(authorizeBeeperDraft(nil, source, nil, agentgrant.PermissionDraftEdit), "draft_disabled")
-	assertions.ErrorContains(authorizeBeeperDraft([]config.BeeperDraftSource{{SourceID: 41}}, source, grant, agentgrant.PermissionDraftEdit), "draft_disabled")
+	requirements.ErrorContains(authorizeBeeperDraft(nil, source, nil, agentgrant.PermissionDraftEdit), "draft_disabled")
+	requirements.ErrorContains(authorizeBeeperDraft([]config.BeeperDraftSource{{SourceID: 41}}, source, grant, agentgrant.PermissionDraftEdit), "draft_disabled")
 	wrong := &store.Source{ID: 42, SourceType: "gmail", Identifier: "signal"}
-	assertions.ErrorContains(authorizeBeeperDraft([]config.BeeperDraftSource{{SourceID: 42}}, wrong, nil, agentgrant.PermissionDraftEdit), "draft_disabled")
+	requirements.ErrorContains(authorizeBeeperDraft([]config.BeeperDraftSource{{SourceID: 42}}, wrong, nil, agentgrant.PermissionDraftEdit), "draft_disabled")
 }
 
 func TestBeeperDraftPolicySnapshot(t *testing.T) {
@@ -142,7 +141,7 @@ func TestBeeperDraftIdentityBoundary(t *testing.T) {
 	requirements.NoError(err)
 	assertions.False(obs.Unknown)
 	_, err = validateBeeperChat(&store.Source{SourceType: "beeper", Identifier: "other"}, chat.ID, chat)
-	assertions.Error(err)
+	requirements.Error(err)
 }
 
 func TestBeeperDraftAgentDelegatedCapabilities(t *testing.T) {
@@ -162,7 +161,7 @@ func TestBeeperDraftDaemonSafetyBoundaries(t *testing.T) {
 	t.Run("occupied create", func(t *testing.T) {
 		fixture := newBeeperDraftCommandFixture(t, "desktop draft")
 		err := fixture.run(t.Context(), "draft-beeper", "create", "--source-id", fixture.sourceID(), "--chat-id", "!room:beeper.local", "--body", "candidate")
-		assertions.ErrorContains(err, "occupied")
+		requirements.ErrorContains(err, "occupied")
 		assertions.Zero(fixture.patches)
 	})
 	t.Run("external edit conflict", func(t *testing.T) {
@@ -171,7 +170,7 @@ func TestBeeperDraftDaemonSafetyBoundaries(t *testing.T) {
 		draftID, revision := latestBeeperDraft(t, fixture.store)
 		fixture.nativeText = "desktop edit"
 		err := fixture.run(t.Context(), "draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(revision, 10), "--body", "updated")
-		assertions.ErrorContains(err, "conflict")
+		requirements.ErrorContains(err, "conflict")
 		assertions.Equal(1, fixture.patches)
 	})
 	t.Run("unsupported observation conflict", func(t *testing.T) {
@@ -180,7 +179,7 @@ func TestBeeperDraftDaemonSafetyBoundaries(t *testing.T) {
 		draftID, revision := latestBeeperDraft(t, fixture.store)
 		fixture.rawGet = []byte(`{"id":"!room:beeper.local","accountID":"signal","draft":{"future":true}}`)
 		err := fixture.run(t.Context(), "draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(revision, 10), "--body", "updated")
-		assertions.ErrorContains(err, "conflict")
+		requirements.ErrorContains(err, "conflict")
 		assertions.Equal(1, fixture.patches)
 	})
 	t.Run("attachment conflict", func(t *testing.T) {
@@ -189,14 +188,14 @@ func TestBeeperDraftDaemonSafetyBoundaries(t *testing.T) {
 		draftID, revision := latestBeeperDraft(t, fixture.store)
 		fixture.rawGet = []byte(`{"id":"!room:beeper.local","accountID":"signal","draft":{"attachments":{"a":{"id":"a"}}}}`)
 		err := fixture.run(t.Context(), "draft-beeper", "clear", draftID, "--revision", strconv.FormatInt(revision, 10))
-		assertions.ErrorContains(err, "conflict")
+		requirements.ErrorContains(err, "conflict")
 		assertions.Equal(1, fixture.patches)
 	})
 	t.Run("merged chat", func(t *testing.T) {
 		fixture := newBeeperDraftCommandFixture(t, "")
 		fixture.merged = true
 		err := fixture.run(t.Context(), "draft-beeper", "create", "--source-id", fixture.sourceID(), "--chat-id", "!room:beeper.local", "--body", "candidate")
-		assertions.ErrorContains(err, "ambiguous_chat")
+		requirements.ErrorContains(err, "ambiguous_chat")
 		assertions.Zero(fixture.patches)
 	})
 	t.Run("grant denied before provider", func(t *testing.T) {
@@ -205,7 +204,7 @@ func TestBeeperDraftDaemonSafetyBoundaries(t *testing.T) {
 			Args:  []string{"draft-beeper", "create", "--source-id", fixture.sourceID(), "--chat-id", "!room:beeper.local", "--body", "candidate"},
 			Grant: &agentgrant.Grant{},
 		}, nil)
-		assertions.ErrorContains(err, "not_permitted")
+		requirements.ErrorContains(err, "not_permitted")
 		assertions.Zero(fixture.patches)
 	})
 	t.Run("stale revision", func(t *testing.T) {
@@ -213,7 +212,7 @@ func TestBeeperDraftDaemonSafetyBoundaries(t *testing.T) {
 		requirements.NoError(fixture.run(t.Context(), "draft-beeper", "create", "--source-id", fixture.sourceID(), "--chat-id", "!room:beeper.local", "--body", "hello"))
 		draftID, revision := latestBeeperDraft(t, fixture.store)
 		err := fixture.run(t.Context(), "draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(revision-1, 10), "--body", "updated")
-		assertions.ErrorContains(err, "revision_mismatch")
+		requirements.ErrorContains(err, "revision_mismatch")
 		assertions.Equal(1, fixture.patches)
 	})
 }
@@ -232,7 +231,7 @@ func TestBeeperDraftSetDisconnectLeavesPending(t *testing.T) {
 		event = got
 		return nil
 	})
-	assertions.ErrorContains(err, "remote_unknown")
+	requirements.ErrorContains(err, "remote_unknown")
 	assertions.Equal(cliStreamStderr, event.Type)
 	assertions.Contains(event.Data, draftID)
 	assertions.Contains(event.Data, "revision "+strconv.FormatInt(revision+1, 10))
@@ -249,7 +248,7 @@ func TestBeeperDraftSetDisconnectLeavesPending(t *testing.T) {
 	assertions.Equal("updated", pending.Pending.Candidate)
 	patches := fixture.patches
 	err = fixture.run(t.Context(), "draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(pending.Revision, 10), "--body", "updated")
-	assertions.ErrorContains(err, "pending")
+	requirements.ErrorContains(err, "pending")
 	assertions.Equal(patches, fixture.patches)
 }
 
@@ -271,10 +270,10 @@ func TestBeeperDraftPendingClearRecovery(t *testing.T) {
 	assertions.Equal(store.BeeperDraftPhaseAcceptedLocalFailed, pending.Pending.Phase)
 
 	err = fixture.run(t.Context(), "draft-beeper", "clear", draftID, "--revision", strconv.FormatInt(pending.Revision-1, 10))
-	assertions.ErrorContains(err, "revision_mismatch")
+	requirements.ErrorContains(err, "revision_mismatch")
 	assertions.Equal(1, fixture.patches)
 	err = fixture.run(t.Context(), "draft-beeper", "clear", draftID, "--revision", strconv.FormatInt(pending.Revision, 10))
-	assertions.ErrorContains(err, "conflict")
+	requirements.ErrorContains(err, "conflict")
 	assertions.Equal(1, fixture.patches)
 
 	fixture.nativeText = ""
@@ -286,7 +285,7 @@ BEGIN
 END`)
 	requirements.NoError(err)
 	err = fixture.run(t.Context(), "draft-beeper", "clear", draftID, "--revision", strconv.FormatInt(pending.Revision, 10))
-	assertions.ErrorContains(err, "local_persistence_failed")
+	requirements.ErrorContains(err, "local_persistence_failed")
 	assertions.Equal(1, fixture.patches)
 	unchanged, err := fixture.store.GetBeeperDraftContext(t.Context(), draftID)
 	requirements.NoError(err)
@@ -310,6 +309,7 @@ type beeperDraftCommandFixture struct {
 	source        *store.Source
 	nativeText    string
 	rawGet        []byte
+	getStatus     int
 	merged        bool
 	disconnectSet bool
 	patches       int
@@ -317,6 +317,7 @@ type beeperDraftCommandFixture struct {
 
 func newBeeperDraftCommandFixture(t *testing.T, nativeText string) *beeperDraftCommandFixture {
 	t.Helper()
+	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("beeper", "signal")
@@ -324,6 +325,10 @@ func newBeeperDraftCommandFixture(t *testing.T, nativeText string) *beeperDraftC
 	fixture := &beeperDraftCommandFixture{store: st, source: source, nativeText: nativeText}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
+			if fixture.getStatus != 0 {
+				w.WriteHeader(fixture.getStatus)
+				return
+			}
 			if fixture.merged {
 				_, _ = w.Write([]byte(`{"id":"!room:beeper.local","accountID":"signal","merge":{"chatIDs":["!room:beeper.local"]},"draft":null}`))
 				return
@@ -337,13 +342,19 @@ func newBeeperDraftCommandFixture(t *testing.T, nativeText string) *beeperDraftC
 		}
 		fixture.patches++
 		body, readErr := io.ReadAll(r.Body)
-		requirements.NoError(readErr)
+		if !assertions.NoError(readErr) {
+			http.Error(w, "read request", http.StatusBadRequest)
+			return
+		}
 		var update struct {
 			Draft *struct {
 				Text string `json:"text"`
 			} `json:"draft"`
 		}
-		requirements.NoError(json.Unmarshal(body, &update))
+		if !assertions.NoError(json.Unmarshal(body, &update)) {
+			http.Error(w, "decode request", http.StatusBadRequest)
+			return
+		}
 		if update.Draft == nil {
 			fixture.nativeText = ""
 		} else {
@@ -375,6 +386,41 @@ func (f *beeperDraftCommandFixture) run(ctx context.Context, args ...string) err
 	return f.adapter.runCLIBeeperDraft(ctx, api.CLIRunRequest{Args: args}, nil)
 }
 
+func TestBeeperDraftMissingChatKeepsBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pending bool
+	}{{"active", false}, {"pending", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			fixture := newBeeperDraftCommandFixture(t, "")
+			fixture.disconnectSet = tc.pending
+			err := fixture.run(t.Context(), "draft-beeper", "create", "--source-id", fixture.sourceID(), "--chat-id", "!room:beeper.local", "--body", "hello")
+			if tc.pending {
+				requirements.ErrorContains(err, "remote_unknown")
+			} else {
+				requirements.NoError(err)
+			}
+			draftID, revision := latestBeeperDraft(t, fixture.store)
+			patches := fixture.patches
+			fixture.getStatus = http.StatusNotFound
+			requirements.ErrorContains(fixture.run(t.Context(), "draft-beeper", "clear", draftID, "--revision", strconv.FormatInt(revision, 10)), "provider_unavailable")
+			kept, err := fixture.store.GetBeeperDraftContext(t.Context(), draftID)
+			requirements.NoError(err)
+			assertions.Equal(revision, kept.Revision)
+			assertions.Equal(patches, fixture.patches)
+			if tc.pending {
+				requirements.NotNil(kept.Pending)
+				assertions.Equal("hello", kept.Pending.Candidate)
+			} else {
+				requirements.NotNil(kept.CommittedText)
+				assertions.Equal("rich hello", *kept.CommittedText)
+			}
+		})
+	}
+}
+
 func TestBeeperDraftCreateEditClearUsesNativeWireAndLocalBinding(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -387,14 +433,20 @@ func TestBeeperDraftCreateEditClearUsesNativeWireAndLocalBinding(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPatch {
 			body, readErr := io.ReadAll(r.Body)
-			requirements.NoError(readErr)
+			if !assertions.NoError(readErr) {
+				http.Error(w, "read request", http.StatusBadRequest)
+				return
+			}
 			patchBodies = append(patchBodies, string(body))
 			var update struct {
 				Draft *struct {
 					Text string `json:"text"`
 				} `json:"draft"`
 			}
-			requirements.NoError(json.Unmarshal(body, &update))
+			if !assertions.NoError(json.Unmarshal(body, &update)) {
+				http.Error(w, "decode request", http.StatusBadRequest)
+				return
+			}
 			if update.Draft == nil {
 				nativeText = ""
 			} else {
@@ -415,7 +467,7 @@ func TestBeeperDraftCreateEditClearUsesNativeWireAndLocalBinding(t *testing.T) {
 		}{ID: "!room:beeper.local", AccountID: "signal", Draft: struct {
 			Text string `json:"text"`
 		}{Text: nativeText}})
-		requirements.NoError(marshalErr)
+		assertions.NoError(marshalErr)
 		_, _ = w.Write(data)
 	}))
 	defer server.Close()
@@ -430,13 +482,9 @@ func TestBeeperDraftCreateEditClearUsesNativeWireAndLocalBinding(t *testing.T) {
 		return adapter.runCLIBeeperDraft(t.Context(), api.CLIRunRequest{Args: args}, nil)
 	}
 	requirements.NoError(run("draft-beeper", "create", "--source-id", strconv.FormatInt(source.ID, 10), "--chat-id", "!room:beeper.local", "--body", "hello"))
-	drafts, err := st.DB().Query(`SELECT draft_id, revision FROM beeper_drafts`)
-	requirements.NoError(err)
-	requirements.True(drafts.Next())
 	var draftID string
 	var revision int64
-	requirements.NoError(drafts.Scan(&draftID, &revision))
-	requirements.NoError(drafts.Close())
+	requirements.NoError(st.DB().QueryRow(`SELECT draft_id, revision FROM beeper_drafts`).Scan(&draftID, &revision))
 	assertions.Equal(int64(2), revision)
 	requirements.NoError(run("draft-beeper", "edit", draftID, "--revision", "2", "--body", "updated"))
 	edited, err := st.GetBeeperDraftContext(t.Context(), draftID)
@@ -447,10 +495,10 @@ func TestBeeperDraftCreateEditClearUsesNativeWireAndLocalBinding(t *testing.T) {
 	cleared, err := st.GetBeeperDraftContext(t.Context(), draftID)
 	requirements.NoError(err)
 	assertions.Nil(cleared.CommittedText)
-	assertions.Equal(patchCount, len(patchBodies))
+	assertions.Len(patchBodies, patchCount)
 	// A Desktop clear is observed locally and needs no second provider clear.
 	requirements.NoError(run("draft-beeper", "clear", draftID, "--revision", strconv.FormatInt(cleared.Revision, 10)))
-	assertions.Equal(patchCount, len(patchBodies))
+	assertions.Len(patchBodies, patchCount)
 	assertions.Contains(patchBodies[0], `"draft":{"text":"hello"}`)
 }
 
@@ -466,13 +514,13 @@ func TestBeeperDraftCreateGet(t *testing.T) {
 		if r.Method == http.MethodPatch {
 			patches++
 			body, readErr := io.ReadAll(r.Body)
-			requirements.NoError(readErr)
+			assertions.NoError(readErr)
 			var update struct {
 				Draft struct {
 					Text string `json:"text"`
 				} `json:"draft"`
 			}
-			requirements.NoError(json.Unmarshal(body, &update))
+			assertions.NoError(json.Unmarshal(body, &update))
 			nativeText = "rich " + update.Draft.Text
 		}
 		writeBeeperTestChat(w, nativeText)
@@ -547,14 +595,14 @@ func TestBeeperDraftInterrupted(t *testing.T) {
 			return
 		}
 		body, readErr := io.ReadAll(r.Body)
-		requirements.NoError(readErr)
+		assertions.NoError(readErr)
 		patchBodies = append(patchBodies, string(body))
 		var update struct {
 			Draft *struct {
 				Text string `json:"text"`
 			} `json:"draft"`
 		}
-		requirements.NoError(json.Unmarshal(body, &update))
+		assertions.NoError(json.Unmarshal(body, &update))
 		if update.Draft == nil {
 			switch patchMode {
 			case "reject-clear":
@@ -598,7 +646,7 @@ func TestBeeperDraftInterrupted(t *testing.T) {
 
 	patchMode = "reject-set"
 	err = run("draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(revision, 10), "--body", "updated")
-	assertions.ErrorContains(err, "provider_rejected")
+	requirements.ErrorContains(err, "provider_rejected")
 	pending, err := st.GetBeeperDraftContext(t.Context(), draftID)
 	requirements.NoError(err)
 	requirements.NotNil(pending.Pending)
@@ -618,7 +666,7 @@ func TestBeeperDraftInterrupted(t *testing.T) {
 
 	patchMode = "reject-clear"
 	err = run("draft-beeper", "clear", draftID, "--revision", strconv.FormatInt(revision, 10))
-	assertions.ErrorContains(err, "provider_rejected")
+	requirements.ErrorContains(err, "provider_rejected")
 	retry, err := st.GetBeeperDraftContext(t.Context(), draftID)
 	requirements.NoError(err)
 	assertions.Nil(retry.Pending)
@@ -636,7 +684,7 @@ func TestBeeperDraftInterrupted(t *testing.T) {
 	draftID, revision = latestBeeperDraft(t, st)
 	patchMode = "disconnect-clear"
 	err = run("draft-beeper", "clear", draftID, "--revision", strconv.FormatInt(revision, 10))
-	assertions.ErrorContains(err, "remote_unknown")
+	requirements.ErrorContains(err, "remote_unknown")
 	uncertain, err := st.GetBeeperDraftContext(t.Context(), draftID)
 	requirements.NoError(err)
 	requirements.NotNil(uncertain.Pending)
@@ -647,7 +695,7 @@ func TestBeeperDraftInterrupted(t *testing.T) {
 	recovered, err := st.GetBeeperDraftContext(t.Context(), draftID)
 	requirements.NoError(err)
 	assertions.Nil(recovered.Pending)
-	assertions.Equal(patchCount, len(patchBodies))
+	assertions.Len(patchBodies, patchCount)
 }
 
 func TestBeeperDraftCancellationPersistsRejectedEvidence(t *testing.T) {
@@ -671,13 +719,13 @@ func TestBeeperDraftCancellationPersistsRejectedEvidence(t *testing.T) {
 		}
 		patches++
 		body, readErr := io.ReadAll(r.Body)
-		requirements.NoError(readErr)
+		assertions.NoError(readErr)
 		var update struct {
 			Draft *struct {
 				Text string `json:"text"`
 			} `json:"draft"`
 		}
-		requirements.NoError(json.Unmarshal(body, &update))
+		assertions.NoError(json.Unmarshal(body, &update))
 		if update.Draft == nil {
 			nativeText = ""
 		} else {
@@ -706,11 +754,10 @@ func TestBeeperDraftCancellationPersistsRejectedEvidence(t *testing.T) {
 	cancelEdit.Store(true)
 	go func() {
 		<-editObserved
-		time.Sleep(500 * time.Millisecond)
-		cancel()
+		time.AfterFunc(500*time.Millisecond, cancel)
 	}()
 	err = run(ctx, "draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(revision, 10), "--body", "updated")
-	assertions.ErrorContains(err, beeper.DraftWriteCodeRateLimit)
+	requirements.ErrorContains(err, beeper.DraftWriteCodeRateLimit)
 	assertions.Equal(1, patches)
 	stored, err := st.GetBeeperDraftContext(t.Context(), draftID)
 	requirements.NoError(err)
@@ -736,13 +783,13 @@ func TestBeeperDraftAcceptedRemoteLocalFinishFailure(t *testing.T) {
 		}
 		patches++
 		body, readErr := io.ReadAll(r.Body)
-		requirements.NoError(readErr)
+		assertions.NoError(readErr)
 		var update struct {
 			Draft *struct {
 				Text string `json:"text"`
 			} `json:"draft"`
 		}
-		requirements.NoError(json.Unmarshal(body, &update))
+		assertions.NoError(json.Unmarshal(body, &update))
 		if update.Draft == nil {
 			nativeText = ""
 		} else {
@@ -780,7 +827,7 @@ END`)
 		failureEvent = got
 		return nil
 	})
-	assertions.ErrorContains(err, "remote_accepted_local_failed")
+	requirements.ErrorContains(err, "remote_accepted_local_failed")
 	assertions.Equal(cliStreamStderr, failureEvent.Type)
 	assertions.Contains(failureEvent.Data, draftID)
 	assertions.Contains(failureEvent.Data, "revision "+strconv.FormatInt(revision+1, 10))
@@ -819,7 +866,7 @@ END`)
 		event = got
 		return nil
 	})
-	assertions.ErrorContains(err, "pending")
+	requirements.ErrorContains(err, "pending")
 	assertions.Equal(3, patches)
 	var pendingOutput beeperDraftOutput
 	requirements.NoError(json.Unmarshal([]byte(event.Data), &pendingOutput))
@@ -839,7 +886,7 @@ END`)
 		event = got
 		return nil
 	})
-	assertions.ErrorContains(err, "pending")
+	requirements.ErrorContains(err, "pending")
 	assertions.Contains(event.Data, "content: <withheld>")
 	assertions.Contains(event.Data, "native: <withheld>")
 	assertions.Contains(event.Data, draftID)
@@ -853,14 +900,14 @@ END`)
 		event = got
 		return nil
 	})
-	assertions.ErrorContains(err, "pending")
+	requirements.ErrorContains(err, "pending")
 	requirements.NoError(json.Unmarshal([]byte(event.Data), &pendingOutput))
 	assertions.False(pendingOutput.ContentWithheld)
 	assertions.Equal("rich hello", *pendingOutput.CommittedText)
 	assertions.Equal("updated", pendingOutput.CandidateText)
 
 	err = run("draft-beeper", "edit", draftID, "--revision", strconv.FormatInt(pending.Revision, 10), "--body", "updated")
-	assertions.ErrorContains(err, "pending")
+	requirements.ErrorContains(err, "pending")
 	assertions.Equal(3, patches)
 }
 
@@ -892,7 +939,7 @@ func TestBeeperDraftConcurrentChange(t *testing.T) {
 	clearedObservation, err := cleared.InspectDraft()
 	requirements.NoError(err)
 	assertions.True(clearedObservation.Empty())
-	assertions.Equal("", nativeText)
+	assertions.Empty(nativeText)
 }
 
 func latestBeeperDraft(t *testing.T, st *store.Store) (string, int64) {

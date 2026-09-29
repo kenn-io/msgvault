@@ -30,7 +30,7 @@ func TestBeeperDraftStore(t *testing.T) {
 	assertions.Equal("rich hello", *finished.CommittedText)
 	assertions.Nil(finished.Pending)
 	_, err = st.ClaimBeeperDraftContext(t.Context(), draft.DraftID, finished.Revision-1, store.BeeperDraftOperationDelete, "")
-	assertions.ErrorIs(err, store.ErrBeeperDraftRevision)
+	requirements.ErrorIs(err, store.ErrBeeperDraftRevision)
 
 	claimed, err := st.ClaimBeeperDraftContext(t.Context(), draft.DraftID, finished.Revision, store.BeeperDraftOperationDelete, "")
 	requirements.NoError(err)
@@ -71,7 +71,7 @@ func TestBeeperDraftStoreRejectsWrongSourceAndDuplicateBinding(t *testing.T) {
 	assertions.Equal(draft.Revision, loaded.Revision)
 	_, err = st.BeginBeeperDraftCreateContext(t.Context(), beeperSource.ID, "signal", "!room:beeper.local", "second")
 	requirements.ErrorIs(err, store.ErrBeeperDraftPending)
-	assertions.NotErrorIs(err, sql.ErrNoRows)
+	requirements.NotErrorIs(err, sql.ErrNoRows)
 	assertions.NotEmpty(draft.DraftID)
 }
 
@@ -86,16 +86,15 @@ func TestBeeperDraftSchemaRecreatesMissingTable(t *testing.T) {
 }
 
 func TestBeeperDraftStoreRejectsSkippedPhase(t *testing.T) {
-	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	requirements.NoError(err)
 	draft, err := st.BeginBeeperDraftCreateContext(t.Context(), source.ID, "signal", "!room:beeper.local", "hello")
 	requirements.NoError(err)
-	assertions.Error(st.RecordBeeperDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, store.BeeperDraftPhaseClearConfirmed, "skipped"))
+	requirements.Error(st.RecordBeeperDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, store.BeeperDraftPhaseClearConfirmed, "skipped"))
 	requirements.NoError(st.RecordBeeperDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, store.BeeperDraftPhaseSetDispatched, "dispatching"))
-	assertions.Error(st.RecordBeeperDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, store.BeeperDraftPhaseClaimed, "backward"))
+	requirements.Error(st.RecordBeeperDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, store.BeeperDraftPhaseClaimed, "backward"))
 }
 
 func TestBeeperDraftRetirePendingPhasesAfterEmptyObservation(t *testing.T) {
@@ -227,7 +226,7 @@ func TestBeeperDraftRetirePendingRevisionAndRollback(t *testing.T) {
 	draft, err := st.BeginBeeperDraftCreateContext(t.Context(), source.ID, "signal", "!rollback:beeper.local", "candidate")
 	requirements.NoError(err)
 	_, retireErr := st.RetireBeeperDraftAfterEmptyObservationContext(t.Context(), draft.DraftID, draft.Revision-1)
-	assertions.ErrorIs(retireErr, store.ErrBeeperDraftRevision)
+	requirements.ErrorIs(retireErr, store.ErrBeeperDraftRevision)
 	unchanged, err := st.GetBeeperDraftContext(t.Context(), draft.DraftID)
 	requirements.NoError(err)
 	assertions.Equal(draft.Revision, unchanged.Revision)
@@ -240,7 +239,7 @@ BEGIN
 END`)
 	requirements.NoError(err)
 	_, err = st.RetireBeeperDraftAfterEmptyObservationContext(t.Context(), draft.DraftID, draft.Revision)
-	assertions.Error(err)
+	requirements.Error(err)
 	unchanged, err = st.GetBeeperDraftContext(t.Context(), draft.DraftID)
 	requirements.NoError(err)
 	assertions.Equal(draft.Revision, unchanged.Revision)

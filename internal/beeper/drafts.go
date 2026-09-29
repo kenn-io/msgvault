@@ -44,7 +44,7 @@ const (
 	DraftWriteCodeRejected  = "provider_rejected"
 	DraftWriteCodeUnknown   = "remote_unknown"
 	DraftWriteCodeRateLimit = "rate_limit"
-	DraftWriteCodeToken     = "token_unavailable"
+	DraftWriteCodeToken     = "token_unavailable" // #nosec G101 -- this is an error code, not a credential.
 )
 
 // DraftObservation is the part of a Chat draft that msgvault can safely
@@ -77,7 +77,7 @@ func (c Chat) InspectDraft() (DraftObservation, error) {
 		return DraftObservation{}, fmt.Errorf("decode Beeper draft: %w", err)
 	}
 	if raw == nil {
-		return DraftObservation{}, errors.New("Beeper draft is not an object")
+		return DraftObservation{}, errors.New("beeper draft is not an object")
 	}
 	for key, value := range raw {
 		switch key {
@@ -140,7 +140,7 @@ func (c *Client) UpdateDraft(ctx context.Context, chatID string, text *string) (
 	if err != nil {
 		return nil, &DraftWriteError{Code: DraftWriteCodeUnknown, State: DraftWriteUncertain, Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	reader := io.Reader(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		reader = io.LimitReader(resp.Body, maxErrorBodyBytes+1)
@@ -156,7 +156,7 @@ func (c *Client) UpdateDraft(ctx context.Context, chatID string, text *string) (
 			state = DraftWriteRejected
 			code = DraftWriteCodeRejected
 		}
-		return nil, &DraftWriteError{Code: code, Status: resp.StatusCode, State: state, Err: fmt.Errorf("Beeper PATCH returned status %d", resp.StatusCode)}
+		return nil, &DraftWriteError{Code: code, Status: resp.StatusCode, State: state, Err: fmt.Errorf("beeper PATCH returned status %d", resp.StatusCode)}
 	}
 	var chat Chat
 	if err := json.Unmarshal(data, &chat); err != nil || strings.TrimSpace(chat.ID) == "" || strings.TrimSpace(chat.AccountID) == "" {
