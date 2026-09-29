@@ -87,7 +87,7 @@ Examples:
 	}
 	cmd.Flags().StringVar(&teamsTenantID, "tenant", "",
 		"Azure AD tenant ID (default: \"common\" for multi-tenant)")
-	cmd.Flags().BoolVar(&noDefaultIdentityAddTeams, "no-default-identity", false, noDefaultIdentityHelp)
+	cmd.Flags().BoolVar(&noDefaultIdentityAddTeams, "no-default-identity", false, savedDefaultIdentityHelp)
 	cmd.Flags().BoolVar(&teamsHeadless, "headless", false,
 		"Sign in with a device code instead of a local browser")
 	registerOAuthPreflightedFlag(cmd)
@@ -142,7 +142,7 @@ func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("set display name: %w", err)
 	}
 
-	if err := setDefaultIdentityOptOut(s, source.ID, noDefaultIdentityAddTeams); err != nil {
+	if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddTeams); err != nil {
 		return err
 	}
 	if !noDefaultIdentityAddTeams {

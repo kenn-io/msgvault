@@ -512,7 +512,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if err := setDefaultIdentityOptOut(s, source.ID, noDefaultIdentityAddAccount); err != nil {
+		if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddAccount); err != nil {
 			return err
 		}
 
@@ -605,7 +605,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		// [identity] block contains the same address. Reverse order
 		// would leave the source without its own account identifier
 		// because confirmDefaultIdentity skips on any existing rows.
-		if err := setDefaultIdentityOptOut(s, source.ID, noDefaultIdentityAddAccount); err != nil {
+		if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddAccount); err != nil {
 			return err
 		}
 		if !noDefaultIdentityAddAccount {
@@ -664,7 +664,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	}
 	// Auto-default-identity must run BEFORE the legacy migration
 	// retry — see comment on the token-reusable path above.
-	if err := setDefaultIdentityOptOut(s, source.ID, noDefaultIdentityAddAccount); err != nil {
+	if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddAccount); err != nil {
 		return err
 	}
 	if !noDefaultIdentityAddAccount {
@@ -1053,7 +1053,7 @@ func registerAddAccountFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&forceReauth, "force", false, "Delete existing token and re-authorize")
 	cmd.Flags().StringVar(&accountDisplayName, "display-name", "", "Display name for the account (e.g., \"Work\", \"Personal\")")
 	cmd.Flags().StringVar(&oauthAppName, "oauth-app", "", "Named OAuth app from config (for Google Workspace orgs)")
-	cmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, noDefaultIdentityHelp)
+	cmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, savedDefaultIdentityHelp)
 	cmd.Flags().BoolVar(&readonlyGrant, "readonly", false, "Request Gmail read-only access instead of read+write (refused if the account already holds write access)")
 	cmd.Flags().Bool(addAccountGrantDecidedFlag, false, "Internal: the grant decision was already applied by the frontend CLI")
 	if err := cmd.Flags().MarkHidden(addAccountGrantDecidedFlag); err != nil {

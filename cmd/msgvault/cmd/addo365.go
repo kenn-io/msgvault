@@ -86,7 +86,7 @@ Examples:
 	}
 	cmd.Flags().StringVar(&o365TenantID, "tenant", "",
 		"Azure AD tenant ID (default: \"common\" for multi-tenant)")
-	cmd.Flags().BoolVar(&noDefaultIdentityAddO365, "no-default-identity", false, noDefaultIdentityHelp)
+	cmd.Flags().BoolVar(&noDefaultIdentityAddO365, "no-default-identity", false, savedDefaultIdentityHelp)
 	cmd.Flags().BoolVar(&o365Headless, "headless", false,
 		"Sign in with a device code instead of a local browser")
 	cmd.Flags().BoolVar(&o365Graph, "graph", false, "sync through the Microsoft Graph mail API instead of IMAP")
@@ -194,7 +194,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 
 	// Auto-default-identity must run BEFORE the legacy migration
 	// retry — see comment in account_identity.go.
-	if err := setDefaultIdentityOptOut(s, source.ID, noDefaultIdentityAddO365); err != nil {
+	if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddO365); err != nil {
 		return err
 	}
 	if !noDefaultIdentityAddO365 {
@@ -275,6 +275,9 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string) error {
 	}
 	if err := s.UpdateSourceDisplayName(source.ID, email); err != nil {
 		return fmt.Errorf("set display name: %w", err)
+	}
+	if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddO365); err != nil {
+		return err
 	}
 	if !noDefaultIdentityAddO365 {
 		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)

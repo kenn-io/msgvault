@@ -865,7 +865,7 @@ func TestAddAccount_NoDefaultIdentitySuppresses(t *testing.T) {
 	cfg := testConfigValue()
 	logger := testLoggerValue()
 
-	require := require.New(t)
+	assert, require := assert.New(t), require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
@@ -931,20 +931,29 @@ func TestAddAccount_NoDefaultIdentitySuppresses(t *testing.T) {
 
 	ids, err := s.ListAccountIdentities(src.ID)
 	require.NoError(err, "ListAccountIdentities")
-	assert.Empty(t, ids, "expected 0 identity rows with --no-default-identity")
+	assert.Empty(ids, "expected 0 identity rows with --no-default-identity")
 
 	// The daemon's shared helper must honor the choice after the store reopens.
 	confirmDefaultIdentity(io.Discard, s, src.ID, "user@example.com", "user@example.com", "account-identifier", logger)
 	ids, err = s.ListAccountIdentities(src.ID)
 	require.NoError(err)
-	assert.Empty(t, ids, "scheduled sync must preserve the opt-out")
+	assert.Empty(ids, "the shared identity helper must preserve the opt-out")
+
+	// Use a new command, as a separate re-authorization invocation would.
+	rerun := &cobra.Command{Use: addAccountUse, RunE: runAddAccountLocal}
+	registerAddAccountFlags(rerun)
+	rerun.SetArgs([]string{"user@example.com"})
+	require.NoError(rerun.ExecuteContext(testInvocationContext(gmailProfileContext(t, "user@example.com"), cfg, invocationOptions{})))
+	ids, err = s.ListAccountIdentities(src.ID)
+	require.NoError(err)
+	assert.Empty(ids, "omitting the flag must preserve the saved choice")
 
 	root.SetArgs([]string{"add-account", "user@example.com", "--no-default-identity=false"})
 	require.NoError(root.ExecuteContext(testInvocationContext(gmailProfileContext(t, "user@example.com"), cfg, invocationOptions{})))
 	ids, err = s.ListAccountIdentities(src.ID)
 	require.NoError(err)
-	require.Len(ids, 1, "re-registering without the opt-out restores the default")
-	assert.Equal(t, "user@example.com", ids[0].Address)
+	require.Len(ids, 1, "explicit false restores the default")
+	assert.Equal("user@example.com", ids[0].Address)
 }
 
 // TestAddAccount_DeferredLegacyIdentityMigrationFires verifies that legacy

@@ -148,9 +148,22 @@ msgvault add-account <email> --oauth-app <name>
 | `--force` | Delete existing token and re-authorize |
 | `--readonly` | Request Gmail read-only access instead of read + write. Refused if the account already holds write access — see [OAuth Setup](/docs/guides/oauth-setup/#read-only-access) |
 | `--display-name` | Set a display name for the account |
-| `--no-default-identity` | Do not auto-confirm the email address as this account's "me" identity |
+| `--no-default-identity` | Do not auto-confirm the email address as this account's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
 
 If `[oauth].service_account_key` or `[oauth.apps.<name>].service_account_key` is configured, `add-account` authorizes via Google service account domain-wide delegation instead of browser OAuth. Service-account accounts do not use `--headless`, `--force`, or `--readonly`; their scope comes from the domain-wide delegation grant in the Admin Console.
+
+### Saved default identity choice
+
+`add-account` (including service accounts), `add-imap`, `add-o365` (IMAP and
+`--graph`), and `add-teams` save `--no-default-identity` for later syncs.
+Omitting the flag when adding or re-authorizing an existing account keeps its
+saved choice. Use `--no-default-identity=false` to re-enable automatic defaults.
+New accounts confirm their default identity unless the flag is set.
+
+The flag does not remove existing identities or prevent the one-time legacy
+`[identity]` migration from adding configured addresses. If the saved sync
+configuration cannot be read, automatic identity confirmation logs a warning
+and skips the write.
 
 ---
 
@@ -179,7 +192,7 @@ It tests the connection before saving credentials.
 | `--port` | `993` | IMAP server port (993 for TLS, 143 for STARTTLS/plain) |
 | `--starttls` | `false` | Use STARTTLS instead of implicit TLS |
 | `--no-tls` | `false` | Disable TLS entirely (plaintext, not recommended) |
-| `--no-default-identity` | `false` | Do not auto-confirm the username as this account's "me" identity |
+| `--no-default-identity` | `false` | Do not auto-confirm the username as this account's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
 
 Credentials are stored in `tokens/imap_<hash>.json` with restricted file permissions (0600). Use app-specific passwords when your provider supports them.
 
@@ -395,7 +408,7 @@ Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAu
 |---|---|---|
 | `--tenant` | `common` | Azure AD tenant ID (restricts which accounts can authorize) |
 | `--headless` | `false` | Sign in with a device code instead of a local browser |
-| `--no-default-identity` | `false` | Do not auto-confirm the email address as this account's "me" identity |
+| `--no-default-identity` | `false` | Do not auto-confirm the email address as this account's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
 | `--graph` | `false` | Sync through the Microsoft Graph mail API instead of IMAP. Creates an `msmail` account. Needs the `Mail.Read` permission |
 
 After adding the account, sync it with `msgvault sync-full`. For a `--graph`
@@ -423,7 +436,7 @@ the Microsoft IMAP token used by `add-o365`. Requires `[microsoft].client_id` in
 |---|---|---|
 | `--tenant` | `common` | Azure AD tenant ID to use for authorization |
 | `--headless` | `false` | Sign in with a device code instead of a local browser |
-| `--no-default-identity` | `false` | Do not auto-confirm the email address as this source's "me" identity |
+| `--no-default-identity` | `false` | Do not auto-confirm the email address as this source's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
 
 After adding the account, sync it with `msgvault sync-teams`.
 

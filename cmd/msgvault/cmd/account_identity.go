@@ -8,21 +8,41 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 // noDefaultIdentityHelp is the flag help text for --no-default-identity.
 // Each ingest command registers its own bool variable and reuses this constant.
-const noDefaultIdentityHelp = "Suppress auto-default-identity at account creation. " +
+const noDefaultIdentityHelp = "Suppress automatic default identity confirmation. " +
 	"Note: a one-time legacy [identity] config migration may still write confirmed " +
 	"identifiers to the account on first post-upgrade startup."
 
-// setDefaultIdentityOptOut saves the add command's choice for later syncs,
-// preserving provider-specific settings in sync_config.
-func setDefaultIdentityOptOut(s *store.Store, sourceID int64, optOut bool) error {
-	src, err := s.GetSourceByID(sourceID)
+const savedDefaultIdentityHelp = noDefaultIdentityHelp +
+	" Saved for later syncs and re-authorization; omit the flag to keep the choice, " +
+	"or use --no-default-identity=false to re-enable defaults."
+
+// setDefaultIdentityOptOut changes the saved choice only for an explicit flag.
+// source must contain the config from before registration: IMAP add commands
+// replace provider settings, so an omitted flag must carry the old choice forward.
+func setDefaultIdentityOptOut(cmd *cobra.Command, s *store.Store, source *store.Source, optOut bool) error {
+	src, err := s.GetSourceByID(source.ID)
 	if err != nil {
 		return fmt.Errorf("read identity preference: %w", err)
+	}
+	if !cmd.Flags().Changed("no-default-identity") {
+		if src.SyncConfig == source.SyncConfig {
+			return nil
+		}
+		var previous struct {
+			NoDefaultIdentity bool `json:"no_default_identity"`
+		}
+		if source.SyncConfig.Valid {
+			if err := json.Unmarshal([]byte(source.SyncConfig.String), &previous); err != nil {
+				return fmt.Errorf("parse saved identity preference: %w", err)
+			}
+		}
+		optOut = previous.NoDefaultIdentity
 	}
 	cfg := make(map[string]jsontext.Value)
 	if src.SyncConfig.Valid {
@@ -45,7 +65,7 @@ func setDefaultIdentityOptOut(s *store.Store, sourceID int64, optOut bool) error
 	if err != nil {
 		return fmt.Errorf("encode identity preference: %w", err)
 	}
-	if err := s.UpdateSourceSyncConfig(sourceID, string(encoded)); err != nil {
+	if err := s.UpdateSourceSyncConfig(source.ID, string(encoded)); err != nil {
 		return fmt.Errorf("save identity preference: %w", err)
 	}
 	return nil

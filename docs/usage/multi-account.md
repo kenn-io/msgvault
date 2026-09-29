@@ -161,13 +161,10 @@ Fastmail alias inventory, person promotion, and typed attributes.
 
 New Gmail, IMAP, Microsoft 365, MBOX, EML, EMLX, WhatsApp, and Google Voice sources auto-confirm the source identifier by default. Use `--no-default-identity` on supported add/import commands when that is not correct. (iMessage imports are exempt, because iMessage contacts are not self-identifying.)
 
-`add-account`, `add-imap`, `add-o365`, and `add-teams` save this choice, so
-scheduled syncs also skip the default identity. Keep passing the flag when
-re-authorizing an account; running its add command without the flag re-enables
-the default. This does not remove existing identities or prevent the one-time
-legacy `[identity]` migration from adding configured addresses. For accounts
-added with older versions, run the add command again with the flag to save the
-choice, then remove any unwanted identity.
+For accounts added with older versions, run the add command again with
+`--no-default-identity` to save the choice, then remove any unwanted identity.
+See the CLI reference for [saved identity choices](../cli-reference.md#saved-default-identity-choice),
+including re-authorization and re-enabling defaults.
 
 ```bash
 # List confirmed identifiers across all accounts
