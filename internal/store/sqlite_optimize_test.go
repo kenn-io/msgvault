@@ -481,8 +481,12 @@ func TestCloseOptimizesWithoutDrainingSQLitePool(t *testing.T) {
 	// Startup maintenance is best-effort and may leave no statistics table.
 	_, err = s.db.ExecContext(t.Context(), "DROP TABLE IF EXISTS sqlite_stat1")
 	require.NoError(err)
-	seedLiveMessages(t, s, 100)
+	const messageCount = 10_000
+	seedLiveMessages(t, s, messageCount)
 	assert.Zero(messagePlannerStatisticCount(t, s))
+	// Short-lived stores can close without ever running InitSchema. Discard
+	// its connections so close cannot inherit their analysis_limit setting.
+	s.db.SetMaxIdleConns(0)
 	s.db.SetMaxOpenConns(2)
 	s.db.SetMaxIdleConns(2)
 	blocker, err := s.db.Conn(t.Context())
@@ -505,6 +509,18 @@ func TestCloseOptimizesWithoutDrainingSQLitePool(t *testing.T) {
 	defer func() { _ = reopened.Close() }()
 	assert.Positive(messagePlannerStatisticCount(t, reopened),
 		"store close must persist planner statistics")
+	var sourceStats string
+	require.NoError(reopened.db.QueryRow(
+		`SELECT stat FROM sqlite_stat1 WHERE idx = 'idx_messages_source'`,
+	).Scan(&sourceStats))
+	fields := strings.Fields(sourceStats)
+	require.Len(fields, 2)
+	rowsPerSource, err := strconv.Atoi(fields[1])
+	require.NoError(err)
+	// Every message has the same source. Full analysis counts them all;
+	// sampled analysis stops counting this group at its sample limit.
+	assert.Less(rowsPerSource, messageCount,
+		"store close must sample indexes even on a fresh connection")
 }
 
 func TestSuccessfulSyncOptimizeThrottled(t *testing.T) {

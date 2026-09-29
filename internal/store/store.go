@@ -566,7 +566,8 @@ func (s *Store) Close() error {
 			// that may still have a checked-out connection during shutdown.
 			ctx, cancel := context.WithTimeout(context.Background(), sqliteOptimizeTimeout)
 			// Log maintenance errors here so expected deadlines do not also emit SQL warnings.
-			_, err := s.db.DB.ExecContext(ctx, "PRAGMA optimize=0x10002")
+			// Include 0x10 to bound ANALYZE even on a fresh connection without an analysis_limit.
+			_, err := s.db.DB.ExecContext(ctx, "PRAGMA optimize=0x10012")
 			logSQLiteOptimizeError("store close", err)
 			cancel()
 		}
