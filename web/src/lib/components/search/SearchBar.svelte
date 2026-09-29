@@ -1,63 +1,100 @@
 <script lang="ts">
-  import { Button, SearchInput } from '@kenn-io/kit-ui';
+  import { Button, SearchInput, SelectDropdown } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
 
-  import type { ArchiveSearchMode } from '../../archive/types';
+  import type { ExploreSearchMode } from '../../explore/models';
   import SearchModeControl from './SearchModeControl.svelte';
 
   interface Props {
-    initialQuery: string;
-    initialMode: ArchiveSearchMode;
-    onSubmit: (query: string, mode: ArchiveSearchMode) => void;
+    query: string;
+    mode: ExploreSearchMode;
+    live: boolean;
+    compact: boolean;
+    onDraft: (query: string, mode: ExploreSearchMode) => void;
+    onSubmit: (query: string, mode: ExploreSearchMode) => void;
+    inputEl?: HTMLInputElement;
   }
 
-  let { initialQuery, initialMode, onSubmit }: Props = $props();
+  let { query, mode, live, compact, onDraft, onSubmit, inputEl = $bindable() }: Props = $props();
 
-  let query = $state(untrack(() => initialQuery));
-  let mode = $state<ArchiveSearchMode>(untrack(() => initialMode));
+  let draft = $state(untrack(() => query));
+  let draftMode = $state<ExploreSearchMode>(untrack(() => mode));
 
   $effect(() => {
-    query = initialQuery;
-    mode = initialMode;
+    draft = query;
+    draftMode = mode;
   });
 
-  function handleSubmit(event: SubmitEvent): void {
+  const modeOptions = [
+    { value: 'full_text', label: 'Full text' },
+    { value: 'semantic', label: 'Semantic' },
+    { value: 'hybrid', label: 'Hybrid' }
+  ];
+
+  function changeQuery(value: string): void {
+    draft = value;
+    if (live) onDraft(value, draftMode);
+  }
+
+  function changeMode(value: ExploreSearchMode): void {
+    draftMode = value;
+    if (live) onDraft(draft, value);
+  }
+
+  function submit(event: SubmitEvent): void {
     event.preventDefault();
-    onSubmit(query.trim(), mode);
+    onSubmit(draft.trim(), draftMode);
   }
 </script>
 
-<form role="search" aria-label="Search archive" onsubmit={handleSubmit}>
-  <div class="query">
+<form
+  class="global-search"
+  class:global-search--compact={compact}
+  role="search"
+  aria-label="Search Everything"
+  onsubmit={submit}
+>
+  <div class="global-search__query">
     <SearchInput
-      id="archive-search-input"
-      name="q"
-      bind:value={query}
+      id="everything-search"
+      bind:inputEl
+      value={draft}
+      ariaLabel="Search everything"
+      placeholder="Search people, conversations, events, and files…"
       block
-      placeholder="Search the archive…"
-      ariaLabel="Search the archive"
+      oninput={changeQuery}
     />
   </div>
-  <SearchModeControl
-    requestedMode={mode === 'fts' ? 'full_text' : mode === 'vector' ? 'semantic' : 'hybrid'}
-    onchange={(next) => {
-      mode = next === 'full_text' ? 'fts' : next === 'semantic' ? 'vector' : 'hybrid';
-    }}
-  />
-  <Button type="submit" tone="info" surface="solid" label="Search" />
+  {#if compact}
+    <SelectDropdown
+      title="Search mode"
+      value={draftMode}
+      options={modeOptions}
+      align="end"
+      onchange={(value) => changeMode(value as ExploreSearchMode)}
+    />
+  {:else}
+    <SearchModeControl requestedMode={draftMode} onchange={changeMode} />
+    <Button type="submit" label="Search" tone="info" surface="solid" />
+  {/if}
 </form>
 
 <style>
-  form {
+  .global-search {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-  }
-
-  .query {
     min-width: 0;
     flex: 1;
+    align-items: center;
+    gap: var(--space-3);
   }
 
+  .global-search__query {
+    min-width: 0;
+    flex: 1;
+    max-width: 640px;
+  }
+
+  .global-search--compact {
+    gap: var(--space-2);
+  }
 </style>
