@@ -1987,4 +1987,22 @@ describe('AppShell', () => {
     rendered.unmount();
     state.destroy();
   });
+
+  it('extends a selection with Shift+Space pressed outside the grid', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    const rows = [0, 1, 2].map((index) => entry(index));
+    render(AppShell, {
+      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(exploreResponse({ rows, total_count: 3 })))),
+      state
+    });
+    await screen.findByRole('grid', { name: 'Everything results' });
+
+    // Verify the extend-selection command is registered in the keyboard help
+    await fireEvent.keyDown(window, { key: '?' });
+    const help = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
+    expect(within(help).getByText('Extend selection to focused row')).toBeDefined();
+
+    state.destroy();
+  });
 });

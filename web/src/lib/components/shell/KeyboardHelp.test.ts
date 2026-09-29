@@ -56,6 +56,15 @@ describe('keyboard command registry', () => {
     expect(command?.querySelector('[aria-label="Mod K"]')).not.toBeNull();
     expect(command?.textContent).not.toContain('or');
   });
+
+  it('documents extending a selection with Shift+Space', () => {
+    const handlers = Object.fromEntries(
+      COMMAND_DEFINITIONS.map(({ id }) => [id, () => undefined])
+    ) as CommandHandlers;
+    render(KeyboardHelp, { commands: createCommandRegistry(handlers), onclose: () => undefined });
+
+    expect(screen.getByText('Extend selection to focused row')).toBeTruthy();
+  });
 });
 
 function handlersFor(ids: CommandID[]): CommandHandlers {

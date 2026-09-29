@@ -678,12 +678,12 @@
       '[role="grid"][aria-label="Everything results"], [role="grid"][aria-label^="Everything grouped by"], [role="grid"][aria-label="Files in current context"]',
     );
   }
-  function relayGridKey(event: KeyboardEvent, key: string): void {
+  function relayGridKey(event: KeyboardEvent, key: string, init: KeyboardEventInit = {}): void {
     if (event.target instanceof Element && event.target.closest('button, a, summary, [role="button"]')) return;
     const grid = currentGrid();
     if (!grid || event.target === grid) return;
     grid.focus();
-    grid.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: false, cancelable: true }));
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: false, cancelable: true, ...init }));
   }
   async function closeReadingPane(): Promise<void> {
     commitNavigation({ selectedRow: null });
@@ -836,18 +836,18 @@
     const next = loader.rows[Math.max(0, Math.min(loader.rows.length - 1, index + delta))];
     if (next && next.key !== exploreState.current.selectedRow) openRow(next);
   }
-  function relay(event: KeyboardEvent | undefined, key: string | undefined = undefined): void {
+  function relay(event: KeyboardEvent | undefined, key: string | undefined = undefined, init: KeyboardEventInit = {}): void {
     const resolvedKey = key ?? event?.key;
     if (!resolvedKey) return;
     if (event) {
-      relayGridKey(event, resolvedKey);
+      relayGridKey(event, resolvedKey, init);
       return;
     }
     queueMicrotask(() => {
       const grid = currentGrid();
       if (!grid) return;
       grid.focus();
-      grid.dispatchEvent(new KeyboardEvent('keydown', { key: resolvedKey, bubbles: false, cancelable: true }));
+      grid.dispatchEvent(new KeyboardEvent('keydown', { key: resolvedKey, bubbles: false, cancelable: true, ...init }));
     });
   }
   const commandHandlers: CommandHandlers = {
@@ -865,6 +865,7 @@
       if (!editableTarget(event?.target ?? null)) searchInput?.focus();
     },
     'toggle-selection': (event) => relay(event, ' '),
+    'extend-selection': (event) => relay(event, ' ', { shiftKey: true }),
     'select-visible': (event) => relay(event, 'A'),
     'clear-selection': (event) => {
       if (event) relay(event, 'x');
