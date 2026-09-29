@@ -493,7 +493,7 @@
           {:else}
             <span class="row__value" data-mono>{value}</span>
           {/if}
-          <Chip size="xs" tone="muted">Host-managed</Chip>
+          <Chip size="xs" tone="muted" uppercase={false}>Host-managed</Chip>
         {:else if setting.kind === 'secret' && setting.credential_id}
           <ProviderCredentialControl
             {client}
@@ -597,7 +597,7 @@
           {/if}
         {/if}
         {#if flag}
-          <Chip size="xs" tone={flag === 'Needs restart' ? 'warning' : 'info'}>{flag}</Chip>
+          <Chip size="xs" tone={flag === 'Needs restart' ? 'warning' : 'info'} uppercase={false}>{flag}</Chip>
         {/if}
       </div>
       {#if hint && !switchedOff}<small class="row__format">{hint}</small>{/if}
