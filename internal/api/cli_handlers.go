@@ -1386,7 +1386,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
-	if IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
+	if IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) || IsCLIRunChatDraft(args) {
 		return false
 	}
 	if len(args) >= 3 && args[0] == cliRunPersonCommand {
@@ -1633,6 +1633,9 @@ func cliRunCommandAllowed(args []string) bool {
 		return false
 	}
 	if IsCLIRunDraftCreate(args) {
+		return len(args) >= 2
+	}
+	if IsCLIRunChatDraft(args) {
 		return len(args) >= 2
 	}
 	if IsCLIRunDraftSendAs(args) {

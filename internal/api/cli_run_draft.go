@@ -35,7 +35,7 @@ func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {
 	if grant == nil {
 		return false
 	}
-	if IsCLIRunDraftCreate(args) {
+	if IsCLIRunDraftCreate(args) || IsCLIRunChatDraftCreate(args) {
 		return grant.HasPermission(agentgrant.PermissionDraftCreate)
 	}
 	if len(args) > 0 && args[0] == CLIRunDraftRecoverCommand {

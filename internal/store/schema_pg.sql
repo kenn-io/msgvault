@@ -1908,6 +1908,25 @@ CREATE INDEX IF NOT EXISTS idx_gmail_drafts_current_message
 CREATE INDEX IF NOT EXISTS idx_gmail_drafts_pending_original_message
     ON gmail_drafts(pending_original_message_id);
 
+CREATE TABLE IF NOT EXISTS chat_drafts (
+    draft_id TEXT PRIMARY KEY,
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    source_conversation_id TEXT NOT NULL,
+    conversation_type TEXT NOT NULL,
+    reply_to_source_message_id TEXT,
+    body TEXT NOT NULL,
+    revision BIGINT NOT NULL CHECK (revision > 0),
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_drafts_source
+    ON chat_drafts(source_id);
+
+CREATE INDEX IF NOT EXISTS idx_chat_drafts_conversation
+    ON chat_drafts(conversation_id);
+
 CREATE TABLE IF NOT EXISTS source_import_items (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

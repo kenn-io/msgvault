@@ -2190,6 +2190,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		}
 		return a.runCLIReplyDraft(ctx, req, emit)
 	}
+	if api.IsCLIRunChatDraft(req.Args) {
+		return a.runCLIChatDraft(ctx, req, emit)
+	}
 	if api.IsCLIRunDraftSendAs(req.Args) {
 		return a.runCLIDraftSendAs(ctx, req, emit)
 	}

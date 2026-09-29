@@ -107,8 +107,8 @@ Commands that access archive state keep their usual stdout/stderr output while u
 2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP. With `[server].daemon_auto_start = false`, they use a daemon that is already running or starting and never start one.
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
 4. With both `--agent-url` and `--agent-token-file`, the CLI connects to a
-   remote daemon as a restricted caller. `draft-reply`, `draft-compose`, and
-   `draft-recover` are available in this mode. The CLI rejects owner
+   remote daemon as a restricted caller. `draft-reply`, `draft-compose`,
+   `chat-draft-create`, and `draft-recover` are available in this mode. The CLI rejects owner
    configuration (`--config`, `--home`, `--local`) and never writes the token
    to logs or argv. It sends the token in the `X-Msgvault-Agent-Token` header;
    generated OpenAPI clients do not model this transport detail.
@@ -358,6 +358,31 @@ Refused results use `refusal_code`; pending cleanup results describe the current
 provider result in `observation.code`. See
 [Manage a created draft](usage/imap.md#manage-a-created-draft) for revision,
 provider checks, retention, retry behavior, and recovery limits.
+
+## chat-draft-create, chat-draft-get, chat-draft-edit, and chat-draft-delete
+
+Manage unsent text for an existing Slack, Teams, or Discord conversation. These
+drafts live in msgvault, do not appear in the provider composer, and never make
+a provider request.
+
+```bash
+msgvault chat-draft-create <conversation-id> (--source <source> | --source-id <id>) --body <text> [--reply-to <message-id>] [--json]
+msgvault chat-draft-get <draft-id> [--json]
+msgvault chat-draft-edit <draft-id> --revision <n> --body <text> [--json]
+msgvault chat-draft-delete <draft-id> --revision <n> [--json]
+```
+
+`--source` selects one source by identifier or display name. Use `--source-id`
+when sources share a name or identifier. `--body` is
+required for create and edit; `--body=` stores an empty body. `--reply-to`
+selects an archived message in the same conversation. The current positive
+`--revision` is required for edit and delete. A stale revision returns
+`revision_conflict` and leaves the draft unchanged.
+
+Restricted agent tokens may use `chat-draft-create` with the existing
+`draft.create` permission and a matching source grant. Retrieval, editing,
+deletion, sending, attachments, and provider-native drafts remain owner-only
+or outside this command family.
 
 ## draft-send-as
 
@@ -3724,7 +3749,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `draft.create` for `draft-reply` and `draft-compose`; `draft.edit` and `draft.delete` for `draft-recover` only (see [draft recovery](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `draft.create` for `draft-reply`, `draft-compose`, and `chat-draft-create`; `draft.edit` and `draft.delete` for `draft-recover` only (see [draft recovery](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
 

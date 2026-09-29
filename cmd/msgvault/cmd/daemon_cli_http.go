@@ -80,7 +80,7 @@ func runDaemonCLICommandHTTPWithEnv(
 	if err != nil {
 		return err
 	}
-	if api.IsCLIRunDraftCreate(args) || api.IsCLIRunDraftLifecycle(args) || api.IsCLIRunDraftSendAs(args) {
+	if api.IsCLIRunDraftCreate(args) || api.IsCLIRunDraftLifecycle(args) || api.IsCLIRunDraftSendAs(args) || api.IsCLIRunChatDraft(args) {
 		cwd = ""
 	}
 
@@ -97,7 +97,7 @@ func runDaemonCLICommandHTTPWithEnv(
 			if _, err := fmt.Fprint(cmd.ErrOrStderr(), data); err != nil {
 				return fmt.Errorf("write CLI stderr: %w", err)
 			}
-			draftFailureReported = (api.IsCLIRunDraftCreate(args) || api.IsCLIRunDraftLifecycle(args) || api.IsCLIRunDraftSendAs(args)) && data != ""
+			draftFailureReported = (api.IsCLIRunDraftCreate(args) || api.IsCLIRunDraftLifecycle(args) || api.IsCLIRunDraftSendAs(args) || api.IsCLIRunChatDraft(args)) && data != ""
 		}
 		return nil
 	})

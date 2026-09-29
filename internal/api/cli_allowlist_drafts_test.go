@@ -35,6 +35,32 @@ func TestCLIRunDraftAllowlist(t *testing.T) {
 	assertions.False(cliRunCommandAllowed([]string{"draft-send-as"}))
 }
 
+func TestCLIRunChatDraftAllowlist(t *testing.T) {
+	t.Parallel()
+	assertions := assert.New(t)
+	assertions.True(IsCLIRunChatDraftCreate([]string{"chat-draft-create", "42", "--body="}))
+	assertions.True(IsCLIRunChatDraft([]string{"chat-draft-get", "chat-draft-1", "--json"}))
+	assertions.True(IsCLIRunChatDraft([]string{"chat-draft-edit", "chat-draft-1", "--body=x", "--revision=1"}))
+	assertions.True(IsCLIRunChatDraft([]string{"chat-draft-delete", "chat-draft-1", "--revision=1"}))
+	assertions.True(cliRunCommandAllowed([]string{"chat-draft-create", "42", "--source=slack", "--body="}))
+	assertions.True(cliRunCommandAllowed([]string{"chat-draft-get", "chat-draft-1"}))
+	assertions.False(cliRunCommandAllowed([]string{"chat-draft-create"}))
+	assertions.False(cliRunCommandAllowed([]string{"chat-draft-get"}))
+	assertions.False(IsCLIRunChatDraft([]string{"chat-draft-create-extra", "42"}))
+}
+
+func TestDelegatedChatDraftAdmission(t *testing.T) {
+	t.Parallel()
+	assertions := assert.New(t)
+	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}}
+	assertions.True(delegatedCLIRunAdmitted(
+		[]string{"chat-draft-create", "42", "--source=slack", "--body="}, grant,
+	))
+	assertions.False(delegatedCLIRunAdmitted([]string{"chat-draft-get", "chat-draft-1"}, grant))
+	assertions.False(delegatedCLIRunAdmitted([]string{"chat-draft-edit", "chat-draft-1", "--revision=1", "--body=x"}, grant))
+	assertions.False(delegatedCLIRunAdmitted([]string{"chat-draft-delete", "chat-draft-1", "--revision=1"}, grant))
+}
+
 func TestDelegatedDraftRecoverRequiresActionPermission(t *testing.T) {
 	t.Parallel()
 	source := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
