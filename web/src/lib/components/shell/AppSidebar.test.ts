@@ -73,9 +73,10 @@ describe('AppSidebar', () => {
     expect(dot?.closest('[aria-hidden="true"]')).toBeTruthy();
   });
 
-  it('keeps the archive status text available to assistive tech in the rail', () => {
+  it('gives assistive tech the full archive status in the rail', () => {
     renderSidebar({ collapsed: true });
-    expect(screen.getByText('Local archive')).toBeTruthy();
+    expect(screen.getByText('Local archive ready').classList.contains('kit-sr-only')).toBe(true);
+    expect(screen.queryByText('Local archive')).toBeNull();
   });
 
   it('toggles the rail and opens shortcuts from the footer', async () => {

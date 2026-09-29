@@ -68,7 +68,7 @@
     <Tooltip text={status.label}>
       <span class="sidebar__status">
         <span aria-hidden="true"><StatusDot status={status.tone} label={status.label} /></span>
-        <span class:kit-sr-only={collapsed}>{status.text}</span>
+        <span class:kit-sr-only={collapsed}>{collapsed ? status.label : status.text}</span>
       </span>
     </Tooltip>
     <Tooltip text="Keyboard shortcuts">
