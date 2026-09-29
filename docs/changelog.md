@@ -17,6 +17,7 @@ All notable changes to msgvault, grouped by release.
   to resume enrichment for an affected person; a later identity change or claim
   expiry can also enqueue work.
 
+- `draft-forward` creates an IMAP draft from an archived email and its stored attachments. It refuses the draft before upload when any archived file is unavailable, and keeps the files through local retrieval and note edits.
 - Beeper media sync stops retrying files the network has deleted, such as expired WhatsApp media. Each is requested once, recorded as unavailable, and reported in the sync summary. Other failed downloads get at most three attempts per run instead of eight, so one bad file no longer stalls a sync.
 - `msgvault search` keeps complete sender and subject/snippet text when piped or redirected. Terminal tables fit the available display width, with aligned Unicode and emoji and complete fixed fields.
 - `msgvault search` shows snippets for subjectless chat hits, keeps Unicode characters whole when truncating, and shows `-` when a message has no recorded size.
