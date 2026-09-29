@@ -2,6 +2,8 @@ package cmd
 
 import "github.com/spf13/cobra"
 
+const beeperDraftCommandAnnotation = "msgvault.beeper-draft"
+
 func init() {
 	rootCmd.AddCommand(newBeeperDraftCommand())
 }
@@ -16,6 +18,12 @@ func newBeeperDraftCommand() *cobra.Command {
 	command.AddCommand(newBeeperDraftGetCommand())
 	command.AddCommand(newBeeperDraftEditCommand())
 	command.AddCommand(newBeeperDraftClearCommand())
+	for _, child := range command.Commands() {
+		if child.Annotations == nil {
+			child.Annotations = map[string]string{}
+		}
+		child.Annotations[beeperDraftCommandAnnotation] = "true"
+	}
 	return command
 }
 

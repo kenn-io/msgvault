@@ -380,7 +380,12 @@ provider observation without adopting Desktop changes.
 Edit and clear compare the provider draft before writing. Beeper's current API
 has no conditional clear token, so a Desktop edit after that observation can
 still be cleared. A provider request whose result is unknown stays pending and
-blocks a new mutation until the evidence is resolved.
+blocks a new mutation until the evidence is resolved. After verifying that
+Desktop shows an explicit empty draft, run `clear` with the saved revision to
+retire the pending local binding without another PATCH. The saved candidate
+remains visible until that explicit retirement; repeating `create` for the same
+source and chat reports the pending draft ID and revision instead of replaying
+the provider write.
 
 Delegated agents need `draft.create`, `draft.read`, `draft.edit`, or
 `draft.delete` for the matching Beeper source. These commands accept no caller

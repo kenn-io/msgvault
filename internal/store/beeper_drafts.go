@@ -137,6 +137,23 @@ func (s *Store) GetBeeperDraft(draftID string) (BeeperDraft, error) {
 	return s.GetBeeperDraftContext(context.Background(), draftID)
 }
 
+// GetBeeperDraftForSourceChatContext loads the one durable binding for an
+// exact source/chat pair without scanning unrelated draft rows.
+func (s *Store) GetBeeperDraftForSourceChatContext(ctx context.Context, sourceID int64, chatID string) (BeeperDraft, error) {
+	if sourceID <= 0 || strings.TrimSpace(chatID) == "" || strings.ContainsAny(chatID, "\x00\r\n") {
+		return BeeperDraft{}, ErrBeeperDraftNotFound
+	}
+	var draftID string
+	err := s.db.QueryRowContext(ctx, `SELECT draft_id FROM beeper_drafts WHERE source_id = ? AND chat_id = ?`, sourceID, chatID).Scan(&draftID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return BeeperDraft{}, fmt.Errorf("source %d chat %q: %w", sourceID, chatID, ErrBeeperDraftNotFound)
+	}
+	if err != nil {
+		return BeeperDraft{}, fmt.Errorf("find Beeper draft binding: %w", err)
+	}
+	return s.GetBeeperDraftContext(ctx, draftID)
+}
+
 func loadBeeperDraft(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, lockClause, draftID string) (BeeperDraft, error) {
@@ -374,6 +391,44 @@ func (s *Store) AbortBeeperDraftClaimContext(ctx context.Context, draftID string
 		_, err = tx.ExecContext(ctx, `UPDATE beeper_drafts SET pending_operation = NULL, pending_phase = NULL, candidate_text = NULL, outcome_code = NULL, updated_at = `+s.dialect.Now()+` WHERE draft_id = ? AND revision = ?`, draftID, revision)
 		return err
 	})
+}
+
+// RetireBeeperDraftAfterEmptyObservationContext clears any pending local
+// attempt after the owner has observed an explicit empty provider slot.
+func (s *Store) RetireBeeperDraftAfterEmptyObservationContext(ctx context.Context, draftID string, revision int64) (BeeperDraft, error) {
+	if err := validateBeeperDraftID(draftID); err != nil {
+		return BeeperDraft{}, err
+	}
+	if revision <= 0 {
+		return BeeperDraft{}, ErrBeeperDraftRevision
+	}
+	var retired BeeperDraft
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockBeeperDraftTx(ctx, tx, draftID); err != nil {
+			return err
+		}
+		draft, err := s.loadBeeperDraftTx(ctx, tx, draftID)
+		if err != nil {
+			return err
+		}
+		if draft.Revision != revision {
+			return ErrBeeperDraftRevision
+		}
+		if draft.Pending == nil || !validBeeperDraftPhase(draft.Pending.Operation, draft.Pending.Phase) {
+			return ErrBeeperDraftState
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE beeper_drafts SET committed_text = NULL, revision = revision + 1, pending_operation = NULL, pending_phase = NULL, candidate_text = NULL, outcome_code = NULL, updated_at = `+s.dialect.Now()+` WHERE draft_id = ? AND revision = ? AND pending_operation IS NOT NULL`, draftID, revision)
+		if err != nil {
+			return fmt.Errorf("retire Beeper draft after empty observation: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		if n != 1 {
+			return ErrBeeperDraftState
+		}
+		retired, err = loadBeeperDraft(ctx, tx, s.dialect.SelectForUpdate(), draftID)
+		return err
+	})
+	return retired, err
 }
 
 // FinishBeeperDraftContext commits a provider observation and advances the

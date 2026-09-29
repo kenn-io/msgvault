@@ -53,7 +53,6 @@ type DraftObservation struct {
 	Present            bool
 	ExplicitNull       bool
 	Text               string
-	Attachments        map[string]jsontext.Value
 	AttachmentsPresent bool
 	Unknown            bool
 }
@@ -80,7 +79,6 @@ func (c Chat) InspectDraft() (DraftObservation, error) {
 	if raw == nil {
 		return DraftObservation{}, errors.New("Beeper draft is not an object")
 	}
-	attachmentsPresent := false
 	for key, value := range raw {
 		switch key {
 		case "text":
@@ -88,17 +86,11 @@ func (c Chat) InspectDraft() (DraftObservation, error) {
 				return DraftObservation{}, fmt.Errorf("decode Beeper draft text: %w", err)
 			}
 		case "attachments":
-			attachmentsPresent = true
 			obs.AttachmentsPresent = true
-			if err := json.Unmarshal(value, &obs.Attachments); err != nil {
-				return DraftObservation{}, fmt.Errorf("decode Beeper draft attachments: %w", err)
-			}
+			obs.Unknown = true
 		default:
 			obs.Unknown = true
 		}
-	}
-	if attachmentsPresent || len(obs.Attachments) > 0 {
-		obs.Unknown = true
 	}
 	return obs, nil
 }
@@ -149,7 +141,11 @@ func (c *Client) UpdateDraft(ctx context.Context, chatID string, text *string) (
 		return nil, &DraftWriteError{Code: DraftWriteCodeUnknown, State: DraftWriteUncertain, Err: err}
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes+1))
+	reader := io.Reader(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		reader = io.LimitReader(resp.Body, maxErrorBodyBytes+1)
+	}
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, &DraftWriteError{Code: DraftWriteCodeUnknown, Status: resp.StatusCode, State: DraftWriteUncertain, Err: err}
 	}

@@ -13,7 +13,9 @@ All notable changes to msgvault, grouped by release.
   draft binding and uses `draft.create`, `draft.read`, `draft.edit`, and
   `draft.delete` grants. Edit and clear use observation-based conflict checks;
   Beeper's current API does not provide a conditional clear token, so a
-  Desktop edit after the observation can still be cleared.
+  Desktop edit after the observation can still be cleared. An owner can clear
+  a pending local attempt after observing an explicit empty slot without
+  replaying the provider write.
 - Exa and Sixtyfour person enrichment collapse repeated values before committing
   claims, so duplicate provider output no longer aborts the claim generation.
 - Person enrichment retains queued lookups and refresh schedules when a provider
@@ -22,7 +24,6 @@ All notable changes to msgvault, grouped by release.
   [manual lookup](cli-reference.md#person-enrichment) with a new idempotency key
   to resume enrichment for an affected person; a later identity change or claim
   expiry can also enqueue work.
-
 - Beeper media sync stops retrying files the network has deleted, such as expired WhatsApp media. Each is requested once, recorded as unavailable, and reported in the sync summary. Other failed downloads get at most three attempts per run instead of eight, so one bad file no longer stalls a sync.
 - `msgvault search` keeps complete sender and subject/snippet text when piped or redirected. Terminal tables fit the available display width, with aligned Unicode and emoji and complete fixed fields.
 - `msgvault search` shows snippets for subjectless chat hits, keeps Unicode characters whole when truncating, and shows `-` when a message has no recorded size.

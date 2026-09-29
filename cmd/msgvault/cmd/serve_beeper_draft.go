@@ -5,9 +5,10 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
-	"strconv"
+	"io"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/beeper"
@@ -31,89 +32,93 @@ func parseBeeperDraftArgs(args []string) (beeperDraftIntent, error) {
 	if !api.IsCLIRunBeeperDraft(args) {
 		return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("expected draft-beeper operation"))
 	}
-	intent := beeperDraftIntent{Operation: args[1]}
-	var positional string
-	var sourceSet, chatSet, revisionSet, bodySet bool
-	rest := args[2:]
-	for len(rest) > 0 {
-		arg := rest[0]
-		rest = rest[1:]
-		if !strings.HasPrefix(arg, "--") {
-			if positional != "" {
-				return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("expected one draft ID"))
-			}
-			positional = arg
-			continue
-		}
-		nameValue := strings.TrimPrefix(arg, "--")
-		name, value, hasValue := strings.Cut(nameValue, "=")
-		if !hasValue && (name == "source-id" || name == "chat-id" || name == "body" || name == "revision") {
-			if len(rest) == 0 {
-				return beeperDraftIntent{}, draftReplyError("invalid_args", fmt.Errorf("--%s requires a value", name))
-			}
-			value, rest = rest[0], rest[1:]
-			hasValue = true
-		}
-		switch name {
-		case "source-id":
-			if sourceSet {
-				return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--source-id given more than once"))
-			}
-			parsed, err := strconv.ParseInt(value, 10, 64)
-			if err != nil || parsed <= 0 {
-				return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--source-id must be positive"))
-			}
-			intent.SourceID, sourceSet = parsed, true
-		case "chat-id":
-			if chatSet || strings.TrimSpace(value) == "" || strings.ContainsAny(value, "\x00\r\n") {
-				return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--chat-id must be a nonblank canonical ID"))
-			}
-			intent.ChatID, chatSet = value, true
-		case "body":
-			if bodySet || value == "" || strings.ContainsRune(value, '\x00') {
-				return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--body must be non-empty"))
-			}
-			intent.Body, bodySet = value, true
-		case "revision":
-			if revisionSet {
-				return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--revision given more than once"))
-			}
-			parsed, err := strconv.ParseInt(value, 10, 64)
-			if err != nil || parsed <= 0 {
-				return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--revision must be positive"))
-			}
-			intent.Revision, revisionSet = parsed, true
-		case "json":
-			if hasValue && value != "true" {
-				return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--json accepts no value"))
-			}
-			intent.JSON = true
-		case "log-level", "verbose", "log-sql", "log-sql-slow-ms":
-			// Root logging flags may be preserved in the daemon request.
-		default:
-			return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("unsupported draft-beeper flag"))
+	root := &cobra.Command{Use: "msgvault", SilenceErrors: true, SilenceUsage: true}
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.PersistentFlags().String("log-level", "", "")
+	root.PersistentFlags().Bool("verbose", false, "")
+	root.PersistentFlags().Bool("log-sql", false, "")
+	root.PersistentFlags().Int64("log-sql-slow-ms", 0, "")
+	draftCommand := newBeeperDraftCommand()
+	root.AddCommand(draftCommand)
+	operation := args[1]
+	var selected *cobra.Command
+	for _, child := range draftCommand.Commands() {
+		if child.Name() == operation {
+			selected = child
+			break
 		}
 	}
-	switch intent.Operation {
+	if selected == nil {
+		return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("unsupported draft-beeper operation"))
+	}
+	var positional []string
+	selected.RunE = func(_ *cobra.Command, values []string) error {
+		positional = append([]string(nil), values...)
+		return nil
+	}
+	root.SetArgs(args)
+	if err := root.Execute(); err != nil {
+		return beeperDraftIntent{}, draftReplyError("invalid_args", err)
+	}
+	intent := beeperDraftIntent{Operation: operation}
+	var flagErr error
+	getInt64 := func(name string) int64 {
+		if selected.Flags().Lookup(name) == nil {
+			return 0
+		}
+		value, err := selected.Flags().GetInt64(name)
+		if err != nil {
+			flagErr = err
+		}
+		return value
+	}
+	getString := func(name string) string {
+		if selected.Flags().Lookup(name) == nil {
+			return ""
+		}
+		value, err := selected.Flags().GetString(name)
+		if err != nil {
+			flagErr = err
+		}
+		return value
+	}
+	intent.SourceID = getInt64("source-id")
+	intent.ChatID = getString("chat-id")
+	intent.Body = getString("body")
+	intent.Revision = getInt64("revision")
+	if flagErr != nil {
+		return beeperDraftIntent{}, draftReplyError("invalid_args", flagErr)
+	}
+	if intent.JSON, flagErr = selected.Flags().GetBool("json"); flagErr != nil {
+		return beeperDraftIntent{}, draftReplyError("invalid_args", flagErr)
+	}
+	switch operation {
 	case "create":
-		if positional != "" || !sourceSet || !chatSet || !bodySet {
-			return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("create requires source, chat, and body"))
+		if intent.SourceID <= 0 {
+			return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--source-id must be positive"))
+		}
+		if strings.TrimSpace(intent.ChatID) == "" || strings.ContainsAny(intent.ChatID, "\x00\r\n") {
+			return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--chat-id must be a nonblank canonical ID"))
+		}
+		if intent.Body == "" || strings.ContainsRune(intent.Body, '\x00') {
+			return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--body must be non-empty"))
 		}
 	case "get":
-		if positional == "" || sourceSet || chatSet || bodySet || revisionSet {
-			return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("get requires one draft ID"))
-		}
-		intent.DraftID = positional
+		intent.DraftID = positional[0]
 	case "edit":
-		if positional == "" || !revisionSet || !bodySet || sourceSet || chatSet {
-			return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("edit requires draft ID, revision, and body"))
+		if intent.Revision <= 0 {
+			return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--revision must be positive"))
 		}
-		intent.DraftID = positional
+		if intent.Body == "" || strings.ContainsRune(intent.Body, '\x00') {
+			return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--body must be non-empty"))
+		}
+		intent.DraftID = positional[0]
 	case "clear":
-		if positional == "" || !revisionSet || sourceSet || chatSet || bodySet {
-			return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("clear requires draft ID and revision"))
+		if intent.Revision <= 0 {
+			return beeperDraftIntent{}, draftReplyError("invalid_args", errors.New("--revision must be positive"))
 		}
-		intent.DraftID = positional
+		intent.DraftID = positional[0]
 	}
 	return intent, nil
 }
@@ -293,11 +298,20 @@ func (a *storeAPIAdapter) runBeeperDraftGet(ctx context.Context, intent beeperDr
 	if err != nil {
 		return err
 	}
-	output.NativePresent, output.NativeEmpty, output.NativeText, output.NativeAttachments, output.NativeUnknown = observation.Present, observation.Empty(), observation.Text, observation.AttachmentsPresent || len(observation.Attachments) > 0, observation.Unknown
+	output.NativePresent, output.NativeEmpty, output.NativeText, output.NativeAttachments, output.NativeUnknown = observation.Present, observation.Empty(), observation.Text, observation.AttachmentsPresent, observation.Unknown
 	return emitBeeperDraftOutput(emit, cliStreamStdout, intent.JSON, output)
 }
 
 func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, intent beeperDraftIntent, source *store.Source, client *beeper.Client, emit func(api.CLIRunEvent) error) error {
+	existing, lookupErr := a.store.GetBeeperDraftForSourceChatContext(ctx, source.ID, intent.ChatID)
+	if lookupErr == nil && existing.Pending != nil {
+		output := beeperDraftOutputFromDraft(existing, "pending")
+		_ = emitBeeperDraftOutput(emit, cliStreamStderr, intent.JSON, output)
+		return draftReplyError("pending", errors.New("Beeper draft has an unresolved provider attempt; use get and clear to inspect it"))
+	}
+	if lookupErr != nil && !errors.Is(lookupErr, store.ErrBeeperDraftNotFound) {
+		return draftReplyError("local_persistence_failed", lookupErr)
+	}
 	chat, err := client.GetChat(ctx, intent.ChatID)
 	if err != nil {
 		return draftReplyError("provider_unavailable", err)
@@ -317,21 +331,23 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, intent beepe
 		return draftReplyError("local_persistence_failed", err)
 	}
 	updated, err := client.UpdateDraft(ctx, intent.ChatID, &intent.Body)
+	evidenceCtx, cancelEvidence := localDraftEvidenceContext(ctx)
+	defer cancelEvidence()
 	if err != nil {
-		return a.handleBeeperDraftWriteError(ctx, intent, draft, err, emit)
+		return a.handleBeeperDraftWriteError(evidenceCtx, intent, draft, err, emit)
 	}
 	observed, err := validateBeeperChat(source, intent.ChatID, updated)
 	if err != nil {
-		_ = a.store.RecordBeeperDraftOutcomeContext(ctx, draft.DraftID, draft.Revision, store.BeeperDraftPhaseRemoteUnknown, "provider_identity_mismatch")
+		_ = a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, draft.DraftID, draft.Revision, store.BeeperDraftPhaseRemoteUnknown, "provider_identity_mismatch")
 		return err
 	}
 	if observed.Empty() || observed.Unknown || observed.Text == "" {
-		_ = a.store.RecordBeeperDraftOutcomeContext(ctx, draft.DraftID, draft.Revision, store.BeeperDraftPhaseRemoteUnknown, "provider_unknown")
+		_ = a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, draft.DraftID, draft.Revision, store.BeeperDraftPhaseRemoteUnknown, "provider_unknown")
 		return draftReplyError("remote_unknown", errors.New("Beeper did not return a managed text draft"))
 	}
-	finished, err := a.store.FinishBeeperDraftContext(ctx, draft.DraftID, draft.Revision, &observed.Text)
+	finished, err := a.store.FinishBeeperDraftContext(evidenceCtx, draft.DraftID, draft.Revision, &observed.Text)
 	if err != nil {
-		_ = a.store.RecordBeeperDraftOutcomeContext(ctx, draft.DraftID, draft.Revision, store.BeeperDraftPhaseAcceptedLocalFailed, "remote_accepted_local_failed")
+		_ = a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, draft.DraftID, draft.Revision, store.BeeperDraftPhaseAcceptedLocalFailed, "remote_accepted_local_failed")
 		return draftReplyError("remote_accepted_local_failed", err)
 	}
 	return emitBeeperDraftOutput(emit, cliStreamStdout, intent.JSON, beeperDraftOutputFromDraft(finished, "created"))
@@ -352,6 +368,18 @@ func (a *storeAPIAdapter) runBeeperDraftMutation(ctx context.Context, intent bee
 	if observation.Unknown || (!observation.Empty() && observation.Text == "") || !observation.Present {
 		return draftReplyError("conflict", errors.New("Beeper draft observation is missing or contains unsupported fields"))
 	}
+	if intent.Operation == "clear" && observation.Empty() && draft.Pending != nil {
+		evidenceCtx, cancelEvidence := localDraftEvidenceContext(ctx)
+		defer cancelEvidence()
+		retired, err := a.store.RetireBeeperDraftAfterEmptyObservationContext(evidenceCtx, draft.DraftID, draft.Revision)
+		if err != nil {
+			return draftReplyError("local_persistence_failed", err)
+		}
+		return emitBeeperDraftOutput(emit, cliStreamStdout, intent.JSON, beeperDraftOutputFromDraft(retired, "retired"))
+	}
+	if intent.Operation == "clear" && draft.Pending != nil && !observation.Empty() {
+		return draftReplyError("conflict", errors.New("Beeper draft is still occupied; clear it in Desktop before retiring the pending attempt"))
+	}
 	if draft.Pending != nil {
 		if draft.Pending.Operation != store.BeeperDraftOperationEdit || draft.Pending.Phase != store.BeeperDraftPhaseClearConfirmed {
 			return draftReplyError("pending", errors.New("Beeper draft has an unresolved provider attempt"))
@@ -369,13 +397,14 @@ func (a *storeAPIAdapter) runBeeperDraftMutation(ctx context.Context, intent bee
 		if err != nil {
 			return draftReplyError("claim_failed", err)
 		}
-		if err := a.store.RecordBeeperDraftOutcomeContext(ctx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseClearConfirmed, "already_empty"); err != nil {
+		evidenceCtx, cancelEvidence := localDraftEvidenceContext(ctx)
+		defer cancelEvidence()
+		if err := a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseClearConfirmed, "already_empty"); err != nil {
 			return draftReplyError("local_persistence_failed", err)
 		}
-		finished, err := a.store.FinishBeeperDraftContext(ctx, claimed.DraftID, claimed.Revision, nil)
+		finished, err := a.store.FinishBeeperDraftContext(evidenceCtx, claimed.DraftID, claimed.Revision, nil)
 		if err != nil {
-			_ = a.store.RecordBeeperDraftOutcomeContext(ctx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseAcceptedLocalFailed, "remote_accepted_local_failed")
-			return draftReplyError("remote_accepted_local_failed", err)
+			return draftReplyError("local_persistence_failed", err)
 		}
 		return emitBeeperDraftOutput(emit, cliStreamStdout, intent.JSON, beeperDraftOutputFromDraft(finished, "cleared"))
 	}
@@ -401,25 +430,27 @@ func (a *storeAPIAdapter) runBeeperDraftMutation(ctx context.Context, intent bee
 		return draftReplyError("local_persistence_failed", err)
 	}
 	cleared, err := client.UpdateDraft(ctx, claimed.ChatID, nil)
+	evidenceCtx, cancelEvidence := localDraftEvidenceContext(ctx)
+	defer cancelEvidence()
 	if err != nil {
-		return a.handleBeeperDraftWriteError(ctx, intent, claimed, err, emit)
+		return a.handleBeeperDraftWriteError(evidenceCtx, intent, claimed, err, emit)
 	}
 	clearObservation, err := validateBeeperChat(source, claimed.ChatID, cleared)
 	if err != nil {
-		_ = a.store.RecordBeeperDraftOutcomeContext(ctx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseRemoteUnknown, "provider_identity_mismatch")
+		_ = a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseRemoteUnknown, "provider_identity_mismatch")
 		return err
 	}
 	if !clearObservation.Empty() {
-		_ = a.store.RecordBeeperDraftOutcomeContext(ctx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseRemoteUnknown, "clear_not_confirmed")
+		_ = a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseRemoteUnknown, "clear_not_confirmed")
 		return draftReplyError("remote_unknown", errors.New("Beeper did not confirm an empty draft"))
 	}
-	if err := a.store.RecordBeeperDraftOutcomeContext(ctx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseClearConfirmed, "cleared"); err != nil {
+	if err := a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseClearConfirmed, "cleared"); err != nil {
 		return draftReplyError("local_persistence_failed", err)
 	}
 	if intent.Operation == "clear" {
-		finished, err := a.store.FinishBeeperDraftContext(ctx, claimed.DraftID, claimed.Revision, nil)
+		finished, err := a.store.FinishBeeperDraftContext(evidenceCtx, claimed.DraftID, claimed.Revision, nil)
 		if err != nil {
-			_ = a.store.RecordBeeperDraftOutcomeContext(ctx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseAcceptedLocalFailed, "remote_accepted_local_failed")
+			_ = a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseAcceptedLocalFailed, "remote_accepted_local_failed")
 			return draftReplyError("remote_accepted_local_failed", err)
 		}
 		return emitBeeperDraftOutput(emit, cliStreamStdout, intent.JSON, beeperDraftOutputFromDraft(finished, "cleared"))
@@ -433,32 +464,36 @@ func (a *storeAPIAdapter) setBeeperDraft(ctx context.Context, intent beeperDraft
 		return draftReplyError("local_persistence_failed", err)
 	}
 	updated, err := client.UpdateDraft(ctx, claimed.ChatID, &intent.Body)
+	evidenceCtx, cancelEvidence := localDraftEvidenceContext(ctx)
+	defer cancelEvidence()
 	if err != nil {
-		return a.handleBeeperDraftWriteError(ctx, intent, claimed, err, emit)
+		return a.handleBeeperDraftWriteError(evidenceCtx, intent, claimed, err, emit)
 	}
 	observed, err := validateBeeperChat(source, claimed.ChatID, updated)
 	if err != nil {
-		_ = a.store.RecordBeeperDraftOutcomeContext(ctx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseRemoteUnknown, "provider_identity_mismatch")
+		_ = a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseRemoteUnknown, "provider_identity_mismatch")
 		return err
 	}
 	if observed.Empty() || observed.Unknown || observed.Text == "" {
-		_ = a.store.RecordBeeperDraftOutcomeContext(ctx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseRemoteUnknown, "set_not_confirmed")
+		_ = a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseRemoteUnknown, "set_not_confirmed")
 		return draftReplyError("remote_unknown", errors.New("Beeper did not return a managed text draft"))
 	}
-	finished, err := a.store.FinishBeeperDraftContext(ctx, claimed.DraftID, claimed.Revision, &observed.Text)
+	finished, err := a.store.FinishBeeperDraftContext(evidenceCtx, claimed.DraftID, claimed.Revision, &observed.Text)
 	if err != nil {
-		_ = a.store.RecordBeeperDraftOutcomeContext(ctx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseAcceptedLocalFailed, "remote_accepted_local_failed")
+		_ = a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseAcceptedLocalFailed, "remote_accepted_local_failed")
 		return draftReplyError("remote_accepted_local_failed", err)
 	}
 	return emitBeeperDraftOutput(emit, cliStreamStdout, intent.JSON, beeperDraftOutputFromDraft(finished, "edited"))
 }
 
 func (a *storeAPIAdapter) handleBeeperDraftWriteError(ctx context.Context, intent beeperDraftIntent, claimed store.BeeperDraft, writeErr error, emit func(api.CLIRunEvent) error) error {
+	evidenceCtx, cancelEvidence := localDraftEvidenceContext(ctx)
+	defer cancelEvidence()
 	var providerErr *beeper.DraftWriteError
 	if errors.As(writeErr, &providerErr) && providerErr.State == beeper.DraftWriteRejected {
 		if claimed.Pending != nil && claimed.Pending.Operation == store.BeeperDraftOperationEdit && claimed.Pending.Phase == store.BeeperDraftPhaseClearConfirmed {
 			code := "set_rejected:" + providerErr.Code
-			if err := a.store.RecordBeeperDraftOutcomeContext(ctx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseClearConfirmed, code); err != nil {
+			if err := a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseClearConfirmed, code); err != nil {
 				return draftReplyError("local_persistence_failed", err)
 			}
 			output := beeperDraftOutputFromDraft(claimed, "rejected")
@@ -468,15 +503,15 @@ func (a *storeAPIAdapter) handleBeeperDraftWriteError(ctx context.Context, inten
 			_ = emitBeeperDraftOutput(emit, cliStreamStderr, intent.JSON, output)
 			return draftReplyError(providerErr.Code, errors.New("Beeper rejected the replacement after clearing the managed draft"))
 		}
-		if err := a.store.RecordBeeperDraftOutcomeContext(ctx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseRejected, providerErr.Code); err != nil {
+		if err := a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseRejected, providerErr.Code); err != nil {
 			return draftReplyError("local_persistence_failed", err)
 		}
-		if err := a.store.AbortBeeperDraftClaimContext(ctx, claimed.DraftID, claimed.Revision); err != nil {
+		if err := a.store.AbortBeeperDraftClaimContext(evidenceCtx, claimed.DraftID, claimed.Revision); err != nil {
 			return draftReplyError("local_persistence_failed", err)
 		}
 		return draftReplyError(providerErr.Code, errors.New("Beeper rejected the draft update"))
 	}
-	_ = a.store.RecordBeeperDraftOutcomeContext(ctx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseRemoteUnknown, "remote_unknown")
+	_ = a.store.RecordBeeperDraftOutcomeContext(evidenceCtx, claimed.DraftID, claimed.Revision, store.BeeperDraftPhaseRemoteUnknown, "remote_unknown")
 	output := beeperDraftOutputFromDraft(claimed, "remote_unknown")
 	output.ProviderStatus = "remote_unknown"
 	_ = emitBeeperDraftOutput(emit, cliStreamStderr, intent.JSON, output)

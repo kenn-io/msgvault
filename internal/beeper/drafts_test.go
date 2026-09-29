@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -86,6 +87,35 @@ func TestBeeperDraftWireFailuresAreSingleAttempt(t *testing.T) {
 	}
 }
 
+func TestBeeperDraftWireReadsFullSuccessfulChat(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	largeTitle := strings.Repeat("x", maxErrorBodyBytes+1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body, err := json.Marshal(struct {
+			ID        string `json:"id"`
+			AccountID string `json:"accountID"`
+			Title     string `json:"title"`
+			Draft     struct {
+				Text string `json:"text"`
+			} `json:"draft"`
+		}{ID: "!room:beeper.local", AccountID: "signal", Title: largeTitle, Draft: struct {
+			Text string `json:"text"`
+		}{Text: "rich text"}})
+		requirements.NoError(err)
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, func(context.Context) (string, error) { return "synthetic-token", nil }, 1000)
+	text := "candidate"
+	chat, err := client.UpdateDraft(t.Context(), "!room:beeper.local", &text)
+	requirements.NoError(err)
+	assertions.Equal(largeTitle, chat.Title)
+	assertions.Equal("rich text", mustDraftText(t, chat))
+}
+
 func TestBeeperDraftPreflightFailureDoesNotDispatch(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -147,7 +177,7 @@ func TestBeeperDraftObservation(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Equal(tc.present, observation.Present)
 			assertions.Equal(tc.empty, observation.Empty())
-			assertions.Equal(tc.attachments, observation.AttachmentsPresent || len(observation.Attachments) > 0)
+			assertions.Equal(tc.attachments, observation.AttachmentsPresent)
 			assertions.Equal(tc.unknown, observation.Unknown)
 		})
 	}
@@ -157,3 +187,10 @@ func TestBeeperDraftObservation(t *testing.T) {
 // used by the provider structs without exposing a second production API.
 func jsonUnmarshal(data []byte, out any) error  { return json.Unmarshal(data, out) }
 func ioReadAll(r *http.Request) ([]byte, error) { return io.ReadAll(r.Body) }
+
+func mustDraftText(t *testing.T, chat *Chat) string {
+	t.Helper()
+	observation, err := chat.InspectDraft()
+	require.NoError(t, err)
+	return observation.Text
+}

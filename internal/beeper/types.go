@@ -96,7 +96,6 @@ type Chat struct {
 	// Draft keeps the provider value verbatim. A nil value means the field was
 	// absent; the JSON bytes "null" mean an explicit empty draft.
 	Draft            jsontext.Value `json:"draft"`
-	LocalChatID      string         `json:"localChatID"`
 	MergedIntoChatID string         `json:"mergedIntoChatID"`
 	Merge            *ChatMerge     `json:"merge"`
 }
