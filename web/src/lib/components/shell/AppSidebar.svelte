@@ -65,7 +65,7 @@
     {/each}
   </nav>
   <div class="sidebar__footer">
-    <Tooltip text={status.label}>
+    <Tooltip text={status.label} focusable={collapsed}>
       <span class="sidebar__status">
         <span aria-hidden="true"><StatusDot status={status.tone} label={status.label} /></span>
         <span class:kit-sr-only={collapsed}>{collapsed ? status.label : status.text}</span>
@@ -131,6 +131,27 @@
 
   .sidebar:not(.sidebar--rail) :global(.kit-tooltip) {
     display: none;
+  }
+
+  /* Kit places tooltips above or below the trigger. In the rail that covers the
+     neighbouring icon, and the open tooltip catches its clicks. Shift rail
+     tooltips beside the 36x32 trigger, centred on it, and point the arrow left.
+     Remove when kit-ui Tooltip supports side placement. */
+  .sidebar--rail :global(.kit-tooltip[data-side='bottom']) {
+    translate: 44px calc(-50% - 24px);
+  }
+
+  .sidebar--rail :global(.kit-tooltip[data-side='top']) {
+    translate: 44px calc(50% + 24px);
+  }
+
+  .sidebar--rail :global(.kit-tooltip[data-side])::before {
+    top: calc(50% - 4px);
+    bottom: auto;
+    left: -5px;
+    border: 0;
+    border-bottom: 1px solid var(--border-default);
+    border-left: 1px solid var(--border-default);
   }
 
   .sidebar__brand {
@@ -228,5 +249,12 @@
     padding: 0 var(--space-3);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
+  }
+
+  .sidebar--rail .sidebar__status {
+    width: 36px;
+    min-height: 32px;
+    justify-content: center;
+    padding: 0;
   }
 </style>

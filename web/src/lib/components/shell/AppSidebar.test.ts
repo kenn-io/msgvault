@@ -79,6 +79,14 @@ describe('AppSidebar', () => {
     expect(screen.queryByText('Local archive')).toBeNull();
   });
 
+  it('lets keyboard users open the archive status tooltip in the rail', async () => {
+    renderSidebar({ collapsed: true });
+    const trigger = screen.getByText('Local archive ready').closest('.kit-tooltip-trigger') as HTMLElement;
+    expect(trigger.tabIndex).toBe(0);
+    trigger.focus();
+    expect((await screen.findByRole('tooltip')).textContent?.trim()).toBe('Local archive ready');
+  });
+
   it('toggles the rail and opens shortcuts from the footer', async () => {
     const props = renderSidebar();
     await fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
