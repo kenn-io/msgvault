@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createSavedView as generatedCreateSavedView } from '../../api/generated/api/api';
   import { Button, Modal, TextInput } from '@kenn-io/kit-ui';
+  import { onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { SavedView } from '../../api/generated/models';
   import type { ExploreURLState } from '../../explore/models';
@@ -17,6 +18,10 @@
     onclose: () => void;
   } = $props();
   let name = $state('');
+  let nameInput = $state<HTMLInputElement>();
+  // Not TextInput's autofocus: it focuses before Modal's focus trap records the
+  // element to restore on close, so closing would drop focus to the body.
+  onMount(() => nameInput?.focus());
   let description = $state('');
   let saving = $state(false);
   let error = $state('');
@@ -60,7 +65,7 @@
       void save();
     }}
   >
-    <label>Name<TextInput ariaLabel="Name" bind:value={name} autocomplete="off" block /></label>
+    <label>Name<TextInput ariaLabel="Name" bind:value={name} bind:inputEl={nameInput} autocomplete="off" block /></label>
     <label
       >Description<TextInput
         ariaLabel="Description"

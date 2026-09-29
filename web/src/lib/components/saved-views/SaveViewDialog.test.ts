@@ -35,6 +35,22 @@ function renderDialog(fetchFn: typeof fetch, overrides: Partial<ExploreURLState>
 }
 
 describe('SaveViewDialog', () => {
+  it('puts focus in Name when it opens', () => {
+    renderDialog(vi.fn<typeof fetch>());
+    expect(document.activeElement).toBe(screen.getByLabelText('Name'));
+  });
+
+  it('submits once when Enter is pressed in a named Name field', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(savedView(), { status: 201 }));
+    const { onSaved } = renderDialog(fetchFn);
+    const name = screen.getByLabelText('Name') as HTMLInputElement;
+    await fireEvent.input(name, { target: { value: 'Invoices' } });
+    // jsdom has no implicit Enter submission; submitting the Name field's form is its effect.
+    await fireEvent.submit(name.form!);
+    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
+
   it('keeps Save disabled until a name is typed', async () => {
     renderDialog(vi.fn<typeof fetch>());
     expect(screen.getByRole('dialog', { name: 'Save view' })).toBeDefined();
@@ -78,19 +94,22 @@ describe('SaveViewDialog', () => {
     }
   );
 
-  it.each(['semantic', 'hybrid'] as const)('saves a filter-only %s view without a query or mode', async (searchMode) => {
+  it.each([
+    ['semantic', ''], ['semantic', ' \t\n '], ['hybrid', ''], ['hybrid', ' \t\n ']
+  ] as const)('saves a filter-only %s view with query %j without a query or mode', async (searchMode, query) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       requests.push(input instanceof Request ? input : new Request(input));
       return Response.json(savedView(), { status: 201 });
     });
-    const { onSaved } = renderDialog(fetchFn, { query: ' \t\n ', searchMode });
+    const { onSaved } = renderDialog(fetchFn, { query, searchMode });
     await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Invoices' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
     const { canonical_state: saved } = await requests[0]!.clone().json();
     expect(saved).not.toHaveProperty('query');
     expect(saved).not.toHaveProperty('search_mode');
+    expect(saved.filters).toEqual([{ field: 'source', operator: 'in', values: ['1'] }]);
   });
 
   it('shows an API error in the dialog and keeps it open', async () => {

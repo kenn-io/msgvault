@@ -1,5 +1,4 @@
 import type { SavedViewStateEnvelope } from '../api/generated/models';
-import { groupingDimensionLabel, isGroupingDimension } from '../grouping/catalog';
 import { filterDimensionLabel, presentationLabel, searchModeLabel } from '../explore/labels';
 import {
   DEFAULT_EXPLORE_COLUMNS,
@@ -61,18 +60,17 @@ export function exploreStateFromSavedView(saved: CanonicalState): Partial<Explor
   };
 }
 
-function groupLabel(dimension: string): string {
-  return isGroupingDimension(dimension) ? groupingDimensionLabel(dimension) : filterDimensionLabel(dimension as ExploreFilterDimension);
-}
-
 export function savedViewSummary(saved: CanonicalState): string[] {
   const parts: string[] = [];
   if (saved.query) parts.push(`${searchModeLabel(searchMode(saved))}: “${saved.query}”`);
   for (const filter of saved.filters ?? []) {
     parts.push(`${filterDimensionLabel(filterDimension(filter.field))}: ${filter.values.join(', ')}`);
   }
-  const grouping = saved.grouping ?? [];
-  if (grouping.length > 0) parts.push(`Grouped by ${grouping.map(groupLabel).join(', then ')}`);
+  // filterDimensionLabel falls through to the grouping catalog for dimensions like `kind`.
+  const groups = (saved.grouping ?? []).map((dimension) =>
+    filterDimensionLabel(dimension as ExploreFilterDimension)
+  );
+  if (groups.length > 0) parts.push(`Grouped by ${groups.join(', then ')}`);
   parts.push(presentationLabel(saved.presentation ?? 'table'));
   return parts;
 }

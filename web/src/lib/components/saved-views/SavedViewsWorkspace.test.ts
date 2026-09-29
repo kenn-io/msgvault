@@ -27,10 +27,10 @@ describe('SavedViewsWorkspace', () => {
     render(SavedViewsWorkspace, {
       client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [] })))
     });
-    const empty = await screen.findByText('No saved views yet');
-    expect(empty.parentElement?.textContent).toContain('Save view…');
-    expect(empty.parentElement?.textContent).toContain('Everything');
-    expect(empty.parentElement?.textContent).toContain('Files');
+    await screen.findByText('No saved views yet');
+    expect(screen.getByText(
+      'Use Save view… in Everything or Files to keep a search and layout you want to return to.'
+    )).toBeDefined();
     expect(screen.queryByText('Save this view')).toBeNull();
     expect(screen.queryByLabelText('Name')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
@@ -45,7 +45,7 @@ describe('SavedViewsWorkspace', () => {
     expect(within(card).getByText('Quarterly review')).toBeDefined();
     const summary = within(card).getByRole('list', { name: 'Invoices summary' });
     expect(within(summary).getAllByRole('listitem').map((item) => item.textContent?.trim())).toEqual([
-      'Full text: “invoice”', 'Source: 1', 'Grouped by Domains', 'Table'
+      'Full text: “invoice”', 'Source: 1', 'Grouped by Domain', 'Table'
     ]);
     for (const name of ['Open Invoices', 'Edit Invoices', 'Delete Invoices']) {
       expect(within(card).getByRole('button', { name })).toBeDefined();

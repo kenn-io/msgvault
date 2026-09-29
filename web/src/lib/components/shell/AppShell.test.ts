@@ -331,17 +331,23 @@ describe('AppShell', () => {
   });
 
 
-  it.each([['everything', 'Everything'], ['files', 'Files']] as const)(
-    'offers Save view… in the %s header and opens the save dialog',
-    async (workspace, title) => {
+  it.each([['everything', 'Everything', 'Cancel'], ['files', 'Files', 'Escape']] as const)(
+    'offers Save view… in the %s header (%s); closing with %s returns focus to it',
+    async (workspace, title, closeWith) => {
       window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace }))}`);
       const state = new ExploreState(window);
       const rendered = render(AppShell, {
         client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(exploreResponse()))), state, enabled: false
       });
       const header = (await screen.findByRole('heading', { level: 1, name: title })).closest('header')!;
-      await fireEvent.click(within(header).getByRole('button', { name: 'Save view…' }));
+      const open = within(header).getByRole('button', { name: 'Save view…' });
+      open.focus();
+      await fireEvent.click(open);
       expect(screen.getByRole('dialog', { name: 'Save view' })).toBeDefined();
+      if (closeWith === 'Cancel') await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      else await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Save view' })).toBeNull());
+      expect(document.activeElement).toBe(open);
       rendered.unmount();
       state.destroy();
     }
