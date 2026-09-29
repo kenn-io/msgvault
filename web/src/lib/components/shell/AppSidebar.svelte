@@ -47,41 +47,31 @@
         {#each group.items as item (item.id)}
           {@const Icon = item.icon}
           <li>
-            {#if collapsed}
-              <Tooltip text={item.label}>
-                <button
-                  type="button"
-                  class="sidebar__item"
-                  aria-label={item.label}
-                  aria-current={item.id === active ? 'page' : undefined}
-                  onclick={() => onNavigate(item.id)}
-                >
-                  <Icon size={18} aria-hidden="true" />
-                </button>
-              </Tooltip>
-            {:else}
+            <Tooltip text={item.label}>
               <button
                 type="button"
                 class="sidebar__item"
+                aria-label={item.label}
                 aria-current={item.id === active ? 'page' : undefined}
                 onclick={() => onNavigate(item.id)}
               >
-                <Icon size={18} aria-hidden="true" /><span>{item.label}</span>
+                <Icon size={18} aria-hidden="true" />
+                {#if !collapsed}<span>{item.label}</span>{/if}
               </button>
-            {/if}
+            </Tooltip>
           </li>
         {/each}
       </ul>
     {/each}
   </nav>
   <div class="sidebar__footer">
-    {#snippet statusRow()}
+    <Tooltip text={status.label}>
       <span class="sidebar__status">
         <StatusDot status={status.tone} label={status.label} />
         <span class:kit-sr-only={collapsed}>{status.text}</span>
       </span>
-    {/snippet}
-    {#snippet shortcutsButton()}
+    </Tooltip>
+    <Tooltip text="Keyboard shortcuts">
       <button
         type="button"
         class="sidebar__item"
@@ -91,29 +81,22 @@
         <Keyboard size={18} aria-hidden="true" />
         {#if !collapsed}<span>Keyboard shortcuts</span><KbdBadge keys={['?']} />{/if}
       </button>
-    {/snippet}
-    {#snippet collapseButton()}
-      <button
-        type="button"
-        class="sidebar__item"
-        aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        onclick={onToggleCollapsed}
-      >
-        {#if collapsed}
-          <PanelLeftOpen size={18} aria-hidden="true" />
-        {:else}
-          <PanelLeftClose size={18} aria-hidden="true" /><span>Collapse</span>
-        {/if}
-      </button>
-    {/snippet}
-    {#if collapsed}
-      <Tooltip text={status.label}>{@render statusRow()}</Tooltip>
-      <Tooltip text="Keyboard shortcuts">{@render shortcutsButton()}</Tooltip>
-      {#if showCollapseToggle}<Tooltip text="Expand sidebar">{@render collapseButton()}</Tooltip>{/if}
-    {:else}
-      {@render statusRow()}
-      {@render shortcutsButton()}
-      {#if showCollapseToggle}{@render collapseButton()}{/if}
+    </Tooltip>
+    {#if showCollapseToggle}
+      <Tooltip text={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+        <button
+          type="button"
+          class="sidebar__item"
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onclick={onToggleCollapsed}
+        >
+          {#if collapsed}
+            <PanelLeftOpen size={18} aria-hidden="true" />
+          {:else}
+            <PanelLeftClose size={18} aria-hidden="true" /><span>Collapse</span>
+          {/if}
+        </button>
+      </Tooltip>
     {/if}
   </div>
 </div>
@@ -134,6 +117,20 @@
   .sidebar--rail {
     width: var(--nav-rail-width);
     align-items: center;
+  }
+
+  /* The same buttons serve both modes so focus survives a toggle; labels show as tooltips only in the rail. */
+  .sidebar :global(.kit-tooltip-trigger) {
+    display: flex;
+    width: 100%;
+  }
+
+  .sidebar--rail :global(.kit-tooltip-trigger) {
+    width: auto;
+  }
+
+  .sidebar:not(.sidebar--rail) :global(.kit-tooltip) {
+    display: none;
   }
 
   .sidebar__brand {

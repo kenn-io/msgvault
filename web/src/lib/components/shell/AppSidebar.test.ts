@@ -16,8 +16,8 @@ function renderSidebar(overrides: Record<string, unknown> = {}) {
     onOpenShortcuts: vi.fn(),
     ...overrides
   };
-  render(AppSidebar, props);
-  return props;
+  const view = render(AppSidebar, props);
+  return { ...props, rerender: view.rerender };
 }
 
 describe('AppSidebar', () => {
@@ -75,5 +75,14 @@ describe('AppSidebar', () => {
     expect(props.onToggleCollapsed).toHaveBeenCalled();
     expect(props.onOpenShortcuts).toHaveBeenCalled();
     expect(screen.getByText('Local archive')).toBeTruthy();
+  });
+
+  it('keeps focus on the toggle when the parent switches the sidebar to the rail', async () => {
+    const { rerender } = renderSidebar();
+    const toggle = screen.getByRole('button', { name: 'Collapse sidebar' });
+    toggle.focus();
+    await fireEvent.click(toggle);
+    await rerender({ collapsed: true });
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Expand sidebar' }));
   });
 });
