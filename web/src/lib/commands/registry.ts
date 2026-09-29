@@ -14,7 +14,7 @@ export const COMMAND_DEFINITIONS = [
   command('focus-search', 'Focus search', ['/'], ['/'], 'Navigate'),
   command('toggle-selection', 'Toggle focused row selection', ['Space'], ['space'], 'Selection'),
   command('extend-selection', 'Extend selection to focused row', ['Shift', 'Space'], ['shift+space'], 'Selection'),
-  command('select-visible', 'Select all visible rows', ['A'], ['shift+a'], 'Selection'),
+  command('select-visible', 'Select all visible rows', ['A'], ['a', 'shift+a'], 'Selection'),
   command('clear-selection', 'Clear selection', ['x'], ['x'], 'Selection'),
   command('review-delete-selected', 'Review selected messages for deletion', ['d'], ['d'], 'Safety', true),
   command('review-delete-matching', 'Review all matching messages for deletion', ['D'], ['shift+d'], 'Safety', true),

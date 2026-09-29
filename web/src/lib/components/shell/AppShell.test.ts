@@ -452,6 +452,27 @@ describe('AppShell', () => {
       expect(window.history.length).toBe(length + 1);
     });
 
+    it('moves focus to the Files results after submitting search on Files', async () => {
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+        if (path.endsWith('/files/search')) {
+          return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+        }
+        return Response.json(exploreResponse());
+      });
+      const state = shellState('files');
+      render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+      const grid = await screen.findByRole('grid', { name: 'Files results' });
+
+      const search = screen.getByRole('searchbox', { name: 'Search everything' });
+      search.focus();
+      await fireEvent.input(search, { target: { value: 'invoice' } });
+      await fireEvent.submit(screen.getByRole('search', { name: 'Search Everything' }));
+
+      expect(state.current.query).toBe('invoice');
+      expect(document.activeElement).toBe(grid);
+    });
+
     it('drops an unsubmitted search draft when the sidebar opens another workspace', async () => {
       const state = shellState('sources');
       render(AppShell, { client: exploreClient(), state, enabled: false });
@@ -2215,7 +2236,7 @@ describe('AppShell', () => {
       }
       return Response.json(exploreResponse({ rows, total_count: 3 }));
     });
-    render(AppShell, { client: createAPIClient(fetchFn), state });
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     const grid = await screen.findByRole('grid', { name: 'Everything results' });
     await screen.findByText('Synthetic subject 0');
     grid.focus();
@@ -2229,6 +2250,40 @@ describe('AppShell', () => {
     await fireEvent.keyDown(document.body, { key: ' ', shiftKey: true });
 
     await waitFor(() => expect(screen.getByText('3 selected')).toBeTruthy());
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('selects the visible rows once when plain a is pressed outside the grid', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    const rows = [0, 1, 2].map((index) => entry(index));
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/explore/preflight')) {
+        return Response.json({
+          count: 3, deletable_count: 3, estimated_bytes: 30, cache_revision: 'cache-1',
+          search_provenance: {}, unavailable_actions: [], action_targets: []
+        });
+      }
+      return Response.json(exploreResponse({ rows, total_count: 3 }));
+    });
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    await screen.findByText('Synthetic subject 0');
+    const gridKeys: string[] = [];
+    grid.addEventListener('keydown', (event) => gridKeys.push(event.key));
+
+    await fireEvent.keyDown(document.body, { key: 'a' });
+
+    await waitFor(() => expect(screen.getByText('3 selected')).toBeTruthy());
+    expect(gridKeys).toEqual(['A']);
+
+    gridKeys.length = 0;
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: 'a' });
+    expect(gridKeys).toEqual(['a']);
+    rendered.unmount();
     state.destroy();
   });
 });

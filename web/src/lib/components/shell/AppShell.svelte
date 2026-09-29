@@ -463,7 +463,8 @@
     const workspace = exploreState.current.workspace;
     if (workspace === 'everything' || workspace === 'files') {
       commitSearch(query, mode);
-      focusGrid();
+      // The ungrouped Files grid stays out of currentGrid() so shortcut relays keep ignoring it.
+      (currentGrid() ?? document.querySelector<HTMLElement>('[role="grid"][aria-label="Files results"]'))?.focus();
       return;
     }
     beforeCommit();
