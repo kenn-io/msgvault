@@ -35,7 +35,7 @@ type fakeGraph struct {
 	names   map[string]string // folder ID -> display name, when not derived from the ID
 	folder  map[string]string // message ID -> folder ID; absent when deleted
 	log     []change          // one entry per change
-	expired map[string]bool   // folder IDs whose next delta answers 410
+	expired map[string]bool   // folder IDs whose next delta reports an expired token
 	gone    map[string]bool   // folder IDs whose every delta answers 410
 	version map[string]int    // message ID -> content version
 
@@ -51,8 +51,9 @@ type fakeGraph struct {
 	pageSize       int
 	stopAt         int // fail the delta page at this skip offset, when non-zero
 
-	mimeCalls  atomic.Int32
-	walkStarts atomic.Int32 // delta requests with no token and no nextLink
+	mimeCalls     atomic.Int32
+	walkStarts    atomic.Int32 // delta requests with no token and no nextLink
+	expiredStatus int
 }
 
 // change records a message and the folder it was in before the change.
@@ -62,6 +63,7 @@ func newFakeGraph(t *testing.T) *fakeGraph {
 	t.Helper()
 	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, broken: map[string]bool{}, goneOnValue: map[string]bool{}, badValue: map[string]bool{}, pageSize: 2}
 	f.folders = []string{"inbox", "archive"}
+	f.expiredStatus = http.StatusGone
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -206,7 +208,7 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 	if tok := get("token"); tok != "" {
 		if f.expired[folder] {
 			delete(f.expired, folder)
-			http.Error(w, `{"error":{"code":"syncStateNotFound"}}`, http.StatusGone)
+			http.Error(w, `{"error":{"code":"syncStateNotFound"}}`, f.expiredStatus)
 			return
 		}
 		pos, _ := strconv.Atoi(tok)
@@ -485,24 +487,29 @@ func attachments(t *testing.T, st *store.Store) [2]int {
 // A message deleted while no cursor covered its folder is marked deleted when
 // the walk after an expired cursor does not return it.
 func TestImportExpiredTokenReconcilesMissedDelete(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	f := newFakeGraph(t)
-	f.put("m1", "inbox")
-	f.put("m2", "inbox")
-	f.put("m3", "inbox")
-	_, err := f.sync(t, st)
-	require.NoError(err)
+	for _, status := range []int{http.StatusNotFound, http.StatusGone} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			f := newFakeGraph(t)
+			f.expiredStatus = status
+			f.put("m1", "inbox")
+			f.put("m2", "inbox")
+			f.put("m3", "inbox")
+			_, err := f.sync(t, st)
+			require.NoError(err)
 
-	f.remove("m2")         // purged during the gap
-	f.put("m3", "archive") // moved during the gap
-	f.expired["inbox"] = true
-	f.expired["archive"] = true
-	sum, err := f.sync(t, st)
-	require.NoError(err)
-	assert.Equal(map[string]string{"m1": "Inbox", "m2": "deleted", "m3": "Archive"}, state(t, st))
-	assert.Equal(1, sum.Deleted)
+			f.remove("m2")         // purged during the gap
+			f.put("m3", "archive") // moved during the gap
+			f.expired["inbox"] = true
+			f.expired["archive"] = true
+			sum, err := f.sync(t, st)
+			require.NoError(err)
+			assert.Equal(map[string]string{"m1": "Inbox", "m2": "deleted", "m3": "Archive"}, state(t, st))
+			assert.Equal(1, sum.Deleted)
+		})
+	}
 }
 
 // A message restored from Recoverable Items loses its deletion mark.

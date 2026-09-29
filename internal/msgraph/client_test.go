@@ -53,6 +53,31 @@ func TestClientContextCancelDuringRetry(t *testing.T) {
 	})
 }
 
+func TestGetGraphErrorClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   error
+	}{
+		{"expired_404", http.StatusNotFound, `{"error":{"code":"syncStateNotFound"}}`, ErrGone},
+		{"expired_400", http.StatusBadRequest, `{"error":{"code":"syncStateNotFound"}}`, ErrGone},
+		{"gone", http.StatusGone, "expired", ErrGone},
+		{"missing", http.StatusNotFound, `{"error":{"code":"ErrorItemNotFound","message":"syncStateNotFound is not the error code"}}`, ErrNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000)
+			_, err := c.GetRaw(t.Context(), "/message")
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
 func TestGetStopsAfterLastAttempt(t *testing.T) {
 	for _, truncated := range []bool{false, true} {
 		t.Run(map[bool]string{false: "503", true: "truncated_body"}[truncated], func(t *testing.T) {

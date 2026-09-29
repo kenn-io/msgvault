@@ -133,16 +133,25 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 		if closeErr != nil {
 			return nil, fmt.Errorf("graph GET %s: close body: %w", reqURL, closeErr)
 		}
+		expired := false
+		if resp.StatusCode >= http.StatusBadRequest {
+			var graphError struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			expired = json.Unmarshal(body, &graphError) == nil && graphError.Error.Code == "syncStateNotFound"
+		}
 		switch {
 		case resp.StatusCode == http.StatusOK:
 			if maxBytes > 0 && int64(len(body)) > maxBytes {
 				return nil, ErrTooLarge
 			}
 			return body, nil
+		case resp.StatusCode == http.StatusGone || expired:
+			return nil, fmt.Errorf("graph GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), ErrGone)
 		case resp.StatusCode == http.StatusNotFound:
 			return nil, fmt.Errorf("graph GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), ErrNotFound)
-		case resp.StatusCode == http.StatusGone || strings.Contains(string(body), "syncStateNotFound"):
-			return nil, fmt.Errorf("graph GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), ErrGone)
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			lastErr = fmt.Errorf("graph GET %s: status %d", reqURL, resp.StatusCode)
 			retryAfter = resp.Header.Get("Retry-After")
