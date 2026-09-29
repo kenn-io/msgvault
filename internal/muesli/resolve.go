@@ -96,7 +96,10 @@ func (imp *Importer) resolveParticipants(
 					participant.LinkExcludedAddresses = append(participant.LinkExcludedAddresses, address)
 				}
 			}
-			participant.Anchor = meetingarchive.Anchor("apple-contact", card.GroupKey)
+			// An unreadable store may hide another card sharing these addresses.
+			if state == ContactsComplete {
+				participant.Anchor = meetingarchive.Anchor("apple-contact", card.GroupKey)
+			}
 			participant.Resolution = resolutionResolved
 			continue
 		}

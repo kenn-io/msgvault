@@ -92,6 +92,55 @@ func TestContactOnlyParticipantReachesPersonKnownByPhone(t *testing.T) {
 		"the Contacts card ties the attendee's email to the person known by phone")
 }
 
+func TestPartialContactsKeepsEvidenceWithoutLinking(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newResolveFixture(t, fixtureCard{
+		uniqueID: "CARD-A:ABPerson", emails: []string{"alice@example.com"}, phones: []string{"+16045550100"},
+	})
+	path := filepath.Join(f.contacts, "Sources", "B", addressBookFile)
+	newAddressBookStore(t, path, fixtureCard{
+		uniqueID: "CARD-B:ABPerson", emails: []string{"bob@example.com"}, phones: []string{"+16045550100"},
+	})
+	// An unsupported store can hide another card with the same address.
+	db := newFixtureDB(t, path, "")
+	_, err := db.Exec(`ALTER TABLE Z_PRIMARYKEY RENAME COLUMN Z_NAME TO Z_FUTURE_NAME`)
+	require.NoError(err)
+	meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(nil))
+	f.addContactParticipant(t, meetingID, "contact:CARD-A:ABPerson", "Alice Example")
+
+	summary := f.sync(t, ImportOptions{})
+	assert.Equal(ContactsPartial, summary.ContactsState)
+	alice, err := f.st.EnsureParticipant("alice@example.com", "", "example.com")
+	require.NoError(err)
+	members, err := f.st.ClusterMembers(f.phoneID)
+	require.NoError(err)
+	assert.NotContains(members, alice, "an unreadable store prevents new automatic links")
+	observations, err := f.st.ListParticipantObservationsContext(t.Context(), alice, true)
+	require.NoError(err)
+	assert.Empty(observations, "partial Contacts evidence must not assert ownership")
+	var messageID int64
+	require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT id FROM messages WHERE source_id=?`), f.source.ID).Scan(&messageID))
+	raw, err := f.st.GetMessageRaw(messageID)
+	require.NoError(err)
+	var evidence rawEvidence
+	require.NoError(json.Unmarshal(raw, &evidence))
+	require.Len(evidence.Participants, 1)
+	assert.Equal([]string{"alice@example.com"}, evidence.Participants[0].Emails)
+	assert.Equal([]string{"+16045550100"}, evidence.Participants[0].Phones)
+
+	// Once every store is readable and the phone is unshared, linking resumes.
+	_, err = db.Exec(`ALTER TABLE Z_PRIMARYKEY RENAME COLUMN Z_FUTURE_NAME TO Z_NAME`)
+	require.NoError(err)
+	_, err = db.Exec(`DELETE FROM ZABCDPHONENUMBER`)
+	require.NoError(err)
+	summary = f.sync(t, ImportOptions{})
+	assert.Equal(ContactsComplete, summary.ContactsState)
+	members, err = f.st.ClusterMembers(f.phoneID)
+	require.NoError(err)
+	assert.Contains(members, alice)
+}
+
 func TestPhoneOnlyContactBecomesPhoneAttendee(t *testing.T) {
 	f := newResolveFixture(t, fixtureCard{uniqueID: "CARD-2:ABPerson", phones: []string{"(604) 555-0100"}})
 	meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(nil))

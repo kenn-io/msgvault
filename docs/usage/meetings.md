@@ -551,8 +551,9 @@ that number.
   (for example `"1"` or `"44"`) to also use numbers typed without a country
   code.
 - When only some Contacts accounts can be read, msgvault still uses Contacts
-  IDs but stops matching by email, because a hidden account could hold another
-  card with the same email.
+  IDs to retain meeting evidence, but stops matching by email and creating
+  automatic identity links. An unreadable account could hold another card
+  with the same address. Linking resumes when every account is readable.
 - When Contacts is unreadable or a card disappears, an attendee still present
   in Muesli keeps the identities archived for that meeting. Those retained
   addresses do not assert current Contacts ownership. Removing the attendee
