@@ -313,6 +313,7 @@ type beeperDraftCommandFixture struct {
 	merged        bool
 	disconnectSet bool
 	patches       int
+	gets          int
 }
 
 func newBeeperDraftCommandFixture(t *testing.T, nativeText string) *beeperDraftCommandFixture {
@@ -325,6 +326,7 @@ func newBeeperDraftCommandFixture(t *testing.T, nativeText string) *beeperDraftC
 	fixture := &beeperDraftCommandFixture{store: st, source: source, nativeText: nativeText}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
+			fixture.gets++
 			if fixture.getStatus != 0 {
 				w.WriteHeader(fixture.getStatus)
 				return
@@ -384,6 +386,45 @@ func (f *beeperDraftCommandFixture) sourceID() string {
 
 func (f *beeperDraftCommandFixture) run(ctx context.Context, args ...string) error {
 	return f.adapter.runCLIBeeperDraft(ctx, api.CLIRunRequest{Args: args}, nil)
+}
+
+func TestBeeperDraftReloadsAfterSourceLock(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite trigger changes state during source-lock recovery")
+	for _, tc := range []struct {
+		name   string
+		change string
+	}{{"draft", "UPDATE beeper_drafts SET committed_text = 'rich updated', revision = revision + 1"}, {"source", "UPDATE sources SET source_type = 'gmail' WHERE id = NEW.source_id"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			fixture := newBeeperDraftCommandFixture(t, "")
+			requirements.NoError(fixture.run(t.Context(), "draft-beeper", "create", "--source-id", fixture.sourceID(), "--chat-id", "!room:beeper.local", "--body", "hello"))
+			draftID, revision := latestBeeperDraft(t, fixture.store)
+			_, err := fixture.store.DB().Exec(`CREATE TRIGGER beeper_draft_lock_change AFTER UPDATE OF status ON sync_runs WHEN NEW.status = 'failed' BEGIN ` + tc.change + `; END`)
+			requirements.NoError(err)
+			_, err = fixture.store.DB().Exec(`INSERT INTO sync_runs (source_id, started_at, status) VALUES (?, CURRENT_TIMESTAMP, 'running')`, fixture.source.ID)
+			requirements.NoError(err)
+			gets, patches := fixture.gets, fixture.patches
+			var event api.CLIRunEvent
+			err = fixture.adapter.runCLIBeeperDraft(t.Context(), api.CLIRunRequest{Args: []string{"draft-beeper", "get", draftID, "--json"}}, func(got api.CLIRunEvent) error {
+				event = got
+				return nil
+			})
+			assertions.Equal(patches, fixture.patches)
+			if tc.name == "source" {
+				requirements.ErrorContains(err, "draft_disabled")
+				assertions.Equal(gets, fixture.gets)
+				return
+			}
+			requirements.NoError(err)
+			var output beeperDraftOutput
+			requirements.NoError(json.Unmarshal([]byte(event.Data), &output))
+			assertions.Equal(revision+1, output.Revision)
+			requirements.NotNil(output.CommittedText)
+			assertions.Equal("rich updated", *output.CommittedText)
+			assertions.Equal(gets+1, fixture.gets)
+		})
+	}
 }
 
 func TestBeeperDraftMissingChatKeepsBinding(t *testing.T) {
