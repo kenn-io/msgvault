@@ -815,57 +815,10 @@ func (a *storeAPIAdapter) runDelegatedGmailDraftLifecycle(
 	if err != nil {
 		return draftReplyNotPermitted(err)
 	}
-	source, err := a.store.GetSourceByIDContext(ctx, draft.SourceID)
-	if err != nil {
-		return draftReplyNotPermitted(fmt.Errorf("load source %d: %w", draft.SourceID, err))
-	}
-	ref := draftSourceRef(source)
-	allowed := a.delegatedGmailDraftAllows(ctx, intent, grant, ref, draft)
-	if !allowed {
-		return draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s for %s", source.ID, grant.ID, intent.Operation))
+	if err := a.authorizeDelegatedDraftLifecycle(ctx, intent, grant, draft.SourceID, draft.CurrentMessageID); err != nil {
+		return err
 	}
 	return a.runCLIGmailDraftLifecycle(ctx, intent, draft, emit)
-}
-
-func (a *storeAPIAdapter) delegatedGmailDraftAllows(
-	ctx context.Context,
-	intent draftLifecycleIntent,
-	grant *agentgrant.Grant,
-	ref agentgrant.SourceRef,
-	draft store.GmailDraft,
-) bool {
-	for _, permission := range api.CLIRunDraftLifecyclePermissions(intent.Operation) {
-		if !grant.Allows(permission, ref) {
-			continue
-		}
-		if intent.Operation != api.CLIRunDraftGetCommand || permission != agentgrant.PermissionDraftCreate {
-			return true
-		}
-		senderKey, err := a.managedGmailDraftSenderKey(ctx, draft)
-		if err == nil && grant.AllowsSender(permission, ref, senderKey) {
-			return true
-		}
-	}
-	return false
-}
-
-func (a *storeAPIAdapter) managedGmailDraftSenderKey(ctx context.Context, draft store.GmailDraft) (string, error) {
-	raw, err := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
-	if err != nil {
-		return "", err
-	}
-	parsed, err := msgmime.Parse(raw)
-	if err != nil {
-		return "", err
-	}
-	if len(parsed.From) != 1 {
-		return "", errors.New("managed Gmail draft must have exactly one From address")
-	}
-	_, senderKey, err := parseDraftSender(parsed.From[0].Email)
-	if err != nil {
-		return "", err
-	}
-	return senderKey, nil
 }
 
 func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(

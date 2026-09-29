@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -70,7 +71,7 @@ func TestDraftLifecycleEndToEnd(t *testing.T) {
 	requirements.NoError(err)
 }
 
-func TestDraftLifecycleDelegatedIMAPGetEditDeleteRemainOwnerOnly(t *testing.T) {
+func TestDraftLifecycleDelegatedIMAPGetEditDelete(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := newDraftReplyFixture(t)
@@ -90,40 +91,57 @@ func TestDraftLifecycleDelegatedIMAPGetEditDeleteRemainOwnerOnly(t *testing.T) {
 		providerCalls++
 		return clientFactory(ctx, source)
 	}
-	grant := &agentgrant.Grant{
-		ID: "imap-lifecycle-grant",
-		Permissions: []agentgrant.Permission{
-			agentgrant.PermissionDraftCreate,
-			agentgrant.PermissionDraftEdit,
-			agentgrant.PermissionDraftDelete,
-		},
-		Sources: []agentgrant.SourceRef{{ID: fixture.source.ID, Type: fixture.source.SourceType, Identifier: fixture.source.Identifier}},
+	_, senderKey, err := parseDraftSender(testutil.IMAPTestUsername)
+	require.NoError(err)
+	sourceRef := agentgrant.SourceRef{ID: fixture.source.ID, Type: fixture.source.SourceType, Identifier: fixture.source.Identifier}
+	grantFor := func(ref agentgrant.SourceRef, permissions ...agentgrant.Permission) *agentgrant.Grant {
+		return &agentgrant.Grant{ID: "imap-lifecycle-grant", Permissions: permissions, Sources: []agentgrant.SourceRef{ref}}
 	}
-	for _, operation := range []string{
-		api.CLIRunDraftGetCommand,
-		api.CLIRunDraftEditCommand,
-		api.CLIRunDraftDeleteCommand,
+	run := func(grant *agentgrant.Grant, args ...string) (string, error) {
+		var out strings.Builder
+		err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+			out.WriteString(event.Data)
+			return nil
+		})
+		return out.String(), err
+	}
+	revision := strconv.FormatInt(created.Revision, 10)
+
+	otherSource := sourceRef
+	otherSource.Identifier = "other@example.test"
+	createWithoutSender := grantFor(sourceRef, agentgrant.PermissionDraftCreate)
+	for _, tc := range []struct {
+		name  string
+		grant *agentgrant.Grant
+		args  []string
+	}{
+		{"edit on another source", grantFor(otherSource, agentgrant.PermissionDraftEdit), []string{api.CLIRunDraftEditCommand, created.DraftID, "--revision", revision, "--body", "delegated"}},
+		{"delete without draft.delete", grantFor(sourceRef, agentgrant.PermissionDraftEdit), []string{api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", revision}},
+		{"get with draft.create and no sender", createWithoutSender, []string{api.CLIRunDraftGetCommand, created.DraftID, "--json"}},
 	} {
-		t.Run(operation, func(t *testing.T) {
-			args := []string{operation, created.DraftID}
-			if operation != api.CLIRunDraftGetCommand {
-				args = append(args, "--revision", strconv.FormatInt(created.Revision, 10))
-			}
-			if operation == api.CLIRunDraftEditCommand {
-				args = append(args, "--body", "delegated")
-			}
-			err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(api.CLIRunEvent) error {
-				assert.Fail("delegated IMAP lifecycle must not emit events")
-				return nil
-			})
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := run(tc.grant, tc.args...)
 			require.Error(err)
 			assert.Equal("not_permitted", err.Error())
+			assert.Empty(out)
 			assert.Equal(0, providerCalls)
 		})
 	}
-	latest, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
+
+	senderRef := sourceRef
+	senderRef.SenderKeys = []string{senderKey}
+	got, err := run(grantFor(senderRef, agentgrant.PermissionDraftCreate), api.CLIRunDraftGetCommand, created.DraftID, "--json")
 	require.NoError(err)
-	assert.Equal(created.Revision, latest.Revision)
+	assert.Contains(got, "initial body")
+
+	edited, err := run(grantFor(sourceRef, agentgrant.PermissionDraftEdit), api.CLIRunDraftEditCommand, created.DraftID, "--revision", revision, "--body", "delegated body", "--json")
+	require.NoError(err)
+	assert.Contains(edited, "\"revision\":2")
+
+	deleted, err := run(grantFor(sourceRef, agentgrant.PermissionDraftDelete), api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "2", "--json")
+	require.NoError(err)
+	assert.Contains(deleted, "\"lifecycle\":\"discarded\"")
+	assert.Equal(2, providerCalls)
 }
 
 func TestDraftLifecycleReplacementIndexesCc(t *testing.T) {

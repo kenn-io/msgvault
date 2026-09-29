@@ -408,8 +408,9 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		return draftReplyError("draft_not_found", err)
 	}
 	if req.Grant != nil && intent.Operation != api.CLIRunDraftRecoverCommand {
-		// Delegated IMAP draft access is limited to draft-recover.
-		return draftReplyNotPermitted(errors.New("delegated IMAP draft get, edit, and delete are owner-only"))
+		if err := a.authorizeDelegatedDraftLifecycle(ctx, intent, req.Grant, draft.SourceID, draft.CurrentMessageID); err != nil {
+			return err
+		}
 	}
 	if intent.Operation == api.CLIRunDraftGetCommand {
 		provider := &draftLifecycleObservation{State: "not_checked", Code: "not_checked"}
@@ -809,6 +810,49 @@ func draftProviderReceipt(receipt store.IMAPDraftReceipt) imaplib.DraftReceipt {
 	return imaplib.DraftReceipt{
 		Mailbox: receipt.Mailbox, UIDValidity: receipt.UIDValidity, UID: receipt.UID,
 	}
+}
+
+// authorizeDelegatedDraftLifecycle checks a delegated Gmail or IMAP get, edit, or delete before any draft work.
+func (a *storeAPIAdapter) authorizeDelegatedDraftLifecycle(
+	ctx context.Context,
+	intent draftLifecycleIntent,
+	grant *agentgrant.Grant,
+	sourceID, currentMessageID int64,
+) error {
+	source, err := a.store.GetSourceByIDContext(ctx, sourceID)
+	if err != nil {
+		return draftReplyNotPermitted(fmt.Errorf("load source %d: %w", sourceID, err))
+	}
+	ref := draftSourceRef(source)
+	for _, permission := range api.CLIRunDraftLifecyclePermissions(intent.Operation) {
+		if !grant.Allows(permission, ref) {
+			continue
+		}
+		if intent.Operation != api.CLIRunDraftGetCommand || permission != agentgrant.PermissionDraftCreate {
+			return nil
+		}
+		senderKey, err := a.managedDraftSenderKey(ctx, currentMessageID)
+		if err == nil && grant.AllowsSender(permission, ref, senderKey) {
+			return nil
+		}
+	}
+	return draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s for %s", source.ID, grant.ID, intent.Operation))
+}
+
+func (a *storeAPIAdapter) managedDraftSenderKey(ctx context.Context, messageID int64) (string, error) {
+	raw, err := a.store.GetMessageRawContext(ctx, messageID)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := msgmime.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if len(parsed.From) != 1 {
+		return "", errors.New("managed draft must have exactly one From address")
+	}
+	_, senderKey, err := parseDraftSender(parsed.From[0].Email)
+	return senderKey, err
 }
 
 func (a *storeAPIAdapter) authorizeDraftRecovery(
