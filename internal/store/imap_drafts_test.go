@@ -178,3 +178,55 @@ func TestPersistIMAPDraftAttachmentsAtomic(t *testing.T) {
 	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT has_attachments FROM messages WHERE id = ?"), draft.CurrentMessageID).Scan(&hasAttachments))
 	assertions.True(hasAttachments)
 }
+
+func TestPersistIMAPDraftAttachmentsRollsBackAfterAttachmentFailure(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "imap://draft-attachments-rollback@example.test:143")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "draft-attachments-rollback", "Attachments rollback")
+	requirements.NoError(err)
+	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 5, UID: 9}
+	participants := []store.ParticipantPersistData{
+		{EmailAddress: "sender@example.test", Domain: "example.test"},
+		{EmailAddress: "recipient@example.test", Domain: "example.test"},
+	}
+	validHash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	invalid := store.AttachmentWrite{
+		Filename: "second.txt", MIMEType: "text/plain", ContentHash: validHash, Size: 7,
+		Role: store.AttachmentRole("invalid"), RoleSource: store.AttachmentRoleSourceMIMEDisposition,
+		SourcePartKey: "mime:second", State: attachmentpolicy.StateStored,
+	}
+	raw := []byte("From: sender@example.test\r\nTo: recipient@example.test\r\n\r\nbody\r\n")
+	_, err = st.PersistIMAPDraftContext(t.Context(), receipt, participants, func(ids []int64) *store.MessagePersistData {
+		return &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
+				ConversationID: conversationID, MessageType: store.MessageTypeEmail,
+				SenderID: sql.NullInt64{Int64: ids[0], Valid: true},
+			},
+			BodyText: sql.NullString{String: "body", Valid: true}, RawMIME: raw,
+			Recipients: []store.RecipientSet{
+				{Type: "from", ParticipantIDs: []int64{ids[0]}, EmailAddresses: []string{"sender@example.test"}},
+				{Type: "to", ParticipantIDs: []int64{ids[1]}, EmailAddresses: []string{"recipient@example.test"}},
+			},
+			MIMEAttachmentReplacement: &[]store.AttachmentWrite{
+				{Filename: "first.txt", MIMEType: "text/plain", ContentHash: validHash, Size: 7,
+					Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceMIMEDisposition,
+					SourcePartKey: "mime:first", State: attachmentpolicy.StateStored},
+				invalid,
+			},
+		}
+	})
+	requirements.ErrorContains(err, "invalid attachment role")
+	var count int
+	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+	assertions.Zero(count)
+	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ?"), source.ID).Scan(&count))
+	assertions.Zero(count)
+	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM imap_drafts WHERE source_id = ?"), source.ID).Scan(&count))
+	assertions.Zero(count)
+	requirements.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM attachments").Scan(&count))
+	assertions.Zero(count)
+}

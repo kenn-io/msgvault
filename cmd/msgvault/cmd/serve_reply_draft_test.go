@@ -762,7 +762,7 @@ func TestDelegatedDraftRefusesOutOfGrantSource(t *testing.T) {
 		From:      testutil.IMAPTestUsername,
 		Body:      "reply body",
 	}
-	target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, outOfScopeGrant)
+	target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, outOfScopeGrant, draftOperationReply)
 	assertions.Empty(target)
 	assertions.Empty(selectedFrom)
 	assertions.Empty(selfAddresses)
@@ -811,7 +811,7 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 			store:       fixture.store,
 			draftPolicy: nil,
 		}
-		target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, inGrant)
+		target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, inGrant, draftOperationReply)
 		assertions.Empty(target)
 		assertions.Empty(selectedFrom)
 		assertions.Empty(selfAddresses)
@@ -824,7 +824,7 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 		// authorizeDelegatedDraftSource runs first, so the code is not_permitted,
 		// not draft_disabled — the caller cannot infer whether drafting is configured.
 		adapter := fixture.grantedAdapter()
-		target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, outOfGrant)
+		target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(t.Context(), &intent.MessageID, "", 0, false, intent.From, outOfGrant, draftOperationReply)
 		assertions.Empty(target)
 		assertions.Empty(selectedFrom)
 		assertions.Empty(selfAddresses)
@@ -840,7 +840,7 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 			Sources:     []agentgrant.SourceRef{{ID: fixture.source.ID, Type: "imap", Identifier: fixture.source.Identifier}},
 		}
 		target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(
-			t.Context(), &intent.MessageID, "", 0, false, intent.From, grantWithoutSender,
+			t.Context(), &intent.MessageID, "", 0, false, intent.From, grantWithoutSender, draftOperationReply,
 		)
 		assertions.Empty(target)
 		assertions.Empty(selectedFrom)
@@ -858,7 +858,7 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 		}
 		from := ""
 		target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(
-			t.Context(), &intent.MessageID, "", 0, false, from, grantWithoutCurrentSender,
+			t.Context(), &intent.MessageID, "", 0, false, from, grantWithoutCurrentSender, draftOperationReply,
 		)
 		assertions.Empty(target)
 		assertions.Empty(selectedFrom)
@@ -870,7 +870,7 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 	t.Run("destination resolution hides missing sources from grants", func(t *testing.T) {
 		adapter := fixture.grantedAdapter()
 		target, selectedFrom, selfAddresses, err := adapter.resolveDraftTarget(
-			t.Context(), &intent.MessageID, "", fixture.source.ID+999, true, intent.From, inGrant,
+			t.Context(), &intent.MessageID, "", fixture.source.ID+999, true, intent.From, inGrant, draftOperationReply,
 		)
 		assertions.Empty(target)
 		assertions.Empty(selectedFrom)
@@ -887,7 +887,7 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 		requirements.NoError(updateErr)
 		adapter := fixture.grantedAdapter()
 		_, _, _, err := adapter.resolveDraftTarget(
-			t.Context(), &intent.MessageID, "", 0, false, intent.From, inGrant,
+			t.Context(), &intent.MessageID, "", 0, false, intent.From, inGrant, draftOperationReply,
 		)
 		requirements.Error(err)
 		assertions.Equal("invalid_parent", err.Error())

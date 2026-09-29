@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	msgmime "go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -52,6 +53,67 @@ func TestDraftForwardAuthorizationPrecedesContentIO(t *testing.T) {
 	requirements.Equal("not_permitted", err.Error())
 	_, ok := errors.AsType[*api.CLIRunCodedError](err)
 	requirements.True(ok)
+}
+
+func TestDraftForwardConversationKeyUsesProviderReceipt(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newDraftReplyFixture(t)
+	parent, err := fixture.store.GetMessageContext(t.Context(), fixture.parentID)
+	requirements.NoError(err)
+	target := draftReplyTarget{source: fixture.source, parent: parent, parentSource: fixture.source, forward: true}
+	build := func(receipt store.IMAPDraftReceipt, messageID string) imaplib.ReplyDraft {
+		draft, buildErr := imaplib.BuildForward(imaplib.ForwardOptions{
+			From: "alice@example.test", To: []string{"recipient@example.test"}, Subject: "Question", Body: "forward",
+		}, time.Now(), messageID)
+		requirements.NoError(buildErr)
+		return draft
+	}
+	receipt1 := store.IMAPDraftReceipt{SourceID: fixture.source.ID, Mailbox: "Drafts", UIDValidity: 4, UID: 1}
+	receipt2 := store.IMAPDraftReceipt{SourceID: fixture.source.ID, Mailbox: "Drafts", UIDValidity: 4, UID: 2}
+	data1 := draftReplyPersistData(target, build(receipt1, "forward-1@example.test"), receipt1, "forward-1@example.test", []int64{1, 2})
+	data2 := draftReplyPersistData(target, build(receipt2, "forward-2@example.test"), receipt2, "forward-2@example.test", []int64{1, 2})
+	requirements.NotNil(data1.Conversation)
+	requirements.NotNil(data2.Conversation)
+	assertions.NotEqual(data1.Conversation.SourceConversationID, data2.Conversation.SourceConversationID)
+	assertions.Contains(data1.Conversation.SourceConversationID, store.IMAPDraftSourceMessageID(receipt1))
+	assertions.Contains(data2.Conversation.SourceConversationID, store.IMAPDraftSourceMessageID(receipt2))
+}
+
+func TestDraftForwardRejectsUnsupportedDestinationBeforeParentRead(t *testing.T) {
+	for _, scenario := range []struct {
+		name        string
+		destination string
+		from        string
+		policy      bool
+		want        string
+	}{
+		{name: "Gmail destination", destination: "gmail", from: "gmail@example.test", policy: true, want: "draft_disabled"},
+		{name: "disabled IMAP source", destination: "imap", from: testutil.IMAPTestUsername, policy: false, want: "draft_disabled"},
+		{name: "disallowed sender", destination: "imap", from: "other@example.test", policy: true, want: "invalid_from"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			requirements := require.New(t)
+			fixture := newDraftReplyFixture(t)
+			adapter := fixture.grantedAdapter()
+			var sourceID int64
+			if scenario.destination == "gmail" {
+				source, err := fixture.store.GetOrCreateSource("gmail", "gmail@example.test")
+				requirements.NoError(err)
+				requirements.NoError(fixture.store.AddAccountIdentity(source.ID, source.Identifier, "manual"))
+				sourceID = source.ID
+			} else {
+				sourceID = fixture.source.ID
+				adapter.draftPolicy = []config.IMAPDraftSource{{SourceID: sourceID, Enabled: scenario.policy, Mailbox: "Drafts"}}
+			}
+			err := adapter.runCLIForwardDraft(t.Context(), api.CLIRunRequest{Args: []string{
+				"draft-forward", strconv.FormatInt(fixture.parentID, 10),
+				"--source-id", strconv.FormatInt(sourceID, 10), "--from", scenario.from, "--to", "recipient@example.test",
+			}}, nil)
+			requirements.Error(err)
+			requirements.Equal(scenario.want, err.Error())
+		})
+	}
 }
 
 func TestDraftForwardHTTPPublishesManagedDraft(t *testing.T) {
@@ -80,7 +142,8 @@ func TestDraftForwardHTTPPublishesManagedDraft(t *testing.T) {
 	requirements.NoError(fixture.store.UpsertMessageRaw(fixture.parentID, parentRaw))
 	digest := sha256.Sum256(attachmentContent)
 	hash := hex.EncodeToString(digest[:])
-	attachmentDir := t.TempDir()
+	dataDir := t.TempDir()
+	attachmentDir := filepath.Join(dataDir, "attachments")
 	relativePath := filepath.Join(hash[:2], hash)
 	requirements.NoError(os.MkdirAll(filepath.Dir(filepath.Join(attachmentDir, relativePath)), 0o700))
 	requirements.NoError(os.WriteFile(filepath.Join(attachmentDir, relativePath), attachmentContent, 0o600))
@@ -100,10 +163,10 @@ func TestDraftForwardHTTPPublishesManagedDraft(t *testing.T) {
 	adapter.attachmentMaintenance = maintenance
 	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{
 		Config: &config.Config{
-			HomeDir: t.TempDir(),
-			Server:  config.ServerConfig{APIKey: "owner-test-key"},
+			HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: dataDir},
+			Server: config.ServerConfig{APIKey: "owner-test-key"},
 		},
-		Store:  adapter,
+		Store: adapter, Engine: query.NewEngine(fixture.store.DB(), fixture.store.IsPostgreSQL()), BlobStore: maintenance.blob,
 		Logger: slog.New(slog.DiscardHandler),
 	}).Router())
 	t.Cleanup(server.Close)
@@ -183,6 +246,93 @@ func TestDraftForwardHTTPPublishesManagedDraft(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(reader.Close())
 	assertions.Equal(attachmentContent, localAttachment)
+
+	getBody, err := json.Marshal(map[string]any{"args": []string{"draft-get", result.DraftID, "--json"}})
+	requirements.NoError(err)
+	getRequest, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(getBody))
+	requirements.NoError(err)
+	getRequest.Header.Set("Content-Type", "application/json")
+	getRequest.Header.Set("X-Api-Key", "owner-test-key")
+	getResponse, err := http.DefaultClient.Do(getRequest)
+	requirements.NoError(err)
+	defer func() { _ = getResponse.Body.Close() }()
+	requirements.Equal(http.StatusOK, getResponse.StatusCode)
+	var getEvents []api.CLIRunEvent
+	getScanner := bufio.NewScanner(getResponse.Body)
+	for getScanner.Scan() {
+		var event api.CLIRunEvent
+		requirements.NoError(json.Unmarshal(getScanner.Bytes(), &event))
+		getEvents = append(getEvents, event)
+	}
+	requirements.NoError(getScanner.Err())
+	requirements.Len(getEvents, 2)
+	var localGet draftLifecycleOutput
+	requirements.NoError(json.Unmarshal([]byte(getEvents[0].Data), &localGet))
+	assertions.Equal(result.DraftID, localGet.DraftID)
+	assertions.Equal(string(storedRaw), localGet.RawMIME)
+
+	detailRequest, err := http.NewRequest(http.MethodGet,
+		server.URL+"/api/v1/messages/"+strconv.FormatInt(result.MessageID, 10), nil)
+	requirements.NoError(err)
+	detailRequest.Header.Set("X-Api-Key", "owner-test-key")
+	detailResponse, err := http.DefaultClient.Do(detailRequest)
+	requirements.NoError(err)
+	defer func() { _ = detailResponse.Body.Close() }()
+	requirements.Equal(http.StatusOK, detailResponse.StatusCode)
+	var detail api.MessageDetail
+	requirements.NoError(json.NewDecoder(detailResponse.Body).Decode(&detail))
+	requirements.Len(detail.Attachments, 1)
+	assertions.Equal(hash, detail.Attachments[0].ContentHash)
+	contentRequest, err := http.NewRequest(http.MethodGet,
+		server.URL+"/api/v1/attachments/"+hash+"/content", nil)
+	requirements.NoError(err)
+	contentRequest.Header.Set("X-Api-Key", "owner-test-key")
+	contentResponse, err := http.DefaultClient.Do(contentRequest)
+	requirements.NoError(err)
+	defer func() { _ = contentResponse.Body.Close() }()
+	requirements.Equal(http.StatusOK, contentResponse.StatusCode)
+	apiAttachment, err := io.ReadAll(contentResponse.Body)
+	requirements.NoError(err)
+	assertions.Equal(attachmentContent, apiAttachment)
+
+	editBody, err := json.Marshal(map[string]any{"args": []string{
+		api.CLIRunDraftEditCommand, result.DraftID, "--revision", "1", "--body", "edited forward note", "--json",
+	}})
+	requirements.NoError(err)
+	editRequest, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(editBody))
+	requirements.NoError(err)
+	editRequest.Header.Set("Content-Type", "application/json")
+	editRequest.Header.Set("X-Api-Key", "owner-test-key")
+	editResponse, err := http.DefaultClient.Do(editRequest)
+	requirements.NoError(err)
+	defer func() { _ = editResponse.Body.Close() }()
+	requirements.Equal(http.StatusOK, editResponse.StatusCode)
+	var editEvents []api.CLIRunEvent
+	editScanner := bufio.NewScanner(editResponse.Body)
+	for editScanner.Scan() {
+		var event api.CLIRunEvent
+		requirements.NoError(json.Unmarshal(editScanner.Bytes(), &event))
+		editEvents = append(editEvents, event)
+	}
+	requirements.NoError(editScanner.Err())
+	requirements.Len(editEvents, 2)
+	var editOutput draftLifecycleOutput
+	requirements.NoError(json.Unmarshal([]byte(editEvents[0].Data), &editOutput))
+	assertions.Equal(int64(2), editOutput.Revision)
+	editedDraft, err := fixture.store.GetIMAPDraftContext(t.Context(), result.DraftID)
+	requirements.NoError(err)
+	assertions.Equal(int64(2), editedDraft.Revision)
+	editedRaw, err := fixture.store.GetMessageRawContext(t.Context(), editedDraft.CurrentMessageID)
+	requirements.NoError(err)
+	edited, err := msgmime.Parse(editedRaw)
+	requirements.NoError(err)
+	assertions.Contains(edited.BodyText, "edited forward note")
+	requirements.Len(edited.Attachments, 1)
+	assertions.Equal(attachmentContent, edited.Attachments[0].Content)
+	editedRefs, err := fixture.store.MessageAttachmentRefsContext(t.Context(), editedDraft.CurrentMessageID)
+	requirements.NoError(err)
+	requirements.Len(editedRefs, 1)
+	assertions.Equal(hash, editedRefs[0].ContentHash)
 }
 
 func TestDraftForwardRefusesMissingAttachmentBeforeAppend(t *testing.T) {
@@ -246,6 +396,100 @@ func TestDraftForwardRefusesMissingAttachmentBeforeAppend(t *testing.T) {
 		"SELECT COUNT(*) FROM imap_drafts",
 	)).Scan(&drafts))
 	assertions.Zero(drafts)
+}
+
+func TestDraftForwardReportsLegacyAttachmentStateAndTextPreflight(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := newDraftReplyFixture(t)
+	emptyContent := []byte{}
+	skippedContent := []byte("skipped bytes")
+	emptyDigest := sha256.Sum256(emptyContent)
+	skippedDigest := sha256.Sum256(skippedContent)
+	emptyHash := hex.EncodeToString(emptyDigest[:])
+	skippedHash := hex.EncodeToString(skippedDigest[:])
+	raw := []byte("From: Sender <sender@example.com>\r\n" +
+		"To: " + testutil.IMAPTestUsername + "\r\n" +
+		"Subject: Question\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=state-boundary\r\n\r\n" +
+		"--state-boundary\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"Parent body\r\n" +
+		"--state-boundary\r\n" +
+		"Content-Type: application/octet-stream; name=empty.bin\r\n" +
+		"Content-Disposition: attachment; filename=empty.bin\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\n\r\n" +
+		"--state-boundary\r\n" +
+		"Content-Type: application/octet-stream; name=skipped.bin\r\n" +
+		"Content-Disposition: attachment; filename=skipped.bin\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\n" +
+		base64.StdEncoding.EncodeToString(skippedContent) + "\r\n" +
+		"--state-boundary--\r\n")
+	parsed, err := msgmime.Parse(raw)
+	requirements.NoError(err)
+	requirements.Len(parsed.Attachments, 2)
+	requirements.NoError(fixture.store.UpsertMessageRaw(fixture.parentID, raw))
+	attachmentDir := t.TempDir()
+	for _, hash := range []string{emptyHash} {
+		relative := filepath.Join(hash[:2], hash)
+		requirements.NoError(os.MkdirAll(filepath.Dir(filepath.Join(attachmentDir, relative)), 0o700))
+		requirements.NoError(os.WriteFile(filepath.Join(attachmentDir, relative), emptyContent, 0o600))
+	}
+	for i, item := range []struct {
+		hash string
+		size int64
+	}{
+		{hash: emptyHash, size: 0},
+		{hash: skippedHash, size: int64(len(skippedContent))},
+	} {
+		role, roleSource := store.AttachmentRoleFromMIME(
+			parsed.Attachments[i].Disposition, parsed.Attachments[i].IsInline, parsed.Attachments[i].ContentID,
+		)
+		write := store.AttachmentWrite{
+			Filename: parsed.Attachments[i].Filename, MIMEType: parsed.Attachments[i].ContentType,
+			StoragePath: filepath.ToSlash(filepath.Join(item.hash[:2], item.hash)), ContentHash: item.hash,
+			Size: item.size, Role: role, RoleSource: roleSource, SourcePartKey: parsed.Attachments[i].PartKey,
+		}
+		if i == 1 {
+			write.SkipReason = attachmentpolicy.SkipReason("policy-test")
+		}
+		requirements.NoError(fixture.store.UpsertAttachmentRecord(t.Context(), fixture.parentID, write))
+	}
+	maintenance, err := newAttachmentMaintenance(fixture.store, attachmentDir, nil, true)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = maintenance.close() })
+	adapter := fixture.grantedAdapter()
+	adapter.attachmentMaintenance = maintenance
+	args := []string{
+		"draft-forward", strconv.FormatInt(fixture.parentID, 10), "--source-id", strconv.FormatInt(fixture.source.ID, 10),
+		"--from", testutil.IMAPTestUsername, "--to", "recipient@example.test",
+	}
+	var textEvents []api.CLIRunEvent
+	err = adapter.runCLIForwardDraft(t.Context(), api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
+		textEvents = append(textEvents, event)
+		return nil
+	})
+	requirements.Error(err)
+	assertions.Equal("attachment_preflight_failed", err.Error())
+	requirements.Len(textEvents, 1)
+	assertions.Equal(cliStreamStderr, textEvents[0].Type)
+	assertions.Contains(textEvents[0].Data, "draft-forward refused before APPEND")
+	assertions.Contains(textEvents[0].Data, "skipped.bin")
+	assertions.NotContains(textEvents[0].Data, "empty.bin")
+	var jsonEvents []api.CLIRunEvent
+	err = adapter.runCLIForwardDraft(t.Context(), api.CLIRunRequest{Args: append(args, "--json")}, func(event api.CLIRunEvent) error {
+		jsonEvents = append(jsonEvents, event)
+		return nil
+	})
+	requirements.Error(err)
+	requirements.Len(jsonEvents, 1)
+	var output draftForwardPreflightOutput
+	requirements.NoError(json.Unmarshal([]byte(jsonEvents[0].Data), &output))
+	requirements.Len(output.Problems, 1)
+	assertions.Equal("skipped.bin", output.Problems[0].Filename)
+	assertions.Equal("attachment_skipped", output.Problems[0].Reason)
+	assertions.Equal("policy-test", output.Problems[0].Detail)
 }
 
 func TestDraftForwardLooseAndPackedAttachments(t *testing.T) {
@@ -391,6 +635,8 @@ func TestDraftForwardAttachmentsSurviveParentRemoval(t *testing.T) {
 	_, err = fixture.maintenance.pack(t.Context(), 0)
 	requirements.NoError(err)
 	_, err = fixture.store.DB().Exec(fixture.store.Rebind("DELETE FROM messages WHERE id = ?"), fixture.messageID)
+	requirements.NoError(err)
+	_, err = fixture.maintenance.repack(t.Context(), 0)
 	requirements.NoError(err)
 	reader, _, err := fixture.maintenance.blob.OpenStream(t.Context(), hash)
 	requirements.NoError(err)

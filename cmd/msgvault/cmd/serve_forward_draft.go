@@ -173,62 +173,54 @@ func (a *storeAPIAdapter) runCLIForwardDraft(
 	if err != nil {
 		return err
 	}
-	if target.source.SourceType != "imap" {
-		return draftReplyError("draft_disabled", errors.New("draft-forward requires an IMAP source"))
-	}
 	parent, err := msgmime.Parse(target.raw)
 	if err != nil {
 		return draftReplyError("invalid_parent", fmt.Errorf("parse parent MIME: %w", err))
 	}
 	readerAvailable := a.attachmentMaintenance != nil && a.attachmentMaintenance.blob != nil
-	if readerAvailable && a.attachmentMaintenance.coordinator != nil {
-		lease, leaseErr := a.attachmentMaintenance.coordinator.AcquireMutation(ctx)
-		if leaseErr != nil {
-			return draftReplyError("attachment_preflight_failed", leaseErr)
+	maintenance := a.attachmentMaintenance
+	if !readerAvailable {
+		maintenance = nil
+	}
+	return runWithAttachmentMutation(ctx, maintenance, func(ctx context.Context) error {
+		refs, err := a.store.MessageAttachmentRefsContext(ctx, target.parent.ID)
+		if err != nil {
+			return draftReplyError("attachment_preflight_failed", err)
 		}
-		defer func() {
-			if releaseErr := lease.Release(); releaseErr != nil && a.logger != nil {
-				a.logger.Error("release attachment lease after draft forward", "error", releaseErr)
+		if len(refs) > 0 || len(parent.Attachments) > 0 {
+			if !readerAvailable {
+				return a.emitDraftForwardPreflight(emit, intent.JSON, []draftForwardProblem{{Reason: "attachment_reader_unavailable"}})
 			}
-		}()
-	}
-	refs, err := a.store.MessageAttachmentRefsContext(ctx, target.parent.ID)
-	if err != nil {
-		return draftReplyError("attachment_preflight_failed", err)
-	}
-	if len(refs) > 0 || len(parent.Attachments) > 0 {
-		if !readerAvailable {
-			return a.emitDraftForwardPreflight(emit, intent.JSON, []draftForwardProblem{{Reason: "attachment_reader_unavailable"}})
 		}
-	}
-	attachments, problems := a.readForwardAttachments(ctx, parent, refs)
-	if len(problems) != 0 {
-		return a.emitDraftForwardPreflight(emit, intent.JSON, problems)
-	}
-	headerSummary, err := forwardHeaderSummary(target.raw)
-	if err != nil {
-		return draftReplyError("invalid_parent", err)
-	}
-	subject := parent.Subject
-	draft, err := imaplib.BuildForward(imaplib.ForwardOptions{
-		From: from, To: intent.To, Cc: intent.Cc, Bcc: intent.Bcc,
-		Subject: subject, Body: intent.Body, QuotedHeader: headerSummary,
-		QuotedText: parent.BodyText, QuotedHTML: parent.BodyHTML,
-		Attachments: attachments,
-	}, time.Now(), "")
-	if err != nil {
-		return a.emitDraftForwardPreflight(emit, intent.JSON, []draftForwardProblem{{
-			Reason: "unsupported_metadata", Detail: err.Error(),
-		}})
-	}
-	writes, err := prepareIMAPDraftAttachmentWrites(ctx, draft.Parsed, refs)
-	if err != nil {
-		return a.emitDraftForwardPreflight(emit, intent.JSON, []draftForwardProblem{{
-			Reason: "unrepresentable_attachment", Detail: err.Error(),
-		}})
-	}
-	target.attachmentWrites = &writes
-	return a.createDraft(ctx, target, draft, intent.JSON, emit)
+		attachments, problems := a.readForwardAttachments(ctx, parent, refs)
+		if len(problems) != 0 {
+			return a.emitDraftForwardPreflight(emit, intent.JSON, problems)
+		}
+		headerSummary, err := forwardHeaderSummary(target.raw)
+		if err != nil {
+			return draftReplyError("invalid_parent", err)
+		}
+		subject := parent.Subject
+		draft, err := imaplib.BuildForward(imaplib.ForwardOptions{
+			From: from, To: intent.To, Cc: intent.Cc, Bcc: intent.Bcc,
+			Subject: subject, Body: intent.Body, QuotedHeader: headerSummary,
+			QuotedText: parent.BodyText, QuotedHTML: parent.BodyHTML,
+			Attachments: attachments,
+		}, time.Now(), "")
+		if err != nil {
+			return a.emitDraftForwardPreflight(emit, intent.JSON, []draftForwardProblem{{
+				Reason: "unsupported_metadata", Detail: err.Error(),
+			}})
+		}
+		writes, err := prepareIMAPDraftAttachmentWrites(ctx, draft.Parsed, refs)
+		if err != nil {
+			return a.emitDraftForwardPreflight(emit, intent.JSON, []draftForwardProblem{{
+				Reason: "unrepresentable_attachment", Detail: err.Error(),
+			}})
+		}
+		target.attachmentWrites = &writes
+		return a.createDraft(ctx, target, draft, intent.JSON, emit)
+	})
 }
 
 func (a *storeAPIAdapter) readForwardAttachments(
@@ -240,28 +232,7 @@ func (a *storeAPIAdapter) readForwardAttachments(
 	problems := make([]draftForwardProblem, 0)
 	used := make([]bool, len(refs))
 	for _, part := range parsed.Attachments {
-		index := -1
-		for i, ref := range refs {
-			if used[i] {
-				continue
-			}
-			if ref.SourcePartKey != "" && part.PartKey == ref.SourcePartKey {
-				index = i
-				break
-			}
-		}
-		if index < 0 {
-			for i, ref := range refs {
-				if used[i] || ref.Filename != part.Filename || !strings.EqualFold(ref.ContentHash, part.ContentHash) {
-					continue
-				}
-				if ref.ContentID != "" && ref.ContentID != part.ContentID {
-					continue
-				}
-				index = i
-				break
-			}
-		}
+		index := matchForwardAttachmentRef(part, refs, used)
 		if index < 0 {
 			problems = append(problems, draftForwardProblem{Filename: part.Filename, PartKey: part.PartKey, Reason: "missing_catalog_reference"})
 			continue

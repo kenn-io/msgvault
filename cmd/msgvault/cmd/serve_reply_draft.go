@@ -287,12 +287,8 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 	sourceIDSet bool,
 	requestedFrom string,
 	grant *agentgrant.Grant,
-	operation ...draftOperationKind,
+	operation draftOperationKind,
 ) (draftReplyTarget, string, []string, error) {
-	kind := draftOperationReply
-	if len(operation) > 0 {
-		kind = operation[0]
-	}
 	var parentSource *store.Source
 	if parentID != nil {
 		var err error
@@ -357,7 +353,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", fmt.Errorf("source %d sync config identifier does not match the source", source.ID))
 		}
 	case "gmail":
-		if kind == draftOperationForward {
+		if operation == draftOperationForward {
 			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("draft-forward requires an IMAP source"))
 		}
 		if parentSource == nil {
@@ -373,7 +369,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", fmt.Errorf("source %d is a %q source", source.ID, source.SourceType))
 	}
 
-	target := draftReplyTarget{parentSource: parentSource, source: source, mailbox: mailbox, forward: kind == draftOperationForward}
+	target := draftReplyTarget{parentSource: parentSource, source: source, mailbox: mailbox, forward: operation == draftOperationForward}
 	if parentID != nil {
 		parent, err := a.store.GetMessageContext(ctx, *parentID)
 		if err != nil {
@@ -405,7 +401,7 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	}
 	target, from, selfAddresses, err := a.resolveDraftTarget(
 		ctx, &intent.MessageID, intent.Account, intent.SourceID, intent.SourceIDSet,
-		intent.From, req.Grant,
+		intent.From, req.Grant, draftOperationReply,
 	)
 	if err != nil {
 		return err
@@ -604,11 +600,7 @@ func draftReplyPersistData(
 	var conversationKey string
 	var replyToMessageID sql.NullInt64
 	if target.forward {
-		if target.parent == nil {
-			conversationKey = fmt.Sprintf("draft-forward-%d-%d-%s", receipt.SourceID, receipt.UIDValidity, store.IMAPDraftSourceMessageID(receipt))
-		} else {
-			conversationKey = fmt.Sprintf("draft-forward-%d-%d-%d", target.parent.ID, target.source.ID, receipt.SourceID)
-		}
+		conversationKey = fmt.Sprintf("draft-forward-%d-%d-%s", receipt.SourceID, receipt.UIDValidity, store.IMAPDraftSourceMessageID(receipt))
 	} else if target.parent != nil {
 		conversationKey = target.parent.SourceConversationID
 		replyToMessageID = sql.NullInt64{Int64: target.parent.ID, Valid: true}

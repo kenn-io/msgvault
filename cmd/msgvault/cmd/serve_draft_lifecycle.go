@@ -1161,7 +1161,7 @@ func draftLifecyclePersistData(
 	replyTo sql.NullInt64,
 	replacement imaplib.ReplyDraft,
 	receipt store.IMAPDraftReceipt,
-	attachmentWrites ...*[]store.AttachmentWrite,
+	attachmentWrites *[]store.AttachmentWrite,
 ) ([]store.ParticipantPersistData, func([]int64) *store.MessagePersistData) {
 	parsed := replacement.Parsed
 	addresses := append([]msgmime.Address(nil), parsed.From...)
@@ -1223,9 +1223,7 @@ func draftLifecyclePersistData(
 				CcAddrs:  strings.Join(ccAddresses, " "),
 			},
 		}
-		if len(attachmentWrites) > 0 {
-			data.MIMEAttachmentReplacement = attachmentWrites[0]
-		}
+		data.MIMEAttachmentReplacement = attachmentWrites
 		return data
 	}
 	return participants, build

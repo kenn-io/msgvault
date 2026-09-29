@@ -43,19 +43,16 @@ type ForwardAttachment struct {
 // ForwardOptions contains the selected envelope and the archived message
 // projection to put in an IMAP draft.
 type ForwardOptions struct {
-	From          string
-	To            []string
-	Cc            []string
-	Bcc           []string
-	Subject       string
-	Body          string
-	QuotedHeader  string
-	QuotedText    string
-	QuotedHTML    string
-	Attachments   []ForwardAttachment
-	OriginalText  string
-	OriginalHTML  string
-	HeaderSummary string
+	From         string
+	To           []string
+	Cc           []string
+	Bcc          []string
+	Subject      string
+	Body         string
+	QuotedHeader string
+	QuotedText   string
+	QuotedHTML   string
+	Attachments  []ForwardAttachment
 }
 
 // BuildForward creates the multipart MIME shape used by draft-forward. The
@@ -77,17 +74,8 @@ func BuildForward(options ForwardOptions, now time.Time, messageID string) (Repl
 		return ReplyDraft{}, err
 	}
 	quotedText := options.QuotedText
-	if quotedText == "" {
-		quotedText = options.OriginalText
-	}
 	quotedHTML := options.QuotedHTML
-	if quotedHTML == "" {
-		quotedHTML = options.OriginalHTML
-	}
 	headerSummary := options.QuotedHeader
-	if headerSummary == "" {
-		headerSummary = options.HeaderSummary
-	}
 	if strings.ContainsAny(headerSummary, "\x00") || !utf8.ValidString(headerSummary) {
 		return ReplyDraft{}, errors.New("invalid forwarded header summary")
 	}
@@ -119,7 +107,7 @@ func BuildForward(options ForwardOptions, now time.Time, messageID string) (Repl
 		}
 	}
 	for _, attachment := range options.Attachments {
-		if attachment.IsInline || attachment.ContentID != "" {
+		if quotedHTML != "" && (attachment.IsInline || attachment.ContentID != "") {
 			continue
 		}
 		if err := writeBinaryPart(writer, attachment); err != nil {
@@ -277,13 +265,28 @@ func writeTextPart(writer *multipart.Writer, contentType, value, encoding string
 }
 
 func writeQuotedRelated(writer *multipart.Writer, quotedText, quotedHTML, headerSummary string, attachments []ForwardAttachment, note string) error {
-	var nested bytes.Buffer
-	nestedWriter := multipart.NewWriter(&nested)
-	if err := writeTextPart(nestedWriter, "text/plain; charset=utf-8", quotedTextWithHeader(headerSummary, quotedText), "quoted-printable", nil); err != nil {
+	var alternative bytes.Buffer
+	alternativeWriter := multipart.NewWriter(&alternative)
+	if err := writeTextPart(alternativeWriter, "text/plain; charset=utf-8", quotedTextWithHeader(headerSummary, quotedText), "quoted-printable", nil); err != nil {
 		return err
 	}
 	htmlBody := forwardHTMLBody(headerSummary, quotedHTML, note)
-	if err := writeTextPart(nestedWriter, "text/html; charset=utf-8", htmlBody, "quoted-printable", nil); err != nil {
+	if err := writeTextPart(alternativeWriter, "text/html; charset=utf-8", htmlBody, "quoted-printable", nil); err != nil {
+		return err
+	}
+	if err := alternativeWriter.Close(); err != nil {
+		return err
+	}
+	var nested bytes.Buffer
+	nestedWriter := multipart.NewWriter(&nested)
+	rootHeader := textproto.MIMEHeader{}
+	rootHeader.Set("Content-Type", `multipart/alternative; boundary="`+alternativeWriter.Boundary()+`"`)
+	rootHeader.Set("Content-Disposition", "inline")
+	root, err := nestedWriter.CreatePart(rootHeader)
+	if err != nil {
+		return err
+	}
+	if _, err := root.Write(alternative.Bytes()); err != nil {
 		return err
 	}
 	for _, attachment := range attachments {
@@ -410,6 +413,13 @@ func validateForwardCIDReferences(htmlBody string, attachments []ForwardAttachme
 		if index < 0 {
 			return nil
 		}
+		if position := offset + index; position > 0 {
+			previous := lower[position-1]
+			if previous >= 'a' && previous <= 'z' || previous >= '0' && previous <= '9' || previous == '_' {
+				offset = position + len("cid:")
+				continue
+			}
+		}
 		start := offset + index + len("cid:")
 		end := start
 		for end < len(htmlBody) && !strings.ContainsRune("\t\r\n \"'<>)]", rune(htmlBody[end])) {
@@ -446,7 +456,7 @@ func BuildIMAPDraftReplacement(currentRaw []byte, body string, now time.Time, me
 	if !strings.HasPrefix(strings.ToLower(mediaType), "multipart/") {
 		return BuildDraftReplacement(currentRaw, body, now, messageID)
 	}
-	if message.Header.Get(forwardMarkerHeader) != forwardMarkerValue || params["boundary"] == "" {
+	if !strings.EqualFold(mediaType, "multipart/mixed") || message.Header.Get(forwardMarkerHeader) != forwardMarkerValue || params["boundary"] == "" {
 		return ReplyDraft{}, errors.New("draft replacement does not support this multipart message")
 	}
 	if !utf8.ValidString(body) || strings.ContainsAny(body, "\x00") {
@@ -586,7 +596,6 @@ func rewriteForwardRelated(body []byte, boundary, note string) ([]byte, string, 
 	reader := multipart.NewReader(bytes.NewReader(body), boundary)
 	var out bytes.Buffer
 	writer := multipart.NewWriter(&out)
-	plainParts, htmlParts := 0, 0
 	partIndex := 0
 	for {
 		part, err := reader.NextRawPart()
@@ -601,32 +610,17 @@ func rewriteForwardRelated(body []byte, boundary, note string) ([]byte, string, 
 			return nil, "", err
 		}
 		header := cloneMIMEHeader(part.Header)
-		mediaType, _, _ := mime.ParseMediaType(header.Get("Content-Type"))
-		if strings.EqualFold(mediaType, "text/plain") {
-			if partIndex != 0 {
-				return nil, "", errors.New("forward draft related text part is out of order")
+		if partIndex == 0 {
+			mediaType, params, typeErr := mime.ParseMediaType(header.Get("Content-Type"))
+			if typeErr != nil || !strings.EqualFold(mediaType, "multipart/alternative") || params["boundary"] == "" {
+				return nil, "", errors.New("forward draft related root must contain plain and HTML alternatives")
 			}
-			plainParts++
-		}
-		if strings.EqualFold(mediaType, "text/html") {
-			if partIndex != 1 {
-				return nil, "", errors.New("forward draft related HTML part is out of order")
+			partBody, params["boundary"], err = rewriteForwardAlternative(partBody, params["boundary"], note)
+			if err != nil {
+				return nil, "", err
 			}
-			htmlParts++
-			decoded, decodeErr := decodeTransfer(partBody, header.Get("Content-Transfer-Encoding"))
-			if decodeErr != nil {
-				return nil, "", fmt.Errorf("decode forward HTML note: %w", decodeErr)
-			}
-			decoded, replaceErr := replaceForwardHTMLNote(decoded, note)
-			if replaceErr != nil {
-				return nil, "", replaceErr
-			}
-			var encodeErr error
-			partBody, encodeErr = encodeTransfer(decoded, header.Get("Content-Transfer-Encoding"))
-			if encodeErr != nil {
-				return nil, "", encodeErr
-			}
-		} else if partIndex >= 2 {
+			header.Set("Content-Type", mime.FormatMediaType(mediaType, params))
+		} else {
 			if err := validateForwardBodyPart(header, true); err != nil {
 				return nil, "", err
 			}
@@ -643,8 +637,57 @@ func rewriteForwardRelated(body []byte, boundary, note string) ([]byte, string, 
 	if err := writer.Close(); err != nil {
 		return nil, "", err
 	}
-	if plainParts != 1 || htmlParts != 1 {
+	if partIndex == 0 {
 		return nil, "", errors.New("forward draft related content is incomplete")
+	}
+	return out.Bytes(), writer.Boundary(), nil
+}
+
+func rewriteForwardAlternative(body []byte, boundary, note string) ([]byte, string, error) {
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	var out bytes.Buffer
+	writer := multipart.NewWriter(&out)
+	for index, want := range []string{"text/plain", "text/html"} {
+		part, err := reader.NextRawPart()
+		if err != nil {
+			return nil, "", errors.New("forward draft alternatives are incomplete")
+		}
+		header := cloneMIMEHeader(part.Header)
+		mediaType, _, typeErr := mime.ParseMediaType(header.Get("Content-Type"))
+		if typeErr != nil || !strings.EqualFold(mediaType, want) {
+			return nil, "", errors.New("forward draft alternatives are out of order")
+		}
+		partBody, err := io.ReadAll(part)
+		if err != nil {
+			return nil, "", err
+		}
+		if index == 1 {
+			decoded, decodeErr := decodeTransfer(partBody, header.Get("Content-Transfer-Encoding"))
+			if decodeErr != nil {
+				return nil, "", decodeErr
+			}
+			decoded, err = replaceForwardHTMLNote(decoded, note)
+			if err != nil {
+				return nil, "", err
+			}
+			partBody, err = encodeTransfer(decoded, header.Get("Content-Transfer-Encoding"))
+			if err != nil {
+				return nil, "", err
+			}
+		}
+		created, err := writer.CreatePart(header)
+		if err != nil {
+			return nil, "", err
+		}
+		if _, err := created.Write(partBody); err != nil {
+			return nil, "", err
+		}
+	}
+	if _, err := reader.NextRawPart(); !errors.Is(err, io.EOF) {
+		return nil, "", errors.New("forward draft has extra alternative parts")
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
 	}
 	return out.Bytes(), writer.Boundary(), nil
 }

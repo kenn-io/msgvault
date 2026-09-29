@@ -10,6 +10,27 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+func matchForwardAttachmentRef(part msgmime.Attachment, refs []store.AttachmentRef, used []bool) int {
+	if part.PartKey != "" {
+		for i, ref := range refs {
+			if used[i] || ref.SourcePartKey == "" || ref.SourcePartKey != part.PartKey {
+				continue
+			}
+			return i
+		}
+	}
+	for i, ref := range refs {
+		if used[i] || ref.Filename != part.Filename || !strings.EqualFold(ref.ContentHash, part.ContentHash) {
+			continue
+		}
+		if ref.ContentID != "" && ref.ContentID != part.ContentID {
+			continue
+		}
+		return i
+	}
+	return -1
+}
+
 // prepareIMAPDraftAttachmentWrites binds generated MIME occurrences to the
 // catalog references that already own their bytes. A hash by itself never
 // creates a new catalog reference.
@@ -23,21 +44,8 @@ func prepareIMAPDraftAttachmentWrites(ctx context.Context, parsed *msgmime.Messa
 	writes := make([]store.AttachmentWrite, 0, len(parsed.Attachments))
 	used := make([]bool, len(refs))
 	for _, part := range parsed.Attachments {
-		refIndex := -1
-		for i, ref := range refs {
-			if used[i] || ref.ContentHash == "" {
-				continue
-			}
-			if !strings.EqualFold(ref.ContentHash, part.ContentHash) || ref.Filename != part.Filename {
-				continue
-			}
-			if ref.ContentID != "" && ref.ContentID != part.ContentID {
-				continue
-			}
-			refIndex = i
-			break
-		}
-		if refIndex < 0 {
+		refIndex := matchForwardAttachmentRef(part, refs, used)
+		if refIndex < 0 || refs[refIndex].ContentHash == "" {
 			return nil, fmt.Errorf("generated attachment %q (%s) has no retained catalog reference", part.Filename, part.PartKey)
 		}
 		ref := refs[refIndex]

@@ -1,6 +1,10 @@
 package imap
 
 import (
+	"bytes"
+	"mime"
+	"mime/multipart"
+	"net/mail"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +33,44 @@ func TestBuildForwardPreservesMIME(t *testing.T) {
 	requirements.Len(draft.Parsed.Attachments, 1)
 	assertions.Equal("logo.png", draft.Parsed.Attachments[0].Filename)
 	assertions.Equal([]byte("png"), draft.Parsed.Attachments[0].Content)
+	message, err := mail.ReadMessage(bytes.NewReader(draft.Raw))
+	requirements.NoError(err)
+	_, mixedParams, err := mime.ParseMediaType(message.Header.Get("Content-Type"))
+	requirements.NoError(err)
+	mixed := multipart.NewReader(message.Body, mixedParams["boundary"])
+	_, err = mixed.NextPart()
+	requirements.NoError(err)
+	relatedPart, err := mixed.NextPart()
+	requirements.NoError(err)
+	_, relatedParams, err := mime.ParseMediaType(relatedPart.Header.Get("Content-Type"))
+	requirements.NoError(err)
+	related := multipart.NewReader(relatedPart, relatedParams["boundary"])
+	root, err := related.NextPart()
+	requirements.NoError(err)
+	rootType, _, err := mime.ParseMediaType(root.Header.Get("Content-Type"))
+	requirements.NoError(err)
+	assertions.Equal("multipart/alternative", rootType)
+}
+
+func TestBuildForwardPlainParentRetainsInlineFile(t *testing.T) {
+	draft, err := BuildForward(ForwardOptions{
+		From: "sender@example.test", To: []string{"recipient@example.test"},
+		QuotedText: "plain parent", Attachments: []ForwardAttachment{{
+			Filename: "photo.jpg", ContentType: "image/jpeg", ContentID: "photo@example.test",
+			IsInline: true, Content: []byte("photo"),
+		}},
+	}, time.Now(), "forward@example.test")
+	require.NoError(t, err)
+	require.Len(t, draft.Parsed.Attachments, 1)
+	assert.Equal(t, []byte("photo"), draft.Parsed.Attachments[0].Content)
+}
+
+func TestBuildForwardVisibleCIDWord(t *testing.T) {
+	_, err := BuildForward(ForwardOptions{
+		From: "sender@example.test", To: []string{"recipient@example.test"},
+		QuotedHTML: "<p>Lucid: ideas</p>",
+	}, time.Now(), "forward@example.test")
+	require.NoError(t, err)
 }
 
 func TestBuildForwardReplacementPreservesParts(t *testing.T) {
@@ -66,4 +108,6 @@ func TestBuildForwardRejectsUnsupportedParts(t *testing.T) {
 	}, time.Now(), "forward@example.test")
 	assertions.Error(err)
 	assertions.Contains(err.Error(), "Content-ID")
+	_, err = BuildIMAPDraftReplacement([]byte("From: a@example.test\r\nTo: b@example.test\r\nX-Msgvault-Forward: 1\r\nContent-Type: multipart/signed; boundary=x\r\n\r\n--x--\r\n"), "changed", time.Now(), "")
+	assertions.ErrorContains(err, "does not support")
 }
