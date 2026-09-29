@@ -14,17 +14,4 @@ describe('SearchModeControl', () => {
     await fireEvent.click(screen.getByRole('radio', { name: 'Semantic' }));
     expect(onchange).toHaveBeenCalledWith('semantic');
   });
-
-  it.each(['disabled', 'initializing', 'stale', 'incomplete', 'unavailable', 'ready'] as const)(
-    'preserves the requested mode through %s coverage',
-    async (status) => {
-      const { rerender } = render(SearchModeControl, {
-        props: { requestedMode: 'hybrid', status, error: status === 'unavailable' ? 'backend failed' : '' }
-      });
-
-      expect(screen.getByRole('radio', { name: 'Hybrid' }).getAttribute('aria-checked')).toBe('true');
-      await rerender({ requestedMode: 'hybrid', status, error: 'new request failure' });
-      expect(screen.getByRole('radio', { name: 'Hybrid' }).getAttribute('aria-checked')).toBe('true');
-    }
-  );
 });

@@ -22,18 +22,4 @@ describe('PageHeader', () => {
     const row = screen.getByRole('tablist');
     expect(heading.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
-
-  it('keeps a visually hidden title accessible', () => {
-    render(PageHeader, { title: 'Operations', visuallyHiddenTitle: true });
-
-    const heading = screen.getByRole('heading', { level: 1, name: 'Operations' });
-    expect(heading.closest('.kit-sr-only')).toBeTruthy();
-  });
-
-  it('shows the title normally by default', () => {
-    render(PageHeader, { title: 'Operations' });
-
-    const heading = screen.getByRole('heading', { level: 1, name: 'Operations' });
-    expect(heading.closest('.kit-sr-only')).toBeNull();
-  });
 });

@@ -6,15 +6,14 @@
     description?: string;
     actions?: Snippet;
     view?: Snippet;
-    visuallyHiddenTitle?: boolean;
   }
 
-  let { title, description, actions, view, visuallyHiddenTitle = false }: Props = $props();
+  let { title, description, actions, view }: Props = $props();
 </script>
 
 <header class="page-header">
   <div class="page-header__row">
-    <div class="page-header__text" class:kit-sr-only={visuallyHiddenTitle}>
+    <div class="page-header__text">
       <h1>{title}</h1>
       {#if description}<p>{description}</p>{/if}
     </div>

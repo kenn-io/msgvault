@@ -1,10 +1,11 @@
 # Web UI overhaul
 
 Status: in review. Design sections were approved 2026-09-28; this revision
-(2026-09-29) addresses review findings. Not yet implemented. Delivery is four
-stacked pull requests, described under [Delivery](#delivery). This record
-describes the intended end state; the current source remains authoritative
-until each pull request lands.
+(2026-09-29) addresses review findings. PR 1 (foundation and shell) is
+implemented on branch `ui-ux-improvements` and not yet merged; PRs 2–4 are not
+started. Delivery is four stacked pull requests, described under
+[Delivery](#delivery). This record describes the intended end state; the
+current source remains authoritative until each pull request lands.
 
 ## Summary
 
