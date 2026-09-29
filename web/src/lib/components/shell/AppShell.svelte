@@ -683,7 +683,7 @@
     const grid = currentGrid();
     if (!grid || event.target === grid) return;
     grid.focus();
-    grid.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: false, cancelable: true, ...init }));
+    grid.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
   }
   async function closeReadingPane(): Promise<void> {
     commitNavigation({ selectedRow: null });
@@ -847,7 +847,7 @@
       const grid = currentGrid();
       if (!grid) return;
       grid.focus();
-      grid.dispatchEvent(new KeyboardEvent('keydown', { key: resolvedKey, bubbles: false, cancelable: true, ...init }));
+      grid.dispatchEvent(new KeyboardEvent('keydown', { key: resolvedKey, bubbles: true, cancelable: true, ...init }));
     });
   }
   const commandHandlers: CommandHandlers = {

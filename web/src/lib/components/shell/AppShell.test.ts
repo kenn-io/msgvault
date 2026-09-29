@@ -1988,32 +1988,34 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('extends a selection with Shift+Space pressed outside the grid', async () => {
+  it('selects three rows when Shift+Space is pressed outside the grid', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);
     const rows = [0, 1, 2].map((index) => entry(index));
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({ rows, total_count: 3 })));
-    render(AppShell, {
-      client: createAPIClient(fetchFn),
-      state
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/explore/preflight')) {
+        return Response.json({
+          count: 3, deletable_count: 3, estimated_bytes: 30, cache_revision: 'cache-1',
+          search_provenance: {}, unavailable_actions: [], action_targets: []
+        });
+      }
+      return Response.json(exploreResponse({ rows, total_count: 3 }));
     });
+    render(AppShell, { client: createAPIClient(fetchFn), state });
     const grid = await screen.findByRole('grid', { name: 'Everything results' });
     await screen.findByText('Synthetic subject 0');
-
-    // Arrange: Select and navigate within the grid
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
     await fireEvent.keyDown(grid, { key: 'j' });
     await fireEvent.keyDown(grid, { key: 'j' });
-    document.body.focus();
+    await waitFor(() => expect(screen.getByText('1 selected')).toBeTruthy());
+    grid.blur();
+    expect(document.activeElement).toBe(document.body);
 
-    // Act: Press Shift+Space outside the grid to extend selection
-    await fireEvent.keyDown(window, { key: ' ', shiftKey: true });
+    await fireEvent.keyDown(document.body, { key: ' ', shiftKey: true });
 
-    // Assert: Selection should extend to focused row
-    await waitFor(() => {
-      expect(screen.queryByText(/\d+ selected/)).toBeTruthy();
-    }, { timeout: 2000 });
+    await waitFor(() => expect(screen.getByText('3 selected')).toBeTruthy());
     state.destroy();
   });
 });
