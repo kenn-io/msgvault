@@ -1,39 +1,32 @@
 <script lang="ts">
   import {
-    createSavedView as generatedCreateSavedView,
     deleteSavedView as generatedDeleteSavedView,
     listSavedViews as generatedListSavedViews,
     patchSavedView as generatedPatchSavedView,
   } from '../../api/generated/api/api';
-  import { Button, Card, EmptyState, Modal, TextInput } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, Modal, TextInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
   import PageHeader from '../shell/PageHeader.svelte';
   import type { APIClient } from '../../api/client';
-  import type {
-    SavedView as GeneratedSavedView,
-    SavedViewStateEnvelope as GeneratedSavedViewStateEnvelope,
-  } from '../../api/generated/models';
-  import { DEFAULT_EXPLORE_COLUMNS, type ExploreURLState } from '../../explore/models';
-  type SavedView = GeneratedSavedView;
-  type CanonicalState = GeneratedSavedViewStateEnvelope;
-  const CURRENT_SCHEMA_VERSION = 1;
+  import type { SavedView } from '../../api/generated/models';
+  import type { ExploreURLState } from '../../explore/models';
+  import {
+    CURRENT_SCHEMA_VERSION,
+    exploreStateFromSavedView,
+    savedViewSummary,
+    type CanonicalState,
+  } from '../../saved-views/canonical';
   let {
     client,
-    currentState,
-    selection = undefined,
     onOpen = () => undefined,
   }: {
     client: APIClient;
-    currentState: ExploreURLState;
-    selection?: unknown;
     onOpen?: (state: Partial<ExploreURLState>) => void;
   } = $props();
   let views = $state<SavedView[]>([]);
   let loading = $state(true);
   let saving = $state(false);
   let error = $state('');
-  let name = $state('');
-  let description = $state('');
   let editing = $state<SavedView>();
   let editName = $state('');
   let editDescription = $state('');
@@ -50,45 +43,6 @@
       error = cause instanceof Error ? cause.message : 'Unable to load saved views.';
     } finally {
       loading = false;
-    }
-  }
-  function canonicalState(): CanonicalState {
-    const query = currentState.query.trim();
-    return {
-      ...(query ? { query, search_mode: currentState.searchMode } : {}),
-      filters: currentState.filters.map((filter) => ({
-        field: filter.dimension,
-        operator: 'in',
-        values: [...filter.values],
-      })),
-      grouping: [...currentState.groupingChain],
-      presentation: currentState.presentation,
-      sort: currentState.sort.map((sort) => ({ field: sort.field, direction: sort.direction })),
-      columns: [...currentState.columns],
-    };
-  }
-  async function createView(): Promise<void> {
-    if (!name.trim()) return;
-    saving = true;
-    error = '';
-    try {
-      const { data, error: responseError } = await generatedCreateSavedView(
-        {
-          name: name.trim(),
-          ...(description.trim() ? { description: description.trim() } : {}),
-          canonical_state: canonicalState(),
-          schema_version: CURRENT_SCHEMA_VERSION,
-        },
-        client,
-      );
-      if (!data) throw new Error(messageFor(responseError, 'Unable to save this view.'));
-      views = [...views, data].sort((left, right) => left.name.localeCompare(right.name));
-      name = '';
-      description = '';
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Unable to save this view.';
-    } finally {
-      saving = false;
     }
   }
   function beginEdit(view: SavedView): void {
@@ -155,31 +109,7 @@
   function open(view: SavedView): void {
     const incompatibility = incompatibilityFor(view);
     if (incompatibility) return;
-    const saved = view.canonical_state as CanonicalState;
-    const filters = (saved.filters ?? []).map((filter) => {
-      const aliases: Record<string, ExploreURLState['filters'][number]['dimension']> = {
-        source_id: 'source',
-        participant_id: 'participant',
-      };
-      return {
-        dimension: aliases[filter.field] ?? (filter.field as ExploreURLState['filters'][number]['dimension']),
-        values: [...filter.values],
-      };
-    });
-    onOpen({
-      workspace: 'everything',
-      query: saved.query ?? '',
-      searchMode: saved.search_mode === 'semantic' || saved.search_mode === 'hybrid' ? saved.search_mode : 'full_text',
-      filters,
-      groupingChain: [...(saved.grouping ?? [])] as ExploreURLState['groupingChain'],
-      presentation: saved.presentation ?? 'table',
-      sort: (saved.sort ?? [{ field: 'occurred_at', direction: 'desc' }]) as ExploreURLState['sort'],
-      columns: (saved.columns ?? DEFAULT_EXPLORE_COLUMNS) as ExploreURLState['columns'],
-      activeRow: null,
-      selectedRow: null,
-      conversationAnchor: null,
-      scrollAnchor: null,
-    });
+    onOpen(exploreStateFromSavedView(view.canonical_state as CanonicalState));
   }
   function incompatibilityFor(view: SavedView): string {
     if (view.schema_version !== CURRENT_SCHEMA_VERSION) {
@@ -199,30 +129,13 @@
 
   {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
 
-  <Card padding="sm" title="Save this view" meta="Shared across sessions">
-    <form
-      class="create"
-      onsubmit={(event) => {
-        event.preventDefault();
-        void createView();
-      }}
-    >
-      <TextInput ariaLabel="Name" placeholder="View name" bind:value={name} autocomplete="off" block />
-      <TextInput
-        ariaLabel="Description"
-        placeholder="Description (optional)"
-        bind:value={description}
-        autocomplete="off"
-        block
-      />
-      <Button type="submit" tone="workflow" surface="solid" label="Save" disabled={saving || !name.trim()} />
-    </form>
-  </Card>
-
   {#if loading}
     <p role="status">Loading saved views…</p>
   {:else if views.length === 0}
-    <EmptyState title="No saved views yet" description="Save the current archive context to reuse it later." />
+    <EmptyState
+      title="No saved views yet"
+      description="Use Save view… in Everything or Files to keep a search and layout you want to return to."
+    />
   {:else}
     <section class="view-list" aria-label="Saved view library">
       {#each views as view (view.id)}
@@ -253,6 +166,13 @@
             <div class="view-copy">
               <h2>{view.name}</h2>
               <p>{view.description ?? 'No description'}</p>
+              {#if !incompatibility}
+                <ul class="summary" aria-label={`${view.name} summary`}>
+                  {#each savedViewSummary(view.canonical_state as CanonicalState) as part, index (index)}
+                    <li>{part}</li>
+                  {/each}
+                </ul>
+              {/if}
             </div>
             {#if incompatibility}
               <p class="notice" role="alert">{incompatibility}</p>
@@ -352,12 +272,6 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
-  .create {
-    display: grid;
-    grid-template-columns: minmax(11rem, 0.8fr) minmax(15rem, 1.2fr) auto;
-    align-items: center;
-    gap: var(--space-2);
-  }
   label {
     display: grid;
     gap: var(--space-1);
@@ -378,6 +292,22 @@
     min-width: 12rem;
     gap: var(--space-1);
   }
+  .summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .summary li {
+    padding: 0 var(--space-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-subtle);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+  }
   .notice {
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--accent-amber);
@@ -389,9 +319,6 @@
     color: var(--text-danger);
   }
   @media (max-width: 760px) {
-    .create {
-      grid-template-columns: 1fr;
-    }
     article {
       align-items: stretch;
       flex-direction: column;

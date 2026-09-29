@@ -1,34 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import { ExploreGroupDimension } from '../../api/generated/models';
 import { defaultExploreURLState, parseExploreURLState, serializeExploreURLState } from '../../explore/state.svelte';
-import type { ExploreURLState } from '../../explore/models';
 import SavedViewsWorkspace from './SavedViewsWorkspace.svelte';
-
-const currentState: ExploreURLState = {
-  schemaVersion: 2,
-  workspace: 'everything',
-  directoryQuery: '', directoryContactState: '', directoryCategory: '', directoryOrganization: '',
-  directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '', directorySort: 'name', directoryPersonID: null,
-  reviewKind: 'identity', identityState: 'candidate', relationshipReviewState: 'pending',
-  query: 'invoice',
-  searchMode: 'full_text',
-  filters: [{ dimension: 'source', values: ['1'] }],
-  groupingChain: ['domain'],
-  presentation: 'table',
-  sort: [{ field: 'occurred_at', direction: 'desc' }],
-  fileFilenameQuery: '', fileMIMEFamilies: [], personFilePresentation: 'files',
-  personFileDirections: ['from_person'], columns: ['kind', 'title'], columnWidths: {},
-  activeRow: null, selectedRow: null, inspectorPinned: true, inspectorWidth: 380,
-  conversationAnchor: null, scrollAnchor: null,
-  relationshipFacet: 'people', relationshipTarget: null,
-  relationshipShowAll: false, relationshipFiles: false,
-  operationLane: '', operationKind: '', operationState: '',
-  operationStartedFrom: '', operationStartedBefore: '', operationRunID: null, operationStatus: '',
-  settingsAuthority: ''
-};
 
 function savedView(overrides: Record<string, unknown> = {}) {
   return {
@@ -47,27 +23,45 @@ function savedView(overrides: Record<string, unknown> = {}) {
 }
 
 describe('SavedViewsWorkspace', () => {
-  it.each(['semantic', 'hybrid'] as const)('saves filter-only views without a %s search mode', async (searchMode) => {
-    for (const query of ['', ' \t\n ']) {
-      const requests: Request[] = [];
-      const fetchFn = vi.fn<typeof fetch>(async (input) => {
-        const request = input instanceof Request ? input : new Request(input);
-        requests.push(request);
-        return Response.json(request.method === 'GET' ? { saved_views: [] } : savedView());
-      });
-      const component = render(SavedViewsWorkspace, {
-        client: createAPIClient(fetchFn), currentState: { ...currentState, query, searchMode }
-      });
-      await screen.findByText('No saved views yet');
-      await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Invoices' } });
-      await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-      await screen.findByRole('heading', { name: 'Invoices' });
-      const { canonical_state: saved } = await requests[1]!.clone().json();
-      expect(saved).not.toHaveProperty('query');
-      expect(saved).not.toHaveProperty('search_mode');
-      expect(saved.filters).toEqual([{ field: 'source', operator: 'in', values: ['1'] }]);
-      component.unmount();
+  it('is a library: no save form, and an empty state that points to Save view…', async () => {
+    render(SavedViewsWorkspace, {
+      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [] })))
+    });
+    const empty = await screen.findByText('No saved views yet');
+    expect(empty.parentElement?.textContent).toContain('Save view…');
+    expect(empty.parentElement?.textContent).toContain('Everything');
+    expect(empty.parentElement?.textContent).toContain('Files');
+    expect(screen.queryByText('Save this view')).toBeNull();
+    expect(screen.queryByLabelText('Name')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
+  it('shows each view with its description, a readable summary, and its actions', async () => {
+    render(SavedViewsWorkspace, {
+      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [savedView()] })))
+    });
+    const heading = await screen.findByRole('heading', { name: 'Invoices' });
+    const card = heading.closest('article')!;
+    expect(within(card).getByText('Quarterly review')).toBeDefined();
+    const summary = within(card).getByRole('list', { name: 'Invoices summary' });
+    expect(within(summary).getAllByRole('listitem').map((item) => item.textContent?.trim())).toEqual([
+      'Full text: “invoice”', 'Source: 1', 'Grouped by Domains', 'Table'
+    ]);
+    for (const name of ['Open Invoices', 'Edit Invoices', 'Delete Invoices']) {
+      expect(within(card).getByRole('button', { name })).toBeDefined();
     }
+  });
+
+  it('opens a saved Files view in Files', async () => {
+    const onOpen = vi.fn();
+    render(SavedViewsWorkspace, {
+      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [savedView({
+        canonical_state: { ...savedView().canonical_state, grouping: [], presentation: 'files' }
+      })] }))),
+      onOpen
+    });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Invoices' }));
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ workspace: 'files', presentation: 'files' }));
   });
 
   it('blocks opening a definition the server marks incompatible', async () => {
@@ -76,7 +70,7 @@ describe('SavedViewsWorkspace', () => {
       client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [savedView({
         canonical_state: { search_mode: 'semantic' },
         incompatibility_reason: 'Semantic and hybrid exploration require free text'
-      })] }))), currentState, onOpen
+      })] }))), onOpen
     });
     expect((await screen.findByRole('alert')).textContent).toContain('require free text');
     const open = screen.getByRole('button', { name: 'Open Invoices' }) as HTMLButtonElement;
@@ -85,48 +79,13 @@ describe('SavedViewsWorkspace', () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
-  it.each(['full_text', 'semantic', 'hybrid'] as const)('creates a %s query without persisting selection tokens', async (searchMode) => {
-    const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      if (request.method === 'GET') return Response.json({ saved_views: [] });
-      return Response.json(savedView(), { status: 201 });
-    });
-    render(SavedViewsWorkspace, {
-      client: createAPIClient(fetchFn), currentState: { ...currentState, query: ' invoice ', searchMode },
-      selection: { mode: 'all_matching', operationToken: 'session-secret' }
-    });
-
-    await screen.findByText('No saved views yet');
-    await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Invoices' } });
-    await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Quarterly review' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await screen.findByRole('heading', { name: 'Invoices' });
-    const body = await requests[1]!.clone().json();
-    expect(body).toEqual({
-      name: 'Invoices', description: 'Quarterly review', schema_version: 1,
-      canonical_state: {
-        query: 'invoice', search_mode: searchMode,
-        filters: [{ field: 'source', operator: 'in', values: ['1'] }],
-        grouping: ['domain'], presentation: 'table',
-        sort: [{ field: 'occurred_at', direction: 'desc' }],
-        columns: ['kind', 'title']
-      }
-    });
-    expect(JSON.stringify(body)).not.toContain('session-secret');
-    expect(JSON.stringify(body)).not.toContain('selection');
-    expect(JSON.stringify(body)).not.toContain('inspector_pinned');
-  });
-
   it.each(Object.values(ExploreGroupDimension))('opens %s grouping and preserves it in the analytical URL state', async (dimension) => {
     const onOpen = vi.fn();
     render(SavedViewsWorkspace, {
       client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [savedView({
         canonical_state: { ...savedView().canonical_state, grouping: [dimension] }
       })] }))),
-      currentState: { ...currentState, activeRow: 'message:9', selectedRow: 'message:9' }, onOpen
+      onOpen
     });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Open Invoices' }));
@@ -157,7 +116,7 @@ describe('SavedViewsWorkspace', () => {
     });
     render(SavedViewsWorkspace, {
       client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [legacy] }))),
-      currentState, onOpen
+      onOpen
     });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Open Invoices' }));
@@ -181,7 +140,7 @@ describe('SavedViewsWorkspace', () => {
     });
     render(SavedViewsWorkspace, {
       client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ saved_views: [view] }))),
-      currentState, onOpen
+      onOpen
     });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Open Invoices' }));
@@ -204,7 +163,7 @@ describe('SavedViewsWorkspace', () => {
       if (request.method === 'PATCH') return Response.json(savedView({ name: 'Invoices 2026', revision: 4 }));
       return new Response(null, { status: 204 });
     });
-    render(SavedViewsWorkspace, { client: createAPIClient(fetchFn), currentState });
+    render(SavedViewsWorkspace, { client: createAPIClient(fetchFn) });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Edit Invoices' }));
     await fireEvent.input(screen.getByLabelText('Edit name'), { target: { value: 'Invoices 2026' } });
@@ -230,8 +189,7 @@ describe('SavedViewsWorkspace', () => {
       return Response.json({ saved_views: [savedView({ schema_version: 99, incompatibility_reason: "unsupported schema", canonical_state: { query: { text: "future" } } })] });
     });
     render(SavedViewsWorkspace, {
-      client: createAPIClient(fetchFn),
-      currentState
+      client: createAPIClient(fetchFn)
     });
 
     expect((await screen.findByRole('alert')).textContent).toContain('schema version 99');

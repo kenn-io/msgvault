@@ -69,6 +69,7 @@
     openRelationship: (participantID: number) => void;
     changeConversationAnchor: (anchorId: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
+    onSaveView: () => void;
   }
 
   let {
@@ -98,6 +99,7 @@
     openRelationship,
     changeConversationAnchor,
     onOpenMeeting = undefined,
+    onSaveView,
   }: Props = $props();
 
   const api = createExploreAPI(untrack(() => client));
@@ -593,7 +595,9 @@
 </script>
 
 <main class="everything-workspace" aria-label="Everything">
-  <PageHeader title="Everything" />
+  <PageHeader title="Everything">
+    {#snippet actions()}<Button surface="outline" label="Save view…" onclick={onSaveView} />{/snippet}
+  </PageHeader>
 
   <ContextBar
     {client}

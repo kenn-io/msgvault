@@ -2,6 +2,7 @@
   import { getCLIMessageRaw as generatedGetCLIMessageRaw } from '../../api/generated/api/api';
   import { preflightExploreSelection as generatedPreflightExploreSelection } from '../../api/generated/exploration/exploration';
   import {
+    Button,
     CommandPalette,
     getThemeMode,
     IconButton,
@@ -57,6 +58,7 @@
   } from '../../theme/preferences.svelte';
   import ContextBar from '../explore/ContextBar.svelte';
   import GroupTable from '../explore/GroupTable.svelte';
+  import SaveViewDialog from '../saved-views/SaveViewDialog.svelte';
   import SavedViewsWorkspace from '../saved-views/SavedViewsWorkspace.svelte';
   import SourcesWorkspace from '../sources/SourcesWorkspace.svelte';
   import OperationsWorkspace from '../operations/OperationsWorkspace.svelte';
@@ -245,6 +247,9 @@
     directoryPromotionParticipantID = undefined;
     exploreState.commitNavigation({ workspace: 'directory', directoryPersonID: personID });
   }
+  function openSaveView(): void {
+    saveViewOpen = true;
+  }
   function announceOperation(message: string): void {
     operationAnnouncement = { key: ++operationAnnouncementKey, message };
   }
@@ -368,6 +373,7 @@
     : undefined);
   let operationAnnouncementKey = 0;
   let operationAnnouncement = $state({ key: 0, message: '' });
+  let saveViewOpen = $state(false);
   type APIExploreSelection = GeneratedExploreSelection;
   type ExplorePreflight = GeneratedExplorePreflightResponse;
   const NARROW_WIDTH = 900;
@@ -1266,8 +1272,6 @@
       {:else if exploreState.current.workspace === 'saved_views'}
         <SavedViewsWorkspace
           {client}
-          currentState={exploreState.current}
-          selection={selection.snapshot()}
           onOpen={(state) => {
             void openSavedView(state);
           }}
@@ -1371,7 +1375,9 @@
         />
       {:else if exploreState.current.workspace === 'files'}
         <main class="files-shell" aria-label="Files">
-          <PageHeader title="Files" />
+          <PageHeader title="Files">
+            {#snippet actions()}<Button surface="outline" label="Save view…" onclick={openSaveView} />{/snippet}
+          </PageHeader>
           <ContextBar
             {client}
             query={exploreState.current.query}
@@ -1522,10 +1528,24 @@
           {openRelationship}
           {changeConversationAnchor}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
+          onSaveView={openSaveView}
         />
       {/if}
     </div>
   </div>
+  {#if saveViewOpen}
+    <SaveViewDialog
+      {client}
+      state={exploreState.current}
+      onSaved={(view) => {
+        saveViewOpen = false;
+        announceOperation(`Saved view ${view.name}.`);
+      }}
+      onclose={() => {
+        saveViewOpen = false;
+      }}
+    />
+  {/if}
   {#if narrow && drawerOpen}
     <NavigationDrawer onclose={() => void closeDrawer()}>
       <AppSidebar

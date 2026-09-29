@@ -331,6 +331,60 @@ describe('AppShell', () => {
   });
 
 
+  it.each([['everything', 'Everything'], ['files', 'Files']] as const)(
+    'offers Save view… in the %s header and opens the save dialog',
+    async (workspace, title) => {
+      window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace }))}`);
+      const state = new ExploreState(window);
+      const rendered = render(AppShell, {
+        client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(exploreResponse()))), state, enabled: false
+      });
+      const header = (await screen.findByRole('heading', { level: 1, name: title })).closest('header')!;
+      await fireEvent.click(within(header).getByRole('button', { name: 'Save view…' }));
+      expect(screen.getByRole('dialog', { name: 'Save view' })).toBeDefined();
+      rendered.unmount();
+      state.destroy();
+    }
+  );
+
+  it('saves a Files view from its header and reopens it in Files from Saved views', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'files' }))}`);
+    const stored: Record<string, unknown>[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/saved-views') && request.method === 'POST') {
+        const body = await request.json();
+        const view = {
+          ...body, id: 5, revision: 1,
+          created_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z'
+        };
+        stored.push(view);
+        return Response.json(view, { status: 201 });
+      }
+      if (path.endsWith('/saved-views')) return Response.json({ saved_views: stored });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save view…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Save view' });
+    expect(within(dialog).getByText('Filename, type, and file sort aren’t saved with the view.')).toBeDefined();
+    await fireEvent.input(within(dialog).getByLabelText('Name'), { target: { value: 'Demo view' } });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Save view' })).toBeNull());
+    expect(screen.getByRole('status', { name: 'Operation status' }).textContent).toContain('Saved view Demo view.');
+
+    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: 'Saved views' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Demo view' }));
+    await waitFor(() => expect(state.current.workspace).toBe('files'));
+    expect(await screen.findByRole('main', { name: 'Files' })).toBeDefined();
+
+    rendered.unmount();
+    state.destroy();
+  });
+
   describe('shell chrome', () => {
     const states: ExploreState[] = [];
 
