@@ -564,6 +564,8 @@ function sharedDetails(state: ExploreURLState): Record<string, unknown> {
     const field = key as keyof ExploreURLState;
     if (field === 'schemaVersion' || field === 'workspace' || field === 'searchMode') return false;
     if (SESSION_ONLY_FIELDS.has(field)) return false;
+    // The Files workspace implies its presentation, so a Files link need not repeat it.
+    if (field === 'presentation' && state.workspace === 'files') return false;
     const owners = WORKSPACE_FIELDS[field];
     if (owners && !owners.includes(state.workspace)) return false;
     return JSON.stringify(value) !== JSON.stringify(defaultExploreURLState[field]);

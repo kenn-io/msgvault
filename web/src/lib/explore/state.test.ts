@@ -347,6 +347,13 @@ describe('Explore URL state', () => {
     });
   });
 
+  it('shares the Files workspace without repeating its implied presentation', () => {
+    const search = serializeExploreURLState({ ...defaultExploreURLState, workspace: 'files', presentation: 'files' });
+
+    expect(search).toBe('?workspace=files&mode=full_text');
+    expect(parseExploreURLState(search)).toMatchObject({ workspace: 'files', presentation: 'files' });
+  });
+
   it('keeps Files presentation in the Files workspace', () => {
     const restored = parseExploreURLState(
       `?workspace=files&explore=${encodeURIComponent(JSON.stringify({ presentation: 'table' }))}`
