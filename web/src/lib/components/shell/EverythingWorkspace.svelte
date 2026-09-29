@@ -108,11 +108,13 @@
 
   const countLabel = $derived.by(() => {
     const result = loader.result;
-    if (result?.candidatePoolSaturated) {
+    if (loader.loading) return 'Counting…';
+    if (!result || loader.error || loader.unavailable) return '';
+    if (result.candidatePoolSaturated) {
       const shown = loader.rows.length;
       return `${shown.toLocaleString()} ${shown === 1 ? 'result' : 'results'} shown`;
     }
-    if (loader.loading || result?.totalCount === undefined) return 'Counting…';
+    if (result.totalCount === undefined) return '';
     const count = result.totalCount;
     const [one, many] = exploreState.current.groupingChain.length > 0 ? ['group', 'groups'] : ['item', 'items'];
     return `${count.toLocaleString()} ${count === 1 ? one : many}`;

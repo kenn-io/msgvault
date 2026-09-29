@@ -27,7 +27,7 @@
     filters,
     groupingChain,
     countLabel,
-    sort,
+    sort = undefined,
     presentation = 'table',
     extra = undefined,
     onAddGroup,
@@ -44,7 +44,7 @@
     filters: ExploreFilter[];
     groupingChain: ExploreGroupDimension[];
     countLabel: string;
-    sort: SortConfig;
+    sort?: SortConfig;
     presentation?: ExploreURLState['presentation'];
     extra?: Snippet;
     onAddGroup: (dimension: ExploreGroupDimension) => void;
@@ -57,15 +57,19 @@
   } = $props();
 
   let filtersOpen = $state(false);
-  const options = $derived(groupingOptions({ excluded: groupingChain, includeUnavailable: true }));
-  const firstRequestable = $derived(options.find((option) => !option.disabled)?.value ?? '');
+  const groupOptions = $derived(groupingOptions({ excluded: groupingChain, includeUnavailable: true }));
+  const canGroup = $derived(groupOptions.some((option) => !option.disabled));
+  const options = $derived([
+    { value: '', label: groupingChain.length > 0 ? 'Add grouping' : 'None', disabled: true },
+    ...groupOptions
+  ]);
   const presentationOptions = [
     { value: 'table', label: 'Table' },
     { value: 'timeline', label: 'Timeline' },
     { value: 'files', label: 'Files' }
   ];
   const sortOptions = $derived(
-    sort.note ? [...sort.options, { value: '__note', label: sort.note, disabled: true }] : sort.options
+    sort?.note ? [...sort.options, { value: '__note', label: sort.note, disabled: true }] : sort?.options ?? []
   );
   const hasChips = $derived(Boolean(query) || filters.length > 0 || groupingChain.length > 0);
 
@@ -92,21 +96,23 @@
     />
     <div class="group-picker" data-group-picker>
       <SelectDropdown
-        value={firstRequestable}
+        value=""
         {options}
         title="Group by"
-        disabled={!firstRequestable}
+        disabled={!canGroup}
         onchange={selectGrouping}
       />
     </div>
-    <div data-sort-menu>
-      <SelectDropdown
-        title="Sort"
-        value={sort.value}
-        options={sortOptions}
-        onchange={(value) => sort.onchange?.(value)}
-      />
-    </div>
+    {#if sort}
+      <div data-sort-menu>
+        <SelectDropdown
+          title="Sort"
+          value={sort.value}
+          options={sortOptions}
+          onchange={(value) => sort.onchange?.(value)}
+        />
+      </div>
+    {/if}
     {@render extra?.()}
     <span class="context-count" aria-live="polite" data-mono>{countLabel}</span>
   </div>

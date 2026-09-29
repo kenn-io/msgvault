@@ -65,3 +65,31 @@ describe('ContextBar chips', () => {
     expect(screen.queryByRole('button', { name: /^Remove / })).toBeNull();
   });
 });
+
+describe('ContextBar grouping picker', () => {
+  it.each([
+    [[], 'Group by: None'],
+    [['participant'], 'Group by: Add grouping']
+  ] as const)('names the picker by what it does when the chain is %j', (groupingChain, name) => {
+    render(ContextBar, {
+      client: createAPIClient(vi.fn()),
+      query: '', searchMode: 'full_text', filters: [], groupingChain: [...groupingChain],
+      countLabel: '', sort,
+      onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
+    });
+    expect(screen.getByRole('combobox', { name })).toBeDefined();
+  });
+
+  it('adds a grouping from the picker', async () => {
+    const onAddGroup = vi.fn();
+    render(ContextBar, {
+      client: createAPIClient(vi.fn()),
+      query: '', searchMode: 'full_text', filters: [], groupingChain: [],
+      countLabel: '', sort,
+      onAddGroup, onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
+    });
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Group by: None' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Year' }));
+    expect(onAddGroup).toHaveBeenCalledWith('year');
+  });
+});

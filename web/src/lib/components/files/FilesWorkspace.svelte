@@ -105,6 +105,7 @@
     embedded?: boolean;
     showHeader?: boolean;
     fileCount?: number | null;
+    fileCountLoading?: boolean;
     sort: FileSearchSort;
     filenameQuery?: string;
     mimeFamilies?: FileMIMEFamily[];
@@ -132,6 +133,7 @@
     embedded = false,
     showHeader = true,
     fileCount = $bindable(null),
+    fileCountLoading = $bindable(false),
     sort,
     filenameQuery = '',
     mimeFamilies = [],
@@ -158,6 +160,7 @@
   let totalCount = $state(0);
   $effect(() => {
     fileCount = loading || error || unavailable ? null : totalCount;
+    fileCountLoading = loading;
   });
   let nextCursor = $state<string>();
   let loading = $state(false);

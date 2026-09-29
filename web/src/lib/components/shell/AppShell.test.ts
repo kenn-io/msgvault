@@ -451,6 +451,44 @@ describe('AppShell', () => {
         .toBe('Use the Sort menu to change the order.');
     });
 
+    it('hides the Files Sort menu while grouped, where file order does not apply', async () => {
+      const state = shellState('files');
+      state.replaceTransient({ groupingChain: ['source'] });
+      render(AppShell, { client: exploreClient(), state, enabled: false });
+      await screen.findByRole('region', { name: 'Active analytical context' });
+      expect(screen.queryByRole('combobox', { name: /^Sort:/ })).toBeNull();
+      expect(screen.getByRole('combobox', { name: 'Group by: Add grouping' })).toBeDefined();
+    });
+
+    it.each([
+      ['everything', '/api/v1/explore'],
+      ['files', '/api/v1/files/search']
+    ])('leaves the %s count empty instead of Counting… when the request fails', async (workspace, failingPath) => {
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+        if (path === failingPath) return Response.json({ error: 'internal', message: 'Synthetic failure' }, { status: 500 });
+        return Response.json(exploreResponse());
+      });
+      render(AppShell, { client: createAPIClient(fetchFn), state: shellState(workspace), enabled: true });
+      await screen.findByText(/Synthetic failure/);
+      const bar = screen.getByRole('region', { name: 'Active analytical context' });
+      expect(within(bar).queryByText('Counting…')).toBeNull();
+    });
+
+    it('shows the Size column after turning it on in the Columns menu', async () => {
+      const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({
+        rows: [entry(1)], total_count: 1
+      })));
+      render(AppShell, { client: createAPIClient(fetchFn), state: shellState('everything') });
+      await screen.findByText('Synthetic subject 1');
+      expect(screen.queryByRole('columnheader', { name: 'Size' })).toBeNull();
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Columns' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Size' }));
+
+      expect(await screen.findByRole('columnheader', { name: 'Size' })).toBeDefined();
+    });
+
     it('opens Everything with the query when searching from another workspace', async () => {
       const state = shellState('sources');
       const length = window.history.length;

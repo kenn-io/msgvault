@@ -109,6 +109,7 @@
   let archiveReturnFocus: HTMLElement | undefined;
   let archiveReturnSelection = $state<string | null>(null);
   let fileCount = $state<number | null>(null);
+  let fileCountLoading = $state(false);
   const FILE_SORTS: Array<FileSearchSort & { label: string }> = [
     { field: 'occurred_at', direction: 'desc', label: 'Newest first' },
     { field: 'occurred_at', direction: 'asc', label: 'Oldest first' },
@@ -132,11 +133,13 @@
   }
   const filesCountLabel = $derived.by(() => {
     if (exploreState.current.groupingChain.length > 0) {
-      const groups = loader.loading ? undefined : loader.result?.totalCount;
-      if (groups === undefined) return 'Counting…';
+      if (loader.loading) return 'Counting…';
+      const groups = loader.error || loader.unavailable ? undefined : loader.result?.totalCount;
+      if (groups === undefined) return '';
       return `${groups.toLocaleString()} ${groups === 1 ? 'group' : 'groups'}`;
     }
-    if (fileCount === null) return 'Counting…';
+    if (fileCountLoading) return 'Counting…';
+    if (fileCount === null) return '';
     return `${fileCount.toLocaleString()} ${fileCount === 1 ? 'file' : 'files'}`;
   });
   let archiveWasOpen = false;
@@ -1391,7 +1394,7 @@
             filters={exploreState.current.filters}
             groupingChain={exploreState.current.groupingChain}
             countLabel={filesCountLabel}
-            sort={{
+            sort={exploreState.current.groupingChain.length > 0 ? undefined : {
               options: FILE_SORT_OPTIONS,
               value: fileSortValue(exploreState.current.fileSort),
               onchange: commitFileSort,
@@ -1467,6 +1470,7 @@
               embedded
               showHeader={false}
               bind:fileCount
+              bind:fileCountLoading
               predicate={{ ...exploreState.predicate(), grouping: undefined }}
               sort={exploreState.current.fileSort ?? { field: 'occurred_at', direction: 'desc' }}
               filenameQuery={exploreState.current.fileFilenameQuery}

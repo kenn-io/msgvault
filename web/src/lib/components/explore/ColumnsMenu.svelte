@@ -14,18 +14,23 @@
 
   function toggle(column: ExploreColumn): void {
     const shown = columns.includes(column);
-    if (shown && columns.length === 1) return;
     onchange(EXPLORE_COLUMNS.map(({ id }) => id).filter((id) => (id === column ? !shown : columns.includes(id))));
   }
 
   const sections = $derived([{
-    items: EXPLORE_COLUMNS.map(({ id, label }) => ({
-      id,
-      label,
-      active: columns.includes(id),
-      closeOnSelect: false,
-      onSelect: () => toggle(id)
-    }))
+    items: EXPLORE_COLUMNS.map(({ id, label }) => {
+      const shown = columns.includes(id);
+      return {
+        // The kit derives the description element id from item.id, so keep it unique on the page.
+        id: `column-${id}`,
+        label,
+        active: shown,
+        description: shown ? 'Shown' : 'Hidden',
+        disabled: shown && columns.length === 1,
+        closeOnSelect: false,
+        onSelect: () => toggle(id)
+      };
+    })
   }]);
 </script>
 
