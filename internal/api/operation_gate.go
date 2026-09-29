@@ -525,6 +525,7 @@ func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err
 var cliRunReadOnlyCommands = map[string]bool{
 	"draft-get":        true,
 	"chat-draft-get":   true,
+	"chat-draft-list":  true,
 	"draft-send-as":    true,
 	"logs":             true,
 	"list-deletions":   true,

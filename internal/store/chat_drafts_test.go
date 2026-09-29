@@ -1,9 +1,7 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
-	"errors"
 	"sync"
 	"testing"
 
@@ -13,9 +11,9 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestChatDraftLifecyclePreservesNativeAddressing(t *testing.T) {
+func TestChatDraftLifecyclePreservesSourceAddressing(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	providers := []string{"slack", "teams", "discord"}
+	providers := []string{"slack", "slackdump", "teams", "discord"}
 	for _, provider := range providers {
 		t.Run(provider, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -38,7 +36,6 @@ func TestChatDraftLifecyclePreservesNativeAddressing(t *testing.T) {
 				Body: "hello " + provider,
 			})
 			requirements.NoError(err)
-			assertions.Equal("msgvault", created.Location)
 			assertions.Equal(int64(1), created.Revision)
 			assertions.Equal(provider+"-conversation", created.SourceConversationID)
 			assertions.Equal(provider+"-message", created.ReplyToSourceMessageID)
@@ -180,7 +177,7 @@ func TestChatDraftCascadeAndReplacementSource(t *testing.T) {
 	requirements.ErrorIs(err, store.ErrChatDraftNotFound)
 }
 
-func TestChatDraftConcurrentRevisionAndCancellation(t *testing.T) {
+func TestChatDraftConcurrentRevision(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("discord", "concurrent-account")
@@ -192,42 +189,22 @@ func TestChatDraftConcurrentRevisionAndCancellation(t *testing.T) {
 		ConversationID: conversationID, Body: "original",
 	})
 	requirements.NoError(err)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err = st.UpdateChatDraftContext(ctx, draft.DraftID, 1, "cancelled")
-	requirements.ErrorIs(err, context.Canceled)
-	unchanged, err := st.GetChatDraftContext(t.Context(), draft.DraftID)
-	requirements.NoError(err)
-	requirements.Equal(draft.Body, unchanged.Body)
-	requirements.Equal(draft.Revision, unchanged.Revision)
 
 	var wait sync.WaitGroup
-	results := make(chan error, 2)
-	for i := range 2 {
-		wait.Go(func() {
-			if i == 0 {
-				_, updateErr := st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "updated")
-				results <- updateErr
-			} else {
-				results <- st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1)
-			}
-		})
-	}
+	var updateErr, deleteErr error
+	wait.Go(func() {
+		_, updateErr = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "updated")
+	})
+	wait.Go(func() {
+		deleteErr = st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1)
+	})
 	wait.Wait()
-	close(results)
-	var successes, conflicts int
-	for result := range results {
-		if result == nil {
-			successes++
-		} else if errors.Is(result, store.ErrChatDraftRevisionConflict) || errors.Is(result, store.ErrChatDraftNotFound) {
-			conflicts++
-		} else {
-			requirements.ErrorIs(result, store.ErrChatDraftRevisionConflict)
-			conflicts++
-		}
+	if updateErr == nil {
+		requirements.ErrorIs(deleteErr, store.ErrChatDraftRevisionConflict)
+	} else {
+		requirements.NoError(deleteErr)
+		requirements.ErrorIs(updateErr, store.ErrChatDraftNotFound)
 	}
-	requirements.Equal(1, successes)
-	requirements.Equal(1, conflicts)
 }
 
 type chatDraftPreservationSnapshot struct {

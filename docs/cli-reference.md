@@ -359,14 +359,16 @@ provider result in `observation.code`. See
 [Manage a created draft](usage/imap.md#manage-a-created-draft) for revision,
 provider checks, retention, retry behavior, and recovery limits.
 
-## chat-draft-create, chat-draft-get, chat-draft-edit, and chat-draft-delete
+## chat-draft-create, chat-draft-list, chat-draft-get, chat-draft-edit, and chat-draft-delete
 
-Manage unsent text for an existing Slack, Teams, or Discord conversation. These
-drafts live in msgvault, do not appear in the provider composer, and never make
-a provider request.
+Manage unsent text for an existing Slack, Teams, or Discord conversation,
+including conversations imported from Slack exports (`slackdump`). These drafts
+live in msgvault, do not appear in the provider composer, and never make a
+provider request.
 
 ```bash
 msgvault chat-draft-create <conversation-id> (--source <source> | --source-id <id>) --body <text> [--reply-to <message-id>] [--json]
+msgvault chat-draft-list <conversation-id> [--json]
 msgvault chat-draft-get <draft-id> [--json]
 msgvault chat-draft-edit <draft-id> --revision <n> --body <text> [--json]
 msgvault chat-draft-delete <draft-id> --revision <n> [--json]
@@ -379,10 +381,18 @@ selects an archived message in the same conversation. The current positive
 `--revision` is required for edit and delete. A stale revision returns
 `revision_conflict` and leaves the draft unchanged.
 
+Use `chat-draft-list` to recover draft IDs for a conversation. It lists drafts
+oldest first, including their text and current revision. `--json` returns one
+array, which is empty when the conversation has no drafts.
+
+Drafts retain the archive's source conversation key. For Teams channels, this
+is `teamID/channelID`, not a standalone provider channel ID. Removing a source
+or conversation also deletes its local chat drafts.
+
 Restricted agent tokens may use `chat-draft-create` with the existing
-`draft.create` permission and a matching source grant. Retrieval, editing,
-deletion, sending, attachments, and provider-native drafts remain owner-only
-or outside this command family.
+`draft.create` permission and a matching source grant. Listing, retrieval,
+editing, and deletion are owner-only. Sending, attachments, and provider-side
+drafts are outside this command family.
 
 ## draft-send-as
 

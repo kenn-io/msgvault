@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -67,6 +71,58 @@ func TestChatDraftCLILifecycle(t *testing.T) {
 	requirements.ErrorIs(err, store.ErrChatDraftNotFound)
 }
 
+func TestChatDraftListByConversation(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "list-account")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "channel-a", "channel", "Channel A")
+	requirements.NoError(err)
+	otherID, err := st.EnsureConversationWithType(source.ID, "channel-b", "channel", "Channel B")
+	requirements.NoError(err)
+	adapter := &storeAPIAdapter{store: st}
+	list := func() ([]chatDraftOutput, error) {
+		var drafts []chatDraftOutput
+		err := adapter.runCLIChatDraft(t.Context(), api.CLIRunRequest{
+			Args: []string{"chat-draft-list", strconv.FormatInt(conversationID, 10), "--json"},
+		}, func(event api.CLIRunEvent) error {
+			return json.Unmarshal([]byte(event.Data), &drafts)
+		})
+		return drafts, err
+	}
+	empty, err := list()
+	requirements.NoError(err)
+	assertions.NotNil(empty)
+	assertions.Empty(empty)
+	var wantIDs []string
+	for _, id := range []int64{conversationID, otherID, conversationID} {
+		draft, err := st.CreateChatDraftContext(t.Context(), store.ChatDraftCreate{
+			SourceID: source.ID, SourceType: source.SourceType, SourceIdentifier: source.Identifier,
+			ConversationID: id, Body: "saved text",
+		})
+		requirements.NoError(err)
+		if id == conversationID {
+			wantIDs = append(wantIDs, draft.DraftID)
+		}
+	}
+	drafts, err := list()
+	requirements.NoError(err)
+	var gotIDs []string
+	for _, draft := range drafts {
+		gotIDs = append(gotIDs, draft.DraftID)
+		assertions.Equal("saved text", draft.Body)
+		assertions.Equal(int64(1), draft.Revision)
+	}
+	assertions.ElementsMatch(wantIDs, gotIDs)
+
+	err = adapter.runCLIChatDraft(t.Context(), api.CLIRunRequest{
+		Args:  []string{"chat-draft-list", strconv.FormatInt(conversationID, 10)},
+		Grant: &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}},
+	}, nil)
+	requirements.EqualError(err, "not_permitted")
+}
+
 func TestChatDraftCobraDaemonRouteAndGate(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -86,13 +142,17 @@ func TestChatDraftCobraDaemonRouteAndGate(t *testing.T) {
 	}).Router())
 	t.Cleanup(server.Close)
 	testCtx := configureRemoteDaemonForTest(t, server.URL)
-	run := func(args ...string) (string, error) {
+	type cliResult struct {
+		stdout, stderr string
+		err            error
+	}
+	run := func(args ...string) cliResult {
 		root := &cobra.Command{Use: "msgvault"}
 		root.PersistentFlags().Bool("verbose", false, "")
 		root.PersistentFlags().Bool("log-sql", false, "")
 		root.SetContext(testCtx)
 		root.AddCommand(
-			newChatDraftCreateCommand(), newChatDraftGetCommand(),
+			newChatDraftCreateCommand(), newChatDraftGetCommand(), newChatDraftListCommand(),
 			newChatDraftEditCommand(), newChatDraftDeleteCommand(),
 		)
 		silenceUsageInRunE(root)
@@ -101,22 +161,23 @@ func TestChatDraftCobraDaemonRouteAndGate(t *testing.T) {
 		root.SetErr(&stderr)
 		root.SetArgs(args)
 		err := root.ExecuteContext(testCtx)
-		requirements.Empty(stderr.String())
-		return stdout.String(), err
+		return cliResult{stdout.String(), stderr.String(), err}
 	}
-	createdJSON, err := run(
+	createdResult := run(
 		api.CLIRunChatDraftCreateCommand, strconv.FormatInt(conversationID, 10),
 		"--source", source.Identifier, "--body", "route body", "--json",
 	)
-	requirements.NoError(err)
+	requirements.NoError(createdResult.err)
+	assertions.Empty(createdResult.stderr)
 	var created chatDraftOutput
-	requirements.NoError(json.Unmarshal([]byte(createdJSON), &created))
+	requirements.NoError(json.Unmarshal([]byte(createdResult.stdout), &created))
 	requirements.NotEmpty(created.DraftID)
-	requirements.Equal(int64(1), created.Revision)
-	textOutput, err := run(api.CLIRunChatDraftGetCommand, created.DraftID,
+	assertions.Equal(int64(1), created.Revision)
+	textResult := run(api.CLIRunChatDraftGetCommand, created.DraftID,
 		"--json=false", "--verbose=false", "--log-sql=false")
-	requirements.NoError(err)
-	requirements.Contains(textOutput, "location=msgvault")
+	requirements.NoError(textResult.err)
+	assertions.Empty(textResult.stderr)
+	assertions.Contains(textResult.stdout, "location=msgvault")
 
 	release, acquired := gate.BeginLabeledWorkContext(t.Context(), "hold chat draft mutation")
 	requirements.True(acquired)
@@ -125,58 +186,87 @@ func TestChatDraftCobraDaemonRouteAndGate(t *testing.T) {
 			release()
 		}
 	}()
-	getDone := make(chan struct {
-		output string
-		err    error
-	}, 1)
-	go func() {
-		output, getErr := run(api.CLIRunChatDraftGetCommand, created.DraftID, "--json")
-		getDone <- struct {
-			output string
-			err    error
-		}{output, getErr}
-	}()
-	select {
-	case result := <-getDone:
-		requirements.NoError(result.err)
-		assertions.Contains(result.output, "\"location\":\"msgvault\"")
-	case <-time.After(time.Second):
-		requirements.FailNow("owner chat-draft-get waited on the mutation gate")
+	const gateWaitTimeout = 10 * time.Second
+	for _, args := range [][]string{
+		{api.CLIRunChatDraftGetCommand, created.DraftID, "--json"},
+		{api.CLIRunChatDraftListCommand, strconv.FormatInt(conversationID, 10), "--json"},
+	} {
+		readDone := make(chan cliResult, 1)
+		go func() { readDone <- run(args...) }()
+		select {
+		case result := <-readDone:
+			requirements.NoError(result.err, result.stderr)
+			assertions.Empty(result.stderr)
+			assertions.Contains(result.stdout, created.DraftID)
+		case <-time.After(gateWaitTimeout):
+			requirements.FailNow(args[0] + " waited on the mutation gate")
+		}
 	}
 
-	editDone := make(chan error, 1)
+	editDone := make(chan cliResult, 1)
 	go func() {
-		_, editErr := run(
+		editDone <- run(
 			api.CLIRunChatDraftEditCommand, created.DraftID,
 			"--revision", "1", "--body", "edited through route", "--json",
 		)
-		editDone <- editErr
 	}()
-	waiterTimer := time.NewTimer(time.Second)
+	waiterTimer := time.NewTimer(gateWaitTimeout)
+	defer waiterTimer.Stop()
 	waiterTicker := time.NewTicker(10 * time.Millisecond)
-	waiting := false
-	for !waiting {
+	defer waiterTicker.Stop()
+	for !gate.HasRequestWaiters() {
 		select {
-		case editErr := <-editDone:
-			requirements.FailNow("chat-draft-edit completed while the mutation gate was held", fmt.Sprint(editErr))
+		case result := <-editDone:
+			requirements.FailNowf("chat-draft-edit completed while the mutation gate was held",
+				"error: %v; stderr: %s", result.err, result.stderr)
 		case <-waiterTimer.C:
 			requirements.FailNow("chat-draft-edit did not reach the held mutation gate")
 		case <-waiterTicker.C:
-			waiting = gate.HasRequestWaiters()
 		}
 	}
-	waiterTicker.Stop()
-	waiterTimer.Stop()
-	assertions.True(waiting)
 	release()
 	release = nil
-	requirements.NoError(<-editDone)
-	editedJSON, err := run(api.CLIRunChatDraftGetCommand, created.DraftID, "--json")
-	requirements.NoError(err)
+	editResult := <-editDone
+	requirements.NoError(editResult.err)
+	assertions.Empty(editResult.stderr)
+	editedResult := run(api.CLIRunChatDraftGetCommand, created.DraftID, "--json")
+	requirements.NoError(editedResult.err)
+	assertions.Empty(editedResult.stderr)
 	var edited chatDraftOutput
-	requirements.NoError(json.Unmarshal([]byte(editedJSON), &edited))
+	requirements.NoError(json.Unmarshal([]byte(editedResult.stdout), &edited))
 	assertions.Equal("edited through route", edited.Body)
 	assertions.Equal(int64(2), edited.Revision)
+
+	conflict := run(api.CLIRunChatDraftEditCommand, created.DraftID,
+		"--revision=1", "--body=stale", "--json")
+	requirements.EqualError(conflict.err, "revision_conflict")
+	assertions.Empty(conflict.stdout)
+	assertions.Equal("Error: revision_conflict\n", conflict.stderr)
+
+	// Run the real entry point to verify its process exit status as well.
+	binaryName := "msgvault"
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	binary := filepath.Join(t.TempDir(), binaryName)
+	build := exec.CommandContext(t.Context(), "go", "build", "-tags", "fts5 sqlite_vec", "-o", binary, "./cmd/msgvault")
+	build.Dir = filepath.Join("..", "..", "..")
+	buildOutput, err := build.CombinedOutput()
+	requirements.NoError(err, "build CLI: %s", buildOutput)
+	home := t.TempDir()
+	configFile := filepath.Join(home, "config.toml")
+	requirements.NoError(os.WriteFile(configFile, []byte(fmt.Sprintf(
+		"[remote]\nurl = %q\nallow_insecure = true\n", server.URL,
+	)), 0o600))
+	child := exec.CommandContext(t.Context(), binary, "--home", home, "--config", configFile, "--log-level=error",
+		"chat-draft-edit", created.DraftID, "--revision=1", "--body=stale", "--json")
+	var stdout, stderr bytes.Buffer
+	child.Stdout, child.Stderr = &stdout, &stderr
+	var exitErr *exec.ExitError
+	requirements.ErrorAs(child.Run(), &exitErr)
+	assertions.Equal(1, exitErr.ExitCode())
+	assertions.Empty(stdout.String())
+	assertions.Equal("Error: revision_conflict\n", stderr.String())
 }
 
 func TestChatDraftDelegatedGrantScopesSource(t *testing.T) {

@@ -31,6 +31,8 @@ func TestChatDraftParsePreservesExplicitEmptyBody(t *testing.T) {
 func TestChatDraftParseRejectsInvalidBoundaries(t *testing.T) {
 	assertions := assert.New(t)
 	tests := [][]string{
+		{api.CLIRunChatDraftListCommand, "0"},
+		{api.CLIRunChatDraftListCommand, "42", "--body=x"},
 		{api.CLIRunChatDraftCreateCommand, "0", "--source=slack-account", "--body=x"},
 		{api.CLIRunChatDraftCreateCommand, "42", "--source=slack-account"},
 		{api.CLIRunChatDraftCreateCommand, "42", "--source-id=0", "--body=x"},

@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-const chatDraftLocation = "msgvault"
-
 // ChatDraft is a local, unsent text draft addressed to one archived chat
 // conversation. The destination fields are snapshots from creation time.
 type ChatDraft struct {
@@ -27,11 +25,10 @@ type ChatDraft struct {
 	Revision               int64
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
-	Location               string
 }
 
-// ChatDraftCreate identifies an existing source and conversation. Native
-// provider keys are read from the Store and cannot be supplied by callers.
+// ChatDraftCreate identifies an existing source and conversation. Archived
+// source keys are read from the Store and cannot be supplied by callers.
 type ChatDraftCreate struct {
 	SourceID         int64
 	SourceType       string
@@ -89,7 +86,7 @@ func (s *Store) CreateChatDraftContext(ctx context.Context, input ChatDraftCreat
 		}
 		if !sourceConversationID.Valid || !conversationType.Valid ||
 			strings.TrimSpace(sourceConversationID.String) == "" || strings.TrimSpace(conversationType.String) == "" {
-			return fmt.Errorf("conversation %d has no native destination: %w", input.ConversationID, ErrChatDraftInvalidDestination)
+			return fmt.Errorf("conversation %d has no source destination: %w", input.ConversationID, ErrChatDraftInvalidDestination)
 		}
 
 		replyToSourceMessageID := sql.NullString{}
@@ -105,7 +102,7 @@ func (s *Store) CreateChatDraftContext(ctx context.Context, input ChatDraftCreat
 				return fmt.Errorf("read chat draft reply target: %w", err)
 			}
 			if !replyToSourceMessageID.Valid || strings.TrimSpace(replyToSourceMessageID.String) == "" {
-				return fmt.Errorf("reply target %d has no native key: %w", input.ReplyToMessageID, ErrChatDraftInvalidDestination)
+				return fmt.Errorf("reply target %d has no source key: %w", input.ReplyToMessageID, ErrChatDraftInvalidDestination)
 			}
 		}
 
@@ -139,6 +136,32 @@ func (s *Store) GetChatDraftContext(ctx context.Context, draftID string) (ChatDr
 	return loadChatDraft(ctx, s.db, draftID)
 }
 
+// ListChatDraftsContext reads local drafts for one archived conversation.
+func (s *Store) ListChatDraftsContext(ctx context.Context, conversationID int64) ([]ChatDraft, error) {
+	if conversationID <= 0 {
+		return nil, fmt.Errorf("conversation ID must be positive: %w", ErrChatDraftInvalidInput)
+	}
+	rows, err := s.db.QueryContext(ctx, chatDraftSelect+`
+		WHERE conversation_id = ? ORDER BY created_at, draft_id
+	`, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("list chat drafts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	drafts := []ChatDraft{}
+	for rows.Next() {
+		draft, err := scanChatDraft(rows)
+		if err != nil {
+			return nil, fmt.Errorf("read chat draft: %w", err)
+		}
+		drafts = append(drafts, draft)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list chat drafts: %w", err)
+	}
+	return drafts, nil
+}
+
 // UpdateChatDraftContext replaces the local body when the expected revision
 // still owns the row.
 func (s *Store) UpdateChatDraftContext(
@@ -168,7 +191,7 @@ func (s *Store) UpdateChatDraftContext(
 			return fmt.Errorf("check chat draft update: %w", err)
 		}
 		if rows == 0 {
-			return chatDraftWriteMiss(ctx, tx, draftID, ErrChatDraftRevisionConflict)
+			return chatDraftWriteMiss(ctx, tx, draftID)
 		}
 		draft, err = loadChatDraft(ctx, tx, draftID)
 		return err
@@ -203,7 +226,7 @@ func (s *Store) DeleteChatDraftContext(
 			return fmt.Errorf("check chat draft delete: %w", err)
 		}
 		if rows == 0 {
-			return chatDraftWriteMiss(ctx, tx, draftID, ErrChatDraftRevisionConflict)
+			return chatDraftWriteMiss(ctx, tx, draftID)
 		}
 		return nil
 	})
@@ -218,7 +241,7 @@ func validateChatDraftCreate(input ChatDraftCreate) error {
 		return fmt.Errorf("reply target must be positive: %w", ErrChatDraftInvalidInput)
 	}
 	switch input.SourceType {
-	case "slack", "teams", "discord":
+	case "slack", "slackdump", "teams", "discord":
 		return nil
 	default:
 		return fmt.Errorf("source type %q: %w", input.SourceType, ErrChatDraftUnsupportedSource)
@@ -241,7 +264,7 @@ func newChatDraftID() (string, error) {
 }
 
 func chatDraftWriteMiss(
-	ctx context.Context, tx *loggedTx, draftID string, conflict error,
+	ctx context.Context, tx *loggedTx, draftID string,
 ) error {
 	var exists int
 	err := tx.QueryRowContext(ctx, `SELECT 1 FROM chat_drafts WHERE draft_id = ?`, draftID).Scan(&exists)
@@ -251,32 +274,41 @@ func chatDraftWriteMiss(
 	if err != nil {
 		return fmt.Errorf("check chat draft after conditional write: %w", err)
 	}
-	return fmt.Errorf("draft %q: %w", draftID, conflict)
+	return fmt.Errorf("draft %q: %w", draftID, ErrChatDraftRevisionConflict)
 }
 
+const chatDraftSelect = `
+	SELECT draft_id, source_id, conversation_id, source_conversation_id,
+	       conversation_type, reply_to_source_message_id, body, revision,
+	       created_at, updated_at
+	FROM chat_drafts
+`
+
 func loadChatDraft(ctx context.Context, q contextRowQuerier, draftID string) (ChatDraft, error) {
+	draft, err := scanChatDraft(q.QueryRowContext(ctx, chatDraftSelect+`WHERE draft_id = ?`, draftID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ChatDraft{}, fmt.Errorf("draft %q: %w", draftID, ErrChatDraftNotFound)
+	}
+	if err != nil {
+		return ChatDraft{}, fmt.Errorf("load chat draft %q: %w", draftID, err)
+	}
+	return draft, nil
+}
+
+func scanChatDraft(row scanner) (ChatDraft, error) {
 	var (
 		draft     ChatDraft
 		reply     sql.NullString
 		createdAt nullableTimestamp
 		updatedAt nullableTimestamp
 	)
-	err := q.QueryRowContext(ctx, `
-		SELECT draft_id, source_id, conversation_id, source_conversation_id,
-		       conversation_type, reply_to_source_message_id, body, revision,
-		       created_at, updated_at
-		FROM chat_drafts
-		WHERE draft_id = ?
-	`, draftID).Scan(
+	err := row.Scan(
 		&draft.DraftID, &draft.SourceID, &draft.ConversationID,
 		&draft.SourceConversationID, &draft.ConversationType, &reply,
 		&draft.Body, &draft.Revision, &createdAt, &updatedAt,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ChatDraft{}, fmt.Errorf("draft %q: %w", draftID, ErrChatDraftNotFound)
-	}
 	if err != nil {
-		return ChatDraft{}, fmt.Errorf("load chat draft %q: %w", draftID, err)
+		return ChatDraft{}, err
 	}
 	if reply.Valid {
 		draft.ReplyToSourceMessageID = reply.String
@@ -287,6 +319,5 @@ func loadChatDraft(ctx context.Context, q contextRowQuerier, draftID string) (Ch
 	if updatedAt.Valid {
 		draft.UpdatedAt = updatedAt.Time
 	}
-	draft.Location = chatDraftLocation
 	return draft, nil
 }

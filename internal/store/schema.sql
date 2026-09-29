@@ -2173,8 +2173,9 @@ CREATE INDEX IF NOT EXISTS idx_gmail_drafts_current_message
 CREATE INDEX IF NOT EXISTS idx_gmail_drafts_pending_original_message
     ON gmail_drafts(pending_original_message_id);
 
--- Local chat drafts are unsent text owned by msgvault. Native destination
--- fields are copied at creation so later mapping repairs cannot retarget it.
+-- Local chat drafts are unsent text owned by msgvault. Archived destination
+-- keys are copied at creation so later mapping repairs cannot retarget them.
+-- Teams channel keys combine the team and channel IDs as teamID/channelID.
 CREATE TABLE IF NOT EXISTS chat_drafts (
     draft_id TEXT PRIMARY KEY,
     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

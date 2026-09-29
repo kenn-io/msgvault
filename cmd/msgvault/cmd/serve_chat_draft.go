@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
@@ -59,89 +58,20 @@ func parseChatDraftArgs(args []string) (chatDraftIntent, error) {
 	if !api.IsCLIRunChatDraft(args) {
 		return chatDraftIntent{}, invalidChatDraftArgs("unknown chat draft command")
 	}
-	intent := chatDraftIntent{Operation: args[0]}
-	var positional string
-	var jsonSet bool
-	rest := args[1:]
-	for len(rest) > 0 {
-		arg := rest[0]
-		rest = rest[1:]
-		nameValue, isFlag := strings.CutPrefix(arg, "--")
-		if !isFlag {
-			if positional != "" {
-				return chatDraftIntent{}, invalidChatDraftArgs("expected one positional identifier")
-			}
-			positional = arg
-			continue
-		}
-		name, value, hasValue := strings.Cut(nameValue, "=")
-		switch name {
-		case "source", "source-id", "body", "reply-to", "revision":
-			if !hasValue {
-				if len(rest) == 0 {
-					return chatDraftIntent{}, invalidChatDraftArgs("--%s requires a value", name)
-				}
-				value, rest = rest[0], rest[1:]
-			}
-			switch name {
-			case "source":
-				if intent.SourceSet || strings.TrimSpace(value) == "" {
-					return chatDraftIntent{}, invalidChatDraftArgs("--source must be given once with a value")
-				}
-				intent.Source, intent.SourceSet = value, true
-			case "source-id":
-				if intent.SourceIDSet {
-					return chatDraftIntent{}, invalidChatDraftArgs("--source-id given more than once")
-				}
-				id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-				if err != nil || id <= 0 {
-					return chatDraftIntent{}, invalidChatDraftArgs("--source-id must be a positive integer")
-				}
-				intent.SourceID, intent.SourceIDSet = id, true
-			case "body":
-				if intent.BodySet {
-					return chatDraftIntent{}, invalidChatDraftArgs("--body given more than once")
-				}
-				intent.Body, intent.BodySet = value, true
-			case "reply-to":
-				if intent.ReplyToSet {
-					return chatDraftIntent{}, invalidChatDraftArgs("--reply-to given more than once")
-				}
-				id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-				if err != nil || id <= 0 {
-					return chatDraftIntent{}, invalidChatDraftArgs("--reply-to must be a positive integer")
-				}
-				intent.ReplyToMessage, intent.ReplyToSet = id, true
-			case "revision":
-				if intent.RevisionSet {
-					return chatDraftIntent{}, invalidChatDraftArgs("--revision given more than once")
-				}
-				revision, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-				if err != nil || revision <= 0 {
-					return chatDraftIntent{}, invalidChatDraftArgs("--revision must be a positive integer")
-				}
-				intent.Revision, intent.RevisionSet = revision, true
-			}
-		case "json":
-			if jsonSet || (hasValue && value != "true" && value != "false") {
-				return chatDraftIntent{}, invalidChatDraftArgs("--json requires a boolean value")
-			}
-			intent.JSON, jsonSet = !hasValue || value == "true", true
-		case "log-level", "log-sql-slow-ms":
-			if !hasValue {
-				if len(rest) == 0 {
-					return chatDraftIntent{}, invalidChatDraftArgs("--%s requires a value", name)
-				}
-				rest = rest[1:]
-			}
-		case "verbose", "log-sql":
-			// Global logging flags are already handled by Cobra.
-		default:
-			return chatDraftIntent{}, invalidChatDraftArgs("unknown flag --%s", name)
-		}
+	intent, positional, err := parseChatDraftFlags(args)
+	if err != nil {
+		return chatDraftIntent{}, err
 	}
 
 	switch intent.Operation {
+	case api.CLIRunChatDraftListCommand:
+		intent.ConversationID, err = parsePositiveChatDraftID(positional, "conversation ID")
+		if err != nil {
+			return chatDraftIntent{}, err
+		}
+		if intent.SourceSet || intent.SourceIDSet || intent.BodySet || intent.ReplyToSet || intent.RevisionSet {
+			return chatDraftIntent{}, invalidChatDraftArgs("chat-draft-list accepts only --json")
+		}
 	case api.CLIRunChatDraftCreateCommand:
 		conversationID, err := parsePositiveChatDraftID(positional, "conversation ID")
 		if err != nil {
@@ -188,6 +118,92 @@ func parseChatDraftArgs(args []string) (chatDraftIntent, error) {
 	return intent, nil
 }
 
+func parseChatDraftFlags(args []string) (chatDraftIntent, string, error) {
+	intent := chatDraftIntent{Operation: args[0]}
+	var positional string
+	var jsonSet bool
+	rest := args[1:]
+	for len(rest) > 0 {
+		arg := rest[0]
+		rest = rest[1:]
+		nameValue, isFlag := strings.CutPrefix(arg, "--")
+		if !isFlag {
+			if positional != "" {
+				return chatDraftIntent{}, "", invalidChatDraftArgs("expected one positional identifier")
+			}
+			positional = arg
+			continue
+		}
+		name, value, hasValue := strings.Cut(nameValue, "=")
+		switch name {
+		case "source", "source-id", "body", "reply-to", "revision":
+			if !hasValue {
+				if len(rest) == 0 {
+					return chatDraftIntent{}, "", invalidChatDraftArgs("--%s requires a value", name)
+				}
+				value, rest = rest[0], rest[1:]
+			}
+			switch name {
+			case "source":
+				if intent.SourceSet || strings.TrimSpace(value) == "" {
+					return chatDraftIntent{}, "", invalidChatDraftArgs("--source must be given once with a value")
+				}
+				intent.Source, intent.SourceSet = value, true
+			case "source-id":
+				if intent.SourceIDSet {
+					return chatDraftIntent{}, "", invalidChatDraftArgs("--source-id given more than once")
+				}
+				id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+				if err != nil || id <= 0 {
+					return chatDraftIntent{}, "", invalidChatDraftArgs("--source-id must be a positive integer")
+				}
+				intent.SourceID, intent.SourceIDSet = id, true
+			case "body":
+				if intent.BodySet {
+					return chatDraftIntent{}, "", invalidChatDraftArgs("--body given more than once")
+				}
+				intent.Body, intent.BodySet = value, true
+			case "reply-to":
+				if intent.ReplyToSet {
+					return chatDraftIntent{}, "", invalidChatDraftArgs("--reply-to given more than once")
+				}
+				id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+				if err != nil || id <= 0 {
+					return chatDraftIntent{}, "", invalidChatDraftArgs("--reply-to must be a positive integer")
+				}
+				intent.ReplyToMessage, intent.ReplyToSet = id, true
+			case "revision":
+				if intent.RevisionSet {
+					return chatDraftIntent{}, "", invalidChatDraftArgs("--revision given more than once")
+				}
+				revision, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+				if err != nil || revision <= 0 {
+					return chatDraftIntent{}, "", invalidChatDraftArgs("--revision must be a positive integer")
+				}
+				intent.Revision, intent.RevisionSet = revision, true
+			}
+		case "json":
+			if jsonSet || (hasValue && value != "true" && value != "false") {
+				return chatDraftIntent{}, "", invalidChatDraftArgs("--json requires a boolean value")
+			}
+			intent.JSON, jsonSet = !hasValue || value == "true", true
+		case "log-level", "log-sql-slow-ms":
+			if !hasValue {
+				if len(rest) == 0 {
+					return chatDraftIntent{}, "", invalidChatDraftArgs("--%s requires a value", name)
+				}
+				rest = rest[1:]
+			}
+		case "verbose", "log-sql":
+			// Global logging flags are already handled by Cobra.
+		default:
+			return chatDraftIntent{}, "", invalidChatDraftArgs("unknown flag --%s", name)
+		}
+	}
+
+	return intent, positional, nil
+}
+
 func parsePositiveChatDraftID(value, label string) (int64, error) {
 	id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 	if err != nil || id <= 0 {
@@ -223,11 +239,8 @@ func (a *storeAPIAdapter) runCLIChatDraft(
 			}
 			return chatDraftError("invalid_destination", err)
 		}
-		if req.Grant != nil && !req.Grant.Allows(
-			agentgrant.PermissionDraftCreate,
-			agentgrant.SourceRef{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier},
-		) {
-			return chatDraftError("not_permitted", errors.New("source is not in grant"))
+		if err := authorizeDelegatedDraftSource(req.Grant, source); err != nil {
+			return err
 		}
 		draft, err := a.store.CreateChatDraftContext(ctx, store.ChatDraftCreate{
 			SourceID:         source.ID,
@@ -245,6 +258,9 @@ func (a *storeAPIAdapter) runCLIChatDraft(
 
 	if req.Grant != nil {
 		return chatDraftError("not_permitted", errors.New("chat draft lifecycle is owner-only"))
+	}
+	if intent.Operation == api.CLIRunChatDraftListCommand {
+		return a.runCLIChatDraftList(ctx, intent, emit)
 	}
 	draft, err := a.store.GetChatDraftContext(ctx, intent.DraftID)
 	if err != nil {
@@ -291,10 +307,39 @@ func chatDraftStoreError(err error) error {
 	}
 }
 
+func (a *storeAPIAdapter) runCLIChatDraftList(
+	ctx context.Context, intent chatDraftIntent, emit func(api.CLIRunEvent) error,
+) error {
+	drafts, err := a.store.ListChatDraftsContext(ctx, intent.ConversationID)
+	if err != nil {
+		return chatDraftStoreError(err)
+	}
+	var source *store.Source
+	if len(drafts) > 0 {
+		source, err = a.store.GetSourceByIDContext(ctx, drafts[0].SourceID)
+		if err != nil {
+			return chatDraftError("local_store_failed", err)
+		}
+	}
+	if intent.JSON {
+		output := make([]chatDraftOutput, 0, len(drafts))
+		for _, draft := range drafts {
+			output = append(output, chatDraftOutputValue("ok", source, draft))
+		}
+		return emitChatDraftJSON(emit, output)
+	}
+	for _, draft := range drafts {
+		if err := emitChatDraftOutput(emit, false, "ok", source, draft); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func chatDraftOutputValue(status string, source *store.Source, draft store.ChatDraft) chatDraftOutput {
 	return chatDraftOutput{
 		Status:                 status,
-		Location:               draft.Location,
+		Location:               "msgvault",
 		DraftID:                draft.DraftID,
 		Revision:               draft.Revision,
 		Body:                   draft.Body,
@@ -320,17 +365,10 @@ func emitChatDraftOutput(
 	}
 	output := chatDraftOutputValue(status, source, draft)
 	if asJSON {
-		data, err := jsonv2.Marshal(output)
-		if err != nil {
-			return chatDraftError("output_failed", err)
-		}
-		if err := emit(api.CLIRunEvent{Type: cliStreamStdout, Data: string(data) + "\n"}); err != nil {
-			return chatDraftError("output_failed", err)
-		}
-		return nil
+		return emitChatDraftJSON(emit, output)
 	}
 	text := fmt.Sprintf(
-		"location=%s draft=%s revision=%d status=%s source=%s source_type=%s conversation=%d conversation_type=%s native_conversation=%s",
+		"location=%s draft=%s revision=%d status=%s source=%s source_type=%s conversation=%d conversation_type=%s source_conversation=%s",
 		textutil.SanitizeTerminal(output.Location),
 		textutil.SanitizeTerminal(output.DraftID),
 		output.Revision,
@@ -346,6 +384,20 @@ func emitChatDraftOutput(
 	}
 	text += "\nbody:\n" + textutil.SanitizeTerminalMultiline(output.Body) + "\n"
 	if err := emit(api.CLIRunEvent{Type: cliStreamStdout, Data: text}); err != nil {
+		return chatDraftError("output_failed", err)
+	}
+	return nil
+}
+
+func emitChatDraftJSON(emit func(api.CLIRunEvent) error, output any) error {
+	if emit == nil {
+		return nil
+	}
+	data, err := jsonv2.Marshal(output)
+	if err != nil {
+		return chatDraftError("output_failed", err)
+	}
+	if err := emit(api.CLIRunEvent{Type: cliStreamStdout, Data: string(data) + "\n"}); err != nil {
 		return chatDraftError("output_failed", err)
 	}
 	return nil

@@ -9,6 +9,7 @@ import (
 func init() {
 	rootCmd.AddCommand(newChatDraftCreateCommand())
 	rootCmd.AddCommand(newChatDraftGetCommand())
+	rootCmd.AddCommand(newChatDraftListCommand())
 	rootCmd.AddCommand(newChatDraftEditCommand())
 	rootCmd.AddCommand(newChatDraftDeleteCommand())
 }
@@ -44,6 +45,17 @@ func newChatDraftGetCommand() *cobra.Command {
 		RunE:  runDaemonCLICommandHTTPFromCobra,
 	}
 	command.Flags().Bool("json", false, "emit one JSON result")
+	return command
+}
+
+func newChatDraftListCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "chat-draft-list <conversation-id>",
+		Short: "List local drafts for an archived chat conversation",
+		Args:  cobra.ExactArgs(1),
+		RunE:  runDaemonCLICommandHTTPFromCobra,
+	}
+	command.Flags().Bool("json", false, "emit one JSON array")
 	return command
 }
 

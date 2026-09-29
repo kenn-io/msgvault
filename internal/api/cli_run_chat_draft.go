@@ -3,6 +3,7 @@ package api
 const (
 	CLIRunChatDraftCreateCommand = "chat-draft-create"
 	CLIRunChatDraftGetCommand    = "chat-draft-get"
+	CLIRunChatDraftListCommand   = "chat-draft-list"
 	CLIRunChatDraftEditCommand   = "chat-draft-edit"
 	CLIRunChatDraftDeleteCommand = "chat-draft-delete"
 )
@@ -19,7 +20,7 @@ func IsCLIRunChatDraft(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case CLIRunChatDraftCreateCommand, CLIRunChatDraftGetCommand,
+	case CLIRunChatDraftCreateCommand, CLIRunChatDraftGetCommand, CLIRunChatDraftListCommand,
 		CLIRunChatDraftEditCommand, CLIRunChatDraftDeleteCommand:
 		return true
 	default:
