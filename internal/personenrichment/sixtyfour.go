@@ -412,13 +412,11 @@ func decodeSixtyfourCompleted(
 		if valueErr != nil || len(values) == 0 {
 			return Result{}, errors.New("unsupported Sixtyfour result value")
 		}
-		for _, value := range values {
-			claim, claimErr := sixtyfourClaim(target, value, factConfidence)
-			if claimErr != nil {
-				return Result{}, claimErr
-			}
-			claims = append(claims, claim)
+		targetClaims, claimErr := sixtyfourClaims(target, values, factConfidence)
+		if claimErr != nil {
+			return Result{}, claimErr
 		}
+		claims = append(claims, targetClaims...)
 	}
 
 	return Result{
@@ -468,24 +466,15 @@ func sixtyfourTargetByKey(attempt Attempt, key string) (personfacts.TargetDescri
 	return personfacts.TargetDescriptor{}, false
 }
 
-func sixtyfourClaim(
+func sixtyfourClaims(
 	target personfacts.TargetDescriptor,
-	value jsontext.Value,
+	values []jsontext.Value,
 	score int,
-) (personfacts.ProposedClaim, error) {
-	if normalized, failure, err := personfacts.NormalizeClaimValue(target, value); err != nil || failure != nil || normalized == nil {
-		return personfacts.ProposedClaim{}, errors.New("sixtyfour returned an unsupported target value")
-	}
-	return personfacts.ProposedClaim{
-		Target: target, Relation: personfacts.RelationSupport,
-		SubmittedValue: append(jsontext.Value(nil), value...),
-		Evidence: []personfacts.EvidenceInput{{
-			SourceClass: personfacts.EvidenceProviderAssertion,
-			Directness:  personfacts.Indirect, Authority: personfacts.AuthorityAggregator,
-		}},
-		Origin:     personfacts.OriginEnrichment,
-		Confidence: personfacts.ConfidenceInputs{ReportedScore: score},
-	}, nil
+) ([]personfacts.ProposedClaim, error) {
+	return claimsForValues(target, values, score, []personfacts.EvidenceInput{{
+		SourceClass: personfacts.EvidenceProviderAssertion,
+		Directness:  personfacts.Indirect, Authority: personfacts.AuthorityAggregator,
+	}})
 }
 
 func parseSixtyfourConfidence(value jsontext.Value) (int, error) {

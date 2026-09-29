@@ -675,27 +675,7 @@ func exaClaims(
 			SourceURL: citation.URL,
 		}
 	}
-	claims := make([]personfacts.ProposedClaim, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		normalized, failure, err := personfacts.NormalizeClaimValue(target, value)
-		if err != nil || failure != nil || normalized == nil {
-			return nil, errors.New("exa returned an unsupported target value")
-		}
-		// Values for one target share confidence and citations. Keep the first
-		// occurrence of each canonical value, including repeated work history.
-		if _, duplicate := seen[normalized.Fingerprint]; duplicate {
-			continue
-		}
-		seen[normalized.Fingerprint] = struct{}{}
-		claims = append(claims, personfacts.ProposedClaim{
-			Target: target, Relation: personfacts.RelationSupport,
-			SubmittedValue: append(jsontext.Value(nil), value...), Evidence: evidence,
-			Origin:     personfacts.OriginEnrichment,
-			Confidence: personfacts.ConfidenceInputs{ReportedScore: score},
-		})
-	}
-	return claims, nil
+	return claimsForValues(target, values, score, evidence)
 }
 
 func exaTypedIdentityMatches(

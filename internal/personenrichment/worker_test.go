@@ -2488,3 +2488,97 @@ func TestWorkerAsyncPollFencesConsentAndRechecksReturnedSuppression(t *testing.T
 		})
 	}
 }
+
+func TestWorkerSixtyfourDuplicateValues(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		values []string
+	}{
+		{"unique", []string{"Example value", "Different value"}},
+		{"duplicate", []string{"Example value", "Different value", "Example value", " Example value "}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newWorkerFixture(t, "sixtyfour-values", nil)
+			organization, err := f.store.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Labs"})
+			require.NoError(err)
+			_, err = f.store.AddEmploymentContext(t.Context(), store.EmploymentInput{
+				PersonID: f.person.ID, OrganizationID: organization.ID,
+				IsCurrent: new(true), Source: store.ProvenanceUser,
+			})
+			require.NoError(err)
+			catalog, err := f.store.BuildPersonFactCatalogContext(t.Context(), true)
+			require.NoError(err)
+			var target personfacts.TargetDescriptor
+			for _, candidate := range catalog.Targets {
+				if candidate.Kind == personfacts.TargetAttribute && candidate.ValueType == personfacts.ValueText && candidate.Cardinality == personfacts.CardinalityMulti && !candidate.Sensitive {
+					target = candidate
+					break
+				}
+			}
+			require.NotEmpty(target.Key)
+			startBody := sixtyfourFixture(t, "sixtyfour_start.json")
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodPost {
+					_, _ = w.Write(startBody)
+					return
+				}
+				assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+					"task_id": "opaque-job-42", "status": "completed", "charge_amount": 12,
+					"result": map[string]any{
+						"structured_data":  map[string]any{target.Key: test.values, "name": "Worker Person", "company": "Example Labs"},
+						"confidence_score": 9, "findings": []any{},
+					},
+				}))
+			}))
+			defer server.Close()
+			f.config = sixtyfourConfig(server.URL+"/start", server.URL+"/job-status")
+			f.config.TargetKeys = []string{target.Key}
+			f.config.RequestTimeout = 30 * time.Second
+			f.profile, err = f.config.Profile(catalog)
+			require.NoError(err)
+			_, err = f.store.EnsurePersonEnrichmentProfile(t.Context(), f.profile)
+			require.NoError(err)
+			_, _, err = f.store.GrantPersonEnrichmentConsent(t.Context(), f.profile.Fingerprint, "test")
+			require.NoError(err)
+			options := f.options(map[string]personenrichment.ProviderConfig{f.config.Name: f.config})
+			now := time.Now().UTC()
+			options.Clock = func() time.Time { return now }
+			worker, err := personenrichment.NewWorker(f.store, f.store,
+				f.gate(t, func(string) (string, bool) { return "test-key", true }),
+				map[string]personenrichment.ProviderFactory{f.config.Name: func(cfg personenrichment.ProviderConfig, key string) (personenrichment.Provider, error) {
+					return personenrichment.NewSixtyfourProvider(cfg, key, server.Client())
+				}}, options)
+			require.NoError(err)
+			processed, err := worker.RunOnce(t.Context(), f.run.ID)
+			require.NoError(err)
+			require.True(processed)
+			work, err := f.store.ListPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkFilter{
+				PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+			})
+			require.NoError(err)
+			require.Len(work, 1)
+			now = work[0].DueAt.Add(time.Second)
+			processed, err = worker.RunOnce(t.Context(), f.run.ID)
+			assert.True(processed)
+			require.NoError(err)
+			attempts, err := f.store.ListPersonEnrichmentAttemptsContext(t.Context(), store.PersonEnrichmentAttemptFilter{
+				PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint, Limit: 10,
+			})
+			require.NoError(err)
+			require.Len(attempts, 1)
+			assert.Equal("succeeded", attempts[0].State)
+			require.NotNil(attempts[0].FactGenerationKey)
+			var claims int
+			require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
+				SELECT COUNT(*) FROM person_fact_claims
+				WHERE generation_id = (SELECT id FROM person_fact_generations WHERE generation_key = ?)`), *attempts[0].FactGenerationKey).Scan(&claims))
+			assert.Equal(2, claims)
+			processed, err = worker.RunOnce(t.Context(), f.run.ID)
+			require.NoError(err)
+			assert.False(processed, "the completed result must not be polled again")
+		})
+	}
+}
