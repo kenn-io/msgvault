@@ -287,10 +287,12 @@ func TestCatalogSchemas(t *testing.T) {
 				}
 				expectedNames := []string{
 					"aggregate",
+					ToolExportEML,
 					"get_attachment",
 					"get_message",
 					"get_stats",
 					"list_messages",
+					ToolListThread,
 					"search_by_domains",
 					"search_in_message",
 					"search_message_bodies",

@@ -54,6 +54,9 @@ const (
 	toolArgBefore        = "before"
 	toolArgAccount       = "account"
 	toolArgOffset        = "offset"
+	toolArgLength        = "length"
+	toolArgSourceMsgID   = "source_message_id"
+	toolArgThreadID      = "thread_id"
 	toolArgMinScore      = "min_score"
 	toolArgMaxChars      = "max_chars"
 	toolArgAttachmentID  = "attachment_id"
@@ -128,6 +131,7 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
+	downloads           *downloadCache
 	engine              query.Engine
 	archiveSQLQuerier   ArchiveSQLQuerier
 	attachmentsDir      string
@@ -1871,20 +1875,51 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
+	chunkReq, chunked, err := chunkArgs(args)
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
 
-	payload, err := h.attachmentService().load(ctx, id)
+	var payload *attachmentPayload
+	var snapshot *downloadSnapshot
+	if chunked {
+		snapshot, err = h.downloads.get(ctx, downloadKey{attachment: id}, chunkReq, func() (*downloadSnapshot, error) {
+			payload, err := h.attachmentService().loadBounded(ctx, id, maxDownloadBytes)
+			if err != nil {
+				return nil, err
+			}
+			return &downloadSnapshot{data: payload.data, attachment: payload}, nil
+		})
+		if err == nil {
+			payload = snapshot.attachment
+		}
+	} else {
+		payload, err = h.attachmentService().load(ctx, id)
+	}
 	if err != nil {
 		if unavailable, ok := errors.AsType[*attachmentUnavailableError](err); ok {
 			return toolErrorResult(unavailable.message), nil
 		}
+		if errors.Is(err, errDownloadExpired) || errors.Is(err, errDownloadTooLarge) {
+			return toolErrorResult(err.Error()), nil
+		}
 		return nil, err
 	}
 	att := payload.metadata
-
 	metaObj := getAttachmentResponse{
 		Filename: att.Filename,
 		MIMEType: payload.mimeType,
 		Size:     att.Size,
+	}
+	if chunked {
+		chunk, err := sliceChunk(snapshot.data, snapshot.digest, chunkReq)
+		if err != nil {
+			return toolErrorResult(err.Error()), nil
+		}
+		metaObj.Size = chunk.Size
+		metaObj.Offset, metaObj.Length = &chunk.Offset, &chunk.Length
+		metaObj.SHA256, metaObj.Complete, metaObj.DataBase64 = &chunk.SHA256, &chunk.Complete, &chunk.DataBase64
+		return jsonResult(metaObj)
 	}
 	result, err := jsonResult(metaObj)
 	if err != nil {

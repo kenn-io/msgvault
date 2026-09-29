@@ -1799,7 +1799,10 @@ the [Discord export guide](usage/discord.md#export-a-bounded-history-window).
 
 ## export-eml
 
-Export a message as a `.eml` file. Accepts either a numeric database ID or a Gmail message ID.
+Export a message as a `.eml` file. Accepts an internal message ID or a provider
+message ID. A numeric reference selects a live internal ID first, then falls
+back to a provider ID if that internal ID does not exist. This also applies
+with `--thread`.
 
 ```bash
 msgvault export-eml <id> [flags]
@@ -1807,7 +1810,15 @@ msgvault export-eml <id> [flags]
 
 | Flag | Description |
 |---|---|
-| `-o`, `--output <path>` | Output file (default: `<gmail_id>.eml`, use `-` for stdout) |
+| `-o`, `--output <path>` | Output file (default: `<source_message_id>.eml`, use `-` for stdout). With `--thread`, the output directory (default: current directory) |
+| `--thread` | Write visible archived messages in the conversation that have stored MIME as `<n>-<source_message_id>.eml`, numbered oldest first. Reports skipped messages and when the account last synced. Needs a daemon with API schema 2.33.0 or newer |
+| `--account <email>` | With `--thread`, the account that holds a provider message ID found in more than one account |
+
+Thread export captures its message list once. Messages added afterward belong
+to the next export. It reports and skips messages that disappear or lose their
+stored MIME before they are read; other read or write errors stop the command.
+Hidden duplicate copies are excluded. The last-sync time describes account
+freshness, not conversation completeness.
 
 ---
 

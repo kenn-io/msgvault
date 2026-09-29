@@ -189,14 +189,30 @@ func TestSweepReclaimsOnlyUnownedTemplates(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dbURL := requirePostgresTestURL(t)
+	ctx := context.Background()
+
+	// Sibling test binaries sweep the configured database's scope too. Use a
+	// private database so they cannot claim the staged orphans before this test.
+	parent := requireTemplate(t, dbURL)
+	parentAdmin, err := pgAdminDB(dbURL)
+	require.NoError(err, "open parent admin connection")
+	privateDB, err := parent.clone(ctx)
+	require.NoError(err, "clone private lock scope")
+	t.Cleanup(func() { dropOwnedDatabase(parentAdmin, privateDB) })
+	dbURL = withDatabase(dbURL, privateDB)
 
 	admin, err := pgAdminDB(dbURL)
 	require.NoError(err, "open admin connection")
-	ctx := context.Background()
+	t.Cleanup(func() { _ = admin.Close() })
 
 	// This binary's own template first: building it sweeps, and the staged
 	// databases below must be judged by the sweep under test, not that one.
 	own := requireTemplate(t, dbURL)
+	t.Cleanup(func() {
+		dropOwnedDatabase(admin, own.name())
+		_, _ = own.owner.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", templateLockKey(own.token))
+		_ = own.owner.Close()
+	})
 
 	deadToken, err := newTemplateToken()
 	require.NoError(err, "dead owner token")
@@ -235,8 +251,6 @@ func TestSweepReclaimsOnlyUnownedTemplates(t *testing.T) {
 	dropped, err := sweepOrphanTemplates(ctx, admin, own.scope)
 	require.NoError(err, "sweep")
 
-	// Other binaries' leftovers may be reclaimed in the same pass, so the
-	// verdict is per database rather than over the whole list.
 	assert.Contains(dropped, dead, "sweep reclaims the dead owner's template")
 	assert.Contains(dropped, deadClone, "sweep reclaims the dead owner's clone")
 	assert.False(databaseExists(t, admin, dead), "dead owner's template is gone")

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.kenn.io/msgvault/internal/query"
@@ -18,6 +18,9 @@ import (
 
 // ErrNotSupported is returned for operations not available through the daemon API.
 var ErrNotSupported = errors.New("operation not supported through daemon API")
+
+// ErrMessageRawNotFound means the daemon holds the message but no raw data.
+var ErrMessageRawNotFound = errors.New("message raw data not found")
 
 const (
 	apiValueCount   = "count"
@@ -31,7 +34,9 @@ const (
 
 // Engine implements query.Engine by making HTTP calls to a msgvault daemon.
 type Engine struct {
-	store *Client
+	store                *Client
+	originalCapabilityMu sync.Mutex
+	originalCapabilityOK bool
 }
 
 // QueryArchiveSQL uses the daemon's archive-only SQL endpoint. It never falls
@@ -908,8 +913,14 @@ func (e *Engine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]q
 
 // GetMessageRaw returns raw MIME data for a message.
 func (e *Engine) GetMessageRaw(ctx context.Context, id int64) ([]byte, error) {
-	raw, _, err := e.store.GetCLIMessageRaw(ctx, strconv.FormatInt(id, 10))
-	return raw, err
+	original, err := e.ReadOriginalMessage(ctx, query.MessageRef{ID: id}, 0)
+	if errors.Is(err, query.ErrOriginalMIMEUnavailable) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return original.MIME, nil
 }
 
 // GetAttachment returns attachment metadata by ID.
@@ -1344,6 +1355,7 @@ func (e *Engine) ListAccounts(ctx context.Context) ([]query.AccountInfo, error) 
 			SourceType:  acc.Type,
 			Identifier:  acc.Email,
 			DisplayName: acc.DisplayName,
+			LastSyncAt:  copyTime(acc.LastSync),
 		}
 	}
 	return result, nil

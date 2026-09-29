@@ -190,6 +190,20 @@ func (g GetCLIMessageQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type GetCLIMessageOriginalQuery struct {
+	// ID Internal message ID
+	ID *int64 `json:"id,omitempty"`
+
+	// MaxBytes Maximum decoded MIME bytes; omit for an unrestricted export
+	MaxBytes *int64 `json:"max_bytes,omitempty"`
+
+	// SourceMessageID Provider message ID
+	SourceMessageID *string `json:"source_message_id,omitempty"`
+
+	// Account Source identifier that narrows the lookup
+	Account *string `json:"account,omitempty"`
+}
+
 type GetCLIMessageRawQuery struct {
 	// ID Message numeric ID or source message ID
 	ID string `json:"id" validate:"required"`
@@ -197,6 +211,29 @@ type GetCLIMessageRawQuery struct {
 
 func (g GetCLIMessageRawQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetCLIMessageThreadQuery struct {
+	// ID Internal ID of a message in the conversation
+	ID *int64 `json:"id,omitempty"`
+
+	// SourceMessageID Provider ID of a message in the conversation
+	SourceMessageID *string `json:"source_message_id,omitempty"`
+
+	// ThreadID Provider conversation ID
+	ThreadID *string `json:"thread_id,omitempty"`
+
+	// Account Source identifier that narrows the lookup
+	Account *string `json:"account,omitempty"`
+
+	// All Return fixed membership for the entire conversation; cannot be combined with limit or offset
+	All *bool `json:"all,omitempty"`
+
+	// Limit Messages per page (default 100, max 500)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Messages to skip
+	Offset *int64 `json:"offset,omitempty"`
 }
 
 type SearchCLIQuery struct {

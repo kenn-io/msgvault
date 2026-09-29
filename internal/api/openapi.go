@@ -331,7 +331,11 @@ import (
 // requests remain valid.
 // 2.32.0 adds frozen sender keys to agent-token source views and optional
 // sender selections to owner token issuance.
-const APISchemaVersion = "2.32.0"
+// 2.33.0 adds GET /api/v1/cli/message/original (a message's original MIME
+// and provenance) and GET /api/v1/cli/message/thread (a complete,
+// chronological conversation listing with original-MIME availability).
+// Additive (minor bump): existing routes are unchanged.
+const APISchemaVersion = "2.33.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

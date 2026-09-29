@@ -102,7 +102,7 @@ func task3ToolErrorText(t *testing.T, response task3RPCResponse) string {
 type task5RawStdioPeer struct {
 	requestWriter  *os.File
 	responseReader *os.File
-	responseLines  *bufio.Scanner
+	responseLines  *bufio.Reader
 	cancel         context.CancelFunc
 	done           chan error
 }
@@ -131,7 +131,7 @@ func newTask5RawStdioPeerWithServer(t *testing.T, server *sdkmcp.Server) *task5R
 	peer := &task5RawStdioPeer{
 		requestWriter:  clientRequestWriter,
 		responseReader: clientResponseReader,
-		responseLines:  bufio.NewScanner(clientResponseReader),
+		responseLines:  bufio.NewReader(clientResponseReader),
 		cancel:         cancel,
 		done:           done,
 	}
@@ -175,21 +175,16 @@ func (p *task5RawStdioPeer) callRaw(t *testing.T, line string) (task3RPCResponse
 	type scanResult struct {
 		line string
 		err  error
-		ok   bool
 	}
 	done := make(chan scanResult, 1)
 	go func() {
-		ok := p.responseLines.Scan()
-		done <- scanResult{
-			line: p.responseLines.Text(),
-			err:  p.responseLines.Err(),
-			ok:   ok,
-		}
+		line, err := p.responseLines.ReadString('\n')
+		done <- scanResult{line: line, err: err}
 	}()
 	var raw string
 	select {
 	case scanned := <-done:
-		require.True(t, scanned.ok, "raw stdio response: %v", scanned.err)
+		require.NoError(t, scanned.err, "raw stdio response")
 		raw = scanned.line
 	case <-time.After(5 * time.Second):
 		require.FailNow(t, "raw stdio response read timed out")

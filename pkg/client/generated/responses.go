@@ -495,6 +495,18 @@ type GetCLIMessageResponse = CliMessageResponse
 
 type GetCLIMessageErrorResponse = ErrorResponse
 
+type GetCLIMessageOriginalResponse = CliOriginalMessageResponse
+
+type GetCLIMessageOriginalErrorResponse = ErrorResponse
+
+type GetCLIMessageOriginalErrorResponseJSON = ErrorResponse
+
+type GetCLIMessageOriginalErrorResponseJSON409 = ErrorResponse
+
+type GetCLIMessageOriginalErrorResponseJSON413 = ErrorResponse
+
+type GetCLIMessageOriginalErrorResponseJSON503 = ErrorResponse
+
 type GetCLIMessageRawResponse = []byte
 
 type GetCLIMessageRawErrorResponse = ErrorResponse
@@ -506,6 +518,16 @@ type GetCLIMessageRawErrorResponseJSON404 = ErrorResponse
 type GetCLIMessageRawErrorResponseJSON500 = ErrorResponse
 
 type GetCLIMessageRawErrorResponseJSON503 = ErrorResponse
+
+type GetCLIMessageThreadResponse = ThreadPage
+
+type GetCLIMessageThreadErrorResponse = ErrorResponse
+
+type GetCLIMessageThreadErrorResponseJSON = ErrorResponse
+
+type GetCLIMessageThreadErrorResponseJSON409 = ErrorResponse
+
+type GetCLIMessageThreadErrorResponseJSON503 = ErrorResponse
 
 type RebuildCLIFTSResponse = []byte
 
@@ -3948,6 +3970,18 @@ type GetCLIMessageResp struct {
 	JSON200      *GetCLIMessageResponse
 }
 
+type GetCLIMessageOriginalResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetCLIMessageOriginalResponse
+	JSON400      *GetCLIMessageOriginalErrorResponse
+	JSON404      *GetCLIMessageOriginalErrorResponseJSON
+	JSON409      *GetCLIMessageOriginalErrorResponseJSON409
+	JSON413      *GetCLIMessageOriginalErrorResponseJSON413
+	JSON503      *GetCLIMessageOriginalErrorResponseJSON503
+}
+
 type GetCLIMessageRawResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -3957,6 +3991,17 @@ type GetCLIMessageRawResp struct {
 	JSON404      *GetCLIMessageRawErrorResponseJSON404
 	JSON500      *GetCLIMessageRawErrorResponseJSON500
 	JSON503      *GetCLIMessageRawErrorResponseJSON503
+}
+
+type GetCLIMessageThreadResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetCLIMessageThreadResponse
+	JSON400      *GetCLIMessageThreadErrorResponse
+	JSON404      *GetCLIMessageThreadErrorResponseJSON
+	JSON409      *GetCLIMessageThreadErrorResponseJSON409
+	JSON503      *GetCLIMessageThreadErrorResponseJSON503
 }
 
 type RebuildCLIFTSResp struct {

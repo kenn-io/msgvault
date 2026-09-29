@@ -36,6 +36,8 @@ const (
 	ToolGetMessage              = "get_message"
 	ToolGetAttachment           = "get_attachment"
 	ToolExportAttachment        = "export_attachment"
+	ToolExportEML               = "export_eml"
+	ToolListThread              = "list_thread"
 	ToolListMessages            = "list_messages"
 	ToolGetStats                = "get_stats"
 	ToolAggregate               = "aggregate"
@@ -77,6 +79,7 @@ const (
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
+	downloads           *downloadCache
 	Engine              query.Engine
 	AttachmentsDir      string
 	AttachmentReader    AttachmentReader
@@ -224,7 +227,11 @@ func newMCPServerWithPolicy(
 		cachePolicyMiddleware,
 	)
 
+	if opts.downloads == nil {
+		opts.downloads = &downloadCache{}
+	}
 	h := &handlers{
+		downloads:           opts.downloads,
 		engine:              opts.Engine,
 		archiveSQLQuerier:   opts.ArchiveSQLQuerier,
 		attachmentsDir:      opts.AttachmentsDir,
@@ -272,6 +279,8 @@ func Serve(ctx context.Context, engine query.Engine, attachmentsDir, dataDir str
 
 // ServeWithOptions creates an MCP server from opts and serves over stdio.
 func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
+	opts.downloads = &downloadCache{}
+	defer opts.downloads.close()
 	policy := newStdioInvocationPolicy()
 	s := newMCPServerWithPolicy(opts, true, policy)
 	if err := s.Run(ctx, &sdkmcp.StdioTransport{}); err != nil {
@@ -295,6 +304,8 @@ func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, httpOpts HTTPO
 		}
 		defer func() { result = errors.Join(result, cleanup()) }()
 	}
+	opts.downloads = &downloadCache{}
+	defer opts.downloads.close()
 	stdlibServer := newMCPHTTPServer(opts, httpOpts)
 	fmt.Fprintf(os.Stderr, "Starting MCP server on %s\n", httpOpts.Addr)
 
@@ -332,6 +343,10 @@ func newMCPHTTPServerWithPolicy(
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	if opts.downloads == nil {
+		opts.downloads = &downloadCache{}
+	}
+	stdlibServer.RegisterOnShutdown(opts.downloads.close)
 	httpServer := sdkmcp.NewStreamableHTTPHandler(
 		func(*http.Request) *sdkmcp.Server {
 			return newMCPServerWithPolicy(opts, httpOpts.AllowWrites, policy)

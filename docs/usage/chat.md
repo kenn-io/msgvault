@@ -171,9 +171,11 @@ The MCP server exposes the following tools to connected AI clients:
 | `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. | `domains` (comma-separated string, required), `limit` (int), `offset` (int), `after` (string), `before` (string) |
 | `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool) |
 | `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `conversation_id` (int), `limit` (int), `offset` (int), `account` (string) |
-| `get_attachment` | Get attachment content by ID | `attachment_id` (int) |
+| `list_thread` | List visible archived messages in one conversation, oldest first, with `has_raw` marking messages whose original `.eml` is stored. See [Export original emails](#export-original-emails). | exactly one of `id` (int), `source_message_id` (string), or `thread_id` (string); `account` (string), `limit` (1–500, default 100), `offset` (int) |
+| `export_eml` | Export one email's original `.eml` bytes in verified chunks. See [Export original emails](#export-original-emails). | exactly one of `id` (int) or `source_message_id` (string); `account` (string), `offset` (int), `length` (1–4194304, default 1048576), `sha256` (string, required after offset 0) |
+| `get_attachment` | Get attachment content by ID. Pass `offset` or `length` to receive verified chunks instead of one embedded blob. | `attachment_id` (int), `offset` (int), `length` (int), `sha256` (string, required after offset 0) |
 | `export_attachment` | Save attachment to filesystem | `attachment_id` (int), `destination` (string) |
-| `get_stats` | Archive overview statistics. Includes vector index state when configured. | — |
+| `get_stats` | Archive overview statistics, plus each account's `LastSyncAt`. Includes vector index state when configured. | — |
 | `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
 | `query_sql` | Advanced read-only SQL over the published analytics cache. Returns rows and freshness metadata, or an accepted refresh job. | `sql` (string, required), `fresh` (bool, default false) |
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
@@ -247,6 +249,60 @@ support message-type filtering.
 slice of the body plus `body_length`, `body_returned`, `offset`, and
 `has_more`, so unusually large messages are paged across calls instead of
 being returned in a single response.
+
+### Export original emails
+
+`export_eml` returns an email's original MIME exactly as the provider
+delivered it, so a client that reaches msgvault only over MCP can save a
+byte-identical `.eml`. `get_attachment` in chunk mode and `list_thread`
+provide the attachment bytes and visible archived messages in the conversation.
+
+Each chunk response carries `offset`, `length`, `size`, `sha256` (of the
+whole object), `complete`, and `data_base64`. To download:
+
+1. Call with `offset = 0`.
+2. Decode `data_base64`, append it, and call again with `offset += length`.
+   Pass the first response's `sha256` and the same message or attachment
+   reference on each later call.
+3. Stop when `complete` is true, then check that the file matches `size`
+   and `sha256` before using it.
+
+Chunks default to 1 MiB and are capped at 4 MiB, which keeps each response
+small enough for tool gateways that reject multi-megabyte strings. The MCP
+server keeps each download snapshot for up to five minutes, with at most eight
+snapshots and 256 MiB total. Objects larger than 256 MiB cannot use chunk mode.
+Email downloads enforce this limit while reading and decompressing the original;
+CLI exports remain unrestricted.
+If a snapshot expires or is evicted, restart at offset 0 and discard the earlier
+partial file. The checksum pins later chunks to the same content even if the
+archived original changes. Whole-file attachment responses remain limited to
+50 MiB.
+
+Pass a provider ID as `source_message_id` or `thread_id`, never as `id`. When
+the same provider ID exists in more than one account, the tool returns
+`message_ambiguous` with the candidate accounts; repeat the call with
+`account`. Messages without stored original MIME, such as chat and calendar
+items, return `raw_mime_unavailable`.
+
+The export works for every email source that keeps MIME:
+
+| Source | What `export_eml` returns |
+|---|---|
+| Gmail, IMAP (including Outlook and Microsoft 365 over IMAP) | The exact bytes the server delivered |
+| mbox, `.eml`, `.emlx`, and Maildir imports | The exact bytes of the imported message |
+| PST imports | MIME rebuilt from Outlook data, with the original transport headers when the PST kept them; `source_type` is `pst` |
+
+Gmail threads use Gmail's `threadId`. IMAP and file imports have no provider
+thread ID, so msgvault groups replies by their `References` and `In-Reply-To`
+headers and uses the root Message-ID as `thread_id`. Pass any message's `id`
+or `source_message_id` to `list_thread` when you don't know that key.
+
+`last_sync_at` reports the account's most recent sync activity; it does not
+prove the conversation is complete. The provider may hold replies that msgvault
+has not archived. Listings also omit hidden duplicate copies, including copies
+whose surviving message belongs to another account's conversation. See
+[Deduplication](/docs/usage/deduplication/) for that visibility policy. Both tools need a daemon with API schema
+`2.33.0` or newer.
 
 ### `search_metadata` and `search_message_bodies` / `semantic_search_messages` query syntax
 

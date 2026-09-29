@@ -111,6 +111,10 @@ msgvault export-eml 18abc123def --output -
 | `-o`, `--output` | Output file path (default: `<source-message-id>.eml`; use `-` for stdout) |
 
 The exported `.eml` contains the original raw MIME bytes preserved during sync.
+To write a conversation as numbered `.eml` files, use
+`msgvault export-eml <id> --thread --output DIR`. See the
+[command reference](/docs/cli-reference/#export-eml) for reference resolution,
+account selection, and skipped-message behavior.
 
 ## Export a single attachment
 

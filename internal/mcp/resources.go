@@ -71,6 +71,10 @@ func parseAttachmentResourceURI(rawURI string) (int64, error) {
 }
 
 func (s attachmentService) load(ctx context.Context, id int64) (*attachmentPayload, error) {
+	return s.loadBounded(ctx, id, maxAttachmentSize)
+}
+
+func (s attachmentService) loadBounded(ctx context.Context, id, maxBytes int64) (*attachmentPayload, error) {
 	attachment, err := s.engine.GetAttachment(ctx, id)
 	if err != nil {
 		return nil, newInternalError("look up attachment", err)
@@ -81,13 +85,13 @@ func (s attachmentService) load(ctx context.Context, id int64) (*attachmentPaylo
 	if s.reader == nil && s.attachmentsDir == "" {
 		return nil, &attachmentUnavailableError{message: "attachments directory not configured"}
 	}
-	if attachment.Size > maxAttachmentSize {
+	if attachment.Size > maxBytes {
 		return nil, &attachmentUnavailableError{message: fmt.Sprintf(
-			"attachment too large: %d bytes (max %d)", attachment.Size, maxAttachmentSize,
+			"attachment too large: %d bytes (max %d)", attachment.Size, maxBytes,
 		)}
 	}
 
-	data, err := s.read(ctx, attachment.ContentHash)
+	data, err := s.read(ctx, attachment.ContentHash, maxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +102,7 @@ func (s attachmentService) load(ctx context.Context, id int64) (*attachmentPaylo
 	return &attachmentPayload{metadata: attachment, mimeType: mimeType, data: data}, nil
 }
 
-func (s attachmentService) read(ctx context.Context, contentHash string) ([]byte, error) {
+func (s attachmentService) read(ctx context.Context, contentHash string, maxBytes int64) ([]byte, error) {
 	if err := export.ValidateContentHash(contentHash); err != nil {
 		return nil, &attachmentUnavailableError{message: "attachment has invalid content hash"}
 	}
@@ -110,9 +114,9 @@ func (s attachmentService) read(ctx context.Context, contentHash string) ([]byte
 			}
 			return nil, newInternalError("read attachment", err)
 		}
-		if int64(len(data)) > maxAttachmentSize {
+		if int64(len(data)) > maxBytes {
 			return nil, &attachmentUnavailableError{message: fmt.Sprintf(
-				"attachment too large: %d bytes (max %d)", len(data), maxAttachmentSize,
+				"attachment too large: %d bytes (max %d)", len(data), maxBytes,
 			)}
 		}
 		return data, nil
@@ -135,18 +139,18 @@ func (s attachmentService) read(ctx context.Context, contentHash string) ([]byte
 	if err != nil {
 		return nil, newInternalError("stat attachment", err)
 	}
-	if info.Size() > maxAttachmentSize {
+	if info.Size() > maxBytes {
 		return nil, &attachmentUnavailableError{message: fmt.Sprintf(
-			"attachment too large: %d bytes (max %d)", info.Size(), maxAttachmentSize,
+			"attachment too large: %d bytes (max %d)", info.Size(), maxBytes,
 		)}
 	}
-	data, err := io.ReadAll(io.LimitReader(file, maxAttachmentSize+1))
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
 	if err != nil {
 		return nil, newInternalError("read attachment", err)
 	}
-	if int64(len(data)) > maxAttachmentSize {
+	if int64(len(data)) > maxBytes {
 		return nil, &attachmentUnavailableError{message: fmt.Sprintf(
-			"attachment too large: %d bytes (max %d)", len(data), maxAttachmentSize,
+			"attachment too large: %d bytes (max %d)", len(data), maxBytes,
 		)}
 	}
 	return data, nil

@@ -799,25 +799,6 @@ func TestEngineGetMessagePreservesPhoneOnlyGeneratedSender(t *testing.T) {
 	assert.Equal("Alice", msg.From[0].Name, "From[0].Name")
 }
 
-func TestEngineGetMessageRawUsesGeneratedCLIEndpoint(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	raw := []byte("From: alice@example.com\r\nSubject: Raw\r\n\r\nBody")
-
-	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v1/cli/message/raw", r.URL.Path, "path")
-		assert.Equal("42", r.URL.Query().Get("id"), "id")
-		w.Header().Set("Content-Type", "message/rfc822")
-		_, _ = w.Write(raw)
-	})
-
-	engine := NewEngineAdapter(store)
-
-	got, err := engine.GetMessageRaw(context.Background(), 42)
-	require.NoError(err, "GetMessageRaw")
-	assert.Equal(raw, got, "raw")
-}
-
 func TestEngineGetAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

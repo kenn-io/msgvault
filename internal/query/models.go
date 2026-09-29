@@ -366,6 +366,10 @@ type AccountInfo struct {
 	SourceType  string
 	Identifier  string // email address
 	DisplayName string
+	// LastSyncAt is the source's most recent sync activity. Provider
+	// messages newer than this may not be archived yet. Nil when the
+	// source has never synced.
+	LastSyncAt *time.Time `json:",omitzero"`
 }
 
 // StatsOptions configures a stats query.

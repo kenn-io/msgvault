@@ -114,3 +114,24 @@ func NewEngine(db *sql.DB, isPostgres bool) Engine {
 	}
 	return NewSQLiteEngine(db)
 }
+
+var _ OriginalMessageReader = (*pgEngine)(nil)
+
+// ReadOriginalMessage forwards to the dialect-parameterized engine; its SQL
+// is portable across SQLite and PostgreSQL.
+func (e *pgEngine) ReadOriginalMessage(ctx context.Context, ref MessageRef, maxBytes int64) (*OriginalMessage, error) {
+	reader, ok := e.Engine.(OriginalMessageReader)
+	if !ok {
+		return nil, ErrOriginalExportUnsupported
+	}
+	return reader.ReadOriginalMessage(ctx, ref, maxBytes)
+}
+
+// ListThread forwards to the dialect-parameterized engine.
+func (e *pgEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPage, error) {
+	reader, ok := e.Engine.(OriginalMessageReader)
+	if !ok {
+		return nil, ErrOriginalExportUnsupported
+	}
+	return reader.ListThread(ctx, q)
+}

@@ -20,6 +20,19 @@ All notable changes to msgvault, grouped by release.
   for a known index gap or rebuild, including rebuilds awaiting other daemon
   work; an unfinished completeness check alone stays silent.
 
+- **Export original emails over MCP.** `export_eml` returns an email's
+  original `.eml` bytes in chunks with a whole-message `sha256`, `list_thread`
+  lists visible archived conversation members oldest first, and
+  `get_attachment` accepts `offset` and `length` for chunked downloads.
+  Later chunks pass the first response's `sha256` to reuse the same snapshot.
+  Responses report the account's
+  `last_sync_at`, and `get_stats` lists it per account.
+  `msgvault export-eml <id> --thread -o DIR` writes visible conversation members as
+  numbered `.eml` files. Works for Gmail, IMAP (including Outlook), and file
+  imports; PST exports are rebuilt from Outlook data. The daemon serves
+  these through two new CLI routes; upgrade it for API schema 2.33.0. See
+  [Export original emails](usage/chat.md#export-original-emails).
+
 - Query published analytics while the daemon refreshes the cache in the
   background. `query --fresh` waits for current results; HTTP and MCP callers
   can track refresh jobs. The new `query_sql` MCP tool restricts SQL to archive
