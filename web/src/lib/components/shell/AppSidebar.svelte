@@ -26,6 +26,9 @@
     onToggleCollapsed,
     onOpenShortcuts
   }: Props = $props();
+
+  const uid = $props.id();
+  const groupId = `nav-group-${uid}`;
 </script>
 
 <div class="sidebar" class:sidebar--rail={collapsed}>
@@ -35,9 +38,12 @@
       {#if collapsed}
         {#if index > 0}<hr class="sidebar__divider" />{/if}
       {:else}
-        <h2 class="sidebar__group">{group.label}</h2>
+        <p class="sidebar__group" id="{groupId}-{index}">{group.label}</p>
       {/if}
-      <ul>
+      <ul
+        aria-label={collapsed ? group.label : undefined}
+        aria-labelledby={collapsed ? undefined : `${groupId}-${index}`}
+      >
         {#each group.items as item (item.id)}
           {@const Icon = item.icon}
           <li>
@@ -69,20 +75,24 @@
     {/each}
   </nav>
   <div class="sidebar__footer">
-    <span class="sidebar__status" title={status.label}>
-      <StatusDot status={status.tone} label={status.label} />
-      {#if !collapsed}<span>{status.text}</span>{/if}
-    </span>
-    <button
-      type="button"
-      class="sidebar__item"
-      aria-label="Keyboard shortcuts"
-      onclick={onOpenShortcuts}
-    >
-      <Keyboard size={18} aria-hidden="true" />
-      {#if !collapsed}<span>Keyboard shortcuts</span><KbdBadge keys={['?']} />{/if}
-    </button>
-    {#if showCollapseToggle}
+    {#snippet statusRow()}
+      <span class="sidebar__status">
+        <StatusDot status={status.tone} label={status.label} />
+        <span class:kit-sr-only={collapsed}>{status.text}</span>
+      </span>
+    {/snippet}
+    {#snippet shortcutsButton()}
+      <button
+        type="button"
+        class="sidebar__item"
+        aria-label="Keyboard shortcuts"
+        onclick={onOpenShortcuts}
+      >
+        <Keyboard size={18} aria-hidden="true" />
+        {#if !collapsed}<span>Keyboard shortcuts</span><KbdBadge keys={['?']} />{/if}
+      </button>
+    {/snippet}
+    {#snippet collapseButton()}
       <button
         type="button"
         class="sidebar__item"
@@ -95,6 +105,15 @@
           <PanelLeftClose size={18} aria-hidden="true" /><span>Collapse</span>
         {/if}
       </button>
+    {/snippet}
+    {#if collapsed}
+      <Tooltip text={status.label}>{@render statusRow()}</Tooltip>
+      <Tooltip text="Keyboard shortcuts">{@render shortcutsButton()}</Tooltip>
+      {#if showCollapseToggle}<Tooltip text="Expand sidebar">{@render collapseButton()}</Tooltip>{/if}
+    {:else}
+      {@render statusRow()}
+      {@render shortcutsButton()}
+      {#if showCollapseToggle}{@render collapseButton()}{/if}
     {/if}
   </div>
 </div>

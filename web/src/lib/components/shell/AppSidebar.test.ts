@@ -58,6 +58,14 @@ describe('AppSidebar', () => {
     renderSidebar({ collapsed: true });
     expect(screen.getByRole('button', { name: 'Saved views' })).toBeTruthy();
     expect(screen.queryByText('People')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Everything' }).getAttribute('aria-current')).toBe(
+      'page'
+    );
+  });
+
+  it('keeps the archive status text available to assistive tech in the rail', () => {
+    renderSidebar({ collapsed: true });
+    expect(screen.getByText('Local archive')).toBeTruthy();
   });
 
   it('toggles the rail and opens shortcuts from the footer', async () => {
