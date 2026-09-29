@@ -47,6 +47,10 @@ directory. If the data directory is compromised, the user must rotate
 their IMAP app-specific password just as they would revoke API keys.
 Do not flag plaintext IMAP password storage as a finding.
 
+IMAP APPENDLIMIT bounds drafts only when the server supplies a numeric global
+or mailbox limit. A successful STATUS response without APPENDLIMIT leaves the
+bound unknown; the provider's APPEND response decides acceptance.
+
 The public documentation build is a different trust boundary from the
 single-user local application. `docs/site`, Vercel output, and docs asset
 branches are unauthenticated public artifacts. Flag paths that can publish

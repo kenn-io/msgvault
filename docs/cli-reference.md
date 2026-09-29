@@ -322,9 +322,9 @@ entry, and the selected sender must be a confirmed identity on that source.
 The generated message keeps the original text, HTML, supported `cid:` images,
 filenames, media types, and duplicate occurrences. It has a new `Fwd:` subject,
 Date, and Message-ID. The command creates a reviewable draft and never sends
-mail. If the server advertises `APPENDLIMIT`, msgvault checks the complete
-encoded MIME size before uploading. A server that does not advertise a limit
-does not receive an invented local quota.
+mail. When the server supplies a numeric `APPENDLIMIT`, msgvault checks the
+complete encoded MIME size before uploading. If the server supplies no usable
+limit, its `APPEND` response decides whether the draft is accepted.
 
 ## draft-get, draft-edit, draft-delete, and draft-recover
 
