@@ -8,6 +8,7 @@ import (
 	"io"
 	stdmime "mime"
 	"net/mail"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -185,6 +186,9 @@ func (a *storeAPIAdapter) runCLIForwardDraft(
 		if err != nil {
 			return draftReplyError("attachment_preflight_failed", err)
 		}
+		refs = slices.DeleteFunc(refs, func(ref store.AttachmentRef) bool {
+			return strings.HasPrefix(ref.SourceAttachmentID, "remote-image:")
+		})
 		if len(refs) > 0 || len(parent.Attachments) > 0 {
 			if !readerAvailable {
 				return a.emitDraftForwardPreflight(emit, intent.JSON, []draftForwardProblem{{Reason: "attachment_reader_unavailable"}})

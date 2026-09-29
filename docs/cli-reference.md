@@ -313,8 +313,8 @@ msgvault draft-forward <message-id> --source-id 42 \
   --cc team@example.com --json
 ```
 
-The command reads attachment bytes through the archive's catalog. A pending,
-skipped, failed, missing, unreadable, or unsupported occurrence is reported
+The command reads original MIME attachment bytes through the archive's catalog.
+A pending, skipped, failed, missing, unreadable, or unsupported occurrence is reported
 with its filename and part key, and the command stops before `APPEND`. It never
 creates a partial draft. The IMAP source must have an enabled `[[imap.drafts]]`
 entry, and the selected sender must be a confirmed identity on that source.
@@ -322,9 +322,10 @@ entry, and the selected sender must be a confirmed identity on that source.
 The generated message keeps the original text, HTML, supported `cid:` images,
 filenames, media types, and duplicate occurrences. It has a new `Fwd:` subject,
 Date, and Message-ID. The command creates a reviewable draft and never sends
-mail. When the server supplies a numeric `APPENDLIMIT`, msgvault checks the
-complete encoded MIME size before uploading. If the server supplies no usable
-limit, its `APPEND` response decides whether the draft is accepted.
+mail. Downloaded web images remain external links in the forwarded HTML; their
+cached files are not attached. When the server supplies a numeric `APPENDLIMIT`,
+msgvault checks the complete encoded MIME size before uploading. If the server
+supplies no usable limit, its `APPEND` response decides whether the draft is accepted.
 
 ## draft-get, draft-edit, draft-delete, and draft-recover
 

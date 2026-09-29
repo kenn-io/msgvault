@@ -118,6 +118,51 @@ func TestDraftForwardRejectsUnsupportedDestinationBeforeParentRead(t *testing.T)
 	}
 }
 
+func TestDraftForwardLeavesArchivedRemoteImageAsExternalLink(t *testing.T) {
+	requirements := require.New(t)
+	fixture := newDraftReplyFixture(t)
+	const imageURL = "https://images.example.test/cat.png"
+	raw := []byte("From: Sender <sender@example.com>\r\n" +
+		"To: " + testutil.IMAPTestUsername + "\r\n" +
+		"Subject: Question\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/html; charset=utf-8\r\n\r\n" +
+		"<p>Parent body</p><img src=\"" + imageURL + "\">\r\n")
+	requirements.NoError(fixture.store.UpsertMessageRaw(fixture.parentID, raw))
+	key := "remote-image:" + strings.Repeat("a", 64)
+	requirements.NoError(fixture.store.UpsertRemoteImageAttachment(t.Context(), fixture.parentID, store.AttachmentWrite{
+		Filename: "remote-image.png", MIMEType: "image/png", StoragePath: "missing/cache.png",
+		ContentHash: strings.Repeat("b", 64), Size: 42, SourceAttachmentID: key,
+		SourcePartKey: key, ContentID: key, MediaType: "image", Role: store.AttachmentRoleInline,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics, State: attachmentpolicy.StateStored,
+	}))
+	adapter := fixture.grantedAdapter()
+	var events []api.CLIRunEvent
+	err := adapter.runCLIForwardDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		"draft-forward", strconv.FormatInt(fixture.parentID, 10),
+		"--source-id", strconv.FormatInt(fixture.source.ID, 10),
+		"--from", testutil.IMAPTestUsername, "--to", "recipient@example.test", "--json",
+	}}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	var result draftReplyOutput
+	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &result))
+	requirements.Equal(draftReplyStatusCreated, result.Status)
+	draft, err := fixture.store.GetIMAPDraft(result.DraftID)
+	requirements.NoError(err)
+	_, fetchedRaw := fetchDraftMailboxMessage(t, fixture.config, draft.CurrentReceipt)
+	fetched, err := msgmime.Parse(fetchedRaw)
+	requirements.NoError(err)
+	requirements.Contains(fetched.BodyHTML, imageURL)
+	requirements.Empty(fetched.Attachments)
+	refs, err := fixture.store.MessageAttachmentRefsContext(t.Context(), draft.CurrentMessageID)
+	requirements.NoError(err)
+	requirements.Empty(refs)
+}
+
 func TestDraftForwardHTTPPublishesManagedDraft(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -158,6 +203,16 @@ func TestDraftForwardHTTPPublishesManagedDraft(t *testing.T) {
 		Role: role, RoleSource: roleSource, SourcePartKey: parsedParent.Attachments[0].PartKey,
 		State: attachmentpolicy.StateStored,
 	}))
+	remoteKey := "remote-image:" + hash
+	requirements.NoError(fixture.store.UpsertRemoteImageAttachment(t.Context(), fixture.parentID, store.AttachmentWrite{
+		Filename: "cached-image.png", MIMEType: "image/png", StoragePath: filepath.ToSlash(relativePath),
+		ContentHash: hash, Size: int64(len(attachmentContent)), SourceAttachmentID: remoteKey,
+		SourcePartKey: remoteKey, ContentID: remoteKey, MediaType: "image", Role: store.AttachmentRoleInline,
+		RoleSource: store.AttachmentRoleSourceImporterSemantics, State: attachmentpolicy.StateStored,
+	}))
+	parentRefs, err := fixture.store.MessageAttachmentRefsContext(t.Context(), fixture.parentID)
+	requirements.NoError(err)
+	requirements.Len(parentRefs, 2)
 	maintenance, err := newAttachmentMaintenance(fixture.store, attachmentDir, slog.New(slog.DiscardHandler), true)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = maintenance.close() })
@@ -223,6 +278,10 @@ func TestDraftForwardHTTPPublishesManagedDraft(t *testing.T) {
 	assertions.Equal([]string{"hidden@example.test"}, message.Bcc)
 	assertions.Len(message.Attachments, 1)
 	assertions.Equal(hash, message.Attachments[0].ContentHash)
+	draftRefs, err := fixture.store.MessageAttachmentRefsContext(t.Context(), result.MessageID)
+	requirements.NoError(err)
+	requirements.Len(draftRefs, 1)
+	assertions.Empty(draftRefs[0].SourceAttachmentID)
 	storedRaw, err := fixture.store.GetMessageRaw(result.MessageID)
 	requirements.NoError(err)
 	assertions.Contains(string(storedRaw), "X-Msgvault-Forward: 1")
