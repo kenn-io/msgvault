@@ -109,6 +109,36 @@
   let archiveReturnFocus: HTMLElement | undefined;
   let archiveReturnSelection = $state<string | null>(null);
   let fileCount = $state<number | null>(null);
+  const FILE_SORTS: Array<FileSearchSort & { label: string }> = [
+    { field: 'occurred_at', direction: 'desc', label: 'Newest first' },
+    { field: 'occurred_at', direction: 'asc', label: 'Oldest first' },
+    { field: 'filename', direction: 'asc', label: 'Filename A–Z' },
+    { field: 'filename', direction: 'desc', label: 'Filename Z–A' },
+    { field: 'size', direction: 'desc', label: 'Largest first' },
+    { field: 'size', direction: 'asc', label: 'Smallest first' },
+  ];
+  function fileSortValue(sort: FileSearchSort | undefined): string {
+    return sort ? `${sort.field}:${sort.direction}` : 'occurred_at:desc';
+  }
+  const FILE_SORT_OPTIONS = FILE_SORTS.map((sort) => ({ value: fileSortValue(sort), label: sort.label }));
+  function commitFileSort(value: string): void {
+    const match = FILE_SORTS.find((sort) => fileSortValue(sort) === value);
+    if (!match) return;
+    commitNavigation({
+      fileSort: { field: match.field, direction: match.direction },
+      activeRow: null,
+      scrollAnchor: null,
+    });
+  }
+  const filesCountLabel = $derived.by(() => {
+    if (exploreState.current.groupingChain.length > 0) {
+      const groups = loader.loading ? undefined : loader.result?.totalCount;
+      if (groups === undefined) return 'Counting…';
+      return `${groups.toLocaleString()} ${groups === 1 ? 'group' : 'groups'}`;
+    }
+    if (fileCount === null) return 'Counting…';
+    return `${fileCount.toLocaleString()} ${fileCount === 1 ? 'file' : 'files'}`;
+  });
   let archiveWasOpen = false;
   const archiveMeetingID = $derived(parseArchiveMeetingSelection(exploreState.current.selectedRow));
   const archiveNavigationFingerprint = $derived(canonicalFingerprint(exploreState.current));
@@ -878,14 +908,16 @@
         ? 'button[aria-label="Filters"]'
         : kind === 'grouping'
           ? '[data-group-picker] button'
-          : 'button[aria-label="Sort: newest first"]';
+          : '[data-sort-menu] button';
     const control = document.querySelector<HTMLButtonElement>(selector);
     control?.focus();
     control?.click();
   }
   function fixedSortNotice(): void {
-    sortNotice = 'Everything remains newest first; reverse order is not supported by the canonical entry API.';
-    document.querySelector<HTMLButtonElement>('button[aria-label="Sort: newest first"]')?.focus();
+    sortNotice = exploreState.current.workspace === 'files'
+      ? 'Use the Sort menu to change the order.'
+      : 'Everything remains newest first; reverse order is not supported by the canonical entry API.';
+    document.querySelector<HTMLButtonElement>('[data-sort-menu] button')?.focus();
   }
   function navigateReader(delta: number): void {
     if (!exploreState.current.selectedRow || loader.rows.length === 0) return;
@@ -1351,20 +1383,19 @@
         />
       {:else if exploreState.current.workspace === 'files'}
         <main class="files-shell" aria-label="Files">
-          <PageHeader title="Files">
-            {#snippet actions()}
-              {#if fileCount !== null && exploreState.current.groupingChain.length === 0}
-                <span class="files-count" aria-live="polite">{fileCount.toLocaleString()} files</span>
-              {/if}
-            {/snippet}
-          </PageHeader>
+          <PageHeader title="Files" />
           <ContextBar
             {client}
             query={exploreState.current.query}
             searchMode={exploreState.current.searchMode}
             filters={exploreState.current.filters}
             groupingChain={exploreState.current.groupingChain}
-            totalCount={exploreState.current.groupingChain.length > 0 ? loader.result?.totalCount : undefined}
+            countLabel={filesCountLabel}
+            sort={{
+              options: FILE_SORT_OPTIONS,
+              value: fileSortValue(exploreState.current.fileSort),
+              onchange: commitFileSort,
+            }}
             presentation="files"
             onPresentationChange={(presentation) => {
               if (presentation === 'files') return;
@@ -1390,6 +1421,14 @@
             onFiltersChange={(filters) =>
               commitNavigation({
                 filters,
+                activeRow: null,
+                selectedRow: null,
+                scrollAnchor: null,
+              })}
+            onRemoveQuery={() => commitSearch('', exploreState.current.searchMode)}
+            onRemoveFilter={(index) =>
+              commitNavigation({
+                filters: exploreState.current.filters.filter((_, position) => position !== index),
                 activeRow: null,
                 selectedRow: null,
                 scrollAnchor: null,
@@ -1482,6 +1521,7 @@
           meetingSelection={apiSelection}
           exportSelection={() => void exportSelection()}
           {commitNavigation}
+          {commitSearch}
           {commitWorkspace}
           {commitGrouping}
           {fixedSortNotice}
@@ -1614,11 +1654,6 @@
     flex-direction: column;
     gap: var(--space-4);
     padding: var(--space-5) var(--page-gutter) var(--space-4);
-  }
-
-  .files-count {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
   }
 
 </style>

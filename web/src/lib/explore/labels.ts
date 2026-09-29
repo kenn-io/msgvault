@@ -1,5 +1,6 @@
 import { groupingDimensionLabel, isGroupingDimension } from '../grouping/catalog';
 import type {
+  ExploreColumn,
   ExploreFilterDimension,
   ExploreSearchMode,
   ExploreURLState,
@@ -17,6 +18,17 @@ const PRESENTATIONS: Record<ExploreURLState['presentation'], string> = {
   timeline: 'Timeline',
   files: 'Files'
 };
+
+// Canonical column order: the table renders visible columns in this order.
+export const EXPLORE_COLUMNS: ReadonlyArray<{ id: ExploreColumn; label: string }> = [
+  { id: 'kind', label: 'Kind' },
+  { id: 'people', label: 'People / source' },
+  { id: 'title', label: 'Subject / title' },
+  { id: 'excerpt', label: 'Excerpt' },
+  { id: 'time', label: 'Time' },
+  { id: 'attachments', label: 'Attachments' },
+  { id: 'size', label: 'Size' }
+];
 
 // Where the grouping label reads wrongly as a filter chip (plural, or a different word), name it here.
 const FILTER_DIMENSIONS: Partial<Record<string, string>> = {

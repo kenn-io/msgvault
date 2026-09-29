@@ -12,10 +12,10 @@
     EntryRow,
     AllMatchingExploreSelection,
     ExploreCacheUnavailable,
-    ExploreColumn,
     ExploreFileFact,
     ExploreGroupDimension,
     ExploreGroupRow,
+    ExploreSearchMode,
     ExploreURLState,
     ExploreWorkspace,
   } from '../../explore/models';
@@ -26,6 +26,7 @@
   import { groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, createAllMatchingSelection, predicateFingerprint } from '../../explore/selection';
   import type { ExploreSelectionState, ExploreState } from '../../explore/state.svelte';
+  import ColumnsMenu from '../explore/ColumnsMenu.svelte';
   import ContextBar from '../explore/ContextBar.svelte';
   import EverythingTable from '../explore/EverythingTable.svelte';
   import FilesPresentation from '../explore/FilesPresentation.svelte';
@@ -58,6 +59,7 @@
     meetingSelection: GeneratedExploreSelection | undefined;
     exportSelection: () => void;
     commitNavigation: (patch: Partial<ExploreURLState>) => void;
+    commitSearch: (query: string, mode: ExploreSearchMode) => void;
     commitWorkspace: (workspace: ExploreWorkspace) => void;
     commitGrouping: (dimension: ExploreGroupDimension) => void;
     fixedSortNotice: () => void;
@@ -87,6 +89,7 @@
     meetingSelection,
     exportSelection,
     commitNavigation,
+    commitSearch,
     commitWorkspace,
     commitGrouping,
     fixedSortNotice,
@@ -102,6 +105,18 @@
   }: Props = $props();
 
   const api = createExploreAPI(untrack(() => client));
+
+  const countLabel = $derived.by(() => {
+    const result = loader.result;
+    if (result?.candidatePoolSaturated) {
+      const shown = loader.rows.length;
+      return `${shown.toLocaleString()} ${shown === 1 ? 'result' : 'results'} shown`;
+    }
+    if (loader.loading || result?.totalCount === undefined) return 'Counting…';
+    const count = result.totalCount;
+    const [one, many] = exploreState.current.groupingChain.length > 0 ? ['group', 'groups'] : ['item', 'items'];
+    return `${count.toLocaleString()} ${count === 1 ? one : many}`;
+  });
 
   function storedPreviewPosition(): 'below' | 'right' {
     try {
@@ -576,48 +591,7 @@
 </script>
 
 <main class="everything-workspace" aria-label="Everything">
-  <PageHeader title="Everything">
-    {#snippet actions()}
-      {#if canPreviewRight}
-        <div class="preview-position">
-          <span>Preview position</span>
-          <SegmentedControl
-            ariaLabel="Preview position"
-            options={[{ value: 'below', label: 'Below' }, { value: 'right', label: 'Right' }]}
-            value={previewPosition}
-            onchange={setPreviewPosition}
-          />
-        </div>
-      {/if}
-      <p class="result-count" aria-live="polite" data-mono>
-        {#if loader.result?.candidatePoolSaturated}
-          {loader.rows.length.toLocaleString()} {loader.rows.length === 1 ? 'result' : 'results'} shown
-        {:else if loader.result?.totalCount !== undefined}
-          {loader.result.totalCount.toLocaleString()} items
-        {:else}
-          Modality-neutral archive
-        {/if}
-      </p>
-    {/snippet}
-  </PageHeader>
-
-  {#if loader.result?.candidatePoolSaturated}
-    <div class="search-limit" role="status">
-      <p>
-        <span class="search-limit__title">More results may match.</span>
-        Narrow with from:alice@example.com, after:2025-01-01, or label:important.
-      </p>
-      <Button label="Refine search" size="sm" surface="soft" onclick={() => searchInput?.focus()} />
-    </div>
-  {/if}
-
-  {#if session.coverage}
-    <SearchCoverage
-      requestedMode={exploreState.current.searchMode}
-      coverage={session.coverage}
-      onaction={handleCoverageAction}
-    />
-  {/if}
+  <PageHeader title="Everything" />
 
   <ContextBar
     {client}
@@ -625,7 +599,13 @@
     searchMode={exploreState.current.searchMode}
     filters={exploreState.current.filters}
     groupingChain={exploreState.current.groupingChain}
-    totalCount={loader.result?.totalCount}
+    {countLabel}
+    sort={{
+      options: [{ value: 'newest', label: 'Newest first' }],
+      value: 'newest',
+      note: 'Other orders aren’t available yet',
+      onchange: fixedSortNotice,
+    }}
     presentation={exploreState.current.presentation}
     onPresentationChange={(presentation) =>
       commitNavigation({
@@ -649,9 +629,51 @@
         selectedRow: null,
         scrollAnchor: null,
       })}
-    onSort={fixedSortNotice}
-  />
+    onRemoveQuery={() => commitSearch('', exploreState.current.searchMode)}
+    onRemoveFilter={(index) =>
+      commitNavigation({
+        filters: exploreState.current.filters.filter((_, position) => position !== index),
+        activeRow: null,
+        selectedRow: null,
+        scrollAnchor: null,
+      })}
+  >
+    {#snippet extra()}
+      {#if exploreState.current.presentation === 'table' && exploreState.current.groupingChain.length === 0}
+        <ColumnsMenu
+          columns={exploreState.current.columns}
+          onchange={(columns) => exploreState.replaceTransient({ columns })}
+        />
+      {/if}
+      {#if canPreviewRight}
+        <SegmentedControl
+          ariaLabel="Preview position"
+          options={[{ value: 'below', label: 'Below' }, { value: 'right', label: 'Right' }]}
+          value={previewPosition}
+          onchange={setPreviewPosition}
+        />
+      {/if}
+    {/snippet}
+  </ContextBar>
   <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
+
+  {#if loader.result?.candidatePoolSaturated}
+    <div class="search-limit" role="status">
+      <p>
+        <span class="search-limit__title">More results may match.</span>
+        Narrow with from:alice@example.com, after:2025-01-01, or label:important.
+      </p>
+      <Button label="Refine search" size="sm" surface="soft" onclick={() => searchInput?.focus()} />
+    </div>
+  {/if}
+
+  {#if session.coverage}
+    <SearchCoverage
+      requestedMode={exploreState.current.searchMode}
+      coverage={session.coverage}
+      onaction={handleCoverageAction}
+    />
+  {/if}
 
   {#if loader.result?.searchDeletionScope === 'active'}
     <p class="scope-note" role="status">Semantic search covers active messages only.</p>
@@ -777,7 +799,6 @@
                 error={loader.error}
                 pageError={loader.pageError}
                 onOpen={openRow}
-                onColumnsChange={(columns: ExploreColumn[]) => exploreState.replaceTransient({ columns })}
                 onScrollAnchor={(key, offset) => exploreState.replaceTransient({ scrollAnchor: { key, offset } })}
                 onLoadMore={loader.loadMore}
                 onLoadThroughEnd={loader.loadThroughEnd}
@@ -828,21 +849,6 @@
   }
 
   .meeting-overview { max-height: 42vh; overflow: auto; flex: none; border: 1px solid var(--border-muted); }
-
-  .preview-position {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-
-  .result-count {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-variant-numeric: tabular-nums;
-  }
 
   .scope-note {
     margin: 0;

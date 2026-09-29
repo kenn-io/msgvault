@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Checkbox, EmptyState, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type {
@@ -8,6 +8,7 @@
     ExploreColumn,
     ExploreScrollAnchor
   } from '../../explore/models';
+  import { EXPLORE_COLUMNS } from '../../explore/labels';
   import { DEFAULT_EXPLORE_COLUMNS, isEmailMessageType } from '../../explore/models';
   import type { ExploreSelectionState } from '../../explore/state.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
@@ -32,7 +33,6 @@
     scrollAnchor?: ExploreScrollAnchor | null;
     restoring?: boolean;
     onOpen?: (row: EntryRow) => void;
-    onColumnsChange?: (columns: ExploreColumn[]) => void;
     onScrollAnchor?: (key: string, offset: number) => void;
     onLoadMore?: () => Promise<unknown>;
     onLoadThroughEnd?: () => Promise<void>;
@@ -59,7 +59,6 @@
     scrollAnchor = null,
     restoring = false,
     onOpen = undefined,
-    onColumnsChange = undefined,
     onScrollAnchor = undefined,
     onLoadMore = undefined,
     onLoadThroughEnd = undefined,
@@ -71,22 +70,13 @@
   const geometry = new RowGeometry();
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
-  const ALL_COLUMNS: Array<{ id: ExploreColumn; label: string }> = [
-    { id: 'kind', label: 'Kind' },
-    { id: 'people', label: 'People / source' },
-    { id: 'title', label: 'Subject / title' },
-    { id: 'excerpt', label: 'Excerpt' },
-    { id: 'time', label: 'Time' },
-    { id: 'attachments', label: 'Attachments' },
-    { id: 'size', label: 'Size' }
-  ];
 
   let gridElement = $state<HTMLDivElement>();
   let headerElement = $state<HTMLDivElement>();
   let scrollTop = $state(0);
   let viewport = $state(360);
   let activeKey = $state<string | null>(untrack(() => focusedKey ?? rows[0]?.key ?? null));
-  let visibleColumns = $state<ExploreColumn[]>(untrack(() => [...providedColumns]));
+  const visibleColumns = $derived(providedColumns);
   let restoredAnchor = '';
   let previousRowCount = untrack(() => rows.length);
   let suppressedScrollTop: number | undefined;
@@ -113,10 +103,6 @@
     requestAnimationFrame(() => applyDensityRebase(
       element, nextHeight, expectedScrollHeight, rebased, preservedKey
     ));
-  });
-
-  $effect(() => {
-    visibleColumns = [...providedColumns];
   });
 
   $effect(() => {
@@ -409,34 +395,9 @@
     }
     if (!restoring && hasMore && !loadingMore && slice.end >= rows.length - OVERSCAN) void onLoadMore?.();
   }
-
-  function toggleColumn(column: ExploreColumn): void {
-    const next = visibleColumns.includes(column)
-      ? visibleColumns.filter((item) => item !== column)
-      : ALL_COLUMNS.map(({ id }) => id).filter(
-          (id) => visibleColumns.includes(id) || id === column
-        );
-    visibleColumns = next.length > 0 ? next : ['title'];
-    onColumnsChange?.([...visibleColumns]);
-  }
 </script>
 
 <section class="everything-table" aria-label="Everything table">
-  <div class="table-tools">
-    <details>
-      <summary>Columns</summary>
-      <div class="column-picker kit-popover-card">
-        {#each ALL_COLUMNS as column (column.id)}
-          <Checkbox
-            checked={visibleColumns.includes(column.id)}
-            label={column.label === 'Size' ? 'Size' : column.label}
-            onchange={() => toggleColumn(column.id)}
-          />
-        {/each}
-      </div>
-    </details>
-  </div>
-
   <div
     class="table-grid"
     bind:this={gridElement}
@@ -458,7 +419,7 @@
           class={`header-cell header-cell--${column}`}
           aria-label={column === 'attachments' ? 'Attachments' : undefined}
         >
-          {column === 'attachments' ? '⌕' : ALL_COLUMNS.find((entry) => entry.id === column)?.label}
+          {column === 'attachments' ? '⌕' : EXPLORE_COLUMNS.find((entry) => entry.id === column)?.label}
         </span>
       {/each}
     </div>
@@ -615,44 +576,6 @@
     border-radius: var(--radius-md);
     background: var(--bg-surface);
     box-shadow: var(--shadow-sm);
-  }
-
-  .table-tools {
-    display: flex;
-    min-height: 30px;
-    align-items: center;
-    justify-content: flex-end;
-    padding: 0 var(--space-4);
-    border-bottom: 1px solid var(--border-muted);
-    background: var(--bg-subtle);
-  }
-
-  details {
-    position: relative;
-    color: var(--text-secondary);
-    font-size: var(--font-size-xs);
-  }
-
-  summary {
-    cursor: pointer;
-  }
-
-  .column-picker {
-    position: absolute;
-    z-index: var(--z-popover);
-    top: 24px;
-    right: 0;
-    display: grid;
-    width: 176px;
-    gap: var(--space-3);
-    padding: var(--space-4);
-  }
-
-  .column-picker :global(.kit-checkbox) {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    white-space: nowrap;
   }
 
   .table-header,

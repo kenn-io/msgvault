@@ -1,9 +1,11 @@
 <script lang="ts">
   import XIcon from '@lucide/svelte/icons/x';
   import { Button, IconButton, SelectDropdown } from '@kenn-io/kit-ui';
+  import type { Snippet } from 'svelte';
 
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter, ExploreGroupDimension, ExploreSearchMode, ExploreURLState } from '../../explore/models';
+  import { filterDimensionLabel, searchModeLabel } from '../../explore/labels';
   import {
     groupingDimensionLabel,
     groupingOptions,
@@ -11,19 +13,29 @@
   } from '../../grouping/catalog';
   import IdentityFilter from './IdentityFilter.svelte';
 
+  interface SortConfig {
+    options: { value: string; label: string }[];
+    value: string;
+    note?: string;
+    onchange?: (value: string) => void;
+  }
+
   let {
     client,
     query,
     searchMode,
     filters,
     groupingChain,
-    totalCount = undefined,
+    countLabel,
+    sort,
     presentation = 'table',
+    extra = undefined,
     onAddGroup,
     onRemoveGroup,
     onClearFilters,
     onFiltersChange,
-    onSort = undefined,
+    onRemoveQuery = undefined,
+    onRemoveFilter = undefined,
     onPresentationChange = undefined
   }: {
     client: APIClient;
@@ -31,13 +43,16 @@
     searchMode: ExploreSearchMode;
     filters: ExploreFilter[];
     groupingChain: ExploreGroupDimension[];
-    totalCount?: number;
+    countLabel: string;
+    sort: SortConfig;
     presentation?: ExploreURLState['presentation'];
+    extra?: Snippet;
     onAddGroup: (dimension: ExploreGroupDimension) => void;
     onRemoveGroup: (index: number) => void;
     onClearFilters: () => void;
     onFiltersChange: (filters: ExploreFilter[]) => void;
-    onSort?: () => void;
+    onRemoveQuery?: () => void;
+    onRemoveFilter?: (index: number) => void;
     onPresentationChange?: (presentation: ExploreURLState['presentation']) => void;
   } = $props();
 
@@ -49,6 +64,10 @@
     { value: 'timeline', label: 'Timeline' },
     { value: 'files', label: 'Files' }
   ];
+  const sortOptions = $derived(
+    sort.note ? [...sort.options, { value: '__note', label: sort.note, disabled: true }] : sort.options
+  );
+  const hasChips = $derived(Boolean(query) || filters.length > 0 || groupingChain.length > 0);
 
   function selectGrouping(value: string): void {
     if (isGroupingDimension(value)) onAddGroup(value);
@@ -80,38 +99,49 @@
         onchange={selectGrouping}
       />
     </div>
-    <Button
-      size="sm"
-      surface="outline"
-      label="Newest first"
-      ariaLabel="Sort: newest first"
-      onclick={() => onSort?.()}
-    />
+    <div data-sort-menu>
+      <SelectDropdown
+        title="Sort"
+        value={sort.value}
+        options={sortOptions}
+        onchange={(value) => sort.onchange?.(value)}
+      />
+    </div>
+    {@render extra?.()}
+    <span class="context-count" aria-live="polite" data-mono>{countLabel}</span>
   </div>
 
-  <div class="context-crumbs">
-    {#if query}
-      <span class="crumb crumb--query">{searchMode}: “{query}”</span>
-    {/if}
-    {#each filters as filter (`${filter.dimension}:${filter.values.join('\u0000')}`)}
-      <span class="crumb crumb--filter">Filter {filter.dimension}: {filter.values.join(', ')}</span>
-    {/each}
-    {#each groupingChain as dimension, index (`${dimension}:${index}`)}
-      <span class="crumb crumb--group">
-        Group {groupingDimensionLabel(dimension)}
-        <IconButton
-          size="sm"
-          ariaLabel={`Remove ${groupingDimensionLabel(dimension)} grouping`}
-          onclick={() => onRemoveGroup(index)}
-        ><XIcon size="12" aria-hidden="true" /></IconButton>
-      </span>
-    {/each}
-    {#if !query && filters.length === 0 && groupingChain.length === 0}
-      <span class="empty-context">All archive entries</span>
-    {/if}
-  </div>
-
-  <span class="context-count" data-mono>{totalCount === undefined ? 'Count pending' : `${totalCount.toLocaleString()} results`}</span>
+  {#if hasChips}
+    <div class="context-chips">
+      {#if query}
+        <span class="chip">
+          {searchModeLabel(searchMode)}: “{query}”
+          <IconButton size="sm" ariaLabel="Remove search" onclick={() => onRemoveQuery?.()}
+          ><XIcon size="12" aria-hidden="true" /></IconButton>
+        </span>
+      {/if}
+      {#each filters as filter, index (`${filter.dimension}:${filter.values.join('\u0000')}`)}
+        <span class="chip chip--filter">
+          {filterDimensionLabel(filter.dimension)}: {filter.values.join(', ')}
+          <IconButton
+            size="sm"
+            ariaLabel={`Remove ${filterDimensionLabel(filter.dimension)} filter`}
+            onclick={() => onRemoveFilter?.(index)}
+          ><XIcon size="12" aria-hidden="true" /></IconButton>
+        </span>
+      {/each}
+      {#each groupingChain as dimension, index (`${dimension}:${index}`)}
+        <span class="chip chip--group">
+          Grouped by {groupingDimensionLabel(dimension)}
+          <IconButton
+            size="sm"
+            ariaLabel={`Remove ${groupingDimensionLabel(dimension)} grouping`}
+            onclick={() => onRemoveGroup(index)}
+          ><XIcon size="12" aria-hidden="true" /></IconButton>
+        </span>
+      {/each}
+    </div>
+  {/if}
 
   {#if filtersOpen}
     <div class="filter-panel">
@@ -133,9 +163,8 @@
     position: relative;
     display: flex;
     min-width: 0;
-    min-height: 34px;
-    align-items: center;
-    gap: var(--space-4);
+    flex-direction: column;
+    gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
@@ -144,53 +173,44 @@
   }
 
   .context-controls,
-  .context-crumbs {
+  .context-chips {
     display: flex;
     min-width: 0;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
-  }
-
-  .context-crumbs {
-    flex: 1;
-    overflow-x: auto;
   }
 
   .group-picker {
     width: 172px;
   }
 
-  .crumb {
+  .chip {
     display: inline-flex;
-    flex: none;
+    max-width: 100%;
     align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-1) var(--space-2);
+    gap: var(--space-1);
+    padding: 0 0 0 var(--space-2);
     border-radius: var(--radius-sm);
     background: var(--bg-inset);
     color: var(--text-secondary);
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 
-  .crumb--filter {
+  .chip--filter {
     border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-muted));
     background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface));
   }
 
-  .crumb--group {
+  .chip--group {
     border: 1px solid color-mix(in srgb, var(--accent-teal) 35%, var(--border-muted));
     background: color-mix(in srgb, var(--accent-teal) 8%, var(--bg-surface));
   }
 
-  .empty-context,
-  .context-count,
-  .filter-panel {
-    color: var(--text-muted);
-  }
-
   .context-count {
-    flex: none;
-    font-variant-numeric: tabular-nums;
+    margin-left: auto;
+    color: var(--text-muted);
+    white-space: nowrap;
   }
 
   .filter-panel {
@@ -207,6 +227,7 @@
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
+    color: var(--text-muted);
     box-shadow: var(--shadow-md);
   }
 

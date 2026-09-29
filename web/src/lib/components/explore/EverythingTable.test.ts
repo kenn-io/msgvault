@@ -143,20 +143,18 @@ describe('EverythingTable', () => {
     expect(rendered.textContent).not.toContain(', Charlie');
   });
 
-  it('exposes size through the column picker without showing it initially', async () => {
-    const onColumnsChange = vi.fn();
-    render(EverythingTable, {
+  it('renders exactly the columns it is given', async () => {
+    const rendered = render(EverythingTable, {
       rows: [row(1, { attachment_size: 2048 })],
-      selection: new ExploreSelectionState(),
-      onColumnsChange
+      selection: new ExploreSelectionState()
     });
 
     expect(screen.queryByRole('columnheader', { name: 'Size' })).toBeNull();
-    await fireEvent.click(screen.getByText('Columns'));
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Size' }));
+    expect(screen.queryByText('Columns')).toBeNull();
+    await rendered.rerender({ columns: ['title', 'size'] });
 
-    expect(screen.getByRole('columnheader', { name: 'Size' })).toBeDefined();
-    expect(onColumnsChange).toHaveBeenCalled();
+    expect(screen.getAllByRole('columnheader').map((header) => header.textContent?.trim()))
+      .toEqual(['Subject / title', 'Size']);
   });
 
   it('keeps keyboard focus on the grid while j/k move a stable keyed cursor', async () => {

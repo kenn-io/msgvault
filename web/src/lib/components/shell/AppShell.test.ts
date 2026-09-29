@@ -424,7 +424,7 @@ describe('AppShell', () => {
       expect(banners).toHaveLength(1);
     });
 
-    it('shows the file count beside the Files title without a second heading', async () => {
+    it('shows the file count once, in the toolbar, without a second heading', async () => {
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
         if (path.endsWith('/files/search')) {
@@ -433,8 +433,22 @@ describe('AppShell', () => {
         return Response.json(exploreResponse());
       });
       render(AppShell, { client: createAPIClient(fetchFn), state: shellState('files'), enabled: false });
-      expect(await screen.findByText('7 files')).toBeDefined();
+      const bar = screen.getByRole('region', { name: 'Active analytical context' });
+      expect(await within(bar).findByText('7 files')).toBeDefined();
+      expect(screen.getAllByText('7 files')).toHaveLength(1);
       expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    });
+
+    it('changes the Files order from the Sort menu and points r at it', async () => {
+      const state = shellState('files');
+      render(AppShell, { client: exploreClient(), state, enabled: false });
+      await chooseSelectOption(screen.getByRole('combobox', { name: 'Sort: Newest first' }), 'Largest first');
+      expect(state.current.fileSort).toEqual({ field: 'size', direction: 'desc' });
+      expect(screen.getByRole('combobox', { name: 'Sort: Largest first' })).toBeDefined();
+
+      await fireEvent.keyDown(window, { key: 'r' });
+      expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
+        .toBe('Use the Sort menu to change the order.');
     });
 
     it('opens Everything with the query when searching from another workspace', async () => {
@@ -2183,6 +2197,33 @@ describe('AppShell', () => {
   });
 
 
+  it('opens the Sort menu with s, announces the fixed order with r, and shows the count once', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({
+      rows: [entry(1), entry(2)], total_count: 2
+    })));
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    await screen.findByText('Synthetic subject 1');
+
+    await fireEvent.keyDown(window, { key: 's' });
+    const sort = screen.getByRole('combobox', { name: /^Sort: Newest first/ });
+    expect(document.activeElement).toBe(sort);
+    const listbox = screen.getByRole('listbox');
+    const note = within(listbox).getByRole('option', { name: 'Other orders aren’t available yet' });
+    expect((note as HTMLButtonElement).disabled).toBe(true);
+
+    await fireEvent.keyDown(window, { key: 'r' });
+    expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
+      .toContain('reverse order is not supported');
+
+    const main = screen.getByRole('main', { name: 'Everything' });
+    expect(within(main).getAllByText('2 items')).toHaveLength(1);
+    rendered.unmount();
+    state.destroy();
+  });
+
+
   it('announces the End cap outside Everything in the files-shell grouped workspace', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     let groupPostCount = 0;
@@ -2277,7 +2318,7 @@ describe('AppShell', () => {
     await fireEvent.keyDown(window, { key: 'g' });
     await fireEvent.click(screen.getByRole('option', { name: 'Year' }));
     expect(state.current.groupingChain).toEqual(['participant', 'year']);
-    expect(screen.getByLabelText('Active analytical context').textContent).toContain('Group People');
+    expect(screen.getByLabelText('Active analytical context').textContent).toContain('Grouped by People');
     expect(screen.getByLabelText('Active analytical context').textContent).toContain('Year');
 
     await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
