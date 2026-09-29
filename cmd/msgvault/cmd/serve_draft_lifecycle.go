@@ -391,7 +391,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	draft, err := a.store.GetIMAPDraftContext(ctx, intent.DraftID)
 	if err != nil {
 		if req.Grant != nil {
-			return draftReplyNotPermitted(err)
+			return a.runDelegatedGmailDraftLifecycle(ctx, intent, req.Grant, err, emit)
 		}
 		if errors.Is(err, store.ErrIMAPDraftNotFound) {
 			gmailDraft, gmailErr := a.store.GetGmailDraftContext(ctx, intent.DraftID)
@@ -406,6 +406,10 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 			}
 		}
 		return draftReplyError("draft_not_found", err)
+	}
+	if req.Grant != nil && intent.Operation != api.CLIRunDraftRecoverCommand {
+		// Delegated IMAP draft access is limited to draft-recover.
+		return draftReplyNotPermitted(errors.New("delegated IMAP draft get, edit, and delete are owner-only"))
 	}
 	if intent.Operation == api.CLIRunDraftGetCommand {
 		provider := &draftLifecycleObservation{State: "not_checked", Code: "not_checked"}

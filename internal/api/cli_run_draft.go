@@ -1,6 +1,10 @@
 package api
 
-import "go.kenn.io/msgvault/internal/agentgrant"
+import (
+	"slices"
+
+	"go.kenn.io/msgvault/internal/agentgrant"
+)
 
 // CLIRunDraftReplyCommand names the daemon CLI command that the daemon runs
 // in-process instead of spawning a subprocess.
@@ -31,17 +35,37 @@ func IsCLIRunDraftCreate(args []string) bool {
 	return IsCLIRunDraftReply(args) || IsCLIRunDraftCompose(args)
 }
 
+// CLIRunDraftLifecyclePermissions lists the grant permissions that authorize a
+// delegated draft-get, draft-edit, or draft-delete. Any listed permission
+// admits the command; the daemon then requires it on the draft's source.
+func CLIRunDraftLifecyclePermissions(command string) []agentgrant.Permission {
+	switch command {
+	case CLIRunDraftGetCommand:
+		return []agentgrant.Permission{
+			agentgrant.PermissionDraftCreate,
+			agentgrant.PermissionDraftEdit,
+			agentgrant.PermissionDraftDelete,
+		}
+	case CLIRunDraftEditCommand:
+		return []agentgrant.Permission{agentgrant.PermissionDraftEdit}
+	case CLIRunDraftDeleteCommand:
+		return []agentgrant.Permission{agentgrant.PermissionDraftDelete}
+	default:
+		return nil
+	}
+}
+
 func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {
-	if grant == nil {
+	if grant == nil || len(args) == 0 {
 		return false
 	}
 	if IsCLIRunDraftCreate(args) {
 		return grant.HasPermission(agentgrant.PermissionDraftCreate)
 	}
-	if len(args) > 0 && args[0] == CLIRunDraftRecoverCommand {
+	if args[0] == CLIRunDraftRecoverCommand {
 		return grant.HasPermission(agentgrant.PermissionDraftEdit) || grant.HasPermission(agentgrant.PermissionDraftDelete)
 	}
-	return false
+	return slices.ContainsFunc(CLIRunDraftLifecyclePermissions(args[0]), grant.HasPermission)
 }
 
 // IsCLIRunDraftLifecycle reports whether args invoke one of the managed draft

@@ -52,6 +52,37 @@ func TestDelegatedDraftRecoverRequiresActionPermission(t *testing.T) {
 	))
 }
 
+func TestDelegatedDraftLifecycleRequiresActionPermission(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		command     string
+		permissions []agentgrant.Permission
+		want        bool
+	}{
+		{name: "get with create", command: CLIRunDraftGetCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, want: true},
+		{name: "get with edit", command: CLIRunDraftGetCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit}, want: true},
+		{name: "get with delete", command: CLIRunDraftGetCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftDelete}, want: true},
+		{name: "get with no permission", command: CLIRunDraftGetCommand},
+		{name: "edit with edit", command: CLIRunDraftEditCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit}, want: true},
+		{name: "edit with create", command: CLIRunDraftEditCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}},
+		{name: "edit with delete", command: CLIRunDraftEditCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftDelete}},
+		{name: "delete with delete", command: CLIRunDraftDeleteCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftDelete}, want: true},
+		{name: "delete with create", command: CLIRunDraftDeleteCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}},
+		{name: "delete with edit", command: CLIRunDraftDeleteCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit}},
+		{name: "send-as", command: CLIRunDraftSendAsCommand, permissions: []agentgrant.Permission{agentgrant.PermissionDraftDelete}},
+		{name: "nil grant", command: CLIRunDraftGetCommand, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var grant *agentgrant.Grant
+			if tc.name != "nil grant" {
+				grant = &agentgrant.Grant{Permissions: tc.permissions}
+			}
+			assert.Equal(t, tc.want, delegatedCLIRunAdmitted([]string{tc.command}, grant))
+		})
+	}
+}
+
 // newDelegatedTestServer creates a server with agentGrants enabled and issues a grant.
 func newDelegatedTestServer(t *testing.T) (*Server, string) {
 	t.Helper()
@@ -248,7 +279,6 @@ func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) { //
 		name string
 		args []string
 	}{
-		{name: "get", args: []string{"draft-get", "draft-abc"}},
 		{name: "edit", args: []string{"draft-edit", "draft-abc", "--revision=1", "--body=updated"}},
 		{name: "delete", args: []string{"draft-delete", "draft-abc", "--revision=1"}},
 		{name: "send-as", args: []string{"draft-send-as", "alice@example.com"}},
@@ -285,6 +315,50 @@ func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) { //
 			assertions.False(gate.HasRequestWaiters())
 		})
 	}
+}
+
+func TestDelegatedDraftGetSkipsBusyOperationGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	gate := NewSerialOperationGate()
+	srv, secret := newDelegatedTestServerWithGate(t, gate)
+	serverStore, ok := srv.store.(*stubSourceStore)
+	requirements.True(ok, "delegated fixture must expose its stub store")
+	runnerCalls := 0
+	serverStore.runFunc = func(_ context.Context, _ CLIRunRequest, _ func(CLIRunEvent) error) error {
+		runnerCalls++
+		return nil
+	}
+
+	oldWaitLimit := operationGateWaitLimit
+	operationGateWaitLimit = 20 * time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = oldWaitLimit })
+
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "owner draft operation")
+	requirements.True(ok, "hold operation gate for delegated request")
+	defer release()
+
+	body, err := json.Marshal(CLIRunRequest{Args: []string{"draft-get", "draft-abc"}})
+	requirements.NoError(err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		srv.Router().ServeHTTP(response, req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		requirements.FailNow("delegated draft-get must not wait on a held operation gate")
+	}
+
+	assertions.Equal(http.StatusOK, response.Code)
+	assertions.Equal(1, runnerCalls)
+	assertions.False(gate.HasRequestWaiters())
 }
 
 func TestOwnerDraftLifecycleCommandsUseOperationGateAndRunner(t *testing.T) {
