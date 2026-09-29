@@ -1200,6 +1200,11 @@ func TestBeeperMediaProcessDescriptorRefresh(t *testing.T) {
 			}
 
 			// The saved request can finish before the replacement is retained.
+			// Set the order explicitly; equal clock timestamps favor retention.
+			_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries
+				SET next_action_at = ? WHERE destination_key = ? AND processing_key = ?`),
+				time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), destination, beforeMapping.ProcessingKey)
+			require.NoError(err)
 			operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
 			require.NoError(err)
 			require.True(ok)
