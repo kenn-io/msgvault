@@ -50,4 +50,28 @@ describe('DisplayMenu', () => {
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Use daemon theme' }));
     expect(onUseDaemonTheme).toHaveBeenCalledOnce();
   });
+
+  it('closes on Escape without passing the key to window shortcuts', async () => {
+    render(DisplayMenu, {
+      density: 'compact',
+      themeOverridden: false,
+      onDensityChange: vi.fn(),
+      onUseDaemonTheme: vi.fn(),
+    });
+    const trigger = screen.getByRole('button', { name: 'Display' });
+    await fireEvent.click(trigger);
+    const windowKeydown = vi.fn();
+    window.addEventListener('keydown', windowKeydown);
+    try {
+      await fireEvent.keyDown(screen.getByRole('menuitemradio', { name: 'Comfortable' }), {
+        key: 'Escape',
+      });
+    } finally {
+      window.removeEventListener('keydown', windowKeydown);
+    }
+
+    expect(screen.queryByRole('menu', { name: 'Display' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(windowKeydown).not.toHaveBeenCalled();
+  });
 });
