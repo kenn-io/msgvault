@@ -80,10 +80,6 @@
 
 <svelte:window onpopstate={() => pathname = window.location.pathname} />
 
-<svelte:head>
-  <title>Everything · msgvault</title>
-</svelte:head>
-
 {#if oauthCallback}
   <main class="boot"><p>Return to CardDAV settings to finish connecting. You can close this window.</p></main>
 {:else if session.authMode === 'required'}

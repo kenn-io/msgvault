@@ -2,13 +2,10 @@
   import { getCLIMessageRaw as generatedGetCLIMessageRaw } from '../../api/generated/api/api';
   import { preflightExploreSelection as generatedPreflightExploreSelection } from '../../api/generated/exploration/exploration';
   import {
-    Button,
     CommandPalette,
     getThemeMode,
-    SelectDropdown,
-    StatusDot,
+    IconButton,
     ThemeToggle,
-    TopBar,
     appShortcuts,
     initShortcuts,
     type PaletteCommand,
@@ -75,6 +72,12 @@
   import { ArchiveMeetingNavigation, archiveMeetingSelection, parseArchiveMeetingSelection } from '../../meetings/archive-navigation.svelte';
   import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory } from '../../meetings/archive-selection';
   import EverythingWorkspace from './EverythingWorkspace.svelte';
+  import AppSidebar from './AppSidebar.svelte';
+  import DisplayMenu from './DisplayMenu.svelte';
+  import NavigationDrawer from './NavigationDrawer.svelte';
+  import SearchBar from '../search/SearchBar.svelte';
+  import { SIDEBAR_COLLAPSED_KEY, workspaceLabel } from './navigation';
+  import Menu from '@lucide/svelte/icons/menu';
   import { EverythingSessionState } from './EverythingSessionState.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
   interface Props {
@@ -328,23 +331,46 @@
   let operationAnnouncement = $state({ key: 0, message: '' });
   type APIExploreSelection = GeneratedExploreSelection;
   type ExplorePreflight = GeneratedExplorePreflightResponse;
-  const tabs = [
-    { id: 'relationships', label: 'Relationships' },
-    { id: 'directory', label: 'Directory' },
-    { id: 'directory_review', label: 'Reviews' },
-    { id: 'everything', label: 'Everything' },
-    { id: 'files', label: 'Files' },
-    { id: 'saved_views', label: 'Saved Views' },
-    { id: 'sources', label: 'Sources' },
-    { id: 'operations', label: 'Operations' },
-    { id: 'deletions', label: 'Deletions' },
-    { id: 'settings', label: 'Settings' },
-  ];
-  const densityOptions = [
-    { value: 'daemon', label: 'Density: Auto' },
-    { value: 'compact', label: 'Density: Compact' },
-    { value: 'comfortable', label: 'Density: Comfortable' },
-  ];
+  const NARROW_WIDTH = 900;
+  let viewportWidth = $state(typeof window === 'undefined' ? 1280 : window.innerWidth);
+  const narrow = $derived(viewportWidth < NARROW_WIDTH);
+  let drawerOpen = $state(false);
+  let drawerOpenerHost = $state<HTMLElement>();
+  let sidebarCollapsed = $state(readSidebarCollapsed());
+
+  function readSidebarCollapsed(): boolean {
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  function toggleSidebar(): void {
+    sidebarCollapsed = !sidebarCollapsed;
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
+    } catch {
+      // Storage may be disabled; the rail still toggles for this page view.
+    }
+  }
+
+  // trapFocus restores focus while the page column may still be inert, so
+  // focus the opener again once the drawer has unmounted.
+  async function closeDrawer(): Promise<void> {
+    drawerOpen = false;
+    await tick();
+    drawerOpenerHost?.querySelector('button')?.focus();
+  }
+
+  $effect(() => {
+    if (!narrow) drawerOpen = false;
+  });
+
+  $effect(() => {
+    document.title = `${workspaceLabel(exploreState.current.workspace)} · msgvault`;
+  });
+
   $effect(() => {
     if (exploreState.current.workspace !== 'settings') cardDAVSettingsRequest = undefined;
   });
@@ -414,6 +440,23 @@
   // behind an {#if}, so it is destroyed and recreated on every switch away
   // from and back to 'everything'.
   const everythingSession = new EverythingSessionState();
+  const archiveStatus = $derived(
+    loader.loading
+      ? { tone: 'working' as const, label: 'Searching', text: 'Searching' }
+      : loader.error || loader.unavailable
+        ? { tone: 'unclean' as const, label: 'Archive needs attention', text: 'Attention' }
+        : { tone: 'idle' as const, label: 'Local archive ready', text: 'Local archive' }
+  );
+  function submitGlobalSearch(query: string, mode: ExploreSearchMode): void {
+    const workspace = exploreState.current.workspace;
+    if (workspace === 'everything' || workspace === 'files') {
+      commitSearch(query, mode);
+      focusGrid();
+      return;
+    }
+    beforeCommit();
+    exploreState.commitSearchIn('everything', query, mode);
+  }
   let paletteOpen = $state(false);
   let keyboardHelpOpen = $state(false);
   let keyboardHelpScopeCleanup: (() => void) | undefined;
@@ -952,9 +995,9 @@
   function runPalette(command: PaletteCommand): void {
     commandRegistry.find(({ id }) => id === command.id)?.run();
   }
-  function applyTemporaryDensity(value: string): void {
+  function applyTemporaryDensity(value: 'daemon' | DensityPreference): void {
     if (value === 'daemon') appearance.clearTemporary('density');
-    else appearance.setTemporary({ density: value as DensityPreference });
+    else appearance.setTemporary({ density: value });
   }
   function openRow(row: EntryRow): void {
     // Single-click selects AND opens; re-opening the already-open row must
@@ -1122,302 +1165,318 @@
   });
 </script>
 
-<div class="app-shell">
+<svelte:window bind:innerWidth={viewportWidth} />
+
+<div class="app-shell" class:app-shell--narrow={narrow}>
   <span class="kit-sr-only" role="status" aria-label="Operation status" aria-live="polite">
     {#key operationAnnouncement.key}<span>{operationAnnouncement.message}</span>{/key}
   </span>
-  <TopBar
-    {tabs}
-    active={exploreState.current.workspace}
-    centerTabs
-    onchange={(workspace) => openWorkspaceTab(workspace as ExploreWorkspace)}
-  >
-    {#snippet left()}
-      <div class="brand" aria-label="msgvault home"><span aria-hidden="true">◇</span> msgvault</div>
-    {/snippet}
-    {#snippet right()}
-      <div class="appearance-controls" aria-label="Appearance controls">
+  {#if !narrow}
+    <AppSidebar
+      active={exploreState.current.workspace}
+      collapsed={sidebarCollapsed}
+      showCollapseToggle
+      status={archiveStatus}
+      onNavigate={openWorkspaceTab}
+      onToggleCollapsed={toggleSidebar}
+      onOpenShortcuts={() => { keyboardHelpOpen = true; }}
+    />
+  {/if}
+  <div class="app-column" inert={drawerOpen}>
+    <header class="app-top-bar">
+      {#if narrow}
+        <span class="app-top-bar__menu" bind:this={drawerOpenerHost}>
+          <IconButton ariaLabel="Open navigation" onclick={() => { drawerOpen = true; }}>
+            <Menu size={18} aria-hidden="true" />
+          </IconButton>
+        </span>
+      {/if}
+      <SearchBar
+        query={exploreState.current.query}
+        mode={exploreState.current.searchMode}
+        live={exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files'}
+        compact={narrow}
+        bind:inputEl={searchInput}
+        onDraft={(query, mode) => exploreState.replaceSearchDraft(query, mode)}
+        onSubmit={submitGlobalSearch}
+      />
+      <div class="app-top-bar__end" aria-label="Appearance controls">
         <ThemeToggle />
-        {#if appearance.temporary.theme !== undefined}
-          <Button
-            size="sm"
-            surface="soft"
-            label="Use daemon theme"
-            onclick={() => appearance.clearTemporary('theme')}
-          />
-        {/if}
-        <SelectDropdown
-          title="Temporary density"
-          value={appearance.temporary.density ?? 'daemon'}
-          options={densityOptions}
-          align="end"
-          onchange={applyTemporaryDensity}
+        <DisplayMenu
+          density={appearance.temporary.density ?? 'daemon'}
+          themeOverridden={appearance.temporary.theme !== undefined}
+          onDensityChange={applyTemporaryDensity}
+          onUseDaemonTheme={() => appearance.clearTemporary('theme')}
         />
       </div>
-      <span class="archive-state" class:archive-state--error={Boolean(loader.error || loader.unavailable)}>
-        <span aria-hidden="true">
-          <StatusDot
-            status={loader.loading ? 'working' : loader.error || loader.unavailable ? 'unclean' : 'idle'}
-            label={loader.loading
-              ? 'Searching'
-              : loader.error || loader.unavailable
-                ? 'Archive needs attention'
-                : 'Local archive ready'}
-          />
-        </span>
-        <span class="archive-state__label">
-          <span class="archive-state__reserve" aria-hidden="true">Local archive</span>
-          <span>{loader.loading ? 'Searching' : loader.error || loader.unavailable ? 'Attention' : 'Local archive'}</span>
-        </span>
-      </span>
-    {/snippet}
-  </TopBar>
-
-  {#if exploreState.current.workspace === 'settings'}
-    {#if settings}{@render settings(cardDAVSettingsRequest, consumeCardDAVSettingsRequest, settingsNavigationTarget)}{/if}
-  {:else if exploreState.current.workspace === 'saved_views'}
-    <SavedViewsWorkspace
-      {client}
-      currentState={exploreState.current}
-      selection={selection.snapshot()}
-      onOpen={(state) => {
-        void openSavedView(state);
-      }}
-    />
-  {:else if exploreState.current.workspace === 'sources'}
-    <SourcesWorkspace {client} onOpenOperations={() => openOperations('messages', 'source_sync')} />
-  {:else if exploreState.current.workspace === 'operations'}
-    <OperationsWorkspace
-      {client}
-      controller={operationsController}
-      state={{
-        operationLane: exploreState.current.operationLane,
-        operationKind: exploreState.current.operationKind,
-        operationState: exploreState.current.operationState,
-        operationStartedFrom: exploreState.current.operationStartedFrom,
-        operationStartedBefore: exploreState.current.operationStartedBefore,
-        operationRunID: exploreState.current.operationRunID,
-        operationStatus: exploreState.current.operationStatus
-      }}
-      onStateChange={(patch) => commitNavigation(patch)}
-      onNavigate={openOperationAuthority}
-      onConfigure={openOperationConfiguration}
-      onAnnounce={announceOperation}
-    />
-  {:else if exploreState.current.workspace === 'deletions'}
-    <DeletionsWorkspace
-      {client}
-      selection={apiSelection}
-      reviewOnMount={pendingDeletionReview === apiSelection?.mode}
-      onReviewStarted={() => {
-        pendingDeletionReview = undefined;
-      }}
-    />
-  {:else if exploreState.current.workspace === 'relationships'}
-    <RelationshipsWorkspace
-      {client}
-      controller={relationshipsController}
-      facet={exploreState.current.relationshipFacet}
-      target={exploreState.current.relationshipTarget}
-      showAll={exploreState.current.relationshipShowAll}
-      filesOpen={exploreState.current.relationshipFiles}
-      predicate={exploreState.predicate()}
-      personFilePresentation={exploreState.current.personFilePresentation}
-      personFileDirections={exploreState.current.personFileDirections}
-      onFacetChange={(relationshipFacet) => commitNavigation({ relationshipFacet })}
-      onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget, relationshipFiles: false })}
-      onShowAllChange={(relationshipShowAll) => commitNavigation({ relationshipShowAll })}
-      onFilesToggle={(relationshipFiles) => commitNavigation({ relationshipFiles })}
-      onPersonFilePresentationChange={(personFilePresentation) =>
-        commitNavigation({
-          personFilePresentation,
-          activeRow: null,
-          selectedRow: null,
-          scrollAnchor: null,
-        })}
-      onPersonFileDirectionsChange={(personFileDirections) =>
-        commitNavigation({
-          personFileDirections,
-          activeRow: null,
-          selectedRow: null,
-          scrollAnchor: null,
-        })}
-      onOpenEverything={() => commitWorkspace('everything')}
-      onOpenDirectory={openDirectoryFromRelationship}
-      onOpenDirectoryPerson={openDirectoryPerson}
-      onAnnounce={announceOperation}
-      onOpenFileItem={openFileItem}
-      onOpenFileConversation={openFileConversation}
-      onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
-    />
-  {:else if exploreState.current.workspace === 'directory'}
-    <DirectoryWorkspace
-      {client}
-      controller={directoryController}
-      onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
-      promotionParticipantID={directoryPromotionParticipantID}
-      state={{
-        directoryQuery: exploreState.current.directoryQuery,
-        directoryContactState: exploreState.current.directoryContactState,
-        directoryCategory: exploreState.current.directoryCategory,
-        directoryOrganization: exploreState.current.directoryOrganization,
-        directoryPrimaryChannel: exploreState.current.directoryPrimaryChannel,
-        directoryLastContactAfter: exploreState.current.directoryLastContactAfter,
-        directoryLastContactBefore: exploreState.current.directoryLastContactBefore,
-        directorySort: exploreState.current.directorySort,
-        directoryPersonID: exploreState.current.directoryPersonID,
-      }}
-      onOpenCardDAVConflict={openCardDAVConflict}
-      onOpenCardDAVSettings={openCardDAVSettings}
-      onAnnounce={announceOperation}
-    />
-  {:else if exploreState.current.workspace === 'directory_review'}
-    <DirectoryReviewWorkspace
-      controller={directoryReviewController}
-      relationshipController={relationshipReviewController}
-      factController={factLedgerController}
-      directoryPersonID={exploreState.current.directoryPersonID}
-      onOpenDirectory={() => commitWorkspace('directory')}
-      onOpenPerson={openDirectoryPerson}
-      onAnnounce={announceOperation}
-    />
-  {:else if exploreState.current.workspace === 'files'}
-    <div class="files-shell">
-      <ContextBar
-        {client}
-        query={exploreState.current.query}
-        searchMode={exploreState.current.searchMode}
-        filters={exploreState.current.filters}
-        groupingChain={exploreState.current.groupingChain}
-        totalCount={exploreState.current.groupingChain.length > 0 ? loader.result?.totalCount : undefined}
-        presentation="files"
-        onPresentationChange={(presentation) => {
-          if (presentation === 'files') return;
-          commitNavigation({
-            workspace: 'everything',
-            presentation,
-            analysisTarget: null,
-            selectedIdentifier: null,
-            activeRow: null,
-            selectedRow: null,
-            conversationAnchor: null,
-            scrollAnchor: null,
-          });
-        }}
-        onAddGroup={(dimension) => commitGrouping(dimension)}
-        onRemoveGroup={(index) =>
-          commitNavigation({
-            groupingChain: exploreState.current.groupingChain.filter((_, position) => position !== index),
-            activeRow: null,
-            scrollAnchor: null,
-          })}
-        onClearFilters={() => commitNavigation({ filters: [], activeRow: null, scrollAnchor: null })}
-        onFiltersChange={(filters) =>
-          commitNavigation({
-            filters,
-            activeRow: null,
-            selectedRow: null,
-            scrollAnchor: null,
-          })}
-      />
-      <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
-      {#if exploreState.current.groupingChain.length > 0}
-        <GroupTable
-          rows={loader.groupRows}
-          dimension={exploreState.current.groupingChain[0]!}
-          workspaceLabel="Files"
-          loading={loader.loading}
-          loadingMore={loader.loadingMore}
-          hasMore={Boolean(loader.nextCursor)}
-          totalCount={loader.result?.totalCount}
-          generation={loader.resultGeneration}
-          error={loader.error}
-          pageError={loader.pageError}
-          unavailable={loader.unavailable}
-          drillable={groupingByDimension(exploreState.current.groupingChain[0]!).drillable}
-          focusedKey={exploreState.current.activeRow}
-          inspectedKey={readingTargetKey}
-          scrollAnchor={exploreState.current.scrollAnchor}
-          restoring={loader.restoring}
-          onDrill={drillGroup}
-          onInspect={drillGroup}
-          onLoadMore={loader.loadMore}
-          onLoadThroughEnd={loader.loadThroughEnd}
-          onActiveKey={(activeRow) => replaceTransient({ activeRow })}
-          onScrollAnchor={(key, offset) => replaceTransient({ scrollAnchor: { key, offset } })}
-          onRetry={loader.retry}
-        />
-      {:else}
-        <FilesWorkspace
+    </header>
+    <div class="app-main">
+      {#if exploreState.current.workspace === 'settings'}
+        {#if settings}{@render settings(cardDAVSettingsRequest, consumeCardDAVSettingsRequest, settingsNavigationTarget)}{/if}
+      {:else if exploreState.current.workspace === 'saved_views'}
+        <SavedViewsWorkspace
           {client}
-          predicate={{ ...exploreState.predicate(), grouping: undefined }}
-          sort={exploreState.current.fileSort ?? { field: 'occurred_at', direction: 'desc' }}
-          filenameQuery={exploreState.current.fileFilenameQuery}
-          mimeFamilies={exploreState.current.fileMIMEFamilies}
-          activeKey={exploreState.current.activeRow}
-          selectedKey={exploreState.current.selectedRow}
-          restorationEpoch={exploreState.restorationEpoch}
-          onRestorationComplete={(epoch) => {
-            exploreState.acknowledgeRestoration(epoch);
+          currentState={exploreState.current}
+          selection={selection.snapshot()}
+          onOpen={(state) => {
+            void openSavedView(state);
           }}
-          onSortChange={(fileSort: FileSearchSort) =>
+        />
+      {:else if exploreState.current.workspace === 'sources'}
+        <SourcesWorkspace {client} onOpenOperations={() => openOperations('messages', 'source_sync')} />
+      {:else if exploreState.current.workspace === 'operations'}
+        <OperationsWorkspace
+          {client}
+          controller={operationsController}
+          state={{
+            operationLane: exploreState.current.operationLane,
+            operationKind: exploreState.current.operationKind,
+            operationState: exploreState.current.operationState,
+            operationStartedFrom: exploreState.current.operationStartedFrom,
+            operationStartedBefore: exploreState.current.operationStartedBefore,
+            operationRunID: exploreState.current.operationRunID,
+            operationStatus: exploreState.current.operationStatus
+          }}
+          onStateChange={(patch) => commitNavigation(patch)}
+          onNavigate={openOperationAuthority}
+          onConfigure={openOperationConfiguration}
+          onAnnounce={announceOperation}
+        />
+      {:else if exploreState.current.workspace === 'deletions'}
+        <DeletionsWorkspace
+          {client}
+          selection={apiSelection}
+          reviewOnMount={pendingDeletionReview === apiSelection?.mode}
+          onReviewStarted={() => {
+            pendingDeletionReview = undefined;
+          }}
+        />
+      {:else if exploreState.current.workspace === 'relationships'}
+        <RelationshipsWorkspace
+          {client}
+          controller={relationshipsController}
+          facet={exploreState.current.relationshipFacet}
+          target={exploreState.current.relationshipTarget}
+          showAll={exploreState.current.relationshipShowAll}
+          filesOpen={exploreState.current.relationshipFiles}
+          predicate={exploreState.predicate()}
+          personFilePresentation={exploreState.current.personFilePresentation}
+          personFileDirections={exploreState.current.personFileDirections}
+          onFacetChange={(relationshipFacet) => commitNavigation({ relationshipFacet })}
+          onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget, relationshipFiles: false })}
+          onShowAllChange={(relationshipShowAll) => commitNavigation({ relationshipShowAll })}
+          onFilesToggle={(relationshipFiles) => commitNavigation({ relationshipFiles })}
+          onPersonFilePresentationChange={(personFilePresentation) =>
             commitNavigation({
-              fileSort,
-              activeRow: null,
-              scrollAnchor: null,
-            })}
-          onFilenameQueryChange={(fileFilenameQuery) =>
-            debouncedSearchPatch({
-              fileFilenameQuery,
+              personFilePresentation,
               activeRow: null,
               selectedRow: null,
               scrollAnchor: null,
             })}
-          onMIMEFamiliesChange={(fileMIMEFamilies) =>
+          onPersonFileDirectionsChange={(personFileDirections) =>
             commitNavigation({
-              fileMIMEFamilies,
+              personFileDirections,
               activeRow: null,
               selectedRow: null,
               scrollAnchor: null,
             })}
-          onActiveKey={(activeRow) => replaceTransient({ activeRow })}
-          onSelectedKey={(selectedRow) =>
-            selectedRow ? commitNavigation({ selectedRow }) : replaceCommittedNavigation({ selectedRow: null })}
-          onOpenItem={openFileItem}
-          onOpenConversation={openFileConversation}
+          onOpenEverything={() => commitWorkspace('everything')}
+          onOpenDirectory={openDirectoryFromRelationship}
+          onOpenDirectoryPerson={openDirectoryPerson}
+          onAnnounce={announceOperation}
+          onOpenFileItem={openFileItem}
+          onOpenFileConversation={openFileConversation}
+          onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
+        />
+      {:else if exploreState.current.workspace === 'directory'}
+        <DirectoryWorkspace
+          {client}
+          controller={directoryController}
+          onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
+          promotionParticipantID={directoryPromotionParticipantID}
+          state={{
+            directoryQuery: exploreState.current.directoryQuery,
+            directoryContactState: exploreState.current.directoryContactState,
+            directoryCategory: exploreState.current.directoryCategory,
+            directoryOrganization: exploreState.current.directoryOrganization,
+            directoryPrimaryChannel: exploreState.current.directoryPrimaryChannel,
+            directoryLastContactAfter: exploreState.current.directoryLastContactAfter,
+            directoryLastContactBefore: exploreState.current.directoryLastContactBefore,
+            directorySort: exploreState.current.directorySort,
+            directoryPersonID: exploreState.current.directoryPersonID,
+          }}
+          onOpenCardDAVConflict={openCardDAVConflict}
+          onOpenCardDAVSettings={openCardDAVSettings}
+          onAnnounce={announceOperation}
+        />
+      {:else if exploreState.current.workspace === 'directory_review'}
+        <DirectoryReviewWorkspace
+          controller={directoryReviewController}
+          relationshipController={relationshipReviewController}
+          factController={factLedgerController}
+          directoryPersonID={exploreState.current.directoryPersonID}
+          onOpenDirectory={() => commitWorkspace('directory')}
+          onOpenPerson={openDirectoryPerson}
+          onAnnounce={announceOperation}
+        />
+      {:else if exploreState.current.workspace === 'files'}
+        <div class="files-shell">
+          <ContextBar
+            {client}
+            query={exploreState.current.query}
+            searchMode={exploreState.current.searchMode}
+            filters={exploreState.current.filters}
+            groupingChain={exploreState.current.groupingChain}
+            totalCount={exploreState.current.groupingChain.length > 0 ? loader.result?.totalCount : undefined}
+            presentation="files"
+            onPresentationChange={(presentation) => {
+              if (presentation === 'files') return;
+              commitNavigation({
+                workspace: 'everything',
+                presentation,
+                analysisTarget: null,
+                selectedIdentifier: null,
+                activeRow: null,
+                selectedRow: null,
+                conversationAnchor: null,
+                scrollAnchor: null,
+              });
+            }}
+            onAddGroup={(dimension) => commitGrouping(dimension)}
+            onRemoveGroup={(index) =>
+              commitNavigation({
+                groupingChain: exploreState.current.groupingChain.filter((_, position) => position !== index),
+                activeRow: null,
+                scrollAnchor: null,
+              })}
+            onClearFilters={() => commitNavigation({ filters: [], activeRow: null, scrollAnchor: null })}
+            onFiltersChange={(filters) =>
+              commitNavigation({
+                filters,
+                activeRow: null,
+                selectedRow: null,
+                scrollAnchor: null,
+              })}
+          />
+          <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
+          {#if exploreState.current.groupingChain.length > 0}
+            <GroupTable
+              rows={loader.groupRows}
+              dimension={exploreState.current.groupingChain[0]!}
+              workspaceLabel="Files"
+              loading={loader.loading}
+              loadingMore={loader.loadingMore}
+              hasMore={Boolean(loader.nextCursor)}
+              totalCount={loader.result?.totalCount}
+              generation={loader.resultGeneration}
+              error={loader.error}
+              pageError={loader.pageError}
+              unavailable={loader.unavailable}
+              drillable={groupingByDimension(exploreState.current.groupingChain[0]!).drillable}
+              focusedKey={exploreState.current.activeRow}
+              inspectedKey={readingTargetKey}
+              scrollAnchor={exploreState.current.scrollAnchor}
+              restoring={loader.restoring}
+              onDrill={drillGroup}
+              onInspect={drillGroup}
+              onLoadMore={loader.loadMore}
+              onLoadThroughEnd={loader.loadThroughEnd}
+              onActiveKey={(activeRow) => replaceTransient({ activeRow })}
+              onScrollAnchor={(key, offset) => replaceTransient({ scrollAnchor: { key, offset } })}
+              onRetry={loader.retry}
+            />
+          {:else}
+            <FilesWorkspace
+              {client}
+              predicate={{ ...exploreState.predicate(), grouping: undefined }}
+              sort={exploreState.current.fileSort ?? { field: 'occurred_at', direction: 'desc' }}
+              filenameQuery={exploreState.current.fileFilenameQuery}
+              mimeFamilies={exploreState.current.fileMIMEFamilies}
+              activeKey={exploreState.current.activeRow}
+              selectedKey={exploreState.current.selectedRow}
+              restorationEpoch={exploreState.restorationEpoch}
+              onRestorationComplete={(epoch) => {
+                exploreState.acknowledgeRestoration(epoch);
+              }}
+              onSortChange={(fileSort: FileSearchSort) =>
+                commitNavigation({
+                  fileSort,
+                  activeRow: null,
+                  scrollAnchor: null,
+                })}
+              onFilenameQueryChange={(fileFilenameQuery) =>
+                debouncedSearchPatch({
+                  fileFilenameQuery,
+                  activeRow: null,
+                  selectedRow: null,
+                  scrollAnchor: null,
+                })}
+              onMIMEFamiliesChange={(fileMIMEFamilies) =>
+                commitNavigation({
+                  fileMIMEFamilies,
+                  activeRow: null,
+                  selectedRow: null,
+                  scrollAnchor: null,
+                })}
+              onActiveKey={(activeRow) => replaceTransient({ activeRow })}
+              onSelectedKey={(selectedRow) =>
+                selectedRow ? commitNavigation({ selectedRow }) : replaceCommittedNavigation({ selectedRow: null })}
+              onOpenItem={openFileItem}
+              onOpenConversation={openFileConversation}
+            />
+          {/if}
+        </div>
+      {:else}
+        <EverythingWorkspace
+          {client}
+          {exploreState}
+          {loader}
+          session={everythingSession}
+          {selection}
+          {enabled}
+          {readingTargetKey}
+          {conversationAnchorId}
+          {sortNotice}
+          {searchInput}
+          {selectionPreflight}
+          meetingSelection={apiSelection}
+          exportSelection={() => void exportSelection()}
+          {commitNavigation}
+          {commitWorkspace}
+          {commitGrouping}
+          {fixedSortNotice}
+          {focusGrid}
+          {openRow}
+          {drillGroup}
+          {openFileItem}
+          {openContextualFile}
+          closeReadingPane={() => void closeReadingPane()}
+          {openRelationship}
+          {changeConversationAnchor}
+          onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
         />
       {/if}
     </div>
-  {:else}
-    <EverythingWorkspace
-      {client}
-      {exploreState}
-      {loader}
-      session={everythingSession}
-      {selection}
-      {enabled}
-      {readingTargetKey}
-      {conversationAnchorId}
-      {sortNotice}
-      bind:searchInput
-      {selectionPreflight}
-      meetingSelection={apiSelection}
-      exportSelection={() => void exportSelection()}
-      {commitNavigation}
-      {commitWorkspace}
-      {commitGrouping}
-      {commitSearch}
-      {fixedSortNotice}
-      {focusGrid}
-      {openRow}
-      {drillGroup}
-      {openFileItem}
-      {openContextualFile}
-      closeReadingPane={() => void closeReadingPane()}
-      {openRelationship}
-      {changeConversationAnchor}
-      onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
-    />
+  </div>
+  {#if narrow && drawerOpen}
+    <NavigationDrawer onclose={() => void closeDrawer()}>
+      <AppSidebar
+        active={exploreState.current.workspace}
+        collapsed={false}
+        showCollapseToggle={false}
+        status={archiveStatus}
+        onNavigate={(id) => {
+          openWorkspaceTab(id);
+          void closeDrawer();
+        }}
+        onToggleCollapsed={() => undefined}
+        onOpenShortcuts={() => {
+          void closeDrawer().then(() => {
+            keyboardHelpOpen = true;
+          });
+        }}
+      />
+    </NavigationDrawer>
   {/if}
 </div>
 
@@ -1468,82 +1527,51 @@
 
   .app-shell {
     display: flex;
-    min-width: 0;
-    min-height: 100vh;
     height: 100vh;
-    flex-direction: column;
+    min-height: 100vh;
     overflow: hidden;
     background: var(--bg-primary);
     color: var(--text-primary);
   }
 
-  .brand {
-    display: inline-flex;
+  .app-column {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+
+  .app-top-bar {
+    display: flex;
+    min-height: var(--header-height);
+    align-items: center;
+    gap: var(--space-3);
+    padding: 0 var(--space-5);
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-default);
+  }
+
+  .app-shell--narrow .app-top-bar {
+    padding: 0 var(--space-3);
+  }
+
+  .app-top-bar__menu {
+    display: contents;
+  }
+
+  .app-top-bar__end {
+    display: flex;
     align-items: center;
     gap: var(--space-2);
-    color: var(--text-primary);
-    font-family: var(--font-sans);
-    font-size: var(--font-size-md);
-    font-weight: 650;
-    letter-spacing: 0.01em;
+    margin-left: auto;
   }
 
-  .brand span {
-    color: var(--artifact-ink);
-    font-size: var(--font-size-sm);
-  }
-
-  /* Machined app-bar boundary: darker hairline plus a faint sheen line. */
-  .app-shell :global(.kit-top-bar) {
-    box-shadow: 0 1px 0 var(--hairline-sheen);
-  }
-
-  /* Integrated app-bar tabs: quiet text buttons with a soft active pill
-   * instead of kit-ui's detached inset track. */
-  .app-shell :global(.kit-top-bar__tabs) {
-    gap: var(--space-1);
-    padding: 0;
-    background: transparent;
-    border-radius: 0;
-  }
-
-  .app-shell :global(.kit-top-bar__tab) {
-    padding: 5px 12px;
-    border-radius: var(--radius-md);
-    font-size: var(--font-size-md);
-  }
-
-  .app-shell :global(.kit-top-bar__tab.active) {
-    background: var(--bg-subtle);
-    box-shadow: none;
-  }
-
-  .archive-state {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    margin-left: var(--space-3);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    white-space: nowrap;
-  }
-
-  .appearance-controls {
-    display: inline-flex;
-    gap: var(--space-2);
-  }
-
-  /* Keep the longest status label's width while searches are in flight. */
-  .archive-state__label {
-    display: inline-grid;
-  }
-
-  .archive-state__label > span {
-    grid-area: 1 / 1;
-  }
-
-  .archive-state__reserve {
-    visibility: hidden;
+  .app-main {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .files-shell {

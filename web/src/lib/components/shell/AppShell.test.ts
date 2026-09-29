@@ -287,10 +287,12 @@ describe('AppShell', () => {
     });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Change theme (current: Dark)' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Use daemon theme' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Use daemon theme' }));
 
     expect(screen.getByRole('button', { name: 'Change theme (current: Dark)' })).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Use daemon theme' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+    expect(screen.queryByRole('menuitem', { name: 'Use daemon theme' })).toBeNull();
     expect(sessionStorage.getItem('msgvault.appearance.override')).toBeNull();
 
     rendered.unmount();
@@ -313,7 +315,7 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
 
     for (const [tab, label, workspace] of [
-      ['Saved Views', 'Saved Views', 'saved_views'],
+      ['Saved views', 'Saved Views', 'saved_views'],
       ['Sources', 'Sources', 'sources'],
       ['Operations', 'Operations', 'operations'],
       ['Deletions', 'Deletions', 'deletions']
@@ -328,22 +330,111 @@ describe('AppShell', () => {
   });
 
 
-  it('presents the primary navigation tabs with Relationships first and People/Domains retired', async () => {
+  it('groups workspaces in the sidebar with Relationships first', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);
     const rendered = render(AppShell, {
-      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(exploreResponse()))),
-      state, enabled: false
+      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(exploreResponse()))), state, enabled: false
     });
-
     const nav = screen.getByRole('navigation', { name: 'Primary' });
     expect(within(nav).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual([
-      'Relationships', 'Directory', 'Reviews', 'Everything', 'Files', 'Saved Views', 'Sources', 'Operations', 'Deletions', 'Settings'
+      'Relationships', 'Directory', 'Reviews', 'Everything', 'Files', 'Saved views', 'Sources', 'Operations', 'Deletions', 'Settings'
     ]);
+    expect(within(nav).getByRole('button', { name: 'Everything' }).getAttribute('aria-current')).toBe('page');
     expect(screen.queryByRole('button', { name: 'People' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Domains' })).toBeNull();
-
     rendered.unmount();
+    state.destroy();
+  });
+
+  it('names the browser tab after the workspace', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'sources' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+    expect(await screen.findByRole('main', { name: 'Sources' })).toBeDefined();
+    await waitFor(() => expect(document.title).toBe('Sources · msgvault'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Directory' }));
+    await waitFor(() => expect(document.title).toBe('Directory · msgvault'));
+    state.destroy();
+  });
+
+  it('opens Everything with the query when searching from another workspace', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'sources' }))}`);
+    const state = new ExploreState(window);
+    const length = window.history.length;
+    render(AppShell, { client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(exploreResponse()))), state, enabled: false });
+
+    const search = screen.getByRole('searchbox', { name: 'Search everything' });
+    await fireEvent.input(search, { target: { value: 'pipeline' } });
+    expect(state.current.workspace).toBe('sources');
+    await fireEvent.submit(screen.getByRole('search', { name: 'Search Everything' }));
+
+    expect(state.current.workspace).toBe('everything');
+    expect(state.current.query).toBe('pipeline');
+    expect(window.history.length).toBe(length + 1);
+    state.destroy();
+  });
+
+  it('updates Everything results as the global search is typed', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    render(AppShell, { client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(exploreResponse()))), state, enabled: false });
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search everything' }), { target: { value: 'gas' } });
+    expect(state.current.query).toBe('gas');
+    state.destroy();
+  });
+
+  it('remembers the collapsed sidebar across reloads', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    const first = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    await fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+    first.unmount();
+    const second = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeTruthy();
+    second.unmount();
+    localStorage.clear();
+    state.destroy();
+  });
+
+  it('opens a modal navigation menu on narrow screens and closes it on Escape', async () => {
+    window.innerWidth = 480;
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+
+    expect(screen.queryByRole('navigation', { name: 'Primary' })).toBeNull();
+    const opener = screen.getByRole('button', { name: 'Open navigation' });
+    await fireEvent.click(opener);
+    const current = await screen.findByRole('button', { name: 'Everything' });
+    await waitFor(() => expect(document.activeElement).toBe(current));
+
+    await fireEvent.keyDown(current, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('navigation', { name: 'Primary' })).toBeNull());
+    expect(document.activeElement).toBe(opener);
+    window.innerWidth = 1024;
+    state.destroy();
+  });
+
+  it('closes the narrow navigation menu after choosing a workspace and returns focus to its opener', async () => {
+    window.innerWidth = 480;
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+
+    const opener = screen.getByRole('button', { name: 'Open navigation' });
+    await fireEvent.click(opener);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+
+    expect(state.current.workspace).toBe('settings');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull());
+    expect(document.activeElement).toBe(opener);
+    window.innerWidth = 1024;
     state.destroy();
   });
 

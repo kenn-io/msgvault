@@ -20,7 +20,12 @@
 
 <!-- kit-ui-check-ignore: kit DetailDrawer is a right-side sheet with its own Escape handling; this is a left slide-out that owns the navigation-drawer shortcut scope. -->
 <div class="drawer">
-  <button type="button" class="drawer__scrim" aria-label="Close navigation" onclick={onclose}
+  <button
+    type="button"
+    class="drawer__scrim"
+    aria-label="Close navigation"
+    tabindex="-1"
+    onclick={onclose}
   ></button>
   <div
     class="drawer__panel"
@@ -41,7 +46,7 @@
     position: fixed;
     /* kit-ui-check-ignore: same as the markup above. */
     inset: 0;
-    z-index: 50;
+    z-index: var(--z-overlay);
   }
 
   .drawer__scrim {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Card, KbdBadge } from '@kenn-io/kit-ui';
+  import { Button, Card } from '@kenn-io/kit-ui';
 
   import type { APIClient } from '../../api/client';
   import type {
@@ -62,8 +62,6 @@
 <Card padding="none" selected={selection.mode === 'all_matching' || selection.count > 0}>
   <div class="selection-bar">
     <span role="status" aria-live="polite">{message}</span>
-    <span class="shortcut"><KbdBadge keys={['Space']} /> toggle</span>
-    <span class="shortcut"><KbdBadge keys={['A']} /> visible</span>
     {#if allMatching && selection.mode === 'explicit' && selection.count > 0}
       <Button
         size="sm"
@@ -119,22 +117,9 @@
     font-weight: 600;
   }
 
-  .shortcut {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    white-space: nowrap;
-  }
-
   .action-reason {
     max-width: 18rem;
     color: var(--text-muted);
     overflow-wrap: anywhere;
-  }
-
-  @media (max-width: 760px) {
-    .shortcut {
-      display: none;
-    }
   }
 </style>

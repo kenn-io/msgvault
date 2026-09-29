@@ -59,6 +59,18 @@ describe('EverythingWorkspace', () => {
     };
   }
 
+  it('leaves searching to the global search box', () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    render(AppShell, { client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(exploreResponse()))), state, enabled: false });
+    const main = screen.getByRole('main', { name: 'Everything' });
+    expect(within(main).queryByRole('search')).toBeNull();
+    expect(screen.getAllByRole('search')).toHaveLength(1);
+    expect(screen.queryByRole('contentinfo', { name: 'Keyboard shortcuts' })).toBeNull();
+    expect(within(main).queryByText('Keyboard shortcuts')).toBeNull();
+    state.destroy();
+  });
+
   it('explains how to refine a semantic search when the candidate pool is capped', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
