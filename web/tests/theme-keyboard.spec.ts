@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { selectKitOption, selectKitTopBarTab, setKitTheme } from './kit-ui';
+import { selectWorkspace, setKitTheme, setTemporaryDensity } from './kit-ui';
 
 const row = {
   key: 'message:1',
@@ -66,12 +66,12 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('compact workspace links preserve browser navigation and reopen the selected tab', async ({ page }) => {
-  await selectKitTopBarTab(page, 'Files');
+  await selectWorkspace(page, 'Files');
   await expect(page.getByText('synthetic.pdf', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\?workspace=files&mode=full_text$/);
   const filesURL = page.url();
 
-  await selectKitTopBarTab(page, 'Everything');
+  await selectWorkspace(page, 'Everything');
   await expect(page.getByText('Synthetic archive subject', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\?workspace=everything&mode=full_text$/);
   await page.goBack();
@@ -94,7 +94,7 @@ test('query failures explain recovery in Everything and Files', async ({ page })
   await expect(page.getByRole('alert')).toContainText('analytics.query_memory_limit');
   await expect(page.getByRole('alert')).toContainText('restart the server');
 
-  await selectKitTopBarTab(page, 'Files');
+  await selectWorkspace(page, 'Files');
   await expect(page.getByRole('alert')).toContainText('analytics.query_temp_limit');
   await expect(page.getByText('0 files', { exact: true })).toHaveCount(0);
   await page.unroute('**/api/v1/files/search', failFiles);
@@ -189,10 +189,10 @@ for (const theme of ['light', 'dark'] as const) {
     expect(requiredRoles.filter(([, value]) => !value)).toEqual([]);
     await expectRenderedContrast(page.locator('[data-row-key="message:1"] strong'), 4.5);
 
-    const infoButton = page.getByRole('button', { name: 'Search', exact: true });
-    await expect(infoButton).toHaveClass(/kit-button--solid/);
-    await expect(infoButton).toHaveClass(/kit-button--info/);
-    await expectRenderedContrast(infoButton, 4.5);
+    const searchButton = page.getByRole('button', { name: 'Search', exact: true });
+    await expect(searchButton).toHaveClass(/kit-button--soft/);
+    await expect(searchButton).toHaveClass(/kit-button--neutral/);
+    await expectRenderedContrast(searchButton, 4.5);
 
     const grid = page.getByRole('grid', { name: 'Everything results' });
     await grid.focus();
@@ -209,19 +209,19 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(activeOption).toHaveClass(/highlighted/);
     await page.keyboard.press('Escape');
 
-    await selectKitTopBarTab(page, 'Saved Views');
+    await selectWorkspace(page, 'Saved views');
     const workflowButton = page.getByRole('button', { name: 'Save', exact: true });
     await expect(workflowButton).toHaveClass(/kit-button--solid/);
     await expect(workflowButton).toHaveClass(/kit-button--workflow/);
     await expectRenderedContrast(workflowButton, 4.5);
 
-    await selectKitTopBarTab(page, 'Files');
+    await selectWorkspace(page, 'Files');
     const filesGrid = page.getByRole('grid', { name: 'Files results' });
     await filesGrid.focus();
     await page.keyboard.press('ArrowDown');
     await expect(filesGrid).toHaveCSS('box-shadow', /0px 0px 0px 2px inset/);
 
-    await selectKitTopBarTab(page, 'Settings');
+    await selectWorkspace(page, 'Settings');
     const settings = page.getByRole('main', { name: 'Settings' });
     await expect(settings).toBeVisible();
     await expectRenderedContrast(settings.locator('.row__hint').first(), 4.5);
@@ -234,7 +234,7 @@ for (const theme of ['light', 'dark'] as const) {
   for (const density of ['compact', 'comfortable'] as const) {
     test(`${theme} ${density} analytical shell geometry`, async ({ page }) => {
       await setKitTheme(page, theme);
-      await selectKitOption(page, 'Temporary density', `Density: ${density === 'compact' ? 'Compact' : 'Comfortable'}`);
+      await setTemporaryDensity(page, density === 'compact' ? 'Compact' : 'Comfortable');
       await expect(page.locator('html')).toHaveAttribute('data-density', density);
       await expect(page.locator('[data-row-key="message:1"]')).toHaveCSS(
         'height', density === 'compact' ? '36px' : '46px'

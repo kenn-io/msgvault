@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { captureScreenshot, type ScreenshotOptions } from './docs-fixture-screenshot';
-import { selectKitOption, setKitTheme } from './kit-ui';
+import { setKitTheme, setTemporaryDensity } from './kit-ui';
 
 const outputDir = process.env.MSGVAULT_DOCS_SCREENSHOT_OUTPUT ?? '';
 const platform = process.env.MSGVAULT_DOCS_SCREENSHOT_PLATFORM ?? 'darwin';
@@ -58,7 +58,7 @@ test.describe('documentation fixture capture', () => {
       for (const density of ['comfortable', 'compact'] as const) {
         await page.goto(exploreURL('everything'));
         await setKitTheme(page, theme);
-        await selectKitOption(page, 'Temporary density', `Density: ${density === 'compact' ? 'Compact' : 'Comfortable'}`);
+        await setTemporaryDensity(page, density === 'compact' ? 'Compact' : 'Comfortable');
         await expect(page.locator('html')).toHaveAttribute('data-density', density);
         const grid = await waitForOverview(page);
         const firstRow = grid.locator('[data-row-key]').first();
@@ -74,7 +74,7 @@ test.describe('documentation fixture capture', () => {
       ] as const) {
         await page.goto(exploreURL('relationships'));
         await setKitTheme(page, theme);
-        await selectKitOption(page, 'Temporary density', `Density: ${density === 'compact' ? 'Compact' : 'Comfortable'}`);
+        await setTemporaryDensity(page, density === 'compact' ? 'Compact' : 'Comfortable');
         const hub = page.getByRole('main', { name: 'Relationships' });
         await expect(hub).toBeVisible();
         await page.getByRole('button', { name: 'All senders' }).click();

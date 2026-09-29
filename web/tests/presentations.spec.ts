@@ -114,7 +114,7 @@ test('Show as preserves analytical meaning, keyboard focus, history, and Saved V
   await expect(files).toBeVisible();
   await expect(files).toBeFocused();
 
-  await page.getByRole('button', { name: 'Saved Views', exact: true }).click();
+  await page.getByRole('button', { name: 'Saved views', exact: true }).click();
   await page.getByLabel('Name').fill('Pasta files');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   expect((savedViews[0]!.canonical_state as Record<string, unknown>).presentation).toBe('files');

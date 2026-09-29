@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { expectKitTheme, selectKitOption, selectKitTopBarTab, setKitTheme } from '../kit-ui';
+import { expectKitTheme, selectWorkspace, setKitTheme, setTemporaryDensity } from '../kit-ui';
 import { assertCardDAVForbiddenMarkersAbsent, installCardDAV } from './fixtures/carddav';
 import { installDirectoryReviewArchive, installMixedArchive } from './fixtures/mixed-archive';
 import { installOperations, OPERATION_REFERENCES } from './fixtures/operations';
@@ -63,7 +63,7 @@ for (const theme of ['light', 'dark'] as const) {
       });
       await page.goto('/');
       await setKitTheme(page, theme);
-      await selectKitOption(page, 'Temporary density', `Density: ${density === 'compact' ? 'Compact' : 'Comfortable'}`);
+      await setTemporaryDensity(page, density === 'compact' ? 'Compact' : 'Comfortable');
 
       // The Relationships hub is the default landing workspace; walk its
       // three panes (list, timeline, reading pane) open one at a time so
@@ -92,7 +92,7 @@ for (const theme of ['light', 'dark'] as const) {
       await assertNoViolations(page, `Relationships reading pane ${theme}/${density}`);
       await page.keyboard.press('Escape');
 
-      await selectKitTopBarTab(page, 'Everything');
+      await selectWorkspace(page, 'Everything');
       const grid = page.getByRole('grid', { name: 'Everything results' });
       await expect(grid.locator('[data-row-key]').first()).toBeVisible();
       await assertNoViolations(page, `Everything ${theme}/${density}`);
@@ -108,8 +108,8 @@ for (const theme of ['light', 'dark'] as const) {
       await assertNoViolations(page, `modal ${theme}/${density}`);
       await keyboardHelp.getByRole('button', { name: 'Close' }).click();
 
-      for (const workspace of ['Directory', 'Files', 'Saved Views', 'Sources', 'Deletions', 'Settings']) {
-        await selectKitTopBarTab(page, workspace);
+      for (const workspace of ['Directory', 'Files', 'Saved views', 'Sources', 'Deletions', 'Settings']) {
+        await selectWorkspace(page, workspace);
         await expect(page.getByRole('main', { name: workspace, exact: true })).toBeVisible();
         await assertNoViolations(page, `${workspace} ${theme}/${density}`);
         if (workspace === 'Files') {

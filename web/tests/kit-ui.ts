@@ -9,16 +9,22 @@ export async function selectKitOption(
   await page.getByRole('option', { name: option, exact: true }).click();
 }
 
-export async function selectKitTopBarTab(page: Page, tab: string): Promise<void> {
-  const navigation = page.getByRole('navigation', { name: 'Primary' });
-  const button = navigation.getByRole('button', { name: tab, exact: true });
-  const collapsed = navigation.getByRole('combobox', { name: /^Primary:/ });
-  await expect(button.or(collapsed)).toBeVisible();
-  if (await button.isVisible()) {
-    await button.click();
-    return;
-  }
-  await selectKitOption(page, 'Primary', tab);
+export async function selectWorkspace(page: Page, label: string): Promise<void> {
+  const opener = page.getByRole('button', { name: 'Open navigation' });
+  if (await opener.isVisible()) await opener.click();
+  await page
+    .getByRole('navigation', { name: 'Primary' })
+    .getByRole('button', { name: label, exact: true })
+    .click();
+}
+
+export async function setTemporaryDensity(
+  page: Page,
+  density: 'Auto' | 'Compact' | 'Comfortable'
+): Promise<void> {
+  await page.getByRole('button', { name: 'Display' }).click();
+  await page.getByRole('menuitemradio', { name: density }).click();
+  await page.keyboard.press('Escape');
 }
 
 export async function setKitTheme(page: Page, theme: 'light' | 'dark'): Promise<void> {

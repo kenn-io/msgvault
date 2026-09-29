@@ -75,7 +75,7 @@ test('50,000 rows keep a bounded keyed DOM and stable grid focus', async ({ page
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
   expect(
     await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent-blue').trim())
-  ).toBe('#2563eb');
+  ).toBe('#0061d5');
   const mutedContrast = await page.evaluate(() => {
     const style = getComputedStyle(document.documentElement);
     const luminance = (color: string) => {

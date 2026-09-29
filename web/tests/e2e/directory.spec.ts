@@ -82,7 +82,7 @@ test('Directory person detail scrolls independently at desktop width', async ({ 
 
   const directory = page.getByRole('main', { name: 'Directory' });
   const list = directory.getByRole('region', { name: 'Directory results' });
-  const toolbar = directory.locator('.directory-toolbar');
+  const toolbar = directory.getByRole('heading', { level: 1, name: 'Directory' });
   const filters = directory.locator('.filters');
   const before = { toolbar: await toolbar.boundingBox(), filters: await filters.boundingBox() };
   const listMetrics = await list.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight, overflow: getComputedStyle(el).overflowY }));
