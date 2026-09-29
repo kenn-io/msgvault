@@ -58,6 +58,7 @@
     selectionPreflight: ExplorePreflight | undefined;
     meetingSelection: GeneratedExploreSelection | undefined;
     exportSelection: () => void;
+    onReviewDeletion: (mode: 'explicit' | 'all_matching') => void;
     commitNavigation: (patch: Partial<ExploreURLState>) => void;
     commitSearch: (query: string, mode: ExploreSearchMode) => void;
     commitWorkspace: (workspace: ExploreWorkspace) => void;
@@ -88,6 +89,7 @@
     selectionPreflight,
     meetingSelection,
     exportSelection,
+    onReviewDeletion,
     commitNavigation,
     commitSearch,
     commitWorkspace,
@@ -747,15 +749,6 @@
               onRetry={loader.retry}
             />
           {:else}
-            <SelectionBar
-              {selection}
-              totalCount={loader.result?.totalCount}
-              allMatching={allMatchingSelection}
-              preflight={selectionPreflight}
-              {client}
-              {meetingSelection}
-              onExport={exportSelection}
-            />
             {#if exploreState.current.presentation === 'timeline'}
               <PersonTimeline
                 rows={loader.rows}
@@ -811,6 +804,16 @@
                 onRetry={loader.retry}
               />
             {/if}
+            <SelectionBar
+              {selection}
+              totalCount={loader.result?.totalCount}
+              allMatching={allMatchingSelection}
+              preflight={selectionPreflight}
+              {client}
+              {meetingSelection}
+              onExport={exportSelection}
+              {onReviewDeletion}
+            />
           {/if}
         </div>
       {/snippet}

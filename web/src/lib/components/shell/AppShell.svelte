@@ -1524,6 +1524,7 @@
           {selectionPreflight}
           meetingSelection={apiSelection}
           exportSelection={() => void exportSelection()}
+          onReviewDeletion={openDeletionReview}
           {commitNavigation}
           {commitSearch}
           {commitWorkspace}

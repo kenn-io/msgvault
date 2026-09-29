@@ -97,9 +97,70 @@ describe('SelectionBar', () => {
     });
 
     expect(screen.queryByRole('button', { name: 'Export selection' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Open selection in source' })).toBeNull();
-    expect(screen.getByText('Export: selection_contains_items_without_exportable_files')).toBeDefined();
-    expect(screen.getByText('Open in source: selection_contains_items_that_cannot_be_opened_in_source')).toBeDefined();
+    expect(screen.getByText('Export unavailable: Selection contains items without exportable files.')).toBeDefined();
+  });
+
+  it('lists a disabled open-in-source item with a plain reason and no raw code', async () => {
+    const selection = new ExploreSelectionState();
+    selection.selectVisible(['message:1']);
+    render(SelectionBar, {
+      selection,
+      totalCount: 2,
+      preflight: preflight([{ action: 'open_in_source', reason: 'trusted_source_link_unavailable' }]),
+      onOpenInSource: () => undefined,
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'More selection actions' }));
+
+    const item = screen.getByRole('menuitem', { name: 'Open selection in source' });
+    expect(item.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByText('Your sources don’t provide links to open these items.')).toBeDefined();
+    expect(screen.queryByText(/trusted_source_link_unavailable/)).toBeNull();
+  });
+
+  it('opens the selection in source from the overflow menu when preflight allows it', async () => {
+    const selection = new ExploreSelectionState();
+    selection.selectVisible(['message:1']);
+    const onOpenInSource = vi.fn();
+    render(SelectionBar, { selection, totalCount: 2, preflight: preflight(), onOpenInSource });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'More selection actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Open selection in source' }));
+
+    expect(onOpenInSource).toHaveBeenCalledOnce();
+  });
+
+  it('renders nothing while nothing is selected', () => {
+    const selection = new ExploreSelectionState();
+    render(SelectionBar, { selection, totalCount: 8 });
+
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText('No items selected')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review for deletion…' })).toBeNull();
+  });
+
+  it('offers deletion review for an explicit and then an all-matching selection', async () => {
+    const selection = new ExploreSelectionState();
+    selection.selectVisible(['message:1', 'message:2', 'message:3']);
+    const onReviewDeletion = vi.fn();
+    const allMatching = {
+      mode: 'all_matching' as const,
+      predicate: { query: 'synthetic', search_mode: 'full_text' as const },
+      exclusions: [],
+      cacheRevision: 'cache-1',
+      searchProvenance: { lexical_index_revision: 'fts-1' },
+      predicateFingerprint: predicateFingerprint({ query: 'synthetic', search_mode: 'full_text' }),
+      resultGeneration: 1,
+    };
+    render(SelectionBar, { selection, totalCount: 50, allMatching, onReviewDeletion });
+
+    expect(screen.getByRole('status').textContent).toContain('3 selected');
+    await fireEvent.click(screen.getByRole('button', { name: 'Review for deletion…' }));
+    expect(onReviewDeletion).toHaveBeenLastCalledWith('explicit');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all 50 matching items' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Review for deletion…' }));
+    expect(onReviewDeletion).toHaveBeenLastCalledWith('all_matching');
   });
 
   it('keeps meeting context independent from raw-export preflight eligibility', async () => {
@@ -127,7 +188,7 @@ describe('SelectionBar', () => {
       meetingSelection,
     });
 
-    expect(screen.getByText('Export: selection_contains_items_without_exportable_files')).toBeDefined();
+    expect(screen.getByText('Export unavailable: Selection contains items without exportable files.')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Select meetings only');
   });

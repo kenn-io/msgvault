@@ -88,7 +88,7 @@ const REASONS: Record<string, string> = {
   'export:raw_message_unavailable': 'The original message isn’t available.',
   'export_files:selection_contains_no_files': 'The selection has no files.',
   'stage_deletion:selection_contains_items_that_cannot_be_deleted_from_source':
-    'Some selected items can’t be deleted from their source.'
+    'None of the selected items can be deleted from their source.'
 };
 
 function sentenceCase(code: string): string {

@@ -2416,6 +2416,39 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  it('opens deletion review from the selection bar like the d shortcut', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    let preflights = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/explore/preflight')) {
+        preflights += 1;
+        return Response.json({
+          count: 1, deletable_count: 1, estimated_bytes: 10, cache_revision: 'cache-1',
+          search_provenance: {}, unavailable_actions: [], action_targets: [],
+          operation_token: 'operation-1', expires_at: '2026-07-19T10:05:00Z'
+        });
+      }
+      if (path.endsWith('/deletions')) return Response.json({ manifests: [] });
+      return Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
+    });
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    await screen.findByText('Synthetic subject 1');
+    expect(screen.queryByRole('button', { name: 'Review for deletion…' })).toBeNull();
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: ' ' });
+    await waitFor(() => expect(preflights).toBe(1));
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review for deletion…' }));
+
+    await waitFor(() => expect(state.current.workspace).toBe('deletions'));
+    await waitFor(() => expect(preflights).toBe(2));
+    rendered.unmount();
+    state.destroy();
+  });
+
   it('selects the visible rows once when plain a is pressed outside the grid', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);

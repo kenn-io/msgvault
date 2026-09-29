@@ -56,7 +56,7 @@ describe('explore labels', () => {
       [
         'stage_deletion',
         'selection_contains_items_that_cannot_be_deleted_from_source',
-        'Some selected items can’t be deleted from their source.'
+        'None of the selected items can be deleted from their source.'
       ]
     ];
     for (const [action, reason, sentence] of reasons) {

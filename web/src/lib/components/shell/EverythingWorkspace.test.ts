@@ -415,8 +415,9 @@ describe('EverythingWorkspace', () => {
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
 
-    expect(await screen.findByText('Export: selection_contains_items_without_exportable_files')).toBeDefined();
-    expect(screen.getByText('Open in source: trusted_source_link_unavailable')).toBeDefined();
+    expect(await screen.findByText('Export unavailable: Selection contains items without exportable files.')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'More selection actions' }));
+    expect(screen.getByText('Your sources don’t provide links to open these items.')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Export selection' })).toBeNull();
     const body = await preflightRequests[0]!.clone().json();
     expect(body.selection).toMatchObject({
