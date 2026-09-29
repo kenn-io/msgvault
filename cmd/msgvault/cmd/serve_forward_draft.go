@@ -158,6 +158,9 @@ func (a *storeAPIAdapter) runCLIForwardDraft(
 	req api.CLIRunRequest,
 	emit func(api.CLIRunEvent) error,
 ) error {
+	if req.Grant != nil {
+		return draftReplyError("not_permitted", errors.New("draft-forward requires owner access"))
+	}
 	if len(req.Env) != 0 || req.Cwd != "" {
 		return draftReplyError("invalid_args", errors.New("draft-forward accepts no environment or working directory"))
 	}

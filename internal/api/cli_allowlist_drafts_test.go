@@ -125,6 +125,11 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 		assert.Equal(t, http.StatusOK, code)
 	})
 
+	t.Run("draft-forward requires owner access", func(t *testing.T) {
+		code := sendDelegated([]string{"draft-forward", "42", "--source-id=1", "--to=alice@example.com"})
+		assert.Equal(t, http.StatusBadRequest, code)
+	})
+
 	t.Run("add-imap returns command_not_allowed", func(t *testing.T) {
 		bs, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"add-imap", "imap://example.com"}})
 		require.NoError(t, marshalErr)

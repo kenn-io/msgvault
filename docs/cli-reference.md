@@ -305,6 +305,7 @@ Create an IMAP draft that forwards an archived message and reuses its retained
 attachment files. Choose exactly one destination with `--account` or
 `--source-id`, and provide at least one explicit `--to`, `--cc`, or `--bcc`.
 The parent message's Bcc recipients are never copied.
+This command requires owner access; agent tokens cannot invoke it.
 
 ```bash
 msgvault draft-forward <message-id> --account you@example.com \

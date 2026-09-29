@@ -40,9 +40,12 @@ func TestDraftForwardAuthorizationPrecedesContentIO(t *testing.T) {
 	fixture := newDraftReplyFixture(t)
 	adapter := fixture.grantedAdapter()
 	grant := &agentgrant.Grant{
-		ID:          "forward-out-of-scope",
+		ID:          "forward-create-grant",
 		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
-		Sources:     []agentgrant.SourceRef{{ID: fixture.source.ID + 1, Type: "imap", Identifier: "other@example.test"}},
+		Sources: []agentgrant.SourceRef{{
+			ID: fixture.source.ID, Type: fixture.source.SourceType, Identifier: fixture.source.Identifier,
+			SenderKeys: []string{testutil.IMAPTestUsername},
+		}},
 	}
 	err := adapter.runCLIForwardDraft(t.Context(), api.CLIRunRequest{
 		Args: []string{
