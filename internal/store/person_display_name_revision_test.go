@@ -22,7 +22,7 @@ func TestPersonDisplayNameRevision(t *testing.T) {
 	}
 	counter(0)
 	alice := f.EnsureParticipant("alice@example.com", "Alice Observed", "example.com")
-	person, _, err := f.Store.CreatePersonFromParticipant(alice)
+	person, _, err := f.Store.CreatePersonFromParticipantWithDisplayNameContext(t.Context(), alice, new(""))
 	requirements.NoError(err)
 	counter(0)
 	person, err = f.Store.UpdatePersonDisplayName(person.ID, person.Revision, nil)

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"sync/atomic"
 	"testing"
 
@@ -465,7 +466,7 @@ func TestPersonPromoteSeedsNameThroughDaemonAdapter(t *testing.T) {
 	var output bytes.Buffer
 	promote := &cobra.Command{Use: personPromoteCmd.Use, Args: personPromoteCmd.Args, RunE: personPromoteCmd.RunE}
 	promote.SetOut(&output)
-	promote.SetArgs([]string{fmt.Sprint(id)})
+	promote.SetArgs([]string{strconv.FormatInt(id, 10)})
 	require.NoError(promote.ExecuteContext(testCtx))
 	assert.Contains(output.String(), "Display name: Alex Example")
 	person, err := st.PersonForParticipants([]int64{id})
@@ -477,7 +478,7 @@ func TestPersonPromoteSeedsNameThroughDaemonAdapter(t *testing.T) {
 	output.Reset()
 	get := &cobra.Command{Use: personGetCmd.Use, Args: personGetCmd.Args, RunE: personGetCmd.RunE}
 	get.SetOut(&output)
-	get.SetArgs([]string{fmt.Sprint(person.ID)})
+	get.SetArgs([]string{strconv.FormatInt(person.ID, 10)})
 	require.NoError(get.ExecuteContext(testCtx))
 	assert.Contains(output.String(), "Display name: Alex Example")
 }

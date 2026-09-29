@@ -188,7 +188,7 @@ func observedPersonDisplayNameTx(ctx context.Context, tx *loggedTx, members []in
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate observed person display names: %w", err)
 	}
-	return nil, nil
+	return nil, nil //nolint:nilnil // A cluster without an observed name has no default.
 }
 
 // bindPersonParticipantsTx binds every member to the person, ignoring
