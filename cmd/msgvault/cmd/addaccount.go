@@ -512,6 +512,10 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		if err := setDefaultIdentityOptOut(s, source.ID, noDefaultIdentityAddAccount); err != nil {
+			return err
+		}
+
 		fmt.Printf("Account %s authorized via service account.\n", email)
 		fmt.Println("Next step: msgvault sync-full", email)
 		return nil

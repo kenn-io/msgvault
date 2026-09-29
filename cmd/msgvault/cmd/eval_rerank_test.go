@@ -242,10 +242,6 @@ func TestRunEvalJevSlowRequestWaves(t *testing.T) {
 	assert.GreaterOrEqual(t, arm.Latency.P95MS, 12000.0)
 }
 
-type testTransport func(*http.Request) (*http.Response, error)
-
-func (f testTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 type fakeReranker struct{}
 
 func (fakeReranker) Rerank(_ context.Context, _ rerank.Request) (rerank.Result, error) {
