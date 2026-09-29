@@ -468,6 +468,7 @@
       return;
     }
     beforeCommit();
+    directoryPromotionParticipantID = undefined;
     exploreState.commitSearchIn('everything', query, mode);
   }
   let paletteOpen = $state(false);

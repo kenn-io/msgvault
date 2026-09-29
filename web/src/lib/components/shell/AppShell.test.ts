@@ -1698,6 +1698,58 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  it.each(['sidebar', 'global search'] as const)(
+    'drops the relationship promotion when leaving Directory by %s and going back',
+    async (exit) => {
+      window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+        workspace: 'relationships', relationshipTarget: 'cluster:11'
+      }))}`);
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const request = input instanceof Request ? input : new Request(input);
+        const path = new URL(request.url).pathname;
+        const meetingResponse = meetingFixtureResponse(path);
+        if (meetingResponse) return meetingResponse;
+        if (path === '/api/v1/relationships') return Response.json({ rows: [] });
+        if (path === '/api/v1/participants/11') return Response.json({
+          id: 11, display_label: 'Synthetic Candidate', partial_label: false, identifiers: [],
+          activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-07-19T10:00:00Z',
+          last_at: '2026-07-19T10:00:00Z', cache_revision: 'cache-rel'
+        });
+        if (path === '/api/v1/relationships/11/timeline') return Response.json({
+          canonical_id: 11, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0
+        });
+        if (path === '/api/v1/people/directory') return Response.json({ people: [] });
+        return Response.json(exploreResponse());
+      });
+      const state = new ExploreState(window);
+      const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+      expect(await screen.findByRole('heading', { name: 'Synthetic Candidate' })).toBeDefined();
+      await fireEvent.click(screen.getByRole('button', { name: 'Open in Directory' }));
+      expect(await screen.findByRole('button', { name: 'Promote to person' })).toBeDefined();
+
+      if (exit === 'sidebar') {
+        await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' }))
+          .getByRole('button', { name: 'Everything' }));
+      } else {
+        await fireEvent.input(screen.getByRole('searchbox', { name: 'Search everything' }), {
+          target: { value: 'pipeline' }
+        });
+        await fireEvent.submit(screen.getByRole('search', { name: 'Search Everything' }));
+      }
+      expect(await screen.findByRole('main', { name: 'Everything' })).toBeDefined();
+
+      const restored = new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.back();
+      await restored;
+      expect(await screen.findByRole('main', { name: 'Directory' })).toBeDefined();
+      expect(screen.queryByRole('button', { name: 'Promote to person' })).toBeNull();
+
+      rendered.unmount();
+      state.destroy();
+    }
+  );
+
   it('renders actionable Directory guidance for a relationship promotion conflict', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'relationships', relationshipTarget: 'cluster:11'
