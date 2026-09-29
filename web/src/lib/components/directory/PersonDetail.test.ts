@@ -124,6 +124,61 @@ describe('PersonDetail', () => {
     expect(requestPaths).not.toContain('/api/v1/files/search');
   });
 
+  it('applies Media & Files filename, type, and sort choices to the person files request', async () => {
+    const filesBodies: Record<string, unknown>[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const overview = overviewCardResponse(request);
+      if (overview) return overview;
+      if (new URL(request.url).pathname === '/api/v1/people/7/files/search') {
+        filesBodies.push((await request.clone().json()) as Record<string, unknown>);
+        return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
+      }
+      return Response.json({ merges: [], limit: 100, offset: 0 });
+    });
+    const bundle = { etags: {}, errors: {} } satisfies DirectoryReadBundle;
+    render(PersonDetail, { client: createAPIClient(fetchFn), bundle, personID: 7 });
+
+    await fireEvent.click(screen.getByRole('tab', { name: 'Media & Files' }));
+    await waitFor(() => expect(filesBodies).toHaveLength(1));
+
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'invoice' } });
+    await waitFor(() => expect(filesBodies.at(-1)).toMatchObject({ filename_query: 'invoice' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Type' }));
+    // A person Files view starts with every file type included; unchecking PDFs leaves the rest.
+    const others = ['audio', 'text', 'document', 'archive', 'other'];
+    await fireEvent.click(screen.getByRole('button', { name: 'PDFs' }));
+    await waitFor(() => expect(filesBodies.at(-1)).toMatchObject({ filename_query: 'invoice', mime_families: others }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Sort by size' }));
+    await waitFor(() => expect(filesBodies.at(-1)).toMatchObject({
+      filename_query: 'invoice', mime_families: others, sort: { field: 'size', direction: 'asc' }
+    }));
+  });
+
+  it('clears Media & Files filters when the selected person changes', async () => {
+    const filesBodies: Record<string, unknown>[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (/^\/api\/v1\/people\/\d+\/files\/search$/.test(new URL(request.url).pathname)) {
+        filesBodies.push((await request.clone().json()) as Record<string, unknown>);
+        return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
+      }
+      return Response.json({ merges: [], limit: 100, offset: 0 });
+    });
+    const bundle = { etags: {}, errors: {} } satisfies DirectoryReadBundle;
+    const view = render(PersonDetail, { client: createAPIClient(fetchFn), bundle, personID: 7 });
+    await fireEvent.click(screen.getByRole('tab', { name: 'Media & Files' }));
+    await fireEvent.input(await screen.findByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'invoice' } });
+    await waitFor(() => expect(filesBodies.at(-1)).toMatchObject({ filename_query: 'invoice' }));
+
+    await view.rerender({ client: createAPIClient(fetchFn), bundle, personID: 8 });
+
+    await waitFor(() => expect(filesBodies.at(-1)).not.toHaveProperty('filename_query'));
+    expect((screen.getByRole('searchbox', { name: 'Filter filename' }) as HTMLInputElement).value).toBe('');
+  });
+
   it('does not claim an organization name for an employment outside the primary projection', async () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);

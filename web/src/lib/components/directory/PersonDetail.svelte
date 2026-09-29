@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { MeetingRef } from '../../api/generated/models';
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
   import type { APIClient } from '../../api/client';
@@ -17,6 +18,7 @@
   import PersonBriefCard from './PersonBriefCard.svelte';
   import PersonAgenda from './PersonAgenda.svelte';
   import CardDAVPublicationControl from './CardDAVPublicationControl.svelte';
+  import type { FileMIMEFamily, FileSearchSort } from '../../explore/models';
   import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
 
   interface Props {
@@ -49,6 +51,17 @@
     onOpenMeeting = undefined
   }: Props = $props();
   let activeTab = $state<DetailTab>('overview');
+  let fileSort = $state<FileSearchSort>({ field: 'occurred_at', direction: 'desc' });
+  let fileFilenameQuery = $state('');
+  let fileMIMEFamilies = $state<FileMIMEFamily[]>([]);
+  let filesPersonID = untrack(() => personID);
+  $effect(() => {
+    if (personID === filesPersonID) return;
+    filesPersonID = personID;
+    fileSort = { field: 'occurred_at', direction: 'desc' };
+    fileFilenameQuery = '';
+    fileMIMEFamilies = [];
+  });
   let organizationRequest = $state<{ id: number; key: number }>();
   let organizationRequestKey = 0;
   let overviewTab = $state<HTMLButtonElement>();
@@ -155,7 +168,12 @@
         {client}
         identityScope={{ kind: 'durable-person', id: personID }}
         predicate={{ filters: [], presentation: 'files' }}
-        sort={{ field: 'occurred_at', direction: 'desc' }}
+        sort={fileSort}
+        filenameQuery={fileFilenameQuery}
+        mimeFamilies={fileMIMEFamilies}
+        onSortChange={(value) => (fileSort = value)}
+        onFilenameQueryChange={(value) => (fileFilenameQuery = value)}
+        onMIMEFamiliesChange={(value) => (fileMIMEFamilies = value)}
         embedded
       />
     </div>
