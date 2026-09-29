@@ -232,6 +232,12 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			  )
 			  AND (w.person_id IS NULL OR (w.trigger_mask & ?) = 0 OR w.due_at > ?)
 			GROUP BY c.person_id, g.provider_policy_fingerprint
+			HAVING 'claim:' || CAST(MAX(c.id) AS TEXT) NOT IN (
+				SELECT attempted.trigger_generation FROM person_enrichment_attempts attempted
+				WHERE attempted.person_id = c.person_id
+				  AND attempted.profile_fingerprint = g.provider_policy_fingerprint
+				  AND attempted.trigger_kind = 'claim_expiry'
+			)
 			ORDER BY c.person_id, g.provider_policy_fingerprint
 			LIMIT ?`, expiredArgs...)
 		if err != nil {
@@ -284,6 +290,12 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			WHERE c.revoked_at IS NULL
 			  AND c.profile_fingerprint IN (`+profilePlaceholders+`)
 			  AND w.person_id IS NULL
+			  AND NOT EXISTS (
+				SELECT 1 FROM person_enrichment_attempts attempted
+				WHERE attempted.person_id = pt.person_id
+				  AND attempted.profile_fingerprint = c.profile_fingerprint
+				  AND attempted.person_revision = p.revision
+			  )
 			ORDER BY pt.person_id, c.profile_fingerprint
 			LIMIT ?`, missingArgs...)
 		if err != nil {

@@ -264,7 +264,7 @@ func TestExaRejectsHistoricalEmploymentAsCurrentCompanyMatch(t *testing.T) {
 	requirements.Error(err)
 	var providerErr *personenrichment.ProviderError
 	requirements.ErrorAs(err, &providerErr)
-	assert.Equal(t, personenrichment.FailureInvalidOutput, providerErr.Class)
+	assert.Equal(t, personenrichment.FailureIdentityRejected, providerErr.Class)
 }
 
 func TestExaDeepModesPreserveGroundingAndBindGeneratedSchema(t *testing.T) {
@@ -496,7 +496,13 @@ func TestExaRejectsInvalidTypedEntitiesAndStructuredOutput(t *testing.T) {
 			if test.mode != "people" {
 				targets = exaDeepTargets(t)
 			}
-			_, err = provider.Start(t.Context(), personenrichment.Request{Identity: personenrichment.Identity{Name: "Test User"}, Targets: targets})
+			_, err = provider.Start(t.Context(), personenrichment.Request{
+				Identity: personenrichment.Identity{
+					Name: "Test User", CurrentCompany: "Example Labs",
+					PublicProfileURLs: []string{"https://sources.example.test/test-user"},
+				},
+				Targets: targets,
+			})
 			requirements.Error(err)
 			checks.NotContains(err.Error(), "private")
 			var providerErr *personenrichment.ProviderError
@@ -504,6 +510,36 @@ func TestExaRejectsInvalidTypedEntitiesAndStructuredOutput(t *testing.T) {
 			checks.Equal(personenrichment.FailureInvalidOutput, providerErr.Class)
 		})
 	}
+}
+
+func TestExaDeepDeduplicatesEmployment(t *testing.T) {
+	require := require.New(t)
+	var wire map[string]any
+	require.NoError(json.Unmarshal(exaFixture(t, "exa_deep_success.json"), &wire))
+	output, ok := wire["output"].(map[string]any)
+	require.True(ok)
+	content, ok := output["content"].(map[string]any)
+	require.True(ok)
+	work, ok := content["system:employment"].([]any)
+	require.True(ok)
+	require.NotEmpty(work)
+	content["system:employment"] = []any{work[0], work[0]}
+	body, err := json.Marshal(wire)
+	require.NoError(err)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+	provider, err := personenrichment.NewExaProvider(exaConfig(server.URL, "deep", 1), "test-key", server.Client())
+	require.NoError(err)
+	attempt, err := provider.Start(t.Context(), personenrichment.Request{
+		Identity: personenrichment.Identity{PublicProfileURLs: []string{"https://sources.example.test/test-user"}},
+		Targets:  exaDeepTargets(t),
+	})
+	require.NoError(err)
+	require.NotNil(attempt.Result)
+	assert.Len(t, attempt.Result.Claims, 2, "one summary and one employment claim")
 }
 
 func TestExaRejectsDeepOutputWithoutReturnedIdentityMatch(t *testing.T) {
@@ -526,7 +562,7 @@ func TestExaRejectsDeepOutputWithoutReturnedIdentityMatch(t *testing.T) {
 	requirements.Error(err)
 	var providerErr *personenrichment.ProviderError
 	requirements.ErrorAs(err, &providerErr)
-	assert.Equal(t, personenrichment.FailureInvalidOutput, providerErr.Class)
+	assert.Equal(t, personenrichment.FailureIdentityRejected, providerErr.Class)
 }
 
 func TestExaRejectsDeepOutputAcrossAmbiguousResultRows(t *testing.T) {
@@ -569,13 +605,13 @@ func TestExaRejectsTypedOutputWithoutReturnedIdentityMatch(t *testing.T) {
 	)
 	requirements.NoError(err)
 	_, err = provider.Start(t.Context(), personenrichment.Request{
-		Identity: personenrichment.Identity{Name: "Different Synthetic Person"},
+		Identity: personenrichment.Identity{Name: "Different Synthetic Person", CurrentCompany: "Example Labs"},
 		Targets:  exaTypedTargets(t),
 	})
 	requirements.Error(err)
 	var providerErr *personenrichment.ProviderError
 	requirements.ErrorAs(err, &providerErr)
-	assert.Equal(t, personenrichment.FailureInvalidOutput, providerErr.Class)
+	assert.Equal(t, personenrichment.FailureIdentityRejected, providerErr.Class)
 }
 
 func TestExaRejectsDuplicateDeepContentMembers(t *testing.T) {

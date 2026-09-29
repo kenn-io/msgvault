@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1748,6 +1750,117 @@ func TestWorkerStopsRetryingActiveAttemptAtLimit(t *testing.T) {
 	requirements.Len(attempts, 1)
 	checks.Equal("terminal", attempts[0].State)
 	checks.Equal(int64(2), attempts[0].AttemptCount)
+}
+
+func TestWorkerExaPeopleResults(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		state   string
+		failure string
+		claims  int
+	}{
+		{"duplicate employment", "succeeded", "", 2},
+		{"identity mismatch", "identity_rejected", "identity_rejected", 0},
+		{"invalid output", "terminal", "invalid_output", 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			var wire map[string]any
+			require.NoError(json.Unmarshal(exaFixture(t, "exa_people_success.json"), &wire))
+			results, ok := wire["results"].([]any)
+			require.True(ok)
+			require.NotEmpty(results)
+			row, ok := results[0].(map[string]any)
+			require.True(ok)
+			row["url"] = "https://profiles.example.test/worker-person"
+			entities, ok := row["entities"].([]any)
+			require.True(ok)
+			require.NotEmpty(entities)
+			entity, ok := entities[0].(map[string]any)
+			require.True(ok)
+			properties, ok := entity["properties"].(map[string]any)
+			require.True(ok)
+			switch test.name {
+			case "duplicate employment":
+				history, ok := properties["workHistory"].([]any)
+				require.True(ok)
+				require.NotEmpty(history)
+				work, ok := history[0].(map[string]any)
+				require.True(ok)
+				properties["workHistory"] = []any{work, work, map[string]any{
+					"title": " Engineer ", "location": "Test City", "dates": work["dates"],
+					"company": map[string]any{"name": " Example Labs "},
+				}, map[string]any{
+					"title": "Senior Engineer", "location": "Test City", "dates": work["dates"],
+					"company": work["company"],
+				}}
+			case "identity mismatch":
+				row["url"] = "https://profiles.example.test/different-person"
+			case "invalid output":
+				properties["workHistory"] = nil
+			}
+			body, err := json.Marshal(wire)
+			require.NoError(err)
+			var calls atomic.Int32
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(body)
+			}))
+			t.Cleanup(server.Close)
+			f := newWorkerFixture(t, "exa-people", func(cfg *personenrichment.ProviderConfig) {
+				cfg.Mode = "people"
+				cfg.Endpoint = server.URL
+				cfg.TargetKeys = []string{"system:employment"}
+			})
+			worker := f.newWorker(t,
+				map[string]personenrichment.ProviderFactory{f.config.Name: func(cfg personenrichment.ProviderConfig, key string) (personenrichment.Provider, error) {
+					return personenrichment.NewExaProvider(cfg, key, server.Client())
+				}}, map[string]personenrichment.ProviderConfig{f.config.Name: f.config},
+				func(string) (string, bool) { return "test-key", true },
+			)
+			processed, err := worker.RunOnce(t.Context(), f.run.ID)
+			require.NoError(err)
+			require.True(processed)
+			attempts, err := f.store.ListPersonEnrichmentAttemptsContext(t.Context(), store.PersonEnrichmentAttemptFilter{
+				PersonID: f.person.ID, RunID: f.run.ID, Limit: 10,
+			})
+			require.NoError(err)
+			require.Len(attempts, 1)
+			assert.Equal(test.state, attempts[0].State)
+			if test.failure == "" {
+				assert.Nil(attempts[0].FailureClass)
+			} else {
+				require.NotNil(attempts[0].FailureClass)
+				assert.Equal(test.failure, *attempts[0].FailureClass)
+			}
+			var claims int
+			require.NoError(f.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM person_fact_claims").Scan(&claims))
+			assert.Equal(test.claims, claims)
+			for range 2 {
+				queued, err := f.store.EnqueueDuePersonEnrichmentContext(t.Context(), time.Now().UTC(), 200, []string{f.profile.Fingerprint})
+				require.NoError(err)
+				assert.Zero(queued)
+				processed, err = worker.RunOnce(t.Context(), f.run.ID)
+				require.NoError(err)
+				assert.False(processed)
+			}
+			assert.Equal(int32(1), calls.Load())
+			require.NoError(f.store.CompleteRun(t.Context(), f.run.ID, personenrichment.RunCompletion{}))
+			run, err := f.store.GetPersonEnrichmentRunContext(t.Context(), f.run.ID)
+			require.NoError(err)
+			switch test.state {
+			case "identity_rejected":
+				assert.Equal(int64(1), run.IdentityRejectedCount)
+				assert.Zero(run.FailedCount)
+			case "terminal":
+				assert.Equal(int64(1), run.FailedCount)
+			default:
+				assert.Equal(int64(1), run.SucceededCount)
+			}
+		})
+	}
 }
 
 func TestWorkerInvalidOutputWritesNoResultState(t *testing.T) {

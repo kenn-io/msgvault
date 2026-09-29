@@ -36,7 +36,10 @@ const (
 	exaMaxResponseBytes = 1 << 20
 )
 
-var errExaSynchronous = errors.New("exa provider is synchronous and cannot be polled")
+var (
+	errExaSynchronous      = errors.New("exa provider is synchronous and cannot be polled")
+	errExaIdentityMismatch = errors.New("missing Exa returned identity match")
+)
 
 type exaProvider struct {
 	config     ProviderConfig
@@ -168,7 +171,11 @@ func (p *exaProvider) Start(ctx context.Context, request Request) (Attempt, erro
 		result, err = decodeExaPeopleResult(wire, request, now)
 	}
 	if err != nil {
-		return Attempt{}, exaFailure(response.StatusCode, FailureInvalidOutput, wire.RequestID, "")
+		class := FailureInvalidOutput
+		if errors.Is(err, errExaIdentityMismatch) {
+			class = FailureIdentityRejected
+		}
+		return Attempt{}, exaFailure(response.StatusCode, class, wire.RequestID, "")
 	}
 	result.AdapterVersion = ExaAdapterVersionV1
 	result.SchemaVersion = ExaSearchWireSchemaV1
@@ -432,17 +439,15 @@ func decodeExaPeopleResult(wire exaSearchResponse, request Request, now time.Tim
 		if err != nil || len(values) == 0 {
 			return Result{}, errors.New("exa typed target value is missing or malformed")
 		}
-		for _, value := range values {
-			claim, err := exaClaim(target, value, ExaTypedUngroundedScore, []Citation{citation})
-			if err != nil {
-				return Result{}, err
-			}
-			claims = append(claims, claim)
+		targetClaims, err := exaClaims(target, values, ExaTypedUngroundedScore, []Citation{citation})
+		if err != nil {
+			return Result{}, err
 		}
+		claims = append(claims, targetClaims...)
 	}
 	matches, identityConfidence := exaTypedIdentityMatches(request.Identity, selected.Properties, profileURL)
 	if len(matches) == 0 || identityConfidence == 0 {
-		return Result{}, errors.New("missing Exa returned identity match")
+		return Result{}, errExaIdentityMismatch
 	}
 	cost, err := exaCost(wire.CostDollars)
 	if err != nil {
@@ -529,13 +534,11 @@ func decodeExaDeepResult(wire exaSearchResponse, request Request, now time.Time)
 		if err != nil || len(values) == 0 {
 			return Result{}, errors.New("unsupported Exa synthesized value")
 		}
-		for _, value := range values {
-			claim, err := exaClaim(target, value, score, citations)
-			if err != nil {
-				return Result{}, err
-			}
-			claims = append(claims, claim)
+		targetClaims, err := exaClaims(target, values, score, citations)
+		if err != nil {
+			return Result{}, err
 		}
+		claims = append(claims, targetClaims...)
 	}
 	citations := make([]Citation, 0, len(citationOrder))
 	for _, key := range citationOrder {
@@ -658,15 +661,12 @@ func exaSubmittedValues(target personfacts.TargetDescriptor, raw jsontext.Value)
 	return values, nil
 }
 
-func exaClaim(
+func exaClaims(
 	target personfacts.TargetDescriptor,
-	value jsontext.Value,
+	values []jsontext.Value,
 	score int,
 	citations []Citation,
-) (personfacts.ProposedClaim, error) {
-	if normalized, failure, err := personfacts.NormalizeClaimValue(target, value); err != nil || failure != nil || normalized == nil {
-		return personfacts.ProposedClaim{}, errors.New("exa returned an unsupported target value")
-	}
+) ([]personfacts.ProposedClaim, error) {
 	evidence := make([]personfacts.EvidenceInput, len(citations))
 	for i, citation := range citations {
 		evidence[i] = personfacts.EvidenceInput{
@@ -675,12 +675,27 @@ func exaClaim(
 			SourceURL: citation.URL,
 		}
 	}
-	return personfacts.ProposedClaim{
-		Target: target, Relation: personfacts.RelationSupport,
-		SubmittedValue: append(jsontext.Value(nil), value...), Evidence: evidence,
-		Origin:     personfacts.OriginEnrichment,
-		Confidence: personfacts.ConfidenceInputs{ReportedScore: score},
-	}, nil
+	claims := make([]personfacts.ProposedClaim, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		normalized, failure, err := personfacts.NormalizeClaimValue(target, value)
+		if err != nil || failure != nil || normalized == nil {
+			return nil, errors.New("exa returned an unsupported target value")
+		}
+		// Values for one target share confidence and citations. Keep the first
+		// occurrence of each canonical value, including repeated work history.
+		if _, duplicate := seen[normalized.Fingerprint]; duplicate {
+			continue
+		}
+		seen[normalized.Fingerprint] = struct{}{}
+		claims = append(claims, personfacts.ProposedClaim{
+			Target: target, Relation: personfacts.RelationSupport,
+			SubmittedValue: append(jsontext.Value(nil), value...), Evidence: evidence,
+			Origin:     personfacts.OriginEnrichment,
+			Confidence: personfacts.ConfidenceInputs{ReportedScore: score},
+		})
+	}
+	return claims, nil
 }
 
 func exaTypedIdentityMatches(
@@ -739,7 +754,7 @@ func exaDeepResultIdentityMatch(identity Identity, results []exaSearchResult) ([
 			return []IdentityMatch{{Class: IdentifierPublicProfileURL, Value: canonical, Confidence: 1000}}, 1000, nil
 		}
 	}
-	return nil, 0, errors.New("missing Exa returned identity match")
+	return nil, 0, errExaIdentityMismatch
 }
 
 func exactExaIdentityMatch(class IdentifierClass, left, right string) bool {
