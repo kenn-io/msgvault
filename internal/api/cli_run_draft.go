@@ -8,6 +8,8 @@ const CLIRunDraftReplyCommand = "draft-reply"
 
 const CLIRunDraftComposeCommand = "draft-compose"
 
+const CLIRunDraftForwardCommand = "draft-forward"
+
 const (
 	CLIRunDraftGetCommand     = "draft-get"
 	CLIRunDraftEditCommand    = "draft-edit"
@@ -26,9 +28,15 @@ func IsCLIRunDraftCompose(args []string) bool {
 	return len(args) > 0 && args[0] == CLIRunDraftComposeCommand
 }
 
+// IsCLIRunDraftForward reports whether args invoke the in-process
+// draft-forward route.
+func IsCLIRunDraftForward(args []string) bool {
+	return len(args) > 0 && args[0] == CLIRunDraftForwardCommand
+}
+
 // IsCLIRunDraftCreate reports whether args create a managed draft.
 func IsCLIRunDraftCreate(args []string) bool {
-	return IsCLIRunDraftReply(args) || IsCLIRunDraftCompose(args)
+	return IsCLIRunDraftReply(args) || IsCLIRunDraftCompose(args) || IsCLIRunDraftForward(args)
 }
 
 func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {

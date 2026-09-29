@@ -22,6 +22,7 @@ func TestCLIRunDraftAllowlist(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	assertions.True(cliRunCommandAllowed([]string{"draft-reply", "42", "--from=alice@example.com", "--body=body"}))
+	assertions.True(cliRunCommandAllowed([]string{"draft-forward", "42", "--source-id=7", "--to=bob@example.com"}))
 	assertions.True(IsCLIRunDraftLifecycle([]string{"draft-get", "draft-abc"}))
 	assertions.True(IsCLIRunDraftSendAs([]string{"draft-send-as", "alice@example.com"}))
 	assertions.True(cliRunCommandAllowed([]string{"draft-send-as", "alice@example.com"}))

@@ -72,6 +72,22 @@ func (c *Client) AppendDraft(ctx context.Context, mailbox string, raw []byte) (D
 			result = DraftAppendResult{State: DraftStateRejected, Code: "uidplus_required"}
 			return &DraftAppendError{State: result.State, Code: result.Code, Err: errors.New("IMAP server does not advertise UIDPLUS")}
 		}
+		limit, advertised := conn.Caps().AppendLimit()
+		if advertised && limit == nil {
+			status, statusErr := conn.Status(mailbox, &imaplib.StatusOptions{AppendLimit: true}).Wait()
+			if statusErr != nil || status == nil {
+				result = DraftAppendResult{State: DraftStateRejected, Code: "append_limit_unavailable"}
+				if statusErr == nil {
+					statusErr = errors.New("STATUS returned no data")
+				}
+				return &DraftAppendError{State: result.State, Code: result.Code, Err: fmt.Errorf("read APPENDLIMIT for %q: %w", mailbox, statusErr)}
+			}
+			limit = status.AppendLimit
+		}
+		if limit != nil && uint64(len(raw)) > uint64(*limit) {
+			result = DraftAppendResult{State: DraftStateRejected, Code: "message_too_large"}
+			return &DraftAppendError{State: result.State, Code: result.Code, Err: fmt.Errorf("encoded draft size %d exceeds APPENDLIMIT %d", len(raw), *limit)}
+		}
 		if err := ctx.Err(); err != nil {
 			result = DraftAppendResult{State: DraftStateCancelled, Code: DraftStateCancelled}
 			return err

@@ -20,6 +20,11 @@ provider setup is covered in [recommended configuration](usage/recommended-confi
 The [complete example](#example-configuration) below illustrates the available
 sections; it is not a required starting configuration.
 
+## Drafts
+
+IMAP draft creation is enabled per source with `[[imap.drafts]]`. The command
+flags and the forwarding attachment rules are in the [draft command reference](cli-reference.md#draft-forward).
+
 
 ## Remote Deletion Consent
 

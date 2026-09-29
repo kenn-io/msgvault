@@ -24,6 +24,31 @@ func captureAttachmentQueryLogs(t *testing.T) *bytes.Buffer {
 	return &logs
 }
 
+func TestMessageAttachmentRefsContextIncludesOccurrenceState(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "attachment-refs@example.test")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "attachment-refs", "Attachment refs")
+	requirements.NoError(err)
+	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "attachment-refs-message")
+	hash := strings.Repeat("a", 64)
+	requirements.NoError(st.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+		Filename: "report.txt", MIMEType: "text/plain", StoragePath: "aa/" + hash,
+		ContentHash: hash, Size: 12, SourcePartKey: "mime:1", ContentID: "part@example.test",
+		Role: store.AttachmentRoleInline, RoleSource: store.AttachmentRoleSourceMIMEDisposition,
+		State: attachmentpolicy.StateStored,
+	}))
+	refs, err := st.MessageAttachmentRefsContext(t.Context(), messageID)
+	requirements.NoError(err)
+	requirements.Len(refs, 1)
+	assertions.Equal("report.txt", refs[0].Filename)
+	assertions.Equal("mime:1", refs[0].SourcePartKey)
+	assertions.Equal(attachmentpolicy.StateStored, refs[0].State)
+	assertions.Equal("part@example.test", refs[0].ContentID)
+}
+
 func persistedProviderRef(ref store.AttachmentRef) store.AttachmentRef {
 	if ref.Role == "" {
 		ref.Role = store.AttachmentRoleUnknown

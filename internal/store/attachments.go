@@ -11,6 +11,56 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
+// MessageAttachmentRefsContext returns every attachment occurrence for one
+// message in row order, including unfinished and skipped occurrences.
+func (s *Store) MessageAttachmentRefsContext(ctx context.Context, messageID int64) ([]AttachmentRef, error) {
+	if messageID <= 0 {
+		return nil, fmt.Errorf("invalid message ID %d", messageID)
+	}
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
+		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(storage_path, ''),
+		       COALESCE(content_hash, ''), COALESCE(size, 0), COALESCE(source_attachment_id, ''),
+		       COALESCE(media_type, ''), COALESCE(width, 0), COALESCE(height, 0),
+		       COALESCE(duration_ms, 0), COALESCE(CAST(attachment_metadata AS TEXT), ''),
+		       COALESCE(attachment_role, ''), COALESCE(role_source, ''),
+		       COALESCE(source_part_key, ''), COALESCE(content_id, ''),
+		       COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
+		FROM attachments
+		WHERE message_id = ?
+		ORDER BY id`), messageID)
+	if err != nil {
+		return nil, fmt.Errorf("list message %d attachment references: %w", messageID, err)
+	}
+	refs := make([]AttachmentRef, 0)
+	for rows.Next() {
+		var ref AttachmentRef
+		var size int64
+		if err := rows.Scan(
+			&ref.Filename, &ref.MimeType, &ref.StoragePath, &ref.ContentHash,
+			&size, &ref.SourceAttachmentID, &ref.MediaType, &ref.Width,
+			&ref.Height, &ref.DurationMS, &ref.Metadata, &ref.Role, &ref.RoleSource,
+			&ref.SourcePartKey, &ref.ContentID, &ref.State, &ref.SkipReason,
+		); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan message %d attachment reference: %w", messageID, err)
+		}
+		if size < 0 || size > int64(^uint(0)>>1) {
+			_ = rows.Close()
+			return nil, fmt.Errorf("message %d attachment size %d is outside local range", messageID, size)
+		}
+		ref.Size = int(size)
+		refs = append(refs, ref)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("read message %d attachment references: %w", messageID, err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close message %d attachment references: %w", messageID, err)
+	}
+	return refs, nil
+}
+
 // PendingAttachmentMessage identifies a message with at least one provider
 // attachment marker that has not been downloaded yet.
 type PendingAttachmentMessage struct {

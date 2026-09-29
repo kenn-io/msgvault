@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -69,6 +70,55 @@ func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 		SELECT deleted_from_source_at FROM messages WHERE id = ?
 	`), draft.CurrentMessageID).Scan(&oldDeleted))
 	requirements.True(oldDeleted.Valid)
+}
+
+func TestManagedIMAPDraftAttachmentReplacement(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "imap://draft-replacement@example.test:143")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "draft-replacement", "Draft replacement")
+	requirements.NoError(err)
+	initialReceipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
+	oldHash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	newHash := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	build := func(receipt store.IMAPDraftReceipt, raw string, hash string) func([]int64) *store.MessagePersistData {
+		return func([]int64) *store.MessagePersistData {
+			return &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
+					MessageType: store.MessageTypeEmail, ConversationID: conversationID,
+				},
+				RawMIME: []byte(raw), MIMEAttachmentReplacement: &[]store.AttachmentWrite{{
+					Filename: "file.txt", MIMEType: "text/plain", ContentHash: hash, Size: 4,
+					Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceMIMEDisposition,
+					SourcePartKey: "mime:file", State: attachmentpolicy.StateStored,
+				}},
+			}
+		}
+	}
+	draft, err := st.PersistIMAPDraftContext(t.Context(), initialReceipt, nil, build(initialReceipt, "initial", oldHash))
+	requirements.NoError(err)
+	claimed, err := st.ClaimIMAPDraftContext(t.Context(), draft.DraftID, draft.Revision, store.IMAPDraftOperationEdit, []byte("replacement"))
+	requirements.NoError(err)
+	requirements.Equal([]byte("replacement"), claimed.Pending.Raw)
+	replacementReceipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 2}
+	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, "append_uidplus", &replacementReceipt))
+	published, err := st.PublishIMAPDraftReplacementContext(t.Context(), draft.DraftID, draft.Revision, nil, build(replacementReceipt, "replacement", newHash))
+	requirements.NoError(err)
+	refs, err := st.MessageAttachmentRefsContext(t.Context(), published.CurrentMessageID)
+	requirements.NoError(err)
+	requirements.Len(refs, 1)
+	assertions.Equal(newHash, refs[0].ContentHash)
+	assertions.Equal([]byte("replacement"), mustMessageRaw(t, st, published.CurrentMessageID))
+}
+
+func mustMessageRaw(t *testing.T, st *store.Store, messageID int64) []byte {
+	t.Helper()
+	raw, err := st.GetMessageRaw(messageID)
+	require.NoError(t, err)
+	return raw
 }
 
 func TestManagedIMAPDraftReplacementUIDReuse(t *testing.T) {

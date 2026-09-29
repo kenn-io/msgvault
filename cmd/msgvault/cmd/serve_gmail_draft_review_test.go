@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gmail"
+	imaplib "go.kenn.io/msgvault/internal/imap"
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -396,6 +398,29 @@ func TestGmailDraftLifecyclePublishesEditAndDelete(t *testing.T) {
 	deleted, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
 	require.NoError(err)
 	assert.NotNil(deleted.DiscardedAt)
+}
+
+func TestGmailDraftEditRejectsGeneratedIMAPForward(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t)
+	forward, err := imaplib.BuildForward(imaplib.ForwardOptions{
+		From: "owner@example.test", To: []string{"sender@example.test"}, Subject: "Question",
+		Body: "generated forward note", QuotedText: "generated quote",
+		QuotedHTML: `<p>generated quote</p>`,
+	}, time.Now(), "generated-forward@example.test")
+	requirements.NoError(err)
+	requirements.NoError(fixture.store.UpsertMessageRaw(draft.CurrentMessageID, forward.Raw))
+	fixture.client.getDraft.Message.Raw = append([]byte(nil), forward.Raw...)
+
+	_, err = fixture.lifecycle(t, api.CLIRunDraftEditCommand, draft, "candidate")
+	requirements.Error(err)
+	assertions.Equal("invalid_draft", err.Error())
+	assertions.Zero(fixture.client.updateCalls)
+	latest, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	requirements.NoError(err)
+	assertions.Nil(latest.Pending)
 }
 
 func TestGmailDraftRecoverIsNotSupported(t *testing.T) {

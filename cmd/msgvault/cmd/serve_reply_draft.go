@@ -40,14 +40,24 @@ type draftReplyIntent struct {
 	SourceIDSet bool
 }
 
+type draftOperationKind uint8
+
+const (
+	draftOperationReply draftOperationKind = iota
+	draftOperationCompose
+	draftOperationForward
+)
+
 // draftReplyTarget is the archived parent message and the granted source
 // mailbox that will hold the reply.
 type draftReplyTarget struct {
-	parent       *store.APIMessage
-	parentSource *store.Source
-	source       *store.Source
-	mailbox      string
-	raw          []byte
+	parent           *store.APIMessage
+	parentSource     *store.Source
+	source           *store.Source
+	mailbox          string
+	raw              []byte
+	forward          bool
+	attachmentWrites *[]store.AttachmentWrite
 }
 
 type draftReplyOutput struct {
@@ -277,7 +287,12 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 	sourceIDSet bool,
 	requestedFrom string,
 	grant *agentgrant.Grant,
+	operation ...draftOperationKind,
 ) (draftReplyTarget, string, []string, error) {
+	kind := draftOperationReply
+	if len(operation) > 0 {
+		kind = operation[0]
+	}
 	var parentSource *store.Source
 	if parentID != nil {
 		var err error
@@ -342,6 +357,9 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", fmt.Errorf("source %d sync config identifier does not match the source", source.ID))
 		}
 	case "gmail":
+		if kind == draftOperationForward {
+			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("draft-forward requires an IMAP source"))
+		}
 		if parentSource == nil {
 			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("draft-compose requires an IMAP source"))
 		}
@@ -355,7 +373,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", fmt.Errorf("source %d is a %q source", source.ID, source.SourceType))
 	}
 
-	target := draftReplyTarget{parentSource: parentSource, source: source, mailbox: mailbox}
+	target := draftReplyTarget{parentSource: parentSource, source: source, mailbox: mailbox, forward: kind == draftOperationForward}
 	if parentID != nil {
 		parent, err := a.store.GetMessageContext(ctx, *parentID)
 		if err != nil {
@@ -585,7 +603,13 @@ func draftReplyPersistData(
 	fromAddresses := addressStrings(parsed.From)
 	var conversationKey string
 	var replyToMessageID sql.NullInt64
-	if target.parent != nil {
+	if target.forward {
+		if target.parent == nil {
+			conversationKey = fmt.Sprintf("draft-forward-%d-%d-%s", receipt.SourceID, receipt.UIDValidity, store.IMAPDraftSourceMessageID(receipt))
+		} else {
+			conversationKey = fmt.Sprintf("draft-forward-%d-%d-%d", target.parent.ID, target.source.ID, receipt.SourceID)
+		}
+	} else if target.parent != nil {
 		conversationKey = target.parent.SourceConversationID
 		replyToMessageID = sql.NullInt64{Int64: target.parent.ID, Valid: true}
 		if conversationKey == "" {
@@ -604,7 +628,7 @@ func draftReplyPersistData(
 	ccIDs := ids[at : at+ccCount]
 	at += ccCount
 	bccIDs := ids[at : at+bccCount]
-	return &store.MessagePersistData{
+	data := &store.MessagePersistData{
 		Message: &store.Message{
 			SourceID:        target.source.ID,
 			SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
@@ -623,6 +647,7 @@ func draftReplyPersistData(
 			ConversationType:     "email_thread", Title: parsed.Subject,
 		},
 		BodyText: sql.NullString{String: parsed.BodyText, Valid: true},
+		BodyHTML: sql.NullString{String: parsed.BodyHTML, Valid: parsed.BodyHTML != ""},
 		RawMIME:  reply.Raw, RawFormat: "mime",
 		Recipients: []store.RecipientSet{
 			{Type: "from", ParticipantIDs: fromIDs, EmailAddresses: fromAddresses},
@@ -638,6 +663,10 @@ func draftReplyPersistData(
 			CcAddrs:  strings.Join(ccAddresses, " "),
 		},
 	}
+	if target.forward {
+		data.MIMEAttachmentReplacement = target.attachmentWrites
+	}
+	return data
 }
 
 func emitDraftReplyOutput(emit func(api.CLIRunEvent) error, stream string, asJSON bool, result draftReplyOutput) error {

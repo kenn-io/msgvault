@@ -299,9 +299,37 @@ validates provider send-as rights.
 
 ---
 
+## draft-forward
+
+Create an IMAP draft that forwards an archived message and reuses its retained
+attachment files. Choose exactly one destination with `--account` or
+`--source-id`, and provide at least one explicit `--to`, `--cc`, or `--bcc`.
+The parent message's Bcc recipients are never copied.
+
+```bash
+msgvault draft-forward <message-id> --account you@example.com \
+  --from you@example.com --to recipient@example.com --body 'Please review'
+msgvault draft-forward <message-id> --source-id 42 \
+  --cc team@example.com --json
+```
+
+The command reads attachment bytes through the archive's catalog. A pending,
+skipped, failed, missing, unreadable, or unsupported occurrence is reported
+with its filename and part key, and the command stops before `APPEND`. It never
+creates a partial draft. The IMAP source must have an enabled `[[imap.drafts]]`
+entry, and the selected sender must be a confirmed identity on that source.
+
+The generated message keeps the original text, HTML, supported `cid:` images,
+filenames, media types, and duplicate occurrences. It has a new `Fwd:` subject,
+Date, and Message-ID. The command creates a reviewable draft and never sends
+mail. If the server advertises `APPENDLIMIT`, msgvault checks the complete
+encoded MIME size before uploading. A server that does not advertise a limit
+does not receive an invented local quota.
+
 ## draft-get, draft-edit, draft-delete, and draft-recover
 
-Read, edit, or delete a managed draft created by `draft-reply` or `draft-compose`:
+Read, edit, or delete a managed draft created by `draft-reply`,
+`draft-compose`, or `draft-forward`:
 
 ```bash
 msgvault draft-get <draft-id> [--json]
@@ -317,9 +345,11 @@ The creation result supplies the opaque `draft_id` and initial revision.
 - `--body` is required for edit; `--body=` sets an empty plain-text body.
 - `--json` emits one JSON result.
 
-`draft-edit` supports `text/plain` drafts only. If the provider draft contains
-HTML, multipart content, or attachments, the command returns `invalid_draft`
-before changing the provider draft.
+`draft-edit --body` replaces the forwarding note in a draft created by
+`draft-forward`. The quoted message, HTML, CID resources, filenames, media
+types, and attachment bytes stay in place. A plain compose or reply draft keeps
+its existing `text/plain` behavior. A multipart message without msgvault's
+forward marker returns `invalid_draft` before changing the provider draft.
 
 `draft-get` reads retained archive content, including discarded drafts, without
 connecting to a provider or requiring the source's draft mutation grant. For

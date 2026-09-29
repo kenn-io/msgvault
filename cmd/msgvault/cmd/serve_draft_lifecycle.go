@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -466,7 +468,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	}
 	var replacement imaplib.ReplyDraft
 	if intent.Operation == api.CLIRunDraftEditCommand {
-		replacement, err = imaplib.BuildDraftReplacement(currentRaw, intent.Body, time.Now(), "")
+		replacement, err = imaplib.BuildIMAPDraftReplacement(currentRaw, intent.Body, time.Now(), "")
 		if err != nil {
 			return draftReplyError("invalid_draft", err)
 		}
@@ -535,7 +537,19 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		return draftReplyError(code, errors.New("provider draft inspection refused mutation"))
 	}
 	if intent.Operation == api.CLIRunDraftEditCommand {
-		return a.runDraftEdit(ctx, intent, draft, source, client, currentRaw, replacement, inspection, execution, emit)
+		var attachmentWrites *[]store.AttachmentWrite
+		if isGeneratedForwardMIME(currentRaw) {
+			refs, refsErr := a.store.MessageAttachmentRefsContext(ctx, draft.CurrentMessageID)
+			if refsErr != nil {
+				return draftReplyError("draft_read_failed", refsErr)
+			}
+			writes, writesErr := prepareIMAPDraftAttachmentWrites(ctx, replacement.Parsed, refs)
+			if writesErr != nil {
+				return draftReplyError("invalid_draft", writesErr)
+			}
+			attachmentWrites = &writes
+		}
+		return a.runDraftEdit(ctx, intent, draft, source, client, currentRaw, replacement, attachmentWrites, inspection, execution, emit)
 	}
 	return a.runDraftDelete(ctx, intent, draft, source, client, inspection, execution, emit)
 }
@@ -548,6 +562,7 @@ func (a *storeAPIAdapter) runDraftEdit(
 	client *imaplib.Client,
 	currentRaw []byte,
 	replacement imaplib.ReplyDraft,
+	attachmentWrites *[]store.AttachmentWrite,
 	inspection imaplib.DraftObservation,
 	execution *store.SyncExecution,
 	emit func(api.CLIRunEvent) error,
@@ -645,7 +660,7 @@ func (a *storeAPIAdapter) runDraftEdit(
 	if replyToErr != nil {
 		return reportAcceptedLocalFailure(replyToErr)
 	}
-	participants, build := draftLifecyclePersistData(currentMessage.ConversationID, replyTo, replacement, receipt)
+	participants, build := draftLifecyclePersistData(currentMessage.ConversationID, replyTo, replacement, receipt, attachmentWrites)
 	published, err := a.store.PublishIMAPDraftReplacementContext(evidenceCtx, intent.DraftID, intent.Revision, participants, build)
 	if err != nil {
 		return reportAcceptedLocalFailure(err)
@@ -931,8 +946,25 @@ func (a *storeAPIAdapter) publishRecoveredDraftReplacement(
 		return store.IMAPDraft{}, fmt.Errorf("load draft reply link for replacement: %w", err)
 	}
 	receipt := *draft.Pending.ReplacementReceipt
-	participants, build := draftLifecyclePersistData(message.ConversationID, replyTo, replacement, receipt)
+	var attachmentWrites *[]store.AttachmentWrite
+	if isGeneratedForwardMIME(replacement.Raw) {
+		refs, refsErr := a.store.MessageAttachmentRefsContext(ctx, draft.CurrentMessageID)
+		if refsErr != nil {
+			return store.IMAPDraft{}, refsErr
+		}
+		writes, writesErr := prepareIMAPDraftAttachmentWrites(ctx, parsed, refs)
+		if writesErr != nil {
+			return store.IMAPDraft{}, writesErr
+		}
+		attachmentWrites = &writes
+	}
+	participants, build := draftLifecyclePersistData(message.ConversationID, replyTo, replacement, receipt, attachmentWrites)
 	return a.store.PublishIMAPDraftReplacementContext(ctx, draft.DraftID, draft.Revision, participants, build)
+}
+
+func isGeneratedForwardMIME(raw []byte) bool {
+	message, err := mail.ReadMessage(bytes.NewReader(raw))
+	return err == nil && strings.TrimSpace(message.Header.Get("X-Msgvault-Forward")) == "1"
 }
 
 func (a *storeAPIAdapter) runDraftRecover(
@@ -1129,6 +1161,7 @@ func draftLifecyclePersistData(
 	replyTo sql.NullInt64,
 	replacement imaplib.ReplyDraft,
 	receipt store.IMAPDraftReceipt,
+	attachmentWrites ...*[]store.AttachmentWrite,
 ) ([]store.ParticipantPersistData, func([]int64) *store.MessagePersistData) {
 	parsed := replacement.Parsed
 	addresses := append([]msgmime.Address(nil), parsed.From...)
@@ -1172,9 +1205,10 @@ func draftLifecyclePersistData(
 			InternalDate:     sql.NullTime{Time: parsed.Date, Valid: !parsed.Date.IsZero()},
 			SizeEstimate:     int64(len(replacement.Raw)), ArchivedAt: time.Now(),
 		}
-		return &store.MessagePersistData{
+		data := &store.MessagePersistData{
 			Message: message, BodyText: sql.NullString{String: parsed.BodyText, Valid: true},
-			RawMIME: replacement.Raw, RawFormat: "mime",
+			BodyHTML: sql.NullString{String: parsed.BodyHTML, Valid: parsed.BodyHTML != ""},
+			RawMIME:  replacement.Raw, RawFormat: "mime",
 			Recipients: []store.RecipientSet{
 				{Type: "from", ParticipantIDs: fromIDs, EmailAddresses: fromAddresses},
 				{Type: "to", ParticipantIDs: toIDs, EmailAddresses: toAddresses},
@@ -1189,6 +1223,10 @@ func draftLifecyclePersistData(
 				CcAddrs:  strings.Join(ccAddresses, " "),
 			},
 		}
+		if len(attachmentWrites) > 0 {
+			data.MIMEAttachmentReplacement = attachmentWrites[0]
+		}
+		return data
 	}
 	return participants, build
 }
