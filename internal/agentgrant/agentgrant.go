@@ -15,12 +15,14 @@ import (
 type Permission string
 
 const (
+	PermissionDraftRead   Permission = "draft.read"
 	PermissionDraftCreate Permission = "draft.create"
 	PermissionDraftEdit   Permission = "draft.edit"
 	PermissionDraftDelete Permission = "draft.delete"
 )
 
 var knownPermissions = map[string]Permission{
+	string(PermissionDraftRead):   PermissionDraftRead,
 	string(PermissionDraftCreate): PermissionDraftCreate,
 	string(PermissionDraftEdit):   PermissionDraftEdit,
 	string(PermissionDraftDelete): PermissionDraftDelete,

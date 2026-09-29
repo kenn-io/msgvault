@@ -93,6 +93,18 @@ type Chat struct {
 	Type         string           `json:"type"` // "single" | "group"
 	Participants ChatParticipants `json:"participants"`
 	LastActivity time.Time        `json:"lastActivity"`
+	// Draft keeps the provider value verbatim. A nil value means the field was
+	// absent; the JSON bytes "null" mean an explicit empty draft.
+	Draft            jsontext.Value `json:"draft"`
+	LocalChatID      string         `json:"localChatID"`
+	MergedIntoChatID string         `json:"mergedIntoChatID"`
+	Merge            *ChatMerge     `json:"merge"`
+}
+
+// ChatMerge identifies the member rooms represented by a merged chat.
+type ChatMerge struct {
+	ChatIDs       []string `json:"chatIDs"`
+	DefaultChatID string   `json:"defaultChatID"`
 }
 
 // Reaction is one participant's reaction to a message.

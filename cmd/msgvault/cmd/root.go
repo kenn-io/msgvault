@@ -234,6 +234,12 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // work without local configuration or a local daemon are permitted; all others
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
+	if cmd != nil && cmd.Parent() != nil && cmd.Parent().Name() == "draft-beeper" {
+		switch cmd.Name() {
+		case "create", "get", "edit", "clear":
+			return true
+		}
+	}
 	switch cmd.Name() {
 	case "draft-reply", "draft-compose", "draft-recover":
 		return true

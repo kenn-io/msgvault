@@ -359,6 +359,33 @@ provider result in `observation.code`. See
 [Manage a created draft](usage/imap.md#manage-a-created-draft) for revision,
 provider checks, retention, retry behavior, and recovery limits.
 
+## draft-beeper
+
+Manage a text draft in an existing Beeper chat. The daemon keeps the Beeper
+token and local binding. The source must be listed in `[[beeper.drafts]]`.
+
+```bash
+msgvault draft-beeper create --source-id <id> --chat-id <canonical-id> --body <text> [--json]
+msgvault draft-beeper get <draft-id> [--json]
+msgvault draft-beeper edit <draft-id> --revision <n> --body <text> [--json]
+msgvault draft-beeper clear <draft-id> --revision <n> [--json]
+```
+
+Create and edit require non-empty text. Beeper returns rich text after it
+converts Markdown, and msgvault stores that returned text for later checks.
+The command refuses a chat with an existing draft, attachments, unknown draft
+fields, or a merged chat. `get` reports the saved text and a separate current
+provider observation without adopting Desktop changes.
+
+Edit and clear compare the provider draft before writing. Beeper's current API
+has no conditional clear token, so a Desktop edit after that observation can
+still be cleared. A provider request whose result is unknown stays pending and
+blocks a new mutation until the evidence is resolved.
+
+Delegated agents need `draft.create`, `draft.read`, `draft.edit`, or
+`draft.delete` for the matching Beeper source. These commands accept no caller
+environment or working directory overrides.
+
 ## draft-send-as
 
 List Gmail send-as identities for an owner-invoked Gmail account:
@@ -3724,7 +3751,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `draft.create` for `draft-reply` and `draft-compose`; `draft.edit` and `draft.delete` for `draft-recover` only (see [draft recovery](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `draft.create` for draft creation, `draft.read` for delegated Beeper `draft-beeper get`, `draft.edit` for edits, and `draft.delete` for clears or recovery (see [draft recovery](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
 

@@ -940,6 +940,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		if strings.HasPrefix(key.String(), "gmail.drafts.") {
 			return nil, fmt.Errorf("unknown Gmail draft config key %q", key.String())
 		}
+		if strings.HasPrefix(key.String(), "beeper.drafts.") {
+			return nil, fmt.Errorf("unknown Beeper draft config key %q", key.String())
+		}
 	}
 	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
 		return nil, err
@@ -948,6 +951,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	if err := cfg.validateGmailDraftSources(content); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateBeeperDraftSources(content); err != nil {
 		return nil, err
 	}
 
@@ -1118,6 +1124,32 @@ func (c *Config) validateGmailDraftSources(content []byte) error {
 		}
 		if _, ok := seen[draft.SourceID]; ok {
 			return fmt.Errorf("[[gmail.drafts]] entry %d: duplicate source_id selector %d", i+1, draft.SourceID)
+		}
+		seen[draft.SourceID] = struct{}{}
+	}
+	return nil
+}
+
+func (c *Config) validateBeeperDraftSources(content []byte) error {
+	var raw struct {
+		Beeper struct {
+			Drafts []struct {
+				SourceID *int64 `toml:"source_id"`
+			} `toml:"drafts"`
+		} `toml:"beeper"`
+	}
+	_, _ = toml.Decode(string(content), &raw)
+	seen := make(map[int64]struct{}, len(c.Beeper.Drafts))
+	for i := range c.Beeper.Drafts {
+		draft := &c.Beeper.Drafts[i]
+		if i >= len(raw.Beeper.Drafts) || raw.Beeper.Drafts[i].SourceID == nil {
+			return fmt.Errorf("[[beeper.drafts]] entry %d: source_id is required", i+1)
+		}
+		if draft.SourceID <= 0 {
+			return fmt.Errorf("[[beeper.drafts]] entry %d: source_id must be positive", i+1)
+		}
+		if _, ok := seen[draft.SourceID]; ok {
+			return fmt.Errorf("[[beeper.drafts]] entry %d: duplicate source_id selector %d", i+1, draft.SourceID)
 		}
 		seen[draft.SourceID] = struct{}{}
 	}
@@ -1473,6 +1505,13 @@ type BeeperConfig struct {
 	MediaMaxParticipants int `toml:"media_max_participants"`
 	// AccountsConfig holds per-Beeper-account media overrides.
 	AccountsConfig map[string]MediaAccountConfig `toml:"accounts_config"`
+	// Drafts grants the daemon permission to mutate native composer slots for
+	// exact source IDs. An empty list keeps the feature disabled.
+	Drafts []BeeperDraftSource `toml:"drafts"`
+}
+
+type BeeperDraftSource struct {
+	SourceID int64 `toml:"source_id"`
 }
 
 // SlackConfig configures Slack workspace archive sources ([slack] table).

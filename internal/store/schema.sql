@@ -2173,6 +2173,39 @@ CREATE INDEX IF NOT EXISTS idx_gmail_drafts_current_message
 CREATE INDEX IF NOT EXISTS idx_gmail_drafts_pending_original_message
     ON gmail_drafts(pending_original_message_id);
 
+-- Beeper drafts own a native chat composer slot rather than an archive
+-- message. Pending fields fence a single provider attempt across restarts.
+CREATE TABLE IF NOT EXISTS beeper_drafts (
+    draft_id TEXT PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    committed_text TEXT,
+    pending_operation TEXT,
+    pending_phase TEXT,
+    candidate_text TEXT,
+    outcome_code TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_id, chat_id),
+    CHECK (length(trim(account_id)) > 0 AND length(trim(chat_id)) > 0),
+    CHECK (pending_operation IS NULL OR pending_operation IN ('create', 'edit', 'delete')),
+    CHECK (pending_phase IS NULL OR pending_phase IN ('claimed', 'clear_dispatched', 'clear_confirmed', 'set_dispatched', 'rejected', 'remote_unknown', 'accepted_local_failed')),
+    CHECK ((pending_operation IS NULL AND pending_phase IS NULL AND candidate_text IS NULL AND outcome_code IS NULL)
+        OR (pending_operation IS NOT NULL AND pending_phase IS NOT NULL
+            AND ((pending_operation IN ('create', 'edit') AND candidate_text IS NOT NULL AND length(candidate_text) > 0)
+                OR (pending_operation = 'delete' AND candidate_text IS NULL)))),
+    CHECK (pending_phase NOT IN ('clear_confirmed', 'set_dispatched') OR pending_operation IS NOT NULL),
+    CHECK (pending_operation IS NULL OR
+        (pending_operation = 'create' AND pending_phase IN ('claimed', 'set_dispatched', 'rejected', 'remote_unknown', 'accepted_local_failed')) OR
+        (pending_operation = 'edit' AND pending_phase IN ('claimed', 'clear_dispatched', 'clear_confirmed', 'set_dispatched', 'rejected', 'remote_unknown', 'accepted_local_failed')) OR
+        (pending_operation = 'delete' AND pending_phase IN ('claimed', 'clear_dispatched', 'clear_confirmed', 'rejected', 'remote_unknown', 'accepted_local_failed')))
+);
+
+CREATE INDEX IF NOT EXISTS idx_beeper_drafts_pending
+    ON beeper_drafts(source_id, pending_operation);
+
 -- Imported source items (files/objects already processed for resumable adapters)
 CREATE TABLE IF NOT EXISTS source_import_items (
     id INTEGER PRIMARY KEY,

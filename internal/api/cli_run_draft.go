@@ -14,7 +14,40 @@ const (
 	CLIRunDraftDeleteCommand  = "draft-delete"
 	CLIRunDraftRecoverCommand = "draft-recover"
 	CLIRunDraftSendAsCommand  = "draft-send-as"
+	CLIRunBeeperDraftCommand  = "draft-beeper"
 )
+
+// IsCLIRunBeeperDraft reports whether args name one supported native Beeper
+// draft operation. The child command is part of the permission boundary.
+func IsCLIRunBeeperDraft(args []string) bool {
+	if len(args) < 2 || args[0] != CLIRunBeeperDraftCommand {
+		return false
+	}
+	switch args[1] {
+	case "create", "get", "edit", "clear":
+		return true
+	default:
+		return false
+	}
+}
+
+func BeeperDraftPermission(args []string) (agentgrant.Permission, bool) {
+	if !IsCLIRunBeeperDraft(args) {
+		return "", false
+	}
+	switch args[1] {
+	case "create":
+		return agentgrant.PermissionDraftCreate, true
+	case "get":
+		return agentgrant.PermissionDraftRead, true
+	case "edit":
+		return agentgrant.PermissionDraftEdit, true
+	case "clear":
+		return agentgrant.PermissionDraftDelete, true
+	default:
+		return "", false
+	}
+}
 
 // IsCLIRunDraftReply reports whether args invoke the in-process draft-reply
 // route.
@@ -37,6 +70,9 @@ func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {
 	}
 	if IsCLIRunDraftCreate(args) {
 		return grant.HasPermission(agentgrant.PermissionDraftCreate)
+	}
+	if permission, ok := BeeperDraftPermission(args); ok {
+		return grant.HasPermission(permission)
 	}
 	if len(args) > 0 && args[0] == CLIRunDraftRecoverCommand {
 		return grant.HasPermission(agentgrant.PermissionDraftEdit) || grant.HasPermission(agentgrant.PermissionDraftDelete)

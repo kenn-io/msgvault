@@ -251,3 +251,13 @@ func TestGrantWithNoSenderKeysHasNoSenderAuthority(t *testing.T) {
 	}
 	assert.False(t, g.AllowsSender(PermissionDraftCreate, SourceRef{Type: "imap", Identifier: "imap://alice@example.com"}, "alice@example.com"))
 }
+
+func TestBeeperDraftReadPermission(t *testing.T) {
+	assertions := assert.New(t)
+	permission, ok := KnownPermission(string(PermissionDraftRead))
+	assertions.True(ok)
+	assertions.Equal(PermissionDraftRead, permission)
+	grant := Grant{Permissions: []Permission{PermissionDraftRead}, Sources: []SourceRef{{ID: 1, Type: "beeper", Identifier: "signal"}}}
+	assertions.True(grant.Allows(PermissionDraftRead, SourceRef{ID: 99, Type: "beeper", Identifier: "signal"}))
+	assertions.False(grant.Allows(PermissionDraftRead, SourceRef{ID: 1, Type: "gmail", Identifier: "signal"}))
+}

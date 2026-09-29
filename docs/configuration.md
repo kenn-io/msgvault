@@ -913,6 +913,18 @@ max_media_mb = 250                # per-attachment download cap (MiB)
 | `media_max_participants` | `20` | Skip media from conversations above this many participants; `0` = no cap |
 | `max_media_mb` | `250` | Per-attachment download cap in MiB (over-cap media is recorded as a `size_cap` skip and retried only after the cap changes) |
 | `accounts_config` | — | Per-accountID `media` and `max_media_mb` overrides |
+| `drafts` | — | Native text-draft mutation grants, each with a required positive `source_id`; absent means disabled |
+
+Native Beeper draft mutation is opt-in per source and is copied when the
+daemon starts. Add an entry for an existing Beeper source:
+
+```toml
+[[beeper.drafts]]
+source_id = 42
+```
+
+The grant covers text drafts in existing canonical chats. It doesn't enable
+sending, attachments, new chat creation, or message edits.
 
 #### Send stored audio to Docbank
 

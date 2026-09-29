@@ -8,6 +8,12 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Add opt-in `draft-beeper` commands for creating, reading, editing, and
+  clearing text drafts in existing Beeper chats. The daemon stores the native
+  draft binding and uses `draft.create`, `draft.read`, `draft.edit`, and
+  `draft.delete` grants. Edit and clear use observation-based conflict checks;
+  Beeper's current API does not provide a conditional clear token, so a
+  Desktop edit after the observation can still be cleared.
 - Exa and Sixtyfour person enrichment collapse repeated values before committing
   claims, so duplicate provider output no longer aborts the claim generation.
 - Person enrichment retains queued lookups and refresh schedules when a provider
