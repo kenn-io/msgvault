@@ -141,6 +141,12 @@ function kindPresentation(icon: string, label: string): EntryKindPresentation {
   return { icon, label, name: label.replace(' item', '').replace('Archive', 'Item') };
 }
 
+// Mirrors identityindex.TextMessageTypes plus its chat/text fallbacks (internal/identityindex/schema.go).
+const CHAT_MESSAGE_TYPES = new Set([
+  'chat', 'text', 'google_chat', 'whatsapp', 'imessage', 'sms', 'mms', 'rcs',
+  'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'fbmessenger'
+]);
+
 // The server-assigned kind wins; the message type covers rows and archive messages without one.
 export function entryKindPresentation(kind: string, messageType = ''): EntryKindPresentation {
   const normalizedKind = kind.toLowerCase();
@@ -151,10 +157,12 @@ export function entryKindPresentation(kind: string, messageType = ''): EntryKind
   if (normalizedKind === 'file') return kindPresentation('▱', 'File item');
   const normalized = messageType.toLowerCase();
   if (normalized === 'email') return kindPresentation('✉', 'Email item');
-  if (normalized === 'chat' || normalized === 'text') {
-    return kindPresentation('◌', 'Conversation item');
+  if (CHAT_MESSAGE_TYPES.has(normalized)) return kindPresentation('◌', 'Conversation item');
+  if (normalized === 'calendar' || normalized === 'calendar_event') {
+    return kindPresentation('□', 'Calendar event');
   }
-  if (normalized === 'calendar') return kindPresentation('□', 'Calendar event');
-  if (normalized === 'meeting') return kindPresentation('◫', 'Meeting item');
+  if (normalized === 'meeting' || normalized === 'meeting_transcript') {
+    return kindPresentation('◫', 'Meeting item');
+  }
   return kindPresentation('◇', 'Archive item');
 }

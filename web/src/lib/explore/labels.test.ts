@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ExploreFilterDimension as FilterDimensions } from '../api/generated/models/exploreFilterDimension';
 import {
+  entryKindPresentation,
   fileTypeLabel,
   filterDimensionLabel,
   preflightReasonLabel,
@@ -63,5 +64,27 @@ describe('explore labels', () => {
       expect(preflightReasonLabel(action, reason)).toBe(sentence);
     }
     expect(preflightReasonLabel('export', 'some_new_reason')).toBe('Some new reason.');
+  });
+});
+
+describe('entryKindPresentation', () => {
+  it.each([
+    ['imessage', 'Conversation'],
+    ['sms', 'Conversation'],
+    ['whatsapp', 'Conversation'],
+    ['slack', 'Conversation'],
+    ['fbmessenger', 'Conversation'],
+    ['chat', 'Conversation'],
+    ['meeting_transcript', 'Meeting'],
+    ['calendar_event', 'Calendar event'],
+    ['email', 'Email'],
+    ['', 'Item'],
+    ['unheard_of', 'Item']
+  ])('names message type %s "%s" when the row has no kind', (messageType, name) => {
+    expect(entryKindPresentation('message', messageType).name).toBe(name);
+  });
+
+  it('prefers the server kind over the message type', () => {
+    expect(entryKindPresentation('meeting', 'email').name).toBe('Meeting');
   });
 });

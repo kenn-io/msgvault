@@ -240,3 +240,67 @@ describe('TaskLinks', () => {
     await expect(posts[0]!.clone().text()).resolves.toBe(await posts[1]!.clone().text());
   });
 });
+
+describe('TaskLinks linkedCount', () => {
+  function lookupFetch(lookup: (messageId: string) => Record<string, unknown>) {
+    return vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.url.endsWith('/integrations/tasks/status')) {
+        return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
+      }
+      const messageId = new URL(request.url).pathname.split('/').at(-2)!;
+      return Response.json(lookup(messageId));
+    });
+  }
+
+  function renderBound(fetchFn: typeof fetch, messageId = 42) {
+    const bound: { count: number | undefined } = { count: undefined };
+    const props = {
+      client: createAPIClient(fetchFn),
+      messageId,
+      title: 'Synthetic',
+      sourceType: 'gmail',
+      sourceIdentifier: 'archive@example.com',
+      get linkedCount() {
+        return bound.count;
+      },
+      set linkedCount(value: number | undefined) {
+        bound.count = value;
+      }
+    };
+    const view = render(TaskLinks, { props });
+    return { bound, view };
+  }
+
+  const complete = {
+    state: 'ready',
+    complete: true,
+    last_scan: '2026-07-19T01:00:00Z',
+    tasks: [{ id: 'task-1', title: 'Follow up', revision: 'r1' }]
+  };
+
+  it('reports the count after a complete lookup', async () => {
+    const { bound } = renderBound(lookupFetch(() => complete));
+    await screen.findByText('Follow up');
+    expect(bound.count).toBe(1);
+  });
+
+  it.each(['partial', 'unavailable'])('stays unknown for an empty %s index', async (state) => {
+    const { bound } = renderBound(
+      lookupFetch(() => ({ state, complete: false, reason: state, last_scan: '2026-07-19T01:00:00Z', tasks: [] }))
+    );
+    expect((await screen.findByRole('alert')).textContent?.toLowerCase()).toContain(state);
+    expect(bound.count).toBeUndefined();
+  });
+
+  it('resets when the message changes', async () => {
+    const { bound, view } = renderBound(
+      lookupFetch((id) => (id === '42' ? complete : { ...complete, state: 'partial', complete: false, tasks: [] }))
+    );
+    await waitFor(() => expect(bound.count).toBe(1));
+
+    await view.rerender({ messageId: 43 });
+    await waitFor(() => expect(bound.count).toBeUndefined());
+  });
+});
+

@@ -93,6 +93,7 @@ describe('ReadingPane header', () => {
     expect(button.getAttribute('aria-expanded')).toBe('true');
     expect(await screen.findByRole('region', { name: 'Linked tasks' })).toBeDefined();
     await waitFor(() => expect(button.textContent?.trim()).toBe('Tasks 2'));
+    expect(screen.getByRole('button', { name: 'Tasks 2 for this message' })).toBe(button);
   });
 
   it('resets the count and closes the sheet when the selection changes', async () => {
@@ -104,12 +105,11 @@ describe('ReadingPane header', () => {
         predicate: {} satisfies ExplorePredicate
       }
     });
-    await fireEvent.click(screen.getByRole('button', { name: 'Tasks for this message' }));
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Tasks for this message' }).textContent?.trim()).toBe('Tasks 1'));
+    await fireEvent.click(screen.getByRole('button', { name: /^Tasks( \d+)? for this message$/ }));
+    expect(await screen.findByRole('button', { name: 'Tasks 1 for this message' })).toBeDefined();
 
     await view.rerender({ selection: { kind: 'entry', row: entryRow({ key: 'entry-2', anchor_message_id: 43 }) } });
-    const button = screen.getByRole('button', { name: 'Tasks for this message' });
+    const button = screen.getByRole('button', { name: /^Tasks( \d+)? for this message$/ });
     expect(button.textContent?.trim()).toBe('Tasks');
     expect(button.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();

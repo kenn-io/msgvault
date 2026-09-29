@@ -258,7 +258,7 @@
           size="sm"
           surface="outline"
           label={linkedCount === undefined ? 'Tasks' : `Tasks ${linkedCount}`}
-          ariaLabel="Tasks for this message"
+          ariaLabel={linkedCount === undefined ? 'Tasks for this message' : `Tasks ${linkedCount} for this message`}
           ariaExpanded={tasksOpen}
           onclick={() => (tasksOpen = !tasksOpen)}
         />
