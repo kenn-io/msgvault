@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	GmailDraftOperationEdit   = "edit"
-	GmailDraftOperationDelete = "delete"
+	GmailDraftOperationEdit   = draftOperationEdit
+	GmailDraftOperationDelete = draftOperationDelete
 )
 
 // GmailDraftReceipt identifies Gmail's stable draft and its current message.
@@ -152,11 +152,32 @@ func validateGmailDraftReceipt(receipt GmailDraftReceipt) error {
 	return nil
 }
 
-func validateGmailDraftID(draftID string) error {
-	if strings.TrimSpace(draftID) == "" || strings.ContainsAny(draftID, "\x00\r\n") {
-		return errors.New("invalid Gmail draft ID")
-	}
-	return nil
+var gmailDrafts = draftTable[GmailDraft]{
+	provider:           "Gmail",
+	table:              "gmail_drafts",
+	originalColumns:    []string{"pending_original_gmail_message_id"},
+	replacementColumns: []string{"pending_replacement_gmail_message_id"},
+	errRevision:        ErrGmailDraftRevision,
+	errPending:         ErrGmailDraftPending,
+	errState:           ErrGmailDraftState,
+	load:               loadGmailDraft,
+	state: func(d GmailDraft) draftState {
+		return draftState{revision: d.Revision, discarded: d.DiscardedAt != nil, pending: d.Pending != nil}
+	},
+	originalArgs: func(d GmailDraft) []any {
+		return []any{d.CurrentMessageID, d.CurrentReceipt.GmailMessageID}
+	},
+	withClaim: func(d GmailDraft, operation string, raw []byte) GmailDraft {
+		d.Pending = &GmailDraftPending{
+			Operation: operation, OriginalMessageID: d.CurrentMessageID,
+			OriginalGmailMessageID: d.CurrentReceipt.GmailMessageID,
+			Raw:                    append([]byte(nil), raw...),
+		}
+		if operation == GmailDraftOperationDelete {
+			d.Pending.Raw = nil
+		}
+		return d
+	},
 }
 
 // GetGmailDraft returns one managed Gmail draft.
@@ -167,20 +188,13 @@ func (s *Store) GetGmailDraft(draftID string) (GmailDraft, error) {
 // GetGmailDraftContext reads ownership by local draft ID without consulting
 // Gmail. Provider reads belong to edit and delete decisions.
 func (s *Store) GetGmailDraftContext(ctx context.Context, draftID string) (GmailDraft, error) {
-	if err := validateGmailDraftID(draftID); err != nil {
+	if err := gmailDrafts.validateID(draftID); err != nil {
 		return GmailDraft{}, err
 	}
 	return loadGmailDraft(ctx, s.db, "", draftID)
 }
 
-func loadGmailDraft(
-	ctx context.Context,
-	q interface {
-		QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	},
-	lockClause string,
-	draftID string,
-) (GmailDraft, error) {
+func loadGmailDraft(ctx context.Context, q contextRowQuerier, lockClause string, draftID string) (GmailDraft, error) {
 	var (
 		draft                            GmailDraft
 		discardedAt                      nullableTimestamp
@@ -244,20 +258,6 @@ func loadGmailDraft(
 	return draft, nil
 }
 
-func (s *Store) loadGmailDraftTx(ctx context.Context, tx *loggedTx, draftID string) (GmailDraft, error) {
-	return loadGmailDraft(ctx, tx, s.dialect.SelectForUpdate(), draftID)
-}
-
-func (s *Store) lockGmailDraftTx(ctx context.Context, tx *loggedTx, draftID string) error {
-	if lockSQL := s.dialect.RowWriterLockSQL("gmail_drafts", "updated_at"); lockSQL != "" {
-		lockSQL = strings.Replace(lockSQL, "WHERE id = ?", "WHERE draft_id = ?", 1)
-		if _, err := tx.ExecContext(ctx, lockSQL, draftID); err != nil {
-			return fmt.Errorf("lock Gmail draft %q: %w", draftID, err)
-		}
-	}
-	return nil
-}
-
 // ClaimGmailDraftContext stores the current archive identity before a provider
 // mutation. The revision does not advance until the mutation publishes.
 func (s *Store) ClaimGmailDraftContext(
@@ -267,101 +267,24 @@ func (s *Store) ClaimGmailDraftContext(
 	operation string,
 	replacementRaw []byte,
 ) (GmailDraft, error) {
-	if err := validateGmailDraftID(draftID); err != nil {
-		return GmailDraft{}, err
-	}
-	if revision <= 0 {
-		return GmailDraft{}, fmt.Errorf("%w: expected positive revision", ErrGmailDraftRevision)
-	}
-	if operation != GmailDraftOperationEdit && operation != GmailDraftOperationDelete {
-		return GmailDraft{}, fmt.Errorf("%w: unknown operation %q", ErrGmailDraftState, operation)
-	}
-	if operation == GmailDraftOperationEdit && len(replacementRaw) == 0 {
-		return GmailDraft{}, errors.New("edit candidate must not be empty")
-	}
-	var claimed GmailDraft
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockGmailDraftTx(ctx, tx, draftID); err != nil {
-			return err
-		}
-		draft, err := s.loadGmailDraftTx(ctx, tx, draftID)
-		if err != nil {
-			return err
-		}
-		if draft.Revision != revision {
-			return fmt.Errorf("%w: expected %d, found %d", ErrGmailDraftRevision, revision, draft.Revision)
-		}
-		if draft.DiscardedAt != nil {
-			return fmt.Errorf("%w: draft is discarded", ErrGmailDraftState)
-		}
-		if draft.Pending != nil {
-			return ErrGmailDraftPending
-		}
-		var raw any
-		if operation == GmailDraftOperationEdit {
-			raw = append([]byte(nil), replacementRaw...)
-		}
-		result, err := tx.ExecContext(ctx, `
-			UPDATE gmail_drafts
-			SET pending_operation = ?,
-			    pending_original_message_id = ?,
-			    pending_original_gmail_message_id = ?,
-			    pending_raw = ?,
-			    pending_replacement_gmail_message_id = NULL,
-			    pending_code = NULL,
-			    updated_at = `+s.dialect.Now()+`
-			WHERE draft_id = ? AND revision = ? AND pending_operation IS NULL
-		`, operation, draft.CurrentMessageID, draft.CurrentReceipt.GmailMessageID,
-			raw, draftID, revision)
-		if err != nil {
-			return fmt.Errorf("claim Gmail draft %q: %w", draftID, err)
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if affected != 1 {
-			return ErrGmailDraftPending
-		}
-		claimed = draft
-		claimed.Pending = &GmailDraftPending{
-			Operation: operation, OriginalMessageID: draft.CurrentMessageID,
-			OriginalGmailMessageID: draft.CurrentReceipt.GmailMessageID,
-			Raw:                    append([]byte(nil), replacementRaw...),
-		}
-		if operation == GmailDraftOperationDelete {
-			claimed.Pending.Raw = nil
-		}
-		return nil
-	})
-	if err != nil {
-		return GmailDraft{}, err
-	}
-	return claimed, nil
+	return gmailDrafts.claim(ctx, s, draftID, revision, operation, replacementRaw)
 }
 
 // AbortGmailDraftContext clears a claim after a provider rejection or a
 // mutation that was cancelled before any provider request.
 func (s *Store) AbortGmailDraftContext(ctx context.Context, draftID string, revision int64) (GmailDraft, error) {
-	if err := validateGmailDraftID(draftID); err != nil {
+	if err := gmailDrafts.validateID(draftID); err != nil {
 		return GmailDraft{}, err
 	}
 	var active GmailDraft
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockGmailDraftTx(ctx, tx, draftID); err != nil {
-			return err
-		}
-		draft, err := s.loadGmailDraftTx(ctx, tx, draftID)
-		if err != nil {
-			return err
-		}
+	err := gmailDrafts.inTx(ctx, s, draftID, func(tx *loggedTx, draft GmailDraft) error {
 		if draft.Revision != revision {
 			return ErrGmailDraftRevision
 		}
 		if draft.Pending == nil {
 			return ErrGmailDraftState
 		}
-		if err := s.clearGmailDraftPendingTx(ctx, tx, draftID, revision); err != nil {
+		if err := gmailDrafts.clearPendingTx(ctx, s, tx, draftID, revision); err != nil {
 			return err
 		}
 		active = draft
@@ -383,20 +306,13 @@ func (s *Store) RecordGmailDraftOutcomeContext(
 	code string,
 	replacementGmailMessageID string,
 ) error {
-	if err := validateGmailDraftID(draftID); err != nil {
+	if err := gmailDrafts.validateID(draftID); err != nil {
 		return err
 	}
-	if revision <= 0 || strings.TrimSpace(code) == "" {
-		return fmt.Errorf("%w: outcome requires positive revision and code", ErrGmailDraftState)
+	if err := gmailDrafts.checkOutcomeRequest(revision, code); err != nil {
+		return err
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockGmailDraftTx(ctx, tx, draftID); err != nil {
-			return err
-		}
-		draft, err := s.loadGmailDraftTx(ctx, tx, draftID)
-		if err != nil {
-			return err
-		}
+	return gmailDrafts.inTx(ctx, s, draftID, func(tx *loggedTx, draft GmailDraft) error {
 		if draft.Revision != revision {
 			return ErrGmailDraftRevision
 		}
@@ -437,21 +353,14 @@ func (s *Store) PublishGmailDraftReplacementContext(
 	participants []ParticipantPersistData,
 	build func([]int64) *MessagePersistData,
 ) (GmailDraft, error) {
-	if err := validateGmailDraftID(draftID); err != nil {
+	if err := gmailDrafts.validateID(draftID); err != nil {
 		return GmailDraft{}, err
 	}
 	if revision <= 0 || strings.TrimSpace(newGmailMessageID) == "" || build == nil {
 		return GmailDraft{}, errors.New("invalid Gmail draft publication")
 	}
 	var published GmailDraft
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockGmailDraftTx(ctx, tx, draftID); err != nil {
-			return err
-		}
-		draft, err := s.loadGmailDraftTx(ctx, tx, draftID)
-		if err != nil {
-			return err
-		}
+	err := gmailDrafts.inTx(ctx, s, draftID, func(tx *loggedTx, draft GmailDraft) error {
 		if draft.Revision != revision {
 			return ErrGmailDraftRevision
 		}
@@ -459,13 +368,8 @@ func (s *Store) PublishGmailDraftReplacementContext(
 			draft.Pending.ReplacementGmailMessageID != newGmailMessageID {
 			return errors.New("gmail draft replacement receipt is not recorded")
 		}
-		var existingMessageID int64
-		if err := tx.QueryRowContext(ctx, `
-			SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
-		`, draft.SourceID, newGmailMessageID).Scan(&existingMessageID); err == nil {
-			return fmt.Errorf("replacement source key already belongs to message %d", existingMessageID)
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("check replacement source key: %w", err)
+		if err := checkDraftReplacementSourceKeyTx(ctx, tx, draft.SourceID, newGmailMessageID); err != nil {
+			return err
 		}
 		prepare := func(ctx context.Context, tx *loggedTx, data *MessagePersistData) (*MessagePersistData, error) {
 			if data == nil || data.Message == nil {
@@ -495,13 +399,9 @@ func (s *Store) PublishGmailDraftReplacementContext(
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			UPDATE gmail_drafts
 			SET current_message_id = ?, current_gmail_message_id = ?,
-			    revision = revision + 1, pending_operation = NULL,
-			    pending_original_message_id = NULL,
-			    pending_original_gmail_message_id = NULL,
-			    pending_raw = NULL, pending_replacement_gmail_message_id = NULL,
-			    pending_code = NULL, updated_at = %s
+			    revision = revision + 1, %s, updated_at = %s
 			WHERE draft_id = ? AND revision = ? AND pending_operation = 'edit'
-		`, s.dialect.Now()), messageID, newGmailMessageID, draftID, revision)
+		`, gmailDrafts.pendingNullSQL(), s.dialect.Now()), messageID, newGmailMessageID, draftID, revision)
 		if err != nil {
 			return fmt.Errorf("publish Gmail draft replacement %q: %w", draftID, err)
 		}
@@ -535,21 +435,14 @@ func (s *Store) AdoptGmailDraftObservationContext(
 	participants []ParticipantPersistData,
 	build func([]int64) *MessagePersistData,
 ) (GmailDraft, error) {
-	if err := validateGmailDraftID(draftID); err != nil {
+	if err := gmailDrafts.validateID(draftID); err != nil {
 		return GmailDraft{}, err
 	}
 	if err := validateGmailDraftReceipt(observed); err != nil || build == nil {
 		return GmailDraft{}, errors.New("invalid Gmail draft observation")
 	}
 	var adopted GmailDraft
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockGmailDraftTx(ctx, tx, draftID); err != nil {
-			return err
-		}
-		draft, err := s.loadGmailDraftTx(ctx, tx, draftID)
-		if err != nil {
-			return err
-		}
+	err := gmailDrafts.inTx(ctx, s, draftID, func(tx *loggedTx, draft GmailDraft) error {
 		if draft.Revision != revision {
 			return ErrGmailDraftRevision
 		}
@@ -564,7 +457,7 @@ func (s *Store) AdoptGmailDraftObservationContext(
 			return nil
 		}
 		var messageID int64
-		err = tx.QueryRowContext(ctx, `
+		err := tx.QueryRowContext(ctx, `
 			SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
 		`, draft.SourceID, observed.GmailMessageID).Scan(&messageID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -638,18 +531,11 @@ func (s *Store) FinishGmailDraftDeleteContext(
 	draftID string,
 	revision int64,
 ) (GmailDraft, error) {
-	if err := validateGmailDraftID(draftID); err != nil {
+	if err := gmailDrafts.validateID(draftID); err != nil {
 		return GmailDraft{}, err
 	}
 	var finished GmailDraft
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockGmailDraftTx(ctx, tx, draftID); err != nil {
-			return err
-		}
-		draft, err := s.loadGmailDraftTx(ctx, tx, draftID)
-		if err != nil {
-			return err
-		}
+	err := gmailDrafts.inTx(ctx, s, draftID, func(tx *loggedTx, draft GmailDraft) error {
 		if draft.Revision != revision {
 			return ErrGmailDraftRevision
 		}
@@ -667,13 +553,9 @@ func (s *Store) FinishGmailDraftDeleteContext(
 		}
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			UPDATE gmail_drafts
-			SET discarded_at = %s, revision = revision + 1,
-			    pending_operation = NULL, pending_original_message_id = NULL,
-			    pending_original_gmail_message_id = NULL, pending_raw = NULL,
-			    pending_replacement_gmail_message_id = NULL, pending_code = NULL,
-			    updated_at = %s
+			SET discarded_at = %s, revision = revision + 1, %s, updated_at = %s
 			WHERE draft_id = ? AND revision = ?
-		`, s.dialect.Now(), s.dialect.Now()), draftID, revision)
+		`, s.dialect.Now(), gmailDrafts.pendingNullSQL(), s.dialect.Now()), draftID, revision)
 		if err != nil {
 			return fmt.Errorf("discard Gmail draft %q: %w", draftID, err)
 		}
@@ -694,28 +576,6 @@ func (s *Store) FinishGmailDraftDeleteContext(
 		return GmailDraft{}, err
 	}
 	return finished, nil
-}
-
-func (s *Store) clearGmailDraftPendingTx(ctx context.Context, tx *loggedTx, draftID string, revision int64) error {
-	result, err := tx.ExecContext(ctx, `
-		UPDATE gmail_drafts
-		SET pending_operation = NULL, pending_original_message_id = NULL,
-		    pending_original_gmail_message_id = NULL, pending_raw = NULL,
-		    pending_replacement_gmail_message_id = NULL, pending_code = NULL,
-		    updated_at = `+s.dialect.Now()+`
-		WHERE draft_id = ? AND revision = ? AND pending_operation IS NOT NULL
-	`, draftID, revision)
-	if err != nil {
-		return fmt.Errorf("clear Gmail draft pending evidence %q: %w", draftID, err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected != 1 {
-		return ErrGmailDraftState
-	}
-	return nil
 }
 
 func prepareGmailDraftMessage(

@@ -6,13 +6,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
 const (
-	IMAPDraftOperationEdit   = "edit"
-	IMAPDraftOperationDelete = "delete"
+	IMAPDraftOperationEdit   = draftOperationEdit
+	IMAPDraftOperationDelete = draftOperationDelete
 	IMAPDraftCodeRejected    = "append_rejected"
 	IMAPDraftCodeCleanup     = "cleanup_pending"
 	IMAPDraftCodeRemoved     = "removed"
@@ -36,27 +35,40 @@ func (s *Store) GetIMAPDraft(draftID string) (IMAPDraft, error) {
 // GetIMAPDraftContext reads ownership by draft ID. It never consults live
 // mailbox memberships, so a sync observation cannot change mutation authority.
 func (s *Store) GetIMAPDraftContext(ctx context.Context, draftID string) (IMAPDraft, error) {
-	if err := validateIMAPDraftID(draftID); err != nil {
+	if err := imapDrafts.validateID(draftID); err != nil {
 		return IMAPDraft{}, err
 	}
 	return loadIMAPDraft(ctx, s.db, "", draftID)
 }
 
-func validateIMAPDraftID(draftID string) error {
-	if strings.TrimSpace(draftID) == "" || strings.ContainsAny(draftID, "\x00\r\n") {
-		return errors.New("invalid IMAP draft ID")
-	}
-	return nil
+var imapDrafts = draftTable[IMAPDraft]{
+	provider:           "IMAP",
+	table:              "imap_drafts",
+	originalColumns:    []string{"pending_original_mailbox", "pending_original_uidvalidity", "pending_original_uid"},
+	replacementColumns: []string{"pending_replacement_mailbox", "pending_replacement_uidvalidity", "pending_replacement_uid"},
+	errRevision:        ErrIMAPDraftRevision,
+	errPending:         ErrIMAPDraftPending,
+	errState:           ErrIMAPDraftState,
+	load:               loadIMAPDraft,
+	state: func(d IMAPDraft) draftState {
+		return draftState{revision: d.Revision, discarded: d.DiscardedAt != nil, pending: d.Pending != nil}
+	},
+	originalArgs: func(d IMAPDraft) []any {
+		return []any{d.CurrentMessageID, d.CurrentReceipt.Mailbox, d.CurrentReceipt.UIDValidity, d.CurrentReceipt.UID}
+	},
+	withClaim: func(d IMAPDraft, operation string, raw []byte) IMAPDraft {
+		d.Pending = &IMAPDraftPending{
+			Operation: operation, OriginalMessageID: d.CurrentMessageID,
+			OriginalReceipt: d.CurrentReceipt, Raw: append([]byte(nil), raw...),
+		}
+		if operation == IMAPDraftOperationDelete {
+			d.Pending.Raw = nil
+		}
+		return d
+	},
 }
 
-func loadIMAPDraft(
-	ctx context.Context,
-	q interface {
-		QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	},
-	lockClause string,
-	draftID string,
-) (IMAPDraft, error) {
+func loadIMAPDraft(ctx context.Context, q contextRowQuerier, lockClause string, draftID string) (IMAPDraft, error) {
 	var (
 		draft                                  IMAPDraft
 		discardedAt                            nullableTimestamp
@@ -151,21 +163,6 @@ func checkedIMAPDraftUint32(value int64) (uint32, error) {
 	return uint32(value), nil
 }
 
-func (s *Store) loadIMAPDraftTx(ctx context.Context, tx *loggedTx, draftID string) (IMAPDraft, error) {
-	return loadIMAPDraft(ctx, tx, s.dialect.SelectForUpdate(), draftID)
-}
-
-func (s *Store) lockIMAPDraftTx(ctx context.Context, tx *loggedTx, draftID string) error {
-	if lockSQL := s.dialect.RowWriterLockSQL("imap_drafts", "updated_at"); lockSQL != "" {
-		// Managed drafts use draft_id instead of the dialect helper's id key.
-		lockSQL = strings.Replace(lockSQL, "WHERE id = ?", "WHERE draft_id = ?", 1)
-		if _, err := tx.ExecContext(ctx, lockSQL, draftID); err != nil {
-			return fmt.Errorf("lock IMAP draft %q: %w", draftID, err)
-		}
-	}
-	return nil
-}
-
 // ClaimIMAPDraftContext durably records the original receipt and candidate
 // bytes before a provider mutation. The revision remains unchanged.
 func (s *Store) ClaimIMAPDraftContext(
@@ -175,84 +172,7 @@ func (s *Store) ClaimIMAPDraftContext(
 	operation string,
 	replacementRaw []byte,
 ) (IMAPDraft, error) {
-	if err := validateIMAPDraftID(draftID); err != nil {
-		return IMAPDraft{}, err
-	}
-	if revision <= 0 {
-		return IMAPDraft{}, fmt.Errorf("%w: expected positive revision", ErrIMAPDraftRevision)
-	}
-	if operation != IMAPDraftOperationEdit && operation != IMAPDraftOperationDelete {
-		return IMAPDraft{}, fmt.Errorf("%w: unknown operation %q", ErrIMAPDraftState, operation)
-	}
-	if operation == IMAPDraftOperationEdit && len(replacementRaw) == 0 {
-		return IMAPDraft{}, errors.New("edit candidate must not be empty")
-	}
-	var claimed IMAPDraft
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockIMAPDraftTx(ctx, tx, draftID); err != nil {
-			return err
-		}
-		draft, err := s.loadIMAPDraftTx(ctx, tx, draftID)
-		if err != nil {
-			return err
-		}
-		if draft.Revision != revision {
-			return fmt.Errorf("%w: expected %d, found %d", ErrIMAPDraftRevision, revision, draft.Revision)
-		}
-		if draft.DiscardedAt != nil {
-			return fmt.Errorf("%w: draft is discarded", ErrIMAPDraftState)
-		}
-		if draft.Pending != nil {
-			return ErrIMAPDraftPending
-		}
-		args := []any{
-			operation, draft.CurrentMessageID, draft.CurrentReceipt.Mailbox,
-			draft.CurrentReceipt.UIDValidity, draft.CurrentReceipt.UID,
-		}
-		var raw any
-		if operation == IMAPDraftOperationEdit {
-			raw = append([]byte(nil), replacementRaw...)
-		}
-		args = append(args, raw)
-		result, err := tx.ExecContext(ctx, `
-			UPDATE imap_drafts
-			SET pending_operation = ?,
-			    pending_original_message_id = ?,
-			    pending_original_mailbox = ?,
-			    pending_original_uidvalidity = ?,
-			    pending_original_uid = ?,
-			    pending_raw = ?,
-			    pending_replacement_mailbox = NULL,
-			    pending_replacement_uidvalidity = NULL,
-			    pending_replacement_uid = NULL,
-			    pending_code = NULL,
-			    updated_at = `+s.dialect.Now()+`
-			WHERE draft_id = ? AND revision = ? AND pending_operation IS NULL
-		`, append(args, draftID, revision)...)
-		if err != nil {
-			return fmt.Errorf("claim IMAP draft %q: %w", draftID, err)
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("check IMAP draft claim %q: %w", draftID, err)
-		}
-		if affected != 1 {
-			return ErrIMAPDraftPending
-		}
-		claimed = draft
-		claimed.Pending = &IMAPDraftPending{
-			Operation: operation, OriginalMessageID: draft.CurrentMessageID,
-			OriginalReceipt: draft.CurrentReceipt, Raw: append([]byte(nil), replacementRaw...),
-		}
-		if operation == IMAPDraftOperationDelete {
-			claimed.Pending.Raw = nil
-		}
-		return nil
-	})
-	if err != nil {
-		return IMAPDraft{}, err
-	}
-	return claimed, nil
+	return imapDrafts.claim(ctx, s, draftID, revision, operation, replacementRaw)
 }
 
 // RecordIMAPDraftOutcomeContext records a provider result against the current
@@ -264,20 +184,13 @@ func (s *Store) RecordIMAPDraftOutcomeContext(
 	code string,
 	replacement *IMAPDraftReceipt,
 ) error {
-	if err := validateIMAPDraftID(draftID); err != nil {
+	if err := imapDrafts.validateID(draftID); err != nil {
 		return err
 	}
-	if revision <= 0 || strings.TrimSpace(code) == "" {
-		return fmt.Errorf("%w: outcome requires positive revision and code", ErrIMAPDraftState)
+	if err := imapDrafts.checkOutcomeRequest(revision, code); err != nil {
+		return err
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockIMAPDraftTx(ctx, tx, draftID); err != nil {
-			return err
-		}
-		draft, err := s.loadIMAPDraftTx(ctx, tx, draftID)
-		if err != nil {
-			return err
-		}
+	return imapDrafts.inTx(ctx, s, draftID, func(tx *loggedTx, draft IMAPDraft) error {
 		if draft.Revision != revision {
 			return fmt.Errorf("%w: expected %d, found %d", ErrIMAPDraftRevision, revision, draft.Revision)
 		}
@@ -300,7 +213,10 @@ func (s *Store) RecordIMAPDraftOutcomeContext(
 				return errors.New("delete outcome cannot carry a replacement receipt")
 			}
 		}
-		var result sql.Result
+		var (
+			result sql.Result
+			err    error
+		)
 		if replacement == nil {
 			result, err = tx.ExecContext(ctx, `
 				UPDATE imap_drafts
@@ -331,21 +247,14 @@ func (s *Store) RecordIMAPDraftOutcomeContext(
 // AbortIMAPDraftContext clears an unadvanced operation after a proven no-effect
 // APPEND or a deletion for which no provider write was attempted.
 func (s *Store) AbortIMAPDraftContext(ctx context.Context, draftID string, revision int64, outcome string) (IMAPDraft, error) {
-	if err := validateIMAPDraftID(draftID); err != nil {
+	if err := imapDrafts.validateID(draftID); err != nil {
 		return IMAPDraft{}, err
 	}
 	if outcome != "rejected" && outcome != "cancelled" && outcome != "not_attempted" {
 		return IMAPDraft{}, errors.New("IMAP draft abort requires a definitive no-effect outcome")
 	}
 	var active IMAPDraft
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockIMAPDraftTx(ctx, tx, draftID); err != nil {
-			return err
-		}
-		draft, err := s.loadIMAPDraftTx(ctx, tx, draftID)
-		if err != nil {
-			return err
-		}
+	err := imapDrafts.inTx(ctx, s, draftID, func(tx *loggedTx, draft IMAPDraft) error {
 		if draft.Revision != revision {
 			return ErrIMAPDraftRevision
 		}
@@ -357,7 +266,7 @@ func (s *Store) AbortIMAPDraftContext(ctx context.Context, draftID string, revis
 		if (draft.Pending.Operation == IMAPDraftOperationDelete) != (outcome == "not_attempted") {
 			return errors.New("IMAP draft abort outcome does not match the pending operation")
 		}
-		if err := s.clearIMAPDraftPendingTx(ctx, tx, draftID, revision); err != nil {
+		if err := imapDrafts.clearPendingTx(ctx, s, tx, draftID, revision); err != nil {
 			return err
 		}
 		active = draft
@@ -379,21 +288,14 @@ func (s *Store) PublishIMAPDraftReplacementContext(
 	participants []ParticipantPersistData,
 	build func([]int64) *MessagePersistData,
 ) (IMAPDraft, error) {
-	if err := validateIMAPDraftID(draftID); err != nil {
+	if err := imapDrafts.validateID(draftID); err != nil {
 		return IMAPDraft{}, err
 	}
 	if revision <= 0 || build == nil {
 		return IMAPDraft{}, errors.New("invalid IMAP draft publication")
 	}
 	var published IMAPDraft
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockIMAPDraftTx(ctx, tx, draftID); err != nil {
-			return err
-		}
-		draft, err := s.loadIMAPDraftTx(ctx, tx, draftID)
-		if err != nil {
-			return err
-		}
+	err := imapDrafts.inTx(ctx, s, draftID, func(tx *loggedTx, draft IMAPDraft) error {
 		if draft.Revision != revision {
 			return ErrIMAPDraftRevision
 		}
@@ -404,13 +306,8 @@ func (s *Store) PublishIMAPDraftReplacementContext(
 		if err := invalidatePreviousIMAPDraftSourceKey(ctx, tx, receipt); err != nil {
 			return err
 		}
-		var existingMessageID int64
-		if err := tx.QueryRowContext(ctx, `
-			SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
-		`, draft.SourceID, IMAPDraftSourceMessageID(receipt)).Scan(&existingMessageID); err == nil {
-			return fmt.Errorf("replacement source key already belongs to message %d", existingMessageID)
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("check replacement source key: %w", err)
+		if err := checkDraftReplacementSourceKeyTx(ctx, tx, draft.SourceID, IMAPDraftSourceMessageID(receipt)); err != nil {
+			return err
 		}
 		var existingMembershipID int64
 		if err := tx.QueryRowContext(ctx, `
@@ -480,7 +377,7 @@ func (s *Store) PublishIMAPDraftReplacementContext(
 			}
 			return nil
 		}
-		_, err = s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, build, prepare, after)
+		_, err := s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, build, prepare, after)
 		return err
 	})
 	if err != nil {
@@ -493,18 +390,11 @@ func (s *Store) PublishIMAPDraftReplacementContext(
 // it clears the old cleanup evidence without another revision advance. For a
 // delete it marks the current message discarded and advances the revision.
 func (s *Store) FinishIMAPDraftRemovalContext(ctx context.Context, draftID string, revision int64) (IMAPDraft, error) {
-	if err := validateIMAPDraftID(draftID); err != nil {
+	if err := imapDrafts.validateID(draftID); err != nil {
 		return IMAPDraft{}, err
 	}
 	var finished IMAPDraft
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockIMAPDraftTx(ctx, tx, draftID); err != nil {
-			return err
-		}
-		draft, err := s.loadIMAPDraftTx(ctx, tx, draftID)
-		if err != nil {
-			return err
-		}
+	err := imapDrafts.inTx(ctx, s, draftID, func(tx *loggedTx, draft IMAPDraft) error {
 		if draft.Revision != revision {
 			return ErrIMAPDraftRevision
 		}
@@ -522,15 +412,9 @@ func (s *Store) FinishIMAPDraftRemovalContext(ctx context.Context, draftID strin
 		}
 		if draft.Pending.Operation == IMAPDraftOperationDelete {
 			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-				UPDATE imap_drafts SET discarded_at = %s, revision = revision + 1,
-				pending_operation = NULL, pending_original_message_id = NULL,
-				pending_original_mailbox = NULL, pending_original_uidvalidity = NULL,
-				pending_original_uid = NULL, pending_raw = NULL,
-				pending_replacement_mailbox = NULL,
-				pending_replacement_uidvalidity = NULL, pending_replacement_uid = NULL,
-				pending_code = NULL, updated_at = %s
+				UPDATE imap_drafts SET discarded_at = %s, revision = revision + 1, %s, updated_at = %s
 				WHERE draft_id = ? AND revision = ? AND pending_operation = 'delete'
-			`, s.dialect.Now(), s.dialect.Now()), draftID, revision); err != nil {
+			`, s.dialect.Now(), imapDrafts.pendingNullSQL(), s.dialect.Now()), draftID, revision); err != nil {
 				return fmt.Errorf("discard IMAP draft %q: %w", draftID, err)
 			}
 			finished = draft
@@ -539,7 +423,7 @@ func (s *Store) FinishIMAPDraftRemovalContext(ctx context.Context, draftID strin
 			finished.Pending = nil
 			return nil
 		}
-		if err := s.clearIMAPDraftPendingTx(ctx, tx, draftID, revision); err != nil {
+		if err := imapDrafts.clearPendingTx(ctx, s, tx, draftID, revision); err != nil {
 			return err
 		}
 		finished = draft
@@ -555,30 +439,6 @@ func (s *Store) FinishIMAPDraftRemovalContext(ctx context.Context, draftID strin
 func ptrTimeNow() *time.Time {
 	t := time.Now()
 	return &t
-}
-
-func (s *Store) clearIMAPDraftPendingTx(ctx context.Context, tx *loggedTx, draftID string, revision int64) error {
-	result, err := tx.ExecContext(ctx, `
-		UPDATE imap_drafts
-		SET pending_operation = NULL, pending_original_message_id = NULL,
-		    pending_original_mailbox = NULL, pending_original_uidvalidity = NULL,
-		    pending_original_uid = NULL, pending_raw = NULL,
-		    pending_replacement_mailbox = NULL,
-		    pending_replacement_uidvalidity = NULL, pending_replacement_uid = NULL,
-		    pending_code = NULL, updated_at = `+s.dialect.Now()+`
-		WHERE draft_id = ? AND revision = ? AND pending_operation IS NOT NULL
-	`, draftID, revision)
-	if err != nil {
-		return fmt.Errorf("clear IMAP draft pending evidence %q: %w", draftID, err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected != 1 {
-		return ErrIMAPDraftState
-	}
-	return nil
 }
 
 func (s *Store) retireIMAPDraftMembershipTx(

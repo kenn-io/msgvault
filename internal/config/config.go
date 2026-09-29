@@ -944,10 +944,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
 		return nil, err
 	}
-	if err := cfg.validateIMAPDraftSources(content); err != nil {
-		return nil, err
-	}
-	if err := cfg.validateGmailDraftSources(content); err != nil {
+	if err := cfg.validateDraftSources(content); err != nil {
 		return nil, err
 	}
 
@@ -1066,60 +1063,57 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	return cfg, nil
 }
 
-func (c *Config) validateIMAPDraftSources(content []byte) error {
+type draftSelector struct {
+	SourceID *int64 `toml:"source_id"`
+}
+
+func (c *Config) validateDraftSources(content []byte) error {
 	var raw struct {
 		IMAP struct {
-			Drafts []struct {
-				SourceID *int64 `toml:"source_id"`
-			} `toml:"drafts"`
+			Drafts []draftSelector `toml:"drafts"`
 		} `toml:"imap"`
+		Gmail struct {
+			Drafts []draftSelector `toml:"drafts"`
+		} `toml:"gmail"`
 	}
 	_, _ = toml.Decode(string(content), &raw)
-	seen := make(map[int64]struct{}, len(c.IMAP.Drafts))
-	for i := range c.IMAP.Drafts {
-		draft := &c.IMAP.Drafts[i]
-		if i >= len(raw.IMAP.Drafts) || raw.IMAP.Drafts[i].SourceID == nil {
-			return fmt.Errorf("[[imap.drafts]] entry %d: source_id is required", i+1)
+	if err := validateDraftSelectors("imap.drafts", c.IMAP.Drafts, raw.IMAP.Drafts,
+		func(d IMAPDraftSource) int64 { return d.SourceID }, validateIMAPDraftMailbox); err != nil {
+		return err
+	}
+	return validateDraftSelectors("gmail.drafts", c.Gmail.Drafts, raw.Gmail.Drafts,
+		func(d GmailDraftSource) int64 { return d.SourceID }, nil)
+}
+
+func validateDraftSelectors[T any](section string, entries []T, raw []draftSelector, sourceID func(T) int64, check func(T) error) error {
+	seen := make(map[int64]struct{}, len(entries))
+	for i, entry := range entries {
+		id := sourceID(entry)
+		if i >= len(raw) || raw[i].SourceID == nil {
+			return fmt.Errorf("[[%s]] entry %d: source_id is required", section, i+1)
 		}
-		if draft.SourceID <= 0 {
-			return fmt.Errorf("[[imap.drafts]] entry %d: source_id must be positive", i+1)
+		if id <= 0 {
+			return fmt.Errorf("[[%s]] entry %d: source_id must be positive", section, i+1)
 		}
-		if _, ok := seen[draft.SourceID]; ok {
-			return fmt.Errorf("[[imap.drafts]] entry %d: duplicate source_id selector %d", i+1, draft.SourceID)
+		if _, ok := seen[id]; ok {
+			return fmt.Errorf("[[%s]] entry %d: duplicate source_id selector %d", section, i+1, id)
 		}
-		seen[draft.SourceID] = struct{}{}
-		if !utf8.ValidString(draft.Mailbox) || strings.TrimSpace(draft.Mailbox) == "" {
-			return fmt.Errorf("[[imap.drafts]] entry %d: mailbox must be nonblank UTF-8", i+1)
-		}
-		if strings.ContainsAny(draft.Mailbox, "\x00\r\n") {
-			return fmt.Errorf("[[imap.drafts]] entry %d: mailbox contains control characters", i+1)
+		seen[id] = struct{}{}
+		if check != nil {
+			if err := check(entry); err != nil {
+				return fmt.Errorf("[[%s]] entry %d: %w", section, i+1, err)
+			}
 		}
 	}
 	return nil
 }
 
-func (c *Config) validateGmailDraftSources(content []byte) error {
-	var raw struct {
-		Gmail struct {
-			Drafts []struct {
-				SourceID *int64 `toml:"source_id"`
-			} `toml:"drafts"`
-		} `toml:"gmail"`
+func validateIMAPDraftMailbox(d IMAPDraftSource) error {
+	if !utf8.ValidString(d.Mailbox) || strings.TrimSpace(d.Mailbox) == "" {
+		return errors.New("mailbox must be nonblank UTF-8")
 	}
-	_, _ = toml.Decode(string(content), &raw)
-	seen := make(map[int64]struct{}, len(c.Gmail.Drafts))
-	for i := range c.Gmail.Drafts {
-		draft := &c.Gmail.Drafts[i]
-		if i >= len(raw.Gmail.Drafts) || raw.Gmail.Drafts[i].SourceID == nil {
-			return fmt.Errorf("[[gmail.drafts]] entry %d: source_id is required", i+1)
-		}
-		if draft.SourceID <= 0 {
-			return fmt.Errorf("[[gmail.drafts]] entry %d: source_id must be positive", i+1)
-		}
-		if _, ok := seen[draft.SourceID]; ok {
-			return fmt.Errorf("[[gmail.drafts]] entry %d: duplicate source_id selector %d", i+1, draft.SourceID)
-		}
-		seen[draft.SourceID] = struct{}{}
+	if strings.ContainsAny(d.Mailbox, "\x00\r\n") {
+		return errors.New("mailbox contains control characters")
 	}
 	return nil
 }

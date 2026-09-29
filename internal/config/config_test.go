@@ -157,6 +157,26 @@ func TestGmailDraftConfig(t *testing.T) {
 	}
 }
 
+func TestDraftSourceConfigErrorText(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	imap := func(body string) string { return "[[imap.drafts]]\n" + body + "\n" }
+	for content, want := range map[string]string{
+		imap("source_id = -5\nmailbox = \"Drafts\""): "[[imap.drafts]] entry 1: source_id must be positive",
+		imap("mailbox = \"Drafts\""):                 "[[imap.drafts]] entry 1: source_id is required",
+		imap("source_id = 7\nmailbox = \"A\"") + imap("source_id = 9\nmailbox = \"B\"") + imap("source_id = 7\nmailbox = \"C\""): "[[imap.drafts]] entry 3: duplicate source_id selector 7",
+		imap("source_id = 1\nmailbox = \"   \""):                                           "[[imap.drafts]] entry 1: mailbox must be nonblank UTF-8",
+		imap("source_id = 1\nmailbox = \"Drafts\\rOld\""):                                  "[[imap.drafts]] entry 1: mailbox contains control characters",
+		"[[gmail.drafts]]\nsource_id = 4\n[[gmail.drafts]]\nenabled = true\n":              "[[gmail.drafts]] entry 2: source_id is required",
+		"[[gmail.drafts]]\nsource_id = 0\n":                                                "[[gmail.drafts]] entry 1: source_id must be positive",
+		"[[gmail.drafts]]\nsource_id = 4\n[[gmail.drafts]]\nsource_id = 4\n":               "[[gmail.drafts]] entry 2: duplicate source_id selector 4",
+		imap("source_id = 1\nmailbox = \"Drafts\"") + "[[gmail.drafts]]\nsource_id = -1\n": "[[gmail.drafts]] entry 1: source_id must be positive",
+	} {
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+		_, err := Load(path, "")
+		assert.EqualError(t, err, want, content)
+	}
+}
+
 func TestCardDAVConfigRejectsPasswordField(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte(`[carddav]
