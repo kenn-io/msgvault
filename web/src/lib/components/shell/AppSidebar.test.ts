@@ -17,7 +17,7 @@ function renderSidebar(overrides: Record<string, unknown> = {}) {
     ...overrides
   };
   const view = render(AppSidebar, props);
-  return { ...props, rerender: view.rerender };
+  return { ...props, rerender: view.rerender, container: view.container };
 }
 
 describe('AppSidebar', () => {
@@ -61,6 +61,16 @@ describe('AppSidebar', () => {
     expect(screen.getByRole('button', { name: 'Everything' }).getAttribute('aria-current')).toBe(
       'page'
     );
+  });
+
+  it('keeps every sidebar item inside its landmark and hides the decorative status dot', () => {
+    const { container } = renderSidebar();
+    const sidebar = screen.getByRole('complementary', { name: 'Sidebar' });
+    expect(sidebar.textContent).toBe(container.textContent);
+    expect(within(sidebar).getByText('msgvault')).toBeTruthy();
+    expect(within(sidebar).getByRole('navigation', { name: 'Primary' })).toBeTruthy();
+    const dot = container.querySelector('[aria-label="Local archive ready"]');
+    expect(dot?.closest('[aria-hidden="true"]')).toBeTruthy();
   });
 
   it('keeps the archive status text available to assistive tech in the rail', () => {

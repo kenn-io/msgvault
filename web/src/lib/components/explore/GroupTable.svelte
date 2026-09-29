@@ -487,7 +487,9 @@
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }
 
+  /* Muted ink falls below AA on the tinted selection, so metadata uses secondary ink here. */
   .group-row--inspected {
+    --text-muted: var(--text-secondary);
     background: var(--selected-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }

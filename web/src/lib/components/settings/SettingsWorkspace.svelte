@@ -636,6 +636,7 @@
         </div>
 
         {#if activeId === 'carddav'}
+          <h2 class="kit-sr-only">CardDAV settings</h2>
           <CardDAVSettingsWorkspace
             {client}
             {settings}

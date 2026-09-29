@@ -128,6 +128,9 @@ describe('PersonMergeHistory', () => {
     }
     expect(screen.getByRole('table', { name: 'Prior splits' })).toBeDefined();
     expect(screen.getByRole('table', { name: 'Merge review candidates' })).toBeDefined();
+    for (const name of ['Merge participants', 'Merge row dispositions', 'Prior splits', 'Merge review candidates']) {
+      expect(screen.getByRole('region', { name: `${name} table` }).tabIndex).toBe(0);
+    }
     expect(document.body.textContent).not.toContain('opaque-row-key-must-not-appear');
     expect(document.body.textContent).not.toContain('private/snapshot/path-must-not-appear');
     expect(requests.map((request) => new URL(request.url).pathname)).not.toContain('/api/v1/person-merges/41/snapshot');

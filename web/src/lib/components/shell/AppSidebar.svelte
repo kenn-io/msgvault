@@ -31,7 +31,7 @@
   const groupId = `nav-group-${uid}`;
 </script>
 
-<div class="sidebar" class:sidebar--rail={collapsed}>
+<aside class="sidebar" class:sidebar--rail={collapsed} aria-label="Sidebar">
   <div class="sidebar__brand">msgvault</div>
   <nav aria-label="Primary">
     {#each NAVIGATION_GROUPS as group, index (group.label)}
@@ -67,7 +67,7 @@
   <div class="sidebar__footer">
     <Tooltip text={status.label}>
       <span class="sidebar__status">
-        <StatusDot status={status.tone} label={status.label} />
+        <span aria-hidden="true"><StatusDot status={status.tone} label={status.label} /></span>
         <span class:kit-sr-only={collapsed}>{status.text}</span>
       </span>
     </Tooltip>
@@ -99,7 +99,7 @@
       </Tooltip>
     {/if}
   </div>
-</div>
+</aside>
 
 <style>
   .sidebar {

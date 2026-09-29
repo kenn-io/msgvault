@@ -123,22 +123,27 @@
       </div>
       {#if controller.detailError}<p class="error" role="alert">{controller.detailError}</p>{/if}
 
-      <div class="table-scroll">
+      <!-- Keyboard focus lets a user scroll a table wider than its pane without a pointer. -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div class="table-scroll" role="region" aria-label="Merge participants table" tabindex="0">
         <table aria-label="Merge participants"><thead><tr><th scope="col">Participant</th><th scope="col">Origin</th><th scope="col">Disposition</th></tr></thead>
           <tbody>{#each controller.detail.participants ?? [] as participant}<tr><th scope="row">{participant.participant_id}</th><td>{participant.origin_side}</td><td>{disposition(participant.split_id)}</td></tr>{/each}</tbody>
         </table>
       </div>
-      <div class="table-scroll">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div class="table-scroll" role="region" aria-label="Merge row dispositions table" tabindex="0">
         <table aria-label="Merge row dispositions"><thead><tr><th scope="col">Table</th><th scope="col">Action</th><th scope="col">Origin</th><th scope="col">Provenance</th><th scope="col">Participant</th><th scope="col">Disposition</th></tr></thead>
           <tbody>{#each controller.detail.rows ?? [] as row}<tr><th scope="row">{row.table_name}</th><td>{row.action}</td><td>{row.origin_side}</td><td>{row.provenance_kind}</td><td>{row.participant_id ?? 'None'}</td><td>{disposition(row.split_id)}</td></tr>{/each}</tbody>
         </table>
       </div>
-      <div class="table-scroll">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div class="table-scroll" role="region" aria-label="Prior splits table" tabindex="0">
         <table aria-label="Prior splits"><thead><tr><th scope="col">Split</th><th scope="col">Source</th><th scope="col">Created person</th><th scope="col">Revision change</th><th scope="col">Restoration</th><th scope="col">Actor</th><th scope="col">Created</th></tr></thead>
           <tbody>{#each controller.detail.splits ?? [] as split}<tr><th scope="row">{split.id}</th><td>Person {split.source_person_id}</td><td>Person {split.new_person_id}</td><td>{split.source_revision_before} → {split.source_revision_after}</td><td>{split.exact_reversal ? 'Exact' : 'Partial'}</td><td>{split.actor}</td><td>{split.created_at}</td></tr>{/each}</tbody>
         </table>
       </div>
-      <div class="table-scroll">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div class="table-scroll" role="region" aria-label="Merge review candidates table" tabindex="0">
         <table aria-label="Merge review candidates"><thead><tr><th scope="col">Candidate</th><th scope="col">Person</th><th scope="col">Definition</th><th scope="col">Survivor value</th><th scope="col">Absorbed value</th><th scope="col">Resolution</th><th scope="col">State</th><th scope="col">Reviewed</th><th scope="col">Reviewer</th><th scope="col">Created</th></tr></thead>
           <tbody>{#each controller.detail.review_candidates ?? [] as candidate}<tr><th scope="row">{candidate.id}</th><td>{candidate.person_id}</td><td>{candidate.definition_id}</td><td>{candidate.survivor_value_id}</td><td>{candidate.absorbed_value_id}</td><td>{candidate.resolution_value_id ?? 'None'}</td><td>{candidate.state}</td><td>{candidate.reviewed_at ?? 'Not reviewed'}</td><td>{candidate.reviewed_by ?? 'None'}</td><td>{candidate.created_at}</td></tr>{/each}</tbody>
         </table>
@@ -173,7 +178,7 @@
   th, td { padding: var(--space-2); border-bottom: var(--border-width) solid var(--border-default); text-align: left; vertical-align: top; }
   thead th { color: var(--text-muted); white-space: nowrap; }
   .snapshot { max-height: 22rem; padding: var(--space-3); border: var(--border-width) solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
-  .snapshot:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
+  .table-scroll:focus-visible, .snapshot:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
   .snapshot pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .message { display: flex; gap: var(--space-2); align-items: center; }
   .error { color: var(--text-danger); }

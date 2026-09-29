@@ -860,6 +860,8 @@ describe('SettingsWorkspace', () => {
 
     await openSettingsCategory('CardDAV account');
     expect(await screen.findByRole('heading', { name: 'CardDAV account' })).toBeDefined();
+    const levels = screen.getAllByRole('heading').map((heading) => Number(heading.tagName.slice(1)));
+    expect(levels.every((level, index) => index === 0 || level <= levels[index - 1]! + 1)).toBe(true);
     expect(screen.getByLabelText('Base URL')).toBeDefined();
     expect(screen.getByLabelText('Username')).toBeDefined();
     expect(screen.getByLabelText('Password')).toBeDefined();

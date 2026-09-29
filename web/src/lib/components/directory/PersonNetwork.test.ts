@@ -101,6 +101,7 @@ describe('PersonNetwork', () => {
     await waitFor(() => expect(list.textContent).toContain('Selected Person'));
     expect(screen.getByText('No curated connections at this depth.')).toBeDefined();
     expect(document.querySelector('.projection > svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.getByRole('region', { name: 'Network graph' }).tabIndex).toBe(0);
   });
 
   it('groups every typed relationship and employment by hop and makes both entity kinds actionable', async () => {

@@ -87,7 +87,9 @@
     </div>
   </header>
 
-  <div class="projection" aria-busy={controller.networkLoading}>
+  <!-- Keyboard focus lets a user scroll a graph wider than its pane without a pointer. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <div class="projection" role="region" aria-label="Network graph" tabindex="0" aria-busy={controller.networkLoading}>
     {#if controller.network}
       <svg aria-hidden="true" width={graphWidth} viewBox={`0 0 ${graphWidth} ${graphHeight}`} preserveAspectRatio="xMinYMin meet">
         {#each edges as edge (edge.id)}
@@ -161,6 +163,7 @@
   .controls { grid-auto-flow: column; align-items: end; }
   .controls label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
   .projection { position: relative; min-height: 7rem; overflow: auto; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
+  .projection:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
   svg { min-width: 100%; max-height: 24rem; }
   line { stroke: var(--border-strong); stroke-width: 1.5; }
   circle { fill: var(--bg-surface); stroke: var(--accent-blue); stroke-width: 2; }
