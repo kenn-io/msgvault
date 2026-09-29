@@ -126,6 +126,30 @@ for (const theme of ['light', 'dark'] as const) {
   }
 }
 
+for (const theme of ['light', 'dark'] as const) {
+  test(`${theme} rail tooltip, narrow navigation menu, and Display menu have no axe violations`, async ({ page }) => {
+    await installMixedArchive(page);
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    await setKitTheme(page, theme);
+    await expect(page.getByRole('grid', { name: 'Everything results' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Display' }).click();
+    await expect(page.getByRole('menuitemradio', { name: 'Compact' })).toBeVisible();
+    await assertNoViolations(page, `Display menu ${theme}`);
+    await page.keyboard.press('Escape');
+
+    await page.getByRole('button', { name: 'Collapse sidebar' }).click();
+    await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Saved views' }).hover();
+    await expect(page.getByRole('tooltip', { name: 'Saved views' })).toBeVisible();
+    await assertNoViolations(page, `rail tooltip ${theme}`);
+
+    await page.setViewportSize({ width: 420, height: 860 });
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
+    await assertNoViolations(page, `narrow navigation menu ${theme}`);
+  });
+}
+
 test('Directory network list and visualization have no axe violations', async ({ page }) => {
   await installMixedArchive(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: 42 }))}`);
