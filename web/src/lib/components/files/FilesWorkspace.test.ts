@@ -546,6 +546,36 @@ describe('FilesWorkspace', () => {
     expect(screen.getAllByRole('row')).toHaveLength(3);
   });
 
+  it('pages with PageDown past the loaded rows and back with PageUp', async () => {
+    const first = response();
+    Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
+    const second = response();
+    second.files[0] = { ...second.files[0]!, id: 8, key: 'file:8', filename: 'later.pdf' };
+    second.total_count = 2;
+    const cursors: Array<string | undefined> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const body = await request.clone().json() as { cursor?: string };
+      cursors.push(body.cursor);
+      return Response.json(body.cursor === 'page-2' ? second : first);
+    });
+    const onActiveKey = vi.fn();
+    render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' }, onActiveKey
+    });
+
+    const grid = await screen.findByRole('grid', { name: 'Files results' });
+    await screen.findByRole('row', { name: /fixture.pdf/ });
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: 'PageDown' });
+    await waitFor(() => expect(onActiveKey).toHaveBeenLastCalledWith('file:8'));
+    expect(cursors).toEqual([undefined, 'page-2']);
+
+    await fireEvent.keyDown(grid, { key: 'PageUp' });
+    expect(onActiveKey).toHaveBeenLastCalledWith('file:7');
+  });
+
   it('opens a file from keyboard focus and preserves containing navigation authority', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input), document.baseURI).pathname;

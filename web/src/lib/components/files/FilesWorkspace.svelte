@@ -712,10 +712,27 @@
     element.scrollTop = rebased;
     scrollTop = element.scrollTop;
   }
+  function pageRowCount(height: number): number {
+    const visibleHeight = grid && headerElement ? measuredViewport(grid, headerElement) : viewport;
+    return Math.max(1, Math.floor(visibleHeight / height));
+  }
+  async function moveAcrossLoadedBoundary(index: number): Promise<void> {
+    if (index < rows.length || !nextCursor || loadingMore) {
+      move(index);
+      return;
+    }
+    const loadedCount = rows.length;
+    await loadMore();
+    await tick();
+    if (rows.length > loadedCount) move(index);
+  }
   function handleKeydown(event: KeyboardEvent): void {
-    if (event.target !== grid || rows.length === 0 || rowHeight === undefined) return;
+    const height = rowHeight;
+    if (event.target !== grid || rows.length === 0 || height === undefined) return;
     if (event.key === 'ArrowDown' || event.key === 'j') move(activeIndex + 1);
     else if (event.key === 'ArrowUp' || event.key === 'k') move(activeIndex - 1);
+    else if (event.key === 'PageDown') void moveAcrossLoadedBoundary(activeIndex + pageRowCount(height));
+    else if (event.key === 'PageUp') move(activeIndex - pageRowCount(height));
     else if (event.key === 'Home') move(0);
     else if (event.key === 'End') move(rows.length - 1);
     else if (event.key === 'Enter') open(rows[Math.max(0, activeIndex)]!, event.currentTarget as HTMLElement);
