@@ -52,7 +52,8 @@
     }
   }
   function messageFor(value: unknown): string {
-    return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'
+    const hasMessage = typeof value === 'object' && value !== null && 'message' in value;
+    return hasMessage && typeof value.message === 'string'
       ? value.message
       : 'Unable to save this view.';
   }
@@ -69,7 +70,15 @@
       void save();
     }}
   >
-    <label>Name<TextInput ariaLabel="Name" bind:value={name} bind:inputEl={nameInput} autocomplete="off" block /></label>
+    <label
+      >Name<TextInput
+        ariaLabel="Name"
+        bind:value={name}
+        bind:inputEl={nameInput}
+        autocomplete="off"
+        block
+      /></label
+    >
     <label
       >Description<TextInput
         ariaLabel="Description"
@@ -85,7 +94,13 @@
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions">
       <Button surface="soft" label="Cancel" disabled={saving} onclick={requestClose} />
-      <Button type="submit" tone="info" surface="solid" label="Save" disabled={saving || !name.trim()} />
+      <Button
+        type="submit"
+        tone="info"
+        surface="solid"
+        label="Save"
+        disabled={saving || !name.trim()}
+      />
     </div>
   </form>
 </Modal>

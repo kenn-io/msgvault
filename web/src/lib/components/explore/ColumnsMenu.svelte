@@ -14,7 +14,10 @@
 
   function toggle(column: ExploreColumn): void {
     const shown = columns.includes(column);
-    onchange(EXPLORE_COLUMNS.map(({ id }) => id).filter((id) => (id === column ? !shown : columns.includes(id))));
+    const next = EXPLORE_COLUMNS.map(({ id }) => id).filter((id) =>
+      id === column ? !shown : columns.includes(id)
+    );
+    onchange(next);
   }
 
   const sections = $derived([{

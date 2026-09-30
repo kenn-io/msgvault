@@ -246,9 +246,6 @@
     directoryPromotionParticipantID = undefined;
     exploreState.commitNavigation({ workspace: 'directory', directoryPersonID: personID });
   }
-  function openSaveView(): void {
-    saveViewOpen = true;
-  }
   function announceOperation(message: string): void {
     operationAnnouncement = { key: ++operationAnnouncementKey, message };
   }
@@ -1378,7 +1375,7 @@
       {:else if exploreState.current.workspace === 'files'}
         <main class="files-shell" aria-label="Files">
           <PageHeader title="Files">
-            {#snippet actions()}<Button surface="outline" label="Save view…" onclick={openSaveView} />{/snippet}
+            {#snippet actions()}<Button surface="outline" label="Save view…" onclick={() => (saveViewOpen = true)} />{/snippet}
           </PageHeader>
           <ContextBar
             {client}
@@ -1535,7 +1532,7 @@
           {openRelationship}
           {changeConversationAnchor}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
-          onSaveView={openSaveView}
+          onSaveView={() => (saveViewOpen = true)}
         />
       {/if}
     </div>
@@ -1670,5 +1667,4 @@
     gap: var(--space-4);
     padding: var(--space-5) var(--page-gutter) var(--space-4);
   }
-
 </style>

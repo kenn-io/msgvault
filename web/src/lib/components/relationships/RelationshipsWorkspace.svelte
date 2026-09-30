@@ -622,5 +622,4 @@
     height: 100%;
     background: var(--bg-surface);
   }
-
 </style>

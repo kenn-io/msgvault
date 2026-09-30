@@ -30,7 +30,9 @@ function savedView() {
 function renderDialog(fetchFn: typeof fetch, overrides: Partial<ExploreURLState> = {}) {
   const onSaved = vi.fn();
   const onclose = vi.fn();
-  render(SaveViewDialog, { client: createAPIClient(fetchFn), state: { ...state, ...overrides }, onSaved, onclose });
+  render(SaveViewDialog, {
+    client: createAPIClient(fetchFn), state: { ...state, ...overrides }, onSaved, onclose
+  });
   return { onSaved, onclose };
 }
 
@@ -73,10 +75,14 @@ describe('SaveViewDialog', () => {
       const { onSaved } = renderDialog(fetchFn, { searchMode, activeRow: 'message:9' });
 
       await fireEvent.input(screen.getByLabelText('Name'), { target: { value: ' Invoices ' } });
-      await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Quarterly review' } });
+      await fireEvent.input(
+        screen.getByLabelText('Description'), { target: { value: 'Quarterly review' } }
+      );
       await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-      await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ id: 7, name: 'Invoices' })));
+      await waitFor(() =>
+        expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ id: 7, name: 'Invoices' }))
+      );
       expect(requests[0]!.method).toBe('POST');
       const body = await requests[0]!.clone().json();
       expect(body).toEqual({
@@ -96,24 +102,29 @@ describe('SaveViewDialog', () => {
 
   it.each([
     ['semantic', ''], ['semantic', ' \t\n '], ['hybrid', ''], ['hybrid', ' \t\n ']
-  ] as const)('saves a filter-only %s view with query %j without a query or mode', async (searchMode, query) => {
-    const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      requests.push(input instanceof Request ? input : new Request(input));
-      return Response.json(savedView(), { status: 201 });
-    });
-    const { onSaved } = renderDialog(fetchFn, { query, searchMode });
-    await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Invoices' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
-    const { canonical_state: saved } = await requests[0]!.clone().json();
-    expect(saved).not.toHaveProperty('query');
-    expect(saved).not.toHaveProperty('search_mode');
-    expect(saved.filters).toEqual([{ field: 'source', operator: 'in', values: ['1'] }]);
-  });
+  ] as const)(
+    'saves a filter-only %s view with query %j without a query or mode',
+    async (searchMode, query) => {
+      const requests: Request[] = [];
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        requests.push(input instanceof Request ? input : new Request(input));
+        return Response.json(savedView(), { status: 201 });
+      });
+      const { onSaved } = renderDialog(fetchFn, { query, searchMode });
+      await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Invoices' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+      const { canonical_state: saved } = await requests[0]!.clone().json();
+      expect(saved).not.toHaveProperty('query');
+      expect(saved).not.toHaveProperty('search_mode');
+      expect(saved.filters).toEqual([{ field: 'source', operator: 'in', values: ['1'] }]);
+    }
+  );
 
   it('shows an API error in the dialog and keeps it open', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ message: 'Name already used' }, { status: 409 }));
+    const fetchFn = vi.fn<typeof fetch>(async () =>
+      Response.json({ message: 'Name already used' }, { status: 409 })
+    );
     const { onSaved, onclose } = renderDialog(fetchFn);
     await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Invoices' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));

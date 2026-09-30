@@ -1086,6 +1086,24 @@ describe('FilesWorkspace', () => {
       expect(await typeMenuItems()).toEqual(expected);
     });
 
+    it('keeps the fusion score out of the row text and names a missing file plainly', async () => {
+      const base = response();
+      const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+        ...base,
+        files: [{ ...base.files[0]!, content_state: 'missing_blob', search_explain: { rrf: 0.0123 } }]
+      }));
+      render(FilesWorkspace, {
+        client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+        sort: { field: 'occurred_at', direction: 'desc' }
+      });
+      const row = await screen.findByRole('row', { name: /fixture.pdf/ });
+      expect(row.textContent).not.toContain('RRF');
+      expect(within(row).getByText('fixture.pdf').closest('[role="gridcell"]')?.getAttribute('title'))
+        .toBe('Match score 0.0123');
+      expect(within(row).getByText('File missing')).toBeDefined();
+      expect(row.textContent).not.toContain('Missing blob');
+    });
+
     it('shows a readable type and keeps the raw MIME type in the title', async () => {
       renderFiles();
       const row = await screen.findByRole('row', { name: /fixture.pdf/ });

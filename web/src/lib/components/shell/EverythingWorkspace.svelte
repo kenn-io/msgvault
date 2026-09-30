@@ -904,5 +904,4 @@
     border-left: 0;
     border-radius: 0 var(--radius-md) var(--radius-md) 0;
   }
-
 </style>

@@ -7,7 +7,9 @@ import ColumnsMenu from './ColumnsMenu.svelte';
 describe('ColumnsMenu', () => {
   it('toggles a column off and announces whether each column is shown', async () => {
     const onchange = vi.fn();
-    const rendered = render(ColumnsMenu, { columns: ['kind', 'title', 'excerpt', 'time'], onchange });
+    const rendered = render(ColumnsMenu, {
+      columns: ['kind', 'title', 'excerpt', 'time'], onchange
+    });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Columns' }));
     const excerpt = screen.getByRole('button', { name: 'Excerpt' });

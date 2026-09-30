@@ -41,7 +41,9 @@ function filterDimension(field: string): ExploreFilterDimension {
 }
 
 function searchMode(saved: CanonicalState): ExploreURLState['searchMode'] {
-  return saved.search_mode === 'semantic' || saved.search_mode === 'hybrid' ? saved.search_mode : 'full_text';
+  return saved.search_mode === 'semantic' || saved.search_mode === 'hybrid'
+    ? saved.search_mode
+    : 'full_text';
 }
 
 export function exploreStateFromSavedView(saved: CanonicalState): Partial<ExploreURLState> {
@@ -69,7 +71,8 @@ export function savedViewSummary(saved: CanonicalState): string[] {
   const parts: string[] = [];
   if (saved.query) parts.push(`${searchModeLabel(searchMode(saved))}: “${saved.query}”`);
   for (const filter of saved.filters ?? []) {
-    parts.push(`${filterDimensionLabel(filterDimension(filter.field))}: ${filter.values.join(', ')}`);
+    const label = filterDimensionLabel(filterDimension(filter.field));
+    parts.push(`${label}: ${filter.values.join(', ')}`);
   }
   if (saved.grouping?.length) parts.push(groupedByLabel(saved.grouping));
   parts.push(presentationLabel(saved.presentation ?? 'table'));

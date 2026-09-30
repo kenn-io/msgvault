@@ -31,7 +31,8 @@ export const EXPLORE_COLUMNS: ReadonlyArray<{ id: ExploreColumn; label: string }
   { id: 'size', label: 'Size' }
 ];
 
-// Where the grouping label reads wrongly as a filter chip (plural, or a different word), name it here.
+// Where the grouping label reads wrongly as a filter chip (plural, or a different word),
+// name it here.
 const FILTER_DIMENSIONS: Partial<Record<string, string>> = {
   participant: 'Person',
   identity: 'Identity',
@@ -73,7 +74,8 @@ const KNOWN_MIME: Record<string, string> = {
   'application/vnd.ms-excel': 'Excel spreadsheet',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Excel spreadsheet',
   'application/vnd.ms-powerpoint': 'PowerPoint presentation',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PowerPoint presentation',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+    'PowerPoint presentation',
   'text/plain': 'Text',
   'text/html': 'HTML',
   'text/csv': 'CSV',
@@ -83,9 +85,11 @@ const KNOWN_MIME: Record<string, string> = {
 
 // Keys are `${action}:${reason}`, matching the unavailable_actions the preflight endpoint returns.
 const REASONS: Record<string, string> = {
-  'open_in_source:trusted_source_link_unavailable': 'Your sources don’t provide links to open these items.',
+  'open_in_source:trusted_source_link_unavailable':
+    'Your sources don’t provide links to open these items.',
   'export:browser_export_requires_single_message': 'Export works for one message at a time.',
-  'export:selection_has_no_exportable_raw_message': 'The selection has no original message to export.',
+  'export:selection_has_no_exportable_raw_message':
+    'The selection has no original message to export.',
   'export:raw_message_unavailable': 'The original message isn’t available.',
   'export_files:selection_contains_no_files': 'The selection has no files.',
   'stage_deletion:selection_contains_items_that_cannot_be_deleted_from_source':
@@ -105,7 +109,9 @@ export function presentationLabel(presentation: ExploreURLState['presentation'])
   return PRESENTATIONS[presentation];
 }
 
-export function filterDimensionLabel(dimension: ExploreFilterDimension | ExploreGroupDimension): string {
+export function filterDimensionLabel(
+  dimension: ExploreFilterDimension | ExploreGroupDimension
+): string {
   const explicit = FILTER_DIMENSIONS[dimension];
   if (explicit) return explicit;
   if (isGroupingDimension(dimension)) return groupingDimensionLabel(dimension);
@@ -152,7 +158,8 @@ function kindPresentation(icon: string, label: string): EntryKindPresentation {
   return { icon, label, name: label.replace(' item', '').replace('Archive', 'Item') };
 }
 
-// Mirrors identityindex.TextMessageTypes plus its chat/text fallbacks (internal/identityindex/schema.go).
+// Mirrors identityindex.TextMessageTypes plus its chat/text fallbacks
+// (internal/identityindex/schema.go).
 const CHAT_MESSAGE_TYPES = new Set([
   'chat', 'text', 'google_chat', 'whatsapp', 'imessage', 'sms', 'mms', 'rcs',
   'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'fbmessenger'

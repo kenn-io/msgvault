@@ -29,7 +29,7 @@
   }
   function availability(row: FileSearchRow): string {
     if (row.content_state === 'local_content') return 'Local content';
-    if (row.content_state === 'missing_blob') return 'Missing blob';
+    if (row.content_state === 'missing_blob') return 'File missing';
     if (row.content_state === 'url_only') return 'URL only';
     return 'Metadata only';
   }
@@ -965,9 +965,11 @@
                     <span role="gridcell"
                       ><time datetime={row.occurred_at} data-mono>{formatDate(row.occurred_at)}</time></span
                     >
-                    <span role="gridcell">
+                    <span
+                      role="gridcell"
+                      title={row.search_explain ? `Match score ${row.search_explain.rrf.toFixed(4)}` : undefined}
+                    >
                       <strong>{row.filename || '(unnamed)'}</strong>
-                      {#if row.search_explain}<small>RRF {row.search_explain.rrf.toFixed(4)}</small>{/if}
                     </span>
                     <span role="gridcell" title={row.mime_type || row.mime_family}
                       >{fileTypeLabel(row.mime_type, row.mime_family)}</span
@@ -1104,11 +1106,6 @@
     font-size: var(--font-size-xs);
   }
   .hosted-disclosure {
-    color: var(--text-muted);
-    font-size: var(--font-size-2xs);
-  }
-  .data-row small {
-    display: block;
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
   }

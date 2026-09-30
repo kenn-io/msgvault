@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { ExploreFilterDimension as FilterDimensions } from '../api/generated/models/exploreFilterDimension';
+import {
+  ExploreFilterDimension as FilterDimensions
+} from '../api/generated/models/exploreFilterDimension';
 import {
   entryKindPresentation,
   fileTypeLabel,
@@ -41,7 +43,10 @@ describe('explore labels', () => {
     expect(fileTypeLabel('image/png', 'image')).toBe('PNG image');
     expect(fileTypeLabel('image/webp', 'image')).toBe('WEBP image');
     expect(
-      fileTypeLabel('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'document')
+      fileTypeLabel(
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'document'
+      )
     ).toBe('Word document');
     expect(fileTypeLabel('', 'archive')).toBe('Archive');
     expect(fileTypeLabel(undefined, undefined)).toBe('Unknown type');
@@ -50,9 +55,18 @@ describe('explore labels', () => {
 
   it('turns every server preflight reason into a sentence', () => {
     const reasons: [string, string, string][] = [
-      ['open_in_source', 'trusted_source_link_unavailable', 'Your sources don’t provide links to open these items.'],
-      ['export', 'browser_export_requires_single_message', 'Export works for one message at a time.'],
-      ['export', 'selection_has_no_exportable_raw_message', 'The selection has no original message to export.'],
+      [
+        'open_in_source', 'trusted_source_link_unavailable',
+        'Your sources don’t provide links to open these items.'
+      ],
+      [
+        'export', 'browser_export_requires_single_message',
+        'Export works for one message at a time.'
+      ],
+      [
+        'export', 'selection_has_no_exportable_raw_message',
+        'The selection has no original message to export.'
+      ],
       ['export', 'raw_message_unavailable', 'The original message isn’t available.'],
       ['export_files', 'selection_contains_no_files', 'The selection has no files.'],
       [

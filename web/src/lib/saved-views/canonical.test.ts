@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { defaultExploreURLState, parseExploreURLState, serializeExploreURLState } from '../explore/state.svelte';
+import {
+  defaultExploreURLState,
+  parseExploreURLState,
+  serializeExploreURLState
+} from '../explore/state.svelte';
 import type { ExploreURLState } from '../explore/models';
 import { canonicalSavedViewState, exploreStateFromSavedView, savedViewSummary } from './canonical';
 
@@ -42,7 +46,9 @@ describe('saved-view canonical state', () => {
   });
 
   it('reopens a Files view in Files', () => {
-    const files = parseExploreURLState(serializeExploreURLState({ ...everything, workspace: 'files', groupingChain: [] }));
+    const files = parseExploreURLState(serializeExploreURLState({
+      ...everything, workspace: 'files', groupingChain: []
+    }));
     expect(canonicalSavedViewState(files).presentation).toBe('files');
     const opened = exploreStateFromSavedView(canonicalSavedViewState(files));
     expect(opened.workspace).toBe('files');
@@ -50,7 +56,8 @@ describe('saved-view canonical state', () => {
   });
 
   it('opens a filter-only view without a stored query in full text', () => {
-    expect(canonicalSavedViewState({ ...everything, query: ' ', searchMode: 'semantic' })).not.toHaveProperty('query');
+    expect(canonicalSavedViewState({ ...everything, query: ' ', searchMode: 'semantic' }))
+      .not.toHaveProperty('query');
     expect(exploreStateFromSavedView({ presentation: 'timeline' })).toMatchObject({
       workspace: 'everything', query: '', searchMode: 'full_text', filters: [], groupingChain: [],
       presentation: 'timeline', sort: [{ field: 'occurred_at', direction: 'desc' }]
