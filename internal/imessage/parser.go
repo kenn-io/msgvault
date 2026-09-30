@@ -2,6 +2,7 @@ package imessage
 
 import (
 	"bytes"
+	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -17,18 +18,24 @@ const appleEpochOffset int64 = 978307200
 // appleTimestampToTime converts an Apple epoch timestamp to time.Time.
 // macOS High Sierra+ stores dates as nanoseconds since Apple epoch;
 // older versions use seconds. We detect the format by checking magnitude.
+// Sentinel values and dates outside years 1 through 9999 have no date.
 func appleTimestampToTime(ts int64) time.Time {
-	if ts == 0 {
+	if ts == 0 || ts == math.MinInt64 || ts == math.MaxInt64 {
 		return time.Time{}
 	}
 	// Values > 1e12 are nanoseconds (1e12 ns = ~16 minutes from epoch,
 	// while 1e12 seconds from epoch = year ~33700).
-	if ts > 1_000_000_000_000 {
-		sec := ts / 1_000_000_000
-		nsec := ts % 1_000_000_000
-		return time.Unix(sec+appleEpochOffset, nsec).UTC()
+	sec, nsec := ts, int64(0)
+	if ts > 1_000_000_000_000 || ts < -1_000_000_000_000 {
+		sec = ts / 1_000_000_000
+		nsec = ts % 1_000_000_000
 	}
-	return time.Unix(ts+appleEpochOffset, 0).UTC()
+	// Apple seconds for 0001-01-01 and 9999-12-31 23:59:59 UTC.
+	// Check before adding the epoch offset so invalid values cannot overflow.
+	if sec < -63_113_904_000 || sec > 252_423_993_599 {
+		return time.Time{}
+	}
+	return time.Unix(sec+appleEpochOffset, nsec).UTC()
 }
 
 // timeToAppleTimestamp converts a time.Time to an Apple epoch timestamp.

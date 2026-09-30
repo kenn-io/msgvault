@@ -104,6 +104,17 @@ By default, the command reads from `~/Library/Messages/chat.db`. No positional a
 
 This is a read-only operation. msgvault does not modify your iMessage database.
 
+Apple timestamp sentinels and dates outside years 1 through 9999 are stored as
+missing dates. msgvault retains those messages and their raw timestamp
+evidence, including empty sync placeholders. Undated messages are excluded from
+dated analytics.
+
+To correct dates imported by an older version, rerun `import-imessage` against
+the same database without `--after`, `--before`, or `--limit`. The import updates
+existing messages without creating duplicates. When it clears a previously
+stored date, msgvault rebuilds analytics so the old date is removed there too.
+Keep the original `--db-path` and `--me` options if you supplied them.
+
 ### Flags
 
 | Flag | Default | Description |

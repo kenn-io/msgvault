@@ -128,20 +128,19 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted.")
 			printImessageSummary(summary, startTime)
-			return finishImessageImport(s, state)
+			return finishImessageImport(s, state, summary)
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
 
 	printImessageSummary(summary, startTime)
-	return finishImessageImport(s, state)
+	return finishImessageImport(s, state, summary)
 }
 
 // finishImessageImport runs the post-import name backfill, refreshes
-// generated chat titles, and triggers an analytics cache rebuild that picks up
-// the participant/conversation changes (the default staleness check only
-// notices new/deleted messages, not title or display_name updates).
-func finishImessageImport(s *store.Store, state *invocation) error {
+// generated chat titles, and rebuilds the analytics cache when those changes
+// affect existing rows inside the published message boundary.
+func finishImessageImport(s *store.Store, state *invocation, summary *imessage.ImportSummary) error {
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
@@ -159,11 +158,11 @@ func finishImessageImport(s *store.Store, state *invocation) error {
 	}
 
 	dbPath := cfg.DatabaseDSN()
-	if mutated {
+	if !store.IsPostgresURL(dbPath) && (mutated || (summary != nil && summary.DatesCleared > 0)) {
 		// Title/display_name updates aren't visible to the message-id-keyed
 		// staleness check, so the standard rebuildCacheAfterWrite would skip.
-		// Force a full rebuild so conversations.parquet and
-		// participants.parquet are re-exported and the TUI sees the new names.
+		// A date clear also leaves the message ID unchanged, so it must re-export
+		// messages.parquet as well as the affected conversation datasets.
 		if _, err := buildCache(
 			dbPath,
 			cfg.AnalyticsDir(),
@@ -351,6 +350,9 @@ func printImessageSummary(
 	fmt.Printf("  Participants:     %d resolved\n", summary.ParticipantsResolved)
 	if summary.Skipped > 0 {
 		fmt.Printf("  Skipped:          %d\n", summary.Skipped)
+	}
+	if summary.DatesCleared > 0 {
+		fmt.Printf("  Dates cleared:    %d\n", summary.DatesCleared)
 	}
 	if summary.MessagesImported > 0 && elapsed.Seconds() > 0 {
 		rate := float64(summary.MessagesImported) / elapsed.Seconds()

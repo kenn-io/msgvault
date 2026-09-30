@@ -25,5 +25,7 @@ type ImportSummary struct {
 	MessagesImported      int
 	ConversationsImported int
 	ParticipantsResolved  int
-	Skipped               int
+	// DatesCleared counts existing archived dates removed for invalid source timestamps.
+	DatesCleared int
+	Skipped      int
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -106,7 +107,8 @@ func (c *Client) Close() error {
 func (c *Client) detectTimestampFormat() error {
 	var maxDate sql.NullInt64
 	err := c.db.QueryRow(
-		"SELECT MAX(date) FROM message WHERE date > 0",
+		"SELECT MAX(date) FROM message WHERE date > 0 AND date < ?",
+		int64(math.MaxInt64),
 	).Scan(&maxDate)
 	if err != nil {
 		return fmt.Errorf("query max date: %w", err)
@@ -388,11 +390,24 @@ func (c *Client) importMessage(
 	if !msgDate.IsZero() {
 		sentAt = sql.NullTime{Time: msgDate, Valid: true}
 	}
+	sourceMessageID := strconv.FormatInt(msg.ROWID, 10)
+	clearsExistingDate := false
+	if msgDate.IsZero() {
+		err := s.DB().QueryRow(s.Rebind(`
+			SELECT EXISTS (
+				SELECT 1 FROM messages
+				WHERE source_id = ? AND source_message_id = ?
+				  AND (sent_at IS NOT NULL OR internal_date IS NOT NULL)
+			)`), sourceID, sourceMessageID).Scan(&clearsExistingDate)
+		if err != nil {
+			return fmt.Errorf("check existing message date: %w", err)
+		}
+	}
 
 	// Upsert the message
 	msgID, err := s.UpsertMessage(&store.Message{
 		SourceID:        sourceID,
-		SourceMessageID: strconv.FormatInt(msg.ROWID, 10),
+		SourceMessageID: sourceMessageID,
 		ConversationID:  convID,
 		MessageType:     msgType,
 		SentAt:          sentAt,
@@ -408,6 +423,9 @@ func (c *Client) importMessage(
 	})
 	if err != nil {
 		return fmt.Errorf("upsert message: %w", err)
+	}
+	if clearsExistingDate {
+		summary.DatesCleared++
 	}
 
 	// Store body text directly (no MIME)

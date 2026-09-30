@@ -1,10 +1,12 @@
 package imessage
 
 import (
+	"math"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"howett.net/plist"
 )
 
@@ -47,6 +49,63 @@ func TestAppleTimestampToTime(t *testing.T) {
 			assert.Equal(t, tt.wantYear, got.Year(), "year (time: %v)", got)
 		})
 	}
+}
+
+// Rejecting sentinels and calendar overflow protects archive and cache dates.
+func TestAppleTimestampToTimeArchiveDates(t *testing.T) {
+	tests := []struct {
+		name string
+		ts   int64
+		want string // empty means no date
+	}{
+		{"minimum sentinel", math.MinInt64, ""},
+		{"maximum sentinel", math.MaxInt64, ""},
+		{"minimum adjacent nanoseconds", math.MinInt64 + 1, "1708-09-22T00:12:43.145224193Z"},
+		{"maximum adjacent nanoseconds", math.MaxInt64 - 1, "2293-04-11T23:47:16.854775806Z"},
+		{"zero", 0, ""},
+		{"negative seconds", -1, "2000-12-31T23:59:59Z"},
+		{"negative nanosecond fraction", -978307200123456789, "1969-12-31T23:59:59.876543211Z"},
+		{"positive nanosecond fraction", 725760000123456789, "2024-01-01T00:00:00.123456789Z"},
+		{"positive seconds threshold", 1000000000000, ""},
+		{"positive nanoseconds threshold", 1000000000001, "2001-01-01T00:16:40.000000001Z"},
+		{"negative seconds threshold", -1000000000000, ""},
+		{"negative nanoseconds threshold", -1000000000001, "2000-12-31T23:43:19.999999999Z"},
+		{"Go zero instant", -63113904000, ""},
+		{"first nonzero supported second", -63113903999, "0001-01-01T00:00:01Z"},
+		{"before supported calendar", -63113904001, ""},
+		{"last supported second", 252423993599, "9999-12-31T23:59:59Z"},
+		{"after supported calendar", 252423993600, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appleTimestampToTime(tt.ts)
+			if tt.want == "" {
+				assert.True(t, got.IsZero(), "got %v", got)
+				return
+			}
+			want, err := time.Parse(time.RFC3339Nano, tt.want)
+			require.NoError(t, err)
+			assert.Equal(t, want, got)
+		})
+	}
+}
+
+// Every nonzero conversion must fit the archive's calendar and JSON dates.
+func FuzzAppleTimestampToTimeArchiveRange(f *testing.F) {
+	for _, ts := range []int64{math.MinInt64, math.MaxInt64, 0, -63113904001, 252423993600, -978307200123456789, math.MinInt64 + 1, math.MaxInt64 - 1} {
+		f.Add(ts)
+	}
+	f.Fuzz(func(t *testing.T, ts int64) {
+		got := appleTimestampToTime(ts)
+		if ts == math.MinInt64 || ts == math.MaxInt64 || ts == 0 {
+			assert.True(t, got.IsZero(), "sentinel %d became %v", ts, got)
+		} else if !got.IsZero() {
+			assert.GreaterOrEqual(t, got.Year(), 1)
+			assert.LessOrEqual(t, got.Year(), 9999)
+			_, err := got.MarshalJSON()
+			assert.NoError(t, err, "timestamp %d became %v", ts, got)
+		}
+	})
 }
 
 func TestTimeToAppleTimestamp(t *testing.T) {
