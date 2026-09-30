@@ -17,6 +17,7 @@ export interface CLIDeleteStagedPlanResponse {
   scope_escalation_cancel_hint?: string;
   scope_escalation_headline?: string;
   scope_escalation_oauth_app?: string;
+  scope_escalation_source_type?: string;
   stdout?: string;
   [key: string]: unknown;
 }
