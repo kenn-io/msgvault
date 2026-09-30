@@ -2641,6 +2641,69 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  it('shows grouped Files filename and type filters as removable chips', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const groupRequests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/groups')) {
+        groupRequests.push(request);
+        return Response.json({
+          rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+          total_count: 1, cache_revision: 'cache-1', search_provenance: {}
+        });
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({
+      workspace: 'files', groupingChain: ['source'], fileFilenameQuery: 'invoice', fileMIMEFamilies: ['pdf', 'image']
+    });
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    await screen.findByText('Example source');
+    const chips = screen.getByRole('region', { name: 'Active analytical context' });
+    expect(within(chips).getByText('Filename: “invoice”').textContent).toContain('invoice');
+    expect(within(chips).getByText('Type: PDFs, Images').textContent).toContain('PDFs');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove filename filter' }));
+    await waitFor(() => expect(groupRequests).toHaveLength(2));
+    expect(state.current.fileFilenameQuery).toBe('');
+    const afterFilename = await groupRequests[1]!.clone().json();
+    expect(afterFilename).not.toHaveProperty('filename_query');
+    expect(afterFilename).toMatchObject({ mime_families: ['pdf', 'image'] });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove type filter' }));
+    await waitFor(() => expect(groupRequests).toHaveLength(3));
+    expect(state.current.fileMIMEFamilies).toEqual([]);
+    await expect(groupRequests[2]!.clone().json()).resolves.not.toHaveProperty('mime_families');
+    expect(screen.queryByText(/^Filename:|^Type:/)).toBeNull();
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('shows no file filter chips beside the ungrouped Files controls', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname === '/api/v1/files/search') return Response.json({
+        files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {}
+      });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ workspace: 'files', fileFilenameQuery: 'invoice', fileMIMEFamilies: ['pdf'] });
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+
+    await screen.findByRole('grid', { name: 'Files results' });
+    expect((screen.getByRole('searchbox', { name: 'Filter filename' }) as HTMLInputElement).value).toBe('invoice');
+    expect(screen.queryByRole('button', { name: 'Remove filename filter' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove type filter' })).toBeNull();
+    rendered.unmount();
+    state.destroy();
+  });
+
 
   it('clears a stale Everything sortNotice when the workspace changes', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);

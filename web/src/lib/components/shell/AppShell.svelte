@@ -31,6 +31,7 @@
   } from '../../explore/models';
   import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
+  import { FILE_FAMILY_LABELS } from '../../explore/labels';
   import { ExploreLoader } from '../../explore/loader.svelte';
   import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
@@ -147,6 +148,31 @@
     if (fileCountLoading) return 'Counting…';
     if (fileCount === null) return '';
     return `${fileCount.toLocaleString()} ${fileCount === 1 ? 'file' : 'files'}`;
+  });
+  // Grouped Files hides the Filename and Type controls, but the group request still applies them.
+  const groupedFileFilterChips = $derived.by(() => {
+    const { groupingChain, fileFilenameQuery, fileMIMEFamilies } = exploreState.current;
+    if (groupingChain.length === 0) return [];
+    const chips = [];
+    if (fileFilenameQuery) {
+      chips.push({
+        key: 'filename',
+        label: `Filename: “${fileFilenameQuery}”`,
+        removeLabel: 'Remove filename filter',
+        onRemove: () =>
+          commitNavigation({ fileFilenameQuery: '', activeRow: null, selectedRow: null, scrollAnchor: null }),
+      });
+    }
+    if (fileMIMEFamilies.length > 0) {
+      chips.push({
+        key: 'type',
+        label: `Type: ${fileMIMEFamilies.map((family) => FILE_FAMILY_LABELS[family]).join(', ')}`,
+        removeLabel: 'Remove type filter',
+        onRemove: () =>
+          commitNavigation({ fileMIMEFamilies: [], activeRow: null, selectedRow: null, scrollAnchor: null }),
+      });
+    }
+    return chips;
   });
   let archiveWasOpen = false;
   const archiveMeetingID = $derived(parseArchiveMeetingSelection(exploreState.current.selectedRow));
@@ -1392,6 +1418,7 @@
             filters={exploreState.current.filters}
             groupingChain={exploreState.current.groupingChain}
             countLabel={filesCountLabel}
+            extraChips={groupedFileFilterChips}
             sort={exploreState.current.groupingChain.length > 0 ? undefined : {
               options: FILE_SORT_OPTIONS,
               value: fileSortValue(exploreState.current.fileSort),

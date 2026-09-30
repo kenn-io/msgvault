@@ -9,6 +9,13 @@
   import { groupingOptions, isGroupingDimension } from '../../grouping/catalog';
   import IdentityFilter from './IdentityFilter.svelte';
 
+  interface ExtraChip {
+    key: string;
+    label: string;
+    removeLabel: string;
+    onRemove: () => void;
+  }
+
   interface SortConfig {
     options: { value: string; label: string }[];
     value: string;
@@ -26,6 +33,7 @@
     sort = undefined,
     presentation = 'table',
     extra = undefined,
+    extraChips = [],
     onAddGroup,
     onRemoveGroup,
     onClearFilters,
@@ -43,6 +51,7 @@
     sort?: SortConfig;
     presentation?: ExploreURLState['presentation'];
     extra?: Snippet;
+    extraChips?: ExtraChip[];
     onAddGroup: (dimension: ExploreGroupDimension) => void;
     onRemoveGroup: (index: number) => void;
     onClearFilters: () => void;
@@ -74,7 +83,9 @@
     ...(sort?.options ?? []).map((option) => ({ ...option, triggerLabel: `Sort: ${option.label}` })),
     ...(sort?.note ? [{ value: '__note', label: sort.note, disabled: true }] : [])
   ]);
-  const hasChips = $derived(Boolean(query) || filters.length > 0 || groupingChain.length > 0);
+  const hasChips = $derived(
+    Boolean(query) || filters.length > 0 || extraChips.length > 0 || groupingChain.length > 0
+  );
 
   function selectGrouping(value: string): void {
     if (isGroupingDimension(value)) onAddGroup(value);
@@ -133,6 +144,13 @@
             size="sm"
             ariaLabel={`Remove ${filterDimensionLabel(filter.dimension)} filter`}
             onclick={() => onRemoveFilter?.(index)}
+          ><XIcon size="12" aria-hidden="true" /></IconButton>
+        </span>
+      {/each}
+      {#each extraChips as chip (chip.key)}
+        <span class="chip chip--filter">
+          {chip.label}
+          <IconButton size="sm" ariaLabel={chip.removeLabel} onclick={chip.onRemove}
           ><XIcon size="12" aria-hidden="true" /></IconButton>
         </span>
       {/each}
