@@ -72,8 +72,8 @@ func TestDraftLifecycleEndToEnd(t *testing.T) {
 }
 
 func TestDraftLifecycleDelegatedIMAPGetEditDelete(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	fixture := newDraftReplyFixture(t)
 	adapter := fixture.grantedAdapter()
 	var created draftReplyOutput
@@ -83,7 +83,7 @@ func TestDraftLifecycleDelegatedIMAPGetEditDelete(t *testing.T) {
 	}}, func(event api.CLIRunEvent) error {
 		return json.Unmarshal([]byte(event.Data), &created)
 	})
-	require.NoError(err)
+	requirements.NoError(err)
 
 	providerCalls := 0
 	clientFactory := adapter.draftClientFactory
@@ -92,7 +92,7 @@ func TestDraftLifecycleDelegatedIMAPGetEditDelete(t *testing.T) {
 		return clientFactory(ctx, source)
 	}
 	_, senderKey, err := parseDraftSender(testutil.IMAPTestUsername)
-	require.NoError(err)
+	requirements.NoError(err)
 	sourceRef := agentgrant.SourceRef{ID: fixture.source.ID, Type: fixture.source.SourceType, Identifier: fixture.source.Identifier}
 	grantFor := func(ref agentgrant.SourceRef, permissions ...agentgrant.Permission) *agentgrant.Grant {
 		return &agentgrant.Grant{ID: "imap-lifecycle-grant", Permissions: permissions, Sources: []agentgrant.SourceRef{ref}}
@@ -120,28 +120,30 @@ func TestDraftLifecycleDelegatedIMAPGetEditDelete(t *testing.T) {
 		{"get with draft.create and no sender", createWithoutSender, []string{api.CLIRunDraftGetCommand, created.DraftID, "--json"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			out, err := run(tc.grant, tc.args...)
-			require.Error(err)
-			assert.Equal("not_permitted", err.Error())
-			assert.Empty(out)
-			assert.Equal(0, providerCalls)
+			requirements.Error(err)
+			assertions.Equal("not_permitted", err.Error())
+			assertions.Empty(out)
+			assertions.Equal(0, providerCalls)
 		})
 	}
 
 	senderRef := sourceRef
 	senderRef.SenderKeys = []string{senderKey}
 	got, err := run(grantFor(senderRef, agentgrant.PermissionDraftCreate), api.CLIRunDraftGetCommand, created.DraftID, "--json")
-	require.NoError(err)
-	assert.Contains(got, "initial body")
+	requirements.NoError(err)
+	assertions.Contains(got, "initial body")
 
 	edited, err := run(grantFor(sourceRef, agentgrant.PermissionDraftEdit), api.CLIRunDraftEditCommand, created.DraftID, "--revision", revision, "--body", "delegated body", "--json")
-	require.NoError(err)
-	assert.Contains(edited, "\"revision\":2")
+	requirements.NoError(err)
+	assertions.Contains(edited, "\"revision\":2")
 
 	deleted, err := run(grantFor(sourceRef, agentgrant.PermissionDraftDelete), api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "2", "--json")
-	require.NoError(err)
-	assert.Contains(deleted, "\"lifecycle\":\"discarded\"")
-	assert.Equal(2, providerCalls)
+	requirements.NoError(err)
+	assertions.Contains(deleted, "\"lifecycle\":\"discarded\"")
+	assertions.Equal(2, providerCalls)
 }
 
 func TestDraftLifecycleReplacementIndexesCc(t *testing.T) {
