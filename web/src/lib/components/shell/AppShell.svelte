@@ -503,8 +503,7 @@
     const workspace = exploreState.current.workspace;
     if (workspace === 'everything' || workspace === 'files') {
       commitSearch(query, mode);
-      // The ungrouped Files grid stays out of currentGrid() so shortcut relays keep ignoring it.
-      (currentGrid() ?? filesGrid())?.focus();
+      focusGrid();
       return;
     }
     beforeCommit();
@@ -685,7 +684,7 @@
     selection.clear();
     replaceCommittedNavigation(state);
     await tick();
-    const grid = currentGrid();
+    const grid = focusableResultsGrid();
     if (grid) grid.focus();
     else searchInput?.focus();
   }
@@ -694,14 +693,14 @@
     if (attachmentID === undefined) {
       contextualViewerFile = undefined;
       if (previousAttachmentID !== undefined) {
-        void tick().then(() => (contextualViewerReturnFocus ?? currentGrid())?.focus());
+        void tick().then(() => (contextualViewerReturnFocus ?? focusableResultsGrid())?.focus());
       }
       previousAttachmentID = undefined;
       return;
     }
     previousAttachmentID = attachmentID;
     if (!untrack(() => contextualViewerReturnFocus)) {
-      contextualViewerReturnFocus = currentGrid() ?? undefined;
+      contextualViewerReturnFocus = focusableResultsGrid() ?? undefined;
     }
     if (untrack(() => contextualViewerFile)?.id !== attachmentID) {
       contextualViewerFile = { id: attachmentID };
@@ -742,7 +741,7 @@
     editableScopeCleanup = focused ? appShortcuts.pushScope('everything-editable') : undefined;
   }
   function focusGrid(): void {
-    currentGrid()?.focus();
+    focusableResultsGrid()?.focus();
   }
   async function restoreHistoryFocus(): Promise<void> {
     await tick();
@@ -751,7 +750,7 @@
       return;
     }
     const grid = exploreState.current.workspace === 'files' && exploreState.current.selectedRow === null
-      ? filesGrid()
+      ? focusableResultsGrid()
       : null;
     (grid ?? navigationFocusTarget())?.focus();
   }
@@ -762,10 +761,17 @@
   function filesGrid(): HTMLElement | null {
     return document.querySelector<HTMLElement>('[role="grid"][aria-label="Files results"]');
   }
+  // Shortcut relays target this grid. The ungrouped Files grid handles its own keys, so it is
+  // left out; grouped Files uses the same GroupTable as grouped Everything.
   function currentGrid(): HTMLElement | null {
-    return document.querySelector<HTMLElement>(
-      '[role="grid"][aria-label="Everything results"], [role="grid"][aria-label^="Everything grouped by"]',
-    );
+    return document.querySelector<HTMLElement>([
+      '[role="grid"][aria-label="Everything results"]',
+      '[role="grid"][aria-label^="Everything grouped by"]',
+      '[role="grid"][aria-label^="Files grouped by"]',
+    ].join(', '));
+  }
+  function focusableResultsGrid(): HTMLElement | null {
+    return currentGrid() ?? filesGrid();
   }
   function relayGridKey(event: KeyboardEvent, key: string, init: KeyboardEventInit = {}): void {
     if (event.target instanceof Element && event.target.closest('button, a, summary, [role="button"]')) return;
@@ -798,7 +804,9 @@
     // Kit releases its focus trap during teardown; focus the surviving source
     // link after that cleanup (or the current workspace's own control).
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const target = archiveReturnFocus?.isConnected ? archiveReturnFocus : currentGrid() ?? navigationFocusTarget();
+    const target = archiveReturnFocus?.isConnected
+      ? archiveReturnFocus
+      : focusableResultsGrid() ?? navigationFocusTarget();
     target?.focus();
   }
 
@@ -856,7 +864,7 @@
     replaceCommittedNavigation({ selectedRow: null });
     contextualViewerFile = undefined;
     await tick();
-    (contextualViewerReturnFocus ?? currentGrid())?.focus();
+    (contextualViewerReturnFocus ?? focusableResultsGrid())?.focus();
   }
   function changeConversationAnchor(anchorId: number): void {
     replaceCommittedNavigation({ conversationAnchor: String(anchorId) });

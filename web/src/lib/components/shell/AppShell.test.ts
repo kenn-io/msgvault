@@ -402,7 +402,9 @@ describe('AppShell', () => {
       }] });
       if (path.endsWith('/files/search')) {
         fileSearches.push(request);
-        return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+        return Response.json({
+          files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {}
+        });
       }
       return Response.json(exploreResponse());
     });
@@ -414,7 +416,7 @@ describe('AppShell', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Open Demo view' }));
   }
 
-  it('opens a saved view without the filename, type, and file sort set earlier on Files', async () => {
+  it('opens a saved view without the Files filename, type, and sort set earlier', async () => {
     window.history.replaceState(null, '', '/?workspace=files');
     const fileSearches: Request[] = [];
     const state = new ExploreState(window);
@@ -422,9 +424,11 @@ describe('AppShell', () => {
       workspace: 'files', fileFilenameQuery: 'invoice', fileMIMEFamilies: ['pdf'],
       fileSort: { field: 'filename', direction: 'asc' }
     });
-    const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch(fileSearches)), state });
+    const client = createAPIClient(savedFilesViewFetch(fileSearches));
+    const rendered = render(AppShell, { client, state });
     try {
-      expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
+      const filter = await screen.findByLabelText<HTMLInputElement>('Filter filename');
+      expect(filter.value).toBe('invoice');
       await openDemoView();
       await screen.findByRole('grid', { name: 'Files results' });
       expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('');
@@ -434,6 +438,51 @@ describe('AppShell', () => {
         expect(body).not.toHaveProperty('mime_families');
         expect(body.sort).toEqual({ field: 'occurred_at', direction: 'desc' });
       });
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
+  it('focuses the Files grid after opening a saved Files view', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch([])), state });
+    try {
+      await openDemoView();
+      const grid = await screen.findByRole('grid', { name: 'Files results' });
+      await waitFor(() => expect(document.activeElement).toBe(grid));
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
+  it('focuses the Files grid when Escape removes a Files grouping level', async () => {
+    window.history.replaceState(null, '', '/?workspace=files');
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/files/groups')) return Response.json({
+        rows: [{
+          key: '7', label: 'Example source', count: 1, estimated_bytes: 1,
+          latest_at: '2026-07-18T12:00:00Z'
+        }],
+        total_count: 1, cache_revision: 'cache-1', search_provenance: {}
+      });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ workspace: 'files', groupingChain: ['source', 'year'] });
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      await screen.findByRole('grid', { name: 'Files grouped by source' });
+      await screen.findByText('Example source');
+      (document.activeElement as HTMLElement | null)?.blur();
+      const escape = { key: 'Escape', bubbles: true, cancelable: true };
+      window.dispatchEvent(new KeyboardEvent('keydown', escape));
+      await waitFor(() => expect(state.current.groupingChain).toEqual(['source']));
+      const grid = screen.getByRole('grid', { name: 'Files grouped by source' });
+      await waitFor(() => expect(document.activeElement).toBe(grid));
     } finally {
       rendered.unmount();
       state.destroy();
@@ -1769,6 +1818,45 @@ describe('AppShell', () => {
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'View legacy-report.pdf' })).toBeNull());
       expect(state.current.selectedRow).toBeNull();
       expect(new URLSearchParams(window.location.search).get('explore') ?? '').not.toContain('attachment:5');
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
+  it.each([
+    ['the Close button', async () => {
+      await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
+    }],
+    ['Escape', async () => {
+      const escape = { key: 'Escape', bubbles: true, cancelable: true };
+      window.dispatchEvent(new KeyboardEvent('keydown', escape));
+    }]
+  ])('focuses the Files grid when a legacy file viewer closes with %s', async (_label, close) => {
+    const explore = encodeURIComponent(JSON.stringify({ selectedRow: 'attachment:5' }));
+    window.history.replaceState(null, '', `/?workspace=files&explore=${explore}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/files/5')) return Response.json({
+        id: 5, message_id: 1, conversation_id: 11, filename: 'legacy-report.pdf',
+        mime_type: 'application/pdf', size_bytes: 2048,
+        content_state: 'missing_blob', content_available: false
+      });
+      if (path.endsWith('/files/search')) return Response.json({
+        files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {}
+      });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const viewer = await screen.findByRole('dialog', { name: 'View legacy-report.pdf' });
+      const grid = await screen.findByRole('grid', { name: 'Files results' });
+      // Let the Files list finish restoring so its settle-time focus cannot mask the close.
+      await waitFor(() => expect(state.peekRestorationEpoch()).toBeUndefined());
+      await close();
+      await waitFor(() => expect(viewer.isConnected).toBe(false));
+      await waitFor(() => expect(document.activeElement).toBe(grid));
     } finally {
       rendered.unmount();
       state.destroy();
