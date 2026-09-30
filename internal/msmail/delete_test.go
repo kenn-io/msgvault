@@ -56,11 +56,11 @@ func (d *deleteFixture) stage(t *testing.T, ids ...string) string {
 func (d *deleteFixture) label(t *testing.T, id string) string {
 	t.Helper()
 	var name string
-	require.NoError(t, d.st.DB().QueryRow(`
+	require.NoError(t, d.st.DB().QueryRow(d.st.Rebind(`
 		SELECT l.name FROM messages m
 		JOIN message_labels ml ON ml.message_id = m.id
 		JOIN labels l ON l.id = ml.label_id
-		WHERE m.source_message_id = ?`, id).Scan(&name))
+		WHERE m.source_message_id = ?`), id).Scan(&name))
 	return name
 }
 
