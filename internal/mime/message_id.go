@@ -2,6 +2,7 @@ package mime
 
 import (
 	"strings"
+	"unicode"
 
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -26,6 +27,48 @@ func NormalizeMessageID(id string) string {
 		}
 	}
 	return textutil.SanitizeUTF8(id)
+}
+
+// NormalizeLegacyMessageID recovers an ID from historical header values with
+// a missing closing bracket or trailing parameters. It is for IMAP legacy
+// identity recovery; NormalizeMessageID remains the storage/parser contract.
+func NormalizeLegacyMessageID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	var id string
+	if start := strings.IndexByte(value, '<'); start >= 0 {
+		if strings.ContainsAny(value[:start], "<>") {
+			return ""
+		}
+		id = value[start+1:]
+		if end := strings.IndexByte(id, '>'); end >= 0 {
+			if strings.ContainsAny(id[end+1:], "<>") {
+				return ""
+			}
+			id = id[:end]
+		}
+		if strings.ContainsAny(id, "<>") || strings.IndexFunc(id, unicode.IsSpace) >= 0 {
+			return ""
+		}
+	} else {
+		if strings.ContainsAny(value, "<>") {
+			return ""
+		}
+		id = strings.Fields(value)[0]
+	}
+	return textutil.SanitizeUTF8(id)
+}
+
+// LegacyMessageIDMatchKey compares recoverable historical IDs without changing
+// their stored spelling. Only the domain is case insensitive.
+func LegacyMessageIDMatchKey(value string) string {
+	id := NormalizeLegacyMessageID(value)
+	if at := strings.LastIndexByte(id, '@'); at >= 0 {
+		id = id[:at+1] + strings.ToLower(id[at+1:])
+	}
+	return id
 }
 
 // ParseMessageIDs extracts canonical message and reply IDs from the top-level

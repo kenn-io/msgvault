@@ -194,7 +194,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 		if err != nil {
 			return err
 		}
-		resolver := imapMembershipResolver{tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL()}
+		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL()}
 		if err := resolver.primeIdentities(normalizedDeltas); err != nil {
 			return err
 		}
@@ -656,11 +656,13 @@ func captureIMAPMembershipMessageIDs(
 }
 
 type imapMembershipResolver struct {
+	ctx               context.Context
 	tx                *loggedTx
 	sourceID          int64
 	sqlite            bool
 	rawMessages       map[int64]map[[32]byte]int64
 	canonicalMessages map[string]int64
+	legacyMessages    map[string]int64
 }
 
 func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailboxDelta) error {
@@ -886,21 +888,32 @@ func (r *imapMembershipResolver) resolveIdentity(observation IMAPMembershipObser
 					return id, nil
 				}
 			}
-			return 0, fmt.Errorf("resolve IMAP membership for mailbox %q UID %d: unresolved independent identity: %w", observation.Mailbox, observation.UID, sql.ErrNoRows)
+			if len(ids) > 1 {
+				return 0, fmt.Errorf("resolve IMAP membership for mailbox %q UID %d: unresolved independent identity: %w", observation.Mailbox, observation.UID, sql.ErrNoRows)
+			}
 		}
-		for _, candidate := range imapRFC822MessageIDCandidates(observation.RFC822MessageID) {
-			err := r.tx.QueryRow(`
+		if !independent {
+			for _, candidate := range imapRFC822MessageIDCandidates(observation.RFC822MessageID) {
+				err := r.tx.QueryRow(`
 				SELECT id FROM messages
 				WHERE source_id = ? AND rfc822_message_id = ?
 				ORDER BY id
 				LIMIT 1
 			`, r.sourceID, candidate).Scan(&messageID)
-			if err == nil {
-				return messageID, nil
+				if err == nil {
+					return messageID, nil
+				}
+				if !errors.Is(err, sql.ErrNoRows) {
+					return 0, fmt.Errorf("resolve IMAP membership by RFC822 Message-ID: %w", err)
+				}
 			}
-			if !errors.Is(err, sql.ErrNoRows) {
-				return 0, fmt.Errorf("resolve IMAP membership by RFC822 Message-ID: %w", err)
-			}
+		}
+		id, err := r.resolveLegacyMessageID(observation.RFC822MessageID)
+		if err != nil {
+			return 0, err
+		}
+		if id != 0 {
+			return id, nil
 		}
 	}
 	return 0, fmt.Errorf(

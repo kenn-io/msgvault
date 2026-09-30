@@ -901,7 +901,8 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	// Raw MIME is needed for new messages and as a compatibility fallback for
 	// incomplete snapshots whose client cannot fetch labels separately.
 	if len(fetchIDs) > 0 {
-		rawMessages, err := s.getMessagesRawBatchWithDiagnostics(ctx, fetchIDs)
+		fetchIDs, rawMessages, err := s.getMessagesRawBatchWithIdentityValidation(
+			ctx, fetchIDs, inconclusiveRefreshes)
 		if err != nil {
 			for _, id := range fetchIDs {
 				s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, err)

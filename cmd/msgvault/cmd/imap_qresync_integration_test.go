@@ -25,13 +25,15 @@ import (
 )
 
 type scriptedRFC7162Message struct {
-	UID        imapapi.UID
-	MessageID  string
-	Subject    string
-	Body       string
-	MissingRaw bool
-	Flags      []imapapi.Flag
-	ModSeq     uint64
+	UID       imapapi.UID
+	MessageID string
+	// MessageIDHeader overrides the header value for damaged legacy IDs.
+	MessageIDHeader string
+	Subject         string
+	Body            string
+	MissingRaw      bool
+	Flags           []imapapi.Flag
+	ModSeq          uint64
 	// Raw overrides the synthesized message bytes verbatim (already CRLF
 	// encoded) so tests can vary recipients, attachments, and HTML.
 	Raw string
@@ -402,8 +404,8 @@ func writeScriptedRFC7162Fetch(
 		}
 		if headerOnly {
 			body := "\r\n"
-			if message.MessageID != "" {
-				body = fmt.Sprintf("Message-ID: <%s>\r\n\r\n", message.MessageID)
+			if header := scriptedRFC7162MessageIDHeader(message); header != "" {
+				body = header + "\r\n"
 			}
 			_, _ = fmt.Fprintf(w,
 				"* %d FETCH (UID %d FLAGS (%s)%s BODY[HEADER.FIELDS (MESSAGE-ID)] {%d}\r\n%s)\r\n",
@@ -429,10 +431,7 @@ func scriptedRFC7162RawMessage(message scriptedRFC7162Message) string {
 	if subject == "" {
 		subject = "Synthetic message"
 	}
-	messageIDHeader := ""
-	if message.MessageID != "" {
-		messageIDHeader = fmt.Sprintf("Message-ID: <%s>\r\n", message.MessageID)
-	}
+	messageIDHeader := scriptedRFC7162MessageIDHeader(message)
 	body := message.Body
 	if body == "" {
 		body = "Synthetic body."
@@ -440,6 +439,16 @@ func scriptedRFC7162RawMessage(message scriptedRFC7162Message) string {
 	return fmt.Sprintf(
 		"From: sender@example.test\r\nTo: recipient@example.test\r\nDate: Mon, 1 Jan 2024 00:00:00 +0000\r\n%sSubject: %s\r\n\r\n%s\r\n",
 		messageIDHeader, subject, body)
+}
+
+func scriptedRFC7162MessageIDHeader(message scriptedRFC7162Message) string {
+	if message.MessageIDHeader != "" {
+		return "Message-ID: " + message.MessageIDHeader + "\r\n"
+	}
+	if message.MessageID != "" {
+		return fmt.Sprintf("Message-ID: <%s>\r\n", message.MessageID)
+	}
+	return ""
 }
 
 func newScriptedRFC7162Client(
@@ -643,6 +652,85 @@ func queryScriptedRFC7162MessageLabels(
 	}
 	require.NoError(t, rows.Err())
 	return labels
+}
+
+func TestIMAPQresyncEndToEndLegacyMessageIDBaseline(t *testing.T) {
+	for _, test := range []struct {
+		name, header, stored string
+	}{
+		{"missing closing bracket", "<legacy@mail.example.test", "<legacy@mail.example.test"},
+		{"trailing parameters", "<ABCDEF@mail01.example.test>", `<ABCDEF@mail01.example.test> type="multipart/alternative"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			message := newScriptedRFC7162Message(1, "")
+			message.MessageIDHeader = test.header
+			message.Subject = "Archived subject"
+			message.Body = "Archived body"
+			archivedRaw := []byte(scriptedRFC7162RawMessage(message))
+			duplicate := message
+			duplicate.UID = 2
+			baseline := scriptedRFC7162Snapshot{
+				Capabilities: scriptedRFC7162Capabilities(),
+				Mailboxes: []scriptedRFC7162Mailbox{
+					{Name: "Archive", UIDValidity: 77, UIDNext: 3, HighestModSeq: 10, Messages: []scriptedRFC7162Message{message, duplicate}},
+					scriptedRFC7162Inbox(77, 2, 10, message),
+				},
+			}
+			addr, server := startScriptedRFC7162Server(t, baseline)
+			st := testutil.NewTestStore(t)
+			const identifier = "imap://legacy-baseline@example.test"
+			source, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
+			requirements.NoError(err)
+			conversation, err := st.EnsureConversation(source.ID, "legacy", "Archived subject")
+			requirements.NoError(err)
+			messageID, err := st.UpsertMessage(&store.Message{
+				SourceID: source.ID, ConversationID: conversation, SourceMessageID: "Archive|1",
+				RFC822MessageID: sql.NullString{String: test.stored, Valid: true}, MessageType: "email",
+			})
+			requirements.NoError(err)
+			requirements.NoError(st.UpsertMessageBody(messageID, sql.NullString{String: "Archived body", Valid: true}, sql.NullString{}))
+			requirements.NoError(st.UpsertMessageRaw(messageID, archivedRaw))
+			states, err := st.GetIMAPFolderStates(source.ID)
+			requirements.NoError(err)
+			requirements.Empty(states)
+
+			first, _ := requireScriptedRFC7162Sync(t, st, identifier, addr)
+			requirements.NoError(first.Close())
+			known, err := st.GetIMAPKnownUIDs(source.ID)
+			requirements.NoError(err)
+			assertions.Equal(map[string][]uint32{"Archive": {1, 2}, "INBOX": {1}}, known)
+			states, err = st.GetIMAPFolderStates(source.ID)
+			requirements.NoError(err)
+			assertions.ElementsMatch([]store.IMAPFolderState{
+				{Mailbox: "Archive", UIDValidity: 77, UIDNext: 3, HighestModSeq: 10},
+				{Mailbox: "INBOX", UIDValidity: 77, UIDNext: 2, HighestModSeq: 10},
+			}, states)
+			assertions.Contains(server.commandsFor(1), "UID SEARCH")
+
+			second, _ := requireScriptedRFC7162Sync(t, st, identifier, addr)
+			requirements.NoError(second.Close())
+			assertions.Contains(server.commandsFor(2), "CHANGEDSINCE 10 VANISHED")
+			assertions.NotContains(server.commandsFor(2), "UID SEARCH")
+			var gotID int64
+			var stored string
+			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id, rfc822_message_id FROM messages WHERE source_id = ?`), source.ID).Scan(&gotID, &stored))
+			assertions.Equal(messageID, gotID)
+			assertions.Equal(test.stored, stored)
+			var count, memberships int
+			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
+			assertions.Equal(1, count)
+			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ? AND message_id = ?`), source.ID, messageID).Scan(&memberships))
+			assertions.Equal(3, memberships)
+			body, err := st.GetMessageBodyText(messageID)
+			requirements.NoError(err)
+			assertions.Equal("Archived body", body)
+			raw, err := st.GetMessageRaw(messageID)
+			requirements.NoError(err)
+			assertions.Equal(archivedRaw, raw)
+		})
+	}
 }
 
 func TestIMAPQresyncEndToEndAppend(t *testing.T) {

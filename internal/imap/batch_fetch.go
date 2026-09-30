@@ -90,6 +90,9 @@ func rawMIMEMessageID(rawMIME []byte) string {
 		// message can become unidentifiable when its headers are refreshed.
 		msgID, _ = mime.ParseMessageIDs(rawMIME)
 	}
+	if msgID == "" {
+		msgID = mime.NormalizeLegacyMessageID(header.Get("Message-ID"))
+	}
 	return msgID
 }
 
@@ -99,6 +102,13 @@ func normalizeRFC822MessageID(value string) string {
 		return value[1 : len(value)-1]
 	}
 	return value
+}
+
+func legacyRFC822MessageIDsMatch(expected, actual string) bool {
+	// Normalize the original values: stripping a bracket pair first could
+	// turn a nested or whitespace-damaged ID into apparently valid evidence.
+	key := mime.LegacyMessageIDMatchKey(expected)
+	return key != "" && key == mime.LegacyMessageIDMatchKey(actual)
 }
 
 func (c *Client) labelsForMessage(mailbox, rfc822MessageID string) []string {
@@ -121,6 +131,18 @@ func (c *Client) applyFetchResults(
 	mailbox string,
 	chunk []batchFetchItem,
 	msgs []*imapclient.FetchMessageBuffer,
+) []batchFetchItem {
+	return c.applyFetchResultsWithIdentityValidation(
+		results, uidToIdx, mailbox, chunk, msgs, false)
+}
+
+func (c *Client) applyFetchResultsWithIdentityValidation(
+	results []gmailapi.RawMessageBatchResult,
+	uidToIdx map[imap.UID]int,
+	mailbox string,
+	chunk []batchFetchItem,
+	msgs []*imapclient.FetchMessageBuffer,
+	forceFullRaw bool,
 ) []batchFetchItem {
 	seenReturnedUIDs := make(map[imap.UID]bool, len(msgs))
 	// Only a message with no Message-ID header needs a durable alias, so the
@@ -204,9 +226,16 @@ func (c *Client) applyFetchResults(
 			results[idx].Err = nil
 			continue
 		}
-		if !forced && c.seenRFC822IDs != nil &&
-			rfc822MessageID != "" {
-			if c.seenRFC822IDs[rfc822MessageID] {
+		if !forced && c.seenRFC822IDs != nil && rfc822MessageID != "" {
+			if forceFullRaw {
+				// This copy must reach sync for raw-byte identity proof. Record
+				// its Message-ID first so ordinary copies in the following batch
+				// can still become dedup stubs.
+				c.seenRFC822IDs[rfc822MessageID] = true
+				if c.isSentPlacementMailboxLocked(mailbox) {
+					c.seenTrustedRFC822IDs[rfc822MessageID] = true
+				}
+			} else if c.seenRFC822IDs[rfc822MessageID] {
 				// A duplicate copy in Sent placement still gets its full
 				// raw — once per identity per run — because that copy may
 				// be the one that must refresh a stale archived snapshot;
@@ -353,6 +382,7 @@ func (c *Client) fetchMailboxBatch(
 	items []batchFetchItem,
 	fetchOpts *imap.FetchOptions,
 	results []gmailapi.RawMessageBatchResult,
+	forceFullRaw bool,
 ) error {
 	uidToIdx := make(map[imap.UID]int, len(items))
 	for _, item := range items {
@@ -382,11 +412,12 @@ func (c *Client) fetchMailboxBatch(
 			return nil
 		}
 
-		omitted := c.applyFetchResults(results, uidToIdx, mailbox, chunk, msgs)
+		omitted := c.applyFetchResultsWithIdentityValidation(
+			results, uidToIdx, mailbox, chunk, msgs, forceFullRaw)
 		if len(omitted) > 0 {
 			var fatalErr error
 			omitted, fatalErr = c.recheckOmittedRaw(
-				ctx, results, uidToIdx, mailbox, omitted, fetchOpts)
+				ctx, results, uidToIdx, mailbox, omitted, fetchOpts, forceFullRaw)
 			if fatalErr != nil {
 				return fatalErr
 			}
@@ -418,6 +449,7 @@ func (c *Client) recheckOmittedRaw(
 	mailbox string,
 	omitted []batchFetchItem,
 	fetchOpts *imap.FetchOptions,
+	forceFullRaw bool,
 ) ([]batchFetchItem, error) {
 	var uidSet imap.UIDSet
 	for _, item := range omitted {
@@ -436,7 +468,8 @@ func (c *Client) recheckOmittedRaw(
 		markRawBatchError(results, omitted, err)
 		return nil, nil
 	}
-	return c.applyFetchResults(results, uidToIdx, mailbox, omitted, msgs), nil
+	return c.applyFetchResultsWithIdentityValidation(
+		results, uidToIdx, mailbox, omitted, msgs, forceFullRaw), nil
 }
 
 // confirmOmittedPresent asks the server which of the UIDs it left out of both
@@ -518,6 +551,25 @@ func (c *Client) markOmittedOutcome(
 // re-established and the failed chunk is retried once; if reconnect itself fails
 // the function returns immediately with whatever results were collected.
 func (c *Client) GetMessagesRawBatchWithErrors(ctx context.Context, messageIDs []string) ([]gmailapi.RawMessageBatchResult, error) {
+	return c.getMessagesRawBatchWithIdentityValidation(ctx, messageIDs, false)
+}
+
+// GetMessagesRawBatchWithIdentityValidation fetches the requested messages
+// with full raw MIME even when this run already fetched another mailbox copy
+// with the same RFC822 Message-ID. Sync uses this for existing source IDs that
+// need raw-byte identity proof before ordinary duplicate copies are deduped.
+func (c *Client) GetMessagesRawBatchWithIdentityValidation(
+	ctx context.Context,
+	messageIDs []string,
+) ([]gmailapi.RawMessageBatchResult, error) {
+	return c.getMessagesRawBatchWithIdentityValidation(ctx, messageIDs, true)
+}
+
+func (c *Client) getMessagesRawBatchWithIdentityValidation(
+	ctx context.Context,
+	messageIDs []string,
+	forceFullRaw bool,
+) ([]gmailapi.RawMessageBatchResult, error) {
 	results := newRawBatchResults(messageIDs)
 
 	byMailbox := make(map[string][]batchFetchItem, 4)
@@ -554,7 +606,7 @@ func (c *Client) GetMessagesRawBatchWithErrors(ctx context.Context, messageIDs [
 			continue
 		}
 
-		if err := c.fetchMailboxBatch(ctx, mailbox, items, fetchOpts, results); err != nil {
+		if err := c.fetchMailboxBatch(ctx, mailbox, items, fetchOpts, results, forceFullRaw); err != nil {
 			return results, err
 		}
 	}
@@ -870,7 +922,15 @@ func (c *Client) FetchedSourceMessageMatches(
 	expected := normalizeRFC822MessageID(expectedRFC822MessageID)
 	actual := normalizeRFC822MessageID(actualRFC822MessageID)
 	if expected != "" && actual != "" {
-		return expected == actual, true, nil
+		if expected == actual {
+			return true, true, nil
+		}
+		if legacyRFC822MessageIDsMatch(expectedRFC822MessageID, actualRFC822MessageID) {
+			// A tolerant match cannot establish that a reused UID still names
+			// the archived message. Let sync compare the fetched raw MIME.
+			return false, false, nil
+		}
+		return false, true, nil
 	}
 	if epochKnown {
 		return true, true, nil
@@ -903,8 +963,8 @@ func (c *Client) SourceMessageMatches(
 	if !exists {
 		return false, true, nil
 	}
-	return normalizeRFC822MessageID(actualRFC822MessageID) ==
-		normalizeRFC822MessageID(expectedRFC822MessageID), true, nil
+	return normalizeRFC822MessageID(expectedRFC822MessageID) ==
+		normalizeRFC822MessageID(actualRFC822MessageID), true, nil
 }
 
 // IsPreferredSourceMessageID reports whether messageID belongs to the

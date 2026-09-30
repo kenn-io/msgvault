@@ -665,6 +665,7 @@ func TestSourceMessageMatchesDefersExcludedMailbox(t *testing.T) {
 
 func TestSourceMessageMatchesRFC822Identity(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	addr, user := testutil.StartIMAPMemServer(
 		t, map[string]int{"INBOX": 0})
 	const messageID = "source-match@example.com"
@@ -683,6 +684,12 @@ func TestSourceMessageMatchesRFC822Identity(t *testing.T) {
 	require.NoError(err)
 	require.True(matches)
 	require.True(conclusive)
+
+	matches, conclusive, err = client.SourceMessageMatches(
+		context.Background(), "INBOX|1", "<"+messageID)
+	require.NoError(err)
+	assert.False(matches, "a legacy-only Message-ID match is not source identity proof")
+	assert.True(conclusive)
 
 	matches, conclusive, err = client.SourceMessageMatches(
 		context.Background(), "INBOX|1", "replacement@example.com")

@@ -4822,6 +4822,140 @@ func TestIMAPMissingIdentityRawComparisonKeepsEqualMessage(t *testing.T) {
 	assertMessageCount(t, env.Store, 1)
 }
 
+func TestIMAPLegacyOnlyIdentityValidationGetsRawBeforeDedup(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"A-copy":    0,
+		"INBOX":     0,
+		"Z-archive": 0,
+	})
+	const messageID = "legacy-dedup-proof@example.test"
+	raw := []byte(
+		"Message-ID: <" + messageID + ">\r\n" +
+			"From: alice@example.test\r\n" +
+			"To: bob@example.test\r\n" +
+			"Subject: archived message\r\n\r\n" +
+			"archived body\r\n",
+	)
+	testutil.AppendIMAPRawMessage(t, user, "A-copy", raw)
+	testutil.AppendIMAPRawMessage(t, user, "Z-archive", raw)
+
+	source, err := env.Store.GetOrCreateSource("imap", testEmail)
+	require.NoError(err)
+	conversationID, err := env.Store.EnsureConversation(source.ID, "legacy-dedup", "archived message")
+	require.NoError(err)
+	archivedID, err := env.Store.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "Z-archive|1",
+		RFC822MessageID: sql.NullString{String: "<" + messageID, Valid: true}, MessageType: "email",
+	})
+	require.NoError(err)
+	require.NoError(env.Store.UpsertMessageBody(archivedID, sql.NullString{String: "archived body", Valid: true}, sql.NullString{}))
+	require.NoError(env.Store.UpsertMessageRaw(archivedID, raw))
+
+	client := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(client, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:  new(int64(0)),
+		Errors: new(int64(0)),
+	})
+	assert.Positive(summary.BytesDownloaded, "legacy-only source validation must compare fetched raw MIME")
+	assertMessageCount(t, env.Store, 1)
+	storedRaw, err := env.Store.GetMessageRaw(archivedID)
+	require.NoError(err)
+	assert.Equal(raw, storedRaw)
+	storedSourceMessageID, err := env.Store.GetMessageSourceID(archivedID)
+	require.NoError(err)
+	assert.Equal("Z-archive|1", storedSourceMessageID)
+}
+
+func TestIMAPLegacyOnlyIdentityRawMismatchPreservesReusedUID(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	opts := DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+	opts.NoResume = true
+
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
+		"Archive": 0,
+		"INBOX":   0,
+	})
+	const messageID = "legacy-uid-reuse@example.test"
+	archivedRaw := []byte(
+		"Message-ID: <" + messageID + ">\r\n" +
+			"From: alice@example.test\r\n" +
+			"To: bob@example.test\r\n" +
+			"Subject: archived message\r\n\r\n" +
+			"archived body\r\n",
+	)
+	replacementRaw := []byte(
+		"Message-ID: <" + messageID + ">\r\n" +
+			"From: alice@example.test\r\n" +
+			"To: bob@example.test\r\n" +
+			"Subject: replacement message\r\n\r\n" +
+			"replacement body\r\n",
+	)
+	testutil.AppendIMAPRawMessage(t, user, "Archive", archivedRaw)
+
+	firstClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(firstClient, env.Store, opts)
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
+	require.NoError(firstClient.Close())
+
+	source, err := env.Store.GetOrCreateSource("imap", testEmail)
+	require.NoError(err)
+	oldID, err := env.Store.GetMessageIDByRFC822ID(source.ID, "<"+messageID+">")
+	require.NoError(err)
+	require.NotZero(oldID)
+	_, err = env.Store.DB().Exec(
+		`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`,
+		"<"+messageID,
+		oldID,
+	)
+	require.NoError(err)
+
+	require.NoError(user.Delete("Archive"))
+	require.NoError(user.Create("Archive", nil))
+	testutil.AppendIMAPRawMessage(t, user, "Archive", replacementRaw)
+
+	secondClient := newSyncTestIMAPClient(t, addr)
+	env.Syncer = New(secondClient, env.Store, opts)
+	summary = runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{
+		Added:   new(int64(1)),
+		Updated: new(int64(0)),
+		Skipped: new(int64(0)),
+	})
+	assertMessageCount(t, env.Store, 2)
+
+	oldSourceID, err := env.Store.GetMessageSourceID(oldID)
+	require.NoError(err)
+	assert.Equal(invalidatedIMAPSourceID(oldID), oldSourceID)
+	oldRaw, err := env.Store.GetMessageRaw(oldID)
+	require.NoError(err)
+	assert.Equal(archivedRaw, oldRaw)
+
+	replacementID, err := env.Store.GetMessageIDByRFC822ID(source.ID, "<"+messageID+">")
+	require.NoError(err)
+	assert.NotZero(replacementID)
+	assert.NotEqual(oldID, replacementID)
+	replacementSourceID, err := env.Store.GetMessageSourceID(replacementID)
+	require.NoError(err)
+	assert.Equal("Archive|1", replacementSourceID)
+	storedReplacementRaw, err := env.Store.GetMessageRaw(replacementID)
+	require.NoError(err)
+	assert.Equal(replacementRaw, storedReplacementRaw)
+}
+
 func TestIMAPAsymmetricMessageIDUsesRawComparison(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

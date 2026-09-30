@@ -322,6 +322,14 @@ func TestLabelOnlyRescanDefersAllMailDedupUntilValidated(t *testing.T) {
 	require.NotNil(rawResults[0].Message)
 	assert.Nil(rawResults[0].Message.Raw,
 		"the overlapping mailbox copy must remain a dedup stub")
+
+	validationResults, err := client.GetMessagesRawBatchWithIdentityValidation(
+		context.Background(), []string{"Archive|1"})
+	require.NoError(err)
+	require.Len(validationResults, 1)
+	require.NoError(validationResults[0].Err)
+	require.NotNil(validationResults[0].Message)
+	assert.Equal(messageID, rawMIMEMessageID(validationResults[0].Message.Raw))
 }
 
 func TestSeedValidatedMessageDedupEligibility(t *testing.T) {
@@ -658,7 +666,7 @@ func TestApplyFetchResultsImportsWhenRawMessageIDMissingOrInvalid(t *testing.T) 
 		},
 		{
 			name: "invalid message id value",
-			raw:  []byte("Message-ID: <broken@example.test\r\n\r\nbody"),
+			raw:  []byte("Message-ID: <<broken@example.test>>\r\n\r\nbody"),
 		},
 	}
 

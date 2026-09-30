@@ -19,6 +19,8 @@ func TestLegacyMessageIDPreservedAcrossIMAPFetchPaths(t *testing.T) {
 		{"bracketed historical ID", "<[legacy-token==@example.test]>", "[legacy-token==@example.test]"},
 		{"standard ID", "<standard@example.test>", "standard@example.test"},
 		{"comment", "<comment@example.test> (comment)", "comment@example.test"},
+		{"missing closing bracket", "<1.3.123456.20080806021507@mail.example.test", "1.3.123456.20080806021507@mail.example.test"},
+		{"trailing parameters", `<ABCDEF0123456789@mail01.example.test> type="multipart/alternative"`, "ABCDEF0123456789@mail01.example.test"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -47,12 +49,41 @@ func TestLegacyMessageIDPreservedAcrossIMAPFetchPaths(t *testing.T) {
 	}
 }
 
-func TestLegacyMessageIDFallbackRejectsMalformedBracketsAndBodyText(t *testing.T) {
+func TestLegacyMessageIDFallbackRejectsNestedBracketsAndBodyText(t *testing.T) {
 	for _, raw := range []string{
-		"Message-ID: <broken@example.test\r\n\r\nbody",
 		"Message-ID: <<nested@example.test>>\r\n\r\nbody",
 		"Subject: no identifier\r\n\r\nMessage-ID: 123456789\r\n",
 	} {
 		assert.Empty(t, rawMIMEMessageID([]byte(raw)))
 	}
+}
+
+func TestLegacyMessageIDSourceValidationRequiresRawProof(t *testing.T) {
+	for _, test := range []struct {
+		name, stored, actual      string
+		wantMatch, wantConclusive bool
+	}{
+		{"missing closing bracket", "<legacy@example.test", "legacy@example.test", false, false},
+		{"trailing parameters", `<Local@EXAMPLE.TEST> type="multipart/alternative"`, "Local@example.test", false, false},
+		{"local case differs", "<Local@example.test", "local@example.test", false, true},
+		{"malformed values differ", "<<one@example.test>>", "<<two@example.test>>", false, true},
+		{"nested versus clean", "<<legacy@example.test>>", "legacy@example.test", false, true},
+		{"space inside brackets", "< legacy@example.test>", "legacy@example.test", false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := Client{}
+			matches, conclusive, err := client.FetchedSourceMessageMatches("INBOX|1", test.stored, test.actual)
+			require.NoError(t, err)
+			assert.Equal(t, test.wantConclusive, conclusive)
+			assert.Equal(t, test.wantMatch, matches)
+		})
+	}
+	client := Client{
+		priorFolderStates:    map[string]FolderState{"INBOX": {UIDValidity: 1}},
+		observedFolderStates: map[string]FolderState{"INBOX": {UIDValidity: 2}},
+	}
+	matches, conclusive, err := client.FetchedSourceMessageMatches("INBOX|1", "<legacy@example.test", "legacy@example.test")
+	require.NoError(t, err)
+	assert.False(t, matches, "a changed epoch still invalidates equivalent legacy IDs")
+	assert.True(t, conclusive)
 }

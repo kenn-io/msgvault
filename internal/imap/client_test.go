@@ -220,5 +220,6 @@ func TestAddMessageIDsFromHeaderFetchResultsParsesMessageIDHeaders(t *testing.T)
 	assert.Equal(t, map[string]bool{
 		"existing@example.com": true,
 		"one@example.com":      true,
+		"broken@example.test":  true,
 	}, got)
 }

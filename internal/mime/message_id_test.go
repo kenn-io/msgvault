@@ -34,3 +34,36 @@ func TestNormalizeMessageIDSanitizesInvalidUTF8(t *testing.T) {
 	assert.True(t, utf8.ValidString(got))
 	assert.Equal(t, "invalid-\ufffd@example.test", got)
 }
+
+func TestNormalizeLegacyMessageID(t *testing.T) {
+	for _, test := range []struct {
+		name, input, want string
+	}{
+		{"bracketed", "<Local@EXAMPLE.TEST>", "Local@EXAMPLE.TEST"},
+		{"missing close", "<Local@EXAMPLE.TEST", "Local@EXAMPLE.TEST"},
+		{"trailing parameters", `<Local@EXAMPLE.TEST> type="multipart/alternative"`, "Local@EXAMPLE.TEST"},
+		{"first bracket", "prefix <Local@example.test> type=alternative", "Local@example.test"},
+		{"bare", "Local@EXAMPLE.TEST", "Local@EXAMPLE.TEST"},
+		{"first bare token", "legacy-token type=alternative", "legacy-token"},
+		{"colon", "legacy:token", "legacy:token"},
+		{"square", "<[legacy-token==@example.test]>", "[legacy-token==@example.test]"},
+		{"outer whitespace", " \t<Local@example.test\r\n", "Local@example.test"},
+		{"invalid UTF8", "<invalid-\x80@example.test", "invalid-\ufffd@example.test"},
+		{"empty", "", ""},
+		{"empty pair", "<>", ""},
+		{"empty unclosed", "<", ""},
+		{"nested", "<<Local@example.test>>", ""},
+		{"nested unclosed", "<<Local@example.test", ""},
+		{"extra close", "<Local@example.test>>", ""},
+		{"missing open", "Local@example.test>", ""},
+		{"multiple", "<one@example.test> <two@example.test>", ""},
+		{"internal space", "<Local @example.test>", ""},
+		{"opening space", "< Local@example.test>", ""},
+		{"closing space", "<Local@example.test >", ""},
+		{"unclosed parameters", "<Local@example.test type=alternative", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, NormalizeLegacyMessageID(test.input))
+		})
+	}
+}
