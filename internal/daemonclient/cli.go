@@ -122,6 +122,7 @@ type CLIDeleteStagedPlan struct {
 	ScopeEscalationBodyLines  []string `json:"scope_escalation_body_lines,omitempty"`
 	ScopeEscalationCancelHint string   `json:"scope_escalation_cancel_hint,omitempty"`
 	ScopeEscalationAccount    string   `json:"scope_escalation_account,omitempty"`
+	ScopeEscalationSourceType string   `json:"scope_escalation_source_type,omitempty"`
 	ScopeEscalationOAuthApp   string   `json:"scope_escalation_oauth_app,omitempty"`
 	BlockedError              string   `json:"blocked_error,omitempty"`
 	RemoteDeleteEnvVar        string   `json:"remote_delete_env_var,omitempty"`

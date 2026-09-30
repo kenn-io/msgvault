@@ -1,7 +1,9 @@
 package msmail
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -89,9 +91,12 @@ func TestPermanentDelete(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	d := newDeleteFixture(t, "m1", "m2", "m3")
+	var logs bytes.Buffer
+	d.exec.WithLogger(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
 
 	require.NoError(d.exec.ExecuteBatch(t.Context(), d.stage(t, "m1", "m2")))
 	assert.Equal(map[string]string{"m3": "inbox"}, d.f.folder)
+	assert.Empty(logs.String(), "individual Graph deletes are expected, not a failed batch")
 
 	_, err := d.f.sync(t, d.st)
 	require.NoError(err)

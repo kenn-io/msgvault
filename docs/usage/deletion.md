@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-29"
+last_edited: "2026-09-30"
 title: Deleting Email
 description: Staging messages for deletion, reviewing manifests, and executing deletes from Gmail, IMAP, or Microsoft Graph mail.
 ---
@@ -106,11 +106,11 @@ The MCP `stage_deletion` tool creates a manifest through the selected daemon, th
 Web dashboards and automation scripts can stage deletion manifests through the
 [web API](/docs/api-server/#post-apiv1deletions) without constructing a manifest
 themselves. `POST /api/v1/deletions` accepts structured filters and/or
-internal message IDs, resolves the Gmail IDs on the server, and supports
+internal message IDs, resolves the provider IDs on the server, and supports
 `"dry_run": true` to preview the count and a sample before writing anything.
-IDs that do not resolve to live deletable Gmail messages with provider message
-IDs are omitted, and the
-reported count is the number of targets resolved by the daemon.
+IDs that do not resolve to live deletable Gmail or Microsoft Graph mail messages
+with provider message IDs are omitted, and the reported count is the number of
+targets resolved by the daemon.
 
 Actually staging depends on the request shape. An explicit `message_ids` list
 stages directly. Filter-based staging requires a preflighted selection: run
@@ -231,6 +231,20 @@ Microsoft Graph mail accounts sync with the `Mail.Read` permission. The first
 opens your browser to grant it. Your existing token keeps working until the new
 grant succeeds. The Entra app registration must list the delegated
 `Mail.ReadWrite` permission.
+
+On a host without a browser, use device-code sign-in:
+
+```bash
+msgvault delete-staged BATCH_ID --headless
+```
+
+Open the printed sign-in URL on another device and enter the code. The
+`--headless` flag applies to Microsoft Graph permission upgrades only.
+
+With a local daemon, the CLI completes the Gmail or Microsoft Graph permission
+upgrade before starting the deletion worker. With a remote daemon, sign-in runs
+on the daemon host because that host owns the token; `--headless` is forwarded
+to that worker for Microsoft Graph accounts.
 
 IMAP accounts do not require a permission upgrade. IMAP credentials already have full mailbox access, so `delete-staged` works without re-authorization.
 

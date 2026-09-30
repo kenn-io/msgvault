@@ -137,7 +137,7 @@ func (c *Client) DeleteMessage(ctx context.Context, id string) error {
 // BatchDeleteMessages is not supported. The deletion executor then deletes
 // one message at a time.
 func (c *Client) BatchDeleteMessages(context.Context, []string) error {
-	return errors.New("graph mail does not support batch delete")
+	return gmail.ErrBatchUnsupported
 }
 
 func (c *Client) post(ctx context.Context, id, action string, body any) error {

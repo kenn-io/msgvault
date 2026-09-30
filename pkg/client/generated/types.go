@@ -823,6 +823,7 @@ type CLIDeleteStagedPlanResponse struct {
 	ScopeEscalationCancelHint *string  `json:"scope_escalation_cancel_hint,omitzero"`
 	ScopeEscalationHeadline   *string  `json:"scope_escalation_headline,omitzero"`
 	ScopeEscalationOauthApp   *string  `json:"scope_escalation_oauth_app,omitzero"`
+	ScopeEscalationSourceType *string  `json:"scope_escalation_source_type,omitzero"`
 	Stdout                    *string  `json:"stdout,omitzero"`
 }
 

@@ -109,6 +109,7 @@ func cliDeleteStagedPlanFromGenerated(resp *generated.PlanCLIDeleteStagedRespons
 		ScopeEscalationBodyLines:  append([]string(nil), resp.ScopeEscalationBodyLines...),
 		ScopeEscalationCancelHint: stringValue(resp.ScopeEscalationCancelHint),
 		ScopeEscalationAccount:    stringValue(resp.ScopeEscalationAccount),
+		ScopeEscalationSourceType: stringValue(resp.ScopeEscalationSourceType),
 		ScopeEscalationOAuthApp:   stringValue(resp.ScopeEscalationOauthApp),
 		BlockedError:              stringValue(resp.BlockedError),
 		RemoteDeleteEnvVar:        stringValue(resp.RemoteDeleteEnvVar),

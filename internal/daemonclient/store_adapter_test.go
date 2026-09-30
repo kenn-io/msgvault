@@ -558,6 +558,7 @@ func TestPlanCLIDeleteStagedUsesGeneratedClientAdapter(t *testing.T) {
 			"scope_escalation_body_lines":  []string{"Batch deletion requires elevated Gmail permissions."},
 			"scope_escalation_cancel_hint": "Cancelled.",
 			"scope_escalation_account":     "alice@example.com",
+			"scope_escalation_source_type": "gmail",
 			"scope_escalation_oauth_app":   "acme",
 			"remote_delete_env_var":        "MSGVAULT_ENABLE_REMOTE_DELETE",
 		}), "encode response") {
@@ -585,6 +586,7 @@ func TestPlanCLIDeleteStagedUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("permanent", got.ConfirmationMode, "confirmation mode")
 	assert.Equal([]string{"batch-123"}, got.PlannedBatchIDs, "planned batch ids")
 	assert.Equal("fp-client", got.PlanFingerprint, "plan fingerprint")
+	assert.Equal("gmail", got.ScopeEscalationSourceType, "authorization provider")
 	assert.True(got.NeedsScopeEscalation, "needs scope escalation")
 	assert.Equal("PERMISSION UPGRADE REQUIRED", got.ScopeEscalationHeadline, "scope headline")
 	assert.Equal([]string{"Batch deletion requires elevated Gmail permissions."}, got.ScopeEscalationBodyLines, "scope body")

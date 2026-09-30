@@ -656,7 +656,9 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 				e.saveCheckpoint(manifest, manifestID, i, succeeded, failed, failedIDs)
 				return fmt.Errorf("batch delete: %w", err)
 			}
-			e.logger.Warn("batch delete failed, falling back to individual deletes", "start_index", i, "error", err)
+			if !errors.Is(err, gmail.ErrBatchUnsupported) {
+				e.logger.Warn("batch delete failed, falling back to individual deletes", "start_index", i, "error", err)
+			}
 			// Fall back to individual deletes
 			for j, gmailID := range batch {
 				select {

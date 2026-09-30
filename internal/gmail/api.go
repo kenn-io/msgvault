@@ -41,7 +41,10 @@ type CompleteMessageSnapshotReader interface {
 	ListCompleteMessageSnapshot(ctx context.Context, pageToken string) (*MessageListResponse, error)
 }
 
-// MessageDeleter provides write operations for deleting Gmail messages.
+// ErrBatchUnsupported tells the executor to delete messages individually.
+var ErrBatchUnsupported = errors.New("batch deletion is unsupported")
+
+// MessageDeleter provides write operations for deleting source messages.
 type MessageDeleter interface {
 	// TrashMessage moves a message to trash (recoverable for 30 days).
 	TrashMessage(ctx context.Context, messageID string) error
@@ -50,6 +53,7 @@ type MessageDeleter interface {
 	DeleteMessage(ctx context.Context, messageID string) error
 
 	// BatchDeleteMessages permanently deletes multiple messages (max 1000).
+	// Clients without batch deletion return ErrBatchUnsupported.
 	BatchDeleteMessages(ctx context.Context, messageIDs []string) error
 }
 

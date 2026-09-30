@@ -29,9 +29,14 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.34.0**.
+it is separate from the binary release version. The current schema is **2.35.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
+`POST /api/v1/cli/delete-staged/plan` responses that require a permission
+upgrade. With `scope_escalation_account`, it lets the local CLI select the
+authorization provider before starting the daemon worker.
 
 Schema 2.34.0 adds optional `display_name` to `POST /api/v1/people`.
 Omitted or null seeds a new profile with the first nonblank observed name in
@@ -745,11 +750,13 @@ use for message-type filtering when you do not need full-text ranking.
 ```
 
 The companion `GET /api/v1/messages/gmail-ids` endpoint returns matching Gmail
-source message IDs for email workflows such as deletion staging. It honors a
-subset of these parameters: `sender` / `sender_name`, `recipient` /
+and Microsoft Graph mail (`msmail`) source message IDs in its `gmail_ids` field
+for email workflows such as deletion staging. The route and field names stay
+the same for both providers. It honors a subset of these parameters:
+`sender` / `sender_name`, `recipient` /
 `recipient_name`, `domain`, `label`, `source_id`, `after` / `before`, and
-`limit`. Results are always restricted to Gmail sources, exclude deleted
-messages, and are ordered newest-first; the remaining `/messages/filter`
+`limit`. Results are restricted to Gmail and Microsoft Graph mail sources,
+exclude deleted messages, and are ordered newest-first; the remaining `/messages/filter`
 parameters (`message_type`, `conversation_id`, `attachments_only`,
 `hide_deleted`, `offset`, `sort`, `direction`) are ignored.
 
@@ -1953,8 +1960,8 @@ explore contract is in the generated OpenAPI document (`/openapi.json`).
 ```
 
 `count` includes all selected items after exclusions. `deletable_count` is the
-Gmail subset that can be staged; the difference is the number of items staging
-will skip. A chat conversation counts as one item.
+Gmail and Microsoft Graph mail subset that can be staged; the difference is
+the number of items staging will skip. A chat conversation counts as one item.
 
 `unavailable_actions` lists actions this selection does not support. A
 `stage_deletion` entry means nothing in the selection can be deleted from its
@@ -2188,8 +2195,8 @@ the IDs are already an explicit, reviewed list:
 }
 ```
 
-IDs that do not resolve to live deletable Gmail messages with provider message
-IDs are omitted, and the
+IDs that do not resolve to live deletable Gmail or Microsoft Graph mail messages
+with provider message IDs are omitted, and the
 response `message_count` reports the number of targets resolved by the daemon.
 
 A pending manifest is written and `201` returned:
@@ -2253,8 +2260,8 @@ and `skipped_count`:
 
 `message_count` is the staged subset, `matched_count` the reviewed match set,
 and `skipped_count` the items no source supports deleting. Deletion covers
-Gmail-source email, so a mixed selection stages its Gmail rows and reports the
-rest as skipped rather than failing; only a selection with nothing deletable
+Gmail and Microsoft Graph mail email, so a mixed selection stages those rows
+and reports the rest as skipped rather than failing; only a selection with nothing deletable
 returns `409 selection_not_deletable`. Legacy Gmail rows with a blank
 `message_type` count as email.
 

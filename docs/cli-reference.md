@@ -3410,6 +3410,7 @@ msgvault delete-staged [batch-id] [flags]
 |---|---|
 | `-y`, `--yes` | Skip confirmation prompt |
 | `--permanent` | Permanently delete through Gmail batch deletion, IMAP UID EXPUNGE, or Graph `permanentDelete` instead of moving to Trash |
+| `--headless` | Use device-code sign-in for Microsoft Graph permission upgrades; open the printed URL on another device |
 | `--dry-run` | Show what would be deleted without deleting |
 | `-l`, `--list` | List staged deletion batches |
 | `--account` | Filter to one source by identifier or unique display name |

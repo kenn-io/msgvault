@@ -304,7 +304,7 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 	var todo []DeltaMessage
 	for _, m := range live {
 		id, ok := known[m.ID]
-		if ok && (s.trash == "" || folderID != s.trash) {
+		if ok && folderID != s.trash {
 			if err := s.st.ClearMessageDeletedFromSource(s.sourceID, m.ID); err != nil {
 				return err
 			}

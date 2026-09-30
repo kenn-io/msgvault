@@ -383,6 +383,33 @@ func TestDeleteStagedScopeEscalationPromptsBeforeDaemonRunner(t *testing.T) {
 	assert.Contains(stdout.String(), "Deletion complete!", "daemon output")
 }
 
+func TestDeleteStagedRemoteGraphHeadlessUpgrade(t *testing.T) {
+	resetDeleteStagedRoutingGlobals(t)
+	t.Setenv(remoteDeleteEnvVar, "1")
+	server, runRequests, _ := newDaemonCLIDeleteStagedTestServer(t, nil, map[string]any{
+		"needs_execution":              true,
+		"planned_batch_ids":            []string{"batch-graph"},
+		"plan_fingerprint":             "fp-graph",
+		"needs_scope_escalation":       true,
+		"scope_escalation_headline":    "PERMISSION UPGRADE REQUIRED",
+		"scope_escalation_account":     "user@example.com",
+		"scope_escalation_source_type": "msmail",
+	}, func(req daemonCLIRunTestRequest) {
+		assert.Contains(t, req.Args, "--headless")
+		assert.Contains(t, req.Args, "--scope-escalation-confirmed")
+	}, `{"type":"complete"}`)
+	cmd := newDeleteStagedRoutingTestCommand()
+	cmd.SetContext(configureRemoteDaemonForTest(t, server.URL))
+	cmd.SetIn(bytes.NewBufferString("y\n"))
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"--headless", "batch-graph"})
+	// The frontend has no Microsoft configuration: remote authorization must
+	// stay in the worker that owns the token, with the headless flag intact.
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, int32(1), runRequests.Load())
+}
+
 func TestDeleteStagedConfirmationAndScopePromptsShareInput(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -456,6 +483,7 @@ func TestCancelDeletionUsageErrorBeforeDaemonRunner(t *testing.T) {
 func resetDeleteStagedRoutingGlobals(t *testing.T) {
 	t.Helper()
 	savedPermanent := deletePermanent
+	savedHeadless := deleteHeadless
 	savedYes := deleteYes
 	savedDryRun := deleteDryRun
 	savedList := deleteList
@@ -463,6 +491,7 @@ func resetDeleteStagedRoutingGlobals(t *testing.T) {
 	savedSourceID := deleteSourceID
 	savedPlannedBatchIDs := deletePlannedBatchIDs
 	deletePermanent = false
+	deleteHeadless = false
 	deleteYes = false
 	deleteDryRun = false
 	deleteList = false
@@ -471,6 +500,7 @@ func resetDeleteStagedRoutingGlobals(t *testing.T) {
 	deletePlannedBatchIDs = nil
 	t.Cleanup(func() {
 		deletePermanent = savedPermanent
+		deleteHeadless = savedHeadless
 		deleteYes = savedYes
 		deleteDryRun = savedDryRun
 		deleteList = savedList
@@ -487,6 +517,7 @@ func newDeleteStagedRoutingTestCommand() *cobra.Command {
 		RunE: deleteStagedCmd.RunE,
 	}
 	cmd.Flags().BoolVar(&deletePermanent, "permanent", false, "Permanent")
+	cmd.Flags().BoolVar(&deleteHeadless, "headless", false, "Device-code sign-in")
 	cmd.Flags().BoolVarP(&deleteYes, "yes", "y", false, "Skip confirmation")
 	cmd.Flags().BoolVar(&deleteDryRun, "dry-run", false, "Dry run")
 	cmd.Flags().BoolVarP(&deleteList, "list", "l", false, "List")

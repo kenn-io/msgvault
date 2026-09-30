@@ -959,6 +959,8 @@ components:
           type: string
         scope_escalation_oauth_app:
           type: string
+        scope_escalation_source_type:
+          type: string
         stdout:
           type: string
       required:
@@ -13652,7 +13654,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.34.0
+  version: 2.35.0
 openapi: 3.1.0
 paths:
   /api/ping:

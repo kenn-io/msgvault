@@ -582,13 +582,13 @@ type CLIDeleteStagedPlanResponse struct {
 	ScopeEscalationHeadline   string   `json:"scope_escalation_headline,omitempty"`
 	ScopeEscalationBodyLines  []string `json:"scope_escalation_body_lines,omitempty"`
 	ScopeEscalationCancelHint string   `json:"scope_escalation_cancel_hint,omitempty"`
-	// ScopeEscalationAccount and ScopeEscalationOAuthApp let the frontend
-	// CLI run the confirmed scope-upgrade authorization client-side before
-	// proxying, instead of opening a browser in the daemon subprocess.
-	ScopeEscalationAccount  string `json:"scope_escalation_account,omitempty"`
-	ScopeEscalationOAuthApp string `json:"scope_escalation_oauth_app,omitempty"`
-	BlockedError            string `json:"blocked_error,omitempty"`
-	RemoteDeleteEnvVar      string `json:"remote_delete_env_var,omitempty"`
+	// ScopeEscalationAccount, ScopeEscalationSourceType and ScopeEscalationOAuthApp
+	// let the frontend CLI authorize before starting the daemon subprocess.
+	ScopeEscalationAccount    string `json:"scope_escalation_account,omitempty"`
+	ScopeEscalationSourceType string `json:"scope_escalation_source_type,omitempty"`
+	ScopeEscalationOAuthApp   string `json:"scope_escalation_oauth_app,omitempty"`
+	BlockedError              string `json:"blocked_error,omitempty"`
+	RemoteDeleteEnvVar        string `json:"remote_delete_env_var,omitempty"`
 }
 
 type CLIDeletionManifestResponse struct {

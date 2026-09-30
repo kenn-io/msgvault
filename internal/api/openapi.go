@@ -338,7 +338,9 @@ import (
 // 2.34.0 adds optional display_name to person promotion requests and seeds
 // newly created profiles from observed participant cluster names by default.
 // Existing person edits, clears, and idempotent re-promotion are preserved.
-const APISchemaVersion = "2.34.0"
+// 2.35.0 adds scope_escalation_source_type to staged-deletion plans so local
+// CLI clients can authorize Microsoft Graph mail before starting the worker.
+const APISchemaVersion = "2.35.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

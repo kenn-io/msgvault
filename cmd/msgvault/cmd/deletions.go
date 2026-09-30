@@ -299,6 +299,7 @@ var (
 	// remote rung should be too unless the user explicitly says
 	// otherwise.
 	deletePermanent bool
+	deleteHeadless  bool
 	deleteYes       bool
 	deleteDryRun    bool
 	deleteList      bool
@@ -368,6 +369,7 @@ type deleteStagedPlan struct {
 	ScopeEscalationBodyLines  []string
 	ScopeEscalationCancelHint string
 	ScopeEscalationAccount    string
+	ScopeEscalationSourceType string
 	ScopeEscalationOAuthApp   string
 	BlockedError              string
 	RemoteDeleteEnvVar        string
@@ -850,7 +852,6 @@ func deleteStagedScopeEscalationForSource(
 // msmailScopeEscalation reports whether a Graph mail token lacks
 // Mail.ReadWrite. Trash and permanent delete need the same scope.
 func msmailScopeEscalation(account string, state *invocation) (deleteStagedScopeEscalation, error) {
-	state = invocationState(context.Background(), state)
 	if state == nil || state.cfg == nil || state.logger == nil {
 		return deleteStagedScopeEscalation{}, errors.New("configuration is unavailable")
 	}
@@ -868,9 +869,9 @@ func msmailScopeEscalation(account string, state *invocation) (deleteStagedScope
 		BodyLines: []string{
 			"Deletion requires the Microsoft Graph Mail.ReadWrite permission.",
 			"",
-			"Your current token can only read mail. msgvault will open a browser",
-			"to grant read and write access to this mailbox. Your existing token",
-			"keeps working until the new grant succeeds.",
+			"Your current token can only read mail. Sign in to grant read and",
+			"write access to this mailbox. Your existing token keeps working",
+			"until the new grant succeeds.",
 		},
 		CancelHint: "Cancelled.",
 	}, nil
@@ -1116,8 +1117,8 @@ Examples:
 						return err
 					}
 				}
-				if err := newGraphMailWriteManager(state).Authorize(ctx, account); err != nil {
-					return fmt.Errorf("authorize: %w", err)
+				if err := authorizeGraphMailWrite(ctx, account, state); err != nil {
+					return err
 				}
 			}
 		}
@@ -1373,7 +1374,7 @@ func deleteStagedSourceIDPtr(cmd *cobra.Command) *int64 {
 	return &value
 }
 
-// preflightDeleteStagedScopeEscalation performs the confirmed Gmail scope
+// preflightDeleteStagedScopeEscalation performs the confirmed Gmail or Graph scope
 // upgrade in this process for local daemons, so the browser consent never
 // runs in the daemon subprocess while it holds the operation gate. After a
 // successful preflight the subprocess re-checks the token, finds the scopes
@@ -1388,11 +1389,25 @@ func preflightDeleteStagedScopeEscalation(ctx context.Context, plan *daemonclien
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
+	if plan.ScopeEscalationSourceType == sourceTypeMSMail {
+		return authorizeGraphMailWrite(ctx, plan.ScopeEscalationAccount, state)
+	}
 	clientSecretsPath, err := state.cfg.OAuth.ClientSecretsFor(plan.ScopeEscalationOAuthApp)
 	if err != nil {
 		return err
 	}
 	return authorizeDeletionScopeEscalation(ctx, plan.ScopeEscalationAccount, deletePermanent, clientSecretsPath)
+}
+
+func authorizeGraphMailWrite(ctx context.Context, account string, state *invocation) error {
+	mgr := newGraphMailWriteManager(state)
+	if deleteHeadless {
+		mgr.UseDeviceCode()
+	}
+	if err := mgr.Authorize(ctx, account); err != nil {
+		return fmt.Errorf("authorize Microsoft Graph mail: %w", err)
+	}
+	return nil
 }
 
 func confirmDeleteStaged(in io.Reader, out io.Writer, mode string) (bool, error) {
@@ -1511,13 +1526,13 @@ func planCLIDeleteStaged(
 			if err != nil {
 				return api.CLIDeleteStagedPlanResponse{}, err
 			}
-			// ScopeEscalationAccount stays empty: the preflight authorizes
-			// Google accounts only, so the subprocess runs the Graph consent.
 			if escalation.Needed {
 				plan.NeedsScopeEscalation = true
 				plan.ScopeEscalationHeadline = escalation.Headline
 				plan.ScopeEscalationBodyLines = escalation.BodyLines
 				plan.ScopeEscalationCancelHint = escalation.CancelHint
+				plan.ScopeEscalationAccount = escalation.Account
+				plan.ScopeEscalationSourceType = target.Source.SourceType
 			}
 		}
 		if target.Source.SourceType == sourceTypeGmail {
@@ -1540,6 +1555,7 @@ func planCLIDeleteStaged(
 					plan.ScopeEscalationBodyLines = escalation.BodyLines
 					plan.ScopeEscalationCancelHint = escalation.CancelHint
 					plan.ScopeEscalationAccount = escalation.Account
+					plan.ScopeEscalationSourceType = target.Source.SourceType
 					plan.ScopeEscalationOAuthApp = appName
 				}
 			}
@@ -1562,6 +1578,7 @@ func planCLIDeleteStaged(
 		ScopeEscalationBodyLines:  plan.ScopeEscalationBodyLines,
 		ScopeEscalationCancelHint: plan.ScopeEscalationCancelHint,
 		ScopeEscalationAccount:    plan.ScopeEscalationAccount,
+		ScopeEscalationSourceType: plan.ScopeEscalationSourceType,
 		ScopeEscalationOAuthApp:   plan.ScopeEscalationOAuthApp,
 		BlockedError:              plan.BlockedError,
 		RemoteDeleteEnvVar:        plan.RemoteDeleteEnvVar,
@@ -1886,6 +1903,7 @@ func isInsufficientScopeError(err error) bool {
 }
 
 func init() {
+	deleteStagedCmd.Flags().BoolVar(&deleteHeadless, "headless", false, "Use device-code sign-in for Microsoft Graph permission upgrades")
 	deleteStagedCmd.Flags().BoolVar(&deletePermanent, "permanent", false, "DESTRUCTIVE: permanently delete via batch API instead of moving to trash (fast, no recovery)")
 	deleteStagedCmd.Flags().BoolVarP(&deleteYes, "yes", "y", false, "Skip confirmation")
 	deleteStagedCmd.Flags().BoolVar(&deleteDryRun, "dry-run", false, "Show what would be deleted")

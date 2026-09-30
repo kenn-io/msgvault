@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,10 +17,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"golang.org/x/oauth2"
 )
 
 func TestRemoteDeleteEnabledUsesConfigOrEnvironment(t *testing.T) {
@@ -735,8 +738,8 @@ func TestPlanCLIDeleteStagedReportsDeletionScopeEscalation(t *testing.T) {
 }
 
 // An msmail batch passes the source check. A read-only Graph token needs the
-// scope upgrade, and a token with Mail.ReadWrite does not. The account stays
-// empty, so the frontend preflight leaves the Graph consent to the subprocess.
+// scope upgrade, and a token with Mail.ReadWrite does not. The plan names the
+// account so the frontend can authorize before starting the daemon subprocess.
 func TestPlanCLIDeleteStagedMSMailScopeEscalation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -766,13 +769,53 @@ func TestPlanCLIDeleteStagedMSMailScopeEscalation(t *testing.T) {
 	require.NoError(err)
 	assert.True(got.NeedsScopeEscalation)
 	assert.Contains(got.ScopeEscalationBodyLines, "Deletion requires the Microsoft Graph Mail.ReadWrite permission.")
-	assert.Empty(got.ScopeEscalationAccount)
+	assert.Equal(source.Identifier, got.ScopeEscalationAccount)
+	assert.Equal(sourceTypeMSMail, got.ScopeEscalationSourceType)
 
 	saveScopes(microsoft.GraphMailWriteScopes())
 	got, err = planCLIDeleteStaged(testCtx, st, req)
 	require.NoError(err)
 	assert.True(got.NeedsExecution)
 	assert.False(got.NeedsScopeEscalation)
+}
+
+func TestPreflightDeleteStagedGraphHeadless(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	resetDeleteStagedRoutingGlobals(t)
+	deleteHeadless = true
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Microsoft.ClientID = "test-client"
+	testCtx := withStoreResolverConfig(t, cfg)
+	account := "user@example.com"
+	tokenPath := newGraphMailManager(invocationFromContext(testCtx)).TokenPath(account)
+	require.NoError(os.MkdirAll(filepath.Dir(tokenPath), 0o700))
+	original := []byte(`{"access_token":"existing-read-token"}`)
+	require.NoError(os.WriteFile(tokenPath, original, 0o600))
+
+	// Intercept only the OAuth HTTP boundary. Reaching the device endpoint
+	// proves the frontend selected Graph and headless authorization; failure
+	// must propagate to the caller without replacing the existing token.
+	requestErr := errors.New("device endpoint unavailable")
+	requests := 0
+	httpClient := &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
+		requests++
+		assert.Equal(http.MethodPost, req.Method)
+		assert.Equal("https://login.microsoftonline.com/common/oauth2/v2.0/devicecode", req.URL.String())
+		require.NoError(req.ParseForm())
+		assert.Equal("test-client", req.Form.Get("client_id"))
+		assert.Contains(strings.Fields(req.Form.Get("scope")), "https://graph.microsoft.com/Mail.ReadWrite")
+		return nil, requestErr
+	})}
+	testCtx = context.WithValue(testCtx, oauth2.HTTPClient, httpClient)
+	err := preflightDeleteStagedScopeEscalation(testCtx, &daemonclient.CLIDeleteStagedPlan{
+		ScopeEscalationAccount: account, ScopeEscalationSourceType: sourceTypeMSMail,
+	})
+	require.ErrorIs(err, requestErr)
+	assert.Equal(1, requests)
+	after, err := os.ReadFile(tokenPath)
+	require.NoError(err)
+	assert.Equal(original, after)
 }
 
 func TestPlanCLIDeleteStagedResolvesDisplayNameBeforeFiltering(t *testing.T) {

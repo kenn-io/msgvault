@@ -73,9 +73,9 @@ See the docs for Azure AD app registration setup.
 With --graph, the account syncs through the Microsoft Graph mail API instead
 of IMAP. Use it when IMAP is turned off for the mailbox. It needs the Mail.Read
 permission on the app registration. The first delete-staged for the account
-asks for Mail.ReadWrite, which the app registration must also list. A Graph account is a separate account: if
-the mailbox is also synced over IMAP, the vault holds two copies, and
-'msgvault dedup --collection' hides the extra ones.
+asks for Mail.ReadWrite, which the app registration must also list. A Graph
+account is a separate account: if the mailbox is also synced over IMAP, the
+vault holds two copies, and 'msgvault dedup --collection' hides the extra ones.
 
 Examples:
   msgvault add-o365 user@outlook.com
