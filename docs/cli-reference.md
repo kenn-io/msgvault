@@ -399,7 +399,7 @@ the returned `chat-draft-` ID and report `location` as `msgvault`. A stale
 revision returns `revision_mismatch` and leaves the draft unchanged.
 `draft-recover` returns `not_supported`. Delegated tokens use the same
 permissions as mail drafts, scoped to the conversation's source, except that
-`draft.create` allows retrieval without a sender check. Removing the source or
+listing and retrieval need `draft.edit` or `draft.delete`. Removing the source or
 conversation deletes its local drafts.
 
 ## draft-send-as

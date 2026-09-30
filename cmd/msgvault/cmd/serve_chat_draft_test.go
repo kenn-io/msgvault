@@ -98,20 +98,18 @@ func TestChatDraftDelegatedGrantIsSourceScoped(t *testing.T) {
 		var out strings.Builder
 		emit := func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil }
 		req := api.CLIRunRequest{Args: args, Grant: grant}
+		runner := adapter.runCLIDraftLifecycle
 		if args[0] == api.CLIRunDraftComposeCommand {
-			return out.String(), adapter.runCLIComposeDraft(t.Context(), req, emit)
+			runner = adapter.runCLIComposeDraft
 		}
-		err := adapter.runCLIDraftLifecycle(t.Context(), req, emit)
+		err := runner(t.Context(), req, emit)
 		return out.String(), err
 	}
 
-	_, err = run(api.CLIRunDraftComposeCommand, "--conversation", strconv.FormatInt(grantedConversation, 10), "--body", "ok", "--json")
+	createdJSON, err := run(api.CLIRunDraftComposeCommand, "--conversation", strconv.FormatInt(grantedConversation, 10), "--body", "ok", "--json")
 	require.NoError(err)
-	listJSON, err := run(api.CLIRunDraftGetCommand, "--conversation", strconv.FormatInt(grantedConversation, 10), "--json")
-	require.NoError(err)
-	var listed []chatDraftOutput
-	require.NoError(json.Unmarshal([]byte(listJSON), &listed))
-	require.Len(listed, 1)
+	var created chatDraftOutput
+	require.NoError(json.Unmarshal([]byte(createdJSON), &created))
 
 	owned, err := st.CreateChatDraftContext(t.Context(), otherConversation, 0, "private", func(string, string) error { return nil })
 	require.NoError(err)
@@ -120,7 +118,9 @@ func TestChatDraftDelegatedGrantIsSourceScoped(t *testing.T) {
 		{api.CLIRunDraftGetCommand, "--conversation", strconv.FormatInt(otherConversation, 10)},
 		{api.CLIRunDraftGetCommand, owned.DraftID},
 		{api.CLIRunDraftGetCommand, "chat-draft-missing"},
-		{api.CLIRunDraftEditCommand, listed[0].DraftID, "--revision", "1", "--body", "needs draft.edit"},
+		{api.CLIRunDraftGetCommand, created.DraftID},
+		{api.CLIRunDraftGetCommand, "--conversation", strconv.FormatInt(grantedConversation, 10)},
+		{api.CLIRunDraftEditCommand, created.DraftID, "--revision", "1", "--body", "needs draft.edit"},
 	} {
 		out, err := run(args...)
 		require.Error(err, args)

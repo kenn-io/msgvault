@@ -92,7 +92,9 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 	if intent.Operation == api.CLIRunDraftRecoverCommand {
 		return draftReplyError("not_supported", errors.New("local chat drafts have nothing to recover"))
 	}
-	authorize := chatDraftAuthorizer(grant, api.CLIRunDraftLifecyclePermissions(intent.Operation)...)
+	// Chat drafts carry no sender, so draft.create alone never reads them.
+	permissions := slices.DeleteFunc(api.CLIRunDraftLifecyclePermissions(intent.Operation), func(p agentgrant.Permission) bool { return p == agentgrant.PermissionDraftCreate })
+	authorize := chatDraftAuthorizer(grant, permissions...)
 	if intent.ConversationID != 0 {
 		drafts, err := a.store.ListChatDraftsContext(ctx, intent.ConversationID, authorize)
 		if err != nil {
