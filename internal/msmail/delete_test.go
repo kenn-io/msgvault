@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/msgraph"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -105,15 +106,15 @@ func TestDeleteMissingMessage(t *testing.T) {
 	require.ErrorAs(t, d.c.DeleteMessage(t.Context(), "nope"), &notFound)
 }
 
-// A token without Mail.ReadWrite gets 403 ErrorAccessDenied. The run stops at
-// the first message instead of failing every one.
+// A token without Mail.ReadWrite gets 403. The run stops at the first message
+// instead of failing every one.
 func TestDeleteAccessDeniedStopsRun(t *testing.T) {
 	assert := assert.New(t)
 	d := newDeleteFixture(t, "m1", "m2")
 	d.f.denied = true
 
 	err := d.exec.Execute(t.Context(), d.stage(t, "m1", "m2"), deletion.DefaultExecuteOptions())
-	require.ErrorContains(t, err, "ErrorAccessDenied")
+	require.ErrorIs(t, err, msgraph.ErrForbidden)
 	assert.Equal(map[string]string{"m1": "inbox", "m2": "inbox"}, d.f.folder)
 	assert.Equal(map[string]string{"m1": "Inbox", "m2": "Inbox"}, state(t, d.st))
 }

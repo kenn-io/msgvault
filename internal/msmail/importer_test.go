@@ -199,7 +199,7 @@ func (f *fakeGraph) write(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.Path, "/") // "", "me", "messages", id, action
 	id, action := parts[3], parts[4]
 	if f.denied {
-		http.Error(w, `{"error":{"code":"ErrorAccessDenied","message":"Access is denied."}}`, http.StatusForbidden)
+		w.WriteHeader(http.StatusForbidden) // no error code, so only the status classifies it
 		return
 	}
 	if _, ok := f.folder[id]; !ok {

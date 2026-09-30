@@ -143,12 +143,12 @@ describe('DeletionsWorkspace', () => {
     await screen.findByText('3 items · 120 bytes');
     await fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
     expect(await screen.findByText(/Dry run: Matched: 3 · Staged: 2 · Skipped: 1 in archive@example.com/)).toBeDefined();
-    expect(screen.getByRole('alert').textContent).toMatch(/Partial staging.*deletable Gmail subset.*unsupported match will be skipped/);
+    expect(screen.getByRole('alert').textContent).toMatch(/Partial staging.*deletable Gmail and Microsoft Graph mail subset.*unsupported match will be skipped/);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Stage deletion' }));
     const dialog = screen.getByRole('dialog', { name: 'Confirm selected deletion' });
     expect(dialog.textContent).toMatch(/Dry run: Matched: 3 · Staged: 2 · Skipped: 1/);
-    expect(dialog.textContent).toMatch(/Only deletable Gmail messages will be staged/);
+    expect(dialog.textContent).toMatch(/Only deletable Gmail and Microsoft Graph mail messages will be staged/);
     expect(deletionPosts).toBe(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm stage deletion' }));
     await waitFor(() => expect(deletionPosts).toBe(2));

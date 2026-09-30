@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/msgraph"
 	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/sourceops"
@@ -483,7 +484,7 @@ func buildDeleteStagedPlan(opts deleteStagedPlanOptions) (deleteStagedPlan, erro
 	// scopes requested by the caller — is derived from opts.Permanent, while
 	// execution honors the method a resumed batch was started with. Refuse
 	// rather than let those disagree: resuming a permanent-delete batch
-	// without --permanent would print "trash (30-day recovery)" and take a
+	// without --permanent would print "trash (recoverable)" and take a
 	// trash confirmation for what is actually an unrecoverable deletion.
 	if err := assertDeleteStagedMethodMatchesFlag(manifests, opts.Permanent); err != nil {
 		return deleteStagedPlan{}, err
@@ -494,7 +495,7 @@ func buildDeleteStagedPlan(opts deleteStagedPlanOptions) (deleteStagedPlan, erro
 		totalMessages += len(m.GmailIDs)
 	}
 
-	method := "trash (30-day recovery)"
+	method := "trash (recoverable)"
 	if opts.Permanent {
 		method = "PERMANENT DELETE (fast, no recovery)"
 	}
@@ -1881,7 +1882,7 @@ func isInsufficientScopeError(err error) bool {
 	return strings.Contains(msg, "ACCESS_TOKEN_SCOPE_INSUFFICIENT") ||
 		strings.Contains(msg, "insufficient authentication scopes") ||
 		strings.Contains(msg, "Insufficient Permission") ||
-		strings.Contains(msg, "ErrorAccessDenied") // Graph mail without Mail.ReadWrite
+		errors.Is(err, msgraph.ErrForbidden) // Graph mail without Mail.ReadWrite
 }
 
 func init() {

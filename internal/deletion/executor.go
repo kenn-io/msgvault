@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/msgraph"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -35,11 +36,13 @@ func isInsufficientScopeError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, msgraph.ErrForbidden) { // Graph mail without Mail.ReadWrite
+		return true
+	}
 	msg := err.Error()
 	return strings.Contains(msg, "ACCESS_TOKEN_SCOPE_INSUFFICIENT") ||
 		strings.Contains(msg, "insufficient authentication scopes") ||
-		strings.Contains(msg, "Insufficient Permission") ||
-		strings.Contains(msg, "ErrorAccessDenied") // Graph mail without Mail.ReadWrite
+		strings.Contains(msg, "Insufficient Permission")
 }
 
 // Progress reports deletion progress.
