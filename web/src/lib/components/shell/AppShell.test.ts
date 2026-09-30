@@ -391,6 +391,55 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  function savedFilesViewFetch(fileSearches: Request[]) {
+    return vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/saved-views')) return Response.json({ saved_views: [{
+        id: 5, name: 'Demo view', canonical_state: { presentation: 'files' },
+        schema_version: 1, revision: 1,
+        created_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z'
+      }] });
+      if (path.endsWith('/files/search')) {
+        fileSearches.push(request);
+        return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+      }
+      return Response.json(exploreResponse());
+    });
+  }
+
+  async function openDemoView(): Promise<void> {
+    const primary = screen.getByRole('navigation', { name: 'Primary' });
+    await fireEvent.click(within(primary).getByRole('button', { name: 'Saved views' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Demo view' }));
+  }
+
+  it('opens a saved view without the filename, type, and file sort set earlier on Files', async () => {
+    window.history.replaceState(null, '', '/?workspace=files');
+    const fileSearches: Request[] = [];
+    const state = new ExploreState(window);
+    state.replaceTransient({
+      workspace: 'files', fileFilenameQuery: 'invoice', fileMIMEFamilies: ['pdf'],
+      fileSort: { field: 'filename', direction: 'asc' }
+    });
+    const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch(fileSearches)), state });
+    try {
+      expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
+      await openDemoView();
+      await screen.findByRole('grid', { name: 'Files results' });
+      expect(screen.getByLabelText<HTMLInputElement>('Filter filename').value).toBe('');
+      await waitFor(async () => {
+        const body = await fileSearches.at(-1)!.clone().json();
+        expect(body).not.toHaveProperty('filename_query');
+        expect(body).not.toHaveProperty('mime_families');
+        expect(body.sort).toEqual({ field: 'occurred_at', direction: 'desc' });
+      });
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
   describe('shell chrome', () => {
     const states: ExploreState[] = [];
 

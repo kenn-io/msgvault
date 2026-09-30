@@ -60,6 +60,10 @@ export function exploreStateFromSavedView(saved: CanonicalState): Partial<Explor
     presentation,
     sort: (saved.sort ?? [{ field: 'occurred_at', direction: 'desc' }]) as ExploreURLState['sort'],
     columns: (saved.columns ?? DEFAULT_EXPLORE_COLUMNS) as ExploreURLState['columns'],
+    // Saved views never store these Files-only settings, so opening one resets them.
+    fileSort: { field: 'occurred_at', direction: 'desc' },
+    fileFilenameQuery: '',
+    fileMIMEFamilies: [],
     activeRow: null,
     selectedRow: null,
     conversationAnchor: null,

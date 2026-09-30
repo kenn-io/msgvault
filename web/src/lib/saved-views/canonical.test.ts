@@ -55,6 +55,16 @@ describe('saved-view canonical state', () => {
     expect(reopened(files).workspace).toBe('files');
   });
 
+  it.each(['files', 'table'] as const)(
+    'opens a %s view with the default filename, type, and file sort',
+    (presentation) => {
+      expect(exploreStateFromSavedView({ presentation })).toMatchObject({
+        fileFilenameQuery: '', fileMIMEFamilies: [],
+        fileSort: { field: 'occurred_at', direction: 'desc' }
+      });
+    }
+  );
+
   it('opens a filter-only view without a stored query in full text', () => {
     expect(canonicalSavedViewState({ ...everything, query: ' ', searchMode: 'semantic' }))
       .not.toHaveProperty('query');
