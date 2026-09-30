@@ -157,6 +157,33 @@ describe('PersonDetail', () => {
     }));
   });
 
+  it('waits for filename typing to pause before requesting person files', async () => {
+    const filesBodies: Record<string, unknown>[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (/^\/api\/v1\/people\/\d+\/files\/search$/.test(new URL(request.url).pathname)) {
+        filesBodies.push((await request.clone().json()) as Record<string, unknown>);
+        return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
+      }
+      return Response.json({ merges: [], limit: 100, offset: 0 });
+    });
+    const bundle = { etags: {}, errors: {} } satisfies DirectoryReadBundle;
+    const view = render(PersonDetail, { client: createAPIClient(fetchFn), bundle, personID: 7 });
+    await fireEvent.click(screen.getByRole('tab', { name: 'Media & Files' }));
+    await waitFor(() => expect(filesBodies).toHaveLength(1));
+
+    const search = screen.getByRole('searchbox', { name: 'Filter filename' });
+    for (const value of ['i', 'in', 'inv']) await fireEvent.input(search, { target: { value } });
+    await waitFor(() => expect(filesBodies.at(-1)).toMatchObject({ filename_query: 'inv' }));
+    expect(filesBodies.filter((body) => 'filename_query' in body)).toHaveLength(1);
+
+    // A query still waiting when the person changes must not filter the next person's files.
+    await fireEvent.input(search, { target: { value: 'invoice' } });
+    await view.rerender({ client: createAPIClient(fetchFn), bundle, personID: 8 });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(filesBodies.at(-1)).not.toHaveProperty('filename_query');
+  });
+
   it('clears Media & Files filters when the selected person changes', async () => {
     const filesBodies: Record<string, unknown>[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
