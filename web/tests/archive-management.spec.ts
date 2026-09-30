@@ -68,8 +68,14 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await expect(grid.getByText('Reviewed message')).toBeVisible();
   await grid.focus();
   await page.keyboard.press('Space');
+  await expect(page.getByRole('status').filter({ hasText: '1 selected' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export selection' })).toBeVisible();
-  await expect(page.getByText('Open in source: trusted_source_link_unavailable')).toBeVisible();
+  await page.getByRole('button', { name: 'More selection actions' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Open selection in source' })).toBeDisabled();
+  await expect(page.getByText('Your sources don’t provide links to open these items.')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menuitem', { name: 'Open selection in source' })).toHaveCount(0);
+  await grid.focus();
   await expect.poll(() => preflights[0]).toMatchObject({ selection: {
     mode: 'explicit', row_keys: ['source:1:message:m1'], cache_revision: 'cache-management'
   } });
@@ -83,6 +89,13 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await page.getByRole('button', { name: 'Everything' }).click();
   await page.getByRole('button', { name: 'Select all 1 matching items' }).click();
   await page.keyboard.press('Shift+d');
+  await expect(page.getByRole('dialog', { name: 'Confirm matching deletion' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+
+  await page.getByRole('button', { name: 'Everything' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'All 1 matching items selected' })).toBeVisible();
+  await page.getByRole('button', { name: 'Review for deletion…' }).click();
+  await expect(page.getByRole('main', { name: 'Deletions' })).toBeVisible();
   await expect(page.getByRole('dialog', { name: 'Confirm matching deletion' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
 

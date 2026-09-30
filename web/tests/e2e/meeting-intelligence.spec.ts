@@ -115,6 +115,12 @@ test("production imports expose archived actions, duration evidence, and exact c
   await page.getByRole("grid", { name: "Everything results" }).focus();
   await page.keyboard.press("Home");
   await page.keyboard.press("Space");
+  const meetingContext = page.getByRole("button", {
+    name: "Meeting context…",
+    exact: true,
+  });
+  await meetingContext.click();
+  await expect(meetingContext).toHaveAttribute("aria-expanded", "true");
   const explicit = await downloadContext(page, info, "explicit-context");
   expect(explicit.meetings).toHaveLength(1);
   expect(explicit.meetings[0].meeting.message_id).toBe(

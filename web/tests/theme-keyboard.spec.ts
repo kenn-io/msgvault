@@ -209,11 +209,16 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(activeOption).toHaveClass(/highlighted/);
     await page.keyboard.press('Escape');
 
-    await selectWorkspace(page, 'Saved views');
-    const workflowButton = page.getByRole('button', { name: 'Save', exact: true });
-    await expect(workflowButton).toHaveClass(/kit-button--solid/);
-    await expect(workflowButton).toHaveClass(/kit-button--workflow/);
-    await expectRenderedContrast(workflowButton, 4.5);
+    await page.getByRole('button', { name: 'Save view…' }).click();
+    const saveDialog = page.getByRole('dialog', { name: 'Save view' });
+    await saveDialog.getByRole('textbox', { name: 'Name' }).fill('Contrast check');
+    const saveButton = saveDialog.getByRole('button', { name: 'Save', exact: true });
+    await expect(saveButton).toBeEnabled();
+    await expect(saveButton).toHaveClass(/kit-button--solid/);
+    await expect(saveButton).toHaveClass(/kit-button--info/);
+    await expectRenderedContrast(saveButton, 4.5);
+    await saveDialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(saveDialog).toHaveCount(0);
 
     await selectWorkspace(page, 'Files');
     const filesGrid = page.getByRole('grid', { name: 'Files results' });

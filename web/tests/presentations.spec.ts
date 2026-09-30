@@ -1,6 +1,16 @@
 import { expect, test } from '@playwright/test';
-import { selectKitOption } from './kit-ui';
+import { selectKitOption, selectWorkspace } from './kit-ui';
 import { exploreHistoryState } from './explore-state';
+
+function fileRow(id: number, title: string) {
+  return {
+    id, key: `file:${id}`, entry_key: `message:${id}`, message_id: id, conversation_id: id,
+    occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
+    source_identifier: 'archive@example.com', containing_title: title,
+    filename: `deep-${id}.pdf`, mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048,
+    content_state: 'missing_blob', content_available: false
+  };
+}
 
 const rows = [1, 2].map((id) => ({
   key: `message:${id}`, kind: 'message', message_type: 'email', conversation_type: 'email_thread',
@@ -12,20 +22,18 @@ const rows = [1, 2].map((id) => ({
   message_count: 1, anchor_message_id: id, conversation_id: id, match: {}
 }));
 
-test('Show as preserves analytical meaning, keyboard focus, history, and Saved Views', async ({ page }) => {
-  const predicates: Array<Record<string, unknown>> = [];
+test('Show as Files opens the Files workspace with the same context, and Back returns', async ({ page }) => {
+  const filePredicates: Array<Record<string, unknown>> = [];
   const savedViews: Array<Record<string, unknown>> = [];
   await page.route('**/api/session', (route) => route.fulfill({ json: {
     auth_mode: 'session', csrf_token: 'csrf', https: true, plain_http_warning: false
   } }));
-  await page.route('**/api/v1/explore/files', async (route) => {
+  await page.route('**/api/v1/files/search', async (route) => {
     const body = route.request().postDataJSON() as { predicate: Record<string, unknown> };
-    predicates.push(body.predicate);
+    filePredicates.push(body.predicate);
     await route.fulfill({ json: {
-      files: [{ id: 7, key: 'message:1:file:7', entry_key: 'message:1', message_id: 1, conversation_id: 1,
-        occurred_at: rows[0]!.occurred_at, source_id: 1,
-        source_identifier: 'archive@example.com', title: rows[0]!.title,
-        filename: 'pasta-analysis.pdf', mime_type: 'application/pdf', size: 2048 }],
+      files: [{ ...fileRow(7, rows[0]!.title), entry_key: 'message:1', message_id: 1, conversation_id: 1,
+        filename: 'pasta-analysis.pdf' }],
       total_count: 1, cache_revision: 'presentation-cache', search_provenance: { lexical_index_revision: 'fts-1' }
     } });
   });
@@ -34,14 +42,10 @@ test('Show as preserves analytical meaning, keyboard focus, history, and Saved V
     mime_type: 'application/pdf', size_bytes: 2048,
     content_state: 'missing_blob', content_available: false
   } }));
-  await page.route('**/api/v1/explore', async (route) => {
-    const body = route.request().postDataJSON() as Record<string, unknown>;
-    predicates.push(body);
-    await route.fulfill({ json: {
-      rows, total_count: rows.length, cache_revision: 'presentation-cache',
-      search_provenance: { lexical_index_revision: 'fts-1' }
-    } });
-  });
+  await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
+    rows, total_count: rows.length, cache_revision: 'presentation-cache',
+    search_provenance: { lexical_index_revision: 'fts-1' }
+  } }));
   await page.route('**/api/v1/explore/match-counts', (route) => route.fulfill({ json: {
     counts: [], cache_revision: 'presentation-cache', lexical_index_revision: 'fts-1',
     canonical_query_hash: 'pasta'
@@ -58,7 +62,8 @@ test('Show as preserves analytical meaning, keyboard focus, history, and Saved V
   });
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  await expect(page.getByRole('grid', { name: 'Everything results' })).toBeVisible();
+  const everything = page.getByRole('grid', { name: 'Everything results' });
+  await expect(everything).toBeVisible();
   await page.getByRole('searchbox', { name: 'Search everything' }).fill('pasta');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
 
@@ -69,85 +74,73 @@ test('Show as preserves analytical meaning, keyboard focus, history, and Saved V
   expect(new URL(page.url()).search).toContain('timeline');
 
   await selectKitOption(page, 'Show as', 'Files');
-  const files = page.getByRole('grid', { name: 'Files in current context' });
-  await expect(files).toBeVisible();
+  const filesMain = page.getByRole('main', { name: 'Files' });
+  const files = page.getByRole('grid', { name: 'Files results' });
+  await expect(filesMain).toBeVisible();
   await expect(files.getByText('pasta-analysis.pdf')).toBeVisible();
-  expect(predicates.at(-1)).toMatchObject({ query: 'pasta', search_mode: 'full_text', presentation: 'files' });
+  await expect(page).toHaveURL(/[?&]workspace=files(&|$)/);
+  await expect(page.getByRole('combobox', { name: 'Show as: Files' })).toBeVisible();
+  await expect(filesMain.getByText('Full text: “pasta”')).toBeVisible();
+  await expect(filesMain.getByText('1 file', { exact: true })).toBeVisible();
+  expect(filePredicates.at(-1)).toMatchObject({ query: 'pasta', search_mode: 'full_text' });
+
+  await page.goBack();
+  await expect(timeline).toBeVisible();
+  await expect(everything).toBeFocused();
+  await expect(filesMain).toHaveCount(0);
+  await expect(page).toHaveURL(/[?&]workspace=everything(&|$)/);
+  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('pasta');
+  await page.goForward();
+  await expect(files.getByText('pasta-analysis.pdf')).toBeVisible();
 
   await files.focus();
   await page.keyboard.press('Home');
   await page.keyboard.press('Enter');
   const viewer = page.getByRole('dialog', { name: 'View pasta-analysis.pdf' });
   await expect(viewer).toBeVisible();
-  expect(await exploreHistoryState(page))
-    .toMatchObject({ selectedRow: 'attachment:7', activeRow: 'message:1:file:7' });
-
-  await page.goBack();
-  await expect(viewer).not.toBeVisible();
-  await expect(files).toBeFocused();
-  await page.goForward();
-  await expect(viewer).toBeVisible();
-  await page.reload();
-  await expect(viewer).toBeVisible();
-
+  expect(await exploreHistoryState(page)).toMatchObject({ workspace: 'files', selectedRow: 'file:7' });
   await viewer.getByRole('button', { name: 'Close file viewer' }).click();
   await expect(viewer).not.toBeVisible();
   await expect(files).toBeFocused();
-  expect((await exploreHistoryState(page)).selectedRow).toBeNull();
 
-  await files.focus();
-  await page.keyboard.press('Enter');
-  await expect(viewer).toBeVisible();
-  await viewer.getByRole('button', { name: 'Open containing item' }).click();
+  await files.getByRole('button', { name: 'Open containing item Presentation message 1' }).click();
   await expect(page.getByRole('complementary', { name: 'Reading pane: Presentation message 1' })).toBeVisible();
-  const tableState = await exploreHistoryState(page);
-  expect(tableState).toMatchObject({ presentation: 'table', activeRow: 'message:1', scrollAnchor: null });
-  expect(tableState.activeRow).not.toContain(':file:');
-
+  expect(await exploreHistoryState(page))
+    .toMatchObject({ workspace: 'everything', presentation: 'table', selectedRow: 'message:1' });
   await page.goBack();
-  await expect(files).toBeVisible();
-  await expect(files).toBeFocused();
-  await page.goBack();
-  await expect(timeline).toBeVisible();
-  await expect(page.getByRole('grid', { name: 'Everything results' })).toBeFocused();
-  await page.goForward();
-  await expect(files).toBeVisible();
-  await expect(files).toBeFocused();
-
-  await page.getByRole('button', { name: 'Saved views', exact: true }).click();
-  await page.getByLabel('Name').fill('Pasta files');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  expect((savedViews[0]!.canonical_state as Record<string, unknown>).presentation).toBe('files');
-  await page.getByRole('button', { name: 'Open Pasta files' }).click();
-  await expect(files).toBeVisible();
   await expect(files.getByText('pasta-analysis.pdf')).toBeVisible();
-  expect(new URL(page.url()).search).toContain('files');
+
+  await filesMain.getByRole('button', { name: 'Save view…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Save view' });
+  await expect(dialog.getByText('Filename, type, and file sort aren’t saved with the view.')).toBeVisible();
+  await dialog.getByRole('textbox', { name: 'Name' }).fill('Pasta files');
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(savedViews[0]!.canonical_state).toMatchObject({ query: 'pasta', presentation: 'files' });
+
+  await selectWorkspace(page, 'Saved views');
+  await expect(page.getByRole('list', { name: 'Pasta files summary' })).toContainText('Full text: “pasta”');
+  await page.getByRole('button', { name: 'Open Pasta files' }).click();
+  await expect(files.getByText('pasta-analysis.pdf')).toBeVisible();
+  await expect(page).toHaveURL(/[?&]workspace=files(&|$)/);
+  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('pasta');
 });
 
-test('Files presentation restores a deep paged anchor with bounded DOM and visible fallback', async ({ page }) => {
-  const pageSize = 100;
+test('an old Everything-as-Files link opens Files at its deep anchor with bounded DOM and a visible fallback', async ({ page }) => {
+  const pageSize = 500;
   const total = 650;
   let requests = 0;
   await page.route('**/api/session', (route) => route.fulfill({ json: {
     auth_mode: 'loopback', https: false, plain_http_warning: false
   } }));
-  await page.route('**/api/v1/explore/files', async (route) => {
+  await page.route('**/api/v1/files/search', async (route) => {
     requests += 1;
     const body = route.request().postDataJSON() as { cursor?: string };
     const pageIndex = body.cursor ? Number(body.cursor.replace('page-', '')) : 0;
     const start = pageIndex * pageSize + 1;
     const end = Math.min(total, start + pageSize - 1);
     await route.fulfill({ json: {
-      files: Array.from({ length: end - start + 1 }, (_, offset) => {
-        const id = start + offset;
-        return {
-          id, key: `message:${id}:file:${id}`, entry_key: `message:${id}`,
-          message_id: id, conversation_id: id, occurred_at: '2026-07-18T12:00:00Z',
-          source_id: 1, source_identifier: 'archive@example.com',
-          title: `Containing item ${id}`, filename: `deep-${id}.pdf`,
-          mime_type: 'application/pdf', size: 2048
-        };
-      }),
+      files: Array.from({ length: end - start + 1 }, (_, offset) => fileRow(start + offset, `Containing item ${start + offset}`)),
       total_count: total, cache_revision: 'deep-files', search_provenance: {},
       ...(end < total ? { next_cursor: `page-${pageIndex + 1}` } : {})
     } });
@@ -158,32 +151,32 @@ test('Files presentation restores a deep paged anchor with bounded DOM and visib
     groupingChain: [], presentation: 'files', sort: [{ field: 'occurred_at', direction: 'desc' }],
     fileSort: { field: 'occurred_at', direction: 'desc' }, fileFilenameQuery: '', fileMIMEFamilies: [],
     columns: ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'], columnWidths: {},
-    activeRow: 'message:550:file:550', selectedRow: null, inspectorPinned: false,
+    activeRow: 'file:550', selectedRow: null, inspectorPinned: false,
     conversationAnchor: null,
-    scrollAnchor: { key: 'message:540:file:540', offset: 5 }
+    scrollAnchor: { key: 'file:540', offset: 5 }
   };
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
-  const grid = page.getByRole('grid', { name: 'Files in current context' });
-  await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-550/);
+  const grid = page.getByRole('grid', { name: 'Files results' });
+  await expect(page.getByRole('main', { name: 'Files' })).toBeVisible();
+  await expect(page).toHaveURL(/[?&]workspace=files(&|$)/);
+  expect(await exploreHistoryState(page)).toMatchObject({ workspace: 'files', presentation: 'files' });
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-550');
   await expect(grid.getByText('deep-550.pdf')).toBeVisible();
   expect(await grid.getByRole('row').count()).toBeLessThan(80);
-  expect(requests).toBe(6);
+  expect(requests).toBe(2);
 
   await grid.focus();
   await page.keyboard.press('End');
-  await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-600/);
-  expect(requests).toBe(6);
-
-  await page.keyboard.press('ArrowDown');
-  await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-601/);
-  expect(requests).toBe(7);
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-650');
+  await expect(grid.getByText('deep-650.pdf')).toBeVisible();
   expect(await grid.getByRole('row').count()).toBeLessThan(80);
+  expect(requests).toBe(2);
 
   const invalid = { ...state, activeRow: 'message:999:file:999', scrollAnchor: null };
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(invalid))}`);
-  await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-1/);
   await expect(grid.getByText('deep-1.pdf')).toBeVisible();
-  await expect(grid).toBeFocused();
+  await grid.focus();
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-1');
 });
 
 test('attachment deep links restore with one bounded metadata lookup', async ({ page }) => {
@@ -192,10 +185,11 @@ test('attachment deep links restore with one bounded metadata lookup', async ({ 
   await page.route('**/api/session', (route) => route.fulfill({ json: {
     auth_mode: 'loopback', https: false, plain_http_warning: false
   } }));
-  await page.route('**/api/v1/explore/files', (route) => {
+  await page.route('**/api/v1/files/search', (route) => {
     filePageRequests += 1;
     return route.fulfill({ json: {
-      files: [], total_count: 10_000, next_cursor: 'page-1',
+      files: [fileRow(filePageRequests, `Containing item ${filePageRequests}`)],
+      total_count: 10_000, next_cursor: `page-${filePageRequests}`,
       cache_revision: 'deep-file-viewer', search_provenance: {}
     } });
   });
@@ -219,6 +213,9 @@ test('attachment deep links restore with one bounded metadata lookup', async ({ 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
 
   await expect(page.getByRole('dialog', { name: 'View deep-linked.pdf' })).toBeVisible();
+  const grid = page.getByRole('grid', { name: 'Files results' });
+  await expect(grid.getByText('deep-1.pdf')).toBeAttached();
+  await expect(grid).toHaveAttribute('aria-busy', 'false');
   expect(filePageRequests).toBe(1);
   expect(metadataRequests).toBe(1);
 });

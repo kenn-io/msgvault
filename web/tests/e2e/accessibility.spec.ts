@@ -127,16 +127,46 @@ for (const theme of ['light', 'dark'] as const) {
 }
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`${theme} rail tooltip, narrow navigation menu, and Display menu have no axe violations`, async ({ page }) => {
+  test(`${theme} menus, selection bar, Save view dialog, and navigation have no axe violations`, async ({ page }) => {
     await installMixedArchive(page);
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     await setKitTheme(page, theme);
-    await expect(page.getByRole('grid', { name: 'Everything results' })).toBeVisible();
+    const grid = page.getByRole('grid', { name: 'Everything results' });
+    await expect(grid.locator('[data-row-key]').first()).toBeVisible();
 
     await page.getByRole('button', { name: 'Display' }).click();
     await expect(page.getByRole('menuitemradio', { name: 'Compact' })).toBeVisible();
     await assertNoViolations(page, `Display menu ${theme}`);
     await page.keyboard.press('Escape');
+
+    await page.getByRole('button', { name: 'Columns' }).click();
+    await expect(page.getByRole('button', { name: 'Size' })).toBeVisible();
+    await assertNoViolations(page, `Columns menu ${theme}`);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button', { name: 'Size' })).toHaveCount(0);
+
+    await grid.focus();
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Space');
+    await expect(page.getByRole('status').filter({ hasText: '1 selected' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Review for deletion…' })).toBeVisible();
+    await assertNoViolations(page, `selection bar ${theme}`);
+    await page.getByRole('button', { name: 'Clear selection' }).click();
+
+    await page.getByRole('button', { name: 'Save view…' }).click();
+    const saveView = page.getByRole('dialog', { name: 'Save view' });
+    await expect(saveView.getByRole('textbox', { name: 'Name' })).toBeFocused();
+    await assertNoViolations(page, `Save view dialog ${theme}`);
+    await saveView.getByRole('button', { name: 'Cancel' }).click();
+    await expect(saveView).toHaveCount(0);
+
+    await selectWorkspace(page, 'Files');
+    await expect(page.getByRole('grid', { name: 'Files results' }).getByText('synthetic.txt')).toBeVisible();
+    await page.getByRole('button', { name: 'Type' }).click();
+    await expect(page.getByRole('button', { name: /^Images/ })).toBeVisible();
+    await assertNoViolations(page, `Type menu ${theme}`);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button', { name: /^Images/ })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Collapse sidebar' }).click();
     await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Saved views' }).hover();
