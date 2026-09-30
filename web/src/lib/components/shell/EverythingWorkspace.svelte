@@ -606,7 +606,7 @@
     filters={exploreState.current.filters}
     groupingChain={exploreState.current.groupingChain}
     {countLabel}
-    sort={{
+    sort={exploreState.current.groupingChain.length > 0 ? undefined : {
       options: [{ value: 'newest', label: 'Newest first' }],
       value: 'newest',
       note: 'Other orders aren’t available yet',

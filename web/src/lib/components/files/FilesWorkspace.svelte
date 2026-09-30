@@ -229,6 +229,7 @@
     const selected = mimeFamilies.filter((family) => visibleMIMEFamilies.includes(family));
     return selected.length > 0 ? selected : visibleMIMEFamilies;
   });
+  const selectedTypeCount = $derived(mimeFamilies.filter((family) => visibleMIMEFamilies.includes(family)).length);
   const typeSections = $derived([
     {
       items: visibleMIMEFamilies.map((family) => {
@@ -238,7 +239,8 @@
           id: `file-type-${family}`,
           label: FILE_FAMILY_LABELS[family],
           active: included,
-          description: included ? 'Included' : 'Not included',
+          // Without a type filter every type is shown, so no item is "not included".
+          description: selectedTypeCount === 0 ? undefined : included ? 'Included' : 'Not included',
           disabled: personScoped && included && effectiveMIMEFamilies.length === 1,
           closeOnSelect: false,
           onSelect: () => toggleMIME(family),
@@ -808,7 +810,8 @@
     </label>
     <FilterDropdown
       label="Type"
-      badgeCount={mimeFamilies.filter((family) => visibleMIMEFamilies.includes(family)).length}
+      detail={selectedTypeCount === 0 ? 'All types' : undefined}
+      badgeCount={selectedTypeCount}
       sections={typeSections}
     />
     <Toggle bind:checked={hostedVisualSearch} label="Visual search" />

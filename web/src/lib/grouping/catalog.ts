@@ -51,7 +51,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     requestable: false,
     drillable: false,
     requestDimensions: [],
-    unavailableReason: 'Identifier-level grouping is not in the analytical API yet.'
+    unavailableReason: 'Grouping by identifier is not available yet.'
   },
   {
     concept: 'domains',
@@ -115,7 +115,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     requestable: false,
     drillable: false,
     requestDimensions: [],
-    unavailableReason: 'Label grouping is not in the analytical API yet.'
+    unavailableReason: 'Grouping by label is not available yet.'
   },
   {
     concept: 'attachment_facts',
@@ -125,7 +125,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     requestable: false,
     drillable: false,
     requestDimensions: [],
-    unavailableReason: 'Attachment-fact grouping is reserved for the Files workspace.'
+    unavailableReason: 'Grouping by attachment facts is not available yet.'
   },
   {
     concept: 'conversation',
@@ -135,7 +135,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     requestable: false,
     drillable: false,
     requestDimensions: [],
-    unavailableReason: 'Conversation grouping is not filterable in the analytical API yet.'
+    unavailableReason: 'Grouping by conversation is not available yet.'
   }
 ] as const;
 
@@ -182,7 +182,7 @@ export function groupingOptions(
     if (options.includeUnavailable && !entry.requestable) {
       result.push({
         value: `unavailable:${entry.concept}`,
-        label: `${entry.label} — unavailable: ${entry.unavailableReason}`,
+        label: `${entry.label} (not available yet)`,
         disabled: true
       });
     }

@@ -1062,8 +1062,10 @@ describe('FilesWorkspace', () => {
       expect(screen.queryByRole('checkbox', { name: 'pdf' })).toBeNull();
       expect(await typeMenuItems())
         .toEqual(['Images', 'PDFs', 'Audio', 'Video', 'Text', 'Documents', 'Archives', 'Other']);
+      expect(screen.getByRole('button', { name: 'Type' }).textContent).toContain('All types');
       const pdfs = screen.getByRole('button', { name: 'PDFs' });
-      expect(describedBy(pdfs)).toBe('Not included');
+      expect(describedBy(pdfs)).toBeUndefined();
+      expect(describedBy(screen.getByRole('button', { name: 'Images' }))).toBeUndefined();
       await fireEvent.click(pdfs);
       expect(onMIMEFamiliesChange).toHaveBeenCalledWith(['pdf']);
     });
@@ -1071,6 +1073,7 @@ describe('FilesWorkspace', () => {
     it('marks selected types as included', async () => {
       renderFiles({ mimeFamilies: ['pdf'] });
       await typeMenuItems();
+      expect(screen.getByRole('button', { name: 'Type' }).textContent).not.toContain('All types');
       expect(describedBy(screen.getByRole('button', { name: 'PDFs' }))).toBe('Included');
       expect(describedBy(screen.getByRole('button', { name: 'Images' }))).toBe('Not included');
     });

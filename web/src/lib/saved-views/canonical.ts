@@ -1,5 +1,10 @@
 import type { SavedViewStateEnvelope } from '../api/generated/models';
-import { filterDimensionLabel, presentationLabel, searchModeLabel } from '../explore/labels';
+import {
+  filterDimensionLabel,
+  groupedByLabel,
+  presentationLabel,
+  searchModeLabel
+} from '../explore/labels';
 import {
   DEFAULT_EXPLORE_COLUMNS,
   type ExploreFilterDimension,
@@ -66,11 +71,7 @@ export function savedViewSummary(saved: CanonicalState): string[] {
   for (const filter of saved.filters ?? []) {
     parts.push(`${filterDimensionLabel(filterDimension(filter.field))}: ${filter.values.join(', ')}`);
   }
-  // filterDimensionLabel falls through to the grouping catalog for dimensions like `kind`.
-  const groups = (saved.grouping ?? []).map((dimension) =>
-    filterDimensionLabel(dimension as ExploreFilterDimension)
-  );
-  if (groups.length > 0) parts.push(`Grouped by ${groups.join(', then ')}`);
+  if (saved.grouping?.length) parts.push(groupedByLabel(saved.grouping));
   parts.push(presentationLabel(saved.presentation ?? 'table'));
   return parts;
 }

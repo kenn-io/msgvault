@@ -512,13 +512,27 @@ describe('AppShell', () => {
         .toBe('Use the Sort menu to change the order.');
     });
 
+    it('hides the Everything Sort menu while grouped and says why sorting is unavailable', async () => {
+      const state = shellState('everything');
+      state.replaceTransient({ groupingChain: ['source'] });
+      render(AppShell, { client: exploreClient(), state, enabled: false });
+      await screen.findByRole('region', { name: 'Active analytical context' });
+      expect(screen.queryByRole('combobox', { name: /^Sort:/ })).toBeNull();
+
+      await fireEvent.keyDown(window, { key: 's' });
+      expect(screen.queryByRole('listbox')).toBeNull();
+      await fireEvent.keyDown(window, { key: 'r' });
+      expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
+        .toBe('Sorting isn’t available while grouped.');
+    });
+
     it('hides the Files Sort menu while grouped, where file order does not apply', async () => {
       const state = shellState('files');
       state.replaceTransient({ groupingChain: ['source'] });
       render(AppShell, { client: exploreClient(), state, enabled: false });
       await screen.findByRole('region', { name: 'Active analytical context' });
       expect(screen.queryByRole('combobox', { name: /^Sort:/ })).toBeNull();
-      expect(screen.getByRole('combobox', { name: 'Group by: Add grouping' })).toBeDefined();
+      expect(screen.getByRole('combobox', { name: 'Add grouping' })).toBeDefined();
     });
 
     it('lists every file order in the Files Sort menu', async () => {
@@ -2507,7 +2521,7 @@ describe('AppShell', () => {
 
     await fireEvent.keyDown(window, { key: 'r' });
     expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
-      .toContain('reverse order is not supported');
+      .toBe('Everything is always shown newest first.');
 
     await fireEvent.click(screen.getByRole('button', { name: 'Files' }));
     expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
@@ -2535,7 +2549,7 @@ describe('AppShell', () => {
 
     await fireEvent.keyDown(window, { key: 'r' });
     expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
-      .toContain('reverse order is not supported');
+      .toBe('Everything is always shown newest first.');
 
     const main = screen.getByRole('main', { name: 'Everything' });
     expect(within(main).getAllByText('2 items')).toHaveLength(1);
@@ -2638,13 +2652,14 @@ describe('AppShell', () => {
     await fireEvent.keyDown(window, { key: 'g' });
     await fireEvent.click(screen.getByRole('option', { name: 'Year' }));
     expect(state.current.groupingChain).toEqual(['participant', 'year']);
-    expect(screen.getByLabelText('Active analytical context').textContent).toContain('Grouped by People');
+    expect(screen.getByLabelText('Active analytical context').textContent).toContain('Grouped by Person');
     expect(screen.getByLabelText('Active analytical context').textContent).toContain('Year');
 
     await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
     const palette = screen.getByRole('dialog', { name: 'Everything commands' });
     expect(palette).toBeDefined();
-    expect(within(palette).getByRole('option', { name: /Labels — unavailable/ }).getAttribute('aria-disabled'))
+    expect(within(palette).getByRole('option', { name: /Group by Labels \(not available yet\)/ })
+      .getAttribute('aria-disabled'))
       .toBe('true');
     const paletteInput = within(palette).getByRole('combobox');
     paletteInput.focus();
@@ -2661,7 +2676,8 @@ describe('AppShell', () => {
     await fireEvent.keyDown(window, { key: 'f' });
     expect(screen.getByRole('button', { name: 'Filters' }).getAttribute('aria-expanded')).toBe('true');
     await fireEvent.keyDown(window, { key: 'r' });
-    expect(screen.getByRole('status', { name: 'Sort status' }).textContent).toContain('newest first');
+    expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
+      .toBe('Sorting isn’t available while grouped.');
     rendered.unmount();
     state.destroy();
   });

@@ -18,6 +18,9 @@ describe('ContextBar presentation control', () => {
     });
 
     const control = screen.getByRole('combobox', { name: 'Show as: Table' });
+    expect(control.textContent?.trim()).toBe('Show as: Table');
+    expect(screen.getByRole('combobox', { name: 'Sort: Newest first' }).textContent?.trim())
+      .toBe('Sort: Newest first');
     await fireEvent.click(control);
     expect(screen.getAllByRole('option').map((option) => option.textContent?.trim()))
       .toEqual(['Table', 'Timeline', 'Files']);
@@ -53,6 +56,28 @@ describe('ContextBar chips', () => {
     expect(screen.getAllByText('20 items')).toHaveLength(1);
   });
 
+  it('names a grouping chip the way saved-view summaries do', () => {
+    render(ContextBar, {
+      client: createAPIClient(vi.fn()),
+      query: '', searchMode: 'full_text', filters: [], groupingChain: ['participant'],
+      countLabel: '', sort,
+      onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
+    });
+    expect(screen.getByText('Grouped by Person')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Remove Person grouping' })).toBeDefined();
+  });
+
+  it('says plainly when no filters are applied', async () => {
+    render(ContextBar, {
+      client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ rows: [] }))),
+      query: '', searchMode: 'full_text', filters: [], groupingChain: [],
+      countLabel: '', sort,
+      onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
+    expect(screen.getByText('No filters applied.')).toBeDefined();
+  });
+
   it('hides the chip line when nothing is active', () => {
     render(ContextBar, {
       client: createAPIClient(vi.fn()),
@@ -68,8 +93,8 @@ describe('ContextBar chips', () => {
 
 describe('ContextBar grouping picker', () => {
   it.each([
-    [[], 'Group by: None'],
-    [['participant'], 'Group by: Add grouping']
+    [[], 'Group by'],
+    [['participant'], 'Add grouping']
   ] as const)('names the picker by what it does when the chain is %j', (groupingChain, name) => {
     render(ContextBar, {
       client: createAPIClient(vi.fn()),
@@ -77,7 +102,7 @@ describe('ContextBar grouping picker', () => {
       countLabel: '', sort,
       onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
     });
-    expect(screen.getByRole('combobox', { name })).toBeDefined();
+    expect(screen.getByRole('combobox', { name }).textContent?.trim()).toBe(name);
   });
 
   it('adds a grouping from the picker', async () => {
@@ -88,8 +113,21 @@ describe('ContextBar grouping picker', () => {
       countLabel: '', sort,
       onAddGroup, onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
     });
-    await fireEvent.click(screen.getByRole('combobox', { name: 'Group by: None' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Group by' }));
     await fireEvent.click(screen.getByRole('option', { name: 'Year' }));
     expect(onAddGroup).toHaveBeenCalledWith('year');
+  });
+
+  it('lists unavailable groupings with a short, disabled label', async () => {
+    render(ContextBar, {
+      client: createAPIClient(vi.fn()),
+      query: '', searchMode: 'full_text', filters: [], groupingChain: [],
+      countLabel: '', sort,
+      onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
+    });
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Group by' }));
+    const labels = screen.getByRole('option', { name: 'Labels (not available yet)' });
+    expect((labels as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole('option', { name: /analytical API/ })).toBeNull();
   });
 });

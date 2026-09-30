@@ -900,9 +900,11 @@
     control?.click();
   }
   function fixedSortNotice(): void {
-    sortNotice = exploreState.current.workspace === 'files'
-      ? 'Use the Sort menu to change the order.'
-      : 'Everything remains newest first; reverse order is not supported by the canonical entry API.';
+    sortNotice = exploreState.current.groupingChain.length > 0
+      ? 'Sorting isn’t available while grouped.'
+      : exploreState.current.workspace === 'files'
+        ? 'Use the Sort menu to change the order.'
+        : 'Everything is always shown newest first.';
     document.querySelector<HTMLButtonElement>('[data-sort-menu] button')?.focus();
   }
   function navigateReader(delta: number): void {
@@ -967,7 +969,7 @@
         return [
           {
             id: `unavailable:${entry.concept}`,
-            label: `${entry.label} — unavailable: ${entry.unavailableReason}`,
+            label: `Group by ${entry.label} (not available yet)`,
             section: 'Group by',
             keywords: `${entry.keywords} ${entry.unavailableReason ?? ''}`,
             keys: [],

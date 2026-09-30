@@ -5,12 +5,8 @@
 
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter, ExploreGroupDimension, ExploreSearchMode, ExploreURLState } from '../../explore/models';
-  import { filterDimensionLabel, searchModeLabel } from '../../explore/labels';
-  import {
-    groupingDimensionLabel,
-    groupingOptions,
-    isGroupingDimension
-  } from '../../grouping/catalog';
+  import { filterDimensionLabel, groupedByLabel, searchModeLabel } from '../../explore/labels';
+  import { groupingOptions, isGroupingDimension } from '../../grouping/catalog';
   import IdentityFilter from './IdentityFilter.svelte';
 
   interface SortConfig {
@@ -59,18 +55,25 @@
   let filtersOpen = $state(false);
   const groupOptions = $derived(groupingOptions({ excluded: groupingChain, includeUnavailable: true }));
   const canGroup = $derived(groupOptions.some((option) => !option.disabled));
+  // The triggers carry their own names (no kit `title`), so the visible text says what each control is.
   const options = $derived([
-    { value: '', label: groupingChain.length > 0 ? 'Add grouping' : 'None', disabled: true },
+    {
+      value: '',
+      label: groupingChain.length > 0 ? 'Add grouping' : 'None',
+      triggerLabel: groupingChain.length > 0 ? 'Add grouping' : 'Group by',
+      disabled: true
+    },
     ...groupOptions
   ]);
   const presentationOptions = [
-    { value: 'table', label: 'Table' },
-    { value: 'timeline', label: 'Timeline' },
-    { value: 'files', label: 'Files' }
+    { value: 'table', label: 'Table', triggerLabel: 'Show as: Table' },
+    { value: 'timeline', label: 'Timeline', triggerLabel: 'Show as: Timeline' },
+    { value: 'files', label: 'Files', triggerLabel: 'Show as: Files' }
   ];
-  const sortOptions = $derived(
-    sort?.note ? [...sort.options, { value: '__note', label: sort.note, disabled: true }] : sort?.options ?? []
-  );
+  const sortOptions = $derived([
+    ...(sort?.options ?? []).map((option) => ({ ...option, triggerLabel: `Sort: ${option.label}` })),
+    ...(sort?.note ? [{ value: '__note', label: sort.note, disabled: true }] : [])
+  ]);
   const hasChips = $derived(Boolean(query) || filters.length > 0 || groupingChain.length > 0);
 
   function selectGrouping(value: string): void {
@@ -89,7 +92,6 @@
       onclick={() => { filtersOpen = !filtersOpen; }}
     />
     <SelectDropdown
-      title="Show as"
       value={presentation}
       options={presentationOptions}
       onchange={(value) => onPresentationChange?.(value as ExploreURLState['presentation'])}
@@ -98,7 +100,6 @@
       <SelectDropdown
         value=""
         {options}
-        title="Group by"
         disabled={!canGroup}
         onchange={selectGrouping}
       />
@@ -106,7 +107,6 @@
     {#if sort}
       <div data-sort-menu>
         <SelectDropdown
-          title="Sort"
           value={sort.value}
           options={sortOptions}
           onchange={(value) => sort.onchange?.(value)}
@@ -138,10 +138,10 @@
       {/each}
       {#each groupingChain as dimension, index (`${dimension}:${index}`)}
         <span class="chip chip--group">
-          Grouped by {groupingDimensionLabel(dimension)}
+          {groupedByLabel([dimension])}
           <IconButton
             size="sm"
-            ariaLabel={`Remove ${groupingDimensionLabel(dimension)} grouping`}
+            ariaLabel={`Remove ${filterDimensionLabel(dimension)} grouping`}
             onclick={() => onRemoveGroup(index)}
           ><XIcon size="12" aria-hidden="true" /></IconButton>
         </span>
@@ -153,7 +153,7 @@
     <div class="filter-panel">
       <div class="filter-summary">
         {#if filters.length === 0}
-          <span>No active filters. Filtering controls will expand with additional canonical dimensions.</span>
+          <span>No filters applied.</span>
         {:else}
           <span>{filters.length} active {filters.length === 1 ? 'filter' : 'filters'}</span>
           <Button size="sm" surface="outline" label="Clear filters" onclick={onClearFilters} />

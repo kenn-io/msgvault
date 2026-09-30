@@ -2,6 +2,7 @@ import { groupingDimensionLabel, isGroupingDimension } from '../grouping/catalog
 import type {
   ExploreColumn,
   ExploreFilterDimension,
+  ExploreGroupDimension,
   ExploreSearchMode,
   ExploreURLState,
   FileMIMEFamily
@@ -104,11 +105,19 @@ export function presentationLabel(presentation: ExploreURLState['presentation'])
   return PRESENTATIONS[presentation];
 }
 
-export function filterDimensionLabel(dimension: ExploreFilterDimension): string {
+export function filterDimensionLabel(dimension: ExploreFilterDimension | ExploreGroupDimension): string {
   const explicit = FILTER_DIMENSIONS[dimension];
   if (explicit) return explicit;
   if (isGroupingDimension(dimension)) return groupingDimensionLabel(dimension);
   return sentenceCase(dimension);
+}
+
+// One wording for grouping in chips and saved-view summaries ("Grouped by Person, then Year").
+export function groupedByLabel(dimensions: readonly string[]): string {
+  const names = dimensions.map((dimension) =>
+    filterDimensionLabel(dimension as ExploreFilterDimension | ExploreGroupDimension)
+  );
+  return `Grouped by ${names.join(', then ')}`;
 }
 
 export function fileTypeLabel(
@@ -131,7 +140,7 @@ export function preflightReasonLabel(action: string, reason: string): string {
   return REASONS[`${action}:${reason}`] ?? `${sentenceCase(reason)}.`;
 }
 
-export interface EntryKindPresentation {
+interface EntryKindPresentation {
   icon: string;
   /** Full name, used as the accessible label ("Email item"). */
   label: string;

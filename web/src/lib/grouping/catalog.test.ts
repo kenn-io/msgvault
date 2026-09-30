@@ -46,7 +46,7 @@ describe('universal grouping catalog', () => {
     expect(groupingOptions({ includeUnavailable: true })).toEqual(expect.arrayContaining([
       expect.objectContaining({
         value: 'unavailable:labels',
-        label: expect.stringContaining('Label grouping is not in the analytical API yet.'),
+        label: 'Labels (not available yet)',
         disabled: true
       }),
       expect.objectContaining({ value: 'unavailable:attachment_facts', disabled: true })
