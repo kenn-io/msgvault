@@ -1661,9 +1661,6 @@ describe('AppShell', () => {
         mime_type: 'application/pdf', size_bytes: 2048,
         content_state: 'missing_blob', content_available: false
       });
-      if (path.endsWith('/explore/files')) return Response.json({
-        files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {}
-      });
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);
@@ -1675,6 +1672,40 @@ describe('AppShell', () => {
         workspace: 'files', presentation: 'files', selectedRow: 'attachment:5'
       });
       expect(window.location.search).toContain('workspace=files');
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
+  it.each([
+    ['the Close button', async () => {
+      await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
+    }],
+    ['Escape', async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    }]
+  ])('clears a legacy attachment selection when its viewer closes with %s', async (_label, close) => {
+    window.history.replaceState(null, '', `/?workspace=everything&explore=${encodeURIComponent(JSON.stringify({
+      presentation: 'files', selectedRow: 'attachment:5'
+    }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/files/5')) return Response.json({
+        id: 5, message_id: 1, conversation_id: 11, filename: 'legacy-report.pdf',
+        mime_type: 'application/pdf', size_bytes: 2048,
+        content_state: 'missing_blob', content_available: false
+      });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      expect(await screen.findByRole('dialog', { name: 'View legacy-report.pdf' })).toBeDefined();
+      await close();
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'View legacy-report.pdf' })).toBeNull());
+      expect(state.current.selectedRow).toBeNull();
+      expect(new URLSearchParams(window.location.search).get('explore') ?? '').not.toContain('attachment:5');
     } finally {
       rendered.unmount();
       state.destroy();

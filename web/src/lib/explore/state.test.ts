@@ -383,6 +383,61 @@ describe('Explore URL state', () => {
     }
   });
 
+  it('keeps a mode-less Everything-as-Files link on the configured default mode', () => {
+    window.history.replaceState(null, '', `/?workspace=everything&explore=${encodeURIComponent(
+      JSON.stringify({ presentation: 'files', query: 'budget' })
+    )}`);
+    const state = new ExploreState(window, null);
+    try {
+      expect(new URLSearchParams(window.location.search).get('workspace')).toBe('files');
+      expect(new URLSearchParams(window.location.search).has('mode')).toBe(false);
+
+      state.setConfiguredDefaultSearchMode('hybrid');
+
+      expect(state.current).toMatchObject({ workspace: 'files', query: 'budget', searchMode: 'hybrid' });
+    } finally {
+      state.destroy();
+    }
+  });
+
+  it('restores the active row and scroll anchor from an old Everything-as-Files history entry', async () => {
+    window.history.replaceState(null, '', '/?workspace=sources');
+    const state = new ExploreState(window);
+    try {
+      window.history.pushState(
+        {
+          exploreSearch: '?workspace=everything',
+          exploreState: {
+            workspace: 'everything', presentation: 'files',
+            activeRow: 'attachment:9', scrollAnchor: { key: 'attachment:9', offset: 24 }
+          }
+        },
+        '',
+        '/?workspace=everything'
+      );
+      window.history.pushState(null, '', '/?workspace=sources');
+      const back = new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.back();
+      await back;
+      expect(state.current).toMatchObject({
+        workspace: 'files', activeRow: 'attachment:9', scrollAnchor: { key: 'attachment:9', offset: 24 }
+      });
+
+      const away = new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.forward();
+      await away;
+      expect(state.current.workspace).toBe('sources');
+      const forward = new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.back();
+      await forward;
+      expect(state.current).toMatchObject({
+        workspace: 'files', activeRow: 'attachment:9', scrollAnchor: { key: 'attachment:9', offset: 24 }
+      });
+    } finally {
+      state.destroy();
+    }
+  });
+
   it('leaves Files for Everything without carrying the Files presentation', () => {
     window.history.replaceState(null, '', '/?workspace=files');
     const state = new ExploreState(window);

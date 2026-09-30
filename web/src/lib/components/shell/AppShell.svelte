@@ -22,7 +22,6 @@
     EntryRow,
     ExploreGroupDimension,
     ExploreGroupRow,
-    ExploreFileFact,
     ExploreSearchMode,
     OperationStatusAuthority,
     ExploreURLState,
@@ -693,21 +692,8 @@
     if (grid) grid.focus();
     else searchInput?.focus();
   }
-  function viewerTargetFromFact(file: ExploreFileFact): FileViewerTarget {
-    return {
-      id: file.id,
-      key: file.key,
-      entry_key: file.entry_key,
-      message_id: file.message_id,
-      conversation_id: file.conversation_id,
-      filename: file.filename,
-      mime_type: file.mime_type,
-      size_bytes: file.size,
-    };
-  }
   $effect(() => {
     const attachmentID = selectedAttachmentID;
-    const facts = loader.fileFacts;
     if (attachmentID === undefined) {
       contextualViewerFile = undefined;
       if (previousAttachmentID !== undefined) {
@@ -720,11 +706,9 @@
     if (!untrack(() => contextualViewerReturnFocus)) {
       contextualViewerReturnFocus = currentGrid() ?? undefined;
     }
-    const local = facts.find((file) => file.id === attachmentID);
-    const existing = untrack(() => contextualViewerFile);
-    if (local) {
-      if (existing?.key !== local.key) contextualViewerFile = viewerTargetFromFact(local);
-    } else if (existing?.id !== attachmentID) contextualViewerFile = { id: attachmentID };
+    if (untrack(() => contextualViewerFile)?.id !== attachmentID) {
+      contextualViewerFile = { id: attachmentID };
+    }
   });
   const conversationAnchorId = $derived.by(() => {
     const anchor = exploreState.current.conversationAnchor;

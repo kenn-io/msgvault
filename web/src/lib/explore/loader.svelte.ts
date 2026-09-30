@@ -4,8 +4,6 @@ import type { APIClient } from '../api/client';
 import type {
   EntryRow,
   ExploreCacheUnavailable,
-  ExploreFileFact,
-  ExploreFilesResult,
   ExploreGroupDimension,
   ExploreGroupResult,
   ExploreGroupRow,
@@ -55,7 +53,7 @@ function samePageAuthority(
 }
 
 /**
- * Owns the Everything workspace's row/group/file loading: the main
+ * Owns the Everything workspace's row/group loading: the main
  * per-predicate load, cursor paging (including the End-key drain-to-end),
  * and deep-link restoration walk that pages forward until a durable
  * selection/scroll/active key becomes visible again.
@@ -68,7 +66,6 @@ function samePageAuthority(
 export class ExploreLoader {
   rows = $state<EntryRow[]>([]);
   groupRows = $state<ExploreGroupRow[]>([]);
-  fileFacts = $state<ExploreFileFact[]>([]);
   resultGeneration = $state(0);
   result = $state<ExploreResult>();
   unavailable = $state<ExploreCacheUnavailable>();
@@ -91,7 +88,7 @@ export class ExploreLoader {
   private pagePredicate: ReturnType<ExploreState['predicate']> | undefined;
   private pageGrouping: ExploreGroupDimension | undefined;
   private pageGroupsFiles = false;
-  private pageKind: 'entries' | 'groups' | 'files' = 'entries';
+  private pageKind: 'entries' | 'groups' = 'entries';
   private pageFileFilenameQuery = '';
   private pageFileMIMEFamilies: FileMIMEFamily[] = [];
   private pageAuthority: Pick<ExploreResult, 'cacheRevision' | 'searchProvenance' | 'candidateSnapshotId'> | undefined;
@@ -160,9 +157,8 @@ export class ExploreLoader {
     this.pagePredicate = predicate;
     this.pageGrouping = undefined;
     this.pageGroupsFiles = filesGrouping;
-    const presentation = this.state.current.presentation;
     const grouping = this.state.current.groupingChain;
-    this.pageKind = grouping.length > 0 ? 'groups' : presentation === 'files' ? 'files' : 'entries';
+    this.pageKind = grouping.length > 0 ? 'groups' : 'entries';
     this.pageFileFilenameQuery = fileFilenameQuery;
     this.pageFileMIMEFamilies = fileMIMEFamilies;
     this.pageRequest = undefined;
@@ -182,7 +178,6 @@ export class ExploreLoader {
     // into their loading skeletons until the new response lands.
     this.rows = [];
     this.groupRows = [];
-    this.fileFacts = [];
     this.result = undefined;
     const request = grouping.length > 0
       ? (filesGrouping
@@ -191,16 +186,13 @@ export class ExploreLoader {
           (this.pageGrouping = grouping[0]!), controller.signal
         )
         : this.api.groups(predicate, (this.pageGrouping = grouping[0]!), controller.signal))
-      : presentation === 'files'
-        ? this.api.files({ ...predicate, grouping: undefined }, controller.signal)
-        : this.api.explore({ ...predicate, grouping: undefined, presentation: 'table' }, controller.signal);
+      : this.api.explore({ ...predicate, grouping: undefined, presentation: 'table' }, controller.signal);
     void request
       .then((loaded) => {
         if (generation !== this.requestGeneration) return;
         if (loaded.status === 'unavailable') {
           this.rows = [];
           this.groupRows = [];
-          this.fileFacts = [];
           this.result = undefined;
           this.unavailable = loaded.unavailable;
           if (loaded.unavailable.readiness === 'building') {
@@ -218,10 +210,9 @@ export class ExploreLoader {
           this.result = entryResult;
           this.rows = entryResult.rows;
           this.groupRows = [];
-          this.fileFacts = [];
           this.resultFingerprint = fingerprint;
           this.pageAuthority = entryResult;
-        } else if (this.pageKind === 'groups') {
+        } else {
           const groupResult = loaded.result as ExploreGroupResult;
           this.result = {
             rows: [],
@@ -235,25 +226,8 @@ export class ExploreLoader {
           };
           this.rows = [];
           this.groupRows = groupResult.rows;
-          this.fileFacts = [];
           this.resultFingerprint = fingerprint;
           this.pageAuthority = groupResult;
-        } else {
-          const filesResult = loaded.result as ExploreFilesResult;
-          this.result = {
-            rows: [], totalCount: filesResult.totalCount,
-            cacheRevision: filesResult.cacheRevision,
-            searchProvenance: filesResult.searchProvenance,
-            candidateSnapshotId: filesResult.candidateSnapshotId,
-            searchDeletionScope: filesResult.searchDeletionScope,
-            candidatePoolSaturated: false,
-            nextCursor: filesResult.nextCursor
-          };
-          this.rows = [];
-          this.groupRows = [];
-          this.fileFacts = filesResult.files;
-          this.resultFingerprint = fingerprint;
-          this.pageAuthority = filesResult;
         }
         this.nextCursor = loaded.result.nextCursor;
       })
@@ -301,9 +275,7 @@ export class ExploreLoader {
       return this.failPaging(REPEATED_CURSOR_NOTICE);
     }
     const first = this.pageAuthority;
-    const previousCount = this.pageKind === 'groups'
-      ? this.groupRows.length
-      : this.pageKind === 'files' ? this.fileFacts.length : this.rows.length;
+    const previousCount = this.pageKind === 'groups' ? this.groupRows.length : this.rows.length;
     this.loadingMore = true;
     this.pageError = '';
     try {
@@ -315,9 +287,7 @@ export class ExploreLoader {
             this.pageGrouping, this.requestController.signal
           )
           : await this.api.groups(predicate, this.pageGrouping, this.requestController.signal))
-        : this.pageKind === 'files'
-          ? await this.api.files({ ...predicate, grouping: undefined }, this.requestController.signal)
-          : await this.api.explore({ ...predicate, grouping: undefined, presentation: 'table' }, this.requestController.signal);
+        : await this.api.explore({ ...predicate, grouping: undefined, presentation: 'table' }, this.requestController.signal);
       if (generation !== this.requestGeneration) return { status: 'stale' };
       if (loaded.status === 'unavailable') {
         if (this.restoring) {
@@ -343,23 +313,14 @@ export class ExploreLoader {
         this.rows = [...merged.values()];
         this.nextCursor = followingCursor;
         this.result = { ...entryResult, rows: this.rows, nextCursor: followingCursor };
-      } else if (this.pageKind === 'groups') {
+      } else {
         const groupResult = loaded.result as ExploreGroupResult;
         const merged = new Map(this.groupRows.map((row) => [row.key, row]));
         for (const row of groupResult.rows) merged.set(row.key, row);
         this.groupRows = [...merged.values()];
         this.nextCursor = followingCursor;
-      } else {
-        const filesResult = loaded.result as ExploreFilesResult;
-        const merged = new Map(this.fileFacts.map((file) => [file.key, file]));
-        for (const file of filesResult.files) merged.set(file.key, file);
-        this.fileFacts = [...merged.values()];
-        this.nextCursor = followingCursor;
-        this.result = this.result ? { ...this.result, nextCursor: followingCursor } : this.result;
       }
-      const currentCount = this.pageKind === 'groups'
-        ? this.groupRows.length
-        : this.pageKind === 'files' ? this.fileFacts.length : this.rows.length;
+      const currentCount = this.pageKind === 'groups' ? this.groupRows.length : this.rows.length;
       if (followingCursor && (followingCursor === cursor || this.seenCursors.has(followingCursor))) {
         return this.failPaging(REPEATED_CURSOR_NOTICE);
       }
@@ -413,7 +374,7 @@ export class ExploreLoader {
     return [...new Set([
       current.activeRow,
       current.scrollAnchor?.key,
-      this.pageKind !== 'files' && selected && !parseGroupSelection(selected) ? selected : undefined
+      selected && !parseGroupSelection(selected) ? selected : undefined
     ].filter((key): key is string => Boolean(key)))];
   }
 
@@ -421,7 +382,6 @@ export class ExploreLoader {
     if (this.pageKind === 'groups' && this.pageGrouping) {
       return this.groupRows.some((row) => `group:${this.pageGrouping}:${row.key}` === key);
     }
-    if (this.pageKind === 'files') return this.fileFacts.some((file) => file.key === key);
     return this.rows.some((row) => row.key === key);
   }
 
