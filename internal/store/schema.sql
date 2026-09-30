@@ -2173,6 +2173,27 @@ CREATE INDEX IF NOT EXISTS idx_gmail_drafts_current_message
 CREATE INDEX IF NOT EXISTS idx_gmail_drafts_pending_original_message
     ON gmail_drafts(pending_original_message_id);
 
+-- Local chat drafts are unsent text owned by msgvault. Native destination
+-- fields are copied at creation so later mapping repairs cannot retarget it.
+CREATE TABLE IF NOT EXISTS chat_drafts (
+    draft_id TEXT PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    source_conversation_id TEXT NOT NULL,
+    conversation_type TEXT NOT NULL,
+    reply_to_source_message_id TEXT,
+    body TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_drafts_source
+    ON chat_drafts(source_id);
+
+CREATE INDEX IF NOT EXISTS idx_chat_drafts_conversation
+    ON chat_drafts(conversation_id);
+
 -- Imported source items (files/objects already processed for resumable adapters)
 CREATE TABLE IF NOT EXISTS source_import_items (
     id INTEGER PRIMARY KEY,

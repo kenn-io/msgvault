@@ -9,7 +9,7 @@ func init() {
 func newDraftComposeCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "draft-compose",
-		Short: "Create an IMAP draft from a selected account",
+		Short: "Create an IMAP draft, or a local draft for a chat conversation",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runDaemonCLICommandHTTPFromCobra(cmd, nil)
@@ -23,6 +23,8 @@ func newDraftComposeCommand() *cobra.Command {
 	command.Flags().StringArray("bcc", nil, "Bcc recipient address, repeatable")
 	command.Flags().String("subject", "", "draft subject")
 	command.Flags().String("body", "", "draft body")
+	command.Flags().Int64("conversation", 0, "chat conversation for a local draft")
+	command.Flags().Int64("reply-to", 0, "archived chat message the local draft replies to")
 	command.Flags().Bool("json", false, "emit one JSON result")
 	return command
 }

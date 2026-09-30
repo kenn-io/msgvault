@@ -1,6 +1,10 @@
 package cmd
 
-import "github.com/spf13/cobra"
+import (
+	"errors"
+
+	"github.com/spf13/cobra"
+)
 
 func init() {
 	rootCmd.AddCommand(newDraftGetCommand())
@@ -12,11 +16,17 @@ func init() {
 
 func newDraftGetCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "draft-get <draft-id>",
-		Short: "Read a managed draft from the archive",
-		Args:  cobra.ExactArgs(1),
-		RunE:  runDaemonCLICommandHTTPFromCobra,
+		Use:   "draft-get (<draft-id> | --conversation <conversation-id>)",
+		Short: "Read a managed draft, or list a chat conversation's local drafts",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 && !cmd.Flags().Changed("conversation") {
+				return errors.New("requires a draft ID or --conversation")
+			}
+			return cobra.MaximumNArgs(1)(cmd, args)
+		},
+		RunE: runDaemonCLICommandHTTPFromCobra,
 	}
+	command.Flags().Int64("conversation", 0, "list local drafts for this chat conversation")
 	command.Flags().Bool("json", false, "emit one JSON result")
 	return command
 }

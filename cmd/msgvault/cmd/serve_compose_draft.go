@@ -23,6 +23,9 @@ type draftComposeIntent struct {
 	Subject     string
 	Body        string
 	JSON        bool
+	// ConversationID selects a local chat draft instead of an IMAP draft.
+	ConversationID int64
+	ReplyTo        int64
 }
 
 func invalidDraftComposeArgs(format string, args ...any) (draftComposeIntent, error) {
@@ -45,7 +48,7 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 		}
 		name, value, hasValue := strings.Cut(nameValue, "=")
 		switch name {
-		case draftFromFlag, "account", "source-id", "subject", "body", "to", "cc", "bcc":
+		case draftFromFlag, "account", "source-id", "subject", "body", "to", "cc", "bcc", "conversation", "reply-to":
 			if !hasValue {
 				if len(rest) == 0 {
 					return invalidDraftComposeArgs("--%s requires a value", name)
@@ -75,6 +78,19 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 					return invalidDraftComposeArgs("source ID must be a positive integer")
 				}
 				intent.SourceID, intent.SourceIDSet, sourceIDSet = id, true, true
+			case "conversation", "reply-to":
+				id, parseErr := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+				if parseErr != nil || id <= 0 {
+					return invalidDraftComposeArgs("--%s must be a positive integer", name)
+				}
+				target := &intent.ReplyTo
+				if name == "conversation" {
+					target = &intent.ConversationID
+				}
+				if *target != 0 {
+					return invalidDraftComposeArgs("--%s given more than once", name)
+				}
+				*target = id
 			case "subject":
 				if subjectSet {
 					return invalidDraftComposeArgs("--subject given more than once")
@@ -114,6 +130,15 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 			return invalidDraftComposeArgs("unknown flag --%s", name)
 		}
 	}
+	if intent.ConversationID != 0 {
+		if fromSet || accountSet || sourceIDSet || subjectSet || len(intent.To)+len(intent.Cc)+len(intent.Bcc) > 0 {
+			return invalidDraftComposeArgs("--conversation accepts only --body, --reply-to, and --json")
+		}
+		return intent, nil
+	}
+	if intent.ReplyTo != 0 {
+		return invalidDraftComposeArgs("--reply-to requires --conversation")
+	}
 	if !accountSet && !sourceIDSet {
 		return invalidDraftComposeArgs("--account or --source-id is required")
 	}
@@ -137,6 +162,9 @@ func (a *storeAPIAdapter) runCLIComposeDraft(
 	intent, err := parseDraftComposeArgs(req.Args)
 	if err != nil {
 		return err
+	}
+	if intent.ConversationID != 0 {
+		return a.runCLIChatDraftCreate(ctx, intent, req.Grant, emit)
 	}
 	target, from, _, err := a.resolveDraftTarget(
 		ctx, nil, intent.Account, intent.SourceID, intent.SourceIDSet, intent.From, req.Grant,

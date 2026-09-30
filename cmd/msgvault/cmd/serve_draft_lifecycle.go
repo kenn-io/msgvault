@@ -26,6 +26,8 @@ type draftLifecycleIntent struct {
 	Body         string
 	JSON         bool
 	MetadataOnly bool // Set by delegated authorization, never by CLI arguments.
+	// ConversationID lists a conversation's local chat drafts in place of DraftID.
+	ConversationID int64
 }
 
 const draftLifecycleActive = "active"
@@ -117,6 +119,18 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 				return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("--body given more than once"))
 			}
 			intent.Body, bodySet = value, true
+		case "conversation":
+			if !hasValue {
+				if len(rest) == 0 {
+					return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("--conversation requires a value"))
+				}
+				value, rest = rest[0], rest[1:]
+			}
+			parsed, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || parsed <= 0 || intent.ConversationID != 0 || intent.Operation != api.CLIRunDraftGetCommand {
+				return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-get accepts one positive --conversation"))
+			}
+			intent.ConversationID = parsed
 		case "json":
 			if jsonSet || (hasValue && value != "true") {
 				return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("--json accepts one flag without a value"))
@@ -129,6 +143,12 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 		default:
 			return draftLifecycleIntent{}, draftReplyError("invalid_args", fmt.Errorf("unknown flag --%s", name))
 		}
+	}
+	if intent.ConversationID != 0 {
+		if positional != "" || revisionSet || bodySet {
+			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-get --conversation accepts only --json"))
+		}
+		return intent, nil
 	}
 	if positional == "" || !utf8.ValidString(positional) || strings.TrimSpace(positional) == "" || strings.ContainsAny(positional, "\x00\r\n") {
 		return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft ID is required"))
@@ -389,6 +409,9 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	intent, err := parseDraftLifecycleArgs(req.Args)
 	if err != nil {
 		return err
+	}
+	if intent.ConversationID != 0 || strings.HasPrefix(intent.DraftID, store.ChatDraftIDPrefix) {
+		return a.runCLIChatDraftLifecycle(ctx, intent, req.Grant, emit)
 	}
 	draft, err := a.store.GetIMAPDraftContext(ctx, intent.DraftID)
 	if err != nil {

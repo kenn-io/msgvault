@@ -8,6 +8,11 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- `draft-compose --conversation` keeps a local draft for a Slack, Teams, or
+  Discord conversation. The existing `draft-get`, `draft-edit`, and
+  `draft-delete` commands manage it, and `draft-get --conversation` lists a
+  conversation's drafts. These drafts stay in msgvault and never reach the
+  provider.
 - Exa and Sixtyfour person enrichment collapse repeated values before committing
   claims, so duplicate provider output no longer aborts the claim generation.
 - Person enrichment retains queued lookups and refresh schedules when a provider

@@ -380,6 +380,28 @@ provider result in `observation.code`. See
 [Manage a created draft](usage/imap.md#manage-a-created-draft) for revision,
 provider checks, retention, retry behavior, and recovery limits.
 
+### Local chat drafts
+
+Slack, Teams, and Discord conversations get drafts that live only in msgvault.
+They never appear in the provider's composer and no command makes a provider
+request.
+
+```bash
+msgvault draft-compose --conversation <conversation-id> --body <text> [--reply-to <message-id>] [--json]
+msgvault draft-get --conversation <conversation-id> [--json]
+```
+
+The conversation's source owns the draft. `--reply-to` names an archived
+message in the same conversation. `draft-get --conversation` lists that
+conversation's drafts oldest first, so a lost draft ID can be found again;
+`--json` returns one array. `draft-get`, `draft-edit`, and `draft-delete` take
+the returned `chat-draft-` ID and report `location` as `msgvault`. A stale
+revision returns `revision_mismatch` and leaves the draft unchanged.
+`draft-recover` returns `not_supported`. Delegated tokens use the same
+permissions as mail drafts, scoped to the conversation's source, except that
+`draft.create` allows retrieval without a sender check. Removing the source or
+conversation deletes its local drafts.
+
 ## draft-send-as
 
 List Gmail send-as identities for an owner-invoked Gmail account:
