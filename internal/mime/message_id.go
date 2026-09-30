@@ -32,14 +32,12 @@ func NormalizeMessageID(id string) string {
 // NormalizeLegacyMessageID recovers an ID from historical header values with
 // a missing closing bracket or trailing text after the closing bracket. It is
 // for IMAP legacy identity recovery; NormalizeMessageID remains the
-// storage/parser contract. Unbracketed values are accepted only whole.
+// storage/parser contract. A bracketed ID must start the value, and an
+// unbracketed value is accepted only whole.
 func NormalizeLegacyMessageID(value string) string {
 	id := strings.TrimSpace(value)
-	if start := strings.IndexByte(id, '<'); start >= 0 {
-		if strings.ContainsAny(id[:start], "<>") {
-			return ""
-		}
-		id = id[start+1:]
+	if strings.HasPrefix(id, "<") {
+		id = id[1:]
 		if end := strings.IndexByte(id, '>'); end >= 0 {
 			if strings.ContainsAny(id[end+1:], "<>") {
 				return ""
