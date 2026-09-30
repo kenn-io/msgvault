@@ -1,7 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { exploreMeetingScope, relationshipMeetingScope } from './scopes';
+import { exploreMeetingScope, relationshipMeetingScope, restrictsToMeetingTranscripts } from './scopes';
 
 describe('meeting scopes', () => {
+  it.each([
+    { name: 'no filters', filters: undefined, want: false },
+    { name: 'meetings only', filters: [{ dimension: 'message_type', values: ['meeting_transcript'] }], want: true },
+    { name: 'meetings and email', filters: [{ dimension: 'message_type', values: ['meeting_transcript', 'email'] }], want: false },
+    { name: 'another dimension', filters: [{ dimension: 'source', values: ['meeting_transcript'] }], want: false },
+    {
+      name: 'a narrower type filter beside a mixed one',
+      filters: [
+        { dimension: 'message_type', values: ['meeting_transcript', 'email'] },
+        { dimension: 'message_type', values: ['meeting_transcript'] },
+      ],
+      want: true,
+    },
+  ] as const)('restricts to meetings with $name', ({ filters, want }) => {
+    expect(restrictsToMeetingTranscripts({ filters: filters?.map((filter) => ({ ...filter, values: [...filter.values] })) })).toBe(want);
+  });
+
   it('retains repeated person/domain intersections and the corresponding loaded search authority', () => {
     const predicate = { query: 'planning', search_mode: 'hybrid' as const, filters: [
       { dimension: 'participant' as const, values: ['3'] }, { dimension: 'participant' as const, values: ['7'] },

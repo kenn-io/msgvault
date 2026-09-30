@@ -37,7 +37,12 @@
   import type { SearchCoverageAction } from '../../search/modes';
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
   import PageHeader from './PageHeader.svelte';
-  import { exploreMeetingScope, filtersToMeetingTranscripts, isMeetingTranscript } from '../../meetings/scopes';
+  import {
+    exploreMeetingScope,
+    filtersToMeetingTranscripts,
+    isMeetingTranscript,
+    restrictsToMeetingTranscripts,
+  } from '../../meetings/scopes';
   import type { EverythingSessionState } from './EverythingSessionState.svelte';
 
   type ExplorePreflight = GeneratedExplorePreflightResponse;
@@ -345,11 +350,12 @@
       });
   });
 
-  const canExportMeetings = $derived(
-    selection.mode === 'all_matching'
-      ? filtersToMeetingTranscripts(exploreState.predicate())
-      : loader.rows.some((row) => selection.isSelected(row.key) && isMeetingTranscript(row)),
-  );
+  // The meeting context API rejects any selection that contains a non-meeting row.
+  const canExportMeetings = $derived.by(() => {
+    if (selection.mode === 'all_matching') return restrictsToMeetingTranscripts(exploreState.predicate());
+    const selected = loader.rows.filter((row) => selection.isSelected(row.key));
+    return selected.length > 0 && selected.every(isMeetingTranscript);
+  });
 
   let meetingReloadRequestedAt: number | undefined;
   const meetingPredicateFingerprint = $derived(predicateFingerprint(exploreState.predicate()));

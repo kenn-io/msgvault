@@ -471,7 +471,7 @@ describe('EverythingWorkspace', () => {
   });
 
 
-  it('offers meeting export only when the selection includes a meeting', async () => {
+  it('offers meeting export only when every selected row is a meeting', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -503,8 +503,12 @@ describe('EverythingWorkspace', () => {
 
     await fireEvent.keyDown(grid, { key: 'j' });
     await fireEvent.keyDown(grid, { key: ' ' });
-
     await waitFor(() => expect(selectionStatus().textContent).toBe('2 selected'));
+    expect(screen.queryByRole('button', { name: 'Meeting context…' })).toBeNull();
+
+    await fireEvent.keyDown(grid, { key: 'k' });
+    await fireEvent.keyDown(grid, { key: ' ' });
+    await waitFor(() => expect(selectionStatus().textContent).toBe('1 selected'));
     await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
     expect(screen.getByRole('button', { name: 'Export meeting context' })).toBeDefined();
     rendered.unmount();
