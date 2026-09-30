@@ -112,7 +112,7 @@ func TestEmitGmailDraftLifecycleHumanPendingOutput(t *testing.T) {
 	err := emitGmailDraftLifecycleOutput(func(got api.CLIRunEvent) error {
 		event = got
 		return nil
-	}, cliStreamStderr, false, output)
+	}, cliStreamStderr, draftLifecycleIntent{}, output)
 	requirements.NoError(err)
 	assertions.Equal(cliStreamStderr, event.Type)
 	assertions.Contains(event.Data, "receipt (revision 2): gmail_draft_id=gmail-draft-1")

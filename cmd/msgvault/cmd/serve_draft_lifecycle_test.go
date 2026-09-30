@@ -110,6 +110,8 @@ func TestDraftLifecycleDelegatedIMAPGetEditDelete(t *testing.T) {
 	otherSource := sourceRef
 	otherSource.Identifier = "other@example.test"
 	createWithoutSender := grantFor(sourceRef, agentgrant.PermissionDraftCreate)
+	otherSender := sourceRef
+	otherSender.SenderKeys = []string{"other@example.test"}
 	for _, tc := range []struct {
 		name  string
 		grant *agentgrant.Grant
@@ -118,6 +120,10 @@ func TestDraftLifecycleDelegatedIMAPGetEditDelete(t *testing.T) {
 		{"edit on another source", grantFor(otherSource, agentgrant.PermissionDraftEdit), []string{api.CLIRunDraftEditCommand, created.DraftID, "--revision", revision, "--body", "delegated"}},
 		{"delete without draft.delete", grantFor(sourceRef, agentgrant.PermissionDraftEdit), []string{api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", revision}},
 		{"get with draft.create and no sender", createWithoutSender, []string{api.CLIRunDraftGetCommand, created.DraftID, "--json"}},
+		{"get with edit and another sender", grantFor(otherSender, agentgrant.PermissionDraftEdit), []string{api.CLIRunDraftGetCommand, created.DraftID, "--json"}},
+		{"get with delete and another sender", grantFor(otherSender, agentgrant.PermissionDraftDelete), []string{api.CLIRunDraftGetCommand, created.DraftID, "--json"}},
+		{"edit with another sender", grantFor(otherSender, agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit), []string{api.CLIRunDraftEditCommand, created.DraftID, "--revision", "99", "--body", "delegated"}},
+		{"delete with another sender", grantFor(otherSender, agentgrant.PermissionDraftDelete), []string{api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "99"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -132,17 +138,46 @@ func TestDraftLifecycleDelegatedIMAPGetEditDelete(t *testing.T) {
 
 	senderRef := sourceRef
 	senderRef.SenderKeys = []string{senderKey}
-	got, err := run(grantFor(senderRef, agentgrant.PermissionDraftCreate), api.CLIRunDraftGetCommand, created.DraftID, "--json")
-	requirements.NoError(err)
-	assertions.Contains(got, "initial body")
+	for _, permission := range []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete} {
+		got, err := run(grantFor(senderRef, permission), api.CLIRunDraftGetCommand, created.DraftID, "--json")
+		requirements.NoError(err)
+		var output draftLifecycleOutput
+		requirements.NoError(json.Unmarshal([]byte(got), &output))
+		assertions.Equal(created.Revision, output.Revision)
+		if permission == agentgrant.PermissionDraftDelete {
+			assertions.Empty(output.Content)
+			assertions.Empty(output.RawMIME)
+		} else {
+			assertions.Contains(output.Content, "initial body")
+		}
+	}
 
-	edited, err := run(grantFor(sourceRef, agentgrant.PermissionDraftEdit), api.CLIRunDraftEditCommand, created.DraftID, "--revision", revision, "--body", "delegated body", "--json")
+	_, err = fixture.store.ClaimIMAPDraftContext(t.Context(), created.DraftID, created.Revision, store.IMAPDraftOperationEdit, []byte("pending candidate"))
+	requirements.NoError(err)
+	for _, asJSON := range []bool{false, true} {
+		args := []string{api.CLIRunDraftGetCommand, created.DraftID}
+		if asJSON {
+			args = append(args, "--json")
+		}
+		got, err := run(grantFor(senderRef, agentgrant.PermissionDraftDelete), args...)
+		requirements.NoError(err)
+		assertions.NotContains(got, "initial body")
+		assertions.NotContains(got, "pending candidate")
+		assertions.NotContains(got, `"raw_mime"`)
+		assertions.Contains(got, "edit")
+	}
+	_, err = fixture.store.AbortIMAPDraftContext(t.Context(), created.DraftID, created.Revision, "cancelled")
+	requirements.NoError(err)
+
+	edited, err := run(grantFor(senderRef, agentgrant.PermissionDraftEdit), api.CLIRunDraftEditCommand, created.DraftID, "--revision", revision, "--body", "delegated body", "--json")
 	requirements.NoError(err)
 	assertions.Contains(edited, "\"revision\":2")
 
-	deleted, err := run(grantFor(sourceRef, agentgrant.PermissionDraftDelete), api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "2", "--json")
+	deleted, err := run(grantFor(senderRef, agentgrant.PermissionDraftDelete), api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "2", "--json")
 	requirements.NoError(err)
 	assertions.Contains(deleted, "\"lifecycle\":\"discarded\"")
+	assertions.NotContains(deleted, "delegated body")
+	assertions.NotContains(deleted, `"raw_mime"`)
 	assertions.Equal(2, providerCalls)
 }
 

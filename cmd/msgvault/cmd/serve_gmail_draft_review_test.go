@@ -416,7 +416,7 @@ func TestGmailDraftRecoverIsNotSupported(t *testing.T) {
 }
 
 func delegatedGmailDraftGrant(f gmailDraftTestFixture, permissions []agentgrant.Permission, sourceType, identifier string, senderKeys ...[]string) *agentgrant.Grant {
-	source := agentgrant.SourceRef{ID: f.source.ID, Type: sourceType, Identifier: identifier}
+	source := agentgrant.SourceRef{ID: f.source.ID, Type: sourceType, Identifier: identifier, SenderKeys: []string{"owner@example.test"}}
 	if len(senderKeys) > 0 {
 		source.SenderKeys = senderKeys[0]
 	}
@@ -435,6 +435,8 @@ func TestGmailDraftLifecycleDelegatedGrantManagesDraft(t *testing.T) {
 		body       string
 	}{
 		{name: "get with create", operation: api.CLIRunDraftGetCommand, permission: agentgrant.PermissionDraftCreate},
+		{name: "get with edit", operation: api.CLIRunDraftGetCommand, permission: agentgrant.PermissionDraftEdit},
+		{name: "get with delete", operation: api.CLIRunDraftGetCommand, permission: agentgrant.PermissionDraftDelete},
 		{name: "edit with edit", operation: api.CLIRunDraftEditCommand, permission: agentgrant.PermissionDraftEdit, body: "edited"},
 		{name: "delete with delete", operation: api.CLIRunDraftDeleteCommand, permission: agentgrant.PermissionDraftDelete},
 	} {
@@ -457,11 +459,7 @@ func TestGmailDraftLifecycleDelegatedGrantManagesDraft(t *testing.T) {
 				args = append(args, "--body", tc.body)
 			}
 			args = append(args, "--json")
-			var senderKeys []string
-			if tc.operation == api.CLIRunDraftGetCommand {
-				senderKeys = []string{store.NormalizeIdentifierForCompare(fixture.source.Identifier)}
-			}
-			grant := delegatedGmailDraftGrant(fixture, []agentgrant.Permission{tc.permission}, fixture.source.SourceType, fixture.source.Identifier, senderKeys)
+			grant := delegatedGmailDraftGrant(fixture, []agentgrant.Permission{tc.permission}, fixture.source.SourceType, fixture.source.Identifier)
 			var events []api.CLIRunEvent
 			err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
 				events = append(events, event)
@@ -471,9 +469,16 @@ func TestGmailDraftLifecycleDelegatedGrantManagesDraft(t *testing.T) {
 			require.Len(events, 1)
 			var output gmailDraftLifecycleOutput
 			require.NoError(json.Unmarshal([]byte(events[0].Data), &output))
+			if tc.permission == agentgrant.PermissionDraftDelete {
+				assert.Empty(output.Content)
+				assert.Empty(output.RawMIME)
+				assert.Empty(output.CandidateContent)
+			} else {
+				assert.NotEmpty(output.Content)
+				assert.NotEmpty(output.RawMIME)
+			}
 			switch tc.operation {
 			case api.CLIRunDraftGetCommand:
-				assert.Contains(output.Content, "original")
 				assert.Equal("gmail", output.Provider)
 				assert.Zero(fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls)
 			case api.CLIRunDraftEditCommand:
@@ -490,45 +495,66 @@ func TestGmailDraftLifecycleDelegatedGrantManagesDraft(t *testing.T) {
 	}
 }
 
-func TestGmailDraftGetDelegatedSenderScopeFailsClosed(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		senderKeys []string
-		raw        []byte
+func TestGmailDraftLifecycleDelegatedSenderScopeFailsClosed(t *testing.T) {
+	for _, access := range []struct {
+		operation  string
+		permission agentgrant.Permission
 	}{
-		{name: "different From on same source", senderKeys: []string{"owner@example.test"}, raw: []byte("From: other@example.test\r\nTo: sender@example.test\r\nSubject: Re: Question\r\n\r\noriginal\r\n")},
-		{name: "empty sender keys", senderKeys: []string{}},
-		{name: "absent From", senderKeys: []string{"owner@example.test"}, raw: []byte("To: sender@example.test\r\nSubject: Re: Question\r\n\r\noriginal\r\n")},
-		{name: "malformed From", senderKeys: []string{"owner@example.test"}, raw: []byte("From: not-an-address\r\nTo: sender@example.test\r\nSubject: Re: Question\r\n\r\noriginal\r\n")},
+		{api.CLIRunDraftGetCommand, agentgrant.PermissionDraftCreate},
+		{api.CLIRunDraftGetCommand, agentgrant.PermissionDraftEdit},
+		{api.CLIRunDraftGetCommand, agentgrant.PermissionDraftDelete},
+		{api.CLIRunDraftEditCommand, agentgrant.PermissionDraftEdit},
+		{api.CLIRunDraftDeleteCommand, agentgrant.PermissionDraftDelete},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			fixture := newGmailDraftTestFixture(t)
-			draft := fixture.seedDraft(t)
-			if tc.raw != nil {
-				require.NoError(fixture.store.UpsertMessageRaw(draft.CurrentMessageID, tc.raw))
-			}
-			factoryCalls := 0
-			factory := fixture.adapter.gmailDraftClientFactory
-			fixture.adapter.gmailDraftClientFactory = func(ctx context.Context, source *store.Source) (gmail.DraftAPI, error) {
-				factoryCalls++
-				return factory(ctx, source)
-			}
-			grant := delegatedGmailDraftGrant(fixture, []agentgrant.Permission{agentgrant.PermissionDraftCreate}, fixture.source.SourceType, fixture.source.Identifier, tc.senderKeys)
-			var events []api.CLIRunEvent
-			err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
-				Args: []string{api.CLIRunDraftGetCommand, draft.DraftID, "--json"}, Grant: grant,
-			}, func(event api.CLIRunEvent) error {
-				events = append(events, event)
-				return nil
+		for _, tc := range []struct {
+			name       string
+			senderKeys []string
+			raw        []byte
+		}{
+			{name: "different From on same source", senderKeys: []string{"owner@example.test"}, raw: []byte("From: other@example.test\r\nTo: sender@example.test\r\nSubject: Re: Question\r\n\r\noriginal\r\n")},
+			{name: "empty sender keys", senderKeys: []string{}},
+			{name: "absent From", senderKeys: []string{"owner@example.test"}, raw: []byte("To: sender@example.test\r\nSubject: Re: Question\r\n\r\noriginal\r\n")},
+			{name: "malformed From", senderKeys: []string{"owner@example.test"}, raw: []byte("From: not-an-address\r\nTo: sender@example.test\r\nSubject: Re: Question\r\n\r\noriginal\r\n")},
+		} {
+			t.Run(access.operation+"/"+string(access.permission)+"/"+tc.name, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				fixture := newGmailDraftTestFixture(t)
+				draft := fixture.seedDraft(t)
+				if tc.raw != nil {
+					require.NoError(fixture.store.UpsertMessageRaw(draft.CurrentMessageID, tc.raw))
+				}
+				factoryCalls := 0
+				factory := fixture.adapter.gmailDraftClientFactory
+				fixture.adapter.gmailDraftClientFactory = func(ctx context.Context, source *store.Source) (gmail.DraftAPI, error) {
+					factoryCalls++
+					return factory(ctx, source)
+				}
+				grant := delegatedGmailDraftGrant(fixture, []agentgrant.Permission{access.permission}, fixture.source.SourceType, fixture.source.Identifier, tc.senderKeys)
+				args := []string{access.operation, draft.DraftID, "--json"}
+				if access.operation != api.CLIRunDraftGetCommand {
+					args = append(args, "--revision", "99")
+				}
+				if access.operation == api.CLIRunDraftEditCommand {
+					args = append(args, "--body", "edited")
+				}
+				var events []api.CLIRunEvent
+				err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{
+					Args: args, Grant: grant,
+				}, func(event api.CLIRunEvent) error {
+					events = append(events, event)
+					return nil
+				})
+				require.Error(err)
+				assert.Equal("not_permitted", err.Error())
+				if tc.name == "absent From" {
+					assert.Contains(errors.Unwrap(err).Error(), "exactly one From address")
+				}
+				assert.Empty(events)
+				assert.Zero(factoryCalls)
+				assert.Zero(fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls)
 			})
-			require.Error(err)
-			assert.Equal("not_permitted", err.Error())
-			assert.Empty(events)
-			assert.Zero(factoryCalls)
-			assert.Zero(fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls)
-		})
+		}
 	}
 }
 
@@ -650,6 +676,26 @@ func TestGmailDraftDelegatedUncertainEditStaysPending(t *testing.T) {
 	assert.Equal("edit", getOutput.PendingOperation)
 	assert.Contains(getOutput.CandidateContent, "candidate")
 	assert.Equal(updateCalls, fixture.client.updateCalls)
+
+	grant.Permissions = []agentgrant.Permission{agentgrant.PermissionDraftDelete}
+	for _, asJSON := range []bool{false, true} {
+		args := []string{api.CLIRunDraftGetCommand, draft.DraftID}
+		if asJSON {
+			args = append(args, "--json")
+		}
+		events = nil
+		err = fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+			events = append(events, event)
+			return nil
+		})
+		require.NoError(err)
+		require.Len(events, 1)
+		assert.NotContains(events[0].Data, `"content"`)
+		assert.NotContains(events[0].Data, "content:\noriginal")
+		assert.NotContains(events[0].Data, "candidate")
+		assert.NotContains(events[0].Data, `"raw_mime"`)
+		assert.Contains(events[0].Data, "remote_unknown")
+	}
 }
 
 func TestGmailDraftLifecycleDelegatedStaleRevisionStopsBeforeProvider(t *testing.T) {
@@ -882,6 +928,47 @@ func TestGmailDraftExternalAdoptionReturnsFailure(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(2), adopted.Revision)
 	assert.Equal("gmail-message-external", adopted.CurrentReceipt.GmailMessageID)
+}
+
+func TestGmailDraftDelegatedExternalAdoptionChecksSender(t *testing.T) {
+	for _, operation := range []string{api.CLIRunDraftEditCommand, api.CLIRunDraftDeleteCommand} {
+		for _, sender := range []string{"owner@example.test", "other@example.test"} {
+			t.Run(operation+"/"+sender, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				fixture := newGmailDraftTestFixture(t)
+				draft := fixture.seedDraft(t)
+				fixture.client.getDraft.Message.ID = "gmail-message-external"
+				fixture.client.getDraft.Message.Raw = []byte(strings.Replace(string(gmailDraftTestRaw("external body", "external@example.test")), "From: owner@example.test", "From: "+sender, 1))
+				permissions := []agentgrant.Permission{agentgrant.PermissionDraftEdit}
+				args := []string{operation, draft.DraftID, "--revision", "1", "--json"}
+				if operation == api.CLIRunDraftEditCommand {
+					args = append(args, "--body", "candidate")
+				} else {
+					permissions = []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftDelete}
+				}
+				grant := delegatedGmailDraftGrant(fixture, permissions, fixture.source.SourceType, fixture.source.Identifier)
+				var events []api.CLIRunEvent
+				err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+					events = append(events, event)
+					return nil
+				})
+				require.Error(err)
+				if sender == "other@example.test" {
+					assert.Equal("not_permitted", err.Error())
+					assert.Empty(events)
+				} else {
+					assert.Equal("changed_externally", err.Error())
+					require.Len(events, 1)
+					assert.Contains(events[0].Data, "external body")
+				}
+				assert.Zero(fixture.client.updateCalls + fixture.client.deleteCalls)
+				adopted, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+				require.NoError(err)
+				assert.Equal(int64(2), adopted.Revision)
+			})
+		}
+	}
 }
 
 func TestGmailDraftExternalAdoptionPersistsAttachments(t *testing.T) {
@@ -1147,7 +1234,7 @@ func TestGmailDraftAcceptedReplacementReceiptIsOutputWhenPublicationFails(t *tes
 	require.NoError(emitGmailDraftLifecycleOutput(func(event api.CLIRunEvent) error {
 		human = event
 		return nil
-	}, cliStreamStderr, false, output))
+	}, cliStreamStderr, draftLifecycleIntent{}, output))
 	assert.Contains(human.Data, "pending replacement Gmail message ID: gmail-message-edited")
 	assert.Contains(human.Data, "acknowledged replacement receipt:")
 }

@@ -256,7 +256,7 @@ func TestEmitDraftLifecycleOutputHuman(t *testing.T) {
 			err := emitDraftLifecycleOutput(func(event api.CLIRunEvent) error {
 				events = append(events, event)
 				return nil
-			}, cliStreamStderr, false, tt.output)
+			}, cliStreamStderr, draftLifecycleIntent{}, tt.output)
 			requirements.NoError(err)
 			requirements.Len(events, 1)
 			for _, want := range tt.want {
@@ -306,7 +306,7 @@ func TestEmitDraftLifecycleOutputJSONRoundTrip(t *testing.T) {
 	err := emitDraftLifecycleOutput(func(event api.CLIRunEvent) error {
 		events = append(events, event)
 		return nil
-	}, cliStreamStdout, true, output)
+	}, cliStreamStdout, draftLifecycleIntent{JSON: true}, output)
 	requirements.NoError(err)
 	requirements.Len(events, 1)
 	var decoded draftLifecycleOutput

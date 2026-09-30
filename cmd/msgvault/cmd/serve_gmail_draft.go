@@ -514,7 +514,7 @@ func gmailDraftLifecycleOutputWithoutMessage(
 
 func (a *storeAPIAdapter) reportGmailDraftAcceptedLocalFailure(
 	emit func(api.CLIRunEvent) error,
-	asJSON bool,
+	intent draftLifecycleIntent,
 	claimed store.GmailDraft,
 	replacement store.GmailDraftReceipt,
 	replacementRaw []byte,
@@ -543,7 +543,7 @@ func (a *storeAPIAdapter) reportGmailDraftAcceptedLocalFailure(
 			output.CandidateContent = string(claimed.Pending.Raw)
 		}
 	}
-	if err := emitGmailDraftLifecycleOutput(emit, cliStreamStderr, asJSON, output); err != nil {
+	if err := emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent, output); err != nil {
 		return draftReplyError("accepted_local_failed", errors.Join(cause, err))
 	}
 	return draftReplyError("accepted_local_failed", cause)
@@ -552,13 +552,18 @@ func (a *storeAPIAdapter) reportGmailDraftAcceptedLocalFailure(
 func emitGmailDraftLifecycleOutput(
 	emit func(api.CLIRunEvent) error,
 	stream string,
-	asJSON bool,
+	intent draftLifecycleIntent,
 	output gmailDraftLifecycleOutput,
 ) error {
 	if emit == nil {
 		return nil
 	}
-	if asJSON {
+	if intent.MetadataOnly {
+		output.Content = ""
+		output.RawMIME = ""
+		output.CandidateContent = ""
+	}
+	if intent.JSON {
 		data, err := jsonv2.Marshal(output)
 		if err != nil {
 			return err
@@ -678,7 +683,7 @@ func (a *storeAPIAdapter) emitGmailDraftPending(
 	if output.PendingCode == "" {
 		output.PendingCode = code
 	}
-	_ = emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
+	_ = emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent, output)
 }
 
 func (a *storeAPIAdapter) recordGmailDraftUncertainOutcome(
@@ -732,7 +737,7 @@ func (a *storeAPIAdapter) completeGmailDraftDelete(
 	if err != nil {
 		return draftReplyError("draft_read_failed", err)
 	}
-	return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
+	return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent, output)
 }
 
 func (a *storeAPIAdapter) retryConfirmedGmailDraftDelete(
@@ -795,7 +800,7 @@ func (a *storeAPIAdapter) retryConfirmedGmailDraftDelete(
 	if err != nil {
 		return draftReplyError("draft_read_failed", err)
 	}
-	return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
+	return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent, output)
 }
 
 // runDelegatedGmailDraftLifecycle authorizes a delegated get, edit, or delete
@@ -815,16 +820,19 @@ func (a *storeAPIAdapter) runDelegatedGmailDraftLifecycle(
 	if err != nil {
 		return draftReplyNotPermitted(err)
 	}
-	if err := a.authorizeDelegatedDraftLifecycle(ctx, intent, grant, draft.SourceID, draft.CurrentMessageID); err != nil {
+	canReadContent, err := a.authorizeDelegatedDraftLifecycle(ctx, intent, grant, draft.SourceID, draft.CurrentMessageID)
+	if err != nil {
 		return err
 	}
-	return a.runCLIGmailDraftLifecycle(ctx, intent, draft, emit)
+	intent.MetadataOnly = !canReadContent
+	return a.runCLIGmailDraftLifecycle(ctx, intent, draft, grant, emit)
 }
 
 func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 	ctx context.Context,
 	intent draftLifecycleIntent,
 	draft store.GmailDraft,
+	grant *agentgrant.Grant,
 	emit func(api.CLIRunEvent) error,
 ) error {
 	if intent.Operation == api.CLIRunDraftGetCommand {
@@ -832,7 +840,7 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		if err != nil {
 			return draftReplyError("draft_read_failed", err)
 		}
-		return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
+		return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent, output)
 	}
 	if draft.Revision != intent.Revision {
 		return draftReplyError("revision_mismatch", fmt.Errorf("expected revision %d, found %d", intent.Revision, draft.Revision))
@@ -843,7 +851,7 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 			if err != nil {
 				return draftReplyError("draft_read_failed", err)
 			}
-			return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
+			return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent, output)
 		}
 		return draftReplyError("draft_discarded", errors.New("discarded drafts cannot be edited"))
 	}
@@ -974,6 +982,13 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		}
 		finish()
 		defer refresh()
+		// A provider edit can change From. Authorize the adopted message before
+		// returning any of its content or lifecycle metadata to the agent.
+		if grant != nil {
+			if _, err := a.authorizeDelegatedDraftLifecycle(evidenceCtx, intent, grant, adopted.SourceID, adopted.CurrentMessageID); err != nil {
+				return err
+			}
+		}
 		status := "changed_externally"
 		if recovered {
 			status = "recovered"
@@ -985,7 +1000,7 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		if outputErr != nil {
 			return draftReplyError("draft_read_failed", outputErr)
 		}
-		if err := emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output); err != nil {
+		if err := emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent, output); err != nil {
 			return draftReplyError("output_failed", err)
 		}
 		if recovered {
@@ -1036,7 +1051,7 @@ func (a *storeAPIAdapter) runGmailDraftEdit(
 			}
 			output, outputErr := a.gmailDraftLifecycleOutput(evidenceCtx, active, code, nil, nil)
 			if outputErr == nil {
-				_ = emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
+				_ = emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent, output)
 			}
 			return draftReplyError(code, gmailWriteCause(err))
 		}
@@ -1055,13 +1070,13 @@ func (a *storeAPIAdapter) runGmailDraftEdit(
 	}
 	if err := a.store.RecordGmailDraftOutcomeContext(evidenceCtx, intent.DraftID, intent.Revision, "accepted_local_failed", updated.Message.ID); err != nil {
 		return a.reportGmailDraftAcceptedLocalFailure(
-			emit, intent.JSON, claimed, replacementReceipt, replacement.Raw, err,
+			emit, intent, claimed, replacementReceipt, replacement.Raw, err,
 		)
 	}
 	replyTo, err := a.store.GetMessageReplyToMessageIDContext(evidenceCtx, draft.CurrentMessageID)
 	if err != nil {
 		return a.reportGmailDraftAcceptedLocalFailure(
-			emit, intent.JSON, claimed, replacementReceipt, replacement.Raw, err,
+			emit, intent, claimed, replacementReceipt, replacement.Raw, err,
 		)
 	}
 	published, err := a.store.PublishGmailDraftReplacementContext(
@@ -1071,7 +1086,7 @@ func (a *storeAPIAdapter) runGmailDraftEdit(
 	)
 	if err != nil {
 		return a.reportGmailDraftAcceptedLocalFailure(
-			emit, intent.JSON, claimed, replacementReceipt, replacement.Raw, err,
+			emit, intent, claimed, replacementReceipt, replacement.Raw, err,
 		)
 	}
 	finish()
@@ -1080,7 +1095,7 @@ func (a *storeAPIAdapter) runGmailDraftEdit(
 	if err != nil {
 		return draftReplyError("draft_read_failed", err)
 	}
-	return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent.JSON, output)
+	return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent, output)
 }
 
 func (a *storeAPIAdapter) runGmailDraftDelete(
@@ -1112,7 +1127,7 @@ func (a *storeAPIAdapter) runGmailDraftDelete(
 			}
 			output, outputErr := a.gmailDraftLifecycleOutput(evidenceCtx, active, code, nil, nil)
 			if outputErr == nil {
-				_ = emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent.JSON, output)
+				_ = emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent, output)
 			}
 			return draftReplyError(code, gmailWriteCause(err))
 		}
