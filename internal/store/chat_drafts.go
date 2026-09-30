@@ -118,7 +118,7 @@ func (s *Store) CreateChatDraftContext(
 				conversation_type, reply_to_source_message_id, body, revision,
 				created_at, updated_at
 			) VALUES (?, ?, ?, ?, ?, ?, ?, 1, %s, %s)
-		`, s.dialect.Now(), s.dialect.Now()), draftID, dest.sourceID, conversationID,
+		`, s.dialect.ContentChangedNow(), s.dialect.Now()), draftID, dest.sourceID, conversationID,
 			dest.nativeID.String, dest.conversationType.String, reply, body); err != nil {
 			return fmt.Errorf("insert chat draft: %w", err)
 		}

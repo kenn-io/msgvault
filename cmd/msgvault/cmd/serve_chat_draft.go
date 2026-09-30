@@ -78,9 +78,18 @@ func (a *storeAPIAdapter) runCLIChatDraftCreate(
 	if err := invalidChatDraftBody(intent.Body); err != nil {
 		return err
 	}
+	authorize := chatDraftAuthorizer(grant, agentgrant.PermissionDraftCreate)
+	authorized := false
 	draft, err := a.store.CreateChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, intent.Body,
-		chatDraftAuthorizer(grant, agentgrant.PermissionDraftCreate))
+		func(sourceType, identifier string) error {
+			err := authorize(sourceType, identifier)
+			authorized = err == nil
+			return err
+		})
 	if err != nil {
+		if authorized {
+			grant = nil // the grant covers this source, so later errors reveal nothing to hide
+		}
 		return chatDraftStoreError(err, grant)
 	}
 	return emitChatDrafts(emit, intent.JSON, false, "created", draft)
