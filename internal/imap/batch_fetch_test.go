@@ -512,7 +512,7 @@ func TestApplyFetchResultsMarksMissingUIDs(t *testing.T) {
 	}
 
 	var c Client
-	omitted := c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+	omitted := c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs, false)
 
 	require.NotNil(results[0].Message)
 	assert.Equal("Archive|10", results[0].Message.ID)
@@ -548,7 +548,7 @@ func TestApplyFetchResultsMarksMissingRawBody(t *testing.T) {
 			chunk := []batchFetchItem{{idx: 0, uid: imapapi.UID(10)}}
 
 			var c Client
-			c.applyFetchResults(results, uidToIdx, "Archive", chunk, []*imapclient.FetchMessageBuffer{tt.msg})
+			c.applyFetchResults(results, uidToIdx, "Archive", chunk, []*imapclient.FetchMessageBuffer{tt.msg}, false)
 
 			assert.Nil(t, results[0].Message)
 			require.ErrorIs(t, results[0].Err, errIMAPRawBodyMissing)
@@ -572,7 +572,7 @@ func TestApplyFetchResultsPreservesDedupStub(t *testing.T) {
 		seenRFC822IDs: map[string]bool{"duplicate@example.com": true},
 	}
 
-	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs, false)
 
 	require.NotNil(results[0].Message)
 	assert.Equal("Archive|10", results[0].Message.ID)
@@ -595,7 +595,7 @@ func TestApplyFetchResultsDedupsUsingRawMessageIDWithoutEnvelope(t *testing.T) {
 		seenRFC822IDs: map[string]bool{"duplicate@example.com": true},
 	}
 
-	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs, false)
 
 	require.NotNil(results[0].Message)
 	assert.Equal("Archive|10", results[0].Message.ID)
@@ -619,7 +619,7 @@ func TestApplyFetchResultsMergesLabelsUsingRawMessageIDWithoutEnvelope(t *testin
 		},
 	}
 
-	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs, false)
 
 	require.NotNil(results[0].Message)
 	assert.Equal([]string{"Archive", "Projects"}, results[0].Message.LabelIDs)
@@ -643,7 +643,7 @@ func TestApplyFetchResultsMergesLabelsWhenRawMessageIDHasRecoverableMIMEError(t 
 		},
 	}
 
-	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs, false)
 
 	require.NotNil(results[0].Message)
 	assert.Equal([]string{"Archive", "Projects"}, results[0].Message.LabelIDs)
@@ -685,7 +685,7 @@ func TestApplyFetchResultsImportsWhenRawMessageIDMissingOrInvalid(t *testing.T) 
 				msgIDToLabels: map[string][]string{"existing": {"Projects"}},
 			}
 
-			c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+			c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs, false)
 
 			require.NotNil(results[0].Message)
 			assert.Equal("Archive|10", results[0].Message.ID)
@@ -821,7 +821,7 @@ func TestMissingUIDDropsEarlierMembershipObservation(t *testing.T) {
 			fetchMessageBuffer("message-10", []byte("raw-10")),
 		}
 
-		omitted := c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+		omitted := c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs, false)
 		markConfirmedGone(&c, results, nil, "Archive", omitted)
 
 		require.ErrorIs(t, results[1].Err, errIMAPFetchResultMissing)

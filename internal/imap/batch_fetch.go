@@ -131,17 +131,6 @@ func (c *Client) applyFetchResults(
 	mailbox string,
 	chunk []batchFetchItem,
 	msgs []*imapclient.FetchMessageBuffer,
-) []batchFetchItem {
-	return c.applyFetchResultsWithIdentityValidation(
-		results, uidToIdx, mailbox, chunk, msgs, false)
-}
-
-func (c *Client) applyFetchResultsWithIdentityValidation(
-	results []gmailapi.RawMessageBatchResult,
-	uidToIdx map[imap.UID]int,
-	mailbox string,
-	chunk []batchFetchItem,
-	msgs []*imapclient.FetchMessageBuffer,
 	forceFullRaw bool,
 ) []batchFetchItem {
 	seenReturnedUIDs := make(map[imap.UID]bool, len(msgs))
@@ -412,7 +401,7 @@ func (c *Client) fetchMailboxBatch(
 			return nil
 		}
 
-		omitted := c.applyFetchResultsWithIdentityValidation(
+		omitted := c.applyFetchResults(
 			results, uidToIdx, mailbox, chunk, msgs, forceFullRaw)
 		if len(omitted) > 0 {
 			var fatalErr error
@@ -468,7 +457,7 @@ func (c *Client) recheckOmittedRaw(
 		markRawBatchError(results, omitted, err)
 		return nil, nil
 	}
-	return c.applyFetchResultsWithIdentityValidation(
+	return c.applyFetchResults(
 		results, uidToIdx, mailbox, omitted, msgs, forceFullRaw), nil
 }
 
@@ -926,9 +915,10 @@ func (c *Client) FetchedSourceMessageMatches(
 			return true, true, nil
 		}
 		if legacyRFC822MessageIDsMatch(expectedRFC822MessageID, actualRFC822MessageID) {
-			// A tolerant match cannot establish that a reused UID still names
-			// the archived message. Let sync compare the fetched raw MIME.
-			return false, false, nil
+			// An unchanged mailbox epoch proves the UID still names the
+			// archived message. Without one, a tolerant match cannot rule out
+			// UID reuse, so sync compares the fetched raw MIME instead.
+			return epochKnown, epochKnown, nil
 		}
 		return false, true, nil
 	}
@@ -963,8 +953,21 @@ func (c *Client) SourceMessageMatches(
 	if !exists {
 		return false, true, nil
 	}
-	return normalizeRFC822MessageID(expectedRFC822MessageID) ==
-		normalizeRFC822MessageID(actualRFC822MessageID), true, nil
+	if normalizeRFC822MessageID(actualRFC822MessageID) ==
+		normalizeRFC822MessageID(expectedRFC822MessageID) {
+		return true, true, nil
+	}
+	if !legacyRFC822MessageIDsMatch(expectedRFC822MessageID, actualRFC822MessageID) {
+		return false, true, nil
+	}
+	// A tolerant match is accepted only under an unchanged mailbox epoch.
+	// Without one, keep the conclusive mismatch: an inconclusive result would
+	// defer the copy unacknowledged and block the mailbox baseline.
+	epochMatches, epochKnown, err := c.sourceMessageIDEpochMatches(messageID)
+	if err != nil {
+		return false, false, err
+	}
+	return epochKnown && epochMatches, true, nil
 }
 
 // IsPreferredSourceMessageID reports whether messageID belongs to the

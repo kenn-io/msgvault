@@ -69,48 +69,50 @@ func (s *Syncer) getMessagesRawBatchWithDiagnostics(ctx context.Context, message
 	return results, nil
 }
 
+// getMessagesRawBatchWithIdentityValidation fetches validationIDs first with
+// full raw MIME so their Message-IDs turn later ordinary copies into dedup
+// stubs. Results keep the order of messageIDs.
 func (s *Syncer) getMessagesRawBatchWithIdentityValidation(
 	ctx context.Context,
 	messageIDs []string,
 	validationIDs map[string]inconclusiveLabelRefresh,
-) ([]string, []gmail.RawMessageBatchResult, error) {
+) ([]gmail.RawMessageBatchResult, error) {
 	client, ok := s.client.(rawBatchWithIdentityValidation)
 	if !ok || len(validationIDs) == 0 {
-		results, err := s.getMessagesRawBatchWithDiagnostics(ctx, messageIDs)
-		return messageIDs, results, err
+		return s.getMessagesRawBatchWithDiagnostics(ctx, messageIDs)
 	}
 
 	var requiredIDs, ordinaryIDs []string
-	for _, id := range messageIDs {
+	var requiredIdx, ordinaryIdx []int
+	for i, id := range messageIDs {
 		if _, needsValidation := validationIDs[id]; needsValidation {
 			requiredIDs = append(requiredIDs, id)
+			requiredIdx = append(requiredIdx, i)
 		} else {
 			ordinaryIDs = append(ordinaryIDs, id)
+			ordinaryIdx = append(ordinaryIdx, i)
 		}
 	}
-	if len(requiredIDs) == 0 {
-		results, err := s.getMessagesRawBatchWithDiagnostics(ctx, messageIDs)
-		return messageIDs, results, err
-	}
 
-	validatedResults, err := client.GetMessagesRawBatchWithIdentityValidation(
-		ctx, requiredIDs)
+	results := make([]gmail.RawMessageBatchResult, len(messageIDs))
+	required, err := client.GetMessagesRawBatchWithIdentityValidation(ctx, requiredIDs)
 	if err != nil {
-		return messageIDs, nil, err
+		return nil, err
 	}
-	var ordinaryResults []gmail.RawMessageBatchResult
-	if len(ordinaryIDs) > 0 {
-		ordinaryResults, err = s.getMessagesRawBatchWithDiagnostics(ctx, ordinaryIDs)
-		if err != nil {
-			return messageIDs, nil, err
-		}
+	for i, result := range required {
+		results[requiredIdx[i]] = result
 	}
-
-	orderedIDs := append([]string(nil), requiredIDs...)
-	orderedIDs = append(orderedIDs, ordinaryIDs...)
-	results := append([]gmail.RawMessageBatchResult(nil), validatedResults...)
-	results = append(results, ordinaryResults...)
-	return orderedIDs, results, nil
+	if len(ordinaryIDs) == 0 {
+		return results, nil
+	}
+	ordinary, err := s.getMessagesRawBatchWithDiagnostics(ctx, ordinaryIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i, result := range ordinary {
+		results[ordinaryIdx[i]] = result
+	}
+	return results, nil
 }
 
 // pendingFetchReplayIDs returns the raw-fetch failures the latest completed

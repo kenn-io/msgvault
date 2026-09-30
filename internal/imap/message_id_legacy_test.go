@@ -58,7 +58,7 @@ func TestLegacyMessageIDFallbackRejectsNestedBracketsAndBodyText(t *testing.T) {
 	}
 }
 
-func TestLegacyMessageIDSourceValidationRequiresRawProof(t *testing.T) {
+func TestLegacyMessageIDSourceValidation(t *testing.T) {
 	for _, test := range []struct {
 		name, stored, actual      string
 		wantMatch, wantConclusive bool
@@ -78,12 +78,23 @@ func TestLegacyMessageIDSourceValidationRequiresRawProof(t *testing.T) {
 			assert.Equal(t, test.wantMatch, matches)
 		})
 	}
-	client := Client{
-		priorFolderStates:    map[string]FolderState{"INBOX": {UIDValidity: 1}},
-		observedFolderStates: map[string]FolderState{"INBOX": {UIDValidity: 2}},
+	for _, test := range []struct {
+		name                      string
+		observedUIDValidity       uint32
+		wantMatch, wantConclusive bool
+	}{
+		{"unchanged epoch proves legacy identity", 1, true, true},
+		{"changed epoch invalidates legacy identity", 2, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := Client{
+				priorFolderStates:    map[string]FolderState{"INBOX": {UIDValidity: 1}},
+				observedFolderStates: map[string]FolderState{"INBOX": {UIDValidity: test.observedUIDValidity}},
+			}
+			matches, conclusive, err := client.FetchedSourceMessageMatches("INBOX|1", "<legacy@example.test", "legacy@example.test")
+			require.NoError(t, err)
+			assert.Equal(t, test.wantConclusive, conclusive)
+			assert.Equal(t, test.wantMatch, matches)
+		})
 	}
-	matches, conclusive, err := client.FetchedSourceMessageMatches("INBOX|1", "<legacy@example.test", "legacy@example.test")
-	require.NoError(t, err)
-	assert.False(t, matches, "a changed epoch still invalidates equivalent legacy IDs")
-	assert.True(t, conclusive)
 }

@@ -44,7 +44,7 @@ func TestNormalizeLegacyMessageID(t *testing.T) {
 		{"trailing parameters", `<Local@EXAMPLE.TEST> type="multipart/alternative"`, "Local@EXAMPLE.TEST"},
 		{"first bracket", "prefix <Local@example.test> type=alternative", "Local@example.test"},
 		{"bare", "Local@EXAMPLE.TEST", "Local@EXAMPLE.TEST"},
-		{"first bare token", "legacy-token type=alternative", "legacy-token"},
+		{"bare trailing text", "legacy-token type=alternative", ""},
 		{"colon", "legacy:token", "legacy:token"},
 		{"square", "<[legacy-token==@example.test]>", "[legacy-token==@example.test]"},
 		{"outer whitespace", " \t<Local@example.test\r\n", "Local@example.test"},

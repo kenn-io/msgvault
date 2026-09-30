@@ -127,7 +127,7 @@ func TestRelocationRawFetchRejectsEpochChangeAndBypassesDedup(t *testing.T) {
 			results := newRawBatchResults([]string{"Sent|1"})
 			c.applyFetchResults(results, map[imapapi.UID]int{1: 0}, "Sent", []batchFetchItem{{idx: 0, uid: 1}}, []*imapclient.FetchMessageBuffer{{
 				UID: 1, BodySection: []imapclient.FetchBodySectionBuffer{{Bytes: raw}},
-			}})
+			}}, false)
 			if epoch == 99 {
 				require.Error(results[0].Err)
 				require.NotErrorIs(results[0].Err, gmail.ErrMessageGone)

@@ -27,7 +27,6 @@ func TestApplyIMAPMailboxDeltas_LegacyMessageID(t *testing.T) {
 		{"missing closing bracket", "<legacy@example.test", "legacy@example.test"},
 		{"trailing parameters", `<ABCDEF@example.test> type="multipart/alternative"`, "ABCDEF@example.test"},
 		{"domain case", `<ABCDEF@EXAMPLE.TEST> type="multipart/alternative"`, "ABCDEF@example.test"},
-		{"bare first token", "legacy-token type=alternative", "legacy-token"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -63,7 +62,7 @@ func TestApplyIMAPMailboxDeltas_LegacyMessageID(t *testing.T) {
 }
 
 func TestApplyIMAPMailboxDeltas_LegacyMessageIDSafety(t *testing.T) {
-	for _, mode := range []string{"ambiguous", "live-deleted collision", "local case", "other source", "nested", "empty", "source precedence", "exact precedence"} {
+	for _, mode := range []string{"ambiguous", "live-deleted collision", "local case", "bare trailing text", "other source", "nested", "empty", "source precedence", "exact precedence"} {
 		t.Run(mode, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
@@ -80,6 +79,9 @@ func TestApplyIMAPMailboxDeltas_LegacyMessageIDSafety(t *testing.T) {
 				}
 			case "local case":
 				observation.RFC822MessageID = "local@example.test"
+			case "bare trailing text":
+				f.createMessage(t, "Archive|2", "legacy-token type=alternative")
+				observation.RFC822MessageID = "legacy-token"
 			case "other source":
 				other, err := f.store.GetOrCreateSource("imap", "other-legacy@example.test")
 				requirements.NoError(err)
