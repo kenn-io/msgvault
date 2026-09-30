@@ -25,6 +25,7 @@
     onExport = undefined,
     onOpenInSource = undefined,
     onReviewDeletion = undefined,
+    onClear = undefined,
   }: {
     selection: ExploreSelectionState;
     totalCount?: number;
@@ -36,6 +37,8 @@
     onExport?: () => void;
     onOpenInSource?: () => void;
     onReviewDeletion?: (mode: 'explicit' | 'all_matching') => void;
+    /** Runs after Clear selection, which removes the bar and its focused button. */
+    onClear?: () => void;
   } = $props();
 
   const exportReason = $derived(preflight?.unavailable_actions.find((item) => item.action === 'export')?.reason);
@@ -57,6 +60,9 @@
   );
 
   let meetingOpen = $state(false);
+  $effect(() => {
+    if (!visible) meetingOpen = false;
+  });
   const message = $derived.by(() => {
     if (selection.mode === 'all_matching') {
       const total = totalCount === undefined ? 'matching' : totalCount.toLocaleString();
@@ -67,9 +73,13 @@
   });
 </script>
 
+<!-- The live region outlives the bar so the first "1 selected" is announced. -->
+<span class="kit-sr-only" role="status" aria-label="Selection status" aria-live="polite"
+  >{visible ? message : ''}</span
+>
 {#if visible}
   <div class="selection-bar">
-    <span role="status" aria-live="polite">{message}</span>
+    <span class="selection-count" aria-hidden="true">{message}</span>
     {#if allMatching && selection.mode === 'explicit' && selection.count > 0}
       <Button
         size="sm"
@@ -112,18 +122,30 @@
           <Ellipsis size={16} aria-hidden="true" />
         </MenuTrigger>
         <MenuContent ariaLabel="More selection actions">
-          <MenuItem disabled={Boolean(openReason)} onselect={() => onOpenInSource?.()}>
-            Open selection in source
-          </MenuItem>
-          {#if openReason}
-            <span class="menu-reason" title={openReason}>
-              {preflightReasonLabel('open_in_source', openReason)}
+          <MenuItem
+            disabled={Boolean(openReason)}
+            textValue="Open selection in source"
+            onselect={() => onOpenInSource?.()}
+          >
+            <span class="menu-item-text">
+              Open selection in source
+              {#if openReason}
+                <span class="menu-reason">{preflightReasonLabel('open_in_source', openReason)}</span>
+              {/if}
             </span>
-          {/if}
+          </MenuItem>
         </MenuContent>
       </Menu>
     {/if}
-    <Button size="sm" surface="soft" label="Clear selection" onclick={() => selection.clear()} />
+    <Button
+      size="sm"
+      surface="soft"
+      label="Clear selection"
+      onclick={() => {
+        selection.clear();
+        onClear?.();
+      }}
+    />
     {#if client && meetingSelection && canExportMeetings && meetingOpen}
       <div class="meeting-row">
         <MeetingContextExport
@@ -138,8 +160,6 @@
 
 <style>
   .selection-bar {
-    position: sticky;
-    bottom: 0;
     display: flex;
     min-height: 36px;
     flex: 0 0 auto;
@@ -153,7 +173,7 @@
     font-size: var(--font-size-xs);
   }
 
-  [role='status'] {
+  .selection-count {
     margin-right: auto;
     font-weight: 600;
   }
@@ -166,12 +186,17 @@
     gap: var(--space-3) var(--space-4);
   }
 
+  .menu-item-text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
   .menu-reason {
-    display: block;
     max-width: 16rem;
-    padding: var(--space-2) var(--space-3);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
+    white-space: normal;
   }
 
   .action-reason {

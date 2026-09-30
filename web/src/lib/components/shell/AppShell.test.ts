@@ -2703,13 +2703,35 @@ describe('AppShell', () => {
     await fireEvent.keyDown(grid, { key: ' ' });
     await fireEvent.keyDown(grid, { key: 'j' });
     await fireEvent.keyDown(grid, { key: 'j' });
-    await waitFor(() => expect(screen.getByText('1 selected')).toBeTruthy());
+    await waitFor(() => expect(selectionStatus().textContent).toBe('1 selected'));
     grid.blur();
     expect(document.activeElement).toBe(document.body);
 
     await fireEvent.keyDown(document.body, { key: ' ', shiftKey: true });
 
-    await waitFor(() => expect(screen.getByText('3 selected')).toBeTruthy());
+    await waitFor(() => expect(selectionStatus().textContent).toBe('3 selected'));
+    rendered.unmount();
+    state.destroy();
+  });
+
+  it('returns focus to the results grid after Clear selection', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    const fetchFn = vi.fn<typeof fetch>(async () =>
+      Response.json(exploreResponse({ rows: [entry(0), entry(1)], total_count: 2 })));
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    const grid = await screen.findByRole('grid', { name: 'Everything results' });
+    await screen.findByText('Synthetic subject 0');
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: ' ' });
+    await waitFor(() => expect(selectionStatus().textContent).toBe('1 selected'));
+
+    const clear = screen.getByRole('button', { name: 'Clear selection' });
+    clear.focus();
+    await fireEvent.click(clear);
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
+    expect(document.activeElement).toBe(screen.getByRole('grid', { name: 'Everything results' }));
     rendered.unmount();
     state.destroy();
   });
@@ -2769,7 +2791,7 @@ describe('AppShell', () => {
 
     await fireEvent.keyDown(document.body, { key: 'a' });
 
-    await waitFor(() => expect(screen.getByText('3 selected')).toBeTruthy());
+    await waitFor(() => expect(selectionStatus().textContent).toBe('3 selected'));
     expect(gridKeys).toEqual(['A']);
 
     gridKeys.length = 0;
@@ -2886,3 +2908,7 @@ describe('AppShell', () => {
     });
   });
 });
+
+function selectionStatus(): HTMLElement {
+  return screen.getByRole('status', { name: 'Selection status' });
+}

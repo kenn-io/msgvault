@@ -796,6 +796,7 @@
               {canExportMeetings}
               onExport={exportSelection}
               {onReviewDeletion}
+              onClear={focusGrid}
             />
           {/if}
         </div>

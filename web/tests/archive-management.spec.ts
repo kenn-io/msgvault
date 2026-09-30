@@ -68,7 +68,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await expect(grid.getByText('Reviewed message')).toBeVisible();
   await grid.focus();
   await page.keyboard.press('Space');
-  await expect(page.getByRole('status').filter({ hasText: '1 selected' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Selection status' })).toHaveText('1 selected');
   await expect(page.getByRole('button', { name: 'Export selection' })).toBeVisible();
   await page.getByRole('button', { name: 'More selection actions' }).click();
   await expect(page.getByRole('menuitem', { name: 'Open selection in source' })).toBeDisabled();
@@ -93,7 +93,8 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await page.getByRole('button', { name: 'Cancel' }).click();
 
   await page.getByRole('button', { name: 'Everything' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'All 1 matching items selected' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Selection status' }))
+    .toHaveText('All 1 matching items selected');
   await page.getByRole('button', { name: 'Review for deletion…' }).click();
   await expect(page.getByRole('main', { name: 'Deletions' })).toBeVisible();
   await expect(page.getByRole('dialog', { name: 'Confirm matching deletion' })).toBeVisible();

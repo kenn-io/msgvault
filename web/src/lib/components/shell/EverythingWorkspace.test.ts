@@ -497,14 +497,14 @@ describe('EverythingWorkspace', () => {
     await screen.findByText('Synthetic subject 2');
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
-    expect(await screen.findByText('1 selected')).toBeDefined();
+    await waitFor(() => expect(selectionStatus().textContent).toBe('1 selected'));
     expect(screen.queryByRole('button', { name: 'Meeting context…' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Export meeting context' })).toBeNull();
 
     await fireEvent.keyDown(grid, { key: 'j' });
     await fireEvent.keyDown(grid, { key: ' ' });
 
-    expect(await screen.findByText('2 selected')).toBeDefined();
+    await waitFor(() => expect(selectionStatus().textContent).toBe('2 selected'));
     await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
     expect(screen.getByRole('button', { name: 'Export meeting context' })).toBeDefined();
     rendered.unmount();
@@ -559,7 +559,7 @@ describe('EverythingWorkspace', () => {
     await screen.findByText('Synthetic subject 7');
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
-    expect(await screen.findByText('1 selected')).toBeDefined();
+    await waitFor(() => expect(selectionStatus().textContent).toBe('1 selected'));
     const end = fireEvent.keyDown(grid, { key: 'End' });
     await waitFor(() => expect(resolveNext).toBeTypeOf('function'));
 
@@ -574,7 +574,7 @@ describe('EverythingWorkspace', () => {
     const secondRow = (await screen.findByText('Synthetic subject 91')).closest('[role="row"]')!;
     await fireEvent.pointerDown(secondRow);
     await fireEvent.keyDown(grid, { key: ' ' });
-    expect(await screen.findByText('2 selected')).toBeDefined();
+    await waitFor(() => expect(selectionStatus().textContent).toBe('2 selected'));
     await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
 
@@ -2539,3 +2539,7 @@ describe('EverythingWorkspace', () => {
     state.destroy();
   });
 });
+
+function selectionStatus(): HTMLElement {
+  return screen.getByRole('status', { name: 'Selection status' });
+}

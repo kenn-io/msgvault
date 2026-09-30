@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -34,6 +35,32 @@ describe('SelectionBar', () => {
     expect(screen.getByRole('status').textContent).toContain('2 selected');
     await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
     expect(selection.count).toBe(0);
+  });
+
+  it('announces the first selection through a live region that exists before it', async () => {
+    const selection = new ExploreSelectionState();
+    render(SelectionBar, { selection, totalCount: 8 });
+    const status = screen.getByRole('status');
+    expect(status.textContent).toBe('');
+
+    selection.selectVisible(['message:1']);
+    await tick();
+
+    expect(screen.getByRole('status')).toBe(status);
+    expect(status.textContent).toBe('1 selected');
+  });
+
+  it('hands focus back after Clear selection removes the bar', async () => {
+    const selection = new ExploreSelectionState();
+    selection.selectVisible(['message:1']);
+    const onClear = vi.fn(() => expect(selection.count).toBe(0));
+    render(SelectionBar, { selection, totalCount: 8, onClear });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('');
   });
 
   it('labels predicate selection as all matching rather than a finite URL selection', () => {
@@ -112,9 +139,10 @@ describe('SelectionBar', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'More selection actions' }));
 
-    const item = screen.getByRole('menuitem', { name: 'Open selection in source' });
+    const item = screen.getByRole('menuitem', {
+      name: 'Open selection in source Your sources don’t provide links to open these items.'
+    });
     expect(item.getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByText('Your sources don’t provide links to open these items.')).toBeDefined();
     expect(screen.queryByText(/trusted_source_link_unavailable/)).toBeNull();
   });
 
@@ -134,7 +162,8 @@ describe('SelectionBar', () => {
     const selection = new ExploreSelectionState();
     render(SelectionBar, { selection, totalCount: 8 });
 
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('');
+    expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull();
     expect(screen.queryByText('No items selected')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Review for deletion…' })).toBeNull();
   });
@@ -238,6 +267,7 @@ describe('SelectionBar', () => {
         meetingSelection,
         canExportMeetings,
       });
+      return selection;
     };
 
     it('hides meeting export for selections that cannot contain meetings', () => {
@@ -257,6 +287,18 @@ describe('SelectionBar', () => {
 
       expect(toggle.getAttribute('aria-expanded')).toBe('true');
       expect(screen.getByRole('button', { name: 'Export meeting context' })).toBeDefined();
+    });
+
+    it('closes the meeting context controls when the bar hides', async () => {
+      const selection = renderBar(true);
+      await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+
+      selection.selectVisible(['message:1']);
+      await tick();
+
+      expect(screen.getByRole('button', { name: 'Meeting context…' }).getAttribute('aria-expanded')).toBe('false');
+      expect(screen.queryByRole('button', { name: 'Export meeting context' })).toBeNull();
     });
   });
 });
