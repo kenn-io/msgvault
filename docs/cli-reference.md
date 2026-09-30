@@ -107,8 +107,9 @@ Commands that access archive state keep their usual stdout/stderr output while u
 2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP. With `[server].daemon_auto_start = false`, they use a daemon that is already running or starting and never start one.
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
 4. With both `--agent-url` and `--agent-token-file`, the CLI connects to a
-   remote daemon as a restricted caller. `draft-reply`, `draft-compose`, and
-   `draft-recover` are available in this mode. The CLI rejects owner
+   remote daemon as a restricted caller. `draft-reply`, `draft-compose`,
+   `draft-get`, `draft-edit`, `draft-delete`, and `draft-recover` are
+   available in this mode. The CLI rejects owner
    configuration (`--config`, `--home`, `--local`) and never writes the token
    to logs or argv. It sends the token in the `X-Msgvault-Agent-Token` header;
    generated OpenAPI clients do not model this transport detail.
