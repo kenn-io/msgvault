@@ -643,7 +643,7 @@ export class ExploreState {
     if (this.current.workspace !== 'files' || new URLSearchParams(location.search).get('workspace') === 'files') return;
     let search = serializeExploreURLState(this.current, location.search);
     // Keep a mode-less link mode-less so the daemon's configured default still applies.
-    if (!new URLSearchParams(location.search).has('mode')) {
+    if (explicitSearchModeFromURL(location.search) === undefined) {
       const parameters = new URLSearchParams(search);
       parameters.delete('mode');
       search = parameters.size > 0 ? `?${parameters.toString()}` : '';

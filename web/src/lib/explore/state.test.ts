@@ -400,6 +400,23 @@ describe('Explore URL state', () => {
     }
   });
 
+  it('keeps a legacy Everything-as-Files link\'s search mode from its explore data', () => {
+    window.history.replaceState(null, '', `/?workspace=everything&explore=${encodeURIComponent(
+      JSON.stringify({ presentation: 'files', searchMode: 'semantic', query: 'budget' })
+    )}`);
+    const state = new ExploreState(window, null);
+    try {
+      expect(new URLSearchParams(window.location.search).get('mode')).toBe('semantic');
+      expect(state.current).toMatchObject({ workspace: 'files', searchMode: 'semantic' });
+
+      state.setConfiguredDefaultSearchMode('hybrid');
+
+      expect(state.current.searchMode).toBe('semantic');
+    } finally {
+      state.destroy();
+    }
+  });
+
   it('restores the active row and scroll anchor from an old Everything-as-Files history entry', async () => {
     window.history.replaceState(null, '', '/?workspace=sources');
     const state = new ExploreState(window);

@@ -249,14 +249,14 @@ Full text: "network" ×   Source: example@example.com ×   Grouped by Year ×
 - **Toolbar.** Filters, Show as, Group by, Sort, and Columns sit in one row.
   - Columns moves from a `<details>` strip into a menu with the same seven
     checkboxes and the same `columns` URL state.
-  - Preview position moves into the toolbar as a segmented control with the
-    text options "Below" and "Right", keeping radiogroup "Preview position".
-    kit `SegmentedControl` has no icon variant, so the options stay text. It
-    still appears only when the results are at least 960px wide.
+  - Preview position moves into the toolbar as a segmented control that keeps
+    the text options "Below" and "Right" and the radiogroup name "Preview
+    position". It still appears only when the results are at least 960px
+    wide.
   - The count appears once, at the right edge.
 - **Sort.** "Newest first" becomes a menu listing the one supported order,
-  marked "Other orders aren't available yet". It keeps the accessible name
-  "Sort: Newest first", so `s` opens it. `r` announces "Everything is always
+  marked "Other orders aren't available yet". Its accessible name is
+  "Sort: Newest first" (previously "Sort: newest first"), and `s` opens it. `r` announces "Everything is always
   shown newest first." While grouped, the Sort menu is hidden, `s` does
   nothing, and `r` announces that sorting isn't available while grouped.
 - **Context chips.** The query, filters, and groupings appear as removable chips
