@@ -241,7 +241,7 @@ Everything                                                    [Save view…]
 [Filters 2] [Show as: Table] [Group by] [Sort: Newest first] [Columns]  [▭|▯] 20 items
 Full text: "network" ×   Source: example@example.com ×   Grouped by Year ×
 ┌ results ────────────────────────────────────────────────────────────────┐
-├ reading pane ───────────────────────── [Open relationship] [Tasks 2] [×] ┤
+├ reading pane ─────────────────────────── [Open relationship] [Tasks] [×] ┤
 └─────────────────────────────────────────────────────────────────────────┘
           ┌ 3 selected · Select all 20 matching · Export · Review for deletion… · Clear ┐
 ```
@@ -249,30 +249,38 @@ Full text: "network" ×   Source: example@example.com ×   Grouped by Year ×
 - **Toolbar.** Filters, Show as, Group by, Sort, and Columns sit in one row.
   - Columns moves from a `<details>` strip into a menu with the same seven
     checkboxes and the same `columns` URL state.
-  - Preview position becomes a two-icon segmented control, keeping radiogroup
-    "Preview position" with radios "Below" and "Right". It still appears only
-    when the results are at least 960px wide.
+  - Preview position moves into the toolbar as a segmented control with the
+    text options "Below" and "Right", keeping radiogroup "Preview position".
+    kit `SegmentedControl` has no icon variant, so the options stay text. It
+    still appears only when the results are at least 960px wide.
   - The count appears once, at the right edge.
 - **Sort.** "Newest first" becomes a menu listing the one supported order,
   marked "Other orders aren't available yet". It keeps the accessible name
-  "Sort: newest first", so `s` opens it. `r` keeps announcing that reversing
-  isn't supported.
+  "Sort: Newest first", so `s` opens it. `r` announces "Everything is always
+  shown newest first." While grouped, the Sort menu is hidden, `s` does
+  nothing, and `r` announces that sorting isn't available while grouped.
 - **Context chips.** The query, filters, and groupings appear as removable chips
-  with readable labels ("Full text", "Source"). Removing a grouping keeps the
-  name "Remove {label} grouping".
+  with readable labels ("Full text", "Source"). Grouping chips and saved-view
+  summaries use the same wording, such as "Grouped by Person". Removing a
+  grouping keeps the name "Remove {label} grouping".
+  - Known gap: chips and saved-view summaries show a source filter by its ID
+    (for example "Source: 7") until source names are resolved.
 - **Selection bar.** The existing `SelectionBar` moves below the results as a
-  compact, sticky action strip. It appears only while at least one row is
+  compact action strip. It appears only while at least one row is
   selected. kit `BottomDock` is not used, because it is a resizable panel that
   opens at half the viewport height. The bar keeps "Select all N matching
   items", "Export selection", meeting-context export, and "Clear selection".
   - It adds **Review for deletion…**, which starts the same flow as `d` (or `D`
     in all-matching mode): `openDeletionReview` switches to Deletions and runs
-    the preflight.
+    the preflight. The button doesn't yet show the preflight's
+    `stage_deletion` reason when deletion is unavailable; that arrives with
+    the Deletions work in pull request 4.
   - "Open selection in source" moves to an overflow menu. It is shown disabled
     with its reason as a sentence, which matches today's behavior because no
     handler exists.
 - **Reading pane.** "Tasks for this message" becomes a header button labeled
-  "Tasks" with the linked-task count, opening the same `TaskLinks` sheet.
+  "Tasks", without a count, that opens the same `TaskLinks` sheet. It keeps the
+  accessible name "Tasks for this message".
   "Close" becomes an icon button that keeps the name "Close reading pane". The
   meta strip uses readable labels.
 
@@ -303,15 +311,18 @@ Files becomes the single file view.
     Timeline sets `workspace: 'everything'` with that presentation.
 - Saved views with `presentation: 'files'` open in the Files workspace through
   the same rule.
-- **Toolbar.** Filename search, a **Type** menu, Filters, Show as, Group by, a
-  **Sort** menu (Date, Filename, Size), and a **Visual search** toggle.
+- **Toolbar.** Files has two toolbar rows. The first is the shared toolbar:
+  Filters, Show as, Group by, and a **Sort** menu (Date, Filename, Size). The
+  second holds Filename search, a **Type** menu, and a **Visual search**
+  toggle.
   - The Type menu replaces the eight raw MIME-family checkboxes with Images,
     PDFs, Audio, Video, Text, Documents, Archives, and Other. URL state
-    `fileMIMEFamilies` is unchanged.
+    `fileMIMEFamilies` is unchanged. With no type selected, the menu reads
+    "All types" and its items carry no "Not included" description.
   - Column-header sorting still works and stays in sync with the Sort menu
     (`fileSort`).
-  - Turning on Visual search expands a second row with the visual query,
-    query image, and the unchanged provider disclosure.
+  - Turning on Visual search adds the visual query, query image, and the
+    unchanged provider disclosure to the second row.
 - **Columns.** Type shows a readable name ("PDF", "PNG image"); the raw MIME
   type moves to the cell tooltip and the file viewer. Source shows the account
   display name when one is available.
@@ -502,15 +513,15 @@ Every control not listed here keeps its location, label, and accessible name.
 | Temporary density | Top bar combobox | Display menu radio group |
 | Use daemon theme | Top bar button | Display menu item |
 | Search form, mode, Search button | Everything search row | Top bar |
-| Preview position | Everything header, text plus segmented control | Everything toolbar, icon segmented control |
+| Preview position | Everything header, text plus segmented control | Everything toolbar, text segmented control |
 | Result count | Everything header and context bar | Toolbar right edge, once |
 | Columns | `<details>` strip above the table | Toolbar menu |
 | Newest first | Button that only announces | Sort menu with the one supported order |
 | Keyboard hints | Everything footer, selection bar badges | Keyboard shortcuts dialog; sidebar footer entry |
-| Selection bar | Always visible above results | Sticky strip below results while a selection exists |
+| Selection bar | Always visible above results | Strip below results while a selection exists |
 | Stage deletion entry | `d` / `D` only | Also "Review for deletion…" in the selection bar |
 | Open selection in source | Selection bar, reason text | Selection bar overflow, disabled with sentence reason |
-| Tasks for this message | Collapsed disclosure | Reading-pane header button with count |
+| Tasks for this message | Collapsed disclosure | Reading-pane header button "Tasks" |
 | Close reading pane | Text button | Icon button, same name |
 | Show as: Files | Everything-only files grid | Opens the Files workspace; old links and history entries normalize there |
 | File type filter | Eight raw checkboxes | Type menu with readable names |
