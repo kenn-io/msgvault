@@ -31,6 +31,7 @@ const (
 	// GET /teams/{id}/channels/{id}/members.
 	scopeGraphChannelMemberRead = "https://graph.microsoft.com/ChannelMember.Read.All"
 	scopeGraphMailRead          = "https://graph.microsoft.com/Mail.Read"
+	scopeGraphMailReadWrite     = "https://graph.microsoft.com/Mail.ReadWrite"
 )
 
 // GraphScopes returns the OAuth scopes requested for Microsoft Teams ingestion
@@ -49,6 +50,13 @@ func GraphScopes() []string {
 // the Graph API.
 func GraphMailScopes() []string {
 	return []string{scopeGraphMailRead, scopeGraphUserRead, scopeOfflineAccess, "openid", scopeEmail}
+}
+
+// GraphMailWriteScopes returns the mail scopes plus Mail.ReadWrite, which
+// deletion needs. It keeps Mail.Read, so the sync manager still accepts a
+// token granted with these scopes.
+func GraphMailWriteScopes() []string {
+	return append(GraphMailScopes(), scopeGraphMailReadWrite)
 }
 
 // GraphManager is a sibling of Manager that runs the same interactive browser
@@ -93,6 +101,14 @@ func NewGraphManager(clientID, tenantID, redirectURI, tokensDir string, logger *
 func NewGraphMailManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
 	m := newGraphManager(clientID, tenantID, redirectURI, tokensDir, logger)
 	m.scopes, m.tokenPrefix, m.reauthCmd = GraphMailScopes(), "msmail_", "msgvault add-o365 %s --graph"
+	return m
+}
+
+// NewGraphMailWriteManager is NewGraphMailManager with GraphMailWriteScopes.
+// It shares the "msmail_" token, so Authorize replaces the read-only grant.
+func NewGraphMailWriteManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
+	m := NewGraphMailManager(clientID, tenantID, redirectURI, tokensDir, logger)
+	m.scopes = GraphMailWriteScopes()
 	return m
 }
 
@@ -248,6 +264,16 @@ func (m *GraphManager) TokenSource(ctx context.Context, email string) (func(cont
 
 		return tok.AccessToken, nil
 	}, nil
+}
+
+// HasScopes reports whether the saved token was granted every scope this
+// manager requests.
+func (m *GraphManager) HasScopes(email string) (bool, error) {
+	tf, err := m.loadTokenFile(email)
+	if err != nil {
+		return false, err
+	}
+	return len(missingScopes(tf.Scopes, m.scopes)) == 0, nil
 }
 
 // HasToken reports whether a persisted Graph token exists for the account.

@@ -26,6 +26,19 @@ func newGraphMailManager(state *invocation) *microsoft.GraphManager {
 	)
 }
 
+// newGraphMailWriteManager requests Mail.ReadWrite on top of the sync scopes.
+// delete-staged uses it.
+func newGraphMailWriteManager(state *invocation) *microsoft.GraphManager {
+	cfg := state.cfg
+	return microsoft.NewGraphMailWriteManager(
+		cfg.Microsoft.ClientID,
+		cfg.Microsoft.EffectiveTenantID(),
+		cfg.Microsoft.EffectiveRedirectURI(),
+		cfg.TokensDir(),
+		state.logger,
+	)
+}
+
 // runMSMailSync syncs one Graph mail account. The first run downloads every
 // folder; later runs fetch only the changes.
 func runMSMailSync(ctx context.Context, s *store.Store, email string, progress func(string), state *invocation) (*msmail.Summary, error) {

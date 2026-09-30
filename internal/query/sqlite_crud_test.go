@@ -2417,11 +2417,16 @@ func TestGetDeletionTargetsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (?, 1, 1, 'chat-1', ?, '2024-01-07')`, 907, store.MessageTypeGoogleChat)
 	require.NoError(err, "insert Gmail Chat message")
 
-	targets, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{1, 901, 902, 903, 904, 905, 907})
+	_, err = env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (98, 'msmail', 'm@example.com'), (97, 'imap', 'i@example.com')`)
+	require.NoError(err, "insert msmail and imap sources")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (908, 1, 98, 'AAMk-1', 'email', '2024-01-08'), (909, 1, 97, 'INBOX|1', 'email', '2024-01-09')`)
+	require.NoError(err, "insert msmail and imap messages")
+
+	targets, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{1, 901, 902, 903, 904, 905, 907, 908, 909})
 	require.NoError(err, "resolve mixed ids")
 	ids, err := deletionTargetSourceMessageIDs(targets, nil)
 	require.NoError(err)
-	assert.ElementsMatch([]string{"msg1", "legacy-empty"}, ids, "non-Gmail, Gmail Chat, source-deleted, dedup-deleted, and provider-ID-less messages must be dropped")
+	assert.ElementsMatch([]string{"msg1", "legacy-empty", "AAMk-1"}, ids, "WhatsApp, IMAP, Gmail Chat, source-deleted, dedup-deleted, and provider-ID-less messages must be dropped")
 }
 
 func TestGetDeletionTargetsByMessageIDs_LargeSelectionExceedsSingleQueryLimit(t *testing.T) {

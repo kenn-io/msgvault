@@ -4,6 +4,7 @@
 package msgraph
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json/v2"
@@ -25,6 +26,10 @@ var ErrTooLarge = errors.New("graph response exceeds the configured size cap")
 
 // ErrNotFound classifies a 404 response.
 var ErrNotFound = errors.New("graph resource not found")
+
+// ErrForbidden classifies a 403 response, for example a token that lacks the
+// scope a write needs.
+var ErrForbidden = errors.New("graph request forbidden")
 
 // ErrGone classifies an expired delta token: 410 Gone, or a syncStateNotFound
 // error. The caller must restart the delta walk without a token.
@@ -72,9 +77,22 @@ func (c *Client) get(ctx context.Context, rawURL string) ([]byte, error) {
 }
 
 func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, rawURL, nil, maxBytes)
+}
+
+// do sends one request with retries. A GET succeeds on 200 only. Any other
+// method succeeds on any 2xx, because Graph answers a move with 201 and a
+// permanentDelete with 204. A non-nil body is sent as JSON.
+func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, maxBytes int64) ([]byte, error) {
 	reqURL, err := c.resolveRequestURL(rawURL)
 	if err != nil {
 		return nil, err
+	}
+	ok := func(code int) bool {
+		if method == http.MethodGet {
+			return code == http.StatusOK
+		}
+		return code >= 200 && code < 300
 	}
 	var lastErr error
 	var retryAfter string
@@ -92,12 +110,19 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 		if err != nil {
 			return nil, err
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		var reqReader io.Reader
+		if reqBody != nil {
+			reqReader = bytes.NewReader(reqBody)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqReader)
 		if err != nil {
 			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+tok)
 		req.Header.Set("Accept", "application/json")
+		if reqBody != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
 		for k, v := range c.Headers {
 			req.Header.Set(k, v)
 		}
@@ -115,7 +140,7 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 			lastErr = err
 			continue
 		}
-		if resp.StatusCode == http.StatusOK && maxBytes > 0 && resp.ContentLength > maxBytes {
+		if ok(resp.StatusCode) && maxBytes > 0 && resp.ContentLength > maxBytes {
 			_ = resp.Body.Close()
 			return nil, ErrTooLarge
 		}
@@ -127,11 +152,11 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 		closeErr := resp.Body.Close()
 		if readErr != nil {
 			// A connection that breaks mid-body is transient, like a 5xx.
-			lastErr = fmt.Errorf("graph GET %s: read body: %w", reqURL, readErr)
+			lastErr = fmt.Errorf("graph %s %s: read body: %w", method, reqURL, readErr)
 			continue
 		}
 		if closeErr != nil {
-			return nil, fmt.Errorf("graph GET %s: close body: %w", reqURL, closeErr)
+			return nil, fmt.Errorf("graph %s %s: close body: %w", method, reqURL, closeErr)
 		}
 		expired := false
 		if resp.StatusCode >= http.StatusBadRequest {
@@ -143,24 +168,26 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 			expired = json.Unmarshal(body, &graphError) == nil && graphError.Error.Code == "syncStateNotFound"
 		}
 		switch {
-		case resp.StatusCode == http.StatusOK:
+		case ok(resp.StatusCode):
 			if maxBytes > 0 && int64(len(body)) > maxBytes {
 				return nil, ErrTooLarge
 			}
 			return body, nil
 		case resp.StatusCode == http.StatusGone || expired:
-			return nil, fmt.Errorf("graph GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), ErrGone)
+			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrGone)
 		case resp.StatusCode == http.StatusNotFound:
-			return nil, fmt.Errorf("graph GET %s: status %d: %s: %w", reqURL, resp.StatusCode, string(body), ErrNotFound)
+			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrNotFound)
+		case resp.StatusCode == http.StatusForbidden:
+			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrForbidden)
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-			lastErr = fmt.Errorf("graph GET %s: status %d", reqURL, resp.StatusCode)
+			lastErr = fmt.Errorf("graph %s %s: status %d", method, reqURL, resp.StatusCode)
 			retryAfter = resp.Header.Get("Retry-After")
 			continue
 		default:
-			return nil, fmt.Errorf("graph GET %s: status %d: %s", reqURL, resp.StatusCode, string(body))
+			return nil, fmt.Errorf("graph %s %s: status %d: %s", method, reqURL, resp.StatusCode, string(body))
 		}
 	}
-	return nil, fmt.Errorf("graph GET %s: exhausted %d retries: %w", reqURL, maxRetries, lastErr)
+	return nil, fmt.Errorf("graph %s %s: exhausted %d retries: %w", method, reqURL, maxRetries, lastErr)
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
@@ -219,6 +246,20 @@ func (c *Client) GetRawLimited(ctx context.Context, url string, maxBytes int64) 
 // host (supporting both production and httptest servers).
 func (c *Client) BaseURL() string {
 	return c.baseURL
+}
+
+// Post sends body as JSON to url and discards the response body. A nil body
+// sends an empty request.
+func (c *Client) Post(ctx context.Context, url string, body any) error {
+	var reqBody []byte
+	if body != nil {
+		var err error
+		if reqBody, err = json.Marshal(body); err != nil {
+			return fmt.Errorf("graph POST %s: encode body: %w", url, err)
+		}
+	}
+	_, err := c.do(ctx, http.MethodPost, url, reqBody, 0)
+	return err
 }
 
 // GetJSON fetches url and unmarshals the JSON body into out.

@@ -28,7 +28,7 @@ func newStageDeleteCommand() *cobra.Command {
 		Long: `Stage the deletable messages matching a search query for deletion.
 
 The search runs with the same semantics as msgvault search. Matches that no
-source supports deleting, such as chats, meetings, and non-Gmail mail, are
+source supports deleting, such as chats, meetings, and mail from IMAP or file imports, are
 reported and skipped rather than rejecting the whole search. Use --dry-run to
 see the same staged subset and counts without creating a batch.
 Alternatively, pass a comma-separated --ids list to stage explicit internal
@@ -324,7 +324,7 @@ func writeStageDeleteSkipped(w io.Writer, result *generated.StageDeletionRespons
 		matched = *result.MatchedCount
 	}
 	if _, err := fmt.Fprintf(w,
-		"%d of %d matching item(s) cannot be deleted from their source (chats, meetings, or non-Gmail mail) and were skipped.\n",
+		"%d of %d matching item(s) cannot be deleted from their source (chats, meetings, or mail from other sources) and were skipped.\n",
 		skipped, matched); err != nil {
 		return fmt.Errorf("write skipped summary: %w", err)
 	}
@@ -344,8 +344,8 @@ func stageDeleteDaemonErr(op string, err error) error {
 			"or run 'msgvault build-cache' and rerun stage-delete", op, apiErr.Message)
 	case "selection_not_deletable":
 		return fmt.Errorf("%s: %s; nothing the search matched can be deleted from its "+
-			"source. Deletion currently covers Gmail mail only, so widen or retarget the "+
-			"search, for example with --source-id <gmail-source-id>",
+			"source. Deletion currently covers Gmail and Microsoft Graph mail only, so widen or retarget the "+
+			"search, for example with --source-id <source-id>",
 			op, apiErr.Message)
 	case "multi_account_selection":
 		return fmt.Errorf("%s: %s; rerun stage-delete once per source with --source-id",

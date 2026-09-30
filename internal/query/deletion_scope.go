@@ -5,6 +5,10 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+// deletableSourceTypesSQL is the SQL list of source types whose mail can be
+// staged for deletion at the source.
+const deletableSourceTypesSQL = "('gmail', 'msmail')"
+
 // searchMessageVisibilityWhere returns the message visibility predicate for
 // the lexical Search path. An explicit scope wins; the zero value keeps the
 // historical HideDeleted-driven visibility so callers that never set a scope

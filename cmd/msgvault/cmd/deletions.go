@@ -25,6 +25,8 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
@@ -727,8 +729,8 @@ func resolveDeleteStagedTargetWithSourceID(
 		if err != nil {
 			return deleteStagedTarget{}, err
 		}
-		if source.SourceType != sourceTypeGmail && source.SourceType != sourceTypeIMAP {
-			return deleteStagedTarget{}, fmt.Errorf("source %d is not a gmail or imap source", source.ID)
+		if !canDeleteAtSource(source.SourceType) {
+			return deleteStagedTarget{}, fmt.Errorf("source %d is not a gmail, imap or msmail source", source.ID)
 		}
 		if requestedSourceIDSet {
 			selected, selectErr := sourceops.ResolveExactOne(st, sourceops.Selector{
@@ -783,8 +785,8 @@ func resolveDeleteStagedTargetWithSourceID(
 	if err != nil {
 		return deleteStagedTarget{}, err
 	}
-	if source.SourceType != sourceTypeGmail && source.SourceType != sourceTypeIMAP {
-		return deleteStagedTarget{}, fmt.Errorf("source %d is not a gmail or imap source", source.ID)
+	if !canDeleteAtSource(source.SourceType) {
+		return deleteStagedTarget{}, fmt.Errorf("source %d is not a gmail, imap or msmail source", source.ID)
 	}
 	for _, manifest := range manifests {
 		if manifest.Filters.Account != "" && manifest.Filters.Account != source.Identifier {
@@ -793,6 +795,11 @@ func resolveDeleteStagedTargetWithSourceID(
 		}
 	}
 	return deleteStagedTarget{Account: source.Identifier, Source: source}, nil
+}
+
+// canDeleteAtSource reports whether delete-staged has a client for a source type.
+func canDeleteAtSource(sourceType string) bool {
+	return sourceType == sourceTypeGmail || sourceType == sourceTypeIMAP || sourceType == sourceTypeMSMail
 }
 
 type deleteStagedScopeEscalation struct {
@@ -839,6 +846,35 @@ func deleteStagedScopeEscalationForSource(
 	return newDeleteStagedScopeEscalation(account, permanent, clientSecretsPath), nil
 }
 
+// msmailScopeEscalation reports whether a Graph mail token lacks
+// Mail.ReadWrite. Trash and permanent delete need the same scope.
+func msmailScopeEscalation(account string, state *invocation) (deleteStagedScopeEscalation, error) {
+	state = invocationState(context.Background(), state)
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return deleteStagedScopeEscalation{}, errors.New("configuration is unavailable")
+	}
+	ok, err := newGraphMailWriteManager(state).HasScopes(account)
+	if err != nil {
+		return deleteStagedScopeEscalation{}, fmt.Errorf("read Microsoft Graph mail token for %s: %w", account, err)
+	}
+	if ok {
+		return deleteStagedScopeEscalation{}, nil
+	}
+	return deleteStagedScopeEscalation{
+		Needed:   true,
+		Account:  account,
+		Headline: deleteStagedScopeEscalationHeadline,
+		BodyLines: []string{
+			"Deletion requires the Microsoft Graph Mail.ReadWrite permission.",
+			"",
+			"Your current token can only read mail. msgvault will open a browser",
+			"to grant read and write access to this mailbox. Your existing token",
+			"keeps working until the new grant succeeds.",
+		},
+		CancelHint: "Cancelled.",
+	}, nil
+}
+
 // grantCoversDeletion reports whether an account's granted scopes already
 // permit the requested deletion, so no re-consent prompt is needed.
 //
@@ -883,8 +919,9 @@ var deleteStagedCmd = &cobra.Command{
 	Short: "Execute staged deletions",
 	Long: `Execute pending deletion batches.
 
-By default, messages are moved to Gmail trash (recoverable for 30 days).
-Use --permanent for batch-API permanent deletion (fast, no recovery).
+By default, messages are moved to the trash: Gmail Trash (recoverable for
+30 days), or Deleted Items for Microsoft Graph mail.
+Use --permanent for permanent deletion (no recovery).
 The default is trash because every other rung of the deletion progression
 in msgvault is locally reversible; the remote rung is too unless the user
 explicitly opts out of recoverability.
@@ -1065,6 +1102,25 @@ Examples:
 			}
 		}
 
+		if src.SourceType == sourceTypeMSMail {
+			escalation, err := msmailScopeEscalation(account, state)
+			if err != nil {
+				return err
+			}
+			if escalation.Needed {
+				if !scopeEscalationConfirmed {
+					ok, err := promptScopeEscalationConfirmation(os.Stdin, os.Stdout,
+						escalation.Headline, escalation.BodyLines, escalation.CancelHint)
+					if err != nil || !ok {
+						return err
+					}
+				}
+				if err := newGraphMailWriteManager(state).Authorize(ctx, account); err != nil {
+					return fmt.Errorf("authorize: %w", err)
+				}
+			}
+		}
+
 		// Build API client — reuses the same factory as sync.
 		getOAuthMgr := func(appName string) (*oauth.Manager, error) {
 			secretsPath := clientSecretsPath
@@ -1087,11 +1143,21 @@ Examples:
 		if deletePermanent {
 			saScopes = oauth.ScopesDeletion
 		}
-		client, err := buildAPIClient(ctx, src, getOAuthMgr, saScopes)
-		if err != nil {
-			return err
+		var client gmail.MessageDeleter
+		if src.SourceType == sourceTypeMSMail {
+			tokenFn, err := newGraphMailWriteManager(state).TokenSource(ctx, account)
+			if err != nil {
+				return err
+			}
+			client = msmail.NewClient(msmail.GraphBaseURL, tokenFn, msmailQPS)
+		} else {
+			apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, saScopes)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = apiClient.Close() }()
+			client = apiClient
 		}
-		defer func() { _ = client.Close() }()
 
 		// Create executor
 		executor := deletion.NewExecutor(manager, s, client).
@@ -1152,6 +1218,14 @@ Examples:
 					if errors.Is(execErr, deletion.ErrManifestCancelled) {
 						fmt.Printf("  Cancelled: %s\n", m.ID)
 						continue
+					}
+
+					if src.SourceType == sourceTypeMSMail && isInsufficientScopeError(execErr) {
+						return fmt.Errorf(
+							"graph mail delete for %s was denied: add the delegated Mail.ReadWrite "+
+								"permission to the app registration, grant consent, then run delete-staged again: %w",
+							account, execErr,
+						)
 					}
 
 					// Check if this is a scope error - offer to re-authorize (Gmail only)
@@ -1335,7 +1409,7 @@ func confirmDeleteStaged(in io.Reader, out io.Writer, mode string) (bool, error)
 		}
 		return true, nil
 	case deleteStagedConfirmModeTrash:
-		_, _ = fmt.Fprint(out, "Proceed with deletion? Messages move to Gmail/Trash (recoverable ~30 days). [y/N]: ")
+		_, _ = fmt.Fprint(out, "Proceed with deletion? Messages move to the trash, where you can restore them. [y/N]: ")
 		answer, ok, err := readStagedDeletePromptLine(reader)
 		if err != nil {
 			return false, fmt.Errorf("read confirmation: %w", err)
@@ -1430,6 +1504,20 @@ func planCLIDeleteStaged(
 		)
 		if err != nil {
 			return api.CLIDeleteStagedPlanResponse{}, err
+		}
+		if target.Source.SourceType == sourceTypeMSMail {
+			escalation, err := msmailScopeEscalation(target.Account, state)
+			if err != nil {
+				return api.CLIDeleteStagedPlanResponse{}, err
+			}
+			// ScopeEscalationAccount stays empty: the preflight authorizes
+			// Google accounts only, so the subprocess runs the Graph consent.
+			if escalation.Needed {
+				plan.NeedsScopeEscalation = true
+				plan.ScopeEscalationHeadline = escalation.Headline
+				plan.ScopeEscalationBodyLines = escalation.BodyLines
+				plan.ScopeEscalationCancelHint = escalation.CancelHint
+			}
 		}
 		if target.Source.SourceType == sourceTypeGmail {
 			if !cfg.OAuth.HasAnyConfig() {
@@ -1792,7 +1880,8 @@ func isInsufficientScopeError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "ACCESS_TOKEN_SCOPE_INSUFFICIENT") ||
 		strings.Contains(msg, "insufficient authentication scopes") ||
-		strings.Contains(msg, "Insufficient Permission")
+		strings.Contains(msg, "Insufficient Permission") ||
+		strings.Contains(msg, "ErrorAccessDenied") // Graph mail without Mail.ReadWrite
 }
 
 func init() {
@@ -1800,7 +1889,7 @@ func init() {
 	deleteStagedCmd.Flags().BoolVarP(&deleteYes, "yes", "y", false, "Skip confirmation")
 	deleteStagedCmd.Flags().BoolVar(&deleteDryRun, "dry-run", false, "Show what would be deleted")
 	deleteStagedCmd.Flags().BoolVarP(&deleteList, "list", "l", false, "List staged batches without executing")
-	deleteStagedCmd.Flags().StringVar(&deleteAccount, "account", "", "Account to use (Gmail or IMAP)")
+	deleteStagedCmd.Flags().StringVar(&deleteAccount, "account", "", "Account to use (Gmail, IMAP or Microsoft Graph mail)")
 	deleteStagedCmd.Flags().Int64Var(&deleteSourceID, "source-id", 0, "Exact source ID to use")
 	deleteStagedCmd.Flags().Bool(deleteStagedConfirmedFlag, false, "Internal confirmation marker")
 	deleteStagedCmd.Flags().Bool(deleteStagedSkipPreludeFlag, false, "Internal planning marker")

@@ -2492,12 +2492,12 @@ func (e *DuckDBEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	filter.HideDeletedFromSource = true
 	where, args := e.buildFilterConditions(filter)
 
-	// Build query — JOIN src to scope to Gmail sources authoritatively.
+	// Build query — JOIN src to scope to deletable sources authoritatively.
 	query := fmt.Sprintf(`
 		WITH %s
 		SELECT msg.id, msg.source_id, COALESCE(src.source_type, 'gmail'), src.account_email, msg.source_message_id
 		FROM msg
-		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') = 'gmail'
+		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') IN `+deletableSourceTypesSQL+`
 		WHERE %s
 		ORDER BY msg.sent_at DESC, msg.id DESC
 	`, e.parquetCTEs(), where)
@@ -2576,7 +2576,7 @@ func (e *DuckDBEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 		SELECT msg.id, msg.source_id, COALESCE(src.source_type, 'gmail'), src.account_email,
 		       msg.source_message_id, msg.sent_at
 		FROM msg
-		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') = 'gmail'
+		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') IN `+deletableSourceTypesSQL+`
 		       WHERE %s AND %s AND COALESCE(msg.source_message_id, '') <> '' AND msg.id IN (%s)
 	`, e.parquetCTEs(), store.LiveMessagesWhere("msg", true), emailOnlyFilterMsg, strings.Join(placeholders, ","))
 	rows, err := e.db.QueryContext(ctx, q, args...)

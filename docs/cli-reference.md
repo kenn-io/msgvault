@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-27"
+last_edited: "2026-09-29"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -409,7 +409,7 @@ Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAu
 | `--tenant` | `common` | Azure AD tenant ID (restricts which accounts can authorize) |
 | `--headless` | `false` | Sign in with a device code instead of a local browser |
 | `--no-default-identity` | `false` | Do not auto-confirm the email address as this account's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
-| `--graph` | `false` | Sync through the Microsoft Graph mail API instead of IMAP. Creates an `msmail` account. Needs the `Mail.Read` permission |
+| `--graph` | `false` | Sync through the Microsoft Graph mail API instead of IMAP. Creates an `msmail` account. Needs the `Mail.Read` permission. `delete-staged` asks for `Mail.ReadWrite` on first use |
 
 After adding the account, sync it with `msgvault sync-full`. For a `--graph`
 account, use `msgvault sync`. See
@@ -3329,16 +3329,17 @@ schema version.
 The query resolves with the same search semantics as `msgvault search`, and
 `--dry-run` prints the set that staging would create.
 
-Deletion staging covers Gmail-source email only. A search that also matches
-chats, meetings, calendar entries, or mail from non-Gmail sources such as Apple
-Mail imports stages the Gmail subset and reports how many items it skipped. Only
+Deletion staging covers email from Gmail and Microsoft Graph mail (`msmail`)
+sources only. A search that also matches chats, meetings, calendar entries, or
+mail from other sources such as IMAP or Apple Mail imports stages the
+deletable subset and reports how many items it skipped. Only
 a search with nothing deletable in it is refused. Legacy Gmail messages imported
 before message types existed carry a blank type and count as email, so
 `message_type:email` stages them too.
 
 In ID mode, the
-daemon resolves live Gmail targets and source boundaries for the requested IDs;
-IDs that do not resolve to live deletable Gmail messages with provider message
+daemon resolves live targets and source boundaries for the requested IDs;
+IDs that do not resolve to live deletable messages with provider message
 IDs are omitted, so the
 reported count is the number of targets resolved by the daemon; the CLI does
 not search, probe FTS readiness, call Explore or preflight, or require
@@ -3395,8 +3396,10 @@ msgvault cancel-deletion --all
 ## delete-staged
 
 Execute staged remote deletions. Gmail and IMAP move messages to Trash by
-default. `--permanent` uses Gmail batch deletion or IMAP UID EXPUNGE; the
-IMAP permanent path requires UIDPLUS. Recovery from Trash depends on the
+default, and Microsoft Graph mail moves them to Deleted Items. `--permanent`
+uses Gmail batch deletion, IMAP UID EXPUNGE, or Graph `permanentDelete`; the
+IMAP permanent path requires UIDPLUS. The first deletion for a Graph mail
+account asks to upgrade its token to `Mail.ReadWrite`. Recovery from Trash depends on the
 provider. See [deletion behavior](usage/deletion.md).
 
 ```bash
@@ -3406,7 +3409,7 @@ msgvault delete-staged [batch-id] [flags]
 | Flag | Description |
 |---|---|
 | `-y`, `--yes` | Skip confirmation prompt |
-| `--permanent` | Permanently delete through Gmail batch deletion or IMAP UID EXPUNGE instead of moving to Trash |
+| `--permanent` | Permanently delete through Gmail batch deletion, IMAP UID EXPUNGE, or Graph `permanentDelete` instead of moving to Trash |
 | `--dry-run` | Show what would be deleted without deleting |
 | `-l`, `--list` | List staged deletion batches |
 | `--account` | Filter to one source by identifier or unique display name |

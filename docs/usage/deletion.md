@@ -1,11 +1,11 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-09-29"
 title: Deleting Email
-description: Staging messages for deletion, reviewing manifests, and executing deletes from Gmail or IMAP.
+description: Staging messages for deletion, reviewing manifests, and executing deletes from Gmail, IMAP, or Microsoft Graph mail.
 ---
 
 
-Remove unwanted mail from Gmail or IMAP while keeping the archived message,
+Remove unwanted mail from Gmail, IMAP, or Microsoft Graph mail while keeping the archived message,
 raw content, and downloaded attachments. Deletion has three separate steps:
 
 1. **Stage** a precise set of messages in a pending manifest.
@@ -36,9 +36,9 @@ msgvault show-deletion BATCH_ID
 
 Query staging uses the same search language as `msgvault search` and considers
 active messages only. It reports and skips matches that this staging path
-cannot delete, such as chats, meetings, and non-Gmail mail. The remaining
-Gmail targets must belong to one source. Use `--source-id` to narrow a query
-when several Gmail accounts match:
+cannot delete, such as chats, meetings, and mail from IMAP or file imports.
+The remaining targets must belong to one source. Use `--source-id` to narrow a
+query when several accounts match:
 
 ```bash
 msgvault stage-delete 'label:Newsletters' --source-id 3 --dry-run
@@ -57,8 +57,8 @@ unsupported targets are skipped and reported. The explicit-ID path works
 without a ready analytical or full-text cache; query staging waits for a
 complete search index and requires daemon API schema `2.18.0` or newer.
 
-These CLI staging paths currently resolve Gmail targets. IMAP deletion uses
-manifests staged through the TUI. Creating a manifest never executes it.
+These CLI staging paths resolve Gmail and Microsoft Graph mail targets. Graph
+mail accounts are the ones added with `add-o365 --graph`. Creating a manifest never executes it.
 
 ## Staging in the Web UI
 
@@ -149,6 +149,9 @@ msgvault delete-staged --account you@gmail.com
 # Move staged IMAP messages to the server's Trash folder
 msgvault delete-staged --account you@fastmail.com
 
+# Move staged Microsoft Graph mail messages to Deleted Items
+msgvault delete-staged --account you@company.com
+
 # Permanently delete Gmail messages instead of moving them to trash
 msgvault delete-staged --account you@gmail.com --permanent
 ```
@@ -157,12 +160,15 @@ Gmail and IMAP both default to moving messages to Trash. Gmail retains trash
 for 30 days; IMAP recovery and retention depend on the server. IMAP uses the
 server's discovered Trash folder, falling back to a folder named `Trash`.
 If that move fails, the batch records the failure rather than switching to
-permanent deletion.
+permanent deletion. Microsoft Graph mail moves messages to Deleted Items, where
+you can restore them in Outlook. A later sync keeps them marked as deleted
+while they stay in Deleted Items.
 
 `--permanent` requests irreversible deletion: Gmail uses its batch API; IMAP
 uses `UID STORE \Deleted` followed by `UID EXPUNGE` for each message. Permanent
 IMAP deletion requires UIDPLUS and is refused when the server lacks it.
-Dry-run mode works for both providers.
+Microsoft Graph mail uses `permanentDelete` for each message, and you cannot
+restore the message in Outlook. Dry-run mode works for all providers.
 
 ## Enabling Remote Deletion
 
@@ -217,7 +223,16 @@ Answering `y` opens your browser for re-authorization. Answering `N` cancels cle
 
 If you have a legacy token from before scope tracking was added, msgvault falls back to detecting the insufficient scope from the API response and shows the same prompt.
 
-Gmail trash deletion does not require this elevated scope. IMAP accounts do not require a permission upgrade. IMAP credentials already have full mailbox access, so `delete-staged` works without re-authorization.
+Gmail trash deletion does not require this elevated scope.
+
+Microsoft Graph mail accounts sync with the `Mail.Read` permission. The first
+`delete-staged` for one of these accounts asks to upgrade the token to
+`Mail.ReadWrite`, for trash and for `--permanent`. If you answer `y`, msgvault
+opens your browser to grant it. Your existing token keeps working until the new
+grant succeeds. The Entra app registration must list the delegated
+`Mail.ReadWrite` permission.
+
+IMAP accounts do not require a permission upgrade. IMAP credentials already have full mailbox access, so `delete-staged` works without re-authorization.
 
 ## Resumable Execution
 

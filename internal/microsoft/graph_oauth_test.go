@@ -227,3 +227,31 @@ func TestGraphMailManager_SeparateTokenAndScopes(t *testing.T) {
 	require.ErrorContains(err, "https://graph.microsoft.com/Mail.Read")
 	require.ErrorContains(err, "msgvault add-o365 user@company.com --graph")
 }
+
+// The write manager shares the mail token. It refuses a read-only grant, and
+// the sync manager still accepts the escalated one.
+func TestGraphMailWriteManager_Scopes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	readMgr := NewGraphMailManager("test-client", "common", "", dir, slog.Default())
+	writeMgr := NewGraphMailWriteManager("test-client", "common", "", dir, slog.Default())
+	assert.Equal(readMgr.TokenPath("user@company.com"), writeMgr.TokenPath("user@company.com"))
+
+	token := &oauth2.Token{AccessToken: "graph-access", RefreshToken: "graph-refresh", TokenType: "Bearer"}
+	require.NoError(readMgr.saveToken("user@company.com", token, GraphMailScopes(), "org-tid"))
+	ok, err := writeMgr.HasScopes("user@company.com")
+	require.NoError(err)
+	assert.False(ok)
+	_, err = writeMgr.TokenSource(t.Context(), "user@company.com")
+	require.ErrorContains(err, "Mail.ReadWrite")
+
+	require.NoError(writeMgr.saveToken("user@company.com", token, GraphMailWriteScopes(), "org-tid"))
+	ok, err = writeMgr.HasScopes("user@company.com")
+	require.NoError(err)
+	assert.True(ok)
+	_, err = writeMgr.TokenSource(t.Context(), "user@company.com")
+	require.NoError(err)
+	_, err = readMgr.TokenSource(t.Context(), "user@company.com")
+	require.NoError(err)
+}

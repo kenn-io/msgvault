@@ -38,7 +38,8 @@ func isInsufficientScopeError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "ACCESS_TOKEN_SCOPE_INSUFFICIENT") ||
 		strings.Contains(msg, "insufficient authentication scopes") ||
-		strings.Contains(msg, "Insufficient Permission")
+		strings.Contains(msg, "Insufficient Permission") ||
+		strings.Contains(msg, "ErrorAccessDenied") // Graph mail without Mail.ReadWrite
 }
 
 // Progress reports deletion progress.
@@ -59,7 +60,7 @@ func (NullProgress) OnComplete(succeeded, failed int)            {}
 type Executor struct {
 	manager  *Manager
 	store    *store.Store
-	client   gmail.API
+	client   gmail.MessageDeleter
 	logger   *slog.Logger
 	progress Progress
 	sourceID int64
@@ -73,7 +74,7 @@ func (e *Executor) WithSourceID(sourceID int64) *Executor {
 }
 
 // NewExecutor creates a deletion executor.
-func NewExecutor(manager *Manager, store *store.Store, client gmail.API) *Executor {
+func NewExecutor(manager *Manager, store *store.Store, client gmail.MessageDeleter) *Executor {
 	return &Executor{
 		manager:  manager,
 		store:    store,

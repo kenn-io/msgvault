@@ -398,6 +398,29 @@ func TestExploreSelectionStatsCanResolveExactDeletableMessageIDs(t *testing.T) {
 	assertions.NotContains(result.DeletableMessageIDs, first)
 }
 
+// Gmail and Graph mail can be deleted at the source. IMAP mail cannot.
+func TestDeletionCoversGmailAndMSMailOnly(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	gmailMsg := b.AddMessage(MessageOpt{SourceID: b.AddSource("g@example.com"), Subject: "One"})
+	msmailMsg := b.AddMessage(MessageOpt{SourceID: b.AddSourceWithType("m@example.com", "msmail"), Subject: "Two"})
+	b.AddMessage(MessageOpt{SourceID: b.AddSourceWithType("i@example.com", "imap"), Subject: "Three"})
+	engine := b.BuildEngine()
+
+	result, err := engine.ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+		IncludeDeletableMessageIDs: true,
+	})
+	requirements.NoError(err)
+	assertions.ElementsMatch([]int64{gmailMsg, msmailMsg}, result.DeletableMessageIDs)
+
+	targets, err := engine.GetDeletionTargetsByFilter(context.Background(), MessageFilter{})
+	requirements.NoError(err)
+	ids, err := deletionTargetSourceMessageIDs(targets, nil)
+	requirements.NoError(err)
+	assertions.ElementsMatch([]string{"msg1", "msg2"}, ids)
+}
+
 func TestExploreSelectionStatsExcludesDedupHiddenDeletionTargets(t *testing.T) {
 	for _, deletion := range []DeletionFilter{DeletionAny, DeletionActive} {
 		t.Run(string(deletion), func(t *testing.T) {

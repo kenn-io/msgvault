@@ -48,6 +48,7 @@ type fakeGraph struct {
 	badValue       map[string]bool   // message IDs whose $value answers 400
 	attachDir      string            // attachments directory; a fresh one when empty
 	throttle       bool              // answer the next $value with 429 once
+	denied         bool              // answer move and permanentDelete with 403
 	pageSize       int
 	stopAt         int // fail the delta page at this skip offset, when non-zero
 
@@ -173,6 +174,8 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 				"Content-Type: multipart mixed; boundary=b\r\n\r\n--b\r\n\r\nbody\r\n--b--\r\n"
 		}
 		_, _ = w.Write([]byte(body)) //nolint:gosec // local test server returns fixture MIME
+	case r.Method == http.MethodPost && strings.HasPrefix(p, "/me/messages/"):
+		f.write(w, r)
 	case strings.HasPrefix(p, "/me/messages/"):
 		id := strings.TrimPrefix(p, "/me/messages/")
 		if f.badLookup[id] {
@@ -187,6 +190,36 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 		f.writeJSON(w, map[string]any{"parentFolderId": folder, "receivedDateTime": "2024-01-01T10:00:00Z"})
 	default:
 		http.Error(w, "unexpected "+p, http.StatusBadRequest)
+	}
+}
+
+// write applies a move or a permanentDelete, as Graph does, so a later delta
+// reports the change.
+func (f *fakeGraph) write(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(r.URL.Path, "/") // "", "me", "messages", id, action
+	id, action := parts[3], parts[4]
+	if f.denied {
+		http.Error(w, `{"error":{"code":"ErrorAccessDenied","message":"Access is denied."}}`, http.StatusForbidden)
+		return
+	}
+	if _, ok := f.folder[id]; !ok {
+		http.Error(w, `{"error":{"code":"ErrorItemNotFound"}}`, http.StatusNotFound)
+		return
+	}
+	f.log = append(f.log, change{id, f.folder[id]})
+	switch action {
+	case "move":
+		var body struct {
+			DestinationID string `json:"destinationId"`
+		}
+		assert.NoError(f.t, json.UnmarshalRead(r.Body, &body))
+		f.folder[id] = body.DestinationID
+		w.WriteHeader(http.StatusCreated)
+	case "permanentDelete":
+		delete(f.folder, id)
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
 	}
 }
 

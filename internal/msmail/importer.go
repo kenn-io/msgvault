@@ -221,6 +221,10 @@ type syncer struct {
 	// so a known draft is downloaded again when delta reports it.
 	drafts string
 
+	// trash is the Deleted Items folder. delete-staged moves a message there
+	// and marks it deleted, and a sync keeps that mark.
+	trash string
+
 	// deletions is the hidden Recoverable Items folder. A permanent delete
 	// (Shift+Delete, or emptying Deleted Items) moves a message there.
 	deletions string
@@ -245,8 +249,11 @@ func (s *syncer) ensureLabels(ctx context.Context, folders []Folder) (map[string
 			return nil, fmt.Errorf("look up folder %s: %w", name, err)
 		}
 		system[id] = role
-		if name == "drafts" {
+		switch name {
+		case "drafts":
 			s.drafts = id
+		case "deleteditems":
+			s.trash = id
 		}
 	}
 	id, err := s.c.WellKnownFolderID(ctx, "recoverableitemsdeletions")
@@ -268,7 +275,8 @@ func (s *syncer) ensureLabels(ctx context.Context, folders []Folder) (map[string
 // applyPage stores one delta page for a folder. New messages are downloaded.
 // Known messages get the folder as their only label, because a mail item is
 // in exactly one folder, and lose any deletion mark, because the mailbox has
-// them again. In an incremental round (seen is nil), known messages are also
+// them again. A message in Deleted Items keeps its mark, as a Gmail message in
+// Trash does. In an incremental round (seen is nil), known messages are also
 // downloaded again, because delta reports them only when they changed. A walk
 // (seen is not nil) returns every message, so it downloads again only drafts,
 // whose content can change under the same ID. Removed messages are looked up
@@ -296,7 +304,7 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 	var todo []DeltaMessage
 	for _, m := range live {
 		id, ok := known[m.ID]
-		if ok {
+		if ok && (s.trash == "" || folderID != s.trash) {
 			if err := s.st.ClearMessageDeletedFromSource(s.sourceID, m.ID); err != nil {
 				return err
 			}

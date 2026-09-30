@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -73,6 +74,62 @@ func TestGetGraphErrorClassification(t *testing.T) {
 			defer srv.Close()
 			c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000)
 			_, err := c.GetRaw(t.Context(), "/message")
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
+// A POST retries a 429 after Retry-After, resends the same JSON body, and
+// accepts any 2xx.
+func TestPostRetriesAndAcceptsAny2xx(t *testing.T) {
+	for _, status := range []int{http.StatusCreated, http.StatusNoContent} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var methods, bodies, types []string
+				srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					b, _ := io.ReadAll(r.Body)
+					methods = append(methods, r.Method)
+					bodies = append(bodies, string(b))
+					types = append(types, r.Header.Get("Content-Type"))
+					if len(methods) == 1 {
+						w.Header().Set("Retry-After", "2")
+						w.WriteHeader(http.StatusTooManyRequests)
+						return
+					}
+					w.WriteHeader(status)
+				}))
+				httpClient := srv.Client()
+				c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000)
+				c.http.Transport = httpClient.Transport
+				start := time.Now()
+				err := c.Post(t.Context(), "/me/messages/m1/move", map[string]string{"destinationId": "deleteditems"})
+				require.NoError(t, err)
+				assert.Equal(t, 2*time.Second, time.Since(start))
+				assert.Equal(t, []string{"POST", "POST"}, methods)
+				want := `{"destinationId":"deleteditems"}`
+				assert.Equal(t, []string{want, want}, bodies)
+				assert.Equal(t, []string{"application/json", "application/json"}, types)
+			})
+		})
+	}
+}
+
+func TestPostErrorClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		want   error
+	}{
+		{"missing", http.StatusNotFound, ErrNotFound},
+		{"forbidden", http.StatusForbidden, ErrForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+			}))
+			defer srv.Close()
+			c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000)
+			err := c.Post(t.Context(), "/me/messages/m1/permanentDelete", nil)
 			require.ErrorIs(t, err, tc.want)
 		})
 	}

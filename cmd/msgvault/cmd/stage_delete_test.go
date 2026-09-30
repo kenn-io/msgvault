@@ -240,14 +240,14 @@ func TestStageDeleteCommand(t *testing.T) {
 				name: "staged", status: http.StatusCreated,
 				wantOutput: "Preflight: 3 matching item(s); 2 message(s) can be staged; 1 item(s) will be skipped.\n" +
 					"Staged 2 message(s) for deletion in batch batch-191.\n" +
-					"1 of 3 matching item(s) cannot be deleted from their source (chats, meetings, or non-Gmail mail) and were skipped.\n" +
+					"1 of 3 matching item(s) cannot be deleted from their source (chats, meetings, or mail from other sources) and were skipped.\n" +
 					"Review with 'msgvault show-deletion batch-191', then execute with 'msgvault delete-staged batch-191'.\n",
 			},
 			{
 				name: "dry_run", dryRun: true, status: http.StatusOK,
 				wantOutput: "Preflight: 3 matching item(s); 2 message(s) can be staged; 1 item(s) will be skipped.\n" +
 					"Dry run: 2 message(s) would be staged; no deletion batch was created.\n" +
-					"1 of 3 matching item(s) cannot be deleted from their source (chats, meetings, or non-Gmail mail) and were skipped.\n",
+					"1 of 3 matching item(s) cannot be deleted from their source (chats, meetings, or mail from other sources) and were skipped.\n",
 			},
 		} {
 			t.Run(tt.name, func(t *testing.T) {

@@ -1520,12 +1520,12 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 		conditions = append(conditions, e.dialect.BoolTrueExpr("m.has_attachments"))
 	}
 
-	// Scope to Gmail sources only — this function is used for
-	// Gmail-specific deletion/staging workflows and must not return
-	// WhatsApp or other source IDs. 1:1 with messages, so kept as a
+	// Scope to sources that can delete at the source — this function is
+	// used for deletion/staging workflows and must not return WhatsApp or
+	// other source IDs. 1:1 with messages, so kept as a
 	// JOIN; the other filter predicates below use EXISTS to stay
 	// non-multiplicative.
-	joins := []string{`JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'`}
+	joins := []string{`JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type IN ` + deletableSourceTypesSQL}
 
 	// When BOTH the email and the display name are filtered, they must
 	// match the SAME from-row (or the SAME direct sender), not two
@@ -1737,7 +1737,7 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearch(
 		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
 		       m.source_message_id
 		FROM messages m
-		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'
+		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type IN `+deletableSourceTypesSQL+`
 		%s
 		WHERE %s
 		ORDER BY m.sent_at DESC, m.id DESC
@@ -1802,7 +1802,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
 		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
 		       m.source_message_id
 		FROM messages m
-		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'
+		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type IN `+deletableSourceTypesSQL+`
 		WHERE m.id IN (
 			SELECT m.id
 			FROM messages m
@@ -1839,7 +1839,7 @@ func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
 		       m.source_message_id, m.sent_at
 		FROM messages m
-		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'
+		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type IN `+deletableSourceTypesSQL+`
 			WHERE %s AND %s AND COALESCE(m.source_message_id, '') <> '' AND m.id IN (%s)
 	`, store.LiveMessagesWhere("m", true), emailOnlyFilterM, strings.Join(placeholders, ","))
 	rows, err := e.queryContext(ctx, q, args...)

@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -515,7 +516,7 @@ func TestDeleteStagedRejectsUnsupportedSourceBeforeClaim(t *testing.T) {
 	cmd.SetErr(new(bytes.Buffer))
 	cmd.SetArgs([]string{"--yes", manifest.ID})
 	err = cmd.Execute()
-	require.ErrorContains(err, "not a gmail or imap source")
+	require.ErrorContains(err, "not a gmail, imap or msmail source")
 	assert.FileExists(filepath.Join(mgr.PendingDir(), manifest.ID+".json"))
 	assert.NoFileExists(filepath.Join(mgr.InProgressDir(), manifest.ID+".json"))
 }
@@ -731,6 +732,47 @@ func TestPlanCLIDeleteStagedReportsDeletionScopeEscalation(t *testing.T) {
 	assert.Equal(scopeEscalationAccount, got.ScopeEscalationAccount,
 		"plan names the account so the frontend can authorize client-side")
 	assert.Empty(got.ScopeEscalationOAuthApp, "default app binding")
+}
+
+// An msmail batch passes the source check. A read-only Graph token needs the
+// scope upgrade, and a token with Mail.ReadWrite does not. The account stays
+// empty, so the frontend preflight leaves the Graph consent to the subprocess.
+func TestPlanCLIDeleteStagedMSMailScopeEscalation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dataDir := t.TempDir()
+	cfg := lifecycleTestConfig(dataDir)
+	testCtx := withStoreResolverConfig(t, cfg)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeMSMail, "user@company.example")
+	require.NoError(err)
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err)
+	require.NoError(mgr.SaveManifest(deletion.NewManifestForSource("graph mail", []string{"AAMk-1"}, deletion.SourceReference{
+		ID: source.ID, Type: source.SourceType, Identifier: source.Identifier,
+	})))
+	tokenPath := microsoft.NewGraphMailManager("", "", "", cfg.TokensDir(), nil).TokenPath(source.Identifier)
+	require.NoError(os.MkdirAll(filepath.Dir(tokenPath), 0o700))
+	saveScopes := func(scopes []string) {
+		data, err := json.Marshal(map[string]any{"access_token": "a", "token_type": "Bearer", "scopes": scopes})
+		require.NoError(err)
+		require.NoError(os.WriteFile(tokenPath, data, 0o600))
+	}
+	req := api.CLIDeleteStagedPlanRequest{Yes: true, RemoteDeleteEnabled: true}
+
+	saveScopes(microsoft.GraphMailScopes())
+	got, err := planCLIDeleteStaged(testCtx, st, req)
+	require.NoError(err)
+	assert.True(got.NeedsScopeEscalation)
+	assert.Contains(got.ScopeEscalationBodyLines, "Deletion requires the Microsoft Graph Mail.ReadWrite permission.")
+	assert.Empty(got.ScopeEscalationAccount)
+
+	saveScopes(microsoft.GraphMailWriteScopes())
+	got, err = planCLIDeleteStaged(testCtx, st, req)
+	require.NoError(err)
+	assert.True(got.NeedsExecution)
+	assert.False(got.NeedsScopeEscalation)
 }
 
 func TestPlanCLIDeleteStagedResolvesDisplayNameBeforeFiltering(t *testing.T) {

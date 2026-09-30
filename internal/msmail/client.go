@@ -5,9 +5,11 @@ package msmail
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"time"
 
+	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/msgraph"
 )
 
@@ -117,4 +119,32 @@ func (c *Client) LookupMessage(ctx context.Context, id string) (MessageInfo, err
 	var m MessageInfo
 	err := c.GetJSON(ctx, "/me/messages/"+url.PathEscape(id)+"?$select=parentFolderId,receivedDateTime", &m)
 	return m, err
+}
+
+// TrashMessage moves a message to Deleted Items, where the user can restore it.
+// It returns *gmail.NotFoundError when the message no longer exists.
+func (c *Client) TrashMessage(ctx context.Context, id string) error {
+	return c.post(ctx, id, "move", map[string]string{"destinationId": "deleteditems"})
+}
+
+// DeleteMessage deletes a message permanently. Graph moves it to the hidden
+// Purges folder, and the user cannot restore it. It returns
+// *gmail.NotFoundError when the message no longer exists.
+func (c *Client) DeleteMessage(ctx context.Context, id string) error {
+	return c.post(ctx, id, "permanentDelete", nil)
+}
+
+// BatchDeleteMessages is not supported. The deletion executor then deletes
+// one message at a time.
+func (c *Client) BatchDeleteMessages(context.Context, []string) error {
+	return errors.New("graph mail does not support batch delete")
+}
+
+func (c *Client) post(ctx context.Context, id, action string, body any) error {
+	path := "/me/messages/" + url.PathEscape(id) + "/" + action
+	err := c.Post(ctx, path, body)
+	if errors.Is(err, msgraph.ErrNotFound) {
+		return &gmail.NotFoundError{Path: path}
+	}
+	return err
 }

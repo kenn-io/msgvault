@@ -437,6 +437,11 @@ type `msmail`. Each mail folder becomes a label. The first sync downloads every
 folder. Later syncs fetch only the changes, including moves between folders
 and deletes. The daemon schedules the account like any other.
 
+To delete messages at the source with `delete-staged`, also add the delegated
+permission `Mail.ReadWrite`. Sync does not use it. The first `delete-staged`
+for the account asks to upgrade the token. See
+[Deleting Email](/docs/usage/deletion/).
+
 A Graph account is a new account. If the same mailbox is also synced over
 IMAP, the vault holds two copies. Run `msgvault dedup --collection` to hide the
 extra copies, and `--undo` to reverse it.
