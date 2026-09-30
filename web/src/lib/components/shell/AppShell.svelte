@@ -508,7 +508,7 @@
     if (workspace === 'everything' || workspace === 'files') {
       commitSearch(query, mode);
       // The ungrouped Files grid stays out of currentGrid() so shortcut relays keep ignoring it.
-      (currentGrid() ?? document.querySelector<HTMLElement>('[role="grid"][aria-label="Files results"]'))?.focus();
+      (currentGrid() ?? filesGrid())?.focus();
       return;
     }
     beforeCommit();
@@ -769,11 +769,17 @@
       if (exploreState.current.selectedRow === null) focusGrid();
       return;
     }
-    navigationFocusTarget()?.focus();
+    const grid = exploreState.current.workspace === 'files' && exploreState.current.selectedRow === null
+      ? filesGrid()
+      : null;
+    (grid ?? navigationFocusTarget())?.focus();
   }
   async function focusGridAfterUpdate(): Promise<void> {
     await tick();
     focusGrid();
+  }
+  function filesGrid(): HTMLElement | null {
+    return document.querySelector<HTMLElement>('[role="grid"][aria-label="Files results"]');
   }
   function currentGrid(): HTMLElement | null {
     return document.querySelector<HTMLElement>(
@@ -1481,6 +1487,11 @@
               restorationEpoch={exploreState.restorationEpoch}
               onRestorationComplete={(epoch) => {
                 exploreState.acknowledgeRestoration(epoch);
+                // Like Everything, a restored list without an open item takes keyboard focus,
+                // unless the person has already moved focus somewhere.
+                if (exploreState.current.selectedRow === null && document.activeElement === document.body) {
+                  filesGrid()?.focus();
+                }
               }}
               onSortChange={(fileSort: FileSearchSort) =>
                 commitNavigation({

@@ -1714,9 +1714,73 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
       expect(await screen.findByRole('dialog', { name: 'View legacy-report.pdf' })).toBeDefined();
+      const grid = await screen.findByRole('grid', { name: 'Files results' });
       expect(await screen.findByText('page-1.pdf')).toBeDefined();
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await waitFor(() => expect(grid.getAttribute('aria-busy')).toBe('false'));
       expect(filePages).toBe(1);
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
+  it('focuses the Files grid once a restored Files list settles on its fallback row', async () => {
+    window.history.replaceState(null, '', `/?workspace=files&explore=${encodeURIComponent(JSON.stringify({
+      activeRow: 'source:1:message:m9:file:9'
+    }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/files/search')) return Response.json({
+        files: [{
+          id: 1, key: 'source:1:message:m1:file:1', entry_key: 'source:1:message:m1', message_id: 1,
+          conversation_id: 1, occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
+          source_identifier: 'archive@example.com', containing_title: 'Containing item',
+          filename: 'fallback.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 1,
+          content_state: 'missing_blob', content_available: false
+        }],
+        total_count: 1, cache_revision: 'cache-1', search_provenance: {}
+      });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Files results' });
+      expect(await screen.findByText('fallback.pdf')).toBeDefined();
+      await waitFor(() => expect(document.activeElement).toBe(grid));
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
+  it('focuses the Files grid when Back returns to Files from the reading pane', async () => {
+    window.history.replaceState(null, '', '/?workspace=files');
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/files/search')) return Response.json({
+        files: [{
+          id: 1, key: 'source:1:message:m1:file:1', entry_key: 'message:1', message_id: 1,
+          conversation_id: 1, occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
+          source_identifier: 'archive@example.com', containing_title: 'Containing item',
+          filename: 'returned.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 1,
+          content_state: 'missing_blob', content_available: false
+        }],
+        total_count: 1, cache_revision: 'cache-1', search_provenance: {}
+      });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      expect(await screen.findByText('returned.pdf')).toBeDefined();
+      await fireEvent.click(screen.getByRole('button', { name: 'Open containing item Containing item' }));
+      expect(await screen.findByRole('main', { name: 'Everything' })).toBeDefined();
+      const returned = new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+      window.history.back();
+      await returned;
+      const grid = await screen.findByRole('grid', { name: 'Files results' });
+      await waitFor(() => expect(document.activeElement).toBe(grid));
     } finally {
       rendered.unmount();
       state.destroy();
