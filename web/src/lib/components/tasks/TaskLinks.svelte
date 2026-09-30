@@ -24,7 +24,6 @@
     sourceType,
     sourceIdentifier,
     onsettings = () => undefined,
-    linkedCount = $bindable(undefined),
   }: {
     client: APIClient;
     messageId: number;
@@ -32,7 +31,6 @@
     sourceType: string;
     sourceIdentifier: string;
     onsettings?: () => void;
-    linkedCount?: number | undefined;
   } = $props();
   let loading = $state(true);
   let integrationState = $state('loading');
@@ -84,7 +82,6 @@
     creating = false;
     outboundMetadata = null;
     existingLinkRetry = undefined;
-    linkedCount = undefined;
   }
   async function loadFor(selectedMessageID: number): Promise<void> {
     const currentGeneration = ++generation;
@@ -128,8 +125,6 @@
     reason = data.reason ?? '';
     lastScan = data.last_scan ?? '';
     tasks = data.tasks ?? [];
-    // A partial or unavailable index can under-report, so a bare zero is not a count.
-    linkedCount = tasks.length > 0 || data.complete ? tasks.length : undefined;
     outboundMetadata = data.outbound_metadata;
   }
   async function search(): Promise<void> {

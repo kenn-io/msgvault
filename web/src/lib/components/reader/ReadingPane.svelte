@@ -98,7 +98,6 @@
   let filesLoading = $state(false);
   let filesError = $state('');
   let tasksOpen = $state(false);
-  let linkedCount = $state<number | undefined>(undefined);
   let requestGeneration = 0;
   let requestController: AbortController | undefined;
   const title = $derived(selection
@@ -214,7 +213,6 @@
     void targetKey;
     void selection;
     tasksOpen = false;
-    linkedCount = undefined;
   });
 
   onDestroy(() => {
@@ -257,8 +255,8 @@
         <Button
           size="sm"
           surface="outline"
-          label={linkedCount === undefined ? 'Tasks' : `Tasks ${linkedCount}`}
-          ariaLabel={linkedCount === undefined ? 'Tasks for this message' : `Tasks ${linkedCount} for this message`}
+          label="Tasks"
+          ariaLabel="Tasks for this message"
           ariaExpanded={tasksOpen}
           onclick={() => (tasksOpen = !tasksOpen)}
         />
@@ -287,7 +285,6 @@
         sourceType={selection.row.source_type}
         sourceIdentifier={selection.row.source_identifier}
         onsettings={onOpenSettings}
-        bind:linkedCount
       />
     </div>
   {/if}
@@ -385,21 +382,25 @@
     min-height: 40px;
     flex: none;
     align-items: center;
+    flex-wrap: wrap;
     justify-content: space-between;
-    gap: var(--space-4);
+    gap: var(--space-2) var(--space-4);
     padding: var(--space-2) var(--space-4);
     border-bottom: 1px solid var(--border-muted);
     box-shadow: 0 1px 0 var(--hairline-sheen);
   }
 
+  /* A narrow pane wraps the actions below the heading instead of squeezing the title away. */
   .pane-heading {
     display: flex;
     min-width: 0;
+    flex: 1 1 12rem;
     align-items: baseline;
     gap: var(--space-4);
   }
 
   .pane-title {
+    min-width: min(8rem, 100%);
     overflow: hidden;
     color: var(--text-primary);
     font-size: var(--font-size-sm);
@@ -408,7 +409,8 @@
   }
 
   .pane-meta {
-    flex: none;
+    min-width: 0;
+    flex: 0 1 auto;
     overflow: hidden;
     color: var(--text-muted);
     font-size: var(--font-size-2xs);

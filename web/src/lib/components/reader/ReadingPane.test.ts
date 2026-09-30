@@ -73,7 +73,7 @@ describe('ReadingPane header', () => {
     });
   }
 
-  it('opens the linked tasks from a labelled button and shows the count once known', async () => {
+  it('opens the linked tasks from a Tasks button without a count', async () => {
     const fetchFn = taskFetch([
       { id: 'task-1', title: 'Follow up', revision: 'r1' },
       { id: 'task-2', title: 'Reply', revision: 'r2' }
@@ -92,11 +92,12 @@ describe('ReadingPane header', () => {
     await fireEvent.click(button);
     expect(button.getAttribute('aria-expanded')).toBe('true');
     expect(await screen.findByRole('region', { name: 'Linked tasks' })).toBeDefined();
-    await waitFor(() => expect(button.textContent?.trim()).toBe('Tasks 2'));
-    expect(screen.getByRole('button', { name: 'Tasks 2 for this message' })).toBe(button);
+    await screen.findByText('Reply');
+    expect(button.textContent?.trim()).toBe('Tasks');
+    expect(screen.getByRole('button', { name: 'Tasks for this message' })).toBe(button);
   });
 
-  it('resets the count and closes the sheet when the selection changes', async () => {
+  it('closes the sheet when the selection changes', async () => {
     const fetchFn = taskFetch([{ id: 'task-1', title: 'Follow up', revision: 'r1' }]);
     const view = render(ReadingPane, {
       props: {
@@ -105,12 +106,11 @@ describe('ReadingPane header', () => {
         predicate: {} satisfies ExplorePredicate
       }
     });
-    await fireEvent.click(screen.getByRole('button', { name: /^Tasks( \d+)? for this message$/ }));
-    expect(await screen.findByRole('button', { name: 'Tasks 1 for this message' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Tasks for this message' }));
+    await screen.findByText('Follow up');
 
     await view.rerender({ selection: { kind: 'entry', row: entryRow({ key: 'entry-2', anchor_message_id: 43 }) } });
-    const button = screen.getByRole('button', { name: /^Tasks( \d+)? for this message$/ });
-    expect(button.textContent?.trim()).toBe('Tasks');
+    const button = screen.getByRole('button', { name: 'Tasks for this message' });
     expect(button.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('region', { name: 'Linked tasks' })).toBeNull();
   });
