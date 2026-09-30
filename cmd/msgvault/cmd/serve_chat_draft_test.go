@@ -131,3 +131,85 @@ func TestChatDraftDelegatedGrantIsSourceScoped(t *testing.T) {
 	require.NoError(err)
 	assert.Len(unchanged, 1)
 }
+
+func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "slack-account")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "C1", "channel", "General")
+	requirements.NoError(err)
+	body := "private chat reply"
+	draft, err := st.CreateChatDraftContext(t.Context(), conversationID, 0, body, func(string, string) error { return nil })
+	requirements.NoError(err)
+	grantFor := func(permission agentgrant.Permission) *agentgrant.Grant {
+		return &agentgrant.Grant{
+			ID: "chat-grant", Permissions: []agentgrant.Permission{permission},
+			Sources: []agentgrant.SourceRef{{Type: source.SourceType, Identifier: source.Identifier}},
+		}
+	}
+	adapter := &storeAPIAdapter{store: st}
+	run := func(grant *agentgrant.Grant, args ...string) (string, error) {
+		var output strings.Builder
+		err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+			output.WriteString(event.Data)
+			return nil
+		})
+		return output.String(), err
+	}
+
+	withEdit, err := run(grantFor(agentgrant.PermissionDraftEdit), api.CLIRunDraftGetCommand, draft.DraftID, "--json")
+	requirements.NoError(err)
+	assertions.Contains(withEdit, body)
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		json bool
+		list bool
+	}{
+		{name: "get text", args: []string{api.CLIRunDraftGetCommand, draft.DraftID}},
+		{name: "get JSON", args: []string{api.CLIRunDraftGetCommand, draft.DraftID}, json: true},
+		{name: "list text", args: []string{api.CLIRunDraftGetCommand, "--conversation", strconv.FormatInt(conversationID, 10)}, list: true},
+		{name: "list JSON", args: []string{api.CLIRunDraftGetCommand, "--conversation", strconv.FormatInt(conversationID, 10)}, json: true, list: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			args := append([]string(nil), tc.args...)
+			if tc.json {
+				args = append(args, "--json")
+			}
+			got, err := run(grantFor(agentgrant.PermissionDraftDelete), args...)
+			require.NoError(err)
+			assert.NotContains(got, body)
+			assert.Contains(got, draft.DraftID)
+			if tc.json && tc.list {
+				var outputs []chatDraftOutput
+				require.NoError(json.Unmarshal([]byte(got), &outputs))
+				require.Len(outputs, 1)
+				assert.Empty(outputs[0].Body)
+			} else if tc.json {
+				var output chatDraftOutput
+				require.NoError(json.Unmarshal([]byte(got), &output))
+				assert.Empty(output.Body)
+			}
+		})
+	}
+
+	deleted, err := run(grantFor(agentgrant.PermissionDraftDelete), api.CLIRunDraftDeleteCommand, draft.DraftID, "--revision", "1", "--json")
+	requirements.NoError(err)
+	assertions.NotContains(deleted, body)
+	var deletedJSON chatDraftOutput
+	requirements.NoError(json.Unmarshal([]byte(deleted), &deletedJSON))
+	assertions.Equal("deleted", deletedJSON.Status)
+	assertions.Empty(deletedJSON.Body)
+	_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
+	requirements.Error(err)
+
+	textDraft, err := st.CreateChatDraftContext(t.Context(), conversationID, 0, body, func(string, string) error { return nil })
+	requirements.NoError(err)
+	deletedText, err := run(grantFor(agentgrant.PermissionDraftDelete), api.CLIRunDraftDeleteCommand, textDraft.DraftID, "--revision", "1")
+	requirements.NoError(err)
+	assertions.Contains(deletedText, textDraft.DraftID)
+	assertions.NotContains(deletedText, body)
+}
