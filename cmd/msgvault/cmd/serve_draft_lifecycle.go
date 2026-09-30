@@ -214,16 +214,12 @@ func (a *storeAPIAdapter) draftLifecycleOutput(
 	providerObservation *draftLifecycleObservation,
 	observation *draftLifecycleObservation,
 ) (draftLifecycleOutput, error) {
-	message, err := a.store.GetMessageContext(ctx, draft.CurrentMessageID)
-	if err != nil {
-		return draftLifecycleOutput{}, fmt.Errorf("load managed draft message: %w", err)
-	}
-	raw, err := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
+	body, raw, err := a.store.GetMessageBodyAndRawContext(ctx, draft.CurrentMessageID)
 	if err != nil {
 		return draftLifecycleOutput{}, fmt.Errorf("load managed draft MIME: %w", err)
 	}
 	output := draftLifecycleMetadata(draft, status, providerObservation, observation)
-	output.Content = message.BodyText
+	output.Content = body
 	output.RawMIME = string(raw)
 	if draft.Pending != nil {
 		output.CandidateContent = string(draft.Pending.Raw)
@@ -426,6 +422,11 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		if err != nil {
 			return draftReplyError("draft_read_failed", err)
 		}
+		if req.Grant != nil {
+			if err := a.authorizeDelegatedDraftOutput(ctx, intent, req.Grant, draft.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+				return err
+			}
+		}
 		return emitDraftLifecycleOutput(emit, cliStreamStdout, intent, output)
 	}
 	if intent.Operation == api.CLIRunDraftRecoverCommand {
@@ -439,6 +440,11 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 			output, err := a.draftLifecycleOutput(ctx, draft, "already_discarded", nil, nil)
 			if err != nil {
 				return draftReplyError("draft_read_failed", err)
+			}
+			if req.Grant != nil {
+				if err := a.authorizeDelegatedDraftOutput(ctx, intent, req.Grant, draft.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+					return err
+				}
 			}
 			return emitDraftLifecycleOutput(emit, cliStreamStdout, intent, output)
 		}
@@ -462,6 +468,12 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	draft, err = a.store.GetIMAPDraftContext(ctx, intent.DraftID)
 	if err != nil {
 		return draftReplyError("draft_not_found", err)
+	}
+	// Sync can replace the archived sender without advancing the draft revision.
+	if req.Grant != nil {
+		if _, err := a.authorizeDelegatedDraftLifecycle(ctx, intent, req.Grant, draft.SourceID, draft.CurrentMessageID); err != nil {
+			return err
+		}
 	}
 	if draft.Revision != intent.Revision {
 		return draftReplyError("revision_mismatch", errors.New("draft changed while acquiring source ownership"))
@@ -828,6 +840,39 @@ func (a *storeAPIAdapter) authorizeDelegatedDraftLifecycle(
 	grant *agentgrant.Grant,
 	sourceID, currentMessageID int64,
 ) (bool, error) {
+	raw, err := a.store.GetMessageRawContext(ctx, currentMessageID)
+	if err != nil {
+		return false, draftReplyNotPermitted(fmt.Errorf("load managed draft sender: %w", err))
+	}
+	return a.authorizeDelegatedDraftContent(ctx, intent, grant, sourceID, raw)
+}
+
+// authorizeDelegatedDraftOutput checks the snapshots actually returned. Sync
+// may replace current MIME while a pending edit still holds a different sender.
+func (a *storeAPIAdapter) authorizeDelegatedDraftOutput(
+	ctx context.Context,
+	intent draftLifecycleIntent,
+	grant *agentgrant.Grant,
+	sourceID int64,
+	raw, candidate string,
+) error {
+	canReadContent, err := a.authorizeDelegatedDraftContent(ctx, intent, grant, sourceID, []byte(raw))
+	if err != nil {
+		return err
+	}
+	if canReadContent && candidate != "" {
+		_, err = a.authorizeDelegatedDraftContent(ctx, intent, grant, sourceID, []byte(candidate))
+	}
+	return err
+}
+
+func (a *storeAPIAdapter) authorizeDelegatedDraftContent(
+	ctx context.Context,
+	intent draftLifecycleIntent,
+	grant *agentgrant.Grant,
+	sourceID int64,
+	raw []byte,
+) (bool, error) {
 	source, err := a.store.GetSourceByIDContext(ctx, sourceID)
 	if err != nil {
 		return false, draftReplyNotPermitted(fmt.Errorf("load source %d: %w", sourceID, err))
@@ -837,7 +882,7 @@ func (a *storeAPIAdapter) authorizeDelegatedDraftLifecycle(
 		if !grant.Allows(permission, ref) {
 			continue
 		}
-		senderKey, err := a.managedDraftSenderKey(ctx, currentMessageID)
+		senderKey, err := managedDraftSenderKey(raw)
 		if err != nil {
 			return false, draftReplyNotPermitted(fmt.Errorf("load managed draft sender: %w", err))
 		}
@@ -849,11 +894,7 @@ func (a *storeAPIAdapter) authorizeDelegatedDraftLifecycle(
 	return false, draftReplyNotPermitted(fmt.Errorf("source %d or sender is not in grant %s for %s", source.ID, grant.ID, intent.Operation))
 }
 
-func (a *storeAPIAdapter) managedDraftSenderKey(ctx context.Context, messageID int64) (string, error) {
-	raw, err := a.store.GetMessageRawContext(ctx, messageID)
-	if err != nil {
-		return "", err
-	}
+func managedDraftSenderKey(raw []byte) (string, error) {
 	parsed, err := msgmime.Parse(raw)
 	if err != nil {
 		return "", err

@@ -1588,6 +1588,24 @@ func (s *Store) GetMessageRawContext(ctx context.Context, messageID int64) ([]by
 	return decodeMessageRaw(compressed, compression)
 }
 
+// GetMessageBodyAndRawContext reads one message's body and MIME in the same
+// snapshot, so callers can authorize the sender of the content they return.
+func (s *Store) GetMessageBodyAndRawContext(ctx context.Context, messageID int64) (string, []byte, error) {
+	var body, compression sql.NullString
+	var compressed []byte
+	err := s.db.QueryRowContext(ctx, s.Rebind(`
+		SELECT b.body_text, r.raw_data, r.compression
+		FROM message_raw r
+		LEFT JOIN message_bodies b ON b.message_id = r.message_id
+		WHERE r.message_id = ?
+	`), messageID).Scan(&body, &compressed, &compression)
+	if err != nil {
+		return "", nil, err
+	}
+	raw, err := decodeMessageRaw(compressed, compression)
+	return body.String, raw, err
+}
+
 // GetMessageBodyText returns the archived plain-text body for one message.
 // A message without a body returns an empty string.
 func (s *Store) GetMessageBodyText(messageID int64) (string, error) {

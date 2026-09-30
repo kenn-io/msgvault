@@ -466,18 +466,14 @@ func (a *storeAPIAdapter) gmailDraftLifecycleOutput(
 	providerObservation *gmailDraftLifecycleObservation,
 	observation *gmailDraftLifecycleObservation,
 ) (gmailDraftLifecycleOutput, error) {
-	message, err := a.store.GetMessageContext(ctx, draft.CurrentMessageID)
-	if err != nil {
-		return gmailDraftLifecycleOutput{}, fmt.Errorf("load managed Gmail draft message: %w", err)
-	}
-	raw, err := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
+	body, raw, err := a.store.GetMessageBodyAndRawContext(ctx, draft.CurrentMessageID)
 	if err != nil {
 		return gmailDraftLifecycleOutput{}, fmt.Errorf("load managed Gmail draft MIME: %w", err)
 	}
 	output := gmailDraftLifecycleOutputWithoutMessage(
 		draft, status, providerObservation, observation,
 	)
-	output.Content = message.BodyText
+	output.Content = body
 	output.RawMIME = string(raw)
 	return output, nil
 }
@@ -840,6 +836,11 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		if err != nil {
 			return draftReplyError("draft_read_failed", err)
 		}
+		if grant != nil {
+			if err := a.authorizeDelegatedDraftOutput(ctx, intent, grant, draft.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+				return err
+			}
+		}
 		return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent, output)
 	}
 	if draft.Revision != intent.Revision {
@@ -850,6 +851,11 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 			output, err := a.gmailDraftLifecycleOutput(ctx, draft, "already_discarded", nil, nil)
 			if err != nil {
 				return draftReplyError("draft_read_failed", err)
+			}
+			if grant != nil {
+				if err := a.authorizeDelegatedDraftOutput(ctx, intent, grant, draft.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+					return err
+				}
 			}
 			return emitGmailDraftLifecycleOutput(emit, cliStreamStdout, intent, output)
 		}
@@ -982,13 +988,6 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		}
 		finish()
 		defer refresh()
-		// A provider edit can change From. Authorize the adopted message before
-		// returning any of its content or lifecycle metadata to the agent.
-		if grant != nil {
-			if _, err := a.authorizeDelegatedDraftLifecycle(evidenceCtx, intent, grant, adopted.SourceID, adopted.CurrentMessageID); err != nil {
-				return err
-			}
-		}
 		status := "changed_externally"
 		if recovered {
 			status = "recovered"
@@ -999,6 +998,12 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		}, nil)
 		if outputErr != nil {
 			return draftReplyError("draft_read_failed", outputErr)
+		}
+		// A provider edit can change From. Check the exact snapshot returned.
+		if grant != nil {
+			if err := a.authorizeDelegatedDraftOutput(evidenceCtx, intent, grant, adopted.SourceID, output.RawMIME, output.CandidateContent); err != nil {
+				return err
+			}
 		}
 		if err := emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent, output); err != nil {
 			return draftReplyError("output_failed", err)
