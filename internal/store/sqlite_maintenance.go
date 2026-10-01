@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"time"
+
+	"github.com/cenkalti/backoff/v7"
 )
 
 // Daily maintenance budgets. The daemon runs it off-peak under the operation
@@ -38,30 +40,32 @@ func (s *Store) RunDailyMaintenance(ctx context.Context) (MaintenanceReport, err
 	logSQLiteOptimizeError("daily maintenance", report.OptimizeErr)
 
 	report.WALBytesBefore = s.walBytes()
-	backoff := s.checkpointRetryBackoff
-	if backoff == nil {
-		backoff = defaultCheckpointRetryBackoff
+	delays := s.checkpointRetryBackoff
+	if delays == nil {
+		delays = defaultCheckpointRetryBackoff
 	}
-	var checkpointErr error
-	for attempt := 0; ; attempt++ {
+	policy := backoff.NewExponentialBackOff()
+	policy.RandomizationFactor = 0
+	policy.Multiplier = 3
+	if len(delays) != 0 {
+		policy.InitialInterval = delays[0]
+		policy.MaxInterval = delays[len(delays)-1]
+	}
+	var lastCheckpointErr error
+	_, checkpointErr := backoff.Retry(ctx, func() (struct{}, error) {
 		if err := ctx.Err(); err != nil {
-			checkpointErr = errors.Join(checkpointErr, err)
-			break
+			return struct{}{}, backoff.Permanent(errors.Join(lastCheckpointErr, err))
 		}
 		report.CheckpointAttempts++
-		checkpointErr = s.CheckpointWALContext(ctx)
-		if checkpointErr == nil || attempt >= len(backoff) {
-			break
-		}
-		timer := time.NewTimer(backoff[attempt])
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		lastCheckpointErr = s.CheckpointWALContext(ctx)
+		return struct{}{}, lastCheckpointErr
+	}, backoff.WithBackOff(policy), backoff.WithMaxTries(uint(len(delays)+1)), backoff.WithMaxElapsedTime(0))
+	if checkpointErr != nil {
+		retryErr := backoff.AsRetryError(checkpointErr)
+		checkpointErr = retryErr.LastErr
+		if !errors.Is(retryErr.Cause, backoff.ErrPermanent) && !errors.Is(retryErr.Cause, backoff.ErrExhausted) {
 			checkpointErr = errors.Join(checkpointErr, ctx.Err())
-		case <-timer.C:
-			continue
 		}
-		break
 	}
 	report.WALBytesAfter = s.walBytes()
 	if checkpointErr != nil {

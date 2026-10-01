@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/time/rate"
@@ -131,27 +132,29 @@ func (s *Session) ToolInventory(ctx context.Context) ([]ToolInfo, error) {
 // A provider rate-limit rejection is retried with exponential backoff; every
 // other error returns immediately.
 func (s *Session) CallToolJSON(ctx context.Context, name string, args map[string]any) (jsontext.Value, error) {
-	delay := s.rateLimitDelay
-	var lastErr error
-	for attempt := 1; attempt <= rateLimitAttempts; attempt++ {
+	policy := backoff.NewExponentialBackOff()
+	policy.InitialInterval = s.rateLimitDelay
+	policy.MaxInterval = rateLimitMaxDelay
+	policy.Multiplier = 2
+	policy.RandomizationFactor = 0
+	payload, err := backoff.Retry(ctx, func() (jsontext.Value, error) {
 		payload, err := s.callToolOnce(ctx, name, args)
-		if err == nil {
-			return payload, nil
+		if err != nil && !errors.Is(err, errRateLimited) {
+			return nil, backoff.Permanent(err)
 		}
-		if !errors.Is(err, errRateLimited) {
-			return nil, err
-		}
-		lastErr = err
-		if attempt == rateLimitAttempts {
-			break
-		}
-		if err := sleepContext(ctx, delay); err != nil {
-			return nil, fmt.Errorf("circleback tool %s: %w", name, err)
-		}
-		delay = min(delay*2, rateLimitMaxDelay)
+		return payload, err
+	}, backoff.WithBackOff(policy), backoff.WithMaxTries(rateLimitAttempts), backoff.WithMaxElapsedTime(0))
+	if err == nil {
+		return payload, nil
 	}
-	// lastErr already names the tool, so this does not repeat it.
-	return nil, fmt.Errorf("still rate limited after %d attempts: %w", rateLimitAttempts, lastErr)
+	retryErr := backoff.AsRetryError(err)
+	if errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+		return nil, retryErr.LastErr
+	}
+	if !errors.Is(retryErr.Cause, backoff.ErrExhausted) {
+		return nil, fmt.Errorf("circleback tool %s: %w", name, ctx.Err())
+	}
+	return nil, fmt.Errorf("still rate limited after %d attempts: %w", rateLimitAttempts, retryErr.LastErr)
 }
 
 // callToolOnce performs one paced tool call.
@@ -170,22 +173,6 @@ func (s *Session) callToolOnce(ctx context.Context, name string, args map[string
 		return nil, fmt.Errorf("circleback tool %s: %w", name, err)
 	}
 	return payload, nil
-}
-
-// sleepContext waits for d, returning early if ctx is cancelled. A
-// non-positive duration returns immediately.
-func sleepContext(ctx context.Context, d time.Duration) error {
-	if d <= 0 {
-		return ctx.Err()
-	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }
 
 // isRateLimitMessage reports whether a tool-result error text is a provider

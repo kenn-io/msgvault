@@ -75,24 +75,17 @@ type operationBusyWaiter struct {
 	lastNotify time.Time
 }
 
-// wait reports whether err is a gate-busy rejection worth retrying, pausing
-// one retry delay before the next attempt.
-func (w *operationBusyWaiter) wait(ctx context.Context, err error) bool {
+// notify reports the current gate owner without repeating frequent notices.
+func (w *operationBusyWaiter) notify(err error, _ time.Duration) {
 	var busy *OperationInProgressError
 	if !errors.As(err, &busy) {
-		return false
+		return
 	}
 	if w.c.busyNotify != nil &&
 		(w.lastNotify.IsZero() || time.Since(w.lastNotify) >= operationBusyNotifyEvery) {
 		w.c.busyNotify(busy.Message)
 		w.lastNotify = time.Now()
 	}
-	select {
-	case <-ctx.Done():
-		return false
-	case <-time.After(operationBusyRetryDelay):
-	}
-	return true
 }
 
 // New creates a daemon HTTP client.

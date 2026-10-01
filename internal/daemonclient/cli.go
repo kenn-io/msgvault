@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/msgvault/internal/accountops"
 	"go.kenn.io/msgvault/internal/apiprotocol"
@@ -850,24 +851,33 @@ func (c *Client) openCLIStream(
 	options runtime.RequestOptions,
 ) (*http.Response, error) {
 	waiter := &operationBusyWaiter{c: c}
-	for {
+	resp, err := backoff.Retry(ctx, func() (*http.Response, error) {
 		resp, err := c.DoGeneratedStreamingRequestWithContext(ctx, http.MethodPost, path, options)
 		if err != nil {
-			return nil, err
+			return nil, backoff.Permanent(err)
 		}
 		if resp.StatusCode == http.StatusOK {
 			return resp, nil
 		}
 		err = HandleCLIErrorResponse(resp)
 		_ = resp.Body.Close()
-		if waiter.wait(ctx, err) {
-			continue
-		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
+			return nil, backoff.Permanent(ctxErr)
+		}
+		if _, busy := errors.AsType[*OperationInProgressError](err); !busy {
+			return nil, backoff.Permanent(err)
 		}
 		return nil, err
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(operationBusyRetryDelay)),
+		backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0), backoff.WithNotify(waiter.notify))
+	if err == nil {
+		return resp, nil
 	}
+	retryErr := backoff.AsRetryError(err)
+	if !errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+		return nil, ctx.Err()
+	}
+	return nil, retryErr.LastErr
 }
 
 func (c *Client) runCLIStream(

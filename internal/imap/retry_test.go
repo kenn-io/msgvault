@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gmailapi "go.kenn.io/msgvault/internal/gmail"
@@ -238,7 +239,7 @@ func TestConnectRetry_ImplicitTLSDisconnectBeforeGreeting(t *testing.T) {
 		return &retryDropConn{Conn: conn}
 	}, nil)
 	client := newRetryClient(t, addr, "implicit-tls")
-	client.sleep = func(context.Context, time.Duration) error { return nil }
+	client.connectRetryInitialInterval = time.Nanosecond
 
 	response, err := client.ListMessages(t.Context(), "", "")
 	require.NoError(t, err)
@@ -287,15 +288,15 @@ func TestConnectRetry_TransportModesBeforeGreeting(t *testing.T) {
 			addr, accepted := startRetryMemServer(t, tt.mode, transform, startTLSConfig)
 			client := newRetryClient(t, addr, tt.mode)
 			var delays []time.Duration
-			client.sleep = func(_ context.Context, delay time.Duration) error {
+			client.connectRetryInitialInterval = time.Nanosecond
+			client.connectRetryNotify = func(_ error, delay time.Duration) {
 				delays = append(delays, delay)
-				return nil
 			}
 
 			response, err := client.ListMessages(t.Context(), "", "")
 			require.NoError(err)
 			require.Len(response.Messages, 1)
-			assert.Equal(connectRetryDelays[:1], delays)
+			assert.Equal([]time.Duration{time.Nanosecond}, delays)
 			assert.Equal(int64(2), accepted.accepted.Load())
 		})
 	}
@@ -321,15 +322,15 @@ func TestConnectRetry_PartialGreetingRetries(t *testing.T) {
 			}, tt.startTLSConfig)
 			client := newRetryClient(t, addr, tt.mode)
 			var delays []time.Duration
-			client.sleep = func(_ context.Context, delay time.Duration) error {
+			client.connectRetryInitialInterval = time.Nanosecond
+			client.connectRetryNotify = func(_ error, delay time.Duration) {
 				delays = append(delays, delay)
-				return nil
 			}
 
 			response, err := client.ListMessages(t.Context(), "", "")
 			require.NoError(err)
 			require.Len(response.Messages, 1)
-			assert.Equal(connectRetryDelays[:1], delays)
+			assert.Equal([]time.Duration{time.Nanosecond}, delays)
 			assert.Equal(int64(2), accepted.accepted.Load())
 		})
 	}
@@ -354,15 +355,14 @@ func TestConnectRetry_ByeGreetingIsTerminal(t *testing.T) {
 	}()
 
 	client := newRetryClient(t, listener.Addr().String(), "plaintext")
-	sleepCalled := false
-	client.sleep = func(context.Context, time.Duration) error {
-		sleepCalled = true
-		return nil
+	retryNotified := false
+	client.connectRetryNotify = func(error, time.Duration) {
+		retryNotified = true
 	}
 
 	err = connectRetryClient(t.Context(), t, client)
 	require.Error(err)
-	assert.False(sleepCalled)
+	assert.False(retryNotified)
 	assert.Equal(int64(1), counted.accepted.Load())
 }
 
@@ -374,7 +374,7 @@ func TestConnectRetry_ImplicitTLSHandshakeFailureRetries(t *testing.T) {
 		return conn
 	}, nil)
 	client := newRetryClient(t, addr, "implicit-tls")
-	client.sleep = func(context.Context, time.Duration) error { return nil }
+	client.connectRetryInitialInterval = time.Nanosecond
 
 	response, err := client.ListMessages(t.Context(), "", "")
 	require.NoError(t, err)
@@ -393,15 +393,14 @@ func TestConnectRetry_CertificateFailureIsTerminal(t *testing.T) {
 			client := newTestClient(t, addr)
 			client.config.TLS = mode == "implicit-tls"
 			client.config.STARTTLS = mode == "starttls"
-			sleepCalled := false
-			client.sleep = func(context.Context, time.Duration) error {
-				sleepCalled = true
-				return nil
+			retryNotified := false
+			client.connectRetryNotify = func(error, time.Duration) {
+				retryNotified = true
 			}
 
 			_, err := client.ListMessages(t.Context(), "", "")
 			require.Error(t, err)
-			assert.False(t, sleepCalled)
+			assert.False(t, retryNotified)
 			assert.Equal(t, int64(1), accepted.accepted.Load())
 		})
 	}
@@ -468,23 +467,25 @@ func TestConnectRetry_BoundedScheduleAndWarnings(t *testing.T) {
 	client := newRetryClient(t, listener.Addr().String(), "plaintext")
 	var logs bytes.Buffer
 	client.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	client.connectRetryInitialInterval = time.Millisecond
 	var delays []time.Duration
-	client.sleep = func(_ context.Context, delay time.Duration) error {
+	client.connectRetryNotify = func(_ error, delay time.Duration) {
 		delays = append(delays, delay)
-		return nil
 	}
 
 	err = connectRetryClient(t.Context(), t, client)
 	require.Error(err)
-	assert.Equal(connectRetryDelays[:], delays)
+	var retryErr *backoff.RetryError
+	assert.NotErrorAs(err, &retryErr)
+	assert.Equal([]time.Duration{time.Millisecond, 3 * time.Millisecond, 9 * time.Millisecond}, delays)
 	assert.Equal(int64(4), counted.accepted.Load())
 	assert.Contains(logs.String(), "attempt=2")
 	assert.Contains(logs.String(), "attempt=3")
 	assert.Contains(logs.String(), "attempt=4")
 	assert.Contains(logs.String(), "limit=4")
-	assert.Contains(logs.String(), "delay=5s")
-	assert.Contains(logs.String(), "delay=15s")
-	assert.Contains(logs.String(), "delay=45s")
+	assert.Contains(logs.String(), "delay=1ms")
+	assert.Contains(logs.String(), "delay=3ms")
+	assert.Contains(logs.String(), "delay=9ms")
 	assert.NotContains(logs.String(), testutil.IMAPTestPassword)
 	assert.NotContains(logs.String(), "access-token")
 }
@@ -515,9 +516,9 @@ func TestConnectRetry_AuthenticationExactlyOnce(t *testing.T) {
 				client.password = tt.password
 			}
 			var delays []time.Duration
-			client.sleep = func(_ context.Context, delay time.Duration) error {
+			client.connectRetryInitialInterval = time.Nanosecond
+			client.connectRetryNotify = func(_ error, delay time.Duration) {
 				delays = append(delays, delay)
-				return nil
 			}
 
 			_, err := client.ListMessages(t.Context(), "", "")
@@ -538,7 +539,7 @@ func TestConnectRetry_STARTTLSHandshakeTransportFailureRetries(t *testing.T) {
 				return conn
 			}, newIMAPServerTLSConfig(t))
 			client := newRetryClient(t, addr, "starttls")
-			client.sleep = func(context.Context, time.Duration) error { return nil }
+			client.connectRetryInitialInterval = time.Nanosecond
 
 			response, err := client.ListMessages(t.Context(), "", "")
 			require.NoError(t, err)
@@ -558,7 +559,7 @@ func TestConnectRetry_STARTTLSResponseTransportFailureRetries(t *testing.T) {
 				return conn
 			}, newIMAPServerTLSConfig(t))
 			client := newRetryClient(t, addr, "starttls")
-			client.sleep = func(context.Context, time.Duration) error { return nil }
+			client.connectRetryInitialInterval = time.Nanosecond
 
 			response, err := client.ListMessages(t.Context(), "", "")
 			require.NoError(t, err)
@@ -571,15 +572,14 @@ func TestConnectRetry_STARTTLSResponseTransportFailureRetries(t *testing.T) {
 func TestConnectRetry_STARTTLSProtocolFailureIsTerminal(t *testing.T) {
 	addr, accepted := startRetryMemServer(t, "starttls", nil, nil)
 	client := newRetryClient(t, addr, "starttls")
-	sleepCalled := false
-	client.sleep = func(context.Context, time.Duration) error {
-		sleepCalled = true
-		return nil
+	retryNotified := false
+	client.connectRetryNotify = func(error, time.Duration) {
+		retryNotified = true
 	}
 
 	_, err := client.ListMessages(t.Context(), "", "")
 	require.Error(t, err)
-	assert.False(t, sleepCalled)
+	assert.False(t, retryNotified)
 	assert.Equal(t, int64(1), accepted.accepted.Load())
 }
 
@@ -589,15 +589,14 @@ func TestConnectRetry_STARTTLSHandshakeProtocolFailureIsTerminal(t *testing.T) {
 	addr, accepted := startRetryMemServer(t, "starttls", nil, serverTLSConfig)
 	client := newRetryClient(t, addr, "starttls")
 	client.tlsConfig.MaxVersion = tls.VersionTLS12
-	sleepCalled := false
-	client.sleep = func(context.Context, time.Duration) error {
-		sleepCalled = true
-		return nil
+	retryNotified := false
+	client.connectRetryNotify = func(error, time.Duration) {
+		retryNotified = true
 	}
 
 	_, err := client.ListMessages(t.Context(), "", "")
 	require.Error(t, err)
-	assert.False(t, sleepCalled)
+	assert.False(t, retryNotified)
 	assert.Equal(t, int64(1), accepted.accepted.Load())
 }
 
@@ -676,9 +675,6 @@ func TestConnectRetry_CancellationAtBlockingStages(t *testing.T) {
 					}
 				}()
 				client := newRetryClient(t, listener.Addr().String(), "plaintext")
-				client.sleep = func(ctx context.Context, _ time.Duration) error {
-					return sleepContext(ctx, time.Hour)
-				}
 				return connectRetryClient(ctx, t, client)
 			},
 		},
@@ -711,9 +707,8 @@ func TestConnectRetry_CancelDuringBackoff(t *testing.T) {
 	client := newRetryClient(t, listener.Addr().String(), "plaintext")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	client.sleep = func(ctx context.Context, _ time.Duration) error {
+	client.connectRetryNotify = func(error, time.Duration) {
 		cancel()
-		return sleepContext(ctx, time.Hour)
 	}
 
 	err = connectRetryClient(ctx, t, client)

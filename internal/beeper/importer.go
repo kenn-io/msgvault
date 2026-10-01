@@ -10,6 +10,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
+
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
@@ -546,19 +548,24 @@ var fetchRetryBackoff = []time.Duration{500 * time.Millisecond, 2 * time.Second}
 func (imp *Importer) listMessagesPage(ctx context.Context, opts ImportOptions, chatID, cursor, direction string) (*ListMessagesOutput, error) {
 	requestCtx, cancel := opts.requestContext(ctx)
 	defer cancel()
-	page, err := imp.client.ListMessagesPage(requestCtx, chatID, cursor, direction)
-	for _, wait := range fetchRetryBackoff {
-		if err == nil || errors.Is(err, ErrNotFound) || errors.Is(err, errPermanentResponse) || requestCtx.Err() != nil {
-			break
+	policy := backoff.NewExponentialBackOff()
+	policy.InitialInterval = fetchRetryBackoff[0]
+	policy.MaxInterval = fetchRetryBackoff[len(fetchRetryBackoff)-1]
+	policy.Multiplier = 4
+	policy.RandomizationFactor = 0
+	page, err := backoff.Retry(requestCtx, func() (*ListMessagesOutput, error) {
+		page, err := imp.client.ListMessagesPage(requestCtx, chatID, cursor, direction)
+		if err != nil && (errors.Is(err, ErrNotFound) || errors.Is(err, errPermanentResponse) || requestCtx.Err() != nil) {
+			return page, backoff.Permanent(err)
 		}
-		timer := time.NewTimer(wait)
-		select {
-		case <-requestCtx.Done():
-			timer.Stop()
+		return page, err
+	}, backoff.WithBackOff(policy), backoff.WithMaxTries(uint(len(fetchRetryBackoff)+1)), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		retryErr := backoff.AsRetryError(err)
+		err = retryErr.LastErr
+		if !errors.Is(retryErr.Cause, backoff.ErrPermanent) && !errors.Is(retryErr.Cause, backoff.ErrExhausted) {
 			return nil, opts.budgetError(ctx, requestCtx.Err())
-		case <-timer.C:
 		}
-		page, err = imp.client.ListMessagesPage(requestCtx, chatID, cursor, direction)
 	}
 	return page, opts.budgetError(ctx, err)
 }
