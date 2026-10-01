@@ -15,7 +15,7 @@ describe('FactReviewPanel', () => {
 
     render(FactReviewPanel, { controller, personID: null, onOpenDirectory });
 
-    const panel = screen.getByRole('region', { name: 'Fact review' });
+    const panel = screen.getByRole('region', { name: 'Facts' });
     expect(within(panel).getByText('Choose a person in Directory to inspect their fact ledger')).toBeDefined();
     await fireEvent.click(within(panel).getByRole('button', { name: 'Open Directory' }));
     expect(onOpenDirectory).toHaveBeenCalledOnce();

@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Button, Card } from '@kenn-io/kit-ui';
+  import { Button, Card, Chip } from '@kenn-io/kit-ui';
 
+  import { reviewStateChip } from '../../directory/labels';
   import type { IdentityMatchCandidate } from '../../directory/review-controller.svelte';
 
   interface Props {
@@ -12,6 +13,7 @@
 
   let { candidate, pending, onAccept, onReject }: Props = $props();
   const headingID = $derived(`identity-match-${candidate.id}-heading`);
+  const chip = $derived(reviewStateChip(candidate.state));
   const evidence = $derived(candidate.evidence ?? []);
 </script>
 
@@ -19,7 +21,7 @@
   <article id={`identity-match-${candidate.id}-card`} class="candidate" aria-labelledby={headingID} aria-busy={pending} tabindex="-1">
     <header>
       <div>
-        <p class="state">{candidate.state}</p>
+        <Chip size="sm" tone={chip.tone} uppercase={false}>{chip.label}</Chip>
         <h3 id={headingID}>Identity match {candidate.id}</h3>
       </div>
       {#if pending}<span class="pending">Decision pending…</span>{/if}
@@ -82,11 +84,10 @@
 <style>
   .candidate { display: grid; gap: var(--space-4); }
   header { display: flex; align-items: start; justify-content: space-between; gap: var(--space-4); }
-  header > div { display: grid; gap: var(--space-1); }
+  header > div { display: grid; justify-items: start; gap: var(--space-1); }
   h3, h4, p, dl, dd, ul { margin: 0; }
   h3 { font-size: var(--font-size-lg); color: var(--text-primary); }
   h4 { font-size: var(--font-size-sm); color: var(--text-secondary); }
-  .state { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold, 600); }
   .pending { color: var(--text-muted); font-size: var(--font-size-sm); }
   .endpoints { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: var(--space-3); }
   .endpoints :global(.kit-card__body) { display: grid; gap: var(--space-1); }

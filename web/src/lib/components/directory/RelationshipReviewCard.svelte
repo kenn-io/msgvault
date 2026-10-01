@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Button, Card } from '@kenn-io/kit-ui';
+  import { Button, Card, Chip } from '@kenn-io/kit-ui';
 
+  import { reviewStateChip } from '../../directory/labels';
   import type { RelationshipReviewRow } from '../../directory/relationship-review-controller.svelte';
 
   interface Props {
@@ -10,6 +11,7 @@
 
   let { review, onOpenPerson = () => undefined }: Props = $props();
   const headingID = $derived(`imported-relationship-review-${review.id}-heading`);
+  const chip = $derived(reviewStateChip(review.status));
 
   function positiveID(value: number | undefined): value is number {
     return value !== undefined && Number.isSafeInteger(value) && value > 0;
@@ -23,7 +25,7 @@
 <Card level="default" padding="md">
   <article class="relationship-review" aria-labelledby={headingID} tabindex="-1">
     <header>
-      <p class="state">{review.status}</p>
+      <Chip size="sm" tone={chip.tone} uppercase={false}>{chip.label}</Chip>
       <h3 id={headingID}>Imported relationship review {review.id}</h3>
     </header>
 
@@ -31,7 +33,6 @@
       <div class="raw-value"><dt>Related value</dt><dd>{review.raw_related_value}</dd></div>
       <div><dt>Related type</dt><dd>{review.raw_related_type}</dd></div>
       <div><dt>Value kind</dt><dd>{review.value_kind}</dd></div>
-      <div><dt>Status</dt><dd>{review.status}</dd></div>
       <div><dt>Source</dt><dd>{review.source}</dd></div>
       <div><dt>Created</dt><dd><time datetime={review.created_at}>{review.created_at}</time></dd></div>
       <div><dt>Updated</dt><dd><time datetime={review.updated_at}>{review.updated_at}</time></dd></div>
@@ -55,10 +56,9 @@
 
 <style>
   .relationship-review { display: grid; gap: var(--space-4); min-width: 0; }
-  header { display: grid; gap: var(--space-1); }
-  h3, p, dl, dd { margin: 0; }
+  header { display: grid; justify-items: start; gap: var(--space-1); }
+  h3, dl, dd { margin: 0; }
   h3 { color: var(--text-primary); font-size: var(--font-size-lg); }
-  .state { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold, 600); }
   .metadata { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3) var(--space-5); }
   .metadata > div { display: grid; gap: var(--space-1); min-width: 0; }
   .raw-value { grid-column: 1 / -1; }

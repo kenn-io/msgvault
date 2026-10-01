@@ -1248,9 +1248,11 @@ describe('AppShell', () => {
       { method: 'GET', path: '/api/v1/person-relationship-reviews', status: 'accepted' }
     ]));
 
-    const accepted = screen.getByRole('radio', { name: 'Accepted' });
-    accepted.focus();
-    await fireEvent.keyDown(accepted, { key: 'ArrowRight' });
+    await screen.findByText('No imported relationship reviews in Accepted.');
+    const show = screen.getByRole('combobox', { name: /^Imported relationship review state/ });
+    expect(show.textContent).toContain('Show: Accepted');
+    await fireEvent.click(show);
+    await fireEvent.click(screen.getByRole('option', { name: 'Rejected' }));
     await waitFor(() => expect(state.current.relationshipReviewState).toBe('rejected'));
     expect(calls.at(-1)).toEqual({ method: 'GET', path: '/api/v1/person-relationship-reviews', status: 'rejected' });
 

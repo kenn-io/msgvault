@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, EmptyState, SegmentedControl, Spinner } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, SegmentedControl, SelectDropdown, Spinner } from '@kenn-io/kit-ui';
   import { tick } from 'svelte';
 
   import type { DirectoryReviewKind, IdentityReviewState } from '../../explore/models';
@@ -45,7 +45,7 @@
 
   const reviewKindOptions = [
     { value: 'identity', label: 'Identity matches' },
-    { value: 'fact', label: 'Fact review' },
+    { value: 'fact', label: 'Facts' },
     { value: 'relationship', label: 'Imported relationships' }
   ];
   const identityStateOptions = [
@@ -141,17 +141,14 @@
   </PageHeader>
 
   {#if controller.reviewKind === 'identity'}
-    <section class="identity-review" aria-labelledby="identity-review-heading">
+    <section class="identity-review" aria-labelledby="identity-review-heading" data-review-section>
+      <h2 bind:this={identityReviewHeading} id="identity-review-heading" class="kit-sr-only review-heading" tabindex="-1">Identity matches</h2>
       <div class="review-toolbar">
-        <div>
-          <h2 bind:this={identityReviewHeading} id="identity-review-heading" tabindex="-1">Identity matches</h2>
-          <p>Review server-supplied evidence before linking or separating identities.</p>
-        </div>
-        <SegmentedControl
-          options={identityStateOptions}
+        <SelectDropdown
+          title="Identity review state"
           value={controller.identityState}
+          options={identityStateOptions.map((option) => ({ ...option, triggerLabel: `Show: ${option.label}` }))}
           onchange={selectIdentityState}
-          ariaLabel="Identity review state"
           disabled={!!activeDecision}
         />
       </div>
@@ -252,11 +249,13 @@
 
 <style>
   .review-centre { display: grid; gap: var(--space-5); padding: var(--space-5) var(--page-gutter) var(--space-4); }
-  .review-toolbar { display: flex; align-items: start; justify-content: space-between; gap: var(--space-5); flex-wrap: wrap; }
-  .review-toolbar > div, .identity-review { display: grid; gap: var(--space-2); }
+  .review-toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
   h2, p { margin: 0; }
-  .review-toolbar p { color: var(--text-muted); }
-  .identity-review { gap: var(--space-4); }
+  .identity-review { display: grid; gap: var(--space-4); }
+  [data-review-section] { position: relative; border-radius: var(--radius-md); }
+  [data-review-section]:has(> .review-heading:focus-visible) {
+    outline: 2px solid var(--focus-color); outline-offset: 4px;
+  }
   .status { color: var(--text-secondary); }
   .loading { display: flex; align-items: center; gap: var(--space-2); color: var(--text-muted); }
   .message { display: grid; justify-items: start; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--accent-red); color: var(--text-secondary); }
@@ -264,7 +263,4 @@
   .candidate-list { display: grid; gap: var(--space-4); }
   .loading-overlay { position: sticky; z-index: 1; top: var(--space-2); display: flex; align-items: center; justify-content: center; gap: var(--space-2); width: fit-content; margin: 0 auto calc(-1 * var(--space-8)); padding: var(--space-2) var(--space-4); border: var(--border-width) solid var(--border-default); border-radius: var(--radius-pill); background: var(--bg-surface); box-shadow: var(--shadow-sm); color: var(--text-muted); }
   .pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-3); color: var(--text-muted); font-size: var(--font-size-sm); }
-  @media (max-width: 760px) {
-    .review-toolbar :global(.kit-segmented) { width: 100%; }
-  }
 </style>

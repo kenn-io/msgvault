@@ -29,12 +29,13 @@ describe('RelationshipReviewCard', () => {
     const card = screen.getByRole('article', { name: 'Imported relationship review 41' });
     const terms = within(card).getAllByRole('term');
     expect(terms.map((term) => term.textContent)).toEqual([
-      'Related value', 'Related type', 'Value kind', 'Status', 'Source', 'Created', 'Updated', 'Reviewed'
+      'Related value', 'Related type', 'Value kind', 'Source', 'Created', 'Updated', 'Reviewed'
     ]);
     expect(terms.map((term) => term.nextElementSibling?.textContent)).toEqual([
-      'https://related.example.test/person/9', 'friend', 'uri', 'pending', 'vcard_import',
+      'https://related.example.test/person/9', 'friend', 'uri', 'vcard_import',
       '2026-08-01T10:00:00Z', '2026-08-02T11:00:00Z', '2026-08-03T12:00:00Z'
     ]);
+    expect(screen.getAllByText('Pending')).toHaveLength(1);
     expect(within(card).queryByRole('link')).toBeNull();
     expect(within(card).getByText('https://related.example.test/person/9').tagName).not.toBe('A');
 

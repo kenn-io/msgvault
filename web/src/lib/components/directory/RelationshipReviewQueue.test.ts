@@ -102,9 +102,10 @@ describe('RelationshipReviewQueue', () => {
     render(RelationshipReviewQueue, { controller });
     await screen.findByRole('article', { name: 'Imported relationship review 41' });
 
-    const pending = screen.getByRole('radio', { name: 'Pending' });
-    pending.focus();
-    await fireEvent.keyDown(pending, { key: 'ArrowRight' });
+    const show = screen.getByRole('combobox', { name: /^Imported relationship review state/ });
+    expect(show.textContent).toContain('Show: Pending');
+    await fireEvent.click(show);
+    await fireEvent.click(screen.getByRole('option', { name: 'Accepted' }));
 
     expect(await screen.findByRole('article', { name: 'Imported relationship review 51' })).toBeDefined();
     expect(states).toEqual(['pending', 'accepted']);

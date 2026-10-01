@@ -100,6 +100,27 @@ describe('DirectoryReviewCentre', () => {
     expect(requests.filter((request) => new URL(request.url).pathname.endsWith('/accept'))).toHaveLength(1);
   });
 
+  it('marks each hidden review heading as the focus target of its section', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => page([candidate(17)]));
+    const apiClient = createAPIClient(fetchFn);
+    const controller = new DirectoryReviewController(apiClient);
+    await controller.loadIdentityPage();
+    render(DirectoryReviewCentre, {
+      controller,
+      relationshipController: new RelationshipReviewController(apiClient),
+      factController: new FactLedgerController(apiClient),
+      directoryPersonID: null
+    });
+
+    for (const name of ['Identity matches', 'Facts', 'Imported relationships']) {
+      if (name !== 'Identity matches') await fireEvent.click(screen.getByRole('radio', { name }));
+      const heading = await screen.findByRole('heading', { name, level: 2 });
+      expect(heading.className).toContain('review-heading');
+      expect(heading.getAttribute('tabindex')).toBe('-1');
+      expect(heading.closest('[data-review-section]')).not.toBeNull();
+    }
+  });
+
   it('changes identity state through the controller and commits the URL filter', async () => {
     const requests: Request[] = [];
     const commit = vi.fn();
@@ -114,8 +135,10 @@ describe('DirectoryReviewCentre', () => {
     renderReview(controller);
 
     expect(screen.getByRole('radiogroup', { name: 'Review type' })).toBeDefined();
-    expect(screen.getByRole('radiogroup', { name: 'Identity review state' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Conflict' }));
+    const show = screen.getByRole('combobox', { name: /^Identity review state/ });
+    expect(show.textContent).toContain('Show: Candidate');
+    await fireEvent.click(show);
+    await fireEvent.click(screen.getByRole('option', { name: 'Conflict' }));
 
     await screen.findByRole('heading', { name: 'Identity match 22' });
     expect(controller.reviewKind).toBe('identity');
@@ -150,10 +173,10 @@ describe('DirectoryReviewCentre', () => {
       });
 
       if (mode === 'selection') {
-        await fireEvent.click(screen.getByRole('radio', { name: 'Fact review' }));
+        await fireEvent.click(screen.getByRole('radio', { name: 'Facts' }));
       }
 
-      expect(screen.getByRole('region', { name: 'Fact review' })).toBeDefined();
+      expect(screen.getByRole('region', { name: 'Facts' })).toBeDefined();
       expect(screen.getByText('Choose a person in Directory to inspect their fact ledger')).toBeDefined();
       expect(screen.queryByRole('button', { name: /accept|reject|unsure|link identities|keep separate/i })).toBeNull();
       expect(fetchFn).not.toHaveBeenCalled();
@@ -246,7 +269,7 @@ describe('DirectoryReviewCentre', () => {
     {
       name: 'identity review to fact review',
       target: { reviewKind: 'fact' as const, identityState: 'candidate' as const },
-      focusHeading: 'Fact review'
+      focusHeading: 'Facts'
     },
     {
       name: 'candidate review to conflict review',
@@ -370,7 +393,7 @@ describe('DirectoryReviewCentre', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Link identities' })).toBeNull());
     const row = screen.getByRole('article', { name: 'Identity match 17' });
-    expect(row.textContent).toContain('accepted');
+    expect(row.textContent).toContain('Accepted');
     expect(screen.getByRole('status').textContent).toContain('Identity match accepted.');
     expect(screen.getByRole('alert').textContent).toContain('Reload failed');
     await waitFor(() => expect(document.activeElement).toBe(row));

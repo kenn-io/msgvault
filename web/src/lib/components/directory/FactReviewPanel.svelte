@@ -13,8 +13,8 @@
   let { controller, personID, onOpenDirectory = () => undefined, onOpenPerson = () => undefined }: Props = $props();
 </script>
 
-<section class="fact-review" aria-labelledby="fact-review-heading">
-  <h2 id="fact-review-heading" tabindex="-1">Fact review</h2>
+<section class="fact-review" aria-labelledby="fact-review-heading" data-review-section>
+  <h2 id="fact-review-heading" class="kit-sr-only review-heading" tabindex="-1">Facts</h2>
   {#if personID === null}
     <div class="chooser">
       <EmptyState
@@ -39,6 +39,10 @@
 <style>
   .fact-review { display: grid; gap: var(--space-4); }
   h2 { margin: 0; }
+  [data-review-section] { position: relative; border-radius: var(--radius-md); }
+  [data-review-section]:has(> .review-heading:focus-visible) {
+    outline: 2px solid var(--focus-color); outline-offset: 4px;
+  }
   .chooser { display: grid; justify-items: center; gap: var(--space-3); }
   .person-context { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
   .notices { display: grid; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--border-strong); color: var(--text-secondary); }

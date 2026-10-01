@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { Button, EmptyState, SegmentedControl, Spinner } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, SelectDropdown, Spinner } from '@kenn-io/kit-ui';
   import { tick } from 'svelte';
 
+  import { reviewStateChip } from '../../directory/labels';
   import type {
     RelationshipReviewController,
     RelationshipReviewState
@@ -23,10 +24,6 @@
     { value: 'accepted', label: 'Accepted' },
     { value: 'rejected', label: 'Rejected' }
   ];
-
-  function stateLabel(state: RelationshipReviewState): string {
-    return `${state[0]!.toUpperCase()}${state.slice(1)}`;
-  }
 
   function selectState(value: string): void {
     controller.setState(value as RelationshipReviewState);
@@ -65,19 +62,17 @@
   });
 </script>
 
-<section class="relationship-queue" aria-labelledby="relationship-review-heading">
+<section class="relationship-queue" aria-labelledby="relationship-review-heading" data-review-section>
+  <h2 bind:this={queueHeading} id="relationship-review-heading" class="kit-sr-only review-heading" tabindex="-1">Imported relationships</h2>
   <div class="toolbar">
-    <div>
-      <h2 bind:this={queueHeading} id="relationship-review-heading" tabindex="-1">Imported relationships</h2>
-      <p>Imported relationship reviews are read-only in the browser until generated decision operations are available.</p>
-    </div>
-    <SegmentedControl
-      options={stateOptions}
+    <SelectDropdown
+      title="Imported relationship review state"
       value={controller.state}
+      options={stateOptions.map((option) => ({ ...option, triggerLabel: `Show: ${option.label}` }))}
       onchange={selectState}
-      ariaLabel="Imported relationship review state"
       disabled={controller.loading}
     />
+    <p class="queue-note">Imported relationship reviews are read-only in the browser until generated decision operations are available.</p>
   </div>
 
   {#if controller.loading}
@@ -98,7 +93,7 @@
     </div>
   {:else if controller.rows.length === 0}
     <EmptyState
-      title={`No imported relationship reviews in ${stateLabel(controller.state)}.`}
+      title={`No imported relationship reviews in ${reviewStateChip(controller.state).label}.`}
       description="Choose another review state or return after another contact import."
     />
   {:else}
@@ -112,16 +107,18 @@
 
 <style>
   .relationship-queue { display: grid; gap: var(--space-4); min-width: 0; }
-  .toolbar { display: flex; align-items: start; justify-content: space-between; gap: var(--space-5); flex-wrap: wrap; }
-  .toolbar > div { display: grid; gap: var(--space-2); }
+  .toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
   h2, p { margin: 0; }
-  .toolbar p { color: var(--text-muted); }
+  .queue-note { color: var(--text-muted); }
   .loading { display: flex; align-items: center; gap: var(--space-2); color: var(--text-muted); }
   .message { display: grid; justify-items: start; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--accent-red); color: var(--text-secondary); }
+  [data-review-section] { position: relative; border-radius: var(--radius-md); }
+  [data-review-section]:has(> .review-heading:focus-visible) {
+    outline: 2px solid var(--focus-color); outline-offset: 4px;
+  }
   .review-list { display: grid; gap: var(--space-4); min-width: 0; }
 
   @media (max-width: 760px) {
     .toolbar { align-items: stretch; flex-direction: column; }
-    .toolbar :global(.kit-segmented) { width: 100%; }
   }
 </style>
