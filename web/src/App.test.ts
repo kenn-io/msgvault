@@ -270,6 +270,33 @@ describe('application foundation', () => {
     await waitFor(() => expect(document.documentElement.classList.contains('dark')).toBe(true));
     expect(document.documentElement.dataset.density).toBe('comfortable');
   });
+  it('keeps a saved theme when the browser-defaults load finishes after the save', async () => {
+    sessionStorage.removeItem('msgvault.appearance.override');
+    const daemon = appearanceDaemon();
+    let releaseFirstLoad: (() => void) | undefined;
+    let settingsReads = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/settings' && request.method === 'GET' && ++settingsReads === 2) {
+        // The browser-defaults load reads the daemon before the save, then stalls.
+        const stale = await daemon(request.clone());
+        const body = await stale.json();
+        body.settings.find((setting: { key: string }) => setting.key === 'web.density').value = { string: 'comfortable' };
+        await new Promise<void>((resolve) => { releaseFirstLoad = resolve; });
+        return Response.json(body);
+      }
+      return daemon(request);
+    });
+    await openAppearance(fetchFn);
+    await chooseSelectOption(screen.getByLabelText('Theme'), 'Dark');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(document.documentElement.classList.contains('dark')).toBe(true));
+    await waitFor(() => expect(releaseFirstLoad).toBeDefined());
+    releaseFirstLoad?.();
+    await waitFor(() => expect(document.documentElement.dataset.density).toBe('comfortable'));
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+  });
   it('keeps a Display menu theme override ahead of a saved theme', async () => {
     sessionStorage.setItem('msgvault.appearance.override', JSON.stringify({ theme: 'light' }));
     await openAppearance(appearanceDaemon());

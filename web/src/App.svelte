@@ -29,6 +29,9 @@
   let searchModeDefault = $state<ExploreSearchMode | undefined>();
   let authenticated = false;
   let browserDefaultsRequestGeneration = 0;
+  // Appearance saved while the browser-defaults load is in flight. That load
+  // read the daemon before the save, so these values win over its result.
+  let savedSinceDefaultsLoad: SavedAppearance = {};
   onMount(() => {
     oauthCallback = receiveGoogleContactsCallback();
     if (!oauthCallback) void session.bootstrap();
@@ -50,6 +53,7 @@
     if (authenticated) return;
     authenticated = true;
     const generation = ++browserDefaultsRequestGeneration;
+    savedSinceDefaultsLoad = {};
     void loadBrowserDefaults(generation);
   });
   async function loadBrowserDefaults(generation: number): Promise<void> {
@@ -58,10 +62,13 @@
       if (generation !== browserDefaultsRequestGeneration || session.authMode === 'required') return;
       const theme = settingString(data?.settings.find(({ key }) => key === 'web.theme'));
       const density = settingString(data?.settings.find(({ key }) => key === 'web.density'));
-      appearanceDefaults = {
-        theme: theme === 'light' || theme === 'dark' || theme === 'system' ? theme : 'system',
-        density: density === 'comfortable' ? density : 'compact',
-      };
+      appearanceDefaults = mergeSavedAppearance(
+        {
+          theme: theme === 'light' || theme === 'dark' || theme === 'system' ? theme : 'system',
+          density: density === 'comfortable' ? density : 'compact',
+        },
+        savedSinceDefaultsLoad,
+      );
       searchModeDefault = parseSearchMode(
         settingString(data?.settings.find(({ key }) => key === 'web.default_search_mode')),
       );
@@ -70,6 +77,7 @@
     }
   }
   function appearanceSaved(saved: SavedAppearance): void {
+    savedSinceDefaultsLoad = { ...savedSinceDefaultsLoad, ...saved };
     appearanceDefaults = mergeSavedAppearance(appearanceDefaults, saved);
     const mode = parseSearchMode(saved.defaultSearchMode);
     // The open view keeps its mode and URL; tabs opened later without a mode
