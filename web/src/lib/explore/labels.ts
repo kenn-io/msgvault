@@ -96,7 +96,7 @@ const REASONS: Record<string, string> = {
     'None of the selected items can be deleted from their source.'
 };
 
-function sentenceCase(code: string): string {
+export function sentenceCase(code: string): string {
   const words = code.replace(/[_-]+/g, ' ').trim();
   return words ? words[0]!.toUpperCase() + words.slice(1) : '';
 }
