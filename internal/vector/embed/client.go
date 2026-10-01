@@ -4,25 +4,22 @@
 package embed
 
 import (
-	"bytes"
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
+	"math"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
+	"go.kenn.io/kit/embedclient"
+	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
 // ErrPermanent4xx marks a non-retryable HTTP 4xx response from the
 // embeddings endpoint. Use errors.Is(err, ErrPermanent4xx) to detect
-// it; the error message still carries the status code and a bounded
-// response body. 429 (rate-limited) and 5xx are NOT wrapped — they
-// flow through the retry loop as transient errors.
+// it. Kit reports the status and failure reason without echoing provider
+// response bodies. HTTP 408, 429 and 5xx remain retryable.
 var ErrPermanent4xx = vector.ErrPermanent4xx
 
 // Config controls an embeddings Client. The zero value is not usable; callers
@@ -45,8 +42,8 @@ type Config struct {
 	// Timeout is the per-request HTTP timeout. Defaults to 30s when zero.
 	Timeout time.Duration
 	// MaxRetries is the maximum number of HTTP attempts for a single Embed
-	// call. Defaults to 3 when zero. Only transient errors (5xx, network)
-	// are retried; 4xx responses fail immediately.
+	// call. Defaults to 3 when zero. Kit retries HTTP 408, 429, 5xx and
+	// transport failures with jittered exponential backoff.
 	MaxRetries int
 	// BeforeRequest reauthorizes each concrete HTTP attempt. A returned error
 	// is propagated without retrying. Nil leaves the client ungated.
@@ -70,95 +67,88 @@ func NewClient(cfg Config) *Client {
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 3
 	}
-	return &Client{cfg: cfg, http: newHTTPClient(cfg.Timeout, cfg.BeforeRequest, cfg.RejectRedirects)}
+	return &Client{cfg: cfg, http: newHTTPClient(cfg.Timeout, nil, cfg.RejectRedirects || cfg.BeforeRequest != nil)}
 }
 
-// embeddingRequest is the JSON body sent to the server.
-type embeddingRequest struct {
-	Input []string `json:"input"`
-	Model string   `json:"model"`
-}
-
-// embeddingResponse is the JSON response body from the server.
-type embeddingResponse struct {
-	Data []struct {
-		Embedding []float32 `json:"embedding"`
-		Index     int       `json:"index"`
-	} `json:"data"`
-	Model string `json:"model"`
-}
-
-// Embed embeds document chunks and returns one vector per input, in input order.
-// DocumentPrefix is applied independently to every input. Empty input is a no-op
-// and returns (nil, nil) without making an HTTP call. Every returned vector
-// is verified to match cfg.Dimension. Transient errors — 5xx responses, 429
-// Too Many Requests, network failures, and body-read / decode hiccups — are
-// retried with exponential backoff up to cfg.MaxRetries total attempts. A
-// 429 response's Retry-After header (when present and parseable) overrides
-// the backoff for that attempt. Other 4xx responses fail immediately.
+// Embed embeds document chunks in input order. Kit owns transport validation
+// and retry policy; MaxRetries is the total attempt budget. Empty input is a no-op.
 func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float32, error) {
-	return c.embed(ctx, prependPrefix(inputs, c.cfg.DocumentPrefix))
+	return c.embed(ctx, embedconfig.RoleDocument, inputs)
 }
 
-func (c *Client) embed(ctx context.Context, inputs []string) ([][]float32, error) {
+func (c *Client) embed(ctx context.Context, role embedconfig.Role, inputs []string) ([][]float32, error) {
 	if len(inputs) == 0 {
 		return nil, nil
 	}
-	body, err := json.Marshal(embeddingRequest{Input: inputs, Model: c.cfg.Model}, json.Deterministic(true))
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	var lastErr error
-	for attempt := 1; attempt <= c.cfg.MaxRetries; attempt++ {
-		vecs, err := c.doOnce(ctx, body, len(inputs))
-		if err == nil {
-			return vecs, nil
+	httpClient := *c.http
+	if c.cfg.BeforeRequest != nil {
+		// Consent failure ends this call, including Kit retries. Each concrete
+		// attempt still checks authorization at the transport boundary.
+		var cancel context.CancelCauseFunc
+		ctx, cancel = context.WithCancelCause(ctx)
+		defer cancel(nil)
+		base := httpClient.Transport
+		if base == nil {
+			base = http.DefaultTransport
 		}
-		lastErr = err
-		var re *retryError
-		if !errors.As(err, &re) {
-			return nil, err
-		}
-		if attempt == c.cfg.MaxRetries {
-			break
-		}
-		// Clamp the shift so a misconfigured MaxRetries can't
-		// produce a backoff measured in hours, and so attempt >= 63
-		// can't trigger the undefined shift behavior on int. 1<<8 *
-		// 100ms = 25.6s, which is plenty for transient-error backoff
-		// on an HTTP embedding endpoint; the retry cap (MaxRetries)
-		// bounds total wait time more naturally than the shift does.
-		shift := min(attempt, 8)
-		backoff := time.Duration(1<<shift) * 100 * time.Millisecond
-		// retryAfterSet distinguishes a successfully parsed
-		// "Retry-After: 0" (immediate retry) from "no usable header".
-		// Without the flag we'd fall back to exponential backoff when
-		// the server explicitly asked for an immediate retry.
-		if re.retryAfterSet {
-			backoff = re.retryAfter
-		}
-		if backoff <= 0 {
-			// time.After(0) still allocates a timer; skip it and let
-			// the loop iterate immediately. This is the
-			// Retry-After: 0 fast path.
-			if err := ctx.Err(); err != nil {
-				return nil, fmt.Errorf("embed: context canceled during backoff: %w", err)
+		httpClient.Transport = beforeRequestTransport{base: base, before: func(ctx context.Context) error {
+			err := c.cfg.BeforeRequest(ctx)
+			if err != nil {
+				cancel(err)
 			}
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("embed: context canceled during backoff: %w", ctx.Err())
-		case <-time.After(backoff):
-		}
+			return err
+		}}
 	}
-	return nil, fmt.Errorf("embed: giving up after %d attempts: %w", c.cfg.MaxRetries, lastErr)
+	client, err := embedclient.New(embedclient.Options{
+		Model: embedconfig.Model{Name: c.cfg.Model, Dimensions: c.cfg.Dimension,
+			Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone},
+		Roles:      embedconfig.Roles{DocumentPrefix: c.cfg.DocumentPrefix, QueryPrefix: c.cfg.QueryPrefix},
+		Deployment: embedconfig.Deployment{BaseURL: c.cfg.Endpoint, TrustPrivateNetwork: true},
+		// The workers already pack batches and preserve document boundaries.
+		Batch:     embedconfig.Batch{Items: math.MaxInt},
+		Transport: embedconfig.Transport{Timeout: c.cfg.Timeout},
+		APIKey:    c.cfg.APIKey, HTTP: &httpClient,
+		Retry: embedclient.Retry{
+			MaxAttempts:    c.cfg.MaxRetries,
+			InitialBackoff: 200 * time.Millisecond,
+			MaxBackoff:     25600 * time.Millisecond,
+			MaxRetryAfter:  time.Hour,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("embed: %w", err)
+	}
+	vectors, err := client.EmbedTexts(ctx, role, inputs)
+	if err == nil {
+		return vectors, nil
+	}
+	if cause := beforeRequestCause(err); cause != nil {
+		return nil, cause
+	}
+	if apiErr, ok := errors.AsType[*embedclient.APIError](err); ok {
+		if apiErr.StatusCode >= 300 && apiErr.StatusCode < 400 {
+			return nil, ErrEmbeddingProviderRedirect
+		}
+		if apiErr.StatusCode >= 400 && apiErr.StatusCode < 500 && !apiErr.Retryable() {
+			return nil, fmt.Errorf("%w: %w", ErrPermanent4xx, err)
+		}
+		return nil, fmt.Errorf("embed: %w", err)
+	}
+	if errors.Is(err, embedclient.ErrInvalidVector) {
+		return nil, fmt.Errorf("%w: %w", vector.ErrInvalidProviderVector, err)
+	}
+	if _, ok := errors.AsType[*embedclient.TransportError](err); ok {
+		return nil, fmt.Errorf("embed: %w", err)
+	}
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("embed: %w", err)
+	}
+	return nil, fmt.Errorf("%w: %w", vector.ErrInvalidProviderShape, err)
 }
 
 // EmbedQuery embeds one query and returns its single vector.
 func (c *Client) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
-	vecs, err := c.embed(ctx, prependPrefix([]string{text}, c.cfg.QueryPrefix))
+	vecs, err := c.embed(ctx, embedconfig.RoleQuery, []string{text})
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +166,7 @@ func (c *Client) EmbedDocuments(ctx context.Context, documents []DocumentInput) 
 		inputs = append(inputs, document.Chunks...)
 	}
 
-	vecs, err := c.embed(ctx, prependPrefix(inputs, c.cfg.DocumentPrefix))
+	vecs, err := c.embed(ctx, embedconfig.RoleDocument, inputs)
 	if err != nil {
 		return nil, err
 	}
@@ -192,149 +182,4 @@ func (c *Client) EmbedDocuments(ctx context.Context, documents []DocumentInput) 
 		offset = next
 	}
 	return documentVecs, nil
-}
-
-func prependPrefix(inputs []string, prefix string) []string {
-	if prefix == "" || len(inputs) == 0 {
-		return inputs
-	}
-	prefixed := make([]string, len(inputs))
-	for i, input := range inputs {
-		prefixed[i] = prefix + input
-	}
-	return prefixed
-}
-
-// doOnce performs a single HTTP request. A returned *retryError signals the
-// caller that the error is transient and the call should be retried.
-// The want parameter is the expected number of vectors (= number of inputs).
-func (c *Client) doOnce(ctx context.Context, body []byte, want int) ([][]float32, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.cfg.Endpoint+"/embeddings", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		if authorizationErr := beforeRequestCause(err); authorizationErr != nil {
-			return nil, authorizationErr
-		}
-		return nil, &retryError{err: fmt.Errorf("http do: %w", err)}
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
-		return nil, ErrEmbeddingProviderRedirect
-	}
-	if resp.StatusCode == http.StatusTooManyRequests {
-		// 429 is a transient rate-limit signal. Honor Retry-After
-		// when the server provides it so we don't thrash.
-		ra, ok := parseRetryAfter(resp.Header.Get("Retry-After"))
-		return nil, &retryError{
-			err:           errors.New("embed: HTTP 429 (rate limited)"),
-			retryAfter:    ra,
-			retryAfterSet: ok,
-		}
-	}
-	if resp.StatusCode >= 500 {
-		return nil, &retryError{err: fmt.Errorf("embed: HTTP %d", resp.StatusCode)}
-	}
-	if resp.StatusCode >= 400 {
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		if err != nil {
-			return nil, fmt.Errorf("embed: HTTP %d (read error body: %w): %w",
-				resp.StatusCode, err, ErrPermanent4xx)
-		}
-		msg := strings.TrimSpace(string(body))
-		if msg == "" {
-			return nil, fmt.Errorf("embed: HTTP %d: %w", resp.StatusCode, ErrPermanent4xx)
-		}
-		return nil, fmt.Errorf("embed: HTTP %d: %s: %w",
-			resp.StatusCode, msg, ErrPermanent4xx)
-	}
-
-	var r embeddingResponse
-	if err := json.UnmarshalRead(resp.Body, &r); err != nil {
-		// Body read/decode failures usually mean the connection
-		// dropped mid-stream (unexpected EOF, deadline hit while
-		// reading). Treat as transient so a healthy retry can
-		// succeed rather than failing the whole batch.
-		return nil, &retryError{err: fmt.Errorf("decode response: %w", err)}
-	}
-	if len(r.Data) != want {
-		return nil, fmt.Errorf("%w: embed response count mismatch: got %d, expected %d", vector.ErrInvalidProviderShape, len(r.Data), want)
-	}
-	vecs := make([][]float32, want)
-	for _, d := range r.Data {
-		if d.Index < 0 || d.Index >= want {
-			return nil, fmt.Errorf("%w: embed invalid index %d (len=%d)", vector.ErrInvalidProviderShape, d.Index, want)
-		}
-		if len(d.Embedding) != c.cfg.Dimension {
-			return nil, fmt.Errorf("%w: embed dimension mismatch: got %d, configured %d",
-				vector.ErrInvalidProviderVector, len(d.Embedding), c.cfg.Dimension)
-		}
-		vecs[d.Index] = d.Embedding
-	}
-	for i, v := range vecs {
-		if v == nil {
-			return nil, fmt.Errorf("%w: embed missing embedding at index %d", vector.ErrInvalidProviderShape, i)
-		}
-	}
-	return vecs, nil
-}
-
-// retryError wraps a transient error. Callers use errors.As to detect it.
-// retryAfter is an optional server-specified delay (from a 429
-// Retry-After header). retryAfterSet=true means the header was
-// successfully parsed and the duration is authoritative — including
-// the "Retry-After: 0" case meaning retry immediately. When
-// retryAfterSet=false the caller should use its default backoff.
-type retryError struct {
-	err           error
-	retryAfter    time.Duration
-	retryAfterSet bool
-}
-
-func (e *retryError) Error() string { return e.err.Error() }
-func (e *retryError) Unwrap() error { return e.err }
-
-// parseRetryAfter parses an HTTP Retry-After header (RFC 7231 §7.1.3),
-// which may be either a non-negative delta-seconds integer or an
-// HTTP-date. Returns (duration, true) when the header was
-// successfully parsed — including "Retry-After: 0" which a server
-// uses to ask for an immediate retry — and (0, false) when the
-// header is missing or unparseable so the caller can fall back to
-// its default backoff. A delta-seconds integer is clamped to one
-// hour so a misbehaving server can't stall a worker indefinitely.
-// HTTP-date values that have already passed return (0, true) so an
-// expired hint still beats the default backoff (closest reasonable
-// interpretation: "you may retry now").
-func parseRetryAfter(v string) (time.Duration, bool) {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return 0, false
-	}
-	const maxWait = time.Hour
-	if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
-		d := time.Duration(secs) * time.Second
-		if d > maxWait {
-			return maxWait, true
-		}
-		return d, true
-	}
-	if t, err := http.ParseTime(v); err == nil {
-		d := time.Until(t)
-		if d <= 0 {
-			return 0, true
-		}
-		if d > maxWait {
-			return maxWait, true
-		}
-		return d, true
-	}
-	return 0, false
 }
