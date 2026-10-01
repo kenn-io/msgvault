@@ -364,7 +364,6 @@ func (c *Client) connectTransport(ctx context.Context) (*imapclient.Client, erro
 	policy.InitialInterval = c.connectRetryInitialInterval
 	policy.MaxInterval = 45 * time.Second
 	policy.Multiplier = 3
-	policy.RandomizationFactor = 0
 	attempt := 0
 	conn, err := backoff.Retry(ctx, func() (*imapclient.Client, error) {
 		attempt++

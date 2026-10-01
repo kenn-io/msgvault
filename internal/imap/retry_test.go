@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -295,7 +296,7 @@ func TestConnectRetry_TransportModesBeforeGreeting(t *testing.T) {
 			response, err := client.ListMessages(t.Context(), "", "")
 			require.NoError(err)
 			require.Len(response.Messages, 1)
-			assert.Equal([]time.Duration{time.Nanosecond}, delays)
+			assert.InDeltaSlice([]time.Duration{time.Nanosecond}, delays, float64(time.Nanosecond))
 			assert.Equal(int64(2), accepted.accepted.Load())
 		})
 	}
@@ -329,7 +330,7 @@ func TestConnectRetry_PartialGreetingRetries(t *testing.T) {
 			response, err := client.ListMessages(t.Context(), "", "")
 			require.NoError(err)
 			require.Len(response.Messages, 1)
-			assert.Equal([]time.Duration{time.Nanosecond}, delays)
+			assert.InDeltaSlice([]time.Duration{time.Nanosecond}, delays, float64(time.Nanosecond))
 			assert.Equal(int64(2), accepted.accepted.Load())
 		})
 	}
@@ -474,15 +475,18 @@ func TestConnectRetry_BoundedScheduleAndWarnings(t *testing.T) {
 
 	err = connectRetryClient(t.Context(), t, client)
 	require.Error(err)
-	assert.Equal([]time.Duration{time.Millisecond, 3 * time.Millisecond, 9 * time.Millisecond}, delays)
+	require.Condition(func() bool {
+		return slices.EqualFunc([]time.Duration{time.Millisecond, 3 * time.Millisecond, 9 * time.Millisecond}, delays,
+			func(want, got time.Duration) bool { return got >= want/2 && got <= want+want/2 })
+	})
 	assert.Equal(int64(4), counted.accepted.Load())
 	assert.Contains(logs.String(), "attempt=2")
 	assert.Contains(logs.String(), "attempt=3")
 	assert.Contains(logs.String(), "attempt=4")
 	assert.Contains(logs.String(), "limit=4")
-	assert.Contains(logs.String(), "delay=1ms")
-	assert.Contains(logs.String(), "delay=3ms")
-	assert.Contains(logs.String(), "delay=9ms")
+	assert.Contains(logs.String(), fmt.Sprintf("delay=%s", delays[0]))
+	assert.Contains(logs.String(), fmt.Sprintf("delay=%s", delays[1]))
+	assert.Contains(logs.String(), fmt.Sprintf("delay=%s", delays[2]))
 	assert.NotContains(logs.String(), testutil.IMAPTestPassword)
 	assert.NotContains(logs.String(), "access-token")
 }

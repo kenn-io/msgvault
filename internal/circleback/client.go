@@ -136,7 +136,6 @@ func (s *Session) CallToolJSON(ctx context.Context, name string, args map[string
 	policy.InitialInterval = s.rateLimitDelay
 	policy.MaxInterval = rateLimitMaxDelay
 	policy.Multiplier = 2
-	policy.RandomizationFactor = 0
 	payload, err := backoff.Retry(ctx, func() (jsontext.Value, error) {
 		payload, err := s.callToolOnce(ctx, name, args)
 		if err != nil && !errors.Is(err, errRateLimited) {

@@ -45,7 +45,6 @@ func (s *Store) RunDailyMaintenance(ctx context.Context) (MaintenanceReport, err
 		delays = defaultCheckpointRetryBackoff
 	}
 	policy := backoff.NewExponentialBackOff()
-	policy.RandomizationFactor = 0
 	policy.Multiplier = 3
 	if len(delays) != 0 {
 		policy.InitialInterval = delays[0]

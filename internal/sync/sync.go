@@ -361,7 +361,6 @@ func (s *Syncer) runPageIdentityDiscovery(
 	policy.InitialInterval = identityDiscoveryRetryBackoff
 	policy.MaxInterval = 2 * identityDiscoveryRetryBackoff
 	policy.Multiplier = 2
-	policy.RandomizationFactor = 0
 	attempt := 0
 	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		attempt++

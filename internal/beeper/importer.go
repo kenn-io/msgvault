@@ -552,7 +552,6 @@ func (imp *Importer) listMessagesPage(ctx context.Context, opts ImportOptions, c
 	policy.InitialInterval = fetchRetryBackoff[0]
 	policy.MaxInterval = fetchRetryBackoff[len(fetchRetryBackoff)-1]
 	policy.Multiplier = 4
-	policy.RandomizationFactor = 0
 	page, err := backoff.Retry(requestCtx, func() (*ListMessagesOutput, error) {
 		page, err := imp.client.ListMessagesPage(requestCtx, chatID, cursor, direction)
 		if err != nil && (errors.Is(err, ErrNotFound) || errors.Is(err, errPermanentResponse) || requestCtx.Err() != nil) {
