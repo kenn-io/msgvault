@@ -167,7 +167,7 @@ PDFs open in application-controlled viewers. Metadata-only, missing,
 unsupported, and previewable content remain distinct. From a file, navigate to
 its containing item and then its email or chat conversation.
 
-Filter by filename and file type. In a person's Media & Files view, choose a
+Filter by filename and file type. In a person's Media & files section, choose a
 media gallery or file table and narrow the relationship to **From them**,
 **To them**, or **Group conversations**. These directions describe the
 containing messages; they do not identify people pictured in an image.
@@ -214,9 +214,10 @@ across sources. Search by name, email, or organization; filter by contact
 state, category, primary channel, or last-contact dates; and sort by most or
 least recently contacted.
 
-Its person detail keeps
-Overview, Organizations, Relationships, Network, and Media & Files together.
-Edit structured profile information, attributes, employment, and typed
+Its person detail has seven sections: Overview, Profile, Organizations,
+Connections, Network, Media & files, and Maintenance. Maintenance holds
+profile-maintenance tracking, CardDAV publication, and merge history. Edit
+structured profile information, attributes, employment, and typed
 relationships here. Curated display names also appear in message views,
 analytics, and exports while source identifiers remain available.
 
@@ -235,7 +236,7 @@ profiles. Edges come only from curated typed relationships and employments
 (including shared organizations), never messages, participant co-occurrence,
 or inferred communication activity.
 
-Reviews brings together identity matches, fact review, and imported
+Reviews brings together identity matches, facts, and imported
 relationships. Inspect the evidence before accepting or rejecting a candidate.
 Conflicts between existing profiles require an explicit merge decision.
 Merge history and reversal follow the boundaries documented in

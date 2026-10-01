@@ -15,7 +15,7 @@ test('Directory network shows curated connections, omits message-only contacts, 
       names: [], contact_points: [], addresses: [], categories: [], identifiers: [], media: []
     }
   }));
-  await page.route('**/api/v1/people/43*', (route) => {
+  await page.route(/\/api\/v1\/people\/43(\/|\?|$)/, (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/v1/people/43') return route.fulfill({ json: {
       id: 43, revision: 1, display_name: 'Curated Peer', participant_ids: [], vcard_uid: 'urn:uuid:curated-peer',
@@ -35,7 +35,7 @@ test('Directory network shows curated connections, omits message-only contacts, 
       root_person_id: 43, depth: 1, truncated: false,
       nodes: [{ id: 'person:43', kind: 'person', entity_id: 43, label: 'Curated Peer', hop: 0 }], edges: []
     } });
-    return route.abort();
+    return route.fallback();
   });
 
   await page.setViewportSize({ width: 1280, height: 900 });
