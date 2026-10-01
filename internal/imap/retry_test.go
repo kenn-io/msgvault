@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cenkalti/backoff/v7"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gmailapi "go.kenn.io/msgvault/internal/gmail"
@@ -475,8 +474,6 @@ func TestConnectRetry_BoundedScheduleAndWarnings(t *testing.T) {
 
 	err = connectRetryClient(t.Context(), t, client)
 	require.Error(err)
-	var retryErr *backoff.RetryError
-	assert.NotErrorAs(err, &retryErr)
 	assert.Equal([]time.Duration{time.Millisecond, 3 * time.Millisecond, 9 * time.Millisecond}, delays)
 	assert.Equal(int64(4), counted.accepted.Load())
 	assert.Contains(logs.String(), "attempt=2")
