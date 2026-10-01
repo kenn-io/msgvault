@@ -342,7 +342,8 @@ import (
 // CLI clients can authorize Microsoft Graph mail before starting the worker.
 // 2.36.0 adds token-guarded identity review and consented identity scoring.
 // 2.37.0 adds authenticated implementation-only MCP capability discovery.
-const APISchemaVersion = "2.37.0"
+// 2.38.0 adds credential-preserving non-secret people inference policy updates.
+const APISchemaVersion = "2.38.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

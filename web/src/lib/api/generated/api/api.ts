@@ -283,6 +283,7 @@ import type {
   PatchRelationshipTypeRequest,
   PatchSavedViewPathParameters,
   PatchSavedViewRequest,
+  PatchSettingsPeopleInferencePolicyPathParameters,
   PeopleCodexLoginRequest,
   PeopleCodexLoginResponse,
   PeopleCodexLoginStatusResponse,
@@ -291,6 +292,7 @@ import type {
   PeopleInferenceCheckResponse,
   PeopleInferenceConsentRequest,
   PeopleInferenceKeyWriteRequest,
+  PeopleInferencePolicyUpdateRequest,
   PeopleInferencePresetCreateRequest,
   PeopleInferenceSelectionRequest,
   PeopleInferenceSettingsResponse,
@@ -3836,6 +3838,24 @@ export const putSettingsPeopleInferenceKey = (
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       data: peopleInferenceKeyWriteRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Update existing non-secret people inference policy
+ */
+export const patchSettingsPeopleInferencePolicy = (
+  { name }: PatchSettingsPeopleInferencePolicyPathParameters,
+  peopleInferencePolicyUpdateRequest: PeopleInferencePolicyUpdateRequest,
+  options?: SecondParameter<typeof orvalFetch<PeopleInferenceSettingsResponse>>,
+) => {
+  return orvalFetch<PeopleInferenceSettingsResponse>(
+    {
+      url: `/api/v1/settings/people-inference/providers/${encodeURIComponent(String(name))}/policy`,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      data: peopleInferencePolicyUpdateRequest,
     },
     options,
   );

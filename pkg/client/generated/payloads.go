@@ -222,6 +222,8 @@ type ConsentSettingsPeopleInferenceProviderBody = PeopleInferenceConsentRequest
 
 type PutSettingsPeopleInferenceKeyBody = PeopleInferenceKeyWriteRequest
 
+type PatchSettingsPeopleInferencePolicyBody = PeopleInferencePolicyUpdateRequest
+
 type SelectSettingsPeopleInferenceBody = PeopleInferenceSelectionRequest
 
 type PutSettingsPersonEnrichmentProviderBody = PersonEnrichmentProviderUpdate

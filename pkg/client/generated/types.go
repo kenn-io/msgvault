@@ -7523,6 +7523,35 @@ func (p PeopleInferenceKeyWriteRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PeopleInferencePolicyUpdateError struct {
+	ConsentRemainsRevoked     *bool   `json:"consent_remains_revoked,omitempty"`
+	ErrorData                 string  `json:"error" validate:"required"`
+	Message                   *string `json:"message,omitzero"`
+	OperationMayHaveCompleted *bool   `json:"operation_may_have_completed,omitempty"`
+	RolledBack                *bool   `json:"rolled_back,omitempty"`
+}
+
+func (p PeopleInferencePolicyUpdateError) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+func (s PeopleInferencePolicyUpdateError) Error() string {
+	return "unmapped client error"
+}
+
+type PeopleInferencePolicyUpdateRequest struct {
+	AllowSensitive   *bool    `json:"allow_sensitive,omitempty"`
+	AllowedSources   []string `json:"allowed_sources,omitempty"`
+	Model            *string  `json:"model,omitzero"`
+	ReasoningEffort  *string  `json:"reasoning_effort,omitzero"`
+	ReasoningMode    *string  `json:"reasoning_mode,omitzero"`
+	RequestTimeout   *string  `json:"request_timeout,omitzero"`
+	RetentionPosture *string  `json:"retention_posture,omitzero"`
+	SourceSince      *string  `json:"source_since,omitzero"`
+	SourceUntil      *string  `json:"source_until,omitzero"`
+	TrainingPosture  *string  `json:"training_posture,omitzero"`
+}
+
 type PeopleInferencePresetCreateRequest struct {
 	AllowSensitive   bool                                       `json:"allow_sensitive"`
 	AllowedSources   []string                                   `json:"allowed_sources" validate:"required"`
@@ -7578,6 +7607,9 @@ type PeopleInferenceProfileSetting struct {
 	OutputMode           string   `json:"output_mode" validate:"required"`
 	PresetID             *string  `json:"preset_id,omitzero"`
 	Protocol             string   `json:"protocol" validate:"required"`
+	ReasoningEffort      *string  `json:"reasoning_effort,omitzero"`
+	ReasoningMode        *string  `json:"reasoning_mode,omitzero"`
+	RequestTimeout       string   `json:"request_timeout" validate:"required"`
 	RetentionPosture     string   `json:"retention_posture" validate:"required"`
 	Selected             bool     `json:"selected"`
 	SourceSince          string   `json:"source_since" validate:"required"`

@@ -8130,6 +8130,47 @@ components:
       required:
         - value
       type: object
+    PeopleInferencePolicyUpdateError:
+      properties:
+        consent_remains_revoked:
+          type: boolean
+        error:
+          type: string
+        message:
+          type: string
+        operation_may_have_completed:
+          type: boolean
+        rolled_back:
+          type: boolean
+      required:
+        - error
+      type: object
+    PeopleInferencePolicyUpdateRequest:
+      additionalProperties: false
+      properties:
+        allow_sensitive:
+          type: boolean
+        allowed_sources:
+          items:
+            type: string
+          type: array
+        model:
+          type: string
+        reasoning_effort:
+          type: string
+        reasoning_mode:
+          type: string
+        request_timeout:
+          type: string
+        retention_posture:
+          type: string
+        source_since:
+          type: string
+        source_until:
+          type: string
+        training_posture:
+          type: string
+      type: object
     PeopleInferencePresetCreateRequest:
       additionalProperties: false
       properties:
@@ -8202,6 +8243,12 @@ components:
           type: string
         protocol:
           type: string
+        reasoning_effort:
+          type: string
+        reasoning_mode:
+          type: string
+        request_timeout:
+          type: string
         retention_posture:
           type: string
         selected:
@@ -8227,6 +8274,7 @@ components:
         - allowed_sources
         - source_since
         - allow_sensitive
+        - request_timeout
       type: object
     PeopleInferenceSelectionRequest:
       additionalProperties: false
@@ -13682,7 +13730,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.37.0
+  version: 2.38.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -28173,6 +28221,98 @@ paths:
       security:
         - apiKey: []
       summary: Set a write-only people inference API key
+      tags:
+        - API
+  /api/v1/settings/people-inference/providers/{name}/policy:
+    patch:
+      operationId: patchSettingsPeopleInferencePolicy
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - description: Exact strong config ETag from the settings read
+          in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeopleInferencePolicyUpdateRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferenceSettingsResponse"
+          description: OK
+          headers:
+            ETag:
+              description: Strong content hash for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferencePolicyUpdateError"
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferencePolicyUpdateError"
+          description: Conflict
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferencePolicyUpdateError"
+          description: Precondition Failed
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferencePolicyUpdateError"
+          description: Unprocessable Entity
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferencePolicyUpdateError"
+          description: Precondition Required
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferencePolicyUpdateError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferencePolicyUpdateError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeopleInferencePolicyUpdateError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Update existing non-secret people inference policy
       tags:
         - API
   /api/v1/settings/people-inference/providers/{name}/revoke:

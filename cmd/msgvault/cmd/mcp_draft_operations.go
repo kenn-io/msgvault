@@ -16,6 +16,7 @@ import (
 )
 
 const (
+	mcpDraftBodyFlag     = "body"
 	mcpDraftSourceIDFlag = "source-id"
 	mcpDraftBCCFlag      = "bcc"
 )
@@ -52,15 +53,15 @@ func draftMCPCapabilities(capabilities *apiprotocol.MCPCapabilities) []string {
 			required := []string{}
 			switch name {
 			case "draft_reply":
-				required = []string{"body", "from", "all", "account", mcpDraftSourceIDFlag}
+				required = []string{mcpDraftBodyFlag, draftFromFlag, "all", mcpAccountArgumentKey, mcpDraftSourceIDFlag}
 			case "draft_compose":
-				required = []string{"body", "to", "cc", mcpDraftBCCFlag, "subject", "from", "account", mcpDraftSourceIDFlag}
+				required = []string{mcpDraftBodyFlag, "to", "cc", mcpDraftBCCFlag, "subject", draftFromFlag, mcpAccountArgumentKey, mcpDraftSourceIDFlag}
 			case "draft_forward":
-				required = []string{"body", "to", "cc", mcpDraftBCCFlag, "from", "account", mcpDraftSourceIDFlag}
+				required = []string{mcpDraftBodyFlag, "to", "cc", mcpDraftBCCFlag, draftFromFlag, mcpAccountArgumentKey, mcpDraftSourceIDFlag}
 			case "list_conversation_drafts":
 				required = []string{"conversation"}
 			case "edit_draft":
-				required = []string{"body", "revision"}
+				required = []string{mcpDraftBodyFlag, "revision"}
 			case "delete_draft", "recover_draft":
 				required = []string{"revision"}
 			}
@@ -112,22 +113,22 @@ func mcpDraftArguments(name string, args map[string]any, descriptor apiprotocol.
 	}
 	switch name {
 	case "draft_reply":
-		allow("message_id", "body", "source_id", "account", "from", "reply_all")
+		allow("message_id", mcpDraftBodyFlag, "source_id", mcpAccountArgumentKey, draftFromFlag, "reply_all")
 	case "draft_compose":
-		allow("body", "source_id", "account", "from", "to", "cc", mcpDraftBCCFlag, "subject")
+		allow(mcpDraftBodyFlag, "source_id", mcpAccountArgumentKey, draftFromFlag, "to", "cc", mcpDraftBCCFlag, "subject")
 		if slices.Contains(descriptor.Flags, "conversation") && slices.Contains(descriptor.Flags, "reply-to") {
 			allow("conversation_id", "reply_to_message_id")
 		}
 	case "draft_forward":
-		allow("message_id", "body", "source_id", "account", "from", "to", "cc", mcpDraftBCCFlag)
+		allow("message_id", mcpDraftBodyFlag, "source_id", mcpAccountArgumentKey, draftFromFlag, "to", "cc", mcpDraftBCCFlag)
 	case "get_draft":
 		allow("draft_id")
 	case "list_conversation_drafts":
 		allow("conversation_id")
 	case "list_draft_send_as":
-		allow("account")
+		allow(mcpAccountArgumentKey)
 	case "edit_draft":
-		allow("draft_id", "revision", "body")
+		allow("draft_id", "revision", mcpDraftBodyFlag)
 	case "delete_draft", "recover_draft":
 		allow("draft_id", "revision")
 	}
@@ -201,11 +202,11 @@ func mcpDraftArguments(name string, args map[string]any, descriptor apiprotocol.
 	for _, item := range []struct {
 		flag  string
 		value *string
-	}{{"account", input.Account}, {"from", input.From}, {"body", input.Body}, {"subject", input.Subject}} {
-		if item.value == nil || (name == "list_draft_send_as" && item.flag == "account") {
+	}{{mcpAccountArgumentKey, input.Account}, {draftFromFlag, input.From}, {mcpDraftBodyFlag, input.Body}, {"subject", input.Subject}} {
+		if item.value == nil || (name == "list_draft_send_as" && item.flag == mcpAccountArgumentKey) {
 			continue
 		}
-		if (item.flag == "account" || item.flag == "from") && strings.TrimSpace(*item.value) == "" {
+		if (item.flag == mcpAccountArgumentKey || item.flag == draftFromFlag) && strings.TrimSpace(*item.value) == "" {
 			return nil, errors.New("empty selector")
 		}
 		if err := add(item.flag, *item.value); err != nil {
@@ -246,7 +247,7 @@ func (b *daemonMCPOperations) executeDraftOperation(ctx context.Context, name st
 	}
 	argv, err := mcpDraftArguments(name, args, descriptor)
 	if err != nil {
-		return operationFailure("invalid_args", false), true, nil
+		return operationFailure("invalid_args", false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 	}
 	stream, runErr := b.client.RunMCPCLICommand(ctx, argv, "")
 	if stream == nil {
@@ -349,7 +350,7 @@ func validMCPDraftOutput(draft mcpserver.DraftOutput, failed bool) bool {
 	if draft.Location != "" {
 		return draft.Location == "msgvault" && draft.Body != nil && draft.ConversationID > 0 && draft.SourceType != "" && draft.Source != "" && draft.SourceConversationID != "" && draft.ConversationType != ""
 	}
-	if draft.Lifecycle != "" && draft.Lifecycle != "active" && draft.Lifecycle != "discarded" {
+	if draft.Lifecycle != "" && draft.Lifecycle != draftLifecycleActive && draft.Lifecycle != "discarded" {
 		return false
 	}
 	if draft.ChatID != "" {

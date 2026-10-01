@@ -3203,6 +3203,24 @@ type PutSettingsPeopleInferenceKeyErrorResponseJSON500 = ErrorResponse
 
 type PutSettingsPeopleInferenceKeyErrorResponseJSON503 = ErrorResponse
 
+type PatchSettingsPeopleInferencePolicyResponse = PeopleInferenceSettingsResponse
+
+type PatchSettingsPeopleInferencePolicyErrorResponse = PeopleInferencePolicyUpdateError
+
+type PatchSettingsPeopleInferencePolicyErrorResponseJSON = PeopleInferencePolicyUpdateError
+
+type PatchSettingsPeopleInferencePolicyErrorResponseJSON412 = PeopleInferencePolicyUpdateError
+
+type PatchSettingsPeopleInferencePolicyErrorResponseJSON422 = PeopleInferencePolicyUpdateError
+
+type PatchSettingsPeopleInferencePolicyErrorResponseJSON428 = PeopleInferencePolicyUpdateError
+
+type PatchSettingsPeopleInferencePolicyErrorResponseJSON500 = PeopleInferencePolicyUpdateError
+
+type PatchSettingsPeopleInferencePolicyErrorResponseJSON502 = PeopleInferencePolicyUpdateError
+
+type PatchSettingsPeopleInferencePolicyErrorResponseJSON503 = PeopleInferencePolicyUpdateError
+
 type RevokeSettingsPeopleInferenceProviderResponse = PeopleInferenceSettingsResponse
 
 type RevokeSettingsPeopleInferenceProviderErrorResponse = ErrorResponse
@@ -6224,6 +6242,26 @@ type PutSettingsPeopleInferenceKeyResp struct {
 	JSON428      *PutSettingsPeopleInferenceKeyErrorResponseJSON428
 	JSON500      *PutSettingsPeopleInferenceKeyErrorResponseJSON500
 	JSON503      *PutSettingsPeopleInferenceKeyErrorResponseJSON503
+}
+
+type PatchSettingsPeopleInferencePolicyResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type PatchSettingsPeopleInferencePolicyResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PatchSettingsPeopleInferencePolicyResponse
+	Headers200   *PatchSettingsPeopleInferencePolicyResp200Headers
+	JSON400      *PatchSettingsPeopleInferencePolicyErrorResponse
+	JSON409      *PatchSettingsPeopleInferencePolicyErrorResponseJSON
+	JSON412      *PatchSettingsPeopleInferencePolicyErrorResponseJSON412
+	JSON422      *PatchSettingsPeopleInferencePolicyErrorResponseJSON422
+	JSON428      *PatchSettingsPeopleInferencePolicyErrorResponseJSON428
+	JSON500      *PatchSettingsPeopleInferencePolicyErrorResponseJSON500
+	JSON502      *PatchSettingsPeopleInferencePolicyErrorResponseJSON502
+	JSON503      *PatchSettingsPeopleInferencePolicyErrorResponseJSON503
 }
 
 type RevokeSettingsPeopleInferenceProviderResp200Headers struct {

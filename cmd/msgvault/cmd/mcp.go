@@ -32,6 +32,9 @@ var mcpAllowPersonMerges bool
 var mcpAllowCardDAVWrites bool
 var mcpAllowSourceWrites bool
 var mcpAllowDraftWrites bool
+var mcpAllowProviderWrites bool
+var mcpAllowDocumentWrites bool
+var mcpDocumentCapabilities string
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -77,6 +80,10 @@ Add to Claude Desktop config:
 			return fmt.Errorf("open daemon: %w", err)
 		}
 		defer func() { _ = st.Close() }()
+		manifest, err := resolveMCPDocumentManifest(mcpDocumentCapabilities, info, delegated)
+		if err != nil {
+			return usageErr(cmd, err)
+		}
 
 		// Derive from cmd.Context() so signal handling installed by
 		// the cobra root command (SIGINT/SIGTERM → ctx.Done()) reaches
@@ -86,6 +93,10 @@ Add to Claude Desktop config:
 		defer cancel()
 
 		opts := daemonMCPServeOptions(ctx, st, state)
+		if backend, ok := opts.Operations.(*daemonMCPOperations); ok && manifest != "" {
+			backend.useDocumentManifest(manifest)
+			opts.OperationCapabilities = backend.capabilities()
+		}
 		opts.AllowProfileWrites = mcpAllowProfileWrites
 		opts.AllowIdentityDecisions = mcpAllowIdentityDecisions
 		opts.AllowIdentityScoring = mcpAllowIdentityScoring
@@ -100,6 +111,13 @@ Add to Claude Desktop config:
 
 		if mcpAllowDraftWrites {
 			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyDrafts)
+		}
+
+		if mcpAllowProviderWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyProviders)
+		}
+		if mcpAllowDocumentWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyDocuments)
 		}
 
 		if mcpHTTPAddr != "" {
@@ -411,6 +429,9 @@ func init() {
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowSourceWrites, "allow-source-writes", false,
 		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires --http-allow-writes.")
+	mcpCmd.Flags().BoolVar(&mcpAllowProviderWrites, "allow-provider-writes", false, "Enable approved provider policy changes and synthetic checks; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowDocumentWrites, "allow-document-writes", false, "Enable approved exact-policy document consent and indexing; requires --document-capabilities and local daemon; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().StringVar(&mcpDocumentCapabilities, "document-capabilities", "", "Operator-selected authenticated manifest on the local daemon host; never accepted from an MCP client")
 	mcpCmd.Flags().BoolVar(&mcpAllowDraftWrites, "allow-draft-writes", false, "Enable approved draft creation, editing, deletion and recovery; HTTP also requires --http-allow-writes")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
 	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")

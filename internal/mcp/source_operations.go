@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"github.com/google/jsonschema-go/jsonschema"
+
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 

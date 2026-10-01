@@ -18,6 +18,9 @@ export interface PeopleInferenceProfileSetting {
   output_mode: string;
   preset_id?: string;
   protocol: string;
+  reasoning_effort?: string;
+  reasoning_mode?: string;
+  request_timeout: string;
   retention_posture: string;
   selected: boolean;
   source_since: string;

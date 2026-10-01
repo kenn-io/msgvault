@@ -10,16 +10,20 @@ import (
 	"strings"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
+
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const mcpAccountArgumentKey = "account"
+
 type daemonMCPOperations struct {
-	client    *daemonclient.Client
-	supported []string
-	commands  []apiprotocol.MCPCommandDescriptor
+	client           *daemonclient.Client
+	supported        []string
+	commands         []apiprotocol.MCPCommandDescriptor
+	documentManifest string
 }
 
 func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotocol.MCPCapabilities) *daemonMCPOperations {
@@ -57,6 +61,8 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 		backend.supported = append(backend.supported, "sync_source")
 	}
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, providerMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, documentMCPCapabilities(hasRoute, capabilities)...)
 	return backend
 }
 
@@ -76,7 +82,13 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.StatusMessageResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
+		if result, handled, err := b.executeDocumentOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeDraftOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeProviderOperation(ctx, name, args); handled {
 			return result, err
 		}
 		if result, handled, err := b.executeSourceOperation(ctx, name, args); handled {
@@ -88,7 +100,13 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
+		if disclosure, handled, err := b.documentOperationDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
 		if disclosure, handled, err := b.draftOperationDisclosure(name, args); handled {
+			return disclosure, err
+		}
+		if disclosure, handled, err := b.providerOperationDisclosure(ctx, name, args); handled {
 			return disclosure, err
 		}
 		if disclosure, handled, err := b.sourceOperationDisclosure(ctx, name, args); handled {
@@ -135,7 +153,7 @@ func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name stri
 }
 
 func mcpSyncArguments(args map[string]any) (string, string, error) {
-	account, ok := args["account"].(string)
+	account, ok := args[mcpAccountArgumentKey].(string)
 	if !ok || strings.TrimSpace(account) == "" {
 		return "", "", errors.New("missing source identifier")
 	}
@@ -177,7 +195,7 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
 		switch code {
-		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "validation_failed", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable":
+		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "validation_failed", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable", "document_status_scope_unavailable", "document_status_unavailable":
 			return operationFailure(code, false), nil
 		default:
 			return operationFailure("operation_refused", writes && response.StatusCode >= 500), nil

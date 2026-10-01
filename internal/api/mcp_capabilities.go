@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+
 	"go.kenn.io/msgvault/internal/apiprotocol"
 )
 

@@ -1,8 +1,9 @@
 package mcp
 
 import (
-	"github.com/google/jsonschema-go/jsonschema"
 	"sync"
+
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // DraftOutput is the closed union of the existing email, local conversation,
@@ -87,7 +88,7 @@ type DraftSendAsEntry struct {
 	ConfirmedIdentity  bool   `json:"confirmed_identity"`
 }
 
-// The daemon's actual compose registration determines this optional contract.
+// ConversationDraftCapabilities follows the daemon's actual compose registration.
 type ConversationDraftCapabilities interface{ SupportsConversationDrafts() bool }
 
 func draftInputProperties() map[string]*jsonschema.Schema {
@@ -102,7 +103,7 @@ func draftInputProperties() map[string]*jsonschema.Schema {
 func draftComposeInput(conversation bool) *jsonschema.Schema {
 	props := draftInputProperties()
 	for _, key := range []string{"to", "cc", "bcc"} {
-		props[key] = &jsonschema.Schema{Type: "array", Items: stringSchema("Exact recipient; native Beeper uses one to value naming its chat")}
+		props[key] = &jsonschema.Schema{Type: mcpSchemaArray, Items: stringSchema("Exact recipient; native Beeper uses one to value naming its chat")}
 	}
 	props["subject"] = stringSchema("Email subject")
 	if conversation {
@@ -125,14 +126,14 @@ func draftOperationalDefinitions() []operationalDefinition {
 	forward := draftInputProperties()
 	forward["message_id"] = safeIDSchema("Archived message including its stored attachments")
 	for _, key := range []string{"to", "cc", "bcc"} {
-		forward[key] = &jsonschema.Schema{Type: "array", Items: stringSchema("Forward recipient")}
+		forward[key] = &jsonschema.Schema{Type: mcpSchemaArray, Items: stringSchema("Forward recipient")}
 	}
 	defs := []operationalDefinition{
 		newOperationalDefinition("draft_reply", "Create a reply draft, optionally reply-all. Requires approval; never sends a message.", OperationFamilyDrafts, closedObject(reply, "message_id", "body"), outputSchemaFor[DraftOutput](), true, true),
 		newOperationalDefinition("draft_compose", draftComposeDescription, OperationFamilyDrafts, draftComposeInput(false), outputSchemaFor[DraftOutput](), true, true),
 		newOperationalDefinition("draft_forward", "Create an owner-only forward draft including stored original attachments and a note. Requires approval; never sends a message.", OperationFamilyDrafts, closedObject(forward, "message_id", "body", "to"), outputSchemaFor[DraftOutput](), true, false),
 		newOperationalDefinition("get_draft", "Read one managed draft with provider observations and pending state. Withheld content remains null or absent.", OperationFamilyDrafts, closedObject(map[string]*jsonschema.Schema{"draft_id": stringSchema("Exact local draft ID")}, "draft_id"), outputSchemaFor[DraftOutput](), false, true),
-		newOperationalDefinition("list_conversation_drafts", "Read local drafts for one archived conversation.", OperationFamilyDrafts, closedObject(map[string]*jsonschema.Schema{"conversation_id": safeIDSchema("Archived conversation ID")}, "conversation_id"), closedObject(map[string]*jsonschema.Schema{"drafts": {Type: "array", Items: outputSchemaFor[DraftOutput]()}}, "drafts"), false, true),
+		newOperationalDefinition("list_conversation_drafts", "Read local drafts for one archived conversation.", OperationFamilyDrafts, closedObject(map[string]*jsonschema.Schema{"conversation_id": safeIDSchema("Archived conversation ID")}, "conversation_id"), closedObject(map[string]*jsonschema.Schema{"drafts": {Type: mcpSchemaArray, Items: outputSchemaFor[DraftOutput]()}}, "drafts"), false, true),
 		newOperationalDefinition("list_draft_send_as", "Read Gmail send-as identities for an exact account. Owner-only.", OperationFamilyDrafts, closedObject(map[string]*jsonschema.Schema{"account": stringSchema("Exact Gmail account")}, "account"), outputSchemaFor[DraftSendAsOutput](), false, false),
 	}
 	for _, name := range []string{"edit_draft", "delete_draft", "recover_draft"} {

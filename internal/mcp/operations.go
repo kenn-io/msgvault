@@ -59,7 +59,7 @@ type operationalDefinition struct {
 // Roots are built once, independent of capability combinations. Selecting any
 // subset retains pointer identity for the official SDK's shared schema cache.
 var fixedOperationalDefinitions = sync.OnceValue(func() []operationalDefinition {
-	return append(sourceOperationalDefinitions(), draftOperationalDefinitions()...)
+	return append(append(append(sourceOperationalDefinitions(), draftOperationalDefinitions()...), providerOperationalDefinitions()...), documentOperationalDefinitions()...)
 })
 
 func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefinition {
@@ -95,6 +95,10 @@ func operationalOutputSchema(output *jsonschema.Schema, family OperationFamily) 
 	properties := map[string]*jsonschema.Schema{
 		"error":                        stringSchema("Fixed public refusal code"),
 		"operation_may_have_completed": {Type: "boolean"},
+	}
+	if family == OperationFamilyProviders {
+		properties["consent_remains_revoked"] = &jsonschema.Schema{Type: "boolean"}
+		properties["rolled_back"] = &jsonschema.Schema{Type: "boolean"}
 	}
 	if family == OperationFamilyDrafts {
 		properties["draft"] = outputSchemaFor[DraftOutput]()

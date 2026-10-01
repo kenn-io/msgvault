@@ -35,6 +35,8 @@ func operationMCPSession(t *testing.T, backend *daemonMCPOperations, families []
 	ctx, cancel := context.WithCancel(t.Context())
 	directory := filepath.Join(t.TempDir(), "mcp")
 	opts := daemonMCPServeOptions(ctx, backend.client, nil)
+	opts.Operations = backend
+	opts.OperationCapabilities = backend.capabilities()
 	opts.OperationWriteFamilies = families
 	opts.AllowProfileWrites = slices.Contains(families, mcpserver.OperationFamilyRecords)
 	done := make(chan error, 1)

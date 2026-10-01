@@ -4,16 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
-	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/spf13/cobra"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/apiprotocol"
-	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
-	mcpserver "go.kenn.io/msgvault/internal/mcp"
-	"go.kenn.io/msgvault/internal/store"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -25,9 +15,23 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
+	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestMCPDraftArgumentsExerciseProductionParsers(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	descriptors := registeredMCPCommandDescriptors()
 	descriptor := func(name string) apiprotocol.MCPCommandDescriptor {
 		for _, d := range descriptors {
@@ -35,24 +39,24 @@ func TestMCPDraftArgumentsExerciseProductionParsers(t *testing.T) {
 				return d
 			}
 		}
-		require.FailNow(t, "missing production command", name)
+		requirements.FailNow("missing production command", name)
 		return apiprotocol.MCPCommandDescriptor{}
 	}
 	args, err := mcpDraftArguments("draft_reply", map[string]any{"message_id": int64(8), "body": "--from=intruder@example.com\ntext", "reply_all": true, "source_id": int64(3), "from": "sender@example.com"}, descriptor("draft-reply"))
-	require.NoError(t, err)
+	requirements.NoError(err)
 	reply, err := parseDraftReplyArgs(args)
-	require.NoError(t, err)
-	assert.Equal(t, "--from=intruder@example.com\ntext", reply.Body)
-	assert.Equal(t, "sender@example.com", reply.From)
-	assert.True(t, reply.ReplyAll)
-	assert.Equal(t, int64(3), reply.SourceID)
+	requirements.NoError(err)
+	assertions.Equal("--from=intruder@example.com\ntext", reply.Body)
+	assertions.Equal("sender@example.com", reply.From)
+	assertions.True(reply.ReplyAll)
+	assertions.Equal(int64(3), reply.SourceID)
 	args, err = mcpDraftArguments("draft_compose", map[string]any{"source_id": int64(3), "to": []string{"one@example.com", "two@example.com"}, "cc": []string{"cc@example.com"}, "body": "", "subject": "--account=other"}, descriptor("draft-compose"))
-	require.NoError(t, err)
+	requirements.NoError(err)
 	compose, err := parseDraftComposeArgs(args)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"one@example.com", "two@example.com"}, compose.To)
-	assert.Equal(t, "--account=other", compose.Subject)
-	assert.Empty(t, compose.Body)
+	requirements.NoError(err)
+	assertions.Equal([]string{"one@example.com", "two@example.com"}, compose.To)
+	assertions.Equal("--account=other", compose.Subject)
+	assertions.Empty(compose.Body)
 	for _, name := range []string{"get_draft", "edit_draft", "delete_draft", "recover_draft"} {
 		command := map[string]string{"get_draft": "draft-get", "edit_draft": "draft-edit", "delete_draft": "draft-delete", "recover_draft": "draft-recover"}[name]
 		input := map[string]any{"draft_id": "draft_example"}
@@ -63,77 +67,81 @@ func TestMCPDraftArgumentsExerciseProductionParsers(t *testing.T) {
 			input["body"] = ""
 		}
 		args, err := mcpDraftArguments(name, input, descriptor(command))
-		require.NoError(t, err)
+		requirements.NoError(err)
 		intent, err := parseDraftLifecycleArgs(args)
-		require.NoError(t, err)
-		assert.Equal(t, "draft_example", intent.DraftID)
+		requirements.NoError(err)
+		assertions.Equal("draft_example", intent.DraftID)
 		if name != "get_draft" {
-			assert.Equal(t, int64(2), intent.Revision)
+			assertions.Equal(int64(2), intent.Revision)
 		}
 	}
 	args, err = mcpDraftArguments("list_draft_send_as", map[string]any{"account": "sender@example.com"}, descriptor("draft-send-as"))
-	require.NoError(t, err)
+	requirements.NoError(err)
 	account, jsonOutput, err := parseDraftSendAsArgs(args)
-	require.NoError(t, err)
-	assert.Equal(t, "sender@example.com", account)
-	assert.True(t, jsonOutput)
+	requirements.NoError(err)
+	assertions.Equal("sender@example.com", account)
+	assertions.True(jsonOutput)
 	for _, input := range []map[string]any{
 		{"draft_id": "--json", "revision": int64(1), "body": ""},
 		{"draft_id": "draft_example", "revision": int64(0), "body": ""},
 		{"draft_id": "draft_example", "revision": int64(1), "body": "", "argv": []string{"anything"}},
 	} {
 		_, err := mcpDraftArguments("edit_draft", input, descriptor("draft-edit"))
-		assert.Error(t, err)
+		requirements.Error(err)
 	}
 	_, err = mcpDraftArguments("draft_compose", map[string]any{"conversation_id": int64(4), "body": "example"}, descriptor("draft-compose"))
 	if slices.Contains(descriptor("draft-compose").Flags, "conversation") {
-		assert.NoError(t, err)
+		requirements.NoError(err)
 	} else {
-		assert.Error(t, err)
+		requirements.Error(err)
 	}
 }
 
 func TestMCPDraftDiscoveryUsesActualAdmission(t *testing.T) {
+	assertions := assert.New(t)
 	capabilities := &apiprotocol.MCPCapabilities{Version: 1, Commands: registeredMCPCommandDescriptors()}
 	backend := newDaemonMCPOperations(nil, capabilities)
-	assert.Contains(t, backend.capabilities(), "draft_reply")
-	assert.Contains(t, backend.capabilities(), "get_draft")
-	assert.Equal(t, slices.ContainsFunc(capabilities.Commands, func(d apiprotocol.MCPCommandDescriptor) bool { return d.Name == "draft-forward" }), slices.Contains(backend.capabilities(), "draft_forward"))
-	assert.Equal(t, slices.ContainsFunc(capabilities.Commands, func(d apiprotocol.MCPCommandDescriptor) bool {
+	assertions.Contains(backend.capabilities(), "draft_reply")
+	assertions.Contains(backend.capabilities(), "get_draft")
+	assertions.Equal(slices.ContainsFunc(capabilities.Commands, func(d apiprotocol.MCPCommandDescriptor) bool { return d.Name == "draft-forward" }), slices.Contains(backend.capabilities(), "draft_forward"))
+	assertions.Equal(slices.ContainsFunc(capabilities.Commands, func(d apiprotocol.MCPCommandDescriptor) bool {
 		return d.Name == "draft-get" && slices.Contains(d.Flags, "conversation")
 	}), slices.Contains(backend.capabilities(), "list_conversation_drafts"))
 	capabilities.Delegated = true
 	backend = newDaemonMCPOperations(nil, capabilities)
-	assert.Contains(t, backend.capabilities(), "draft_reply")
-	assert.Contains(t, backend.capabilities(), "recover_draft")
-	assert.Equal(t, agentDelegatedCapable(newDraftGetCommand()), slices.Contains(backend.capabilities(), "get_draft"))
-	assert.NotContains(t, backend.capabilities(), "list_draft_send_as")
+	assertions.Contains(backend.capabilities(), "draft_reply")
+	assertions.Contains(backend.capabilities(), "recover_draft")
+	assertions.Equal(agentDelegatedCapable(newDraftGetCommand()), slices.Contains(backend.capabilities(), "get_draft"))
+	assertions.NotContains(backend.capabilities(), "list_draft_send_as")
 }
 
 func TestMCPDraftResultsPreserveWithheldAndFailureReceipts(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	result, err := decodeMCPDraftResult("get_draft", &daemonclient.MCPCLIResult{Stdout: `{"status":"ok","draft_id":"draft_example","revision":2,"lifecycle":"active","source_id":3,"chat_id":"chat_example","content":null}`})
-	require.NoError(t, err)
-	require.False(t, result.IsError)
+	requirements.NoError(err)
+	requirements.False(result.IsError)
 	output := operationOutput[map[string]any](t, result)
-	assert.Contains(t, output, "content")
-	assert.Nil(t, output["content"])
+	assertions.Contains(output, "content")
+	assertions.Nil(output["content"])
 	result, err = decodeMCPDraftResult("edit_draft", &daemonclient.MCPCLIResult{Failed: true, ErrorCode: "remote_unknown", OperationMayHaveCompleted: true, Stderr: `{"status":"remote_unknown","draft_id":"draft_example","revision":2,"lifecycle":"active","source_id":3,"message_id":4,"receipt":{"mailbox":"Drafts","uid":6,"uidvalidity":7},"pending_operation":"edit","candidate_content":"candidate"}`})
-	require.NoError(t, err)
-	require.True(t, result.IsError)
+	requirements.NoError(err)
+	requirements.True(result.IsError)
 	for _, data := range []string{`{"status":"ok"}`, `{"status":"ok","draft_id":"draft_example","revision":2,"source_id":3,"secret":"private"}`, `{}\n{}`, `private diagnostic`} {
 		result, _ := decodeMCPDraftResult("get_draft", &daemonclient.MCPCLIResult{Stdout: data})
-		require.True(t, result.IsError)
+		requirements.True(result.IsError)
 	}
 	result, err = decodeMCPDraftResult("edit_draft", &daemonclient.MCPCLIResult{Failed: true, ErrorCode: "not_permitted", Stderr: "private diagnostic"})
-	require.NoError(t, err)
-	require.True(t, result.IsError)
+	requirements.NoError(err)
+	requirements.True(result.IsError)
 	encoded, err := json.Marshal(result.Output)
-	require.NoError(t, err)
-	assert.NotContains(t, string(encoded), "private diagnostic")
+	requirements.NoError(err)
+	assertions.NotContains(string(encoded), "private diagnostic")
 }
 
 func mcpDraftDaemonFixture(t *testing.T) (draftReplyFixture, *daemonMCPOperations, string, string) {
 	t.Helper()
+	requirements := require.New(t)
 	fixture := newDraftReplyFixture(t)
 	adapter := fixture.grantedAdapter()
 	adapter.mcpCommands = registeredMCPCommandDescriptors()
@@ -141,104 +149,113 @@ func mcpDraftDaemonFixture(t *testing.T) (draftReplyFixture, *daemonMCPOperation
 	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, Logger: slog.New(slog.DiscardHandler)}).Router())
 	t.Cleanup(server.Close)
 	data, err := json.Marshal(map[string]any{"label": "synthetic-agent", "permissions": []string{"draft.create", "draft.edit", "draft.delete"}, "source_ids": []int64{fixture.source.ID}})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(data))
-	require.NoError(t, err)
+	requirements.NoError(err)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Api-Key", "owner-test-key")
 	response, err := http.DefaultClient.Do(request)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	defer func() { _ = response.Body.Close() }()
-	require.Equal(t, http.StatusCreated, response.StatusCode)
+	requirements.Equal(http.StatusCreated, response.StatusCode)
 	var issued agentTokenIssueFixture
-	require.NoError(t, json.UnmarshalRead(response.Body, &issued))
+	requirements.NoError(json.UnmarshalRead(response.Body, &issued))
 	tokenFile := filepath.Join(t.TempDir(), "grant.token")
-	require.NoError(t, os.WriteFile(tokenFile, []byte(issued.Secret), 0o600))
+	requirements.NoError(os.WriteFile(tokenFile, []byte(issued.Secret), 0o600))
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	caps, err := client.MCPCapabilities(t.Context())
-	require.NoError(t, err)
+	requirements.NoError(err)
 	return fixture, newDaemonMCPOperations(client, caps), server.URL, tokenFile
 }
 
 func TestMCPDraftRoundTripUsesRealIMAPProducer(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	fixture, backend, _, _ := mcpDraftDaemonFixture(t)
 	result, err := backend.ExecuteOperation(t.Context(), "draft_reply", map[string]any{"message_id": fixture.parentID, "source_id": fixture.source.ID, "body": "--from=other@example.com\nreply"})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	created := operationOutput[draftReplyOutput](t, result)
-	require.Equal(t, "created", created.Status)
-	require.NotEmpty(t, created.DraftID)
+	requirements.Equal("created", created.Status)
+	requirements.NotEmpty(created.DraftID)
 	_, raw := fetchDraftMailboxMessage(t, fixture.config, store.IMAPDraftReceipt{SourceID: created.SourceID, Mailbox: created.Mailbox, UID: created.UID, UIDValidity: created.UIDValidity})
-	assert.Contains(t, string(raw), "From: <alice@example.com>")
+	assertions.Contains(string(raw), "From: <alice@example.com>")
 	result, err = backend.ExecuteOperation(t.Context(), "get_draft", map[string]any{"draft_id": created.DraftID})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	current := operationOutput[draftLifecycleOutput](t, result)
-	assert.Contains(t, current.Content, "--from=other@example.com")
+	assertions.Contains(current.Content, "--from=other@example.com")
 	result, err = backend.ExecuteOperation(t.Context(), "edit_draft", map[string]any{"draft_id": created.DraftID, "revision": created.Revision, "body": ""})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	edited := operationOutput[draftLifecycleOutput](t, result)
-	assert.Equal(t, created.Revision+1, edited.Revision)
+	assertions.Equal(created.Revision+1, edited.Revision)
 	result, err = backend.ExecuteOperation(t.Context(), "delete_draft", map[string]any{"draft_id": created.DraftID, "revision": created.Revision})
-	require.NoError(t, err)
-	require.True(t, result.IsError)
+	requirements.NoError(err)
+	requirements.True(result.IsError)
 	result, err = backend.ExecuteOperation(t.Context(), "delete_draft", map[string]any{"draft_id": created.DraftID, "revision": edited.Revision})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	deleted := operationOutput[draftLifecycleOutput](t, result)
-	assert.Equal(t, "discarded", deleted.Lifecycle)
+	assertions.Equal("discarded", deleted.Lifecycle)
 }
 
 func TestMCPDelegatedAdmissionSkipsOwnerConfiguration(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	ctx := testInvocationContext(t.Context(), nil, invocationOptions{agentURL: "https://daemon.example.com", agentTokenFile: "/grant.token", agentURLChanged: true, agentTokenChanged: true})
 	command := &cobra.Command{Use: "mcp"}
 	command.SetContext(ctx)
-	require.NoError(t, rootCmd.PersistentPreRunE(command, nil))
-	assert.Nil(t, invocationFromCommand(command).cfg)
+	requirements.NoError(rootCmd.PersistentPreRunE(command, nil))
+	assertions.Nil(invocationFromCommand(command).cfg)
 }
 
 func TestMCPDelegatedHandshakeUsesOnlyAgentSession(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	_, _, url, tokenFile := mcpDraftDaemonFixture(t)
 	ctx := testInvocationContext(t.Context(), nil, invocationOptions{agentURL: url, agentTokenFile: tokenFile, agentURLChanged: true, agentTokenChanged: true, agentAllowInsecure: true})
 	client, err := openMCPAgentDelegatedStore(ctx, invocationFromContext(ctx))
-	require.NoError(t, err)
+	requirements.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
-	assert.True(t, client.UsesDelegatedAuthentication())
+	assertions.True(client.UsesDelegatedAuthentication())
 	caps, err := client.MCPCapabilities(ctx)
-	require.NoError(t, err)
-	assert.True(t, caps.Delegated)
+	requirements.NoError(err)
+	assertions.True(caps.Delegated)
 	opts := daemonMCPServeOptions(ctx, client, nil)
-	assert.True(t, opts.DelegatedOnly)
-	assert.Contains(t, opts.OperationCapabilities, "draft_reply")
-	assert.Equal(t, agentDelegatedCapable(newDraftGetCommand()), slices.Contains(opts.OperationCapabilities, "get_draft"))
+	assertions.True(opts.DelegatedOnly)
+	assertions.Contains(opts.OperationCapabilities, "draft_reply")
+	assertions.Equal(agentDelegatedCapable(newDraftGetCommand()), slices.Contains(opts.OperationCapabilities, "get_draft"))
 }
 
 func TestMCPDelegatedHTTPRefusesBeforeReadingToken(t *testing.T) {
+	requirements := require.New(t)
 	ctx := testInvocationContext(t.Context(), nil, invocationOptions{agentURL: "https://daemon.example.com", agentTokenFile: "/missing-grant.token", agentURLChanged: true, agentTokenChanged: true})
 	savedHTTP := mcpHTTPAddr
 	mcpHTTPAddr = "127.0.0.1:0"
 	t.Cleanup(func() { mcpHTTPAddr = savedHTTP })
 	command := &cobra.Command{Use: "mcp"}
 	command.SetContext(ctx)
-	require.ErrorContains(t, mcpCmd.RunE(command, nil), "stdio only")
+	requirements.ErrorContains(mcpCmd.RunE(command, nil), "stdio only")
 }
 
 func TestMCPDelegatedHandshakeRejectsOwnerSessionWithoutHealthFallback(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	fixture := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler)})
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
-		assert.Empty(t, r.Header.Get("X-Api-Key"))
-		assert.Equal(t, "synthetic-grant", r.Header.Get("X-Msgvault-Agent-Token"))
+		assertions.Empty(r.Header.Get("X-Api-Key"))
+		assertions.Equal("synthetic-grant", r.Header.Get("X-Msgvault-Agent-Token"))
 		fixture.Router().ServeHTTP(w, r)
 	}))
 	t.Cleanup(server.Close)
 	tokenFile := filepath.Join(t.TempDir(), "grant.token")
-	require.NoError(t, os.WriteFile(tokenFile, []byte("synthetic-grant"), 0o600))
+	requirements.NoError(os.WriteFile(tokenFile, []byte("synthetic-grant"), 0o600))
 	ctx := testInvocationContext(t.Context(), nil, invocationOptions{agentURL: server.URL, agentTokenFile: tokenFile, agentURLChanged: true, agentTokenChanged: true, agentAllowInsecure: true})
 	client, err := openMCPAgentDelegatedStore(ctx, invocationFromContext(ctx))
-	require.Error(t, err)
-	assert.Nil(t, client)
-	assert.Equal(t, []string{"/api/session"}, paths)
+	requirements.Error(err)
+	assertions.Nil(client)
+	assertions.Equal([]string{"/api/session"}, paths)
 }
 
 // The property uses the production reply parser as its oracle. Valid text must
@@ -267,45 +284,51 @@ func FuzzMCPDraftReplyBodyIsolation(f *testing.F) {
 }
 
 func TestMCPDraftOptionalForwardUsesActualRegistration(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	fixture, backend, _, _ := mcpDraftDaemonFixture(t)
 	if !slices.Contains(backend.capabilities(), "draft_forward") {
 		result, err := backend.ExecuteOperation(t.Context(), "draft_forward", nil)
-		require.NoError(t, err)
-		assert.True(t, result.IsError)
+		requirements.NoError(err)
+		assertions.True(result.IsError)
 		return
 	}
 	result, err := backend.ExecuteOperation(t.Context(), "draft_forward", map[string]any{"message_id": fixture.parentID, "source_id": fixture.source.ID, "body": "forward note", "to": []string{"recipient@example.com"}})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	created := operationOutput[draftReplyOutput](t, result)
-	assert.Equal(t, "created", created.Status)
+	assertions.Equal("created", created.Status)
 	_, raw := fetchDraftMailboxMessage(t, fixture.config, store.IMAPDraftReceipt{SourceID: created.SourceID, Mailbox: created.Mailbox, UID: created.UID, UIDValidity: created.UIDValidity})
-	assert.Contains(t, string(raw), "recipient@example.com")
+	assertions.Contains(string(raw), "recipient@example.com")
 }
 
 func TestMCPDraftOptionalConversationUsesActualProducer(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	fixture, backend, _, _ := mcpDraftDaemonFixture(t)
 	if !backend.SupportsConversationDrafts() {
 		return
 	}
 	source, err := fixture.store.GetOrCreateSource("slack", "workspace_example")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	conversation, err := fixture.store.EnsureConversationWithType(source.ID, "channel_example", "channel", "Synthetic chat")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	result, err := backend.ExecuteOperation(t.Context(), "draft_compose", map[string]any{"conversation_id": conversation, "body": "local text"})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	output := operationOutput[map[string]any](t, result)
-	assert.Equal(t, "msgvault", output["location"])
-	assert.Equal(t, "local text", output["body"])
+	assertions.Equal("msgvault", output["location"])
+	assertions.Equal("local text", output["body"])
 	result, err = backend.ExecuteOperation(t.Context(), "list_conversation_drafts", map[string]any{"conversation_id": conversation})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	listed := operationOutput[struct {
 		Drafts []map[string]any `json:"drafts"`
 	}](t, result)
-	require.Len(t, listed.Drafts, 1)
-	assert.Equal(t, output["draft_id"], listed.Drafts[0]["draft_id"])
+	requirements.Len(listed.Drafts, 1)
+	assertions.Equal(output["draft_id"], listed.Drafts[0]["draft_id"])
 }
 
 func TestMCPDelegatedBuiltBinaryHasNoOwnerArchive(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	binary := os.Getenv("MSGVAULT_MCP_TEST_BINARY")
 	if binary == "" {
 		t.Skip("artifact check: set MSGVAULT_MCP_TEST_BINARY to a make build binary")
@@ -314,53 +337,57 @@ func TestMCPDelegatedBuiltBinaryHasNoOwnerArchive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	for _, home := range []string{filepath.Join(t.TempDir(), "absent", "home"), "/proc/msgvault-mcp-unwritable"} {
+		//nolint:gosec // The operator selects a locally built msgvault binary for this production artifact test.
 		command := exec.CommandContext(ctx, binary, "mcp", "--agent-url="+url, "--agent-token-file="+tokenFile, "--agent-allow-insecure", "--allow-draft-writes")
 		command.Env = append(os.Environ(), "MSGVAULT_HOME="+home)
 		var stderr bytes.Buffer
 		command.Stderr = &stderr
 		client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "synthetic-client", Version: "1"}, nil)
 		session, err := client.Connect(ctx, &sdkmcp.CommandTransport{Command: command}, nil)
-		require.NoError(t, err, stderr.String())
-		assert.Nil(t, session.InitializeResult().Capabilities.Resources)
+		requirements.NoError(err, stderr.String())
+		assertions.Nil(session.InitializeResult().Capabilities.Resources)
 		tools, err := session.ListTools(ctx, nil)
-		require.NoError(t, err)
+		requirements.NoError(err)
 		var names []string
 		for _, tool := range tools.Tools {
 			names = append(names, tool.Name)
 		}
-		assert.Contains(t, names, "draft_reply")
-		assert.Contains(t, names, "draft_compose")
-		assert.Contains(t, names, "recover_draft")
-		assert.NotContains(t, names, "get_message")
-		assert.NotContains(t, names, "search_metadata")
-		assert.NotContains(t, names, "list_source_status")
-		assert.NotContains(t, names, "list_draft_send_as")
+		assertions.Contains(names, "draft_reply")
+		assertions.Contains(names, "draft_compose")
+		assertions.Contains(names, "recover_draft")
+		assertions.NotContains(names, "get_message")
+		assertions.NotContains(names, "search_metadata")
+		assertions.NotContains(names, "list_source_status")
+		assertions.NotContains(names, "list_draft_send_as")
 		_, err = session.ReadResource(ctx, &sdkmcp.ReadResourceParams{URI: "msgvault://stats"})
-		assert.Error(t, err)
-		require.NoError(t, session.Close())
+		requirements.Error(err)
+		requirements.NoError(session.Close())
 		_, err = os.Stat(home)
-		assert.True(t, os.IsNotExist(err), "delegated launch must not create its configured home")
+		assertions.True(os.IsNotExist(err), "delegated launch must not create its configured home")
 	}
 }
 
 func TestMCPDraftResultRejectsUnidentifiedProducerShape(t *testing.T) {
+	assertions := assert.New(t)
 	for _, data := range []string{
 		`{"status":"ok","draft_id":"draft_example","revision":2,"source_id":3}`,
 		`{"status":"ok","draft_id":"draft_example","revision":2,"source_id":3,"chat_id":"chat_example"}`,
 		`{"status":"ok","draft_id":"draft_example","revision":2,"source_id":3,"lifecycle":"active","message_id":4,"receipt":{}}`,
 	} {
 		result, _ := decodeMCPDraftResult("get_draft", &daemonclient.MCPCLIResult{Stdout: data})
-		assert.True(t, result.IsError)
+		assertions.True(result.IsError)
 	}
 }
 
 func TestMCPDraftSDKConfirmsBeforeRealProviderWrite(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	fixture, backend, _, _ := mcpDraftDaemonFixture(t)
 	approved := false
 	approvals := 0
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyDrafts}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approvals++
-		assert.Contains(t, request.Params.Message, "never retries or sends")
+		assertions.Contains(request.Params.Message, "never retries or sends")
 		if approved {
 			return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 		}
@@ -368,18 +395,18 @@ func TestMCPDraftSDKConfirmsBeforeRealProviderWrite(t *testing.T) {
 	}})
 	args := map[string]any{"message_id": fixture.parentID, "source_id": fixture.source.ID, "body": "SDK approved reply"}
 	declined, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "draft_reply", Arguments: args})
-	require.NoError(t, err)
-	assert.True(t, declined.IsError)
-	assert.Empty(t, *fixture.refreshed)
+	requirements.NoError(err)
+	assertions.True(declined.IsError)
+	assertions.Empty(*fixture.refreshed)
 	approved = true
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "draft_reply", Arguments: args})
-	require.NoError(t, err)
-	require.False(t, result.IsError)
+	requirements.NoError(err)
+	requirements.False(result.IsError)
 	data, err := json.Marshal(result.StructuredContent)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	var output draftReplyOutput
-	require.NoError(t, json.Unmarshal(data, &output))
-	assert.Equal(t, "created", output.Status)
-	assert.Len(t, *fixture.refreshed, 1)
-	assert.Equal(t, 2, approvals)
+	requirements.NoError(json.Unmarshal(data, &output))
+	assertions.Equal("created", output.Status)
+	assertions.Len(*fixture.refreshed, 1)
+	assertions.Equal(2, approvals)
 }

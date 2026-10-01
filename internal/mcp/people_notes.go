@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
+
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"

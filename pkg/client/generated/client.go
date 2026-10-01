@@ -1095,6 +1095,10 @@ type ClientInterface interface {
 	PutSettingsPeopleInferenceKey(ctx context.Context, options *PutSettingsPeopleInferenceKeyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PutSettingsPeopleInferenceKeyResponse, error)
 	PutSettingsPeopleInferenceKeyWithResponse(ctx context.Context, options *PutSettingsPeopleInferenceKeyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PutSettingsPeopleInferenceKeyResp, error)
 
+	// PatchSettingsPeopleInferencePolicy Update existing non-secret people inference policy
+	PatchSettingsPeopleInferencePolicy(ctx context.Context, options *PatchSettingsPeopleInferencePolicyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchSettingsPeopleInferencePolicyResponse, error)
+	PatchSettingsPeopleInferencePolicyWithResponse(ctx context.Context, options *PatchSettingsPeopleInferencePolicyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchSettingsPeopleInferencePolicyResp, error)
+
 	// RevokeSettingsPeopleInferenceProvider Revoke exact people inference consent
 	RevokeSettingsPeopleInferenceProvider(ctx context.Context, options *RevokeSettingsPeopleInferenceProviderRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeSettingsPeopleInferenceProviderResponse, error)
 	RevokeSettingsPeopleInferenceProviderWithResponse(ctx context.Context, options *RevokeSettingsPeopleInferenceProviderRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RevokeSettingsPeopleInferenceProviderResp, error)
@@ -17539,6 +17543,70 @@ func (c *Client) PutSettingsPeopleInferenceKey(ctx context.Context, options *Put
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/settings/people-inference/providers/{name}/key")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PatchSettingsPeopleInferencePolicy Update existing non-secret people inference policy
+func (c *Client) PatchSettingsPeopleInferencePolicy(ctx context.Context, options *PatchSettingsPeopleInferencePolicyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PatchSettingsPeopleInferencePolicyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/settings/people-inference/providers/{name}/policy",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PatchSettingsPeopleInferencePolicyResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PatchSettingsPeopleInferencePolicyErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PatchSettingsPeopleInferencePolicyErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PatchSettingsPeopleInferencePolicyResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PatchSettingsPeopleInferencePolicyResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/settings/people-inference/providers/{name}/policy")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

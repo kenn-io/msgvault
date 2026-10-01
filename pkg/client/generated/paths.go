@@ -873,6 +873,14 @@ func (p PutSettingsPeopleInferenceKeyPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PatchSettingsPeopleInferencePolicyPath struct {
+	Name string `json:"name" validate:"required"`
+}
+
+func (p PatchSettingsPeopleInferencePolicyPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type RevokeSettingsPeopleInferenceProviderPath struct {
 	Name string `json:"name" validate:"required"`
 }
