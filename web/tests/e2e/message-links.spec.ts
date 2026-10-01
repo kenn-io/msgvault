@@ -2,9 +2,10 @@ import { expect, test } from '@playwright/test';
 
 for (const messageType of ['email', 'whatsapp']) {
   test(`direct ${messageType} link opens its message without Explore pagination`, async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 900 });
     const message = {
       id: 42001, source_id: 3, source_message_id: 'source-message', conversation_id: 71,
-      subject: 'Linked message', message_type: messageType, from: 'sender@example.com',
+      subject: 'LongUnbrokenSubject'.repeat(10), message_type: messageType, from: 'sender@example.com',
       to: ['reader@example.com'], sent_at: '2020-01-01T12:00:00Z', snippet: 'Old message',
       labels: [], has_attachments: false, size_bytes: 20, body: 'The requested old message', attachments: [],
     };
@@ -26,6 +27,7 @@ for (const messageType of ['email', 'whatsapp']) {
     await page.goto('/messages/42001');
     await expect(page.getByRole('article', { name: 'Message 42001' })).toContainText('The requested old message');
     expect(archiveRequests).toEqual(['/api/v1/messages/42001', '/api/v1/conversations/71']);
-    await page.screenshot({ path: `/tmp/msgvault-direct-${messageType}.png` });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: `test-results/artifacts/direct-${messageType}.png` });
   });
 }

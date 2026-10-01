@@ -88,10 +88,19 @@ export class CardDAVController {
     visibilityDocument?.addEventListener('visibilitychange', this.visibilityChanged);
   }
   async load(): Promise<void> {
-    await Promise.all([this.readStatus(true), this.loadBooks(false), this.refreshRuns()]);
+    await Promise.all([this.retryStatus(), this.refreshRuns()]);
   }
   async retryStatus(): Promise<void> {
-    await this.readStatus(true);
+    const loaded = await this.readStatus(true);
+    if (loaded && this.status?.available) {
+      await this.loadBooks(false);
+    } else if (!this.disposed) {
+      if (loaded) {
+        this.books = [];
+        this.booksError = null;
+      }
+      this.booksLoading = false;
+    }
   }
   async retryBooks(): Promise<void> {
     await this.loadBooks(this.books.length > 0 || this.booksUnknown);

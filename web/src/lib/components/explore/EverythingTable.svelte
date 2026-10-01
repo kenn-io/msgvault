@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, EmptyState, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, Tooltip, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type {
@@ -470,7 +470,7 @@
         <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length}><p class="empty" role="status">Preparing table layout…</p></div></div>
       {:else}
         <div class="virtual-spacer" style:height={`${slice.totalHeight}px`}>
-          <div class="virtual-window" style:transform={`translateY(${slice.topPad}px)`}>
+          <div class="virtual-window" style:top={`${slice.topPad}px`}>
             {#each renderedRows as row, offset (row.key)}
               {@const index = slice.start + offset}
               <!-- svelte-ignore a11y_click_events_have_key_events -- Enter on
@@ -503,7 +503,7 @@
                       {/if}
                       <RowKind kind={row.kind} messageType={row.message_type} />
                     {:else if column === 'people'}
-                      {people(row)}
+                      <Tooltip text={people(row)} focusable><span class="people-label">{people(row)}</span></Tooltip>
                       {#if isEmailMessageType(row.message_type)}
                         <IdentityBadge
                           senderIdentities={row.matched_sender_identities}
@@ -561,6 +561,7 @@
 </section>
 
 <style>
+  .cell--people :global(.kit-tooltip) { white-space: normal; overflow-wrap: anywhere; }
   .everything-table {
     display: flex;
     min-height: 0;
@@ -673,6 +674,9 @@
     background: var(--selected-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue), inset 0 0 0 1px var(--selected-border);
   }
+
+  .cell--people :global(.kit-tooltip-trigger) { max-width: 100%; }
+  .people-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* Tabular data columns sit on the right edge, mono-aligned. */
   .cell--time,

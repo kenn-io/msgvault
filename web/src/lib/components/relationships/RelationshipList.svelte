@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, EmptyState, SearchInput, SegmentedControl } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, SearchInput, SegmentedControl, Tooltip } from '@kenn-io/kit-ui';
 
   import type { DomainSummary, ExploreCacheUnavailable, PersonSummary } from '../../explore/models';
   import type { RelationshipFacet, RelationshipRow } from '../../relationships/models';
@@ -259,7 +259,7 @@
               />
               <div class="row-body">
                 <div class="row-main">
-                  <span class="label">{view.label}</span>
+                  <Tooltip text={view.label} focusable><span class="label">{view.label}</span></Tooltip>
                   <span class="last-at" data-mono>{compactDate(view.lastAt)}</span>
                 </div>
                 <span class="row-summary" data-mono>{view.summary}</span>
@@ -276,6 +276,7 @@
 </aside>
 
 <style>
+  .row-main :global(.kit-tooltip) { white-space: normal; overflow-wrap: anywhere; }
   .relationship-list {
     display: flex;
     min-width: 0;

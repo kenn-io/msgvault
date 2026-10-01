@@ -1222,7 +1222,8 @@
     });
     resyncEditableScope();
     const unregister = commandRegistry.flatMap((command) =>
-      command.combos.map((combo) => appShortcuts.register(combo, command.run, { description: command.label })),
+      (command.id === 'focus-search' ? ['root', 'deletions'] : ['root']).flatMap((scope) =>
+        command.combos.map((combo) => appShortcuts.register(combo, command.run, { scope, description: command.label }))),
     );
     return () => {
       disposed = true;

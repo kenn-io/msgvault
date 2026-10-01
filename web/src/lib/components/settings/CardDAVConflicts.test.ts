@@ -525,7 +525,7 @@ describe('CardDAVConflicts', () => {
         mutationSignal = request.signal;
         return mutation.promise;
       }
-      if (path === '/api/v1/carddav/status') return Response.json({ configured: false, available: false, credential_configured: false, enabled: false, scheduled: false, schedule: '' });
+      if (path === '/api/v1/carddav/status') return Response.json({ configured: true, available: true, credential_configured: true, enabled: false, scheduled: false, schedule: '' });
       if (path === '/api/v1/carddav/books') return Response.json({ books: [] });
       if (path === '/api/v1/carddav/runs') return Response.json({ runs: [] });
       if (path.endsWith('/41')) return Response.json(conflictDetail(41));

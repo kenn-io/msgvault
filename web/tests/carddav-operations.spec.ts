@@ -56,6 +56,9 @@ test('keyboard journey configures CardDAV, reconciles roles, syncs history, and 
   await cardDAVCategory.focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'CardDAV account' })).toBeVisible();
+  await expect(page.getByText('Not configured', { exact: true })).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveText('CardDAV account discovery is missing. Test and save the account again.');
+  expect(fixture.requests.filter(({ path }) => /carddav\/(books|conflicts)$/.test(path))).toEqual([]);
 
   await page.getByLabel('Base URL').fill('https://carddav.example.test/');
   await page.getByLabel('Username').fill('synthetic-user');

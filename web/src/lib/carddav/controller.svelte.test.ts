@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 describe('CardDAVController', () => {
-  it('loads status, books, and page-zero history independently', async () => {
+  it('keeps history available when status fails without requesting runtime books', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -74,15 +74,14 @@ describe('CardDAVController', () => {
     await controller.load();
 
     expect(requests.map((request) => new URL(request.url).pathname).sort()).toEqual([
-      '/api/v1/carddav/books',
       '/api/v1/carddav/runs',
       '/api/v1/carddav/status'
     ]);
     expect(new URL(requests.find((request) => new URL(request.url).pathname.endsWith('/runs'))!.url).searchParams.get('limit')).toBe('25');
     expect(controller.status).toBeUndefined();
     expect(controller.statusError).toBe('Unable to load CardDAV status.');
-    expect(controller.books.map(({ id, name }) => ({ id, name }))).toEqual([{ id: 3, name: 'Synthetic book 3' }]);
-    expect(controller.books[0]).not.toHaveProperty('url');
+    expect(controller.books).toEqual([]);
+    expect(controller.booksLoading).toBe(false);
     expect(controller.runs).toEqual([]);
     expect(controller.runsError).toBeNull();
     controller.destroy();
@@ -99,7 +98,7 @@ describe('CardDAVController', () => {
         if (statusReads === 1) return Response.json(idleStatus);
         return Response.json({ error: 'unavailable' }, { status: 503 });
       }
-      if (path.endsWith('/books')) return Response.json({ books: [] });
+      if (path.endsWith('/books')) return Response.json({ books: [book(3)] });
       if (path.endsWith('/runs')) return Response.json({ runs: [] });
       posts += 1;
       return Response.json({ run: run(1) });
@@ -112,6 +111,7 @@ describe('CardDAVController', () => {
 
     expect(controller.statusError).toBe('Unable to load CardDAV status.');
     expect(controller.canSync).toBe(false);
+    expect(controller.books.map(({ id, name }) => ({ id, name }))).toEqual([{ id: 3, name: 'Synthetic book 3' }]);
     await controller.sync(false);
     expect(posts).toBe(0);
     controller.destroy();

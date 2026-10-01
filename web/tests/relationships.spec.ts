@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { setKitTheme } from './kit-ui';
 import { exploreHistoryState } from './explore-state';
 
 const when = '2026-07-19T10:00:00Z';
@@ -225,4 +226,91 @@ test('person attachment gallery preserves directions and Media state across sour
     workspace: 'relationships', relationshipTarget: 'cluster:1', relationshipFiles: true,
     personFilePresentation: 'media', personFileDirections: ['from_person', 'group']
   });
+});
+
+for (const width of [1440, 420]) {
+  test(`expanded relationship overview leaves usable activity at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await prepare(page);
+    await page.route('**/api/v1/relationships/1/calendar', route => route.fulfill({ json: {
+      participant_id: 1, canonical_id: 1, year: 2026, timezone: 'UTC', days: [], annual: [],
+      current: { temperature: 62, rank: 1, population: 1, raw_score: 3,
+        signals: { sent_signal: 1, received_volume: 1, meeting_signal: 0, modalities: 2 } },
+      peak_temperature: 62, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1,
+      effective_date: '2026-07-19', cache_revision: 'cache-relationships', identity_revision: 1
+    } }));
+    await page.route('**/api/v1/meetings/metrics', route => route.fulfill({ json: {
+      totals: { meeting_count: 2, known_duration_count: 2, unknown_duration_count: 0,
+        total_known_seconds: 3600, average_known_seconds: 1800 },
+      duration_by_basis: [{ basis: 'provider', count: 2, total_seconds: 3600 }],
+      months: [], undated_count: 0
+    } }));
+    await page.route('**/api/v1/meetings/actions', route => route.fulfill({ json: {
+      rows: [], total_count: 0, coverage: { available: 2, meeting_count: 2, partial: 0, unavailable: 0, unsupported: 0 }
+    } }));
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'relationships', relationshipTarget: 'cluster:1'
+    }))}`);
+    const overview = page.locator('.meeting-overview');
+    await expect(overview).toHaveAttribute('open', '');
+    await expect(page.getByRole('heading', { name: '2 meetings', exact: true })).toBeVisible();
+    const timeline = page.getByRole('grid', { name: 'Relationship activity' });
+    await expect(timeline).toBeInViewport();
+    expect((await timeline.boundingBox())!.height).toBeGreaterThanOrEqual(100);
+    await timeline.getByText('6 messages in Team Chat', { exact: true }).click();
+    await expect(page.getByRole('complementary', { name: /^Reading pane:/ })).toBeVisible();
+    await expect(timeline).toBeInViewport();
+    expect((await timeline.boundingBox())!.height).toBeGreaterThanOrEqual(100);
+    await page.getByRole('radio', { name: 'Files 1', exact: true }).click();
+    const files = page.getByRole('grid', { name: 'Files results' });
+    await expect(files.getByText('notes.pdf', { exact: true })).toBeInViewport();
+    expect((await files.boundingBox())!.height).toBeGreaterThanOrEqual(100);
+    await expect(overview).toHaveAttribute('open', '');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: `test-results/artifacts/relationships-expanded-${width}.png` });
+  });
+}
+
+test('relationship labels disclose on focus and identity hues retain text contrast', async ({ page }) => {
+  await prepare(page);
+  await page.goto('/');
+  const name = page.getByRole('grid', { name: 'Relationship results' }).locator('.kit-tooltip-trigger').first();
+  await name.focus();
+  await expect(page.getByRole('tooltip')).toHaveText('Alice Example');
+  await expect(page.getByRole('tooltip')).toBeInViewport();
+  await page.keyboard.press('Escape');
+  for (const theme of ['light', 'dark'] as const) {
+    await setKitTheme(page, theme);
+    const minimum = await page.locator('.identity-avatar').first().evaluate(element => {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext('2d')!;
+      const ancestors: Element[] = [];
+      for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) ancestors.unshift(ancestor);
+      const luminance = (values: Uint8ClampedArray) => {
+        const linear = [...values].slice(0, 3).map(value => {
+          value /= 255;
+          return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+        });
+        return .2126 * linear[0]! + .7152 * linear[1]! + .0722 * linear[2]!;
+      };
+      let minimum = Infinity;
+      for (let hue = 0; hue < 360; hue++) {
+        (element as HTMLElement).style.setProperty('--avatar-hue', String(hue));
+        context.fillStyle = 'white';
+        context.fillRect(0, 0, 1, 1);
+        for (const ancestor of ancestors) {
+          context.fillStyle = getComputedStyle(ancestor).backgroundColor;
+          context.fillRect(0, 0, 1, 1);
+        }
+        const background = luminance(context.getImageData(0, 0, 1, 1).data);
+        context.fillStyle = getComputedStyle(element).color;
+        context.fillRect(0, 0, 1, 1);
+        const foreground = luminance(context.getImageData(0, 0, 1, 1).data);
+        minimum = Math.min(minimum, (Math.max(background, foreground) + .05) / (Math.min(background, foreground) + .05));
+      }
+      return minimum;
+    });
+    expect(minimum, `${theme} identity initials`).toBeGreaterThanOrEqual(4.5);
+  }
 });

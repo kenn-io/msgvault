@@ -480,13 +480,18 @@ func (s *Store) SearchMessagesQueryContext(
 	return s.searchMessagesQueryImpl(ctx, q, offset, limit, s.fts5Available)
 }
 
-// searchMessagesQueryImpl runs the actual query. The ftsAvailable flag is
-// taken as an explicit parameter so the runtime FTS-error fallback
-// (searchMessagesQueryNoFTS) can force the LIKE path even when
-// s.fts5Available was true at startup.
-func (s *Store) searchMessagesQueryImpl(
-	ctx context.Context, q *search.Query, offset, limit int, ftsAvailable bool,
-) ([]APIMessage, int64, error) {
+type messageSearchSQL struct {
+	join      string
+	where     string
+	orderBy   string
+	args      []any
+	orderArgs []any
+	fts       bool
+}
+
+// buildMessageSearchSQL keeps candidate-only and full-message searches on the
+// same filters and ranking, including the subject/snippet fallback without FTS.
+func (s *Store) buildMessageSearchSQL(q *search.Query, ftsAvailable bool) messageSearchSQL {
 	var conditions []string
 	var args []any
 
@@ -772,7 +777,26 @@ func (s *Store) searchMessagesQueryImpl(
 		args = append(args, q.BeforeDate.UTC())
 	}
 
-	whereClause := strings.Join(conditions, " AND ")
+	orderBy := "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
+	var orderArgs []any
+	if ftsEnabled {
+		orderBy = ftsOrder + ", " + orderBy
+		for range ftsOrderArgCount {
+			orderArgs = append(orderArgs, ftsExpr)
+		}
+	}
+	return messageSearchSQL{
+		join: ftsJoin, where: strings.Join(conditions, " AND "), orderBy: orderBy,
+		args: args, orderArgs: orderArgs, fts: ftsEnabled,
+	}
+}
+
+// searchMessagesQueryImpl runs the actual query. The ftsAvailable flag lets
+// the existing runtime FTS-error fallback retry through subject and snippet.
+func (s *Store) searchMessagesQueryImpl(
+	ctx context.Context, q *search.Query, offset, limit int, ftsAvailable bool,
+) ([]APIMessage, int64, error) {
+	plan := s.buildMessageSearchSQL(q, ftsAvailable)
 
 	// Count query.
 	countSQL := fmt.Sprintf(`
@@ -780,21 +804,17 @@ func (s *Store) searchMessagesQueryImpl(
 		FROM messages m
 		%s
 		WHERE %s
-	`, ftsJoin, whereClause)
+	`, plan.join, plan.where)
 
 	var total int64
-	if err := s.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
-		if ftsEnabled && ctx.Err() == nil {
+	if err := s.db.QueryRowContext(ctx, countSQL, plan.args...).Scan(&total); err != nil {
+		if plan.fts && ctx.Err() == nil {
 			return s.searchMessagesQueryNoFTS(ctx, q, offset, limit)
 		}
 		return nil, 0, fmt.Errorf("count search results: %w", err)
 	}
 
 	// Results query.
-	orderBy := "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
-	if ftsEnabled {
-		orderBy = ftsOrder + ", " + orderBy
-	}
 	searchSQL := fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -821,23 +841,21 @@ func (s *Store) searchMessagesQueryImpl(
 		WHERE %s
 		ORDER BY %s
 		LIMIT ? OFFSET ?
-	`, participantSummarySenderSQL, ftsJoin, whereClause, orderBy)
+	`, participantSummarySenderSQL, plan.join, plan.where, plan.orderBy)
 
 	// If the dialect's order-by fragment has ? placeholders, bind the FTS
 	// expression that many extra times — right after the WHERE args and
 	// before LIMIT/OFFSET so Rebind assigns them the correct positions.
-	resultArgs := make([]any, 0, len(args)+ftsOrderArgCount+2)
-	resultArgs = append(resultArgs, args...)
-	for range ftsOrderArgCount {
-		resultArgs = append(resultArgs, ftsExpr)
-	}
+	resultArgs := make([]any, 0, len(plan.args)+len(plan.orderArgs)+2)
+	resultArgs = append(resultArgs, plan.args...)
+	resultArgs = append(resultArgs, plan.orderArgs...)
 	resultArgs = append(resultArgs, limit, offset)
 	rows, err := s.db.QueryContext(ctx, searchSQL, resultArgs...)
 	if err != nil {
 		// FTS5 not available -- fall back if we used it. Skip the fallback
 		// when the context was cancelled: the error is the abort we asked
 		// for, not an FTS capability problem, and re-running would ignore it.
-		if ftsEnabled && ctx.Err() == nil {
+		if plan.fts && ctx.Err() == nil {
 			return s.searchMessagesQueryNoFTS(ctx, q, offset, limit)
 		}
 		return nil, 0, err

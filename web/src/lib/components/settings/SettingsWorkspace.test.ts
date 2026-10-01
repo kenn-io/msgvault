@@ -1152,7 +1152,7 @@ describe('SettingsWorkspace', () => {
     expect(screen.getByRole('alert').textContent).toContain('Password is required');
   });
 
-  it('renders unconfigured CardDAV conflict review as optional setup without retry or detail requests', async () => {
+  it('renders unconfigured CardDAV setup without requesting runtime books or conflicts', async () => {
     const requests: Array<{ method: string; path: string }> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -1173,10 +1173,11 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client: createAPIClient(fetchFn) });
 
     await openSettingsCategory('CardDAV account');
-    expect(await screen.findByText('CardDAV conflict review is unavailable.')).toBeDefined();
+    expect(await screen.findByText('Not configured')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Retry CardDAV conflicts' })).toBeNull();
     expect(screen.queryByText('Unable to load CardDAV conflicts.')).toBeNull();
     expect(document.body.textContent).not.toContain('synthetic setup detail');
+    expect(requests.filter(({ path }) => /carddav\/(books|conflicts)(?:\/|$)/.test(path))).toEqual([]);
     expect(requests.some(({ method, path }) => method !== 'GET' || /^\/api\/v1\/carddav\/conflicts\//.test(path))).toBe(false);
   });
 

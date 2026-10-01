@@ -559,6 +559,15 @@ func (m *mockStore) SearchMessagesQueryContext(ctx context.Context, q *search.Qu
 	return m.SearchMessagesQuery(q, offset, limit)
 }
 
+func (m *mockStore) SearchMessageIDsQueryContext(_ context.Context, q *search.Query, limit int) ([]int64, int64, error) {
+	messages, total, err := m.SearchMessagesQuery(q, 0, limit)
+	ids := make([]int64, 0, min(len(messages), limit))
+	for _, message := range messages[:min(len(messages), limit)] {
+		ids = append(ids, message.ID)
+	}
+	return ids, total, err
+}
+
 func (m *mockStore) SearchMessagesQuery(q *search.Query, offset, limit int) ([]APIMessage, int64, error) {
 	m.searchMessagesQueryCalls.Add(1)
 	m.searchMessagesQueryLimits = append(m.searchMessagesQueryLimits, limit)

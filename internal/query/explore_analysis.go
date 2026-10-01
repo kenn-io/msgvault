@@ -58,7 +58,14 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	if spec.noLists {
 		logicalSQL = buildExploreLogicalSQLNoLists
 	}
-	queryText := logicalSQL(conditions) + spec.cte + `
+	queryText := logicalSQL(conditions)
+	if spec.noLists && !exploreConditionsTouchParticipantLists(explore) {
+		// The multiply-referenced filtered CTE otherwise materializes the
+		// wide view's participant lists before projection can discard them.
+		queryText = buildExploreNarrowFilteredClassifiedCTE(conditions, "NULL::BIGINT") +
+			exploreLogicalEntriesCTE(false)
+	}
+	queryText += spec.cte + `
 ), grouped AS (
 	SELECT ` + spec.key + ` AS group_key, ` + spec.label + ` AS group_label,
 		COUNT(*)::BIGINT AS group_count,
@@ -121,8 +128,8 @@ type groupExpressions struct {
 	whereSuffix string
 	// noLists selects the logical_entries variant without participant list
 	// columns; dimensions that resolve participants/domains through
-	// relationship_activity edge joins must set it so analytical_entries
-	// never aggregates whole-archive participant lists.
+	// relationship_activity edge joins set it. ExploreGroups also uses the
+	// narrow scalar input when its filters do not require participant lists.
 	noLists bool
 }
 
