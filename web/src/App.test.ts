@@ -297,6 +297,38 @@ describe('application foundation', () => {
     await waitFor(() => expect(document.documentElement.dataset.density).toBe('comfortable'));
     expect(document.documentElement.classList.contains('dark')).toBe(true);
   });
+  it('keeps the open view mode when the browser-defaults load finishes after a saved search mode', async () => {
+    localStorage.removeItem(SEARCH_MODE_PREFERENCE_KEY);
+    const daemon = appearanceDaemon();
+    let releaseDefaultsLoad: (() => void) | undefined;
+    let settingsReads = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/settings' && request.method === 'GET' && ++settingsReads === 2) {
+        // The browser-defaults load reads an older daemon default, then stalls past the save.
+        const stale = await daemon(request.clone());
+        const body = await stale.json();
+        body.settings.find((setting: { key: string }) => setting.key === 'web.default_search_mode').value = { string: 'semantic' };
+        // An unsaved density change shows when the late load has been applied.
+        body.settings.find((setting: { key: string }) => setting.key === 'web.density').value = { string: 'comfortable' };
+        await new Promise<void>((resolve) => { releaseDefaultsLoad = resolve; });
+        return Response.json(body);
+      }
+      return daemon(request);
+    });
+    await openAppearance(fetchFn);
+    const before = window.location.search;
+    await chooseSelectOption(screen.getByLabelText('Default search mode'), 'Hybrid');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(localStorage.getItem(SEARCH_MODE_PREFERENCE_KEY)).toBe('hybrid'));
+    await waitFor(() => expect(releaseDefaultsLoad).toBeDefined());
+    releaseDefaultsLoad?.();
+    await waitFor(() => expect(document.documentElement.dataset.density).toBe('comfortable'));
+    expect(screen.getByRole('radio', { name: 'Full text' }).getAttribute('aria-checked')).toBe('true');
+    expect(window.location.search).toBe(before);
+    expect(localStorage.getItem(SEARCH_MODE_PREFERENCE_KEY)).toBe('hybrid');
+  });
   it('keeps a Display menu theme override ahead of a saved theme', async () => {
     sessionStorage.setItem('msgvault.appearance.override', JSON.stringify({ theme: 'light' }));
     await openAppearance(appearanceDaemon());

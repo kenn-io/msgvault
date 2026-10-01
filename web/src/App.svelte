@@ -30,7 +30,8 @@
   let authenticated = false;
   let browserDefaultsRequestGeneration = 0;
   // Appearance saved while the browser-defaults load is in flight. That load
-  // read the daemon before the save, so these values win over its result.
+  // read the daemon before the save, so these values win over its result,
+  // and a saved search mode keeps it from reconfiguring the open view.
   let savedSinceDefaultsLoad: SavedAppearance = {};
   onMount(() => {
     oauthCallback = receiveGoogleContactsCallback();
@@ -69,9 +70,14 @@
         },
         savedSinceDefaultsLoad,
       );
-      searchModeDefault = parseSearchMode(
-        settingString(data?.settings.find(({ key }) => key === 'web.default_search_mode')),
-      );
+      // A mode saved during this load is already this browser's remembered mode
+      // for later tabs; applying the older daemon value here would re-resolve
+      // the open view, which saving promises to leave alone.
+      if (savedSinceDefaultsLoad.defaultSearchMode === undefined) {
+        searchModeDefault = parseSearchMode(
+          settingString(data?.settings.find(({ key }) => key === 'web.default_search_mode')),
+        );
+      }
     } catch {
       // Keep the safe fallback when settings authority is temporarily unavailable.
     }
