@@ -172,6 +172,36 @@ describe('OrganizationEmploymentTab', () => {
     expect(screen.getByText(/Engineer/).closest('li')?.textContent).not.toContain('Primary');
   });
 
+  it('rejects a year-less employment date and keeps Create disabled until it is fixed', async () => {
+    const controller = controllerWith(vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      if (pathOf(request) === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
+      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
+    }));
+    render(OrganizationEmploymentTab, { controller, personID: 7 });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Add employment' }));
+    await chooseSelectOption(await screen.findByRole('combobox', { name: /^Organization:/ }), 'Synthetic Org');
+    const create = screen.getByRole('button', { name: 'Create employment' });
+    expect(create).toHaveProperty('disabled', false);
+
+    const start = screen.getByRole('textbox', { name: 'Employment start date' });
+    await fireEvent.input(start, { target: { value: '--04-12' } });
+    const message = screen.getByText('Use a year, year and month, or full date, like 2019, 2019-04, or 2019-04-12.');
+    expect(start.getAttribute('aria-describedby')).toBe(message.id);
+    expect(create).toHaveProperty('disabled', true);
+
+    await fireEvent.input(start, { target: { value: '20190412' } });
+    expect(screen.queryByText(/Use a year/)).toBeNull();
+    expect(start.getAttribute('aria-describedby')).toBeNull();
+    expect(create).toHaveProperty('disabled', false);
+
+    const end = screen.getByRole('textbox', { name: 'Employment end date' });
+    await fireEvent.input(end, { target: { value: '2019-13' } });
+    expect(screen.getByText('Use a year, year and month, or full date, like 2019, 2019-04, or 2019-04-12.').id).toBe(end.getAttribute('aria-describedby'));
+    expect(create).toHaveProperty('disabled', true);
+  });
+
   it('uses a fresh employment ETag, retains a conflict draft, and retries only after another explicit save', async () => {
     const requests: Request[] = [];
     let reads = 0;

@@ -199,6 +199,47 @@ describe('RelationshipsTab', () => {
     }
   });
 
+  it('rejects an impossible relationship date and keeps Create disabled until it is fixed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+        const request = requestOf(input);
+        if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [
+          { id: 8, revision: 1, display_name: 'Synthetic Counterpart', categories: [], contact_state: 'active', organizations: [] }
+        ] });
+        throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
+      }));
+      controller.relationshipTypes = [relationshipType()];
+      render(RelationshipsTab, { client, controller, personID: 7 });
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Add relationship' }));
+      const personSearch = await openTypeahead('Relationship counterpart');
+      await fireEvent.input(personSearch, { target: { value: 'Synthetic' } });
+      await vi.advanceTimersByTimeAsync(250);
+      await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Counterpart/ }));
+      await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship type:/ }), 'mentors / is mentored by');
+      const create = screen.getByRole('button', { name: 'Create relationship' });
+      expect(create).toHaveProperty('disabled', false);
+
+      const start = screen.getByRole('textbox', { name: 'Relationship start date' });
+      await fireEvent.input(start, { target: { value: '2019-02-30' } });
+      const message = screen.getByText('Use a year, year and month, or full date, like 2019, 2019-04, or 2019-04-12.');
+      expect(start.getAttribute('aria-describedby')).toBe(message.id);
+      expect(create).toHaveProperty('disabled', true);
+
+      await fireEvent.input(start, { target: { value: '2019' } });
+      expect(screen.queryByText(/Use a year/)).toBeNull();
+      expect(create).toHaveProperty('disabled', false);
+
+      const end = screen.getByRole('textbox', { name: 'Relationship end date' });
+      await fireEvent.input(end, { target: { value: '--04-12' } });
+      expect(screen.getByText('Use a year, year and month, or full date, like 2019, 2019-04, or 2019-04-12.').id).toBe(end.getAttribute('aria-describedby'));
+      expect(create).toHaveProperty('disabled', true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('creates an outgoing edge at the collection endpoint with the selected person as source', async () => {
     const requests: Request[] = [];
     const created = relationship(45, 1, { source_person_id: 7, target_person_id: 9 });

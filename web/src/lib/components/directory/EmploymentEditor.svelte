@@ -2,6 +2,7 @@
   import { appShortcuts, Button, Checkbox, Modal, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
 
+  import { intervalDateError } from '../../directory/dates';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment, EmploymentBody, Organization } from '../../directory/models';
   import EmploymentCurrentData from './EmploymentCurrentData.svelte';
@@ -28,6 +29,9 @@
   let endDate = $state(partialDate(initialEmployment?.end_date));
   let isCurrent = $state(initialEmployment?.is_current ?? true);
   let isPrimary = $state(initialEmployment?.is_primary ?? false);
+  const uid = $props.id();
+  const startDateError = $derived(intervalDateError(startDate));
+  const endDateError = $derived(intervalDateError(endDate));
   let loading = $state(!!initialEmployment);
   let submitting = $state(false);
   let message = $state('');
@@ -179,15 +183,18 @@
     {#if loading}
       <p role="status">Loading current employment…</p>
     {:else if initialAction === 'end'}
-      <label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" required block disabled={submitting} /></label>
+      <label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" required block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} /></label>
+      {#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}
     {:else}
       <label>Organization<SelectDropdown title="Organization" value={organizationID} options={organizationOptions} onchange={(value) => { organizationID = value; }} disabled={submitting || !!initialEmployment} /></label>
       <label>Title<TextInput ariaLabel="Employment title" bind:value={title} block disabled={submitting} /></label>
       <label>Role<TextInput ariaLabel="Employment role" bind:value={role} block disabled={submitting} /></label>
       <label>Department<TextInput ariaLabel="Employment department" bind:value={department} block disabled={submitting} /></label>
       <label>Location<TextInput ariaLabel="Employment location" bind:value={location} block disabled={submitting} /></label>
-      <label>Start date<TextInput ariaLabel="Employment start date" bind:value={startDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" block disabled={submitting} /></label>
-      <label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" block disabled={submitting} /></label>
+      <label>Start date<TextInput ariaLabel="Employment start date" bind:value={startDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" block disabled={submitting} ariaDescribedby={startDateError ? `${uid}-start-date-error` : undefined} /></label>
+      {#if startDateError}<p id="{uid}-start-date-error" class="field-error">{startDateError}</p>{/if}
+      <label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} /></label>
+      {#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}
       <label>Description<textarea aria-label="Employment description" bind:value={description} disabled={submitting}></textarea></label>
       <div class="checks"><Checkbox checked={isCurrent} label="Current employment" onchange={(checked) => { isCurrent = checked; }} disabled={submitting} /><Checkbox checked={isPrimary} label="Primary employment" onchange={(checked) => { isPrimary = checked; }} disabled={submitting} /></div>
     {/if}
@@ -204,7 +211,7 @@
       <Button label="Cancel" disabled={submitting} onclick={requestClose} />
       <Button type="submit" tone="info" surface="solid"
         label={initialAction === 'end' ? 'Confirm end employment' : initialEmployment ? 'Save employment' : 'Create employment'}
-        disabled={loading || submitting || !organizationID || (initialAction === 'end' && !endDate.trim()) || controller.createBlocked.employments} />
+        disabled={loading || submitting || !organizationID || (initialAction === 'end' && !endDate.trim()) || Boolean(startDateError) || Boolean(endDateError) || controller.createBlocked.employments} />
     </div>
   </form>
 </Modal>
@@ -213,6 +220,7 @@
   .editor { display: grid; gap: var(--space-3); min-width: min(30rem, 80vw); }
   label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
   textarea { min-height: 5rem; resize: vertical; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); }
+  .field-error { color: var(--text-danger); font-size: var(--font-size-xs); margin: 0; }
   p { margin: 0; } [role="alert"] { color: var(--text-danger); }
   .checks, .actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
   .actions { justify-content: flex-end; }

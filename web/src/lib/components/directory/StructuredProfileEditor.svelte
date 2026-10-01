@@ -13,6 +13,7 @@
     PersonName as GeneratedPersonName,
     ValueEnvelopeInput as GeneratedValueEnvelopeInput,
   } from '../../api/generated/models';
+  import { isTextProfileDate, profileDateError } from '../../directory/dates';
   import type { PersonProfilePatchRequest } from '../../directory/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 
@@ -81,6 +82,8 @@
       (initialSection === 'dates' ? (initialCurrent?.original_value ?? '') : ''),
   );
   let dateLabel = $state(currentDate?.label ?? '');
+  const uid = $props.id();
+  const dateError = $derived(profileDateError(dateValue));
   let categoryValue = $state(initialSection === 'categories' ? (initialCurrent?.original_value ?? '') : '');
   let mediaKind = $state(currentMedia?.media_kind ?? 'photo');
   let mediaURI = $state(
@@ -441,8 +444,11 @@
           required
           block
           disabled={submitting}
+          ariaDescribedby={dateError ? `${uid}-date-error` : undefined}
         /></label
       >
+      {#if dateError}<p id="{uid}-date-error" class="field-error">{dateError}</p>{/if}
+      {#if isTextProfileDate(dateValue)}<p class="field-hint">Saved as text</p>{/if}
       <label>Label<TextInput bind:value={dateLabel} ariaLabel="Date label" block disabled={submitting} /></label>
     {:else if section === 'categories'}
       <label
@@ -510,7 +516,7 @@
         type="submit"
         tone="info"
         surface="solid"
-        disabled={submitting || !controller.canWriteProfile}
+        disabled={submitting || !controller.canWriteProfile || (section === 'dates' && Boolean(dateError))}
       />
     </div>
   </form>
@@ -546,6 +552,16 @@
     justify-content: flex-end;
     gap: var(--space-2);
     flex-wrap: wrap;
+  }
+  .field-error {
+    margin: 0;
+    color: var(--text-danger);
+    font-size: var(--font-size-xs);
+  }
+  .field-hint {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
   .editor-error {
     margin: 0;

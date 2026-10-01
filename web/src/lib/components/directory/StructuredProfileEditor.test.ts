@@ -624,6 +624,47 @@ describe('StructuredProfileEditor', () => {
     });
   });
 
+  it.each(['--04-12', '--04', '---12'])('keeps the year-less profile date form %s', async (value) => {
+    const { controller } = requestHarness();
+    render(StructuredProfileEditor, { controller, section: 'dates' });
+
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Date' }), { target: { value } });
+
+    expect(screen.queryByText(/does not exist/)).toBeNull();
+    expect(screen.queryByText('Saved as text')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save date' })).toHaveProperty('disabled', false);
+  });
+
+  it('rejects an impossible profile date and marks free text', async () => {
+    const { controller } = requestHarness();
+    render(StructuredProfileEditor, { controller, section: 'dates' });
+    const field = screen.getByRole('textbox', { name: 'Date' });
+    const save = screen.getByRole('button', { name: 'Save date' });
+
+    await fireEvent.input(field, { target: { value: '--02-30' } });
+    const message = screen.getByText('This date does not exist. Check the month and day.');
+    expect(field.getAttribute('aria-describedby')).toBe(message.id);
+    expect(save).toHaveProperty('disabled', true);
+
+    await fireEvent.input(field, { target: { value: 'spring 2019' } });
+    expect(screen.queryByText(/does not exist/)).toBeNull();
+    expect(screen.getByText('Saved as text')).toBeTruthy();
+    expect(save).toHaveProperty('disabled', false);
+  });
+
+  it('submits a free-text profile date as date_text without a typed date', async () => {
+    const { controller, requests } = requestHarness();
+    render(StructuredProfileEditor, { controller, section: 'dates' });
+
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Date' }), { target: { value: 'spring 2019' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save date' }));
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    const body = (await requests[0]!.clone().json()) as { dates: { add: Array<Record<string, unknown>> } };
+    expect(body.dates.add[0]).toMatchObject({ date_text: 'spring 2019' });
+    expect(body.dates.add[0]).not.toHaveProperty('date');
+  });
+
   it.each([
     ['2000-02-03', { year: 2000, month: 2, day: 3 }],
     ['2000-02', { year: 2000, month: 2 }],

@@ -12,6 +12,7 @@
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
+  import { intervalDateError } from '../../directory/dates';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type {
     CreatePersonRelationshipRequest,
@@ -49,6 +50,9 @@
   let relationshipTypeSlug = $state(initialRelationship?.type_slug ?? '');
   let startDate = $state(partialDate(initialRelationship?.start_date));
   let endDate = $state(partialDate(initialRelationship?.end_date));
+  const uid = $props.id();
+  const startDateError = $derived(intervalDateError(startDate));
+  const endDateError = $derived(intervalDateError(endDate));
   let notes = $state(initialRelationship?.notes ?? '');
   let submitting = $state(false);
   let committed = $state(false);
@@ -298,8 +302,10 @@
           placeholder="YYYY, YYYY-MM, or YYYY-MM-DD"
           block
           disabled={submitting}
+          ariaDescribedby={startDateError ? `${uid}-start-date-error` : undefined}
         /></label
       >
+      {#if startDateError}<p id="{uid}-start-date-error" class="field-error">{startDateError}</p>{/if}
     {/if}
     <label
       >End date<TextInput
@@ -308,8 +314,10 @@
         placeholder="YYYY, YYYY-MM, or YYYY-MM-DD"
         block
         disabled={submitting}
+        ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined}
       /></label
     >
+    {#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}
     <label>Notes<TextInput ariaLabel="Relationship notes" bind:value={notes} block disabled={submitting} /></label>
     {#if message}
       <div role="alert">
@@ -335,6 +343,8 @@
         disabled={submitting ||
           committed ||
           !relationshipTypeSlug ||
+          Boolean(startDateError) ||
+          Boolean(endDateError) ||
           (!initialRelationship && (counterpartID === null || counterpartID === personID)) ||
           controller.createBlocked.relationships}
       />
@@ -356,6 +366,11 @@
   }
   p {
     margin: 0;
+  }
+  .field-error {
+    margin: 0;
+    color: var(--text-danger);
+    font-size: var(--font-size-xs);
   }
   .muted {
     color: var(--text-muted);
