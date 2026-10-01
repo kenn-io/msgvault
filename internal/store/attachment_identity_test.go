@@ -146,3 +146,43 @@ func TestAttachmentResyncInvalidatesThumbnailsAndReconcilesDocument(t *testing.T
 		})
 	}
 }
+
+func TestReplaceAttachmentsRetainsProviderIDWhenAssigningPartKey(t *testing.T) {
+	for _, partKey := range []string{"", "discord:part:report"} {
+		t.Run("part="+partKey, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			f := storetest.New(t)
+			messageID := f.CreateMessage("provider-identity")
+			// Provider rows written before source-part keys retain their
+			// source attachment ID when the schema adds the nullable column.
+			requirements.NoError(f.Store.UpsertAttachmentRecord(t.Context(), messageID,
+				store.AttachmentWrite{
+					Filename: "before.txt", StoragePath: "aa/" + strings.Repeat("a", 64),
+					ContentHash: strings.Repeat("a", 64), SourceAttachmentID: "discord:report",
+				}))
+			var attachmentID int64
+			var initialKey sql.NullString
+			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+				SELECT id, source_part_key FROM attachments WHERE message_id = ?`), messageID).
+				Scan(&attachmentID, &initialKey))
+			requirements.False(initialKey.Valid)
+			// Prevent SQLite's maximum-row-ID reuse from hiding a delete/insert.
+			requirements.NoError(f.Store.UpsertAttachmentRecord(t.Context(), messageID,
+				store.AttachmentWrite{Filename: "other.txt", SourcePartKey: "other:part"}))
+			ref := store.AttachmentRef{
+				Filename: "after.txt", StoragePath: "bb/" + strings.Repeat("b", 64),
+				ContentHash: strings.Repeat("b", 64), SourceAttachmentID: "discord:report",
+				SourcePartKey: partKey,
+			}
+			requirements.NoError(f.Store.ReplaceMessageDiscordAttachments(
+				messageID, []store.AttachmentRef{ref},
+			))
+			file, err := f.Store.GetFileMetadata(t.Context(), attachmentID)
+			requirements.NoError(err)
+			requirements.NotNil(file, "the same provider occurrence keeps its file ID")
+			assertions.Equal("after.txt", file.Filename)
+			assertions.Equal(strings.Repeat("b", 64), file.ContentHash)
+		})
+	}
+}

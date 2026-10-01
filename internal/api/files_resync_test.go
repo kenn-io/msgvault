@@ -15,9 +15,10 @@ func TestFilesSearchRetainsCachedAttachmentAfterProviderResync(t *testing.T) {
 	requirements := require.New(t)
 	f := newExploreIdentityAPIFixture(t)
 	// The committed DuckDB fixture contains attachment 11 on message 1.
-	// Give that SQLite row the same stable provider identity used on resync.
+	// Archives written before source-part keys still have the provider ID.
+	// The first resync must retain that row's cached file ID too.
 	_, err := f.store.DB().Exec(`UPDATE attachments SET
-		source_attachment_id = 'discord:report', source_part_key = 'discord:report',
+		source_attachment_id = 'discord:report', source_part_key = NULL,
 		storage_path = 'https://files.example/report.txt'
 		WHERE id = 11`)
 	requirements.NoError(err)

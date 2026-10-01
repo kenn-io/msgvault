@@ -5720,6 +5720,17 @@ func (s *Store) replaceMessageAttachmentsWhereTx(
 		if err := write.validate(); err != nil {
 			return err
 		}
+		if write.SourceAttachmentID != "" {
+			// A provider ID already identifies the occurrence even if its row
+			// predates source-part keys. Assign the key before removing stale
+			// rows so the upsert can retain the existing file ID.
+			if _, err := tx.Exec(`
+				UPDATE attachments SET source_part_key = ?
+				WHERE message_id = ? AND source_attachment_id = ? AND source_part_key IS NULL
+			`, write.SourcePartKey, messageID, write.SourceAttachmentID); err != nil {
+				return fmt.Errorf("assign provider attachment source-part key: %w", err)
+			}
+		}
 		writes = append(writes, write)
 		if write.SourcePartKey != "" {
 			keys = append(keys, write.SourcePartKey)
