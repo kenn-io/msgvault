@@ -55,17 +55,14 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	if request.GroupKey != "" {
 		keyFilter = " WHERE group_key = ?"
 	}
-	logicalSQL := buildExploreLogicalSQL
-	if spec.noLists {
-		logicalSQL = buildExploreLogicalSQLNoLists
-	}
-	queryText := logicalSQL(conditions)
+	buildPopulation := buildExploreFilteredClassifiedCTE
 	if spec.noLists && !exploreConditionsTouchParticipantLists(explore) {
 		// The multiply-referenced filtered CTE otherwise materializes the
 		// wide view's participant lists before projection can discard them.
-		queryText = buildExploreNarrowFilteredClassifiedCTE(conditions, "NULL::BIGINT") +
-			exploreLogicalEntriesCTE(false)
+		buildPopulation = buildExploreNarrowFilteredClassifiedCTE
 	}
+	queryText := buildPopulation(conditions, "NULL::BIGINT") +
+		exploreLogicalEntriesCTE(!spec.noLists)
 	queryText += spec.cte + `
 ), grouped AS (
 	SELECT ` + spec.key + ` AS group_key, ` + spec.label + ` AS group_label,
@@ -205,7 +202,9 @@ func sqlMessageTypeGroupExpr() string {
 // aggregate ExploreGroups builds over logical_entries. The "participant"
 // dimension groups by canonical identity-cluster IDs. Membership is deduplicated
 // before aggregation so entries listing several aliases of one person count once.
-func exploreGroupExpressions(dimension, peopleGlob, activityGlob, clustersGlob string) (groupExpressions, error) {
+func exploreGroupExpressions(
+	dimension, peopleGlob, activityGlob, clustersGlob string,
+) (groupExpressions, error) {
 	simple := func(key string) groupExpressions {
 		return groupExpressions{key: key, label: key, groupBy: key, source: "logical_entries"}
 	}
@@ -220,7 +219,9 @@ func exploreGroupExpressions(dimension, peopleGlob, activityGlob, clustersGlob s
 		// participant_ids column this replaces. Chat entries also include
 		// the conversation roster and speakers in the filtered context.
 		return groupExpressions{
-			key: "CAST(person_id AS VARCHAR)", label: sqlIndexedPersonGroupLabelExpr(peopleGlob), groupBy: "person_id",
+			key:     "CAST(person_id AS VARCHAR)",
+			label:   sqlIndexedPersonGroupLabelExpr(peopleGlob),
+			groupBy: "person_id",
 			noLists: true,
 			cte:     exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob),
 			source:  "group_entries",
@@ -260,7 +261,10 @@ func exploreGroupExpressions(dimension, peopleGlob, activityGlob, clustersGlob s
 // Message IDs and negated globally unique conversation IDs keep entry keys numeric.
 func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) string {
 	domainCTE := ""
-	directJoin, rosterJoin, resultJoin := "", "", ""
+	directJoin, resultJoin := "", ""
+	rosterJoin := `
+		LEFT JOIN read_parquet('` + quoteIdentitySQLPath(clustersGlob) + `') c
+			ON c.participant_id = p.id`
 	directValue := "a.canonical_id"
 	rosterValue := "COALESCE(c.canonical_id, p.id)"
 	rosterFilter := "le.entry_kind = 'conversation'"
@@ -274,7 +278,7 @@ func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) str
 	FROM participants WHERE domain <> '' GROUP BY lower(domain)`
 		directValue, rosterValue = "d.domain_id", "d.domain_id"
 		directJoin = " JOIN group_domains d ON d.domain = a.participant_domain"
-		rosterJoin = " JOIN group_domains d ON d.domain = lower(p.domain)"
+		rosterJoin = "\n\t\tJOIN group_domains d ON d.domain = lower(p.domain)"
 		rosterFilter = "true"
 		resultJoin = " JOIN group_domains d ON d.domain_id = gm.group_value"
 		resultValue = "d.domain AS group_value"
@@ -285,15 +289,17 @@ func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) str
 		SELECT CASE WHEN f.is_chat THEN -f.conversation_id ELSE f.message_id END AS entry_id,
 			` + directValue + ` AS group_value
 		FROM classified f
-		JOIN read_parquet('` + quoteIdentitySQLPath(activityGlob) + `', hive_partitioning=true) a ON a.message_id = f.message_id` + directJoin + `
+		JOIN read_parquet('` + quoteIdentitySQLPath(activityGlob) + `',
+			hive_partitioning=true, union_by_name=true) a
+			ON a.message_id = f.message_id` + directJoin + `
 		WHERE a.canonical_id IS NOT NULL AND a.is_direct
 		UNION ALL
-		SELECT CASE WHEN le.entry_kind = 'conversation' THEN -le.conversation_id ELSE le.anchor_message_id END,
+		SELECT CASE WHEN le.entry_kind = 'conversation'
+			THEN -le.conversation_id ELSE le.anchor_message_id END,
 			` + rosterValue + `
 		FROM logical_entries le
 		JOIN conversation_participants cp ON cp.conversation_id = le.conversation_id
-		JOIN participants p ON p.id = cp.participant_id
-		LEFT JOIN read_parquet('` + quoteIdentitySQLPath(clustersGlob) + `') c ON c.participant_id = p.id` + rosterJoin + `
+		JOIN participants p ON p.id = cp.participant_id` + rosterJoin + `
 		WHERE ` + rosterFilter + `
 	) members
 	WHERE group_value IS NOT NULL
@@ -302,7 +308,8 @@ func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) str
 	SELECT ` + resultValue + `, le.occurred_at, le.estimated_bytes
 	FROM logical_entries le
 	JOIN group_members gm ON gm.entry_id =
-		CASE WHEN le.entry_kind = 'conversation' THEN -le.conversation_id ELSE le.anchor_message_id END` + resultJoin
+		CASE WHEN le.entry_kind = 'conversation'
+			THEN -le.conversation_id ELSE le.anchor_message_id END` + resultJoin
 }
 
 // expandParticipantFilterClusters widens a request's participant filter

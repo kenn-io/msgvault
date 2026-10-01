@@ -473,8 +473,8 @@
           <div class="virtual-window" style:top={`${slice.topPad}px`}>
             {#each renderedRows as row, offset (row.key)}
               {@const index = slice.start + offset}
-              <!-- svelte-ignore a11y_click_events_have_key_events -- Enter on
-                   the focused grid opens the same row via handleKeydown. -->
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus --
+                   The grid owns focus and opens its active row with Enter. -->
               <div
                 class="data-row"
                 class:data-row--active={index === activeIndex}
@@ -483,7 +483,6 @@
                 id={rowId(row)}
                 data-row-key={row.key}
                 role="row"
-                tabindex="-1"
                 aria-rowindex={index + 2}
                 aria-selected={selection.isSelected(row.key)}
                 aria-current={inspectedKey === row.key ? 'true' : undefined}
@@ -503,7 +502,8 @@
                       {/if}
                       <RowKind kind={row.kind} messageType={row.message_type} />
                     {:else if column === 'people'}
-                      <Tooltip text={people(row)} focusable><span class="people-label">{people(row)}</span></Tooltip>
+                      {@const label = people(row)}
+                      <Tooltip text={label}><span class="people-label" title={label}>{label}</span></Tooltip>
                       {#if isEmailMessageType(row.message_type)}
                         <IdentityBadge
                           senderIdentities={row.matched_sender_identities}

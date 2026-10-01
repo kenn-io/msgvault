@@ -10,15 +10,21 @@ import (
 // SearchMessageIDsQueryContext resolves a bounded ranked candidate pool without
 // hydrating messages, recipients, or labels. Total counts the entire matching
 // population so callers can distinguish a complete pool from a truncated one.
-func (s *Store) SearchMessageIDsQueryContext(ctx context.Context, q *search.Query, limit int) ([]int64, int64, error) {
+func (s *Store) SearchMessageIDsQueryContext(
+	ctx context.Context, q *search.Query, limit int,
+) ([]int64, int64, error) {
 	return s.searchMessageIDsQuery(ctx, q, limit, s.fts5Available)
 }
 
-func (s *Store) searchMessageIDsQuery(ctx context.Context, q *search.Query, limit int, ftsAvailable bool) ([]int64, int64, error) {
+func (s *Store) searchMessageIDsQuery(
+	ctx context.Context, q *search.Query, limit int, ftsAvailable bool,
+) ([]int64, int64, error) {
 	plan := s.buildMessageSearchSQL(q, ftsAvailable)
 	from := " FROM messages m " + plan.join + " WHERE " + plan.where
 	var total int64
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*)"+from, plan.args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(
+		ctx, "SELECT COUNT(*)"+from, plan.args...,
+	).Scan(&total); err != nil {
 		if plan.fts && ctx.Err() == nil {
 			return s.searchMessageIDsQuery(ctx, q, limit, false)
 		}
@@ -26,7 +32,9 @@ func (s *Store) searchMessageIDsQuery(ctx context.Context, q *search.Query, limi
 	}
 	args := append(append([]any{}, plan.args...), plan.orderArgs...)
 	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, "SELECT m.id"+from+" ORDER BY "+plan.orderBy+" LIMIT ?", args...)
+	rows, err := s.db.QueryContext(
+		ctx, "SELECT m.id"+from+" ORDER BY "+plan.orderBy+" LIMIT ?", args...,
+	)
 	if err != nil {
 		if plan.fts && ctx.Err() == nil {
 			return s.searchMessageIDsQuery(ctx, q, limit, false)

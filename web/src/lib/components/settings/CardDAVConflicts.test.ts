@@ -68,10 +68,72 @@ function deferredResponse() {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe('CardDAVConflicts', () => {
+  it('waits for runtime availability to open a deep link and does not replay focus after a closed decision and status recovery', async () => {
+    vi.useFakeTimers();
+    let available = false;
+    let detailReads = 0;
+    const onCardDAVRequestConsumed = vi.fn();
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/status')) return Response.json({
+        configured: true, available, credential_configured: true, enabled: true,
+        scheduled: false, schedule: '', active: {
+          id: 8, trigger: 'manual', full: false, state: 'running', started_at: '2026-08-28T10:00:00Z',
+          books: 1, created: 0, updated: 0, removed: 0
+        }
+      });
+      if (path.endsWith('/books')) return Response.json({ books: [] });
+      if (path.endsWith('/runs')) return Response.json({ runs: [] });
+      if (path.endsWith('/conflicts')) return Response.json({ conflicts: [listItem(41)] });
+      if (path.endsWith('/conflicts/41')) {
+        detailReads += 1;
+        return Response.json(conflictDetail(41));
+      }
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    const rendered = render(CardDAVSettingsWorkspace, {
+      client: createAPIClient(fetchFn), settings: [],
+      cardDAVRequest: { conflictID: 41, key: 1 }, onCardDAVRequestConsumed
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText('Runtime unavailable')).toBeDefined();
+    expect(detailReads).toBe(0);
+    expect(onCardDAVRequestConsumed).not.toHaveBeenCalled();
+
+    available = true;
+    await vi.advanceTimersByTimeAsync(500);
+    const heading = screen.getByRole('heading', { name: 'Conflict comparison' });
+    expect(document.activeElement).toBe(heading);
+    expect(detailReads).toBe(1);
+    expect(onCardDAVRequestConsumed.mock.calls).toEqual([[1]]);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep remote card' }));
+    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+    const accountControl = screen.getByRole('button', { name: 'Save CardDAV account' });
+    accountControl.focus();
+    expect(document.activeElement).toBe(accountControl);
+    available = false;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(screen.queryByRole('heading', { name: 'Conflict comparison' })).toBeNull();
+    available = true;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(screen.getByRole('heading', { name: 'Conflict comparison' })).toBeDefined();
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(detailReads).toBe(1);
+    expect(onCardDAVRequestConsumed.mock.calls).toEqual([[1]]);
+    expect(document.activeElement).toBe(accountControl);
+    rendered.unmount();
+  });
+
   it('renders only safe comparison summaries with explicit present, deleted, unavailable, and truncated text', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(requestOf(input).url).pathname;

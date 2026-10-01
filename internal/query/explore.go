@@ -631,7 +631,8 @@ SELECT COUNT(*) FROM logical_entries`
 // path (which rescans the filtered population) would pay that cost twice; such
 // requests keep the single-pass legacy query.
 func exploreConditionsTouchParticipantLists(request ExploreRequest) bool {
-	return len(request.Context.ParticipantIDs) > 0 || len(request.Context.AdditionalParticipantGroups) > 0
+	return len(request.Context.ParticipantIDs) > 0 ||
+		len(request.Context.AdditionalParticipantGroups) > 0
 }
 
 // buildExploreFastListingSQL builds the two-phase entry-row page query used

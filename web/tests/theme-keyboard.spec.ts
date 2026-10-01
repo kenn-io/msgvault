@@ -300,16 +300,15 @@ test('Deletions keeps the global search shortcut available', async ({ page }) =>
   await expect(page.getByRole('searchbox', { name: 'Search everything' })).toBeFocused();
 });
 
-test('truncated people and filenames disclose full labels on hover and focus', async ({ page }) => {
+test('truncated people and filenames disclose full labels on hover', async ({ page }) => {
   const people = page.locator('.cell--people .kit-tooltip-trigger').first();
   await people.hover();
   await expect(page.getByRole('tooltip')).toHaveText('Example Person With A Long Archive Display Name');
-  await people.focus();
   await expect(page.getByRole('tooltip')).toBeInViewport();
   await page.keyboard.press('Escape');
   await selectWorkspace(page, 'Files');
   const filename = page.getByRole('grid', { name: 'Files results' }).locator('.kit-tooltip-trigger').first();
-  await filename.focus();
+  await filename.hover();
   const tooltip = page.getByRole('tooltip');
   await expect(tooltip).toHaveText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf');
   await expect(tooltip).toBeInViewport();
@@ -317,4 +316,64 @@ test('truncated people and filenames disclose full labels on hover and focus', a
   const bounds = await tooltip.boundingBox();
   const trigger = await filename.boundingBox();
   expect(Math.abs(bounds!.y - trigger!.y)).toBeLessThan(100);
+});
+
+test('clicking a people label preserves Everything keyboard navigation and one grid tab stop', async ({ page }) => {
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [row, { ...row, key: 'message:2', title: 'Second archive subject' }],
+    total_count: 2, cache_revision: 'cache-theme', search_provenance: {}
+  } }));
+  await page.reload();
+  const grid = page.getByRole('grid', { name: 'Everything results' });
+  await grid.locator('.people-label').first().click();
+  await expect(grid).toBeFocused();
+  await page.keyboard.press('j');
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'everything-row-message-3a-2');
+  await page.keyboard.press('ArrowUp');
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'everything-row-message-3a-1');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('complementary', { name: 'Reading pane: Second archive subject' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(grid).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect.poll(() => grid.evaluate(element => element.contains(document.activeElement))).toBe(false);
+});
+
+test('clicking a filename returns to Files keyboard navigation without extra row tab stops', async ({ page }) => {
+  const files = [1, 2].map(id => ({
+    id, key: `file:${id}`, entry_key: `message:${id}`, message_id: id, conversation_id: id,
+    occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
+    source_identifier: 'archive@example.com', containing_title: `Containing item ${id}`,
+    filename: `Attachment ${id}.pdf`, mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048,
+    content_state: 'missing_blob', content_available: false
+  }));
+  await page.route('**/api/v1/files/search', route => route.fulfill({ json: {
+    files, total_count: 2, cache_revision: 'cache-theme', search_provenance: {}
+  } }));
+  for (const file of files) {
+    await page.route(`**/api/v1/files/${file.id}`, route => route.fulfill({ json: file }));
+  }
+  await selectWorkspace(page, 'Files');
+  const grid = page.getByRole('grid', { name: 'Files results' });
+  await grid.getByText('Attachment 1.pdf', { exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'View Attachment 1.pdf' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(grid).toBeFocused();
+  await page.keyboard.press('j');
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-2');
+  await page.keyboard.press('k');
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-1');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'View Attachment 2.pdf' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(grid).toBeFocused();
+  for (const label of ['Sort by date', 'Sort by filename', 'Sort by size',
+    'Open containing item Containing item 1', 'Open containing item Containing item 2']) {
+    await page.keyboard.press('Tab');
+    await expect(grid.getByRole('button', { name: label, exact: true })).toBeFocused();
+  }
+  await page.keyboard.press('Tab');
+  await expect.poll(() => grid.evaluate(element => element.contains(document.activeElement))).toBe(false);
 });

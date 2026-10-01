@@ -5728,7 +5728,8 @@ func (s *Store) replaceMessageAttachmentsWhereTx(
 	deleteQuery := `DELETE FROM attachments WHERE message_id = ? AND (` + deleteWhere + `)`
 	args := append([]any{messageID}, deleteArgs...)
 	if len(keys) > 0 {
-		deleteQuery += ` AND (source_part_key IS NULL OR source_part_key NOT IN (?` + strings.Repeat(`, ?`, len(keys)-1) + `))`
+		deleteQuery += ` AND (source_part_key IS NULL OR source_part_key NOT IN (?` +
+			strings.Repeat(`, ?`, len(keys)-1) + `))`
 		args = append(args, keys...)
 	}
 	if _, err := tx.Exec(deleteQuery, args...); err != nil {

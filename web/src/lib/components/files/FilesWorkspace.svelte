@@ -954,25 +954,23 @@
               <div class="virtual-window" style:top={`${slice.topPad}px`}>
                 {#each renderedRows as row, offset (row.key)}
                   {@const index = slice.start + offset}
-                  <!-- svelte-ignore a11y_click_events_have_key_events -- Enter on
-                   the focused grid opens the same file via handleKeydown. -->
+                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus --
+                       The grid owns focus and opens its active file with Enter. -->
                   <div
                     id={rowID(row)}
                     class="data-row"
                     class:person-columns={personScoped}
                     class:data-row--active={index === activeIndex}
                     role="row"
-                    tabindex="-1"
                     aria-rowindex={index + 2}
-                    onpointerdown={(event) => {
+                    onpointerdown={() => {
                       activeKey = row.key;
                       onActiveKey?.(row.key);
                       grid?.focus();
-                      viewerReturnFocus = event.currentTarget as HTMLElement;
                     }}
                     onclick={(event) => {
                       if (!(event.target as Element).closest('button')) {
-                        open(row, event.currentTarget as HTMLElement);
+                        open(row);
                       }
                     }}
                   >
@@ -983,7 +981,7 @@
                       role="gridcell"
                       title={row.search_explain ? `Match score ${row.search_explain.rrf.toFixed(4)}` : undefined}
                     >
-                      <Tooltip text={row.filename || '(unnamed)'} focusable><strong>{row.filename || '(unnamed)'}</strong></Tooltip>
+                      <Tooltip text={row.filename || '(unnamed)'}><strong title={row.filename || '(unnamed)'}>{row.filename || '(unnamed)'}</strong></Tooltip>
                     </span>
                     <span role="gridcell" title={row.mime_type || row.mime_family}
                       >{fileTypeLabel(row.mime_type, row.mime_family)}</span

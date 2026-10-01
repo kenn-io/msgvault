@@ -51,7 +51,11 @@ type MessageStore interface {
 	GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error)
 	SearchMessages(query string, offset, limit int) ([]APIMessage, int64, error)
 	SearchMessagesQuery(q *search.Query, offset, limit int) ([]APIMessage, int64, error)
-	SearchMessageIDsQueryContext(ctx context.Context, q *search.Query, limit int) ([]int64, int64, error)
+	// Successful searches return a non-nil ID slice even with no matches;
+	// Explore interprets nil candidate IDs as an unrestricted population.
+	SearchMessageIDsQueryContext(
+		ctx context.Context, q *search.Query, limit int,
+	) ([]int64, int64, error)
 }
 
 // MessageIdentityStore is the optional source-identity extension used by

@@ -271,11 +271,44 @@ for (const width of [1440, 420]) {
   });
 }
 
-test('relationship labels disclose on focus and identity hues retain text contrast', async ({ page }) => {
+test('clicking a relationship label preserves keyboard navigation and one grid tab stop', async ({ page }) => {
+  await prepare(page);
+  await page.route('**/api/v1/relationships', route => route.fulfill({ json: {
+    rows: [
+      { canonical_id: 1, display_label: 'Alice Example', last_at: when, member_ids: [1], score: 2,
+        signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2,
+          received_from_them: 1, sent_count: 3, sent_to_them: 1 } },
+      { canonical_id: 2, display_label: 'Bob Example', last_at: when, member_ids: [2], score: 1,
+        signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 1,
+          received_from_them: 1, sent_count: 1, sent_to_them: 1 } }
+    ], total_count: 2, cache_revision: 'cache-relationships', identity_revision: 1
+  } }));
+  await page.route('**/api/v1/participants/2', route => route.fulfill({ json: {
+    ...alice, id: 2, display_label: 'Bob Example', display_name: 'Bob Example'
+  } }));
+  await page.route('**/api/v1/relationships/2/timeline', route => route.fulfill({ json: {
+    canonical_id: 2, identity_revision: 1, cache_revision: 'cache-relationships', rows: [], total_count: 0
+  } }));
+  await page.goto('/');
+  const grid = page.getByRole('grid', { name: 'Relationship results' });
+  await grid.getByText('Alice Example', { exact: true }).click();
+  await expect(grid).toBeFocused();
+  await page.keyboard.press('j');
+  await expect(grid.getByRole('row', { name: /Bob Example/ })).toHaveClass(/active/);
+  await page.keyboard.press('ArrowUp');
+  await expect(grid.getByRole('row', { name: /Alice Example/ })).toHaveClass(/active/);
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Bob Example' })).toBeVisible();
+  await page.keyboard.press('Tab');
+  await expect.poll(() => grid.evaluate(element => element.contains(document.activeElement))).toBe(false);
+});
+
+test('relationship labels disclose on hover and identity hues retain text contrast', async ({ page }) => {
   await prepare(page);
   await page.goto('/');
   const name = page.getByRole('grid', { name: 'Relationship results' }).locator('.kit-tooltip-trigger').first();
-  await name.focus();
+  await name.hover();
   await expect(page.getByRole('tooltip')).toHaveText('Alice Example');
   await expect(page.getByRole('tooltip')).toBeInViewport();
   await page.keyboard.press('Escape');

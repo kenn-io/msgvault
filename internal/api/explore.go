@@ -380,7 +380,9 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 // Candidate resolution includes lexical/embedding/retrieval subphases; callers
 // should not add its duration to those component measurements.
 func addExploreTiming(w http.ResponseWriter, name string, duration time.Duration) {
-	w.Header().Add("Server-Timing", fmt.Sprintf("%s;dur=%.3f", name, float64(duration)/float64(time.Millisecond)))
+	w.Header().Add("Server-Timing", fmt.Sprintf(
+		"%s;dur=%.3f", name, float64(duration)/float64(time.Millisecond),
+	))
 }
 
 func (s *Server) hydrateExploreIdentityMatches(ctx context.Context, rows []query.EntryRow) error {

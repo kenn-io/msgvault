@@ -1012,6 +1012,7 @@
             keywords: `${entry.keywords} ${entry.unavailableReason ?? ''}`,
             keys: [],
             combos: [],
+            scopes: [],
             destructive: false,
             review: false,
             disabled: true,
@@ -1025,6 +1026,7 @@
         keywords: entry.keywords,
         keys: [],
         combos: [],
+        scopes: [],
         destructive: false,
         review: false,
         disabled: exploreState.current.groupingChain.includes(dimension),
@@ -1042,6 +1044,7 @@
     keywords: 'Navigate Reviews Directory identity matches fact review',
     keys: [],
     combos: [],
+    scopes: [],
     destructive: false,
     review: false,
     run: () => commitWorkspace('directory_review'),
@@ -1222,7 +1225,7 @@
     });
     resyncEditableScope();
     const unregister = commandRegistry.flatMap((command) =>
-      (command.id === 'focus-search' ? ['root', 'deletions'] : ['root']).flatMap((scope) =>
+      command.scopes.flatMap((scope) =>
         command.combos.map((combo) => appShortcuts.register(combo, command.run, { scope, description: command.label }))),
     );
     return () => {

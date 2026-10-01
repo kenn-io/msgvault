@@ -31,6 +31,7 @@
   onMount(() => { void controller.load(); });
   $effect(() => {
     if (available) untrack(() => { void conflictsController.load(); });
+    else conflictsController.focusRequest = undefined;
   });
   onDestroy(() => {
     controller.destroy();
