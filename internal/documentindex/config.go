@@ -126,9 +126,10 @@ type ResolvedInputPolicy struct {
 }
 
 // ScopeConfig limits extraction to selected message families. Empty includes
-// every source whose attachment role is authoritatively standalone.
+// every supported message source. Inline documents require an explicit opt-in.
 type ScopeConfig struct {
-	MessageTypes []string `toml:"message_types"`
+	MessageTypes  []string `toml:"message_types"`
+	IncludeInline bool     `toml:"include_inline"`
 }
 
 // IndexConfig describes the local index shape. The first release requires
@@ -453,6 +454,7 @@ func (c *DocumentsConfig) ProfilePolicyJSON(
 		MaxPagesPerRun            int      `json:"max_pages_per_run"`
 		MaxEstimatedCostUSDPerRun float64  `json:"max_estimated_cost_usd_per_run"`
 		MessageTypes              []string `json:"message_types"`
+		IncludeInline             bool     `json:"include_inline,omitzero"`
 		AllowedMediaTypes         []string `json:"allowed_media_types"`
 		DocumentPolicyFingerprint string   `json:"document_policy_fingerprint"`
 		Lexical                   bool     `json:"lexical"`
@@ -478,6 +480,7 @@ func (c *DocumentsConfig) ProfilePolicyJSON(
 		MaxPagesPerRun:            c.MaxPagesPerRun,
 		MaxEstimatedCostUSDPerRun: c.MaxEstimatedCostUSDPerRun,
 		MessageTypes:              slices.Clone(c.Scope.MessageTypes), AllowedMediaTypes: mediaTypes,
+		IncludeInline:             c.Scope.IncludeInline,
 		DocumentPolicyFingerprint: documentPolicyFingerprint,
 		Lexical:                   c.LexicalEnabled(), StoreChunkText: c.StoresChunkText(),
 		ExtractHeader: true, ExtractFooter: true,

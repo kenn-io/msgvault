@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-29"
+last_edited: "2026-09-30"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1730,6 +1730,19 @@ review their disclosure and preflight.
 `--message-id`, `-n`/`--limit`, `--cursor`, and `--json`. Its cursor is opaque
 and bound to a stable index revision; restart pagination after a stale-cursor
 error.
+
+On `main` after v0.20.0, build failures include available local causes alongside
+the document hash and reason code. `documents status` lists up to 20 current
+failed documents, including failed replacements in an active rebuild. JSON
+output adds `status.failures` and `status.failures_exhausted`. Each failure has
+`canonical_blob_hash`, `reason_code`, `detail`, and `state`; detail is a bounded
+single line and may be empty for historical failures. Use `documents retry` and
+then build again to obtain fresh diagnostics for an older failure.
+
+To include inline documents, set
+`[attachments.documents.scope].include_inline = true` and record exact consent
+again. The default is false. See the
+[scope configuration](configuration.md#attachmentsdocuments) for the contract.
 
 See [Document Attachment Indexing](/docs/usage/document-indexing/) for fixture
 generation, configuration, privacy boundaries, scheduling, and recovery.

@@ -609,8 +609,10 @@ func documentSearchValidityForConsent(consentName string) string {
 		AND ` + consentName + `.profile_fingerprint = ` + profile + `.fingerprint
 		AND ` + consentName + `.retention_posture = ` + profile + `.retention_posture
 		AND ` + consentName + `.training_posture = ` + profile + `.training_posture
-		AND o.attachment_role = 'standalone'
-		AND ` + attachment + `.attachment_role = 'standalone'
+		AND ` + documentRoleScopeSQL("o", profile+".include_inline") + `
+		AND ` + documentRoleScopeSQL(attachment, profile+".include_inline") + `
+		AND ` + attachment + `.attachment_role = o.attachment_role
+		AND ` + documentRoleScopeSQL(attachment, "COALESCE((SELECT include_inline FROM document_extraction_profiles WHERE id = ds.target_profile_id), FALSE)") + `
 		AND o.role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'raw_mime_repair')
 		AND ` + attachment + `.role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'raw_mime_repair')
 		AND ` + LiveMessagesWhere(message, true) + `
@@ -632,6 +634,7 @@ func documentSearchValidityForConsent(consentName string) string {
 		              AND target_head.profile_id = ` + state + `.target_profile_id
 		              AND target_profile.enabled = TRUE
 		              AND target_profile.retired_at IS NULL
+		              AND ` + documentRoleScopeSQL(attachment, "target_profile.include_inline") + `
 		              AND target_consent.profile_fingerprint = target_profile.fingerprint
 		              AND target_consent.retention_posture = target_profile.retention_posture
 		              AND target_consent.training_posture = target_profile.training_posture
@@ -654,6 +657,7 @@ func documentSearchValidityForConsent(consentName string) string {
 		            WHERE fallback_head.canonical_blob_hash = ` + head + `.canonical_blob_hash
 		              AND fallback_profile.enabled = TRUE
 		              AND fallback_profile.retired_at IS NULL
+		              AND ` + documentRoleScopeSQL(attachment, "fallback_profile.include_inline") + `
 		              AND fallback_consent.profile_fingerprint = fallback_profile.fingerprint
 		              AND fallback_consent.retention_posture = fallback_profile.retention_posture
 		              AND fallback_consent.training_posture = fallback_profile.training_posture

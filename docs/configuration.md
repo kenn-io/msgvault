@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-26"
+last_edited: "2026-09-30"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -368,8 +368,21 @@ manifest explicitly and displays its upload and cost preflight before requiring
 `--yes`. When document indexing is enabled, the daemon's weekly reconciliation
 and local derivative cleanup remain automatic and make no provider requests.
 
-`[attachments.documents.scope]` accepts `message_types`; an empty list includes
-all supported standalone attachment sources. The first release requires
+`[attachments.documents.scope]` accepts these fields:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `message_types` | `[]` | Include all supported message sources, or restrict extraction to the listed types |
+| `include_inline` | `false` | Also include inline attachments with an authorized document media type and authoritative role provenance |
+
+Inline scope support is available on `main` after v0.20.0. Some mail clients mark
+ordinary document attachments as inline. Set `include_inline = true` to include
+them; other roles remain excluded. This changes the consent fingerprint. Run
+`msgvault documents consent-mistral --capabilities <manifest> --yes` again before
+building. Selecting a standalone-only profile stops inline search results from
+serving, including results extracted under an earlier profile.
+
+The first release requires
 `[attachments.documents.index].lexical = true` and `store_chunk_text = true`.
 Hosted document embeddings are not enabled by this configuration.
 

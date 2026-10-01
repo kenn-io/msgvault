@@ -12,7 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+func TestDocumentFailureContractAcceptsLegacyEmptyDetail(t *testing.T) {
+	var failure generated.DocumentFailureDiagnostic
+	require.NoError(t, json.Unmarshal([]byte(`{"canonical_blob_hash":"synthetic-hash","reason_code":"invalid_local_source","detail":"","state":"terminal"}`), &failure))
+	assert.NoError(t, failure.Validate())
+}
 
 func TestSearchDocumentsUsesGeneratedDaemonContract(t *testing.T) {
 	assert := assert.New(t)
@@ -92,6 +99,7 @@ func TestSearchDocumentsUsesGeneratedDaemonContract(t *testing.T) {
 }
 
 func TestDocumentIndexStatusUsesGeneratedDaemonContract(t *testing.T) {
+	require := require.New(t)
 	assert := assert.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/documents/status", r.URL.Path)
@@ -107,6 +115,8 @@ func TestDocumentIndexStatusUsesGeneratedDaemonContract(t *testing.T) {
 			Status: store.DocumentIndexStatus{
 				ProfileExists: true, ExactConsent: true, ReadyOwners: 4,
 				AverageProviderLatencyMS: 12.5,
+				Failures:                 []store.DocumentFailureDiagnostic{{CanonicalBlobHash: "synthetic-hash", ReasonCode: "invalid_local_source", Detail: "PDF end marker is missing or not final", State: "terminal"}},
+				FailuresExhausted:        true,
 			},
 			ActiveRebuild: &store.DocumentIndexRebuildStatus{
 				SnapshotOwners: 6, RemainingOwners: 2,
@@ -115,18 +125,21 @@ func TestDocumentIndexStatusUsesGeneratedDaemonContract(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client, err := New(Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(t, err)
+	require.NoError(err)
 	response, err := client.GetDocumentIndexStatus(context.Background(), store.DocumentIndexStatusRequest{
 		ProfileID: "profile", ExtractionInputKey: "original",
 		AllowedMediaTypes:   []string{"application/pdf", "application/epub+zip"},
 		AllowedMessageTypes: []string{"email", "mms"},
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.True(response.Status.ProfileExists)
 	assert.True(response.Status.ExactConsent)
 	assert.Equal(int64(4), response.Status.ReadyOwners)
 	assert.InDelta(12.5, response.Status.AverageProviderLatencyMS, 0.001)
-	require.NotNil(t, response.ActiveRebuild)
+	require.Len(response.Status.Failures, 1)
+	assert.Equal("PDF end marker is missing or not final", response.Status.Failures[0].Detail)
+	assert.True(response.Status.FailuresExhausted)
+	require.NotNil(response.ActiveRebuild)
 	assert.Equal(int64(6), response.ActiveRebuild.SnapshotOwners)
 	assert.Equal(int64(2), response.ActiveRebuild.RemainingOwners)
 }

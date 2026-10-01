@@ -479,9 +479,9 @@ func (s *Store) publishDocumentPersonSweepChangesTx(
 		JOIN attachments a ON a.id = o.attachment_id
 		JOIN messages m ON m.id = o.message_id
 		WHERE o.canonical_blob_hash = ?
-		  AND o.attachment_role = 'standalone'
+		  AND o.attachment_role IN ('standalone', 'inline')
 		  AND `+authoritativeDocumentRoleSourceSQL("o")+`
-		  AND a.attachment_role = 'standalone'
+		  AND a.attachment_role = o.attachment_role
 		  AND `+authoritativeDocumentRoleSourceSQL("a")+`
 		  AND (COALESCE(a.content_hash, '') = ? OR
 		       (COALESCE(a.content_hash, '') = '' AND a.storage_path = ?))

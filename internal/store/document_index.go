@@ -44,6 +44,7 @@ type DocumentExtractionProfile struct {
 	RetentionPosture  string
 	TrainingPosture   string
 	AllowedMediaTypes []string
+	IncludeInline     bool
 	PolicyJSON        jsontext.Value
 }
 
@@ -93,31 +94,33 @@ type DocumentExtractionRebuild struct {
 }
 
 type DocumentIndexStatus struct {
-	ProfileExists              bool    `json:"profile_exists"`
-	ProfileEnabled             bool    `json:"profile_enabled"`
-	ExactConsent               bool    `json:"exact_consent"`
-	ExtractionAttempts         int64   `json:"extraction_attempts"`
-	SuccessfulAttempts         int64   `json:"successful_attempts"`
-	FailedAttempts             int64   `json:"failed_attempts"`
-	ProviderRequests           int64   `json:"provider_requests"`
-	ProviderRetries            int64   `json:"provider_retries"`
-	ProviderLatencyMillis      int64   `json:"provider_latency_millis"`
-	AverageProviderLatencyMS   float64 `json:"average_provider_latency_millis"`
-	VerifiedUploadBytes        int64   `json:"verified_upload_bytes"`
-	ProcessedProviderUnits     int64   `json:"processed_provider_units"`
-	ReportedProviderBytes      int64   `json:"reported_provider_bytes"`
-	MissingProviderByteReports int64   `json:"missing_provider_byte_reports"`
-	EligibleOccurrences        int64   `json:"eligible_occurrences"`
-	EligibleOwners             int64   `json:"eligible_owners"`
-	EligibleBytes              int64   `json:"eligible_bytes"`
-	UnknownRoleOccurrences     int64   `json:"unknown_role_occurrences"`
-	IneligibleRoleOccurrences  int64   `json:"ineligible_role_occurrences"`
-	ReadyOwners                int64   `json:"ready_owners"`
-	StagingOwners              int64   `json:"staging_owners"`
-	RetryOwners                int64   `json:"retry_owners"`
-	TerminalOwners             int64   `json:"terminal_owners"`
-	MissingOwners              int64   `json:"missing_owners"`
-	StoredPlaintextChunks      int64   `json:"stored_plaintext_chunks"`
+	Failures                   []DocumentFailureDiagnostic `json:"failures"`
+	FailuresExhausted          bool                        `json:"failures_exhausted"`
+	ProfileExists              bool                        `json:"profile_exists"`
+	ProfileEnabled             bool                        `json:"profile_enabled"`
+	ExactConsent               bool                        `json:"exact_consent"`
+	ExtractionAttempts         int64                       `json:"extraction_attempts"`
+	SuccessfulAttempts         int64                       `json:"successful_attempts"`
+	FailedAttempts             int64                       `json:"failed_attempts"`
+	ProviderRequests           int64                       `json:"provider_requests"`
+	ProviderRetries            int64                       `json:"provider_retries"`
+	ProviderLatencyMillis      int64                       `json:"provider_latency_millis"`
+	AverageProviderLatencyMS   float64                     `json:"average_provider_latency_millis"`
+	VerifiedUploadBytes        int64                       `json:"verified_upload_bytes"`
+	ProcessedProviderUnits     int64                       `json:"processed_provider_units"`
+	ReportedProviderBytes      int64                       `json:"reported_provider_bytes"`
+	MissingProviderByteReports int64                       `json:"missing_provider_byte_reports"`
+	EligibleOccurrences        int64                       `json:"eligible_occurrences"`
+	EligibleOwners             int64                       `json:"eligible_owners"`
+	EligibleBytes              int64                       `json:"eligible_bytes"`
+	UnknownRoleOccurrences     int64                       `json:"unknown_role_occurrences"`
+	IneligibleRoleOccurrences  int64                       `json:"ineligible_role_occurrences"`
+	ReadyOwners                int64                       `json:"ready_owners"`
+	StagingOwners              int64                       `json:"staging_owners"`
+	RetryOwners                int64                       `json:"retry_owners"`
+	TerminalOwners             int64                       `json:"terminal_owners"`
+	MissingOwners              int64                       `json:"missing_owners"`
+	StoredPlaintextChunks      int64                       `json:"stored_plaintext_chunks"`
 }
 
 // DocumentIndexStatusRequest identifies one exact profile and configured scope.
@@ -167,12 +170,12 @@ func (s *Store) EnsureDocumentExtractionProfile(
 			INSERT INTO document_extraction_profiles
 				(id, fingerprint, provider, endpoint, region, model,
 				 retention_posture, training_posture, allowed_media_types,
-				 policy_json, enabled)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, `+s.dialect.JSONBindExpr()+`, FALSE)
+				 policy_json, include_inline, enabled)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, `+s.dialect.JSONBindExpr()+`, ?, FALSE)
 			ON CONFLICT (id) DO NOTHING`,
 			profile.ID, profile.Fingerprint, profile.Provider, profile.Endpoint,
 			profile.Region, profile.Model, profile.RetentionPosture,
-			profile.TrainingPosture, string(allowedJSON), string(policyJSON),
+			profile.TrainingPosture, string(allowedJSON), string(policyJSON), profile.IncludeInline,
 		)
 		if execErr != nil {
 			return fmt.Errorf("insert document extraction profile: %w", execErr)
@@ -188,11 +191,11 @@ func (s *Store) EnsureDocumentExtractionProfile(
 		if scanErr := tx.QueryRow(`
 			SELECT id, fingerprint, provider, endpoint, region, model,
 			       retention_posture, training_posture,
-			       CAST(allowed_media_types AS TEXT), CAST(policy_json AS TEXT)
+			       CAST(allowed_media_types AS TEXT), CAST(policy_json AS TEXT), include_inline
 			FROM document_extraction_profiles WHERE id = ?`, profile.ID).Scan(
 			&stored.ID, &stored.Fingerprint, &stored.Provider, &stored.Endpoint,
 			&stored.Region, &stored.Model, &stored.RetentionPosture,
-			&stored.TrainingPosture, &storedAllowed, &storedPolicy,
+			&stored.TrainingPosture, &storedAllowed, &storedPolicy, &stored.IncludeInline,
 		); scanErr != nil {
 			return fmt.Errorf("read document extraction profile: %w", scanErr)
 		}
@@ -200,7 +203,7 @@ func (s *Store) EnsureDocumentExtractionProfile(
 			stored.Provider != profile.Provider || stored.Endpoint != profile.Endpoint ||
 			stored.Region != profile.Region || stored.Model != profile.Model ||
 			stored.RetentionPosture != profile.RetentionPosture ||
-			stored.TrainingPosture != profile.TrainingPosture ||
+			stored.TrainingPosture != profile.TrainingPosture || stored.IncludeInline != profile.IncludeInline ||
 			!equalJSON([]byte(storedAllowed), allowedJSON) ||
 			!equalJSON([]byte(storedPolicy), policyJSON) {
 			return errors.New("document extraction profile ID already has different immutable policy")
@@ -330,9 +333,10 @@ func (s *Store) RecordDocumentProviderConsent(
 }
 
 // ReconcileDocumentOccurrence resolves current metadata through the same
-// trusted-CAS authority as file downloads. Only live, standalone occurrences
+// trusted-CAS authority as file downloads. Live standalone and inline occurrences
 // with authoritative role provenance and locally available canonical bytes
-// are retained. It returns false for an ineligible or missing attachment.
+// are retained. Profile scope grants extraction and serving authority separately.
+// It returns false for an ineligible or missing attachment.
 func (s *Store) ReconcileDocumentOccurrence(
 	ctx context.Context,
 	attachmentID int64,
@@ -616,7 +620,7 @@ func (s *Store) GetDocumentIndexStatusForScope(
 		return DocumentIndexStatus{}, err
 	}
 	scopeSQL, scopeArgs, err := documentOccurrenceScopeSQL(
-		"o", "m", allowedMediaTypes, allowedMessageTypes,
+		profileID, "o", "m", allowedMediaTypes, allowedMessageTypes,
 	)
 	if err != nil {
 		return DocumentIndexStatus{}, err
@@ -695,10 +699,10 @@ func (s *Store) GetDocumentIndexStatusForScope(
 	}
 	err = s.db.QueryRowContext(ctx, s.dialect.Rebind(`
 		SELECT COALESCE(SUM(CASE WHEN a.attachment_role = 'unknown' THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN a.attachment_role NOT IN ('standalone', 'unknown') THEN 1 ELSE 0 END), 0)
+		       COALESCE(SUM(CASE WHEN a.attachment_role <> 'unknown' AND NOT `+documentRoleScopeSQL("a", "COALESCE((SELECT include_inline FROM document_extraction_profiles WHERE id = ?), FALSE)")+` THEN 1 ELSE 0 END), 0)
 		FROM attachments a
 		JOIN messages m ON m.id = a.message_id
-		WHERE `+mediaScopeSQL), mediaScopeArgs...).Scan(
+		WHERE `+mediaScopeSQL), append([]any{profileID}, mediaScopeArgs...)...).Scan(
 		&status.UnknownRoleOccurrences, &status.IneligibleRoleOccurrences,
 	)
 	if err != nil {
@@ -708,6 +712,10 @@ func (s *Store) GetDocumentIndexStatusForScope(
 		&status.StoredPlaintextChunks,
 	); err != nil {
 		return DocumentIndexStatus{}, fmt.Errorf("count stored document plaintext chunks: %w", err)
+	}
+	status.Failures, status.FailuresExhausted, err = s.documentFailureDiagnostics(ctx, profileID, extractionInputKey, allowedMediaTypes, allowedMessageTypes)
+	if err != nil {
+		return DocumentIndexStatus{}, err
 	}
 	return status, nil
 }
@@ -724,7 +732,7 @@ func (s *Store) StartDocumentExtractionRebuild(
 		return DocumentExtractionRebuild{}, errors.New("document extraction rebuild identity is incomplete")
 	}
 	scopeSQL, scopeArgs, err := documentOccurrenceScopeSQL(
-		"o", "m", allowedMediaTypes, allowedMessageTypes,
+		profileID, "o", "m", allowedMediaTypes, allowedMessageTypes,
 	)
 	if err != nil {
 		return DocumentExtractionRebuild{}, err
@@ -830,7 +838,7 @@ func (s *Store) CountIncompleteDocumentExtractionRebuild(
 		return 0, errors.New("document extraction rebuild is invalid")
 	}
 	scopeSQL, scopeArgs, err := documentOccurrenceScopeSQL(
-		"o", "m", allowedMediaTypes, allowedMessageTypes,
+		rebuild.ProfileID, "o", "m", allowedMediaTypes, allowedMessageTypes,
 	)
 	if err != nil {
 		return 0, err
@@ -907,7 +915,7 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 			      SELECT 1 FROM document_occurrences o
 			      JOIN messages m ON m.id = o.message_id
 			      WHERE o.canonical_blob_hash = e.canonical_blob_hash
-			        AND o.attachment_role = 'standalone'
+			        AND `+documentRoleScopeSQL("o", "(SELECT include_inline FROM document_extraction_profiles WHERE id = e.profile_id)")+`
 			        AND `+LiveMessagesWhere("m", true)+`
 			  ))
 			ORDER BY e.updated_at, e.id
@@ -1208,13 +1216,13 @@ func (s *Store) ListDocumentExtractionCandidates(
 		return nil, errors.New("pending document extraction scan has invalid bounds")
 	}
 	outerScopeSQL, outerScopeArgs, err := documentOccurrenceScopeSQL(
-		"o", "m", allowedMediaTypes, allowedMessageTypes,
+		profileID, "o", "m", allowedMediaTypes, allowedMessageTypes,
 	)
 	if err != nil {
 		return nil, err
 	}
 	innerScopeSQL, innerScopeArgs, err := documentOccurrenceScopeSQL(
-		"o2", "m2", allowedMediaTypes, allowedMessageTypes,
+		profileID, "o2", "m2", allowedMediaTypes, allowedMessageTypes,
 	)
 	if err != nil {
 		return nil, err
@@ -1316,6 +1324,7 @@ func documentHeadRouteMatchesSQL(extractionAlias, occurrenceAlias string) string
 }
 
 func documentOccurrenceScopeSQL(
+	profileID string,
 	occurrenceAlias string,
 	messageAlias string,
 	allowedMediaTypes []string,
@@ -1327,7 +1336,8 @@ func documentOccurrenceScopeSQL(
 	if err != nil {
 		return "", nil, err
 	}
-	return occurrenceAlias + ".attachment_role = 'standalone' AND " + mediaScopeSQL, args, nil
+	roleSQL := documentRoleScopeSQL(occurrenceAlias, "(SELECT include_inline FROM document_extraction_profiles WHERE id = ?)")
+	return roleSQL + " AND " + mediaScopeSQL, append([]any{profileID}, args...), nil
 }
 
 func documentOccurrenceMediaScopeSQL(
@@ -1554,7 +1564,7 @@ func bumpDocumentIndexRevision(q querier) error {
 }
 
 func eligibleDocumentFile(file FileMetadata) bool {
-	if file.AttachmentRole != AttachmentRoleStandalone || file.StoragePath == "" ||
+	if (file.AttachmentRole != AttachmentRoleStandalone && file.AttachmentRole != AttachmentRoleInline) || file.StoragePath == "" ||
 		file.Size <= 0 || !validLowerSHA256(file.ContentHash) {
 		return false
 	}
@@ -1632,4 +1642,10 @@ func validLowerSHA256(value string) bool {
 	}
 	_, err := hex.DecodeString(value)
 	return err == nil
+}
+
+// documentRoleScopeSQL accepts only document occurrence roles, using immutable
+// profile authority for inline attachments. Other media roles never qualify.
+func documentRoleScopeSQL(alias, includeInlineExpression string) string {
+	return "(" + alias + ".attachment_role = 'standalone' OR (" + alias + ".attachment_role = 'inline' AND " + includeInlineExpression + " = TRUE))"
 }

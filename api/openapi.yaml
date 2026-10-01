@@ -3171,6 +3171,22 @@ components:
         - rejected
         - applied
       type: object
+    DocumentFailureDiagnostic:
+      additionalProperties: true
+      properties:
+        canonical_blob_hash:
+          type: string
+        detail:
+          type: string
+        reason_code:
+          type: string
+        state:
+          type: string
+      required:
+        - canonical_blob_hash
+        - reason_code
+        - state
+      type: object
     DocumentIndexRebuildStatus:
       additionalProperties: true
       properties:
@@ -3207,6 +3223,12 @@ components:
         failed_attempts:
           format: int64
           type: integer
+        failures:
+          items:
+            $ref: "#/components/schemas/DocumentFailureDiagnostic"
+          type: array
+        failures_exhausted:
+          type: boolean
         ineligible_role_occurrences:
           format: int64
           type: integer
@@ -3260,6 +3282,8 @@ components:
           format: int64
           type: integer
       required:
+        - failures
+        - failures_exhausted
         - profile_exists
         - profile_enabled
         - exact_consent

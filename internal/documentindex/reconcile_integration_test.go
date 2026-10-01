@@ -44,7 +44,7 @@ func TestReconcilerBootstrapAndReplayConvergeOnCurrentOccurrences(t *testing.T) 
 	secondID := createReconcileAttachment(t, f, secondMessage, "c")
 	_, err = f.Store.DB().Exec(f.Store.Rebind(
 		`UPDATE attachments SET attachment_role = ?, role_source = ? WHERE id = ?`),
-		store.AttachmentRoleInline, store.AttachmentRoleSourceMIMEDisposition, firstID)
+		store.AttachmentRolePreview, store.AttachmentRoleSourceMIMEDisposition, firstID)
 	require.NoError(err)
 
 	result, err = reconciler.Reconcile(t.Context())
@@ -86,7 +86,7 @@ func TestReconcilerReenableUsesDurableJournalHighWater(t *testing.T) {
 	))
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`
 		UPDATE attachments SET attachment_role = ?, role_source = ? WHERE id = ?`),
-		store.AttachmentRoleInline, store.AttachmentRoleSourceMIMEDisposition, attachmentID)
+		store.AttachmentRolePreview, store.AttachmentRoleSourceMIMEDisposition, attachmentID)
 	require.NoError(err)
 
 	result, err := reconciler.Reconcile(t.Context())
@@ -142,7 +142,7 @@ func TestOccurrenceReconciliationIgnoresStaleSourceSequence(t *testing.T) {
 
 	_, err = f.Store.DB().Exec(f.Store.Rebind(
 		`UPDATE attachments SET filename = ?, attachment_role = ?, role_source = ? WHERE id = ?`),
-		"stale-name.pdf", store.AttachmentRoleInline,
+		"stale-name.pdf", store.AttachmentRolePreview,
 		store.AttachmentRoleSourceMIMEDisposition, attachmentID)
 	require.NoError(err)
 	_, eligible, err = f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 9)
@@ -242,7 +242,7 @@ func TestSQLiteOccurrenceReconciliationReadsAfterWriterSlot(t *testing.T) {
 	}
 	_, err = holder.ExecContext(t.Context(), `
 		UPDATE attachments SET attachment_role = ? WHERE id = ?`,
-		store.AttachmentRoleInline, attachmentID)
+		store.AttachmentRolePreview, attachmentID)
 	require.NoError(err)
 	_, err = holder.ExecContext(t.Context(), `
 		DELETE FROM document_occurrences
@@ -310,7 +310,7 @@ func TestPostgreSQLOccurrenceReconciliationSerializesEligibilityRead(t *testing.
 
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`
 		UPDATE attachments SET attachment_role = ? WHERE id = ?`),
-		store.AttachmentRoleInline, attachmentID)
+		store.AttachmentRolePreview, attachmentID)
 	require.NoError(err)
 	higher := make(chan reconcileResult, 1)
 	go func() {

@@ -2890,37 +2890,65 @@ func (d DiscoverResult) Validate() error {
 	return errors
 }
 
+type DocumentFailureDiagnostic struct {
+	CanonicalBlobHash string  `json:"canonical_blob_hash" validate:"required"`
+	Detail            *string `json:"detail,omitzero"`
+	ReasonCode        string  `json:"reason_code" validate:"required"`
+	State             string  `json:"state" validate:"required"`
+}
+
+func (d DocumentFailureDiagnostic) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
 type DocumentIndexRebuildStatus struct {
 	RemainingOwners int64 `json:"remaining_owners"`
 	SnapshotOwners  int64 `json:"snapshot_owners"`
 }
 
 type DocumentIndexStatus struct {
-	AverageProviderLatencyMillis float64 `json:"average_provider_latency_millis"`
-	EligibleBytes                int64   `json:"eligible_bytes"`
-	EligibleOccurrences          int64   `json:"eligible_occurrences"`
-	EligibleOwners               int64   `json:"eligible_owners"`
-	ExactConsent                 bool    `json:"exact_consent"`
-	ExtractionAttempts           int64   `json:"extraction_attempts"`
-	FailedAttempts               int64   `json:"failed_attempts"`
-	IneligibleRoleOccurrences    int64   `json:"ineligible_role_occurrences"`
-	MissingOwners                int64   `json:"missing_owners"`
-	MissingProviderByteReports   int64   `json:"missing_provider_byte_reports"`
-	ProcessedProviderUnits       int64   `json:"processed_provider_units"`
-	ProfileEnabled               bool    `json:"profile_enabled"`
-	ProfileExists                bool    `json:"profile_exists"`
-	ProviderLatencyMillis        int64   `json:"provider_latency_millis"`
-	ProviderRequests             int64   `json:"provider_requests"`
-	ProviderRetries              int64   `json:"provider_retries"`
-	ReadyOwners                  int64   `json:"ready_owners"`
-	ReportedProviderBytes        int64   `json:"reported_provider_bytes"`
-	RetryOwners                  int64   `json:"retry_owners"`
-	StagingOwners                int64   `json:"staging_owners"`
-	StoredPlaintextChunks        int64   `json:"stored_plaintext_chunks"`
-	SuccessfulAttempts           int64   `json:"successful_attempts"`
-	TerminalOwners               int64   `json:"terminal_owners"`
-	UnknownRoleOccurrences       int64   `json:"unknown_role_occurrences"`
-	VerifiedUploadBytes          int64   `json:"verified_upload_bytes"`
+	AverageProviderLatencyMillis float64                     `json:"average_provider_latency_millis"`
+	EligibleBytes                int64                       `json:"eligible_bytes"`
+	EligibleOccurrences          int64                       `json:"eligible_occurrences"`
+	EligibleOwners               int64                       `json:"eligible_owners"`
+	ExactConsent                 bool                        `json:"exact_consent"`
+	ExtractionAttempts           int64                       `json:"extraction_attempts"`
+	FailedAttempts               int64                       `json:"failed_attempts"`
+	Failures                     []DocumentFailureDiagnostic `json:"failures" validate:"required"`
+	FailuresExhausted            bool                        `json:"failures_exhausted"`
+	IneligibleRoleOccurrences    int64                       `json:"ineligible_role_occurrences"`
+	MissingOwners                int64                       `json:"missing_owners"`
+	MissingProviderByteReports   int64                       `json:"missing_provider_byte_reports"`
+	ProcessedProviderUnits       int64                       `json:"processed_provider_units"`
+	ProfileEnabled               bool                        `json:"profile_enabled"`
+	ProfileExists                bool                        `json:"profile_exists"`
+	ProviderLatencyMillis        int64                       `json:"provider_latency_millis"`
+	ProviderRequests             int64                       `json:"provider_requests"`
+	ProviderRetries              int64                       `json:"provider_retries"`
+	ReadyOwners                  int64                       `json:"ready_owners"`
+	ReportedProviderBytes        int64                       `json:"reported_provider_bytes"`
+	RetryOwners                  int64                       `json:"retry_owners"`
+	StagingOwners                int64                       `json:"staging_owners"`
+	StoredPlaintextChunks        int64                       `json:"stored_plaintext_chunks"`
+	SuccessfulAttempts           int64                       `json:"successful_attempts"`
+	TerminalOwners               int64                       `json:"terminal_owners"`
+	UnknownRoleOccurrences       int64                       `json:"unknown_role_occurrences"`
+	VerifiedUploadBytes          int64                       `json:"verified_upload_bytes"`
+}
+
+func (d DocumentIndexStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range d.Failures {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Failures[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type DocumentIndexStatusResponse struct {

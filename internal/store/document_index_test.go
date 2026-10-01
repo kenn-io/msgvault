@@ -362,7 +362,7 @@ func TestDocumentCandidatesReprocessOwnerWhenRemovedOccurrenceChangesRepresentat
 	require.Empty(documentCandidates(t, f, profile, nil))
 
 	_, err := f.Store.DB().Exec(f.Store.Rebind(
-		`UPDATE attachments SET attachment_role = ? WHERE id = ?`), store.AttachmentRoleInline, pdfAttachmentID)
+		`UPDATE attachments SET attachment_role = ? WHERE id = ?`), store.AttachmentRolePreview, pdfAttachmentID)
 	require.NoError(err)
 	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), pdfAttachmentID, 100)
 	require.NoError(err)
@@ -381,7 +381,7 @@ func TestDocumentCandidatesReprocessReturningOwnerOnlyThroughAnotherRoute(t *tes
 	publishSearchDocument(t, f, profile, hash, "PDF route evidence", "mime-route-vanished-head")
 	pdfAttachmentID := seededDocumentAttachmentID(t, f, hash)
 	_, err := f.Store.DB().Exec(f.Store.Rebind(
-		`UPDATE attachments SET attachment_role = ? WHERE id = ?`), store.AttachmentRoleInline, pdfAttachmentID)
+		`UPDATE attachments SET attachment_role = ? WHERE id = ?`), store.AttachmentRolePreview, pdfAttachmentID)
 	require.NoError(err)
 	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), pdfAttachmentID, 2)
 	require.NoError(err)

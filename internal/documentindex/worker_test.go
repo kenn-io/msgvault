@@ -1000,3 +1000,23 @@ func successfulWorkerResult(markdown string) mistral.Result {
 		Metrics: mistral.RequestMetrics{Requests: 1, Latency: time.Millisecond},
 	}
 }
+
+func TestMistralWorkerReportsMalformedPDFCauseWithoutUpload(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	content := []byte("%PDF-1.4\nmalformed synthetic document\n")
+	digest := sha256.Sum256(content)
+	catalog := &workerCatalog{}
+	processor := &workerProcessor{}
+	worker := newTestMistralWorker(t, catalog, &workerOpener{content: content}, processor)
+	result, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+		AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]),
+		MIMEType: "application/pdf", Size: int64(len(content)), MessageType: "email",
+	})
+	require.ErrorContains(err, "PDF end marker")
+	require.NotNil(catalog.failure)
+	assert.Equal("invalid_local_source", catalog.failure.ReasonCode)
+	assert.Contains(catalog.failure.Detail, "PDF end marker")
+	assert.Equal(catalog.failure.Detail, result.FailureDetail)
+	assert.Zero(processor.calls)
+}

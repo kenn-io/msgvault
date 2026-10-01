@@ -135,6 +135,7 @@ func (s *Store) ClaimDocumentExtraction(
 	ctx context.Context,
 	input DocumentExtractionClaimInput,
 ) (DocumentExtractionClaim, error) {
+	input.LeaseUntil = input.LeaseUntil.UTC()
 	if err := validateDocumentClaimInput(input); err != nil {
 		return DocumentExtractionClaim{}, err
 	}
@@ -161,10 +162,12 @@ func (s *Store) ClaimDocumentExtraction(
 				SELECT 1 FROM document_occurrences o
 				JOIN attachments a ON a.id = o.attachment_id
 				JOIN messages m ON m.id = o.message_id
+				JOIN document_extraction_profiles p ON p.id = ?
 				WHERE o.attachment_id = ? AND o.canonical_blob_hash = ?
-				  AND o.attachment_role = 'standalone'
+				  AND `+documentRoleScopeSQL("o", "p.include_inline")+`
 				  AND `+authoritativeDocumentRoleSourceSQL("o")+`
-				  AND a.attachment_role = 'standalone'
+				  AND a.attachment_role = o.attachment_role
+				  AND `+documentRoleScopeSQL("a", "p.include_inline")+`
 				  AND `+authoritativeDocumentRoleSourceSQL("a")+`
 				  AND (COALESCE(a.content_hash, '') = ? OR
 				       (COALESCE(a.content_hash, '') = '' AND a.storage_path = ?))
@@ -172,7 +175,7 @@ func (s *Store) ClaimDocumentExtraction(
 				  AND COALESCE(a.mime_type, '') = ?
 				  AND COALESCE(m.message_type, '') = ?
 				  AND `+LiveMessagesWhere("m", true)+`
-			)`, input.OccurrenceAttachmentID, input.CanonicalBlobHash,
+			)`, input.ProfileID, input.OccurrenceAttachmentID, input.CanonicalBlobHash,
 			input.CanonicalBlobHash, canonicalCASPath(input.CanonicalBlobHash), input.OccurrenceMIMEType,
 			input.OccurrenceMIMEType, input.OccurrenceMessageType).Scan(&eligible); err != nil {
 			return fmt.Errorf("check document extraction occurrence: %w", err)
@@ -214,11 +217,11 @@ func (s *Store) ClaimDocumentExtraction(
 		if _, err := q.Exec(`
 			INSERT INTO document_extractions
 				(id, profile_id, rebuild_id, canonical_blob_hash, extraction_input_key,
-				 source_media_type, state, lease_owner, lease_until, local_bytes, source_sequence)
-			VALUES (?, ?, ?, ?, ?, ?, 'staging', ?, ?, ?, ?)`,
+				 source_media_type, state, lease_owner, lease_until, local_bytes, source_sequence, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, 'staging', ?, ?, ?, ?, ?)`,
 			input.ExtractionID, input.ProfileID, nullIfEmpty(input.RebuildID), input.CanonicalBlobHash,
 			input.ExtractionInputKey, input.OccurrenceMIMEType, input.LeaseOwner, input.LeaseUntil,
-			input.LocalBytes, input.SourceSequence,
+			input.LocalBytes, input.SourceSequence, time.Now().UTC(),
 		); err != nil {
 			return fmt.Errorf("create staging document extraction: %w", err)
 		}
@@ -280,6 +283,7 @@ func (s *Store) ClaimDocumentExtraction(
 type DocumentExtractionFailure struct {
 	Claim             DocumentExtractionClaim
 	ReasonCode        string
+	Detail            string
 	Terminal          bool
 	RetryAt           time.Time
 	RequestCount      int
@@ -288,7 +292,7 @@ type DocumentExtractionFailure struct {
 	Conversion        *DocumentExtractionConversion
 }
 
-// FailDocumentExtraction records only a bounded reason code, releases the
+// FailDocumentExtraction records a reason and bounded safe diagnostic, releases the
 // exact fenced claim, and either suppresses the owner for this immutable
 // profile or schedules a later retry. Provider bodies and extracted content
 // are never stored on failure.
@@ -322,13 +326,13 @@ func (s *Store) FailDocumentExtraction(ctx context.Context, failure DocumentExtr
 			UPDATE document_extractions
 			SET state = ?, attempt_count = attempt_count + 1,
 			    request_count = ?, retry_count = ?, provider_latency_ms = ?,
-			    next_retry_at = ?, terminal_reason = ?, lease_owner = NULL,
+			    next_retry_at = ?, terminal_reason = ?, failure_reason = ?, failure_detail = ?, lease_owner = NULL,
 			    lease_until = NULL, updated_at = `+s.dialect.Now()+`
 			WHERE id = ? AND profile_id = ? AND canonical_blob_hash = ?
 			  AND extraction_input_key = ? AND state = 'staging'
 			  AND lease_owner = ? AND lease_fence = ?`,
 			state, failure.RequestCount, failure.RetryCount, failure.ProviderLatencyMS,
-			nextRetry, terminalReason, failure.Claim.ExtractionID,
+			nextRetry, terminalReason, failure.ReasonCode, CleanDocumentFailureDetail(failure.Detail), failure.Claim.ExtractionID,
 			failure.Claim.ProfileID, failure.Claim.CanonicalBlobHash,
 			failure.Claim.ExtractionInputKey, failure.Claim.LeaseOwner,
 			failure.Claim.LeaseFence,
@@ -469,10 +473,12 @@ func (s *Store) PublishDocumentExtraction(
 			FROM document_occurrences o
 			JOIN attachments a ON a.id = o.attachment_id
 			JOIN messages m ON m.id = o.message_id
+			JOIN document_extraction_profiles p ON p.id = ?
 			WHERE o.attachment_id = ? AND o.canonical_blob_hash = ?
-			  AND o.attachment_role = 'standalone'
+			  AND `+documentRoleScopeSQL("o", "p.include_inline")+`
 			  AND `+authoritativeDocumentRoleSourceSQL("o")+`
-			  AND a.attachment_role = 'standalone'
+			  AND a.attachment_role = o.attachment_role
+			  AND `+documentRoleScopeSQL("a", "p.include_inline")+`
 			  AND `+authoritativeDocumentRoleSourceSQL("a")+`
 			  AND (COALESCE(a.content_hash, '') = ? OR
 			       (COALESCE(a.content_hash, '') = '' AND a.storage_path = ?))
@@ -480,7 +486,7 @@ func (s *Store) PublishDocumentExtraction(
 			  AND COALESCE(a.mime_type, '') = ?
 			  AND COALESCE(m.message_type, '') = ?
 			  AND `+LiveMessagesWhere("m", true),
-			publication.OccurrenceAttachmentID, publication.CanonicalBlobHash,
+			publication.ProfileID, publication.OccurrenceAttachmentID, publication.CanonicalBlobHash,
 			publication.CanonicalBlobHash, canonicalCASPath(publication.CanonicalBlobHash), publication.OccurrenceMIMEType,
 			publication.OccurrenceMIMEType, publication.OccurrenceMessageType,
 		).Scan(&sourceSequence); err != nil {

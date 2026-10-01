@@ -149,3 +149,19 @@ func documentFTSMatchCount(t *testing.T, st *store.Store, term string) int {
 		WHERE document_chunks_fts MATCH ?`, term).Scan(&count))
 	return count
 }
+
+func TestInitSchemaAddsDocumentDiagnosticsAndInlinePolicy(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	for _, column := range []string{"failure_reason", "failure_detail"} {
+		_, err := st.DB().Exec("ALTER TABLE document_extractions DROP COLUMN " + column)
+		require.NoError(err)
+	}
+	_, err := st.DB().Exec("ALTER TABLE document_extraction_profiles DROP COLUMN include_inline")
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	_, err = st.DB().Exec("SELECT include_inline FROM document_extraction_profiles")
+	require.NoError(err)
+	_, err = st.DB().Exec("SELECT failure_reason, failure_detail FROM document_extractions")
+	require.NoError(err)
+}

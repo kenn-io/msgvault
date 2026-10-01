@@ -355,6 +355,7 @@ func TestOpenAPIDocumentVectorStatusUsesSnakeCaseCoverage(t *testing.T) {
 }
 
 func TestDocumentStatusHTTPPreservesScopedContract(t *testing.T) {
+	require := require.New(t)
 	t.Parallel()
 	assert := assert.New(t)
 	server, catalog := newTestServerWithMockStore(t)
@@ -375,7 +376,13 @@ func TestDocumentStatusHTTPPreservesScopedContract(t *testing.T) {
 		assert.Equal("original", inputKey)
 		assert.Equal([]string{"application/pdf", "application/epub+zip"}, mediaTypes)
 		assert.Equal([]string{"email", "mms"}, messageTypes)
-		return store.DocumentIndexStatus{ProfileExists: true, ReadyOwners: 4}, nil
+		return store.DocumentIndexStatus{
+			ProfileExists: true, ReadyOwners: 4, FailuresExhausted: true,
+			Failures: []store.DocumentFailureDiagnostic{{
+				CanonicalBlobHash: strings.Repeat("a", 64), ReasonCode: "invalid_local_source",
+				Detail: "PDF end marker is missing or not final", State: "terminal",
+			}},
+		}, nil
 	}
 	catalog.documentRebuildFunc = func(
 		_ context.Context,
@@ -403,12 +410,15 @@ func TestDocumentStatusHTTPPreservesScopedContract(t *testing.T) {
 			"message_type=email&message_type=mms", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
-	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(http.StatusOK, response.Code)
 	var body store.DocumentIndexStatusResponse
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 	assert.True(body.Status.ProfileExists)
 	assert.Equal(int64(4), body.Status.ReadyOwners)
-	require.NotNil(t, body.ActiveRebuild)
+	require.Len(body.Status.Failures, 1)
+	assert.Equal("PDF end marker is missing or not final", body.Status.Failures[0].Detail)
+	assert.True(body.Status.FailuresExhausted)
+	require.NotNil(body.ActiveRebuild)
 	assert.Equal(int64(6), body.ActiveRebuild.SnapshotOwners)
 	assert.Equal(int64(2), body.ActiveRebuild.RemainingOwners)
 }

@@ -96,6 +96,7 @@ type DocumentExtractionResult struct {
 	ExtractionID      string
 	CanonicalBlobHash string
 	FailureReasonCode string
+	FailureDetail     string
 	Units             int
 	Chunks            int
 	Truncated         bool
@@ -162,6 +163,7 @@ func (w *MistralWorker) ProcessCandidate(
 	defer func() {
 		if runErr != nil {
 			_, result.FailureReasonCode = classifyDocumentExtractionFailure(runErr)
+			result.FailureDetail = documentFailureDetail(runErr)
 		}
 	}()
 	authorized, allowed := w.formats[candidate.MIMEType]
@@ -412,7 +414,7 @@ func (w *MistralWorker) recordFailure(
 ) error {
 	terminal, reason := classifyDocumentExtractionFailure(cause)
 	failure := store.DocumentExtractionFailure{
-		Claim: claim, ReasonCode: reason, Terminal: terminal,
+		Claim: claim, ReasonCode: reason, Detail: documentFailureDetail(cause), Terminal: terminal,
 		RequestCount: metrics.Requests, RetryCount: metrics.Retries,
 		ProviderLatencyMS: requestLatencyMillis(metrics.Latency), Conversion: conversion,
 	}

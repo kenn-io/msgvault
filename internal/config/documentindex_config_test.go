@@ -45,6 +45,7 @@ estimated_cost_usd_per_1000_units = 4.25
 pricing_assumption_on = "2026-08-13"
 
 [attachments.documents.scope]
+include_inline = true
 message_types = ["EMAIL", "chat", "email"]
 
 [attachments.documents.index]
@@ -61,6 +62,7 @@ profile = "vector.embeddings"
 	require.NoError(t, err)
 	documents := loaded.Attachments.Documents
 	assert.True(documents.Enabled)
+	assert.True(documents.Scope.IncludeInline)
 	assert.Equal("PRIVATE_MISTRAL_KEY", documents.APIKeyEnv)
 	assert.Equal(2*time.Minute, documents.RequestTimeout)
 	assert.Equal(int64(8388608), documents.MaxSpoolBytes)

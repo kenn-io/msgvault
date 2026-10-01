@@ -161,7 +161,19 @@ func documentIndexStatusFromGenerated(
 		RetryOwners: generatedStatus.RetryOwners, TerminalOwners: generatedStatus.TerminalOwners,
 		MissingOwners:         generatedStatus.MissingOwners,
 		StoredPlaintextChunks: generatedStatus.StoredPlaintextChunks,
+		FailuresExhausted:     generatedStatus.FailuresExhausted,
 	}}
+	result.Status.Failures = make([]store.DocumentFailureDiagnostic, 0, len(generatedStatus.Failures))
+	for _, failure := range generatedStatus.Failures {
+		detail := ""
+		if failure.Detail != nil {
+			detail = *failure.Detail
+		}
+		result.Status.Failures = append(result.Status.Failures, store.DocumentFailureDiagnostic{
+			CanonicalBlobHash: failure.CanonicalBlobHash, ReasonCode: failure.ReasonCode,
+			Detail: detail, State: failure.State,
+		})
+	}
 	if response.ActiveRebuild != nil {
 		result.ActiveRebuild = &store.DocumentIndexRebuildStatus{
 			SnapshotOwners:  response.ActiveRebuild.SnapshotOwners,

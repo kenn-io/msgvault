@@ -203,6 +203,7 @@ export * from "./discoverEventType";
 export * from "./discoverProgress";
 export * from "./discoverRequest";
 export * from "./discoverResult";
+export * from "./documentFailureDiagnostic";
 export * from "./documentIndexRebuildStatus";
 export * from "./documentIndexStatus";
 export * from "./documentIndexStatusResponse";

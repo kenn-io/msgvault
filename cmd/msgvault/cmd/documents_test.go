@@ -1254,3 +1254,65 @@ func commandMistralResult(markdown string) mistral.Result {
 		Metrics: mistral.RequestMetrics{Requests: 1, Latency: time.Millisecond},
 	}
 }
+
+func TestInlineDocumentConsentRescansAndReportsMalformedSource(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	markDaemonCLISubprocessForTest(t)
+	cfg := testConfigValue()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Attachments.Documents.Enabled = true
+	cfg.Attachments.Documents.RetentionPosture = documentindex.RetentionStandard
+	cfg.Attachments.Documents.TrainingPosture = documentindex.TrainingOptedOut
+	testCtx := withTestConfig(t, cfg)
+	fixture := storetest.New(t)
+	content := []byte("%PDF-1.4\nsynthetic malformed PDF\n")
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	msg := fixture.CreateMessage("inline-malformed-document")
+	require.NoError(fixture.Store.UpsertAttachmentRecord(t.Context(), msg, store.AttachmentWrite{Filename: "synthetic.pdf", MIMEType: "application/pdf", Size: int64(len(content)), StoragePath: hash[:2] + "/" + hash, ContentHash: hash, Role: store.AttachmentRoleInline, RoleSource: store.AttachmentRoleSourceRawMIMERepair}))
+	manifestPath := writeCommandCapabilityManifest(t, cfg.Attachments.Documents.MaxPagesPerDocument)
+	processor := &commandBuildProcessor{}
+	deps := documentsCommandDeps{
+		newMistralProcessor: func(*documentindex.DocumentsConfig) (documentindex.MistralProcessor, error) { return processor, nil },
+		openStore:           func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openAttachments: func(context.Context, *store.Store) (documentindex.DocumentAttachmentOpener, func() error, error) {
+			return commandAttachmentOpener{content: content}, func() error { return nil }, nil
+		},
+		openReadClient: func(context.Context) (documentReadClient, func(), error) {
+			return localDocumentReadClient{store: fixture.Store}, func() {}, nil
+		},
+	}
+	run := func(args ...string) (string, error) {
+		command := newDocumentsCmd(deps)
+		var output bytes.Buffer
+		command.SetOut(&output)
+		command.SetErr(&bytes.Buffer{})
+		command.SetArgs(args)
+		err := command.ExecuteContext(testCtx)
+		return output.String(), err
+	}
+	_, err := run("consent-mistral", "--capabilities", manifestPath, "--yes")
+	require.NoError(err)
+	// Simulate an old completed journal bootstrap that never retained inline rows.
+	_, err = fixture.Store.DB().Exec("DELETE FROM document_occurrences")
+	require.NoError(err)
+	cfg.Attachments.Documents.Scope.IncludeInline = true
+	disclosure, err := run("consent-mistral", "--capabilities", manifestPath)
+	require.ErrorContains(err, "requires --yes")
+	assert.Contains(disclosure, "standalone and inline document attachments")
+	_, err = run("consent-mistral", "--capabilities", manifestPath, "--yes")
+	require.NoError(err)
+	assert.Equal(1, commandDocumentOccurrenceCount(t, fixture.Store))
+	_, err = run("build", "--capabilities", manifestPath, "--yes")
+	require.ErrorContains(err, "PDF end marker")
+	assert.Zero(processor.calls)
+	human, err := run("status", "--capabilities", manifestPath)
+	require.NoError(err)
+	assert.Contains(human, "invalid_local_source")
+	assert.Contains(human, "PDF end marker")
+	encoded, err := run("status", "--capabilities", manifestPath, "--json")
+	require.NoError(err)
+	assert.Contains(encoded, `"reason_code":"invalid_local_source"`)
+	assert.Contains(encoded, "PDF end marker")
+}

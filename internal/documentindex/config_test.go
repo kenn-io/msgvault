@@ -440,3 +440,27 @@ func TestDocumentsConfigResolvesAPIKeyOnlyOnDemand(t *testing.T) {
 	_, err = config.ResolveAPIKey()
 	require.ErrorContains(t, err, config.APIKeyEnv)
 }
+
+func TestInlineScopeChangesConsentFingerprint(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	config := DefaultDocumentsConfig()
+	config.RetentionPosture = RetentionZDR
+	config.TrainingPosture = TrainingOptedOut
+	policy, err := config.MistralPolicy()
+	require.NoError(err)
+	manifest := testCapabilityManifest(t, policy)
+	before, err := config.ProfileFingerprint(manifest, []string{"application/pdf"})
+	require.NoError(err)
+	config.Scope.IncludeInline = true
+	after, err := config.ProfileFingerprint(manifest, []string{"application/pdf"})
+	require.NoError(err)
+	assert.NotEqual(before, after)
+	encoded, err := config.ProfilePolicyJSON(manifest, []string{"application/pdf"})
+	require.NoError(err)
+	assert.Contains(string(encoded), `"include_inline":true`)
+	config.Scope.IncludeInline = false
+	restored, err := config.ProfileFingerprint(manifest, []string{"application/pdf"})
+	require.NoError(err)
+	assert.Equal(before, restored)
+}

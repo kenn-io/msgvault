@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-09-29"
 title: Document Attachment Indexing
 description: Find words and topics inside archived documents, with explicit control over provider uploads.
 ---
@@ -40,7 +40,7 @@ Msgvault keeps the containing-message links, normalized text, text chunks,
 indexes, consent records, and backups locally. It does not retain the full raw
 provider JSON or Markdown response.
 
-Standalone CSV attachments use a local conversion step when enabled. Msgvault
+Eligible CSV attachments use a local conversion step when enabled. Msgvault
 retains the CSV source hash and `text/csv` occurrence identity, then sends only
 the generated `application/pdf` bytes to Mistral. The conversion receipt stores
 the generated PDF hash, byte count, page count, converter version, policy
@@ -117,6 +117,7 @@ max_estimated_cost_usd_per_run = 50
 
 [attachments.documents.scope]
 message_types = ["email"]
+include_inline = false
 
 [attachments.documents.index]
 lexical = true
@@ -125,6 +126,17 @@ store_chunk_text = true
 [attachments.documents.conversion.csv]
 enabled = true
 ```
+
+Document extraction includes standalone attachments by default. On `main` after
+v0.20.0, set `include_inline = true` when your mail client marks ordinary attached
+documents as inline. Only authenticated document formats with authoritative role
+provenance become eligible. Avatar, preview, sticker, and unknown roles stay out
+of scope. The setting also applies to local CSV conversion.
+
+Changing inline scope changes the profile fingerprint. Record consent again
+before building. Consent rescans historical attachments, including archives whose
+original reconciliation skipped inline documents. Returning to standalone-only
+scope stops inline results from serving under older profiles too.
 
 Set the key in the named environment variable only when running an
 authenticated operation:
@@ -340,3 +352,26 @@ rebuilding or retiring the OCR extraction profile:
 Once a generation is active, use `rebuild` to replace it for coverage changes;
 `build` reports that it is already active. Retirement keeps the backend
 ledger; later vector operations finish the cleanup.
+
+## Diagnose extraction failures
+
+On `main` after v0.20.0, a failed build reports each document hash, reason code,
+and available local cause. For example, `invalid_local_source` can include
+`PDF end marker is missing or not final`. Size mismatches and spool capacity
+failures have separate details. `documents status --capabilities <manifest>`
+shows those diagnostics later; `--json` includes `status.failures` and
+`status.failures_exhausted` (false when more than 20 failures remain).
+
+Status lists up to 20 current failed documents in deterministic order. It keeps
+failed replacements visible during an active full rebuild even while an older
+extraction still serves. A successful replacement removes its failure from the
+list. Details are single-line and capped at 1024 UTF-8 bytes. Parser diagnostics
+that can contain document content and I/O paths are filtered; raw provider
+response bodies and extracted text are never retained as failure details.
+
+Older failures have only a reason code. Retry one to record a fresh cause:
+
+```bash
+msgvault documents retry --capabilities <manifest> --hash <sha256>
+msgvault documents build --capabilities <manifest> --yes
+```

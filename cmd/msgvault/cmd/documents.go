@@ -189,6 +189,7 @@ type documentBuildResult struct {
 type documentBuildFailure struct {
 	CanonicalBlobHash string
 	ReasonCode        string
+	Detail            string
 }
 
 type documentsCommandDeps struct {
@@ -615,7 +616,19 @@ func runConsentMistral(
 	}); err != nil {
 		return err
 	}
-	if err := bootstrapDocumentOccurrencesIfConsented(command.Context(), st); err != nil {
+	if profile.IncludeInline {
+		// Repeat the full scan on every confirmed inline consent. An older
+		// completed bootstrap, or an interrupted consent scan, may omit rows.
+		reconciler, err := documentindex.NewReconciler(st, documentindex.ReconcilerConfig{
+			AttachmentPageSize: 1000, ChangePageSize: 1000,
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := reconciler.FullReconcile(command.Context()); err != nil {
+			return err
+		}
+	} else if err := bootstrapDocumentOccurrencesIfConsented(command.Context(), st); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(),
@@ -644,6 +657,11 @@ func printDocumentConsentDisclosure(
 	inputPolicy documentindex.ResolvedInputPolicy,
 ) {
 	_, _ = fmt.Fprintln(w, "Hosted document extraction disclosure:")
+	roles := "standalone document attachments"
+	if profile.IncludeInline {
+		roles = "standalone and inline document attachments"
+	}
+	_, _ = fmt.Fprintf(w, "- Scope includes %s in the configured document formats and message sources.\n", roles)
 	_, _ = fmt.Fprintf(w, "- Authenticated upload routes target %s (%s):\n", profile.Endpoint, profile.Region)
 	for _, mediaType := range inputPolicy.AllowedMediaTypes {
 		route := inputPolicy.Routes[mediaType]
@@ -950,6 +968,7 @@ func executeDocumentBuild(
 			result.Failures = append(result.Failures, documentBuildFailure{
 				CanonicalBlobHash: extraction.CanonicalBlobHash,
 				ReasonCode:        extraction.FailureReasonCode,
+				Detail:            extraction.FailureDetail,
 			})
 			pass.checkpoint(ctx, documentExtractionCounters(result))
 			continue
@@ -982,6 +1001,9 @@ func executeDocumentBuild(
 		var details strings.Builder
 		for _, failure := range result.Failures {
 			fmt.Fprintf(&details, "\n%s: %s", failure.CanonicalBlobHash, failure.ReasonCode)
+			if failure.Detail != "" {
+				fmt.Fprintf(&details, ": %s", failure.Detail)
+			}
 		}
 		return result, fmt.Errorf(
 			"document build completed with %d extraction failure(s):%s\nretry one with `msgvault documents retry --capabilities <manifest> --hash <sha256>`",
@@ -1090,6 +1112,16 @@ func runDocumentStatus(
 	if rebuildStatus != nil {
 		_, _ = fmt.Fprintf(command.OutOrStdout(), "Active full rebuild: %d of %d owner(s) remaining\n",
 			rebuildStatus.RemainingOwners, rebuildStatus.SnapshotOwners)
+	}
+	for _, failure := range status.Failures {
+		_, _ = fmt.Fprintf(command.OutOrStdout(), "%s: %s", failure.CanonicalBlobHash, failure.ReasonCode)
+		if failure.Detail != "" {
+			_, _ = fmt.Fprintf(command.OutOrStdout(), ": %s", failure.Detail)
+		}
+		_, _ = fmt.Fprintln(command.OutOrStdout())
+	}
+	if len(status.Failures) > 0 && !status.FailuresExhausted {
+		_, _ = fmt.Fprintln(command.OutOrStdout(), "Additional document failures omitted; retry reported documents and check status again.")
 	}
 	return nil
 }
@@ -1418,6 +1450,7 @@ func documentProfileForConfig(
 		Model: values.Model, RetentionPosture: values.Retention,
 		TrainingPosture:   values.Training,
 		AllowedMediaTypes: allowedMediaTypes, PolicyJSON: policyJSON,
+		IncludeInline: documentsConfig.Scope.IncludeInline,
 	}
 	return inputPolicy, profile, nil
 }
