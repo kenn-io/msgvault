@@ -45,6 +45,7 @@ const (
 type OperationFamily string
 
 const (
+	OperationFamilyDeletion      OperationFamily = "deletion"
 	OperationFamilySources       OperationFamily = "sources"
 	OperationFamilyDrafts        OperationFamily = "drafts"
 	OperationFamilyProviders     OperationFamily = "providers"
@@ -79,6 +80,8 @@ var fixedOperationalDefinitions = sync.OnceValue(func() []operationalDefinition 
 	definitions = append(definitions, recordOperationalDefinitions()...)
 	definitions = append(definitions, relationshipOperationalDefinitions()...)
 	definitions = append(definitions, factOperationalDefinitions()...)
+	definitions = append(definitions, deletionOperationalDefinitions()...)
+	definitions = append(definitions, messageExportOperationalDefinitions()...)
 	return append(definitions, sweepOperationalDefinitions()...)
 })
 
@@ -91,7 +94,7 @@ func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefini
 		if !slices.Contains(opts.OperationCapabilities, definition.definition.name) || (opts.DelegatedOnly && !definition.delegated) {
 			continue
 		}
-		if definition.writes && (!allowWrites || !slices.Contains(opts.OperationWriteFamilies, definition.family)) {
+		if definition.writes && (!allowWrites || (definition.family != OperationFamilyDeletion && !slices.Contains(opts.OperationWriteFamilies, definition.family))) {
 			continue
 		}
 		if capability, ok := opts.Operations.(ConversationDraftCapabilities); ok && capability.SupportsConversationDrafts() && definition.definition.name == "draft_compose" {
@@ -109,7 +112,7 @@ func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefini
 
 func newOperationalDefinition(name, description string, family OperationFamily, input, output *jsonschema.Schema, writes, delegated bool) operationalDefinition {
 	definition := toolDefinition{name: name, description: description, inputSchema: input, outputSchema: operationalOutputSchema(output, family), annotations: toolAnnotations(!writes)}
-	openWorld := writes && family != OperationFamilyRecords && family != OperationFamilySettings && family != OperationFamilyMergeRecovery
+	openWorld := writes && family != OperationFamilyRecords && family != OperationFamilySettings && family != OperationFamilyMergeRecovery && family != OperationFamilyDeletion
 	definition.annotations.OpenWorldHint = &openWorld
 	return operationalDefinition{definition: definition, family: family, writes: writes, delegated: delegated}
 }

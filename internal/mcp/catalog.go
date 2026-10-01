@@ -164,6 +164,13 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 		definitions = append(definitions, stableIdentityScoringDefinitions...)
 		sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
 	}
+	if opts.Operations != nil {
+		definitions = slices.DeleteFunc(definitions, func(d toolDefinition) bool { return d.name == ToolStageDeletion })
+	}
+	if _, supported := opts.Engine.(query.CollectionScopeLister); supported {
+		definitions = append(definitions, fixedCollectionDefinition())
+		sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
+	}
 	if _, supported := opts.PeopleBackend.(NamedPersonPromoter); supported {
 		for i := range definitions {
 			if definitions[i].name == ToolPromotePerson {
@@ -228,6 +235,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 
 	available := definitions[:0]
 	for _, definition := range definitions {
+		addCollectionScopeSchema(&definition)
 		if definition.availability(capabilities) {
 			available = append(available, definition)
 		}

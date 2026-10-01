@@ -439,6 +439,7 @@ type HybridSearchRequest struct {
 	Query          string
 	Mode           string
 	Account        string
+	SourceID       *int64
 	Limit          int
 	Offset         int
 	IncludeMatches bool
@@ -516,6 +517,8 @@ func translateDaemonRequestError(err error) *toolResult {
 
 	var message string
 	switch coded.APIErrorCode() {
+	case "source_scope_unconfirmed":
+		message = "source_scope_unconfirmed: daemon did not confirm the selected source IDs; use API schema 2.17.0 or newer"
 	case "visual_search_not_ready":
 		message = "visual_search_not_ready: visual attachment search is unavailable"
 	case "vector_initializing":
@@ -718,8 +721,7 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	limit := searchLimitArg(args)
 	offset := limitArg(args, toolArgOffset, 0)
 
-	account, _ := args[toolArgAccount].(string)
-	sourceID, err := h.getAccountID(ctx, account)
+	sourceID, sourceIDs, err := h.readSourceScope(ctx, args)
 	if err != nil {
 		return dependencyError("resolve metadata-search account", err)
 	}
@@ -728,16 +730,16 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 		q.AccountIDs = []int64{*sourceID}
 	}
 
-	filter := query.MessageFilter{SourceID: sourceID}
+	filter := query.MessageFilter{SourceID: sourceID, SourceIDs: sourceIDs}
 
 	results, err := h.engine.SearchFast(ctx, q, filter, limit, offset)
 	if err != nil {
-		return nil, newInternalError("search metadata", err)
+		return dependencyError("search metadata", err)
 	}
 
 	totalMatched, err := h.engine.SearchFastCount(ctx, q, filter)
 	if err != nil {
-		return nil, newInternalError("count metadata search", err)
+		return dependencyError("count metadata search", err)
 	}
 
 	return jsonResult(searchMetadataResponse(newPaginatedResponse(results, totalMatched, offset)))
@@ -895,8 +897,7 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	limit := searchLimitArg(args)
 	offset := limitArg(args, toolArgOffset, 0)
 
-	account, _ := args[toolArgAccount].(string)
-	sourceID, err := h.getAccountID(ctx, account)
+	sourceID, err := h.singleSourceScope(ctx, args)
 	if err != nil {
 		return dependencyError("resolve body-search account", err)
 	}
@@ -1042,8 +1043,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 	started := time.Now()
 
 	// Resolve account filter to a source ID for the structured Filter.
-	account, _ := args[toolArgAccount].(string)
-	sourceID, err := h.getAccountID(ctx, account)
+	sourceID, err := h.singleSourceScope(ctx, args)
 	if err != nil {
 		return dependencyError("resolve semantic-search account", err)
 	}
@@ -1210,11 +1210,20 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 		), nil
 	}
 
+	var sourceID *int64
+	if _, supplied := args[toolArgCollection]; supplied {
+		var err error
+		sourceID, err = h.singleSourceScope(ctx, args)
+		if err != nil {
+			return dependencyError("resolve semantic-search scope", err)
+		}
+	}
 	account, _ := args[toolArgAccount].(string)
 	result, err := h.hybridSearcher.SearchHybrid(ctx, HybridSearchRequest{
 		Query:          queryStr,
 		Mode:           mode,
 		Account:        account,
+		SourceID:       sourceID,
 		Limit:          limit,
 		Offset:         offset,
 		IncludeMatches: true,
@@ -2007,14 +2016,14 @@ func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResu
 	args := req.GetArguments()
 
 	// Look up account filter
-	account, _ := args[toolArgAccount].(string)
-	sourceID, err := h.getAccountID(ctx, account)
+	sourceID, sourceIDs, err := h.readSourceScope(ctx, args)
 	if err != nil {
 		return dependencyError("resolve message-list account", err)
 	}
 
 	filter := query.MessageFilter{
-		SourceID: sourceID,
+		SourceID:  sourceID,
+		SourceIDs: sourceIDs,
 		Pagination: query.Pagination{
 			Limit:  listLimitArg(args) + 1,
 			Offset: limitArg(args, toolArgOffset, 0),
@@ -2051,7 +2060,7 @@ func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResu
 
 	results, err := h.engine.ListMessages(ctx, filter)
 	if err != nil {
-		return nil, newInternalError("list messages", err)
+		return dependencyError("list messages", err)
 	}
 
 	pageLimit := listLimitArg(args)
@@ -2073,10 +2082,14 @@ type getStatsResponse struct {
 	VectorSearch *vector.StatsView   `json:"vector_search,omitzero"`
 }
 
-func (h *handlers) getStats(ctx context.Context, _ toolRequest) (*toolResult, error) {
-	stats, err := h.engine.GetTotalStats(ctx, query.StatsOptions{})
+func (h *handlers) getStats(ctx context.Context, req toolRequest) (*toolResult, error) {
+	sourceID, sourceIDs, err := h.readSourceScope(ctx, req.GetArguments())
 	if err != nil {
-		return nil, newInternalError("load archive statistics", err)
+		return dependencyError("resolve statistics scope", err)
+	}
+	stats, err := h.engine.GetTotalStats(ctx, query.StatsOptions{SourceID: sourceID, SourceIDs: sourceIDs})
+	if err != nil {
+		return dependencyError("load archive statistics", err)
 	}
 
 	accounts, err := h.engine.ListAccounts(ctx)
@@ -2084,7 +2097,12 @@ func (h *handlers) getStats(ctx context.Context, _ toolRequest) (*toolResult, er
 		return nil, newInternalError("list archive accounts", err)
 	}
 
-	vs, vsErr := vector.CollectStats(ctx, h.backend)
+	accounts = collectionAccounts(accounts, sourceID, sourceIDs)
+	var vs *vector.StatsView
+	var vsErr error
+	if sourceID == nil && sourceIDs == nil {
+		vs, vsErr = vector.CollectStats(ctx, h.backend)
+	}
 	if vsErr != nil {
 		slog.Warn("MCP vector statistics are incomplete", "error", vsErr)
 	}
@@ -2105,15 +2123,15 @@ func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult,
 	}
 
 	// Look up account filter
-	account, _ := args[toolArgAccount].(string)
-	sourceID, err := h.getAccountID(ctx, account)
+	sourceID, sourceIDs, err := h.readSourceScope(ctx, args)
 	if err != nil {
 		return dependencyError("resolve aggregate account", err)
 	}
 
 	opts := query.AggregateOptions{
-		SourceID: sourceID,
-		Limit:    limitArg(args, toolArgLimit, 50),
+		SourceID:  sourceID,
+		SourceIDs: sourceIDs,
+		Limit:     limitArg(args, toolArgLimit, 50),
 	}
 
 	if opts.After, err = getDateArg(args, toolArgAfter); err != nil {
@@ -2139,7 +2157,7 @@ func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult,
 
 	rows, err := h.engine.Aggregate(ctx, viewType, opts)
 	if err != nil {
-		return nil, newInternalError("aggregate messages", err)
+		return dependencyError("aggregate messages", err)
 	}
 
 	return jsonResult(aggregateResponse{Data: nonNilSlice(rows)})
@@ -2256,8 +2274,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 	args := req.GetArguments()
 
 	// Look up account filter
-	account, _ := args[toolArgAccount].(string)
-	sourceID, err := h.getAccountID(ctx, account)
+	sourceID, err := h.singleSourceScope(ctx, args)
 	if err != nil {
 		return dependencyError("resolve deletion account", err)
 	}

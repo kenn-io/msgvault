@@ -1558,15 +1558,23 @@ func sourceIDForSourceIDs(sourceID *int64, sourceIDs []int64) *int64 {
 	return sourceID
 }
 
+type sourceScopeConfirmationError struct{ surface string }
+
+func (e *sourceScopeConfirmationError) Error() string {
+	return fmt.Sprintf("daemon did not confirm %s source IDs; upgrade the daemon to API schema 2.17.0 or newer", e.surface)
+}
+
+func (*sourceScopeConfirmationError) APIErrorCode() string { return "source_scope_unconfirmed" }
+
 func requireAppliedSourceIDs(requested, applied []int64, surface string) error {
 	if requested == nil {
 		return nil
 	}
 	if applied == nil {
-		return fmt.Errorf("daemon did not confirm %s source IDs; upgrade the daemon to API schema 2.17.0 or newer", surface)
+		return &sourceScopeConfirmationError{surface: surface}
 	}
 	if !slices.Equal(normalizedSourceIDs(requested), normalizedSourceIDs(applied)) {
-		return fmt.Errorf("daemon did not confirm %s source IDs; upgrade the daemon to API schema 2.17.0 or newer", surface)
+		return &sourceScopeConfirmationError{surface: surface}
 	}
 	return nil
 }

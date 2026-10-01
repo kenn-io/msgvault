@@ -21,6 +21,7 @@ func (a *storeAPIAdapter) MCPCommandDescriptors() []apiprotocol.MCPCommandDescri
 
 func registeredMCPCommandDescriptors() []apiprotocol.MCPCommandDescriptor {
 	paths := [][]string{
+		{"export-messages"},
 		{"draft-reply"}, {"draft-compose"}, {"draft-forward"}, {"draft-get"},
 		{"draft-list"}, {"draft-edit"}, {"draft-delete"}, {"draft-recover"}, {"draft-send-as"},
 		{"person", "provider", multimodalStatusSubcommand}, {"person", "provider", "history"},

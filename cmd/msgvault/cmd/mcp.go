@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/vector/visual"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -210,6 +211,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.AttachmentsDir = cfg.AttachmentsDir()
 		opts.DataDir = cfg.Data.DataDir
 	}
+	opts.Operations = newDaemonMCPOperations(st, nil)
 	capabilities, discoveryErr := st.MCPCapabilities(ctx)
 	if discoveryErr != nil {
 		log.Warn("operational MCP tools disabled because daemon discovery failed", "error", discoveryErr)
@@ -326,6 +328,7 @@ func (s daemonMCPHybridSearcher) SearchHybrid(
 	resp, err := s.client.GetCLIHybridSearch(ctx, daemonclient.CLIHybridSearchRequest{
 		Query:          req.Query,
 		Account:        req.Account,
+		Filter:         query.MessageFilter{SourceID: req.SourceID},
 		Mode:           req.Mode,
 		Limit:          req.Limit,
 		Offset:         req.Offset,

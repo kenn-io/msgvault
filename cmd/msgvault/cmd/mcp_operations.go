@@ -41,6 +41,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 		return backend
 	}
 	backend.supported = append(backend.supported, embeddingMCPCapabilities(backend.commands)...)
+	backend.supported = append(backend.supported, messageExportMCPCapabilities(backend.commands)...)
 
 	hasRoute := func(id, method, path string, query ...string) bool {
 		for _, route := range capabilities.Routes {
@@ -62,6 +63,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	if hasRoute("triggerSync", http.MethodPost, "/api/v1/sync/{account}", "source_type") && hasRoute("listSourceStatus", http.MethodGet, "/api/v1/sources/status", "source_type") {
 		backend.supported = append(backend.supported, "sync_source")
 	}
+	backend.supported = append(backend.supported, deletionMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, importMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, briefMCPCapabilities(hasRoute, capabilities)...)
@@ -113,6 +115,12 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.StatusMessageResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
+		if name == mcpPersonExportTool {
+			return b.executePersonMessageExport(ctx, args)
+		}
+		if result, handled, err := b.executeDeletionOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeFactOperation(ctx, name, args); handled {
 			return result, err
 		}
@@ -167,6 +175,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
+		if disclosure, handled, err := b.deletionOperationDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
 		if disclosure, handled, err := b.factOperationDisclosure(ctx, name, args); handled {
 			return disclosure, err
 		}
@@ -308,6 +319,8 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 		case "person_profile_failed", "person_profile_media_failed", "attribute_failed":
 			return operationFailure(code, writes), nil
 		case "brief_generation_unavailable", "briefs_unavailable", "person_brief_not_found", "person_brief_not_tracked", "person_brief_not_enrolled", "person_brief_lane_disabled", "person_brief_policy_refused", "person_brief_no_supported_lane", "person_brief_busy":
+			return operationFailure(code, false), nil
+		case "candidate_pool_saturated", "selection_not_deletable", "multi_account_selection", "selection_changed", "preflight_required", "operation_token_invalid", "archive_revision_changed", "search_revision_changed", "source_resolution_conflict", "no_messages_matched", "invalid_selection", "candidate_snapshot_required", "invalid_selection_predicate":
 			return operationFailure(code, false), nil
 		case "person_brief_failed":
 			return operationFailure(code, writes), nil
