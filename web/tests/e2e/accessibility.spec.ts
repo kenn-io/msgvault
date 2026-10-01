@@ -236,6 +236,23 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(fact.getByRole('button', { name: 'Person: Synthetic One' })).toBeVisible();
     await assertNoViolations(page, `Facts with a chosen person ${theme}`);
   });
+
+  test(`${theme} Reviews identity matches and imported relationships have no axe violations`, async ({ page }) => {
+    await installDirectoryReviewArchive(page);
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory_review', reviewKind: 'identity', identityState: 'candidate'
+    }))}`);
+    await setKitTheme(page, theme);
+    await expect(page.getByRole('article', { name: 'Identity match 17' })).toBeVisible();
+    await assertNoViolations(page, `Reviews identity matches ${theme}`);
+
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory_review', reviewKind: 'relationship', relationshipReviewState: 'pending'
+    }))}`);
+    await setKitTheme(page, theme);
+    await expect(page.getByRole('article', { name: 'Imported relationship review 41' })).toBeVisible();
+    await assertNoViolations(page, `Imported relationships ${theme}`);
+  });
 }
 
 test('Directory profile maintenance is accessible at desktop and narrow widths', async ({ page }) => {

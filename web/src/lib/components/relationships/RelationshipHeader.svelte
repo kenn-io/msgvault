@@ -517,12 +517,14 @@
 
   .title-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-4);
+    gap: var(--space-2) var(--space-4);
   }
 
   .title-row h2 {
-    flex: 1;
+    flex: 1 1 12rem;
+    min-width: 0;
   }
 
   h2 {

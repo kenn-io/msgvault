@@ -102,6 +102,30 @@ describe('FactReviewPanel', () => {
     expect(screen.getByRole('button', { name: 'Person: Person 12' })).toBeDefined();
   });
 
+  it('drops the name-load note after picking another person', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input), 'http://localhost').pathname;
+      if (path === '/api/v1/people/directory') {
+        return Response.json({
+          people: [
+            { id: 13, display_name: 'Sam Example', categories: [], organizations: [], contact_state: 'active', revision: 1 }
+          ]
+        });
+      }
+      if (path === '/api/v1/people/12') return Response.json({ message: 'boom' }, { status: 500 });
+      return new Promise<Response>(() => undefined);
+    });
+    const view = renderFactPanel({ client: createAPIClient(fetchFn), personID: 12 });
+    expect(await screen.findByText("Couldn't load this person's name.")).toBeDefined();
+
+    await fireEvent.input(await openTypeahead('Person'), { target: { value: 'Sam' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Sam Example' }));
+    await view.rerender({ personID: 13 });
+
+    expect(screen.getByText('Sam Example', { selector: 'strong' })).toBeDefined();
+    expect(screen.queryByText("Couldn't load this person's name.")).toBeNull();
+  });
+
   it('does not show the previous name for a different person', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input), 'http://localhost').pathname;

@@ -125,7 +125,7 @@
   const countLabel = $derived(
     controller.loading && controller.rows.length === 0
       ? ''
-      : `${controller.rows.length.toLocaleString()}${controller.cursor !== null ? '+' : ''} ${controller.rows.length === 1 ? 'person' : 'people'}`
+      : `${controller.rows.length.toLocaleString()}${controller.cursor !== null ? '+' : ''} ${controller.rows.length === 1 && controller.cursor === null ? 'person' : 'people'}`
   );
 
   $effect(() => {
@@ -188,26 +188,30 @@
           oninput={(value) => editTextFilter('directoryOrganization', value)} />
         <SelectDropdown title="Primary channel" value={controller.primaryChannel} options={primaryChannelOptions}
           onchange={(value) => selectFilter({ directoryPrimaryChannel: value })} />
-        <label class="date-field">
-          Last contacted after
-          <!-- kit-ui-check-ignore: a one-sided boundary needs a single optional date; kit DateRangePicker only commits complete ranges (PR 3 spec, Directory list). -->
-          <input type="date" aria-label="Last contacted after" value={controller.lastContactAfter}
-            onchange={(event) => selectFilter({ directoryLastContactAfter: event.currentTarget.value })} />
+        <span class="date-field">
+          <label>
+            Last contacted after
+            <!-- kit-ui-check-ignore: a one-sided boundary needs a single optional date; kit DateRangePicker only commits complete ranges (PR 3 spec, Directory list). -->
+            <input type="date" aria-label="Last contacted after" value={controller.lastContactAfter}
+              onchange={(event) => selectFilter({ directoryLastContactAfter: event.currentTarget.value })} />
+          </label>
           {#if controller.lastContactAfter}
             <IconButton size="sm" ariaLabel="Clear last contacted after"
               onclick={() => selectFilter({ directoryLastContactAfter: '' })}><XIcon size="12" aria-hidden="true" /></IconButton>
           {/if}
-        </label>
-        <label class="date-field">
-          Last contacted before
-          <!-- kit-ui-check-ignore: a one-sided boundary needs a single optional date; kit DateRangePicker only commits complete ranges (PR 3 spec, Directory list). -->
-          <input type="date" aria-label="Last contacted before" value={controller.lastContactBefore}
-            onchange={(event) => selectFilter({ directoryLastContactBefore: event.currentTarget.value })} />
+        </span>
+        <span class="date-field">
+          <label>
+            Last contacted before
+            <!-- kit-ui-check-ignore: a one-sided boundary needs a single optional date; kit DateRangePicker only commits complete ranges (PR 3 spec, Directory list). -->
+            <input type="date" aria-label="Last contacted before" value={controller.lastContactBefore}
+              onchange={(event) => selectFilter({ directoryLastContactBefore: event.currentTarget.value })} />
+          </label>
           {#if controller.lastContactBefore}
             <IconButton size="sm" ariaLabel="Clear last contacted before"
               onclick={() => selectFilter({ directoryLastContactBefore: '' })}><XIcon size="12" aria-hidden="true" /></IconButton>
           {/if}
-        </label>
+        </span>
       </div>
     {/if}
     {#if filterChips.length > 0}
@@ -263,6 +267,7 @@
   .directory-count { margin-left: auto; color: var(--text-muted); font-size: var(--font-size-xs); white-space: nowrap; }
   .filter-panel { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); }
   .date-field { display: inline-flex; gap: var(--space-2); align-items: center; color: var(--text-secondary); font-size: var(--font-size-xs); }
+  .date-field label { display: inline-flex; gap: var(--space-2); align-items: center; }
   .chip { display: inline-flex; max-width: 100%; align-items: center; gap: var(--space-1); padding: 0 0 0 var(--space-2); border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-muted)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); color: var(--text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
   .directory-content { display: grid; grid-row: 4; min-height: 0; overflow: hidden; }
   .directory-content > :global(*) { min-height: 0; overflow: auto; }

@@ -27,7 +27,7 @@
   let searching = $state(false);
   let searchError = $state('');
   let named = $state<{ id: number; name: string } | null>(null);
-  let nameLoadFailed = $state(false);
+  let nameLoadFailedID = $state<number | null>(null);
   let searchAbort: AbortController | undefined;
   let searchGeneration = 0;
 
@@ -41,7 +41,6 @@
     const id = personID;
     if (id === null || untrack(() => personName) !== null) return;
     const abort = new AbortController();
-    nameLoadFailed = false;
     void loadPersonName(id, abort.signal);
     return () => abort.abort();
   });
@@ -58,12 +57,12 @@
       const response = await generatedGetPersonProfile({ id }, { ...client, signal });
       if (signal.aborted) return;
       if (!response.data) {
-        nameLoadFailed = true;
+        nameLoadFailedID = id;
         return;
       }
       if (response.data.display_name) named = { id, name: response.data.display_name };
     } catch {
-      if (!signal.aborted) nameLoadFailed = true;
+      if (!signal.aborted) nameLoadFailedID = id;
     }
   }
   async function searchPeople(value: string): Promise<void> {
@@ -137,7 +136,7 @@
       <strong>{personName ?? `Person ${personID}`}</strong>
       <Button label="Open person profile" size="sm" onclick={() => onOpenPerson(personID)} />
     </div>
-    {#if nameLoadFailed}
+    {#if nameLoadFailedID === personID && personName === null}
       <p class="name-note">Couldn't load this person's name.</p>
     {/if}
     <div class="notices" aria-label="Unavailable fact features">

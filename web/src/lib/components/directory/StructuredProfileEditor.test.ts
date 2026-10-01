@@ -648,7 +648,8 @@ describe('StructuredProfileEditor', () => {
 
     await fireEvent.input(field, { target: { value: 'spring 2019' } });
     expect(screen.queryByText(/does not exist/)).toBeNull();
-    expect(screen.getByText('Saved as text')).toBeTruthy();
+    const hint = screen.getByText('Saved as text');
+    expect(field.getAttribute('aria-describedby')).toBe(hint.id);
     expect(save).toHaveProperty('disabled', false);
   });
 

@@ -84,6 +84,10 @@
   let dateLabel = $state(currentDate?.label ?? '');
   const uid = $props.id();
   const dateError = $derived(profileDateError(dateValue));
+  const textDate = $derived(isTextProfileDate(dateValue));
+  const dateDescribedBy = $derived(
+    [dateError ? `${uid}-date-error` : '', textDate ? `${uid}-date-hint` : ''].filter(Boolean).join(' ') || undefined
+  );
   let categoryValue = $state(initialSection === 'categories' ? (initialCurrent?.original_value ?? '') : '');
   let mediaKind = $state(currentMedia?.media_kind ?? 'photo');
   let mediaURI = $state(
@@ -444,11 +448,11 @@
           required
           block
           disabled={submitting}
-          ariaDescribedby={dateError ? `${uid}-date-error` : undefined}
+          ariaDescribedby={dateDescribedBy}
         /></label
       >
       {#if dateError}<p id="{uid}-date-error" class="field-error">{dateError}</p>{/if}
-      {#if isTextProfileDate(dateValue)}<p class="field-hint">Saved as text</p>{/if}
+      {#if textDate}<p id="{uid}-date-hint" class="field-hint">Saved as text</p>{/if}
       <label>Label<TextInput bind:value={dateLabel} ariaLabel="Date label" block disabled={submitting} /></label>
     {:else if section === 'categories'}
       <label

@@ -145,7 +145,7 @@
           />
           {#if publication.conflict_id}
             <Button
-              tone="workflow"
+              tone="info"
               surface="solid"
               label={`Review CardDAV conflict ${publication.conflict_id}`}
               onclick={() => onOpenConflict(publication.conflict_id!)}

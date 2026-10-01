@@ -211,7 +211,7 @@ describe('DirectoryWorkspace', () => {
     const controller = new DirectoryController(client);
     render(DirectoryWorkspace, { client, controller, state });
 
-    expect(await screen.findByText('1+ person')).toBeDefined();
+    expect(await screen.findByText('1+ people')).toBeDefined();
   });
 
   it('offers only contact states accepted by the Directory handler contract', async () => {

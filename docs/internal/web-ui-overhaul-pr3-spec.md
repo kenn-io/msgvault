@@ -1,6 +1,6 @@
 # Web UI overhaul, PR 3: People
 
-Status: draft for review, 2026-09-30; revised after review the same day. PR 3 has not started. This spec
+Status: draft for review, 2026-09-30; revised after review the same day. PR 3 is implemented on the `ui-ux-people` branch (PR pending). This spec
 refines the People sections of the [Web UI overhaul design](web-ui-overhaul-design.md)
 (Relationships, Directory, Reviews) against the code on `main` at ef66efc1. The
 design owns the shared rules (palette, page structure, toolbars, code labels,
