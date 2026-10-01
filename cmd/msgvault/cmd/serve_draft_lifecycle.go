@@ -415,6 +415,18 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	}
 	draft, err := a.store.GetIMAPDraftContext(ctx, intent.DraftID)
 	if err != nil {
+		if errors.Is(err, store.ErrIMAPDraftNotFound) {
+			beeperDraft, beeperErr := a.store.GetBeeperDraftContext(ctx, intent.DraftID)
+			if beeperErr == nil {
+				return a.runBeeperDraftLifecycle(ctx, intent, req.Grant, beeperDraft, emit)
+			}
+			if !errors.Is(beeperErr, store.ErrBeeperDraftNotFound) {
+				if req.Grant != nil {
+					return draftReplyNotPermitted(beeperErr)
+				}
+				return draftReplyError("draft_read_failed", beeperErr)
+			}
+		}
 		if req.Grant != nil {
 			return a.runDelegatedGmailDraftLifecycle(ctx, intent, req.Grant, err, emit)
 		}

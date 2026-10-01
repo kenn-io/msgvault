@@ -228,6 +228,8 @@ func TestDraftSourceConfigErrorText(t *testing.T) {
 		"[[gmail.drafts]]\nsource_id = 0\n":                                                "[[gmail.drafts]] entry 1: source_id must be positive",
 		"[[gmail.drafts]]\nsource_id = 4\n[[gmail.drafts]]\nsource_id = 4\n":               "[[gmail.drafts]] entry 2: duplicate source_id selector 4",
 		imap("source_id = 1\nmailbox = \"Drafts\"") + "[[gmail.drafts]]\nsource_id = -1\n": "[[gmail.drafts]] entry 1: source_id must be positive",
+		"[[beeper.drafts]]\nenabled = true\n":                                              "[[beeper.drafts]] entry 1: source_id is required",
+		"[[beeper.drafts]]\nsource_id = 4\nchat = \"x\"\n":                                 `unknown Beeper draft config key "beeper.drafts.chat"`,
 	} {
 		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 		_, err := Load(path, "")

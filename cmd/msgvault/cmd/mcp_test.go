@@ -230,7 +230,13 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			var healthRequests atomic.Int32
+			var discoveryRequests atomic.Int32
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/mcp/capabilities" {
+					discoveryRequests.Add(1)
+					http.NotFound(w, r)
+					return
+				}
 				assert.Equal("/api/v1/health", r.URL.Path, "startup must not request archive statistics")
 				healthRequests.Add(1)
 				if tt.health == "" {
@@ -246,6 +252,7 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 			assert.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
 			assert.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
 			assert.Equal(int32(1), healthRequests.Load(), "reuse the schema probe")
+			assert.Equal(int32(1), discoveryRequests.Load(), "probe optional operations once")
 		})
 	}
 }
@@ -283,7 +290,9 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	require.ErrorAs(err, &coded)
 	assert.Equal("vector_initializing", coded.APIErrorCode())
 	path := <-requests
-	assert.Equal("/api/v1/health", path, "startup should only probe health")
+	assert.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
+	path = <-requests
+	assert.Equal("/api/v1/health", path, "startup probes configured lanes")
 	path = <-requests
 	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
 }

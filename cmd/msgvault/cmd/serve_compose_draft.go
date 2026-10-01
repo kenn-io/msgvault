@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/api"
 	imaplib "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/sourceops"
 )
 
 type draftComposeIntent struct {
@@ -165,6 +166,11 @@ func (a *storeAPIAdapter) runCLIComposeDraft(
 	}
 	if intent.ConversationID != 0 {
 		return a.runCLIChatDraftCreate(ctx, intent, req.Grant, emit)
+	}
+	if source, err := sourceops.ResolveExactOne(a.store, sourceops.Selector{
+		Account: intent.Account, SourceID: intent.SourceID, SourceIDSet: intent.SourceIDSet,
+	}); err == nil && source.SourceType == "beeper" {
+		return a.runBeeperDraftCreate(ctx, req.Grant, intent, source, emit)
 	}
 	target, from, _, err := a.resolveDraftTarget(
 		ctx, nil, intent.Account, intent.SourceID, intent.SourceIDSet, intent.From, req.Grant,

@@ -20,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
@@ -700,12 +701,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
+		mcpCommands:            registeredMCPCommandDescriptors(),
 		store:                  s,
 		config:                 cfg,
 		options:                state.options,
 		logger:                 logger,
 		draftPolicy:            snapshotIMAPDraftPolicy(cfg),
 		gmailDraftPolicy:       snapshotGmailDraftPolicy(cfg),
+		beeperDraftPolicy:      snapshotBeeperDraftPolicy(cfg),
 		draftCacheRefresh:      refreshCacheAfterWrite,
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
@@ -919,6 +922,13 @@ func snapshotGmailDraftPolicy(cfg *config.Config) []config.GmailDraftSource {
 		return nil
 	}
 	return append([]config.GmailDraftSource(nil), cfg.Gmail.Drafts...)
+}
+
+func snapshotBeeperDraftPolicy(cfg *config.Config) []config.GmailDraftSource {
+	if cfg == nil {
+		return nil
+	}
+	return append([]config.GmailDraftSource(nil), cfg.Beeper.Drafts...)
 }
 
 func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger) error {
@@ -1524,6 +1534,7 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
+	mcpCommands             []apiprotocol.MCPCommandDescriptor
 	store                   *store.Store
 	config                  *config.Config
 	options                 invocationOptions
@@ -1531,6 +1542,7 @@ type storeAPIAdapter struct {
 	draftPolicy             []config.IMAPDraftSource
 	draftClientFactory      func(context.Context, *store.Source) (*imaplib.Client, error)
 	gmailDraftPolicy        []config.GmailDraftSource
+	beeperDraftPolicy       []config.GmailDraftSource
 	gmailDraftClientFactory func(context.Context, *store.Source) (gmail.DraftAPI, error)
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
 	// the same best-effort hook the meeting importer uses.

@@ -206,6 +206,7 @@ func TestIdentityDecisionConfirmationWorksAcrossAuthenticatedStatelessHTTPReques
 	arguments := map[string]any{"candidate_id": candidate["id"], "review_token": candidate["review_token"]}
 	httpOpts := HTTPOptions{APIKey: "fixture-api-key", AllowWrites: true}
 	handler := newMCPHTTPServer(opts, httpOpts).Handler
+	var clientID string
 	call := func(id int, extra map[string]any) task3RPCResponse {
 		t.Helper()
 		params := map[string]any{"name": ToolAcceptIdentityMatch, "arguments": arguments,
@@ -216,8 +217,13 @@ func TestIdentityDecisionConfirmationWorksAcrossAuthenticatedStatelessHTTPReques
 		requires.NoError(err)
 		req := task3ModernRequest("tools/call", ToolAcceptIdentityMatch, string(body))
 		req.Header.Set("Authorization", "Bearer fixture-api-key")
+		if clientID != "" {
+			req.Header.Set("Mcp-Session-Id", clientID)
+		}
 		returnRecorder, response := task3Serve(handler, req)
 		task3RequireSuccess(t, returnRecorder, response)
+		clientID = returnRecorder.Header().Get("Mcp-Session-Id")
+		requires.NotEmpty(clientID)
 		return response
 	}
 	first := call(1, nil)
@@ -249,6 +255,7 @@ func TestIdentityDecisionConfirmationWorksAcrossNoKeyStatelessHTTPRequests(t *te
 	requires.True(ok)
 	arguments := map[string]any{"candidate_id": candidate["id"], "review_token": candidate["review_token"]}
 	handler := newMCPHTTPServer(opts, HTTPOptions{AllowWrites: true}).Handler
+	var clientID string
 	call := func(id int, extra map[string]any) task3RPCResponse {
 		t.Helper()
 		params := map[string]any{"name": ToolAcceptIdentityMatch, "arguments": arguments,
@@ -258,7 +265,13 @@ func TestIdentityDecisionConfirmationWorksAcrossNoKeyStatelessHTTPRequests(t *te
 		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params})
 		requires.NoError(err)
 		req := task3ModernRequest("tools/call", ToolAcceptIdentityMatch, string(body))
-		_, response := task3Serve(handler, req)
+		if clientID != "" {
+			req.Header.Set("Mcp-Session-Id", clientID)
+		}
+		recorder, response := task3Serve(handler, req)
+		task3RequireSuccess(t, recorder, response)
+		clientID = recorder.Header().Get("Mcp-Session-Id")
+		requires.NotEmpty(clientID)
 		return response
 	}
 	first := call(1, nil)

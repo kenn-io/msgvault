@@ -70,8 +70,8 @@ func isPermanentAssetError(body []byte) bool {
 // TokenFunc returns a bearer token for a Beeper Desktop API request.
 type TokenFunc func(context.Context) (string, error)
 
-// Client is a read-only Beeper Desktop API client. It exposes only GET
-// endpoints by construction, so the archiver can never mutate Beeper state.
+// Client is a Beeper Desktop API client. Archive reads use only GET; SetDraft
+// is the one write, reached only from an explicit draft command.
 type Client struct {
 	baseURL       string
 	token         TokenFunc

@@ -5253,6 +5253,57 @@ func (l ListDeletionsResponse) Validate() error {
 	return errors
 }
 
+type MCPCapabilities struct {
+	Commands  []MCPCommandDescriptor `json:"commands" validate:"required"`
+	Delegated bool                   `json:"delegated"`
+	Routes    []MCPRouteDescriptor   `json:"routes" validate:"required"`
+	Version   int64                  `json:"version"`
+}
+
+func (m MCPCapabilities) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range m.Commands {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Commands[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range m.Routes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Routes[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MCPCommandDescriptor struct {
+	Delegated bool     `json:"delegated"`
+	Flags     []string `json:"flags" validate:"required"`
+	Name      string   `json:"name" validate:"required"`
+}
+
+func (m MCPCommandDescriptor) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MCPRouteDescriptor struct {
+	Method            string   `json:"method" validate:"required"`
+	OperationID       string   `json:"operation_id" validate:"required"`
+	Path              string   `json:"path" validate:"required"`
+	QueryParameters   []string `json:"query_parameters" validate:"required"`
+	RequestProperties []string `json:"request_properties" validate:"required"`
+}
+
+func (m MCPRouteDescriptor) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
 type Manifest struct {
 	CreatedAt   time.Time        `json:"created_at" validate:"required"`
 	CreatedBy   string           `json:"created_by" validate:"required"`

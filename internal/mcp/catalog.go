@@ -69,7 +69,7 @@ func searchVisualAttachmentsDefinition() toolDefinition {
 			toolArgPersonID:      safeIDSchema("Only attachments related to this durable person ID"),
 			toolArgParticipantID: safeIDSchema("Only attachments related to this observed participant, translated through its durable person when bound"),
 			"directions": {
-				Type: "array", Description: "Optional union of from_person, to_person, and group; requires a person reference",
+				Type: mcpSchemaArray, Description: "Optional union of from_person, to_person, and group; requires a person reference",
 				Items: direction,
 			},
 			"source_id":      safeIDSchema("Only attachments from this source ID"),
@@ -163,6 +163,13 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 	if opts.IdentityScoring != nil {
 		definitions = append(definitions, stableIdentityScoringDefinitions...)
 		sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
+	}
+	if _, supported := opts.PeopleBackend.(NamedPersonPromoter); supported {
+		for i := range definitions {
+			if definitions[i].name == ToolPromotePerson {
+				definitions[i] = namedPromotionDefinition()
+			}
+		}
 	}
 	return definitions
 }
@@ -862,11 +869,11 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery: stringSchema("Document content or filename query; terms are ANDed"),
 			"source_ids": {
-				Type: "array", Description: "Optional source ID scope",
+				Type: mcpSchemaArray, Description: "Optional source ID scope",
 				Items: safeIDSchema("Source ID"),
 			},
 			"message_types": {
-				Type: "array", Description: "Optional containing message type scope",
+				Type: mcpSchemaArray, Description: "Optional containing message type scope",
 				Items: stringSchema("Containing message type"),
 			},
 			toolArgAttachmentID:  safeIDSchema("Optional exact attachment occurrence ID"),
@@ -874,7 +881,7 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 			toolArgPersonID:      safeIDSchema("Optional durable person ID"),
 			toolArgParticipantID: safeIDSchema("Optional observed participant ID; translated through its durable person when bound"),
 			"directions": {
-				Type: "array", Description: "Optional union of from_person, to_person, and group; requires a person reference",
+				Type: mcpSchemaArray, Description: "Optional union of from_person, to_person, and group; requires a person reference",
 				Items: direction,
 			},
 			toolArgAfter:      stringSchema("Only messages on or after YYYY-MM-DD"),
@@ -904,14 +911,14 @@ func searchPersonFilesDefinition(_ *handlers) toolDefinition {
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgPersonID: safeIDSchema("Durable person ID"),
 			"directions": {
-				Type: "array", Description: "Optional union of from_person, to_person, and group",
+				Type: mcpSchemaArray, Description: "Optional union of from_person, to_person, and group",
 				Items: direction,
 			},
 			toolArgAfter:  stringSchema("Only messages on or after YYYY-MM-DD"),
 			toolArgBefore: stringSchema("Only messages before YYYY-MM-DD"),
 			"filename":    stringSchema("Case-insensitive filename substring filter"),
 			"mime_families": {
-				Type: "array", Description: "Optional stable MIME-family filter",
+				Type: mcpSchemaArray, Description: "Optional stable MIME-family filter",
 				Items: mimeFamily,
 			},
 			toolArgLimit:  limit,

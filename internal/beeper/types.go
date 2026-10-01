@@ -93,6 +93,8 @@ type Chat struct {
 	Type         string           `json:"type"` // "single" | "group"
 	Participants ChatParticipants `json:"participants"`
 	LastActivity time.Time        `json:"lastActivity"`
+	// Draft is the composer draft as sent: absent, null, or an object.
+	Draft jsontext.Value `json:"draft"`
 }
 
 // Reaction is one participant's reaction to a message.

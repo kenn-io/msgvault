@@ -5714,6 +5714,65 @@ components:
       required:
         - manifests
       type: object
+    MCPCapabilities:
+      properties:
+        commands:
+          items:
+            $ref: "#/components/schemas/MCPCommandDescriptor"
+          type: array
+        delegated:
+          type: boolean
+        routes:
+          items:
+            $ref: "#/components/schemas/MCPRouteDescriptor"
+          type: array
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - delegated
+        - routes
+        - commands
+      type: object
+    MCPCommandDescriptor:
+      properties:
+        delegated:
+          type: boolean
+        flags:
+          items:
+            type: string
+          type: array
+        name:
+          type: string
+      required:
+        - name
+        - flags
+        - delegated
+      type: object
+    MCPRouteDescriptor:
+      properties:
+        method:
+          type: string
+        operation_id:
+          type: string
+        path:
+          type: string
+        query_parameters:
+          items:
+            type: string
+          type: array
+        request_properties:
+          items:
+            type: string
+          type: array
+      required:
+        - operation_id
+        - method
+        - path
+        - query_parameters
+        - request_properties
+      type: object
     Manifest:
       additionalProperties: false
       properties:
@@ -13623,7 +13682,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.36.0
+  version: 2.37.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -19920,6 +19979,27 @@ paths:
       security:
         - apiKey: []
       summary: Test task integration discovery, authentication, capabilities, and project
+      tags:
+        - API
+  /api/v1/mcp/capabilities:
+    get:
+      operationId: getMCPCapabilities
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPCapabilities"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Describe supported MCP daemon operations
       tags:
         - API
   /api/v1/meetings/actions:

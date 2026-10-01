@@ -184,7 +184,7 @@ func TestRelationshipCalendarOpenAPIContract(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
-	assert.Equal("2.36.0", APISchemaVersion)
+	assert.Equal("2.37.0", APISchemaVersion)
 	document := OpenAPIDocument()
 	path := document.Paths["/api/v1/relationships/{id}/calendar"]
 	require.NotNil(path)

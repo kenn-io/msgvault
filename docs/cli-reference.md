@@ -298,6 +298,50 @@ structured provider outcomes as `draft-reply`. It stores the Bcc envelope in
 the draft so the mail application can use it. It never sends the message or
 validates provider send-as rights.
 
+### Beeper chat drafts
+
+For a Beeper source, `draft-compose` leaves a text draft in the composer of an
+existing chat. `--to` takes the Beeper chat ID, and `--body` the text; no other
+fields apply. Enable it per source in the daemon host's `config.toml`, the same
+way as Gmail, and keep Beeper Desktop running:
+
+```toml
+[[beeper.drafts]]
+source_id = 42
+enabled = true
+```
+
+```bash
+msgvault draft-compose --source-id 42 --to '!room:beeper.local' --body 'Draft text'
+```
+
+The chat's composer must be empty. Each chat has at most one managed draft;
+`draft_exists` reports the existing one. `draft-get`, `draft-edit`, and
+`draft-delete` work on the returned draft ID, and `draft-delete` clears the
+composer. The edit body must be nonblank. Delegated tokens need `draft.create` on the
+Beeper source to create; `draft-get` accepts `draft.edit` or `draft.delete`,
+`draft-edit` needs `draft.edit`, and `draft-delete` needs `draft.delete`.
+Delete-only agents receive draft metadata without committed or pending text,
+including in error responses. A creator's `draft_exists` result carries the
+draft ID without its text. `draft-get` shows the draft as
+Beeper last reported it, which can differ from the text sent because Beeper
+formats it. Edit and delete read the composer first and return `draft_conflict`
+when someone changed it in Beeper; msgvault never replaces text it did not
+write. Beeper has no conditional write, so a change typed between that read and
+the write can still be cleared. A write Beeper refuses before anything changed
+returns `provider_rejected`; a new draft whose text Beeper refused is
+discarded, so the chat is free for another `draft-compose`. A write with an
+unknown outcome returns `remote_unknown` and keeps the draft's pending
+operation; the next edit or delete settles it from what Beeper shows. An edit
+that finds an earlier delete settled, or a new draft's text never delivered,
+returns `draft_discarded`. When Beeper shows text msgvault cannot
+attribute, the command returns `pending_operation`; clear the composer in
+Beeper and retry. `not_supported` means the installed Beeper Desktop does not
+report chat drafts, `chat_not_found` that Beeper has no chat with that ID,
+`provider_unavailable` that Beeper Desktop or its saved token cannot be
+reached, and `provider_identity_mismatch` that Beeper answered
+for another chat or account.
+
 ---
 
 ## draft-forward
@@ -2056,58 +2100,6 @@ msgvault stats [flags]
 Use the [people guide](/docs/usage/people/) for the workflow. Observed contacts
 use participant IDs; saved profiles use person IDs. Each command below takes
 the ID named in its arguments.
-
-### identity matches
-
-Review archive-derived identity suggestions with a token from the current
-review snapshot:
-
-| Command | Purpose |
-|---|---|
-| `identity matches list [--state candidate] [--limit 100] [--offset 0] [--json]` | List candidate, accepted, rejected, conflict, or all match records |
-| `identity matches show <id> [--json]` | Inspect evidence, blockers, and the current review token |
-| `identity matches accept <id> --review-token <token> [--notes-file <path> | --notes-stdin] [--json]` | Accept the reviewed suggestion and apply its participant link |
-| `identity matches reject <id> --review-token <token> [--notes-file <path> | --notes-stdin] [--json]` | Reject the reviewed suggestion while retaining its record |
-
-Always inspect the match before deciding. Evidence or endpoint changes make a
-review token stale; fetch the match again and decide with its new token. A
-successful acceptance records the decision and applies the link. Review notes
-are private data. See [people and profiles](/docs/usage/people/#review-identity-matches)
-for how to review candidates safely.
-
-### person scoring
-
-Run a bounded scoring batch to create identity review suggestions and journal
-the results. Scoring never accepts matches. Configure the disabled-by-default
-[`people.identity_scoring`](configuration.md#people-identity-scoring) settings,
-inspect the provider disclosure and data fields, then consent to its fingerprint:
-
-```bash
-msgvault person scoring status
-msgvault person scoring consent <disclosure-fingerprint>
-msgvault person scoring run --limit 20
-msgvault person scoring history --limit 20
-```
-
-| Command | Purpose |
-|---|---|
-| `person scoring status [--json]` | Show readiness, credential availability, consent, blockers, and the provider disclosure |
-| `person scoring consent <disclosure-fingerprint> [--json]` | Consent to the exact current disclosure |
-| `person scoring revoke <disclosure-fingerprint> [--json]` | Withdraw that disclosure's consent without changing configuration |
-| `person scoring run [--limit <n>] [--json]` | Score and journal one batch; local blockers prevent provider requests for those pairs |
-| `person scoring history [--candidate-id <id>] [--limit <n>] [--before-id <id>] [--json]` | Read redacted judgments, optionally for one candidate or below a history cursor |
-
-`run --limit` defaults to the configured batch size and cannot exceed it.
-History defaults to 100 rows and accepts limits from 1 through 100. Candidate
-and cursor IDs must be nonnegative; zero means no filter. Use the returned
-`next_before_id` with `--before-id` for older history.
-
-Each run result includes its candidate's review token, proposed action, and
-blockers. If a batch stops early, completed results remain in the response and
-history, and the command reports the batch error. Inspect the candidate's
-current evidence before accepting a proposal. See the
-[people guide](usage/people.md#optional-identity-scoring) for the consent and
-provider boundaries.
 
 ### person notes
 
