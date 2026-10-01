@@ -31,6 +31,7 @@ var mcpAllowIdentityScoring bool
 var mcpAllowPersonMerges bool
 var mcpAllowCardDAVWrites bool
 var mcpAllowSourceWrites bool
+var mcpAllowDraftWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -53,11 +54,25 @@ Add to Claude Desktop config:
 	  }`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
-		if state == nil || state.cfg == nil {
+		if state == nil {
+			return errors.New("invocation state is unavailable")
+		}
+		delegated := isAgentMode(state)
+		if delegated && mcpHTTPAddr != "" {
+			return errors.New("agent-delegated MCP supports stdio only")
+		}
+		if !delegated && state.cfg == nil {
 			return errors.New("configuration is unavailable")
 		}
 		cfg := state.cfg
-		st, info, err := OpenHTTPStore(cmd.Context())
+		var st *daemonclient.Client
+		var info HTTPStoreInfo
+		var err error
+		if delegated {
+			st, err = openMCPAgentDelegatedStore(cmd.Context(), state)
+		} else {
+			st, info, err = OpenHTTPStore(cmd.Context())
+		}
 		if err != nil {
 			return fmt.Errorf("open daemon: %w", err)
 		}
@@ -81,6 +96,10 @@ Add to Claude Desktop config:
 		}
 		if mcpAllowSourceWrites {
 			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySources)
+		}
+
+		if mcpAllowDraftWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyDrafts)
 		}
 
 		if mcpHTTPAddr != "" {
@@ -392,6 +411,7 @@ func init() {
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowSourceWrites, "allow-source-writes", false,
 		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires --http-allow-writes.")
+	mcpCmd.Flags().BoolVar(&mcpAllowDraftWrites, "allow-draft-writes", false, "Enable approved draft creation, editing, deletion and recovery; HTTP also requires --http-allow-writes")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
 	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
 	_ = mcpCmd.Flags().MarkHidden("force-sql")

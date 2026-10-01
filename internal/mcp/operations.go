@@ -58,7 +58,9 @@ type operationalDefinition struct {
 
 // Roots are built once, independent of capability combinations. Selecting any
 // subset retains pointer identity for the official SDK's shared schema cache.
-var fixedOperationalDefinitions = sync.OnceValue(sourceOperationalDefinitions)
+var fixedOperationalDefinitions = sync.OnceValue(func() []operationalDefinition {
+	return append(sourceOperationalDefinitions(), draftOperationalDefinitions()...)
+})
 
 func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefinition {
 	if opts.Operations == nil {
@@ -72,12 +74,14 @@ func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefini
 		if definition.writes && (!allowWrites || !slices.Contains(opts.OperationWriteFamilies, definition.family)) {
 			continue
 		}
+		if capability, ok := opts.Operations.(ConversationDraftCapabilities); ok && capability.SupportsConversationDrafts() && definition.definition.name == "draft_compose" {
+			definition = conversationDraftComposeDefinition()
+		}
 		definitions = append(definitions, definition)
 	}
 	return definitions
 }
 
-//nolint:unparam // The shared constructor also supports the separately enabled delegated draft family.
 func newOperationalDefinition(name, description string, family OperationFamily, input, output *jsonschema.Schema, writes, delegated bool) operationalDefinition {
 	definition := toolDefinition{name: name, description: description, inputSchema: input, outputSchema: operationalOutputSchema(output, family), annotations: toolAnnotations(!writes)}
 	openWorld := writes && family != OperationFamilyRecords && family != OperationFamilySettings
@@ -87,11 +91,15 @@ func newOperationalDefinition(name, description string, family OperationFamily, 
 
 // Operational tools can return a declared refusal instead of their success
 // receipt. The SDK validates structured error results against this same root.
-func operationalOutputSchema(output *jsonschema.Schema, _ OperationFamily) *jsonschema.Schema {
-	failure := closedObject(map[string]*jsonschema.Schema{
+func operationalOutputSchema(output *jsonschema.Schema, family OperationFamily) *jsonschema.Schema {
+	properties := map[string]*jsonschema.Schema{
 		"error":                        stringSchema("Fixed public refusal code"),
 		"operation_may_have_completed": {Type: "boolean"},
-	}, "error")
+	}
+	if family == OperationFamilyDrafts {
+		properties["draft"] = outputSchemaFor[DraftOutput]()
+	}
+	failure := closedObject(properties, "error")
 	failure.Schema = ""
 	success := *output
 	success.Schema = ""

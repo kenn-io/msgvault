@@ -19,13 +19,23 @@ import (
 type daemonMCPOperations struct {
 	client    *daemonclient.Client
 	supported []string
+	commands  []apiprotocol.MCPCommandDescriptor
 }
 
 func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotocol.MCPCapabilities) *daemonMCPOperations {
 	backend := &daemonMCPOperations{client: client}
-	if capabilities == nil || capabilities.Delegated {
+	if capabilities == nil {
 		return backend
 	}
+	backend.commands = slices.Clone(capabilities.Commands)
+	for i := range backend.commands {
+		backend.commands[i].Flags = slices.Clone(backend.commands[i].Flags)
+	}
+	backend.supported = draftMCPCapabilities(capabilities)
+	if capabilities.Delegated {
+		return backend
+	}
+
 	hasRoute := func(id, method, path string, query ...string) bool {
 		for _, route := range capabilities.Routes {
 			if route.OperationID != id || route.Method != method || route.Path != path {
@@ -66,6 +76,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.StatusMessageResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
+		if result, handled, err := b.executeDraftOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeSourceOperation(ctx, name, args); handled {
 			return result, err
 		}
@@ -75,6 +88,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
+		if disclosure, handled, err := b.draftOperationDisclosure(name, args); handled {
+			return disclosure, err
+		}
 		if disclosure, handled, err := b.sourceOperationDisclosure(ctx, name, args); handled {
 			return disclosure, err
 		}

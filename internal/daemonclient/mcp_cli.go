@@ -141,7 +141,8 @@ func safeMCPCLIErrorCode(code string) string {
 		"invalid_message", "uidplus_required", "append_rejected", "accepted_unidentified",
 		"connection_failed", "select_failed", "uidvalidity_mismatch", "modseq_unusable",
 		"fetch_failed", "not_draft", "absent", "not_found", "already_deleted", "store_failed",
-		"store_conflict", "expunge_failed", "confirmation_failed", "survivor":
+		"store_conflict", "expunge_failed", "confirmation_failed", "survivor",
+		"attachment_preflight_failed", "chat_not_found", "draft_exists", "invalid_destination", "invalid_forward_metadata", "local_store_failed", "provider_identity_mismatch", "provider_rejected", "provider_unavailable", "unsupported_source":
 		return code
 	default:
 		return "cli_execution_failed"
