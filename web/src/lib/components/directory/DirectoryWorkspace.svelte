@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { Button, DetailDrawer, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import XIcon from '@lucide/svelte/icons/x';
+  import { Button, DetailDrawer, IconButton, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type { MeetingRef } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import type { DirectoryURLState } from '../../directory/models';
   import { DirectoryController } from '../../directory/controller.svelte';
+  import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatContactDate, formatDay } from '../../directory/labels';
   import { bufferedCallback } from '../../util/buffered-callback';
   import DirectoryList from './DirectoryList.svelte';
   import PageHeader from '../shell/PageHeader.svelte';
@@ -38,7 +40,7 @@
   let mediaQuery: MediaQueryList | undefined;
 
   const TEXT_FILTER_DEBOUNCE_MS = 250;
-  type TextFilterKey = 'directoryQuery' | 'directoryCategory' | 'directoryOrganization' | 'directoryLastContactAfter' | 'directoryLastContactBefore';
+  type TextFilterKey = 'directoryQuery' | 'directoryCategory' | 'directoryOrganization';
   // Mirrors the controller's text filters for immediate display: the debounce
   // below only delays the controller write (and so the page-one fetch and the
   // URL replace it drives), never the text shown in the inputs. This matches
@@ -50,9 +52,7 @@
     return {
       directoryQuery: controller.query,
       directoryCategory: controller.category,
-      directoryOrganization: controller.organization,
-      directoryLastContactAfter: controller.lastContactAfter,
-      directoryLastContactBefore: controller.lastContactBefore
+      directoryOrganization: controller.organization
     };
   }
 
@@ -86,15 +86,43 @@
 
   const contactStateOptions = [
     { value: '', label: 'All contact states' },
-    { value: 'active', label: 'Active' },
-    { value: 'inactive', label: 'Inactive' }
+    { value: 'active', label: contactStateLabel('active') },
+    { value: 'inactive', label: contactStateLabel('inactive') }
   ];
-  const primaryChannelOptions = [{ value: '', label: 'All channels' }, ...['email', 'phone', 'chat'].map((value) => ({ value, label: value }))];
+  const primaryChannelOptions = [
+    { value: '', label: 'All channels' },
+    ...PRIMARY_CHANNELS.map((value) => ({ value, label: channelLabel(value) }))
+  ];
   const sortOptions = [
     { value: 'name', label: 'Name' },
     { value: 'last_contact_desc', label: 'Most recently contacted' },
     { value: 'last_contact_asc', label: 'Least recently contacted' }
-  ];
+  ].map((option) => ({ ...option, triggerLabel: `Sort: ${option.label}` }));
+
+  let filtersOpen = $state(false);
+
+  interface FilterChip {
+    key: keyof DirectoryURLState;
+    text: string;
+  }
+
+  // One chip per active filter, in the order the panel lists the controls.
+  const filterChips = $derived.by((): FilterChip[] => {
+    const chips: FilterChip[] = [];
+    if (controller.contactState) chips.push({ key: 'directoryContactState', text: `Contact state: ${contactStateLabel(controller.contactState)}` });
+    if (controller.category) chips.push({ key: 'directoryCategory', text: `Category: ${controller.category}` });
+    if (controller.organization) chips.push({ key: 'directoryOrganization', text: `Organization: ${controller.organization}` });
+    if (controller.primaryChannel) chips.push({ key: 'directoryPrimaryChannel', text: `Primary channel: ${channelLabel(controller.primaryChannel)}` });
+    if (controller.lastContactAfter) chips.push({ key: 'directoryLastContactAfter', text: `Last contacted after ${formatDay(controller.lastContactAfter)}` });
+    if (controller.lastContactBefore) chips.push({ key: 'directoryLastContactBefore', text: `Last contacted before ${formatDay(controller.lastContactBefore)}` });
+    return chips;
+  });
+
+  const countLabel = $derived(
+    controller.loading && controller.rows.length === 0
+      ? ''
+      : `${controller.rows.length.toLocaleString()}${controller.cursor !== null ? '+' : ''} ${controller.rows.length === 1 ? 'person' : 'people'}`
+  );
 
   $effect(() => {
     // Read every URL field outside untrack so AppShell history restoration
@@ -133,26 +161,62 @@
   <PageHeader title="Directory" description="People you've saved, with profiles and contact details.">
     {#snippet actions()}
       {#if promotionParticipantID !== undefined}
-        <Button label="Promote to person" tone="workflow" onclick={() => void promote()} />
+        <Button label="Promote to person" tone="info" surface="solid" onclick={() => void promote()} />
       {/if}
     {/snippet}
   </PageHeader>
-  <div class="filters">
-    <SearchInput value={textFilters.directoryQuery} ariaLabel="Search directory" placeholder="Search people, email, or organization…" block oninput={(value) => editTextFilter('directoryQuery', value)} />
-    <SelectDropdown title="Contact state" value={controller.contactState} options={contactStateOptions}
-      onchange={(value) => selectFilter({ directoryContactState: value })} />
-    <TextInput value={textFilters.directoryCategory} ariaLabel="Category filter" placeholder="Category"
-      oninput={(value) => editTextFilter('directoryCategory', value)} />
-    <TextInput value={textFilters.directoryOrganization} ariaLabel="Organization filter" placeholder="Organization"
-      oninput={(value) => editTextFilter('directoryOrganization', value)} />
-    <SelectDropdown title="Primary channel" value={controller.primaryChannel} options={primaryChannelOptions}
-      onchange={(value) => selectFilter({ directoryPrimaryChannel: value })} />
-    <TextInput value={textFilters.directoryLastContactAfter} ariaLabel="Last contacted after" placeholder="Contacted after (YYYY-MM-DD)"
-      oninput={(value) => editTextFilter('directoryLastContactAfter', value)} />
-    <TextInput value={textFilters.directoryLastContactBefore} ariaLabel="Last contacted before" placeholder="Contacted before (YYYY-MM-DD)"
-      oninput={(value) => editTextFilter('directoryLastContactBefore', value)} />
-    <SelectDropdown title="Directory order" value={controller.sort} options={sortOptions}
-      onchange={(value) => selectFilter({ directorySort: value as DirectoryURLState['directorySort'] })} />
+  <div class="directory-controls">
+    <div class="directory-toolbar">
+      <SearchInput value={textFilters.directoryQuery} ariaLabel="Search directory" placeholder="Search people, email, or organization…" block oninput={(value) => editTextFilter('directoryQuery', value)} />
+      <Button size="sm" surface={filtersOpen || filterChips.length > 0 ? 'soft' : 'outline'} label="Filters" ariaLabel="Filters"
+        ariaExpanded={filtersOpen} onclick={() => { filtersOpen = !filtersOpen; }} />
+      <SelectDropdown title="Directory order" value={controller.sort} options={sortOptions}
+        onchange={(value) => selectFilter({ directorySort: value as DirectoryURLState['directorySort'] })} />
+      <span class="directory-count" aria-live="polite">{countLabel}</span>
+    </div>
+    {#if filtersOpen}
+      <div class="filter-panel" role="group" aria-label="Directory filters">
+        <SelectDropdown title="Contact state" value={controller.contactState} options={contactStateOptions}
+          onchange={(value) => selectFilter({ directoryContactState: value })} />
+        <TextInput value={textFilters.directoryCategory} ariaLabel="Category filter" placeholder="Category"
+          oninput={(value) => editTextFilter('directoryCategory', value)} />
+        <TextInput value={textFilters.directoryOrganization} ariaLabel="Organization filter" placeholder="Organization"
+          oninput={(value) => editTextFilter('directoryOrganization', value)} />
+        <SelectDropdown title="Primary channel" value={controller.primaryChannel} options={primaryChannelOptions}
+          onchange={(value) => selectFilter({ directoryPrimaryChannel: value })} />
+        <label class="date-field">
+          Last contacted after
+          <!-- kit-ui-check-ignore: a one-sided boundary needs a single optional date; kit DateRangePicker only commits complete ranges (PR 3 spec, Directory list). -->
+          <input type="date" aria-label="Last contacted after" value={controller.lastContactAfter}
+            onchange={(event) => selectFilter({ directoryLastContactAfter: event.currentTarget.value })} />
+          {#if controller.lastContactAfter}
+            <IconButton size="sm" ariaLabel="Clear last contacted after"
+              onclick={() => selectFilter({ directoryLastContactAfter: '' })}><XIcon size="12" aria-hidden="true" /></IconButton>
+          {/if}
+        </label>
+        <label class="date-field">
+          Last contacted before
+          <!-- kit-ui-check-ignore: a one-sided boundary needs a single optional date; kit DateRangePicker only commits complete ranges (PR 3 spec, Directory list). -->
+          <input type="date" aria-label="Last contacted before" value={controller.lastContactBefore}
+            onchange={(event) => selectFilter({ directoryLastContactBefore: event.currentTarget.value })} />
+          {#if controller.lastContactBefore}
+            <IconButton size="sm" ariaLabel="Clear last contacted before"
+              onclick={() => selectFilter({ directoryLastContactBefore: '' })}><XIcon size="12" aria-hidden="true" /></IconButton>
+          {/if}
+        </label>
+      </div>
+    {/if}
+    {#if filterChips.length > 0}
+      <div class="filter-chips">
+        {#each filterChips as chip (chip.key)}
+          <span class="chip">
+            {chip.text}
+            <IconButton size="sm" ariaLabel={`Remove ${chip.text} filter`}
+              onclick={() => selectFilter({ [chip.key]: '' })}><XIcon size="12" aria-hidden="true" /></IconButton>
+          </span>
+        {/each}
+      </div>
+    {/if}
   </div>
   {#if controller.promotionResult && !controller.promotionResult.ok}
     <div role="alert" class="promotion-error">
@@ -189,8 +253,13 @@
 
 <style>
   .directory-workspace { padding: var(--space-5) var(--page-gutter) var(--space-4); display: grid; gap: var(--space-4); flex: 1; min-height: 0; grid-template-rows: auto auto auto minmax(0, 1fr); overflow: hidden; }
-  .filters { display: flex; gap: var(--space-3); align-items: center; justify-content: space-between; flex-wrap: wrap; }
-  .filters { justify-content: stretch; } .filters :global(.kit-search-input) { min-width: min(100%, 300px); flex: 1; }
+  .directory-controls { display: grid; gap: var(--space-2); min-width: 0; }
+  .directory-toolbar, .filter-chips { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; min-width: 0; }
+  .directory-toolbar :global(.kit-search-input) { min-width: min(100%, 300px); flex: 1; }
+  .directory-count { margin-left: auto; color: var(--text-muted); font-size: var(--font-size-xs); white-space: nowrap; }
+  .filter-panel { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); }
+  .date-field { display: inline-flex; gap: var(--space-2); align-items: center; color: var(--text-secondary); font-size: var(--font-size-xs); }
+  .chip { display: inline-flex; max-width: 100%; align-items: center; gap: var(--space-1); padding: 0 0 0 var(--space-2); border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-muted)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); color: var(--text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
   .directory-content { display: grid; grid-row: 4; min-height: 0; overflow: hidden; }
   .directory-content > :global(*) { min-height: 0; overflow: auto; }
   .directory-content.has-detail { grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.2fr); gap: var(--space-4); }

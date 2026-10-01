@@ -2,6 +2,7 @@
   import { Button, EmptyState } from '@kenn-io/kit-ui';
 
   import type { DirectoryPerson } from '../../directory/models';
+  import { channelLabel, contactStateLabel, formatContactDate } from '../../directory/labels';
 
   interface Props {
     rows: DirectoryPerson[];
@@ -90,8 +91,8 @@
             onclick={() => { activeID = person.id; onSelect(person.id); }}
           >
             <span role="gridcell" class="name">{person.display_name ?? `Person ${person.id}`}</span>
-            <span role="gridcell" class="meta">{person.primary_channel ?? 'No primary channel'} · {person.contact_state}</span>
-            <span role="gridcell" class="meta">{person.last_contact_at ? `Last contact ${person.last_contact_at}` : 'Never contacted'}</span>
+            <span role="gridcell" class="meta">{person.primary_channel ? channelLabel(person.primary_channel) : 'No primary channel'} · {contactStateLabel(person.contact_state)}</span>
+            <span role="gridcell" class="meta">{person.last_contact_at ? `Last contact ${formatContactDate(person.last_contact_at)}` : 'Never contacted'}</span>
             {#if person.organizations?.length}<span role="gridcell" class="meta">{person.organizations.join(' · ')}</span>{/if}
             {#if person.categories?.length}<span role="gridcell" class="meta">{person.categories.join(' · ')}</span>{/if}
           </div>

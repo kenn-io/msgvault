@@ -56,7 +56,22 @@ describe('DirectoryList', () => {
       hasMore: false, selectedPersonID: null, onSelect: vi.fn(), onLoadMore: vi.fn(), onReload: vi.fn()
     });
 
-    expect(screen.getByRole('row', { name: /Alpha Fixture/ }).textContent).toContain('Last contact 2026-08-20T10:00:00Z');
+    expect(screen.getByRole('row', { name: /Alpha Fixture/ }).textContent).toContain('Last contact Aug 20, 2026');
     expect(screen.getByRole('row', { name: /Bravo Fixture/ }).textContent).toContain('Never contacted');
+  });
+
+  it('names the channel and contact state and formats the last contact', () => {
+    render(DirectoryList, {
+      rows: [{
+        ...rows[0]!, primary_channel: 'email', contact_state: 'active', last_contact_at: '2002-01-02T12:00:00Z'
+      }],
+      loading: false, loadingMore: false, error: null, pageError: null, pageRecovery: null,
+      hasMore: false, selectedPersonID: null, onSelect: vi.fn(), onLoadMore: vi.fn(), onReload: vi.fn()
+    });
+
+    const text = screen.getByRole('row', { name: /Alpha Fixture/ }).textContent ?? '';
+    expect(text).toContain('Email · Active');
+    expect(text).toContain('Last contact Jan 2, 2002');
+    expect(text).not.toContain('T12:00');
   });
 });

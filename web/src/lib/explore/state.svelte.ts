@@ -25,6 +25,7 @@ import type {
   OperationState
 } from './models';
 import { DEFAULT_EXPLORE_COLUMNS, isValidSourceID } from './models';
+import { isCalendarDate } from '../directory/dates';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
 import { hasValidSearchAuthority, predicateFingerprint } from './selection';
 import { parseAttachmentSelection } from './attachment-authority';
@@ -322,6 +323,10 @@ function directoryPersonID(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
+function directoryDay(value: unknown): string {
+  return typeof value === 'string' && isCalendarDate(value) ? value : '';
+}
+
 function operationDateBound(value: unknown): string {
   if (typeof value !== 'string' ||
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{0,8}[1-9])?Z$/.test(value)) return '';
@@ -460,8 +465,8 @@ function normalize(value: unknown): ExploreURLState {
     directoryCategory: typeof value.directoryCategory === 'string' ? value.directoryCategory : '',
     directoryOrganization: typeof value.directoryOrganization === 'string' ? value.directoryOrganization : '',
     directoryPrimaryChannel: typeof value.directoryPrimaryChannel === 'string' ? value.directoryPrimaryChannel : '',
-    directoryLastContactAfter: typeof value.directoryLastContactAfter === 'string' ? value.directoryLastContactAfter : '',
-    directoryLastContactBefore: typeof value.directoryLastContactBefore === 'string' ? value.directoryLastContactBefore : '',
+    directoryLastContactAfter: directoryDay(value.directoryLastContactAfter),
+    directoryLastContactBefore: directoryDay(value.directoryLastContactBefore),
     directorySort: value.directorySort === 'last_contact_desc' || value.directorySort === 'last_contact_asc' ? value.directorySort : 'name',
     directoryPersonID: directoryPersonID(value.directoryPersonID),
     reviewKind,

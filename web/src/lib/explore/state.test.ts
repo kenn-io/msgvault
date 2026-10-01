@@ -17,6 +17,19 @@ import { createAllMatchingSelection, predicateFingerprint } from './selection';
 import { SEARCH_MODE_PREFERENCE_KEY } from '../search/modes';
 
 describe('Explore URL state', () => {
+  it('drops an impossible Directory date when reading the URL', () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory', directoryLastContactAfter: '2026-02-31', directoryLastContactBefore: '2026-03-01'
+    }))}`);
+    const state = new ExploreState(window);
+    try {
+      expect(state.current.directoryLastContactAfter).toBe('');
+      expect(state.current.directoryLastContactBefore).toBe('2026-03-01');
+    } finally {
+      state.destroy();
+    }
+  });
+
   it('shares an ordinary tab without defaults or another workspace selection', () => {
     const search = serializeExploreURLState({
       ...defaultExploreURLState,
