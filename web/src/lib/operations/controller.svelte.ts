@@ -229,7 +229,7 @@ export class OperationsController {
             ...this.client,
             signal: request.signal,
           })
-          : await generatedResumeVisualAttachmentBuild({
+          : await generatedResumeVisualAttachmentBuild({}, {
             ...this.client,
             signal: request.signal,
           });

@@ -722,10 +722,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start API server
 	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
-		Config:         cfg,
-		Store:          storeAdapter,
-		SavedViewStore: s,
-		Engine:         engine,
+		LaneReadinessReader: newDaemonLaneReadinessReader(cfg, s),
+		Config:              cfg,
+		Store:               storeAdapter,
+		SavedViewStore:      s,
+		Engine:              engine,
 		SQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
 			if apiServer == nil {
 				return nil, nil, errors.New("daemon API server unavailable")

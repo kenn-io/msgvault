@@ -220,7 +220,10 @@ func officialToolHandler(
 			}
 		}
 
-		wireResult := &sdkmcp.CallToolResult{IsError: result.isError}
+		// Supply our canonical JSON text rather than asking the SDK to recreate
+		// it through its generic float64 decoder (which rounds opaque integers).
+		wireResult := &sdkmcp.CallToolResult{IsError: result.isError,
+			Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: result.text}}}
 		if result.isError {
 			wireResult.Content = []sdkmcp.Content{&sdkmcp.TextContent{Text: result.text}}
 			if len(result.structuredContent) > 0 {

@@ -7,6 +7,7 @@ import PeopleInferenceSettings from './PeopleInferenceSettings.svelte';
 
 const profile: PeopleInferenceProfileSetting = {
   name: 'routed', preset_id: 'openrouter', protocol: 'openai-chat', model: 'model-one',
+  request_timeout: '2m0s',
   endpoint: 'https://openrouter.example.test/api/v1', credential_source: 'stored',
   credential_configured: true, credential_revision: '"credential-a"', checked: false,
   consent_active: false, fingerprint: 'fingerprint-routed', selected: false,

@@ -206,7 +206,9 @@ func applyPersonEnrichmentProviderUpdate(
 	for index, identifier := range request.AllowedIdentifiers {
 		provider.AllowedIdentifiers[index] = personenrichment.IdentifierClass(identifier)
 	}
-	provider.TargetKeys = append([]string(nil), request.TargetKeys...)
+	// Keep an explicit empty array: the config editor needs a TOML assignment
+	// when a disabled provider clears its targets.
+	provider.TargetKeys = append([]string{}, request.TargetKeys...)
 	provider.AllowSensitiveTargets = request.AllowSensitiveTargets
 	provider.RetentionPosture = request.RetentionPosture
 	provider.TrainingPosture = request.TrainingPosture

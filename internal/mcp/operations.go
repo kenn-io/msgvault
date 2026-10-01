@@ -33,20 +33,26 @@ type OperationRefusalError struct{ Code string }
 
 func (e *OperationRefusalError) Error() string { return e.Code }
 
-const mcpSchemaArray = "array"
+const (
+	mcpSchemaArray   = "array"
+	mcpSchemaString  = "string"
+	mcpSchemaInteger = "integer"
+	mcpSchemaBoolean = "boolean"
+)
 
 type OperationFamily string
 
 const (
-	OperationFamilySources   OperationFamily = "sources"
-	OperationFamilyDrafts    OperationFamily = "drafts"
-	OperationFamilyProviders OperationFamily = "providers"
-	OperationFamilyDocuments OperationFamily = "documents"
-	OperationFamilyCardDAV   OperationFamily = "carddav"
-	OperationFamilyRecords   OperationFamily = "records"
-	OperationFamilyInference OperationFamily = "inference"
-	OperationFamilyVisual    OperationFamily = "visual"
-	OperationFamilySettings  OperationFamily = "settings"
+	OperationFamilySources    OperationFamily = "sources"
+	OperationFamilyDrafts     OperationFamily = "drafts"
+	OperationFamilyProviders  OperationFamily = "providers"
+	OperationFamilyDocuments  OperationFamily = "documents"
+	OperationFamilyCardDAV    OperationFamily = "carddav"
+	OperationFamilyRecords    OperationFamily = "records"
+	OperationFamilyInference  OperationFamily = "inference"
+	OperationFamilyVisual     OperationFamily = "visual"
+	OperationFamilySettings   OperationFamily = "settings"
+	OperationFamilyEnrichment OperationFamily = "enrichment"
 )
 
 type operationalDefinition struct {
@@ -59,7 +65,15 @@ type operationalDefinition struct {
 // Roots are built once, independent of capability combinations. Selecting any
 // subset retains pointer identity for the official SDK's shared schema cache.
 var fixedOperationalDefinitions = sync.OnceValue(func() []operationalDefinition {
-	return append(append(append(append(sourceOperationalDefinitions(), draftOperationalDefinitions()...), providerOperationalDefinitions()...), documentOperationalDefinitions()...), cardDAVOperationalDefinitions()...)
+	definitions := append(append(append(append(sourceOperationalDefinitions(), draftOperationalDefinitions()...), providerOperationalDefinitions()...), documentOperationalDefinitions()...), cardDAVOperationalDefinitions()...)
+	definitions = append(definitions, historyOperationalDefinitions()...)
+	definitions = append(definitions, visualOperationalDefinitions()...)
+	definitions = append(definitions, embeddingOperationalDefinitions()...)
+	definitions = append(definitions, laneReadinessOperationalDefinitions()...)
+	definitions = append(definitions, settingsOperationalDefinitions()...)
+	definitions = append(definitions, importOperationalDefinitions()...)
+	definitions = append(definitions, briefOperationalDefinitions()...)
+	return append(definitions, sweepOperationalDefinitions()...)
 })
 
 func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefinition {
@@ -99,11 +113,11 @@ func newOperationalDefinition(name, description string, family OperationFamily, 
 func operationalOutputSchema(output *jsonschema.Schema, family OperationFamily) *jsonschema.Schema {
 	properties := map[string]*jsonschema.Schema{
 		"error":                        stringSchema("Fixed public refusal code"),
-		"operation_may_have_completed": {Type: "boolean"},
+		"operation_may_have_completed": {Type: mcpSchemaBoolean},
 	}
 	if family == OperationFamilyProviders {
-		properties["consent_remains_revoked"] = &jsonschema.Schema{Type: "boolean"}
-		properties["rolled_back"] = &jsonschema.Schema{Type: "boolean"}
+		properties["consent_remains_revoked"] = &jsonschema.Schema{Type: mcpSchemaBoolean}
+		properties["rolled_back"] = &jsonschema.Schema{Type: mcpSchemaBoolean}
 	}
 	if family == OperationFamilyDrafts {
 		properties["draft"] = outputSchemaFor[DraftOutput]()

@@ -109,7 +109,7 @@ func (r toolRequest) confirmUserAction(ctx context.Context, message string) erro
 		RequestedSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
-				"confirm": {Type: "boolean", Description: "Confirm this specific action"},
+				"confirm": {Type: mcpSchemaBoolean, Description: "Confirm this specific action"},
 			},
 			Required: []string{"confirm"},
 		},

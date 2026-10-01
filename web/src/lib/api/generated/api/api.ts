@@ -186,6 +186,7 @@ import type {
   GetTextAggregatesParams,
   GetTextStatsParams,
   GetTotalStatsParams,
+  GetVisualAttachmentStatusParams,
   GmailIDsResponse,
   HealthResponse,
   HybridSearchResponse,
@@ -197,6 +198,7 @@ import type {
   IdentityMatchRejectResponse,
   ImportJobRequest,
   ImportJobResponse,
+  LaneReadinessResponse,
   LinkPersonAgendaItemPathParameters,
   ListAttributeDefinitionsParams,
   ListCardDAVRunsParams,
@@ -428,7 +430,9 @@ import type {
   UploadTokenPathParameters,
   VerifyCLIParams,
   VisualBuildRequest,
+  VisualResumeRequest,
   VisualRetryRequest,
+  VisualRuntimePolicy,
 } from "../models";
 
 import { orvalFetch } from "../../runtime";
@@ -1972,6 +1976,17 @@ export const testTaskIntegration = (
   );
 };
 /**
+ * @summary Read sanitized configured and initialized lane readiness
+ */
+export const getLaneReadiness = (
+  options?: SecondParameter<typeof orvalFetch<LaneReadinessResponse>>,
+) => {
+  return orvalFetch<LaneReadinessResponse>(
+    { url: `/api/v1/lanes/readiness`, method: "GET" },
+    options,
+  );
+};
+/**
  * @summary Describe supported MCP daemon operations
  */
 export const getMCPCapabilities = (
@@ -2129,6 +2144,17 @@ export const startVisualAttachmentBuild = (
   );
 };
 /**
+ * @summary Get the initialized visual upload policy
+ */
+export const getVisualRuntimePolicy = (
+  options?: SecondParameter<typeof orvalFetch<VisualRuntimePolicy>>,
+) => {
+  return orvalFetch<VisualRuntimePolicy>(
+    { url: `/api/v1/multimodal/policy`, method: "GET" },
+    options,
+  );
+};
+/**
  * @summary Retry one visual attachment owner
  */
 export const retryVisualAttachmentOwner = (
@@ -2149,10 +2175,16 @@ export const retryVisualAttachmentOwner = (
  * @summary Resume one bounded visual attachment embedding pass
  */
 export const resumeVisualAttachmentBuild = (
+  visualResumeRequest: VisualResumeRequest,
   options?: SecondParameter<typeof orvalFetch<Status>>,
 ) => {
   return orvalFetch<Status>(
-    { url: `/api/v1/multimodal/run`, method: "POST" },
+    {
+      url: `/api/v1/multimodal/run`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: visualResumeRequest,
+    },
     options,
   );
 };
@@ -2160,10 +2192,11 @@ export const resumeVisualAttachmentBuild = (
  * @summary Get visual attachment embedding status
  */
 export const getVisualAttachmentStatus = (
+  params?: GetVisualAttachmentStatusParams,
   options?: SecondParameter<typeof orvalFetch<Status>>,
 ) => {
   return orvalFetch<Status>(
-    { url: `/api/v1/multimodal/status`, method: "GET" },
+    { url: `/api/v1/multimodal/status`, method: "GET", params },
     options,
   );
 };

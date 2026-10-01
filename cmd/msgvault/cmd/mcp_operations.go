@@ -40,6 +40,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	if capabilities.Delegated {
 		return backend
 	}
+	backend.supported = append(backend.supported, embeddingMCPCapabilities(backend.commands)...)
 
 	hasRoute := func(id, method, path string, query ...string) bool {
 		for _, route := range capabilities.Routes {
@@ -62,8 +63,25 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 		backend.supported = append(backend.supported, "sync_source")
 	}
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, importMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, briefMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, sweepMCPCapabilities(hasRoute, capabilities)...)
+	for _, name := range settingsMCPCapabilities(hasRoute) {
+		if (name == "update_operational_settings" || name == "update_enrichment_controls") && !mcpRequestPropertiesPresent(capabilities, "patchSettings", "updates") {
+			continue
+		}
+		if name == "update_enrichment_policy" && !mcpRequestPropertiesPresent(capabilities, "putSettingsPersonEnrichmentProvider", "kind", "endpoint", "poll_endpoint", "enabled", "mode", "tier", "num_results", "allowed_identifiers", "target_keys", "allow_sensitive_targets", "retention_posture", "training_posture", "refresh_interval", "request_timeout", "poll_interval", "max_job_age", "max_retries", "max_requests_per_run", "max_requests_per_day") {
+			continue
+		}
+		backend.supported = append(backend.supported, name)
+	}
 	backend.supported = append(backend.supported, providerMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, documentMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, historyMCPCapabilities(hasRoute)...)
+	if hasRoute("getLaneReadiness", http.MethodGet, "/api/v1/lanes/readiness") {
+		backend.supported = append(backend.supported, "get_lane_readiness")
+	}
+	backend.supported = append(backend.supported, visualMCPCapabilities(hasRoute, capabilities)...)
 	backend.cardDAVNamed = hasRoute("listCardDAVConnections", http.MethodGet, mcpCardDAVPrefix+"/connections") && hasRoute("getCardDAVStatus", http.MethodGet, mcpCardDAVPrefix+"/status", "connection") && hasRoute("listCardDAVBooks", http.MethodGet, mcpCardDAVPrefix+"/books", "connection") && hasRoute("listCardDAVRuns", http.MethodGet, mcpCardDAVPrefix+"/runs", "connection") && mcpRequestPropertiesPresent(capabilities, "syncCardDAV", "connection")
 	for _, route := range mcpCardDAVRoutes {
 		if route.contextID != "" && !hasRoute(route.contextID, http.MethodGet, route.contextPath) {
@@ -92,6 +110,30 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.StatusMessageResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
+		if result, handled, err := b.executeSweepOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeBriefOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeImportOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeSettingsOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeLaneReadinessOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeEmbeddingOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeVisualOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeHistoryOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeCardDAVOperation(ctx, name, args); handled {
 			return result, err
 		}
@@ -113,6 +155,21 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
+		if disclosure, handled, err := b.sweepOperationDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
+		if disclosure, handled, err := b.briefOperationDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
+		if disclosure, handled, err := b.importOperationDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
+		if disclosure, handled, err := b.settingsOperationDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
+		if disclosure, handled, err := b.visualOperationDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
 		if disclosure, handled, err := b.cardDAVOperationDisclosure(ctx, name, args); handled {
 			return disclosure, err
 		}
@@ -211,7 +268,17 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
 		switch code {
+		case "brief_generation_unavailable", "briefs_unavailable", "person_brief_not_found", "person_brief_not_tracked", "person_brief_not_enrolled", "person_brief_lane_disabled", "person_brief_policy_refused", "person_brief_no_supported_lane", "person_brief_busy":
+			return operationFailure(code, false), nil
+		case "person_brief_failed":
+			return operationFailure(code, writes), nil
+		case "ambiguous_account", "account_not_syncable", "sync_already_active", "service_unavailable":
+			return operationFailure(code, false), nil
 		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "validation_failed", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable", "document_status_scope_unavailable", "document_status_unavailable", "carddav_unavailable", "carddav_connection_unavailable", "google_authorization_required", "carddav_conflict_stale", "carddav_conflict_pending", "carddav_publication_pending", "carddav_inference_review_required", "carddav_review_stale", "conflict", "carddav_retry_after":
+			return operationFailure(code, false), nil
+		case "invalid_cursor", "operation_history_conflict", "invalid_operation_run_id", "operation_run_not_found", "operation_history_unavailable", "operation_history_failed":
+			return operationFailure(code, false), nil
+		case "lane_readiness_unavailable", "visual_policy_changed", "visual_policy_unavailable", "visual_search_not_ready", "visual_consent_required", "visual_operation_active", "visual_generation_changed", "invalid_visual_owner", "invalid_visual_generation", "invalid_visual_guard", "visual_coverage_busy", "rate_limit_exceeded", "cross_origin_loopback", "document_vector_status_unavailable":
 			return operationFailure(code, false), nil
 		case "carddav_upstream_failed", "carddav_storage_failed", "carddav_failed":
 			return operationFailure(code, writes), nil
@@ -220,6 +287,9 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 		}
 	}
 	var output T
+	if response.StatusCode == http.StatusNoContent && len(data) == 0 {
+		return &mcpserver.OperationResult{Output: output}, nil
+	}
 	if err := json.Unmarshal(data, &output); err != nil {
 		return operationFailure("invalid_operation_response", writes), err
 	}

@@ -24,8 +24,10 @@ func registeredMCPCommandDescriptors() []apiprotocol.MCPCommandDescriptor {
 		{"draft-reply"}, {"draft-compose"}, {"draft-forward"}, {"draft-get"},
 		{"draft-list"}, {"draft-edit"}, {"draft-delete"}, {"draft-recover"}, {"draft-send-as"},
 		{"person", "provider", multimodalStatusSubcommand}, {"person", "provider", "history"},
+		{personValue, mcpSweepCommandName, multimodalStatusSubcommand}, {personValue, mcpSweepCommandName, "history"}, {personValue, mcpSweepCommandName, "run"},
 		{documentsCommandName, "policy"}, {documentsCommandName, "consent-mistral"},
 		{documentsCommandName, "build"}, {documentsCommandName, "resume"}, {documentsCommandName, "retry"},
+		{embeddingsCommandName, cmdUseList},
 	}
 	descriptors := make([]apiprotocol.MCPCommandDescriptor, 0, len(paths))
 	for _, path := range paths {

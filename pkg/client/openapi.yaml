@@ -5705,6 +5705,81 @@ components:
         - candidates
         - applied
       type: object
+    LaneReadiness:
+      properties:
+        blockers:
+          items:
+            type: string
+          type: array
+        configured:
+          type: boolean
+        consent_purposes:
+          additionalProperties:
+            type: string
+          type: object
+        consent_state:
+          enum:
+            - active
+            - missing
+            - stale
+            - unknown
+            - not_required
+          type: string
+        credential_state:
+          enum:
+            - available
+            - missing
+            - unknown
+            - not_required
+          type: string
+        enabled:
+          type: boolean
+        initialized:
+          type: boolean
+        lane:
+          enum:
+            - text_search
+            - person_search
+            - visual_search
+            - documents
+            - document_vectors
+            - people_inference
+            - activity
+            - media_policy
+          type: string
+        model:
+          type: string
+        pending_restart:
+          type: boolean
+        provider:
+          type: string
+        schedule:
+          type: string
+      required:
+        - lane
+        - enabled
+        - configured
+        - initialized
+        - credential_state
+        - consent_state
+        - pending_restart
+        - blockers
+      type: object
+    LaneReadinessResponse:
+      properties:
+        lanes:
+          items:
+            $ref: "#/components/schemas/LaneReadiness"
+          type: array
+        pending_restart:
+          type: boolean
+        store_available:
+          type: boolean
+      required:
+        - store_available
+        - pending_restart
+        - lanes
+      type: object
     ListDeletionsResponse:
       properties:
         manifests:
@@ -13629,6 +13704,16 @@ components:
       properties:
         consent:
           type: boolean
+        expected_generation_fingerprint:
+          minLength: 1
+          type: string
+        expected_generation_id:
+          format: int64
+          minimum: 1
+          type: integer
+        expected_policy_fingerprint:
+          minLength: 1
+          type: string
       required:
         - consent
       type: object
@@ -13662,9 +13747,33 @@ components:
         - source_fence
         - consented
       type: object
+    VisualResumeRequest:
+      additionalProperties: false
+      properties:
+        expected_generation_fingerprint:
+          minLength: 1
+          type: string
+        expected_generation_id:
+          format: int64
+          minimum: 1
+          type: integer
+        expected_policy_fingerprint:
+          minLength: 1
+          type: string
+      type: object
     VisualRetireRequest:
       additionalProperties: false
       properties:
+        expected_generation_fingerprint:
+          minLength: 1
+          type: string
+        expected_generation_id:
+          format: int64
+          minimum: 1
+          type: integer
+        expected_policy_fingerprint:
+          minLength: 1
+          type: string
         generation_id:
           format: int64
           type: integer
@@ -13676,12 +13785,95 @@ components:
       properties:
         blob_hash:
           type: string
+        expected_generation_fingerprint:
+          minLength: 1
+          type: string
+        expected_generation_id:
+          format: int64
+          minimum: 1
+          type: integer
+        expected_policy_fingerprint:
+          minLength: 1
+          type: string
         message_id:
           format: int64
           type: integer
       required:
         - message_id
         - blob_hash
+      type: object
+    VisualRuntimePolicy:
+      properties:
+        authorized_capabilities:
+          items:
+            type: string
+          type: array
+        current_policy_fingerprint:
+          type: string
+        dimension:
+          format: int64
+          type: integer
+        generation_fingerprint:
+          type: string
+        generation_id:
+          format: int64
+          type: integer
+        include_animated_gifs:
+          type: boolean
+        include_images:
+          type: boolean
+        include_video:
+          type: boolean
+        max_context_chars:
+          format: int64
+          type: integer
+        max_media_bytes:
+          format: int64
+          type: integer
+        max_media_pixels:
+          format: int64
+          type: integer
+        max_owners_per_pass:
+          format: int64
+          type: integer
+        message_types:
+          description: An empty list includes every message type within the source scope
+          items:
+            type: string
+          type: array
+        model:
+          type: string
+        provider:
+          type: string
+        retention_posture:
+          type: string
+        source_ids:
+          description: An empty list includes all archived sources within the configured message types
+          items:
+            format: int64
+            type: integer
+          type: array
+        training_posture:
+          type: string
+      required:
+        - generation_id
+        - generation_fingerprint
+        - current_policy_fingerprint
+        - provider
+        - model
+        - dimension
+        - source_ids
+        - message_types
+        - include_images
+        - include_video
+        - include_animated_gifs
+        - max_context_chars
+        - max_media_bytes
+        - max_media_pixels
+        - max_owners_per_pass
+        - retention_posture
+        - training_posture
+        - authorized_capabilities
       type: object
     VisualTextSearchRequest:
       additionalProperties: false
@@ -13730,7 +13922,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.38.0
+  version: 2.40.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -20029,6 +20221,27 @@ paths:
       summary: Test task integration discovery, authentication, capabilities, and project
       tags:
         - API
+  /api/v1/lanes/readiness:
+    get:
+      operationId: getLaneReadiness
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LaneReadinessResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read sanitized configured and initialized lane readiness
+      tags:
+        - API
   /api/v1/mcp/capabilities:
     get:
       operationId: getMCPCapabilities
@@ -20909,6 +21122,27 @@ paths:
       summary: Consent and run one bounded visual attachment embedding pass
       tags:
         - API
+  /api/v1/multimodal/policy:
+    get:
+      operationId: getVisualRuntimePolicy
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VisualRuntimePolicy"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get the initialized visual upload policy
+      tags:
+        - API
   /api/v1/multimodal/retire:
     post:
       operationId: retireVisualAttachmentGeneration
@@ -20958,6 +21192,12 @@ paths:
   /api/v1/multimodal/run:
     post:
       operationId: resumeVisualAttachmentBuild
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VisualResumeRequest"
+        required: true
       responses:
         "200":
           content:
@@ -20979,6 +21219,15 @@ paths:
   /api/v1/multimodal/status:
     get:
       operationId: getVisualAttachmentStatus
+      parameters:
+        - description: Set 1 for an explicit rate-limited archive media coverage scan; omitted status reads only progress
+          in: query
+          name: coverage
+          schema:
+            enum:
+              - "0"
+              - "1"
+            type: string
       responses:
         "200":
           content:

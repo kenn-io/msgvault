@@ -919,6 +919,68 @@ func (i ImportJobResponseStatus) Validate() error {
 	}
 }
 
+type LaneReadinessConsentState string
+
+const (
+	Active                         LaneReadinessConsentState = "active"
+	LaneReadinessConsentStateStale LaneReadinessConsentState = "stale"
+	Missing                        LaneReadinessConsentState = "missing"
+	NotRequired                    LaneReadinessConsentState = "not_required"
+	Unknown                        LaneReadinessConsentState = "unknown"
+)
+
+// Validate checks if the LaneReadinessConsentState value is valid
+func (l LaneReadinessConsentState) Validate() error {
+	switch l {
+	case Active, LaneReadinessConsentStateStale, Missing, NotRequired, Unknown:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LaneReadinessConsentState value, got: %v", l))
+	}
+}
+
+type LaneReadinessCredentialState string
+
+const (
+	Available                               LaneReadinessCredentialState = "available"
+	LaneReadinessCredentialStateMissing     LaneReadinessCredentialState = "missing"
+	LaneReadinessCredentialStateNotRequired LaneReadinessCredentialState = "not_required"
+	LaneReadinessCredentialStateUnknown     LaneReadinessCredentialState = "unknown"
+)
+
+// Validate checks if the LaneReadinessCredentialState value is valid
+func (l LaneReadinessCredentialState) Validate() error {
+	switch l {
+	case Available, LaneReadinessCredentialStateMissing, LaneReadinessCredentialStateNotRequired, LaneReadinessCredentialStateUnknown:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LaneReadinessCredentialState value, got: %v", l))
+	}
+}
+
+type LaneReadinessLane string
+
+const (
+	Activity        LaneReadinessLane = "activity"
+	DocumentVectors LaneReadinessLane = "document_vectors"
+	Documents       LaneReadinessLane = "documents"
+	MediaPolicy     LaneReadinessLane = "media_policy"
+	PeopleInference LaneReadinessLane = "people_inference"
+	PersonSearch    LaneReadinessLane = "person_search"
+	TextSearch      LaneReadinessLane = "text_search"
+	VisualSearch    LaneReadinessLane = "visual_search"
+)
+
+// Validate checks if the LaneReadinessLane value is valid
+func (l LaneReadinessLane) Validate() error {
+	switch l {
+	case Activity, DocumentVectors, Documents, MediaPolicy, PeopleInference, PersonSearch, TextSearch, VisualSearch:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LaneReadinessLane value, got: %v", l))
+	}
+}
+
 type MeetingActionsRequestStatus string
 
 const (
@@ -975,15 +1037,15 @@ func (m MeetingImportResponseStatus) Validate() error {
 type MeetingScopeRequestDeletion string
 
 const (
-	Active  MeetingScopeRequestDeletion = "active"
-	Any     MeetingScopeRequestDeletion = "any"
-	Deleted MeetingScopeRequestDeletion = "deleted"
+	Any                               MeetingScopeRequestDeletion = "any"
+	Deleted                           MeetingScopeRequestDeletion = "deleted"
+	MeetingScopeRequestDeletionActive MeetingScopeRequestDeletion = "active"
 )
 
 // Validate checks if the MeetingScopeRequestDeletion value is valid
 func (m MeetingScopeRequestDeletion) Validate() error {
 	switch m {
-	case Active, Any, Deleted:
+	case Any, Deleted, MeetingScopeRequestDeletionActive:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingScopeRequestDeletion value, got: %v", m))
@@ -1027,14 +1089,14 @@ func (n NetworkNodeKind) Validate() error {
 type OperationLaneStatusHistoryAvailability string
 
 const (
-	Available   OperationLaneStatusHistoryAvailability = "available"
-	Unavailable OperationLaneStatusHistoryAvailability = "unavailable"
+	OperationLaneStatusHistoryAvailabilityAvailable OperationLaneStatusHistoryAvailability = "available"
+	Unavailable                                     OperationLaneStatusHistoryAvailability = "unavailable"
 )
 
 // Validate checks if the OperationLaneStatusHistoryAvailability value is valid
 func (o OperationLaneStatusHistoryAvailability) Validate() error {
 	switch o {
-	case Available, Unavailable:
+	case OperationLaneStatusHistoryAvailabilityAvailable, Unavailable:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationLaneStatusHistoryAvailability value, got: %v", o))
@@ -1068,17 +1130,17 @@ func (o OperationLaneStatusKind) Validate() error {
 type OperationLaneStatusLane string
 
 const (
-	Contacts          OperationLaneStatusLane = "contacts"
-	Documents         OperationLaneStatusLane = "documents"
-	Messages          OperationLaneStatusLane = "messages"
-	PersonFacts       OperationLaneStatusLane = "person_facts"
-	VisualAttachments OperationLaneStatusLane = "visual_attachments"
+	Contacts                         OperationLaneStatusLane = "contacts"
+	Messages                         OperationLaneStatusLane = "messages"
+	OperationLaneStatusLaneDocuments OperationLaneStatusLane = "documents"
+	PersonFacts                      OperationLaneStatusLane = "person_facts"
+	VisualAttachments                OperationLaneStatusLane = "visual_attachments"
 )
 
 // Validate checks if the OperationLaneStatusLane value is valid
 func (o OperationLaneStatusLane) Validate() error {
 	switch o {
-	case Contacts, Documents, Messages, PersonFacts, VisualAttachments:
+	case Contacts, Messages, OperationLaneStatusLaneDocuments, PersonFacts, VisualAttachments:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationLaneStatusLane value, got: %v", o))
@@ -2303,7 +2365,6 @@ func (s SetPersonAttributeRequestSource) Validate() error {
 type SettingGroup0 string
 
 const (
-	Activity                SettingGroup0 = "activity"
 	Archive                 SettingGroup0 = "archive"
 	Attachments             SettingGroup0 = "attachments"
 	Backup                  SettingGroup0 = "backup"
@@ -2312,6 +2373,7 @@ const (
 	Logging                 SettingGroup0 = "logging"
 	Search                  SettingGroup0 = "search"
 	Server                  SettingGroup0 = "server"
+	SettingGroup0Activity   SettingGroup0 = "activity"
 	SettingGroup0Enrichment SettingGroup0 = "enrichment"
 	Sources                 SettingGroup0 = "sources"
 	Sync                    SettingGroup0 = "sync"
@@ -2320,7 +2382,7 @@ const (
 // Validate checks if the SettingGroup0 value is valid
 func (s SettingGroup0) Validate() error {
 	switch s {
-	case Activity, Archive, Attachments, Backup, Browser, Integrations, Logging, Search, Server, SettingGroup0Enrichment, Sources, Sync:
+	case Archive, Attachments, Backup, Browser, Integrations, Logging, Search, Server, SettingGroup0Activity, SettingGroup0Enrichment, Sources, Sync:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SettingGroup0 value, got: %v", s))
@@ -2384,6 +2446,23 @@ func (t TaskIntegrationStatusResponseState) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid TaskIntegrationStatusResponseState value, got: %v", t))
+	}
+}
+
+type GetVisualAttachmentStatusQueryCoverage string
+
+const (
+	N0 GetVisualAttachmentStatusQueryCoverage = "0"
+	N1 GetVisualAttachmentStatusQueryCoverage = "1"
+)
+
+// Validate checks if the GetVisualAttachmentStatusQueryCoverage value is valid
+func (g GetVisualAttachmentStatusQueryCoverage) Validate() error {
+	switch g {
+	case N0, N1:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid GetVisualAttachmentStatusQueryCoverage value, got: %v", g))
 	}
 }
 

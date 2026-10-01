@@ -132,6 +132,8 @@ type RetireVisualAttachmentGenerationBody = VisualRetireRequest
 
 type RetryVisualAttachmentOwnerBody = VisualRetryRequest
 
+type ResumeVisualAttachmentBuildBody = VisualResumeRequest
+
 type CreateOrganizationBody = OrganizationCreateBody
 
 type PatchOrganizationBody = OrganizationBody

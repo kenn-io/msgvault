@@ -685,6 +685,26 @@ func (g GetMessageInlinePartQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type GetVisualAttachmentStatusQuery struct {
+	// Coverage Set 1 for an explicit rate-limited archive media coverage scan; omitted status reads only progress
+	Coverage *GetVisualAttachmentStatusQueryCoverage `json:"coverage,omitempty"`
+}
+
+func (g GetVisualAttachmentStatusQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if g.Coverage != nil {
+		if v, ok := any(g.Coverage).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Coverage", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ListOperationRunsQuery struct {
 	// Kind Exact operation kind
 	Kind *ListOperationRunsQueryKind `json:"kind,omitempty"`

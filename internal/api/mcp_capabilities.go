@@ -83,7 +83,9 @@ func mcpRouteDescriptors(doc *huma.OpenAPI) []apiprotocol.MCPRouteDescriptor {
 func mcpOperationDescribed(operationID string) bool {
 	switch operationID {
 	case "listSourceStatus", "listSourceIdentities", "getSchedulerStatus", "triggerSync",
-		"getSettings", "patchSettings", "getParticipant", "getCacheBuildStatus",
+		"createImportJob", "getImportJob",
+		"getPersonBrief", "listPersonBriefVersions", "getPersonBriefEnrollment", "setPersonBriefEnrollment", "rejectPersonBrief", "generatePersonBrief",
+		"getSettings", "patchSettings", "putSettingsPersonEnrichmentProvider", "getParticipant", "getCacheBuildStatus",
 		"getPersonProfile", "patchPerson", "createPerson", "getCurrentDocumentIndexStatus",
 		"getSettingsPeopleInference", "selectSettingsPeopleInference",
 		"putSettingsPeopleInferencePreset", "checkSettingsPeopleInferenceProvider",
@@ -91,7 +93,10 @@ func mcpOperationDescribed(operationID string) bool {
 		"disableSettingsPeopleInference", "deleteSettingsPeopleInferenceProvider",
 		"patchSettingsPeopleInferencePolicy", "listCardDAVConnections", "getCardDAVStatus",
 		"listCardDAVBooks", "listCardDAVRuns", "syncCardDAV", "updateCardDAVBookRoles",
-		"listCardDAVConflicts", "getCardDAVConflict", "resolveCardDAVConflict", "unpublishCardDAVPerson", "getCardDAVPublication":
+		"listCardDAVConflicts", "getCardDAVConflict", "resolveCardDAVConflict", "unpublishCardDAVPerson", "getCardDAVPublication",
+		"listOperationRuns", "getOperationRun", "getOperationStatus":
+		return true
+	case "getLaneReadiness", "getVisualRuntimePolicy", "getVisualAttachmentStatus", "startVisualAttachmentBuild", "resumeVisualAttachmentBuild", "retryVisualAttachmentOwner", "retireVisualAttachmentGeneration", "getDocumentVectorStatus":
 		return true
 	default:
 		return false

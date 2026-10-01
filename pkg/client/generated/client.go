@@ -563,6 +563,10 @@ type ClientInterface interface {
 	TestTaskIntegration(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*TestTaskIntegrationResponse, error)
 	TestTaskIntegrationWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*TestTaskIntegrationResp, error)
 
+	// GetLaneReadiness Read sanitized configured and initialized lane readiness
+	GetLaneReadiness(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetLaneReadinessResponse, error)
+	GetLaneReadinessWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetLaneReadinessResp, error)
+
 	// GetMCPCapabilities Describe supported MCP daemon operations
 	GetMCPCapabilities(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMCPCapabilitiesResponse, error)
 	GetMCPCapabilitiesWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMCPCapabilitiesResp, error)
@@ -619,6 +623,10 @@ type ClientInterface interface {
 	StartVisualAttachmentBuild(ctx context.Context, options *StartVisualAttachmentBuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartVisualAttachmentBuildResponse, error)
 	StartVisualAttachmentBuildWithResponse(ctx context.Context, options *StartVisualAttachmentBuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartVisualAttachmentBuildResp, error)
 
+	// GetVisualRuntimePolicy Get the initialized visual upload policy
+	GetVisualRuntimePolicy(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetVisualRuntimePolicyResponse, error)
+	GetVisualRuntimePolicyWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetVisualRuntimePolicyResp, error)
+
 	// RetireVisualAttachmentGeneration Retire the visual attachment generation
 	RetireVisualAttachmentGeneration(ctx context.Context, options *RetireVisualAttachmentGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
 	RetireVisualAttachmentGenerationWithResponse(ctx context.Context, options *RetireVisualAttachmentGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetireVisualAttachmentGenerationResp, error)
@@ -628,12 +636,12 @@ type ClientInterface interface {
 	RetryVisualAttachmentOwnerWithResponse(ctx context.Context, options *RetryVisualAttachmentOwnerRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetryVisualAttachmentOwnerResp, error)
 
 	// ResumeVisualAttachmentBuild Resume one bounded visual attachment embedding pass
-	ResumeVisualAttachmentBuild(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ResumeVisualAttachmentBuildResponse, error)
-	ResumeVisualAttachmentBuildWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ResumeVisualAttachmentBuildResp, error)
+	ResumeVisualAttachmentBuild(ctx context.Context, options *ResumeVisualAttachmentBuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResumeVisualAttachmentBuildResponse, error)
+	ResumeVisualAttachmentBuildWithResponse(ctx context.Context, options *ResumeVisualAttachmentBuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResumeVisualAttachmentBuildResp, error)
 
 	// GetVisualAttachmentStatus Get visual attachment embedding status
-	GetVisualAttachmentStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetVisualAttachmentStatusResponse, error)
-	GetVisualAttachmentStatusWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetVisualAttachmentStatusResp, error)
+	GetVisualAttachmentStatus(ctx context.Context, options *GetVisualAttachmentStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetVisualAttachmentStatusResponse, error)
+	GetVisualAttachmentStatusWithResponse(ctx context.Context, options *GetVisualAttachmentStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetVisualAttachmentStatusResp, error)
 
 	// ListOperationRuns List normalized operation history
 	ListOperationRuns(ctx context.Context, options *ListOperationRunsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListOperationRunsResponse, error)
@@ -9263,6 +9271,68 @@ func (c *Client) TestTaskIntegration(ctx context.Context, reqEditors ...runtime.
 	return responseParser(ctx, resp)
 }
 
+// GetLaneReadiness Read sanitized configured and initialized lane readiness
+func (c *Client) GetLaneReadiness(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetLaneReadinessResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/lanes/readiness",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetLaneReadinessResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetLaneReadinessErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetLaneReadinessErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetLaneReadinessResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetLaneReadinessResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/lanes/readiness")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetMCPCapabilities Describe supported MCP daemon operations
 func (c *Client) GetMCPCapabilities(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMCPCapabilitiesResponse, error) {
 	var err error
@@ -10149,6 +10219,68 @@ func (c *Client) StartVisualAttachmentBuild(ctx context.Context, options *StartV
 	return responseParser(ctx, resp)
 }
 
+// GetVisualRuntimePolicy Get the initialized visual upload policy
+func (c *Client) GetVisualRuntimePolicy(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetVisualRuntimePolicyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/multimodal/policy",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetVisualRuntimePolicyResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetVisualRuntimePolicyErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetVisualRuntimePolicyErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetVisualRuntimePolicyResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetVisualRuntimePolicyResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/multimodal/policy")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // RetireVisualAttachmentGeneration Retire the visual attachment generation
 func (c *Client) RetireVisualAttachmentGeneration(ctx context.Context, options *RetireVisualAttachmentGenerationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
@@ -10244,11 +10376,13 @@ func (c *Client) RetryVisualAttachmentOwner(ctx context.Context, options *RetryV
 }
 
 // ResumeVisualAttachmentBuild Resume one bounded visual attachment embedding pass
-func (c *Client) ResumeVisualAttachmentBuild(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ResumeVisualAttachmentBuildResponse, error) {
+func (c *Client) ResumeVisualAttachmentBuild(ctx context.Context, options *ResumeVisualAttachmentBuildRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResumeVisualAttachmentBuildResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/multimodal/run",
-		Method:     "POST",
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/multimodal/run",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -10306,11 +10440,12 @@ func (c *Client) ResumeVisualAttachmentBuild(ctx context.Context, reqEditors ...
 }
 
 // GetVisualAttachmentStatus Get visual attachment embedding status
-func (c *Client) GetVisualAttachmentStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetVisualAttachmentStatusResponse, error) {
+func (c *Client) GetVisualAttachmentStatus(ctx context.Context, options *GetVisualAttachmentStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetVisualAttachmentStatusResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/multimodal/status",
 		Method:     "GET",
+		Options:    options,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)

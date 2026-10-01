@@ -81,7 +81,7 @@
         if (!result.data) throw new Error('document vector status unavailable');
         documentVectorStatus = result.data;
       } else {
-        const result = await generatedGetVisualAttachmentStatus(client);
+        const result = await generatedGetVisualAttachmentStatus(undefined, client);
         if (!result.data) throw new Error('visual status unavailable');
         visualStatus = result.data;
       }

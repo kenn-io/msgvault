@@ -35,6 +35,10 @@ var mcpAllowDraftWrites bool
 var mcpAllowProviderWrites bool
 var mcpAllowDocumentWrites bool
 var mcpAllowCardDAVOperationWrites bool
+var mcpAllowVisualWrites bool
+var mcpAllowSettingsWrites bool
+var mcpAllowEnrichmentWrites bool
+var mcpAllowInferenceRuns bool
 var mcpDocumentCapabilities string
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
@@ -106,6 +110,9 @@ Add to Claude Desktop config:
 		if mcpAllowProfileWrites {
 			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
 		}
+		if mcpAllowInferenceRuns {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyInference)
+		}
 		if mcpAllowSourceWrites {
 			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySources)
 		}
@@ -122,6 +129,15 @@ Add to Claude Desktop config:
 		}
 		if mcpAllowCardDAVOperationWrites {
 			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyCardDAV)
+		}
+		if mcpAllowSettingsWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySettings)
+		}
+		if mcpAllowEnrichmentWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyEnrichment)
+		}
+		if mcpAllowVisualWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyVisual)
 		}
 
 		if mcpHTTPAddr != "" {
@@ -436,6 +452,10 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpAllowProviderWrites, "allow-provider-writes", false, "Enable approved provider policy changes and synthetic checks; HTTP also requires --http-allow-writes")
 	mcpCmd.Flags().BoolVar(&mcpAllowDocumentWrites, "allow-document-writes", false, "Enable approved exact-policy document consent and indexing; requires --document-capabilities and local daemon; HTTP also requires --http-allow-writes")
 	mcpCmd.Flags().BoolVar(&mcpAllowCardDAVOperationWrites, "allow-carddav-operation-writes", false, "Enable approved CardDAV sync, book roles, conflict resolution and unpublication; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowSettingsWrites, "allow-settings-writes", false, "Enable approved fixed operational settings changes; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowEnrichmentWrites, "allow-enrichment-writes", false, "Enable approved existing enrichment policy and global controls changes; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowInferenceRuns, "allow-inference-runs", false, "Enable approved bounded people sweep and brief generation using existing provider consent; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowVisualWrites, "allow-visual-writes", false, "Enable approved exact-policy visual build, resume, retry and retirement; HTTP also requires --http-allow-writes")
 	mcpCmd.Flags().StringVar(&mcpDocumentCapabilities, "document-capabilities", "", "Operator-selected authenticated manifest on the local daemon host; never accepted from an MCP client")
 	mcpCmd.Flags().BoolVar(&mcpAllowDraftWrites, "allow-draft-writes", false, "Enable approved draft creation, editing, deletion and recovery; HTTP also requires --http-allow-writes")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")

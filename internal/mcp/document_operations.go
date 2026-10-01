@@ -119,9 +119,9 @@ func documentOperationalDefinitions() []operationalDefinition {
 		newOperationalDefinition("consent_document_processing", "Record exact document upload consent after reviewing the current policy and approving this call. No arbitrary manifest path or inline-scope override.", OperationFamilyDocuments, closedObject(map[string]*jsonschema.Schema{"fingerprint": stringSchema("Exact current processing policy fingerprint")}, "fingerprint"), outputSchemaFor[DocumentConsent](), true, false),
 	}
 	for _, name := range []string{"build_document_index", "resume_document_index"} {
-		props := map[string]*jsonschema.Schema{"fingerprint": stringSchema("Exact current processing policy fingerprint"), toolArgLimit: {Type: "integer", Minimum: new(float64(1)), Maximum: new(float64(10000)), Description: "Maximum documents; defaults to 100, constrained by the host run budget"}}
+		props := map[string]*jsonschema.Schema{"fingerprint": stringSchema("Exact current processing policy fingerprint"), toolArgLimit: {Type: mcpSchemaInteger, Minimum: new(float64(1)), Maximum: new(float64(10000)), Description: "Maximum documents; defaults to 100, constrained by the host run budget"}}
 		if name == "build_document_index" {
-			props["full_rebuild"] = &jsonschema.Schema{Type: "boolean", Description: "Start a replacement rebuild; resume preserves its existing identity"}
+			props["full_rebuild"] = &jsonschema.Schema{Type: mcpSchemaBoolean, Description: "Start a replacement rebuild; resume preserves its existing identity"}
 		}
 		defs = append(defs, newOperationalDefinition(name, "Run an approved hosted document extraction pass under exact consent. Uploads may incur charges. Preserve partial failures and rebuild continuation; never retries an uncertain call.", OperationFamilyDocuments, closedObject(props, "fingerprint"), outputSchemaFor[DocumentBuild](), true, false))
 	}

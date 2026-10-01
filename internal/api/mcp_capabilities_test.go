@@ -74,3 +74,24 @@ func TestMCPCapabilitiesReportsActualRegisteredParameters(t *testing.T) {
 		assertions.NotEmpty(descriptor.OperationID)
 	}
 }
+
+func TestMCPCapabilitiesVisualGuardsComeFromActualRequests(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	descriptors := mcpRouteDescriptors(OpenAPIDocument())
+	byID := map[string]apiprotocol.MCPRouteDescriptor{}
+	for _, descriptor := range descriptors {
+		byID[descriptor.OperationID] = descriptor
+	}
+	for _, operation := range []string{"startVisualAttachmentBuild", "resumeVisualAttachmentBuild", "retryVisualAttachmentOwner", "retireVisualAttachmentGeneration"} {
+		requirements.Contains(byID, operation)
+		for _, field := range []string{"expected_generation_id", "expected_generation_fingerprint", "expected_policy_fingerprint"} {
+			assertions.Contains(byID[operation].RequestProperties, field)
+		}
+	}
+	requirements.Contains(byID, "getVisualRuntimePolicy")
+	assertions.Equal("/api/v1/multimodal/policy", byID["getVisualRuntimePolicy"].Path)
+	requirements.Contains(byID, "getVisualAttachmentStatus")
+	assertions.Equal([]string{"coverage"}, byID["getVisualAttachmentStatus"].QueryParameters)
+	assertions.Contains(byID, "getDocumentVectorStatus")
+}

@@ -363,7 +363,7 @@ func rejectAllSchema() *jsonschema.Schema {
 }
 
 func stringSchema(description string, values ...string) *jsonschema.Schema {
-	schema := &jsonschema.Schema{Type: "string", Description: description}
+	schema := &jsonschema.Schema{Type: mcpSchemaString, Description: description}
 	if len(values) > 0 {
 		schema.Enum = make([]any, len(values))
 		for i, value := range values {
@@ -374,7 +374,7 @@ func stringSchema(description string, values ...string) *jsonschema.Schema {
 }
 
 func booleanSchema(description string) *jsonschema.Schema {
-	return &jsonschema.Schema{Type: "boolean", Description: description}
+	return &jsonschema.Schema{Type: mcpSchemaBoolean, Description: description}
 }
 
 func safeIDSchema(description string) *jsonschema.Schema {
@@ -395,7 +395,7 @@ func signedSafeIntegerSchema(description string, defaultValue int) *jsonschema.S
 
 func boundedIntegerSchema(description string, minimum, maximum float64) *jsonschema.Schema {
 	return &jsonschema.Schema{
-		Type:        "integer",
+		Type:        mcpSchemaInteger,
 		Description: description,
 		Minimum:     &minimum,
 		Maximum:     &maximum,

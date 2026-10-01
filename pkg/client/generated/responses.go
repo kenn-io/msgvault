@@ -1517,6 +1517,10 @@ type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
 
+type GetLaneReadinessResponse = LaneReadinessResponse
+
+type GetLaneReadinessErrorResponse = ErrorResponse
+
 type GetMCPCapabilitiesResponse = MCPCapabilities
 
 type GetMCPCapabilitiesErrorResponse = ErrorResponse
@@ -1634,6 +1638,10 @@ type UnlinkMessageTaskErrorResponse = ErrorResponse
 type StartVisualAttachmentBuildResponse = Status
 
 type StartVisualAttachmentBuildErrorResponse = ErrorResponse
+
+type GetVisualRuntimePolicyResponse = VisualRuntimePolicy
+
+type GetVisualRuntimePolicyErrorResponse = ErrorResponse
 
 type RetryVisualAttachmentOwnerResponse = Status
 
@@ -4687,6 +4695,13 @@ type TestTaskIntegrationResp struct {
 	JSON200      *TestTaskIntegrationResponse
 }
 
+type GetLaneReadinessResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetLaneReadinessResponse
+}
+
 type GetMCPCapabilitiesResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -4818,6 +4833,13 @@ type StartVisualAttachmentBuildResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *StartVisualAttachmentBuildResponse
+}
+
+type GetVisualRuntimePolicyResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetVisualRuntimePolicyResponse
 }
 
 type RetireVisualAttachmentGenerationResp struct {

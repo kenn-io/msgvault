@@ -5234,6 +5234,68 @@ func (i ImportResult) Validate() error {
 	return errors
 }
 
+type LaneReadiness struct {
+	Blockers        []string                     `json:"blockers" validate:"required"`
+	Configured      bool                         `json:"configured"`
+	ConsentPurposes map[string]string            `json:"consent_purposes,omitempty"`
+	ConsentState    LaneReadinessConsentState    `json:"consent_state" validate:"required"`
+	CredentialState LaneReadinessCredentialState `json:"credential_state" validate:"required"`
+	Enabled         bool                         `json:"enabled"`
+	Initialized     bool                         `json:"initialized"`
+	Lane            LaneReadinessLane            `json:"lane" validate:"required"`
+	Model           *string                      `json:"model,omitzero"`
+	PendingRestart  bool                         `json:"pending_restart"`
+	Provider        *string                      `json:"provider,omitzero"`
+	Schedule        *string                      `json:"schedule,omitzero"`
+}
+
+func (l LaneReadiness) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Blockers, "required"); err != nil {
+		errors = errors.Append("Blockers", err)
+	}
+	if v, ok := any(l.ConsentState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ConsentState", err)
+		}
+	}
+	if v, ok := any(l.CredentialState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("CredentialState", err)
+		}
+	}
+	if v, ok := any(l.Lane).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Lane", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type LaneReadinessResponse struct {
+	Lanes          []LaneReadiness `json:"lanes" validate:"required"`
+	PendingRestart bool            `json:"pending_restart"`
+	StoreAvailable bool            `json:"store_available"`
+}
+
+func (l LaneReadinessResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range l.Lanes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Lanes[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ListDeletionsResponse struct {
 	Manifests []DeletionManifestSummary `json:"manifests" validate:"required"`
 }
@@ -13039,7 +13101,14 @@ func (v VectorHealth) Validate() error {
 }
 
 type VisualBuildRequest struct {
-	Consent bool `json:"consent"`
+	Consent                       bool    `json:"consent"`
+	ExpectedGenerationFingerprint *string `json:"expected_generation_fingerprint,omitzero" validate:"omitempty,min=1"`
+	ExpectedGenerationID          *int64  `json:"expected_generation_id,omitempty" validate:"omitempty,gte=1"`
+	ExpectedPolicyFingerprint     *string `json:"expected_policy_fingerprint,omitzero" validate:"omitempty,min=1"`
+}
+
+func (v VisualBuildRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
 type VisualGeneration struct {
@@ -13057,16 +13126,65 @@ func (v VisualGeneration) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
+type VisualResumeRequest struct {
+	ExpectedGenerationFingerprint *string `json:"expected_generation_fingerprint,omitzero" validate:"omitempty,min=1"`
+	ExpectedGenerationID          *int64  `json:"expected_generation_id,omitempty" validate:"omitempty,gte=1"`
+	ExpectedPolicyFingerprint     *string `json:"expected_policy_fingerprint,omitzero" validate:"omitempty,min=1"`
+}
+
+func (v VisualResumeRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
 type VisualRetireRequest struct {
-	GenerationID int64 `json:"generation_id"`
+	ExpectedGenerationFingerprint *string `json:"expected_generation_fingerprint,omitzero" validate:"omitempty,min=1"`
+	ExpectedGenerationID          *int64  `json:"expected_generation_id,omitempty" validate:"omitempty,gte=1"`
+	ExpectedPolicyFingerprint     *string `json:"expected_policy_fingerprint,omitzero" validate:"omitempty,min=1"`
+	GenerationID                  int64   `json:"generation_id"`
+}
+
+func (v VisualRetireRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
 type VisualRetryRequest struct {
-	BlobHash  string `json:"blob_hash" validate:"required"`
-	MessageID int64  `json:"message_id"`
+	BlobHash                      string  `json:"blob_hash" validate:"required"`
+	ExpectedGenerationFingerprint *string `json:"expected_generation_fingerprint,omitzero" validate:"omitempty,min=1"`
+	ExpectedGenerationID          *int64  `json:"expected_generation_id,omitempty" validate:"omitempty,gte=1"`
+	ExpectedPolicyFingerprint     *string `json:"expected_policy_fingerprint,omitzero" validate:"omitempty,min=1"`
+	MessageID                     int64   `json:"message_id"`
 }
 
 func (v VisualRetryRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type VisualRuntimePolicy struct {
+	AuthorizedCapabilities   []string `json:"authorized_capabilities" validate:"required"`
+	CurrentPolicyFingerprint string   `json:"current_policy_fingerprint" validate:"required"`
+	Dimension                int64    `json:"dimension"`
+	GenerationFingerprint    string   `json:"generation_fingerprint" validate:"required"`
+	GenerationID             int64    `json:"generation_id"`
+	IncludeAnimatedGifs      bool     `json:"include_animated_gifs"`
+	IncludeImages            bool     `json:"include_images"`
+	IncludeVideo             bool     `json:"include_video"`
+	MaxContextChars          int64    `json:"max_context_chars"`
+	MaxMediaBytes            int64    `json:"max_media_bytes"`
+	MaxMediaPixels           int64    `json:"max_media_pixels"`
+	MaxOwnersPerPass         int64    `json:"max_owners_per_pass"`
+
+	// MessageTypes An empty list includes every message type within the source scope
+	MessageTypes     []string `json:"message_types" validate:"required"`
+	Model            string   `json:"model" validate:"required"`
+	Provider         string   `json:"provider" validate:"required"`
+	RetentionPosture string   `json:"retention_posture" validate:"required"`
+
+	// SourceIds An empty list includes all archived sources within the configured message types
+	SourceIds       []int64 `json:"source_ids" validate:"required"`
+	TrainingPosture string  `json:"training_posture" validate:"required"`
+}
+
+func (v VisualRuntimePolicy) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 

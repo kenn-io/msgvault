@@ -5758,6 +5758,94 @@ func (o *RetryVisualAttachmentOwnerRequestOptions) GetHeader() (map[string]strin
 	return nil, nil
 }
 
+// ResumeVisualAttachmentBuildRequestOptions is the options needed to make a request to ResumeVisualAttachmentBuild.
+type ResumeVisualAttachmentBuildRequestOptions struct {
+	Body *ResumeVisualAttachmentBuildBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ResumeVisualAttachmentBuildRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResumeVisualAttachmentBuildRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResumeVisualAttachmentBuildRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResumeVisualAttachmentBuildRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResumeVisualAttachmentBuildRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetVisualAttachmentStatusRequestOptions is the options needed to make a request to GetVisualAttachmentStatus.
+type GetVisualAttachmentStatusRequestOptions struct {
+	Query *GetVisualAttachmentStatusQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetVisualAttachmentStatusRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetVisualAttachmentStatusRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetVisualAttachmentStatusRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetVisualAttachmentStatusRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetVisualAttachmentStatusRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListOperationRunsRequestOptions is the options needed to make a request to ListOperationRuns.
 type ListOperationRunsRequestOptions struct {
 	Query *ListOperationRunsQuery

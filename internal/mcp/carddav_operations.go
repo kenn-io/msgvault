@@ -105,25 +105,25 @@ func cardDAVDefinitions(named bool) []operationalDefinition {
 			properties = map[string]*jsonschema.Schema{}
 		}
 		if named {
-			properties["connection"] = &jsonschema.Schema{Type: "string", Pattern: "^[a-z][a-z0-9_-]{0,63}$", Description: "Saved connection name; omit to preserve the daemon's aggregate scope"}
+			properties["connection"] = &jsonschema.Schema{Type: mcpSchemaString, Pattern: "^[a-z][a-z0-9_-]{0,63}$", Description: "Saved connection name; omit to preserve the daemon's aggregate scope"}
 		}
 		return closedObject(properties)
 	}
 	id := func(key string) map[string]*jsonschema.Schema {
-		return map[string]*jsonschema.Schema{key: {Type: "integer", Minimum: new(float64(1))}}
+		return map[string]*jsonschema.Schema{key: {Type: mcpSchemaInteger, Minimum: new(float64(1))}}
 	}
 	roleProperties := id("book_id")
 	for _, name := range []string{"write_target", "subscribed", "lookup_source"} {
-		roleProperties[name] = &jsonschema.Schema{Type: "boolean"}
+		roleProperties[name] = &jsonschema.Schema{Type: mcpSchemaBoolean}
 	}
 	resolve := id("conflict_id")
-	resolve["choice"] = &jsonschema.Schema{Type: "string", Enum: []any{"keep_local", "keep_remote"}}
+	resolve["choice"] = &jsonschema.Schema{Type: mcpSchemaString, Enum: []any{"keep_local", "keep_remote"}}
 	return []operationalDefinition{
 		newOperationalDefinition("list_carddav_connections", "List saved CardDAV connections and readiness, without credentials or remote discovery.", OperationFamilyCardDAV, closedObject(nil), outputSchemaFor[CardDAVConnections](), false, false),
 		newOperationalDefinition("list_carddav_books", "List the daemon's known CardDAV address books and roles.", OperationFamilyCardDAV, scope(nil), outputSchemaFor[CardDAVBooks](), false, false),
-		newOperationalDefinition("list_carddav_runs", "Read durable CardDAV sync history, default25/max100; before_id returns lower run IDs.", OperationFamilyCardDAV, scope(map[string]*jsonschema.Schema{toolArgLimit: {Type: "integer", Minimum: new(float64(1)), Maximum: new(float64(100))}, "before_id": {Type: "integer", Minimum: new(float64(1))}}), outputSchemaFor[CardDAVRuns](), false, false),
+		newOperationalDefinition("list_carddav_runs", "Read durable CardDAV sync history, default25/max100; before_id returns lower run IDs.", OperationFamilyCardDAV, scope(map[string]*jsonschema.Schema{toolArgLimit: {Type: mcpSchemaInteger, Minimum: new(float64(1)), Maximum: new(float64(100))}, "before_id": {Type: mcpSchemaInteger, Minimum: new(float64(1))}}), outputSchemaFor[CardDAVRuns](), false, false),
 		newOperationalDefinition("get_carddav_connection_status", "Read aggregate or selected CardDAV readiness and actual active/latest runs.", OperationFamilyCardDAV, scope(nil), outputSchemaFor[CardDAVStatus](), false, false),
-		newOperationalDefinition("sync_carddav_connections", "Synchronize enabled connections when scope is omitted; explicit manual scope can synchronize a disabled connection. Retains partial failures and actual started run IDs.", OperationFamilyCardDAV, scope(map[string]*jsonschema.Schema{"full": {Type: "boolean"}}), outputSchemaFor[CardDAVSync](), true, false),
+		newOperationalDefinition("sync_carddav_connections", "Synchronize enabled connections when scope is omitted; explicit manual scope can synchronize a disabled connection. Retains partial failures and actual started run IDs.", OperationFamilyCardDAV, scope(map[string]*jsonschema.Schema{"full": {Type: mcpSchemaBoolean}}), outputSchemaFor[CardDAVSync](), true, false),
 		newOperationalDefinition("update_carddav_book_roles", "Update all three book roles after approval; the daemon enforces one global publication target and its pending-publication switch guard.", OperationFamilyCardDAV, closedObject(roleProperties, "book_id", "write_target", "subscribed", "lookup_source"), outputSchemaFor[CardDAVBook](), true, false),
 		newOperationalDefinition("list_carddav_conflicts", "List unresolved CardDAV conflicts with actual allowed resolutions.", OperationFamilyCardDAV, closedObject(nil), outputSchemaFor[generated.CardDAVConflictsResponse](), false, false),
 		newOperationalDefinition("get_carddav_conflict", "Read bounded public contact summaries for one actual CardDAV conflict.", OperationFamilyCardDAV, closedObject(id("conflict_id"), "conflict_id"), outputSchemaFor[generated.CardDAVConflictDetailResponse](), false, false),

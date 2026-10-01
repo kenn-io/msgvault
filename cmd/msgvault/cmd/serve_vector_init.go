@@ -177,60 +177,7 @@ func startVectorInit(
 			} else {
 				apiServer.SetVisualSearch(searchService)
 			}
-			build := func(runCtx context.Context, scope operations.PassScope) error {
-				return runVisualOperation(runCtx, vf.Visual, scope, func(ctx context.Context) (visual.WorkerResult, error) {
-					if err := vf.Visual.Archive.ConsentVisualGeneration(
-						ctx, vf.Visual.Generation.ID, vf.Visual.PolicyFingerprint); err != nil {
-						return visual.WorkerResult{}, err
-					}
-					return runVisualOnce(ctx, vf.Visual)
-				})
-			}
-			resume := func(runCtx context.Context, scope operations.PassScope) error {
-				return runVisualOperation(runCtx, vf.Visual, scope, func(ctx context.Context) (visual.WorkerResult, error) {
-					if err := requireVisualConsent(ctx, vf.Visual); err != nil {
-						return visual.WorkerResult{}, err
-					}
-					return runVisualOnce(ctx, vf.Visual)
-				})
-			}
-			apiServer.SetVisualOperations(build, resume, func(
-				runCtx context.Context, scope operations.PassScope, messageID int64, hash string,
-			) error {
-				return runVisualOperation(runCtx, vf.Visual, scope, func(ctx context.Context) (visual.WorkerResult, error) {
-					if err := requireVisualConsent(ctx, vf.Visual); err != nil {
-						return visual.WorkerResult{}, err
-					}
-					if vf.Visual.ScopeCheck != nil {
-						if err := vf.Visual.ScopeCheck(ctx); err != nil {
-							return visual.WorkerResult{}, err
-						}
-					}
-					result, err := vf.Visual.Reconciler.RetryOwner(ctx, messageID, hash)
-					if err != nil || len(result.Work) == 0 {
-						return visual.WorkerResult{}, err
-					}
-					return vf.Visual.Worker.Run(ctx, result.Work)
-				})
-			}, func(statusCtx context.Context, includeCoverage bool) (visual.Status, error) {
-				return vf.Visual.Reconciler.Status(statusCtx, visual.ProviderUsage{}, false, includeCoverage)
-			}, func(retireCtx context.Context) error {
-				// Retire FIRST: prepare and commit refuse retired
-				// generations, so no publisher can add a token after this
-				// point and the enumeration below is complete.
-				if err := vf.Visual.Reconciler.Retire(retireCtx); err != nil {
-					return err
-				}
-				tokens, err := vf.Visual.Reconciler.GenerationTokens(retireCtx)
-				if err != nil {
-					return err
-				}
-				visualTokens := make([]visual.VectorToken, len(tokens))
-				for i, token := range tokens {
-					visualTokens[i] = visual.VectorToken(token)
-				}
-				return vf.Visual.Backend.DeleteTokens(retireCtx, visualTokens)
-			})
+			installVisualOperations(apiServer, vf.Visual)
 			if err := registerVisualJob(sched, vf.Visual, cfg); err != nil {
 				logger.Error("register multimodal job failed", "error", err)
 			}
@@ -266,12 +213,77 @@ func requireVisualConsent(ctx context.Context, vf *visualFeatures) error {
 	return nil
 }
 
+// installVisualOperations publishes the initialized policy and the actual
+// consent, worker and retirement callbacks as one runtime.
+func installVisualOperations(apiServer *api.Server, vf *visualFeatures) {
+	build := func(runCtx context.Context, scope operations.PassScope) error {
+		return runVisualOperation(runCtx, vf, scope, func(ctx context.Context) (visual.WorkerResult, error) {
+			if err := vf.Archive.ConsentVisualGeneration(
+				ctx, vf.Generation.ID, vf.PolicyFingerprint); err != nil {
+				return visual.WorkerResult{}, err
+			}
+			return runVisualOnce(ctx, vf)
+		})
+	}
+	resume := func(runCtx context.Context, scope operations.PassScope) error {
+		return runVisualOperation(runCtx, vf, scope, func(ctx context.Context) (visual.WorkerResult, error) {
+			if err := requireVisualConsent(ctx, vf); err != nil {
+				return visual.WorkerResult{}, err
+			}
+			return runVisualOnce(ctx, vf)
+		})
+	}
+	apiServer.SetVisualOperationsWithPolicy(vf.RuntimePolicy, build, resume, func(
+		runCtx context.Context, scope operations.PassScope, messageID int64, hash string,
+	) error {
+		return runVisualOperation(runCtx, vf, scope, func(ctx context.Context) (visual.WorkerResult, error) {
+			if err := requireVisualConsent(ctx, vf); err != nil {
+				return visual.WorkerResult{}, err
+			}
+			if vf.ScopeCheck != nil {
+				if err := vf.ScopeCheck(ctx); err != nil {
+					return visual.WorkerResult{}, err
+				}
+			}
+			result, err := vf.Reconciler.RetryOwner(ctx, messageID, hash)
+			if err != nil || len(result.Work) == 0 {
+				return visual.WorkerResult{}, err
+			}
+			return vf.Worker.Run(ctx, result.Work)
+		})
+	}, func(statusCtx context.Context, includeCoverage bool) (visual.Status, error) {
+		return vf.Reconciler.Status(statusCtx, visual.ProviderUsage{}, false, includeCoverage)
+	}, func(retireCtx context.Context) error {
+		if err := checkVisualRuntimeGuard(retireCtx, vf); err != nil {
+			return err
+		}
+		// Retire FIRST: prepare and commit refuse retired
+		// generations, so no publisher can add a token after this
+		// point and the enumeration below is complete.
+		if err := vf.Reconciler.Retire(retireCtx); err != nil {
+			return err
+		}
+		tokens, err := vf.Reconciler.GenerationTokens(retireCtx)
+		if err != nil {
+			return err
+		}
+		visualTokens := make([]visual.VectorToken, len(tokens))
+		for i, token := range tokens {
+			visualTokens[i] = visual.VectorToken(token)
+		}
+		return vf.Backend.DeleteTokens(retireCtx, visualTokens)
+	})
+}
+
 func runVisualOperation(
 	ctx context.Context,
 	vf *visualFeatures,
 	scope operations.PassScope,
 	execute func(context.Context) (visual.WorkerResult, error),
 ) (runErr error) {
+	if err := checkVisualRuntimeGuard(ctx, vf); err != nil {
+		return err
+	}
 	pass, terminal, err := beginCommandOperationPass(
 		ctx, vf.Archive, operations.KindVisualEmbedding, scope,
 	)
@@ -289,6 +301,16 @@ func runVisualOperation(
 	}()
 	result, runErr = execute(ctx)
 	return runErr
+}
+
+func checkVisualRuntimeGuard(ctx context.Context, vf *visualFeatures) error {
+	if err := api.CheckVisualOperationGuard(ctx, vf.Generation.ID, vf.Generation.Fingerprint, vf.PolicyFingerprint); err != nil {
+		return err
+	}
+	if api.VisualOperationGuardRequested(ctx) && vf.GuardPolicyCheck != nil {
+		return vf.GuardPolicyCheck(ctx)
+	}
+	return nil
 }
 
 func visualEmbeddingCounters(result visual.WorkerResult) operations.InvocationCounters {

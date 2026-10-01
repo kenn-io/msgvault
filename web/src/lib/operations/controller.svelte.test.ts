@@ -575,7 +575,7 @@ describe('OperationsController', () => {
   it.each([
     ['carddav_sync', '/api/v1/carddav/sync', { full: false }],
     ['visual_build', '/api/v1/multimodal/build', { consent: true }],
-    ['visual_resume', '/api/v1/multimodal/run', undefined]
+    ['visual_resume', '/api/v1/multimodal/run', {}]
   ] as const)('invokes advertised %s through its generated route and refreshes', async (action, actionPath, body) => {
     const requests: Request[] = [];
     let reads = 0;
@@ -598,7 +598,7 @@ describe('OperationsController', () => {
 
     const actionRequest = requests.find((request) => request.method === 'POST')!;
     expect(new URL(actionRequest.url).pathname).toBe(actionPath);
-    expect(body === undefined ? await actionRequest.text() : await actionRequest.json()).toEqual(body ?? '');
+    expect(await actionRequest.json()).toEqual(body);
     expect(reads).toBe(4);
     expect(controller.snapshot.actionPending).toBeNull();
     expect(controller.snapshot.actionError).toBeNull();
