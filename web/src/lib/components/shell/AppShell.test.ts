@@ -7,7 +7,7 @@ import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createAPIClient } from '../../api/client';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, serializeExploreURLState } from '../../explore/state.svelte';
-import { chooseSelectOption } from '../../../test/kit-ui';
+import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import AppShell from './AppShell.svelte';
 import { SIDEBAR_COLLAPSED_KEY } from './navigation';
 
@@ -1268,6 +1268,40 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  it('chooses the Facts person from the Directory search and stays in Facts', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory_review', reviewKind: 'fact', identityState: 'candidate'
+    }))}`);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/people/directory') {
+        return Response.json({
+          people: [{ id: 12, display_name: 'Alex Example', categories: [], organizations: [], contact_state: 'active', revision: 1 }]
+        });
+      }
+      if (path === '/api/v1/person-fact-targets') return Response.json({ fingerprint: 'safe', version: 'safe', targets: [] });
+      if (path.endsWith('/fact-evidence')) return Response.json({ evidence: [] });
+      if (path.endsWith('/fact-claims')) return Response.json({ claims: [] });
+      if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
+      if (path.endsWith('/fact-pins')) return Response.json({ pins: [] });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
+    try {
+      await fireEvent.input(await openTypeahead('Search Directory people'), { target: { value: 'Alex' } });
+      await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Alex Example' }));
+
+      await waitFor(() => expect(state.current.directoryPersonID).toBe(12));
+      expect(state.current.reviewKind).toBe('fact');
+      expect(state.current.workspace).toBe('directory_review');
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
   it('owns the selected-person fact ledger and reloads the same person on history restoration', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'directory_review', reviewKind: 'fact', identityState: 'candidate', directoryPersonID: 42
@@ -1287,7 +1321,7 @@ describe('AppShell', () => {
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
 
-    expect(await screen.findByText('Person ID 42')).toBeDefined();
+    expect(await screen.findByText('Person 42', { selector: 'strong' })).toBeDefined();
     await vi.waitFor(() => expect(requests.filter((request) => new URL(request.url).pathname.includes('fact'))).toHaveLength(5));
     window.dispatchEvent(new PopStateEvent('popstate'));
     await vi.waitFor(() => expect(requests.filter((request) => new URL(request.url).pathname.includes('fact'))).toHaveLength(10));

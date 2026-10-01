@@ -48,6 +48,7 @@ function renderReview(controller: DirectoryReviewController) {
     controller,
     relationshipController: new RelationshipReviewController(controller.apiClient),
     factController: new FactLedgerController(controller.apiClient),
+    client: controller.apiClient,
     directoryPersonID: null
   });
 }
@@ -63,7 +64,11 @@ describe('DirectoryReviewCentre', () => {
     });
     const review = new DirectoryReviewController(createAPIClient(fetchFn));
     const relationships = new RelationshipReviewController(createAPIClient(fetchFn));
-    render(DirectoryReviewCentre, { controller: review, relationshipController: relationships });
+    render(DirectoryReviewCentre, {
+      controller: review,
+      relationshipController: relationships,
+      client: review.apiClient
+    });
 
     await fireEvent.click(screen.getByRole('radio', { name: 'Imported relationships' }));
 
@@ -109,6 +114,7 @@ describe('DirectoryReviewCentre', () => {
       controller,
       relationshipController: new RelationshipReviewController(apiClient),
       factController: new FactLedgerController(apiClient),
+      client: apiClient,
       directoryPersonID: null
     });
 
@@ -169,6 +175,7 @@ describe('DirectoryReviewCentre', () => {
         controller,
         relationshipController: new RelationshipReviewController(apiClient),
         factController,
+        client: apiClient,
         directoryPersonID: null
       });
 
@@ -177,7 +184,7 @@ describe('DirectoryReviewCentre', () => {
       }
 
       expect(screen.getByRole('region', { name: 'Facts' })).toBeDefined();
-      expect(screen.getByText('Choose a person in Directory to inspect their fact ledger')).toBeDefined();
+      expect(screen.getByText('Choose a person to see the facts recorded about them.')).toBeDefined();
       expect(screen.queryByRole('button', { name: /accept|reject|unsure|link identities|keep separate/i })).toBeNull();
       expect(fetchFn).not.toHaveBeenCalled();
       if (mode === 'selection') expect(commit).toHaveBeenCalledWith({ reviewKind: 'fact' });
@@ -302,6 +309,7 @@ describe('DirectoryReviewCentre', () => {
       controller,
       relationshipController: new RelationshipReviewController(apiClient),
       factController,
+      client: apiClient,
       directoryPersonID: null
     });
 

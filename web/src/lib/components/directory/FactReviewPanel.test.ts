@@ -1,34 +1,110 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createAPIClient } from '../../api/client';
+import { createAPIClient, type APIClient } from '../../api/client';
 import { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
+import { openTypeahead } from '../../../test/kit-ui';
 import FactReviewPanel from './FactReviewPanel.svelte';
 
 afterEach(() => cleanup());
 
-describe('FactReviewPanel', () => {
-  it('asks for a durable Directory person and remains network-silent without one', async () => {
-    const fetchFn = vi.fn<typeof fetch>();
-    const onOpenDirectory = vi.fn();
-    const controller = new FactLedgerController(createAPIClient(fetchFn));
+function renderFactPanel(props: {
+  client: APIClient;
+  personID: number | null;
+  onSelectFactPerson?: (personID: number) => void;
+  onOpenPerson?: (personID: number) => void;
+}) {
+  const controller = new FactLedgerController(props.client);
+  if (props.personID !== null) controller.personID = props.personID;
+  return render(FactReviewPanel, {
+    controller,
+    client: props.client,
+    personID: props.personID,
+    onSelectFactPerson: props.onSelectFactPerson ?? (() => undefined),
+    onOpenPerson: props.onOpenPerson
+  });
+}
 
-    render(FactReviewPanel, { controller, personID: null, onOpenDirectory });
+describe('FactReviewPanel', () => {
+  it('offers the person picker and remains network-silent without a person', () => {
+    const fetchFn = vi.fn<typeof fetch>();
+    renderFactPanel({ client: createAPIClient(fetchFn), personID: null });
 
     const panel = screen.getByRole('region', { name: 'Facts' });
-    expect(within(panel).getByText('Choose a person in Directory to inspect their fact ledger')).toBeDefined();
-    await fireEvent.click(within(panel).getByRole('button', { name: 'Open Directory' }));
-    expect(onOpenDirectory).toHaveBeenCalledOnce();
+    expect(within(panel).getByText('Choose a person to see the facts recorded about them.')).toBeDefined();
+    expect(within(panel).getByRole('button', { name: /^Search Directory people/ })).toBeDefined();
+    expect(within(panel).queryByRole('button', { name: 'Open Directory' })).toBeNull();
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('renders exact honest gates and selected durable-person navigation without decision controls', async () => {
-    const controller = new FactLedgerController(createAPIClient(vi.fn<typeof fetch>()));
-    controller.personID = 42;
-    const onOpenPerson = vi.fn();
-    render(FactReviewPanel, { controller, personID: 42, onOpenPerson });
+  it('picks a person for Facts from the Directory search', async () => {
+    const requests: URL[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(input instanceof Request ? input.url : String(input), 'http://localhost');
+      requests.push(url);
+      if (url.pathname === '/api/v1/people/directory') {
+        return Response.json({
+          people: [
+            { id: 12, display_name: 'Alex Example', categories: [], organizations: [], contact_state: 'active', revision: 1 }
+          ]
+        });
+      }
+      return Response.json({});
+    });
+    const onSelectFactPerson = vi.fn();
+    renderFactPanel({ client: createAPIClient(fetchFn), personID: null, onSelectFactPerson });
 
-    expect(screen.getByText('Person ID 42')).toBeDefined();
+    const input = await openTypeahead('Search Directory people');
+    await fireEvent.input(input, { target: { value: 'Alex' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Alex Example' }));
+
+    expect(onSelectFactPerson).toHaveBeenCalledWith(12);
+    expect(requests[0]!.searchParams.get('q')).toBe('Alex');
+    expect(requests[0]!.searchParams.get('limit')).toBe('20');
+  });
+
+  it('says when nobody matches', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ people: [] }));
+    renderFactPanel({ client: createAPIClient(fetchFn), personID: null });
+
+    await fireEvent.input(await openTypeahead('Search Directory people'), { target: { value: 'Nobody' } });
+
+    expect(await screen.findByText('No matching people')).toBeDefined();
+  });
+
+  it('shows a search failure inside the picker', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ message: 'Directory is offline' }, { status: 500 }));
+    renderFactPanel({ client: createAPIClient(fetchFn), personID: null });
+
+    await fireEvent.input(await openTypeahead('Search Directory people'), { target: { value: 'Alex' } });
+
+    expect(await screen.findByText('Directory is offline')).toBeDefined();
+  });
+
+  it('shows the selected person by name after a reload', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () =>
+      Response.json({ id: 12, display_name: 'Alex Example', participant_ids: [] })
+    );
+    renderFactPanel({ client: createAPIClient(fetchFn), personID: 12 });
+
+    expect(await screen.findByText('Alex Example', { selector: 'strong' })).toBeDefined();
+    expect(screen.queryByText('Person ID 12')).toBeNull();
+    const paths = fetchFn.mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : String(input), 'http://localhost').pathname);
+    expect(paths).toContain('/api/v1/people/12');
+  });
+
+  it('falls back to a generic label while the name is unknown', () => {
+    const fetchFn = vi.fn<typeof fetch>(() => new Promise<Response>(() => undefined));
+    renderFactPanel({ client: createAPIClient(fetchFn), personID: 42 });
+
+    expect(screen.getByText('Person 42', { selector: 'strong' })).toBeDefined();
+  });
+
+  it('renders exact honest gates and selected durable-person navigation without decision controls', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ id: 42, display_name: 'Sam Example', participant_ids: [] }));
+    const onOpenPerson = vi.fn();
+    renderFactPanel({ client: createAPIClient(fetchFn), personID: 42, onOpenPerson });
+
     expect(screen.getByText('Fact candidate decisions are unavailable until a generated candidate contract is installed.')).toBeDefined();
     expect(screen.getByText('A dated last-time-we-talked brief is unavailable until the server exposes a generated brief contract.')).toBeDefined();
     expect(screen.queryByRole('button', { name: /accept|reject|unsure|run/i })).toBeNull();

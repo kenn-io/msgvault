@@ -1405,7 +1405,8 @@
           relationshipController={relationshipReviewController}
           factController={factLedgerController}
           directoryPersonID={exploreState.current.directoryPersonID}
-          onOpenDirectory={() => commitWorkspace('directory')}
+          {client}
+          onSelectFactPerson={(personID) => commitNavigation({ directoryPersonID: personID })}
           onOpenPerson={openDirectoryPerson}
           onAnnounce={announceOperation}
         />

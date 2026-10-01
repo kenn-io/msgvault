@@ -2,6 +2,7 @@
   import { Button, EmptyState, SegmentedControl, SelectDropdown, Spinner } from '@kenn-io/kit-ui';
   import { tick } from 'svelte';
 
+  import type { APIClient } from '../../api/client';
   import type { DirectoryReviewKind, IdentityReviewState } from '../../explore/models';
   import type { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
   import type {
@@ -23,7 +24,8 @@
     relationshipController: RelationshipReviewController;
     factController?: FactLedgerController;
     directoryPersonID?: number | null;
-    onOpenDirectory?: () => void;
+    client: APIClient;
+    onSelectFactPerson?: (personID: number) => void;
     onOpenPerson?: (personID: number) => void;
     onAnnounce?: (message: string) => void;
   }
@@ -33,7 +35,8 @@
     relationshipController,
     factController = undefined,
     directoryPersonID = null,
-    onOpenDirectory = () => undefined,
+    client,
+    onSelectFactPerson = () => undefined,
     onOpenPerson = () => undefined,
     onAnnounce = () => undefined
   }: Props = $props();
@@ -220,7 +223,13 @@
     </section>
   {:else if controller.reviewKind === 'fact'}
     {#if factController}
-      <FactReviewPanel controller={factController} personID={directoryPersonID} {onOpenDirectory} {onOpenPerson} />
+      <FactReviewPanel
+        controller={factController}
+        personID={directoryPersonID}
+        {client}
+        {onSelectFactPerson}
+        {onOpenPerson}
+      />
     {/if}
   {:else}
     <RelationshipReviewQueue controller={relationshipController} {onOpenPerson} />

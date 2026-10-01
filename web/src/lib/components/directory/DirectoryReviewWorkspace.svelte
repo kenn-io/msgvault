@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { APIClient } from '../../api/client';
   import type { DirectoryReviewController } from '../../directory/review-controller.svelte';
   import type { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
   import DirectoryReviewCentre from './DirectoryReviewCentre.svelte';
@@ -9,7 +10,8 @@
     relationshipController: RelationshipReviewController;
     factController: FactLedgerController;
     directoryPersonID: number | null;
-    onOpenDirectory?: () => void;
+    client: APIClient;
+    onSelectFactPerson?: (personID: number) => void;
     onOpenPerson?: (personID: number) => void;
     onAnnounce?: (message: string) => void;
   }
@@ -18,7 +20,8 @@
     relationshipController,
     factController,
     directoryPersonID,
-    onOpenDirectory = undefined,
+    client,
+    onSelectFactPerson = undefined,
     onOpenPerson = undefined,
     onAnnounce = undefined
   }: Props = $props();
@@ -29,7 +32,8 @@
   {relationshipController}
   {factController}
   {directoryPersonID}
-  {onOpenDirectory}
+  {client}
+  {onSelectFactPerson}
   {onOpenPerson}
   {onAnnounce}
 />
