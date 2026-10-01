@@ -320,8 +320,10 @@ The chat's composer must be empty. Each chat has at most one managed draft;
 `draft-delete` work on the returned draft ID, and `draft-delete` clears the
 composer. The edit body must be nonblank. Delegated tokens need `draft.create` on the
 Beeper source to create; `draft-get` accepts `draft.edit` or `draft.delete`,
-`draft-edit` needs `draft.edit`, and `draft-delete` needs `draft.delete`. A creator's `draft_exists` result carries the draft ID without its
-text. `draft-get` shows the draft as
+`draft-edit` needs `draft.edit`, and `draft-delete` needs `draft.delete`.
+Delete-only agents receive draft metadata without committed or pending text,
+including in error responses. A creator's `draft_exists` result carries the
+draft ID without its text. `draft-get` shows the draft as
 Beeper last reported it, which can differ from the text sent because Beeper
 formats it. Edit and delete read the composer first and return `draft_conflict`
 when someone changed it in Beeper; msgvault never replaces text it did not

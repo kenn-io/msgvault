@@ -26,7 +26,7 @@ type beeperDraftOutput struct {
 	CandidateContent string  `json:"candidate_content,omitempty"`
 }
 
-func emitBeeperDraft(emit func(api.CLIRunEvent) error, stream string, asJSON bool, status string, draft store.BeeperDraft) error {
+func emitBeeperDraft(emit func(api.CLIRunEvent) error, stream string, intent draftLifecycleIntent, status string, draft store.BeeperDraft) error {
 	if emit == nil {
 		return nil
 	}
@@ -40,7 +40,10 @@ func emitBeeperDraft(emit func(api.CLIRunEvent) error, stream string, asJSON boo
 	if draft.Pending != nil {
 		output.PendingOperation, output.CandidateContent = draft.Pending.Operation, draft.Pending.Text
 	}
-	if asJSON {
+	if intent.MetadataOnly {
+		output.Content, output.CandidateContent = nil, ""
+	}
+	if intent.JSON {
 		data, err := jsonv2.Marshal(output)
 		if err != nil {
 			return err
@@ -64,11 +67,11 @@ func emitBeeperDraft(emit func(api.CLIRunEvent) error, stream string, asJSON boo
 }
 
 // beeperDraftFailure shows the draft's recorded state before returning code.
-func (a *storeAPIAdapter) beeperDraftFailure(ctx context.Context, emit func(api.CLIRunEvent) error, asJSON bool, draftID, code string, cause error) error {
+func (a *storeAPIAdapter) beeperDraftFailure(ctx context.Context, emit func(api.CLIRunEvent) error, intent draftLifecycleIntent, draftID, code string, cause error) error {
 	evidenceCtx, cancel := localDraftEvidenceContext(ctx)
 	defer cancel()
 	if draft, err := a.store.GetBeeperDraftContext(evidenceCtx, draftID); err == nil {
-		_ = emitBeeperDraft(emit, cliStreamStderr, asJSON, code, draft)
+		_ = emitBeeperDraft(emit, cliStreamStderr, intent, code, draft)
 	}
 	return draftReplyError(code, cause)
 }
@@ -159,10 +162,10 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 	chatID := strings.TrimSpace(intent.To[0])
 	if existing, err := a.store.LiveBeeperDraftContext(ctx, source.ID, chatID); err == nil {
 		if grant != nil {
-			// Reading draft text needs draft.edit or draft.delete; creators get the ID.
+			// Reading draft text needs draft.edit; creators get the ID.
 			existing.Text, existing.Pending = nil, nil
 		}
-		_ = emitBeeperDraft(emit, cliStreamStderr, intent.JSON, "draft_exists", existing)
+		_ = emitBeeperDraft(emit, cliStreamStderr, draftLifecycleIntent{JSON: intent.JSON}, "draft_exists", existing)
 		return draftReplyError("draft_exists", store.ErrBeeperDraftExists)
 	} else if !errors.Is(err, store.ErrBeeperDraftNotFound) {
 		return draftReplyError("draft_read_failed", err)
@@ -181,7 +184,7 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 	if err != nil {
 		return draftReplyError("local_persistence_failed", err)
 	}
-	return a.writeBeeperDraft(ctx, client, source, draft, state, intent.JSON, "created", emit)
+	return a.writeBeeperDraft(ctx, client, source, draft, state, draftLifecycleIntent{JSON: intent.JSON}, "created", emit)
 }
 
 // runBeeperDraftLifecycle serves draft-get, draft-edit and draft-delete for
@@ -207,16 +210,19 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 		if err := chatDraftAuthorizer(grant, permissions...)(source.SourceType, source.Identifier); err != nil {
 			return err
 		}
+		intent.MetadataOnly = !grant.Allows(agentgrant.PermissionDraftEdit, agentgrant.SourceRef{
+			Type: source.SourceType, Identifier: source.Identifier,
+		})
 	}
 	if intent.Operation == api.CLIRunDraftGetCommand {
-		return emitBeeperDraft(emit, cliStreamStdout, intent.JSON, "ok", draft)
+		return emitBeeperDraft(emit, cliStreamStdout, intent, "ok", draft)
 	}
 	if draft.Revision != intent.Revision {
 		return draftReplyError("revision_mismatch", fmt.Errorf("expected revision %d, found %d", intent.Revision, draft.Revision))
 	}
 	if draft.DiscardedAt != nil {
 		if intent.Operation == api.CLIRunDraftDeleteCommand {
-			return emitBeeperDraft(emit, cliStreamStdout, intent.JSON, "already_discarded", draft)
+			return emitBeeperDraft(emit, cliStreamStdout, intent, "already_discarded", draft)
 		}
 		return draftReplyError("draft_discarded", errors.New("discarded drafts cannot be edited"))
 	}
@@ -260,23 +266,23 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 				return draftReplyError("local_persistence_failed", err)
 			}
 			if intent.Operation != api.CLIRunDraftDeleteCommand {
-				_ = emitBeeperDraft(emit, cliStreamStderr, intent.JSON, "recovered", finished)
+				_ = emitBeeperDraft(emit, cliStreamStderr, intent, "recovered", finished)
 				return draftReplyError("draft_discarded", errors.New("an earlier delete finished; the draft is discarded"))
 			}
-			return emitBeeperDraft(emit, cliStreamStdout, intent.JSON, "deleted", finished)
+			return emitBeeperDraft(emit, cliStreamStdout, intent, "deleted", finished)
 		case state.Empty, beeperDraftMatches(state, draft.Text):
 			if draft, err = a.store.AbortBeeperDraftContext(ctx, draft.DraftID, draft.Revision); err != nil {
 				return draftReplyError("local_persistence_failed", err)
 			}
 			if draft.DiscardedAt != nil && intent.Operation == api.CLIRunDraftDeleteCommand {
-				return emitBeeperDraft(emit, cliStreamStdout, intent.JSON, "deleted", draft)
+				return emitBeeperDraft(emit, cliStreamStdout, intent, "deleted", draft)
 			}
 			if draft.DiscardedAt != nil {
-				_ = emitBeeperDraft(emit, cliStreamStderr, intent.JSON, "recovered", draft)
+				_ = emitBeeperDraft(emit, cliStreamStderr, intent, "recovered", draft)
 				return draftReplyError("draft_discarded", errors.New("the draft's first write never reached Beeper; the draft is discarded"))
 			}
 		default:
-			return a.beeperDraftFailure(ctx, emit, intent.JSON, draft.DraftID, "pending_operation",
+			return a.beeperDraftFailure(ctx, emit, intent, draft.DraftID, "pending_operation",
 				errors.New("beeper shows a draft that may be an unconfirmed write; clear it in Beeper to continue"))
 		}
 	}
@@ -295,13 +301,13 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 		}
 		return draftReplyError("claim_failed", err)
 	}
-	return a.writeBeeperDraft(ctx, client, source, claimed, state, intent.JSON, status, emit)
+	return a.writeBeeperDraft(ctx, client, source, claimed, state, intent, status, emit)
 }
 
 // writeBeeperDraft sends a claimed write and commits what Beeper reports. A
 // write Beeper refused before anything changed drops the claim; any other
 // failure keeps it for the next command to settle.
-func (a *storeAPIAdapter) writeBeeperDraft(ctx context.Context, client *beeper.Client, source *store.Source, claimed store.BeeperDraft, state beeper.DraftState, asJSON bool, status string, emit func(api.CLIRunEvent) error) error {
+func (a *storeAPIAdapter) writeBeeperDraft(ctx context.Context, client *beeper.Client, source *store.Source, claimed store.BeeperDraft, state beeper.DraftState, intent draftLifecycleIntent, status string, emit func(api.CLIRunEvent) error) error {
 	changed := false
 	fail := func(err error) error {
 		evidenceCtx, cancel := localDraftEvidenceContext(ctx)
@@ -309,10 +315,10 @@ func (a *storeAPIAdapter) writeBeeperDraft(ctx context.Context, client *beeper.C
 		var writeErr *beeper.DraftWriteError
 		if errors.As(err, &writeErr) && writeErr.Status >= 400 && writeErr.Status < 500 && !changed {
 			if _, abortErr := a.store.AbortBeeperDraftContext(evidenceCtx, claimed.DraftID, claimed.Revision); abortErr == nil {
-				return a.beeperDraftFailure(ctx, emit, asJSON, claimed.DraftID, "provider_rejected", err)
+				return a.beeperDraftFailure(ctx, emit, intent, claimed.DraftID, "provider_rejected", err)
 			}
 		}
-		return a.beeperDraftFailure(ctx, emit, asJSON, claimed.DraftID, "remote_unknown", err)
+		return a.beeperDraftFailure(ctx, emit, intent, claimed.DraftID, "remote_unknown", err)
 	}
 	if !state.Empty {
 		chat, err := client.SetDraft(ctx, claimed.ChatID, nil)
@@ -340,7 +346,7 @@ func (a *storeAPIAdapter) writeBeeperDraft(ctx context.Context, client *beeper.C
 	defer cancel()
 	finished, err := a.store.FinishBeeperDraftContext(evidenceCtx, claimed.DraftID, claimed.Revision, text)
 	if err != nil {
-		return a.beeperDraftFailure(ctx, emit, asJSON, claimed.DraftID, "accepted_local_failed", err)
+		return a.beeperDraftFailure(ctx, emit, intent, claimed.DraftID, "accepted_local_failed", err)
 	}
-	return emitBeeperDraft(emit, cliStreamStdout, asJSON, status, finished)
+	return emitBeeperDraft(emit, cliStreamStdout, intent, status, finished)
 }

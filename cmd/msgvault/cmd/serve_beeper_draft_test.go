@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -236,6 +237,71 @@ func TestBeeperDraftDelegatedLifecycle(t *testing.T) {
 	_, err = f.run(t, grant, api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", strconv.FormatInt(edited.Revision, 10))
 	require.NoError(err)
 	assert.Equal("null", f.beeper.current())
+}
+
+func TestBeeperDraftDeleteOnlyResponses(t *testing.T) {
+	for _, format := range []string{"json", "text"} {
+		t.Run(format, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newBeeperDraftFixture(t)
+			created, err := f.create(t, nil, "owner draft")
+			require.NoError(err)
+			grant := &agentgrant.Grant{
+				ID:          "delete-only",
+				Permissions: []agentgrant.Permission{agentgrant.PermissionDraftDelete},
+				Sources:     []agentgrant.SourceRef{{Type: "beeper", Identifier: f.source.Identifier}},
+			}
+			run := func(status string, args ...string) error {
+				t.Helper()
+				if format == "json" {
+					args = append(args, "--json")
+				}
+				var output strings.Builder
+				err := f.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, Grant: grant}, func(event api.CLIRunEvent) error {
+					output.WriteString(event.Data)
+					return nil
+				})
+				assert.Contains(output.String(), created.DraftID)
+				assert.NotContains(output.String(), "owner draft")
+				if format == "json" {
+					var got beeperDraftOutput
+					require.NoError(json.Unmarshal([]byte(output.String()), &got))
+					assert.Equal(status, got.Status)
+					assert.Positive(got.Revision)
+					assert.Nil(got.Content)
+					assert.Empty(got.CandidateContent)
+				} else {
+					assert.Contains(output.String(), "status: "+status)
+					assert.NotContains(output.String(), "content:")
+				}
+				return err
+			}
+			require.NoError(run("ok", api.CLIRunDraftGetCommand, created.DraftID))
+
+			// An unconfirmed edit has both committed and candidate text to hide.
+			_, err = f.store.ClaimBeeperDraftContext(t.Context(), created.DraftID, created.Revision, store.BeeperDraftOperationEdit, "pending owner draft")
+			require.NoError(err)
+			require.NoError(run("ok", api.CLIRunDraftGetCommand, created.DraftID))
+			f.beeper.set(`{"text":"<p>pending owner draft</p>"}`, false)
+			err = run("pending_operation", api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "1")
+			assertBeeperDraftCode(t, err, "pending_operation")
+
+			// Redaction must leave the stored text available to an editor.
+			editor := *grant
+			editor.Permissions = []agentgrant.Permission{agentgrant.PermissionDraftEdit}
+			visible, err := f.run(t, &editor, api.CLIRunDraftGetCommand, created.DraftID)
+			require.NoError(err)
+			require.NotNil(visible.Content)
+			assert.Equal("<p>owner draft</p>", *visible.Content)
+			assert.Equal("pending owner draft", visible.CandidateContent)
+			assert.Equal(store.BeeperDraftOperationEdit, visible.PendingOperation)
+
+			f.beeper.set("null", false)
+			require.NoError(run("deleted", api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "1"))
+			require.NoError(run("already_discarded", api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "2"))
+		})
+	}
 }
 
 func TestBeeperDraftDelegatedDenialPrecedesProvider(t *testing.T) {
