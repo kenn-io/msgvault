@@ -493,15 +493,14 @@
     {#if layout === 'narrow'}
       <Button
         class="drawer-toggle"
-        label="Contacts"
-        ariaLabel="Show relationship list"
+        label="People"
         ariaExpanded={mobileListOpen}
         onclick={() => (mobileListOpen = !mobileListOpen)}
       />
       {@render centerAndReading()}
       {#if mobileListOpen}
         <DetailDrawer
-          title="Contacts"
+          title="People"
           ariaLabel="Relationship search and results"
           width="min(390px, 100vw)"
           onclose={closeDrawer}

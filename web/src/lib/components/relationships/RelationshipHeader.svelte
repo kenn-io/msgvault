@@ -85,7 +85,8 @@
 
   function formatDate(value: string): string {
     const date = new Date(value);
-    return Number.isNaN(date.valueOf()) ? value : date.toLocaleDateString();
+    if (Number.isNaN(date.valueOf())) return value;
+    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
   /** Cluster members (from PersonCluster.member_ids) with no row in
@@ -313,17 +314,8 @@
         size={36}
       />
       <h2>{displayLabel(detail)}</h2>
-      <div class="actions">
-        <SegmentedControl
-          ariaLabel="Relationship view"
-          value={filesOpen ? 'files' : 'messages'}
-          options={[
-            { value: 'messages', label: 'Messages' },
-            { value: 'files', label: `Files ${detail.file_count.toLocaleString()}` }
-          ]}
-          onchange={(value) => onFilesToggle(value === 'files')}
-        />
-        {#if isPersonDetail(detail)}
+      {#if isPersonDetail(detail)}
+        <div class="actions" role="group" aria-label="Person actions">
           {#if onOpenDirectory || (detail.profile?.id && onOpenDirectoryPerson)}
             <Button
               label="Open in Directory"
@@ -339,8 +331,8 @@
             surface="outline"
             onclick={openLinkDialog}
           />
-        {/if}
-      </div>
+        </div>
+      {/if}
     </div>
     {#if staleBanner === 'identity_cache_stale'}
       <section class="named-state" role="alert">
@@ -348,8 +340,19 @@
         <Button label="Retry" surface="outline" size="sm" disabled={retrying} onclick={() => void retryRefresh()} />
       </section>
     {/if}
-    <p class="counts" data-mono>
-      {detail.activity_count.toLocaleString()} items · {detail.file_count.toLocaleString()} files ·
+    <div class="view-row">
+      <SegmentedControl
+        ariaLabel="Relationship view"
+        value={filesOpen ? 'files' : 'messages'}
+        options={[
+          { value: 'messages', label: 'Messages' },
+          { value: 'files', label: `Files ${detail.file_count.toLocaleString()}` }
+        ]}
+        onchange={(value) => onFilesToggle(value === 'files')}
+      />
+    </div>
+    <p class="counts">
+      {detail.activity_count.toLocaleString()} items ·
       {formatDate(detail.first_at)} – {formatDate(detail.last_at)}
       {#if !isPersonDetail(detail)}
         · {detail.person_count.toLocaleString()} people
@@ -536,6 +539,10 @@
     display: flex;
     flex: none;
     gap: var(--space-2);
+  }
+
+  .view-row {
+    display: flex;
   }
 
   .counts {

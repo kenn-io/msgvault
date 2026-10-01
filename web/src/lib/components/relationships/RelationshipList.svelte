@@ -165,7 +165,7 @@
 
 <aside class="relationship-list" aria-label="Relationship search and results">
   <div class="toolbar">
-    <SearchInput value={query} ariaLabel="Search people and domains" placeholder="Search names and identifiers…"
+    <SearchInput value={query} ariaLabel="Search people and domains" placeholder="Filter people and domains"
       block autofocus={autofocusSearch} oninput={(value) => onQueryChange(value)} />
     <div class="toolbar-row">
       <SegmentedControl ariaLabel="Relationship facet" value={facet}

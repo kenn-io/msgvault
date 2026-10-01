@@ -614,7 +614,7 @@ describe('RelationshipsWorkspace drawer (narrow layout)', () => {
 
       expect(screen.queryByRole('dialog', { name: 'Relationship search and results' })).toBeNull();
 
-      const toggle = screen.getByRole('button', { name: 'Show relationship list' });
+      const toggle = screen.getByRole('button', { name: 'People' });
       toggle.focus();
       await fireEvent.click(toggle);
       const drawer = screen.getByRole('dialog', { name: 'Relationship search and results' });
@@ -662,7 +662,7 @@ describe('RelationshipsWorkspace drawer (narrow layout)', () => {
       await fireEvent.keyDown(screen.getByRole('grid', { name: 'Relationship activity' }), { key: 'Escape' });
       expect(props.onTargetChange).toHaveBeenCalledWith(null);
 
-      const toggle = screen.getByRole('button', { name: 'Show relationship list' });
+      const toggle = screen.getByRole('button', { name: 'People' });
       await waitFor(() => expect(document.activeElement).toBe(toggle));
     } finally {
       restoreContainer();

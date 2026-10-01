@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -254,7 +254,7 @@ describe('RelationshipHeader', () => {
 
     expect(screen.getByRole('heading', { name: 'Alice Example' })).toBeDefined();
     expect(screen.getByText(/42 items/)).toBeDefined();
-    expect(screen.getByText(/3 files/)).toBeDefined();
+    expect(screen.getByText(/items · /).textContent).not.toMatch(/files/);
     expect(screen.getByText('Alice')).toBeDefined();
     expect(screen.getByText(/alice@example\.com/)).toBeDefined();
     expect(screen.getByText(/\+15550100001/)).toBeDefined();
@@ -301,6 +301,30 @@ describe('RelationshipHeader', () => {
     expect(own.textContent).toContain('this profile');
     const linked = screen.getByLabelText('Identity +15550100002');
     expect(linked.textContent).toContain('linked');
+  });
+
+  it('keeps person actions separate from the Messages and Files view switch', () => {
+    render(RelationshipHeader, baseProps({ onOpenDirectory: vi.fn() }));
+
+    const actions = screen.getByRole('group', { name: 'Person actions' });
+    expect(within(actions).getByRole('button', { name: 'Open in Directory' })).toBeTruthy();
+    expect(within(actions).getByRole('button', { name: 'Same person…' })).toBeTruthy();
+    expect(within(actions).queryByRole('radio', { name: 'Messages' })).toBeNull();
+    expect(screen.getByRole('radio', { name: 'Messages' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'Files 3' })).toBeTruthy();
+  });
+
+  it('formats the counts date range with the month spelled out', () => {
+    render(RelationshipHeader, baseProps());
+
+    expect(screen.getByText(/items · /).textContent).toMatch(/[A-Z][a-z]{2} \d{1,2}, \d{4} – [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+  });
+
+  it('offers no person actions group for a domain but keeps the view switch', () => {
+    render(RelationshipHeader, baseProps({ detail: domain() }));
+
+    expect(screen.queryByRole('group', { name: 'Person actions' })).toBeNull();
+    expect(screen.getByRole('radio', { name: 'Messages' })).toBeTruthy();
   });
 
   it('renders a domain by domain name and person count, without identity chips or a Same person button', () => {
