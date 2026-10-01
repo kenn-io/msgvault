@@ -524,6 +524,13 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		}
 		return nil
 	}
+	var attachmentWrites []store.AttachmentWrite
+	if intent.Operation == api.CLIRunDraftEditCommand {
+		attachmentWrites, err = a.forwardDraftAttachmentWrites(ctx, draft.CurrentMessageID, replacement)
+		if err != nil {
+			return draftReplyError("invalid_draft", err)
+		}
+	}
 	clientFactory := a.draftClientFactory
 	if clientFactory == nil {
 		clientFactory = defaultDraftClientFactory
@@ -560,10 +567,6 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		return draftReplyError(code, errors.New("provider draft inspection refused mutation"))
 	}
 	if intent.Operation == api.CLIRunDraftEditCommand {
-		attachmentWrites, writesErr := a.forwardDraftAttachmentWrites(ctx, draft.CurrentMessageID, replacement)
-		if writesErr != nil {
-			return draftReplyError("invalid_draft", writesErr)
-		}
 		return a.runDraftEdit(ctx, intent, draft, source, client, currentRaw, replacement, attachmentWrites, inspection, execution, emit)
 	}
 	return a.runDraftDelete(ctx, intent, draft, source, client, inspection, execution, emit)

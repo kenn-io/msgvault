@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
@@ -429,6 +430,66 @@ func TestDraftForwardAttachmentAvailability(t *testing.T) {
 		problems[0].Reason, problems[1].Reason, problems[2].Reason,
 	})
 	assertions.Equal("policy-test", problems[1].Detail)
+}
+
+func TestDraftForwardReportsUnrepresentableAttachment(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := newAttachmentMaintenanceFixture(t)
+	content := []byte("Subject: Original\r\n\r\nzero\x00byte")
+	fixture.addLoose(content)
+	raw := []byte("From: sender@example.test\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=original\r\n\r\n" +
+		"--original\r\nContent-Type: text/plain\r\n\r\nbody\r\n" +
+		"--original\r\nContent-Type: message/rfc822\r\n" +
+		"Content-Disposition: attachment; filename=original.eml\r\n\r\n" +
+		string(content) + "\r\n--original--\r\n")
+	parent, err := msgmime.Parse(raw)
+	requirements.NoError(err)
+	refs, err := fixture.store.MessageMIMEAttachmentsContext(t.Context(), fixture.messageID)
+	requirements.NoError(err)
+	adapter := &storeAPIAdapter{attachmentMaintenance: fixture.maintenance}
+	attachments, problems := adapter.readForwardAttachments(t.Context(), parent, refs)
+	assertions.Empty(attachments)
+	requirements.Len(problems, 1)
+	assertions.Equal("original.eml", problems[0].Filename)
+	assertions.NotEmpty(problems[0].PartKey)
+	assertions.Equal("unrepresentable_attachment", problems[0].Reason)
+	assertions.Contains(problems[0].Detail, "binary transport")
+}
+
+func TestDraftForwardPreflightWithoutAttachmentIdentity(t *testing.T) {
+	adapter := &storeAPIAdapter{}
+	var output strings.Builder
+	err := adapter.emitDraftForwardPreflight(func(event api.CLIRunEvent) error {
+		output.WriteString(event.Data)
+		return nil
+	}, false, []draftForwardProblem{{Reason: "attachment_reader_unavailable"}})
+	require.ErrorContains(t, err, "attachment_preflight_failed")
+	assert.Equal(t, "draft-forward refused before APPEND:\nattachment_reader_unavailable\n", output.String())
+}
+
+func TestDraftForwardEditChecksAttachmentsBeforeConnecting(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture, _ := newDraftRecoveryFixture(t)
+	forward, err := imaplib.BuildForward(imaplib.ForwardOptions{
+		From: "sender@example.test", To: []string{"recipient@example.test"},
+		Attachments: []imaplib.ForwardAttachment{{Filename: "missing.bin", ContentType: "application/octet-stream", Content: []byte("missing catalog row")}},
+	}, time.Now(), "forward@example.test")
+	requirements.NoError(err)
+	requirements.NoError(fixture.store.UpsertMessageRaw(fixture.draft.CurrentMessageID, forward.Raw))
+	connections := 0
+	fixture.adapter.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
+		connections++
+		return nil, errors.New("provider offline")
+	}
+	_, err = runReviewLifecycle(t, fixture.adapter, "draft-edit", fixture.draft.DraftID, "--revision", "1", "--body", "updated")
+	requirements.ErrorContains(err, "invalid_draft")
+	assertions.Zero(connections)
+	current, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
+	requirements.NoError(err)
+	assertions.Nil(current.Pending)
 }
 
 func TestDraftForwardEditRecoveryRetainsAttachments(t *testing.T) {

@@ -48,6 +48,7 @@ type draftReplyTarget struct {
 	source           *store.Source
 	mailbox          string
 	raw              []byte
+	forward          bool
 	attachmentWrites *[]store.AttachmentWrite
 }
 
@@ -586,7 +587,7 @@ func draftReplyPersistData(
 	fromAddresses := addressStrings(parsed.From)
 	var conversationKey string
 	var replyToMessageID sql.NullInt64
-	if target.attachmentWrites != nil { // forwards start their own conversation
+	if target.forward { // forwards start their own conversation
 		conversationKey = fmt.Sprintf("draft-forward-%d-%d-%s", receipt.SourceID, receipt.UIDValidity, store.IMAPDraftSourceMessageID(receipt))
 	} else if target.parent != nil {
 		conversationKey = target.parent.SourceConversationID

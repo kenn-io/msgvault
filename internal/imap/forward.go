@@ -71,7 +71,7 @@ func BuildForward(options ForwardOptions, now time.Time, messageID string) (Repl
 		return ReplyDraft{}, errors.New("invalid forwarded header summary")
 	}
 	for _, attachment := range options.Attachments {
-		if err := validateForwardAttachment(attachment); err != nil {
+		if err := ValidateForwardAttachment(attachment); err != nil {
 			return ReplyDraft{}, err
 		}
 	}
@@ -140,8 +140,12 @@ func validateForwardOptions(options ForwardOptions) (*mail.Address, []*mail.Addr
 
 func normalizeForwardSubject(subject string) string {
 	subject = strings.TrimSpace(subject)
-	for len(subject) >= 4 && strings.EqualFold(subject[:4], "fwd:") {
-		subject = strings.TrimSpace(subject[4:])
+	for {
+		prefix, rest, found := strings.Cut(subject, ":")
+		if !found || (!strings.EqualFold(prefix, "fw") && !strings.EqualFold(prefix, "fwd")) {
+			break
+		}
+		subject = strings.TrimSpace(rest)
 	}
 	if subject == "" {
 		return "Fwd:"
@@ -149,7 +153,9 @@ func normalizeForwardSubject(subject string) string {
 	return "Fwd: " + subject
 }
 
-func validateForwardAttachment(attachment ForwardAttachment) error {
+// ValidateForwardAttachment checks whether an archived part can be forwarded
+// without changing its bytes over the client's non-binary IMAP APPEND path.
+func ValidateForwardAttachment(attachment ForwardAttachment) error {
 	if !utf8.ValidString(attachment.Filename) || strings.ContainsAny(attachment.Filename, "\x00\r\n") {
 		return errors.New("invalid forwarded attachment filename")
 	}
@@ -162,13 +168,24 @@ func validateForwardAttachment(attachment ForwardAttachment) error {
 	if attachment.Disposition != "" && !validHeaderValue(attachment.Disposition) {
 		return errors.New("invalid forwarded attachment disposition")
 	}
-	if disposition := strings.ToLower(strings.TrimSpace(attachment.Disposition)); disposition != "" &&
-		disposition != "inline" && disposition != "attachment" {
-		return fmt.Errorf("unsupported forwarded attachment disposition %q", attachment.Disposition)
+	if attachment.Disposition != "" {
+		if _, _, err := mime.ParseMediaType(attachment.Disposition); err != nil {
+			return fmt.Errorf("invalid forwarded attachment disposition: %w", err)
+		}
 	}
 	if attachment.ContentType != "" {
-		if _, _, err := mime.ParseMediaType(attachment.ContentType); err != nil {
+		mediaType, _, err := mime.ParseMediaType(attachment.ContentType)
+		if err != nil {
 			return fmt.Errorf("invalid forwarded attachment media type: %w", err)
+		}
+		if mediaType == "message/rfc822" {
+			// RFC 2046 forbids base64 for attached messages. Preserve their
+			// bytes as 8bit; APPEND does not support binary literals.
+			for line := range bytes.SplitSeq(attachment.Content, []byte("\r\n")) {
+				if len(line) > 998 || bytes.ContainsAny(line, "\x00\r\n") {
+					return errors.New("attached message requires unsupported binary transport")
+				}
+			}
 		}
 	}
 	return nil
@@ -197,6 +214,7 @@ func writeForwardHeaders(raw *bytes.Buffer, from *mail.Address, to, cc, bcc []*m
 	write(forwardMarkerHeader, forwardMarkerValue)
 	write("MIME-Version", "1.0")
 	write("Content-Type", `multipart/mixed; boundary="`+boundary+`"`)
+	write("Content-Transfer-Encoding", "8bit")
 	raw.WriteString("\r\n")
 }
 
@@ -229,7 +247,10 @@ func writeBinaryPart(writer *multipart.Writer, attachment ForwardAttachment) err
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	params := map[string]string{"name": attachment.Filename}
+	params := make(map[string]string)
+	if attachment.Filename != "" {
+		params["name"] = attachment.Filename
+	}
 	mediaType, _, _ := mime.ParseMediaType(contentType)
 	if mediaType == "" {
 		mediaType = "application/octet-stream"
@@ -238,22 +259,35 @@ func writeBinaryPart(writer *multipart.Writer, attachment ForwardAttachment) err
 		params["charset"] = "utf-8" // the archive stores text parts decoded to UTF-8
 	}
 	header.Set("Content-Type", mime.FormatMediaType(mediaType, params))
-	disposition := attachment.Disposition
+	disposition := strings.ToLower(strings.TrimSpace(attachment.Disposition))
 	if disposition == "" {
 		if attachment.IsInline || attachment.ContentID != "" {
 			disposition = "inline"
 		} else {
 			disposition = "attachment"
 		}
+	} else if disposition != "inline" {
+		disposition = "attachment" // RFC 2183: unknown dispositions are attachments.
 	}
-	header.Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": attachment.Filename}))
+	dispositionParams := make(map[string]string)
+	if attachment.Filename != "" {
+		dispositionParams["filename"] = attachment.Filename
+	}
+	header.Set("Content-Disposition", mime.FormatMediaType(disposition, dispositionParams))
 	if attachment.ContentID != "" {
 		header.Set("Content-ID", "<"+strings.Trim(attachment.ContentID, "<>")+">")
 	}
 	header.Set("Content-Transfer-Encoding", "base64")
+	if mediaType == "message/rfc822" {
+		header.Set("Content-Transfer-Encoding", "8bit")
+	}
 	part, err := writer.CreatePart(header)
 	if err != nil {
 		return fmt.Errorf("create forwarded attachment: %w", err)
+	}
+	if mediaType == "message/rfc822" {
+		_, err := part.Write(attachment.Content)
+		return err
 	}
 	return writeBase64MIME(part, attachment.Content)
 }
@@ -286,9 +320,11 @@ func writeBase64MIME(dst io.Writer, content []byte) error {
 }
 
 func quotedTextWithHeader(headerSummary, text string) string {
-	headerSummary = strings.TrimSpace(headerSummary)
-	if headerSummary == "" {
-		return text
+	const separator = "---------- Forwarded message ----------"
+	if headerSummary = strings.TrimSpace(headerSummary); headerSummary == "" {
+		headerSummary = separator
+	} else {
+		headerSummary = separator + "\r\n" + headerSummary
 	}
 	if text == "" {
 		return headerSummary + "\r\n"

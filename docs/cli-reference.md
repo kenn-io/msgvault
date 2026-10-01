@@ -315,17 +315,47 @@ msgvault draft-forward <message-id> --source-id 42 \
   --cc team@example.com --json
 ```
 
-The command reads original MIME attachment bytes through the archive's catalog.
-A pending, skipped, failed, missing, unreadable, or unsupported occurrence is reported
-with its filename and part key, and the command stops before `APPEND`. It never
-creates a partial draft. The IMAP source must have an enabled `[[imap.drafts]]`
-entry, and the selected sender must be a confirmed identity on that source.
+Every nonempty attachment must have a retained, readable file in the archive's
+catalog, even when its bytes remain in the original message. Forwarding reuses
+those catalog references; it does not restore skipped or missing files from raw
+MIME. Empty attachment parts need no stored file.
 
-The draft is plain text: your note, then the original headers and text, then
-each original attachment with its filename, media type, and `Content-ID`. It has
-a new `Fwd:` subject, Date, and Message-ID, and it is never sent. When the
-server supplies a numeric `APPENDLIMIT`, msgvault checks the encoded size before
-uploading; otherwise the server's `APPEND` response decides.
+A pending, skipped, failed, unavailable, missing, unreadable, or unsupported
+occurrence stops the command before `APPEND`. It never creates a partial draft.
+The IMAP source must have an enabled `[[imap.drafts]]` entry, and the selected
+sender must be a confirmed identity on that source.
+
+The draft has two inline plain-text parts: your editable note, then a
+`---------- Forwarded message ----------` separator with the original headers
+and text. The original attachments follow, retaining their names and
+`Content-ID` values when present. Attached emails (`message/rfc822`) keep their
+bytes with 8-bit encoding. An attached email that needs binary encoding, such as
+one containing NUL bytes, bare line breaks, or lines longer than 998 bytes, is
+refused. Unknown MIME dispositions are treated as attachments.
+
+The draft has a new Date and Message-ID. Its subject has one `Fwd:` prefix;
+existing `Fw:` and `Fwd:` prefixes are removed. The `X-Msgvault-Forward: 1`
+header identifies the layout for note editing. A mail client that preserves
+custom headers may include it when you send the message. msgvault only creates
+the draft.
+
+When the server supplies a numeric `APPENDLIMIT`, msgvault checks the encoded
+size before uploading; otherwise the server's `APPEND` response decides. This
+upload check does not limit the memory used to build the draft.
+
+With `--json`, attachment preflight refusals emit a JSON object on stderr with
+`status: "attachment_preflight_failed"` and a `problems` array. Each problem has
+a `reason`, plus `filename`, `part_key`, and `detail` when available:
+
+| Reason | Meaning |
+|---|---|
+| `missing_catalog_reference` | An original attachment has no matching catalog row. |
+| `attachment_pending`, `attachment_skipped`, `attachment_failed`, `attachment_unavailable` | The catalog records a file that is not stored. `detail` includes its skip reason when available. |
+| `unreadable_file` | Opening, reading, verifying, or closing a stored file failed. |
+| `catalog_size_mismatch` | The stored file's length differs from the original MIME part. |
+| `unrepresented_attachment` | A catalog row has no corresponding original attachment. |
+| `attachment_reader_unavailable` | The daemon cannot access the attachment store. |
+| `unrepresentable_attachment` | An attachment's metadata or bytes cannot be forwarded, or the generated draft cannot retain its catalog reference. |
 
 ## draft-get, draft-edit, draft-delete, and draft-recover
 

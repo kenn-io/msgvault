@@ -3,6 +3,10 @@ package imap
 import (
 	"bytes"
 	"encoding/base64"
+	"io"
+	"mime"
+	"mime/multipart"
+	"net/mail"
 	"strings"
 	"testing"
 	"time"
@@ -34,12 +38,101 @@ func TestBuildForwardPreservesMIME(t *testing.T) {
 	assertions.Equal("Fwd: Original subject", draft.Parsed.Subject)
 	assertions.Equal(1, strings.Count(draft.Parsed.BodyText, "distinctive current note"))
 	assertions.Contains(draft.Parsed.BodyText, "distinctive quoted text")
+	assertions.Contains(draft.Parsed.BodyText, "---------- Forwarded message ----------")
 	requirements.Len(draft.Parsed.Attachments, 2)
 	parts := map[string][2]string{}
 	for _, attachment := range draft.Parsed.Attachments {
 		parts[attachment.Filename] = [2]string{attachment.ContentID, string(attachment.Content)}
 	}
 	assertions.Equal(map[string][2]string{"logo.png": {"logo@example.test", "png"}, "report.pdf": {"", "pdf"}}, parts)
+}
+
+func TestBuildForwardAttachmentWireFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		attachment  ForwardAttachment
+		encoding    string
+		disposition string
+	}{
+		{
+			name: "attached message",
+			attachment: ForwardAttachment{Filename: "original.eml", ContentType: "message/rfc822",
+				Content: []byte("From: sender@example.test\r\nSubject: Original\r\n\r\nCaf\xc3\xa9\r\n")},
+			encoding: "8bit", disposition: "attachment",
+		},
+		{
+			name: "unnamed inline image",
+			attachment: ForwardAttachment{ContentType: "image/png", ContentID: "logo@example.test",
+				IsInline: true, Content: []byte("image")},
+			encoding: "base64", disposition: "inline",
+		},
+		{
+			name: "extension disposition",
+			attachment: ForwardAttachment{Filename: "data.bin", ContentType: "application/octet-stream",
+				Disposition: "x-custom", Content: []byte("data")},
+			encoding: "base64", disposition: "attachment",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			draft, err := BuildForward(ForwardOptions{
+				From: "sender@example.test", To: []string{"recipient@example.test"},
+				Attachments: []ForwardAttachment{tc.attachment},
+			}, time.Now(), "forward@example.test")
+			requirements.NoError(err)
+			message, err := mail.ReadMessage(bytes.NewReader(draft.Raw))
+			requirements.NoError(err)
+			_, params, err := mime.ParseMediaType(message.Header.Get("Content-Type"))
+			requirements.NoError(err)
+			reader := multipart.NewReader(message.Body, params["boundary"])
+			for range 2 { // editable note and quoted original
+				_, err = reader.NextRawPart()
+				requirements.NoError(err)
+			}
+			part, err := reader.NextRawPart()
+			requirements.NoError(err)
+			assertions.Equal(tc.encoding, part.Header.Get("Content-Transfer-Encoding"))
+			disposition, dispositionParams, err := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+			requirements.NoError(err)
+			assertions.Equal(tc.disposition, disposition)
+			if tc.attachment.Filename == "" {
+				_, typeParams, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
+				requirements.NoError(err)
+				assertions.NotContains(typeParams, "name")
+				assertions.NotContains(dispositionParams, "filename")
+			}
+			if tc.encoding == "8bit" {
+				assertions.Equal("8bit", message.Header.Get("Content-Transfer-Encoding"))
+				content, err := io.ReadAll(part)
+				requirements.NoError(err)
+				assertions.Equal(tc.attachment.Content, content)
+				replacement, err := BuildIMAPDraftReplacement(draft.Raw, "updated note", time.Now(), "")
+				requirements.NoError(err)
+				assertions.Equal(draft.Parsed.Attachments, replacement.Parsed.Attachments)
+			}
+		})
+	}
+}
+
+func TestBuildForwardRejectsBinaryMessage(t *testing.T) {
+	for _, content := range []string{"Subject: Original\r\n\r\nzero\x00byte", "Subject: Original\r\n\r\n" + strings.Repeat("x", 999)} {
+		_, err := BuildForward(ForwardOptions{
+			From: "sender@example.test", To: []string{"recipient@example.test"},
+			Attachments: []ForwardAttachment{{Filename: "original.eml", ContentType: "message/rfc822", Content: []byte(content)}},
+		}, time.Now(), "forward@example.test")
+		require.ErrorContains(t, err, "binary transport")
+	}
+}
+
+func TestBuildForwardSubject(t *testing.T) {
+	for _, subject := range []string{"Fw: Original", "fWd: FW: Original", "Original"} {
+		draft, err := BuildForward(ForwardOptions{
+			From: "sender@example.test", To: []string{"recipient@example.test"}, Subject: subject,
+		}, time.Now(), "forward@example.test")
+		require.NoError(t, err)
+		assert.Equal(t, "Fwd: Original", draft.Parsed.Subject)
+	}
 }
 
 func TestBuildForwardWrapsAttachmentBase64(t *testing.T) {

@@ -144,6 +144,7 @@ func (a *storeAPIAdapter) runCLIForwardDraft(
 				Reason: "unrepresentable_attachment", Detail: err.Error(),
 			}})
 		}
+		target.forward = true
 		target.attachmentWrites = &writes
 		return a.createDraft(ctx, target, draft, intent.JSON, emit)
 	})
@@ -159,22 +160,31 @@ func (a *storeAPIAdapter) readForwardAttachments(
 	used := make([]bool, len(refs))
 	boundHashes := make(map[string]bool, len(refs))
 	for _, part := range msgmime.DistinctAttachments(parsed.Attachments) {
-		if part.Size == 0 {
-			// Sync stores no file or row for an empty part; forward it as is.
-			attachments = append(attachments, imaplib.ForwardAttachment{
-				Filename: part.Filename, ContentType: part.ContentType, ContentID: part.ContentID,
-				Disposition: part.Disposition, IsInline: part.IsInline,
+		attachment := imaplib.ForwardAttachment{
+			Filename: part.Filename, ContentType: part.ContentType, ContentID: part.ContentID,
+			Disposition: part.Disposition, IsInline: part.IsInline, Content: part.Content,
+		}
+		index := matchForwardAttachmentRef(part, refs, used)
+		if part.Size != 0 && index >= 0 {
+			used[index] = true
+			boundHashes[strings.ToLower(refs[index].ContentHash)] = true
+		}
+		if err := imaplib.ValidateForwardAttachment(attachment); err != nil {
+			problems = append(problems, draftForwardProblem{
+				Filename: part.Filename, PartKey: part.PartKey, Reason: "unrepresentable_attachment", Detail: err.Error(),
 			})
 			continue
 		}
-		index := matchForwardAttachmentRef(part, refs, used)
+		if part.Size == 0 {
+			// Sync stores no file or row for an empty part; forward it as is.
+			attachments = append(attachments, attachment)
+			continue
+		}
 		if index < 0 {
 			problems = append(problems, draftForwardProblem{Filename: part.Filename, PartKey: part.PartKey, Reason: "missing_catalog_reference"})
 			continue
 		}
-		used[index] = true
 		ref := refs[index]
-		boundHashes[strings.ToLower(ref.ContentHash)] = true
 		if (ref.State != "" && ref.State != attachmentpolicy.StateStored) ||
 			(ref.State == "" && ref.SkipReason != "") {
 			state := string(ref.State)
@@ -193,7 +203,8 @@ func (a *storeAPIAdapter) readForwardAttachments(
 			problems = append(problems, draftForwardProblem{Filename: ref.Filename, PartKey: part.PartKey, Reason: "unreadable_file", Detail: openErr.Error()})
 			continue
 		}
-		content, readErr := io.ReadAll(reader)
+		// Consume through EOF to verify the blob without retaining a second copy.
+		size, readErr := io.Copy(io.Discard, reader)
 		closeErr := reader.Close()
 		if readErr != nil || closeErr != nil {
 			detail := "read attachment failed"
@@ -205,14 +216,11 @@ func (a *storeAPIAdapter) readForwardAttachments(
 			problems = append(problems, draftForwardProblem{Filename: ref.Filename, PartKey: part.PartKey, Reason: "unreadable_file", Detail: detail})
 			continue
 		}
-		if len(content) != part.Size {
-			problems = append(problems, draftForwardProblem{Filename: ref.Filename, PartKey: part.PartKey, Reason: "catalog_size_mismatch", Detail: fmt.Sprintf("parent part has %d bytes, read %d", part.Size, len(content))})
+		if size != int64(part.Size) {
+			problems = append(problems, draftForwardProblem{Filename: ref.Filename, PartKey: part.PartKey, Reason: "catalog_size_mismatch", Detail: fmt.Sprintf("parent part has %d bytes, read %d", part.Size, size)})
 			continue
 		}
-		attachments = append(attachments, imaplib.ForwardAttachment{
-			Filename: part.Filename, ContentType: part.ContentType, ContentID: part.ContentID,
-			Disposition: part.Disposition, IsInline: part.IsInline, Content: content,
-		})
+		attachments = append(attachments, attachment)
 	}
 	for i, ref := range refs {
 		// A keyless legacy row shadowed by a bound copy of its bytes is not a separate occurrence.
@@ -243,7 +251,19 @@ func (a *storeAPIAdapter) emitDraftForwardPreflight(
 			var text strings.Builder
 			text.WriteString("draft-forward refused before APPEND:\n")
 			for _, problem := range problems {
-				fmt.Fprintf(&text, "attachment %q (%s): %s", problem.Filename, problem.PartKey, problem.Reason)
+				if problem.Filename != "" || problem.PartKey != "" {
+					text.WriteString("attachment")
+				}
+				if problem.Filename != "" {
+					fmt.Fprintf(&text, " %q", problem.Filename)
+				}
+				if problem.PartKey != "" {
+					fmt.Fprintf(&text, " (%s)", problem.PartKey)
+				}
+				if problem.Filename != "" || problem.PartKey != "" {
+					text.WriteString(": ")
+				}
+				text.WriteString(problem.Reason)
 				if problem.Detail != "" {
 					fmt.Fprintf(&text, " (%s)", problem.Detail)
 				}
