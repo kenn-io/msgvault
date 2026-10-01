@@ -155,7 +155,7 @@ func (c *KataClient) ListPersonTasks(ctx context.Context, project, personUID str
 	}
 	result := make([]KataTask, 0, len(response.Issues))
 	for _, issue := range response.Issues {
-		task := taskFromKataIssue(project, kata.Issue{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, issue.Labels, issue.WebURL)
+		task := taskFromKataIssue(project, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, issue.Labels, issue.WebURL)
 		task.QualifiedRef = issue.QualifiedID
 		result = append(result, task)
 	}
@@ -248,7 +248,7 @@ func (c *KataClient) patchMetadata(ctx context.Context, project, taskID string, 
 	return c.GetTask(ctx, project, response.Issue.UID)
 }
 
-func taskFromKataIssue(project string, issue kata.Issue, labels []string, webURL *string) KataTask {
+func taskFromKataIssue(project string, issue kata.ShowIssueOut, labels []string, webURL *string) KataTask {
 	task := KataTask{UID: issue.UID, Ref: issue.ShortID, QualifiedRef: project + "#" + issue.ShortID, Project: project, Title: issue.Title, Body: issue.Body, Revision: strconv.FormatInt(issue.Revision, 10), Metadata: issue.Metadata, Status: issue.Status, PriorityValue: issue.Priority, Labels: labels}
 	if issue.Owner != nil {
 		task.Owner = *issue.Owner

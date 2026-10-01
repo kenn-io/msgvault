@@ -4,10 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"syscall"
 
-	"go.kenn.io/docbank/document/mistral"
+	"go.kenn.io/docbank/document/ocr"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -17,28 +16,15 @@ func documentFailureDetail(err error) string {
 	if !errors.Is(err, errDocumentPreparation) {
 		return ""
 	}
-	text := err.Error()
-	// Spool sentinels can wrap low-level I/O details; keep their stable diagnosis.
-	if errors.Is(err, mistral.ErrSpoolCapacity) {
-		return "document spool capacity unavailable: quota or free-space reserve exhausted"
+	if errors.Is(err, errDocumentSizeBounds) {
+		return errDocumentSizeBounds.Error()
 	}
-	if errors.Is(err, mistral.ErrSpoolUnavailable) {
-		return "document spool temporarily unavailable"
+	if errors.Is(err, errDocumentSizeMismatch) {
+		return errDocumentSizeMismatch.Error()
 	}
-	// Local unit parsers can echo XML names, ZIP entries and relationship targets.
-	if strings.Contains(text, "count local Mistral OCR units:") {
-		return "invalid document structure while counting local units"
-	}
-	if strings.Contains(text, "verify generated PDF:") {
-		return "invalid generated PDF structure"
-	}
-	// PDF object parsing can include dictionary keys and tokens from the source.
-	if strings.Contains(text, "PDF object") || strings.Contains(text, "PDF dictionary") ||
-		strings.Contains(text, "PDF embedded file") || strings.Contains(text, "decode PDF stream:") {
-		return "invalid PDF structure"
-	}
-	if strings.Contains(text, "PDF end marker is missing or not final") {
-		return "PDF end marker is missing or not final"
+	// Docbank owns content-safe descriptions of its parsers and staging errors.
+	if preparation, ok := errors.AsType[*ocr.PreparationError](err); ok {
+		return preparation.Error()
 	}
 	if pathErr, ok := errors.AsType[*os.PathError](err); ok {
 		if errors.Is(pathErr.Err, os.ErrNotExist) {
@@ -52,13 +38,8 @@ func documentFailureDetail(err error) string {
 		}
 		return "local document I/O failed"
 	}
-	// Openers/readers are application dependencies, not a content-safe error
-	// contract. Keep fixed bounds and integrity diagnostics; mask arbitrary I/O.
-	if strings.Contains(text, "open document attachment:") {
-		return "open document attachment failed"
-	}
-	if strings.Contains(text, "copy Mistral OCR spool:") || strings.Contains(text, "close Mistral OCR source:") || strings.Contains(text, "verify Mistral OCR source length:") {
-		return "read document attachment failed"
+	if errors.Is(err, errDocumentAttachmentOpen) {
+		return errDocumentAttachmentOpen.Error()
 	}
 	// Unknown local preparation errors can include source content or paths.
 	return "invalid local document source"

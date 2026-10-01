@@ -800,11 +800,14 @@ func personSweepHistoricalLanePredicate(classes []peoplesweep.SourceClass) strin
 	}
 	if sweepSourceAllowed(classes, peoplesweep.SourceDocumentText) {
 		clauses = append(clauses, `EXISTS (
-			SELECT 1 FROM document_occurrences occurrence
-			JOIN document_extraction_heads head
-			  ON head.canonical_blob_hash = occurrence.canonical_blob_hash
-			JOIN document_chunks chunk ON chunk.extraction_id = head.extraction_id
-			WHERE occurrence.message_id = m.id
+			SELECT 1 FROM document_occurrences o
+			JOIN document_extraction_heads h ON h.canonical_blob_hash = o.canonical_blob_hash
+			JOIN document_extraction_profiles p ON p.id = h.profile_id
+			JOIN document_provider_consents consent ON consent.profile_id = p.id
+			JOIN document_chunks dc ON dc.extraction_id = h.extraction_id
+			JOIN attachments a ON a.id = o.attachment_id
+			CROSS JOIN document_index_state ds
+			WHERE o.message_id = m.id AND `+documentSearchValidityForConsent("consent")+`
 		)`)
 	}
 	if len(clauses) == 0 {
@@ -1078,7 +1081,21 @@ func (s *Store) alignDocumentItem(ctx context.Context, personID int64, ref peopl
 	args = append([]any{ref.AttachmentID, ref.MessageID, ref.SourceID, ref.OccurrenceKey, ref.ChunkKey}, args...)
 	var text, checksum, extractionID, sourceMessageID, sourceType string
 	var event, recorded requiredTimestamp
-	err = s.db.QueryRowContext(ctx, s.Rebind(fmt.Sprintf(`SELECT dc.text,dc.checksum,h.extraction_id,COALESCE(m.source_message_id,''),s.source_type,COALESCE(m.sent_at,m.received_at,m.internal_date,h.switched_at),h.switched_at FROM document_chunks dc JOIN document_extraction_heads h ON h.extraction_id=dc.extraction_id JOIN document_occurrences o ON o.canonical_blob_hash=h.canonical_blob_hash JOIN attachments a ON a.id=o.attachment_id JOIN messages m ON m.id=o.message_id JOIN sources s ON s.id=m.source_id JOIN conversations c ON c.id=m.conversation_id WHERE a.id=? AND m.id=? AND m.source_id=? AND o.occurrence_key=? AND dc.chunk_key=? AND %s AND (%s)`, LiveMessagesWhere("m", true), predicate)), args...).Scan(&text, &checksum, &extractionID, &sourceMessageID, &sourceType, &event, &recorded)
+	err = s.db.QueryRowContext(ctx, s.Rebind(fmt.Sprintf(`
+		SELECT dc.text,dc.checksum,h.extraction_id,COALESCE(m.source_message_id,''),s.source_type,
+		       COALESCE(m.sent_at,m.received_at,m.internal_date,h.switched_at),h.switched_at
+		FROM document_chunks dc
+		JOIN document_extraction_heads h ON h.extraction_id=dc.extraction_id
+		JOIN document_extraction_profiles p ON p.id=h.profile_id
+		JOIN document_provider_consents consent ON consent.profile_id=p.id
+		JOIN document_occurrences o ON o.canonical_blob_hash=h.canonical_blob_hash
+		JOIN attachments a ON a.id=o.attachment_id
+		JOIN messages m ON m.id=o.message_id
+		JOIN sources s ON s.id=m.source_id
+		JOIN conversations c ON c.id=m.conversation_id
+		CROSS JOIN document_index_state ds
+		WHERE a.id=? AND m.id=? AND m.source_id=? AND o.occurrence_key=? AND dc.chunk_key=?
+		  AND %s AND (%s)`, documentSearchValidityForConsent("consent"), predicate)), args...).Scan(&text, &checksum, &extractionID, &sourceMessageID, &sourceType, &event, &recorded)
 	if err != nil {
 		return peoplesweep.EvidenceItem{}, err
 	}

@@ -19,10 +19,12 @@ func TestInlineDocumentsRequireExactProfileConsentAndStayInScope(t *testing.T) {
 	attachmentID := seededDocumentAttachmentID(t, f, hash)
 	_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE attachments SET attachment_role = 'inline' WHERE id = ?"), attachmentID)
 	require.NoError(err)
-	occurrence, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 2)
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 2)
 	require.NoError(err)
-	require.True(eligible, "catalog retains inline occurrence without granting upload authority")
-	assert.Equal(store.AttachmentRoleInline, occurrence.AttachmentRole)
+	require.False(eligible, "standalone consent must not retain inline occurrences")
+	var occurrenceCount int
+	require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_occurrences").Scan(&occurrenceCount))
+	assert.Zero(occurrenceCount)
 	candidates, err := f.Store.ListDocumentExtractionCandidates(t.Context(), original.ID, "original", original.AllowedMediaTypes, nil, nil, 10)
 	require.NoError(err)
 	assert.Empty(candidates)
@@ -41,6 +43,9 @@ func TestInlineDocumentsRequireExactProfileConsentAndStayInScope(t *testing.T) {
 	expanded.PolicyJSON = []byte(`{"include_inline":true}`)
 	_, err = f.Store.EnsureDocumentExtractionProfile(t.Context(), expanded)
 	require.NoError(err)
+	_, eligible, err = f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 2)
+	require.NoError(err)
+	require.False(eligible, "an unconsented inline profile must not expand reconciliation")
 	input.ProfileID = expanded.ID
 	_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
 	require.ErrorContains(err, "exact consent")
@@ -48,6 +53,10 @@ func TestInlineDocumentsRequireExactProfileConsentAndStayInScope(t *testing.T) {
 		ProfileID: expanded.ID, ProfileFingerprint: expanded.Fingerprint,
 		RetentionPosture: expanded.RetentionPosture, TrainingPosture: expanded.TrainingPosture,
 	}))
+	occurrence, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 2)
+	require.NoError(err)
+	require.True(eligible)
+	assert.Equal(store.AttachmentRoleInline, occurrence.AttachmentRole)
 	candidates, err = f.Store.ListDocumentExtractionCandidates(t.Context(), expanded.ID, "original", expanded.AllowedMediaTypes, nil, nil, 10)
 	require.NoError(err)
 	require.Len(candidates, 1)
@@ -97,9 +106,16 @@ func TestInlineDocumentsRequireExactProfileConsentAndStayInScope(t *testing.T) {
 	response, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "quasar", PageSize: 10})
 	require.NoError(err)
 	assert.Empty(response.Results)
+	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE attachments SET attachment_role = 'inline' WHERE id = ?"), attachmentID)
+	require.NoError(err)
 	retired, err := f.Store.RetireDocumentExtractionProfile(t.Context(), expanded.ID)
 	require.NoError(err)
 	assert.True(retired)
+	_, eligible, err = f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 3)
+	require.NoError(err)
+	require.False(eligible, "retired inline consent must not retain occurrences")
+	require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_occurrences").Scan(&occurrenceCount))
+	assert.Zero(occurrenceCount)
 }
 
 func TestInlineFallbackSurvivesStandaloneHeadForSharedHash(t *testing.T) {
@@ -111,17 +127,17 @@ func TestInlineFallbackSurvivesStandaloneHeadForSharedHash(t *testing.T) {
 	msg := f.CreateMessage("shared-inline")
 	require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), msg, store.AttachmentWrite{Filename: "inline.pdf", MIMEType: "application/pdf", Size: 128, StoragePath: hash[:2] + "/" + hash, ContentHash: hash, Role: store.AttachmentRoleInline, RoleSource: store.AttachmentRoleSourceImporterSemantics}))
 	inlineID := singleAttachmentID(t, f, msg)
-	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), inlineID, 1)
-	require.NoError(err)
-	require.True(eligible)
 	expanded := original
 	expanded.ID = "expanded-old"
 	expanded.Fingerprint = strings.Repeat("f", 64)
 	expanded.IncludeInline = true
 	expanded.PolicyJSON = []byte(`{"include_inline":true}`)
-	_, err = f.Store.EnsureDocumentExtractionProfile(t.Context(), expanded)
+	_, err := f.Store.EnsureDocumentExtractionProfile(t.Context(), expanded)
 	require.NoError(err)
 	require.NoError(f.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{ProfileID: expanded.ID, ProfileFingerprint: expanded.Fingerprint, RetentionPosture: expanded.RetentionPosture, TrainingPosture: expanded.TrainingPosture}))
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), inlineID, 1)
+	require.NoError(err)
+	require.True(eligible)
 	input := store.DocumentExtractionClaimInput{ExtractionID: "expanded-head", ProfileID: expanded.ID, CanonicalBlobHash: hash, ExtractionInputKey: "original", OccurrenceAttachmentID: inlineID, OccurrenceMIMEType: "application/pdf", OccurrenceMessageType: "email", LeaseOwner: "mixed-worker", LeaseUntil: time.Now().Add(time.Hour), LocalBytes: 128, SourceSequence: 1}
 	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
 	require.NoError(err)

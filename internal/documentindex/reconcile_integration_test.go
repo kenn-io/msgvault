@@ -26,6 +26,13 @@ func TestReconcilerBootstrapAndReplayConvergeOnCurrentOccurrences(t *testing.T) 
 		unknownMessage, "unknown.pdf", "application/pdf",
 		unknownHash[:2]+"/"+unknownHash, unknownHash, 64,
 	))
+	inlineMessage := f.CreateMessage("document-reconcile-inline-image")
+	inlineHash := strings.Repeat("d", 64)
+	require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), inlineMessage, store.AttachmentWrite{
+		Filename: "logo.png", MIMEType: "image/png", MediaType: "image", Size: 64,
+		StoragePath: inlineHash[:2] + "/" + inlineHash, ContentHash: inlineHash,
+		Role: store.AttachmentRoleInline, RoleSource: store.AttachmentRoleSourceMIMEDisposition,
+	}))
 
 	reconciler, err := NewReconciler(f.Store, ReconcilerConfig{
 		AttachmentPageSize: 1, ChangePageSize: 1,
@@ -35,7 +42,7 @@ func TestReconcilerBootstrapAndReplayConvergeOnCurrentOccurrences(t *testing.T) 
 	require.NoError(err)
 	assert.True(result.ConsumerCreated)
 	assert.True(result.FullScanCompleted)
-	assert.Equal(2, result.AttachmentsExamined)
+	assert.Equal(3, result.AttachmentsExamined)
 	assert.Equal(1, result.EligibleOccurrences)
 	assert.Equal(0, result.ChangesConsumed)
 	assert.Equal([]int64{firstID}, documentOccurrenceAttachmentIDs(t, f))

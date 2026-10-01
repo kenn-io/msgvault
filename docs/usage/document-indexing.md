@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-29"
+last_edited: "2026-09-30"
 title: Document Attachment Indexing
 description: Find words and topics inside archived documents, with explicit control over provider uploads.
 ---
@@ -135,8 +135,10 @@ of scope. The setting also applies to local CSV conversion.
 
 Changing inline scope changes the profile fingerprint. Record consent again
 before building. Consent rescans historical attachments, including archives whose
-original reconciliation skipped inline documents. Returning to standalone-only
-scope stops inline results from serving under older profiles too.
+original reconciliation skipped inline documents. Local reconciliation retains
+inline occurrences only while an active, consented profile permits inline scope.
+Returning to standalone-only scope stops inline results from serving under older
+profiles too.
 
 Set the key in the named environment variable only when running an
 authenticated operation:
@@ -357,15 +359,16 @@ ledger; later vector operations finish the cleanup.
 
 On `main` after v0.20.0, a failed build reports each document hash, reason code,
 and available local cause. For example, `invalid_local_source` can include
-`PDF end marker is missing or not final`. Size mismatches and spool capacity
+`PDF structure is malformed`. Size mismatches and spool capacity
 failures have separate details. `documents status --capabilities <manifest>`
 shows those diagnostics later; `--json` includes `status.failures` and
 `status.failures_exhausted` (false when more than 20 failures remain).
 
 Status lists up to 20 current failed documents in deterministic order. It keeps
 failed replacements visible during an active full rebuild even while an older
-extraction still serves. A successful replacement removes its failure from the
-list. Details are single-line and capped at 1024 UTF-8 bytes. Parser diagnostics
+extraction still serves. Those documents still count as ready in coverage totals.
+A successful replacement removes its failure from the list. Details are
+single-line and capped at 1024 UTF-8 bytes. Parser diagnostics
 that can contain document content and I/O paths are filtered; raw provider
 response bodies and extracted text are never retained as failure details.
 

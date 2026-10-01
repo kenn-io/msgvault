@@ -23,9 +23,12 @@ const originalDocumentInputKey = "original"
 const documentFailureCleanupTimeout = 5 * time.Second
 
 var (
-	errDocumentPreparation  = errors.New("document extraction preparation failed")
-	errDocumentLeaseRenewal = errors.New("document extraction lease renewal failed")
-	errDocumentPublication  = errors.New("document extraction publication failed")
+	errDocumentPreparation    = errors.New("document extraction preparation failed")
+	errDocumentLeaseRenewal   = errors.New("document extraction lease renewal failed")
+	errDocumentPublication    = errors.New("document extraction publication failed")
+	errDocumentSizeBounds     = errors.New("document candidate size is outside configured bounds")
+	errDocumentSizeMismatch   = errors.New("document attachment size no longer matches reconciled metadata")
+	errDocumentAttachmentOpen = errors.New("open document attachment failed")
 )
 
 type DocumentExtractionCatalog interface {
@@ -213,16 +216,16 @@ func (w *MistralWorker) ProcessCandidate(
 		)
 	}
 	if candidate.Size <= 0 || candidate.Size > w.config.Policy.Values().MaxDocumentBytes {
-		return result, failPreparation(errors.New("document candidate size is outside configured bounds"))
+		return result, failPreparation(errDocumentSizeBounds)
 	}
 	source, authoritativeSize, err := w.opener.OpenStream(workCtx, candidate.CanonicalBlobHash)
 	if err != nil {
-		return result, failPreparation(fmt.Errorf("open document attachment: %w", err))
+		return result, failPreparation(fmt.Errorf("%w: %w", errDocumentAttachmentOpen, err))
 	}
 	if authoritativeSize != candidate.Size {
 		closeErr := source.Close()
 		return result, failPreparation(errors.Join(
-			errors.New("document attachment size no longer matches reconciled metadata"), closeErr,
+			errDocumentSizeMismatch, closeErr,
 		))
 	}
 	var prepared *mistral.PreparedDocument

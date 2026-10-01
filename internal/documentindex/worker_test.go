@@ -1013,10 +1013,66 @@ func TestMistralWorkerReportsMalformedPDFCauseWithoutUpload(t *testing.T) {
 		AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]),
 		MIMEType: "application/pdf", Size: int64(len(content)), MessageType: "email",
 	})
-	require.ErrorContains(err, "PDF end marker")
+	require.ErrorContains(err, "PDF structure is malformed")
 	require.NotNil(catalog.failure)
 	assert.Equal("invalid_local_source", catalog.failure.ReasonCode)
-	assert.Contains(catalog.failure.Detail, "PDF end marker")
+	assert.Contains(catalog.failure.Detail, "PDF structure is malformed")
 	assert.Equal(catalog.failure.Detail, result.FailureDetail)
 	assert.Zero(processor.calls)
+}
+
+func TestMistralWorkerSizeDiagnosticsReachStatus(t *testing.T) {
+	content := mistraltest.MinimalPDF("synthetic size diagnostics")
+	digest := sha256.Sum256(content)
+	hash := hex.EncodeToString(digest[:])
+	for _, tc := range []struct {
+		name string
+		size int64
+		want string
+	}{
+		{"bounds", (1 << 20) + 1, "document candidate size is outside configured bounds"},
+		{"metadata mismatch", int64(len(content)) + 1, "document attachment size no longer matches reconciled metadata"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			profile := store.DocumentExtractionProfile{
+				ID: "profile-test", Fingerprint: strings.Repeat("a", 64),
+				Provider: "mistral", Endpoint: "https://api.mistral.ai/v1/ocr", Region: "eu", Model: "synthetic-model",
+				RetentionPosture: "standard", TrainingPosture: "opted-out",
+				AllowedMediaTypes: []string{"application/pdf"}, PolicyJSON: []byte(`{"policy":1}`),
+			}
+			_, err := f.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
+			require.NoError(err)
+			require.NoError(f.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
+				ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
+				RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
+			}))
+			messageID := f.CreateMessage("size-diagnostic")
+			require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+				Filename: "synthetic.pdf", MIMEType: "application/pdf", Size: tc.size,
+				StoragePath: hash[:2] + "/" + hash, ContentHash: hash,
+				Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceMIMEDisposition,
+			}))
+			var attachmentID int64
+			require.NoError(f.Store.DB().QueryRow("SELECT id FROM attachments").Scan(&attachmentID))
+			_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 1)
+			require.NoError(err)
+			require.True(eligible)
+			processor := &workerProcessor{}
+			worker := newTestMistralWorker(t, f.Store, &workerOpener{content: content}, processor)
+			result, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+				AttachmentID: attachmentID, CanonicalBlobHash: hash, MIMEType: "application/pdf",
+				Size: tc.size, MessageType: "email", SourceSequence: 1,
+			})
+			require.ErrorContains(err, tc.want)
+			assert.Zero(processor.calls)
+			assert.Equal(tc.want, result.FailureDetail)
+			status, err := f.Store.GetDocumentIndexStatusForScope(t.Context(), profile.ID, "original", profile.AllowedMediaTypes, nil)
+			require.NoError(err)
+			require.Len(status.Failures, 1)
+			assert.Equal(tc.want, status.Failures[0].Detail)
+		})
+	}
 }

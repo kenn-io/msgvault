@@ -333,9 +333,10 @@ func (s *Store) RecordDocumentProviderConsent(
 }
 
 // ReconcileDocumentOccurrence resolves current metadata through the same
-// trusted-CAS authority as file downloads. Live standalone and inline occurrences
-// with authoritative role provenance and locally available canonical bytes
-// are retained. Profile scope grants extraction and serving authority separately.
+// trusted-CAS authority as file downloads. Live occurrences with authoritative
+// role provenance and locally available canonical bytes are retained. Inline
+// occurrences also require an active, exactly consented profile that permits them.
+// Each profile grants extraction and serving authority separately.
 // It returns false for an ineligible or missing attachment.
 func (s *Store) ReconcileDocumentOccurrence(
 	ctx context.Context,
@@ -471,7 +472,16 @@ func (s *Store) getDocumentFileMetadataTx(
 		FROM attachments a
 		JOIN messages m ON m.id = a.message_id
 		JOIN conversations c ON c.id = m.conversation_id
-		WHERE a.id = ? AND `+LiveMessagesWhere("m", true), attachmentID).Scan(
+		WHERE a.id = ? AND `+LiveMessagesWhere("m", true)+`
+		  AND (a.attachment_role <> 'inline' OR EXISTS (
+		      SELECT 1 FROM document_extraction_profiles p
+		      JOIN document_provider_consents consent ON consent.profile_id = p.id
+		      WHERE p.include_inline = TRUE AND p.enabled = TRUE
+		        AND p.retired_at IS NULL
+		        AND consent.profile_fingerprint = p.fingerprint
+		        AND consent.retention_posture = p.retention_posture
+		        AND consent.training_posture = p.training_posture
+		  ))`, attachmentID).Scan(
 		&file.ID, &file.MessageID, &file.ConversationID,
 		&file.SourceID, &file.SourceMessageID, &file.MessageType, &file.ConversationType,
 		&file.Filename, &file.MimeType, &file.Size, &file.ContentHash, &file.StoragePath,
