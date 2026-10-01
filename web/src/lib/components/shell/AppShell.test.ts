@@ -1437,6 +1437,51 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  function directoryPersonFetch(): typeof fetch {
+    return vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      const meetingResponse = meetingFixtureResponse(path);
+      if (meetingResponse) return meetingResponse;
+      if (path === '/api/v1/people/directory') return Response.json({ people: [{
+        id: 7, revision: 1, display_name: 'Synthetic Person', contact_state: 'active',
+        categories: [], organizations: []
+      }] });
+      if (path === '/api/v1/people/7') return Response.json({
+        id: 7, revision: 1, display_name: 'Synthetic Person', participant_ids: [42, 19], vcard_uid: '',
+        created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
+      });
+      if (path === '/api/v1/people/7/contact-state') return Response.json({
+        person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-08-01T00:00:00Z', stale: false
+      });
+      return Response.json(exploreResponse());
+    });
+  }
+
+  it.each([
+    {
+      action: 'Review facts',
+      expected: { workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: 7 }
+    },
+    {
+      action: 'Open relationship',
+      expected: { workspace: 'relationships', relationshipTarget: 'cluster:19' }
+    }
+  ])('leaves a Directory person through $action', async ({ action, expected }) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
+      workspace: 'directory', directoryPersonID: 7
+    }))}`);
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(directoryPersonFetch()), state, enabled: false });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: action }));
+      expect(state.current).toMatchObject(expected);
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
   it('owns an ephemeral CardDAV conflict handoff and Browser Back restores the prior Directory person', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
       workspace: 'directory', directoryPersonID: 7
@@ -1494,6 +1539,7 @@ describe('AppShell', () => {
       client: createAPIClient(fetchFn), state, enabled: false, settings: settings as never
     });
 
+    await fireEvent.click(await screen.findByRole('tab', { name: 'Maintenance' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     expect(state.current.workspace).toBe('settings');
     expect(settingsHandoffs.at(-1)?.request).toMatchObject({ conflictID: 41 });
@@ -1506,6 +1552,7 @@ describe('AppShell', () => {
     await waitFor(() => expect(state.current).toMatchObject({ workspace: 'directory', directoryPersonID: 7 }));
     expect(await screen.findByRole('heading', { name: 'Synthetic Person' })).toBeDefined();
     expect(screen.getAllByRole('status', { name: 'Operation status' })).toHaveLength(1);
+    await fireEvent.click(screen.getByRole('tab', { name: 'Maintenance' }));
     await waitFor(() => expect(restoredPublicationSignal).toBeDefined());
 
     await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
@@ -1538,7 +1585,7 @@ describe('AppShell', () => {
         }] });
       }
       if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
-      if (path.startsWith('/api/v1/people/7')) return Response.json({ person_id: 7, employments: [], relationships: [], days: [], attributes: [], categories: [], names: [], contact_points: [], addresses: [], dates: [] });
+      if (path.startsWith('/api/v1/people/7')) return Response.json({ person_id: 7, participant_ids: [], cadence_status: 'active', interaction_count: 0, employments: [], relationships: [], days: [], attributes: [], categories: [], names: [], contact_points: [], addresses: [], dates: [] });
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);
@@ -2320,7 +2367,9 @@ describe('AppShell', () => {
         person: { id: 7, revision: 3, display_name: 'Prior Directory Person', participant_ids: [7] }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
       });
       if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
-      if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, state: 'active' });
+      if (path === '/api/v1/people/7/contact-state') return Response.json({
+        person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-07-19T10:00:00Z', stale: false
+      });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
       if (path === '/api/v1/people/7/days') return Response.json({ person_id: 7, days: [], total_count: 0 });

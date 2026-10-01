@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getPersonProfileHistory as generatedGetPersonProfileHistory } from '../../api/generated/api/api';
-  import { Button, TextInput } from '@kenn-io/kit-ui';
+  import { Button } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type {
     ParticipantContactObservation as GeneratedParticipantContactObservation,
@@ -12,7 +12,6 @@
   } from '../../api/generated/models';
   import type { PersonProfilePatchRequest } from '../../directory/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
-  import ProfileHistoryDialog from './ProfileHistoryDialog.svelte';
   import StructuredProfileEditor, {
     type StructuredProfileRecord,
     type StructuredProfileSectionName,
@@ -34,10 +33,6 @@
     section: StructuredProfileSectionName;
     current: StructuredProfileRecord;
   }>();
-  let historyOpen = $state(false);
-  let renaming = $state(false);
-  let renameValue = $state('');
-  let confirmingDelete = $state(false);
   let observations = $state<ParticipantContactObservation[]>([]);
   let observationsError = $state<string | null>(null);
   $effect(() => {
@@ -208,24 +203,7 @@
   }
   async function reload(): Promise<void> {
     const result = await controller.reload();
-    if (result.ok && controller.draft === null) {
-      confirming = undefined;
-      confirmingDelete = false;
-    }
-  }
-  function beginRename(): void {
-    renameValue = controller.person?.display_name ?? '';
-    renaming = true;
-    confirmingDelete = false;
-  }
-  async function saveRename(): Promise<void> {
-    const result = await controller.rename(renameValue.trim() || null);
-    if (result === undefined && controller.draft === null) renaming = false;
-  }
-  async function deletePerson(): Promise<void> {
-    const activeController = controller;
-    const result = await activeController.deletePerson();
-    if (result === undefined && activeController.draft === null) confirmingDelete = false;
+    if (result.ok && controller.draft === null) confirming = undefined;
   }
   function cancelEditor(): void {
     const localOnly = controller.draft === null && !controller.mutationPending && !controller.reloadPending;
@@ -234,81 +212,7 @@
 </script>
 
 <section class="structured-profile" aria-label="Structured profile">
-  <header class="profile-header">
-    <h3>Structured profile</h3>
-    <div class="record-actions">
-      <Button label="Rename person" size="sm" disabled={!controller.canWritePerson} onclick={beginRename} />
-      <Button
-        label="View profile history"
-        size="sm"
-        onclick={() => {
-          historyOpen = true;
-        }}
-      />
-      <Button
-        label="Delete person"
-        size="sm"
-        tone="danger"
-        disabled={!controller.canWritePerson}
-        onclick={() => {
-          confirmingDelete = true;
-          renaming = false;
-        }}
-      />
-    </div>
-  </header>
-
-  {#if renaming}
-    <div class="person-action" role="group" aria-label="Rename person">
-      <label
-        >Display name<TextInput
-          bind:value={renameValue}
-          ariaLabel="Display name"
-          block
-          disabled={controller.mutationPending}
-        /></label
-      >
-      <div class="record-actions">
-        <Button
-          label="Cancel rename"
-          size="sm"
-          disabled={controller.mutationPending}
-          onclick={() => {
-            renaming = false;
-          }}
-        />
-        <Button
-          label={controller.mutationPending ? 'Renaming…' : 'Save display name'}
-          size="sm"
-          disabled={!controller.canWritePerson}
-          onclick={() => void saveRename()}
-        />
-      </div>
-    </div>
-  {/if}
-  {#if confirmingDelete}
-    <div class="person-action close-confirm" role="group" aria-label="Confirm deleting person">
-      <span>Permanently delete this durable person profile?</span>
-      <div class="record-actions">
-        <Button
-          label="Cancel delete"
-          size="sm"
-          disabled={controller.mutationPending}
-          onclick={() => {
-            confirmingDelete = false;
-          }}
-        />
-        <Button
-          label={controller.mutationPending ? 'Deleting…' : 'Confirm delete person'}
-          size="sm"
-          tone="danger"
-          surface="solid"
-          disabled={!controller.canWritePerson}
-          onclick={() => void deletePerson()}
-        />
-      </div>
-    </div>
-  {/if}
+  <h3>Structured profile</h3>
 
   {#each sections as descriptor (descriptor.section)}
     <section class="profile-group">
@@ -431,26 +335,14 @@
   {/if}
 </section>
 
-{#if historyOpen}
-  <ProfileHistoryDialog
-    {client}
-    {personID}
-    onClose={() => {
-      historyOpen = false;
-    }}
-  />
-{/if}
-
 <style>
   .structured-profile,
   .profile-group,
   li,
-  .record-copy,
-  .person-action {
+  .record-copy {
     display: grid;
     gap: var(--space-2);
   }
-  .profile-header,
   .group-header,
   .record-actions,
   .close-confirm {
@@ -459,7 +351,6 @@
     gap: var(--space-2);
     flex-wrap: wrap;
   }
-  .profile-header,
   .group-header {
     justify-content: space-between;
   }
@@ -503,11 +394,6 @@
     background: var(--bg-inset);
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
-  }
-  .person-action {
-    padding: var(--space-3);
-    border: 1px solid var(--border-muted);
-    border-radius: var(--radius-sm);
   }
   .observation-error {
     margin: 0;

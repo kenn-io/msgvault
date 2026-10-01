@@ -208,7 +208,7 @@
 
   {#if error}<p class="notice" role="status">{error}</p>{/if}
 
-  {#if stateMessage}<p class="notice" role="alert">{stateMessage}</p>{/if}
+  {#if stateMessage}<p class="notice" role="status">{stateMessage}</p>{/if}
 
   {#if !loading && !error && !stateMessage && items.length === 0}
     <p class="notice">No linked Kata items.</p>
@@ -235,11 +235,13 @@
     </div>
   {/each}
 
-  <form onsubmit={(event) => { event.preventDefault(); void createItem(); }}>
-    <label>New agenda item <input bind:value={title} disabled={mutating || !mutationReady} /></label>
-    <label>List <input bind:value={listName} disabled={mutating || !mutationReady} /></label>
-    <button type="submit" disabled={mutating || !mutationReady || !title.trim()}>Add item</button>
-  </form>
+  {#if mutationReady}
+    <form onsubmit={(event) => { event.preventDefault(); void createItem(); }}>
+      <label>New agenda item <input bind:value={title} disabled={mutating} /></label>
+      <label>List <input bind:value={listName} disabled={mutating} /></label>
+      <button type="submit" disabled={mutating || !title.trim()}>Add item</button>
+    </form>
+  {/if}
 </section>
 
 <style>

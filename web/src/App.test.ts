@@ -348,6 +348,7 @@ describe('application foundation', () => {
     const session = createSessionController(fetchFn);
     const rendered = render(App, { session });
     await session.bootstrap();
+    await fireEvent.click(await screen.findByRole('tab', { name: 'Maintenance' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     const detailHeading = await screen.findByRole('heading', { name: 'Conflict comparison' });
     await waitFor(() => expect(document.activeElement).toBe(detailHeading));
@@ -360,6 +361,7 @@ describe('application foundation', () => {
     expect(firstAnnouncement).not.toBeNull();
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+    await fireEvent.click(await screen.findByRole('tab', { name: 'Maintenance' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     const repeatedStatus = screen.getByRole('status', { name: 'Operation status' });
     await waitFor(() => expect(repeatedStatus.firstElementChild).not.toBe(firstAnnouncement));

@@ -1395,6 +1395,9 @@
           onOpenCardDAVConflict={openCardDAVConflict}
           onOpenCardDAVSettings={openCardDAVSettings}
           onAnnounce={announceOperation}
+          onOpenRelationship={openRelationship}
+          onReviewFacts={(personID) =>
+            commitNavigation({ workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: personID })}
         />
       {:else if exploreState.current.workspace === 'directory_review'}
         <DirectoryReviewWorkspace

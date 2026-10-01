@@ -23,6 +23,8 @@
     onOpenCardDAVSettings?: () => void;
     onAnnounce?: (message: string) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
+    onOpenRelationship?: (participantID: number) => void;
+    onReviewFacts?: (personID: number) => void;
   }
 
   let {
@@ -33,7 +35,9 @@
     onOpenCardDAVConflict = () => undefined,
     onOpenCardDAVSettings = () => undefined,
     onAnnounce = () => undefined,
-    onOpenMeeting = undefined
+    onOpenMeeting = undefined,
+    onOpenRelationship = undefined,
+    onReviewFacts = undefined
   }: Props = $props();
   let root = $state<HTMLElement>();
   let narrow = $state(false);
@@ -240,13 +244,13 @@
     />
     {#if controller.selectedPersonID !== null && !narrow}
       <aside class="detail-pane" aria-label="Person detail">
-        {#if controller.detailLoading}<p role="status">Loading person detail…</p>{:else if controller.detail}<PersonDetail {client} bundle={controller.detail} personID={controller.selectedPersonID} profileController={controller.profile} entityController={controller.entity} onOpenPerson={(personID) => void controller.selectPerson(personID)} onSplitCommitted={(context) => controller.reconcilePersonSplit(context)} {onOpenCardDAVConflict} {onOpenCardDAVSettings} {onAnnounce} {onOpenMeeting} />{/if}
+        {#if controller.detailLoading}<p role="status">Loading person detail…</p>{:else if controller.detail}<PersonDetail {client} bundle={controller.detail} personID={controller.selectedPersonID} profileController={controller.profile} entityController={controller.entity} onOpenPerson={(personID) => void controller.selectPerson(personID)} onSplitCommitted={(context) => controller.reconcilePersonSplit(context)} {onOpenCardDAVConflict} {onOpenCardDAVSettings} {onAnnounce} {onOpenMeeting} {onOpenRelationship} {onReviewFacts} />{/if}
       </aside>
     {/if}
   </div>
   {#if controller.selectedPersonID !== null && narrow}
     <DetailDrawer title="Person detail" ariaLabel="Person detail" onclose={() => void closeDetail()}>
-      {#if controller.detailLoading}<p role="status">Loading person detail…</p>{:else if controller.detail}<PersonDetail {client} bundle={controller.detail} personID={controller.selectedPersonID} profileController={controller.profile} entityController={controller.entity} onOpenPerson={(personID) => void controller.selectPerson(personID)} onSplitCommitted={(context) => controller.reconcilePersonSplit(context)} {onOpenCardDAVConflict} {onOpenCardDAVSettings} {onAnnounce} {onOpenMeeting} />{/if}
+      {#if controller.detailLoading}<p role="status">Loading person detail…</p>{:else if controller.detail}<PersonDetail {client} bundle={controller.detail} personID={controller.selectedPersonID} profileController={controller.profile} entityController={controller.entity} onOpenPerson={(personID) => void controller.selectPerson(personID)} onSplitCommitted={(context) => controller.reconcilePersonSplit(context)} {onOpenCardDAVConflict} {onOpenCardDAVSettings} {onAnnounce} {onOpenMeeting} {onOpenRelationship} {onReviewFacts} />{/if}
     </DetailDrawer>
   {/if}
 </main>

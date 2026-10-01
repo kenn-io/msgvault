@@ -190,9 +190,9 @@ describe('PersonAgenda', () => {
     // rows or Unlink controls render; the status message is the only notice.
     expect(screen.queryByRole('button', { name: 'Unlink Ask' })).toBeNull();
     expect(screen.queryByText('Task service is unavailable')).toBeNull();
-    expect((screen.getByLabelText('New agenda item') as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByLabelText('List') as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: 'Add item' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByLabelText('New agenda item')).toBeNull();
+    expect(screen.queryByLabelText('List')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add item' })).toBeNull();
 
     ready = true;
     await rerender({ client, personID: 8 });
@@ -223,9 +223,9 @@ describe('PersonAgenda', () => {
     expect(await screen.findByText('Kata integration incompatible: Kata API is incompatible.')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Unlink Ask' })).toBeNull();
     expect(screen.queryByText('Task service is unavailable')).toBeNull();
-    expect((screen.getByLabelText('New agenda item') as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByLabelText('List') as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: 'Add item' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByLabelText('New agenda item')).toBeNull();
+    expect(screen.queryByLabelText('List')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add item' })).toBeNull();
 
     compatible = true;
     await rerender({ client, personID: 8 });
@@ -238,6 +238,22 @@ describe('PersonAgenda', () => {
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
     expect((screen.getByRole('button', { name: 'Add item' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Unlink Ask' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('shows the integration status instead of the add form when the integration is disabled', async () => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (isStatus(request)) return Response.json({ state: 'disabled', message: 'Kata is not configured.' });
+      throw new Error(`Unexpected ${request.method} ${request.url}`);
+    }));
+
+    render(PersonAgenda, { client, personID: 7 });
+
+    const status = await screen.findByText('Kata integration disabled: Kata is not configured.');
+    expect(status.getAttribute('role')).toBe('status');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByLabelText('New agenda item')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add item' })).toBeNull();
   });
 
   it('does not request the agenda while the task integration is not ready', async () => {
@@ -334,9 +350,9 @@ describe('PersonAgenda', () => {
     // nothing from A stays clickable while B's status and list are pending.
     expect(screen.queryByText('Ask about launch')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Unlink Ask about launch' })).toBeNull();
-    expect((screen.getByLabelText('New agenda item') as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByLabelText('List') as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: 'Add item' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByLabelText('New agenda item')).toBeNull();
+    expect(screen.queryByLabelText('List')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add item' })).toBeNull();
 
     // A click that slips through must never pair A's ref with B's person id.
     await fireEvent.click(staleUnlink);

@@ -62,8 +62,68 @@ function overviewCardResponse(request: Request): Response | undefined {
   return undefined;
 }
 
+const personID = 7;
+const person = {
+  id: personID, revision: 1, display_name: 'Synthetic Person', participant_ids: [11], vcard_uid: '',
+  created_at: when, updated_at: when
+};
+
+function renderPersonDetail(
+  bundle: Partial<DirectoryReadBundle> = {},
+  props: Partial<{ onOpenRelationship: (participantID: number) => void; onReviewFacts: (personID: number) => void }> = {}
+) {
+  return render(PersonDetail, {
+    client: createAPIClient(quietOverviewFetch()), personID,
+    bundle: { person, etags: {}, errors: {}, ...bundle }, ...props
+  });
+}
+
 describe('PersonDetail', () => {
-  it('renders available read sections, marks sensitive attributes, and keeps Media & Files person-scoped', async () => {
+  it('lists seven person sections in order', async () => {
+    renderPersonDetail();
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent?.trim())).toEqual(
+      ['Overview', 'Profile', 'Organizations', 'Connections', 'Network', 'Media & files', 'Maintenance']);
+    await fireEvent.click(screen.getByRole('tab', { name: 'Maintenance' }));
+    expect(await screen.findByRole('heading', { name: 'Merge history' })).toBeTruthy();
+  });
+
+  it('names the person in a header above the sections', () => {
+    renderPersonDetail();
+    const heading = screen.getByRole('heading', { level: 2, name: 'Synthetic Person' });
+    const tablist = screen.getByRole('tablist', { name: 'Person detail sections' });
+    expect(heading.compareDocumentPosition(tablist) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('tabpanel', { name: 'Overview' }).contains(heading)).toBe(false);
+  });
+
+  it('opens the relationship for the lowest participant ID and reviews facts', async () => {
+    const onOpenRelationship = vi.fn();
+    const onReviewFacts = vi.fn();
+    renderPersonDetail({ person: { ...person, participant_ids: [42, 7, 19] } }, { onOpenRelationship, onReviewFacts });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open relationship' }));
+    expect(onOpenRelationship).toHaveBeenCalledWith(7);
+    await fireEvent.click(screen.getByRole('button', { name: 'Review facts' }));
+    expect(onReviewFacts).toHaveBeenCalledWith(personID);
+  });
+
+  it('hides Open relationship when the person has no participants', () => {
+    renderPersonDetail({ person: { ...person, participant_ids: [] } }, { onOpenRelationship: vi.fn() });
+    expect(screen.queryByRole('button', { name: 'Open relationship' })).toBeNull();
+  });
+
+  it('offers record actions once, from the header menu, when the profile controller is available', async () => {
+    const client = createAPIClient(quietOverviewFetch());
+    const bundle = { person, etags: { person: '"person-7-r1"' }, errors: {} } satisfies DirectoryReadBundle;
+    const profileController = new DirectoryProfileController(client, personID, bundle);
+    render(PersonDetail, { client, personID, bundle, profileController });
+
+    expect(screen.getAllByRole('button', { name: 'More actions' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Rename person' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename person' }));
+    expect(screen.getByRole('group', { name: 'Rename person' })).toBeDefined();
+  });
+
+  it('renders available read sections, marks sensitive attributes, and keeps Media & files person-scoped', async () => {
     const requestPaths: string[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -105,8 +165,6 @@ describe('PersonDetail', () => {
     void entityController.load();
     render(PersonDetail, { client, bundle, personID: 7, entityController });
 
-    expect(screen.getByText('Names')).toBeDefined();
-    expect(screen.getByText('person@example.test')).toBeDefined();
     expect(document.querySelector('.attribute-summary .sensitive')?.textContent).toBe('concealed');
     expect(document.body.innerHTML).not.toContain('Synthetic value');
     expect(await screen.findByText(/Example Org/)).toBeDefined();
@@ -117,14 +175,18 @@ describe('PersonDetail', () => {
     expect(requestPaths.filter((path) => path === '/api/v1/people/7/relationships')).toHaveLength(1);
     expect(requestPaths).not.toContain('/api/v1/people/7/network');
     expect(screen.getByText('Activity')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Connections' })).toBeDefined();
     expect(screen.queryByText('Provenance and history')).toBeNull();
-    await fireEvent.click(screen.getByRole('tab', { name: 'Media & Files' }));
+    await fireEvent.click(screen.getByRole('tab', { name: 'Profile' }));
+    expect(screen.getByText('Names')).toBeDefined();
+    expect(screen.getByText('person@example.test')).toBeDefined();
+    await fireEvent.click(screen.getByRole('tab', { name: 'Media & files' }));
     await waitFor(() => expect(requestPaths).toContain('/api/v1/people/7/files/search'));
     expect(requestPaths).not.toContain('/api/v1/participants/7/files/search');
     expect(requestPaths).not.toContain('/api/v1/files/search');
   });
 
-  it('applies Media & Files filename, type, and sort choices to the person files request', async () => {
+  it('applies Media & files filename, type, and sort choices to the person files request', async () => {
     const filesBodies: Record<string, unknown>[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -139,7 +201,7 @@ describe('PersonDetail', () => {
     const bundle = { etags: {}, errors: {} } satisfies DirectoryReadBundle;
     render(PersonDetail, { client: createAPIClient(fetchFn), bundle, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('tab', { name: 'Media & Files' }));
+    await fireEvent.click(screen.getByRole('tab', { name: 'Media & files' }));
     await waitFor(() => expect(filesBodies).toHaveLength(1));
 
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'invoice' } });
@@ -169,7 +231,7 @@ describe('PersonDetail', () => {
     });
     const bundle = { etags: {}, errors: {} } satisfies DirectoryReadBundle;
     const view = render(PersonDetail, { client: createAPIClient(fetchFn), bundle, personID: 7 });
-    await fireEvent.click(screen.getByRole('tab', { name: 'Media & Files' }));
+    await fireEvent.click(screen.getByRole('tab', { name: 'Media & files' }));
     await waitFor(() => expect(filesBodies).toHaveLength(1));
 
     const search = screen.getByRole('searchbox', { name: 'Filter filename' });
@@ -184,7 +246,7 @@ describe('PersonDetail', () => {
     expect(filesBodies.at(-1)).not.toHaveProperty('filename_query');
   });
 
-  it('clears Media & Files filters when the selected person changes', async () => {
+  it('clears Media & files filters when the selected person changes', async () => {
     const filesBodies: Record<string, unknown>[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -196,7 +258,7 @@ describe('PersonDetail', () => {
     });
     const bundle = { etags: {}, errors: {} } satisfies DirectoryReadBundle;
     const view = render(PersonDetail, { client: createAPIClient(fetchFn), bundle, personID: 7 });
-    await fireEvent.click(screen.getByRole('tab', { name: 'Media & Files' }));
+    await fireEvent.click(screen.getByRole('tab', { name: 'Media & files' }));
     await fireEvent.input(await screen.findByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'invoice' } });
     await waitFor(() => expect(filesBodies.at(-1)).toMatchObject({ filename_query: 'invoice' }));
 
@@ -255,45 +317,38 @@ describe('PersonDetail', () => {
     const entityController = new DirectoryEntityController(client, 7);
     render(PersonDetail, { client, personID: 7, bundle: { etags: {}, errors: {} }, entityController });
 
-    const overview = screen.getByRole('tab', { name: 'Overview' });
-    const organizations = screen.getByRole('tab', { name: 'Organizations' });
-    const relationships = screen.getByRole('tab', { name: 'Relationships' });
-    const network = screen.getByRole('tab', { name: 'Network' });
-    const media = screen.getByRole('tab', { name: 'Media & Files' });
-    expect(overview.getAttribute('tabindex')).toBe('0');
-    expect(screen.getAllByRole('tab')).toHaveLength(5);
+    const names = ['Overview', 'Profile', 'Organizations', 'Connections', 'Network', 'Media & files', 'Maintenance'];
+    const tabs = names.map((name) => screen.getByRole('tab', { name }));
+    const [overview, profileTab] = tabs;
+    const maintenance = tabs.at(-1)!;
+    expect(tabs.map((tab) => tab.getAttribute('tabindex'))).toEqual(['0', '-1', '-1', '-1', '-1', '-1', '-1']);
+    expect(tabs.map((tab) => tab.id)).toEqual(
+      ['overview', 'profile', 'organizations', 'connections', 'network', 'media', 'maintenance'].map((id) => `person-7-${id}-tab`));
+    expect(overview!.getAttribute('aria-controls')).toBe(screen.getByRole('tabpanel', { name: 'Overview' }).id);
+
+    overview!.focus();
+    for (const [index, tab] of tabs.entries()) {
+      const next = tabs[(index + 1) % tabs.length]!;
+      await fireEvent.keyDown(tab, { key: 'ArrowRight' });
+      expect(document.activeElement).toBe(next);
+      expect(next.getAttribute('aria-selected')).toBe('true');
+      await waitFor(() => expect(next.getAttribute('aria-controls')).toBe(screen.getByRole('tabpanel', { name: names[(index + 1) % names.length] }).id));
+    }
+
+    await fireEvent.keyDown(overview!, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(maintenance);
     expect(await screen.findByRole('heading', { name: 'Merge history' })).toBeDefined();
-    expect(organizations.getAttribute('tabindex')).toBe('-1');
-    expect(relationships.getAttribute('tabindex')).toBe('-1');
-    expect(network.getAttribute('tabindex')).toBe('-1');
-    expect(media.getAttribute('tabindex')).toBe('-1');
-    expect(overview.getAttribute('aria-controls')).toBe(screen.getByRole('tabpanel', { name: 'Overview' }).id);
 
-    overview.focus();
-    await fireEvent.keyDown(overview, { key: 'ArrowRight' });
-    expect(document.activeElement).toBe(organizations);
-    expect(organizations.getAttribute('aria-selected')).toBe('true');
-    await fireEvent.keyDown(organizations, { key: 'ArrowRight' });
-    expect(document.activeElement).toBe(relationships);
-    await waitFor(() => expect(relationships.getAttribute('aria-controls')).toBe(screen.getByRole('tabpanel', { name: 'Relationships' }).id));
-    await fireEvent.keyDown(relationships, { key: 'ArrowRight' });
-    expect(document.activeElement).toBe(network);
-    await waitFor(() => expect(network.getAttribute('aria-controls')).toBe(screen.getByRole('tabpanel', { name: 'Network' }).id));
-    await fireEvent.keyDown(network, { key: 'ArrowRight' });
-    expect(document.activeElement).toBe(media);
-    expect(media.getAttribute('aria-controls')).toBe(screen.getByRole('tabpanel', { name: 'Media & Files' }).id);
-
-    await fireEvent.keyDown(media, { key: 'ArrowRight' });
+    await fireEvent.keyDown(maintenance, { key: 'Home' });
     expect(document.activeElement).toBe(overview);
-    await fireEvent.keyDown(overview, { key: 'ArrowLeft' });
-    expect(document.activeElement).toBe(media);
+    expect(overview!.getAttribute('aria-selected')).toBe('true');
 
-    await fireEvent.keyDown(media, { key: 'Home' });
+    await fireEvent.keyDown(overview!, { key: 'End' });
+    expect(document.activeElement).toBe(maintenance);
+    await fireEvent.keyDown(maintenance, { key: 'ArrowRight' });
     expect(document.activeElement).toBe(overview);
-    expect(overview.getAttribute('aria-selected')).toBe('true');
-
-    await fireEvent.keyDown(overview, { key: 'End' });
-    expect(document.activeElement).toBe(media);
+    await fireEvent.keyDown(overview!, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(profileTab);
   });
 
   it('selects durable people and opens the exact organization editor from network actions', async () => {
@@ -337,7 +392,7 @@ describe('PersonDetail', () => {
     expect(entityController.organizationETags.get(21)).toBe('"organization-21-r2"');
   });
 
-  it('mounts one compact profile-maintenance card before CardDAV without adding a tab', async () => {
+  it('mounts profile maintenance before CardDAV publication in Maintenance', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
@@ -367,14 +422,14 @@ describe('PersonDetail', () => {
       }
     });
 
+    expect(screen.queryByRole('heading', { name: 'Profile maintenance' })).toBeNull();
+    await fireEvent.click(screen.getByRole('tab', { name: 'Maintenance' }));
     const maintenance = await screen.findByRole('heading', { name: 'Profile maintenance' });
     const publication = await screen.findByRole('heading', { name: 'CardDAV publication' });
     expect(maintenance.compareDocumentPosition(publication) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getAllByRole('tab')).toHaveLength(5);
-    expect(screen.queryByRole('tab', { name: /maintenance/i })).toBeNull();
   });
 
-  it('mounts compact CardDAV publication in Overview and threads conflict and status callbacks', async () => {
+  it('mounts compact CardDAV publication in Maintenance and threads conflict and status callbacks', async () => {
     const onOpenCardDAVConflict = vi.fn();
     const onAnnounce = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -407,15 +462,14 @@ describe('PersonDetail', () => {
       onAnnounce
     });
 
+    await fireEvent.click(screen.getByRole('tab', { name: 'Maintenance' }));
     expect(await screen.findByRole('heading', { name: 'CardDAV publication' })).toBeDefined();
-    expect(screen.getAllByRole('tab')).toHaveLength(5);
-    expect(screen.queryByRole('tab', { name: /CardDAV/i })).toBeNull();
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     expect(onOpenCardDAVConflict).toHaveBeenCalledWith(41);
     expect(onAnnounce).not.toHaveBeenCalled();
   });
 
-  it('mounts the brief card in Overview under contact state without adding a tab', async () => {
+  it('leads Overview with the brief card, then labeled contact state', async () => {
     const paths: string[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -466,11 +520,11 @@ describe('PersonDetail', () => {
 
     const brief = await screen.findByRole('heading', { name: 'Last time we talked' });
     const contactState = screen.getByText('Contact state');
-    expect(contactState.compareDocumentPosition(brief) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(brief.compareDocumentPosition(contactState) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('Active · 4 interactions · last contact Aug 29, 2026')).toBeDefined();
     expect(await screen.findByRole('button', {
       name: 'Last time you talked (Aug 29, chat): they were preparing for a role change.'
     })).toBeDefined();
-    expect(screen.getAllByRole('tab')).toHaveLength(5);
     expect(screen.queryByRole('tab', { name: /brief/i })).toBeNull();
     expect(paths).toContain('/api/v1/people/7/brief');
     expect(document.body.innerHTML).not.toContain('not-rendered.example.test');
@@ -499,6 +553,7 @@ describe('PersonDetail', () => {
       onOpenCardDAVSettings
     });
 
+    await fireEvent.click(screen.getByRole('tab', { name: 'Maintenance' }));
     expect(await screen.findByText('CardDAV publication is unavailable. Configure or repair it in CardDAV settings.')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Retry CardDAV publication' })).toBeNull();
@@ -524,7 +579,7 @@ describe('PersonDetail', () => {
     expect(screen.queryByRole('heading', { name: 'Attributes' })).toBeNull();
   });
 
-  it('moves focus to the attributes section when Edit attributes is pressed', async () => {
+  it('opens Profile and moves focus to the attributes section when Edit attributes is pressed', async () => {
     const definition = nicknameDefinition();
     const client = createAPIClient(quietOverviewFetch());
     const bundle = {
@@ -540,8 +595,9 @@ describe('PersonDetail', () => {
     const button = await screen.findByRole('button', { name: 'Edit attributes' });
     await fireEvent.click(button);
 
+    await waitFor(() => expect(document.getElementById('person-attributes')).not.toBeNull());
+    expect(screen.getByRole('tab', { name: 'Profile' }).getAttribute('aria-selected')).toBe('true');
     const section = document.getElementById('person-attributes');
-    expect(section).not.toBeNull();
     expect(section!.getAttribute('tabindex')).toBe('-1');
     expect(document.activeElement).toBe(section);
   });

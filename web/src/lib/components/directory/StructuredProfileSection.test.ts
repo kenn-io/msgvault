@@ -243,77 +243,6 @@ describe('StructuredProfileSection', () => {
     expect(fetchFn).toHaveBeenCalledOnce();
   });
 
-  it('renames the selected person with the current strong ETag', async () => {
-    const requests: Request[] = [];
-    renderSection(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      return new Response(JSON.stringify({ ...profile().person, revision: 4, display_name: 'Renamed User' }), {
-        headers: { 'Content-Type': 'application/json', ETag: '"person-7-r4"' }
-      });
-    }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Rename person' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Display name' }), { target: { value: 'Renamed User' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
-
-    await waitFor(() => expect(requests).toHaveLength(1));
-    expect(requests[0]!.method).toBe('PATCH');
-    expect(requests[0]!.headers.get('If-Match')).toBe('"person-7-r3"');
-    await expect(requests[0]!.clone().json()).resolves.toEqual({ display_name: 'Renamed User' });
-  });
-
-  it('locks rename controls while the non-abortable write is pending', async () => {
-    let resolveRename!: (response: Response) => void;
-    const pendingRename = new Promise<Response>((resolve) => { resolveRename = resolve; });
-    const controller = renderSection(vi.fn<typeof fetch>(async () => pendingRename));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Rename person' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
-
-    await waitFor(() => expect(controller.mutationPending).toBe(true));
-    expect(screen.getByRole('button', { name: 'Cancel rename' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Renaming…' })).toHaveProperty('disabled', true);
-
-    resolveRename(new Response(JSON.stringify({ ...profile().person, revision: 4 }), {
-      headers: { 'Content-Type': 'application/json', ETag: '"person-7-r4"' }
-    }));
-    await waitFor(() => expect(controller.mutationPending).toBe(false));
-  });
-
-  it('requires confirmation and the current strong ETag before deleting a person', async () => {
-    const requests: Request[] = [];
-    renderSection(vi.fn<typeof fetch>(async (input) => {
-      requests.push(input instanceof Request ? input : new Request(input));
-      return new Response(null, { status: 204 });
-    }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete person' }));
-    expect(requests).toHaveLength(0);
-    expect(screen.getByRole('group', { name: 'Confirm deleting person' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete person' }));
-
-    await waitFor(() => expect(requests).toHaveLength(1));
-    expect(requests[0]!.method).toBe('DELETE');
-    expect(requests[0]!.headers.get('If-Match')).toBe('"person-7-r3"');
-  });
-
-  it('locks delete confirmation while the non-abortable delete is pending', async () => {
-    let resolveDelete!: (response: Response) => void;
-    const pendingDelete = new Promise<Response>((resolve) => { resolveDelete = resolve; });
-    const controller = renderSection(vi.fn<typeof fetch>(async () => pendingDelete));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete person' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete person' }));
-
-    await waitFor(() => expect(controller.mutationPending).toBe(true));
-    expect(screen.getByRole('button', { name: 'Cancel delete' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Deleting…' })).toHaveProperty('disabled', true);
-
-    resolveDelete(new Response(null, { status: 204 }));
-    await waitFor(() => expect(controller.mutationPending).toBe(false));
-  });
-
   it('does not offer an unsafe URI replacement for inline media content', async () => {
     const controller = renderSection(vi.fn());
     controller.structuredProfile = {
@@ -367,22 +296,5 @@ describe('StructuredProfileSection', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm close media metadata' }));
     await waitFor(() => expect(requests).toHaveLength(1));
     await expect(requests[0]!.clone().json()).resolves.toEqual({ media: { supersede: [61] } });
-  });
-
-  it('opens history without replacing the Directory overview and returns focus to its trigger', async () => {
-    renderSection(vi.fn<typeof fetch>(async () => Response.json({
-      person: profile().person,
-      names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [], observations: []
-    })));
-    const trigger = screen.getByRole('button', { name: 'View profile history' });
-    trigger.focus();
-
-    await fireEvent.click(trigger);
-    expect(await screen.findByRole('dialog', { name: 'Profile history' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Close profile history' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Profile history' })).toBeNull());
-    expect(document.activeElement).toBe(trigger);
-    expect(screen.getByRole('heading', { name: 'Names' })).toBeDefined();
   });
 });

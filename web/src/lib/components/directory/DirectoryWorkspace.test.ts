@@ -244,6 +244,7 @@ describe('DirectoryWorkspace', () => {
       if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} });
       const meetingResponse = meetingFixtureResponse(path);
       if (meetingResponse) return meetingResponse;
+      if (path.endsWith('/contact-state')) return Response.json({ person_id: 42, cadence_status: 'active', interaction_count: 0, computed_at: '2026-01-01T00:00:00Z', stale: false });
       return Response.json({ id: 42, revision: 1, participant_ids: [], vcard_uid: '', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' });
     });
     const client = createAPIClient(fetchFn);
@@ -356,6 +357,7 @@ describe('DirectoryWorkspace', () => {
 
     render(DirectoryWorkspace, { client, controller, state: selectedState });
 
+    await fireEvent.click(await screen.findByRole('tab', { name: 'Profile' }));
     expect(await screen.findByRole('heading', { name: 'Structured profile' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Add name' })).toHaveProperty('disabled', false);
     expect(controller.profile).not.toBeNull();
@@ -392,7 +394,8 @@ describe('DirectoryWorkspace', () => {
     const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
     render(DirectoryWorkspace, { client: createAPIClient(fetchFn), controller, state: selectedState });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete person' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete person' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete person' }));
 
     await waitFor(() => expect(controller.selectedPersonID).toBeNull());
@@ -447,6 +450,7 @@ describe('DirectoryWorkspace', () => {
     const controller = new DirectoryController(client);
     render(DirectoryWorkspace, { client, controller, state: selectedState });
 
+    await fireEvent.click(await screen.findByRole('tab', { name: 'Profile' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Add category' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Category' }), { target: { value: 'VIP' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
@@ -504,6 +508,7 @@ describe('DirectoryWorkspace', () => {
     const controller = new DirectoryController(client);
     render(DirectoryWorkspace, { client, controller, state: selectedState });
 
+    await fireEvent.click(await screen.findByRole('tab', { name: 'Profile' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Add category' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Category' }), { target: { value: 'Straße' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
@@ -573,6 +578,7 @@ describe('DirectoryWorkspace', () => {
     render(DirectoryWorkspace, { client, controller, state: selectedState });
 
     const row = await screen.findByRole('row', { name: /Synthetic Person/ });
+    await fireEvent.click(await screen.findByRole('tab', { name: 'Profile' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Add category' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Category' }), { target: { value: 'Straße' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
@@ -654,6 +660,7 @@ describe('DirectoryWorkspace', () => {
     const controller = new DirectoryController(client);
     render(DirectoryWorkspace, { client, controller, state: selectedState });
 
+    await fireEvent.click(await screen.findByRole('tab', { name: 'Profile' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Edit Primary channel value 1' }));
     await fireEvent.change(screen.getByRole('combobox', { name: 'Primary channel' }), { target: { value: 'chat' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
@@ -715,6 +722,7 @@ describe('DirectoryWorkspace', () => {
         publicationSignal = request.signal;
         return new Promise<Response>((resolve) => { resolvePublication = resolve; });
       }
+      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'active', interaction_count: 0, computed_at: '2026-01-01T00:00:00Z', stale: false });
       return Response.json({
         id: 7, revision: 1, participant_ids: [], vcard_uid: '',
         created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z'
@@ -726,6 +734,7 @@ describe('DirectoryWorkspace', () => {
 
     await fireEvent.click(await screen.findByRole('row', { name: /Synthetic Person/ }));
     expect(await screen.findByRole('dialog', { name: 'Person detail' })).toBeDefined();
+    await fireEvent.click(await screen.findByRole('tab', { name: 'Maintenance' }));
     await waitFor(() => expect(publicationSignal).toBeDefined());
     await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(publicationSignal?.aborted).toBe(true);
