@@ -91,7 +91,7 @@ func mcpOperationDescribed(operationID string) bool {
 		"disableSettingsPeopleInference", "deleteSettingsPeopleInferenceProvider",
 		"patchSettingsPeopleInferencePolicy", "listCardDAVConnections", "getCardDAVStatus",
 		"listCardDAVBooks", "listCardDAVRuns", "syncCardDAV", "updateCardDAVBookRoles",
-		"listCardDAVConflicts", "getCardDAVConflict", "resolveCardDAVConflict", "unpublishCardDAVPerson":
+		"listCardDAVConflicts", "getCardDAVConflict", "resolveCardDAVConflict", "unpublishCardDAVPerson", "getCardDAVPublication":
 		return true
 	default:
 		return false

@@ -59,7 +59,7 @@ type operationalDefinition struct {
 // Roots are built once, independent of capability combinations. Selecting any
 // subset retains pointer identity for the official SDK's shared schema cache.
 var fixedOperationalDefinitions = sync.OnceValue(func() []operationalDefinition {
-	return append(append(append(sourceOperationalDefinitions(), draftOperationalDefinitions()...), providerOperationalDefinitions()...), documentOperationalDefinitions()...)
+	return append(append(append(append(sourceOperationalDefinitions(), draftOperationalDefinitions()...), providerOperationalDefinitions()...), documentOperationalDefinitions()...), cardDAVOperationalDefinitions()...)
 })
 
 func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefinition {
@@ -76,6 +76,11 @@ func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefini
 		}
 		if capability, ok := opts.Operations.(ConversationDraftCapabilities); ok && capability.SupportsConversationDrafts() && definition.definition.name == "draft_compose" {
 			definition = conversationDraftComposeDefinition()
+		}
+		if capability, ok := opts.Operations.(CardDAVConnectionCapabilities); ok && capability.SupportsCardDAVConnections() && definition.family == OperationFamilyCardDAV {
+			if named, exists := namedCardDAVDefinition(definition.definition.name); exists {
+				definition = named
+			}
 		}
 		definitions = append(definitions, definition)
 	}
@@ -102,6 +107,9 @@ func operationalOutputSchema(output *jsonschema.Schema, family OperationFamily) 
 	}
 	if family == OperationFamilyDrafts {
 		properties["draft"] = outputSchemaFor[DraftOutput]()
+	}
+	if family == OperationFamilyCardDAV {
+		properties["publication"] = outputSchemaFor[CardDAVUnpublicationFailure]().Properties["publication"]
 	}
 	failure := closedObject(properties, "error")
 	failure.Schema = ""

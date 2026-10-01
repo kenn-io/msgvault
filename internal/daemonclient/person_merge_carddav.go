@@ -2,8 +2,12 @@ package daemonclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+
+	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -113,7 +117,36 @@ func (c *Client) SyncCardDAV(ctx context.Context, full bool) (*generated.SyncRes
 
 func (c *Client) GetCardDAVSyncStatus(ctx context.Context) (*generated.CardDAVStatusResponse, error) {
 	response, err := APIResponse(c, func(api *apiclient.Client) (*generated.GetCardDAVStatusResp, error) {
-		return api.GetCardDAVStatusWithResponse(ctx)
+		// Keep the default status route stable across the generated client's
+		// optional connection selector. APIResponse retains admission, native
+		// busy handling and error decoding for both schema versions.
+		native := api.APIClient()
+		const path = "/api/v1/carddav/status"
+		req, requestErr := native.CreateRequest(ctx, runtime.RequestOptionsParameters{
+			RequestURL: native.GetBaseURL() + path, Method: http.MethodGet,
+		})
+		if requestErr != nil {
+			return nil, fmt.Errorf("create CardDAV status request: %w", requestErr)
+		}
+		resp, requestErr := native.ExecuteRequest(ctx, req, path)
+		if requestErr != nil {
+			return nil, fmt.Errorf("execute CardDAV status request: %w", requestErr)
+		}
+		out := &generated.GetCardDAVStatusResp{HTTPResponse: resp.Raw, Body: resp.Content, StatusCode: resp.StatusCode}
+		if resp.StatusCode != http.StatusOK {
+			return out, runtime.NewClientAPIError(fmt.Errorf("CardDAV status failed (%d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+		}
+		out.JSON200 = new(generated.GetCardDAVStatusResponse)
+		if len(resp.Content) > 0 {
+			if decodeErr := json.Unmarshal(resp.Content, out.JSON200); decodeErr != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetCardDAVStatusResponse",
+					Body: resp.Content, Err: decodeErr,
+				}
+			}
+		}
+		return out, nil
 	})
 	if err != nil {
 		return nil, err

@@ -24,6 +24,7 @@ type daemonMCPOperations struct {
 	supported        []string
 	commands         []apiprotocol.MCPCommandDescriptor
 	documentManifest string
+	cardDAVNamed     bool
 }
 
 func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotocol.MCPCapabilities) *daemonMCPOperations {
@@ -63,6 +64,15 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, providerMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, documentMCPCapabilities(hasRoute, capabilities)...)
+	backend.cardDAVNamed = hasRoute("listCardDAVConnections", http.MethodGet, mcpCardDAVPrefix+"/connections") && hasRoute("getCardDAVStatus", http.MethodGet, mcpCardDAVPrefix+"/status", "connection") && hasRoute("listCardDAVBooks", http.MethodGet, mcpCardDAVPrefix+"/books", "connection") && hasRoute("listCardDAVRuns", http.MethodGet, mcpCardDAVPrefix+"/runs", "connection") && mcpRequestPropertiesPresent(capabilities, "syncCardDAV", "connection")
+	for _, route := range mcpCardDAVRoutes {
+		if route.contextID != "" && !hasRoute(route.contextID, http.MethodGet, route.contextPath) {
+			continue
+		}
+		if hasRoute(route.id, route.method, route.path, route.query...) && (len(route.properties) == 0 || mcpRequestPropertiesPresent(capabilities, route.id, route.properties...)) {
+			backend.supported = append(backend.supported, route.name)
+		}
+	}
 	return backend
 }
 
@@ -82,6 +92,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.StatusMessageResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
+		if result, handled, err := b.executeCardDAVOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeDocumentOperation(ctx, name, args); handled {
 			return result, err
 		}
@@ -100,6 +113,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
+		if disclosure, handled, err := b.cardDAVOperationDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
 		if disclosure, handled, err := b.documentOperationDisclosure(ctx, name, args); handled {
 			return disclosure, err
 		}
@@ -195,8 +211,10 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
 		switch code {
-		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "validation_failed", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable", "document_status_scope_unavailable", "document_status_unavailable":
+		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "validation_failed", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable", "document_status_scope_unavailable", "document_status_unavailable", "carddav_unavailable", "carddav_connection_unavailable", "google_authorization_required", "carddav_conflict_stale", "carddav_conflict_pending", "carddav_publication_pending", "carddav_inference_review_required", "carddav_review_stale", "conflict", "carddav_retry_after":
 			return operationFailure(code, false), nil
+		case "carddav_upstream_failed", "carddav_storage_failed", "carddav_failed":
+			return operationFailure(code, writes), nil
 		default:
 			return operationFailure("operation_refused", writes && response.StatusCode >= 500), nil
 		}
