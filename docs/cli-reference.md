@@ -298,6 +298,48 @@ structured provider outcomes as `draft-reply`. It stores the Bcc envelope in
 the draft so the mail application can use it. It never sends the message or
 validates provider send-as rights.
 
+### Beeper chat drafts
+
+For a Beeper source, `draft-compose` leaves a text draft in the composer of an
+existing chat. `--to` takes the Beeper chat ID, and `--body` the text; no other
+fields apply. Enable it per source in the daemon host's `config.toml`, the same
+way as Gmail, and keep Beeper Desktop running:
+
+```toml
+[[beeper.drafts]]
+source_id = 42
+enabled = true
+```
+
+```bash
+msgvault draft-compose --source-id 42 --to '!room:beeper.local' --body 'Draft text'
+```
+
+The chat's composer must be empty. Each chat has at most one managed draft;
+`draft_exists` reports the existing one. `draft-get`, `draft-edit`, and
+`draft-delete` work on the returned draft ID, and `draft-delete` clears the
+composer. The edit body must be nonblank. Delegated tokens need `draft.create` on the
+Beeper source to create; `draft-get` accepts `draft.edit` or `draft.delete`,
+`draft-edit` needs `draft.edit`, and `draft-delete` needs `draft.delete`. A creator's `draft_exists` result carries the draft ID without its
+text. `draft-get` shows the draft as
+Beeper last reported it, which can differ from the text sent because Beeper
+formats it. Edit and delete read the composer first and return `draft_conflict`
+when someone changed it in Beeper; msgvault never replaces text it did not
+write. Beeper has no conditional write, so a change typed between that read and
+the write can still be cleared. A write Beeper refuses before anything changed
+returns `provider_rejected`; a new draft whose text Beeper refused is
+discarded, so the chat is free for another `draft-compose`. A write with an
+unknown outcome returns `remote_unknown` and keeps the draft's pending
+operation; the next edit or delete settles it from what Beeper shows. An edit
+that finds an earlier delete settled, or a new draft's text never delivered,
+returns `draft_discarded`. When Beeper shows text msgvault cannot
+attribute, the command returns `pending_operation`; clear the composer in
+Beeper and retry. `not_supported` means the installed Beeper Desktop does not
+report chat drafts, `chat_not_found` that Beeper has no chat with that ID,
+`provider_unavailable` that Beeper Desktop or its saved token cannot be
+reached, and `provider_identity_mismatch` that Beeper answered
+for another chat or account.
+
 ---
 
 ## draft-get, draft-edit, draft-delete, and draft-recover

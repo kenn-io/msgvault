@@ -22,6 +22,7 @@ All notable changes to msgvault, grouped by release.
   to resume enrichment for an affected person; a later identity change or claim
   expiry can also enqueue work.
 
+- `draft-compose` can leave a text draft in an existing Beeper chat for review in Beeper, enabled per source with `[[beeper.drafts]]`. `draft-get`, `draft-edit`, and `draft-delete` manage it, and edits never replace text someone else typed in the chat.
 - Agents with a restricted token can read, edit, and delete managed Gmail and IMAP drafts on their granted sources. Retrieval with `draft.create` also checks the draft's archived From sender against the grant. Editing needs `draft.edit`; deletion needs `draft.delete`.
 - Beeper media sync stops retrying files the network has deleted, such as expired WhatsApp media. Each is requested once, recorded as unavailable, and reported in the sync summary. Other failed downloads get at most three attempts per run instead of eight, so one bad file no longer stalls a sync.
 - `msgvault search` keeps complete sender and subject/snippet text when piped or redirected. Terminal tables fit the available display width, with aligned Unicode and emoji and complete fixed fields.

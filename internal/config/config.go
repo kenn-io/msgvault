@@ -940,6 +940,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		if strings.HasPrefix(key.String(), "gmail.drafts.") {
 			return nil, fmt.Errorf("unknown Gmail draft config key %q", key.String())
 		}
+		if strings.HasPrefix(key.String(), "beeper.drafts.") {
+			return nil, fmt.Errorf("unknown Beeper draft config key %q", key.String())
+		}
 	}
 	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
 		return nil, err
@@ -1075,13 +1078,20 @@ func (c *Config) validateDraftSources(content []byte) error {
 		Gmail struct {
 			Drafts []draftSelector `toml:"drafts"`
 		} `toml:"gmail"`
+		Beeper struct {
+			Drafts []draftSelector `toml:"drafts"`
+		} `toml:"beeper"`
 	}
 	_, _ = toml.Decode(string(content), &raw)
 	if err := validateDraftSelectors("imap.drafts", c.IMAP.Drafts, raw.IMAP.Drafts,
 		func(d IMAPDraftSource) int64 { return d.SourceID }, validateIMAPDraftMailbox); err != nil {
 		return err
 	}
-	return validateDraftSelectors("gmail.drafts", c.Gmail.Drafts, raw.Gmail.Drafts,
+	if err := validateDraftSelectors("gmail.drafts", c.Gmail.Drafts, raw.Gmail.Drafts,
+		func(d GmailDraftSource) int64 { return d.SourceID }, nil); err != nil {
+		return err
+	}
+	return validateDraftSelectors("beeper.drafts", c.Beeper.Drafts, raw.Beeper.Drafts,
 		func(d GmailDraftSource) int64 { return d.SourceID }, nil)
 }
 
@@ -1467,6 +1477,9 @@ type BeeperConfig struct {
 	MediaMaxParticipants int `toml:"media_max_participants"`
 	// AccountsConfig holds per-Beeper-account media overrides.
 	AccountsConfig map[string]MediaAccountConfig `toml:"accounts_config"`
+	// Drafts lets the daemon write native chat drafts on these sources. The
+	// entries have the same shape as [[gmail.drafts]].
+	Drafts []GmailDraftSource `toml:"drafts"`
 }
 
 // SlackConfig configures Slack workspace archive sources ([slack] table).

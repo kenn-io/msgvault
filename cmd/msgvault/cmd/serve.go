@@ -705,6 +705,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger:                 logger,
 		draftPolicy:            snapshotIMAPDraftPolicy(cfg),
 		gmailDraftPolicy:       snapshotGmailDraftPolicy(cfg),
+		beeperDraftPolicy:      snapshotBeeperDraftPolicy(cfg),
 		draftCacheRefresh:      refreshCacheAfterWrite,
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
@@ -918,6 +919,13 @@ func snapshotGmailDraftPolicy(cfg *config.Config) []config.GmailDraftSource {
 		return nil
 	}
 	return append([]config.GmailDraftSource(nil), cfg.Gmail.Drafts...)
+}
+
+func snapshotBeeperDraftPolicy(cfg *config.Config) []config.GmailDraftSource {
+	if cfg == nil {
+		return nil
+	}
+	return append([]config.GmailDraftSource(nil), cfg.Beeper.Drafts...)
 }
 
 func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger) error {
@@ -1530,6 +1538,7 @@ type storeAPIAdapter struct {
 	draftPolicy             []config.IMAPDraftSource
 	draftClientFactory      func(context.Context, *store.Source) (*imaplib.Client, error)
 	gmailDraftPolicy        []config.GmailDraftSource
+	beeperDraftPolicy       []config.GmailDraftSource
 	gmailDraftClientFactory func(context.Context, *store.Source) (gmail.DraftAPI, error)
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
 	// the same best-effort hook the meeting importer uses.

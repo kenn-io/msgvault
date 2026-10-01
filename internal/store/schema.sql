@@ -2194,6 +2194,28 @@ CREATE INDEX IF NOT EXISTS idx_chat_drafts_source
 CREATE INDEX IF NOT EXISTS idx_chat_drafts_conversation
     ON chat_drafts(conversation_id);
 
+-- Beeper drafts bind a chat's native composer, which holds the content, so
+-- the shared pending columns carry no archive message link.
+CREATE TABLE IF NOT EXISTS beeper_drafts (
+    draft_id TEXT PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    chat_id TEXT NOT NULL CHECK (length(trim(chat_id)) > 0),
+    text TEXT,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    discarded_at DATETIME,
+    pending_operation TEXT CHECK (pending_operation IN ('edit', 'delete')),
+    pending_original_message_id INTEGER CHECK (pending_original_message_id IS NULL),
+    pending_raw BLOB,
+    pending_code TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CHECK (pending_operation = 'edit' OR pending_raw IS NULL),
+    CHECK (discarded_at IS NULL OR pending_operation IS NULL)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_beeper_drafts_live_chat
+    ON beeper_drafts(source_id, chat_id) WHERE discarded_at IS NULL;
+
 -- Imported source items (files/objects already processed for resumable adapters)
 CREATE TABLE IF NOT EXISTS source_import_items (
     id INTEGER PRIMARY KEY,
