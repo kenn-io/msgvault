@@ -30,6 +30,7 @@ var mcpAllowIdentityDecisions bool
 var mcpAllowIdentityScoring bool
 var mcpAllowPersonMerges bool
 var mcpAllowCardDAVWrites bool
+var mcpAllowMergeRecoveryWrites bool
 var mcpAllowSourceWrites bool
 var mcpAllowDraftWrites bool
 var mcpAllowProviderWrites bool
@@ -101,6 +102,9 @@ Add to Claude Desktop config:
 		if backend, ok := opts.Operations.(*daemonMCPOperations); ok && manifest != "" {
 			backend.useDocumentManifest(manifest)
 			opts.OperationCapabilities = backend.capabilities()
+		}
+		if mcpAllowMergeRecoveryWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyMergeRecovery)
 		}
 		opts.AllowProfileWrites = mcpAllowProfileWrites
 		opts.AllowIdentityDecisions = mcpAllowIdentityDecisions
@@ -447,6 +451,7 @@ func init() {
 		"Expose local person merge tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowCardDAVWrites, "allow-carddav-writes", false,
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowMergeRecoveryWrites, "allow-merge-recovery-writes", false, "Enable approved native person merge candidate decisions and eligible lineage splits; HTTP also requires --http-allow-writes")
 	mcpCmd.Flags().BoolVar(&mcpAllowSourceWrites, "allow-source-writes", false,
 		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires --http-allow-writes.")
 	mcpCmd.Flags().BoolVar(&mcpAllowProviderWrites, "allow-provider-writes", false, "Enable approved provider policy changes and synthetic checks; HTTP also requires --http-allow-writes")

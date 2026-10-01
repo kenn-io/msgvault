@@ -25,6 +25,8 @@ type OperationResult struct {
 	IsError bool
 	// ETag is adapter metadata. It is exposed only by an owning typed projection.
 	ETag string
+	// NewPersonETag is exposed only by the owning split projection.
+	NewPersonETag string
 }
 
 // OperationRefusalError exposes a fixed safe code selected by the owning adapter;
@@ -43,16 +45,17 @@ const (
 type OperationFamily string
 
 const (
-	OperationFamilySources    OperationFamily = "sources"
-	OperationFamilyDrafts     OperationFamily = "drafts"
-	OperationFamilyProviders  OperationFamily = "providers"
-	OperationFamilyDocuments  OperationFamily = "documents"
-	OperationFamilyCardDAV    OperationFamily = "carddav"
-	OperationFamilyRecords    OperationFamily = "records"
-	OperationFamilyInference  OperationFamily = "inference"
-	OperationFamilyVisual     OperationFamily = "visual"
-	OperationFamilySettings   OperationFamily = "settings"
-	OperationFamilyEnrichment OperationFamily = "enrichment"
+	OperationFamilySources       OperationFamily = "sources"
+	OperationFamilyDrafts        OperationFamily = "drafts"
+	OperationFamilyProviders     OperationFamily = "providers"
+	OperationFamilyDocuments     OperationFamily = "documents"
+	OperationFamilyCardDAV       OperationFamily = "carddav"
+	OperationFamilyRecords       OperationFamily = "records"
+	OperationFamilyMergeRecovery OperationFamily = "merge_recovery"
+	OperationFamilyInference     OperationFamily = "inference"
+	OperationFamilyVisual        OperationFamily = "visual"
+	OperationFamilySettings      OperationFamily = "settings"
+	OperationFamilyEnrichment    OperationFamily = "enrichment"
 )
 
 type operationalDefinition struct {
@@ -73,6 +76,9 @@ var fixedOperationalDefinitions = sync.OnceValue(func() []operationalDefinition 
 	definitions = append(definitions, settingsOperationalDefinitions()...)
 	definitions = append(definitions, importOperationalDefinitions()...)
 	definitions = append(definitions, briefOperationalDefinitions()...)
+	definitions = append(definitions, recordOperationalDefinitions()...)
+	definitions = append(definitions, relationshipOperationalDefinitions()...)
+	definitions = append(definitions, factOperationalDefinitions()...)
 	return append(definitions, sweepOperationalDefinitions()...)
 })
 
@@ -103,7 +109,7 @@ func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefini
 
 func newOperationalDefinition(name, description string, family OperationFamily, input, output *jsonschema.Schema, writes, delegated bool) operationalDefinition {
 	definition := toolDefinition{name: name, description: description, inputSchema: input, outputSchema: operationalOutputSchema(output, family), annotations: toolAnnotations(!writes)}
-	openWorld := writes && family != OperationFamilyRecords && family != OperationFamilySettings
+	openWorld := writes && family != OperationFamilyRecords && family != OperationFamilySettings && family != OperationFamilyMergeRecovery
 	definition.annotations.OpenWorldHint = &openWorld
 	return operationalDefinition{definition: definition, family: family, writes: writes, delegated: delegated}
 }
@@ -114,6 +120,10 @@ func operationalOutputSchema(output *jsonschema.Schema, family OperationFamily) 
 	properties := map[string]*jsonschema.Schema{
 		"error":                        stringSchema("Fixed public refusal code"),
 		"operation_may_have_completed": {Type: mcpSchemaBoolean},
+	}
+	if family == OperationFamilyRecords {
+		properties["current_value_id"] = safeIDSchema("Native current value ID after attribute CAS conflict")
+		properties["current_value"] = recordSchema[AttributeConflict]().Properties["current_value"]
 	}
 	if family == OperationFamilyProviders {
 		properties["consent_remains_revoked"] = &jsonschema.Schema{Type: mcpSchemaBoolean}

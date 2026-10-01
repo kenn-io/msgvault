@@ -82,6 +82,14 @@ func mcpRouteDescriptors(doc *huma.OpenAPI) []apiprotocol.MCPRouteDescriptor {
 // An ID in this set is advertised only when its real route is registered.
 func mcpOperationDescribed(operationID string) bool {
 	switch operationID {
+	case "listPersonFactTargets", "listPersonFactEvidence", "listPersonFactEvidenceStatusEvents", "listPersonFactClaims", "listPersonFactDecisions", "listPersonFactPins", "setPersonFactPin", "getPersonTracking", "setPersonTracking", "listPersonMerges", "getPersonMerge", "getPersonMergeSnapshot", "decidePersonMergeCandidate", "splitPersonMerge":
+		return true
+	case "listOrganizations", "createOrganization", "getOrganization", "patchOrganization", "deleteOrganization", "mergeOrganization", "getOrganizationHistory", "putOrganizationProfile", "listOrganizationAttributes", "setOrganizationAttribute", "clearOrganizationAttribute", "getOrganizationProfileMediaContent", "createEmployment", "getEmployment", "patchEmployment", "deleteEmployment", "endEmployment", "setPrimaryEmployment", "listPersonEmployments", "listOrganizationEmployments", "listRelationshipTypes", "createRelationshipType", "getRelationshipType", "patchRelationshipType", "deleteRelationshipType", "listPersonRelationships", "createPersonRelationship", "getPersonRelationship", "patchPersonRelationship", "deletePersonRelationship", "listPersonRelationshipReviews", "getPersonNetwork":
+		return true
+	case "getPersonStructuredProfile", "patchPersonStructuredProfile", "getPersonProfileHistory", "getPersonProfileMediaContent",
+		"listPersonAttributes", "setPersonAttribute", "clearPersonAttribute",
+		"listAttributeDefinitions", "getAttributeDefinition", "createAttributeDefinition", "patchAttributeDefinition", "deleteAttributeDefinition":
+		return true
 	case "listSourceStatus", "listSourceIdentities", "getSchedulerStatus", "triggerSync",
 		"createImportJob", "getImportJob",
 		"getPersonBrief", "listPersonBriefVersions", "getPersonBriefEnrollment", "setPersonBriefEnrollment", "rejectPersonBrief", "generatePersonBrief",

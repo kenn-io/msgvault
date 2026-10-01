@@ -65,6 +65,9 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, importMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, briefMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, recordMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, relationshipMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, factMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sweepMCPCapabilities(hasRoute, capabilities)...)
 	for _, name := range settingsMCPCapabilities(hasRoute) {
 		if (name == "update_operational_settings" || name == "update_enrichment_controls") && !mcpRequestPropertiesPresent(capabilities, "patchSettings", "updates") {
@@ -110,6 +113,15 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.StatusMessageResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
+		if result, handled, err := b.executeFactOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeRelationshipOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeRecordOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeSweepOperation(ctx, name, args); handled {
 			return result, err
 		}
@@ -155,6 +167,15 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
+		if disclosure, handled, err := b.factOperationDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
+		if disclosure, handled, err := b.relationshipOperationDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
+		if disclosure, handled, err := b.recordOperationDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
 		if disclosure, handled, err := b.sweepOperationDisclosure(ctx, name, args); handled {
 			return disclosure, err
 		}
@@ -268,6 +289,24 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
 		switch code {
+		case "person_facts_unavailable", "person_fact_conflict", "tracking_unavailable", "invalid_target", "invalid_fact_target", "invalid_target_kind", "invalid_target_key", "invalid_limit", "invalid_offset", "person_merge_not_found", "person_merge_revision_conflict", "person_merge_idempotency_conflict", "person_split_idempotency_conflict", "person_merge_already_split", "person_split_reviewed_candidates", "person_split_merge_not_owned", "person_carddav_published", "person_merge_candidate_not_found", "person_merge_candidate_state_changed", "person_split_invalid_participants", "person_merge_invalid", "person_merge_snapshot_corrupt":
+			return operationFailure(code, false), nil
+		case "person_fact_failed", "person_merge_failed":
+			return operationFailure(code, writes), nil
+		case "organizations_unavailable", "organization_not_found", "organization_revision_conflict", "organization_has_employments", "organization_merge_conflict", "organization_profile_too_large", "invalid_organization", "invalid_source", "invalid_attribute_definition", "invalid_attribute_value", "invalid_organization_id", "invalid_employment_id", "employments_unavailable", "employment_not_found", "employment_revision_conflict", "employment_primary_conflict", "employment_duplicate_active", "invalid_employment", "invalid_partial_date", "invalid_person_id", "person_relationships_unavailable", "relationship_type_not_found", "person_relationship_not_found", "relationship_review_not_found", "relationship_revision_conflict", "relationship_type_slug_conflict", "relationship_type_related_type_conflict", "relationship_type_not_deletable", "relationship_type_in_use", "person_relationship_duplicate", "relationship_review_not_pending", "invalid_relationship", "invalid_relationship_type", "person_network_unavailable":
+			return operationFailure(code, false), nil
+		case "organization_failed", "organization_profile_media_failed", "employment_failed", "person_relationship_failed", "person_network_failed":
+			return operationFailure(code, writes), nil
+		case "attribute_value_conflict":
+			var conflict generated.PersonAttributeConflictResponse
+			if err := json.Unmarshal(data, &conflict); err != nil {
+				return operationFailure("invalid_operation_response", false), err
+			}
+			return &mcpserver.OperationResult{IsError: true, Output: mcpserver.AttributeConflict{Error: code, CurrentValueID: conflict.CurrentValueID, CurrentValue: conflict.CurrentValue}}, nil
+		case "profile_values_unavailable", "person_enrichment_dispatch_in_progress", "service_alias_conflict", "person_category_duplicate", "profile_patch_too_large", "invalid_profile_value", "profile_value_not_found", "profile_media_not_found", "profile_media_content_unavailable", "attribute_uniqueness_unsupported", "attribute_invalid", "attribute_value_invalid", "attribute_definition_not_found", "attribute_value_not_found", "attribute_definition_slug_conflict", "attribute_definition_universal_id_conflict", "attribute_definition_revision_conflict", "attribute_definition_not_deletable", "attribute_definition_has_values", "attribute_definition_not_writable", "attribute_definition_inactive", "invalid_attribute_slug", "invalid_expected_value_id", "invalid_ordinal", "invalid_attribute_definition_id", "invalid_if_match", "invalid_object_type":
+			return operationFailure(code, false), nil
+		case "person_profile_failed", "person_profile_media_failed", "attribute_failed":
+			return operationFailure(code, writes), nil
 		case "brief_generation_unavailable", "briefs_unavailable", "person_brief_not_found", "person_brief_not_tracked", "person_brief_not_enrolled", "person_brief_lane_disabled", "person_brief_policy_refused", "person_brief_no_supported_lane", "person_brief_busy":
 			return operationFailure(code, false), nil
 		case "person_brief_failed":
@@ -293,5 +332,5 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 	if err := json.Unmarshal(data, &output); err != nil {
 		return operationFailure("invalid_operation_response", writes), err
 	}
-	return &mcpserver.OperationResult{Output: output, ETag: response.Header.Get("ETag")}, nil
+	return &mcpserver.OperationResult{Output: output, ETag: response.Header.Get("ETag"), NewPersonETag: response.Header.Get("X-New-Person-Etag")}, nil
 }
