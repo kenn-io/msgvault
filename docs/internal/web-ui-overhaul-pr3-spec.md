@@ -1,6 +1,6 @@
 # Web UI overhaul, PR 3: People
 
-Status: draft for review, 2026-09-30. PR 3 has not started. This spec
+Status: draft for review, 2026-09-30; revised after review the same day. PR 3 has not started. This spec
 refines the People sections of the [Web UI overhaul design](web-ui-overhaul-design.md)
 (Relationships, Directory, Reviews) against the code on `main` at ef66efc1. The
 design owns the shared rules (palette, page structure, toolbars, code labels,
@@ -26,8 +26,11 @@ after promoting one participant to a Directory person.
 
 - **Directory toolbar** is eight inline controls that wrap to two rows at
   1440px. The date fields are free text with a truncated `YYYY-MM-DD`
-  placeholder; `2026-02-31` or `last week` are silently dropped from the query
-  but stay in the field and the URL (`directory/controller.svelte.ts:576-580`).
+  placeholder. A value that is not shaped like `YYYY-MM-DD`, such as `last
+  week`, is silently dropped from the query but stays in the field and the URL
+  (`directory/controller.svelte.ts:576-580`). A well-shaped but impossible
+  value, such as `2026-02-31`, passes that check and reaches the backend's date
+  validation.
 - **Directory list rows** show raw codes and ISO timestamps, such as
   "No primary channel · inactive" and "Last contact" followed by an ISO
   timestamp (`DirectoryList.svelte:93-94`). The Primary channel menu lists
@@ -151,7 +154,7 @@ pattern. Tab ids keep the `person-<id>-<section>-tab` form.
 | Section | Contents, in order | Source today |
 |---|---|---|
 | Overview | "Last time we talked" brief, agenda, attributes summary, contact state, activity, organization and connection summaries, meeting activity | Overview |
-| Profile | Structured profile (names, contact points, addresses, dates, categories), attributes | Overview |
+| Profile | Structured profile (names, contact points, addresses, dates, categories, media metadata), attributes | Overview |
 | Organizations | Unchanged | Organizations tab |
 | Connections | Unchanged content; the tab was "Relationships" | Relationships tab |
 | Network | Unchanged | Network tab |
@@ -168,15 +171,34 @@ pattern. Tab ids keep the `person-<id>-<section>-tab` form.
 - **Narrow screens.** The tablist scrolls horizontally instead of wrapping, so
   every tab stays one line at 420px.
 
+Media metadata editing stays in Profile with the rest of the structured
+profile. It is separate from the Media & files section, which lists archived
+attachments.
+
 ### Partial dates
 
-Profile dates, employment dates, and connection dates stay text fields because
-a date picker cannot express `YYYY` or `YYYY-MM`. Each gets inline validation
-that accepts `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, and `--MM-DD` with real month and
-day ranges. An invalid value shows a message under the field and disables Save
-for that editor. This applies to the fields named "Date", "Employment start
-date", "Employment end date", "Relationship start date", and "Relationship end
-date".
+Date fields in the person editors stay text fields because a date picker cannot
+express `YYYY` or `YYYY-MM`. They get inline validation that mirrors what the
+store accepts, which differs between profile dates and interval dates. The
+range rules come from `PartialDate.Validate` (`internal/store/partialdate.go`):
+year 1–9999, month 1–12, and a day that exists in that month, checked against
+leap year 2000 when no year is given.
+
+- **Interval dates** ("Employment start date", "Employment end date",
+  "Relationship start date", "Relationship end date") require a year, as
+  `validateEmploymentDate` and `ParseRelationshipDate` do. They accept `YYYY`,
+  `YYYY-MM`, `YYYY-MM-DD`, and the compact `YYYYMMDD`. Year-less forms such as
+  `--04-12` and any other text are invalid. An invalid value shows a message
+  under the field, such as "Use a year, year and month, or full date, like
+  2019, 2019-04, or 2019-04-12", and disables that editor's save button.
+- **Profile dates** (the "Date" field in the structured profile editor) keep
+  every form the editor accepts today. Values that `dateParts` recognizes as a
+  structured date (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`, `--MM-DD`, `--MM`, and
+  `---DD`) must pass the range rules above; `2024-13` or `--02-30` shows a
+  message and disables Save. Any other text is still saved as a text date
+  (`date_text`), which the store accepts. The field shows the hint "Saved as
+  text" for such a value, so people can tell it will not sort or compare as a
+  date.
 
 ## Reviews
 
@@ -186,13 +208,20 @@ date".
 - **One heading.** The second visible heading and description for each review
   type are removed. Each type keeps an `h2` with the same text as a
   visually-hidden heading, so screen readers still announce the section and the
-  existing focus targets after a change keep working.
+  existing focus targets after a change keep working. Focus on that heading
+  must stay visible: while the hidden heading has keyboard focus
+  (`:focus-visible`), its queue section shows the standard focus ring, so
+  keyboard users see where focus landed without the layout shifting. This
+  covers every place that focuses these headings, including the imported
+  relationship queue after a context change
+  (`RelationshipReviewQueue.svelte:35`).
 - **Show menu.** Each queue's state filter moves from a segmented control to a
   select at the start of the queue's toolbar, with visible labels "Show:
-  Candidate" and "Show: Pending". It keeps the names "Identity review state"
-  and "Imported relationship review state" and the keys `identityState` and
-  `relationshipReviewState`. Choosing a state still invalidates an open
-  decision, as today.
+  Candidate" and "Show: Pending". Like Directory Sort, the select's accessible
+  name starts with the old radiogroup name, for example "Identity review state:
+  Show: Candidate" and "Imported relationship review state: Show: Pending".
+  The keys `identityState` and `relationshipReviewState` are unchanged.
+  Choosing a state still invalidates an open decision, as today.
 - **Cards.** States show as status chips with readable labels (Candidate,
   Conflict, Accepted, Rejected, Pending) using the shared status tones: amber
   for Candidate, Conflict, and Pending, green for Accepted, gray for Rejected.
@@ -225,7 +254,8 @@ date".
 3. **Visually hidden review headings.** Removing the second heading outright
    would drop the focus targets that review decisions and state changes move
    focus to. Hiding it visually keeps those targets and the heading outline
-   with less code.
+   with less code. Because kit's `kit-sr-only` stays clipped when focused, the
+   section draws the focus ring instead, as described under Reviews.
 4. **Rename and delete stay inline.** The header menu opens the existing
    inline form and confirmation instead of new dialogs. This keeps their
    roles, names, and flows, and their tests change only in how they are
@@ -274,10 +304,14 @@ New tests cover the behavior this PR adds:
   lowest participant ID and is absent with no participants; "Review facts"
   commits the Facts view for the person; each menu item opens its existing
   flow.
-- Partial-date validation: each accepted form, an out-of-range month or day,
-  and Save disabled while invalid.
+- Interval dates: each year-bearing form is accepted; `--04-12`, free text,
+  an out-of-range month, and February 30 are rejected with Save disabled.
+- Profile dates: `--MM-DD`, `--MM`, and `---DD` are still accepted;
+  `2024-13` and `--02-30` are rejected; free text saves as a text date and
+  shows the "Saved as text" hint.
 - Reviews: the Show select commits its key; the Facts picker searches,
-  selects, and shows the name after a reload.
+  selects, and shows the name after a reload; a focused hidden heading gives
+  its section a visible focus ring.
 - Accessibility (axe) on each People workspace in both themes, including a
   person page and the Facts picker.
 
