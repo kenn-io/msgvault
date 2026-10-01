@@ -257,18 +257,31 @@ go test -tags 'fts5 sqlite_vec' ./internal/query -run '^$' \
   -args -relationship-bench-root="$explore_bench_root"
 go test -tags 'fts5 sqlite_vec' ./internal/query -run '^$' \
   -bench '^BenchmarkExploreScaleQueries$' -benchtime=4x \
-  -args -relationship-bench-root="$explore_bench_root" \
-  -relationship-bench-memory=8GB
+  -args -relationship-bench-root="$explore_bench_root"
 ```
 
 This fixture has 2,562,000 messages and 71,486 people. The query benchmark
-reports the first request and the median of later requests separately. The
-explicit memory limit permits latency comparisons for queries that exceed the
-default interactive budget; omit it to test that budget. Add
+reports the first request and the median of later requests separately. It uses
+the default interactive memory limit; DuckDB can spill work to temporary disk.
+Add `-relationship-bench-memory=8GB` for diagnostic comparisons with older
+queries that exceed that limit. Add
 `-relationship-bench-profile` to write DuckDB operator profiles into the scratch
 directory. Run timing comparisons without other heavy workloads, and retain
 the same memory limit and thread settings. This fixture uses uniform senders
 and one chat roster; it does not model real participant skew or attachments.
+
+To separate local vector retrieval from embedding-provider latency, run:
+
+```bash
+go test -tags 'fts5 sqlite_vec' ./internal/vector/sqlitevec -run '^$' \
+  -bench '^BenchmarkVectorRetrieval$' -benchtime=3x -count=3 -benchmem
+```
+
+This benchmark uses 100,000 synthetic messages with one 64-dimensional vector
+each. It measures exact semantic retrieval and rare/common hybrid retrieval,
+without an accelerator, embedding calls, or HTTP result projection. Use the
+request timing headers to determine which phase needs attention on a real
+archive before comparing it with this narrower benchmark.
 
 ## Evaluate search quality
 

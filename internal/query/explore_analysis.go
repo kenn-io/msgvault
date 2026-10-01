@@ -22,7 +22,8 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 		return nil, err
 	}
 	spec, err := exploreGroupExpressions(request.Dimension,
-		e.parquetPath(identityindex.DatasetPeople))
+		e.parquetPath(identityindex.DatasetPeople), e.parquetPath(identityindex.DatasetActivity),
+		e.parquetPath(datasetParticipantClusters))
 	if err != nil {
 		return nil, err
 	}
@@ -202,13 +203,9 @@ func sqlMessageTypeGroupExpr() string {
 
 // exploreGroupExpressions maps a grouping dimension onto the grouped
 // aggregate ExploreGroups builds over logical_entries. The "participant"
-// dimension groups by canonical identity-cluster IDs: raw participant_ids
-// members are resolved through canon before grouping, and the DISTINCT
-// mirrors personEntriesCTE and the relationship index — an entry listing several
-// aliases of one person collapses to a single (entry, canonical) row, so the
-// entry is never double-counted (entry_key is projected only to carry
-// per-entry uniqueness through that DISTINCT).
-func exploreGroupExpressions(dimension, peopleGlob string) (groupExpressions, error) {
+// dimension groups by canonical identity-cluster IDs. Membership is deduplicated
+// before aggregation so entries listing several aliases of one person count once.
+func exploreGroupExpressions(dimension, peopleGlob, activityGlob, clustersGlob string) (groupExpressions, error) {
 	simple := func(key string) groupExpressions {
 		return groupExpressions{key: key, label: key, groupBy: key, source: "logical_entries"}
 	}
@@ -220,18 +217,13 @@ func exploreGroupExpressions(dimension, peopleGlob string) (groupExpressions, er
 		}, nil
 	case "participant":
 		// Direct edges only for message entries, matching the aggregated
-		// participant_ids column this replaces (message-level participants;
-		// conversation rosters applied to chat entries via the classified
-		// branch inside sqlActivityEntryEdges).
+		// participant_ids column this replaces. Chat entries also include
+		// the conversation roster and speakers in the filtered context.
 		return groupExpressions{
 			key: "CAST(person_id AS VARCHAR)", label: sqlIndexedPersonGroupLabelExpr(peopleGlob), groupBy: "person_id",
 			noLists: true,
-			cte: `
-), participant_entries AS (` +
-				sqlActivityEntryEdges(
-					"a.canonical_id AS person_id, le.occurred_at, le.estimated_bytes",
-					"a.is_direct", "(a.is_direct OR a.is_conversation_member)"),
-			source: "participant_entries",
+			cte:     exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob),
+			source:  "group_entries",
 		}, nil
 	case "domain":
 		// All edges for message entries: the aggregated participant_domains
@@ -240,12 +232,8 @@ func exploreGroupExpressions(dimension, peopleGlob string) (groupExpressions, er
 		return groupExpressions{
 			key: "group_value", label: "group_value", groupBy: "group_value",
 			noLists: true,
-			cte: `
-), domain_entries AS (` +
-				sqlActivityEntryEdges(
-					"a.participant_domain AS group_value, le.occurred_at, le.estimated_bytes",
-					"a.participant_domain <> ''", "a.participant_domain <> ''"),
-			source: "domain_entries",
+			cte:     exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob),
+			source:  "group_entries",
 		}, nil
 	case messageTypeDimension:
 		return simple(sqlMessageTypeGroupExpr()), nil
@@ -263,6 +251,58 @@ func exploreGroupExpressions(dimension, peopleGlob string) (groupExpressions, er
 	default:
 		return groupExpressions{}, fmt.Errorf("%w: unknown group dimension %q", ErrInvalidExploreRequest, dimension)
 	}
+}
+
+// Deduplicate narrow numeric entry/group pairs before joining entry payload.
+// Sparse direct edges avoid expanding every message by its conversation roster;
+// roster membership is added once per logical entry instead. Chat speakers still
+// come only from messages selected by the analytical context.
+// Message IDs and negated globally unique conversation IDs keep entry keys numeric.
+func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) string {
+	domainCTE := ""
+	directJoin, rosterJoin, resultJoin := "", "", ""
+	directValue := "a.canonical_id"
+	rosterValue := "COALESCE(c.canonical_id, p.id)"
+	rosterFilter := "le.entry_kind = 'conversation'"
+	resultValue := "gm.group_value AS person_id"
+	if dimension == "domain" {
+		// The same compact key is used for direct and roster domains, even
+		// when several participants or linked aliases share a domain.
+		domainCTE = `
+), group_domains AS (
+	SELECT lower(domain) AS domain, MIN(id) AS domain_id
+	FROM participants WHERE domain <> '' GROUP BY lower(domain)`
+		directValue, rosterValue = "d.domain_id", "d.domain_id"
+		directJoin = " JOIN group_domains d ON d.domain = a.participant_domain"
+		rosterJoin = " JOIN group_domains d ON d.domain = lower(p.domain)"
+		rosterFilter = "true"
+		resultJoin = " JOIN group_domains d ON d.domain_id = gm.group_value"
+		resultValue = "d.domain AS group_value"
+	}
+	return domainCTE + `
+), group_members AS (
+	SELECT entry_id, group_value FROM (
+		SELECT CASE WHEN f.is_chat THEN -f.conversation_id ELSE f.message_id END AS entry_id,
+			` + directValue + ` AS group_value
+		FROM classified f
+		JOIN read_parquet('` + quoteIdentitySQLPath(activityGlob) + `', hive_partitioning=true) a ON a.message_id = f.message_id` + directJoin + `
+		WHERE a.canonical_id IS NOT NULL AND a.is_direct
+		UNION ALL
+		SELECT CASE WHEN le.entry_kind = 'conversation' THEN -le.conversation_id ELSE le.anchor_message_id END,
+			` + rosterValue + `
+		FROM logical_entries le
+		JOIN conversation_participants cp ON cp.conversation_id = le.conversation_id
+		JOIN participants p ON p.id = cp.participant_id
+		LEFT JOIN read_parquet('` + quoteIdentitySQLPath(clustersGlob) + `') c ON c.participant_id = p.id` + rosterJoin + `
+		WHERE ` + rosterFilter + `
+	) members
+	WHERE group_value IS NOT NULL
+	GROUP BY entry_id, group_value
+), group_entries AS (
+	SELECT ` + resultValue + `, le.occurred_at, le.estimated_bytes
+	FROM logical_entries le
+	JOIN group_members gm ON gm.entry_id =
+		CASE WHEN le.entry_kind = 'conversation' THEN -le.conversation_id ELSE le.anchor_message_id END` + resultJoin
 }
 
 // expandParticipantFilterClusters widens a request's participant filter

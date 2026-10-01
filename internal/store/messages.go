@@ -5669,9 +5669,10 @@ type AttachmentRef struct {
 	SkipReason attachmentpolicy.SkipReason
 }
 
-// replaceMessageAttachmentsWhere atomically deletes a message's attachment
-// rows matching deleteWhere and inserts refs. Refs with an empty StoragePath
-// (and, when requireHash is set, an empty ContentHash) are skipped.
+// replaceMessageAttachmentsWhere atomically reconciles a message's attachment
+// rows matching deleteWhere with refs. Retained source-part keys keep their row
+// IDs so resync does not invalidate cached file listings. Refs with an empty
+// StoragePath (and, when requireHash is set, an empty ContentHash) are skipped.
 func (s *Store) replaceMessageAttachmentsWhere(
 	messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef, deleteArgs ...any,
 ) error {
@@ -5684,10 +5685,8 @@ func (s *Store) replaceMessageAttachmentsWhereTx(
 	tx *loggedTx, messageID int64, deleteWhere string, requireHash bool,
 	refs []AttachmentRef, deleteArgs ...any,
 ) error {
-	args := append([]any{messageID}, deleteArgs...)
-	if _, err := tx.Exec(`DELETE FROM attachments WHERE message_id = ? AND (`+deleteWhere+`)`, args...); err != nil {
-		return err
-	}
+	writes := make([]AttachmentWrite, 0, len(refs))
+	keys := make([]any, 0, len(refs))
 	for _, ref := range refs {
 		if ref.StoragePath == "" || (requireHash && ref.ContentHash == "") {
 			continue
@@ -5721,6 +5720,21 @@ func (s *Store) replaceMessageAttachmentsWhereTx(
 		if err := write.validate(); err != nil {
 			return err
 		}
+		writes = append(writes, write)
+		if write.SourcePartKey != "" {
+			keys = append(keys, write.SourcePartKey)
+		}
+	}
+	deleteQuery := `DELETE FROM attachments WHERE message_id = ? AND (` + deleteWhere + `)`
+	args := append([]any{messageID}, deleteArgs...)
+	if len(keys) > 0 {
+		deleteQuery += ` AND (source_part_key IS NULL OR source_part_key NOT IN (?` + strings.Repeat(`, ?`, len(keys)-1) + `))`
+		args = append(args, keys...)
+	}
+	if _, err := tx.Exec(deleteQuery, args...); err != nil {
+		return err
+	}
+	for _, write := range writes {
 		if err := s.upsertAttachmentRecord(tx, messageID, write); err != nil {
 			return err
 		}

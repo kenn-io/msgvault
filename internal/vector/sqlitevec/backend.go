@@ -1163,16 +1163,10 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 			 GROUP BY e.message_id
 			 ORDER BY distance ASC
 		`, vecTable)
-		// Two over-fetch dimensions stacked:
-		//   - chunk-level: with N chunks/msg, a top-k by chunk could
-		//     pack the result with one or two messages' tail chunks.
-		//     Multiply by chunkOverfetchFactor so the GROUP BY can
-		//     still pick out k distinct messages.
-		//   - deletion-level: existing soft-delete filter may shrink
-		//     the result; the doubling loop below already handles
-		//     this dimension.
-		// max() guards against overflow or degenerate small k.
-		fetch := max(k*chunkOverfetchFactor*deletedOverfetchFactor, k)
+		// Start with room for ordinary chunk duplication and deletions.
+		// The doubling loop handles either source of underfill; multiplying
+		// both worst-case allowances up front over-fetches every search.
+		fetch := max(k*deletedOverfetchFactor, k)
 		for {
 			if fetch > chunkCeiling {
 				fetch = chunkCeiling
@@ -1287,12 +1281,9 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 	}
 }
 
-// chunkOverfetchFactor multiplies the requested k when fetching from
-// the vec0 table so the message-level GROUP BY downstream still has
-// enough chunks to surface k distinct messages. Most messages produce
-// a single chunk; this factor only matters for the long tail. 4× is
-// generous for typical email corpora (avg ~1.1 chunks/msg) and cheap
-// — sqlite-vec returns the top-N rows in O(N log N) regardless.
+// chunkOverfetchFactor gives filtered vector queries room for duplicate chunks
+// before widening. The doubling loop still covers messages with more chunks
+// than this initial allowance.
 const chunkOverfetchFactor = 4
 
 // scanHits runs an ANN query and materializes hits in distance order

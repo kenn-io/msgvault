@@ -316,6 +316,55 @@ func TestExploreGroupsMergesLinkedParticipantIdentities(t *testing.T) {
 	}, result.Rows)
 }
 
+func TestExploreGroupsPreservesFilteredChatAndRosterMembership(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.test")
+	alice := b.AddParticipant("alice@alpha.example.test", "alpha.example.test", "Alice")
+	alias := b.AddParticipant("alice@beta.example.test", "beta.example.test", "Alice alias")
+	bob := b.AddParticipant("bob@alpha.example.test", "alpha.example.test", "Bob")
+	roster := b.AddParticipant("roster@roster.example.test", "roster.example.test", "Roster")
+	excluded := b.AddParticipant("excluded@outside.example.test", "outside.example.test", "Excluded")
+	b.LinkCluster(alice, alias)
+	base := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	email := b.AddMessage(MessageOpt{ConversationID: 800, SenderID: &alice, SizeEstimate: 100, SentAt: base})
+	b.AddTo(email, alias, "")
+	b.AddCc(email, bob, "")
+	b.AddConversationParticipant(800, roster)
+	b.AddMessage(MessageOpt{MessageType: "imessage", ConversationType: "group_chat",
+		ConversationID: 900, SenderID: &alice, SizeEstimate: 20, SentAt: base.Add(time.Hour)})
+	b.AddMessage(MessageOpt{MessageType: "imessage", ConversationType: "group_chat",
+		ConversationID: 900, SenderID: &alias, SizeEstimate: 30, SentAt: base.Add(2 * time.Hour)})
+	b.AddMessage(MessageOpt{MessageType: "imessage", ConversationType: "group_chat",
+		ConversationID: 900, SenderID: &excluded, SizeEstimate: 80, SentAt: base.Add(4 * time.Hour)})
+	b.AddConversationParticipant(900, roster)
+	engine := b.BuildEngine()
+	before := base.Add(3 * time.Hour)
+	for _, tc := range []struct {
+		dimension string
+		want      []ExploreGroupRow
+	}{
+		{"participant", []ExploreGroupRow{
+			{Key: "1", Label: "Alice", Count: 2, EstimatedBytes: 150, LatestAt: base.Add(2 * time.Hour)},
+			{Key: "3", Label: "Bob", Count: 1, EstimatedBytes: 100, LatestAt: base},
+			{Key: "4", Label: "Roster", Count: 1, EstimatedBytes: 50, LatestAt: base.Add(2 * time.Hour)},
+		}},
+		{"domain", []ExploreGroupRow{
+			{Key: "alpha.example.test", Label: "alpha.example.test", Count: 2, EstimatedBytes: 150, LatestAt: base.Add(2 * time.Hour)},
+			{Key: "beta.example.test", Label: "beta.example.test", Count: 2, EstimatedBytes: 150, LatestAt: base.Add(2 * time.Hour)},
+			{Key: "roster.example.test", Label: "roster.example.test", Count: 2, EstimatedBytes: 150, LatestAt: base.Add(2 * time.Hour)},
+		}},
+	} {
+		t.Run(tc.dimension, func(t *testing.T) {
+			result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
+				Explore: ExploreRequest{Context: Context{Before: &before}}, Dimension: tc.dimension,
+				Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 10},
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, result.Rows)
+		})
+	}
+}
+
 func TestExploreParticipantFilterMatchesLinkedAliases(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

@@ -34,10 +34,20 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 		}
 		metadata = searchMeta
 		if metadata.Accelerator == acceleratorKind || metadata.Accelerator == "exact-filter" {
-			return b.fuseAcceleratedSignals(ctx, req, vectorHits, metadata)
+			return b.fuseSignals(ctx, req, vectorHits, metadata)
 		}
 		if metadata.Accelerator == "" {
 			metadata.Accelerator = "exact"
+		}
+		if req.Filter.IsEmpty() && req.KPerSignal > 0 {
+			// Exact vector search already handles chunk collapse and deleted
+			// messages using bounded hit lookups. Reuse it rather than build
+			// the entire live-message population inside the fused SQL query.
+			vectorHits, err = b.searchExact(ctx, req.Generation, req.QueryVec, req.KPerSignal+1, req.Filter)
+			if err != nil {
+				return nil, vector.SearchMetadata{}, err
+			}
+			return b.fuseSignals(ctx, req, vectorHits, metadata)
 		}
 	}
 	hits, saturated, err := b.fusedSearchExact(ctx, req)
@@ -45,7 +55,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	return hits, metadata, err
 }
 
-func (b *Backend) fuseAcceleratedSignals(
+func (b *Backend) fuseSignals(
 	ctx context.Context,
 	req vector.FusedRequest,
 	vectorHits []vector.Hit,
