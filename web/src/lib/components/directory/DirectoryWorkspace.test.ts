@@ -198,9 +198,32 @@ describe('DirectoryWorkspace', () => {
     expect(screen.getByRole('combobox', { name: /^Directory order:/ }).textContent).toContain('Sort: Name');
     await fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
     await fireEvent.click(screen.getByRole('combobox', { name: /^Primary channel/ }));
-    expect(screen.getByRole('option', { name: 'Email' })).toBeDefined();
-    expect(screen.getByRole('option', { name: 'Phone' })).toBeDefined();
-    expect(screen.getByRole('option', { name: 'Chat' })).toBeDefined();
+    expect(screen.getAllByRole('option').map((option) => option.textContent?.trim())).toEqual([
+      'All channels', 'Email', 'Chat', 'Meeting', 'Other'
+    ]);
+  });
+
+  it.each([
+    ['email', 'Email'], ['chat', 'Chat'], ['meeting', 'Meeting'], ['other', 'Other']
+  ])('filters by the %s activity channel and clears it', async (channel, label) => {
+    const requests: Request[] = [];
+    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      return directoryResponse();
+    }));
+    const controller = new DirectoryController(client);
+    render(DirectoryWorkspace, { client, controller, state });
+    await screen.findByRole('row', { name: /Synthetic Person/ });
+    await fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
+
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^Primary channel/ }), label);
+    await waitFor(() => expect(new URL(requests.at(-1)!.url).searchParams.get('primary_channel')).toBe(channel));
+    expect(screen.getByText(`Primary channel: ${label}`)).toBeDefined();
+
+    await fireEvent.click(screen.getByRole('button', { name: `Remove Primary channel: ${label} filter` }));
+    await waitFor(() => expect(new URL(requests.at(-1)!.url).searchParams.has('primary_channel')).toBe(false));
+    expect(screen.queryByText(`Primary channel: ${label}`)).toBeNull();
   });
 
   it('counts people and marks more pages with a plus', async () => {

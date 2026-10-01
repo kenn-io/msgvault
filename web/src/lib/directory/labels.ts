@@ -1,9 +1,12 @@
 import type { ChipTone } from '@kenn-io/kit-ui';
 import { sentenceCase } from '../explore/labels';
 
-export const PRIMARY_CHANNELS = ['email', 'phone', 'chat'] as const;
 const CONTACT_STATES: Record<string, string> = { active: 'Active', inactive: 'Inactive' };
-const CHANNELS: Record<string, string> = { email: 'Email', phone: 'Phone', chat: 'Chat' };
+// The directory projection uses ActivityChannel (internal/store/activity.go).
+const CHANNELS: Record<string, string> = {
+  email: 'Email', chat: 'Chat', meeting: 'Meeting', other: 'Other'
+};
+export const PRIMARY_CHANNELS = Object.keys(CHANNELS);
 // Shared status vocabulary: amber needs attention, green finished, gray off.
 const REVIEW_STATES: Record<string, { label: string; tone: ChipTone }> = {
   candidate: { label: 'Candidate', tone: 'warning' },
