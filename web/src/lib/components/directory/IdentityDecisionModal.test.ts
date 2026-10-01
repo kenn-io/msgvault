@@ -22,6 +22,9 @@ function candidate(state = 'candidate'): IdentityMatchCandidate {
     basis: 'stable_provider_id',
     source: 'synthetic',
     state,
+    review_token: `token-17-${state}`,
+    actionable: state === 'candidate',
+    application_pending: false,
     evidence: [],
     created_at: '2026-08-01T10:00:00Z',
     updated_at: '2026-08-02T11:00:00Z'
@@ -44,8 +47,8 @@ function requestOf(input: RequestInfo | URL): Request {
 
 describe('IdentityDecisionModal', () => {
   it.each([
-    { decision: 'accept' as const, action: 'Link identities', path: '/api/v1/identity/match-candidates/17/accept', state: 'accepted' },
-    { decision: 'reject' as const, action: 'Keep separate', path: '/api/v1/identity/match-candidates/17/reject', state: 'rejected' }
+    { decision: 'accept' as const, action: 'Link identities', path: '/api/v1/identity/match-candidates/17/review/accept', state: 'accepted' },
+    { decision: 'reject' as const, action: 'Keep separate', path: '/api/v1/identity/match-candidates/17/review/reject', state: 'rejected' }
   ])('submits one generated $decision request with only trimmed notes', async ({ decision, action, path, state }) => {
     const requests: Request[] = [];
     const decided = candidate(state);
@@ -78,7 +81,7 @@ describe('IdentityDecisionModal', () => {
     const posts = requests.filter((request) => request.method === 'POST');
     expect(posts).toHaveLength(1);
     expect(new URL(posts[0]!.url).pathname).toBe(path);
-    await expect(posts[0]!.clone().json()).resolves.toEqual({ notes: 'Synthetic review note' });
+    await expect(posts[0]!.clone().json()).resolves.toEqual({ review_token: 'token-17-candidate', notes: 'Synthetic review note' });
     expect(posts[0]!.headers.has('If-Match')).toBe(false);
     expect(posts[0]!.headers.has('Idempotency-Key')).toBe(false);
   });
@@ -270,6 +273,6 @@ describe('IdentityDecisionModal', () => {
     expect(onResolveMerge).toHaveBeenCalledOnce();
     expect(onResolveMerge).toHaveBeenCalledWith(conflict);
     expect(requests).toHaveLength(1);
-    expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/identity/match-candidates/17/accept');
+    expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/identity/match-candidates/17/review/accept');
   });
 });

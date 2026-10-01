@@ -114,6 +114,16 @@ connect them; matching display names alone do not merge people. Profile facts
 retain evidence and resolution history. User pins and explicit merge or split
 actions have their own contracts. See [people and profiles](../usage/people.md).
 
+Identity review decisions bind to the inspected evidence and endpoint snapshot.
+Changed evidence or a candidate collapse requires a new review. Optional manual
+identity scoring creates suggestions and journals proposals; it does not
+accept them. The daemon checks local blockers before sending eligible pairs
+to the fixed provider and checks consent at each provider attempt. Consent
+changes wait for requests already admitted by that daemon. Provider I/O holds
+no archive writer gate or database write transaction; local mutations retain
+the daemon's normal coordination. See the
+[review and scoring contract](../api-server.md#identity-match-review-and-scoring).
+
 ### Each external operation has its own scope
 
 Provider sync, identity discovery, CardDAV publication, remote image downloads,

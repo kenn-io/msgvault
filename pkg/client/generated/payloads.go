@@ -102,9 +102,15 @@ type SearchFilesBody = FileSearchHTTPRequest
 
 type LinkIdentityParticipantsBody = IdentityLinkRequest
 
-type AcceptIdentityMatchCandidateBody = DecideIdentityMatchRequest
+type ReviewAcceptIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
 
-type RejectIdentityMatchCandidateBody = DecideIdentityMatchRequest
+type ReviewRejectIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
+
+type PersonMatchScoringConsentBody = PersonMatchConsentDecisionRequest
+
+type PersonMatchScoringRevokeBody = PersonMatchConsentDecisionRequest
+
+type RunPersonMatchScoringBody = PersonMatchScoringRequest
 
 type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
