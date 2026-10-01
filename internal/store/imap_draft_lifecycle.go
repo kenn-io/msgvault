@@ -59,10 +59,7 @@ var imapDrafts = draftTable[IMAPDraft]{
 	withClaim: func(d IMAPDraft, operation string, raw []byte) IMAPDraft {
 		d.Pending = &IMAPDraftPending{
 			Operation: operation, OriginalMessageID: d.CurrentMessageID,
-			OriginalReceipt: d.CurrentReceipt, Raw: append([]byte(nil), raw...),
-		}
-		if operation == IMAPDraftOperationDelete {
-			d.Pending.Raw = nil
+			OriginalReceipt: d.CurrentReceipt, Raw: raw,
 		}
 		return d
 	},

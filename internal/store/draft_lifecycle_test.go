@@ -36,7 +36,9 @@ func newDraftFixtures(t *testing.T) []draftFixture {
 			return st.RecordIMAPDraftOutcomeContext(ctx, imap.DraftID, rev, code, nil)
 		},
 		finish: func(rev int64) error {
-			require.NoError(t, st.RecordIMAPDraftOutcomeContext(ctx, imap.DraftID, rev, store.IMAPDraftCodeRemoved, nil))
+			if err := st.RecordIMAPDraftOutcomeContext(ctx, imap.DraftID, rev, store.IMAPDraftCodeRemoved, nil); err != nil {
+				return err
+			}
 			_, err := st.FinishIMAPDraftRemovalContext(ctx, imap.DraftID, rev)
 			return err
 		},
@@ -57,19 +59,21 @@ func newDraftFixtures(t *testing.T) []draftFixture {
 
 // TestManagedDraftLifecycleErrorText pins the error text the shared lifecycle returns for each provider.
 func TestManagedDraftLifecycleErrorText(t *testing.T) {
-	require := require.New(t)
 	for _, f := range newDraftFixtures(t) {
-		require.EqualError(f.get("draft\rone"), "invalid "+f.provider+" draft ID")
-		require.EqualError(f.get("draft-absent"), `draft "draft-absent": `+f.sentinel+" draft not found")
-		require.EqualError(f.claim(0, "delete", nil), f.sentinel+" draft revision mismatch: expected positive revision")
-		require.EqualError(f.claim(1, "archive", nil), "invalid "+f.provider+` draft state: unknown operation "archive"`)
-		require.EqualError(f.claim(1, "edit", nil), "edit candidate must not be empty")
-		require.EqualError(f.claim(7, "delete", nil), f.sentinel+" draft revision mismatch: expected 7, found 1")
-		require.EqualError(f.record(1, " "), "invalid "+f.provider+" draft state: outcome requires positive revision and code")
-		require.NoError(f.claim(1, "delete", nil))
-		require.EqualError(f.claim(1, "delete", nil), f.sentinel+" draft has a pending operation")
-		require.EqualError(f.record(3, "accepted"), f.staleOutcome)
-		require.NoError(f.finish(1))
-		require.EqualError(f.claim(2, "delete", nil), "invalid "+f.provider+" draft state: draft is discarded")
+		t.Run(f.provider, func(t *testing.T) {
+			require := require.New(t)
+			require.EqualError(f.get("draft\rone"), "invalid "+f.provider+" draft ID")
+			require.EqualError(f.get("draft-absent"), `draft "draft-absent": `+f.sentinel+" draft not found")
+			require.EqualError(f.claim(0, "delete", nil), f.sentinel+" draft revision mismatch: expected positive revision")
+			require.EqualError(f.claim(1, "archive", nil), "invalid "+f.provider+` draft state: unknown operation "archive"`)
+			require.EqualError(f.claim(1, "edit", nil), "edit candidate must not be empty")
+			require.EqualError(f.claim(7, "delete", nil), f.sentinel+" draft revision mismatch: expected 7, found 1")
+			require.EqualError(f.record(1, " "), "invalid "+f.provider+" draft state: outcome requires positive revision and code")
+			require.NoError(f.claim(1, "delete", nil))
+			require.EqualError(f.claim(1, "delete", nil), f.sentinel+" draft has a pending operation")
+			require.EqualError(f.record(3, "accepted"), f.staleOutcome)
+			require.NoError(f.finish(1))
+			require.EqualError(f.claim(2, "delete", nil), "invalid "+f.provider+" draft state: draft is discarded")
+		})
 	}
 }

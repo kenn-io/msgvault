@@ -143,7 +143,7 @@ func (t draftTable[D]) claim(ctx context.Context, s *Store, draftID string, revi
 		if st.pending {
 			return t.errPending
 		}
-		var raw any
+		var raw []byte
 		if operation == draftOperationEdit {
 			raw = append([]byte(nil), replacementRaw...)
 		}
@@ -162,7 +162,7 @@ func (t draftTable[D]) claim(ctx context.Context, s *Store, draftID string, revi
 		if affected != 1 {
 			return t.errPending
 		}
-		claimed = t.withClaim(draft, operation, replacementRaw)
+		claimed = t.withClaim(draft, operation, raw)
 		return nil
 	})
 	if err != nil {

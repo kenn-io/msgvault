@@ -171,10 +171,7 @@ var gmailDrafts = draftTable[GmailDraft]{
 		d.Pending = &GmailDraftPending{
 			Operation: operation, OriginalMessageID: d.CurrentMessageID,
 			OriginalGmailMessageID: d.CurrentReceipt.GmailMessageID,
-			Raw:                    append([]byte(nil), raw...),
-		}
-		if operation == GmailDraftOperationDelete {
-			d.Pending.Raw = nil
+			Raw:                    raw,
 		}
 		return d
 	},
