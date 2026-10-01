@@ -1046,7 +1046,7 @@ func publishRecoveryReplacement(t *testing.T, fixture reviewManagedLifecycleFixt
 	replyTo, err := fixture.store.GetMessageReplyToMessageIDContext(t.Context(), draft.CurrentMessageID)
 	require.NoError(t, err)
 	replacement := *draft.Pending.ReplacementReceipt
-	participants, build := draftLifecyclePersistData(message.ConversationID, replyTo, imaplib.ReplyDraft{Raw: candidate, Parsed: parsed}, replacement)
+	participants, build := draftLifecyclePersistData(message.ConversationID, replyTo, imaplib.ReplyDraft{Raw: candidate, Parsed: parsed}, replacement, nil)
 	published, err := fixture.store.PublishIMAPDraftReplacementContext(t.Context(), draft.DraftID, draft.Revision, participants, build)
 	require.NoError(t, err)
 	return published

@@ -12,6 +12,8 @@ const CLIRunDraftReplyCommand = "draft-reply"
 
 const CLIRunDraftComposeCommand = "draft-compose"
 
+const CLIRunDraftForwardCommand = "draft-forward"
+
 const (
 	CLIRunDraftGetCommand     = "draft-get"
 	CLIRunDraftEditCommand    = "draft-edit"
@@ -30,9 +32,15 @@ func IsCLIRunDraftCompose(args []string) bool {
 	return len(args) > 0 && args[0] == CLIRunDraftComposeCommand
 }
 
+// IsCLIRunDraftForward reports whether args invoke the in-process
+// draft-forward route.
+func IsCLIRunDraftForward(args []string) bool {
+	return len(args) > 0 && args[0] == CLIRunDraftForwardCommand
+}
+
 // IsCLIRunDraftCreate reports whether args create a managed draft.
 func IsCLIRunDraftCreate(args []string) bool {
-	return IsCLIRunDraftReply(args) || IsCLIRunDraftCompose(args)
+	return IsCLIRunDraftReply(args) || IsCLIRunDraftCompose(args) || IsCLIRunDraftForward(args)
 }
 
 // CLIRunDraftLifecyclePermissions lists the grant permissions that authorize a
@@ -59,7 +67,7 @@ func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {
 	if grant == nil || len(args) == 0 {
 		return false
 	}
-	if IsCLIRunDraftCreate(args) {
+	if IsCLIRunDraftReply(args) || IsCLIRunDraftCompose(args) {
 		return grant.HasPermission(agentgrant.PermissionDraftCreate)
 	}
 	if args[0] == CLIRunDraftRecoverCommand {

@@ -38,21 +38,41 @@ func (s *Store) replaceMessageProviderAttachments(messageID int64, providerPrefi
 }
 
 func (s *Store) messageProviderAttachments(messageID int64, providerPrefix string) (map[string]AttachmentRef, error) {
-	rows, err := s.db.Query(`
-		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), storage_path, COALESCE(content_hash, ''), size, source_attachment_id,
+	refs, err := s.messageAttachmentsWhere(context.Background(), messageID, `source_attachment_id LIKE ?`, providerPrefix+"%")
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]AttachmentRef, len(refs))
+	for _, ref := range refs {
+		out[ref.SourceAttachmentID] = ref
+	}
+	return out, nil
+}
+
+// MessageMIMEAttachmentsContext returns a message's MIME attachment rows in
+// row order, including pending and skipped occurrences.
+func (s *Store) MessageMIMEAttachmentsContext(ctx context.Context, messageID int64) ([]AttachmentRef, error) {
+	return s.messageAttachmentsWhere(ctx, messageID, `source_attachment_id IS NULL`)
+}
+
+func (s *Store) messageAttachmentsWhere(ctx context.Context, messageID int64, where string, args ...any) ([]AttachmentRef, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(storage_path, ''), COALESCE(content_hash, ''),
+		       COALESCE(size, 0), COALESCE(source_attachment_id, ''),
 		       COALESCE(media_type, ''), COALESCE(width, 0), COALESCE(height, 0), COALESCE(duration_ms, 0),
-		       COALESCE(CAST(attachment_metadata AS TEXT), ''), attachment_role, role_source,
+		       COALESCE(CAST(attachment_metadata AS TEXT), ''), COALESCE(attachment_role, ''), COALESCE(role_source, ''),
 		       COALESCE(source_part_key, ''), COALESCE(content_id, ''),
 		       COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
 		FROM attachments
-		WHERE message_id = ? AND source_attachment_id LIKE ?
-	`, messageID, providerPrefix+"%")
+		WHERE message_id = ? AND `+where+`
+		ORDER BY id
+	`, append([]any{messageID}, args...)...)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := map[string]AttachmentRef{}
+	var out []AttachmentRef
 	for rows.Next() {
 		var ref AttachmentRef
 		var size int64
@@ -65,7 +85,7 @@ func (s *Store) messageProviderAttachments(messageID int64, providerPrefix strin
 			return nil, err
 		}
 		ref.Size = int(size)
-		out[ref.SourceAttachmentID] = ref
+		out = append(out, ref)
 	}
 	return out, rows.Err()
 }

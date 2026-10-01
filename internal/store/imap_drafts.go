@@ -112,15 +112,19 @@ func (s *Store) PersistIMAPDraftContext(
 		if data.Message.SourceID != receipt.SourceID || data.Message.SourceMessageID != IMAPDraftSourceMessageID(receipt) {
 			return nil, errors.New("source_key_conflict")
 		}
-		if data.MIMEAttachmentReplacement != nil {
-			return nil, errors.New("IMAP drafts cannot contain attachments")
-		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		return data, nil
 	}
 	after := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.replaceMIMEAttachmentsWith(q, id, data.MIMEAttachmentReplacement); err != nil {
+			return fmt.Errorf("persist IMAP draft attachments: %w", err)
+		}
+		if err := recomputeMessageAttachmentStatsWith(q, id); err != nil {
+			return fmt.Errorf("recompute IMAP draft attachment stats: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			INSERT INTO imap_message_memberships
 				(source_id, mailbox, uidvalidity, uid, message_id, flags, updated_at)

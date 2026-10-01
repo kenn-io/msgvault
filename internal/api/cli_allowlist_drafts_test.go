@@ -22,6 +22,7 @@ func TestCLIRunDraftAllowlist(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	assertions.True(cliRunCommandAllowed([]string{"draft-reply", "42", "--from=alice@example.com", "--body=body"}))
+	assertions.True(cliRunCommandAllowed([]string{"draft-forward", "42", "--source-id=7", "--to=bob@example.com"}))
 	assertions.True(IsCLIRunDraftLifecycle([]string{"draft-get", "draft-abc"}))
 	assertions.True(IsCLIRunDraftSendAs([]string{"draft-send-as", "alice@example.com"}))
 	assertions.True(cliRunCommandAllowed([]string{"draft-send-as", "alice@example.com"}))
@@ -153,6 +154,11 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 	t.Run("draft-compose is admitted with draft.create", func(t *testing.T) {
 		code := sendDelegated([]string{"draft-compose", "--source-id=1", "--to=alice@example.com", "--body=hi"})
 		assert.Equal(t, http.StatusOK, code)
+	})
+
+	t.Run("draft-forward requires owner access", func(t *testing.T) {
+		code := sendDelegated([]string{"draft-forward", "42", "--source-id=1", "--to=alice@example.com"})
+		assert.Equal(t, http.StatusBadRequest, code)
 	})
 
 	t.Run("add-imap returns command_not_allowed", func(t *testing.T) {

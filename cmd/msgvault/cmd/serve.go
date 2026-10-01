@@ -2185,6 +2185,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		return emit(api.CLIRunEvent{Type: stream, Data: data})
 	}
 	if api.IsCLIRunDraftCreate(req.Args) {
+		if api.IsCLIRunDraftForward(req.Args) {
+			return a.runCLIForwardDraft(ctx, req, emit)
+		}
 		if api.IsCLIRunDraftCompose(req.Args) {
 			return a.runCLIComposeDraft(ctx, req, emit)
 		}

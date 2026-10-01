@@ -33,6 +33,47 @@ func TestAppendDraft(t *testing.T) {
 	assertions.Positive(result.UIDValidity)
 }
 
+func TestAppendDraftEncodedSizeLimit(t *testing.T) {
+	raw := []byte("From: alice@example.com\r\n\r\nbody\r\n")
+	fits, tooSmall := uint32(len(raw)), uint32(len(raw)-1)
+	for _, scenario := range []struct {
+		name    string
+		options testutil.IMAPDraftServerOptions
+		code    string
+	}{
+		{name: "global limit fits", options: testutil.IMAPDraftServerOptions{AppendLimit: &fits}},
+		{name: "global limit exceeded", options: testutil.IMAPDraftServerOptions{AppendLimit: &tooSmall}, code: "message_too_large"},
+		{name: "mailbox limit exceeded", options: testutil.IMAPDraftServerOptions{StatusAppendLimit: &tooSmall, StatusAppendMailbox: "Drafts"}, code: "message_too_large"},
+		{name: "mailbox limit unknown", options: testutil.IMAPDraftServerOptions{}},
+		{name: "mailbox limit unreadable", options: testutil.IMAPDraftServerOptions{StatusErrorMailbox: "Drafts"}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			options := scenario.options
+			options.MessagesPerMailbox = map[string]int{"Drafts": 0}
+			options.Caps = emersionimap.CapSet{emersionimap.CapIMAP4rev1: {}, emersionimap.CapUIDPlus: {}, emersionimap.CapAppendLimit: {}}
+			addr, _ := testutil.StartIMAPMemServerForDrafts(t, options)
+			host, port, err := net.SplitHostPort(addr)
+			requirements.NoError(err)
+			portNumber, err := strconv.Atoi(port)
+			requirements.NoError(err)
+			client := NewClient(&Config{Host: host, Port: portNumber, Username: testutil.IMAPTestUsername}, testutil.IMAPTestPassword)
+			t.Cleanup(func() { _ = client.Close() })
+
+			result, err := client.AppendDraft(t.Context(), "Drafts", raw)
+			if scenario.code == "" {
+				requirements.NoError(err)
+				assertions.Equal(DraftStateCreated, result.State)
+				return
+			}
+			requirements.Error(err)
+			assertions.Equal(DraftStateRejected, result.State)
+			assertions.Equal(scenario.code, result.Code)
+		})
+	}
+}
+
 func TestAppendDraftRequiresUIDPlus(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

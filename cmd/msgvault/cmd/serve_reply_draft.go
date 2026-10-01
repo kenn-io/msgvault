@@ -43,11 +43,12 @@ type draftReplyIntent struct {
 // draftReplyTarget is the archived parent message and the granted source
 // mailbox that will hold the reply.
 type draftReplyTarget struct {
-	parent       *store.APIMessage
-	parentSource *store.Source
-	source       *store.Source
-	mailbox      string
-	raw          []byte
+	parent           *store.APIMessage
+	parentSource     *store.Source
+	source           *store.Source
+	mailbox          string
+	raw              []byte
+	attachmentWrites *[]store.AttachmentWrite
 }
 
 type draftReplyOutput struct {
@@ -585,7 +586,9 @@ func draftReplyPersistData(
 	fromAddresses := addressStrings(parsed.From)
 	var conversationKey string
 	var replyToMessageID sql.NullInt64
-	if target.parent != nil {
+	if target.attachmentWrites != nil { // forwards start their own conversation
+		conversationKey = fmt.Sprintf("draft-forward-%d-%d-%s", receipt.SourceID, receipt.UIDValidity, store.IMAPDraftSourceMessageID(receipt))
+	} else if target.parent != nil {
 		conversationKey = target.parent.SourceConversationID
 		replyToMessageID = sql.NullInt64{Int64: target.parent.ID, Valid: true}
 		if conversationKey == "" {
@@ -637,6 +640,7 @@ func draftReplyPersistData(
 			ToAddrs:  strings.Join(toAddresses, " "),
 			CcAddrs:  strings.Join(ccAddresses, " "),
 		},
+		MIMEAttachmentReplacement: target.attachmentWrites,
 	}
 }
 

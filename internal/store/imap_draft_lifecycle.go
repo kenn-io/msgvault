@@ -428,15 +428,19 @@ func (s *Store) PublishIMAPDraftReplacementContext(
 			if data.Message.SourceID != draft.SourceID || data.Message.SourceMessageID != IMAPDraftSourceMessageID(receipt) {
 				return nil, errors.New("replacement message identity does not match receipt")
 			}
-			if data.MIMEAttachmentReplacement != nil {
-				return nil, errors.New("IMAP draft replacements cannot contain attachments")
-			}
 			if !bytes.Equal(data.RawMIME, draft.Pending.Raw) {
 				return nil, errors.New("replacement MIME does not match the claimed candidate")
 			}
 			return data, nil
 		}
-		after := func(ctx context.Context, tx *loggedTx, _ *MessagePersistData, messageID int64) error {
+		after := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, messageID int64) error {
+			q := boundQuerier{ctx: ctx, q: tx}
+			if err := s.replaceMIMEAttachmentsWith(q, messageID, data.MIMEAttachmentReplacement); err != nil {
+				return fmt.Errorf("persist replacement IMAP attachments: %w", err)
+			}
+			if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
+				return fmt.Errorf("recompute replacement IMAP attachment stats: %w", err)
+			}
 			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 				INSERT INTO imap_message_memberships
 					(source_id, mailbox, uidvalidity, uid, message_id, flags, updated_at)

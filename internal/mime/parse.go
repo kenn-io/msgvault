@@ -72,6 +72,21 @@ type Attachment struct {
 	IsInline    bool
 }
 
+// DistinctAttachments drops the second copy of a part that enmime lists as
+// both an attachment and an inline; PartKey is the part's identity.
+func DistinctAttachments(parts []Attachment) []Attachment {
+	seen := make(map[string]bool, len(parts))
+	out := make([]Attachment, 0, len(parts))
+	for _, part := range parts {
+		if part.PartKey != "" && seen[part.PartKey] {
+			continue
+		}
+		seen[part.PartKey] = true
+		out = append(out, part)
+	}
+	return out
+}
+
 // Parse parses raw MIME data into a Message.
 func Parse(raw []byte) (*Message, error) {
 	root, err := envelopeParser.ReadParts(bytes.NewReader(raw))
