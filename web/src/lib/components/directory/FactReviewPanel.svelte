@@ -27,6 +27,7 @@
   let searching = $state(false);
   let searchError = $state('');
   let named = $state<{ id: number; name: string } | null>(null);
+  let nameLoadFailed = $state(false);
   let searchAbort: AbortController | undefined;
   let searchGeneration = 0;
 
@@ -40,6 +41,7 @@
     const id = personID;
     if (id === null || untrack(() => personName) !== null) return;
     const abort = new AbortController();
+    nameLoadFailed = false;
     void loadPersonName(id, abort.signal);
     return () => abort.abort();
   });
@@ -54,10 +56,14 @@
   async function loadPersonName(id: number, signal: AbortSignal): Promise<void> {
     try {
       const response = await generatedGetPersonProfile({ id }, { ...client, signal });
-      if (signal.aborted || !response.data?.display_name) return;
-      named = { id, name: response.data.display_name };
+      if (signal.aborted) return;
+      if (!response.data) {
+        nameLoadFailed = true;
+        return;
+      }
+      if (response.data.display_name) named = { id, name: response.data.display_name };
     } catch {
-      // The context row falls back to "Person <id>" when the name cannot be loaded.
+      if (!signal.aborted) nameLoadFailed = true;
     }
   }
   async function searchPeople(value: string): Promise<void> {
@@ -107,14 +113,14 @@
 
 <section class="fact-review" aria-labelledby="fact-review-heading" data-review-section>
   <h2 id="fact-review-heading" class="kit-sr-only review-heading" tabindex="-1">Facts</h2>
-  <div class="person-field">
+  <label class="person-field">
     <span class="field-label">Person</span>
     <Typeahead
       title="Fact person"
-      placeholder="Search Directory people"
+      placeholder="Person"
       options={peopleOptions}
       value={personID === null ? '' : String(personID)}
-      fallbackLabel={personName ?? 'Choose a person'}
+      fallbackLabel={personName ?? (personID === null ? 'Choose a person' : `Person ${personID}`)}
       remote
       loading={searching}
       loadingLabel="Searching…"
@@ -123,7 +129,7 @@
       onquery={debouncedSearch}
       onselect={selectPerson}
     />
-  </div>
+  </label>
   {#if personID === null}
     <p class="choose-hint">Choose a person to see the facts recorded about them.</p>
   {:else}
@@ -131,6 +137,9 @@
       <strong>{personName ?? `Person ${personID}`}</strong>
       <Button label="Open person profile" size="sm" onclick={() => onOpenPerson(personID)} />
     </div>
+    {#if nameLoadFailed}
+      <p class="name-note">Couldn't load this person's name.</p>
+    {/if}
     <div class="notices" aria-label="Unavailable fact features">
       <p>Fact candidate decisions are unavailable until a generated candidate contract is installed.</p>
       <p>A dated last-time-we-talked brief is unavailable until the server exposes a generated brief contract.</p>
@@ -148,6 +157,7 @@
   }
   .person-field { display: grid; gap: var(--space-1); justify-items: start; }
   .field-label { color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .name-note { margin: 0; color: var(--text-muted); font-size: var(--font-size-sm); }
   .choose-hint { margin: 0; color: var(--text-secondary); }
   .person-context { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
   .notices { display: grid; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--border-strong); color: var(--text-secondary); }

@@ -32,7 +32,7 @@ describe('FactReviewPanel', () => {
 
     const panel = screen.getByRole('region', { name: 'Facts' });
     expect(within(panel).getByText('Choose a person to see the facts recorded about them.')).toBeDefined();
-    expect(within(panel).getByRole('button', { name: /^Search Directory people/ })).toBeDefined();
+    expect(within(panel).getByRole('button', { name: /^Person/ })).toBeDefined();
     expect(within(panel).queryByRole('button', { name: 'Open Directory' })).toBeNull();
     expect(fetchFn).not.toHaveBeenCalled();
   });
@@ -54,7 +54,7 @@ describe('FactReviewPanel', () => {
     const onSelectFactPerson = vi.fn();
     renderFactPanel({ client: createAPIClient(fetchFn), personID: null, onSelectFactPerson });
 
-    const input = await openTypeahead('Search Directory people');
+    const input = await openTypeahead('Person');
     await fireEvent.input(input, { target: { value: 'Alex' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Alex Example' }));
 
@@ -67,7 +67,7 @@ describe('FactReviewPanel', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ people: [] }));
     renderFactPanel({ client: createAPIClient(fetchFn), personID: null });
 
-    await fireEvent.input(await openTypeahead('Search Directory people'), { target: { value: 'Nobody' } });
+    await fireEvent.input(await openTypeahead('Person'), { target: { value: 'Nobody' } });
 
     expect(await screen.findByText('No matching people')).toBeDefined();
   });
@@ -76,7 +76,7 @@ describe('FactReviewPanel', () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ message: 'Directory is offline' }, { status: 500 }));
     renderFactPanel({ client: createAPIClient(fetchFn), personID: null });
 
-    await fireEvent.input(await openTypeahead('Search Directory people'), { target: { value: 'Alex' } });
+    await fireEvent.input(await openTypeahead('Person'), { target: { value: 'Alex' } });
 
     expect(await screen.findByText('Directory is offline')).toBeDefined();
   });
@@ -91,6 +91,31 @@ describe('FactReviewPanel', () => {
     expect(screen.queryByText('Person ID 12')).toBeNull();
     const paths = fetchFn.mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : String(input), 'http://localhost').pathname);
     expect(paths).toContain('/api/v1/people/12');
+  });
+
+  it('says so when the person name cannot be loaded', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ message: 'boom' }, { status: 500 }));
+    renderFactPanel({ client: createAPIClient(fetchFn), personID: 12 });
+
+    expect(await screen.findByText("Couldn't load this person's name.")).toBeDefined();
+    expect(screen.getByText('Person 12', { selector: 'strong' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Person: Person 12' })).toBeDefined();
+  });
+
+  it('does not show the previous name for a different person', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input), 'http://localhost').pathname;
+      if (path === '/api/v1/people/12') return Response.json({ id: 12, display_name: 'Alex Example', participant_ids: [] });
+      return new Promise<Response>(() => undefined);
+    });
+    const client = createAPIClient(fetchFn);
+    const view = renderFactPanel({ client, personID: 12 });
+    expect(await screen.findByText('Alex Example', { selector: 'strong' })).toBeDefined();
+
+    await view.rerender({ personID: 13 });
+
+    expect(screen.queryByText('Alex Example')).toBeNull();
+    expect(screen.getByText('Person 13', { selector: 'strong' })).toBeDefined();
   });
 
   it('falls back to a generic label while the name is unknown', () => {

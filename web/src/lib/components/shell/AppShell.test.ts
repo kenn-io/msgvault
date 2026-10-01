@@ -1290,7 +1290,7 @@ describe('AppShell', () => {
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
     try {
-      await fireEvent.input(await openTypeahead('Search Directory people'), { target: { value: 'Alex' } });
+      await fireEvent.input(await openTypeahead('Person'), { target: { value: 'Alex' } });
       await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Alex Example' }));
 
       await waitFor(() => expect(state.current.directoryPersonID).toBe(12));
