@@ -855,6 +855,56 @@ privacy, retry behavior, and stored evidence.
 
 ---
 
+## add-plaud
+
+Authorize and register a configured Plaud cloud account using browser OAuth.
+
+```bash
+msgvault add-plaud [identifier]
+```
+
+With one configured `[[plaud]]` entry, omit the identifier. The browser callback
+runs on the daemon host at `localhost:8091/callback/plaud`. A configured remote
+refuses before proxying; use SSH with that port forwarded and run
+`msgvault --local add-plaud <identifier>` on the daemon host. Credentials are
+stored in `tokens/plaud_<identifier>.json` and bound to the exact MCP endpoint.
+
+The live account email must equal configured `account_email` before source
+registration. A source's confirmed owner cannot change under the same
+identifier. Use a new identifier for another account. See
+[Plaud configuration](configuration.md#plaud-sources).
+
+## sync-plaud
+
+Archive Plaud cloud recordings, complete transcripts, and every note tab.
+Cloud Sync and upstream transcription must already be enabled. Audio is not
+downloaded; no changes propagate to Plaud.
+
+```bash
+msgvault sync-plaud [identifier]
+msgvault sync-plaud work --limit 20
+msgvault sync-plaud work --full --after 2025-01-01
+msgvault sync-plaud work --probe
+```
+
+| Flag | Description |
+|---|---|
+| `--limit n` | Hydrate at most n recordings; newest first, then successful runs rotate through least recently checked. Failed selected recordings retry in the same window. 0 is unlimited; negatives fail |
+| `--full` | Force archive repair, preserving stable source and file IDs |
+| `--after YYYY-MM-DD` | Filter recording dates locally; implies `--full` and does not advance exhaustive reconciliation state |
+| `--probe` | Print tool names, input schemas, and first-page counts without personal content or archive writes; requires an identifier when multiple accounts are configured |
+| `--build-cache` | Refresh analytics cache after sync |
+| `--no-build-cache` | Skip analytics cache refresh; mutually exclusive with `--build-cache` |
+
+Without an identifier, sync every configured Plaud entry. Every run validates
+the live account owner and checks complete content for edits. Sync refuses an
+unregistered source before authentication; run `add-plaud` first.
+
+Missing pending transcripts and notes preserve previous evidence. Deleted
+recordings remain archived. Failed and canceled runs preserve prior successful
+sync state and refresh committed changes before returning the error. See the
+[meeting guide](usage/meetings.md#plaud) for pagination and consistency limits.
+
 ## add-circleback
 
 Authorize a configured Circleback account using browser OAuth (their MCP

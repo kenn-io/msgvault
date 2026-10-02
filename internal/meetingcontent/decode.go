@@ -31,6 +31,8 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 		return decodeGranola(fields)
 	case "circleback_json":
 		return decodeCircleback(fields)
+	case "plaud_json":
+		return decodePlaud(fields)
 	case "notion_meeting_json":
 		return decodeNotion(fields)
 	case "muesli_json":

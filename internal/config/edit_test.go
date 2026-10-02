@@ -2143,3 +2143,19 @@ func TestEditConfigRejectsInvalidMuesliSchedule(t *testing.T) {
 	require.NoError(readErr)
 	assert.Equal(before, string(got))
 }
+
+func TestEditConfigRejectsInvalidPlaudSchedule(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before := "[[plaud]]\nidentifier = \"work\"\naccount_email = \"owner@example.com\"\nschedule = \"15 */6 * * *\"\nenabled = true\n"
+	require.NoError(os.WriteFile(path, []byte(before), 0600))
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+	_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "plaud.schedule", Value: "not a cron"}})
+	require.ErrorIs(err, ErrInvalidConfigCandidate)
+	assert.Contains(err.Error(), "invalid plaud[0].schedule")
+	got, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Equal(before, string(got))
+}

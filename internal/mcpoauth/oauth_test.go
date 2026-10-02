@@ -1,8 +1,9 @@
-package circleback
+package mcpoauth
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,10 +15,41 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
+
+func TestTokenSourceRefusesDifferentResource(t *testing.T) {
+	dir := t.TempDir()
+	first := newDefaultManager("https://example.com/mcp", dir)
+	require.NoError(t, first.saveToken("work", &tokenFile{
+		Token:    oauth2.Token{AccessToken: "synthetic-access", Expiry: time.Now().Add(time.Hour)},
+		Resource: "https://example.com/mcp",
+	}))
+	other := newDefaultManager("https://other.example.com/mcp", dir)
+	_, err := other.TokenSource(context.Background(), "work")
+	require.Error(t, err, "credentials must never cross endpoint boundaries")
+}
+
+func TestProviderCredentialsAndCallbacksStaySeparate(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFakeAS(t)
+	dir := t.TempDir()
+	m := newTestManager(t, f, "18091")
+	m.tokensDir = dir
+	m.provider.Name = "plaud"
+	m.provider.CallbackPath = "/callback/plaud"
+	require.NoError(m.Authorize(context.Background(), "work"))
+	assert.Equal("http://localhost:18091/callback/plaud", f.lastAuthorize.Get("redirect_uri"))
+	other := newDefaultManager(f.srv.URL+"/api/mcp", dir)
+	assert.False(other.HasToken("work"))
+	_, err := other.TokenSource(context.Background(), "work")
+	require.Error(err)
+	assert.Equal("plaud_work.json", filepath.Base(m.TokenPath("work")))
+}
 
 // fakeAS is an httptest-backed OAuth authorization server + MCP resource:
 // 401 challenge with resource_metadata, RFC 9728 PRM, RFC 8414 metadata,
@@ -116,7 +148,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 // localhost callback.
 func newTestManager(t *testing.T, f *fakeAS, port string) *Manager {
 	t.Helper()
-	m := NewManager(f.srv.URL+"/api/mcp", t.TempDir(), nil)
+	m := newDefaultManager(f.srv.URL+"/api/mcp", t.TempDir())
 	m.redirectPort = port
 	m.openBrowserFn = func(ctx context.Context, rawURL string) error {
 		go func() {
@@ -176,11 +208,67 @@ func TestAuthorize_FullFlow(t *testing.T) {
 	assert.EqualValues(1, f.registrations.Load(), "re-auth must reuse the persisted client_id")
 }
 
+func TestAuthorizeWithValidationPreservesStoredTokenUntilIdentityMatches(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("localhost listener flow not exercised on windows CI")
+	}
+
+	for _, test := range []struct {
+		name            string
+		validationErr   error
+		wantAccessToken string
+	}{
+		{name: "reject", validationErr: errors.New("account mismatch"), wantAccessToken: "old-access"},
+		{name: "accept", wantAccessToken: "at-1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newFakeAS(t)
+			m := newTestManager(t, f, "18092")
+			require.NoError(m.saveToken("work", &tokenFile{
+				Token: oauth2.Token{
+					AccessToken:  "old-access",
+					RefreshToken: "old-refresh",
+					TokenType:    "Bearer",
+					Expiry:       time.Now().Add(time.Hour),
+				},
+				ClientID:      "cid_existing",
+				TokenEndpoint: f.srv.URL + "/token",
+				Resource:      m.endpoint,
+			}))
+
+			err := m.AuthorizeWithValidation(context.Background(), "work", func(ctx context.Context, handler auth.OAuthHandler) error {
+				tokenSource, err := handler.TokenSource(ctx)
+				require.NoError(err)
+				token, err := tokenSource.Token()
+				require.NoError(err)
+				assert.Equal("at-1", token.AccessToken)
+
+				stored, err := m.loadTokenFile("work")
+				require.NoError(err)
+				assert.Equal("old-access", stored.Token.AccessToken)
+
+				return test.validationErr
+			})
+
+			if test.validationErr != nil {
+				require.ErrorIs(err, test.validationErr)
+			} else {
+				require.NoError(err)
+			}
+			stored, err := m.loadTokenFile("work")
+			require.NoError(err)
+			assert.Equal(test.wantAccessToken, stored.Token.AccessToken)
+		})
+	}
+}
+
 func TestTokenSource_RefreshPersistsRotatedToken(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newFakeAS(t)
-	m := NewManager(f.srv.URL+"/api/mcp", t.TempDir(), nil)
+	m := newDefaultManager(f.srv.URL+"/api/mcp", t.TempDir())
 
 	// Seed an expired token file directly.
 	require.NoError(m.saveToken("default", &tokenFile{
@@ -223,7 +311,7 @@ func TestTokenSource_RefreshPersistsRotatedToken(t *testing.T) {
 
 func TestTokenSource_MissingFileIsActionable(t *testing.T) {
 	require := require.New(t)
-	m := NewManager("", t.TempDir(), nil)
+	m := newDefaultManager("", t.TempDir())
 	_, err := m.TokenSource(context.Background(), "nobody")
 	require.Error(err)
 	require.Contains(err.Error(), "add-circleback")
@@ -231,7 +319,7 @@ func TestTokenSource_MissingFileIsActionable(t *testing.T) {
 
 func TestHandlerAuthorizeIsActionable(t *testing.T) {
 	require := require.New(t)
-	m := NewManager("", t.TempDir(), nil)
+	m := newDefaultManager("", t.TempDir())
 	h := m.Handler("alice@example.com")
 	err := h.Authorize(context.Background(), nil, &http.Response{Status: "401 Unauthorized", Body: http.NoBody})
 	require.Error(err)
@@ -262,6 +350,10 @@ func TestSanitizeIdentifier_Injective(t *testing.T) {
 
 	// TokenPath stays inside the tokens dir for hostile identifiers.
 	tokensDir := t.TempDir()
-	m := NewManager("", tokensDir, nil)
+	m := newDefaultManager("", tokensDir)
 	assert.Equal(tokensDir, filepath.Dir(m.TokenPath("../../etc/passwd")))
+}
+
+func newDefaultManager(endpoint, dir string) *Manager {
+	return NewManager(Provider{Name: "circleback", Endpoint: "https://circleback.ai/api/mcp", RedirectPort: "8090", CallbackPath: "/callback/circleback"}, endpoint, dir, nil)
 }

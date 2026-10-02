@@ -17,6 +17,7 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/plaud"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
@@ -382,6 +383,11 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 					"Warning: could not remove Slack token: %v\n", err,
 				)
 			}
+		}
+	case sourceTypePlaud:
+		mgr := plaud.NewManager("", cfg.TokensDir(), logger)
+		if err := mgr.DeleteToken(source.Identifier); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove Plaud token: %v\n", err)
 		}
 	case sourceTypeCircleback:
 		circlebackMgr := circleback.NewManager("", cfg.TokensDir(), logger)

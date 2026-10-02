@@ -1153,6 +1153,36 @@ the primary identity even if aliases already exist. Manage aliases with
 existing meeting attribution. A scheduled source must still be registered in
 the archive; removing it prevents the scheduler from silently recreating it.
 
+### Plaud Sources
+
+Configure one top-level `[[plaud]]` entry per Plaud cloud account. Browser
+OAuth stores credentials separately from this file. Enable Cloud Sync and
+transcription in Plaud before syncing. See the
+[meeting guide](usage/meetings.md#plaud) for setup and preservation rules.
+
+```toml
+[[plaud]]
+identifier = "work"
+account_email = "you@example.com"
+schedule = "30 */6 * * *"
+enabled = true
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | `default` for one unnamed entry | Stable command, source, and token label; must be unique and contain no path separators, control characters, or surrounding whitespace |
+| `account_email` | Required | Explicit account email; normalized to lowercase and checked against live Plaud identity |
+| `endpoint` | `https://mcp.plaud.ai/mcp` | MCP resource endpoint override; changing it requires new authorization |
+| `schedule` | — | Five-field cron expression used by `msgvault serve` |
+| `enabled` | `false` | Whether a scheduled entry runs in the daemon |
+
+Authorize with `msgvault add-plaud <identifier>` on the daemon host. The callback
+uses `localhost:8091/callback/plaud`; tokens use
+`tokens/plaud_<identifier>.json`. An existing source retains its confirmed
+owner even if configuration changes. Use a new identifier for another account.
+A scheduled entry must be registered; source removal prevents sync from
+recreating it automatically.
+
 ### Circleback Sources
 
 Circleback meeting sync is configured with top-level `[[circleback]]`

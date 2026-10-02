@@ -508,6 +508,7 @@ type Config struct {
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Granola            []GranolaSource                 `toml:"granola"`
+	Plaud              []PlaudSource                   `toml:"plaud"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
 	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
 	Muesli             []MuesliSource                  `toml:"muesli"`
@@ -1788,6 +1789,19 @@ type CirclebackSource struct {
 	Enabled      bool   `toml:"enabled"`
 }
 
+// PlaudSource configures one browser-authorized Plaud cloud account.
+type PlaudSource struct {
+	Identifier   string `toml:"identifier"`
+	AccountEmail string `toml:"account_email"`
+	Endpoint     string `toml:"endpoint"`
+	Schedule     string `toml:"schedule"`
+	Enabled      bool   `toml:"enabled"`
+}
+
+func (s PlaudSource) EffectiveAccountEmail() (string, error) {
+	return effectiveMeetingAccountEmail("plaud", s.Identifier, s.AccountEmail)
+}
+
 // NotionMeetingsSource is one configured Notion AI Meeting Notes identity.
 // Authentication uses a read-only integration token stored in config.toml.
 type NotionMeetingsSource struct {
@@ -1893,6 +1907,9 @@ func normalizedMeetingAccountEmail(value string) (string, bool) {
 // single entry with no identifier becomes "default" so the CLI argument can
 // be omitted in the common one-account case.
 func (c *Config) applyMeetingSourceDefaults() {
+	if len(c.Plaud) == 1 && c.Plaud[0].Identifier == "" {
+		c.Plaud[0].Identifier = "default"
+	}
 	if len(c.Granola) == 1 && c.Granola[0].Identifier == "" {
 		c.Granola[0].Identifier = "default"
 	}
@@ -1956,6 +1973,29 @@ func (c *Config) validateMeetingSources() error {
 		if strings.TrimSpace(c.Circleback[i].AccountEmail) != "" {
 			c.Circleback[i].AccountEmail = email
 		}
+	}
+	plaudIDs := make([]string, len(c.Plaud))
+	for i, src := range c.Plaud {
+		plaudIDs[i] = src.Identifier
+	}
+	if err := check("plaud", plaudIDs); err != nil {
+		return err
+	}
+	for i := range c.Plaud {
+		id := c.Plaud[i].Identifier
+		if strings.TrimSpace(id) != id || id == "." || id == ".." || strings.ContainsAny(id, "/\\") {
+			return fmt.Errorf("[[plaud]]: unsafe identifier %q; use a label without path separators or surrounding whitespace", id)
+		}
+		for _, r := range id {
+			if r < 32 || r == 127 {
+				return fmt.Errorf("[[plaud]]: unsafe identifier %q", id)
+			}
+		}
+		email, err := c.Plaud[i].EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		c.Plaud[i].AccountEmail = email
 	}
 	notionIDs := make([]string, len(c.NotionMeetings))
 	for i, s := range c.NotionMeetings {
@@ -2203,4 +2243,26 @@ func expandPath(path string) string {
 		return filepath.Join(home, suffix)
 	}
 	return path
+}
+
+// GetPlaudSource resolves a configured source without changing its stable label.
+func (c *Config) GetPlaudSource(identifier string) *PlaudSource {
+	for _, src := range c.Plaud {
+		if strings.EqualFold(src.Identifier, identifier) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+// ScheduledPlaudSources returns enabled sources with a configured cron schedule.
+func (c *Config) ScheduledPlaudSources() []PlaudSource {
+	var out []PlaudSource
+	for _, src := range c.Plaud {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
 }

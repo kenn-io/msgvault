@@ -40,6 +40,7 @@ import (
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/personmatch"
+	"go.kenn.io/msgvault/internal/plaud"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -566,7 +567,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Meeting sources (Granola/Circleback) mirror the gcal treatment: warn
+	// Meeting sources mirror the gcal treatment: warn
 	// when enabled but unscheduled, then register the scheduled ones.
 	for _, src := range cfg.Granola {
 		if src.Enabled && src.Schedule == "" {
@@ -624,6 +625,32 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule circleback source", "source", source.Identifier, "error", err)
 		} else {
 			logger.Info("scheduled circleback source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+	for _, src := range cfg.Plaud {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("plaud source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "30 */6 * * *") on the [[plaud]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledPlaudSources() {
+		source := src
+		jobName, ok := api.SchedulerJobNameForSource(plaud.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for plaud source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredPlaudSync(ctx, s, source)
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule plaud source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled plaud source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
 	for _, src := range cfg.NotionMeetings {
