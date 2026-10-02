@@ -141,3 +141,21 @@ func TestPullStopsFallbackAfterRetryAfter(t *testing.T) {
 	require.NoError(err)
 	assert.NotNil(gate)
 }
+
+func TestCanonicalAbsentReadSavesRetryAfter(t *testing.T) {
+	require := require.New(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+	service, st, book := newPullService(t, server, false)
+
+	_, absent, err := service.fetchCanonical(t.Context(), book.CanonicalURL+"gone.vcf")
+	require.NoError(err)
+	require.True(absent)
+	gate, err := st.GetCardDAVRetryAfterContext(t.Context(), store.DefaultCardDAVAccountID)
+	require.NoError(err)
+	require.NotNil(gate)
+}

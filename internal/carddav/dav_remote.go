@@ -710,7 +710,13 @@ func (r *davRemote) Get(ctx context.Context, href string) (store.CardDAVRemoteRe
 		return store.CardDAVRemoteResource{}, false, ErrUnsafeTarget
 	}
 	href = canonicalDAVURLIdentity(target)
-	response, err := r.client.Do(ctx, Request{Method: http.MethodGet, URL: href})
+	// An absent card is not an error, so the gate must see the status first.
+	var response *Response
+	err = GateRequest(ctx, func(ctx context.Context) error {
+		var err error
+		response, err = r.client.Do(ctx, Request{Method: http.MethodGet, URL: href})
+		return err
+	})
 	if isAbsentStatus(err) {
 		return store.CardDAVRemoteResource{Href: href}, true, nil
 	}
