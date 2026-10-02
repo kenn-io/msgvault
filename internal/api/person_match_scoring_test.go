@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/personmatchworker"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -468,4 +469,54 @@ func TestPersonMatchScoringBusyAfterResultPreservesBatch(t *testing.T) {
 	require.NoError(err)
 	require.Len(history, 1)
 	assert.Equal("scored", history[0].Status)
+}
+
+func TestPersonMatchScoringReportsIncompleteFullSweep(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := config.NewDefaultConfig()
+	cfg.People.IdentityScoring.Enabled = true
+	cfg.People.IdentityScoring.CredentialEnv = "MSGVAULT_SCORING_API_SWEEP_FIXTURE"
+	cfg.People.IdentityScoring.RetentionDeclaration = "fixture retention"
+	t.Setenv(cfg.People.IdentityScoring.CredentialEnv, "fixture-key")
+	disclosure, err := cfg.People.IdentityScoring.Disclosure()
+	require.NoError(err)
+	_, _, err = st.GrantPersonMatchConsentContext(t.Context(), disclosure, "fixture_operator", nil)
+	require.NoError(err)
+	srv := NewServer(cfg, st, nil, testLogger())
+	worker := personmatchworker.Worker{Store: st, Config: cfg.People.IdentityScoring}
+	for i := range 129 {
+		left, err := st.EnsureParticipantByIdentifier("beeper", fmt.Sprintf("api-sweep-left-%d", i), "Example Left")
+		require.NoError(err)
+		right, err := st.EnsureParticipantByIdentifier("beeper", fmt.Sprintf("api-sweep-right-%d", i), "Example Right")
+		require.NoError(err)
+		_, _, err = st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
+			LeftKind: store.IdentityMatchParticipant, LeftID: left,
+			RightKind: store.IdentityMatchParticipant, RightID: right,
+			Basis: store.IdentityMatchEmail, State: store.IdentityMatchStateCandidate,
+			Source: store.ProvenanceArchiveObservation,
+		})
+		require.NoError(err)
+		// Prepare final scores through the production worker. Repeated HTTP
+		// setup requests would exercise rate limiting rather than scan completion.
+		results, err := worker.Run(t.Context(), 1)
+		require.NoError(err)
+		require.Len(results, 1)
+		require.Equal("local_guard_blocked", results[0].Status)
+	}
+	for _, incomplete := range []bool{true, false} {
+		run := personRequest(t, srv, http.MethodPost, "/api/v1/identity/scoring/run", []byte(`{"limit":1}`), "")
+		require.Equal(http.StatusOK, run.Code)
+		var response PersonMatchScoringResponse
+		require.NoError(json.Unmarshal(run.Body.Bytes(), &response))
+		assert.Zero(response.Processed)
+		assert.Empty(response.Results)
+		if incomplete {
+			require.NotNil(response.Error)
+			assert.Equal("scoring_scan_incomplete", response.Error.Code)
+		} else {
+			assert.Nil(response.Error)
+		}
+	}
 }

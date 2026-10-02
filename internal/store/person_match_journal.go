@@ -315,13 +315,14 @@ func randomJudgmentLeaseToken() (string, error) {
 	return hex.EncodeToString(bytes[:]), nil
 }
 
-// ClaimNextIdentityMatchJudgmentContext walks candidate IDs after the last
-// scanned candidate, examining at most 128 snapshots per call. Reaching the end
-// completes the sweep and resets the cursor for the next sweep. A call starting
-// beyond the last candidate wraps immediately so changed input can be rescored.
-// A capped miss returns ErrIdentityMatchJudgmentScanIncomplete; the next call
-// continues from the durable cursor. Only participant pairs awaiting review
-// are scored. A lease is fenced by a fresh random token and exact fingerprint.
+// ClaimNextIdentityMatchJudgmentContext walks candidate IDs after the durable
+// cursor, examining at most 128 snapshots per call. A suffix miss wraps to zero
+// with the remaining budget. Only a no-claim sweep that started at zero can
+// report completion; its coverage persists across capped calls. Each candidate
+// is observed when visited, so later evidence changes or retry expiry may wait
+// for the next sweep. A capped miss returns ErrIdentityMatchJudgmentScanIncomplete.
+// Only participant pairs awaiting review are scored. A lease is fenced by a
+// fresh random token and exact fingerprint.
 func (s *Store) ClaimNextIdentityMatchJudgmentContext(
 	ctx context.Context, owner string, leaseDuration time.Duration, scoringVersion ...string,
 ) (*IdentityMatchJudgmentLease, error) {
@@ -342,22 +343,24 @@ func (s *Store) ClaimNextIdentityMatchJudgmentContext(
 			return err
 		}
 		var cursor int64
-		err := tx.QueryRowContext(ctx, `SELECT candidate_id FROM person_match_judgment_cursor WHERE singleton = 1`).Scan(&cursor)
+		var startedAtZero bool
+		err := tx.QueryRowContext(ctx, `SELECT candidate_id, started_at_zero
+			FROM person_match_judgment_cursor WHERE singleton = 1`).Scan(&cursor, &startedAtZero)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read identity match judgment cursor: %w", err)
+		}
+		if cursor == 0 {
+			startedAtZero = true
 		}
 		now := time.Now().UTC()
 		scanned := 0
 		lastScanned := cursor
 		scanErr := func() error {
-			for _, bounds := range [][2]int64{{cursor, math.MaxInt64}, {0, cursor}} {
-				if bounds[0] >= bounds[1] {
-					continue
-				}
+			for {
 				rows, err := tx.QueryContext(ctx, `SELECT id FROM identity_match_candidates
 					WHERE state = 'candidate' AND left_kind = 'participant'
-					  AND right_kind = 'participant' AND id > ? AND id <= ?
-					ORDER BY id LIMIT ?`, bounds[0], bounds[1], maxScoringCandidatesPerClaim-scanned+1)
+					  AND right_kind = 'participant' AND id > ?
+					ORDER BY id LIMIT ?`, lastScanned, maxScoringCandidatesPerClaim-scanned+1)
 				if err != nil {
 					return fmt.Errorf("list identity match scoring candidates: %w", err)
 				}
@@ -445,23 +448,31 @@ func (s *Store) ClaimNextIdentityMatchJudgmentContext(
 					if err != nil {
 						return fmt.Errorf("claim identity match judgment: %w", err)
 					}
+					// A successful claim ends no-claim coverage. Earlier candidates
+					// may change before the worker asks for its next lease.
+					startedAtZero = false
 					claimed = &IdentityMatchJudgmentLease{CandidateID: id,
 						Fingerprint: workFingerprint, ScoringVersion: version, Candidate: *candidate, Summaries: summaries,
 						Owner: owner, Token: token, LeaseUntil: until}
 					return nil
 				}
-				if len(ids) > 0 {
-					break // Finish this sweep instead of starting another capped scan.
+				lastScanned = 0
+				if startedAtZero {
+					startedAtZero = false
+					return nil
 				}
+				// Reaching EOF after starting mid-sweep cannot prove completion.
+				// Wrap even if the budget is exhausted: the ID-only lookahead
+				// distinguishes an empty archive from a capped scan.
+				startedAtZero = true
 			}
-			lastScanned = 0
-			return nil
 		}()
 		if scanErr != nil {
 			return scanErr
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO person_match_judgment_cursor (singleton, candidate_id)
-			VALUES (1, ?) ON CONFLICT(singleton) DO UPDATE SET candidate_id = excluded.candidate_id`, lastScanned)
+		_, err = tx.ExecContext(ctx, `INSERT INTO person_match_judgment_cursor (singleton, candidate_id, started_at_zero)
+			VALUES (1, ?, ?) ON CONFLICT(singleton) DO UPDATE SET
+			candidate_id = excluded.candidate_id, started_at_zero = excluded.started_at_zero`, lastScanned, startedAtZero)
 		return err
 	})
 	if err == nil && scanIncomplete {

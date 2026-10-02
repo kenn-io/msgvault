@@ -3453,7 +3453,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_person_match_judgments_final
     WHERE status IN ('scored', 'terminal_error');
 CREATE TABLE IF NOT EXISTS person_match_judgment_cursor (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    candidate_id INTEGER NOT NULL DEFAULT 0
+    candidate_id INTEGER NOT NULL DEFAULT 0,
+    started_at_zero BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- A reviewed acceptance has a second transaction for applying its link.

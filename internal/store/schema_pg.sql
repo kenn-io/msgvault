@@ -3232,7 +3232,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_person_match_judgments_final
     WHERE status IN ('scored', 'terminal_error');
 CREATE TABLE IF NOT EXISTS person_match_judgment_cursor (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    candidate_id BIGINT NOT NULL DEFAULT 0
+    candidate_id BIGINT NOT NULL DEFAULT 0,
+    started_at_zero BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS identity_match_review_decisions (

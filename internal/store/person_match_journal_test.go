@@ -416,3 +416,142 @@ func TestIdentityMatchJudgmentWithdrawalPreservesPriorProviderFailures(t *testin
 	assert.Equal("terminal_error", history[0].Status, "withdrawal must not erase earlier provider failures")
 	assert.Equal("provider_error", history[0].ErrorClass)
 }
+
+// Ending an unclaimable suffix must not hide eligible work below its cursor.
+func TestIdentityMatchJudgmentWrapsBeforeReportingDone(t *testing.T) {
+	for _, count := range []int{3, 258, 260} {
+		for _, eligibility := range []string{"changed_evidence", "expired_backoff", "expired_lease"} {
+			t.Run(fmt.Sprintf("%d/%s", count, eligibility), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				st := storetest.New(t).Store
+				ids := make([]int64, count)
+				for i := range count {
+					ids[i] = createScoringCandidate(t, st, fmt.Sprintf("wrap-%d", i))
+					lease, err := st.ClaimNextIdentityMatchJudgmentContext(t.Context(), "worker", time.Hour)
+					require.NoError(err)
+					require.NotNil(lease)
+					if i == 0 && eligibility == "expired_lease" {
+						continue
+					}
+					input := scoredJudgmentInput()
+					if i == 0 && eligibility == "expired_backoff" {
+						input.Status, input.Probability, input.ErrorClass = "retryable_error", nil, "provider_timeout"
+					}
+					_, err = st.RecordIdentityMatchJudgmentContext(t.Context(), *lease, input)
+					require.NoError(err)
+					if i == 0 && eligibility == "expired_backoff" {
+						// Keep the fence closed until the explicit expiry below,
+						// independently of fixture setup throughput.
+						_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_match_judgment_work SET retry_after_at = ? WHERE candidate_id = ?`), time.Now().Add(time.Hour), ids[0])
+						require.NoError(err)
+					}
+				}
+				middleID := ids[count/2]
+				_, err := st.AddIdentityMatchEvidenceContext(t.Context(), middleID, store.IdentityMatchEvidenceInput{
+					EvidenceKind: "email", Source: store.ProvenanceArchiveObservation,
+				})
+				require.NoError(err)
+				var middle *store.IdentityMatchJudgmentLease
+				for range 4 {
+					middle, err = st.ClaimNextIdentityMatchJudgmentContext(t.Context(), "worker", time.Hour)
+					if err == nil {
+						break
+					}
+					require.ErrorIs(err, store.ErrIdentityMatchJudgmentScanIncomplete)
+				}
+				require.NoError(err)
+				require.NotNil(middle)
+				require.Equal(middleID, middle.CandidateID)
+				_, err = st.RecordIdentityMatchJudgmentContext(t.Context(), *middle, scoredJudgmentInput())
+				require.NoError(err)
+				if eligibility == "changed_evidence" {
+					_, err = st.AddIdentityMatchEvidenceContext(t.Context(), ids[0], store.IdentityMatchEvidenceInput{
+						EvidenceKind: "email", Source: store.ProvenanceArchiveObservation,
+					})
+				} else {
+					column := "retry_after_at"
+					if eligibility == "expired_lease" {
+						column = "lease_until"
+					}
+					_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_match_judgment_work SET `+column+` = ? WHERE candidate_id = ?`), time.Now().Add(-time.Minute), ids[0])
+				}
+				require.NoError(err)
+				var lease *store.IdentityMatchJudgmentLease
+				for range 4 {
+					lease, err = st.ClaimNextIdentityMatchJudgmentContext(t.Context(), "worker", time.Hour)
+					if err == nil {
+						require.NotNil(lease, "a suffix miss must not report completion before wrapping")
+						break
+					}
+					require.ErrorIs(err, store.ErrIdentityMatchJudgmentScanIncomplete)
+				}
+				require.NoError(err)
+				require.NotNil(lease)
+				assert.Equal(ids[0], lease.CandidateID)
+			})
+		}
+	}
+}
+
+func TestIdentityMatchJudgmentFullSweepPersistsAcrossReopen(t *testing.T) {
+	for _, count := range []int{128, 129, 256} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := storetest.New(t).Store
+			var firstID int64
+			for i := range count {
+				id := createScoringCandidate(t, st, fmt.Sprintf("boundary-%d", i))
+				if i == 0 {
+					firstID = id
+				}
+				lease, err := st.ClaimNextIdentityMatchJudgmentContext(t.Context(), "worker", time.Minute)
+				require.NoError(err)
+				require.NotNil(lease)
+				_, err = st.RecordIdentityMatchJudgmentContext(t.Context(), *lease, scoredJudgmentInput())
+				require.NoError(err)
+			}
+			// Opening the real store again must retain both fields at a cap.
+			for sweep := range 2 {
+				lease, err := st.ClaimNextIdentityMatchJudgmentContext(t.Context(), "worker", time.Minute)
+				assert.Nil(lease)
+				if count > 128 {
+					require.ErrorIs(err, store.ErrIdentityMatchJudgmentScanIncomplete)
+					var cursor int64
+					var started bool
+					require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT candidate_id, started_at_zero FROM person_match_judgment_cursor WHERE singleton = 1`).Scan(&cursor, &started))
+					assert.NotZero(cursor)
+					assert.True(started)
+					reopened, openErr := store.Open(store.DBPathForTest(st))
+					require.NoError(openErr)
+					t.Cleanup(func() { _ = reopened.Close() })
+					st = reopened
+					if sweep == 1 {
+						_, err = st.AddIdentityMatchEvidenceContext(t.Context(), firstID, store.IdentityMatchEvidenceInput{
+							EvidenceKind: "email", Source: store.ProvenanceArchiveObservation,
+						})
+						require.NoError(err)
+					}
+					lease, err = st.ClaimNextIdentityMatchJudgmentContext(t.Context(), "worker", time.Minute)
+					assert.Nil(lease)
+				}
+				require.NoError(err, "a full sweep must terminate, even at an exact budget boundary")
+				var cursor int64
+				var started bool
+				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT candidate_id, started_at_zero FROM person_match_judgment_cursor WHERE singleton = 1`).Scan(&cursor, &started))
+				assert.Zero(cursor)
+				assert.False(started)
+			}
+			if count > 128 {
+				lease, err := st.ClaimNextIdentityMatchJudgmentContext(t.Context(), "worker", time.Minute)
+				require.NoError(err)
+				require.NotNil(lease)
+				assert.Equal(firstID, lease.CandidateID, "changes after a visit appear on the following sweep")
+				var started bool
+				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT started_at_zero FROM person_match_judgment_cursor WHERE singleton = 1`).Scan(&started))
+				assert.False(started, "every claim invalidates no-claim sweep coverage")
+			}
+		})
+	}
+}

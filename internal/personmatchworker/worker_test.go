@@ -478,3 +478,66 @@ func TestRunConsentWithdrawalsDoNotExhaustProviderAttempts(t *testing.T) {
 	assert.Equal("scored", results[0].Status)
 	assert.EqualValues(1, requests.Load())
 }
+
+func TestRunReportsIncompleteSweepAndRetainsWrappedResult(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := storetest.New(t).Store
+	cfg := personmatch.Config{Enabled: true, ModelID: personmatch.ModelID,
+		MinimumProbability: 0.80, CredentialEnv: "MSGVAULT_SCORING_SWEEP_FIXTURE",
+		BatchSize: 2, RetentionDeclaration: "fixture retention"}
+	t.Setenv(cfg.CredentialEnv, "fixture-key")
+	disclosure, err := cfg.Disclosure()
+	require.NoError(err)
+	_, _, err = st.GrantPersonMatchConsentContext(t.Context(), disclosure, "fixture_operator", nil)
+	require.NoError(err)
+	worker := Worker{Store: st, Config: cfg}
+	ids := make([]int64, 132)
+	for i := range ids {
+		left, err := st.EnsureParticipantByIdentifier("beeper", fmt.Sprintf("sweep-left-%d", i), "Example Left")
+		require.NoError(err)
+		right, err := st.EnsureParticipantByIdentifier("beeper", fmt.Sprintf("sweep-right-%d", i), "Example Right")
+		require.NoError(err)
+		candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
+			LeftKind: store.IdentityMatchParticipant, LeftID: left,
+			RightKind: store.IdentityMatchParticipant, RightID: right,
+			Basis: store.IdentityMatchEmail, State: store.IdentityMatchStateCandidate,
+			Source: store.ProvenanceArchiveObservation,
+		})
+		require.NoError(err)
+		ids[i] = candidate.ID
+		results, err := worker.Run(t.Context(), 1)
+		require.NoError(err)
+		require.Len(results, 1)
+		assert.Equal(candidate.ID, results[0].CandidateID)
+		assert.Equal("local_guard_blocked", results[0].Status)
+	}
+	// Display names change the scoring snapshot without permitting disclosure.
+	for _, index := range []int{1, 0} {
+		candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), ids[index])
+		require.NoError(err)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET display_name = ? WHERE id = ?`), "Changed Example", candidate.LeftID)
+		require.NoError(err)
+		if index == 1 {
+			results, err := worker.Run(t.Context(), 1)
+			require.NoError(err)
+			require.Len(results, 1)
+			assert.Equal(ids[1], results[0].CandidateID)
+		}
+	}
+	results, err := worker.Run(t.Context(), 2)
+	require.ErrorIs(err, store.ErrIdentityMatchJudgmentScanIncomplete)
+	assert.Empty(results)
+	results, err = worker.Run(t.Context(), 2)
+	require.ErrorIs(err, store.ErrIdentityMatchJudgmentScanIncomplete)
+	require.Len(results, 1, "the completed wrapped result survives the next capped scan")
+	assert.Equal(ids[0], results[0].CandidateID)
+	// The claim cleared coverage, so the next suffix miss starts another
+	// full sweep. That sweep also spans bounded calls.
+	results, err = worker.Run(t.Context(), 2)
+	require.ErrorIs(err, store.ErrIdentityMatchJudgmentScanIncomplete)
+	assert.Empty(results)
+	results, err = worker.Run(t.Context(), 2)
+	require.NoError(err)
+	assert.Empty(results)
+}
