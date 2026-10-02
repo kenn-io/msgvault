@@ -234,14 +234,15 @@ func TestNotionProbeUsersToken(t *testing.T) {
 		{"request timeout", nil, fmt.Errorf("perform Notion request: %w", context.DeadlineExceeded), "Users token: unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
 			users := &fakeNotionUsersProbe{users: tc.users, listErr: tc.err}
 			var out bytes.Buffer
 			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{}, usersErr: notionmeetings.ErrUserInformation}, users)
 			require.NoError(t, err)
-			assert.Contains(t, out.String(), "unless a users token is configured")
-			assert.Contains(t, out.String(), tc.want)
-			assert.NotContains(t, out.String(), "member@example.com")
-			assert.Equal(t, 1, users.listed)
+			assert.Contains(out.String(), "unless a users token is configured")
+			assert.Contains(out.String(), tc.want)
+			assert.NotContains(out.String(), "member@example.com")
+			assert.Equal(1, users.listed)
 		})
 	}
 }
