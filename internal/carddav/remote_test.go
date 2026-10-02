@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -124,9 +125,9 @@ func TestPullStopsFallbackAfterRetryAfter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	requests := 0
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests++
+		requests.Add(1)
 		w.Header().Set("Retry-After", "60")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}))
@@ -135,7 +136,7 @@ func TestPullStopsFallbackAfterRetryAfter(t *testing.T) {
 
 	_, err := service.Sync(t.Context(), SyncOptions{})
 	require.Error(err)
-	assert.Equal(1, requests, "the snapshot fallback must not run after a pause")
+	assert.Equal(int32(1), requests.Load(), "the snapshot fallback must not run after a pause")
 	gate, err := st.GetCardDAVRetryAfterContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	assert.NotNil(gate)
