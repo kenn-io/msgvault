@@ -85,7 +85,7 @@ in a single binary.`,
 
 			// Load config first; logging options live under [log].
 			var err error
-			inv.cfg, err = config.Load(inv.options.cfgFile, inv.options.homeDir)
+			inv.cfg, err = config.LoadWithOverrides(inv.options.cfgFile, inv.options.homeDir, serveRuntimeOverrides(cmd))
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}

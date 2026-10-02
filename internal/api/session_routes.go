@@ -93,7 +93,7 @@ func (s *Server) handleSessionLogin(w http.ResponseWriter, r *http.Request) {
 	if !requireSingleJSONValue(w, decoder, "bad_request") {
 		return
 	}
-	if s.cfg.Server.APIKey == "" || !constantTimeAPIKeyEqual(input.APIKey, s.cfg.Server.APIKey) {
+	if s.cfg.Server.AuthenticationKey() == "" || !constantTimeAPIKeyEqual(input.APIKey, s.cfg.Server.AuthenticationKey()) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid API key")
 		return
 	}

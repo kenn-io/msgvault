@@ -206,7 +206,17 @@ func runExportToken(cmd *cobra.Command, args []string) error {
 
 	// Resolution order: flag > env var > config file
 	remoteURL := resolveParam(exportTokenTo, "MSGVAULT_REMOTE_URL", cfg.Remote.URL)
-	apiKey := resolveParam(exportTokenAPIKey, "MSGVAULT_REMOTE_API_KEY", cfg.Remote.APIKey)
+	apiKey := exportTokenAPIKey
+	persistInlineKey := apiKey != ""
+	if !persistInlineKey {
+		if cmd.Flags().Changed("api-key") {
+			return errors.New("--api-key must not be empty")
+		}
+		if err := cfg.ResolveRemoteKey(); err != nil {
+			return err
+		}
+		apiKey = cfg.Remote.AuthenticationKey()
+	}
 
 	if remoteURL == "" {
 		return errors.New("remote URL required: use --to flag, MSGVAULT_REMOTE_URL env var, or [remote] url in config.toml")
@@ -230,10 +240,12 @@ func runExportToken(cmd *cobra.Command, args []string) error {
 
 	// Save remote config for future use
 	if cfg.Remote.URL != result.remoteURL ||
-		cfg.Remote.APIKey != result.apiKey ||
+		(persistInlineKey && cfg.Remote.APIKey != result.apiKey) ||
 		(result.allowInsecure && !cfg.Remote.AllowInsecure) {
 		cfg.Remote.URL = result.remoteURL
-		cfg.Remote.APIKey = result.apiKey
+		if persistInlineKey {
+			cfg.Remote.APIKey = result.apiKey
+		}
 		if result.allowInsecure {
 			cfg.Remote.AllowInsecure = true
 		}

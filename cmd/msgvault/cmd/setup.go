@@ -69,6 +69,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 2: Optionally configure remote NAS
+	runtimeRemoteURL, remoteURLFromEnvironment := os.LookupEnv("MSGVAULT_REMOTE_URL")
 	remoteURL, remoteAPIKey, err := setupRemoteServer(reader, secretsPath, cfg)
 	if err != nil {
 		return err
@@ -83,7 +84,11 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		cfg.Remote.APIKey = remoteAPIKey
 		// Auto-set for HTTP: target is Tailscale/LAN, not public internet.
 		if strings.HasPrefix(remoteURL, "http://") {
-			cfg.Remote.AllowInsecure = true
+			if remoteURLFromEnvironment && remoteURL == runtimeRemoteURL {
+				cfg.SetRuntimeRemoteAllowInsecure(true)
+			} else {
+				cfg.Remote.AllowInsecure = true
+			}
 		}
 	}
 

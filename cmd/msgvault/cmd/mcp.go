@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/vector/visual"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -61,6 +62,10 @@ Add to Claude Desktop config:
 			return usageErr(cmd, errors.New("delegated MCP supports stdio only"))
 		}
 		cfg := state.cfg
+		httpAddr, inboundKey, err := prepareMCPHTTP(cmd, cfg)
+		if err != nil {
+			return usageErr(cmd, err)
+		}
 		st, info, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("open daemon: %w", err)
@@ -85,25 +90,58 @@ Add to Claude Desktop config:
 		opts.AllowCardDAVWrites = mcpAllowCardDAVWrites
 		opts.AllowCalendarWrites = mcpAllowCalendarWrites
 
-		if mcpHTTPAddr != "" {
-			normalized, err := normalizeMCPHTTPAddr(
-				mcpHTTPAddr,
-				mcpHTTPAllowInsecure,
-				cfg.Server.APIKey != "",
-			)
-			if err != nil {
-				return usageErr(cmd, err)
-			}
+		if httpAddr != "" {
 			return serveMCPHTTPWithOptions(ctx, opts, mcpserver.HTTPOptions{
-				Addr:               normalized,
+				Addr:               httpAddr,
 				DiscoveryDirectory: filepath.Join(cfg.HomeDir, "mcp"),
 				BackendURL:         info.URL,
-				APIKey:             cfg.Server.APIKey,
+				APIKey:             inboundKey,
 				AllowWrites:        mcpHTTPAllowWrites,
 			})
 		}
 		return serveMCPStdioWithOptions(ctx, opts)
 	},
+}
+
+// prepareMCPHTTP validates inbound authentication before opening the backend.
+// Explicit inbound sources leave the daemon's unused server credential alone.
+func prepareMCPHTTP(cmd *cobra.Command, cfg *config.Config) (string, string, error) {
+	fileSet := cmd.Flags().Changed("http-token-file")
+	envSet := cmd.Flags().Changed("http-token-env")
+	if mcpHTTPAddr == "" {
+		if fileSet || envSet || cmd.Flags().Changed("http") {
+			return "", "", errors.New("HTTP token flags require --http with an address")
+		}
+		return "", "", nil
+	}
+	var key string
+	var err error
+	switch {
+	case fileSet:
+		path, _ := cmd.Flags().GetString("http-token-file")
+		if path == "" {
+			return "", "", errors.New("--http-token-file must not be empty")
+		}
+		key, err = providercredentials.ReadSecretFile(path)
+	case envSet:
+		name, _ := cmd.Flags().GetString("http-token-env")
+		if name == "" {
+			return "", "", errors.New("--http-token-env must not be empty")
+		}
+		key, err = providercredentials.ResolveSecret("", "", name)
+	default:
+		if isRemoteModeFor(invocationFromCommand(cmd)) {
+			err = cfg.ResolveServerKey()
+		} else {
+			err = cfg.PrepareServerKey()
+		}
+		key = cfg.Server.AuthenticationKey()
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("MCP inbound credential: %w", err)
+	}
+	address, err := normalizeMCPHTTPAddr(mcpHTTPAddr, mcpHTTPAllowInsecure, key != "")
+	return address, key, err
 }
 
 // savedViewsMinAPISchemaVersion is the first daemon API schema that runs Saved
@@ -361,10 +399,12 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpHTTPAddr, "http", "",
 		"Serve over StreamableHTTP on this address (e.g. 127.0.0.1:8080) "+
 			"instead of stdio. Bare port forms (':8080', '8080') bind to "+
-			"loopback only; non-loopback hosts require [server].api_key or "+
+			"loopback only; non-loopback hosts require an inbound key or "+
 			"--http-allow-insecure.")
+	mcpCmd.Flags().String("http-token-file", "", "Read an independent inbound bearer key from an owner-only file (requires --http)")
+	mcpCmd.Flags().String("http-token-env", "", "Name the environment variable holding an inbound bearer key (requires --http; file takes priority)")
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowInsecure, "http-allow-insecure", false,
-		"Allow --http to bind a non-loopback address without [server].api_key. "+
+		"Allow --http to bind a non-loopback address without an inbound key. "+
 			"Any configured key still requires bearer authentication. Without a "+
 			"key, any reachable client can read your archive; only set this behind "+
 			"a trusted network boundary or authenticating reverse proxy.")
@@ -434,7 +474,7 @@ func normalizeMCPHTTPAddr(addr string, allowInsecure, authenticated bool) (strin
 	if !authenticated && !allowInsecure {
 		return "", fmt.Errorf(
 			"--http %q: refusing to bind a non-loopback address without "+
-				"[server].api_key or --http-allow-insecure (configure an API key "+
+				"an inbound key or --http-allow-insecure (configure an API key "+
 				"for bearer authentication, or only opt into unauthenticated "+
 				"access behind a trusted network boundary)", trimmed)
 	}

@@ -177,6 +177,22 @@ listener serves plain HTTP, so put non-loopback connections behind TLS or an
 encrypted private network to prevent the bearer token and archive data from
 being exposed in transit.
 
+On unreleased `main`, select an independent inbound key without writing a
+config file:
+
+```sh
+msgvault mcp --http 0.0.0.0:8081 --http-token-file /run/secrets/mcp-key
+```
+
+Alternatively, `--http-token-env MCP_INBOUND_KEY` names the environment
+variable holding the key. Both flags require `--http`; file takes priority
+over named environment. An empty, missing, or unreadable selected source
+fails before connecting to the backend. Without either flag, the effective
+`[server]` key remains the inbound credential. File security and remote
+backend environment controls are documented in [Configuration](../configuration.md#server).
+`MSGVAULT_REMOTE_URL`, `MSGVAULT_REMOTE_API_KEY_FILE`, and
+`MSGVAULT_REMOTE_ALLOW_INSECURE` can select a backend without config seeding.
+
 `[server].api_key` authenticates clients connecting to this MCP HTTP listener.
 It is separate from `[remote].api_key`, which authenticates `msgvault mcp` to a
 selected remote msgvault daemon. Stdio transport does not use bearer
@@ -577,7 +593,9 @@ msgvault mcp --http 8080
 |---|---|---|
 | `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/docs/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
-| `--http` | — | Serve over MCP StreamableHTTP instead of stdio. Bare ports bind to `127.0.0.1`; non-loopback addresses require `[server].api_key` or `--http-allow-insecure`. |
+| `--http` | — | Serve over MCP StreamableHTTP instead of stdio. Bare ports bind to `127.0.0.1`; non-loopback addresses require an effective inbound key or `--http-allow-insecure`. |
+| `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; requires `--http`. |
+| `--http-token-env` | — | On unreleased `main`, name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
@@ -585,7 +603,7 @@ msgvault mcp --http 8080
 | `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-carddav-writes` | `false` | Expose CardDAV publication and sync tools. Each write needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`. Treat event text as untrusted input and enable this only for sessions where the user has authorized calendar writes. |
-| `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without `[server].api_key`. A configured key is still enforced. Without a key, use only behind your own network or authentication layer. |
+| `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced. Without a key, use only behind your own network or authentication layer. |
 
 Identity tools include `list_identity_matches`, `get_identity_match`,
 `accept_identity_match`, `reject_identity_match`,

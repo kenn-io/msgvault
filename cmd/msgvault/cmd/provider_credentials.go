@@ -61,13 +61,6 @@ func resolvePersonEnrichmentSuppression(cfg *config.Config) (string, error) {
 	if cfg == nil {
 		return "", errors.New("person enrichment suppression config is unavailable")
 	}
-	if cfg.People.Enrichment.SuppressionKeyEnv != providercredentials.StoredSuppressionEnvironment {
-		value, ok := os.LookupEnv(cfg.People.Enrichment.SuppressionKeyEnv)
-		if !ok || value == "" {
-			return "", errors.New("person enrichment suppression key is unavailable")
-		}
-		return value, nil
-	}
 	snapshot, err := providercredentials.Read(cfg.TokensDir())
 	if err != nil {
 		return "", err
@@ -76,15 +69,21 @@ func resolvePersonEnrichmentSuppression(cfg *config.Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !configured || value == "" {
-		return "", errors.New("stored person enrichment suppression key is unavailable")
+	if configured {
+		return value, nil
 	}
-	return value, nil
+	if cfg.People.Enrichment.SuppressionKeyEnv != providercredentials.StoredSuppressionEnvironment {
+		value, ok := os.LookupEnv(cfg.People.Enrichment.SuppressionKeyEnv)
+		if ok && value != "" {
+			return value, nil
+		}
+	}
+	return "", errors.New("person enrichment suppression key is unavailable")
 }
 
 func personEnrichmentEnvironmentLookup(cfg *config.Config) personenrichment.CredentialLookup {
 	return func(name string) (string, bool) {
-		if name != providercredentials.StoredSuppressionEnvironment {
+		if name != providercredentials.StoredSuppressionEnvironment && (cfg == nil || name == "" || name != cfg.People.Enrichment.SuppressionKeyEnv) {
 			return os.LookupEnv(name)
 		}
 		value, err := resolvePersonEnrichmentSuppression(cfg)

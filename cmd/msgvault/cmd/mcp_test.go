@@ -233,6 +233,29 @@ func TestMCPDelegatedModeRejectsDaemonWithoutCalendarAPI(t *testing.T) {
 	assertions.Equal(int32(2), healthRequests.Load())
 }
 
+func TestMCPDefaultLocalKeyIsPreparedBeforeSecureNonLoopbackBindValidation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	home := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = home
+	cfg.Data.DataDir = home
+	cfg.Server.BindAddr = "0.0.0.0"
+	setMCPTokenTestFlags(t, nil)
+	mcpCmd.SetContext(withTestConfig(t, cfg))
+	mcpHTTPAddr = "0.0.0.0:0"
+
+	address, key, err := prepareMCPHTTP(mcpCmd, cfg)
+	require.NoError(err)
+	assert.Equal("0.0.0.0:0", address)
+	assert.NotEmpty(key)
+
+	reloaded, err := config.Load("", home)
+	require.NoError(err)
+	require.NoError(reloaded.ResolveServerKey())
+	assert.Equal(key, reloaded.Server.AuthenticationKey(), "the default inbound key must reuse the daemon's persisted key")
+}
+
 func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
 	assert := assert.New(t)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {

@@ -90,7 +90,9 @@ Defaults identify a development build.
 
 Image builds run checks against a temporary empty archive: database
 initialization, a DuckDB query, and the embedded Web UI and its JavaScript
-asset. `scripts/smoke-container.sh` repeats these checks in the loaded image
+asset. The runtime smoke also starts from environment variables without a
+config file and verifies that its minted daemon key survives a restart.
+`scripts/smoke-container.sh` repeats these checks in the loaded image
 with networking disabled. These commands build and check local artifacts; they
 do not publish them.
 

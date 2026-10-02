@@ -177,6 +177,7 @@ type serveRuntimeOperationGate interface {
 }
 
 func init() {
+	addServeConfigFlags(serveCmd)
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(daemonCmd)
 	addServeLifecycleCommands(serveCmd)
@@ -189,11 +190,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	cfg := state.cfg
 	logger := state.logger
-	// Validate security posture before doing any work
-	if err := cfg.Server.ValidateSecure(); err != nil {
+	// Resolve interface and credentials before reserving a listener.
+	if err := prepareServeConfig(cfg); err != nil {
 		return err
 	}
-	if cfg.Server.APIKey != "" && len(cfg.Server.APIKey) < 16 {
+	if !cfg.Server.HasCredentialSource() && !cfg.Server.AllowInsecure && cfg.Server.AuthenticationKey() != "" {
+		logger.Info("Server API credential is persisted", "path", cfg.ServerKeyFilePath())
+	}
+	if cfg.Server.AuthenticationKey() != "" && len(cfg.Server.AuthenticationKey()) < 16 {
 		logger.Warn("api_key is very short — use a randomly generated key of at least 32 characters")
 	}
 
@@ -218,6 +222,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	logger.Info("Server listener bound", "address", apiListener.Addr().String(), "bind_source", serveBindSource(cmd, cfg))
 	listenerReserved := true
 	defer func() {
 		if listenerReserved {
@@ -1062,6 +1067,11 @@ func applyServerRuntimeConfig(options *api.ServerOptions, cfg *config.Config) {
 }
 
 func listenServeAPI(bindAddr string, port int) (net.Listener, error) {
+	resolved, err := resolveServeBind(bindAddr)
+	if err != nil {
+		return nil, err
+	}
+	bindAddr = resolved
 	if bindAddr == "" {
 		bindAddr = defaultDaemonBindAddr
 	}

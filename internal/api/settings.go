@@ -217,7 +217,7 @@ var settingsCatalog = []settingDefinition{
 	liveStringSetting("web.density", "browser", []string{"compact", "comfortable"}, func(c *config.Config) string { return c.Web.Density }),
 	readOnlyStringSetting("server.bind_addr", "server", func(c *config.Config) string { return c.Server.BindAddr }),
 	readOnlyIntSetting("server.api_port", "server", func(c *config.Config) int { return c.Server.APIPort }),
-	readOnlySecretSetting("server.api_key", "server", func(c *config.Config) string { return c.Server.APIKey }),
+	readOnlySecretSetting("server.api_key", "server", func(c *config.Config) string { return c.Server.AuthenticationKey() }),
 	readOnlyBoolSetting("server.allow_insecure", "server", func(c *config.Config) bool { return c.Server.AllowInsecure }),
 	readOnlyStringArraySetting("server.trusted_proxies", "server", func(c *config.Config) []string { return c.Server.TrustedProxies }),
 	stringSetting("server.daemon_idle_timeout", "server", nil, func(c *config.Config) string { return c.Server.DaemonIdleTimeout.String() }),
@@ -617,8 +617,12 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	if restartRequired {
 		s.settingsPendingRestart.Store(true)
 	}
-	loaded, err := config.LoadConfigFile(snapshot, "")
+	loaded, err := config.LoadConfigFileWithOverrides(snapshot, s.cfg.HomeDir, config.RuntimeOverrides{})
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, "settings_read_failed", "Could not read settings")
+		return
+	}
+	if err := loaded.ResolveServerKey(); err != nil {
 		writeError(w, http.StatusInternalServerError, "settings_read_failed", "Could not read settings")
 		return
 	}
@@ -702,11 +706,11 @@ func (s *Server) readPersistedSettings() (config.ConfigFile, *config.Config, err
 	if err != nil {
 		return config.ConfigFile{}, nil, err
 	}
-	if !snapshot.Exists {
-		return snapshot, config.NewDefaultConfig(), nil
-	}
-	loaded, err := config.LoadConfigFile(snapshot, "")
+	loaded, err := config.LoadConfigFileWithOverrides(snapshot, s.cfg.HomeDir, config.RuntimeOverrides{})
 	if err != nil {
+		return config.ConfigFile{}, nil, err
+	}
+	if err := loaded.ResolveServerKey(); err != nil {
 		return config.ConfigFile{}, nil, err
 	}
 	return snapshot, loaded, nil

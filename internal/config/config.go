@@ -119,11 +119,13 @@ type IntegrationsConfig struct {
 }
 
 // DocbankIntegrationConfig configures the optional stored-media destination.
-// The API key stays in the daemon environment and is read when a request runs.
+// The selected API key source is read when a request runs.
 type DocbankIntegrationConfig struct {
 	Enabled                 bool   `toml:"enabled"`
 	URL                     string `toml:"url"`
 	APIKeyEnv               string `toml:"api_key_env"`
+	APIKey                  string `toml:"api_key"`
+	APIKeyFile              string `toml:"api_key_file"`
 	AllSourcesUploadConsent bool   `toml:"all_sources_upload_consent"`
 	ASRProfile              string `toml:"asr_profile"`
 }
@@ -216,11 +218,13 @@ func (a *AnalyticsConfig) Validate() error {
 
 // ServerConfig holds HTTP API server configuration.
 type ServerConfig struct {
-	APIPort           int           `toml:"api_port"`            // HTTP server port; 0 (the default) auto-selects an open port at daemon startup and clients discover it via the daemon runtime record. Set api_port explicitly for a stable port (e.g. remote/NAS deployments).
-	BindAddr          string        `toml:"bind_addr"`           // Bind address (default: 127.0.0.1)
-	APIKey            string        `toml:"api_key"`             // API authentication key
+	APIPort           int           `toml:"api_port"`  // HTTP server port; 0 (the default) auto-selects an open port at daemon startup and clients discover it via the daemon runtime record. Set api_port explicitly for a stable port (e.g. remote/NAS deployments).
+	BindAddr          string        `toml:"bind_addr"` // Bind address (default: 127.0.0.1)
+	APIKey            string        `toml:"api_key"`   // API authentication key
+	APIKeyFile        string        `toml:"api_key_file"`
+	APIKeyEnv         string        `toml:"api_key_env"`
 	AllowInsecure     bool          `toml:"allow_insecure"`      // Allow unauthenticated non-loopback access
-	AgentAccess       bool          `toml:"agent_access"`        // Enable restricted agent grant tokens (requires api_key)
+	AgentAccess       bool          `toml:"agent_access"`        // Enable restricted agent grant tokens (requires an effective API key)
 	CORSOrigins       []string      `toml:"cors_origins"`        // Allowed CORS origins (empty = disabled)
 	CORSCredentials   bool          `toml:"cors_credentials"`    // Allow credentials in CORS
 	CORSMaxAge        int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
@@ -228,6 +232,9 @@ type ServerConfig struct {
 	DaemonIdleTimeout time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
 	DaemonAutoRestart string        `toml:"daemon_auto_restart"` // never, newer, or always
 	DaemonAutoStart   *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
+
+	credential     runtimeCredential
+	defaultKeyFile string
 }
 
 func (s *ServerConfig) ApplyDefaults() {
@@ -248,7 +255,7 @@ func (s *ServerConfig) Validate() error {
 	if s.APIPort < 0 || s.APIPort > 65535 {
 		return fmt.Errorf("invalid [server] api_port %d: must be between 0 and 65535 (0 auto-selects an open port)", s.APIPort)
 	}
-	if s.AgentAccess && s.APIKey == "" {
+	if s.AgentAccess && !s.HasCredentialSource() && environmentSecret("MSGVAULT_API_KEY") == nil && s.AuthenticationKey() == "" && !s.hasPersistedKey() && (s.IsLoopback() || s.AllowInsecure) {
 		return errors.New("invalid [server] agent_access: requires api_key to be set")
 	}
 	switch s.DaemonAutoRestart {
@@ -288,7 +295,7 @@ func (s *ServerConfig) IsLoopback() bool {
 // ValidateSecure returns an error if the server is configured insecurely
 // without an explicit opt-in via allow_insecure.
 func (s *ServerConfig) ValidateSecure() error {
-	if !s.IsLoopback() && s.APIKey == "" && !s.AllowInsecure {
+	if !s.IsLoopback() && s.AuthenticationKey() == "" && !s.AllowInsecure {
 		return fmt.Errorf("refusing to start: bind address %q is not loopback and no api_key is set\n\n"+
 			"Set [server] api_key in config.toml, or set allow_insecure = true to override", s.BindAddr)
 	}
@@ -362,11 +369,14 @@ type SynctechSMSSource struct {
 }
 
 // RemoteConfig holds configuration for a remote msgvault server.
-// Used by export-token to remember the NAS/server destination.
+// Remote-capable commands use this destination unless --local is selected.
 type RemoteConfig struct {
-	URL           string `toml:"url"`            // Remote server URL (e.g., http://nas:8080)
-	APIKey        string `toml:"api_key"`        // API key for authentication
-	AllowInsecure bool   `toml:"allow_insecure"` // Allow HTTP (insecure) for trusted networks
+	URL           string `toml:"url"`     // Remote server URL (e.g., http://nas:8080)
+	APIKey        string `toml:"api_key"` // API key for authentication
+	APIKeyFile    string `toml:"api_key_file"`
+	APIKeyEnv     string `toml:"api_key_env"`
+	credential    runtimeCredential
+	AllowInsecure bool `toml:"allow_insecure"` // Allow HTTP (insecure) for trusted networks
 }
 
 // IdentityConfig holds the user's curated identity addresses.
@@ -523,8 +533,10 @@ type Config struct {
 	Gmail              GmailConfig                     `toml:"gmail"`
 
 	// Computed paths (not from config file)
-	HomeDir    string `toml:"-"`
-	configPath string // resolved path to the loaded config file
+	HomeDir                  string `toml:"-"`
+	manageHomeDirPermissions bool   `toml:"-"`
+	configPath               string // resolved path to the loaded config file
+	runtimeConfigState       runtimeConfigState
 }
 
 // IMAPConfig contains operator-owned settings for IMAP mutations.
@@ -780,11 +792,16 @@ func DefaultHome() string {
 	return filepath.Join(home, ".msgvault")
 }
 
+func isDefaultHomeDir(path string) bool {
+	return path != "" && filepath.Clean(path) == filepath.Clean(DefaultHome())
+}
+
 // NewDefaultConfig returns a configuration with default values.
 func NewDefaultConfig() *Config {
 	homeDir := DefaultHome()
 	cfg := &Config{
-		HomeDir: homeDir,
+		HomeDir:                  homeDir,
+		manageHomeDirPermissions: true,
 		Data: DataConfig{
 			DataDir: homeDir,
 		},
@@ -832,6 +849,7 @@ func NewDefaultConfig() *Config {
 	}
 	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()
+	cfg.resolveCredentialPaths()
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
 	cfg.Web.ApplyDefaults()
@@ -851,7 +869,7 @@ func NewDefaultConfig() *Config {
 //
 // homeDir overrides the home directory (equivalent to MSGVAULT_HOME).
 // When set, config.toml is loaded from homeDir unless path is also set.
-func Load(path, homeDir string) (*Config, error) {
+func loadWithOverrides(path, homeDir string, overrides RuntimeOverrides) (*Config, error) {
 	explicit := path != ""
 
 	cfg := NewDefaultConfig()
@@ -875,23 +893,41 @@ func Load(path, homeDir string) (*Config, error) {
 		if explicit {
 			return nil, fmt.Errorf("config file not found: %s", path)
 		}
-		// Default config file is optional
+		// Default config file is optional; runtime controls still apply.
+		cfg.resolveCredentialPaths()
+		if err := cfg.applyRuntimeOverrides(overrides); err != nil {
+			return nil, err
+		}
+		if err := cfg.Server.Validate(); err != nil {
+			return nil, err
+		}
 		return cfg, nil
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	return decodeConfig(cfg, path, explicit, homeDir != "", content)
+	return decodeConfig(cfg, path, explicit, homeDir != "", content, &overrides)
 }
 
 // LoadConfigFile decodes the exact bytes captured by ReadConfigFile. Relative
 // paths resolve against the operator-specified logical path, matching daemon
 // startup even when that path is a symlink to a target in another directory.
 func LoadConfigFile(snapshot ConfigFile, homeDir string) (*Config, error) {
-	if !snapshot.Exists {
-		return NewDefaultConfig(), nil
-	}
+	return loadConfigFile(snapshot, homeDir, nil)
+}
+
+// LoadConfigFileWithOverrides decodes the captured TOML bytes and applies
+// runtime environment and explicit overrides before validating the result.
+func LoadConfigFileWithOverrides(
+	snapshot ConfigFile,
+	homeDir string,
+	overrides RuntimeOverrides,
+) (*Config, error) {
+	return loadConfigFile(snapshot, homeDir, &overrides)
+}
+
+func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverrides) (*Config, error) {
 	cfg := NewDefaultConfig()
 	if homeDir != "" {
 		homeDir = expandPath(homeDir)
@@ -902,10 +938,28 @@ func LoadConfigFile(snapshot ConfigFile, homeDir string) (*Config, error) {
 	if decodePath == "" {
 		decodePath = snapshot.Path
 	}
-	return decodeConfig(cfg, decodePath, true, homeDir != "", snapshot.Content)
+	if !snapshot.Exists {
+		if homeDir == "" && decodePath != "" {
+			cfg.HomeDir = filepath.Dir(decodePath)
+			cfg.Data.DataDir = cfg.HomeDir
+		}
+		cfg.manageHomeDirPermissions = homeDir != "" || isDefaultHomeDir(cfg.HomeDir)
+		cfg.configPath = decodePath
+		cfg.resolveCredentialPaths()
+		if overrides != nil {
+			if err := cfg.applyRuntimeOverrides(*overrides); err != nil {
+				return nil, err
+			}
+			if err := cfg.Server.Validate(); err != nil {
+				return nil, err
+			}
+		}
+		return cfg, nil
+	}
+	return decodeConfig(cfg, decodePath, true, homeDir != "", snapshot.Content, overrides)
 }
 
-func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content []byte) (*Config, error) {
+func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content []byte, overrides *RuntimeOverrides) (*Config, error) {
 	cfg.configPath = path
 
 	// When --config points to a custom location without --home,
@@ -916,6 +970,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.HomeDir = filepath.Dir(path)
 		cfg.Data.DataDir = cfg.HomeDir
 	}
+	cfg.manageHomeDirPermissions = homeOverride || isDefaultHomeDir(cfg.HomeDir)
 
 	// Multimodal defaults depend on the decoded credential destination. Reset
 	// the pre-filled section so changing endpoint cannot silently carry the
@@ -1026,6 +1081,12 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if cfg.Vector.AnyLaneEnabled() {
 		if err := cfg.Vector.Validate(); err != nil {
 			return nil, fmt.Errorf("vector config: %w", err)
+		}
+	}
+	cfg.resolveCredentialPaths()
+	if overrides != nil {
+		if err := cfg.applyRuntimeOverrides(*overrides); err != nil {
+			return nil, err
 		}
 	}
 	cfg.Server.ApplyDefaults()
@@ -1363,7 +1424,18 @@ func (c *Config) LogsDir() string {
 
 // EnsureHomeDir creates the msgvault home directory if it doesn't exist.
 func (c *Config) EnsureHomeDir() error {
-	return fileutil.SecureMkdirAll(c.HomeDir, 0700)
+	if err := fileutil.SecureMkdirAll(c.HomeDir, 0700); err != nil {
+		return err
+	}
+	if !c.manageHomeDirPermissions {
+		return nil
+	}
+	info, err := os.Stat(c.HomeDir)
+	if err != nil {
+		return err
+	}
+	// Remove access for other users without making a read-only home writable.
+	return fileutil.SecureChmod(c.HomeDir, info.Mode().Perm()&0o700)
 }
 
 // ConfigFilePath returns the path to the config file.
@@ -1422,7 +1494,9 @@ func (c *Config) saveWithHooks(hooks configSaveHooks) error {
 		return fmt.Errorf("set config file permissions: %w", err)
 	}
 
-	if err := toml.NewEncoder(tmp).Encode(c); err != nil {
+	persisted := *c
+	c.runtimeConfigState.restore(&persisted)
+	if err := toml.NewEncoder(tmp).Encode(&persisted); err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
 

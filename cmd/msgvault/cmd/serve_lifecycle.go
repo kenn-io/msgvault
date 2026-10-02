@@ -77,7 +77,7 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 			if state == nil || state.cfg == nil {
 				return errors.New("configuration is unavailable")
 			}
-			return runServeStatusWithAPIKey(cmd, state.cfg.Data.DataDir, state.cfg.Server.APIKey)
+			return runServeStatusWithAPIKey(cmd, state.cfg.Data.DataDir, bestEffortLifecycleAPIKey(state.cfg))
 		}
 	case "stop":
 		cmd.Short = "Stop msgvault daemon"
@@ -86,7 +86,7 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 			if state == nil || state.cfg == nil {
 				return errors.New("configuration is unavailable")
 			}
-			return runServeStopWithAPIKey(cmd, state.cfg.Data.DataDir, state.cfg.Server.APIKey)
+			return runServeStopWithAPIKey(cmd, state.cfg.Data.DataDir, bestEffortLifecycleAPIKey(state.cfg))
 		}
 	case "restart":
 		cmd.Short = "Restart msgvault daemon in the background"
@@ -101,6 +101,15 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 		panic("unknown daemon lifecycle command: " + name)
 	}
 	return cmd
+}
+
+// bestEffortLifecycleAPIKey lets status omit authenticated health details and
+// stop use runtime shutdown credentials when the configured key is unavailable.
+func bestEffortLifecycleAPIKey(cfg *config.Config) string {
+	if err := cfg.ResolveServerKey(); err != nil {
+		return ""
+	}
+	return cfg.Server.AuthenticationKey()
 }
 
 func addServeLifecycleCommands(parent *cobra.Command) {
@@ -274,6 +283,12 @@ func prepareBackgroundDaemonStart(
 	incompatibleGuidance string,
 	logger *slog.Logger,
 ) (backgroundDaemonStartPreparation, error) {
+	if _, err := resolveServeBind(c.Server.BindAddr); err != nil {
+		return backgroundDaemonStartPreparation{}, err
+	}
+	if err := c.ResolveServerKey(); err != nil {
+		return backgroundDaemonStartPreparation{}, err
+	}
 	if rt := findDaemonRuntime(c.Data.DataDir); rt != nil {
 		if !shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, restartPolicy) {
 			return backgroundDaemonStartPreparation{Reusable: rt}, nil
@@ -414,7 +429,13 @@ func runServeRestart(cmd *cobra.Command, c *config.Config) error {
 	if c == nil {
 		return errors.New("nil config")
 	}
-	if err := stopLiveDaemonsWithAPIKey(cmd, c.Data.DataDir, c.Server.APIKey, true); err != nil {
+	if _, err := resolveServeBind(c.Server.BindAddr); err != nil {
+		return err
+	}
+	if err := c.ResolveServerKey(); err != nil {
+		return err
+	}
+	if err := stopLiveDaemonsWithAPIKey(cmd, c.Data.DataDir, c.Server.AuthenticationKey(), true); err != nil {
 		return err
 	}
 	return runServeStart(cmd, c)
@@ -464,7 +485,7 @@ func stopDaemonRuntimeForUpgradeImpl(c config.Config, rt *DaemonRuntime, logger 
 		return nil
 	}
 	if err := stopDaemonRuntimeRecord(os.Stdout, c.Data.DataDir, rt.Record,
-		c.Server.APIKey, serveStopGraceTimeout, logger); err != nil {
+		c.Server.AuthenticationKey(), serveStopGraceTimeout, logger); err != nil {
 		return fmt.Errorf("stop pid %d: %w", rt.Record.PID, err)
 	}
 	return nil
