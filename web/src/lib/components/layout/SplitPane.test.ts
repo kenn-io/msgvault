@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import SplitPane from './SplitPane.svelte';
+import { splitHandleSize } from './split-handle';
 
 const observers = new Map<Element, ResizeObserverCallback>();
 
@@ -98,17 +99,21 @@ describe('SplitPane', () => {
     const host = container.querySelector('[data-split-pane]')!;
     const primary = container.querySelector('[data-pane="primary"]') as HTMLElement;
 
+    // The primary pane may take whatever the 320px secondary minimum and the
+    // kit handle leave over.
+    const wideMaximum = 700 - 320 - splitHandleSize;
     reportWidth(host, 700);
-    await waitFor(() => expect(primary.style.flexBasis).toBe('376px'));
+    await waitFor(() => expect(primary.style.flexBasis).toBe(`${wideMaximum}px`));
 
     await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize result list' }), {
       key: 'ArrowRight'
     });
-    expect(primary.style.flexBasis).toBe('376px');
+    expect(primary.style.flexBasis).toBe(`${wideMaximum}px`);
 
+    const narrowMaximum = 500 - 320 - splitHandleSize;
     reportWidth(host, 500);
-    await waitFor(() => expect(primary.style.flexBasis).toBe('176px'));
-    expect(localStorage.getItem('archive:test-split')).toBe('176');
+    await waitFor(() => expect(primary.style.flexBasis).toBe(`${narrowMaximum}px`));
+    expect(localStorage.getItem('archive:test-split')).toBe(String(narrowMaximum));
   });
 
   it('caps a horizontal primary pane at maxPrimary even when more width is available', async () => {
@@ -312,8 +317,8 @@ describe('SplitPane', () => {
     for (let step = 0; step < 30; step += 1) {
       await fireEvent.keyDown(handle, { key: 'ArrowUp' });
     }
-    // 800 - 120 (list minimum) - 4 (Kit handle) = 676.
-    expect(secondary.style.flexBasis).toBe('676px');
+    // 800 minus the 120px list minimum and the kit handle.
+    expect(secondary.style.flexBasis).toBe(`${800 - 120 - splitHandleSize}px`);
 
     for (let step = 0; step < 30; step += 1) {
       await fireEvent.keyDown(handle, { key: 'ArrowDown' });
