@@ -263,7 +263,7 @@ const duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identi
 		       COALESCE(m.subject, ''), m.sent_at, m.archived_at,
 		       COALESCE(m.rfc822_message_id, ''), COALESCE(CAST(m.metadata AS TEXT), ''),
 		       CASE WHEN m.reply_to_message_id IS NOT NULL THEN 1 ELSE 0 END AS has_reply_parent,
-		       CASE WHEN s.source_type = 'google-groups' THEN
+		       CASE WHEN s.source_type IN ('gmail', 'google-groups') THEN
 		           COALESCE((SELECT c.source_conversation_id FROM conversations c
 		               WHERE c.id = m.conversation_id AND c.source_id = m.source_id), '')
 		           ELSE '' END AS provider_thread_key,
@@ -555,7 +555,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		       COALESCE(m.subject, ''), m.sent_at, m.archived_at,
 		       COALESCE(m.rfc822_message_id, ''), COALESCE(CAST(m.metadata AS TEXT), ''),
 		       CASE WHEN m.reply_to_message_id IS NOT NULL THEN 1 ELSE 0 END AS has_reply_parent,
-		       CASE WHEN s.source_type = 'google-groups' THEN
+		       CASE WHEN s.source_type IN ('gmail', 'google-groups') THEN
 		           COALESCE((SELECT c.source_conversation_id FROM conversations c
 		               WHERE c.id = m.conversation_id AND c.source_id = m.source_id), '')
 		           ELSE '' END AS provider_thread_key,

@@ -56,17 +56,17 @@ func TestSyncRefreshesOAuthEvidence(t *testing.T) {
 func TestProfileIdentityAccountBoundaries(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, kind, account, profile    string
-		confirmed, wantError, wantOAuth bool
+		name, kind, account, profile string
+		confirmed, wantOAuth         bool
 	}{
-		{"primary", "gmail", "owner@example.test", "owner@example.test", true, false, true},
-		{"case", "gmail", "OWNER@example.test", "owner@example.test", true, false, true},
-		{"Workspace is exact", "gmail", "alias@example.test", "owner@example.test", true, true, false},
-		{"unconfirmed stays unconfirmed", "gmail", "owner@example.test", "owner@example.test", false, false, false},
-		{"IMAP config is not OAuth", "imap", "owner@example.test", "owner@example.test", true, false, false},
-		{"empty profile", "gmail", "owner@example.test", "", true, true, false},
-		{"display name profile", "gmail", "owner@example.test", "Owner <owner@example.test>", true, true, false},
-		{"invalid profile", "gmail", "owner@example.test", "invalid", true, true, false},
+		{"primary", "gmail", "owner@example.test", "owner@example.test", true, true},
+		{"case", "gmail", "OWNER@example.test", "owner@example.test", true, true},
+		{"Workspace is exact", "gmail", "alias@example.test", "owner@example.test", true, false},
+		{"unconfirmed stays unconfirmed", "gmail", "owner@example.test", "owner@example.test", false, false},
+		{"IMAP config is not OAuth", "imap", "owner@example.test", "owner@example.test", true, false},
+		{"empty profile", "gmail", "owner@example.test", "", true, false},
+		{"display name profile", "gmail", "owner@example.test", "Owner <owner@example.test>", true, false},
+		{"invalid profile", "gmail", "owner@example.test", "invalid", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -79,11 +79,7 @@ func TestProfileIdentityAccountBoundaries(t *testing.T) {
 				require.NoError(env.Store.AddAccountIdentity(source.ID, tc.account, "manual"))
 			}
 			err = env.Syncer.refreshProfileIdentity(t.Context(), source, &gmail.Profile{EmailAddress: tc.profile})
-			if tc.wantError {
-				require.Error(err)
-			} else {
-				require.NoError(err)
-			}
+			require.NoError(err)
 			identities, err := env.Store.ListAccountIdentities(source.ID)
 			require.NoError(err)
 			if !tc.confirmed {
@@ -111,6 +107,42 @@ func TestProfileIdentityMissingProfile(t *testing.T) {
 	identities, err := env.Store.ListAccountIdentities(source.ID)
 	require.NoError(err)
 	assert.Empty(t, identities)
+}
+
+func TestSyncContinuesAfterProfileAddressChange(t *testing.T) {
+	t.Parallel()
+	for _, incremental := range []bool{false, true} {
+		t.Run(map[bool]string{false: "full", true: "incremental"}[incremental], func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			assert := assert.New(t)
+			env := newTestEnv(t)
+			source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+			require.NoError(err)
+			if incremental {
+				runFullSync(t, env)
+			}
+			require.NoError(env.Store.AddAccountIdentity(source.ID, testEmail, "manual"))
+			seedMessages(env, 1, 2000, "after-rename")
+			env.Mock.Profile.EmailAddress = "renamed@example.com"
+			if incremental {
+				env.SetHistory(2000, gmail.HistoryRecord{
+					ID:            2000,
+					MessagesAdded: []gmail.HistoryMessage{{Message: gmail.MessageID{ID: "after-rename"}}},
+				})
+				runIncrementalSync(t, env)
+			} else {
+				runFullSync(t, env)
+			}
+			ids, err := env.Store.MessageExistsBatch(source.ID, []string{"after-rename"})
+			require.NoError(err)
+			assert.NotZero(ids["after-rename"])
+			identities, err := env.Store.ListAccountIdentities(source.ID)
+			require.NoError(err)
+			require.Len(identities, 1)
+			assert.Equal("manual", identities[0].SourceSignal)
+		})
+	}
 }
 
 func TestProfileIdentityWriteFailureRetriesOnNoopSync(t *testing.T) {

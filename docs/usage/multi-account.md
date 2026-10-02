@@ -190,7 +190,9 @@ evidence to confirmed identities.
 Gmail sync adds `oauth` when the authenticated profile matches an
 already-confirmed address, including Gmail's equivalent address spellings.
 These refreshes preserve identity removal and `--no-default-identity`; they do
-not confirm new addresses. Use the [identity discovery workflow](people.md)
+not confirm new addresses. If the profile address differs from the source
+address, sync logs a warning and continues without adding identity evidence.
+Use the [identity discovery workflow](people.md)
 to review and confirm new identities, including authenticated Gmail profile
 evidence with `--provider`.
 

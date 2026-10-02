@@ -91,12 +91,10 @@ type MessageDeliveryEvidence struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
-	Message      *Message
-	Conversation *ConversationPersistData
-	Delivery     *MessageDeliveryEvidence
-	Metadata     *sql.NullString
-	// MergeMetadata preserves existing object keys omitted by this snapshot.
-	MergeMetadata             bool
+	Message                   *Message
+	Conversation              *ConversationPersistData
+	Delivery                  *MessageDeliveryEvidence
+	Metadata                  *sql.NullString
 	BodyText                  sql.NullString
 	BodyHTML                  sql.NullString
 	RawMIME                   []byte
@@ -2127,11 +2125,7 @@ func (s *Store) persistMessageWith(
 		}
 	}
 	if data.Metadata != nil {
-		writeMetadata := setMessageMetadataWith
-		if data.MergeMetadata {
-			writeMetadata = mergeMessageMetadataWith
-		}
-		if err := writeMetadata(q, s.dialect, messageID, *data.Metadata); err != nil {
+		if err := setMessageMetadataWith(q, s.dialect, messageID, *data.Metadata); err != nil {
 			return 0, fmt.Errorf("set metadata: %w", err)
 		}
 	}

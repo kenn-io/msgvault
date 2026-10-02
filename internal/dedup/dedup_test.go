@@ -1084,6 +1084,28 @@ func TestEngine_SurvivorTiebreakerMoreLabels(t *testing.T) {
 	assert.Equal(t, idMany, survivor.ID, "survivor (more labels)")
 }
 
+func TestEngine_HistoricalGmailThreadKeepsLabelTiebreaker(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	f := storetest.New(t)
+	older := addMessage(t, f.Store, f.Source, "older", "same@example.test", false)
+	newer := addMessage(t, f.Store, f.Source, "newer", "same@example.test", false)
+	// Both copies have provider conversation IDs. Only the newer sync wrote
+	// the redundant metadata marker introduced with metadata scoring.
+	require.NoError(f.Store.SetMessageMetadata(newer,
+		sql.NullString{String: `{"gmail_thread_id":"thread-newer"}`, Valid: true}))
+	linkLabel(t, f.Store, f.Source.ID, newer, "one", "One", "user")
+	for _, label := range []string{"one", "two", "three", "four", "five"} {
+		linkLabel(t, f.Store, f.Source.ID, older, label, label, "user")
+	}
+	engine := dedup.NewEngine(f.Store, dedup.Config{AccountSourceIDs: []int64{f.Source.ID}}, nil)
+	report, err := engine.Scan(t.Context())
+	require.NoError(err)
+	require.Len(report.Groups, 1)
+	group := report.Groups[0]
+	assert.Equal(t, older, group.Messages[group.Survivor].ID)
+}
+
 func TestEngine_SurvivorTiebreakerLowerID(t *testing.T) {
 	f := storetest.New(t)
 	st := f.Store
@@ -1703,6 +1725,12 @@ func TestEngine_MetadataQualityBeforeLabels(t *testing.T) {
 			f := storetest.New(t)
 			older := addMessage(t, f.Store, f.Source, "older", "quality@example.test", false)
 			richer := addMessage(t, f.Store, f.Source, "richer", "quality@example.test", false)
+			// The older copy has only a fallback conversation key; the richer
+			// copy preserves a provider thread and an archived reply header.
+			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE conversations
+				SET source_conversation_id = 'older'
+				WHERE id = (SELECT conversation_id FROM messages WHERE id = ?)`), older)
+			require.NoError(err)
 			linkLabel(t, f.Store, f.Source.ID, older, "extra", "Extra", "user")
 			require.NoError(f.Store.RecordEmailHeadersContext(t.Context(), f.Source.ID, richer, "", "parent@example.test"))
 			if contentHash {

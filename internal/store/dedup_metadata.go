@@ -7,8 +7,8 @@ import (
 )
 
 // duplicateMetadataEvidence scores independent archived facts. Generic
-// conversation keys are omitted; Groups' scoped provider-thread marker is real
-// evidence preserved by the export importer.
+// fallback conversation keys are omitted. Provider conversation IDs apply to
+// historical copies too, without relying on metadata written by a later sync.
 type duplicateMetadataEvidence struct {
 	rfc822ID          string
 	metadata          string
@@ -17,22 +17,20 @@ type duplicateMetadataEvidence struct {
 }
 
 func (e duplicateMetadataEvidence) quality(sourceType, sourceMessageID string) int {
+	sourceMessageID = strings.TrimSpace(sourceMessageID)
 	quality := 0
-	if (sourceType == "gmail" || sourceType == "imap" || sourceType == "msmail") && strings.TrimSpace(sourceMessageID) != "" {
+	if (sourceType == "gmail" || sourceType == "imap" || sourceType == "msmail") && sourceMessageID != "" {
 		quality++
 	}
 	if strings.TrimSpace(e.rfc822ID) != "" {
 		quality++
 	}
-	var fields map[string]any
-	// Damaged historical metadata must not prevent deduplication. Other stored
-	// facts still count when the metadata object is unreadable.
-	if err := json.Unmarshal([]byte(e.metadata), &fields); err != nil {
-		fields = nil
-	}
-	if e.hasReplyParent || nonemptyMetadataString(fields, emailReplyMetadataKey) ||
-		(sourceType == "gmail" && nonemptyMetadataString(fields, "gmail_thread_id")) ||
-		(sourceType == "google-groups" && isGoogleGroupsProviderThread(e.providerThreadKey)) {
+	threadKey := strings.TrimSpace(e.providerThreadKey)
+	if e.hasReplyParent ||
+		(sourceType == "gmail" && threadKey != "" && sourceMessageID != "" &&
+			threadKey != sourceMessageID) ||
+		(sourceType == "google-groups" && isGoogleGroupsProviderThread(threadKey)) ||
+		hasArchivedReplyHeader(e.metadata) {
 		quality++
 	}
 	return quality
@@ -47,7 +45,11 @@ func isGoogleGroupsProviderThread(key string) bool {
 	return err == nil
 }
 
-func nonemptyMetadataString(fields map[string]any, key string) bool {
-	value, ok := fields[key].(string)
-	return ok && strings.TrimSpace(value) != ""
+func hasArchivedReplyHeader(metadata string) bool {
+	var fields struct {
+		ReplyTo string `json:"email_in_reply_to"`
+	}
+	// Ignore unrelated values and damaged historical metadata. Other stored
+	// facts still count when the metadata object is unreadable.
+	return json.Unmarshal([]byte(metadata), &fields) == nil && strings.TrimSpace(fields.ReplyTo) != ""
 }

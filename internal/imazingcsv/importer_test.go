@@ -120,6 +120,29 @@ func TestImporterMessagesConversationsAndIdentity(t *testing.T) {
 	assert.True(readReceiptImpliesDelivered)
 }
 
+func TestImporterPreservesRemovedIdentityOptOut(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	exportDir := newTestExport(t, [][]string{
+		{"Example", "2024-06-01 12:00:00", "", "", "iMessage", "Outgoing", "", "", "", "", "", "hello", "", ""},
+	})
+	imp := NewImporter(st, Options{Owner: "owner@example.test", Timezone: "UTC"})
+	_, err := imp.ImportPath(t.Context(), exportDir)
+	require.NoError(err)
+	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "owner@example.test")
+	require.NoError(err)
+	require.NoError(st.AddAccountIdentity(source.ID, "owner@example.test", "manual"))
+	_, err = st.RemoveAccountIdentity(source.ID, "owner@example.test")
+	require.NoError(err)
+	_, err = imp.ImportPath(t.Context(), exportDir)
+	require.NoError(err)
+	source, err = st.GetSourceByID(source.ID)
+	require.NoError(err)
+	assert.JSONEq(t, `{"timezone":"UTC","ambiguous_time_policy":"earlier","no_default_identity":true}`,
+		source.SyncConfig.String)
+}
+
 func TestImporterDoesNotDuplicateSoleUnnamedParticipantFromTitle(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

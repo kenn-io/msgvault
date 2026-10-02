@@ -1148,21 +1148,22 @@ func TestStore_GetDuplicateGroupMessagesBatch_FiltersBySourceID(t *testing.T) {
 func TestStore_DedupMetadataQuality(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, sourceType, metadata string
-		want                       int
+		name, sourceType, metadata, thread string
+		want                               int
 	}{
-		{"gmail provider and RFC ID", "gmail", `{}`, 2},
-		{"imap provider and RFC ID", "imap", `{}`, 2},
-		{"msmail provider and RFC ID", "msmail", `{}`, 2},
-		{"synthetic import IDs", "mbox", `{}`, 1},
-		{"genuine gmail thread", "gmail", `{"gmail_thread_id":"src"}`, 3},
-		{"import reply", "mbox", `{"email_in_reply_to":"parent@example.test"}`, 2},
-		{"orphan reply", "gmail", `{"email_in_reply_to":"missing@example.test"}`, 3},
-		{"thread categories count once", "gmail", `{"gmail_thread_id":"src","email_in_reply_to":"parent@example.test"}`, 3},
-		{"whitespace thread", "gmail", `{"gmail_thread_id":"  "}`, 2},
-		{"mistyped header", "gmail", `{"email_in_reply_to":123}`, 2},
-		{"null header", "gmail", `{"email_in_reply_to":null}`, 2},
-		{"import cannot claim provider thread", "emlx", `{"gmail_thread_id":"src"}`, 1},
+		{"gmail provider and RFC ID", "gmail", `{}`, "src", 2},
+		{"imap provider and RFC ID", "imap", `{}`, "thread", 2},
+		{"msmail provider and RFC ID", "msmail", `{}`, "thread", 2},
+		{"synthetic import IDs", "mbox", `{}`, "thread", 1},
+		{"historical gmail thread", "gmail", `{}`, "thread", 3},
+		{"gmail root or fallback", "gmail", `{"gmail_thread_id":"src"}`, "src", 2},
+		{"import reply", "mbox", `{"email_in_reply_to":"parent@example.test"}`, "thread", 2},
+		{"orphan reply", "gmail", `{"email_in_reply_to":"missing@example.test"}`, "src", 3},
+		{"thread categories count once", "gmail", `{"email_in_reply_to":"parent@example.test"}`, "thread", 3},
+		{"whitespace thread", "gmail", `{}`, "  ", 2},
+		{"mistyped header", "gmail", `{"email_in_reply_to":123}`, "src", 2},
+		{"null header", "gmail", `{"email_in_reply_to":null}`, "src", 2},
+		{"import cannot claim provider thread", "emlx", `{"gmail_thread_id":"thread"}`, "thread", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1170,6 +1171,9 @@ func TestStore_DedupMetadataQuality(t *testing.T) {
 			assert := assert.New(t)
 			f := storetest.New(t)
 			_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE sources SET source_type = ? WHERE id = ?"), tc.sourceType, f.Source.ID)
+			require.NoError(err)
+			_, err = f.Store.DB().Exec(f.Store.Rebind(
+				"UPDATE conversations SET source_conversation_id = ? WHERE id = ?"), tc.thread, f.ConvID)
 			require.NoError(err)
 			id := newRFC822Message(t, f, "src", "quality@example.test")
 			require.NoError(f.Store.SetMessageMetadata(id, sql.NullString{String: tc.metadata, Valid: true}))

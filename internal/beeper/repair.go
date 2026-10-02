@@ -3,6 +3,7 @@ package beeper
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -60,8 +61,9 @@ func (imp *Importer) RepairSource(ctx context.Context, sourceID int64, progress 
 		return sum, err
 	}
 	var resume struct {
-		Version string `json:"repair_version,omitempty"`
-		AfterID int64  `json:"repair_after_id,omitempty"`
+		Version string                    `json:"repair_version,omitempty"`
+		AfterID int64                     `json:"repair_after_id,omitzero"`
+		Other   map[string]jsontext.Value `json:",embed"`
 	}
 	if src.SyncConfig.Valid {
 		if err := json.Unmarshal([]byte(src.SyncConfig.String), &resume); err != nil {
@@ -144,7 +146,8 @@ func (imp *Importer) RepairSource(ctx context.Context, sourceID int64, progress 
 	if err := ctx.Err(); err != nil {
 		return sum, err
 	}
-	if err := imp.store.UpdateSourceSyncConfig(sourceID, "{}"); err != nil {
+	resume.Version, afterID = "", 0
+	if err := checkpoint(); err != nil {
 		return sum, err
 	}
 	sum.Duration = time.Since(start)

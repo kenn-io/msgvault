@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/store"
@@ -22,7 +24,9 @@ func (s *Syncer) refreshProfileIdentity(ctx context.Context, source *store.Sourc
 	}
 	evidence, err := provideridentity.GmailProfileEvidence(source, profile.EmailAddress)
 	if err != nil {
-		return err
+		s.logger.Warn("Gmail OAuth identity evidence skipped; sync will continue",
+			"source_id", source.ID, "error", err)
+		return nil
 	}
 	address := evidence[0].Identifier
 	if err := s.mergeProfileIdentitySignals(ctx, source.ID, address); err != nil {
@@ -40,7 +44,8 @@ func (s *Syncer) mergeProfileIdentitySignals(ctx context.Context, sourceID int64
 	}
 	var candidates []store.IdentityConfirmation
 	for _, identity := range confirmed {
-		if oauth.SameGoogleAccount(identity.Address, address) {
+		if oauth.SameGoogleAccount(identity.Address, address) &&
+			!slices.Contains(identityops.SplitSignalSet(identity.SourceSignal), "oauth") {
 			candidates = append(candidates, store.IdentityConfirmation{Identifier: identity.Address, Signals: []string{"oauth"}})
 		}
 	}

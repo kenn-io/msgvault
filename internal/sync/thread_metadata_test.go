@@ -1,17 +1,21 @@
 package sync
 
 import (
-	"encoding/json/v2"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestFullSyncRecordsGenuineThreadMetadata(t *testing.T) {
+func TestFullSyncScoresStoredThreadEvidence(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ name, thread string }{
-		{"root equals message", "thread-message"}, {"provider thread", "provider-thread"}, {"generated fallback", ""},
+	for _, tc := range []struct {
+		name, thread string
+		wantQuality  int
+	}{
+		{"root equals message", "thread-message", 2},
+		{"provider thread", "provider-thread", 3},
+		{"generated fallback", "", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -19,6 +23,7 @@ func TestFullSyncRecordsGenuineThreadMetadata(t *testing.T) {
 			assert := assert.New(t)
 			env := newTestEnv(t)
 			seedMessages(env, 1, 12345, "thread-message")
+			env.Mock.Messages["thread-message"].Raw = []byte("Message-ID: <thread@example.test>\r\nSubject: Thread\r\n\r\nBody")
 			env.Mock.UseRawThreadID = true
 			env.Mock.Messages["thread-message"].ThreadID = tc.thread
 			runFullSync(t, env)
@@ -30,17 +35,7 @@ func TestFullSyncRecordsGenuineThreadMetadata(t *testing.T) {
 			require.NoError(err)
 			require.Len(raw, 1)
 			require.Equal(ids["thread-message"], raw[0].ID)
-			metadata, err := env.Store.GetMessageMetadata(raw[0].ID)
-			require.NoError(err)
-			var fields map[string]any
-			if metadata.Valid {
-				require.NoError(json.Unmarshal([]byte(metadata.String), &fields))
-			}
-			if tc.thread == "" {
-				assert.NotContains(fields, "gmail_thread_id")
-			} else {
-				assert.Equal(tc.thread, fields["gmail_thread_id"])
-			}
+			assert.Equal(tc.wantQuality, raw[0].MetadataQuality)
 		})
 	}
 }

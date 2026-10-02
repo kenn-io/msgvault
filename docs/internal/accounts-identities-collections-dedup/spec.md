@@ -325,7 +325,8 @@ preference runs in this order:
    Threading evidence is a stored Gmail provider thread ID, preserved Google
    Groups grouping derived from a valid exported X-GM-THRID, an archived
    In-Reply-To header, or a resolved reply parent. Generic fallback conversation
-   keys do not count.
+   keys do not count. Gmail uses stored conversation IDs for historical and
+   current rows; an ID equal to the message ID is ambiguous and earns no point.
 4. Richer label or folder metadata.
 5. Earlier `archived_at` timestamp (when meaningful).
 6. Stable row ID, as the final tie-breaker.

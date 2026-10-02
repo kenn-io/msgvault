@@ -1651,11 +1651,6 @@ func (s *Syncer) prepareMessage(
 		return nil, fmt.Errorf("missing raw MIME data for message %s", raw.ID)
 	}
 
-	providerThreadID := strings.TrimSpace(threadID)
-	if providerThreadID == "" {
-		providerThreadID = strings.TrimSpace(raw.ThreadID)
-	}
-
 	// Fall back to raw.ThreadID if list response threadID is missing,
 	// then to message ID as last resort
 	if threadID == "" {
@@ -1778,13 +1773,6 @@ func (s *Syncer) prepareMessage(
 	}
 
 	var metadata *sql.NullString
-	if s.opts.SourceType != sourceTypeIMAP && providerThreadID != "" {
-		encoded, err := json.Marshal(map[string]string{"gmail_thread_id": providerThreadID}, json.Deterministic(true))
-		if err != nil {
-			return nil, fmt.Errorf("encode Gmail thread evidence: %w", err)
-		}
-		metadata = &sql.NullString{String: string(encoded), Valid: true}
-	}
 	if origin := s.imapContentOrigin(raw.ID); s.opts.SourceType == sourceTypeIMAP && origin != "" {
 		encoded, err := json.Marshal(imapMessageMetadata{ContentOrigin: origin}, json.Deterministic(true))
 		if err != nil {
@@ -1849,14 +1837,13 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 
 	// Persist atomically
 	messageID, err := s.store.PersistMessage(&store.MessagePersistData{
-		Message:       data.message,
-		Metadata:      data.metadata,
-		MergeMetadata: s.opts.SourceType != sourceTypeIMAP,
-		BodyText:      sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
-		BodyHTML:      sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
-		RawMIME:       data.rawMIME,
-		Recipients:    recipientSets,
-		LabelIDs:      labelIDs,
+		Message:    data.message,
+		Metadata:   data.metadata,
+		BodyText:   sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
+		BodyHTML:   sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
+		RawMIME:    data.rawMIME,
+		Recipients: recipientSets,
+		LabelIDs:   labelIDs,
 	})
 	if err != nil {
 		return 0, err

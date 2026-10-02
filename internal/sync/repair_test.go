@@ -72,12 +72,12 @@ func TestRepairMessageLeavesSentAttributionToIdentityDiscovery(t *testing.T) {
 		"identity attribution comes from confirmed identities, not the SENT label")
 }
 
-func TestRepairMessagePreservesMetadataAndRecordsProviderThread(t *testing.T) {
+func TestRepairMessagePreservesMetadata(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ name, stored, want string }{
-		{"object", `{"custom":{"keep":true},"email_in_reply_to":"<parent@example.test>"}`, `{"custom":{"keep":true},"email_in_reply_to":"<parent@example.test>","gmail_thread_id":"provider-thread"}`},
-		{"malformed", `{"partial":true,`, `{"gmail_thread_id":"provider-thread"}`},
-		{"array", `[{"old":"value"}]`, `{"gmail_thread_id":"provider-thread"}`},
+	for _, tc := range []struct{ name, stored string }{
+		{"object", `{"custom":{"keep":true},"email_in_reply_to":"<parent@example.test>"}`},
+		{"malformed", `{"partial":true,`},
+		{"array", `[{"old":"value"}]`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -91,7 +91,7 @@ func TestRepairMessagePreservesMetadataAndRecordsProviderThread(t *testing.T) {
 			require.NoError(err)
 			var encoded string
 			require.NoError(env.Store.DB().QueryRow(`SELECT metadata FROM messages WHERE id = ?`, id).Scan(&encoded))
-			assert.JSONEq(t, tc.want, encoded)
+			assert.Equal(t, tc.stored, encoded)
 		})
 	}
 }

@@ -44,13 +44,14 @@ signals authoritative.
 Source metadata quality counts three independent facts, one point each: a
 native Gmail, IMAP, or Microsoft Mail message ID, threading evidence, and an
 RFC822 `Message-ID`.
-Threading evidence means a recorded Gmail provider thread ID, preserved Google
+Threading evidence means a Gmail provider conversation ID, preserved Google
 Groups grouping derived from a valid exported `X-GM-THRID`, an `In-Reply-To`
-header in archived metadata, or a resolved reply parent. Generic import and
-fallback conversation IDs do not count. Older Gmail rows without recorded provider
-thread evidence use their stored reply facts; ordinary sync does not backfill
-this evidence for messages it skips. This comparison applies even when
-normalized MIME hashes differ.
+header in archived metadata, or a resolved reply parent. Gmail conversation
+IDs count for both historical and newly synced copies. A conversation ID equal
+to its message ID earns no point: it may be a generated fallback, and archived
+rows cannot distinguish that fallback from a genuine single-message thread.
+Generic import conversation IDs do not count. This comparison applies even
+when normalized MIME hashes differ.
 
 The survivor inherits the union of labels from the copies it replaces, and
 backfills raw MIME from a non-survivor if it was missing the original payload.

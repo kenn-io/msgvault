@@ -749,14 +749,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 		BlobStore:                     blobStore,
 	}
 	apiOpts.GmailProfileAddress = func(ctx context.Context, source *store.Source) (string, error) {
-		client, err := newDaemonGmailClient(ctx, source.Identifier, source, getOAuthMgr, state)
+		client, serviceAccount, err := newDaemonGmailClient(
+			ctx, source.Identifier, source, getOAuthMgr, state,
+		)
 		if err != nil {
 			return "", err
 		}
 		defer func() { _ = client.Close() }()
 		profile, err := client.GetProfile(ctx)
 		if err != nil {
-			classified := provideridentity.ClassifyGmailProfileError(err, cfg.OAuth.ServiceAccountKeyFor(sourceOAuthApp(source)) != "")
+			classified := provideridentity.ClassifyGmailProfileError(err, serviceAccount)
 			return "", fmt.Errorf("read authenticated Gmail profile: %w", classified)
 		}
 		if profile == nil {
@@ -4012,12 +4014,16 @@ func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Lo
 }
 
 // newDaemonGmailClient reuses source-bound credentials without interactive reauth.
-func newDaemonGmailClient(ctx context.Context, email string, src *store.Source, getOAuthMgr func(string) (*oauth.Manager, error), state *invocation) (gmail.API, error) {
+// serviceAccount reports which credentials the returned client uses.
+func newDaemonGmailClient(
+	ctx context.Context, email string, src *store.Source,
+	getOAuthMgr func(string) (*oauth.Manager, error), state *invocation,
+) (client gmail.API, serviceAccount bool, err error) {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
 	if state == nil || state.cfg == nil || state.logger == nil {
-		return nil, errors.New("configuration is unavailable")
+		return nil, false, errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
 	logger := state.logger
@@ -4029,19 +4035,29 @@ func newDaemonGmailClient(ctx context.Context, email string, src *store.Source, 
 	var tokenSource oauth2.TokenSource
 	var tsErr error
 
-	if saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName); saKeyPath != "" {
+	saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName)
+	if saKeyPath != "" {
 		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
 		if saErr != nil {
-			return nil, provideridentity.NewGmailCredentialError(provideridentity.GmailServiceAccountConfiguration, fmt.Errorf("service account for %s: %w", email, saErr))
+			return nil, false, provideridentity.NewGmailCredentialError(
+				provideridentity.GmailServiceAccountConfiguration,
+				fmt.Errorf("service account for %s: %w", email, saErr),
+			)
 		}
 		tokenSource, tsErr = saMgr.TokenSource(ctx, email)
 		if tsErr != nil {
-			return nil, provideridentity.NewGmailCredentialError(provideridentity.GmailServiceAccountConfiguration, fmt.Errorf("service account token for %s: %w", email, tsErr))
+			return nil, false, provideridentity.NewGmailCredentialError(
+				provideridentity.GmailServiceAccountConfiguration,
+				fmt.Errorf("service account token for %s: %w", email, tsErr),
+			)
 		}
 	} else {
 		oauthMgr, oaErr := getOAuthMgr(appName)
 		if oaErr != nil {
-			return nil, provideridentity.NewGmailCredentialError(provideridentity.GmailOAuthConfiguration, fmt.Errorf("resolve OAuth credentials for %s: %w", email, oaErr))
+			return nil, false, provideridentity.NewGmailCredentialError(
+				provideridentity.GmailOAuthConfiguration,
+				fmt.Errorf("resolve OAuth credentials for %s: %w", email, oaErr),
+			)
 		}
 		tokenSource, tsErr = oauthMgr.TokenSource(ctx, email)
 		if tsErr != nil {
@@ -4050,16 +4066,23 @@ func newDaemonGmailClient(ctx context.Context, email string, src *store.Source, 
 			// auth errors. Suggesting reauth on every network blip sends
 			// the user down the wrong path.
 			if syncerr.IsTransientNetwork(tsErr) {
-				return nil, fmt.Errorf("get token source: %w (transient network error; will retry on next schedule)", tsErr)
+				return nil, false, fmt.Errorf(
+					"get token source: %w (transient network error; will retry on next schedule)", tsErr,
+				)
 			}
 			if oauthMgr.HasToken(email) {
-				return nil, provideridentity.ClassifyGmailProfileError(fmt.Errorf("get token source: %w (token may be expired; %s)", tsErr, gmailReauthHint(email, accountIsNarrowed(oauthMgr, email))), false)
+				return nil, false, provideridentity.ClassifyGmailProfileError(fmt.Errorf(
+					"get token source: %w (token may be expired; %s)",
+					tsErr, gmailReauthHint(email, accountIsNarrowed(oauthMgr, email)),
+				), false)
 			}
 			missing := fmt.Errorf("get token source: %w (run 'msgvault add-account %s' first)", tsErr, email)
 			if errors.Is(tsErr, os.ErrNotExist) {
-				return nil, provideridentity.NewGmailCredentialError(provideridentity.GmailTokenMissing, missing)
+				return nil, false, provideridentity.NewGmailCredentialError(
+					provideridentity.GmailTokenMissing, missing,
+				)
 			}
-			return nil, missing
+			return nil, false, missing
 		}
 	}
 
@@ -4067,7 +4090,7 @@ func newDaemonGmailClient(ctx context.Context, email string, src *store.Source, 
 	return gmail.NewClient(tokenSource,
 		gmail.WithLogger(logger),
 		gmail.WithRateLimiter(rateLimiter),
-	), nil
+	), saKeyPath != "", nil
 }
 
 // runScheduledGmailSync runs an incremental Gmail sync for the daemon.
@@ -4084,7 +4107,7 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	}
 	cfg := state.cfg
 	logger := state.logger
-	client, err := newDaemonGmailClient(ctx, email, src, getOAuthMgr, state)
+	client, _, err := newDaemonGmailClient(ctx, email, src, getOAuthMgr, state)
 	if err != nil {
 		return nil, err
 	}
