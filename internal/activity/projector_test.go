@@ -1348,3 +1348,51 @@ func (s *recordActivityScanStore) ScanForActivityProjectionContext(ctx context.C
 	s.afterIDs = append(s.afterIDs, afterID)
 	return s.Store.ScanForActivityProjectionContext(ctx, afterID, limit)
 }
+
+func TestTimezoneTransitionResumesAcrossIdentityChange(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, _ := projectorManyFixture(t, 7)
+	initial, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
+	require.NoError(err)
+	_, err = initial.RunOnce(t.Context())
+	require.NoError(err)
+	limited, err := NewProjector(f.Store, Options{Timezone: "America/New_York", BatchSize: 1, MaxBatches: 2})
+	require.NoError(err)
+	_, err = limited.RunOnce(t.Context())
+	require.ErrorIs(err, ErrWorkRemaining)
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "tz-alias@example.com", "manual"))
+	observed := &recordActivityScanAllStore{Store: f.Store}
+	resumed, err := NewProjector(observed, Options{Timezone: "America/New_York", BatchSize: 1, MaxBatches: 2})
+	require.NoError(err)
+	_, err = resumed.RunOnce(t.Context())
+	require.ErrorIs(err, ErrWorkRemaining)
+	require.NotEmpty(observed.afterIDs)
+	assert.Positive(observed.afterIDs[0], "an identity change does not restart the timezone scan")
+	for range 15 {
+		_, err = resumed.RunOnce(t.Context())
+		require.True(err == nil || errors.Is(err, ErrWorkRemaining), "%v", err)
+		if err == nil {
+			break
+		}
+	}
+	require.NoError(err)
+	transition, err := f.Store.ActivityTimezoneTransitionContext(t.Context())
+	require.NoError(err)
+	assert.False(transition.Active)
+	assert.Equal("America/New_York", transition.Target)
+	candidates, err := f.Store.ScanForActivityProjectionContext(t.Context(), 0, 10)
+	require.NoError(err)
+	assert.Empty(candidates, "identity reconciliation re-projects rows the timezone scan stamped earlier")
+}
+
+type recordActivityScanAllStore struct {
+	*store.Store
+
+	afterIDs []int64
+}
+
+func (s *recordActivityScanAllStore) ScanAllActivityCandidatesContext(ctx context.Context, afterID int64, limit int) ([]store.ActivityCandidate, error) {
+	s.afterIDs = append(s.afterIDs, afterID)
+	return s.Store.ScanAllActivityCandidatesContext(ctx, afterID, limit)
+}

@@ -642,10 +642,10 @@ func (p *Projector) forceScan(
 		pass = "direct_limit"
 	}
 	if pass != "" {
-		revisions, err := p.store.ContactRevisionsContext(ctx)
-		if err != nil {
-			return err
-		}
+		// The token names only the configuration transition. Rows projected
+		// before an identity change keep their old revision stamp, and
+		// reconcileRevisions re-projects them afterward, so an identity change
+		// must not restart this full-archive scan.
 		var timezone store.ActivityTimezoneTransition
 		if expectedTimezone != nil {
 			timezone = *expectedTimezone
@@ -654,8 +654,9 @@ func (p *Projector) forceScan(
 		if expectedDirectLimit != nil {
 			directLimit = *expectedDirectLimit
 		}
-		token = fmt.Sprintf("%d/%d/%t/%q/%d/%t/%d/%d", revisions.IdentityRevision, revisions.AccountIdentityRevision,
-			timezone.Active, timezone.Target, timezone.Generation, directLimit.Active, directLimit.Target, directLimit.Generation)
+		token = fmt.Sprintf("%t/%q/%d/%t/%d/%d", timezone.Active, timezone.Target, timezone.Generation,
+			directLimit.Active, directLimit.Target, directLimit.Generation)
+		var err error
 		afterID, err = p.store.ActivityProjectionCursorContext(ctx, pass, token)
 		if err != nil {
 			return err
