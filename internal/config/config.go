@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personenrichment"
+	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
@@ -557,8 +558,9 @@ type DeletionConfig struct {
 // PeopleConfig keeps the existing archive sweep and external enrichment as
 // sibling, independently disabled subsystems.
 type PeopleConfig struct {
-	Sweep      peoplesweep.Config      `toml:"sweep"`
-	Enrichment personenrichment.Config `toml:"enrichment"`
+	Sweep           peoplesweep.Config      `toml:"sweep"`
+	Enrichment      personenrichment.Config `toml:"enrichment"`
+	IdentityScoring personmatch.Config      `toml:"identity_scoring"`
 }
 
 // ActivityConfig controls dated activity projection and contact-state
@@ -836,6 +838,7 @@ func NewDefaultConfig() *Config {
 	cfg.Activity.ApplyDefaults()
 	cfg.People.Sweep.ApplyDefaults()
 	cfg.People.Enrichment.ApplyDefaults()
+	cfg.People.IdentityScoring.ApplyDefaults()
 	return cfg
 }
 
@@ -929,10 +932,21 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		}
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
+	if metadata.IsDefined("people", "identity_scoring", "minimum_probability") &&
+		cfg.People.IdentityScoring.MinimumProbability == 0 {
+		return nil, errors.New("people.identity_scoring.minimum_probability must be between 0.80 and 1.00")
+	}
+	if metadata.IsDefined("people", "identity_scoring", "batch_size") &&
+		cfg.People.IdentityScoring.BatchSize == 0 {
+		return nil, errors.New("people.identity_scoring.batch_size must be between 1 and 100")
+	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
 		if key.String() == "carddav.password" {
 			return nil, errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json")
+		}
+		if strings.HasPrefix(key.String(), "people.identity_scoring.") {
+			return nil, fmt.Errorf("unknown people.identity_scoring config key %q", key.String())
 		}
 		if strings.HasPrefix(key.String(), "imap.drafts.") {
 			return nil, fmt.Errorf("unknown IMAP draft config key %q", key.String())
@@ -1048,6 +1062,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.Enrichment.ApplyDefaults()
 	if err := cfg.People.Enrichment.Validate(); err != nil {
+		return nil, err
+	}
+	cfg.People.IdentityScoring.ApplyDefaults()
+	if err := cfg.People.IdentityScoring.Validate(); err != nil {
 		return nil, err
 	}
 	if err := cfg.Backup.Validate(); err != nil {

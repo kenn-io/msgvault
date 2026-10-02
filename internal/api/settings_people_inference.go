@@ -40,6 +40,9 @@ type PeopleInferenceProfileSetting struct {
 	SourceUntil          string   `json:"source_until,omitempty"`
 	AllowSensitive       bool     `json:"allow_sensitive"`
 	Fingerprint          string   `json:"fingerprint,omitempty"`
+	ReasoningEffort      string   `json:"reasoning_effort,omitempty"`
+	ReasoningMode        string   `json:"reasoning_mode,omitempty"`
+	RequestTimeout       string   `json:"request_timeout"`
 }
 
 // PeopleInferenceSettingsResponse distinguishes disk configuration from the
@@ -138,6 +141,7 @@ type peopleInferenceCredentialAuthorityStore interface {
 }
 
 func (s *Server) registerPeopleInferenceSettingsRoute(api huma.API) {
+	s.registerPeopleInferencePolicyUpdateRoute(api)
 	operation := rawAPIV1Operation("getSettingsPeopleInference", http.MethodGet,
 		"/settings/people-inference", "Get people inference provider status")
 	operation.Responses = jsonResponsesFor[PeopleInferenceSettingsResponse](api)
@@ -1070,7 +1074,9 @@ func peopleInferenceSettingsResponse(configured, running peoplesweep.Config) Peo
 			OutputMode:    string(provider.OutputMode), RetentionPosture: provider.RetentionPosture,
 			TrainingPosture: provider.TrainingPosture, SourceSince: provider.SourceSince,
 			SourceUntil: provider.SourceUntil, AllowSensitive: provider.AllowSensitive,
-			AllowedSources: make([]string, 0, len(provider.AllowedSources)),
+			AllowedSources:  make([]string, 0, len(provider.AllowedSources)),
+			ReasoningEffort: provider.ReasoningEffort, ReasoningMode: provider.ReasoningMode,
+			RequestTimeout: provider.RequestTimeout.String(),
 		}
 		for _, source := range provider.AllowedSources {
 			entry.AllowedSources = append(entry.AllowedSources, string(source))

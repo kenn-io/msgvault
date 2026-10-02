@@ -4,4 +4,10 @@
 
 export interface VisualBuildRequest {
   consent: boolean;
+  /** @minLength 1 */
+  expected_generation_fingerprint?: string;
+  /** @minimum 1 */
+  expected_generation_id?: number;
+  /** @minLength 1 */
+  expected_policy_fingerprint?: string;
 }

@@ -283,12 +283,17 @@ type GetFileContentPath struct {
 	ID int64 `json:"id"`
 }
 
-type AcceptIdentityMatchCandidatePath struct {
+type GetIdentityMatchCandidatePath struct {
 	// ID Identity match candidate ID
 	ID int64 `json:"id"`
 }
 
-type RejectIdentityMatchCandidatePath struct {
+type ReviewAcceptIdentityMatchCandidatePath struct {
+	// ID Identity match candidate ID
+	ID int64 `json:"id"`
+}
+
+type ReviewRejectIdentityMatchCandidatePath struct {
 	// ID Identity match candidate ID
 	ID int64 `json:"id"`
 }
@@ -865,6 +870,14 @@ type PutSettingsPeopleInferenceKeyPath struct {
 }
 
 func (p PutSettingsPeopleInferenceKeyPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PatchSettingsPeopleInferencePolicyPath struct {
+	Name string `json:"name" validate:"required"`
+}
+
+func (p PatchSettingsPeopleInferencePolicyPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 

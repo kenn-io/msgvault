@@ -113,6 +113,61 @@ func TestStoreAPIAdapterExposesFileMetadataCatalog(t *testing.T) {
 	assertions.Empty(files)
 }
 
+func TestStoreAPIAdapterServesPersonMatchScoringRun(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := storetest.New(t)
+	st := fixture.Store
+	cfg := config.NewDefaultConfig()
+	cfg.People.IdentityScoring.Enabled = true
+	cfg.People.IdentityScoring.CredentialEnv = "MSGVAULT_JEV_DAEMON_WIRING_FIXTURE_KEY"
+	cfg.People.IdentityScoring.RetentionDeclaration = "fixture retention declaration"
+	t.Setenv(cfg.People.IdentityScoring.CredentialEnv, "fixture-key")
+
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: cfg,
+		Store:  &storeAPIAdapter{store: st},
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	disclosure, err := cfg.People.IdentityScoring.Disclosure()
+	require.NoError(err)
+	fingerprint, err := disclosure.Fingerprint()
+	require.NoError(err)
+	consentRequest := httptest.NewRequest(http.MethodPost, "/api/v1/identity/scoring/consent",
+		strings.NewReader(fmt.Sprintf(`{"disclosure_fingerprint":%q}`, fingerprint)))
+	consentRequest.Header.Set("Content-Type", "application/json")
+	consentResponse := httptest.NewRecorder()
+	srv.Router().ServeHTTP(consentResponse, consentRequest)
+	require.Equal(http.StatusOK, consentResponse.Code, consentResponse.Body.String())
+
+	runRequest := httptest.NewRequest(http.MethodPost, "/api/v1/identity/scoring/run",
+		strings.NewReader(`{"limit":1}`))
+	runRequest.Header.Set("Content-Type", "application/json")
+	runResponse := httptest.NewRecorder()
+	srv.Router().ServeHTTP(runResponse, runRequest)
+	require.Equal(http.StatusOK, runResponse.Code, runResponse.Body.String())
+	var result api.PersonMatchScoringResponse
+	require.NoError(json.Unmarshal(runResponse.Body.Bytes(), &result))
+	assert.Nil(result.Error)
+	assert.Zero(result.Processed)
+	assert.Empty(result.Results)
+
+	providerDispatched := false
+	egressStore, ok := any(&storeAPIAdapter{store: st}).(interface {
+		PersonMatchConsentEgressContext(ctx context.Context, fingerprint string, dispatch func() error) (bool, error)
+	})
+	require.True(ok)
+	consented, err := egressStore.PersonMatchConsentEgressContext(
+		t.Context(), fingerprint, func() error {
+			providerDispatched = true
+			return nil
+		},
+	)
+	require.NoError(err)
+	assert.True(consented)
+	assert.True(providerDispatched)
+}
+
 func TestStoreAPIAdapterExposesCuratedPeopleCompletion(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

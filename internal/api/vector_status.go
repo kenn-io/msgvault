@@ -81,7 +81,35 @@ func (s *Server) SetVisualOperations(
 	status func(context.Context, bool) (visual.Status, error),
 	retire func(context.Context) error,
 ) {
+	s.setVisualOperations(nil, build, run, retry, status, retire)
+}
+
+// SetVisualOperationsWithPolicy installs one immutable disclosure together with
+// its callbacks, so guarded writes cannot consume a different runtime's policy.
+func (s *Server) SetVisualOperationsWithPolicy(
+	policy VisualRuntimePolicy,
+	build func(context.Context, operations.PassScope) error,
+	run func(context.Context, operations.PassScope) error,
+	retry func(context.Context, operations.PassScope, int64, string) error,
+	status func(context.Context, bool) (visual.Status, error),
+	retire func(context.Context) error,
+) {
+	snapshot := policy.clone()
+	s.setVisualOperations(&snapshot, build, run, retry, status, retire)
+}
+
+func (s *Server) setVisualOperations(
+	policy *VisualRuntimePolicy,
+	build func(context.Context, operations.PassScope) error,
+	run func(context.Context, operations.PassScope) error,
+	retry func(context.Context, operations.PassScope, int64, string) error,
+	status func(context.Context, bool) (visual.Status, error),
+	retire func(context.Context) error,
+) {
+	s.visualRuntimeMu.Lock()
+	defer s.visualRuntimeMu.Unlock()
 	s.vectorMu.Lock()
+	s.visualPolicy = policy
 	s.visualBuild = build
 	s.visualRun = run
 	s.visualRetry = retry

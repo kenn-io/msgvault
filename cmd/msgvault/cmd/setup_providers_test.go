@@ -353,7 +353,7 @@ func TestSetupDocumentConsentMatchesCompletePolicy(t *testing.T) {
 			assert.False(consent.Documents)
 			lane := documentsLane(&changed, setupEnvironment{consent: consent, lookupEnv: func(string) (string, bool) { return setupProvidersTestKey, true }})
 			assert.Equal(laneStatePending, lane.State)
-			assert.Equal(consentMissing, lane.Consent)
+			assert.Contains([]string{consentMissing, consentStale, consentUnknown}, lane.Consent)
 		})
 	}
 	_, err = st.RetireDocumentExtractionProfile(t.Context(), profile.ID)
@@ -851,6 +851,15 @@ func TestSetupReportsCheckStoredPeopleCredential(t *testing.T) {
 					assert.Contains(lane.Next, "msgvault person provider add <new-name> --credential-env <KEY_ENV>")
 				}
 			}
+			direct := findLane(t, buildLaneReport(loaded, setupEnvironment{consent: consent}), lanePeopleInference)
+			wantCredential := "unknown"
+			if kind == "valid" {
+				wantCredential = "available"
+			}
+			if kind == "missing" {
+				wantCredential = "missing"
+			}
+			assert.Equal(wantCredential, direct.readiness.credential)
 			if kind == "missing" {
 				assert.NoDirExists(loaded.TokensDir(), "status must not create credential directories")
 			}

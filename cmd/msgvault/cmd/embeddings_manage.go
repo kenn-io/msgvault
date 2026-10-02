@@ -3,10 +3,12 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -152,6 +154,9 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if len(rows) == 0 {
+		if jsonOutput, _ := cmd.Flags().GetBool(flagJSON); jsonOutput {
+			return writeEmbeddingGenerationsJSON(cmd, cfg.Vector, rows)
+		}
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No embedding generations found.")
 		return nil
 	}
@@ -189,6 +194,9 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	if jsonOutput, _ := cmd.Flags().GetBool(flagJSON); jsonOutput {
+		return writeEmbeddingGenerationsJSON(cmd, cfg.Vector, rows)
+	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "ID\tSTATE\tMODEL\tDIM\tLIVE\tEMBEDDED\tBLANK\tMISSING\tACCELERATOR\tANN_ROWS\tANN_STARTED\tANN_COMPLETED\tANN_ERROR\tFINGERPRINT\tSTARTED\tCOMPLETED\tACTIVATED")
 	for _, row := range rows {
@@ -214,6 +222,27 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flush embedding generations table: %w", err)
+	}
+	return nil
+}
+
+func writeEmbeddingGenerationsJSON(cmd *cobra.Command, cfg vector.Config, rows []embeddingGenerationRow) error {
+	scope := cfg.Embed.Scope.BuildScope()
+	report := vector.GenerationStatusReport{ConfiguredGenerationFingerprint: cfg.GenerationFingerprint(), SourceIDs: slices.Clone(scope.SourceIDs), MessageTypes: slices.Clone(scope.MessageTypes), Generations: make([]vector.GenerationStatus, 0, len(rows))}
+	for _, row := range rows {
+		report.Generations = append(report.Generations, vector.GenerationStatus{
+			ID: row.ID, Model: row.Model, Dimension: row.Dimension, Fingerprint: row.Fingerprint, State: row.State,
+			StartedAt: row.StartedAt.UTC(), SeededAt: row.SeededAt, CompletedAt: row.CompletedAt, ActivatedAt: row.ActivatedAt,
+			MessageCount: row.MessageCount, CoverageAvailable: row.State != vector.GenerationRetired, LiveCount: row.LiveCount, EmbeddedCount: row.EmbeddedCount, BlankCount: row.BlankCount, MissingCount: row.MissingCount,
+			Accelerator: vector.AcceleratorStatus{State: row.Accelerator.State, IndexedCount: row.Accelerator.IndexedCount, StartedAt: row.Accelerator.StartedAt, CompletedAt: row.Accelerator.CompletedAt, HasError: row.Accelerator.LastError != ""},
+		})
+	}
+	data, err := json.Marshal(report, json.Deterministic(true))
+	if err != nil {
+		return fmt.Errorf("encode embedding generation status: %w", err)
+	}
+	if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(data)); err != nil {
+		return fmt.Errorf("write embedding generation status: %w", err)
 	}
 	return nil
 }

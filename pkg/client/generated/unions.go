@@ -488,18 +488,18 @@ func (l *LinkIdentityParticipants_ErrorResponse_AnyOf) Validate() error {
 	return nil
 }
 
-type AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf struct {
+type ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf struct {
 	runtime.Either[PersonMergeRequiredError, ErrorResponse]
 }
 
-func (a *AcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf) Validate() error {
-	if a.IsA() {
-		if v, ok := any(a.A).(runtime.Validator); ok {
+func (r *ReviewAcceptIdentityMatchCandidate_ErrorResponse_409_AnyOf) Validate() error {
+	if r.IsA() {
+		if v, ok := any(r.A).(runtime.Validator); ok {
 			return v.Validate()
 		}
 	}
-	if a.IsB() {
-		if v, ok := any(a.B).(runtime.Validator); ok {
+	if r.IsB() {
+		if v, ok := any(r.B).(runtime.Validator); ok {
 			return v.Validate()
 		}
 	}

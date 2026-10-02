@@ -38,11 +38,124 @@ func seedMatchCandidate(
 }
 
 func acceptPath(id int64) string {
-	return fmt.Sprintf("/api/v1/identity/match-candidates/%d/accept", id)
+	return fmt.Sprintf("/api/v1/identity/match-candidates/%d/review/accept", id)
 }
 
 func rejectPath(id int64) string {
-	return fmt.Sprintf("/api/v1/identity/match-candidates/%d/reject", id)
+	return fmt.Sprintf("/api/v1/identity/match-candidates/%d/review/reject", id)
+}
+
+type failingIdentityMatchReviewReadStore struct {
+	*stubIdentityCacheStore
+
+	err error
+}
+
+func (s *failingIdentityMatchReviewReadStore) GetIdentityMatchReviewContext(
+	context.Context, int64,
+) (*store.IdentityMatchCandidate, error) {
+	return nil, s.err
+}
+
+func TestIdentityMatchReviewHTTPRequiresFreshToken(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	candidate, left, right := seedMatchCandidate(t, st, store.IdentityMatchEmail)
+	list := personRequest(t, srv, http.MethodGet,
+		"/api/v1/identity/match-candidates?state=candidate&limit=1", nil, "")
+	require.Equal(http.StatusOK, list.Code, list.Body.String())
+	var page IdentityMatchCandidatesResponse
+	require.NoError(json.Unmarshal(list.Body.Bytes(), &page))
+	require.Len(page.Candidates, 1)
+	token := page.Candidates[0].ReviewToken
+	require.NotEmpty(token)
+
+	missing := personRequest(t, srv, http.MethodPost, acceptPath(candidate.ID),
+		[]byte(`{}`), "")
+	assert.Equal(http.StatusBadRequest, missing.Code, missing.Body.String())
+
+	_, err := st.AddIdentityMatchEvidenceContext(t.Context(), candidate.ID,
+		store.IdentityMatchEvidenceInput{EvidenceKind: "email", Source: store.ProvenanceArchiveObservation})
+	require.NoError(err)
+	stale := personRequest(t, srv, http.MethodPost, acceptPath(candidate.ID),
+		[]byte(fmt.Sprintf(`{"review_token":%q}`, token)), "")
+	assert.Equal(http.StatusConflict, stale.Code, stale.Body.String())
+	assert.False(linkedParticipants(t, st, left, right))
+
+	show := personRequest(t, srv, http.MethodGet,
+		fmt.Sprintf("/api/v1/identity/match-candidates/%d", candidate.ID), nil, "")
+	require.Equal(http.StatusOK, show.Code, show.Body.String())
+	var current store.IdentityMatchCandidate
+	require.NoError(json.Unmarshal(show.Body.Bytes(), &current))
+	assert.NotEqual(token, current.ReviewToken)
+	accepted := personRequest(t, srv, http.MethodPost, acceptPath(candidate.ID),
+		[]byte(fmt.Sprintf(`{"review_token":%q}`, current.ReviewToken)), "")
+	require.Equal(http.StatusOK, accepted.Code, accepted.Body.String())
+	assert.True(linkedParticipants(t, st, left, right))
+}
+
+func TestIdentityMatchReviewHTTPReportsReadbackFailureAfterAccept(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	candidate, left, right := seedMatchCandidate(t, st, store.IdentityMatchEmail)
+	review, err := st.GetIdentityMatchReviewContext(t.Context(), candidate.ID)
+	require.NoError(err)
+	srv.store = &failingIdentityMatchReviewReadStore{
+		stubIdentityCacheStore: st,
+		err:                    errors.New("fixture review read failure"),
+	}
+	response := personRequest(t, srv, http.MethodPost, acceptPath(candidate.ID),
+		[]byte(fmt.Sprintf(`{"review_token":%q}`, review.ReviewToken)), "")
+	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	envelope := decodeErrorEnvelope(t, response)
+	assert.Equal("identity_match_state_unavailable", envelope.Error)
+	assert.Contains(envelope.Message, "decision was recorded")
+	assert.True(linkedParticipants(t, st, left, right))
+}
+
+func TestIdentityMatchReviewHTTPReportsMergeAndUnsupportedBlockers(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	candidate, leftID, rightID := seedMatchCandidate(t, st, store.IdentityMatchEmail)
+	left, _, err := st.CreatePersonFromParticipantContext(t.Context(), leftID)
+	require.NoError(err)
+	right, _, err := st.CreatePersonFromParticipantContext(t.Context(), rightID)
+	require.NoError(err)
+	getPath := fmt.Sprintf("/api/v1/identity/match-candidates/%d", candidate.ID)
+	get := personRequest(t, srv, http.MethodGet, getPath, nil, "")
+	require.Equal(http.StatusOK, get.Code, get.Body.String())
+	var review store.IdentityMatchCandidate
+	require.NoError(json.Unmarshal(get.Body.Bytes(), &review))
+	assert.False(review.Actionable)
+	assert.Equal("person_merge_required", review.Blocker)
+	require.NotNil(review.LeftPerson)
+	require.NotNil(review.RightPerson)
+	assert.Equal(left.ID, review.LeftPerson.PersonID)
+	assert.Equal(left.Revision, review.LeftPerson.Revision)
+	assert.Equal(right.ID, review.RightPerson.PersonID)
+	assert.Equal(right.Revision, review.RightPerson.Revision)
+	merge := personRequest(t, srv, http.MethodPost, acceptPath(candidate.ID),
+		[]byte(fmt.Sprintf(`{"review_token":%q}`, review.ReviewToken)), "")
+	assert.Equal(http.StatusConflict, merge.Code, merge.Body.String())
+	assertPersonMergeRequiredResponse(t, merge, *left, *right)
+
+	unsupported, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(),
+		store.IdentityMatchCandidateInput{
+			LeftKind: store.IdentityMatchParticipant, LeftID: leftID,
+			RightKind: store.IdentityMatchPerson, RightID: right.ID,
+			Basis: store.IdentityMatchEmail, State: store.IdentityMatchStateCandidate,
+			Source: store.ProvenanceArchiveObservation,
+		})
+	require.NoError(err)
+	get = personRequest(t, srv, http.MethodGet,
+		fmt.Sprintf("/api/v1/identity/match-candidates/%d", unsupported.ID), nil, "")
+	require.Equal(http.StatusOK, get.Code, get.Body.String())
+	require.NoError(json.Unmarshal(get.Body.Bytes(), &review))
+	assert.False(review.Actionable)
+	assert.Equal("endpoint_unsupported", review.Blocker)
 }
 
 func TestListIdentityMatchCandidatesFiltersByState(t *testing.T) {
@@ -79,7 +192,7 @@ func TestAcceptIdentityMatchCandidateLinksAndReportsCacheState(t *testing.T) {
 	candidate, alice, bob := seedMatchCandidate(t, st, store.IdentityMatchServiceScopeUsername)
 
 	response := personRequest(t, srv, http.MethodPost, acceptPath(candidate.ID),
-		[]byte(`{"notes":"same person, confirmed in review"}`), "")
+		identityDecisionBody(t, srv, candidate.ID, "same person, confirmed in review"), "")
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 
 	var accepted IdentityMatchAcceptResponse
@@ -111,7 +224,7 @@ func TestAcceptIdentityMatchCandidateAcrossPersonsReturnsPersonMergeRequired(t *
 	beforeIdentityRevision, err := st.IdentityRevision()
 	require.NoError(err)
 
-	response := personRequest(t, srv, http.MethodPost, acceptPath(candidate.ID), nil, "")
+	response := personRequest(t, srv, http.MethodPost, acceptPath(candidate.ID), identityDecisionBody(t, srv, candidate.ID, ""), "")
 	require.Equal(http.StatusConflict, response.Code, response.Body.String())
 	assertPersonMergeRequiredResponse(t, response, *left, *right)
 
@@ -138,7 +251,7 @@ func TestRejectIdentityMatchCandidateRetainsTheRow(t *testing.T) {
 	candidate, alice, bob := seedMatchCandidate(t, st, store.IdentityMatchServiceScopeUsername)
 
 	response := personRequest(t, srv, http.MethodPost, rejectPath(candidate.ID),
-		[]byte(`{"notes":"different people"}`), "")
+		identityDecisionBody(t, srv, candidate.ID, "different people"), "")
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 
 	var rejected IdentityMatchRejectResponse
@@ -175,7 +288,7 @@ func TestRejectAcceptedSystemIdentityMatchUnlinksAndRetainsRejection(t *testing.
 	require.True(linkedParticipants(t, st, alice, bob), "precondition: accept linked the pair")
 
 	rejected := personRequest(t, srv, http.MethodPost, rejectPath(candidate.ID),
-		[]byte(`{"notes":"not the same person"}`), "")
+		identityDecisionBody(t, srv, candidate.ID, "not the same person"), "")
 	require.Equal(http.StatusOK, rejected.Code, rejected.Body.String())
 	var body IdentityMatchRejectResponse
 	require.NoError(json.Unmarshal(rejected.Body.Bytes(), &body), rejected.Body.String())
@@ -206,14 +319,14 @@ func TestRejectAcceptedSystemIdentityMatchRetryRepairsStaleCache(t *testing.T) {
 	require.NoError(err, "system acceptance")
 	st.refreshErr = errors.New("cache refresh unavailable")
 
-	first := personRequest(t, srv, http.MethodPost, rejectPath(candidate.ID), nil, "")
+	first := personRequest(t, srv, http.MethodPost, rejectPath(candidate.ID), identityDecisionBody(t, srv, candidate.ID, ""), "")
 	require.Equal(http.StatusOK, first.Code, first.Body.String())
 	var firstBody IdentityMatchRejectResponse
 	require.NoError(json.Unmarshal(first.Body.Bytes(), &firstBody), first.Body.String())
 	assert.Equal(identityCacheStateStale, firstBody.CacheState)
 	assert.Equal(1, st.refreshCalls)
 
-	second := personRequest(t, srv, http.MethodPost, rejectPath(candidate.ID), nil, "")
+	second := personRequest(t, srv, http.MethodPost, rejectPath(candidate.ID), identityDecisionBody(t, srv, candidate.ID, ""), "")
 	require.Equal(http.StatusOK, second.Code, second.Body.String())
 	var secondBody IdentityMatchRejectResponse
 	require.NoError(json.Unmarshal(second.Body.Bytes(), &secondBody), second.Body.String())
@@ -241,7 +354,7 @@ func TestRejectAcceptedSystemIdentityMatchPreservesManualEdgeWithoutBumpingRevis
 	before, err := st.IdentityRevision()
 	require.NoError(err, "identity revision before rejection")
 
-	rejected := personRequest(t, srv, http.MethodPost, rejectPath(candidate.ID), nil, "")
+	rejected := personRequest(t, srv, http.MethodPost, rejectPath(candidate.ID), identityDecisionBody(t, srv, candidate.ID, ""), "")
 	require.Equal(http.StatusOK, rejected.Code, rejected.Body.String())
 	var body IdentityMatchRejectResponse
 	require.NoError(json.Unmarshal(rejected.Body.Bytes(), &body), rejected.Body.String())
@@ -319,17 +432,18 @@ func TestIdentityMatchCandidateRoutesValidateInput(t *testing.T) {
 		},
 		{
 			name: "non numeric candidate id", method: http.MethodPost,
-			path:       "/api/v1/identity/match-candidates/abc/accept",
+			path:       "/api/v1/identity/match-candidates/abc/review/accept",
 			wantStatus: http.StatusBadRequest, wantCode: "invalid_candidate_id",
 		},
 		{
 			name: "unknown candidate", method: http.MethodPost,
-			path:       "/api/v1/identity/match-candidates/999999/accept",
+			path:       "/api/v1/identity/match-candidates/999999/review/accept",
+			body:       []byte(`{"review_token":"missing-candidate"}`),
 			wantStatus: http.StatusNotFound, wantCode: "identity_match_not_found",
 		},
 		{
 			name: "unknown request field", method: http.MethodPost,
-			path:       "/api/v1/identity/match-candidates/1/accept",
+			path:       "/api/v1/identity/match-candidates/1/review/accept",
 			body:       []byte(`{"note":"typo"}`),
 			wantStatus: http.StatusBadRequest, wantCode: "invalid_request",
 		},
@@ -347,17 +461,32 @@ func TestIdentityMatchCandidateRoutesValidateInput(t *testing.T) {
 	}
 }
 
-func TestAcceptEmptyBodyIsAllowed(t *testing.T) {
+func TestReviewedAcceptNotesAreOptional(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
 	candidate, _, _ := seedMatchCandidate(t, st, store.IdentityMatchStableProviderID)
 
-	response := personRequest(t, srv, http.MethodPost, acceptPath(candidate.ID), nil, "")
+	response := personRequest(t, srv, http.MethodPost, acceptPath(candidate.ID), identityDecisionBody(t, srv, candidate.ID, ""), "")
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 
 	var accepted IdentityMatchAcceptResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &accepted), response.Body.String())
 	assert.Nil(accepted.Candidate.Notes, "notes are optional")
+}
+
+func identityDecisionBody(t *testing.T, srv *Server, id int64, notes string) []byte {
+	t.Helper()
+	response := personRequest(t, srv, http.MethodGet, fmt.Sprintf("/api/v1/identity/match-candidates/%d", id), nil, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var candidate store.IdentityMatchCandidate
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &candidate))
+	request := DecideIdentityMatchReviewedRequest{ReviewToken: candidate.ReviewToken}
+	if notes != "" {
+		request.Notes = &notes
+	}
+	body, err := json.Marshal(request)
+	require.NoError(t, err)
+	return body
 }
