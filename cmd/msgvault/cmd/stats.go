@@ -69,7 +69,7 @@ func runStats(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	if info.Kind == HTTPStoreConfiguredRemote {
+	if info.Kind == HTTPStoreConfiguredRemote || info.Kind == HTTPStoreAgentDelegated {
 		_, _ = fmt.Fprintf(out, "Remote: %s\n", info.URL)
 	} else {
 		_, _ = fmt.Fprintf(out, "Database: %s\n", cfg.DatabaseDSN())

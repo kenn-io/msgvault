@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -103,7 +104,15 @@ func (s *Server) handleCLIMessageThread(w http.ResponseWriter, r *http.Request) 
 	}
 	page, err := reader.ListThread(r.Context(), q)
 	if err != nil {
+		if s.requestAuthentication(r).Grant != nil {
+			writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionMessageRead))
+			return
+		}
 		s.writeOriginalExportError(w, "list thread", err)
+		return
+	}
+	if !s.agentMessageSourceAllowed(r, page.SourceID) {
+		writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionMessageRead))
 		return
 	}
 	writeJSON(w, http.StatusOK, page)

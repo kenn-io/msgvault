@@ -3,10 +3,35 @@ package agentgrant
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestExpiredGrantsRemainManageable(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		registry := NewRegistry()
+		id, secret, _, err := registry.IssueExpires(t.Context(), "reader", []Permission{PermissionSearchRead}, []SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Now().Add(time.Hour))
+		requirements.NoError(err)
+		time.Sleep(2 * time.Hour)
+		_, allowed := registry.Lookup(secret)
+		assertions.False(allowed)
+		listed, err := registry.ListContext(t.Context())
+		requirements.NoError(err)
+		requirements.Len(listed, 1, "expired grants must remain visible to the owner")
+		assertions.Equal(id, listed[0].ID)
+		assertions.True(listed[0].ExpiresAt.Before(time.Now()))
+		requirements.NoError(registry.RevokeContext(t.Context(), id))
+		listed, err = registry.ListContext(t.Context())
+		requirements.NoError(err)
+		assertions.Empty(listed)
+	})
+}
 
 // TestGrantPermissionsDoNotImply covers proof matrix rows 12 and 13.
 func TestGrantPermissionsDoNotImply(t *testing.T) {
@@ -52,7 +77,9 @@ func TestRegistryLifecycle(t *testing.T) {
 
 	t.Run("new registry has zero grants", func(t *testing.T) {
 		r := NewRegistry()
-		assert.Empty(t, r.List())
+		grants, err := r.ListContext(t.Context())
+		require.NoError(t, err)
+		assert.Empty(t, grants)
 	})
 
 	t.Run("Issue rejects empty label", func(t *testing.T) {
@@ -172,12 +199,17 @@ func TestRegistryLifecycle(t *testing.T) {
 	})
 
 	t.Run("Close empties the registry", func(t *testing.T) {
+		requirements := require.New(t)
 		r := NewRegistry()
 		_, _, _, err := r.Issue("test", perms, []SourceRef{src})
-		require.NoError(t, err)
-		require.Len(t, r.List(), 1)
+		requirements.NoError(err)
+		grants, err := r.ListContext(t.Context())
+		requirements.NoError(err)
+		requirements.Len(grants, 1)
 		r.Close()
-		assert.Empty(t, r.List())
+		grants, err = r.ListContext(t.Context())
+		requirements.NoError(err)
+		assert.Empty(t, grants)
 	})
 }
 
@@ -236,7 +268,8 @@ func TestGrantSenderKeysAreFrozenAndDeepCopied(t *testing.T) {
 	assertions.True(lookup.AllowsSender(PermissionDraftCreate, SourceRef{Type: source.Type, Identifier: source.Identifier}, "alice@example.com"))
 	assertions.False(lookup.AllowsSender(PermissionDraftCreate, source, "changed@example.com"))
 
-	listed := r.List()
+	listed, err := r.ListContext(t.Context())
+	requirements.NoError(err)
 	listed[0].Sources[0].SenderKeys[0] = "list-mutated@example.com"
 	again, ok := r.Lookup(secret)
 	requirements.True(ok)

@@ -248,7 +248,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 		if s.agentGrants == nil || agentVal == "" || ownerCredentialPresented(r) {
 			return requestAuthentication{Mode: AuthModeRequired}
 		}
-		if grant, ok := s.agentGrants.Lookup(agentVal); ok {
+		if grant, ok := s.agentGrants.LookupContext(r.Context(), agentVal); ok {
 			return requestAuthentication{Mode: AuthModeDelegated, Grant: &grant}
 		}
 		return requestAuthentication{Mode: AuthModeRequired}

@@ -63,7 +63,7 @@ type ClientInterface interface {
 	AddAccount(ctx context.Context, options *AddAccountRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddAccountResponseJSON, error)
 	AddAccountWithResponse(ctx context.Context, options *AddAccountRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddAccountResp, error)
 
-	// ListAgentTokens List active agent grants
+	// ListAgentTokens List agent grants
 	ListAgentTokens(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListAgentTokensResponse, error)
 	ListAgentTokensWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListAgentTokensResp, error)
 
@@ -1597,7 +1597,7 @@ func (c *Client) AddAccount(ctx context.Context, options *AddAccountRequestOptio
 	return responseParser(ctx, resp)
 }
 
-// ListAgentTokens List active agent grants
+// ListAgentTokens List agent grants
 func (c *Client) ListAgentTokens(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListAgentTokensResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

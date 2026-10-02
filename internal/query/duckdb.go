@@ -3291,3 +3291,11 @@ func (e *DuckDBEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 	}
 	return e.sqliteEngine.ListThread(ctx, q)
 }
+
+// SearchByDomainsScoped delegates participant reads with exact source authority.
+func (e *DuckDBEngine) SearchByDomainsScoped(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error) {
+	if e.sqliteEngine == nil {
+		return nil, errors.New("scoped domain search requires SQLite engine")
+	}
+	return e.sqliteEngine.SearchByDomainsScoped(ctx, domains, after, before, limit, offset, sourceIDs)
+}

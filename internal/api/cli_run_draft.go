@@ -67,6 +67,9 @@ func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {
 	if grant == nil || len(args) == 0 {
 		return false
 	}
+	if permission := agentCLIReadPermission(args); permission != "" {
+		return grant.HasPermission(permission)
+	}
 	if IsCLIRunDraftReply(args) || IsCLIRunDraftCompose(args) {
 		return grant.HasPermission(agentgrant.PermissionDraftCreate)
 	}

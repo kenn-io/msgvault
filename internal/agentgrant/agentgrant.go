@@ -1,10 +1,12 @@
 package agentgrant
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -15,15 +17,23 @@ import (
 type Permission string
 
 const (
-	PermissionDraftCreate Permission = "draft.create"
-	PermissionDraftEdit   Permission = "draft.edit"
-	PermissionDraftDelete Permission = "draft.delete"
+	PermissionSearchRead     Permission = "search.read"
+	PermissionMessageRead    Permission = "message.read"
+	PermissionAttachmentRead Permission = "attachment.read"
+	PermissionStatsRead      Permission = "stats.read"
+	PermissionDraftCreate    Permission = "draft.create"
+	PermissionDraftEdit      Permission = "draft.edit"
+	PermissionDraftDelete    Permission = "draft.delete"
 )
 
 var knownPermissions = map[string]Permission{
-	string(PermissionDraftCreate): PermissionDraftCreate,
-	string(PermissionDraftEdit):   PermissionDraftEdit,
-	string(PermissionDraftDelete): PermissionDraftDelete,
+	string(PermissionSearchRead):     PermissionSearchRead,
+	string(PermissionMessageRead):    PermissionMessageRead,
+	string(PermissionAttachmentRead): PermissionAttachmentRead,
+	string(PermissionStatsRead):      PermissionStatsRead,
+	string(PermissionDraftCreate):    PermissionDraftCreate,
+	string(PermissionDraftEdit):      PermissionDraftEdit,
+	string(PermissionDraftDelete):    PermissionDraftDelete,
 }
 
 func KnownPermission(s string) (Permission, bool) {
@@ -47,6 +57,7 @@ type Grant struct {
 	Permissions []Permission
 	Sources     []SourceRef
 	CreatedAt   time.Time
+	ExpiresAt   time.Time
 }
 
 func (g Grant) HasPermission(p Permission) bool {
@@ -86,6 +97,7 @@ func cloneGrant(g Grant) Grant {
 		Label:       g.Label,
 		Permissions: append([]Permission(nil), g.Permissions...),
 		CreatedAt:   g.CreatedAt,
+		ExpiresAt:   g.ExpiresAt,
 		Sources:     make([]SourceRef, len(g.Sources)),
 	}
 	for i, source := range g.Sources {
@@ -108,6 +120,7 @@ type entry struct {
 }
 
 type Registry struct {
+	store   Persistence
 	mu      sync.Mutex
 	entries map[string]entry // keyed by grant ID
 }
@@ -117,6 +130,13 @@ func NewRegistry() *Registry {
 }
 
 func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) (id, secret string, g Grant, err error) {
+	return r.IssueExpires(context.Background(), label, perms, sources, time.Time{})
+}
+func (r *Registry) IssueExpires(ctx context.Context, label string, perms []Permission, sources []SourceRef, expires time.Time) (id, secret string, g Grant, err error) {
+	if !expires.IsZero() && !expires.After(time.Now()) {
+		return "", "", Grant{}, errors.New("agentgrant: expiry must be in the future")
+	}
+
 	if label == "" {
 		return "", "", Grant{}, errors.New("agentgrant: label must not be empty")
 	}
@@ -175,8 +195,15 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) 
 		Permissions: append([]Permission(nil), perms...),
 		Sources:     append([]SourceRef(nil), sources...),
 		CreatedAt:   time.Now(),
+		ExpiresAt:   expires,
 	}
 
+	if r.store != nil {
+		if err := r.store.SaveAgentGrant(ctx, Record{Digest: hex.EncodeToString(digest[:]), Grant: cloneGrant(g)}); err != nil {
+			return "", "", Grant{}, fmt.Errorf("%w: %w", ErrPersistence, err)
+		}
+		return id, secretPlain, cloneGrant(g), nil
+	}
 	r.mu.Lock()
 	r.entries[id] = entry{digest: digest, grant: cloneGrant(g)}
 	r.mu.Unlock()
@@ -185,20 +212,30 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) 
 }
 
 func (r *Registry) Lookup(secret string) (Grant, bool) {
+	return r.LookupContext(context.Background(), secret)
+}
+func (r *Registry) LookupContext(ctx context.Context, secret string) (Grant, bool) {
 	digest := sha256.Sum256([]byte(secret))
+	if r.store != nil {
+		record, ok, err := r.store.FindAgentGrant(ctx, hex.EncodeToString(digest[:]))
+		if err != nil || !ok || (!record.Grant.ExpiresAt.IsZero() && !time.Now().Before(record.Grant.ExpiresAt)) {
+			return Grant{}, false
+		}
+		return cloneGrant(record.Grant), true
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	for _, e := range r.entries {
-		if subtle.ConstantTimeCompare(digest[:], e.digest[:]) == 1 {
+		if subtle.ConstantTimeCompare(digest[:], e.digest[:]) == 1 && (e.grant.ExpiresAt.IsZero() || time.Now().Before(e.grant.ExpiresAt)) {
 			return cloneGrant(e.grant), true
 		}
 	}
 	return Grant{}, false
 }
 
-func (r *Registry) List() []Grant {
+func (r *Registry) listMemory() []Grant {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out []Grant
@@ -209,6 +246,18 @@ func (r *Registry) List() []Grant {
 }
 
 func (r *Registry) Revoke(id string) bool {
+	if r.store != nil {
+		rows, err := r.store.ListAgentGrants(context.Background())
+		if err != nil {
+			return false
+		}
+		for _, row := range rows {
+			if row.Grant.ID == id {
+				return r.RevokeContext(context.Background(), id) == nil
+			}
+		}
+		return false
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	_, ok := r.entries[id]

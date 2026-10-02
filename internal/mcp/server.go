@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -95,6 +96,7 @@ const (
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
+	AgentReadOnly       bool
 	downloads           *downloadCache
 	Engine              query.Engine
 	AttachmentsDir      string
@@ -204,6 +206,18 @@ func officialToolHandler(
 					InputRequests: sdkmcp.InputRequestMap{"confirm": required.params},
 					RequestState:  state,
 				}, nil, nil
+			}
+			if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok {
+				message := ""
+				switch apiErr.Code {
+				case "permission_denied", "unsupported_agent_scope":
+					message = apiErr.Code + ": " + apiErr.Message
+				case "unauthorized":
+					message = "unauthorized: Archive authentication failed"
+				}
+				if message != "" {
+					return &sdkmcp.CallToolResult{IsError: true, Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: message}}}, nil, nil
+				}
 			}
 			return nil, nil, mapInternalError(err)
 		}
@@ -344,6 +358,9 @@ func newMCPServerWithPolicy(
 	}
 
 	for _, definition := range operationCatalog(opts, h) {
+		if opts.AgentReadOnly && !agentReadToolAllowed(definition.name) {
+			continue
+		}
 		if definition.security == toolSecurityWrite && !allowWrites {
 			continue
 		}
@@ -369,7 +386,9 @@ func newMCPServerWithPolicy(
 		}
 		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h), confirmation))
 	}
-	registerAttachmentResources(s, h)
+	if !opts.AgentReadOnly {
+		registerAttachmentResources(s, h)
+	}
 
 	return s
 }
@@ -561,4 +580,12 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func agentReadToolAllowed(name string) bool {
+	switch name {
+	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolGetMessage, ToolGetAttachment, ToolListThread, ToolListMessages, ToolGetStats, ToolAggregate, ToolSearchByDomains, ToolSearchInMessage:
+		return true
+	}
+	return false
 }

@@ -158,7 +158,7 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 	defer func() { _ = s.Close() }()
 
 	prefix := "Searching..."
-	if info.Kind == HTTPStoreConfiguredRemote {
+	if info.Kind == HTTPStoreConfiguredRemote || info.Kind == HTTPStoreAgentDelegated {
 		prefix = fmt.Sprintf("Searching %s...", info.URL)
 	}
 	stopStatus := startSearchStatus(cmd.Context(), prefix, info)

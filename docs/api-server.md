@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-01"
+last_edited: "2026-10-02"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -29,9 +29,13 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.0.0**.
+it is separate from the binary release version. The current schema is **3.1.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 3.1.0 adds source-scoped agent read permissions and optional `expires_at`
+to grant issuance and grant information. See [scoped archive reads](cli-reference.md#scoped-archive-reads)
+for permissions, supported commands, and the distinction from the owner key.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -2458,6 +2462,24 @@ The server is designed for local use:
 
 !!! warning
     Exposing the server on a network without authentication gives anyone on that network access to your entire email archive. Always set an `api_key` when binding to non-loopback addresses.
+
+### Restricted agent reads
+
+On newer `main`, agent requests use `X-Msgvault-Agent-Token` instead of the owner
+key. The daemon checks `search.read`, `message.read`, `attachment.read`, or
+`stats.read` and the live source identity before serving supported archive reads.
+Unscoped reads select only granted sources. Explicit accounts, collections, and
+source ID sets must fit entirely inside the grant. Missing authority returns
+`401 permission_denied` and names the permission. Unsupported routes remain
+owner-only, including SQL, exports, writes, configuration, and grant management.
+
+Grant records and SHA-256 secret digests are stored in the archive. Optional
+`expires_at` is a future RFC3339 timestamp in the issuance request and metadata
+responses. Revocation deletes the record immediately; the next authentication
+attempt fails. In-flight requests that already authenticated may complete.
+See [agent-token](cli-reference.md#agent-token) for issuance, restart migration,
+remote CLI and MCP usage, and the exact supported read capabilities.
+
 
 ## Configuration Reference
 

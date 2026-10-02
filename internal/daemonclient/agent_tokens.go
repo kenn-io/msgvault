@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -20,6 +21,7 @@ func (c *Client) IssueAgentToken(
 	permissions []string,
 	sourceIDs []int64,
 	senderSelections map[int64][]string,
+	expires ...time.Time,
 ) (*generated.AgentTokenIssueResponse, error) {
 	if senderSelections != nil {
 		compatible, err := c.SupportsAPISchemaVersion(ctx, agentTokenSenderMinAPISchemaVersion)
@@ -35,10 +37,22 @@ func (c *Client) IssueAgentToken(
 	for sourceID, values := range senderSelections {
 		encodedSelections[strconv.FormatInt(sourceID, 10)] = append([]string(nil), values...)
 	}
+	var expiresAt *time.Time
+	if len(expires) > 0 && !expires[0].IsZero() {
+		expiresAt = &expires[0]
+		compatible, err := c.SupportsAPISchemaVersion(ctx, "2.36.0")
+		if err != nil {
+			return nil, fmt.Errorf("check agent-token expiry capability: %w", err)
+		}
+		if !compatible {
+			return nil, errors.New("agent-token expiry requires daemon API schema 2.36.0 or newer")
+		}
+	}
 	resp, err := APIResponseWithStatuses(c, []int{http.StatusCreated}, func(client *apiclient.Client) (*generated.IssueAgentTokenResp, error) {
 		return client.IssueAgentTokenWithResponse(ctx, &generated.IssueAgentTokenRequestOptions{
 			Body: &generated.IssueAgentTokenBody{
 				Label: label, Permissions: permissions, SourceIds: sourceIDs,
+				ExpiresAt:        expiresAt,
 				SenderSelections: encodedSelections,
 			},
 		})
@@ -52,7 +66,7 @@ func (c *Client) IssueAgentToken(
 	return resp.JSON201, nil
 }
 
-// ListAgentTokens returns active grant metadata without secrets.
+// ListAgentTokens returns all grant metadata, including expired grants, without secrets.
 func (c *Client) ListAgentTokens(ctx context.Context) ([]generated.AgentTokenView, error) {
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ListAgentTokensResp, error) {
 		return client.ListAgentTokensWithResponse(ctx)

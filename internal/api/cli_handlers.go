@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -900,6 +901,10 @@ func (s cliScope) displayName() string {
 }
 
 func (s *Server) handleCLIStats(w http.ResponseWriter, r *http.Request) {
+	if s.requestAuthentication(r).Grant != nil {
+		s.agentScopedStats(w, r, true)
+		return
+	}
 	if s.store == nil {
 		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Database not available")
 		return
@@ -1320,7 +1325,7 @@ func (s *Server) handleCLIRepairMessage(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	runner, ok := s.store.(CLIRunner)
-	if !ok {
+	if !ok && s.requestAuthentication(r).Grant == nil {
 		writeAPIHTTPError(w, cliStoreUnavailableError())
 		return
 	}
@@ -1335,6 +1340,10 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Args) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_args", "args must not be empty")
+		return
+	}
+	if s.requestAuthentication(r).Grant != nil && agentCLIReadPermission(req.Args) != "" {
+		s.runAgentCLIRead(w, r, req)
 		return
 	}
 	if !cliRunCommandAllowed(req.Args) {
@@ -1368,6 +1377,10 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if !ok {
+		writeAPIHTTPError(w, cliStoreUnavailableError())
+		return
+	}
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
 	if err := runner.RunCLICommand(r.Context(), req, writeEvent); err != nil {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
@@ -2357,6 +2370,9 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		parsed.AccountIDs = append(parsed.AccountIDs, sourceIDs...)
 	}
 
+	if s.requestAuthentication(r).Grant != nil {
+		parsed.AccountIDs = agentReadSourceIDs(r)
+	}
 	if parsed.IsEmpty() {
 		writeError(w, http.StatusBadRequest, "empty_search", "empty search query")
 		return
@@ -2370,9 +2386,16 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		// waits on it: the probe and any backfill run in the background
 		// and the response only reports their state so the CLI can warn
 		// that results may be incomplete while a backfill runs.
-		IndexState: s.ensureCLISearchIndexAsync(cliStore),
+		IndexState: "",
 	}
 
+	if s.requestAuthentication(r).Grant == nil {
+		resp.IndexState = s.ensureCLISearchIndexAsync(cliStore)
+	} else if !s.ftsIndexComplete.Load() {
+		// Read grants cannot trigger archive writes. Until an owner has verified
+		// the index, tell clients that search completeness is still unverified.
+		resp.IndexState = cliSearchIndexStateChecking
+	}
 	results, err := s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit, offset)
 	if err != nil {
 		s.logger.Error("CLI search failed", "error", err)
@@ -2573,6 +2596,15 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sources = slices.DeleteFunc(sources, func(src *store.Source) bool { return !agentSourceVisible(s.requestAuthentication(r).Grant, src) })
+	if s.requestAuthentication(r).Grant != nil {
+		accounts := make([]cliAccountResponse, 0, len(sources))
+		for _, src := range sources {
+			accounts = append(accounts, cliAccountResponse{ID: src.ID, Email: src.Identifier, Type: src.SourceType})
+		}
+		writeJSON(w, 200, cliAccountsResponse{Accounts: accounts})
+		return
+	}
 	var grouped map[int64]store.SourceMessageCounts
 	var response cliAccountsResponse
 	if counter, ok := s.store.(sourceMessageCounter); ok {
@@ -2679,6 +2711,33 @@ func (s *Server) handleCLICollections(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]cliCollectionResponse, 0, len(collections))
 	for _, coll := range collections {
+		if grant := s.requestAuthentication(r).Grant; grant != nil {
+			members, err := cliStore.GetCollectionByName(coll.Name)
+			if err != nil {
+				writeError(w, 500, "scope_failed", "Could not resolve collection")
+				return
+			}
+			visible := true
+			item := cliCollectionResponse{ID: members.ID, Name: members.Name, Description: members.Description, CreatedAt: members.CreatedAt, SourceIDs: append([]int64{}, members.SourceIDs...)}
+			for _, id := range members.SourceIDs {
+				resolver, ok := s.store.(agentGrantSourceResolver)
+				if !ok {
+					visible = false
+					break
+				}
+				src, err := resolver.GetSourceByIDContext(r.Context(), id)
+				if err != nil || !agentSourceVisible(grant, src) {
+					visible = false
+					break
+				}
+				item.Sources = append(item.Sources, cliCollectionSourceResponse{ID: src.ID, Identifier: src.Identifier})
+			}
+			if !visible {
+				continue
+			}
+			resp = append(resp, item)
+			continue
+		}
 		item, err := cliCollectionResponseFromStore(cliStore, coll)
 		if err != nil {
 			s.logger.Error("failed to hydrate CLI collection", "collection", coll.Name, "error", err)
@@ -3237,6 +3296,11 @@ func (s *Server) handleCLIMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg == nil {
 		writeError(w, http.StatusNotFound, cliErrorMessageNotFound, "Message not found")
+		return
+	}
+
+	if !s.agentMessageSourceAllowed(r, msg.SourceID) {
+		writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionMessageRead))
 		return
 	}
 

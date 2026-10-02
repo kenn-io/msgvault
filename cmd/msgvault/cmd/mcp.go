@@ -75,6 +75,11 @@ Add to Claude Desktop config:
 		opts.AllowIdentityScoring = mcpAllowIdentityScoring
 		opts.AllowPersonMerges = mcpAllowPersonMerges
 		opts.AllowCardDAVWrites = mcpAllowCardDAVWrites
+		opts.AgentReadOnly = isAgentMode(state)
+		if opts.AgentReadOnly && (mcpHTTPAddr != "" || mcpAllowProfileWrites || mcpAllowIdentityDecisions ||
+			mcpAllowIdentityScoring || mcpAllowPersonMerges || mcpAllowCardDAVWrites) {
+			return errors.New("agent MCP supports read-only stdio mode")
+		}
 
 		if mcpHTTPAddr != "" {
 			normalized, err := normalizeMCPHTTPAddr(

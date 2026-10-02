@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-30"
+last_edited: "2026-10-02"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -107,9 +107,11 @@ Commands that access archive state keep their usual stdout/stderr output while u
 2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP. With `[server].daemon_auto_start = false`, they use a daemon that is already running or starting and never start one.
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
 4. With both `--agent-url` and `--agent-token-file`, the CLI connects to a
-   remote daemon as a restricted caller. `draft-reply`, `draft-compose`,
-   `draft-get`, `draft-edit`, `draft-delete`, and `draft-recover` are
-   available in this mode. The CLI rejects owner
+   remote daemon as a restricted caller. `search`, `show-message`, `stats`,
+   `mcp`, `draft-reply`, `draft-compose`, `draft-get`, `draft-edit`,
+   `draft-delete`, and `draft-recover` are available with their required
+   permissions (see [scoped archive reads](#scoped-archive-reads) and
+   [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)). The CLI rejects owner
    configuration (`--config`, `--home`, `--local`) and never writes the token
    to logs or argv. It sends the token in the `X-Msgvault-Agent-Token` header;
    generated OpenAPI clients do not model this transport detail.
@@ -3938,14 +3940,61 @@ configuration, and daemon replacement outside the agent's authority — a remote
 user-managed daemon achieves that, and so does an isolated local agent environment, while
 a second daemon or data directory under the same unrestricted user does not.
 
-Tokens are in-memory and process-scoped. All grants are invalidated when the daemon
-restarts. A grant is valid until it is revoked or the daemon restarts.
-There is no persistence to disk and no migration needed.
+On newer `main`, grants survive daemon restarts. The archive stores only each
+secret's SHA-256 digest and grant metadata. A grant is valid until revoked or its
+optional expiry. Existing process-only tokens from older deployments cannot be
+recovered after an upgrade; issue replacements once. The schema creates the new
+grant table without changing archive messages.
+
+### Scoped archive reads
+
+Use a scoped grant for an agent that needs archive reads. Keep the owner key on
+the daemon host for administration. The owner key retains unrestricted access.
+
+```bash
+msgvault agent-token issue --label researcher \
+  --permissions search.read,message.read --source-ids 1,2 --expires 24h
+msgvault --agent-url https://archive.example.test \
+  --agent-token-file ./reader.token search 'subject:meeting' --json
+msgvault --agent-url https://archive.example.test \
+  --agent-token-file ./reader.token show-message 42 --json
+```
+
+| Permission | Granted reads |
+|---|---|
+| `search.read` | Keyword search, metadata lists, fast search, aggregate counts, and domain search |
+| `message.read` | Message bodies and metadata, and containing threads |
+| `attachment.read` | Attachment metadata and stored bytes; message access alone does not grant bytes |
+| `stats.read` | Statistics within the granted sources; global database size is omitted |
+
+Unscoped reads select the grant's live sources. Explicit accounts, collections,
+and source sets must fit entirely inside that grant. Collection membership is
+resolved for every request; adding an ungranted source makes that collection
+unavailable to the grant. Empty collections return no matches. Source matching
+uses source type and identifier, so removing and re-adding the same source
+preserves authority. Errors name the required permission.
+
+`--agent-url` and `--agent-token-file` also support `stats` and a read-only `mcp`
+stdio server without local owner configuration. Supported MCP tools include
+keyword search, message and thread reads, attachment reads, lists, aggregate,
+and stats. Multi-source metadata lists, fast search, aggregates, and stats keep
+exact per-call scopes. Deep body search requires a single source; vector and
+hybrid reads remain unavailable to scoped grants.
+
+Agent search reports index completeness as unverified until an owner search
+has checked the index. Read grants cannot rebuild it. If results are incomplete,
+the owner can run `rebuild-fts` or search once to start the index check.
+
+Sync, deletion, configuration, account and token administration, SQL, exports,
+people administration, and all other ungranted routes are rejected. Existing
+`draft.*` permissions retain their separate draft authority. Read commands sent
+through `/api/v1/cli/run` return structured JSON as stdout events and execute
+through the same scoped handlers.
 
 ### agent-token issue
 
 Issue a new restricted grant for one agent. The secret is printed once and not stored by
-the daemon (only its SHA-256 digest is kept in memory). Write it to a file that the agent
+the daemon (only its SHA-256 digest is stored in the archive). Write it to a file that the agent
 can read, never pass it as a flag or environment variable.
 
 ```bash
@@ -3958,11 +4007,12 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)), or `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
+| `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h` |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
 
-The grant is valid until revoked or until the daemon restarts.
+The grant is valid until revoked or its optional expiry.
 
 When `--sender` is omitted for a selected source, issuance snapshots every
 currently confirmed valid mailbox identity. Sender selections are stored as
@@ -3980,7 +4030,7 @@ without transport encryption; use it only on a trusted network.
 
 ### agent-token list
 
-List all active grants. Secrets and digests are never returned.
+List all grants, including expired ones. Secrets and digests are never returned.
 Agent-token commands return an error when `server.agent_access` is disabled.
 
 ```bash
@@ -3988,7 +4038,9 @@ msgvault agent-token list
 ```
 
 Each row shows the grant ID, label, permissions, sources (as
-`id/type/identifier`), frozen sender keys, and creation time.
+`id/type/identifier`), frozen sender keys, creation time, and optional expiry.
+Expired grants remain listed with an `(expired)` marker so the owner can revoke
+them. Expired grants cannot authenticate.
 
 ### agent-token revoke
 
@@ -3999,6 +4051,6 @@ enumerated by probing revoke.
 msgvault agent-token revoke <id>
 ```
 
-The grant is removed from the in-memory registry immediately. Any request in flight that
+The persisted grant is removed immediately. Any request in flight that
 already passed authentication completes, but the next authentication attempt with the
 revoked secret is denied without fallback.

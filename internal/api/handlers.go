@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -597,6 +598,10 @@ func toMessageSummary(m APIMessage) MessageSummary {
 
 // handleStats returns archive statistics.
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	if s.requestAuthentication(r).Grant != nil {
+		s.agentScopedStats(w, r, false)
+		return
+	}
 	if s.store == nil {
 		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Database not available")
 		return
@@ -661,6 +666,10 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 // handleListMessages returns a paginated list of messages.
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
+	if s.requestAuthentication(r).Grant != nil {
+		s.handleAgentListMessages(w, r)
+		return
+	}
 	if s.store == nil {
 		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Database not available")
 		return
@@ -732,6 +741,10 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "Message not found")
 			return
 		case err == nil:
+			if !s.agentMessageSourceAllowed(r, qMsg.SourceID) {
+				writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionMessageRead))
+				return
+			}
 			detail := messageDetailFromQuery(qMsg)
 			detail.BodyHTML = s.archivedRemoteImageHTML(id, detail.BodyHTML)
 			writeJSON(w, http.StatusOK, detail)
@@ -761,6 +774,10 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.agentMessageSourceAllowed(r, msg.SourceID) {
+		writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionMessageRead))
+		return
+	}
 	detail := MessageDetail{
 		MessageSummary: toMessageSummary(*msg),
 		Body:           msg.Body,
@@ -811,6 +828,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parsedQuery.HideDeleted = true
+	if s.requestAuthentication(r).Grant != nil {
+		parsedQuery.AccountIDs = agentReadSourceIDs(r)
+	}
 
 	account := r.URL.Query().Get("account")
 	collection := r.URL.Query().Get("collection")
@@ -3390,6 +3410,10 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
 		return
 	}
+	if grant := s.requestAuthentication(r).Grant; grant != nil && !s.agentAttachmentVisible(r, grant, att.ID) {
+		writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionAttachmentRead))
+		return
+	}
 
 	writeJSON(w, http.StatusOK, AttachmentInfo{
 		ID:          att.ID,
@@ -3427,6 +3451,13 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 	if len(attachments) == 0 {
 		writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
 		return
+	}
+	if grant := s.requestAuthentication(r).Grant; grant != nil {
+		attachments = slices.DeleteFunc(attachments, func(att query.AttachmentInfo) bool { return !s.agentAttachmentVisible(r, grant, att.ID) })
+		if len(attachments) == 0 {
+			writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionAttachmentRead))
+			return
+		}
 	}
 	att := &attachments[0]
 
@@ -3602,14 +3633,19 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestLimit := filter.Pagination.Limit
-	messages, err := engine.SearchByDomains(
-		r.Context(),
-		domains,
-		filter.After,
-		filter.Before,
-		requestLimit+1,
-		filter.Pagination.Offset,
-	)
+	var messages []query.MessageSummary
+	if s.requestAuthentication(r).Grant != nil {
+		scoped, ok := engine.(interface {
+			SearchByDomainsScoped(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]query.MessageSummary, error)
+		})
+		if !ok {
+			writeError(w, 503, "source_scope_unavailable", "Scoped domain search is unavailable")
+			return
+		}
+		messages, err = scoped.SearchByDomainsScoped(r.Context(), domains, filter.After, filter.Before, requestLimit+1, filter.Pagination.Offset, filter.SourceIDs)
+	} else {
+		messages, err = engine.SearchByDomains(r.Context(), domains, filter.After, filter.Before, requestLimit+1, filter.Pagination.Offset)
+	}
 	if err != nil {
 		s.logger.Error("domain search failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Domain search failed")
