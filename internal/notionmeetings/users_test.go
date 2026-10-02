@@ -2,6 +2,7 @@ package notionmeetings
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -168,4 +169,14 @@ func TestHydratorGuestFailuresHaveOneWarningPerMeeting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"blocked-1", "blocked-2"}, result.UnresolvedAttendeeIDs)
 	assert.Equal(t, []string{"Notion attendee lookup failed: notion integration lacks User Information access; kept display-only identity"}, result.Warnings)
+}
+
+func TestHydratorGuestTimeoutKeepsContent(t *testing.T) {
+	timeout := fmt.Errorf("perform Notion request: %w", context.DeadlineExceeded)
+	users := &fakeUserSource{pages: map[string]*UserPage{"": {}}, errs: map[string]error{"user-1": timeout}, users: map[string]*User{"user-2": {Object: "user", ID: "user-2", Person: UserPerson{Email: "second@example.com", EmailVerified: true}}}}
+	result, err := NewHydrator(completeHydrationSource()).WithUserSource(users).Hydrate(t.Context(), hydrationMeeting())
+	require.NoError(t, err)
+	assert.Equal(t, "Test Speaker: Ready to ship.", result.Transcript)
+	assert.Equal(t, []string{"user-1"}, result.UnresolvedAttendeeIDs)
+	assert.Equal(t, map[string]bool{"user-1": true}, result.failedAttendeeIDs)
 }
