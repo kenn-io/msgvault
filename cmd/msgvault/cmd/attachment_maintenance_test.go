@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/msgvault/internal/attachmentstore"
@@ -728,4 +729,27 @@ func TestDailyMaintenanceVerificationFollowupsReclaimDeadPacks(t *testing.T) {
 	require.NoError(err)
 	assert.False(recorded, "the final verification window must reach physical GC")
 	assert.Contains(f.logs.String(), "automatic attachment repack complete")
+}
+
+func TestRemovingRedundantOrphanPackCountsAsProgress(t *testing.T) {
+	require := require.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	hash := f.addLoose([]byte("blob already served by a recorded pack"))
+	_, err := f.maintenance.pack(t.Context(), 0)
+	require.NoError(err)
+	entry := f.packedEntry(hash)
+	require.NotNil(entry)
+	recorded := filepath.Join(f.dir, "packs", entry.PackID[:2], entry.PackID+packstore.PackExt)
+	data, err := os.ReadFile(recorded)
+	require.NoError(err)
+	// An unrecorded copy, as left by a crash after a repack published its
+	// replacement: every live entry already resolves elsewhere, so Pack deletes it.
+	orphanID := pack.NewPackID()
+	orphan := filepath.Join(f.dir, "packs", orphanID[:2], orphanID+packstore.PackExt)
+	require.NoError(os.MkdirAll(filepath.Dir(orphan), 0o700))
+	require.NoError(os.WriteFile(orphan, data, 0o600))
+	ctx := jobctx.WithProgress(t.Context())
+	require.NoError(f.maintenance.runAutomaticPack(ctx, nil))
+	assert.NoFileExists(t, orphan)
+	assert.True(t, jobctx.HasProgress(ctx), "a removed pack is committed progress a timed-out pass can resume after")
 }

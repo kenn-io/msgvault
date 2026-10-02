@@ -136,7 +136,12 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 	}
 	start := time.Now()
 	stats, err := m.pack(ctx, automaticAttachmentBytes)
-	if stats.BlobsPacked > 0 || stats.PacksAdopted > 0 || stats.MappingsPruned > 0 || stats.RecordsDropped > 0 || stats.LooseSwept > 0 || stats.LooseOrphansRemoved > 0 {
+	// Each counter is a committed change a later pass need not repeat.
+	// PacksQuarantined is not: a damaged pack stays in place and is counted
+	// again on every pass.
+	if stats.BlobsPacked > 0 || stats.PacksAdopted > 0 || stats.PacksRemoved > 0 ||
+		stats.MappingsPruned > 0 || stats.RecordsDropped > 0 || stats.LooseSwept > 0 ||
+		stats.LooseOrphansRemoved > 0 {
 		jobctx.RecordProgress(ctx)
 	}
 	duration := time.Since(start)
