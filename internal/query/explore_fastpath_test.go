@@ -141,6 +141,16 @@ func TestExploreListingFastPathMatchesLegacy(t *testing.T) {
 		{name: "source filter", request: ExploreRequest{
 			Context: Context{SourceIDs: []int64{ids.chatSource}}, Page: PageSpec{Limit: 50},
 		}},
+		{name: "domain sender recipient and roster membership", request: ExploreRequest{
+			Context: Context{Domains: []string{"example.com"}}, Page: PageSpec{Limit: 50},
+		}},
+		{name: "domain intersection", request: ExploreRequest{
+			Context: Context{Domains: []string{"example.com"}, AdditionalDomainGroups: [][]string{{"corp.example"}}},
+			Page:    PageSpec{Limit: 50},
+		}},
+		{name: "domain page beyond end", request: ExploreRequest{
+			Context: Context{Domains: []string{"example.com"}}, Page: PageSpec{Limit: 3, Offset: 500},
+		}},
 		{name: "message type filter", request: ExploreRequest{
 			Context: Context{MessageTypes: []string{"email"}}, Page: PageSpec{Limit: 50},
 		}},
@@ -320,7 +330,7 @@ func TestExploreParticipantContextKeepsLegacyPath(t *testing.T) {
 	assert.True(exploreConditionsTouchParticipantLists(ExploreRequest{
 		Context: Context{ParticipantIDs: []int64{7}},
 	}))
-	assert.True(exploreConditionsTouchParticipantLists(ExploreRequest{
+	assert.False(exploreConditionsTouchParticipantLists(ExploreRequest{
 		Context: Context{Domains: []string{"example.com"}},
 	}))
 }

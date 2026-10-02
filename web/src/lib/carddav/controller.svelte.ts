@@ -88,10 +88,19 @@ export class CardDAVController {
     visibilityDocument?.addEventListener('visibilitychange', this.visibilityChanged);
   }
   async load(): Promise<void> {
-    await Promise.all([this.readStatus(true), this.loadBooks(false), this.refreshRuns()]);
+    await Promise.all([this.retryStatus(), this.refreshRuns()]);
   }
   async retryStatus(): Promise<void> {
-    await this.readStatus(true);
+    const loaded = await this.readStatus(true);
+    if (loaded && this.status?.available) {
+      await this.loadBooks(false);
+    } else if (!this.disposed && !this.booksReadAbort) {
+      if (loaded) {
+        this.books = [];
+        this.booksError = null;
+      }
+      this.booksLoading = false;
+    }
   }
   async retryBooks(): Promise<void> {
     await this.loadBooks(this.books.length > 0 || this.booksUnknown);
@@ -466,6 +475,7 @@ export class CardDAVController {
         this.schedulePoll(this.pollDelay);
         return;
       }
+      const becameAvailable = !this.status?.available && data.available;
       const fingerprint = statusFingerprint(data);
       const advanced = fingerprint !== this.pollFingerprint;
       this.status = data;
@@ -474,13 +484,14 @@ export class CardDAVController {
       this.recordSuccessfulStatusCommit(statusCommit);
       if (priorActive && !data.active && !this.syncPending) {
         this.stopPolling(false);
-        await Promise.all([this.loadBooks(true), this.refreshRuns()]);
+        await Promise.all([...(data.available ? [this.loadBooks(true)] : []), this.refreshRuns()]);
         return;
       }
       if (this.shouldPoll()) {
         this.pollDelay = advanced ? MIN_POLL_MS : Math.min(MAX_POLL_MS, this.pollDelay * 2);
         this.schedulePoll(this.pollDelay);
       }
+      if (becameAvailable) await this.loadBooks(false);
     } catch {
       if (
         !this.currentStatusCommit(context, statusCommit, requestController.signal) ||

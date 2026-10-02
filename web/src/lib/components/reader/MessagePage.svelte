@@ -47,6 +47,6 @@
 
 <style>
   .message-page { display: flex; flex-direction: column; height: 100dvh; padding: 1rem; }
-  header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
-  h1 { font-size: 1rem; font-weight: 600; }
+  header { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
+  h1 { min-width: 0; overflow-wrap: anywhere; font-size: 1rem; font-weight: 600; }
 </style>

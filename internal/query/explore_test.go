@@ -1436,8 +1436,8 @@ func TestExploreAdditionalDomainGroupsIntersectRatherThanUnion(t *testing.T) {
 
 	response, err := engine.Explore(ctx, ExploreRequest{
 		Context: Context{
-			Domains:                []string{"domain-a.example"},
-			AdditionalDomainGroups: [][]string{{"domain-b.example"}},
+			Domains:                []string{"DOMAIN-A.EXAMPLE", "absent.example"},
+			AdditionalDomainGroups: [][]string{{"DOMAIN-B.EXAMPLE", "missing.example"}},
 		},
 		Page: PageSpec{Limit: 10},
 	})

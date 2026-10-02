@@ -424,12 +424,9 @@ func TestExploreFullTextResolverBoundsCandidateTransfer(t *testing.T) {
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 	assertions.True(body.CandidatePoolSaturated)
 	assertions.Nil(body.TotalCount, "a bounded lexical candidate set must not publish an exact total")
-	require.NotEmpty(store.searchMessagesQueryLimits)
-	for _, limit := range store.searchMessagesQueryLimits {
-		require.LessOrEqual(limit, exploreMaxLimit)
-	}
-	require.Equal(10_000, store.searchMessagesQueryTransferred)
-	require.Len(engine.request.Search.CandidateMessageIDs, 10_000)
+	assertions.Equal([]int{query.MaxExploreCandidateMessageIDs}, store.searchMessagesQueryLimits)
+	assertions.Equal(10_000, store.searchMessagesQueryTransferred)
+	assertions.Len(engine.request.Search.CandidateMessageIDs, 10_000)
 	preflight := postExploreJSON(t, srv, "/api/v1/explore/preflight", fmt.Sprintf(`{
 		"selection":{"mode":"all_matching","predicate":{"query":"alpha","search_mode":"full_text"},
 		"exclusions":[],"cache_revision":%q,"search_provenance":{"lexical_index_revision":%q}}

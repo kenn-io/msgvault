@@ -42,7 +42,7 @@
     justify-content: center;
     border-radius: 27%;
     background: hsl(var(--avatar-hue, 210) 55% 45% / 0.13);
-    color: hsl(var(--avatar-hue, 210) 40% 36%);
+    color: hsl(var(--avatar-hue, 210) 40% 28%);
     font-family: var(--font-sans);
     font-weight: 600;
     letter-spacing: 0.02em;

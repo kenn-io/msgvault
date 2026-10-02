@@ -287,7 +287,9 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 		}
 		prepared.request.CandidateSnapshotID = cursor.Snapshot
 	}
+	candidatesStarted := time.Now()
 	searchSpec, snapshotID, ok := s.resolveExploreSearch(r.Context(), w, prepared.request)
+	addExploreTiming(w, "candidates", time.Since(candidatesStarted))
 	if !ok {
 		return
 	}
@@ -314,7 +316,9 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
+	projectionStarted := time.Now()
 	result, err := explorer.Explore(r.Context(), prepared.query)
+	addExploreTiming(w, "projection", time.Since(projectionStarted))
 	if err != nil {
 		s.writeExploreError(r.Context(), w, err)
 		return
@@ -335,7 +339,10 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 	}
-	if err := s.hydrateExploreIdentityMatches(r.Context(), result.Rows); err != nil {
+	identitiesStarted := time.Now()
+	err = s.hydrateExploreIdentityMatches(r.Context(), result.Rows)
+	addExploreTiming(w, "identities", time.Since(identitiesStarted))
+	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
 		}
@@ -367,6 +374,15 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 		})
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// addExploreTiming reports milliseconds in the browser's request timing panel.
+// Candidate resolution includes lexical/embedding/retrieval subphases; callers
+// should not add its duration to those component measurements.
+func addExploreTiming(w http.ResponseWriter, name string, duration time.Duration) {
+	w.Header().Add("Server-Timing", fmt.Sprintf(
+		"%s;dur=%.3f", name, float64(duration)/float64(time.Millisecond),
+	))
 }
 
 func (s *Server) hydrateExploreIdentityMatches(ctx context.Context, rows []query.EntryRow) error {
@@ -502,11 +518,13 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
+	groupingStarted := time.Now()
 	result, err := analyzer.ExploreGroups(r.Context(), query.ExploreGroupRequest{
 		Explore: query.ExploreRequest{Context: ctx, Search: searchSpec}, Dimension: string(dimension),
 		GroupKey: request.GroupKey, Sort: sortSpec,
 		Page: query.PageSpec{Limit: request.Limit, Offset: offset},
 	})
+	addExploreTiming(w, "grouping", time.Since(groupingStarted))
 	if err != nil {
 		s.writeExploreError(r.Context(), w, err)
 		return
@@ -1359,25 +1377,11 @@ func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter
 		candidateCap = query.MaxExploreCandidateMessageIDs
 	}
 	ids := make([]int64, 0)
-	seen := make(map[int64]struct{})
-	offset := 0
 	var reportedTotal int64
-	for matchable {
-		remainingCapacity := candidateCap - len(ids)
-		if remainingCapacity <= 0 {
-			break
-		}
-		pageLimit := min(exploreMaxLimit, remainingCapacity)
-		var (
-			messages []APIMessage
-			total    int64
-			err      error
-		)
-		if searcher, ok := s.store.(ctxMessageSearcher); ok {
-			messages, total, err = searcher.SearchMessagesQueryContext(ctx, parsed, offset, pageLimit)
-		} else {
-			messages, total, err = s.store.SearchMessagesQuery(parsed, offset, pageLimit)
-		}
+	if matchable {
+		started := time.Now()
+		ids, reportedTotal, err = s.store.SearchMessageIDsQueryContext(ctx, parsed, candidateCap)
+		addExploreTiming(w, "lexical", time.Since(started))
 		if err != nil {
 			if s.writeIfContextError(w, err) {
 				return query.SearchSpec{}, "", false
@@ -1385,21 +1389,9 @@ func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter
 			writeError(w, http.StatusServiceUnavailable, "lexical_index_unavailable", "The full-text index could not resolve candidates")
 			return query.SearchSpec{}, "", false
 		}
-		reportedTotal = total
-		for _, message := range messages {
-			if _, ok := seen[message.ID]; ok {
-				continue
-			}
-			seen[message.ID] = struct{}{}
-			ids = append(ids, message.ID)
-		}
-		offset += len(messages)
-		if len(messages) == 0 || int64(offset) >= total {
-			break
-		}
 	}
 	slices.Sort(ids)
-	saturated := reportedTotal > int64(offset)
+	saturated := reportedTotal > int64(len(ids))
 	revision := "fts5:" + hashCanonicalValue(struct {
 		ParsedQuery string  `json:"parsed_query"`
 		IDs         []int64 `json:"ids"`
@@ -1628,6 +1620,10 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		s.writeExploreVectorError(w, err)
 		return query.SearchSpec{}, "", false
 	}
+	addExploreTiming(w, "embedding", meta.QueryEmbeddingDuration)
+	w.Header().Add("Server-Timing", fmt.Sprintf("retrieval;dur=%.3f;desc=%q",
+		float64(meta.RetrievalDuration)/float64(time.Millisecond), meta.Accelerator))
+
 	poolSaturated := meta.PoolSaturated || len(hits) >= exploreMaxLimit || lexicalSpec.CandidatePoolSaturated
 	if len(hits) > exploreMaxLimit {
 		hits = hits[:exploreMaxLimit]

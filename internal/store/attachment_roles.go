@@ -422,6 +422,12 @@ func (s *Store) upsertAttachmentRecordWithPolicy(
 				mime_type = EXCLUDED.mime_type,
 				storage_path = EXCLUDED.storage_path,
 				content_hash = EXCLUDED.content_hash,
+				thumbnail_hash = CASE
+					WHEN COALESCE(attachments.content_hash, '') = EXCLUDED.content_hash
+					THEN attachments.thumbnail_hash ELSE NULL END,
+				thumbnail_path = CASE
+					WHEN COALESCE(attachments.content_hash, '') = EXCLUDED.content_hash
+					THEN attachments.thumbnail_path ELSE NULL END,
 				size = EXCLUDED.size,
 				source_attachment_id = EXCLUDED.source_attachment_id,
 				media_type = EXCLUDED.media_type,
