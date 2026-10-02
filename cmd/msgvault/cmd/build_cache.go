@@ -802,26 +802,18 @@ func buildCacheScheduled(
 	if _, throttle := scheduledCacheBuildDelay(staleness, minRebuildInterval, now()); throttle {
 		return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 	}
-	if derivedDriftOnly(staleness) {
-		return refreshIdentityDatasetsOnly(
-			dbPath,
-			analyticsDir,
-			acquirePublishLock,
-			builderOverrides...,
-		)
-	}
-	if relatedDriftOnly(staleness) {
-		return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-			acquirePublishLock, true, builderOverrides...)
-	}
-	return buildCacheLocked(
-		dbPath,
-		analyticsDir,
-		staleness.FullRebuild,
-		false,
-		acquirePublishLock,
-		builderOverrides...,
-	)
+	return withFullBuildFallback(func() (*buildResult, error) {
+		if derivedDriftOnly(staleness) {
+			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, acquirePublishLock,
+				builderOverrides...)
+		}
+		if relatedDriftOnly(staleness) {
+			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
+				acquirePublishLock, true, builderOverrides...)
+		}
+		return buildCacheLockedAttempt(dbPath, analyticsDir, staleness.FullRebuild, false,
+			acquirePublishLock, builderOverrides...)
+	}, dbPath, analyticsDir, acquirePublishLock, builderOverrides...)
 }
 
 func buildCacheImpl(
@@ -983,6 +975,36 @@ func buildCacheLocked(
 	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
+	return withFullBuildFallback(func() (*buildResult, error) {
+		return buildCacheLockedAttempt(dbPath, analyticsDir, fullRebuild, recheckStaleness,
+			locking, builderOverrides...)
+	}, dbPath, analyticsDir, locking, builderOverrides...)
+}
+
+// withFullBuildFallback runs build and finishes with a full build when a
+// derived refresh inside it finds changes it cannot repair. A sync can commit
+// after the staleness check selects that refresh. The caller holds the builder
+// lock, and build's own resources are released before the full build starts.
+func withFullBuildFallback(
+	build func() (*buildResult, error),
+	dbPath, analyticsDir string,
+	locking cachePublishLocking,
+	builderOverrides ...duckdbutil.BuilderOverrides,
+) (*buildResult, error) {
+	result, err := build()
+	if !errors.Is(err, ErrDerivedRefreshRequiresFullBuild) {
+		return result, err
+	}
+	fmt.Printf("%v. Forcing full rebuild...\n", err)
+	return buildCacheLockedAttempt(dbPath, analyticsDir, true, false, locking, builderOverrides...)
+}
+
+func buildCacheLockedAttempt(
+	dbPath, analyticsDir string,
+	fullRebuild, recheckStaleness bool,
+	locking cachePublishLocking,
+	builderOverrides ...duckdbutil.BuilderOverrides,
+) (*buildResult, error) {
 	// Callers pass the configured DSN, which may be a file: URI; everything
 	// below (sqlite ?mode=ro opens, the DuckDB attach, filepath.Dir for the
 	// staging dir) needs a plain filesystem path.
@@ -1070,6 +1092,13 @@ func buildCacheLocked(
 	if err != nil {
 		_ = identityStore.Close()
 		return nil, fmt.Errorf("read account identity revision: %w", err)
+	}
+	if hasPreviousState && !fullRebuild &&
+		accountIdentityRevision != previousState.AccountIdentityRevision {
+		// Canonical links can reuse message facts; account attribution cannot.
+		fmt.Println("Account identities changed. Forcing full rebuild...")
+		fullRebuild = true
+		lastMessageID = 0
 	}
 	participantIdentifierRevision, err := identityStore.ParticipantIdentifierRevision()
 	if err != nil {
@@ -1179,13 +1208,25 @@ func buildCacheLocked(
 			return nil, fmt.Errorf("read cache related-change sequence: %w", err)
 		}
 	}
+	// Messages at or below the committed boundary, counted once and reused
+	// for the expected total of an incremental build.
+	var coveredCount int64
+	coveredCounted := false
 	if !fullRebuild && hasPreviousState && hasSyncRunsTable > 0 {
 		updatesChanged := syncCounters.updates != previousState.LastCacheUpdateCount
-		coveredAdditionsChanged := syncCounters.additions != previousState.LastCacheAdditionCount &&
-			maxID <= previousState.LastMessageID
+		additionsRegressed := syncCounters.additions < previousState.LastCacheAdditionCount
+		populationChanged := false
+		if syncCounters.additions != previousState.LastCacheAdditionCount {
+			if err := sourceSnapshot.QueryRow(coveredCacheMessageCountSQL(), previousState.LastMessageID).
+				Scan(&coveredCount); err != nil {
+				return nil, fmt.Errorf("check cached message population: %w", err)
+			}
+			coveredCounted = true
+			populationChanged = coveredCount != previousState.Stats.TotalMessages
+		}
 		failedSyncChanged := syncCounters.failedRunCount != previousState.LastFailedSyncRunCount ||
 			syncCounters.failedRunIDSum != previousState.LastFailedSyncRunIDSum
-		if updatesChanged || coveredAdditionsChanged || failedSyncChanged {
+		if updatesChanged || additionsRegressed || failedSyncChanged || populationChanged {
 			fmt.Println("Existing cached messages changed. Forcing full rebuild...")
 			fullRebuild = true
 			lastMessageID = 0
@@ -1205,7 +1246,21 @@ func buildCacheLocked(
 			relatedKinds = relatedChangeKinds{}
 		}
 	}
+	if hasPreviousState && !fullRebuild && maxID > lastMessageID &&
+		identityRevision != previousState.IdentityRevision {
+		// Rebuilding canonical edges reads recipients for old messages too.
+		// Export their complete population alongside the new message shards.
+		relatedKinds.recipients = true
+	}
 	repairRelated := relatedKinds.recipients || relatedKinds.labels || relatedKinds.attachments
+	if hasPreviousState && !fullRebuild && hasSyncRunsTable > 0 &&
+		syncCounters.additions != previousState.LastCacheAdditionCount &&
+		maxID <= previousState.LastMessageID && !repairRelated {
+		// Without journaled child changes there is no bounded repair for an
+		// addition already inside the committed message boundary.
+		fullRebuild = true
+		lastMessageID = 0
+	}
 	if hasPreviousState && maxID <= lastMessageID && !fullRebuild && repairRelated {
 		if err := sourceSnapshot.Close(); err != nil {
 			return nil, fmt.Errorf("close SQLite snapshot before related repair: %w", err)
@@ -1230,10 +1285,14 @@ func buildCacheLocked(
 	if err := sourceSnapshot.QueryRow(expectedCountQuery, maxID, lastMessageID).Scan(&expectedBatchCount); err != nil {
 		return nil, fmt.Errorf("count expected staged messages: %w", err)
 	}
-	expectedTotalQuery := "SELECT COUNT(*) FROM messages WHERE " +
-		exportableMessageWhere("") + " AND id <= ?"
-	if err := sourceSnapshot.QueryRow(expectedTotalQuery, maxID).Scan(&expectedTotalCount); err != nil {
-		return nil, fmt.Errorf("count expected cached messages: %w", err)
+	if coveredCounted && !replaceAll {
+		expectedTotalCount = coveredCount + expectedBatchCount
+	} else {
+		expectedTotalQuery := "SELECT COUNT(*) FROM messages WHERE " +
+			exportableMessageWhere("") + " AND id <= ?"
+		if err := sourceSnapshot.QueryRow(expectedTotalQuery, maxID).Scan(&expectedTotalCount); err != nil {
+			return nil, fmt.Errorf("count expected cached messages: %w", err)
+		}
 	}
 	if buildCacheAfterSnapshotHook != nil {
 		buildCacheAfterSnapshotHook()
@@ -1649,12 +1708,18 @@ func buildCacheLocked(
 			return nil, fmt.Errorf("close sqlite after cache consistency check: %w", closeErr)
 		}
 		if currentCounters != syncCounters {
-			// The snapshot is internally consistent but may hold a parent row
-			// whose related rows committed after it. Publishing it beats
-			// discarding the whole export; the flag makes the next build full,
-			// so no later incremental build can skip those rows.
-			partialSnapshot = true
-			slog.Warn("sync counters changed during cache export; published snapshot, next build will be full",
+			// The journal tracks children committed after their parent was
+			// exported. Keep the snapshot watermarks so the next build can
+			// append new messages or repair those children. Legacy archives
+			// without a journal still need a conservative full repair.
+			partialSnapshot = hasRelatedChangeJournal == 0
+			level := slog.LevelInfo
+			if partialSnapshot {
+				level = slog.LevelWarn
+			}
+			slog.Log(context.Background(), level,
+				"sync counters changed during cache export; published read snapshot",
+				"full_rebuild_required", partialSnapshot,
 				"additions", fmt.Sprintf("%d→%d", syncCounters.additions, currentCounters.additions),
 				"updates", fmt.Sprintf("%d→%d", syncCounters.updates, currentCounters.updates),
 				"failed_runs", fmt.Sprintf("%d→%d", syncCounters.failedRunCount, currentCounters.failedRunCount),

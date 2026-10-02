@@ -2849,7 +2849,7 @@ msgvault build-cache [flags]
 
 | Flag | Description |
 |---|---|
-| `--full-rebuild` | Discard existing cache and rebuild |
+| `--full-rebuild` | Rebuild all cache files from scratch |
 
 The CLI sends the request over HTTP and streams the daemon's stdout/stderr back
 to the terminal. A local daemon runs the DuckDB export in an isolated child
@@ -2858,7 +2858,9 @@ long-lived daemon process. With `[remote].url` configured, the remote daemon
 builds its own cache; use `--local` only to target this machine's local daemon.
 
 For automatic cache rebuilds after daemon-owned syncs, configure
-`[analytics].auto_build_cache` in `config.toml`.
+`[analytics].auto_build_cache` in `config.toml`. See
+[analytics settings](configuration.md#analytics) for snapshot freshness,
+builder memory, threads, and temporary disk limits.
 
 Build warnings count exported text values repaired with U+FFFD and identity
 values exported as unknown. Invalid source message IDs, source conversation

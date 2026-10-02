@@ -814,7 +814,7 @@ Settings for daemon-side aggregate query behavior. The Web UI, TUI, MCP server, 
 | `engine` | `auto` | Aggregate engine: `auto` starts with live SQL and switches to DuckDB after cache maintenance succeeds; `sql` always uses live SQL; `duckdb` requires a usable Parquet cache |
 | `auto_build_cache` | `true` | Refresh a stale or missing Parquet cache automatically at startup, after scheduled or manual syncs, and when a query finds it due; `false` skips automatic builds. An explicit `query --fresh` or sync `--build-cache` can still request one |
 | `min_rebuild_interval` | `0s` | Minimum age of a usable cache before a sync, query, or daemon restart may queue an automatic rebuild. Queries serve the committed snapshot during the interval |
-| `builder_memory_limit` | `2GB` | DuckDB memory limit for cache builds, such as `4GB` or `512MiB` |
+| `builder_memory_limit` | `2GB` | DuckDB buffer-manager budget for cache builds, such as `4GB` or `512MiB`; total process memory can exceed it |
 | `builder_threads` | min(CPUs, 2) | DuckDB threads for cache builds; zero keeps the default |
 | `builder_temp_limit` | `32GB` | Maximum spill-to-disk size for cache builds |
 | `query_memory_limit` | `512MB` | DuckDB memory limit for daemon aggregate queries; raise it on a large archive |
@@ -827,6 +827,24 @@ machine running msgvault, check available memory and free disk space before
 raising these limits in `config.toml`. Restart the daemon to apply the change,
 then retry the query. The limits cap resource use; they do not reserve memory
 or disk space. Cache builds have separate `builder_*` limits.
+
+Start with the builder defaults, including at most two threads. More threads
+can increase peak memory use. DuckDB's memory budget covers its buffer manager;
+native allocations and Go memory add to the process total. A `24GB` budget
+therefore does not guarantee that a build stays below 24 GB of resident memory.
+Leave room for the daemon, syncs, other applications, and those allocations.
+For a constrained host, lower `builder_memory_limit` and set
+`builder_threads = 1` before raising the memory budget. See
+[DuckDB's memory guidance](https://duckdb.org/docs/stable/guides/performance/oom).
+
+Builders spill temporary work under the cache staging directory, beside the
+analytics cache. Check free space on that filesystem before increasing
+`builder_temp_limit`. The default allows up to `32GB` of spill in addition to
+the existing cache and the new generation being staged. When DuckDB's SQLite
+scanner is unavailable, the CSV fallback also writes a temporary copy of the
+source tables beside the database, or in the system temporary directory if that
+fails. A larger disk budget can help a large archive finish with a smaller
+memory budget; it does not reserve space.
 
 The daemon starts HTTP health and API routing before analytics cache
 maintenance. With `engine = "duckdb"`, analytics remain unavailable until a
@@ -856,9 +874,15 @@ or otherwise unusable cache are not delayed.
 The daemon runs automatic rebuilds in the background, outside the scheduled
 sync that requested them, so syncs keep their cadence while a build runs. A
 sync that finishes during a build does not discard it: the build publishes
-what it exported and marks the cache so the next build is a full rebuild.
-This partial snapshot remains usable across daemon restarts, and its next
-automatic rebuild still honors `min_rebuild_interval`.
+one consistent read snapshot with that snapshot's counters and message boundary.
+The next build appends later messages and repairs journaled child-row changes.
+Participant links can refresh relationship data while retaining existing
+message shards, including when new messages arrive in the same sync. Changes
+to baked message facts, account identities, deletions, and failed syncs still
+require a full rebuild. Archives without the child-row repair journal use a
+conservative full rebuild after an overlapping sync. The published snapshot
+remains usable across daemon restarts, and automatic follow-up builds still
+honor `min_rebuild_interval`.
 Cache build memory and temporary disk usage scale with archive size, so a
 minimum interval can prevent repeated archive-scale work when sources sync
 frequently. Changes under `[analytics]` take effect after the daemon restarts.

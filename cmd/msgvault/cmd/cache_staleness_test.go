@@ -406,11 +406,12 @@ func TestCacheNeedsBuild_MeetingMutation(t *testing.T) {
 	}
 }
 
-func TestCacheNeedsBuildMixedNewMessagesAndRelationshipDriftForcesFullRebuild(t *testing.T) {
+func TestCacheNeedsBuildMixedNewMessagesAndRelationshipDrift(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*testing.T, *store.Store)
 		assert func(*testing.T, cacheStaleness)
+		full   bool
 	}{
 		{
 			name: "participant links",
@@ -426,6 +427,7 @@ func TestCacheNeedsBuildMixedNewMessagesAndRelationshipDriftForcesFullRebuild(t 
 		},
 		{
 			name: "conversation membership",
+			full: true,
 			mutate: func(t *testing.T, st *store.Store) {
 				t.Helper()
 				_, err := st.DB().Exec(`
@@ -469,8 +471,8 @@ func TestCacheNeedsBuildMixedNewMessagesAndRelationshipDriftForcesFullRebuild(t 
 			got := cacheNeedsBuild(dbPath, analyticsDir)
 			assertions.True(got.HasNew)
 			tt.assert(t, got)
-			assertions.True(got.FullRebuild,
-				"mixed new-message and relationship drift must not append stale index rows")
+			assertions.Equal(tt.full, got.FullRebuild,
+				"only membership drift requires re-exporting message facts on append")
 		})
 	}
 }

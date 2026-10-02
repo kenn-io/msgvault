@@ -89,10 +89,10 @@ type CacheSyncState struct {
 	PersonDisplayNameRevision int64     `json:"person_display_name_revision,omitzero"`
 	PublishedAt               time.Time `json:"published_at"`
 	DatasetFingerprint        string    `json:"dataset_fingerprint"`
-	// FullRebuildRequired marks a publication whose export snapshot missed
-	// rows committed while it ran (a sync finished mid-export). Rows related
-	// to messages already inside LastMessageID may be absent, so the next
-	// build must be full no matter what else changed.
+	// FullRebuildRequired marks an overlapping sync on a legacy archive without
+	// a child-row repair journal. Later children may be absent for parents inside
+	// LastMessageID, so no append can safely repair that publication. Journaled
+	// archives instead retain their snapshot watermarks for normal catch-up.
 	FullRebuildRequired bool `json:"full_rebuild_required,omitempty"`
 
 	ConversationParticipantsFingerprint string `json:"conversation_participants_fingerprint,omitempty"`

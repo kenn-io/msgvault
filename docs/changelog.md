@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-01"
+last_edited: "2026-10-02"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -21,6 +21,13 @@ All notable changes to msgvault, grouped by release.
   review token and use `/api/v1/identity/match-candidates/{id}/review/accept`
   or `/review/reject`. See [API compatibility](api-server.md#api-compatibility).
 
+- Analytics cache builds retain their read snapshot when a sync finishes during
+  export. Follow-up builds append new messages and repair journaled child rows
+  without rewriting unchanged message shards. Participant links changed during
+  an append also refresh relationship data from retained message facts. Changes
+  to baked facts or account attribution still require a full rebuild. See
+  [analytics settings](configuration.md#analytics) for freshness and resource
+  limits.
 - `draft-compose --conversation` keeps a local draft for a Slack, Teams, or
   Discord conversation. The existing `draft-get`, `draft-edit`, and
   `draft-delete` commands manage it, and `draft-get --conversation` lists a

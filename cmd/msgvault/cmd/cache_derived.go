@@ -23,6 +23,11 @@ var ErrDerivedRefreshRequiresFullBuild = errors.New(
 
 var derivedPublishBeforeMarkerHook func() error
 
+// derivedRefreshBeforeSnapshotHook is a deterministic test seam for writes
+// that commit after a staleness check selects a refresh but before the refresh
+// pins its source snapshot.
+var derivedRefreshBeforeSnapshotHook func()
+
 func refreshDerivedDatasetsOnly(
 	ctx context.Context,
 	dbPath, analyticsDir string,
@@ -136,6 +141,9 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 
+	if derivedRefreshBeforeSnapshotHook != nil {
+		derivedRefreshBeforeSnapshotHook()
+	}
 	sourceSnapshot, err := openCacheSourceSnapshot(duckDB, dbPath)
 	if err != nil {
 		return nil, err
@@ -153,6 +161,26 @@ func refreshDerivedDatasetsOnly(
 	var relatedChangeSeq int64
 	var relatedKinds relatedChangeKinds
 	if repairRelated {
+		// A late terminal sync can add children to an already-exported parent.
+		// Acknowledge its addition counter only from the same snapshot used to
+		// repair those children. Changed facts or failed runs remain full repairs.
+		counters, err := readCacheSyncCounters(sourceSnapshot)
+		if err != nil {
+			return nil, fmt.Errorf("read related-refresh sync counters: %w", err)
+		}
+		if counters.updates != state.LastCacheUpdateCount ||
+			counters.failedRunCount != state.LastFailedSyncRunCount ||
+			counters.failedRunIDSum != state.LastFailedSyncRunIDSum ||
+			counters.additions < state.LastCacheAdditionCount {
+			return nil, fmt.Errorf("%w: sync counters require a full repair",
+				ErrDerivedRefreshRequiresFullBuild)
+		}
+		if counters.additions != state.LastCacheAdditionCount {
+			if err := verifyRelatedOnlyAdditions(sourceSnapshot, state); err != nil {
+				return nil, err
+			}
+		}
+		state.LastCacheAdditionCount = counters.additions
 		if err := sourceSnapshot.QueryRow(`SELECT COALESCE((SELECT seq FROM sqlite_sequence
 			WHERE name = 'cache_related_change_journal'), 0)`).Scan(&relatedChangeSeq); err != nil {
 			return nil, fmt.Errorf("read related-change boundary: %w", err)
@@ -162,7 +190,6 @@ func refreshDerivedDatasetsOnly(
 		}
 		// The CSV fallback closes its SQLite transaction during preparation.
 		// Read journal metadata while that snapshot is still available.
-		var err error
 		relatedKinds, err = inspectRelatedChangeKinds(sourceSnapshot,
 			state.LastRelatedChangeSeq, relatedChangeSeq, state.LastMessageID)
 		if err != nil {
@@ -688,4 +715,33 @@ func publishDerivedCache(
 		derivedPublishBeforeMarkerHook,
 		locking,
 	)
+}
+
+// verifyRelatedOnlyAdditions confirms that new sync additions changed only
+// child rows of cached messages. A refresh may then record the new addition
+// count. Any change to the message population needs a full build instead:
+// an old message that became exportable inside the cached boundary, or an
+// exportable message above it. The staleness check ignores a message deleted
+// at the source when it looks for new messages, so such a message above the
+// boundary would otherwise stay out of the cache.
+func verifyRelatedOnlyAdditions(snapshot *cacheSourceSnapshot, state syncState) error {
+	var coveredCount int64
+	if err := snapshot.QueryRow(coveredCacheMessageCountSQL(), state.LastMessageID).
+		Scan(&coveredCount); err != nil {
+		return fmt.Errorf("check related-refresh message population: %w", err)
+	}
+	if coveredCount != state.Stats.TotalMessages {
+		return fmt.Errorf("%w: cached message population changed",
+			ErrDerivedRefreshRequiresFullBuild)
+	}
+	var uncachedExportable bool
+	if err := snapshot.QueryRow(`SELECT EXISTS (SELECT 1 FROM messages WHERE id > ? AND `+
+		exportableMessageWhere("")+`)`, state.LastMessageID).Scan(&uncachedExportable); err != nil {
+		return fmt.Errorf("check related-refresh message boundary: %w", err)
+	}
+	if uncachedExportable {
+		return fmt.Errorf("%w: exportable messages above the cached boundary",
+			ErrDerivedRefreshRequiresFullBuild)
+	}
+	return nil
 }

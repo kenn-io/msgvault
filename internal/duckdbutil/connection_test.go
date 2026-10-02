@@ -41,6 +41,7 @@ func TestBuilderPolicyWithOverrides(t *testing.T) {
 }
 
 func TestPolicyAppliesEffectiveSettings(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	tempDir := filepath.Join(t.TempDir(), "spill")
 	policy := Policy{
 		MemoryLimit:          "512MB",
@@ -49,13 +50,22 @@ func TestPolicyAppliesEffectiveSettings(t *testing.T) {
 		MaxTempDirectorySize: "2GB",
 	}
 	db, err := Open(context.Background(), policy)
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() {
-		require.NoError(t, db.Close())
+		require.NoError(db.Close())
 	})
 
-	require.NoError(t, db.Ping())
-	assert.DirExists(t, tempDir)
+	require.NoError(db.Ping())
+	assert.DirExists(tempDir)
+	var threads int
+	var preserveOrder bool
+	var spillDir string
+	require.NoError(db.QueryRow(`SELECT current_setting('threads'),
+		current_setting('preserve_insertion_order'), current_setting('temp_directory')`).
+		Scan(&threads, &preserveOrder, &spillDir))
+	assert.Equal(policy.Threads, threads)
+	assert.False(preserveOrder, "exports must be able to stream unordered results")
+	assert.Equal(tempDir, spillDir)
 }
 
 func TestPolicyRejectsIncompleteOrUnsafeSettings(t *testing.T) {
