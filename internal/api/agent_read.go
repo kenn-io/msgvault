@@ -30,7 +30,7 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 }
 
 func agentReadDenied(permission agentgrant.Permission) *apiHTTPError {
-	return newAPIHTTPError(http.StatusUnauthorized, "permission_denied", "Agent grant requires "+string(permission)+" on the requested sources")
+	return newAPIHTTPError(http.StatusForbidden, "permission_denied", "Agent grant requires "+string(permission)+" on the requested sources")
 }
 
 func (s *Server) agentMessageSourceAllowed(r *http.Request, sourceID int64) bool {
@@ -59,7 +59,7 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	if operation == "listCLIAccounts" || operation == "listCLICollections" {
 		permission = agentDiscoveryPermission(grant)
 		if permission == "" {
-			return newAPIHTTPError(401, "permission_denied", "Agent grant requires search.read, message.read, attachment.read, or stats.read on the requested sources")
+			return newAPIHTTPError(http.StatusForbidden, "permission_denied", "Agent grant requires search.read, message.read, attachment.read, or stats.read on the requested sources")
 		}
 	}
 	if grant == nil || permission == "" || !grant.HasPermission(permission) {
@@ -141,6 +141,12 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 		if requested == nil {
 			requested = []int64{}
 		}
+		// Every member must be granted, even when source_ids narrows the scope below.
+		for _, id := range requested {
+			if !slices.Contains(allowed, id) {
+				return agentReadDenied(permission)
+			}
+		}
 	}
 	for _, name := range []string{"source_id", "source_ids"} {
 		ids, present, err := queryInt64s(r, name)
@@ -175,6 +181,7 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	if requested == nil {
 		requested = allowed
 	}
+	requested = normalizeSourceIDs(requested)
 	for _, id := range requested {
 		if !slices.Contains(allowed, id) {
 			return agentReadDenied(permission)
@@ -206,8 +213,15 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	return nil
 }
 
+var agentReadPermissionSet = []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead}
+
+// agentSourceVisible lists a source when any read permission covers it.
 func agentSourceVisible(grant *agentgrant.Grant, source *store.Source) bool {
-	return grant == nil || grant.Allows(agentDiscoveryPermission(grant), agentgrant.SourceRef{Type: source.SourceType, Identifier: source.Identifier})
+	if grant == nil {
+		return true
+	}
+	ref := agentgrant.SourceRef{Type: source.SourceType, Identifier: source.Identifier}
+	return slices.ContainsFunc(agentReadPermissionSet, func(p agentgrant.Permission) bool { return grant.Allows(p, ref) })
 }
 
 func agentReadSourceIDs(r *http.Request) []int64 {
@@ -227,11 +241,18 @@ func (s *Server) agentScopedStats(w http.ResponseWriter, r *http.Request, cli bo
 		writeError(w, 500, "stats_failed", "Could not retrieve scoped statistics")
 		return
 	}
+	granted := int64(0)
+	for _, id := range ids {
+		if id > 0 { // -1 is the empty-scope sentinel, not a source.
+			granted++
+		}
+	}
+	stats.SourceCount = granted
 	// Archive file size is global, so scoped grants do not disclose it.
 	stats.DatabaseSize = 0
 	resp := statsResponseFromStore(stats)
 	if cli {
-		writeJSON(w, 200, cliStatsResponse{Stats: resp, ScopeLabel: "agent grant", ScopeSourceCount: len(ids)})
+		writeJSON(w, 200, cliStatsResponse{Stats: resp, ScopeLabel: "agent grant", ScopeSourceCount: int(granted)})
 	} else {
 		writeJSON(w, 200, resp)
 	}
@@ -239,7 +260,7 @@ func (s *Server) agentScopedStats(w http.ResponseWriter, r *http.Request, cli bo
 
 func agentDiscoveryPermission(grant *agentgrant.Grant) agentgrant.Permission {
 	if grant != nil {
-		for _, p := range []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead} {
+		for _, p := range agentReadPermissionSet {
 			if grant.HasPermission(p) {
 				return p
 			}
@@ -296,7 +317,7 @@ func (s *Server) handleAgentListMessages(w http.ResponseWriter, r *http.Request)
 		writeError(w, 500, "message_query_failed", "Could not list scoped messages")
 		return
 	}
-	stats, err := engine.GetTotalStats(r.Context(), query.StatsOptions{Filter: &filter, SourceIDs: filter.SourceIDs})
+	stats, err := engine.GetTotalStats(r.Context(), query.StatsOptions{Filter: &filter, SourceIDs: filter.SourceIDs, AllMessageTypes: true})
 	if err != nil {
 		writeError(w, 500, "message_query_failed", "Could not count scoped messages")
 		return

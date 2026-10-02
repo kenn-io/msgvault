@@ -643,12 +643,6 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		sessions:               newSessionStore(defaultSessionTTL),
 		agentGrants: func() *agentgrant.Registry {
 			if opts.Config != nil && opts.Config.Server.AgentAccess {
-				if persistence, ok := opts.Store.(agentgrant.Persistence); ok {
-					return agentgrant.NewPersistentRegistry(persistence)
-				}
-				if provider, ok := opts.Store.(interface{ AgentGrantStore() agentgrant.Persistence }); ok {
-					return agentgrant.NewPersistentRegistry(provider.AgentGrantStore())
-				}
 				return agentgrant.NewRegistry()
 			}
 			return nil

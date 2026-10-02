@@ -4523,10 +4523,3 @@ CREATE INDEX IF NOT EXISTS idx_meeting_actions_status
     ON meeting_action_items(status, message_id, ordinal);
 CREATE INDEX IF NOT EXISTS idx_meeting_actions_assignee
     ON meeting_action_items(assignee_email, message_id, ordinal);
-
--- Restricted grants store a digest only; legacy process-only grants have no row.
-CREATE TABLE IF NOT EXISTS agent_grants (
- id TEXT PRIMARY KEY,
- secret_hash TEXT NOT NULL UNIQUE,
- record TEXT NOT NULL
-);

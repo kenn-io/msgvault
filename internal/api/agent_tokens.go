@@ -20,7 +20,8 @@ import (
 // It is used by operationGateExemptPaths to exempt both the collection
 // endpoint (POST/GET /api/v1/agent-tokens) and the member endpoint
 // (DELETE /api/v1/agent-tokens/{id}) from the generic mutation gate.
-// Grant management uses its own Store writes and remains owner-key-only.
+// agentgrant.Registry is in-memory and process-scoped; revoke touches no
+// archive state, so these routes belong with the session endpoints.
 const agentTokensPath = "/api/v1/agent-tokens" //nolint:gosec // endpoint path, not a credential
 
 // agentGrantSourceResolver is the narrow interface on s.store needed by
@@ -295,13 +296,8 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		}
 		expires = *req.ExpiresAt
 	}
-	_, secret, g, err := s.agentGrants.IssueExpires(r.Context(), req.Label, perms, sources, expires)
+	_, secret, g, err := s.agentGrants.IssueExpires(req.Label, perms, sources, expires)
 	if err != nil {
-		if errors.Is(err, agentgrant.ErrPersistence) {
-			s.logger.Error("persist agent grant", "error", err)
-			writeError(w, 500, "grant_store_failed", "Could not persist agent grant")
-			return
-		}
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -338,11 +334,7 @@ func (s *Server) handleListAgentTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	grants, err := s.agentGrants.ListContext(r.Context())
-	if err != nil {
-		writeError(w, 500, "grant_store_failed", "Could not list agent grants")
-		return
-	}
+	grants := s.agentGrants.List()
 	views := make([]agentTokenView, 0, len(grants))
 	for _, g := range grants {
 		views = append(views, grantToView(g))
@@ -369,10 +361,7 @@ func (s *Server) handleRevokeAgentToken(w http.ResponseWriter, r *http.Request) 
 
 	id := r.PathValue("id")
 	if id != "" {
-		if err := s.agentGrants.RevokeContext(r.Context(), id); err != nil {
-			writeError(w, 500, "grant_store_failed", "Could not revoke agent grant")
-			return
-		}
+		s.agentGrants.Revoke(id)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

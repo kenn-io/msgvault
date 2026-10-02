@@ -3633,19 +3633,15 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestLimit := filter.Pagination.Limit
-	var messages []query.MessageSummary
-	if s.requestAuthentication(r).Grant != nil {
-		scoped, ok := engine.(interface {
-			SearchByDomainsScoped(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]query.MessageSummary, error)
-		})
-		if !ok {
-			writeError(w, 503, "source_scope_unavailable", "Scoped domain search is unavailable")
-			return
-		}
-		messages, err = scoped.SearchByDomainsScoped(r.Context(), domains, filter.After, filter.Before, requestLimit+1, filter.Pagination.Offset, filter.SourceIDs)
-	} else {
-		messages, err = engine.SearchByDomains(r.Context(), domains, filter.After, filter.Before, requestLimit+1, filter.Pagination.Offset)
-	}
+	messages, err := engine.SearchByDomains(
+		r.Context(),
+		domains,
+		filter.After,
+		filter.Before,
+		requestLimit+1,
+		filter.Pagination.Offset,
+		filter.SourceIDs,
+	)
 	if err != nil {
 		s.logger.Error("domain search failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Domain search failed")

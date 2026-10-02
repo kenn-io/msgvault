@@ -8,9 +8,9 @@ import (
 // AgentAttachmentSourceIDsContext resolves attachment authority through its
 // containing messages. A shared blob may be readable from several sources.
 func (s *Store) AgentAttachmentSourceIDsContext(ctx context.Context, id int64, hash string) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT s.id FROM sources s WHERE EXISTS (
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT s.id FROM sources s WHERE EXISTS (
  SELECT 1 FROM attachments a JOIN messages m ON m.id=a.message_id
- WHERE m.source_id=s.id AND ((? > 0 AND a.id=?) OR (? <> '' AND a.content_hash=?)))`, id, id, hash, hash)
+ WHERE m.source_id=s.id AND ((? > 0 AND a.id=?) OR (? <> '' AND a.content_hash=?)))`), id, id, hash, hash)
 	if err != nil {
 		return nil, fmt.Errorf("resolve attachment sources: %w", err)
 	}

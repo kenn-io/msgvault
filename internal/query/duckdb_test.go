@@ -1846,6 +1846,32 @@ func TestDuckDBEngine_GetTotalStats_SearchScopeUsesDeepSearchEngine(t *testing.T
 	assert.Equal(int64(420), stats.TotalSize, "body-only meeting stats size")
 }
 
+func TestDuckDBEngine_GetTotalStats_AllMessageTypesMatchesListedCache(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	// The live SQLite archive holds messages the Parquet cache has not seen yet.
+	env := newTestEnv(t)
+
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	b.AddMessage(MessageOpt{Subject: "cached email", MessageType: messageTypeEmail, SizeEstimate: 100})
+	b.AddMessage(MessageOpt{Subject: "cached meeting", MessageType: messageTypeMeetingTranscript, SizeEstimate: 420})
+	b.SetEmptyAttachments()
+	analyticsDir, cleanup := b.Build()
+	t.Cleanup(cleanup)
+	engine, err := NewDuckDBEngine(analyticsDir, "", env.DB)
+	require.NoError(err, "NewDuckDBEngine")
+	t.Cleanup(func() { _ = engine.Close() })
+	ctx := context.Background()
+
+	listed, err := engine.ListMessages(ctx, MessageFilter{Pagination: Pagination{Limit: 100}})
+	require.NoError(err, "ListMessages")
+	stats, err := engine.GetTotalStats(ctx, StatsOptions{Filter: &MessageFilter{}, AllMessageTypes: true})
+	require.NoError(err, "GetTotalStats all message types")
+	assert.Len(listed, 2, "cached list covers every message type")
+	assert.Equal(int64(len(listed)), stats.MessageCount, "list and total read the same cache")
+}
+
 func TestDuckDBEngine_DefaultAnalyticsExcludeNonEmailMessages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -2154,12 +2180,12 @@ func TestDuckDBOffsetDateBoundsMatchSQLite(t *testing.T) {
 	})
 
 	t.Run("domains", func(t *testing.T) {
-		want, err := sqliteEngine.SearchByDomains(ctx, []string{"offset.example"}, parsed.AfterDate, parsed.BeforeDate, 50, 0)
+		want, err := sqliteEngine.SearchByDomains(ctx, []string{"offset.example"}, parsed.AfterDate, parsed.BeforeDate, 50, 0, nil)
 		require.NoError(t, err)
 		assertSubjects(t, want, "inside bound")
 
 		delegatingEngine := &DuckDBEngine{sqliteEngine: sqliteEngine}
-		got, err := delegatingEngine.SearchByDomains(ctx, []string{"offset.example"}, parsed.AfterDate, parsed.BeforeDate, 50, 0)
+		got, err := delegatingEngine.SearchByDomains(ctx, []string{"offset.example"}, parsed.AfterDate, parsed.BeforeDate, 50, 0, nil)
 		require.NoError(t, err)
 		assertSubjects(t, got, "inside bound")
 	})

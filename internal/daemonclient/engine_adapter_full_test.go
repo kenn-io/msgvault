@@ -1171,6 +1171,7 @@ func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
 		&before,
 		25,
 		50,
+		nil,
 	)
 	require.NoError(err, "SearchByDomains")
 	require.Len(results, 1, "results")
@@ -1213,7 +1214,7 @@ func TestEngineTimeFiltersPreserveUTCNanoseconds(t *testing.T) {
 		After: &after, Before: &before,
 	})
 	require.NoError(err)
-	_, err = engine.SearchByDomains(context.Background(), []string{"example.com"}, &after, &before, 10, 0)
+	_, err = engine.SearchByDomains(context.Background(), []string{"example.com"}, &after, &before, 10, 0, nil)
 	require.NoError(err)
 	assert.True(seen["/api/v1/aggregates"])
 	assert.True(seen["/api/v1/search/domains"])

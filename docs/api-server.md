@@ -2465,21 +2465,20 @@ The server is designed for local use:
 
 ### Restricted agent reads
 
-On newer `main`, agent requests use `X-Msgvault-Agent-Token` instead of the owner
-key. The daemon checks `search.read`, `message.read`, `attachment.read`, or
-`stats.read` and the live source identity before serving supported archive reads.
-Unscoped reads select only granted sources. Explicit accounts, collections, and
-source ID sets must fit entirely inside the grant. Missing authority returns
-`401 permission_denied` and names the permission. Unsupported routes remain
+Agent requests use `X-Msgvault-Agent-Token` instead of the owner key. The
+daemon checks `search.read`, `message.read`, `attachment.read`, or `stats.read`
+and the live source identity before serving supported archive reads. Unscoped
+reads select only granted sources. Explicit accounts, collections, and source ID
+sets must fit entirely inside the grant. Missing authority returns
+`403 permission_denied` and names the permission. Unsupported routes remain
 owner-only, including SQL, exports, writes, configuration, and grant management.
 
-Grant records and SHA-256 secret digests are stored in the archive. Optional
-`expires_at` is a future RFC3339 timestamp in the issuance request and metadata
-responses. Revocation deletes the record immediately; the next authentication
-attempt fails. In-flight requests that already authenticated may complete.
-See [agent-token](cli-reference.md#agent-token) for issuance, restart migration,
-remote CLI and MCP usage, and the exact supported read capabilities.
-
+Grants live in daemon memory, keyed by the SHA-256 digest of their secret, and
+end when the daemon restarts. Optional `expires_at` is a future RFC3339
+timestamp in the issuance request and metadata responses. Revocation removes the
+grant immediately; the next authentication attempt fails. In-flight requests
+that already authenticated may complete. See [agent-token](cli-reference.md#agent-token)
+for issuance, remote CLI and MCP usage, and the exact supported read capabilities.
 
 ## Configuration Reference
 

@@ -2494,7 +2494,7 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult(err.Error()), nil
 	}
 
-	results, err := h.engine.SearchByDomains(ctx, domains, afterDate, beforeDate, limit, offset)
+	results, err := h.engine.SearchByDomains(ctx, domains, afterDate, beforeDate, limit, offset, nil)
 	if err != nil {
 		return nil, newInternalError("search messages by domain", err)
 	}

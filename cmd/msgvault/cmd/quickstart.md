@@ -356,10 +356,10 @@ file on the CLI machine.
 
 ## Restricted remote reads
 
-On newer main, issue a source-scoped grant for an agent instead of giving it the
-owner API key. The owner enables `[server] agent_access = true` and keeps the
-owner key for grant management. Grant secrets survive restarts and expire only
-when revoked or at their optional expiry.
+Issue a source-scoped grant for an agent instead of giving it the owner API
+key. The owner enables `[server] agent_access = true` and keeps the owner key
+for grant management. Grants live in daemon memory and end when revoked, at
+their optional expiry, or when the daemon restarts.
 
 ```bash
 msgvault agent-token issue --label researcher --permissions search.read,message.read --source-ids 1,2 --expires 24h

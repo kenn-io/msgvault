@@ -475,8 +475,7 @@ func TestAgentTokenRoutesExemptFromOperationGate(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, revokeW.Code, "revoke while gate held: %s", revokeW.Body.String())
 
 		// Grant must be gone immediately.
-		grants, err := reg.ListContext(t.Context())
-		require.NoError(err)
+		grants := reg.List()
 		for _, g := range grants {
 			assert.NotEqual(t, preIssued.ID, g.ID, "revoked grant must not appear in registry")
 		}

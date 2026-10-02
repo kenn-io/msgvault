@@ -1325,7 +1325,7 @@ func (s *Server) handleCLIRepairMessage(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	runner, ok := s.store.(CLIRunner)
-	if !ok && s.requestAuthentication(r).Grant == nil {
+	if !ok {
 		writeAPIHTTPError(w, cliStoreUnavailableError())
 		return
 	}
@@ -1340,10 +1340,6 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Args) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_args", "args must not be empty")
-		return
-	}
-	if s.requestAuthentication(r).Grant != nil && agentCLIReadPermission(req.Args) != "" {
-		s.runAgentCLIRead(w, r, req)
 		return
 	}
 	if !cliRunCommandAllowed(req.Args) {
@@ -1377,10 +1373,6 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if !ok {
-		writeAPIHTTPError(w, cliStoreUnavailableError())
-		return
-	}
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
 	if err := runner.RunCLICommand(r.Context(), req, writeEvent); err != nil {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {

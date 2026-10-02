@@ -2462,11 +2462,11 @@ func (e *DuckDBEngine) SearchMessageBodies(ctx context.Context, q *search.Query,
 // SearchByDomains returns message summaries for the given sender domains.
 // It delegates to SQLite because domain search needs JOINs across
 // participants and message_recipients that the Parquet cache doesn't carry.
-func (e *DuckDBEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]MessageSummary, error) {
+func (e *DuckDBEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error) {
 	// Delegate to SQLite — domain search requires JOINs across participants
 	// and message_recipients which are not available in the Parquet cache.
 	if e.sqliteEngine != nil {
-		return e.sqliteEngine.SearchByDomains(ctx, domains, after, before, limit, offset)
+		return e.sqliteEngine.SearchByDomains(ctx, domains, after, before, limit, offset, sourceIDs)
 	}
 	return nil, errors.New("SearchByDomains requires SQLite engine (participant data not in Parquet cache)")
 }
@@ -3290,12 +3290,4 @@ func (e *DuckDBEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 		return nil, errOriginalMessageNeedsSQLite
 	}
 	return e.sqliteEngine.ListThread(ctx, q)
-}
-
-// SearchByDomainsScoped delegates participant reads with exact source authority.
-func (e *DuckDBEngine) SearchByDomainsScoped(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error) {
-	if e.sqliteEngine == nil {
-		return nil, errors.New("scoped domain search requires SQLite engine")
-	}
-	return e.sqliteEngine.SearchByDomainsScoped(ctx, domains, after, before, limit, offset, sourceIDs)
 }

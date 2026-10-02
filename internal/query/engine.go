@@ -96,8 +96,8 @@ type Engine interface {
 	GetDeletionTargetsByFilter(ctx context.Context, filter MessageFilter) ([]DeletionTarget, error)
 
 	// SearchByDomains returns messages where any participant (from, to, cc, or bcc)
-	// belongs to one of the given domains.
-	SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]MessageSummary, error)
+	// belongs to one of the given domains. Non-empty sourceIDs limit results to those accounts.
+	SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error)
 
 	// Account queries
 	ListAccounts(ctx context.Context) ([]AccountInfo, error)

@@ -3940,11 +3940,9 @@ configuration, and daemon replacement outside the agent's authority — a remote
 user-managed daemon achieves that, and so does an isolated local agent environment, while
 a second daemon or data directory under the same unrestricted user does not.
 
-On newer `main`, grants survive daemon restarts. The archive stores only each
-secret's SHA-256 digest and grant metadata. A grant is valid until revoked or its
-optional expiry. Existing process-only tokens from older deployments cannot be
-recovered after an upgrade; issue replacements once. The schema creates the new
-grant table without changing archive messages.
+Tokens are in-memory and process-scoped. All grants are invalidated when the daemon
+restarts. A grant is valid until it is revoked, reaches its optional expiry, or the
+daemon restarts. There is no persistence to disk and no migration needed.
 
 ### Scoped archive reads
 
@@ -3972,7 +3970,8 @@ and source sets must fit entirely inside that grant. Collection membership is
 resolved for every request; adding an ungranted source makes that collection
 unavailable to the grant. Empty collections return no matches. Source matching
 uses source type and identifier, so removing and re-adding the same source
-preserves authority. Errors name the required permission.
+preserves authority. A request outside the grant returns 403 `permission_denied` and names the
+required permission.
 
 `--agent-url` and `--agent-token-file` also support `stats` and a read-only `mcp`
 stdio server without local owner configuration. Supported MCP tools include
@@ -3987,14 +3986,12 @@ the owner can run `rebuild-fts` or search once to start the index check.
 
 Sync, deletion, configuration, account and token administration, SQL, exports,
 people administration, and all other ungranted routes are rejected. Existing
-`draft.*` permissions retain their separate draft authority. Read commands sent
-through `/api/v1/cli/run` return structured JSON as stdout events and execute
-through the same scoped handlers.
+`draft.*` permissions retain their separate draft authority.
 
 ### agent-token issue
 
 Issue a new restricted grant for one agent. The secret is printed once and not stored by
-the daemon (only its SHA-256 digest is stored in the archive). Write it to a file that the agent
+the daemon (only its SHA-256 digest is kept in memory). Write it to a file that the agent
 can read, never pass it as a flag or environment variable.
 
 ```bash
@@ -4012,7 +4009,8 @@ msgvault agent-token issue --label <name> \
 | `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h` |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
 
-The grant is valid until revoked or its optional expiry.
+The grant is valid until it is revoked, reaches its optional expiry, or the daemon
+restarts.
 
 When `--sender` is omitted for a selected source, issuance snapshots every
 currently confirmed valid mailbox identity. Sender selections are stored as
@@ -4051,6 +4049,6 @@ enumerated by probing revoke.
 msgvault agent-token revoke <id>
 ```
 
-The persisted grant is removed immediately. Any request in flight that
+The grant is removed from the in-memory registry immediately. Any request in flight that
 already passed authentication completes, but the next authentication attempt with the
 revoked secret is denied without fallback.

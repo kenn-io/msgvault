@@ -31,7 +31,7 @@ var agentTokenCmd = &cobra.Command{
 		"limited set of operations on behalf of the archive owner without\n" +
 		"exposing the full owner API key. Each token declares the permissions\n" +
 		"and source IDs it may access. A grant is valid until revoked or until\n" +
-		"its optional expiry. Grants survive daemon restarts.\n\n" +
+		"its optional expiry, or until the daemon restarts.\n\n" +
 		"Requires agent_access = true and api_key to be set in config.toml.",
 }
 
@@ -163,9 +163,9 @@ func printAgentTokenIssueResult(cmd *cobra.Command, r *generated.AgentTokenIssue
 	}
 	_, _ = fmt.Fprintf(w, "Created:     %s\n", r.CreatedAt.Format(time.RFC3339))
 	if r.ExpiresAt != nil {
-		_, _ = fmt.Fprintf(w, "Valid until: %s or revocation\n", r.ExpiresAt.Format(time.RFC3339))
+		_, _ = fmt.Fprintf(w, "Valid until: %s, revocation, or daemon restart\n", r.ExpiresAt.Format(time.RFC3339))
 	} else {
-		_, _ = fmt.Fprintln(w, "Valid until: revoked (survives daemon restart)")
+		_, _ = fmt.Fprintf(w, "Valid until: revoked or daemon restart\n")
 	}
 	if r.DaemonURL != "" {
 		_, _ = fmt.Fprintf(w, "Daemon URL:  %s\n", r.DaemonURL)

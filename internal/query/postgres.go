@@ -11,7 +11,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 
 	"go.kenn.io/msgvault/internal/search"
 )
@@ -32,17 +31,6 @@ var ErrNotImplemented = errors.New("query: method not implemented for this engin
 // silently sending SQLite SQL to PostgreSQL at runtime.
 type pgEngine struct {
 	Engine
-}
-
-// SearchByDomainsScoped explicitly promotes the portable source-filtered query.
-func (e *pgEngine) SearchByDomainsScoped(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error) {
-	searcher, ok := e.Engine.(interface {
-		SearchByDomainsScoped(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error)
-	})
-	if !ok {
-		return nil, ErrNotImplemented
-	}
-	return searcher.SearchByDomainsScoped(ctx, domains, after, before, limit, offset, sourceIDs)
 }
 
 var _ MessageBodySearcher = (*pgEngine)(nil)

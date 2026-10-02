@@ -1859,12 +1859,7 @@ const inListChunkSize = 500
 // belongs to one of the given domains. Uses the shared executeSearchQuery
 // path so results carry the same fields as Search/SearchFast (including
 // deleted_at, conversation_title, message_type, and labels).
-func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]MessageSummary, error) {
-	return e.SearchByDomainsScoped(ctx, domains, after, before, limit, offset, nil)
-}
-
-// SearchByDomainsScoped applies source authority before pagination.
-func (e *SQLiteEngine) SearchByDomainsScoped(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error) {
+func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error) {
 	if len(domains) == 0 {
 		return nil, nil
 	}

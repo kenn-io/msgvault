@@ -1,12 +1,10 @@
 package agentgrant
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -120,7 +118,6 @@ type entry struct {
 }
 
 type Registry struct {
-	store   Persistence
 	mu      sync.Mutex
 	entries map[string]entry // keyed by grant ID
 }
@@ -130,9 +127,11 @@ func NewRegistry() *Registry {
 }
 
 func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) (id, secret string, g Grant, err error) {
-	return r.IssueExpires(context.Background(), label, perms, sources, time.Time{})
+	return r.IssueExpires(label, perms, sources, time.Time{})
 }
-func (r *Registry) IssueExpires(ctx context.Context, label string, perms []Permission, sources []SourceRef, expires time.Time) (id, secret string, g Grant, err error) {
+
+// IssueExpires is Issue with an optional expiry; a zero time never expires.
+func (r *Registry) IssueExpires(label string, perms []Permission, sources []SourceRef, expires time.Time) (id, secret string, g Grant, err error) {
 	if !expires.IsZero() && !expires.After(time.Now()) {
 		return "", "", Grant{}, errors.New("agentgrant: expiry must be in the future")
 	}
@@ -198,12 +197,6 @@ func (r *Registry) IssueExpires(ctx context.Context, label string, perms []Permi
 		ExpiresAt:   expires,
 	}
 
-	if r.store != nil {
-		if err := r.store.SaveAgentGrant(ctx, Record{Digest: hex.EncodeToString(digest[:]), Grant: cloneGrant(g)}); err != nil {
-			return "", "", Grant{}, fmt.Errorf("%w: %w", ErrPersistence, err)
-		}
-		return id, secretPlain, cloneGrant(g), nil
-	}
 	r.mu.Lock()
 	r.entries[id] = entry{digest: digest, grant: cloneGrant(g)}
 	r.mu.Unlock()
@@ -212,17 +205,7 @@ func (r *Registry) IssueExpires(ctx context.Context, label string, perms []Permi
 }
 
 func (r *Registry) Lookup(secret string) (Grant, bool) {
-	return r.LookupContext(context.Background(), secret)
-}
-func (r *Registry) LookupContext(ctx context.Context, secret string) (Grant, bool) {
 	digest := sha256.Sum256([]byte(secret))
-	if r.store != nil {
-		record, ok, err := r.store.FindAgentGrant(ctx, hex.EncodeToString(digest[:]))
-		if err != nil || !ok || (!record.Grant.ExpiresAt.IsZero() && !time.Now().Before(record.Grant.ExpiresAt)) {
-			return Grant{}, false
-		}
-		return cloneGrant(record.Grant), true
-	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -235,7 +218,8 @@ func (r *Registry) LookupContext(ctx context.Context, secret string) (Grant, boo
 	return Grant{}, false
 }
 
-func (r *Registry) listMemory() []Grant {
+// List returns every grant, including expired ones so the owner can revoke them.
+func (r *Registry) List() []Grant {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out []Grant
@@ -246,18 +230,6 @@ func (r *Registry) listMemory() []Grant {
 }
 
 func (r *Registry) Revoke(id string) bool {
-	if r.store != nil {
-		rows, err := r.store.ListAgentGrants(context.Background())
-		if err != nil {
-			return false
-		}
-		for _, row := range rows {
-			if row.Grant.ID == id {
-				return r.RevokeContext(context.Background(), id) == nil
-			}
-		}
-		return false
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	_, ok := r.entries[id]

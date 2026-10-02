@@ -108,7 +108,7 @@ func TestAgentReadAuthorization(t *testing.T) {
 			for _, access := range []struct {
 				name, token string
 				code        int
-			}{{"allowed", secret, 200}, {"missing permission", "", 401}} {
+			}{{"allowed", secret, 200}, {"missing permission", "", http.StatusForbidden}} {
 				t.Run(access.name, func(t *testing.T) {
 					requirements := require.New(t)
 					assertions := assert.New(t)
@@ -136,15 +136,33 @@ func TestAgentReadAuthorization(t *testing.T) {
 	}
 	_, secret, _, err := srv.agentGrants.Issue("all reads", []agentgrant.Permission{"search.read", "stats.read", "message.read", "attachment.read"}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}})
 	requirements.NoError(err)
-	for _, path := range []string{fmt.Sprintf("/api/v1/messages/%d", ids[1]), fmt.Sprintf("/api/v1/search/fast?q=glacier&source_ids=%d,%d", src.ID, other.ID), fmt.Sprintf("/api/v1/cli/attachment?id=%d&content_hash=%s", attID, outsideHash), "/api/v1/settings", "/api/v1/agent-tokens", "/api/v1/cli/message/thread?thread_id=thread"} {
-		r := httptest.NewRequest(http.MethodGet, path, nil)
+	for _, tc := range []struct {
+		path string
+		code int
+	}{
+		{fmt.Sprintf("/api/v1/messages/%d", ids[1]), http.StatusForbidden},
+		{fmt.Sprintf("/api/v1/search/fast?q=glacier&source_ids=%d,%d", src.ID, other.ID), http.StatusForbidden},
+		{fmt.Sprintf("/api/v1/cli/attachment?id=%d&content_hash=%s", attID, outsideHash), http.StatusForbidden},
+		{"/api/v1/cli/message/thread?thread_id=thread", http.StatusForbidden},
+		// A narrower source_ids must not hide an ungranted collection member.
+		{fmt.Sprintf("/api/v1/cli/search?q=glacier&collection=mixed&source_ids=%d", src.ID), http.StatusForbidden},
+		{"/api/v1/settings", http.StatusUnauthorized},
+		{"/api/v1/agent-tokens", http.StatusUnauthorized},
+	} {
+		r := httptest.NewRequest(http.MethodGet, tc.path, nil)
 		requestCount++
 		r.RemoteAddr = fmt.Sprintf("10.0.0.%d:1234", requestCount)
 		r.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
-		assertions.Equal(http.StatusUnauthorized, w.Code, path+": "+w.Body.String())
+		assertions.Equal(tc.code, w.Code, tc.path+": "+w.Body.String())
 	}
+	// A repeated ID is still one source, so deep search accepts it.
+	deep := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/search/deep?q=glacier&source_ids=%d,%d", src.ID, src.ID), nil)
+	deep.Header.Set(apiprotocol.AgentTokenHeader, secret)
+	deepW := httptest.NewRecorder()
+	srv.Router().ServeHTTP(deepW, deep)
+	assertions.Equal(http.StatusOK, deepW.Code, deepW.Body.String())
 	_, multiToken, _, err := srv.agentGrants.Issue("multiple sources", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}, {ID: other.ID, Type: other.SourceType, Identifier: other.Identifier}})
 	requirements.NoError(err)
 	for _, tc := range []struct {
@@ -165,7 +183,7 @@ func TestAgentReadAuthorization(t *testing.T) {
 	}
 }
 
-func TestAgentCollectionsAndCLIRun(t *testing.T) {
+func TestAgentCollections(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -193,7 +211,7 @@ func TestAgentCollectionsAndCLIRun(t *testing.T) {
 	for _, tc := range []struct {
 		path string
 		code int
-	}{{"/api/v1/search/fast?q=glacier&collection=allowed", 200}, {"/api/v1/search/fast?q=glacier&collection=empty", 200}, {"/api/v1/search/fast?q=glacier&collection=mixed", 401}, {"/api/v1/cli/collections", 200}, {"/api/v1/cli/accounts", 200}} {
+	}{{"/api/v1/search/fast?q=glacier&collection=allowed", 200}, {"/api/v1/search/fast?q=glacier&collection=empty", 200}, {"/api/v1/search/fast?q=glacier&collection=mixed", http.StatusForbidden}, {"/api/v1/cli/collections", 200}, {"/api/v1/cli/accounts", 200}} {
 		r := httptest.NewRequest(http.MethodGet, tc.path, nil)
 		r.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		w := httptest.NewRecorder()
@@ -204,25 +222,12 @@ func TestAgentCollectionsAndCLIRun(t *testing.T) {
 			assertions.NotContains(w.Body.String(), `"name":"mixed"`)
 		}
 	}
-	for _, tc := range []struct {
-		args []string
-		code int
-	}{{[]string{"search", "glacier", "--collection=allowed"}, 200}, {[]string{"search", "glacier", "-n", "5", "--explain"}, 200}, {[]string{"stats"}, 200}, {[]string{"search", "glacier", "--collection=mixed"}, 401}, {[]string{"show-message", "1"}, 401}, {[]string{"search", "glacier", "--config=/tmp/config"}, 400}, {[]string{"sync"}, 400}} {
-		body, err := json.Marshal(CLIRunRequest{Args: tc.args})
-		requirements.NoError(err)
-		r := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(string(body)))
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set(apiprotocol.AgentTokenHeader, secret)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, r)
-		assertions.Equal(tc.code, w.Code, w.Body.String())
-	}
 	requirements.NoError(st.AddSourcesToCollection("allowed", []int64{other.ID}))
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/stats/total?collection=allowed", nil)
 	r.Header.Set(apiprotocol.AgentTokenHeader, secret)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, r)
-	assertions.Equal(401, w.Code, w.Body.String())
+	assertions.Equal(http.StatusForbidden, w.Code, w.Body.String())
 }
 
 func TestAgentReadGrantDeniesUnlistedRoutes(t *testing.T) {
@@ -264,17 +269,15 @@ func TestAgentReadGrantDeniesUnlistedRoutes(t *testing.T) {
 	assertions.Greater(count, 10)
 }
 
-func TestAgentTokenPersistentAPI(t *testing.T) {
+func TestAgentTokenExpiryAPI(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("test", "reader@example.test")
 	requirements.NoError(err)
-	newServer := func() *Server {
-		return NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	}
-	srv := newServer()
-	request := func(server *Server, method, path, body, token string) *httptest.ResponseRecorder {
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	defer srv.agentGrants.Close()
+	request := func(method, path, body, token string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		if body != "" {
 			r.Header.Set("Content-Type", "application/json")
@@ -285,7 +288,7 @@ func TestAgentTokenPersistentAPI(t *testing.T) {
 			r.Header.Set(apiprotocol.AgentTokenHeader, token)
 		}
 		w := httptest.NewRecorder()
-		server.Router().ServeHTTP(w, r)
+		srv.Router().ServeHTTP(w, r)
 		return w
 	}
 	future := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
@@ -296,7 +299,7 @@ func TestAgentTokenPersistentAPI(t *testing.T) {
 	}{{time.Time{}, 400}, {time.Now().Add(-time.Hour), 400}, {future, 201}} {
 		body, err := json.Marshal(agentTokenIssueRequest{Label: "reader", Permissions: []string{"stats.read"}, SourceIDs: []int64{src.ID}, ExpiresAt: &tc.expires})
 		requirements.NoError(err)
-		w := request(srv, http.MethodPost, agentTokensPath, string(body), "")
+		w := request(http.MethodPost, agentTokensPath, string(body), "")
 		requirements.Equal(tc.status, w.Code, w.Body.String())
 		if tc.status == 201 {
 			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &issued))
@@ -304,20 +307,74 @@ func TestAgentTokenPersistentAPI(t *testing.T) {
 			assertions.True(future.Equal(*issued.ExpiresAt))
 		}
 	}
-	restarted := newServer()
-	w := request(restarted, http.MethodGet, "/api/v1/cli/stats", "", issued.Secret)
+	w := request(http.MethodGet, "/api/v1/cli/stats", "", issued.Secret)
 	requirements.Equal(200, w.Code, w.Body.String())
-	w = request(restarted, http.MethodDelete, agentTokensPath+"/"+issued.ID, "", "")
+	w = request(http.MethodGet, agentTokensPath, "", "")
+	requirements.Equal(200, w.Code, w.Body.String())
+	assertions.Contains(w.Body.String(), `"expires_at"`)
+	w = request(http.MethodDelete, agentTokensPath+"/"+issued.ID, "", "")
 	requirements.Equal(204, w.Code, w.Body.String())
-	w = request(srv, http.MethodGet, "/api/v1/cli/stats", "", issued.Secret)
-	assertions.Equal(401, w.Code, "revocation must affect the original server immediately")
-	_, err = st.DB().Exec("DROP TABLE agent_grants")
+	w = request(http.MethodGet, "/api/v1/cli/stats", "", issued.Secret)
+	assertions.Equal(401, w.Code, "revocation must take effect immediately")
+}
+
+func TestAgentReadScopeCounts(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("test", "reader@example.test")
 	requirements.NoError(err)
-	body, err := json.Marshal(agentTokenIssueRequest{Label: "reader", Permissions: []string{"stats.read"}, SourceIDs: []int64{src.ID}})
+	other, err := st.GetOrCreateSource("test", "stats@example.test")
 	requirements.NoError(err)
-	w = request(restarted, http.MethodPost, agentTokensPath, string(body), "")
-	assertions.Equal(500, w.Code, w.Body.String())
-	assertions.Contains(w.Body.String(), "grant_store_failed")
+	conv, err := st.EnsureConversationWithType(src.ID, "chat", "group_chat", "Synthetic")
+	requirements.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "chat-1", MessageType: "whatsapp"})
+	requirements.NoError(err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	defer srv.agentGrants.Close()
+	get := func(path, token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Header.Set(apiprotocol.AgentTokenHeader, token)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		return w
+	}
+
+	// The list total counts the same message types the list returns.
+	_, reader, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}})
+	requirements.NoError(err)
+	w := get("/api/v1/messages", reader)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	var list MessageListResponse
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &list))
+	requirements.Len(list.Messages, 1)
+	assertions.Equal(int64(1), list.Total)
+
+	// Discovery lists a source granted for any read permission.
+	_, split, _, err := srv.agentGrants.Issue("split", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}, {ID: other.ID, Type: other.SourceType, Identifier: other.Identifier}})
+	requirements.NoError(err)
+	_, statsOnly, _, err := srv.agentGrants.Issue("stats only", []agentgrant.Permission{agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: other.ID, Type: other.SourceType, Identifier: other.Identifier}})
+	requirements.NoError(err)
+	for _, token := range []string{split, statsOnly} {
+		w = get("/api/v1/cli/accounts", token)
+		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+		assertions.Contains(w.Body.String(), other.Identifier)
+	}
+
+	// A grant whose sources no longer exist covers zero accounts, not one.
+	_, gone, _, err := srv.agentGrants.Issue("gone", []agentgrant.Permission{agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: 999, Type: "test", Identifier: "removed@example.test"}})
+	requirements.NoError(err)
+	w = get("/api/v1/cli/stats", gone)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	assertions.NotContains(w.Body.String(), "scope_source_count")
+	var cliStats cliStatsResponse
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &cliStats))
+	assertions.Zero(cliStats.Stats.TotalAccounts)
+	w = get("/api/v1/stats", gone)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	var plain StatsResponse
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &plain))
+	assertions.Zero(plain.TotalAccounts)
 }
 
 // Delete after the real authorization lookup to reproduce an owner deletion
@@ -376,28 +433,9 @@ func TestAgentCLIMessageChecksResolvedSource(t *testing.T) {
 	r.Header.Set(apiprotocol.AgentTokenHeader, secret)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, r)
-	assertions.Equal(http.StatusUnauthorized, w.Code, w.Body.String())
+	assertions.Equal(http.StatusForbidden, w.Code, w.Body.String())
 	assertions.NotContains(w.Body.String(), "outside body")
 	assertions.Contains(w.Body.String(), "message.read")
-}
-
-func TestOwnerCLIRunUnavailablePrecedesValidation(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
-	for _, tc := range []struct{ name, body string }{
-		{"invalid JSON", "{"},
-		{"empty args", `{"args":[]}`},
-		{"read command", `{"args":["stats"]}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(tc.body))
-			r.Header.Set("Content-Type", "application/json")
-			r.Header.Set("X-Api-Key", "owner")
-			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, r)
-			assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
-		})
-	}
 }
 
 func TestAgentMessageChecksReusedArchiveID(t *testing.T) {
@@ -432,7 +470,7 @@ func TestAgentMessageChecksReusedArchiveID(t *testing.T) {
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, r)
 			assertions.Equal(id, mutating.replacementID, "SQLite must reuse the deleted archive ID to exercise the regression")
-			assertions.Equal(http.StatusUnauthorized, w.Code, w.Body.String())
+			assertions.Equal(http.StatusForbidden, w.Code, w.Body.String())
 			assertions.NotContains(w.Body.String(), "outside body")
 			assertions.Contains(w.Body.String(), "message.read")
 		})
@@ -469,7 +507,7 @@ func TestAgentAttachmentChecksReusedArchiveID(t *testing.T) {
 		name   string
 		owner  bool
 		status int
-	}{{"grant", false, http.StatusUnauthorized}, {"owner", true, http.StatusOK}} {
+	}{{"grant", false, http.StatusForbidden}, {"owner", true, http.StatusOK}} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)

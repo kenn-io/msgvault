@@ -40,12 +40,12 @@ func (c *Client) IssueAgentToken(
 	var expiresAt *time.Time
 	if len(expires) > 0 && !expires[0].IsZero() {
 		expiresAt = &expires[0]
-		compatible, err := c.SupportsAPISchemaVersion(ctx, "2.36.0")
+		compatible, err := c.SupportsAPISchemaVersion(ctx, "3.1.0")
 		if err != nil {
 			return nil, fmt.Errorf("check agent-token expiry capability: %w", err)
 		}
 		if !compatible {
-			return nil, errors.New("agent-token expiry requires daemon API schema 2.36.0 or newer")
+			return nil, errors.New("agent-token expiry requires daemon API schema 3.1.0 or newer")
 		}
 	}
 	resp, err := APIResponseWithStatuses(c, []int{http.StatusCreated}, func(client *apiclient.Client) (*generated.IssueAgentTokenResp, error) {

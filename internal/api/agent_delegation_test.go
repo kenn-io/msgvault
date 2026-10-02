@@ -90,18 +90,18 @@ func TestDelegatedFailsPrivilegedPredicate(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, w.Code, "beginBackupFreeze must deny delegated callers")
 	})
 
-	t.Run("getStats returns 401", func(t *testing.T) {
+	t.Run("getStats returns 403 without its read permission", func(t *testing.T) {
 		req := makeRequest(http.MethodGet, "/api/v1/stats")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
-	t.Run("listMessages returns 401", func(t *testing.T) {
+	t.Run("listMessages returns 403 without its read permission", func(t *testing.T) {
 		req := makeRequest(http.MethodGet, "/api/v1/messages")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
 	t.Run("issueAgentToken returns 401", func(t *testing.T) {
@@ -299,6 +299,10 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 				assert.NotEqual(http.StatusUnauthorized, w.Code,
 					"allowed op %q (%s %s) must not return 401; got %d", op.OperationID, strings.ToUpper(method), rawPath, w.Code)
 				testedAllowed++
+			} else if _, read := agentReadPermissions[op.OperationID]; read {
+				// Read operations pass the middleware; a draft-only grant then lacks the read permission.
+				assert.Equal(http.StatusForbidden, w.Code,
+					"read op %q (%s %s) must return 403 without its permission; got %d", op.OperationID, strings.ToUpper(method), rawPath, w.Code)
 			} else {
 				assert.Equal(http.StatusUnauthorized, w.Code,
 					"non-allowed op %q (%s %s) must return 401; got %d", op.OperationID, strings.ToUpper(method), rawPath, w.Code)
