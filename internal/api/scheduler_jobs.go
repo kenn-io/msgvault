@@ -129,6 +129,8 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		// Store identifier == config Identifier (see
 		// internal/circleback/importer.go GetOrCreateSource call).
 		return "circleback:" + identifier, true
+	case "pocket":
+		return "pocket:" + identifier, true
 	case notionmeetings.SourceType:
 		return "notion-meetings:" + identifier, true
 	case twilio.SourceType:
