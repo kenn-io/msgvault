@@ -83,18 +83,18 @@ func TestHydratorRetrievesUsersWhenListingIsUnavailable(t *testing.T) {
 	assert.Equal([]string{"user-1", "user-2"}, users.retrieved)
 	assert.Equal(map[string]bool{"user-2": true}, result.failedAttendeeIDs)
 	assert.True(result.AttendeeResolutionDegraded)
-	assert.Contains(result.Warnings, "Notion User Information access unavailable; attempting per-attendee retrieval where supported")
-	assert.Contains(result.Warnings, "Notion attendee user lookup unavailable; retained display-only identity")
+	assert.Contains(result.Warnings, "Notion User Information access unavailable; attendee emails were not resolved")
+	assert.Contains(result.Warnings, "Notion attendee lookup failed: notion integration lacks User Information access; kept display-only identity")
 }
 
-func TestRetrieveUserValidatesIdentityAndPATRestriction(t *testing.T) {
+func TestRetrieveUserValidatesIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
 		status     int
 		want       error
 	}{
 		{"guest", `{"object":"user","id":"guest","type":"person","person":{"email":"guest@example.com","email_verified":true}}`, 200, nil},
-		{"PAT", `{"object":"error","code":"restricted_resource","message":"Personal access tokens can only retrieve their own authorized user"}`, 403, ErrUserInformation},
+		{"restricted", `{"object":"error","code":"restricted_resource","message":"Personal access tokens can only retrieve their own authorized user"}`, 403, ErrUserInformation},
 		{"wrong ID", `{"object":"user","id":"other"}`, 200, ErrMalformedResponse},
 		{"wrong object", `{"object":"block","id":"guest"}`, 200, ErrMalformedResponse},
 		{"null", `null`, 200, ErrMalformedResponse},
@@ -136,57 +136,28 @@ func TestImporterPerUserFailureDoesNotRestoreHealthyUnverifiedEmail(t *testing.T
 	assert.Equal(t, "attendee@example.com", recipients[0].EmailAddress)
 }
 
-func TestPATListUsersRestrictionHasSafeDiagnostic(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/v1/users", r.URL.Path)
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = io.WriteString(w, `{"object":"error","code":"restricted_resource","message":"Personal access tokens cannot list users; secret-token"}`)
-	}))
-	t.Cleanup(server.Close)
-	_, err := NewClient(server.URL, "secret-token").ListUsers(t.Context(), "")
-	require.ErrorIs(err, ErrUserInformation)
-	var apiErr *APIError
-	require.ErrorAs(err, &apiErr)
-	assert.True(apiErr.PersonalAccessToken)
-	assert.NotContains(err.Error(), "secret-token")
-}
-
-// A single-token integration can resolve guests without WithUserSource.
-type guestHydrationSource struct {
+// Without a users token, guests stay display-only rather than costing one doomed request each.
+type retrievingHydrationSource struct {
 	*fakeHydrationSource
 
-	retrieval *fakeUserSource
+	retrieved int
 }
 
-func (s *guestHydrationSource) RetrieveUser(ctx context.Context, id string) (*User, error) {
-	return s.retrieval.RetrieveUser(ctx, id)
+func (s *retrievingHydrationSource) RetrieveUser(context.Context, string) (*User, error) {
+	s.retrieved++
+	return nil, ErrUserInformation
 }
 
-func TestHydratorMeetingTokenRetrievesGuestsWithoutSeparateCredential(t *testing.T) {
+func TestHydratorSkipsLookupsWithoutUsersToken(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	users := &fakeUserSource{
-		users: map[string]*User{"guest": {Object: "user", ID: "guest", Name: "Guest", Type: "person", Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}},
-		errs:  map[string]error{"blocked": ErrUserInformation},
-	}
-	source := &guestHydrationSource{fakeHydrationSource: completeHydrationSource(), retrieval: users}
-	meeting := hydrationMeeting()
-	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"guest", "blocked"}
-	hydrator := NewHydrator(source)
-	for range 2 {
-		result, err := hydrator.Hydrate(t.Context(), meeting)
-		require.NoError(err)
-		require.Len(result.Attendees, 1)
-		assert.Equal("guest@example.com", result.Attendees[0].Email)
-		assert.Equal(userAnchor("guest"), result.Attendees[0].Anchor)
-		assert.Equal([]string{"blocked"}, result.UnresolvedAttendeeIDs)
-		assert.True(result.AttendeeResolutionDegraded)
-		assert.Equal(map[string]bool{"blocked": true}, result.failedAttendeeIDs)
-	}
-	assert.Equal(1, source.usersCalls)
-	assert.Equal([]string{"guest", "blocked"}, users.retrieved)
+	source := &retrievingHydrationSource{fakeHydrationSource: completeHydrationSource()}
+	source.usersErr = ErrUserInformation
+	result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+	require.NoError(err)
+	assert.Zero(source.retrieved)
+	assert.Nil(result.failedAttendeeIDs)
+	assert.Equal([]string{"user-1", "user-2"}, result.UnresolvedAttendeeIDs)
 }
 
 func TestHydratorGuestFailuresHaveOneWarningPerMeeting(t *testing.T) {
@@ -196,5 +167,5 @@ func TestHydratorGuestFailuresHaveOneWarningPerMeeting(t *testing.T) {
 	result, err := NewHydrator(completeHydrationSource()).WithUserSource(users).Hydrate(t.Context(), meeting)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"blocked-1", "blocked-2"}, result.UnresolvedAttendeeIDs)
-	assert.Equal(t, []string{"Notion attendee user lookup unavailable; retained display-only identity"}, result.Warnings)
+	assert.Equal(t, []string{"Notion attendee lookup failed: notion integration lacks User Information access; kept display-only identity"}, result.Warnings)
 }
