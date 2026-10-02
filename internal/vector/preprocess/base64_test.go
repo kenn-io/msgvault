@@ -49,10 +49,23 @@ func TestStripBase64Runs(t *testing.T) {
 	}
 }
 
-func TestStripBase64PassOrder(t *testing.T) {
-	input := strings.Repeat("A", 200) + "/" + strings.Repeat("B", 100)
-	first := stripBase64Runs(input, 200, false)
-	assert.Equal(t, " /"+strings.Repeat("B", 100), stripBase64Runs(first, 300, true))
+func TestPreprocessBase64Policy(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+		cfg              Config
+		truncated        bool
+	}{
+		{name: "ordered passes", body: strings.Repeat("A", 200) + "/" + strings.Repeat("B", 100), want: "/" + strings.Repeat("B", 100), cfg: Config{StripBase64: true}},
+		{name: "whitespace retained", body: "left " + strings.Repeat("A", 200) + " right", want: "left   right", cfg: Config{StripBase64: true}},
+		{name: "data URI unicode case folding", body: "head data:teſt/plain;base64,KſAA== tail", want: "head   tail", cfg: Config{StripBase64: true}},
+		{name: "pollution removed before unicode body cap", body: strings.Repeat("A", 200) + "\n日本語tail", want: "日本", cfg: Config{StripBase64: true, MaxBodyRunes: 4}, truncated: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, truncated := Preprocess("", tc.body, 0, tc.cfg)
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, tc.truncated, truncated)
+		})
+	}
 }
 
 func TestStripBase64UnchangedNoAllocations(t *testing.T) {

@@ -1,10 +1,33 @@
 package preprocess
 
+// IMPORTANT: this file is part of Preprocess(). The preprocessVersion rule
+// at the top of preprocess.go applies here too.
+
 import "strings"
 
-// The letters in "data:" have only ASCII case-fold equivalents, even though
-// the rest of the legacy data-URI expression accepts some non-ASCII letters.
-func hasDataURIPrefix(s string) bool {
+// Bare base64 payloads (no `data:` prefix) that leaked into body_text are
+// removed in two passes. The split exists because '/' is in both the base64
+// alphabet AND in every URL path, so one length threshold cannot both keep
+// URL paths and catch real base64 with slashes:
+//
+//   - minBase64Run (no '/', 200+ chars). Catches dense letter+digit runs
+//     that prose never produces. Every '/' resets the run, so URL paths
+//     between separators are never matched as a whole.
+//   - minBase64RunWithSlash (with '/', 300+ chars). Catches real base64
+//     binary residue where '/' appears at the alphabet's natural ~1/64
+//     frequency. Even long signed S3 / CloudFront URLs and GitHub blob
+//     paths rarely reach 300 unbroken base64-alphabet chars without a `.`,
+//     `?`, `&`, `_`, `-`, or `~` breaking the run, while inline images or
+//     PDFs routinely produce thousands of chars.
+const (
+	minBase64Run          = 200
+	minBase64RunWithSlash = 300
+)
+
+// containsDataScheme reports whether s contains "data:" in any ASCII case.
+// It is a cheap prefilter for reDataURI: unlike other letters in that
+// expression, the letters in "data:" have no non-ASCII case-fold equivalents.
+func containsDataScheme(s string) bool {
 	for i := 0; i+5 <= len(s); i++ {
 		if s[i]|0x20 == 'd' && s[i+1]|0x20 == 'a' &&
 			s[i+2]|0x20 == 't' && s[i+3]|0x20 == 'a' && s[i+4] == ':' {

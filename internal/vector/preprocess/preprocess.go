@@ -179,14 +179,11 @@ func Preprocess(subject, body string, maxChars int, cfg Config) (string, bool) {
 		// Avoid the regex scan and its output copies on ordinary text.
 		// Keep the full matcher for candidates: its case folding includes
 		// non-ASCII MIME/payload characters such as Kelvin sign and long s.
-		if hasDataURIPrefix(s) {
+		if containsDataScheme(s) {
 			s = reDataURI.ReplaceAllString(s, " ")
 		}
-		// Keep the two historical thresholds and their order. The
-		// slash-free pass removes dense 200+ byte runs; the slash-inclusive
-		// pass uses 300+ bytes to preserve ordinary URL paths.
-		s = stripBase64Runs(s, 200, false)
-		s = stripBase64Runs(s, 300, true)
+		s = stripBase64Runs(s, minBase64Run, false)
+		s = stripBase64Runs(s, minBase64RunWithSlash, true)
 	}
 	bodyTruncated := false
 	if cfg.MaxBodyRunes > 0 {
