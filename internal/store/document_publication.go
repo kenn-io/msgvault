@@ -636,9 +636,10 @@ func canonicalCASPath(contentHash string) string {
 // for the same owner. Failure diagnostics pick the newest attempt by
 // created_at and break ties by caller-chosen ID, so a clock that repeats a
 // value (Windows wall time is coarse) or steps backward must not tie or invert
-// the order. The one-microsecond step survives PostgreSQL timestamp precision.
+// the order. Times use microseconds, PostgreSQL's timestamp precision, so a
+// value later by less than a microsecond cannot be stored equal to latest.
 func documentAttemptCreatedAt(q boundQuerier, input DocumentExtractionClaimInput) (time.Time, error) {
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	var latest time.Time
 	err := q.QueryRow(`
 		SELECT created_at FROM document_extractions
@@ -654,7 +655,7 @@ func documentAttemptCreatedAt(q boundQuerier, input DocumentExtractionClaimInput
 	if now.After(latest) {
 		return now, nil
 	}
-	return latest.UTC().Add(time.Microsecond), nil
+	return latest.UTC().Truncate(time.Microsecond).Add(time.Microsecond), nil
 }
 
 func validateDocumentClaimInput(input DocumentExtractionClaimInput) error {
