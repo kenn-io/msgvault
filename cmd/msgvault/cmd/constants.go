@@ -13,6 +13,7 @@ const (
 	sourceTypeCalendar       = "gcal"
 	sourceTypeBeeper         = "beeper"
 	sourceTypeSlack          = "slack"
+	sourceTypeInline         = "inline"
 	sourceTypeSlackdump      = "slackdump"
 	sourceTypeGranola        = "granola"
 	sourceTypeCircleback     = "circleback"

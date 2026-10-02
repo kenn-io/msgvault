@@ -592,3 +592,31 @@ func TestSetDiscordAttachmentMetadataPreservesMediaState(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(0), changed)
 }
+
+func TestInlineRetryableMediaFailsClosedOnUnknownRoster(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("inline", "api.inline.chat:user:42")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "chat:123", "group_chat", "Example group")
+	require.NoError(err)
+	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "chat:123:message:7")
+	refs := []store.AttachmentRef{{SourceAttachmentID: "inline:photo:70", Filename: "example.jpg", MediaType: "image",
+		StoragePath: "inline:pending:photo:70",
+		State:       attachmentpolicy.StateSkipped, SkipReason: attachmentpolicy.SkipParticipantThreshold}}
+	require.NoError(st.ReplaceMessageInlineProviderAttachments(messageID, refs))
+	stored, err := st.MessageInlineProviderAttachments(messageID)
+	require.NoError(err)
+	require.Contains(stored, "inline:photo:70")
+	assert.Equal(refs[0].SkipReason, stored["inline:photo:70"].SkipReason)
+	blocked, err := st.ListInlineProviderRetryableAttachmentMessages(source.ID, attachmentpolicy.Policy{MaxParticipants: 20})
+	require.NoError(err)
+	assert.Empty(blocked, "observed senders cannot stand in for a complete effective roster")
+	allowed, err := st.ListInlineProviderRetryableAttachmentMessages(source.ID, attachmentpolicy.Policy{})
+	require.NoError(err)
+	require.Len(allowed, 1)
+	assert.Equal(messageID, allowed[0].MessageID)
+	assert.Equal("chat:123", allowed[0].ChatID)
+}

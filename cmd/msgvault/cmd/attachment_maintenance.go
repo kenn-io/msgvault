@@ -403,6 +403,7 @@ func attachmentProducingCommand(args []string) bool {
 	case "archive-remote-images",
 		"backfill-beeper-media",
 		"backfill-discord-media",
+		"backfill-inline-media",
 		"backfill-slack-media",
 		"backfill-teams-media",
 		"import",
@@ -420,6 +421,7 @@ func attachmentProducingCommand(args []string) bool {
 		"import-whatsapp",
 		"sync-beeper",
 		"sync-discord",
+		"sync-inline",
 		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams":

@@ -308,6 +308,12 @@ var settingsCatalog = []settingDefinition{
 	stringArraySetting("beeper.accounts", settingsGroupSources, func(c *config.Config) []string { return c.Beeper.Accounts }),
 	stringArraySetting("beeper.exclude_accounts", settingsGroupSources, func(c *config.Config) []string { return c.Beeper.ExcludeAccounts }),
 	numberSetting("beeper.rate_limit_qps", settingsGroupSources, func(c *config.Config) float64 { return c.Beeper.RateLimitQPS }),
+	boolSetting("inline.enabled", settingsGroupSources, func(c *config.Config) bool { return c.Inline.Enabled }),
+	stringSetting("inline.schedule", settingsGroupSources, nil, func(c *config.Config) string { return c.Inline.Schedule }),
+	configuredBoolSetting("inline.media", settingsGroupAttachments, func(c *config.Config) bool { return c.Inline.Media == nil || *c.Inline.Media }, func(c *config.Config) bool { return c.Inline.Media == nil }),
+	stringSetting("inline.media_scope", settingsGroupAttachments, []string{"all", "direct", "none"}, func(c *config.Config) string { return effectiveMediaScope(c.Inline.MediaScope) }),
+	intSetting("inline.media_max_participants", settingsGroupAttachments, func(c *config.Config) int { return c.Inline.MediaMaxParticipants }),
+	intSetting("inline.max_media_mb", settingsGroupAttachments, func(c *config.Config) int { return c.Inline.MaxMediaMB }),
 	boolSetting("slack.enabled", settingsGroupSources, func(c *config.Config) bool { return c.Slack.Enabled }),
 	stringSetting("slack.schedule", settingsGroupSources, nil, func(c *config.Config) string { return c.Slack.Schedule }),
 	stringArraySetting("slack.channels", settingsGroupSources, func(c *config.Config) []string { return c.Slack.Channels }),
@@ -993,7 +999,7 @@ func validateSettingUpdate(key string, value any, options []string) error {
 			return errors.New("must be positive")
 		}
 	case "log.sql_slow_ms", "beeper.media_max_participants", "beeper.max_media_mb",
-		"slack.media_max_participants", "slack.max_media_mb", "discord.media_max_participants",
+		"slack.media_max_participants", "slack.max_media_mb", "inline.media_max_participants", "inline.max_media_mb", "discord.media_max_participants",
 		"discord.max_media_mb", "teams.media_max_participants", "teams.max_media_mb",
 		"vector.search.max_page_size_hybrid":
 		integer, ok := value.(int)

@@ -5504,7 +5504,7 @@ func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error
 				continue
 			}
 			if _, err := tx.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
-				VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, r.CreatedAt); err != nil {
+				VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, sql.NullTime{Time: r.CreatedAt, Valid: !r.CreatedAt.IsZero()}); err != nil {
 				return err
 			}
 		}

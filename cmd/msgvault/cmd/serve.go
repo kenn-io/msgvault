@@ -564,6 +564,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if cfg.Inline.Enabled && cfg.Inline.Schedule == "" {
+		logger.Warn("inline is enabled but has no schedule; set [inline].schedule to sync automatically")
+	}
+	if cfg.Inline.Enabled && cfg.Inline.Schedule != "" {
+		if err := sched.AddJob(scheduler.Job{
+			Name: api.InlineJobName, Schedule: cfg.Inline.Schedule, Preemptible: true,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+					return runConfiguredInlineSync(ctx, s)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule inline sync", "error", err)
+		}
+	}
+
 	// Meeting sources (Granola/Circleback) mirror the gcal treatment: warn
 	// when enabled but unscheduled, then register the scheduled ones.
 	for _, src := range cfg.Granola {

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-30"
+last_edited: "2026-10-02"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1102,6 +1102,106 @@ msgvault backfill-beeper-media --account signal
 | Flag | Default | Description |
 |---|---|---|
 | `--account` | all registered | Beeper accountID to backfill (repeatable) |
+
+---
+
+## add-inline
+
+Register an [Inline account](usage/inline.md) and archive all its accessible
+chats by default. Use repeated `--chat-id` values for an exact chat filter.
+The default transport is OAuth MCP; choose `cli` explicitly to use an
+authenticated Inline CLI on the daemon host.
+
+```bash
+msgvault add-inline
+msgvault add-inline --transport cli --cli-path inline
+msgvault add-inline --chat-id 123 --chat-id 456
+```
+
+Setup verifies the signed-in user and capture scope. It writes the canonical
+account identifier, transport, and optional filter to `[[inline.accounts]]`.
+Re-running with IDs merges them into an existing filter or establishes a filter
+for an account previously in all-chat mode. Re-running without IDs restores
+all-chat capture. Removing IDs while keeping the configuration filter nonempty
+stops future capture of those chats and keeps archived records. An empty filter
+restores all accessible chats.
+
+A transport change keeps the same source identity. Every `add-inline`
+invocation defaults to MCP; repeat `--transport cli` when updating a CLI-backed
+account.
+
+OAuth requests `messages:read` and `offline_access`, with no message-write
+scopes. OAuth credentials stay in private files on the daemon host. The CLI
+transport keeps its credentials in Inline's own authentication store. Remote
+OAuth consent runs on the invoking machine, then hands credentials to the
+configured daemon for verification and storage. The CLI executable and its
+login must be on the daemon host; see the
+[connection guide](usage/inline.md#connect-an-account).
+
+| Flag | Default | Description |
+|---|---|---|
+| `--chat-id` | all accessible chats | Numeric Inline chat ID for an exact filter (repeatable); children must be selected separately |
+| `--transport` | `mcp` | `mcp` for browser OAuth or `cli` for the authenticated Inline executable |
+| `--cli-path` | `inline` | Executable path for the CLI transport, resolved on the daemon host |
+| `--no-default-identity` | `false` | Do not auto-confirm the verified Inline account as this source's "me" identity |
+
+After adding, run `msgvault sync-inline --probe` and `msgvault sync-inline`.
+Restart the daemon after changing scheduled accounts or chat selections.
+
+---
+
+## sync-inline
+
+Archive all accessible chats for every registered Inline account, or one
+canonical account identifier, honoring any explicit chat filter. All-chat mode
+includes hidden and archived chats and accessible child threads. The first run
+backfills currently readable history and resumes after interruption; later
+runs collect new messages and discover newly accessible chats.
+
+All-chat mode requires the connected backend and MCP server or CLI to expose
+the complete catalog marker. Unsupported catalogs fail with an
+update instruction. This requirement must be checked against the deployed
+service; see [catalog support](usage/inline.md#check-all-chat-catalog-support).
+
+```bash
+msgvault sync-inline
+msgvault sync-inline 'api.inline.chat:user:42'
+msgvault sync-inline --full
+msgvault sync-inline --probe
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--full` | `false` | Re-fetch available history within the account's capture scope and refresh existing messages |
+| `--probe` | `false` | Check identity and read contracts, reporting capability and counts without importing or printing sampled message text |
+| `--no-media` | `false` | Defer attachment downloads while keeping message and media metadata |
+| `--limit` | `0` | Total messages of work per account this run; `0` is unlimited, and unfinished history or refresh work resumes later |
+
+`--probe` cannot be combined with `--full`, `--no-media`, or a nonzero `--limit`.
+
+Older edits require `--full`. A source deletion does not erase captured text
+or downloaded media. Content removed before capture and historical edit
+versions are unavailable; see [capture limits](usage/inline.md#sync-and-refresh).
+Use [Inline configuration](configuration.md#inline) to schedule ongoing sync.
+
+---
+
+## backfill-inline-media
+
+Retry eligible missing media for every registered Inline account, or one
+canonical account identifier. The command refreshes signed source URLs and
+reuses content-addressed bytes already stored. Size, scope, account, and
+participant policies still apply.
+
+```bash
+msgvault backfill-inline-media
+msgvault backfill-inline-media 'api.inline.chat:user:42'
+```
+
+An unknown group participant count fails a positive participant cap. Message
+and attachment metadata remain archived when media is skipped. See
+[Inline media downloads](usage/inline.md#media-downloads) for the explicit
+policy choice and source-availability limits.
 
 ---
 

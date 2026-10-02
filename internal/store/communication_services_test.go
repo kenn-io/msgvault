@@ -25,7 +25,7 @@ func TestSeededServiceCatalogCoversTheRoadmapSet(t *testing.T) {
 		"whatsapp", "telegram", "facebook", "messenger", "instagram", "signal",
 		"x", "discord", "slack", "linkedin", "sms", "rcs", "google-messages",
 		"google-voice", "google-chat", "irc", "groupme", "imessage", "line",
-		"bluesky", "matrix", "reddit", "kakaotalk", "wechat",
+		"bluesky", "matrix", "reddit", "kakaotalk", "wechat", "inline",
 	} {
 		service, ok := bySlug[slug]
 		assert.True(ok, "seeded service %q must exist", slug)
@@ -348,4 +348,37 @@ func TestBlankScopeStringsDoNotFragmentObservationIdentity(t *testing.T) {
 	assert.Equal(first.Observation.Envelope.ID, second.Observation.Envelope.ID)
 	assert.Nil(second.Observation.ScopeKind)
 	assert.Nil(second.Observation.ScopeValue)
+}
+
+func TestInlineServiceSeedUpgradesExistingArchiveAndPreservesEdits(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	// Model an older archive with the original service catalog already seeded.
+	_, err := st.DB().Exec(`DELETE FROM applied_migrations WHERE name = 'communication_services_inline_v1'`)
+	require.NoError(err)
+	_, err = st.DB().Exec(`DELETE FROM communication_services WHERE slug = 'inline'`)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	service, err := st.ResolveCommunicationServiceContext(ctx, "inline")
+	require.NoError(err)
+	assert.True(service.IsSystem)
+	assert.Equal(store.ScopePolicyRequired, service.ScopePolicy)
+	assert.Equal(store.NormalizationNone, service.Normalization)
+	require.NotNil(service.DefaultScopeKind)
+	assert.Equal("server", *service.DefaultScopeKind)
+	_, err = st.UpdateCommunicationServiceContext(ctx, service.ID, store.CommunicationServiceInput{
+		Slug: "inline", DisplayLabel: "Team archive", ScopePolicy: store.ScopePolicyRequired,
+		DefaultScopeKind: new("server"), Normalization: store.NormalizationNone, NormalizationVersion: 1,
+	})
+	require.NoError(err)
+	_, err = st.DB().Exec(`DELETE FROM applied_migrations WHERE name = 'communication_services_inline_v1'`)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	again, err := st.ResolveCommunicationServiceContext(ctx, "inline")
+	require.NoError(err)
+	assert.Equal(service.ID, again.ID)
+	assert.Equal("Team archive", again.DisplayLabel)
 }

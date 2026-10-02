@@ -1386,6 +1386,9 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
+	if name == clirun.EnvInlineOAuth {
+		return len(args) > 0 && args[0] == "add-inline"
+	}
 	if IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
 		return false
 	}
@@ -1694,6 +1697,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-discord",
 		"add-granola",
 		"add-imap",
+		"add-inline",
 		"add-muesli",
 		"add-notion-meetings",
 		"add-o365",
@@ -1702,6 +1706,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-teams",
 		"backfill-beeper-media",
 		"backfill-discord-media",
+		"backfill-inline-media",
 		"backfill-slack-media",
 		"backfill-teams-media",
 		"build-embeddings",
@@ -1745,6 +1750,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-circleback",
 		"sync-discord",
 		"sync-granola",
+		"sync-inline",
 		"sync-muesli",
 		"sync-notion-meetings",
 		"sync-slack",

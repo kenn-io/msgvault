@@ -44,6 +44,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Microsoft Teams](https://msgvault.io/docs/usage/teams.md)
 - [Discord](https://msgvault.io/docs/usage/discord.md)
 - [Beeper](https://msgvault.io/docs/usage/beeper.md)
+- [Inline](https://msgvault.io/docs/usage/inline.md): all accessible chats through OAuth MCP or the authenticated Inline CLI, with optional chat filters and a complete-catalog prerequisite
 - [Slack](https://msgvault.io/docs/usage/slack.md)
 - [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)
 

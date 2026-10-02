@@ -1,6 +1,9 @@
 package store
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 type participantIdentifierClassification struct {
 	ServiceSlug string
@@ -33,6 +36,15 @@ func classifyParticipantIdentifier(
 		classification.ServiceSlug = "sms"
 	case kind == "google_voice" || kind == "google-voice":
 		classification.ServiceSlug = "google-voice"
+	case kind == "inline":
+		server, userID, found := strings.Cut(value, ":user:")
+		id, err := strconv.ParseInt(userID, 10, 64)
+		if !found || server != "api.inline.chat" || err != nil || id <= 0 || id > 1<<53-1 || strconv.FormatInt(id, 10) != userID {
+			return participantIdentifierClassification{}, false
+		}
+		classification.ServiceSlug = "inline"
+		classification.ScopeKind = new("server")
+		classification.ScopeValue = new(server)
 	case kind == "slack":
 		classification.ServiceSlug = "slack"
 		if separator := strings.Index(value, ":"); separator > 0 {

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-30"
+last_edited: "2026-10-02"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -516,9 +516,9 @@ included parent. `exclude` wins when the same ID is in both lists. See
 
 ### Media policy
 
-`[beeper]`, `[slack]`, `[discord]`, and `[teams]` share one attachment policy
-vocabulary. It decides which chat media is downloaded during sync and backfill;
-message text is always archived.
+`[beeper]`, `[inline]`, `[slack]`, `[discord]`, and `[teams]` share one attachment
+policy vocabulary. It decides which chat media is downloaded during sync and
+backfill; message text is always archived.
 
 | Key | Default | Description |
 |---|---|---|
@@ -526,7 +526,7 @@ message text is always archived.
 | `media_scope` | `all` | `all` collects from every conversation; `direct` collects only from direct and group chats (not channels, rooms, or guild channels); `none` collects nothing |
 | `media_max_participants` | `20` | Skip media from conversations with more participants than this. Omitting the key applies the default; an explicit `0` removes the cap |
 | `max_media_mb` | `250` (Discord `50`) | Per-attachment size cap in MiB. Sized for long voice notes, screen recordings, and phone video from direct chats now that the participant cap keeps large-room volume out |
-| `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by Beeper accountID, Slack team ID, or Teams account email. Discord uses `[discord.guilds."<id>"]` instead |
+| `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by Beeper accountID, Inline canonical account identifier, Slack team ID, or Teams account email. Discord uses `[discord.guilds."<id>"]` instead |
 
 The participant cap exists because most attachment bytes in a real chat
 archive come from large rooms whose forwarded videos nobody wants kept. Direct
@@ -964,6 +964,67 @@ Docbank daemon's processing consent still decides whether a configured profile
 may run. The route inspects stored CAS bytes, so MIME claims do not expand
 Docbank's WAV and MP3 capability. Capture gaps and unsupported formats remain
 typed local states.
+
+### `[inline]`
+
+Archive [all accessible Inline chats](usage/inline.md) by default, including
+hidden and archived chats and accessible child threads. `add-inline` verifies
+the account and adds it to `[[inline.accounts]]`. Optional chat IDs restrict
+capture to an exact filter. One provider block controls scheduling and media
+policy for all registered Inline accounts. Credentials are separate from this
+file.
+Restart the daemon after changing scheduled accounts or chat selections.
+
+```toml
+[inline]
+enabled = true
+schedule = "0 */6 * * *"          # optional; omitted = manual sync only
+media = true
+media_scope = "all"
+media_max_participants = 20       # unknown group counts also skip; 0 = no cap
+max_media_mb = 250
+
+[[inline.accounts]]
+identifier = "api.inline.chat:user:42" # verified by add-inline
+transport = "mcp"                # mcp (default) or cli
+chat_ids = []                     # empty or omitted = all accessible chats
+# chat_ids = ["123", "456"]     # optional exact filter; no implied children
+# endpoint = "https://mcp.inline.chat/mcp/v2"
+# cli_path = "inline"            # CLI transport only; daemon-host executable
+
+[inline.accounts_config."api.inline.chat:user:42"]
+media = true
+max_media_mb = 500
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules Inline sync |
+| `schedule` | — | Cron expression used by `msgvault serve`; no schedule means manual sync only |
+| `media` | `true` | Download attachment bytes; deferred media retains metadata |
+| `media_scope` | `all` | `all`, `direct`, or `none`; see [Media policy](#media-policy) |
+| `media_max_participants` | `20` | Skip media above this participant count or when the effective group count is unknown; explicit `0` removes the cap |
+| `max_media_mb` | `250` | Per-attachment download cap in MiB |
+| `accounts_config` | — | Per-canonical-account-identifier `media` and `max_media_mb` overrides |
+
+Each `[[inline.accounts]]` entry has:
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | required | Canonical authenticated account identifier written by `add-inline` |
+| `transport` | `mcp` | OAuth MCP or the explicitly selected `cli` transport; there is no automatic fallback |
+| `chat_ids` | all accessible chats | Optional numeric chat IDs as strings for an exact filter; empty or omitted discovers all chats, while filtered child chats must be selected separately |
+| `endpoint` | `https://mcp.inline.chat/mcp/v2` | Only this production URL is accepted; omit the key to use the default |
+| `cli_path` | `inline` | CLI executable path on the daemon host, used only for `transport = "cli"` |
+
+An explicit filter pauses future capture outside that filter without removing
+archived records. Re-running `add-inline` with IDs merges existing explicit
+filters; running it without IDs restores all-chat mode. Changing transports
+retains the canonical account, conversation, and message identities. All-chat
+mode requires a complete catalog from the deployed Inline backend
+and MCP server or CLI; an unsupported catalog fails rather than silently
+capturing only visible chats. Read the [connection and capture limits](usage/inline.md)
+before choosing media caps or configuring a remote daemon.
 
 ### `[slack]`
 
@@ -1428,7 +1489,7 @@ auto_confirm_identities = false
 # Per-attachment download cap (default: 50 MiB)
 max_media_bytes = 52428800
 # Skip attachments from rooms with more than this many participants
-# (default: 20; 0 = no cap). Shared by [beeper], [slack], and [teams].
+# (default: 20; 0 = no cap). Shared by [beeper], [inline], [slack], and [teams].
 media_max_participants = 20
 # Trailing edit/delete/reaction repair window (default: seven days)
 edit_rescan_window = "168h"
