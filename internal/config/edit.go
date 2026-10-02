@@ -883,8 +883,23 @@ func syncConfigDirectory(path string, open func(string) (syncDirectoryHandle, er
 }
 
 func validateEditableCandidate(cfg *Config) error {
-	if err := cfg.Server.ValidateSecure(); err != nil {
+	// Validate effective runtime security without serializing runtime secrets.
+	effective := *cfg
+	if err := effective.applyRuntimeOverrides(RuntimeOverrides{}); err != nil {
 		return err
+	}
+	resolvedBind, err := ResolveBindAddress(effective.Server.BindAddr)
+	if err != nil {
+		return err
+	}
+	effective.Server.BindAddr = resolvedBind
+	if err := effective.ResolveServerKey(); err != nil {
+		return err
+	}
+	if !effective.Server.shouldAutoMintKey() {
+		if err := effective.Server.ValidateSecure(); err != nil {
+			return err
+		}
 	}
 	if cfg.Vector.AnyLaneEnabled() {
 		if err := cfg.Vector.Validate(); err != nil {

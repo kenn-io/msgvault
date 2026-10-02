@@ -185,6 +185,10 @@ func openStoreFile(path string) (*os.File, error) {
 	return os.NewFile(uintptr(handle), path), nil
 }
 
+func openSecretFile(path string) (*os.File, error) { return openStoreFile(path) }
+
+func verifySecretFile(file *os.File) error { return (nativePermissions{}).verifyFile(file) }
+
 func withStoreLock(tokenDir string, fn func() error) error {
 	path := filepath.Join(tokenDir, ".provider-credentials.lock")
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)

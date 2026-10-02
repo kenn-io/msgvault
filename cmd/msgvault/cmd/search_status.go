@@ -138,7 +138,7 @@ func httpStoreAPIKey(info HTTPStoreInfo, cfg *config.Config) string {
 		return ""
 	}
 	if info.Kind == HTTPStoreConfiguredRemote {
-		return cfg.Remote.APIKey
+		return cfg.Remote.AuthenticationKey()
 	}
-	return cfg.Server.APIKey
+	return cfg.Server.AuthenticationKey()
 }

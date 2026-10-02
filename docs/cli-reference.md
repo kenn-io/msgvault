@@ -20,7 +20,7 @@ in your installed binary. This reference follows current `main`; see
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
-| Operate or integrate | [setup](#setup), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
+| Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
 
 ## meetings
 
@@ -3213,6 +3213,25 @@ See [SQL Queries](/docs/usage/querying/) for available views and example queries
 
 ---
 
+## credentials
+
+On unreleased `main`, manage provider keys on the daemon host without the Web UI:
+
+```sh
+msgvault credentials set <id> --from-file PATH [--endpoint URL]
+msgvault credentials set <id> --stdin [--endpoint URL]
+msgvault credentials list [--json]
+msgvault credentials import-env
+```
+
+Supply exactly one input source. Supported IDs are `vector.embeddings`,
+`vector.multimodal`, `people.enrichment/<name>`, and
+`people.enrichment/suppression`. The configured provider supplies the default
+endpoint. Suppression keys have no endpoint. Listing prints IDs and bound
+origins, never key values. Import copies present configured environment keys
+and preserves stored keys. See [stored credentials](configuration.md#stored-provider-credentials)
+for input security, runtime precedence, and sweep-provider commands.
+
 ## mcp
 
 ### Discover running HTTP listeners
@@ -3240,8 +3259,10 @@ msgvault mcp [flags]
 |---|---|---|
 | `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/docs/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
-| `--http` | — | Serve MCP over StreamableHTTP on this address instead of stdio. Bare ports bind to loopback, e.g. `8080` becomes `127.0.0.1:8080`. Non-loopback addresses require `[server].api_key` or `--http-allow-insecure`. |
-| `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without `[server].api_key`. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
+| `--http` | — | Serve MCP over StreamableHTTP on this address instead of stdio. Bare ports bind to loopback, e.g. `8080` becomes `127.0.0.1:8080`. Non-loopback addresses require an effective inbound key or `--http-allow-insecure`. |
+| `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
+| `--http-token-env` | — | On unreleased `main`, name the environment variable holding an independent inbound bearer key. Requires `--http`. |
+| `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
 | `--http-allow-writes` | `false` | Expose Saved View management, attachment export, and deletion staging tools over StreamableHTTP. Enable only for trusted, authenticated clients. |
 
 See [MCP Server](/docs/usage/chat/) for configuration and tool reference.
@@ -3312,7 +3333,7 @@ msgvault daemon restart
 
 `start` launches the daemon in the background, `status` reports its recorded URL/PID/version/API schema/uptime, `stop` shuts it down, and `restart` performs a stop followed by a start. Starting a newer compatible binary replaces an older recorded daemon when `[server].daemon_auto_restart = "newer"`; incompatible running daemons are reported with a prompt to stop them first.
 
-The lifecycle commands have no command-specific flags. All configuration (port, bind address, API key, CORS, account schedules, SyncTech SMS sources, background idle timeout, daemon restart policy, and vector embedding schedule) is read from your `config.toml`. See [Web UI & API Server](/docs/api-server/) for endpoint documentation, run `msgvault openapi`, or fetch `/openapi.json` from a running server for the generated OpenAPI contract. See [Configuration](/docs/configuration/#server) for config options. When vector search is enabled, the daemon can also run the embed worker on a cron and/or after every successful sync, see [Configuration: vector.embed.schedule](/docs/configuration/#vectorembedschedule).
+The lifecycle commands have no command-specific flags. Configuration comes from `config.toml` with the [runtime environment overrides](configuration.md#environment-variables). See [Web UI & API Server](/docs/api-server/) for endpoint documentation, run `msgvault openapi`, or fetch `/openapi.json` from a running server for the generated OpenAPI contract. See [Configuration](/docs/configuration/#server) for config options. When vector search is enabled, the daemon can also run the embed worker on a cron and/or after every successful sync, see [Configuration: vector.embed.schedule](/docs/configuration/#vectorembedschedule).
 
 Background daemons started by `daemon start` or auto-started by a CLI command shut down after `[server].daemon_idle_timeout` with no requests. The default is `20m`; set it to `"0s"` to disable idle shutdown. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the value for a lifecycle-managed background daemon.
 
@@ -3331,6 +3352,16 @@ msgvault serve
 ```
 
 `msgvault serve` stays in the foreground until interrupted and is not idle-stopped. Use it for externally supervised, Docker, and NAS deployments; use `msgvault daemon` for local background lifecycle management.
+
+On unreleased `main`, `--bind ADDRESS` and `--port PORT` override environment,
+TOML, and defaults. A port of `0` selects an open port. `--bind iface:NAME`
+resolves a named network interface at startup and fails before binding if it
+cannot find a usable address. See [runtime configuration](configuration.md#environment-variables)
+for environment-only deployment and persisted API keys.
+
+```sh
+msgvault serve --bind 0.0.0.0 --port 8080
+```
 
 ---
 

@@ -2021,6 +2021,37 @@ func TestEditConfigRejectsInvalidNotionMeetingsSchedule(t *testing.T) {
 	assert.Equal(before, string(got))
 }
 
+func TestEditAllowsAutoMintForSecureNonLoopbackWithoutMintingKey(t *testing.T) { //nolint:paralleltest // process environment
+	require := require.New(t)
+	unsetServerKeyEnvironmentForTest(t)
+	t.Setenv("MSGVAULT_BIND_ADDR", "0.0.0.0")
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[web]\ntheme = \"system\"\n"), 0o600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	keyPath := cfg.ServerKeyFilePath()
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+
+	_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "web.theme", Value: "dark"}})
+	require.NoError(err, "config editing must allow the daemon's startup key mint policy")
+	_, err = os.Stat(keyPath)
+	require.ErrorIs(err, os.ErrNotExist, "editing config must not mint a server key")
+	contents, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Contains(t, string(contents), `theme = "dark"`)
+}
+
+func unsetServerKeyEnvironmentForTest(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"MSGVAULT_API_KEY", "MSGVAULT_API_KEY_FILE", "MSGVAULT_API_KEY_ENV"} {
+		envName := name
+		original, _ := os.LookupEnv(envName)
+		t.Setenv(envName, original)
+		require.NoError(t, os.Unsetenv(envName))
+	}
+}
+
 func TestEditConfigPreservesModeAndExistingSymlink(t *testing.T) {
 	if runtime.GOOS == windowsOS {
 		t.Skip("symlink permission semantics differ on Windows")

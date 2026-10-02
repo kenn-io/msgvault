@@ -13,6 +13,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Exercise environment-only startup and persisted authentication in the stock
+# runtime before installing the separate archive-query fixture below.
+export MSGVAULT_BIND_ADDR=0.0.0.0 MSGVAULT_API_PORT=8080
+msgvault daemon start
+test ! -e "$scratch/config.toml"
+test -s "$scratch/tokens/server-api-key"
+cp "$scratch/tokens/server-api-key" "$scratch/first-server-key"
+wget -q -O /dev/null http://127.0.0.1:8080/health
+msgvault daemon stop
+msgvault daemon start
+cmp "$scratch/first-server-key" "$scratch/tokens/server-api-key"
+test ! -e "$scratch/config.toml"
+msgvault daemon stop
+unset MSGVAULT_BIND_ADDR MSGVAULT_API_PORT
+
 cat > "$scratch/config.toml" <<'EOF'
 [server]
 api_port = 8080

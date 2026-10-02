@@ -1016,6 +1016,9 @@ func newBackupFreezer(ctx context.Context, cfg *config.Config) (backup.FreezeCoo
 	if cfg == nil {
 		return nil, func() {}, errors.New("configuration is unavailable")
 	}
+	if err := cfg.ResolveServerKey(); err != nil {
+		return nil, func() {}, err
+	}
 	rt := findDaemonRuntime(cfg.Data.DataDir)
 	if rt == nil {
 		return nil, func() {}, errors.New(
@@ -1026,7 +1029,7 @@ func newBackupFreezer(ctx context.Context, cfg *config.Config) (backup.FreezeCoo
 	// cleanup request that releases an already-open freeze window.
 	client, err := newDaemonCLIClient(context.WithoutCancel(ctx), daemonclient.Config{
 		URL:           urlFromDaemonRuntime(rt),
-		APIKey:        cfg.Server.APIKey,
+		APIKey:        cfg.Server.AuthenticationKey(),
 		AllowInsecure: true,
 	})
 	if err != nil {

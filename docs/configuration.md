@@ -696,9 +696,11 @@ Settings for the Web UI and API server started by `msgvault serve`. The same HTT
 | Key | Default | Description |
 |---|---|---|
 | `api_port` | `0` (auto-select) | Port the server listens on; `0` picks an open port at startup and clients discover it automatically. Set a fixed port for remote/NAS deployments. |
-| `bind_addr` | `127.0.0.1` | Bind address |
+| `bind_addr` | `127.0.0.1` | Bind address, or `iface:NAME` to bind an address on a named interface |
 | `api_key` | — | API key for daemon/API authentication and bearer authentication on `msgvault mcp --http` |
-| `agent_access` | `false` | Enable restricted agent grants; requires `api_key` to be non-empty. Read at daemon startup only; a `config.toml` edit takes effect only after a restart. |
+| `api_key_file` | — | Owner-only file holding the API key |
+| `api_key_env` | — | Name of an environment variable holding the API key |
+| `agent_access` | `false` | Enable restricted agent grants; requires an effective API key. Read at daemon startup only; a `config.toml` edit takes effect only after a restart. |
 | `allow_insecure` | `false` | Allow non-loopback binding without `api_key` |
 | `cors_origins` | `[]` | Allowed CORS origins |
 | `cors_credentials` | `false` | Allow credentials in CORS requests |
@@ -710,6 +712,30 @@ Settings for the Web UI and API server started by `msgvault serve`. The same HTT
 
 `daemon_idle_timeout` applies only to background daemons started by `msgvault daemon start` or auto-started by a CLI command. Foreground `msgvault serve` keeps running until stopped. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured value for lifecycle-managed background daemons.
 
+On unreleased `main`, flags and environment variables can configure the server
+without `config.toml`. `serve --bind` and `serve --port` take priority over
+environment variables, then TOML, then defaults. `iface:NAME` resolves at
+startup, preferring a usable IPv4 address and otherwise IPv6. An unknown, down,
+or unaddressed interface fails before opening a listener. Startup logs report
+the bound address and whether the bind came from a flag, environment, a config
+file, or the default.
+
+Credentials use `api_key`, then `api_key_file`, then `api_key_env`. A selected
+file or named variable that is missing, empty, or unsafe fails without trying
+another source. Files must be regular, owned by the process user, at most
+64 KiB, and readable only by that user (`0400` or `0600` on Unix). Symlinks are
+rejected. Windows files require an owner-only ACL. File reads trim surrounding
+whitespace and leave mounted permissions unchanged. Relative secret paths in
+an explicit `--config` resolve beside that file.
+
+When a secure non-loopback server has no configured credential source, it
+creates `<home>/tokens/server-api-key` with an unpredictable key and owner-only
+permissions. It reuses that key on later starts. An invalid existing key fails
+instead of being replaced. Local CLI clients discover the persisted key,
+including when they start the daemon themselves. `allow_insecure = true`
+retains the explicit unauthenticated mode. Startup logs name the credential
+file without printing its contents.
+
 `daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
 
 `daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start`, `msgvault daemon restart`, and the restart after `msgvault update` still start a daemon when you run them. Commands routed to `[remote].url` are unaffected.
@@ -720,8 +746,9 @@ access, terminate TLS at a reverse proxy and list that proxy—not arbitrary
 clients—in `trusted_proxies`. See [Web UI](/docs/web-ui/) for the complete security
 model and the plain-HTTP warning.
 
-For MCP Streamable HTTP, send `[server].api_key` as `Authorization: Bearer
-<key>` on every `/mcp` request. This inbound credential is independent of
+For MCP Streamable HTTP, send the effective `[server]` key, or the key selected
+by `--http-token-file` or `--http-token-env`, as `Authorization: Bearer <key>`
+on every `/mcp` request. This inbound credential is independent of
 `[remote].api_key`, which authenticates `msgvault mcp` when it connects to a
 remote daemon.
 
@@ -883,9 +910,17 @@ When set, archive-access CLI commands use the remote server by default. Without 
 |---|---|---|
 | `url` | — | Remote API base URL (e.g. `http://nas-ip:8080`) |
 | `api_key` | — | API key used by remote commands |
+| `api_key_file` | — | Owner-only file holding the remote API key |
+| `api_key_env` | — | Name of an environment variable holding the remote API key |
 | `allow_insecure` | `false` | Allow HTTP remote connections |
 
 Affected CLI commands include `search` (FTS mode), `query`, `show-message`, `stats`, `list-accounts`, `list-senders`, `list-domains`, `list-labels`, `identity` subcommands, `collection` subcommands, `export-eml`, `export-attachment`, `export-attachments`, and `tui`.
+
+The same settings route `mcp` to a remote daemon. Secret precedence and file
+requirements match [server credentials](#server). `--local` ignores the remote
+destination and its secret sources. An unused destination's secret is not read.
+Runtime keys from files or environment variables are never copied into saved
+`api_key` fields by `setup` or `export-token`.
 
 ### `[[accounts]]`
 
@@ -1016,6 +1051,8 @@ all_sources_upload_consent = true # allow audio from every captured source to le
 | `enabled` | `false` | Schedule the stored-media job in `msgvault serve` |
 | `url` | — | Docbank base URL: HTTPS, or HTTP on a loopback address. User info, query strings and fragments are rejected |
 | `api_key_env` | — | Name of the daemon environment variable that holds the Docbank API key. It is read for each request and sent as `X-Api-Key` |
+| `api_key` | — | Inline Docbank API key; takes priority over file and environment sources |
+| `api_key_file` | — | Owner-only Docbank key file, read for each request; takes priority over `api_key_env` |
 | `all_sources_upload_consent` | `false` | Allow stored audio and explicit source transcripts from every captured source, including future providers, to be sent to `url`. Without it the job only records local state |
 | `asr_profile` | — | Optional Docbank processing profile for stored audio without usable source text. An empty value retains audio without requesting processing. Msgvault rejects `supplied-transcript`, which Docbank reserves for supplied transcript input. |
 
@@ -1271,6 +1308,30 @@ Changing a stored key for vector or multimodal (visual) embeddings requires a da
 restart, like the other `[vector]` settings. Person enrichment and sweep keys
 apply on the next run.
 
+On unreleased `main`, the host owner can also install keys without the Web UI:
+
+```sh
+msgvault credentials set vector.embeddings --from-file /run/secrets/embedding-key
+msgvault credentials set vector.multimodal --stdin < /run/secrets/visual-key
+msgvault credentials set people.enrichment/research --endpoint https://api.example.com/search --stdin
+msgvault credentials set people.enrichment/suppression --stdin < /run/secrets/suppression-key
+msgvault credentials list --json
+msgvault credentials import-env
+```
+
+The CLI lists IDs and bound origins without values. File input follows the
+[server secret-file rules](#server). Standard input is trimmed and limited to
+64 KiB. `--endpoint` defaults to the configured provider endpoint; suppression
+keys have no endpoint. `import-env` copies present configured vector,
+multimodal, named enrichment, and suppression variables once, preserving
+existing stored keys. These host commands do not start the daemon or change
+provider consent. Run them on the daemon host; `--local` selects a local home
+when remote access is configured.
+
+Sweep providers use their own named profile credentials. Use
+`msgvault person provider add --api-key-stdin` or `--credential-env` for them;
+the legacy `people.sweep` store ID is not consumed by current sweep runs.
+
 The index generation fingerprint includes the model, dimension, document and query prefixes, preprocessing settings, `max_input_chars`, embedding policy, and scope. Changing those settings triggers a stale-index error on the next vector/hybrid query. For an existing account-scoped generation built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild`.
 
 #### `[vector.preprocess]`
@@ -1446,8 +1507,40 @@ ownership and permission checks to the target directory.
 | Variable | Description |
 |---|---|
 | `MSGVAULT_HOME` | Base directory for all data (default: `~/.msgvault`) |
-| `MSGVAULT_REMOTE_URL` | Remote URL for `export-token` (flag > env > config) |
-| `MSGVAULT_REMOTE_API_KEY` | Remote API key for `export-token` (flag > env > config) |
+| `MSGVAULT_BIND_ADDR` | Server bind address or `iface:NAME`; `serve --bind` wins |
+| `MSGVAULT_API_PORT` | Server port from `0` to `65535`; `serve --port` wins |
+| `MSGVAULT_API_KEY` | Inline server key for this process |
+| `MSGVAULT_API_KEY_FILE` | Mounted server key file |
+| `MSGVAULT_API_KEY_ENV` | Name of the environment variable holding the server key |
+| `MSGVAULT_ALLOW_INSECURE` | Allow unauthenticated non-loopback serving |
+| `MSGVAULT_BACKUP_REPO` | Backup repository path |
+| `MSGVAULT_CORS_ORIGINS` | Comma-separated browser origins; empty clears the list |
+| `MSGVAULT_CORS_CREDENTIALS` | Whether browser CORS requests may use credentials |
+| `MSGVAULT_TRUSTED_PROXIES` | Comma-separated proxy IP addresses or CIDRs; empty clears the list |
+| `MSGVAULT_REMOTE_URL` | Remote daemon URL for all commands with remote support |
+| `MSGVAULT_REMOTE_API_KEY` | Inline remote key for this process; `export-token --api-key` wins |
+| `MSGVAULT_REMOTE_API_KEY_FILE` | Mounted remote key file |
+| `MSGVAULT_REMOTE_API_KEY_ENV` | Name of the environment variable holding the remote key |
+| `MSGVAULT_REMOTE_ALLOW_INSECURE` | Allow plaintext HTTP to the remote daemon |
+
+These runtime controls are available on unreleased `main`. Environment values
+override TOML. For each server or remote credential group, setting any of its
+three environment variables selects that group's environment sources; within
+the group, inline wins over file, then named environment. A supplied empty
+credential variable is an error when that destination is used. Booleans accept
+Go's `strconv.ParseBool` values, such as `true`, `false`, `1`, and `0`; empty or
+invalid values fail. Origin and proxy lists trim whitespace between entries.
+
+For example, a supervised daemon can start without a config file:
+
+```sh
+MSGVAULT_HOME=/data MSGVAULT_BIND_ADDR=0.0.0.0 MSGVAULT_API_PORT=8080 msgvault serve
+```
+
+Persist `/data` across restarts so the archive and generated key survive. The
+published stock image is `ghcr.io/kenn-io/msgvault`; it runs as UID/GID `1000`
+and stores its home at `/data`. Use an image containing these unreleased
+features once published. No startup hook or entrypoint wrapper is required.
 
 ## File Locations
 
@@ -1459,6 +1552,7 @@ All data lives under the msgvault home directory (`~/.msgvault` on macOS/Linux, 
 | `msgvault.db` | SQLite database (system of record when PostgreSQL is not configured) |
 | `attachments/` | Content-addressed attachment files |
 | `tokens/` | OAuth tokens per account |
+| `tokens/server-api-key` | Persisted daemon API key when a secure non-loopback server mints one |
 | `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
 
