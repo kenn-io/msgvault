@@ -337,46 +337,57 @@ func TestImportPst_SupportPST_ContextCancelled(t *testing.T) {
 	require.NotNil(t, summary, "ImportPst returned nil summary")
 }
 
-func TestImportPst_ContextCancellationDoesNotSkipPendingMessageOnResume(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := openIntegrationStore(t)
-	pstPath := filepath.Join(pstTestdataDir, "support.pst")
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
+func TestImportPst_ContextCancellationResumesWithoutSkippingMessages(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		batchSize int
+	}{
+		{"inside a batch", 2},
+		{"between batches", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := openIntegrationStore(t)
+			pstPath := filepath.Join(pstTestdataDir, "support.pst")
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 
-	var ingestCalls int
-	interrupted, err := importPstWithBatchSize(ctx, st, pstPath, PstImportOptions{
-		Identifier:         "owner@example.test",
-		CheckpointInterval: 200,
-		IngestFunc: func(
-			ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string,
-			labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time,
-			log *slog.Logger,
-		) error {
-			ingestCalls++
-			err := IngestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log)
-			if err == nil && ingestCalls == 1 {
-				cancel()
-			}
-			return err
-		},
-	}, 2)
-	require.NoError(err)
-	require.Equal(1, ingestCalls)
-	require.Equal(int64(1), interrupted.MessagesAdded)
+			var ingestCalls int
+			interrupted, err := importPstWithBatchSize(ctx, st, pstPath, PstImportOptions{
+				Identifier:         "owner@example.test",
+				CheckpointInterval: 200,
+				IngestFunc: func(
+					ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string,
+					labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time,
+					log *slog.Logger,
+				) error {
+					ingestCalls++
+					err := IngestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs,
+						sourceMsgID, rawHash, raw, fallbackDate, log)
+					if err == nil && ingestCalls == 1 {
+						cancel()
+					}
+					return err
+				},
+			}, tc.batchSize)
+			require.NoError(err, "an interrupted import reports through the summary, not an error")
+			require.Equal(1, ingestCalls)
+			require.Equal(int64(1), interrupted.MessagesAdded)
 
-	resumed, err := ImportPst(t.Context(), st, pstPath, PstImportOptions{
-		Identifier: "owner@example.test",
-	})
-	require.NoError(err)
-	assert.True(resumed.WasResumed)
+			resumed, err := ImportPst(t.Context(), st, pstPath, PstImportOptions{
+				Identifier: "owner@example.test",
+			})
+			require.NoError(err)
+			assert.True(resumed.WasResumed)
 
-	var messageCount int64
-	require.NoError(st.DB().QueryRow(
-		`SELECT COUNT(*) FROM messages WHERE source_id = ?`, interrupted.SourceID,
-	).Scan(&messageCount))
-	assert.Equal(int64(17), messageCount)
+			var messageCount int64
+			require.NoError(st.DB().QueryRow(
+				`SELECT COUNT(*) FROM messages WHERE source_id = ?`, interrupted.SourceID,
+			).Scan(&messageCount))
+			assert.Equal(int64(17), messageCount)
+		})
+	}
 }
 
 // TestImportPst_32BitPST verifies that a 32-bit format PST is handled

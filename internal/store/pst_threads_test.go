@@ -154,3 +154,25 @@ func TestPstThreadAcceptedParentWithMissingReferenceRoot(t *testing.T) {
 		})
 	}
 }
+
+func TestPstThreadKeyJoinsMessagesWithoutKeyedConversation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	first, firstConv := pstThreadMessage(t, st, f.Source.ID, "legacy-first", "first@example.test")
+	second, _ := pstThreadMessage(t, st, f.Source.ID, "legacy-second", "second@example.test")
+	unrelated, unrelatedConv := pstThreadMessage(t, st, f.Source.ID, "legacy-unrelated", "unrelated@example.test")
+	var before, after int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&before))
+	for _, id := range []int64{first, second} {
+		require.NoError(st.RecordPstEmailHeadersContext(t.Context(), f.Source.ID, id, "", "", "missing-root@example.test"))
+	}
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&after))
+	assert.Equal(before, after, "recording a thread key must not create a conversation")
+
+	require.NoError(st.ReconcilePstEmailThreadsContext(t.Context(), f.Source.ID))
+	assert.Equal(firstConv, pstMessageConversation(t, st, first))
+	assert.Equal(firstConv, pstMessageConversation(t, st, second))
+	assert.Equal(unrelatedConv, pstMessageConversation(t, st, unrelated))
+}

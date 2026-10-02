@@ -124,7 +124,7 @@ func importPstWithBatchSize(
 
 	ingestFn := opts.IngestFunc
 	if ingestFn == nil {
-		ingestFn = rawMessageIngester(opts.RemoteImages)
+		ingestFn = pstMessageIngester(opts.RemoteImages)
 	}
 
 	log := opts.Logger
@@ -430,15 +430,12 @@ func importPstWithBatchSize(
 				lblIDs = []int64{p.LabelID}
 			}
 
-			ingestErr := ingestFn(ctx, st, src.ID, opts.Identifier, opts.AttachmentsDir,
-				lblIDs, p.SourceMsgID, p.RawHash, p.Raw, p.FallbackDate, log)
-			if ingestErr == nil && opts.IngestFunc == nil {
-				ingestErr = recordPstMessageHeaders(ctx, st, src.ID, p.SourceMsgID, p.Raw)
-			}
-			if ingestErr != nil {
+			if err := ingestFn(ctx, st, src.ID, opts.Identifier, opts.AttachmentsDir,
+				lblIDs, p.SourceMsgID, p.RawHash, p.Raw, p.FallbackDate, log,
+			); err != nil {
 				cp.ErrorsCount++
 				summary.Errors++
-				log.Warn("failed to ingest message", "source_msg_id", p.SourceMsgID, "error", ingestErr)
+				log.Warn("failed to ingest message", "source_msg_id", p.SourceMsgID, "error", err)
 				checkpointBlocked = true
 				hardErrors = true
 				continue
@@ -610,8 +607,10 @@ func importPstWithBatchSize(
 	summary.Duration = time.Since(start)
 	summary.HardErrors = hardErrors
 
-	if err := ctx.Err(); err != nil {
-		return summary, err
+	// An interrupted import leaves its sync running so the next run resumes
+	// from the last checkpoint, matching an interruption inside a batch.
+	if ctx.Err() != nil {
+		return summary, nil
 	}
 	finalMsg := fmt.Sprintf("folders:%d messages:%d", summary.FoldersImported, summary.MessagesProcessed)
 	if hardErrors {
@@ -621,23 +620,34 @@ func importPstWithBatchSize(
 		return summary, nil
 	}
 
-	if err := st.ResolveEmailReplyParentsContext(ctx, src.ID, 0, nil); err != nil {
-		if ctx.Err() == nil {
-			failSync(err.Error())
+	if err := finishPstThreads(ctx, st, src.ID); err != nil {
+		if ctx.Err() != nil {
+			return summary, nil
 		}
-		return summary, fmt.Errorf("resolve PST email replies: %w", err)
-	}
-	if err := st.ReconcilePstEmailThreadsContext(ctx, src.ID); err != nil {
-		if ctx.Err() == nil {
-			failSync(err.Error())
-		}
-		return summary, fmt.Errorf("reconcile PST email threads: %w", err)
+		failSync(err.Error())
+		return summary, err
 	}
 	if err := st.CompleteSyncContext(ctx, syncID, finalMsg); err != nil {
+		if ctx.Err() != nil {
+			return summary, nil
+		}
 		return summary, fmt.Errorf("complete sync: %w", err)
 	}
 
 	return summary, nil
+}
+
+// finishPstThreads links replies to archived parents and joins split
+// conversations after every folder is imported, so replies that appear before
+// their parents in the file still thread.
+func finishPstThreads(ctx context.Context, st *store.Store, sourceID int64) error {
+	if err := st.ResolveEmailReplyParentsContext(ctx, sourceID, 0, nil); err != nil {
+		return fmt.Errorf("resolve PST email replies: %w", err)
+	}
+	if err := st.ReconcilePstEmailThreadsContext(ctx, sourceID); err != nil {
+		return fmt.Errorf("reconcile PST email threads: %w", err)
+	}
+	return nil
 }
 
 // pstArchiveFingerprint returns a short stable identifier for a PST file,

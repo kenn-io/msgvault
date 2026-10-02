@@ -97,11 +97,19 @@ func TestImportPst_RerunRepairsMissingIdentifiers(t *testing.T) {
 	}
 	_, err = st.DB().Exec(`UPDATE messages SET rfc822_message_id = NULL, metadata = NULL`)
 	require.NoError(err)
+	// Earlier imports without identifiers keyed conversations by content hash.
+	_, err = st.DB().Exec(`UPDATE conversations SET source_conversation_id = 'legacy-' || id`)
+	require.NoError(err)
+	var conversationsBefore int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&conversationsBefore))
 	second, err := ImportPst(t.Context(), st, path, opts)
 	require.NoError(err)
 	require.Zero(second.Errors)
 	assert.Equal(first.MessagesAdded, second.MessagesSkipped)
 	assert.Zero(second.MessagesAdded)
+	var conversationsAfter int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&conversationsAfter))
+	assert.Equal(conversationsBefore, conversationsAfter, "repair must not add placeholder conversations")
 	for id, want := range original {
 		var got string
 		require.NoError(st.DB().QueryRow(`SELECT COALESCE(rfc822_message_id,'') FROM messages WHERE id = ?`, id).Scan(&got))

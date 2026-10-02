@@ -72,5 +72,7 @@ func ParseMessageIDs(raw []byte) (messageID, inReplyTo string) {
 // chain from top-level headers without decoding bodies or attachments.
 func ParseThreadingHeaders(raw []byte) (messageID, inReplyTo string, references []string) {
 	headers := tokenizeHeaders(raw)
-	return NormalizeMessageID(firstHeader(headers, "message-id")), NormalizeMessageID(firstHeader(headers, "in-reply-to")), parseReferences(firstHeader(headers, "references"))
+	messageID = NormalizeMessageID(firstHeader(headers, "message-id"))
+	inReplyTo = NormalizeMessageID(firstHeader(headers, "in-reply-to"))
+	return messageID, inReplyTo, parseReferences(firstHeader(headers, "references"))
 }

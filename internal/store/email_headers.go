@@ -23,13 +23,19 @@ func (s *Store) RecordEmailHeadersContext(ctx context.Context, sourceID, message
 const pstThreadMetadataKey = "pst_thread_key"
 
 // RecordPstEmailHeadersContext repairs accepted PST header facts without
-// replacing archived content. The durable thread key lets finalization resume
-// after interruption without moving a previously merged message back.
-func (s *Store) RecordPstEmailHeadersContext(ctx context.Context, sourceID, messageID int64, rfcID, inReplyTo, threadKey string) error {
-	return s.recordEmailHeadersContext(ctx, sourceID, messageID, rfcID, inReplyTo, mime.NormalizeMessageID(threadKey), true)
+// replacing archived content. A stored ID that differs from rfcID wins, and the
+// message keeps its stored facts. ReconcilePstEmailThreadsContext reads the
+// durable thread key, so finalization can resume after an interruption.
+func (s *Store) RecordPstEmailHeadersContext(
+	ctx context.Context, sourceID, messageID int64, rfcID, inReplyTo, threadKey string,
+) error {
+	threadKey = mime.NormalizeMessageID(threadKey)
+	return s.recordEmailHeadersContext(ctx, sourceID, messageID, rfcID, inReplyTo, threadKey, true)
 }
 
-func (s *Store) recordEmailHeadersContext(ctx context.Context, sourceID, messageID int64, rfcID, inReplyTo, threadKey string, pst bool) error {
+func (s *Store) recordEmailHeadersContext(
+	ctx context.Context, sourceID, messageID int64, rfcID, inReplyTo, threadKey string, pst bool,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -45,74 +51,80 @@ func (s *Store) recordEmailHeadersContext(ctx context.Context, sourceID, message
 			return err
 		}
 		var storedID, metadata sql.NullString
-		if err := tx.QueryRowContext(ctx, `SELECT rfc822_message_id, metadata FROM messages WHERE id = ? AND source_id = ? AND message_type = 'email'`+s.dialect.SelectForUpdate(), messageID, sourceID).Scan(&storedID, &metadata); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT rfc822_message_id, metadata FROM messages
+   WHERE id = ? AND source_id = ? AND message_type = 'email'`+s.dialect.SelectForUpdate(),
+			messageID, sourceID).Scan(&storedID, &metadata); err != nil {
 			return fmt.Errorf("read email header target: %w", err)
 		}
 		if pst && storedID.String != "" && rfcID != "" && mime.NormalizeMessageID(storedID.String) != rfcID {
 			return nil
 		}
-		fields := make(map[string]jsontext.Value)
-		if (pst || inReplyTo != "") && metadata.Valid && metadata.String != "" {
-			if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
-				return fmt.Errorf("decode email metadata: %w", err)
-			}
-			if fields == nil {
-				fields = make(map[string]jsontext.Value)
-			}
-		}
-		if pst && inReplyTo != "" {
-			if value, ok := fields[emailReplyMetadataKey]; ok {
-				var storedParent string
-				if err := json.Unmarshal(value, &storedParent); err != nil {
-					return fmt.Errorf("decode email parent ID: %w", err)
-				}
-				if mime.NormalizeMessageID(storedParent) != inReplyTo {
-					threadKey = ""
-				}
-			}
-		}
-		changed := false
-		for _, fact := range []struct{ key, value string }{{emailReplyMetadataKey, inReplyTo}, {pstThreadMetadataKey, threadKey}} {
-			if fact.value == "" {
-				continue
-			}
-			if _, exists := fields[fact.key]; exists {
-				continue
-			}
-			value, err := json.Marshal(fact.value, json.Deterministic(true))
+		if inReplyTo != "" || threadKey != "" {
+			encoded, changed, err := mergeEmailHeaderMetadata(metadata, inReplyTo, threadKey)
 			if err != nil {
-				return err
+				return fmt.Errorf("message %d: %w", messageID, err)
 			}
-			fields[fact.key] = value
-			changed = true
-		}
-		if changed {
-			encoded, err := json.Marshal(fields, json.Deterministic(true))
-			if err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE messages SET metadata = %s WHERE id = ?`, s.dialect.JSONBindExpr()), string(encoded), messageID); err != nil {
-				return err
-			}
-		}
-		if threadKey != "" {
-			if value, exists := fields[pstThreadMetadataKey]; exists {
-				if err := json.Unmarshal(value, &threadKey); err != nil {
-					return fmt.Errorf("decode PST thread key: %w", err)
+			if changed {
+				if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE messages SET metadata = %s WHERE id = ?`,
+					s.dialect.JSONBindExpr()), encoded, messageID); err != nil {
+					return err
 				}
 			}
-			if _, err := ensureConversation(boundQuerier{ctx: ctx, q: tx}, s.dialect, sourceID, threadKey, "(no subject)"); err != nil {
-				return fmt.Errorf("ensure PST thread target: %w", err)
-			}
 		}
-		if storedID.String == "" && rfcID != "" {
-			if _, err := tx.ExecContext(ctx, `UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, rfcID, messageID); err != nil {
-				return err
-			}
-			return s.bumpDerivedDataRevision(tx)
+		if storedID.String != "" || rfcID == "" {
+			return nil
 		}
-		return nil
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, rfcID, messageID); err != nil {
+			return err
+		}
+		return s.bumpDerivedDataRevision(tx)
 	})
+}
+
+// mergeEmailHeaderMetadata adds header facts that metadata does not already
+// hold. A thread key is dropped when the stored parent differs from inReplyTo,
+// because the key would then describe a different reply chain.
+func mergeEmailHeaderMetadata(metadata sql.NullString, inReplyTo, threadKey string) (string, bool, error) {
+	fields := make(map[string]jsontext.Value)
+	if metadata.Valid && metadata.String != "" {
+		if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
+			return "", false, fmt.Errorf("decode email metadata: %w", err)
+		}
+		if fields == nil {
+			fields = make(map[string]jsontext.Value)
+		}
+	}
+	if value, ok := fields[emailReplyMetadataKey]; ok && inReplyTo != "" && threadKey != "" {
+		var storedParent string
+		if err := json.Unmarshal(value, &storedParent); err != nil {
+			return "", false, fmt.Errorf("decode email parent ID: %w", err)
+		}
+		if mime.NormalizeMessageID(storedParent) != inReplyTo {
+			threadKey = ""
+		}
+	}
+	changed := false
+	for _, fact := range []struct{ key, value string }{
+		{emailReplyMetadataKey, inReplyTo}, {pstThreadMetadataKey, threadKey},
+	} {
+		if _, exists := fields[fact.key]; fact.value == "" || exists {
+			continue
+		}
+		value, err := json.Marshal(fact.value, json.Deterministic(true))
+		if err != nil {
+			return "", false, err
+		}
+		fields[fact.key] = value
+		changed = true
+	}
+	if !changed {
+		return "", false, nil
+	}
+	encoded, err := json.Marshal(fields, json.Deterministic(true))
+	if err != nil {
+		return "", false, err
+	}
+	return string(encoded), true, nil
 }
 
 func (s *Store) lockEmailHeaderRow(ctx context.Context, tx *loggedTx, messageID int64) error {
