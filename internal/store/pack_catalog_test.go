@@ -317,3 +317,32 @@ func TestPackVerificationWindowListsRowsAsKitReadsThem(t *testing.T) {
 	require.NoError(err)
 	assert.False(more)
 }
+
+func TestPackVerificationWindowKeepsItsRangeAcrossListings(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	created := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	record := func(hash string) {
+		packID := pack.NewPackID()
+		require.NoError(st.RecordPackedBlobs(store.PackRecord{PackID: packID, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
+			[]store.PackIndexEntry{{BlobHash: hash, PackID: packID, Offset: 6, StoredLen: 64, RawLen: 64}}))
+	}
+	inWindow := "aa11223344556677889900aabbccddeeff00112233445566778899aabbccddee"
+	record(inWindow)
+	ctx, pass, err := st.BeginPackVerification(t.Context(), 128, 32<<20)
+	require.NoError(err)
+	catalog := store.NewPackCatalog(st)
+	repair, err := catalog.ListIndexed(ctx)
+	require.NoError(err)
+	require.Len(repair, 1)
+	// Pack records newly packed blobs between its repair and sweep listings.
+	record("bb11223344556677889900aabbccddeeff00112233445566778899aabbccddee")
+	sweep, err := catalog.ListIndexed(ctx)
+	require.NoError(err)
+	require.Len(sweep, 1, "the sweep covers the window repair verified, not rows added after it")
+	assert.Equal(inWindow, sweep[0].Hash.String())
+	more, err := st.FinishPackVerification(t.Context(), pass)
+	require.NoError(err)
+	assert.False(more)
+}

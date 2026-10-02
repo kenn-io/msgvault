@@ -50,22 +50,23 @@ func (s *Store) BeginPackVerification(
 // listPackVerificationWindow returns the current index rows in the pass's
 // hash range. The first call selects at most maxEntries rows or maxBytes of
 // raw content after the cursor, always admitting one oversized row. Later
-// calls return the current rows in that same range.
+// calls return the current rows in that same range, so rows Pack adds past
+// its end wait for a later window.
 func (s *Store) listPackVerificationWindow(
 	ctx context.Context, pass *PackVerificationPass,
 ) ([]PackIndexEntry, error) {
+	if pass.selected && pass.end == "" {
+		return nil, nil
+	}
 	query := `SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
 		FROM attachment_pack_index WHERE blob_hash > ?`
 	args := []any{pass.start}
-	switch {
-	case !pass.selected:
-		query += ` ORDER BY blob_hash LIMIT ?`
-		args = append(args, pass.maxEntries+1)
-	case pass.more:
+	if pass.selected {
 		query += ` AND blob_hash <= ? ORDER BY blob_hash`
 		args = append(args, pass.end)
-	default:
-		query += ` ORDER BY blob_hash`
+	} else {
+		query += ` ORDER BY blob_hash LIMIT ?`
+		args = append(args, pass.maxEntries+1)
 	}
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
