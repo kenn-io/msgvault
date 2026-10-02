@@ -1796,11 +1796,11 @@ type CirclebackSource struct {
 // NotionMeetingsSource is one configured Notion AI Meeting Notes identity.
 // Meeting access and optional workspace user access use separate credentials.
 type NotionMeetingsSource struct {
-	UsersTokenEnv  string `toml:"users_token_env"`
-	UsersTokenFile string `toml:"users_token_file"`
 	Identifier     string `toml:"identifier"`
 	AccountEmail   string `toml:"account_email"`
 	Token          string `toml:"token"`
+	UsersTokenEnv  string `toml:"users_token_env"`
+	UsersTokenFile string `toml:"users_token_file"`
 	Schedule       string `toml:"schedule"`
 	Enabled        bool   `toml:"enabled"`
 }

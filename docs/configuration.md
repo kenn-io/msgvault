@@ -1212,18 +1212,12 @@ enabled = true
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |
 
-The daemon reads the optional user credential at each invocation. An unset or
-empty environment variable, unreadable or empty file, or both references set
-fails the command before Notion requests. Secret values stay out of diagnostics
-and archived evidence. With no separate credential, the meeting token also
-serves user requests. User lookup failures leave affected attendees unresolved;
-meeting content still syncs.
-
-The importer also uses Google Calendar events already synced for
-`account_email`. Calendar access is configured through
-[Google Calendar](usage/calendar.md); the Notion importer does not request new
-OAuth permissions. See [attendee matching](usage/meetings.md#notion-attendee-emails)
-for match rules and attribution evidence.
+The daemon reads the optional users token at each invocation. An unset or
+empty environment variable, an unreadable or empty file, or both references set
+fails the command before any Notion request. Token values stay out of
+diagnostics and archived evidence. Without a users token, the meeting token
+lists users and guests stay unresolved. A failed user lookup leaves that
+attendee unresolved; meeting content still syncs.
 
 Run `msgvault add-notion-meetings <identifier>` to validate access and register
 the source before enabling a schedule. Removing the source prevents the

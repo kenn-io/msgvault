@@ -36,8 +36,6 @@ var (
 )
 
 type APIError struct {
-	PersonalAccessToken bool `json:"-"`
-
 	Kind   error  `json:"-"`
 	Status int    `json:"status"`
 	Code   string `json:"code,omitempty"`
@@ -323,8 +321,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload any, t
 		}
 
 		var providerErr struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
+			Code string `json:"code"`
 		}
 		_ = json.Unmarshal(body, &providerErr)
 		if transientStatus(resp.StatusCode) {
@@ -337,7 +334,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload any, t
 			}
 			continue
 		}
-		return nil, &APIError{Kind: classifyError(resp.StatusCode, op), Status: resp.StatusCode, Code: providerErr.Code, PersonalAccessToken: op == operationUsers && resp.StatusCode == http.StatusForbidden && strings.Contains(strings.ToLower(providerErr.Message), "personal access tokens")}
+		return nil, &APIError{Kind: classifyError(resp.StatusCode, op), Status: resp.StatusCode, Code: providerErr.Code}
 	}
 	return nil, ErrProvider
 }

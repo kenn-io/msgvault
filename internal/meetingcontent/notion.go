@@ -392,29 +392,5 @@ func notionParticipants(fields map[string]jsontext.Value, discovery notionDiscov
 			participants = append(participants, Participant{Name: name, Email: user.Email, Role: "to"})
 		}
 	}
-	var match struct {
-		Basis     string `json:"basis"`
-		Attendees []struct {
-			Name  string `json:"name"`
-			Email string `json:"email"`
-		} `json:"attendees"`
-	}
-	if json.Unmarshal(fields["calendar_match"], &match) == nil &&
-		(match.Basis == "notion_link" || match.Basis == "heuristic") {
-		seen := make(map[string]bool, len(participants))
-		for _, person := range participants {
-			if person.Email != "" {
-				seen[person.Email] = true
-			}
-		}
-		for _, invitee := range match.Attendees {
-			email := normalizeExplicitEmail(invitee.Email)
-			if email == "" || seen[email] {
-				continue
-			}
-			participants = append(participants, Participant{Name: strings.TrimSpace(invitee.Name), Email: email, Role: "to"})
-			seen[email] = true
-		}
-	}
 	return participants
 }

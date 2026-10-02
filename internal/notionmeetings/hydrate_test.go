@@ -403,7 +403,7 @@ func TestHydratorDegradesWhenUserInformationIsUnavailable(t *testing.T) {
 	assert.Empty(hydrated.Attendees)
 	assert.True(hydrated.AttendeeResolutionDegraded)
 	assert.Equal([]string{"user-1", "user-2"}, hydrated.UnresolvedAttendeeIDs)
-	assert.Contains(hydrated.Warnings, "Notion User Information access unavailable; attempting per-attendee retrieval where supported")
+	assert.Contains(hydrated.Warnings, "Notion User Information access unavailable; attendee emails were not resolved")
 
 	snapshot, err := hydrated.ArchiveSnapshot(17, "work", "user@example.com")
 	require.NoError(err)
@@ -493,13 +493,13 @@ func TestHydratorDegradesAndCachesTransientUserListingFailure(t *testing.T) {
 	assert.Empty(first.Attendees)
 	assert.True(first.AttendeeResolutionDegraded)
 	assert.Equal([]string{"user-1", "user-2"}, first.AttendeeLabels)
-	assert.Contains(first.Warnings, "Notion User Information lookup failed: rate limit exceeded; attempting per-attendee retrieval where supported")
+	assert.Contains(first.Warnings, "Notion User Information lookup failed: rate limit exceeded; attendee emails were not resolved")
 
 	second, err := hydrator.Hydrate(context.Background(), hydrationMeeting())
 	require.NoError(err)
 	assert.Empty(second.Attendees)
 	assert.True(second.AttendeeResolutionDegraded)
-	assert.Contains(second.Warnings, "Notion User Information lookup failed: rate limit exceeded; attempting per-attendee retrieval where supported")
+	assert.Contains(second.Warnings, "Notion User Information lookup failed: rate limit exceeded; attendee emails were not resolved")
 	assert.Equal(1, source.usersCalls)
 }
 
@@ -544,5 +544,5 @@ func TestHydratorKeepsMeetingContentWhenUserLookupBudgetIsExhausted(t *testing.T
 	assert.Equal("attendee@example.com", hydrated.Attendees[0].Email)
 	assert.Equal([]string{"user-2"}, hydrated.UnresolvedAttendeeIDs)
 	assert.Empty(users.retrieved)
-	assert.Contains(hydrated.Warnings, "Notion user lookup skipped because the hydration request limit was reached")
+	assert.Contains(hydrated.Warnings, "Notion attendee lookup failed: notion meeting hydration exceeded request limit; kept display-only identity")
 }

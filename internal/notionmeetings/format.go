@@ -11,8 +11,6 @@ import (
 )
 
 type meetingMetadata struct {
-	CalendarMatch *calendarMatch `json:"calendar_match,omitempty"`
-
 	Platform                   string         `json:"platform"`
 	SourceIdentifier           string         `json:"source_identifier,omitempty"`
 	MeetingNoteBlockID         string         `json:"meeting_note_block_id"`
@@ -40,8 +38,6 @@ type rawBlockTree struct {
 }
 
 type rawEvidence struct {
-	CalendarMatch *calendarMatch `json:"calendar_match,omitempty"`
-
 	SchemaVersion  int               `json:"schema_version"`
 	Discovery      jsontext.Value    `json:"discovery"`
 	MeetingBlock   jsontext.Value    `json:"meeting_block"`
@@ -73,7 +69,7 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 	body := h.body(title, startedAt, endedAt)
 	children := h.Discovery.MeetingNotes.Children
 	metadata, err := json.Marshal(meetingMetadata{
-		CalendarMatch: h.CalendarMatch, Platform: SourceType, SourceIdentifier: identifier, MeetingNoteBlockID: h.Discovery.ID,
+		Platform: SourceType, SourceIdentifier: identifier, MeetingNoteBlockID: h.Discovery.ID,
 		PageID: h.Discovery.Parent.PageID, Status: h.Discovery.MeetingNotes.Status,
 		Lifecycle:      lifecycleForStatus(h.Discovery.MeetingNotes.Status, h.Transcript),
 		CreatorUserID:  h.Discovery.CreatedBy.ID,
@@ -91,7 +87,7 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 		return meetingarchive.Snapshot{}, fmt.Errorf("marshal Notion meeting metadata: %w", err)
 	}
 	raw, err := json.Marshal(rawEvidence{
-		CalendarMatch: h.CalendarMatch, SchemaVersion: 1, Discovery: h.Discovery.Raw,
+		SchemaVersion: 1, Discovery: h.Discovery.Raw,
 		MeetingBlock: rawForBlock(h.MeetingBlock),
 		Summary:      rawForTree(h.SummaryTree), Notes: rawForTree(h.NotesTree),
 		Transcript: rawForTree(h.TranscriptTree), PageMarkdown: rawForMarkdown(h.PageMarkdown),

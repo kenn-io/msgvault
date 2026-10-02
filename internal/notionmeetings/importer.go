@@ -32,21 +32,19 @@ type Source interface {
 }
 
 type Importer struct {
-	users    UserSource
-	calendar CalendarSource
-
+	users  UserSource
 	store  *store.Store
 	client Source
 	now    func() time.Time
 }
 
 func NewImporter(st *store.Store, client Source) *Importer {
-	return &Importer{store: st, client: client, now: time.Now, calendar: archiveCalendarSource{st}}
+	return &Importer{store: st, client: client, now: time.Now}
 }
 
-func (imp *Importer) WithUserSource(users UserSource) *Importer { imp.users = users; return imp }
-func (imp *Importer) WithCalendarSource(calendar CalendarSource) *Importer {
-	imp.calendar = calendar
+// WithUserSource resolves attendees with a separate workspace users token.
+func (imp *Importer) WithUserSource(users UserSource) *Importer {
+	imp.users = users
 	return imp
 }
 
@@ -311,19 +309,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 
 	hydrator := NewHydrator(imp.client).WithUserSource(imp.users)
-	var calendarEvents []CalendarEvent
-	calendarWarning := ""
-	if imp.calendar != nil && opts.AccountEmail != "" && len(workOrder) > 0 {
-		calendarEvents, err = imp.calendar.CalendarEvents(ctx, opts.AccountEmail)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return sum, fmt.Errorf("load Google Calendar join evidence: %w", err)
-			}
-			calendarWarning = "some Google Calendar join evidence was unavailable; only readable events were considered"
-			progress(calendarWarning)
-		}
-		prepareCalendarEvents(calendarEvents)
-	}
 	archiver := meetingarchive.New(scopedStore)
 	var hardErrors []error
 	for _, id := range workOrder {
@@ -342,9 +327,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
-		if calendarWarning != "" {
-			hydrated.Warnings = append(hydrated.Warnings, calendarWarning)
-		}
 		archived, recoverErr := imp.archivedState(source.ID, id)
 		if recoverErr != nil {
 			sum.Errors++
@@ -373,11 +355,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				}
 				preserveArchivedAttendeeRelationships(hydrated, recipients, archived.ResolvedUsers)
 			}
-		}
-
-		joinCalendarWithHeuristics(hydrated, calendarEvents, calendarWarning == "")
-		if calendarWarning != "" {
-			preserveArchivedCalendarJoin(hydrated, archived.Evidence.CalendarMatch)
 		}
 
 		terminal := terminalStatus(meeting.MeetingNotes.Status)

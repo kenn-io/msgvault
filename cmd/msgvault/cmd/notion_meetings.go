@@ -91,7 +91,7 @@ type notionMeetingsQuerySource interface {
 	ListUsers(ctx context.Context, cursor string) (*notionmeetings.UserPage, error)
 }
 
-func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, userSources ...notionmeetings.UserSource) error {
+func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, users notionmeetings.UserSource) error {
 	result, err := client.QueryMeetingNotes(ctx, 1)
 	if err != nil {
 		return fmt.Errorf("probe Notion AI Meeting Notes access: %w", err)
@@ -126,12 +126,7 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 		_, _ = fmt.Fprintln(out, "  Read Content: available")
 	}
 	if _, err := client.ListUsers(ctx, ""); errors.Is(err, notionmeetings.ErrUserInformation) {
-		var apiErr *notionmeetings.APIError
-		if errors.As(err, &apiErr) && apiErr.PersonalAccessToken {
-			_, _ = fmt.Fprintln(out, "  Meeting token User Information: unavailable (personal access token cannot list users or retrieve other users; configure users_token_env or users_token_file)")
-		} else {
-			_, _ = fmt.Fprintln(out, "  User Information: unavailable (enable Read user information including email addresses; or configure a user-resolution token)")
-		}
+		_, _ = fmt.Fprintln(out, "  User Information: unavailable (attendees remain display-only unless a users token is configured)")
 	} else if errors.Is(err, notionmeetings.ErrRateLimited) {
 		_, _ = fmt.Fprintf(out, "  User Information: unavailable (error: %v; attendees remain display-only)\n", err)
 	} else if err != nil {
@@ -139,47 +134,24 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	} else {
 		_, _ = fmt.Fprintln(out, "  User Information: available")
 	}
-	if len(userSources) > 0 && userSources[0] != nil {
-		users := userSources[0]
-		page, err := users.ListUsers(ctx, "")
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return err
-			}
-			_, _ = fmt.Fprintf(out, "  User-resolution token: User Information unavailable (%v)\n", err)
-		} else if page == nil {
-			return fmt.Errorf("probe user-resolution token: %w", notionmeetings.ErrMalformedResponse)
-		} else {
-			_, _ = fmt.Fprintln(out, "  User-resolution token: User Information available")
-			id := ""
-			if len(result.Results) > 0 {
-				for _, candidate := range result.Results[0].MeetingNotes.CalendarEvent.Attendees {
-					if strings.TrimSpace(candidate) != "" {
-						id = candidate
-						break
-					}
-				}
-			}
-			if id == "" {
-				_, _ = fmt.Fprintln(out, "  User-resolution token: individual user access not tested (no attendee ID)")
-			} else {
-				user, err := users.RetrieveUser(ctx, id)
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return err
-				}
-				if err != nil {
-					_, _ = fmt.Fprintf(out, "  User-resolution token: individual user access unavailable (%v)\n", err)
-				} else {
-					_, _ = fmt.Fprintln(out, "  User-resolution token: individual user access available")
-					if user != nil && user.Type == "person" && user.Person.EmailVerified && strings.TrimSpace(user.Person.Email) != "" {
-						_, _ = fmt.Fprintln(out, "  User-resolution token: verified email: available")
-					} else {
-						_, _ = fmt.Fprintln(out, "  User-resolution token: verified email: unavailable (enable Read user information including email addresses; unverified users remain display-only)")
-					}
-				}
-			}
+	if users == nil {
+		return nil
+	}
+	page, err := users.ListUsers(ctx, "")
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "  Users token: unavailable (%v)\n", err)
+		return nil
+	}
+	for _, user := range page.Results {
+		if user.Person.EmailVerified && strings.TrimSpace(user.Person.Email) != "" {
+			_, _ = fmt.Fprintln(out, "  Users token: available")
+			return nil
 		}
 	}
+	_, _ = fmt.Fprintln(out, "  Users token: no emails returned (enable Read user information including email addresses)")
 	return nil
 }
 
