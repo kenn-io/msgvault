@@ -34,7 +34,7 @@ func TestParseSyncPageRecognizesEquivalentAbsoluteCollectionHref(t *testing.T) {
 	require.NoError(err)
 	service := NewService(nil, client)
 
-	changed, removed, token, truncated, err := service.parseSyncPage(t.Context(), collection, MultiStatus{
+	changed, removed, token, truncated, err := service.dav().parseSyncPage(t.Context(), collection, MultiStatus{
 		SyncToken: "next-token",
 		Responses: []MultiStatusResponse{{
 			Href:      "https://CONTACTS.example:443/books/personal",
@@ -58,11 +58,11 @@ func TestPullBudgetChargesHTTPErrorBodies(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	service, _, _ := newPullService(t, server, false)
-	budget := &operationBudget{remaining: int64(len(errorBody) + 1)}
+	budget := &Budget{remaining: int64(len(errorBody) + 1)}
 
-	_, err := service.do(t.Context(), Request{Method: http.MethodGet, URL: server.URL + "/missing-one"}, budget)
+	_, err := service.dav().do(t.Context(), Request{Method: http.MethodGet, URL: server.URL + "/missing-one"}, budget)
 	require.Error(t, err)
-	_, err = service.do(t.Context(), Request{Method: http.MethodGet, URL: server.URL + "/missing-two"}, budget)
+	_, err = service.dav().do(t.Context(), Request{Method: http.MethodGet, URL: server.URL + "/missing-two"}, budget)
 	require.ErrorIs(t, err, ErrOperationLimit)
 }
 
@@ -79,17 +79,17 @@ func TestPullBudgetChargesPartialBodiesOnResponseLimit(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	service, _, _ := newPullService(t, server, false)
-	service.client.responseBytes = 2
-	service.client.operationBytes = 10
-	budget := &operationBudget{remaining: 5}
+	service.dav().client.responseBytes = 2
+	service.dav().client.operationBytes = 10
+	budget := &Budget{remaining: 5}
 
-	response, err := service.do(t.Context(), Request{Method: http.MethodGet, URL: server.URL + "/oversized-one"}, budget)
+	response, err := service.dav().do(t.Context(), Request{Method: http.MethodGet, URL: server.URL + "/oversized-one"}, budget)
 	require.ErrorIs(err, ErrResponseLimit)
 	require.NotNil(response)
 	assert.Equal([]byte(responseBody), response.Body)
 	assert.Equal(int64(2), budget.remaining)
 
-	response, err = service.do(t.Context(), Request{Method: http.MethodGet, URL: server.URL + "/oversized-two"}, budget)
+	response, err = service.dav().do(t.Context(), Request{Method: http.MethodGet, URL: server.URL + "/oversized-two"}, budget)
 	require.ErrorIs(err, ErrOperationLimit)
 	assert.Nil(response)
 	assert.Equal(int64(-1), budget.remaining)
@@ -115,9 +115,9 @@ func TestPullBudgetChargesRedirectResponseBodies(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	service, _, _ := newPullService(t, server, false)
-	budget := &operationBudget{remaining: 4}
+	budget := &Budget{remaining: 4}
 
-	response, err := service.do(t.Context(), Request{Method: http.MethodGet, URL: server.URL + "/start"}, budget)
+	response, err := service.dav().do(t.Context(), Request{Method: http.MethodGet, URL: server.URL + "/start"}, budget)
 	require.ErrorIs(err, ErrOperationLimit)
 	assert.Nil(response)
 	assert.Equal(int64(-1), budget.remaining)
@@ -137,8 +137,8 @@ func TestIndividualMemberFetchTreatsGoneAsMissing(t *testing.T) {
 	require.NoError(err)
 	href := book.CanonicalURL + "gone.vcf"
 
-	resources, missing, err := service.fetchMembersIndividually(
-		t.Context(), collection, []string{href}, &operationBudget{remaining: defaultOperationBytes})
+	resources, missing, err := service.dav().fetchMembersIndividually(
+		t.Context(), collection, []string{href}, &Budget{remaining: defaultOperationBytes})
 	require.NoError(err)
 	assert.Empty(resources)
 	assert.Equal([]string{href}, missing)
@@ -155,7 +155,7 @@ func TestSyncPageTreatsGoneMemberAsRemoved(t *testing.T) {
 	require.NoError(err)
 	href := book.CanonicalURL + "gone.vcf"
 
-	changed, removed, token, truncated, err := service.parseSyncPage(t.Context(), collection, MultiStatus{
+	changed, removed, token, truncated, err := service.dav().parseSyncPage(t.Context(), collection, MultiStatus{
 		SyncToken: "next-token",
 		Responses: []MultiStatusResponse{{Href: href, StatusCode: http.StatusGone}},
 	})
@@ -588,8 +588,8 @@ func TestMultigetMatchesEquivalentAbsoluteHref(t *testing.T) {
 	collection := mustParseURL(t, origin.String()+"/books/personal/")
 	requestedHref := origin.String() + "/books/personal/alice.vcf"
 
-	resources, missing, err := service.fetchMultiget(t.Context(), collection,
-		[]string{requestedHref}, &operationBudget{remaining: defaultOperationBytes})
+	resources, missing, err := service.dav().fetchMultiget(t.Context(), collection,
+		[]string{requestedHref}, &Budget{remaining: defaultOperationBytes})
 
 	require.NoError(err)
 	assert.Empty(missing)
@@ -621,8 +621,8 @@ func TestMultigetCanonicalizesEquivalentMissingHref(t *testing.T) {
 	collection := mustParseURL(t, origin.String()+"/books/personal/")
 	requestedHref := origin.String() + "/books/personal/alice.vcf"
 
-	resources, missing, err := service.fetchMultiget(t.Context(), collection,
-		[]string{requestedHref}, &operationBudget{remaining: defaultOperationBytes})
+	resources, missing, err := service.dav().fetchMultiget(t.Context(), collection,
+		[]string{requestedHref}, &Budget{remaining: defaultOperationBytes})
 
 	require.NoError(err)
 	assert.Empty(resources)
@@ -862,7 +862,7 @@ func TestManualFullSyncMarksSnapshotAsCompleteReconciliation(t *testing.T) {
 			require.NotNil(account)
 
 			plan, err := service.fetchBookPlan(t.Context(), *account, book, SyncOptions{Full: true},
-				&operationBudget{remaining: defaultOperationBytes}, &bookSyncState{})
+				&Budget{remaining: defaultOperationBytes}, &bookSyncState{})
 			require.NoError(err)
 			assert.True(plan.CompletesFullReconcile)
 		})
@@ -1069,7 +1069,7 @@ func TestGoogleInitialSyncSkipsEmptyTokenSyncCollection(t *testing.T) {
 	server := httptest.NewServer(newGoogleLikeHandler(t, state))
 	t.Cleanup(server.Close)
 	base, st, _ := newPullService(t, server, true)
-	service := NewGoogleService(st, base.client)
+	service := NewGoogleService(st, base.dav().client)
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
@@ -1113,7 +1113,7 @@ func TestGoogleInvalidTokenReconcileUsesEnumeratedSnapshot(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	base, st, book := newPullService(t, server, true)
-	service := NewGoogleService(st, base.client)
+	service := NewGoogleService(st, base.dav().client)
 	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET sync_token = ? WHERE id = ?`), "stale-token", book.ID)
 	require.NoError(err)
 
@@ -1173,7 +1173,7 @@ func TestEnumeratedSnapshotRejectsEmptyMemberListing(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	base, st, book := newPullService(t, server, true)
-	service := NewGoogleService(st, base.client)
+	service := NewGoogleService(st, base.dav().client)
 	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
 
@@ -1196,7 +1196,7 @@ func TestEnumeratedSnapshotTreatsTruncatedListingAsTruncatedSnapshot(t *testing.
 	}))
 	t.Cleanup(server.Close)
 	base, st, _ := newPullService(t, server, true)
-	service := NewGoogleService(st, base.client)
+	service := NewGoogleService(st, base.dav().client)
 
 	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.ErrorIs(t, err, ErrTruncatedSnapshot)
@@ -1209,7 +1209,7 @@ func TestGoogleSnapshotNeverUsesAddressbookQuery(t *testing.T) {
 	server := httptest.NewServer(newGoogleLikeHandler(t, state))
 	t.Cleanup(server.Close)
 	base, st, _ := newPullService(t, server, false)
-	service := NewGoogleService(st, base.client)
+	service := NewGoogleService(st, base.dav().client)
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
@@ -1235,7 +1235,7 @@ func TestEnumeratedSnapshotWarnsWhenCollectionOmitsSyncToken(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	base, st, _ := newPullService(t, server, true)
-	service := NewGoogleService(st, base.client)
+	service := NewGoogleService(st, base.dav().client)
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
@@ -1268,7 +1268,7 @@ func TestEnumeratedSnapshotRejectsListingThatOmitsCollection(t *testing.T) {
 	server := httptest.NewServer(newGoogleLikeHandler(t, state))
 	t.Cleanup(server.Close)
 	base, st, book := newPullService(t, server, true)
-	service := NewGoogleService(st, base.client)
+	service := NewGoogleService(st, base.dav().client)
 	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
 
@@ -1290,7 +1290,7 @@ func TestEnumeratedSnapshotRejectsMemberWithoutETag(t *testing.T) {
 	server := httptest.NewServer(newGoogleLikeHandler(t, state))
 	t.Cleanup(server.Close)
 	base, st, book := newPullService(t, server, true)
-	service := NewGoogleService(st, base.client)
+	service := NewGoogleService(st, base.dav().client)
 	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
 
@@ -1302,4 +1302,12 @@ func TestEnumeratedSnapshotRejectsMemberWithoutETag(t *testing.T) {
 	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, server.URL+"/books/personal/bob.vcf")
 	require.NoError(err, "a member with no ETag and no resourcetype may still exist and must not be removed")
 	assert.Equal(`"b1"`, resource.RemoteETag)
+}
+
+func (s *Service) dav() *davRemote {
+	remote, ok := s.remote.(*davRemote)
+	if !ok {
+		panic("service does not use the CardDAV remote")
+	}
+	return remote
 }

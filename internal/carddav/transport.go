@@ -175,7 +175,7 @@ func (c *Client) Do(ctx context.Context, request Request) (*Response, error) {
 }
 
 func (c *Client) doWithBudget(
-	ctx context.Context, request Request, budget *operationBudget,
+	ctx context.Context, request Request, budget *Budget,
 ) (*Response, error) {
 	if budget == nil {
 		return c.Do(ctx, request)

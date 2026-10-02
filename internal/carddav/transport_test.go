@@ -230,14 +230,14 @@ func TestClientReusesDigestAcrossBudgetedAndConcurrentRequests(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := newFixtureClient(t, server.URL, "alice", "app-password")
 	request := Request{Method: "PROPFIND", URL: server.URL + "/dav"}
-	_, err := client.doWithBudget(t.Context(), request, &operationBudget{remaining: 1024})
+	_, err := client.doWithBudget(t.Context(), request, &Budget{remaining: 1024})
 	require.NoError(err)
 	_, err = client.Do(t.Context(), request)
 	require.NoError(err)
 	var calls sync.WaitGroup
 	for range 4 {
 		calls.Go(func() {
-			_, err := client.doWithBudget(t.Context(), request, &operationBudget{remaining: 1024})
+			_, err := client.doWithBudget(t.Context(), request, &Budget{remaining: 1024})
 			assert.NoError(err)
 		})
 	}
