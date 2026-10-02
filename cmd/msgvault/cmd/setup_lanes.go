@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -21,7 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
-	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
@@ -35,6 +35,7 @@ const (
 	consentActive  = "active"
 	consentMissing = "missing"
 	consentUnknown = "unknown"
+	consentStale   = "stale"
 
 	laneTextSearch      = "text_search"
 	lanePersonSearch    = "person_search"
@@ -71,6 +72,7 @@ const (
 // laneStatus is one row of the provider report. It answers, for one lane:
 // which provider and model, whether it is on, why not, and what to run next.
 type laneStatus struct {
+	readiness       laneReadinessFacts
 	Lane            string            `json:"lane"`
 	Label           string            `json:"label"`
 	State           string            `json:"state"`
@@ -95,6 +97,7 @@ type laneReport struct {
 // incompatibility, PostgreSQL unreachable) and every consent is reported as
 // unknown rather than missing.
 type setupConsentState struct {
+	purposes          map[string]string
 	Documents         bool
 	Visual            bool
 	PersonInference   bool
@@ -121,22 +124,33 @@ func (e setupEnvironment) hasEnv(name string) bool {
 }
 
 func (e setupEnvironment) reportMissingCredential(lane *laneStatus, name string) {
+	lane.readiness.credential = "not_required"
+	if name != "" {
+		lane.readiness.credential = "available"
+	}
 	if name != "" && !e.hasEnv(name) {
 		lane.State = laneStatePending
 		lane.Reason += "; environment variable " + name + " is not set"
+		lane.readiness.credential = "missing"
 	}
 }
 
 func (e setupEnvironment) reportVectorCredential(lane *laneStatus, id, endpoint, name string) {
 	credential, _, err := e.credentials.Resolve(id, endpoint, name, e.lookupEnv)
+	lane.readiness.credential = "not_required"
+	if name != "" || credential != "" {
+		lane.readiness.credential = "available"
+	}
 	if err != nil {
 		lane.State = laneStatePending
 		lane.Reason += "; provider credential unavailable: " + err.Error()
+		lane.readiness.credential = "unknown"
 		return
 	}
 	if name != "" && strings.TrimSpace(credential) == "" {
 		lane.State = laneStatePending
 		lane.Reason += "; no stored provider credential and environment variable " + name + " is not set"
+		lane.readiness.credential = "missing"
 	}
 }
 
@@ -147,9 +161,12 @@ func (e setupEnvironment) exists(path string) bool {
 	return e.fileExists(path)
 }
 
-func (e setupEnvironment) consentState(read func(setupConsentState) bool) string {
+func (e setupEnvironment) consentState(purpose string, read func(setupConsentState) bool) string {
 	if e.consent == nil {
 		return consentUnknown
+	}
+	if state, ok := e.consent.purposes[purpose]; ok {
+		return state
 	}
 	if read(*e.consent) {
 		return consentActive
@@ -231,83 +248,7 @@ func readSetupConsentState(ctx context.Context, cfg *config.Config) *setupConsen
 // already-open store. Each lookup is independent so one failing table cannot
 // hide the others.
 func setupConsentFromStore(ctx context.Context, cfg *config.Config, st *store.Store) *setupConsentState {
-	state := &setupConsentState{}
-	if cfg.Vector.Enabled && cfg.Attachments.Documents.Index.Embeddings.Enabled {
-		if target, err := st.GetDocumentVectorTargetProfileID(ctx); err == nil {
-			if fingerprint, err := vectordocument.EgressFingerprint(target, cfg.Vector); err == nil {
-				consent, err := st.GetDocumentVectorConsent(ctx, fingerprint)
-				state.DocumentEmbedding = err == nil && consent != nil && consent.Purpose == "document_embedding"
-			}
-			if fingerprint, err := vectordocument.QueryEgressFingerprint(target, cfg.Vector); err == nil {
-				consent, err := st.GetDocumentVectorConsent(ctx, fingerprint)
-				state.QueryEmbedding = err == nil && consent != nil && consent.Purpose == "query_embedding"
-			}
-		}
-	}
-	state.Documents = setupDocumentConsent(ctx, cfg, st)
-	state.Visual = setupVisualConsent(ctx, cfg, st)
-	if cfg.People.Sweep.Enabled {
-		if profile, err := cfg.People.Sweep.Profile(); err == nil {
-			if active, err := st.HasActivePersonInferenceConsent(ctx, profile.Fingerprint); err == nil {
-				state.PersonInference = active
-			}
-		}
-	}
-	if cfg.Vector.Enabled && cfg.Vector.People.Enabled {
-		if profile, err := cfg.Vector.SemanticPersonEmbeddingProfile(); err == nil {
-			if active, err := st.HasActivePersonSemanticEmbeddingConsent(ctx, profile.Fingerprint); err == nil {
-				state.PersonSemantic = active
-			}
-		}
-	}
-	return state
-}
-
-func setupDocumentConsent(ctx context.Context, cfg *config.Config, st *store.Store) bool {
-	if !cfg.Attachments.Documents.Enabled {
-		return false
-	}
-	manifest, err := loadDocumentCapabilityManifest(setupMistralManifestPath(cfg))
-	if err != nil {
-		return false
-	}
-	_, profile, err := documentProfileForConfig(&cfg.Attachments.Documents, manifest)
-	if err != nil {
-		return false
-	}
-	consented, err := st.HasMatchingDocumentProviderConsent(ctx, profile)
-	return err == nil && consented
-}
-
-func setupVisualConsent(ctx context.Context, cfg *config.Config, st *store.Store) bool {
-	if !cfg.Vector.Multimodal.Enabled {
-		return false
-	}
-	vecCfg, err := resolvedVectorConfig(st, cfg.Vector)
-	if err != nil {
-		return false
-	}
-	providerConfig, err := visualVoyageConfig(vecCfg)
-	if err != nil {
-		return false
-	}
-	policy, err := providerConfig.Policy()
-	if err != nil {
-		return false
-	}
-	policyFingerprint, err := policy.Fingerprint(providerConfig.Manifest)
-	if err != nil {
-		return false
-	}
-	fingerprint := vecCfg.MultimodalGenerationFingerprint()
-	for _, read := range []func(context.Context) (store.VisualGeneration, error){st.ActiveVisualGeneration, st.BuildingVisualGeneration} {
-		generation, err := read(ctx)
-		if err == nil && generation.Consented && generation.Fingerprint == fingerprint &&
-			generation.ConsentPolicyFingerprint == policyFingerprint {
-			return true
-		}
-	}
-	return false
+	return readSetupLaneConsents(ctx, cfg, st)
 }
 
 // embeddingProviderName names the embedding destination for the report.
@@ -364,6 +305,9 @@ func buildLaneReport(cfg *config.Config, env setupEnvironment) laneReport {
 		mediaPolicyLane(cfg),
 	)
 	report.MCPTools = liveMCPTools(cfg)
+	for i := range report.Lanes {
+		enrichLaneReadinessFacts(cfg, &report.Lanes[i])
+	}
 	return report
 }
 
@@ -383,6 +327,7 @@ func textSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		if _, unavailable := setupVectorBackend(cfg); unavailable != "" {
 			lane.State = laneStatePending
 			lane.Reason += "; " + unavailable
+			lane.readiness.blockers = append(lane.readiness.blockers, "backend_unavailable")
 		}
 		env.reportVectorCredential(&lane, providercredentials.VectorEmbeddingsID, embeddings.Endpoint, embeddings.APIKeyEnv)
 		return lane
@@ -409,11 +354,14 @@ func personSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.State = laneStateOn
 		lane.Provider = embeddingProviderName(cfg.Vector.Embeddings.Endpoint)
 		lane.Model = cfg.Vector.Embeddings.Model
-		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.PersonSemantic })
+		lane.Consent = env.consentState("person_semantic", func(s setupConsentState) bool { return s.PersonSemantic })
 		lane.Reason = "one curated document per person rides the text-search generation"
-		if text := textSearchLane(cfg, env); text.State != laneStateOn {
+		text := textSearchLane(cfg, env)
+		lane.readiness.credential = text.readiness.credential
+		if text.State != laneStateOn {
 			lane.State = laneStatePending
 			lane.Reason += "; text search is not ready: " + text.Reason
+			lane.readiness.blockers = append(lane.readiness.blockers, "dependency_unready")
 		}
 		if lane.Consent != consentActive {
 			lane.State = laneStatePending
@@ -437,15 +385,17 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Provider = multimodal.Provider
 		lane.Model = multimodal.Model
 		lane.Schedule = embedScheduleSummary(multimodal.Schedule)
-		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.Visual })
+		lane.Consent = env.consentState("visual", func(s setupConsentState) bool { return s.Visual })
 		if _, unavailable := setupVectorBackend(cfg); unavailable != "" {
 			lane.State, lane.Reason = laneStatePending, unavailable
+			lane.readiness.blockers = append(lane.readiness.blockers, "backend_unavailable")
 			env.reportVectorCredential(&lane, providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv)
 			return lane
 		}
 		if multimodal.CapabilitiesFile == "" {
 			lane.State = laneStatePending
 			lane.Reason = "capabilities_file is unset; setup providers can configure a validated default manifest"
+			lane.readiness.blockers = append(lane.readiness.blockers, "manifest_missing")
 			lane.Next = []string{"msgvault setup providers"}
 			env.reportVectorCredential(&lane, providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv)
 			return lane
@@ -453,6 +403,7 @@ func visualSearchLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		if err := setupVisualManifestError(cfg, env); err != nil {
 			lane.State = laneStatePending
 			lane.Reason = err.Error() + "; the daemon refuses every vector lane until a valid manifest is configured"
+			lane.readiness.blockers = append(lane.readiness.blockers, "manifest_invalid")
 			lane.Next = []string{visualProbeCommand(cfg)}
 			env.reportVectorCredential(&lane, providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv)
 			return lane
@@ -502,7 +453,7 @@ func documentsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.State = laneStateOn
 		lane.Provider = documents.Provider
 		lane.Model = documents.Model
-		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.Documents })
+		lane.Consent = env.consentState("documents", func(s setupConsentState) bool { return s.Documents })
 		lane.Reason = fmt.Sprintf("region %s; retention=%s, training=%s; uploads are manual-only",
 			documents.Region, documents.RetentionPosture, documents.TrainingPosture)
 		if lane.Consent != consentActive {
@@ -543,15 +494,18 @@ func documentVectorsLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		lane.Model = cfg.Vector.Embeddings.Model
 		lane.Schedule = embedScheduleSummary(cfg.Vector.Embed.Schedule)
 		lane.Reason = "document chunks and search query text are sent to the text-search provider under separate consents"
-		if text := textSearchLane(cfg, env); text.State != laneStateOn {
+		text := textSearchLane(cfg, env)
+		lane.readiness.credential = text.readiness.credential
+		if text.State != laneStateOn {
 			lane.State = laneStatePending
 			lane.Reason += "; text search is not ready: " + text.Reason
+			lane.readiness.blockers = append(lane.readiness.blockers, "dependency_unready")
 		}
 		lane.ConsentPurposes = map[string]string{
-			"document_embedding": env.consentState(func(s setupConsentState) bool { return s.DocumentEmbedding }),
-			"query_embedding":    env.consentState(func(s setupConsentState) bool { return s.QueryEmbedding }),
+			"document_embedding": env.consentState("document_embedding", func(s setupConsentState) bool { return s.DocumentEmbedding }),
+			"query_embedding":    env.consentState("query_embedding", func(s setupConsentState) bool { return s.QueryEmbedding }),
 		}
-		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.DocumentEmbedding && s.QueryEmbedding })
+		lane.Consent = combinedSetupConsent(lane.ConsentPurposes)
 		if lane.Consent != consentActive {
 			lane.State = laneStatePending
 		}
@@ -585,7 +539,7 @@ func peopleInferenceLane(cfg *config.Config, env setupEnvironment) laneStatus {
 			lane.Model = provider.Model
 		}
 		lane.Schedule = "cron " + sweep.Schedule
-		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.PersonInference })
+		lane.Consent = env.consentState("person_inference", func(s setupConsentState) bool { return s.PersonInference })
 		lane.Reason = "runs for tracked people only; deterministic contact state refreshes for everyone through the activity job"
 		if lane.Consent != consentActive {
 			lane.State = laneStatePending
@@ -597,7 +551,14 @@ func peopleInferenceLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		if err == nil && provider.Auth != peoplesweep.AuthNone && provider.Credential == peoplesweep.CredentialEnv {
 			env.reportMissingCredential(&lane, provider.CredentialEnv)
 		}
+		if err != nil {
+			lane.readiness.blockers = append(lane.readiness.blockers, "configuration_invalid")
+		}
+		if err == nil && provider.Auth == peoplesweep.AuthNone {
+			lane.readiness.credential = "not_required"
+		}
 		if err == nil && provider.Credential == peoplesweep.CredentialStored {
+			lane.readiness.credential = "available"
 			profile, credentialErr := sweep.Profile()
 			if credentialErr == nil {
 				resolver := peoplesweep.NewCredentialResolver(peoplesweep.NewFileCredentialStore(cfg.TokensDir()), env.lookupEnv)
@@ -605,6 +566,10 @@ func peopleInferenceLane(cfg *config.Config, env setupEnvironment) laneStatus {
 			}
 			if credentialErr != nil {
 				lane.State = laneStatePending
+				lane.readiness.credential = "unknown"
+				if errors.Is(credentialErr, peoplesweep.ErrCredentialNotFound) {
+					lane.readiness.credential = "missing"
+				}
 				lane.Reason += "; stored provider credential unavailable: " + credentialErr.Error() +
 					"; restore the stored credential or add and select a replacement provider profile"
 				lane.Next = append(lane.Next, "msgvault person provider check "+name,

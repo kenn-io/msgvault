@@ -20,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
@@ -39,6 +40,7 @@ import (
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personfacts"
+	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -699,6 +701,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
+		mcpCommands:            registeredMCPCommandDescriptors(),
 		store:                  s,
 		config:                 cfg,
 		options:                state.options,
@@ -719,10 +722,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start API server
 	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
-		Config:         cfg,
-		Store:          storeAdapter,
-		SavedViewStore: s,
-		Engine:         engine,
+		LaneReadinessReader: newDaemonLaneReadinessReader(cfg, s),
+		Config:              cfg,
+		Store:               storeAdapter,
+		SavedViewStore:      s,
+		Engine:              engine,
 		SQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
 			if apiServer == nil {
 				return nil, nil, errors.New("daemon API server unavailable")
@@ -1531,6 +1535,7 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
+	mcpCommands             []apiprotocol.MCPCommandDescriptor
 	store                   *store.Store
 	config                  *config.Config
 	options                 invocationOptions
@@ -1564,6 +1569,40 @@ func (a *storeAPIAdapter) invocationContext(ctx context.Context) context.Context
 		state.logger = a.logger
 	}
 	return withInvocation(ctx, state)
+}
+
+func (a *storeAPIAdapter) GrantPersonMatchConsentContext(ctx context.Context, disclosure personmatch.Disclosure, actor string, mutationGate func(context.Context) (func(), error)) (*store.PersonMatchConsent, bool, error) {
+	return a.store.GrantPersonMatchConsentContext(ctx, disclosure, actor, mutationGate)
+}
+
+func (a *storeAPIAdapter) RevokePersonMatchConsentContext(ctx context.Context, fingerprint, actor string, mutationGate func(context.Context) (func(), error)) (bool, error) {
+	return a.store.RevokePersonMatchConsentContext(ctx, fingerprint, actor, mutationGate)
+}
+
+func (a *storeAPIAdapter) HasPersonMatchConsentContext(ctx context.Context, fingerprint string) (bool, error) {
+	return a.store.HasPersonMatchConsentContext(ctx, fingerprint)
+}
+
+func (a *storeAPIAdapter) PersonMatchConsentEgressContext(
+	ctx context.Context, fingerprint string, dispatch func() error,
+) (bool, error) {
+	return a.store.PersonMatchConsentEgressContext(ctx, fingerprint, dispatch)
+}
+
+func (a *storeAPIAdapter) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, limit int) (int, error) {
+	return a.store.EnsurePersonMatchScoringCandidatesContext(ctx, limit)
+}
+
+func (a *storeAPIAdapter) ClaimNextIdentityMatchJudgmentContext(ctx context.Context, owner string, leaseDuration time.Duration, scoringVersion ...string) (*store.IdentityMatchJudgmentLease, error) {
+	return a.store.ClaimNextIdentityMatchJudgmentContext(ctx, owner, leaseDuration, scoringVersion...)
+}
+
+func (a *storeAPIAdapter) RecordIdentityMatchJudgmentContext(ctx context.Context, lease store.IdentityMatchJudgmentLease, input store.IdentityMatchJudgmentInput) (*store.IdentityMatchJudgment, error) {
+	return a.store.RecordIdentityMatchJudgmentContext(ctx, lease, input)
+}
+
+func (a *storeAPIAdapter) ListIdentityMatchJudgmentsContext(ctx context.Context, candidateID int64, limit int, beforeID ...int64) ([]store.IdentityMatchJudgment, error) {
+	return a.store.ListIdentityMatchJudgmentsContext(ctx, candidateID, limit, beforeID...)
 }
 
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
@@ -2717,23 +2756,29 @@ func (a *storeAPIAdapter) ListIdentityMatchCandidatesContext(
 	return a.store.ListIdentityMatchCandidatesContext(ctx, states, limit, offset)
 }
 
+func (a *storeAPIAdapter) ListIdentityMatchReviewsContext(
+	ctx context.Context, states []store.IdentityMatchState, limit, offset int,
+) ([]store.IdentityMatchCandidate, error) {
+	return a.store.ListIdentityMatchReviewsContext(ctx, states, limit, offset)
+}
+
+func (a *storeAPIAdapter) GetIdentityMatchReviewContext(
+	ctx context.Context, candidateID int64,
+) (*store.IdentityMatchCandidate, error) {
+	return a.store.GetIdentityMatchReviewContext(ctx, candidateID)
+}
+
+func (a *storeAPIAdapter) DecideIdentityMatchReviewedContext(
+	ctx context.Context, candidateID int64, token string,
+	decision store.IdentityMatchState, notes *string,
+) (*store.IdentityMatchCandidate, int64, error) {
+	return a.store.DecideIdentityMatchReviewedContext(ctx, candidateID, token, decision, notes)
+}
+
 func (a *storeAPIAdapter) GetIdentityMatchCandidateContext(
 	ctx context.Context, candidateID int64,
 ) (*store.IdentityMatchCandidate, error) {
 	return a.store.GetIdentityMatchCandidateContext(ctx, candidateID)
-}
-
-func (a *storeAPIAdapter) AcceptIdentityMatchCandidateContext(
-	ctx context.Context, candidateID int64, decidedBy string, notes *string,
-) (*store.IdentityMatchCandidate, int64, error) {
-	return a.store.AcceptIdentityMatchCandidateContext(ctx, candidateID, decidedBy, notes)
-}
-
-func (a *storeAPIAdapter) DecideIdentityMatchCandidateContext(
-	ctx context.Context, candidateID int64, state store.IdentityMatchState,
-	decidedBy string, notes *string,
-) (*store.IdentityMatchCandidate, error) {
-	return a.store.DecideIdentityMatchCandidateContext(ctx, candidateID, state, decidedBy, notes)
 }
 
 func (a *storeAPIAdapter) CreatePersonFromParticipantWithDisplayNameContext(

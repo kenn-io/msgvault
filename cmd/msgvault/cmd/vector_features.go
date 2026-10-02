@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -23,6 +24,8 @@ type visualFeatures struct {
 	// PolicyFingerprint is the docbank Voyage policy identity of the manifest
 	// in force; consent is recorded against and verified with it.
 	PolicyFingerprint string
+	RuntimePolicy     api.VisualRuntimePolicy
+	GuardPolicyCheck  func(context.Context) error
 	// ScopeCheck re-resolves the configured account scope against the live
 	// archive before any provider-capable pass. SQLite can reuse a deleted
 	// account's numeric ID, so cached source IDs must never outlive the

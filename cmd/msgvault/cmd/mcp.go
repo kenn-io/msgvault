@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/vector/visual"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -26,6 +27,21 @@ var mcpHTTPAddr string
 var mcpHTTPAllowInsecure bool
 var mcpHTTPAllowWrites bool
 var mcpAllowProfileWrites bool
+var mcpAllowIdentityDecisions bool
+var mcpAllowIdentityScoring bool
+var mcpAllowPersonMerges bool
+var mcpAllowCardDAVWrites bool
+var mcpAllowMergeRecoveryWrites bool
+var mcpAllowSourceWrites bool
+var mcpAllowDraftWrites bool
+var mcpAllowProviderWrites bool
+var mcpAllowDocumentWrites bool
+var mcpAllowCardDAVOperationWrites bool
+var mcpAllowVisualWrites bool
+var mcpAllowSettingsWrites bool
+var mcpAllowEnrichmentWrites bool
+var mcpAllowInferenceRuns bool
+var mcpDocumentCapabilities string
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -48,15 +64,33 @@ Add to Claude Desktop config:
 	  }`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
-		if state == nil || state.cfg == nil {
+		if state == nil {
+			return errors.New("invocation state is unavailable")
+		}
+		delegated := isAgentMode(state)
+		if delegated && mcpHTTPAddr != "" {
+			return errors.New("agent-delegated MCP supports stdio only")
+		}
+		if !delegated && state.cfg == nil {
 			return errors.New("configuration is unavailable")
 		}
 		cfg := state.cfg
-		st, info, err := OpenHTTPStore(cmd.Context())
+		var st *daemonclient.Client
+		var info HTTPStoreInfo
+		var err error
+		if delegated {
+			st, err = openMCPAgentDelegatedStore(cmd.Context(), state)
+		} else {
+			st, info, err = OpenHTTPStore(cmd.Context())
+		}
 		if err != nil {
 			return fmt.Errorf("open daemon: %w", err)
 		}
 		defer func() { _ = st.Close() }()
+		manifest, err := resolveMCPDocumentManifest(mcpDocumentCapabilities, info, delegated)
+		if err != nil {
+			return usageErr(cmd, err)
+		}
 
 		// Derive from cmd.Context() so signal handling installed by
 		// the cobra root command (SIGINT/SIGTERM → ctx.Done()) reaches
@@ -66,7 +100,50 @@ Add to Claude Desktop config:
 		defer cancel()
 
 		opts := daemonMCPServeOptions(ctx, st, state)
+		if backend, ok := opts.Operations.(*daemonMCPOperations); ok && manifest != "" {
+			backend.useDocumentManifest(manifest)
+			opts.OperationCapabilities = backend.capabilities()
+		}
+		if mcpAllowMergeRecoveryWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyMergeRecovery)
+		}
 		opts.AllowProfileWrites = mcpAllowProfileWrites
+		opts.AllowIdentityDecisions = mcpAllowIdentityDecisions
+		opts.AllowIdentityScoring = mcpAllowIdentityScoring
+		opts.AllowPersonMerges = mcpAllowPersonMerges
+		opts.AllowCardDAVWrites = mcpAllowCardDAVWrites
+		if mcpAllowProfileWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
+		}
+		if mcpAllowInferenceRuns {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyInference)
+		}
+		if mcpAllowSourceWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySources)
+		}
+
+		if mcpAllowDraftWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyDrafts)
+		}
+
+		if mcpAllowProviderWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyProviders)
+		}
+		if mcpAllowDocumentWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyDocuments)
+		}
+		if mcpAllowCardDAVOperationWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyCardDAV)
+		}
+		if mcpAllowSettingsWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySettings)
+		}
+		if mcpAllowEnrichmentWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyEnrichment)
+		}
+		if mcpAllowVisualWrites {
+			opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyVisual)
+		}
 
 		if mcpHTTPAddr != "" {
 			normalized, err := normalizeMCPHTTPAddr(
@@ -92,6 +169,9 @@ Add to Claude Desktop config:
 // savedViewsMinAPISchemaVersion is the first daemon API schema that runs Saved
 // Views through POST /api/v1/saved-views/{id}/run.
 const savedViewsMinAPISchemaVersion = "2.21.0"
+const personCardDAVMinAPISchemaVersion = "2.32.0"
+const identityReviewMinAPISchemaVersion = "2.36.0"
+const identityScoringMinAPISchemaVersion = "2.36.0"
 
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
@@ -120,6 +200,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	engine := daemonclient.NewEngineAdapter(st)
 	opts := mcpserver.ServeOptions{
+		DelegatedOnly:      st.UsesDelegatedAuthentication(),
 		Engine:             engine,
 		AttachmentReader:   st,
 		ManifestSaver:      daemonMCPManifestSaver{client: st},
@@ -129,6 +210,19 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if cfg != nil {
 		opts.AttachmentsDir = cfg.AttachmentsDir()
 		opts.DataDir = cfg.Data.DataDir
+	}
+	opts.Operations = newDaemonMCPOperations(st, nil)
+	capabilities, discoveryErr := st.MCPCapabilities(ctx)
+	if discoveryErr != nil {
+		log.Warn("operational MCP tools disabled because daemon discovery failed", "error", discoveryErr)
+	} else {
+		backend := newDaemonMCPOperations(st, capabilities)
+		opts.Operations = backend
+		opts.OperationCapabilities = backend.capabilities()
+		opts.DelegatedOnly = capabilities.Delegated
+	}
+	if opts.DelegatedOnly {
+		return opts
 	}
 	health, capabilityErr := st.Health(ctx)
 	var schemaVersion string
@@ -154,6 +248,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 			opts.DirectoryBackend = people
 		}
 		opts.PeopleBackend = people
+		if supportsNamedPromotion(capabilities) {
+			opts.PeopleBackend = daemonMCPNamedPeopleBrowser{PeopleBrowser: people, client: st}
+		}
 	}
 	// The daemon executes Saved Views itself, so the tools need a daemon that
 	// serves the run endpoint; an older daemon simply omits them.
@@ -173,6 +270,15 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, archiveSQLMinAPISchemaVersion) &&
 		(health.AnalyticsEngine == nil || *health.AnalyticsEngine != api.AnalyticsModePostgres) {
 		opts.ArchiveSQLQuerier = engine
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityReviewMinAPISchemaVersion) {
+		opts.IdentityReview = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personCardDAVMinAPISchemaVersion) {
+		opts.PersonCardDAV = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityScoringMinAPISchemaVersion) {
+		opts.IdentityScoring = st
 	}
 
 	return opts
@@ -222,6 +328,7 @@ func (s daemonMCPHybridSearcher) SearchHybrid(
 	resp, err := s.client.GetCLIHybridSearch(ctx, daemonclient.CLIHybridSearchRequest{
 		Query:          req.Query,
 		Account:        req.Account,
+		Filter:         query.MessageFilter{SourceID: req.SourceID},
 		Mode:           req.Mode,
 		Limit:          req.Limit,
 		Offset:         req.Offset,
@@ -333,11 +440,32 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
 		"Expose write-class MCP tools over HTTP. This permits attachment exports, "+
 			"deletion manifests, Saved View management, and profile writes separately enabled with "+
-			"--allow-profile-writes; enable it only for trusted, authenticated clients.")
+			"--allow-profile-writes, identity decisions, identity scoring, person merges, and CardDAV writes enabled "+
+			"with their separate opt-ins; enable it only for trusted, authenticated clients.")
 	mcpCmd.Flags().BoolVar(&mcpAllowProfileWrites, "allow-profile-writes", false,
 		"Expose person promotion and private Notes writes. Model tool calls "+
 			"can persist profile data, so enable this only for sessions where the user "+
 			"has explicitly authorized profile writes.")
+	mcpCmd.Flags().BoolVar(&mcpAllowIdentityDecisions, "allow-identity-decisions", false,
+		"Expose identity match accept/reject tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowIdentityScoring, "allow-identity-scoring", false,
+		"Expose manual identity scoring that sends evidence to the fixed Jev provider. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowPersonMerges, "allow-person-merges", false,
+		"Expose local person merge tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowCardDAVWrites, "allow-carddav-writes", false,
+		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowMergeRecoveryWrites, "allow-merge-recovery-writes", false, "Enable approved native person merge candidate decisions and eligible lineage splits; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowSourceWrites, "allow-source-writes", false,
+		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires --http-allow-writes.")
+	mcpCmd.Flags().BoolVar(&mcpAllowProviderWrites, "allow-provider-writes", false, "Enable approved provider policy changes and synthetic checks; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowDocumentWrites, "allow-document-writes", false, "Enable approved exact-policy document consent and indexing; requires --document-capabilities and local daemon; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowCardDAVOperationWrites, "allow-carddav-operation-writes", false, "Enable approved CardDAV sync, book roles, conflict resolution and unpublication; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowSettingsWrites, "allow-settings-writes", false, "Enable approved fixed operational settings changes; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowEnrichmentWrites, "allow-enrichment-writes", false, "Enable approved existing enrichment policy and global controls changes; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowInferenceRuns, "allow-inference-runs", false, "Enable approved bounded people sweep and brief generation using existing provider consent; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().BoolVar(&mcpAllowVisualWrites, "allow-visual-writes", false, "Enable approved exact-policy visual build, resume, retry and retirement; HTTP also requires --http-allow-writes")
+	mcpCmd.Flags().StringVar(&mcpDocumentCapabilities, "document-capabilities", "", "Operator-selected authenticated manifest on the local daemon host; never accepted from an MCP client")
+	mcpCmd.Flags().BoolVar(&mcpAllowDraftWrites, "allow-draft-writes", false, "Enable approved draft creation, editing, deletion and recovery; HTTP also requires --http-allow-writes")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
 	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
 	_ = mcpCmd.Flags().MarkHidden("force-sql")

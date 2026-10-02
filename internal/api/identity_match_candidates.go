@@ -27,20 +27,16 @@ const (
 // IdentityMatchStore is the feature-local capability for reviewable identity
 // match candidates.
 type IdentityMatchStore interface {
-	ListIdentityMatchCandidatesContext(
+	ListIdentityMatchReviewsContext(
 		ctx context.Context, states []store.IdentityMatchState, limit, offset int,
 	) ([]store.IdentityMatchCandidate, error)
-	GetIdentityMatchCandidateContext(
+	GetIdentityMatchReviewContext(
 		ctx context.Context, candidateID int64,
 	) (*store.IdentityMatchCandidate, error)
-	AcceptIdentityMatchCandidateContext(
-		ctx context.Context, candidateID int64, decidedBy string, notes *string,
+	DecideIdentityMatchReviewedContext(
+		ctx context.Context, candidateID int64, token string,
+		decision store.IdentityMatchState, notes *string,
 	) (*store.IdentityMatchCandidate, int64, error)
-	DecideIdentityMatchCandidateContext(
-		ctx context.Context, candidateID int64, state store.IdentityMatchState,
-		decidedBy string, notes *string,
-	) (*store.IdentityMatchCandidate, error)
-	IdentityRevision() (int64, error)
 }
 
 // IdentityMatchCandidatesResponse is a bounded page of candidates with their
@@ -51,9 +47,9 @@ type IdentityMatchCandidatesResponse struct {
 	Offset     int                            `json:"offset"`
 }
 
-// DecideIdentityMatchRequest is the optional body of an accept or reject.
-type DecideIdentityMatchRequest struct {
-	Notes *string `json:"notes,omitzero" nullable:"false"`
+type DecideIdentityMatchReviewedRequest struct {
+	ReviewToken string  `json:"review_token"`
+	Notes       *string `json:"notes,omitzero" nullable:"false"`
 }
 
 // IdentityMatchAcceptResponse reports the decided candidate, identity revision,
@@ -86,29 +82,34 @@ func (s *Server) registerIdentityMatchRoutes(api huma.API) {
 	addErrorResponses(api, list.Responses, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, list, s.handleListIdentityMatchCandidates)
 
-	accept := rawAPIV1Operation("acceptIdentityMatchCandidate", http.MethodPost,
-		"/identity/match-candidates/{id}/accept", "Accept an identity match candidate")
-	accept.Description = "Accepting is the explicit user confirmation the matching policy " +
-		"requires. The participant link is applied through the normal identity link path, so " +
-		"a match spanning two curated people is refused rather than merged."
-	accept.RequestBody = jsonRequestBodyFor[DecideIdentityMatchRequest](api)
-	accept.RequestBody.Required = false
-	accept.Responses = jsonResponsesFor[IdentityMatchAcceptResponse](api)
-	addErrorResponses(api, accept.Responses, http.StatusConflict, http.StatusNotFound,
-		http.StatusServiceUnavailable)
-	accept.Responses[httpStatusKey(http.StatusConflict)] = personMergeConflictResponseFor(api)
-	registerRawHumaRoute(api, accept, s.handleAcceptIdentityMatchCandidate)
+	get := rawAPIV1Operation("getIdentityMatchCandidate", http.MethodGet,
+		"/identity/match-candidates/{id}", "Get an identity match candidate for review")
+	get.Responses = jsonResponsesFor[store.IdentityMatchCandidate](api)
+	addErrorResponses(api, get.Responses, http.StatusNotFound, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, get, s.handleGetIdentityMatchCandidate)
 
-	reject := rawAPIV1Operation("rejectIdentityMatchCandidate", http.MethodPost,
-		"/identity/match-candidates/{id}/reject", "Reject an identity match candidate")
-	reject.Description = "A rejected suggestion is retained rather than deleted, so the same " +
-		"low-quality inference is not proposed again on the next import."
-	reject.RequestBody = jsonRequestBodyFor[DecideIdentityMatchRequest](api)
-	reject.RequestBody.Required = false
-	reject.Responses = jsonResponsesFor[IdentityMatchRejectResponse](api)
-	addErrorResponses(api, reject.Responses, http.StatusConflict, http.StatusNotFound,
-		http.StatusServiceUnavailable)
-	registerRawHumaRoute(api, reject, s.handleRejectIdentityMatchCandidate)
+	for _, action := range []string{"accept", "reject"} {
+		op := rawAPIV1Operation("review"+strings.ToUpper(action[:1])+action[1:]+"IdentityMatchCandidate",
+			http.MethodPost, "/identity/match-candidates/{id}/review/"+action,
+			"Review and "+action+" an identity match candidate")
+		op.Description = "Requires the exact review token from a fresh list or get response. " +
+			"Changed evidence returns a conflict without making a new decision."
+		op.RequestBody = jsonRequestBodyFor[DecideIdentityMatchReviewedRequest](api)
+		op.RequestBody.Required = true
+		if action == "accept" {
+			op.Responses = jsonResponsesFor[IdentityMatchAcceptResponse](api)
+		} else {
+			op.Responses = jsonResponsesFor[IdentityMatchRejectResponse](api)
+		}
+		addErrorResponses(api, op.Responses, http.StatusBadRequest, http.StatusConflict,
+			http.StatusNotFound, http.StatusServiceUnavailable)
+		if action == "accept" {
+			op.Responses[httpStatusKey(http.StatusConflict)] = personMergeConflictResponseFor(api)
+			registerRawHumaRoute(api, op, s.handleReviewedIdentityMatchAccept)
+		} else {
+			registerRawHumaRoute(api, op, s.handleReviewedIdentityMatchReject)
+		}
+	}
 }
 
 func (s *Server) handleListIdentityMatchCandidates(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +136,7 @@ func (s *Server) handleListIdentityMatchCandidates(w http.ResponseWriter, r *htt
 		offset = 0
 	}
 
-	candidates, err := matches.ListIdentityMatchCandidatesContext(r.Context(), states, limit, offset)
+	candidates, err := matches.ListIdentityMatchReviewsContext(r.Context(), states, limit, offset)
 	if err != nil {
 		s.writeIdentityMatchError(w, err)
 		return
@@ -149,7 +150,7 @@ func (s *Server) handleListIdentityMatchCandidates(w http.ResponseWriter, r *htt
 	})
 }
 
-func (s *Server) handleAcceptIdentityMatchCandidate(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetIdentityMatchCandidate(w http.ResponseWriter, r *http.Request) {
 	matches, ok := s.identityMatchStore(w)
 	if !ok {
 		return
@@ -158,17 +159,41 @@ func (s *Server) handleAcceptIdentityMatchCandidate(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	var request DecideIdentityMatchRequest
-	if !decodeIdentityMatchRequest(w, r, &request) {
+	candidate, err := matches.GetIdentityMatchReviewContext(r.Context(), id)
+	if err != nil {
+		s.writeIdentityMatchError(w, err)
 		return
 	}
-	// An HTTP accept is always an explicit user decision. The store also
-	// refuses a system accept for every basis except a stable provider ID. The
-	// store performs the binding check under the identity lock and restores the
-	// prior decision if a merge is required, so this endpoint has no TOCTOU
-	// preflight window.
-	candidate, revision, err := matches.AcceptIdentityMatchCandidateContext(
-		r.Context(), id, "user", request.Notes)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, candidate)
+}
+
+func (s *Server) handleReviewedIdentityMatchAccept(w http.ResponseWriter, r *http.Request) {
+	s.handleReviewedIdentityMatchDecision(w, r, store.IdentityMatchStateAccepted)
+}
+
+func (s *Server) handleReviewedIdentityMatchReject(w http.ResponseWriter, r *http.Request) {
+	s.handleReviewedIdentityMatchDecision(w, r, store.IdentityMatchStateRejected)
+}
+
+func (s *Server) handleReviewedIdentityMatchDecision(
+	w http.ResponseWriter, r *http.Request, decision store.IdentityMatchState,
+) {
+	w.Header().Set("Cache-Control", "no-store")
+	matches, ok := s.identityMatchStore(w)
+	if !ok {
+		return
+	}
+	id, ok := identityMatchCandidateID(w, r)
+	if !ok {
+		return
+	}
+	var request DecideIdentityMatchReviewedRequest
+	if !decodeIdentityMatchReviewedRequest(w, r, &request) {
+		return
+	}
+	_, revision, err := matches.DecideIdentityMatchReviewedContext(
+		r.Context(), id, request.ReviewToken, decision, request.Notes)
 	if err != nil {
 		if s.writePersonMergeRequired(w, r, err) {
 			return
@@ -176,52 +201,38 @@ func (s *Server) handleAcceptIdentityMatchCandidate(w http.ResponseWriter, r *ht
 		s.writeIdentityMatchError(w, err)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, IdentityMatchAcceptResponse{
-		Candidate:        *candidate,
-		IdentityRevision: revision,
-		CacheState:       s.refreshIdentityCacheState(r.Context()),
+	// Read back after the link transaction: the returned decision snapshot may
+	// still carry application_pending from before its guarded link write.
+	current, readErr := matches.GetIdentityMatchReviewContext(r.Context(), id)
+	if readErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "identity_match_state_unavailable",
+			"The decision was recorded, but its current state is unavailable; read the candidate before retrying")
+		return
+	}
+	if decision == store.IdentityMatchStateAccepted {
+		writeJSON(w, http.StatusOK, IdentityMatchAcceptResponse{
+			Candidate: *current, IdentityRevision: revision,
+			CacheState: s.refreshIdentityCacheState(r.Context()),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, IdentityMatchRejectResponse{
+		Candidate: *current, IdentityRevision: revision,
+		CacheState: s.refreshIdentityCacheState(r.Context()),
 	})
 }
 
-func (s *Server) handleRejectIdentityMatchCandidate(w http.ResponseWriter, r *http.Request) {
-	matches, ok := s.identityMatchStore(w)
-	if !ok {
-		return
+func decodeIdentityMatchReviewedRequest(
+	w http.ResponseWriter, r *http.Request, request *DecideIdentityMatchReviewedRequest,
+) bool {
+	if !decodeIdentityMatchJSON(w, r, request) {
+		return false
 	}
-	id, ok := identityMatchCandidateID(w, r)
-	if !ok {
-		return
+	if strings.TrimSpace(request.ReviewToken) == "" {
+		writeError(w, http.StatusBadRequest, "review_token_required", "Review token is required")
+		return false
 	}
-	var request DecideIdentityMatchRequest
-	if !decodeIdentityMatchRequest(w, r, &request) {
-		return
-	}
-	if _, err := matches.GetIdentityMatchCandidateContext(r.Context(), id); err != nil {
-		s.writeIdentityMatchError(w, err)
-		return
-	}
-	candidate, err := matches.DecideIdentityMatchCandidateContext(
-		r.Context(), id, store.IdentityMatchStateRejected, "user", request.Notes)
-	if err != nil {
-		s.writeIdentityMatchError(w, err)
-		return
-	}
-	afterRevision, err := matches.IdentityRevision()
-	if err != nil {
-		s.writeIdentityMatchError(w, err)
-		return
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, IdentityMatchRejectResponse{
-		Candidate:        *candidate,
-		IdentityRevision: afterRevision,
-		// RefreshIdentityDatasets is staleness-aware and skips publication
-		// when the persisted cache already has this identity revision. Always
-		// consulting it also lets a no-op retry repair a previously failed
-		// refresh instead of incorrectly reporting the stale cache as ready.
-		CacheState: s.refreshIdentityCacheState(r.Context()),
-	})
+	return true
 }
 
 func (s *Server) identityMatchStore(w http.ResponseWriter) (IdentityMatchStore, bool) {
@@ -283,11 +294,7 @@ func identityMatchCandidateID(w http.ResponseWriter, r *http.Request) (int64, bo
 	return id, true
 }
 
-// decodeIdentityMatchRequest decodes an optional decision body. Unknown fields
-// are rejected so a typo in notes is never silently discarded.
-func decodeIdentityMatchRequest(
-	w http.ResponseWriter, r *http.Request, request *DecideIdentityMatchRequest,
-) bool {
+func decodeIdentityMatchJSON(w http.ResponseWriter, r *http.Request, request any) bool {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
@@ -314,6 +321,9 @@ func (s *Server) writeIdentityMatchError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrIdentityMatchNotFound):
 		writeError(w, http.StatusNotFound, "identity_match_not_found",
 			"Identity match candidate not found")
+	case errors.Is(err, store.ErrIdentityMatchReviewStale):
+		writeError(w, http.StatusConflict, "identity_match_review_stale",
+			"The identity match changed; read it again before deciding")
 	case errors.Is(err, store.ErrIdentityMatchNotAcceptable):
 		writeError(w, http.StatusConflict, "identity_match_not_acceptable",
 			"This match needs stable provider corroboration or an explicit user decision")

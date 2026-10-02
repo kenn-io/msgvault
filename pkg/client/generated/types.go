@@ -2596,8 +2596,13 @@ func (d DayPerson) Validate() error {
 	return errors
 }
 
-type DecideIdentityMatchRequest struct {
-	Notes *string `json:"notes,omitzero"`
+type DecideIdentityMatchReviewedRequest struct {
+	Notes       *string `json:"notes,omitzero"`
+	ReviewToken string  `json:"review_token" validate:"required"`
+}
+
+func (d DecideIdentityMatchReviewedRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
 type DecidePersonMergeCandidateRequest struct {
@@ -2777,6 +2782,19 @@ type DirectoryPersonSummary struct {
 }
 
 func (d DirectoryPersonSummary) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type Disclosure struct {
+	Endpoint             string `json:"endpoint" validate:"required"`
+	ModelID              string `json:"model_id" validate:"required"`
+	PacketSchema         string `json:"packet_schema" validate:"required"`
+	PolicyVersion        string `json:"policy_version" validate:"required"`
+	QuestionVersion      string `json:"question_version" validate:"required"`
+	RetentionDeclaration string `json:"retention_declaration" validate:"required"`
+}
+
+func (d Disclosure) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
@@ -4822,26 +4840,33 @@ func (i IdentityMatchAcceptResponse) Validate() error {
 }
 
 type IdentityMatchCandidate struct {
-	Basis           string                  `json:"basis" validate:"required"`
-	Confidence      *float64                `json:"confidence,omitempty"`
-	CreatedAt       time.Time               `json:"created_at" validate:"required"`
-	DecidedAt       *time.Time              `json:"decided_at,omitempty"`
-	DecidedBy       *string                 `json:"decided_by,omitzero"`
-	Evidence        []IdentityMatchEvidence `json:"evidence" validate:"required"`
-	ID              int64                   `json:"id"`
-	LeftID          int64                   `json:"left_id"`
-	LeftKind        string                  `json:"left_kind" validate:"required"`
-	NormalizedValue *string                 `json:"normalized_value,omitzero"`
-	Notes           *string                 `json:"notes,omitzero"`
-	RightID         int64                   `json:"right_id"`
-	RightKind       string                  `json:"right_kind" validate:"required"`
-	ScopeKind       *string                 `json:"scope_kind,omitzero"`
-	ScopeValue      *string                 `json:"scope_value,omitzero"`
-	ServiceSlug     *string                 `json:"service_slug,omitzero"`
-	Source          string                  `json:"source" validate:"required"`
-	SourceRef       *string                 `json:"source_ref,omitzero"`
-	State           string                  `json:"state" validate:"required"`
-	UpdatedAt       time.Time               `json:"updated_at" validate:"required"`
+	Actionable         bool                         `json:"actionable"`
+	ApplicationPending bool                         `json:"application_pending"`
+	Basis              string                       `json:"basis" validate:"required"`
+	Blocker            *string                      `json:"blocker,omitzero"`
+	Confidence         *float64                     `json:"confidence,omitempty"`
+	CreatedAt          time.Time                    `json:"created_at" validate:"required"`
+	DecidedAt          *time.Time                   `json:"decided_at,omitempty"`
+	DecidedBy          *string                      `json:"decided_by,omitzero"`
+	Evidence           []IdentityMatchEvidence      `json:"evidence" validate:"required"`
+	ID                 int64                        `json:"id"`
+	LeftID             int64                        `json:"left_id"`
+	LeftKind           string                       `json:"left_kind" validate:"required"`
+	LeftPerson         *IdentityMatchPersonBinding  `json:"left_person,omitempty"`
+	NormalizedValue    *string                      `json:"normalized_value,omitzero"`
+	Notes              *string                      `json:"notes,omitzero"`
+	ReviewToken        *string                      `json:"review_token,omitzero"`
+	RightID            int64                        `json:"right_id"`
+	RightKind          string                       `json:"right_kind" validate:"required"`
+	RightPerson        *IdentityMatchPersonBinding  `json:"right_person,omitempty"`
+	ScopeKind          *string                      `json:"scope_kind,omitzero"`
+	ScopeValue         *string                      `json:"scope_value,omitzero"`
+	ServiceSlug        *string                      `json:"service_slug,omitzero"`
+	Source             string                       `json:"source" validate:"required"`
+	SourceRef          *string                      `json:"source_ref,omitzero"`
+	SourceSupport      []IdentityMatchSourceSupport `json:"source_support,omitempty"`
+	State              string                       `json:"state" validate:"required"`
+	UpdatedAt          time.Time                    `json:"updated_at" validate:"required"`
 }
 
 func (i IdentityMatchCandidate) Validate() error {
@@ -4862,11 +4887,32 @@ func (i IdentityMatchCandidate) Validate() error {
 	if err := typesValidator.Var(i.LeftKind, "required"); err != nil {
 		errors = errors.Append("LeftKind", err)
 	}
+	if i.LeftPerson != nil {
+		if v, ok := any(i.LeftPerson).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("LeftPerson", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(i.RightKind, "required"); err != nil {
 		errors = errors.Append("RightKind", err)
 	}
+	if i.RightPerson != nil {
+		if v, ok := any(i.RightPerson).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("RightPerson", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(i.Source, "required"); err != nil {
 		errors = errors.Append("Source", err)
+	}
+	for i, item := range i.SourceSupport {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("SourceSupport[%d]", i), err)
+			}
+		}
 	}
 	if err := typesValidator.Var(i.State, "required"); err != nil {
 		errors = errors.Append("State", err)
@@ -4902,17 +4948,63 @@ func (i IdentityMatchCandidatesResponse) Validate() error {
 }
 
 type IdentityMatchEvidence struct {
-	CandidateID  int64     `json:"candidate_id"`
-	CreatedAt    time.Time `json:"created_at" validate:"required"`
-	Detail       *string   `json:"detail,omitzero"`
-	EvidenceKind string    `json:"evidence_kind" validate:"required"`
-	EvidenceRef  *string   `json:"evidence_ref,omitzero"`
-	ID           int64     `json:"id"`
-	Source       string    `json:"source" validate:"required"`
+	CandidateID   int64                        `json:"candidate_id"`
+	CreatedAt     time.Time                    `json:"created_at" validate:"required"`
+	Detail        *string                      `json:"detail,omitzero"`
+	EvidenceKind  string                       `json:"evidence_kind" validate:"required"`
+	EvidenceRef   *string                      `json:"evidence_ref,omitzero"`
+	ID            int64                        `json:"id"`
+	Source        string                       `json:"source" validate:"required"`
+	SourceSupport []IdentityMatchSourceSupport `json:"source_support,omitempty"`
 }
 
 func (i IdentityMatchEvidence) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(i.EvidenceKind, "required"); err != nil {
+		errors = errors.Append("EvidenceKind", err)
+	}
+	if err := typesValidator.Var(i.Source, "required"); err != nil {
+		errors = errors.Append("Source", err)
+	}
+	for i, item := range i.SourceSupport {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("SourceSupport[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type IdentityMatchJudgment struct {
+	Blockers        []string   `json:"blockers" validate:"required"`
+	CandidateID     int64      `json:"candidate_id"`
+	CreatedAt       time.Time  `json:"created_at" validate:"required"`
+	ErrorClass      *string    `json:"error_class,omitzero"`
+	Fingerprint     string     `json:"fingerprint" validate:"required"`
+	ID              int64      `json:"id"`
+	ModelID         string     `json:"model_id" validate:"required"`
+	Outcome         string     `json:"outcome" validate:"required"`
+	PolicyVersion   string     `json:"policy_version" validate:"required"`
+	Probability     *float64   `json:"probability,omitempty"`
+	QuestionVersion string     `json:"question_version" validate:"required"`
+	RetryAfter      *time.Time `json:"retry_after,omitempty"`
+	Status          string     `json:"status" validate:"required"`
+}
+
+func (i IdentityMatchJudgment) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
+type IdentityMatchPersonBinding struct {
+	PersonID int64 `json:"person_id"`
+	Revision int64 `json:"revision"`
 }
 
 type IdentityMatchRejectResponse struct {
@@ -4937,6 +5029,11 @@ func (i IdentityMatchRejectResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type IdentityMatchSourceSupport struct {
+	IsConservative bool  `json:"is_conservative"`
+	SourceID       int64 `json:"source_id"`
 }
 
 type IdentitySearchHTTPRequest struct {
@@ -5137,6 +5234,68 @@ func (i ImportResult) Validate() error {
 	return errors
 }
 
+type LaneReadiness struct {
+	Blockers        []string                     `json:"blockers" validate:"required"`
+	Configured      bool                         `json:"configured"`
+	ConsentPurposes map[string]string            `json:"consent_purposes,omitempty"`
+	ConsentState    LaneReadinessConsentState    `json:"consent_state" validate:"required"`
+	CredentialState LaneReadinessCredentialState `json:"credential_state" validate:"required"`
+	Enabled         bool                         `json:"enabled"`
+	Initialized     bool                         `json:"initialized"`
+	Lane            LaneReadinessLane            `json:"lane" validate:"required"`
+	Model           *string                      `json:"model,omitzero"`
+	PendingRestart  bool                         `json:"pending_restart"`
+	Provider        *string                      `json:"provider,omitzero"`
+	Schedule        *string                      `json:"schedule,omitzero"`
+}
+
+func (l LaneReadiness) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Blockers, "required"); err != nil {
+		errors = errors.Append("Blockers", err)
+	}
+	if v, ok := any(l.ConsentState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ConsentState", err)
+		}
+	}
+	if v, ok := any(l.CredentialState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("CredentialState", err)
+		}
+	}
+	if v, ok := any(l.Lane).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Lane", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type LaneReadinessResponse struct {
+	Lanes          []LaneReadiness `json:"lanes" validate:"required"`
+	PendingRestart bool            `json:"pending_restart"`
+	StoreAvailable bool            `json:"store_available"`
+}
+
+func (l LaneReadinessResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range l.Lanes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Lanes[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ListDeletionsResponse struct {
 	Manifests []DeletionManifestSummary `json:"manifests" validate:"required"`
 }
@@ -5154,6 +5313,57 @@ func (l ListDeletionsResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type MCPCapabilities struct {
+	Commands  []MCPCommandDescriptor `json:"commands" validate:"required"`
+	Delegated bool                   `json:"delegated"`
+	Routes    []MCPRouteDescriptor   `json:"routes" validate:"required"`
+	Version   int64                  `json:"version"`
+}
+
+func (m MCPCapabilities) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range m.Commands {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Commands[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range m.Routes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Routes[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MCPCommandDescriptor struct {
+	Delegated bool     `json:"delegated"`
+	Flags     []string `json:"flags" validate:"required"`
+	Name      string   `json:"name" validate:"required"`
+}
+
+func (m MCPCommandDescriptor) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MCPRouteDescriptor struct {
+	Method            string   `json:"method" validate:"required"`
+	OperationID       string   `json:"operation_id" validate:"required"`
+	Path              string   `json:"path" validate:"required"`
+	QueryParameters   []string `json:"query_parameters" validate:"required"`
+	RequestProperties []string `json:"request_properties" validate:"required"`
+}
+
+func (m MCPRouteDescriptor) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
 type Manifest struct {
@@ -7375,6 +7585,35 @@ func (p PeopleInferenceKeyWriteRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PeopleInferencePolicyUpdateError struct {
+	ConsentRemainsRevoked     *bool   `json:"consent_remains_revoked,omitempty"`
+	ErrorData                 string  `json:"error" validate:"required"`
+	Message                   *string `json:"message,omitzero"`
+	OperationMayHaveCompleted *bool   `json:"operation_may_have_completed,omitempty"`
+	RolledBack                *bool   `json:"rolled_back,omitempty"`
+}
+
+func (p PeopleInferencePolicyUpdateError) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+func (s PeopleInferencePolicyUpdateError) Error() string {
+	return "unmapped client error"
+}
+
+type PeopleInferencePolicyUpdateRequest struct {
+	AllowSensitive   *bool    `json:"allow_sensitive,omitempty"`
+	AllowedSources   []string `json:"allowed_sources,omitempty"`
+	Model            *string  `json:"model,omitzero"`
+	ReasoningEffort  *string  `json:"reasoning_effort,omitzero"`
+	ReasoningMode    *string  `json:"reasoning_mode,omitzero"`
+	RequestTimeout   *string  `json:"request_timeout,omitzero"`
+	RetentionPosture *string  `json:"retention_posture,omitzero"`
+	SourceSince      *string  `json:"source_since,omitzero"`
+	SourceUntil      *string  `json:"source_until,omitzero"`
+	TrainingPosture  *string  `json:"training_posture,omitzero"`
+}
+
 type PeopleInferencePresetCreateRequest struct {
 	AllowSensitive   bool                                       `json:"allow_sensitive"`
 	AllowedSources   []string                                   `json:"allowed_sources" validate:"required"`
@@ -7430,6 +7669,9 @@ type PeopleInferenceProfileSetting struct {
 	OutputMode           string   `json:"output_mode" validate:"required"`
 	PresetID             *string  `json:"preset_id,omitzero"`
 	Protocol             string   `json:"protocol" validate:"required"`
+	ReasoningEffort      *string  `json:"reasoning_effort,omitzero"`
+	ReasoningMode        *string  `json:"reasoning_mode,omitzero"`
+	RequestTimeout       string   `json:"request_timeout" validate:"required"`
 	RetentionPosture     string   `json:"retention_posture" validate:"required"`
 	Selected             bool     `json:"selected"`
 	SourceSince          string   `json:"source_since" validate:"required"`
@@ -9154,6 +9396,122 @@ func (p PersonInboxRow) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PersonMatchBatchError struct {
+	Code    string `json:"code" validate:"required"`
+	Message string `json:"message" validate:"required"`
+}
+
+func (p PersonMatchBatchError) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMatchConsentDecisionRequest struct {
+	DisclosureFingerprint string `json:"disclosure_fingerprint" validate:"required"`
+}
+
+func (p PersonMatchConsentDecisionRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMatchConsentDecisionResponse struct {
+	Changed               bool   `json:"changed"`
+	ConsentActive         bool   `json:"consent_active"`
+	DisclosureFingerprint string `json:"disclosure_fingerprint" validate:"required"`
+}
+
+func (p PersonMatchConsentDecisionResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMatchJudgmentHistoryResponse struct {
+	CandidateID  int64                   `json:"candidate_id"`
+	Judgments    []IdentityMatchJudgment `json:"judgments" validate:"required"`
+	Limit        int64                   `json:"limit"`
+	NextBeforeID *int64                  `json:"next_before_id,omitempty"`
+}
+
+func (p PersonMatchJudgmentHistoryResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Judgments {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Judgments[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMatchScoringRequest struct {
+	Limit *int64 `json:"limit,omitempty"`
+}
+
+type PersonMatchScoringResponse struct {
+	ErrorData *PersonMatchBatchError `json:"error,omitempty"`
+	Processed int64                  `json:"processed"`
+	Results   []Result               `json:"results" validate:"required"`
+}
+
+func (p PersonMatchScoringResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.ErrorData != nil {
+		if v, ok := any(p.ErrorData).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ErrorData", err)
+			}
+		}
+	}
+	for i, item := range p.Results {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMatchScoringStatus struct {
+	BatchSize             int64       `json:"batch_size"`
+	Blocker               *string     `json:"blocker,omitzero"`
+	ConsentActive         bool        `json:"consent_active"`
+	CredentialAvailable   bool        `json:"credential_available"`
+	DataFields            string      `json:"data_fields" validate:"required"`
+	Disclosure            *Disclosure `json:"disclosure,omitempty"`
+	DisclosureFingerprint *string     `json:"disclosure_fingerprint,omitzero"`
+	Enabled               bool        `json:"enabled"`
+	MinimumProbability    float64     `json:"minimum_probability"`
+	ModelID               string      `json:"model_id" validate:"required"`
+	Ready                 bool        `json:"ready"`
+}
+
+func (p PersonMatchScoringStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.DataFields, "required"); err != nil {
+		errors = errors.Append("DataFields", err)
+	}
+	if p.Disclosure != nil {
+		if v, ok := any(p.Disclosure).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Disclosure", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.ModelID, "required"); err != nil {
+		errors = errors.Append("ModelID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonMedia struct {
 	ByteSize      *int64        `json:"byte_size,omitempty"`
 	ContentHash   *string       `json:"content_hash,omitzero"`
@@ -10681,6 +11039,23 @@ func (r RemoveResult) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type Result struct {
+	Blockers        []string `json:"blockers" validate:"required"`
+	CandidateID     int64    `json:"candidate_id"`
+	EvidenceClasses []string `json:"evidence_classes" validate:"required"`
+	ModelID         string   `json:"model_id" validate:"required"`
+	PacketSchema    string   `json:"packet_schema" validate:"required"`
+	PolicyVersion   string   `json:"policy_version" validate:"required"`
+	Probability     *float64 `json:"probability,omitempty"`
+	ProposedAction  string   `json:"proposed_action" validate:"required"`
+	ReviewToken     string   `json:"review_token" validate:"required"`
+	Status          string   `json:"status" validate:"required"`
+}
+
+func (r Result) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
 type RunSavedViewRequest struct {
@@ -12726,7 +13101,14 @@ func (v VectorHealth) Validate() error {
 }
 
 type VisualBuildRequest struct {
-	Consent bool `json:"consent"`
+	Consent                       bool    `json:"consent"`
+	ExpectedGenerationFingerprint *string `json:"expected_generation_fingerprint,omitzero" validate:"omitempty,min=1"`
+	ExpectedGenerationID          *int64  `json:"expected_generation_id,omitempty" validate:"omitempty,gte=1"`
+	ExpectedPolicyFingerprint     *string `json:"expected_policy_fingerprint,omitzero" validate:"omitempty,min=1"`
+}
+
+func (v VisualBuildRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
 type VisualGeneration struct {
@@ -12744,16 +13126,65 @@ func (v VisualGeneration) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
+type VisualResumeRequest struct {
+	ExpectedGenerationFingerprint *string `json:"expected_generation_fingerprint,omitzero" validate:"omitempty,min=1"`
+	ExpectedGenerationID          *int64  `json:"expected_generation_id,omitempty" validate:"omitempty,gte=1"`
+	ExpectedPolicyFingerprint     *string `json:"expected_policy_fingerprint,omitzero" validate:"omitempty,min=1"`
+}
+
+func (v VisualResumeRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
 type VisualRetireRequest struct {
-	GenerationID int64 `json:"generation_id"`
+	ExpectedGenerationFingerprint *string `json:"expected_generation_fingerprint,omitzero" validate:"omitempty,min=1"`
+	ExpectedGenerationID          *int64  `json:"expected_generation_id,omitempty" validate:"omitempty,gte=1"`
+	ExpectedPolicyFingerprint     *string `json:"expected_policy_fingerprint,omitzero" validate:"omitempty,min=1"`
+	GenerationID                  int64   `json:"generation_id"`
+}
+
+func (v VisualRetireRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
 type VisualRetryRequest struct {
-	BlobHash  string `json:"blob_hash" validate:"required"`
-	MessageID int64  `json:"message_id"`
+	BlobHash                      string  `json:"blob_hash" validate:"required"`
+	ExpectedGenerationFingerprint *string `json:"expected_generation_fingerprint,omitzero" validate:"omitempty,min=1"`
+	ExpectedGenerationID          *int64  `json:"expected_generation_id,omitempty" validate:"omitempty,gte=1"`
+	ExpectedPolicyFingerprint     *string `json:"expected_policy_fingerprint,omitzero" validate:"omitempty,min=1"`
+	MessageID                     int64   `json:"message_id"`
 }
 
 func (v VisualRetryRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type VisualRuntimePolicy struct {
+	AuthorizedCapabilities   []string `json:"authorized_capabilities" validate:"required"`
+	CurrentPolicyFingerprint string   `json:"current_policy_fingerprint" validate:"required"`
+	Dimension                int64    `json:"dimension"`
+	GenerationFingerprint    string   `json:"generation_fingerprint" validate:"required"`
+	GenerationID             int64    `json:"generation_id"`
+	IncludeAnimatedGifs      bool     `json:"include_animated_gifs"`
+	IncludeImages            bool     `json:"include_images"`
+	IncludeVideo             bool     `json:"include_video"`
+	MaxContextChars          int64    `json:"max_context_chars"`
+	MaxMediaBytes            int64    `json:"max_media_bytes"`
+	MaxMediaPixels           int64    `json:"max_media_pixels"`
+	MaxOwnersPerPass         int64    `json:"max_owners_per_pass"`
+
+	// MessageTypes An empty list includes every message type within the source scope
+	MessageTypes     []string `json:"message_types" validate:"required"`
+	Model            string   `json:"model" validate:"required"`
+	Provider         string   `json:"provider" validate:"required"`
+	RetentionPosture string   `json:"retention_posture" validate:"required"`
+
+	// SourceIds An empty list includes all archived sources within the configured message types
+	SourceIds       []int64 `json:"source_ids" validate:"required"`
+	TrainingPosture string  `json:"training_posture" validate:"required"`
+}
+
+func (v VisualRuntimePolicy) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 

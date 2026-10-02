@@ -132,6 +132,17 @@ func isAgentMode(state *invocation) bool {
 // openAgentDelegatedStore creates a daemonclient.Client authenticated with an
 // agent grant secret read from the file named by --agent-token-file.
 func openAgentDelegatedStore(ctx context.Context, state *invocation) (*daemonclient.Client, HTTPStoreInfo, error) {
+	return openAgentDelegatedStoreWithHandshake(ctx, state, false)
+}
+
+// MCP delegated startup must use the authenticated session handshake without
+// probing owner health or touching local configuration.
+func openMCPAgentDelegatedStore(ctx context.Context, state *invocation) (*daemonclient.Client, error) {
+	client, _, err := openAgentDelegatedStoreWithHandshake(ctx, state, true)
+	return client, err
+}
+
+func openAgentDelegatedStoreWithHandshake(ctx context.Context, state *invocation, sessionOnly bool) (*daemonclient.Client, HTTPStoreInfo, error) {
 	state = invocationState(ctx, state)
 	if state == nil {
 		return nil, HTTPStoreInfo{}, errors.New("invocation state is required")
@@ -164,12 +175,14 @@ func openAgentDelegatedStore(ctx context.Context, state *invocation) (*daemoncli
 		return nil, HTTPStoreInfo{}, err
 	}
 	st.SetBusyNotifier(reportDaemonBusyWait)
-	if err := verifyRemoteAPISchemaVersion(ctx, st); err != nil {
-		_ = st.Close()
-		if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Status == http.StatusUnauthorized {
-			return nil, HTTPStoreInfo{}, fmt.Errorf("agent authentication failed: token is invalid, revoked, or agent access is disabled: %w", apiErr)
+	if !sessionOnly {
+		if err := verifyRemoteAPISchemaVersion(ctx, st); err != nil {
+			_ = st.Close()
+			if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Status == http.StatusUnauthorized {
+				return nil, HTTPStoreInfo{}, fmt.Errorf("agent authentication failed: token is invalid, revoked, or agent access is disabled: %w", apiErr)
+			}
+			return nil, HTTPStoreInfo{}, err
 		}
-		return nil, HTTPStoreInfo{}, err
 	}
 	// Older keyless daemons accept the health probe but ignore agent tokens.
 	// Require the daemon to confirm that it authenticated this token as delegated.

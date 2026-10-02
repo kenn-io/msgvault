@@ -249,6 +249,7 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
+	laneReadinessReader LaneReadinessReader
 	// statsSnapshots and accountCountSnapshots bound /stats and
 	// /cli/accounts latency under load (see snapshotCache). Background
 	// computations run on importContext, the server-lifetime context that
@@ -271,6 +272,8 @@ type Server struct {
 	cardDAV                *CardDAVController
 	logger                 *slog.Logger
 	requestTimeout         time.Duration
+	// Empty in production; API tests use a local Jev fixture.
+	personMatchScoringEndpoint string
 	// readTimeout is the ordinary connection read ceiling used by http.Server.
 	// Tests shrink it to exercise protective slow-body handling without waiting
 	// for the production timeout.
@@ -372,6 +375,10 @@ type Server struct {
 	visualRun          func(context.Context, operations.PassScope) error
 	visualRetry        func(context.Context, operations.PassScope, int64, string) error
 	visualStatus       func(context.Context, bool) (visual.Status, error)
+	visualPolicy       *VisualRuntimePolicy
+	// visualRuntimeMu pins guarded effects to one installed visual runtime
+	// without holding vectorMu during provider I/O or blocking status reads.
+	visualRuntimeMu sync.RWMutex
 	// visualAction prevents concurrent HTTP build/resume requests from both
 	// passing the active-run check before either worker records its run.
 	visualAction sync.Mutex
@@ -507,8 +514,10 @@ const (
 
 // ServerOptions configures the API server.
 type ServerOptions struct {
-	Config *config.Config
-	Store  MessageStore
+	// LaneReadinessReader projects shared setup facts from the daemon environment.
+	LaneReadinessReader LaneReadinessReader
+	Config              *config.Config
+	Store               MessageStore
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
@@ -616,6 +625,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		vectorCfg:              opts.VectorCfg,
 		backend:                opts.Backend,
 		personSearchEngine:     opts.PersonSearchEngine,
+		laneReadinessReader:    opts.LaneReadinessReader,
 		scheduler:              opts.Scheduler,
 		cardDAV:                opts.CardDAV,
 		logger:                 opts.Logger,
@@ -1126,7 +1136,8 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 			serveMeetingImportWithReadDeadline(w, r, next)
 			return
 		}
-		if cardDAVRequestNeedsProtectiveCeiling(r) {
+		if cardDAVRequestNeedsProtectiveCeiling(r) ||
+			(r.Method == http.MethodPost && r.URL.Path == "/api/v1/identity/scoring/run") {
 			serveWithProtectiveRequestDeadline(w, r, next)
 			return
 		}

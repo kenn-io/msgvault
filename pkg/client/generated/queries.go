@@ -492,6 +492,17 @@ type ListIdentityMatchCandidatesQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ListPersonMatchJudgmentsQuery struct {
+	// CandidateID Optional candidate ID; zero lists all
+	CandidateID *int64 `json:"candidate_id,omitempty"`
+
+	// Limit Maximum judgments
+	Limit *int64 `json:"limit,omitempty"`
+
+	// BeforeID Older judgments with ID below this cursor
+	BeforeID *int64 `json:"before_id,omitempty"`
+}
+
 type SearchIntegrationTasksQuery struct {
 	// Q Task title search within the configured project
 	Q string `json:"q" validate:"required"`
@@ -672,6 +683,26 @@ type GetMessageInlinePartQuery struct {
 
 func (g GetMessageInlinePartQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetVisualAttachmentStatusQuery struct {
+	// Coverage Set 1 for an explicit rate-limited archive media coverage scan; omitted status reads only progress
+	Coverage *GetVisualAttachmentStatusQueryCoverage `json:"coverage,omitempty"`
+}
+
+func (g GetVisualAttachmentStatusQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if g.Coverage != nil {
+		if v, ok := any(g.Coverage).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Coverage", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ListOperationRunsQuery struct {

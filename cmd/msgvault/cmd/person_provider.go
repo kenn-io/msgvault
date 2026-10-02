@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/personenrollment"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -679,7 +680,9 @@ func runPersonProviderSet(
 	}
 
 	replacement := provider
-	applyPersonProviderSetOptions(command, &replacement, options)
+	if err := applyPersonProviderSetOptions(command, &replacement, options); err != nil {
+		return err
+	}
 	proposed := personProviderProposedConfig(configured, name, replacement)
 	proposedProfile, err := proposed.Profile()
 	if err != nil {
@@ -723,35 +726,34 @@ func runPersonProviderSet(
 		return err
 	}
 
-	if err := revokePersonProviderSetConsent(command, deps, name, oldProfile.Fingerprint, directStore, true); err != nil {
+	var checkedConfig peoplesweep.Config
+	_, err = personenrollment.UpdatePolicy(command.Context(), before, personenrollment.PolicyUpdateHooks{
+		Revoke: func(_ context.Context, guard bool) error {
+			return revokePersonProviderSetConsent(command, deps, name, oldProfile.Fingerprint, directStore, guard)
+		},
+		Publish: func(etag string) (config.ConfigFile, error) {
+			return deps.editConfigTables(etag, []config.TableEdit{personProviderProfileUpdateEdit(name, replacement)})
+		},
+		Restore: deps.restoreConfigFile,
+		Check: func(_ context.Context, after config.ConfigFile) error {
+			var err error
+			checkedConfig, err = personProviderConfigFromSnapshot(deps, after)
+			if err != nil {
+				return err
+			}
+			checkedDeps := deps
+			checkedDeps.config = func() peoplesweep.Config { return checkedConfig }
+			checkOutput := command.OutOrStdout()
+			if options.jsonOutput {
+				checkOutput = io.Discard
+			}
+			return executeSavedPersonProviderCheck(command, checkedDeps, name, proposedProfile.Fingerprint, checkOutput)
+		},
+	})
+	if err != nil {
 		return err
 	}
 
-	after, err := deps.editConfigTables(before.ETag, []config.TableEdit{
-		personProviderProfileUpdateEdit(name, replacement),
-	})
-	if err != nil {
-		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
-			errors.New("exact people provider consent remains revoked"))
-	}
-	if err := revokePersonProviderSetConsent(command, deps, name, oldProfile.Fingerprint, directStore, false); err != nil {
-		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
-			errors.New("exact people provider consent remains revoked"))
-	}
-	checkedConfig, err := personProviderConfigFromSnapshot(deps, after)
-	if err == nil {
-		checkedDeps := deps
-		checkedDeps.config = func() peoplesweep.Config { return checkedConfig }
-		checkOutput := command.OutOrStdout()
-		if options.jsonOutput {
-			checkOutput = io.Discard
-		}
-		err = executeSavedPersonProviderCheck(command, checkedDeps, name, proposedProfile.Fingerprint, checkOutput)
-	}
-	if err != nil {
-		return errors.Join(err, rollbackPersonProviderSetConfig(deps, after, before),
-			errors.New("exact people provider consent remains revoked"))
-	}
 	if options.jsonOutput {
 		checkedProvider, err := selectPersonProviderConfig(checkedConfig, name)
 		if err != nil {
@@ -810,19 +812,6 @@ func revokePersonProviderSetConsent(
 		return proxySavedPersonProviderOperation(command, deps, "revoke", name, fingerprint, io.Discard)
 	}
 	return proxySavedPersonProviderRevokeFingerprint(command, deps, name, fingerprint)
-}
-
-func rollbackPersonProviderSetConfig(
-	deps personProviderCommandDeps,
-	published, before config.ConfigFile,
-) error {
-	if !published.Exists || published.ETag == "" {
-		return errors.New("cannot roll back people provider config without a verified published snapshot")
-	}
-	if _, err := deps.restoreConfigFile(published, before); err != nil {
-		return fmt.Errorf("restore people provider config: %w", err)
-	}
-	return nil
 }
 
 func runPersonProviderUse(
