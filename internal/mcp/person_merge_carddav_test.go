@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -146,7 +147,8 @@ func TestMCPCardDAVUnavailableErrorIsActionable(t *testing.T) {
 func TestMCPPersonCardDAVCompletionPublicationAndSyncRoutes(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	const privateCard = "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Private\\, Test\r\nEND:VCARD\r\n"
+	photoData := strings.Repeat("QUJD", 12*1024)
+	privateCard := "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Private\\, Test\r\nPHOTO:data:image/png;base64," + photoData + "\r\nEMAIL:contact@example.com\r\nEND:VCARD\r\n"
 	var approved atomic.Bool
 	var syncBlocked atomic.Bool
 	syncBlocked.Store(true)
@@ -199,6 +201,7 @@ func TestMCPPersonCardDAVCompletionPublicationAndSyncRoutes(t *testing.T) {
 	assert.Equal(true, toolStructuredContent(t, publication)["inference_review_required"])
 	preview := rawCallTool(t, opts, ToolPreviewCardDAVPublication, map[string]any{"person_id": float64(7)})
 	assert.Equal(privateCard, toolStructuredContent(t, preview)["vcard"])
+	assert.Equal("token-1", toolStructuredContent(t, preview)["approval_token"])
 	stale := confirmedCallTool(t, opts, ToolApproveCardDAVPublication, map[string]any{"person_id": float64(7), "approval_token": "old-token"}, true)
 	assert.Equal(true, stale["isError"])
 	assert.Contains(fmt.Sprint(stale), "carddav_review_stale")
@@ -208,6 +211,10 @@ func TestMCPPersonCardDAVCompletionPublicationAndSyncRoutes(t *testing.T) {
 		assert.Contains(message, `"Private, Test" (person 7)`)
 		assert.Contains(message, "Personal")
 		assert.Contains(message, "queues")
+		assert.Contains(message, "[inline PHOTO, 49174 encoded bytes]")
+		assert.Contains(message, "EMAIL:contact@example.com")
+		assert.NotContains(message, photoData)
+		assert.Less(len(message), 2048)
 	})
 	assert.NotEqual(true, approvedResult["isError"])
 	assert.True(approved.Load())
@@ -229,4 +236,41 @@ func TestMCPPersonCardDAVCompletionPublicationAndSyncRoutes(t *testing.T) {
 	}
 	status := rawCallTool(t, opts, ToolGetCardDAVSyncStatus, map[string]any{})
 	assert.Equal(true, toolStructuredContent(t, status)["available"])
+}
+
+// FuzzMCPCardDAVApprovalInlineMedia checks that payload bytes never reach the
+// confirmation, across all four inline media properties. The HTTP fixture is
+// the daemon boundary; MCP and daemonclient execute their production paths.
+func FuzzMCPCardDAVApprovalInlineMedia(f *testing.F) {
+	f.Add([]byte{0, 1, 2}, uint8(0))
+	f.Add([]byte{}, uint8(1))
+	f.Add([]byte{255}, uint8(2))
+	f.Add([]byte("synthetic media"), uint8(3))
+	f.Fuzz(func(t *testing.T, data []byte, variant uint8) {
+		property := []string{"PHOTO", "LOGO", "SOUND", "KEY"}[variant%4]
+		value := "data:;base64," + base64.StdEncoding.EncodeToString(data)
+		body := "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Example Contact\r\n" + property + ":" + value + "\r\nEMAIL:contact@example.com\r\nEND:VCARD\r\n"
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/api/v1/carddav/publications/7/preview":
+				_, _ = fmt.Fprintf(w, `{"person_id":7,"address_book":{"id":2,"name":"Example"},"kind":"pending","vcard":%q,"approval_token":"token-1","review_required":true}`, body)
+			case "/api/v1/carddav/publications/7/approve":
+				_, _ = w.Write([]byte(`{"person_id":7,"state":"pending","desired":true,"inference_review_required":false}`))
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		t.Cleanup(server.Close)
+		client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+		require.NoError(t, err)
+		t.Cleanup(func() { assert.NoError(t, client.Close()) })
+		opts := ServeOptions{Engine: &querytest.MockEngine{}, PersonCardDAV: client, AllowCardDAVWrites: true}
+		result := confirmedCallTool(t, opts, ToolApproveCardDAVPublication,
+			map[string]any{"person_id": float64(7), "approval_token": "token-1"}, true, func(message string) {
+				assert.NotContains(t, message, "data:;base64,")
+				assert.Contains(t, message, "[inline "+property+",")
+			})
+		require.NotEqual(t, true, result["isError"])
+	})
 }
