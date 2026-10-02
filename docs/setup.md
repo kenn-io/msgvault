@@ -39,6 +39,81 @@ Verify the installation:
 msgvault --help
 ```
 
+## Vendor a pinned binary
+
+Applications can download a release archive directly from
+[GitHub Releases](https://github.com/kenn-io/msgvault/releases). Pin the tag and
+verify the matching entry in that release's `SHA256SUMS` before extracting it.
+Fail the download if the archive or checksum is missing.
+
+The v0.20.0 release uses this asset naming pattern:
+
+| Platform | Archive name |
+|---|---|
+| macOS | `msgvault_<version>_darwin_<arch>.tar.gz` |
+| Linux | `msgvault_<version>_linux_<arch>.tar.gz` |
+| Windows | `msgvault_<version>_windows_<arch>.zip` |
+
+`<version>` excludes the tag's leading `v`. `<arch>` is `amd64` or `arm64`.
+The executable is `msgvault` on macOS/Linux and `msgvault.exe` on Windows.
+There are no unversioned binary aliases. Select an archive from the pinned
+release's asset list; repository-owned release publishers have been removed,
+so this pattern does not promise a release schedule.
+
+For example, download and verify the Linux AMD64 archive without running an
+installer:
+
+```bash
+set -eu
+tag=v0.20.0
+asset="msgvault_${tag#v}_linux_amd64.tar.gz"
+base="https://github.com/kenn-io/msgvault/releases/download/$tag"
+curl -fL "$base/$asset" -o "$asset"
+curl -fL "$base/SHA256SUMS" -o SHA256SUMS
+awk -v asset="$asset" '$2 == asset { print; found = 1 } END { if (!found) exit 1 }' \
+  SHA256SUMS > selected-checksum
+sha256sum -c selected-checksum
+tar -xzf "$asset"
+```
+
+### Migrate before replacing the executable
+
+The following commands are new on `main` and are not in v0.20.0. Use a candidate
+binary that includes them. Run maintenance on the archive host; for a configured
+remote server, use `--local` only when intentionally selecting this host's archive.
+
+1. Download, verify, and extract the candidate into a separate directory.
+2. Stop the daemon and all other processes using the archive. For PostgreSQL,
+   stop users on other hosts too. Back up the archive before migrating.
+3. Compare the candidate's expected archive version with the stored version:
+
+   ```bash
+   ./candidate/msgvault schema-version
+   ./candidate/msgvault --home /path/to/archive-home schema-version --database
+   ```
+
+4. Run the candidate's migrations. Require exit status zero before continuing:
+
+   ```bash
+   ./candidate/msgvault --home /path/to/archive-home migrate
+   ./candidate/msgvault --home /path/to/archive-home schema-version --database
+   ```
+
+5. Require the stored version to equal the candidate's expected version, then
+   replace the installed executable and restart the daemon.
+
+A stored version of `0` means the archive predates this contract or has not
+completed schema initialization. A greater stored version requires a newer
+compatible binary. There is no schema downgrade command.
+
+Migrations can commit progress before failing or being interrupted. A retained
+old version does not make those partial changes safe for an old executable.
+Retry with the candidate, or restore the backup before restarting the old
+binary. Older releases do not have the future-version guard.
+
+See [schema-version](cli-reference.md#schema-version) for the exact probe
+contract and [migrate](cli-reference.md#migrate) for its scope and failure behavior.
+
 ## Conda-Forge
 
 If you use [conda](https://docs.conda.io/) or [pixi](https://pixi.sh/):

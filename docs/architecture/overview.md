@@ -86,10 +86,14 @@ See [storage](storage.md) and [search ranking](search-ranking.md).
 ### The daemon coordinates archive mutations
 
 Archive-access CLI commands discover or start the local daemon unless a remote
-is configured. `--local` selects the local daemon; it does not make the CLI open
+is configured. For ordinary archive commands, `--local` selects the local daemon;
+it does not make the CLI open
 SQLite directly. Mutating jobs wait for the daemon's writer coordination instead
 of competing through independent foreground database connections. Some offline
-recovery commands require the daemon to be stopped. The
+recovery commands require the daemon to be stopped. The offline `migrate` command
+applies the candidate binary’s main archive schema migrations directly;
+`schema-version --database` reads its completion marker without migrations or
+daemon startup. See the [CLI contracts](../cli-reference.md#schema-version). The
 [daemon guide](../guides/daemon-migration.md) owns those lifecycle rules.
 
 ### Archive records and derived indexes have different lifetimes

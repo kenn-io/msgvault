@@ -309,6 +309,23 @@ unknown extensions, and raw values. Keep new registry elements covered by an
 explicit handling declaration so an upstream addition cannot be silently
 ignored.
 
+## Archive schema version maintenance
+
+`internal/store/schema_version.go` owns `store.SchemaVersion`, the monotonic
+integer for required main archive schema work. Increase it whenever the main
+archive schema or a required migration changes. SQLite exposes the marker in
+`PRAGMA user_version`; PostgreSQL uses the
+`schema_version` key in `archive_metadata`. `InitSchemaContext` refuses future versions before DDL
+and stamps this version only after its required steps succeed, using the caller's
+context. Keep optional and best-effort maintenance behavior separate from that
+completion guarantee.
+
+The initial contract is new on `main`, after v0.20.0. Existing archives start at
+`0`; successful initialization upgrades them to the binary's expected version.
+The [CLI reference](cli-reference.md#schema-version) owns the probe contract,
+and [Setup](setup.md#migrate-before-replacing-the-executable) owns the operator
+upgrade procedure.
+
 ## Code Conventions
 
 - **Web UI**: Svelte with TypeScript, generated OpenAPI types, and components

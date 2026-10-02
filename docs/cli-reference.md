@@ -132,6 +132,68 @@ msgvault init-db
 
 ---
 
+## schema-version
+
+New on `main`; not available in v0.20.0.
+
+Print the main archive schema version as one decimal integer followed by a
+newline. Without flags, this reports the version expected by this binary and
+runs without loading configuration, opening an archive, or creating directories.
+
+```bash
+msgvault schema-version
+msgvault --home /path/to/archive-home schema-version --database
+```
+
+`--database` reads the configured local archive without migrations or daemon
+startup. A missing SQLite file is an error and is not created. Remote mode is
+rejected unless `--local` selects this machine's local archive. The stored
+version may be greater than this binary's expected version; the probe reports
+it without attempting an upgrade.
+
+SQLite stores the same value in `PRAGMA user_version`. PostgreSQL stores it in
+`archive_metadata` under key `schema_version`; the CLI probe works on either
+backend. Version `0` means legacy or uninitialized. Negative or malformed
+markers are errors. The marker records required main archive schema work,
+not a physical integrity check, API version, analytics cache version, or
+optional vector backend version. Existing best-effort index/statistics work
+keeps its failure behavior.
+
+---
+
+## migrate
+
+New on `main`; not available in v0.20.0.
+
+Apply this binary's main archive schema migrations directly, without starting
+or contacting a daemon. This supports migration before replacing an installed
+executable. It can initialize a fresh archive and is safe to repeat.
+
+```bash
+msgvault --home /path/to/archive-home daemon stop
+msgvault --home /path/to/archive-home migrate
+```
+
+This command is local-only. A configured remote server is rejected unless
+`--local` explicitly selects the local archive. Stop all archive users first.
+The command takes the daemon-owner lock and, for SQLite, the write-owner lock
+before opening the archive. PostgreSQL users on other hosts must be stopped by
+the operator.
+
+Success prints `Schema version: <version>`. Failure or cancellation returns a
+nonzero exit status. An archive newer than the binary is rejected before schema
+DDL. The marker advances only after required schema initialization succeeds;
+failed migrations can leave committed partial changes. Require both a successful
+exit and matching expected/stored versions before swapping binaries. Follow
+[the upgrade procedure](setup.md#migrate-before-replacing-the-executable) for
+backup and recovery.
+
+`migrate` leaves legacy identity configuration for its existing account-confirmation
+flow. Optional vector backend and analytics cache upgrades remain owned by those
+subsystems. There is no downgrade mode. Neither command accepts positional arguments.
+
+---
+
 ## add-account
 
 Add a Gmail account and authorize via OAuth.
