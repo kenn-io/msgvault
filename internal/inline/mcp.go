@@ -286,8 +286,8 @@ type mcpChat struct {
 }
 
 // Discover enumerates the complete catalog authorized by the OAuth grant.
-// An explicit source marker prevents an older MCP/server deployment from
-// silently returning the historical capped, visible-dialog-only list.
+// The connected backend must support complete discovery; deploy it before
+// updating the MCP server. Pagination is validated on every page.
 func (c *MCPClient) Discover(ctx context.Context) ([]Conversation, error) {
 	var out []Conversation
 	var after int64
@@ -301,16 +301,12 @@ func (c *MCPClient) Discover(ctx context.Context) ([]Conversation, error) {
 			return nil, err
 		}
 		var v struct {
-			Items    []stdjson.RawMessage `json:"items"`
-			Sort     string               `json:"sort"`
-			Next     stdjson.RawMessage   `json:"nextAfterChatId"`
-			Complete *bool                `json:"subthreadsIncluded"`
+			Items []stdjson.RawMessage `json:"items"`
+			Sort  string               `json:"sort"`
+			Next  stdjson.RawMessage   `json:"nextAfterChatId"`
 		}
 		if err := json.Unmarshal(raw, &v); err != nil {
 			return nil, fmt.Errorf("%w: malformed conversation catalog", ErrContract)
-		}
-		if v.Complete == nil || !*v.Complete {
-			return nil, fmt.Errorf("%w: complete conversation discovery requires an Inline server and MCP upgrade", ErrContract)
 		}
 		if v.Items == nil || len(v.Items) > 50 || v.Next == nil || v.Sort != "id" {
 			return nil, fmt.Errorf("%w: malformed catalog page", ErrContract)

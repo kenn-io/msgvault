@@ -350,7 +350,7 @@ func TestMCPDiscoverCompleteCatalogBeyondFifty(t *testing.T) {
 		if last < 125 {
 			next = fmt.Sprintf(`"%d"`, last)
 		}
-		return fmt.Sprintf(`{"sort":"id","subthreadsIncluded":true,"nextAfterChatId":%s,"items":[%s]}`, next, strings.Join(items, ","))
+		return fmt.Sprintf(`{"sort":"id","nextAfterChatId":%s,"items":[%s]}`, next, strings.Join(items, ","))
 	}
 	c := connectInlineFixture(t, f)
 	chats, err := c.Discover(t.Context())
@@ -375,15 +375,14 @@ func TestMCPDiscoverCompleteCatalogBeyondFifty(t *testing.T) {
 	}, calls)
 }
 
-func TestMCPDiscoverRequiresCompletenessAndAdvancingCursor(t *testing.T) {
+func TestMCPDiscoverRequiresValidPagesAndAdvancingCursor(t *testing.T) {
 	for _, payload := range []string{
 		`{"items":[]}`,
-		`{"sort":"id","subthreadsIncluded":false,"nextAfterChatId":null,"items":[]}`,
-		`{"sort":"recent","subthreadsIncluded":true,"nextAfterChatId":null,"items":[]}`,
-		`{"sort":"id","subthreadsIncluded":true,"items":[]}`,
-		`{"sort":"id","subthreadsIncluded":true,"nextAfterChatId":"5","items":[]}`,
-		`{"sort":"id","subthreadsIncluded":true,"nextAfterChatId":"6","items":[{"chatId":"5","kind":"dm"}]}`,
-		`{"sort":"id","subthreadsIncluded":true,"nextAfterChatId":null,"items":[{"chatId":"5","kind":"dm"},{"chatId":"5","kind":"dm"}]}`,
+		`{"sort":"recent","nextAfterChatId":null,"items":[]}`,
+		`{"sort":"id","items":[]}`,
+		`{"sort":"id","nextAfterChatId":"5","items":[]}`,
+		`{"sort":"id","nextAfterChatId":"6","items":[{"chatId":"5","kind":"dm"}]}`,
+		`{"sort":"id","nextAfterChatId":null,"items":[{"chatId":"5","kind":"dm"},{"chatId":"5","kind":"dm"}]}`,
 	} {
 		t.Run(payload, func(t *testing.T) {
 			f := newInlineMCPFixture(t, map[string]string{"conversations.list": payload}, true)
@@ -392,20 +391,20 @@ func TestMCPDiscoverRequiresCompletenessAndAdvancingCursor(t *testing.T) {
 			require.ErrorIs(t, err, ErrContract)
 		})
 	}
-	f := newInlineMCPFixture(t, map[string]string{"conversations.list": `{"sort":"id","subthreadsIncluded":true,"nextAfterChatId":null,"items":[]}`}, true)
+	f := newInlineMCPFixture(t, map[string]string{"conversations.list": `{"sort":"id","nextAfterChatId":null,"items":[]}`}, true)
 	c := connectInlineFixture(t, f)
 	chats, err := c.Discover(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, chats)
 }
 
-func TestMCPDiscoverChecksMarkerOnEveryPage(t *testing.T) {
+func TestMCPDiscoverValidatesEveryCatalogPage(t *testing.T) {
 	f := newInlineMCPFixture(t, nil, true)
 	f.catalog = func(args map[string]any) string {
 		if args["afterChatId"] == "5" {
-			return `{"sort":"id","nextAfterChatId":null,"items":[]}`
+			return `{"sort":"recent","nextAfterChatId":null,"items":[]}`
 		}
-		return `{"sort":"id","subthreadsIncluded":true,"nextAfterChatId":"5","items":[{"chatId":"5","kind":"dm"}]}`
+		return `{"sort":"id","nextAfterChatId":"5","items":[{"chatId":"5","kind":"dm"}]}`
 	}
 	c := connectInlineFixture(t, f)
 	chats, err := c.Discover(t.Context())

@@ -76,17 +76,17 @@ All-chat capture requires a complete conversation catalog from the
 connected Inline service. It must include accessible child threads, hidden
 chats, and archived chats rather than only the visible sidebar.
 
-The MCP connection requires `conversations.list` with `includeSubthreads = true`,
-`sort = "id"`, and a `subthreadsIncluded = true` coverage marker. It follows
-`nextAfterChatId` as `afterChatId` until the continuation is null.
-The CLI connection requires an updated `inline chats list --include-subthreads`
-and backend with the corresponding `subthreads_included` marker. msgvault
-checks that contract and fails with an update instruction when it is missing;
-it does not treat a partial catalog as a complete archive.
+The MCP connection requests `conversations.list` with `includeSubthreads = true`
+and `sort = "id"`. It follows `nextAfterChatId` as `afterChatId` until the
+continuation is null. The CLI connection runs
+`inline chats list --include-subthreads --json --compact`.
 
-The catalog must be available on the backend and CLI you actually use. Changes
-in their source repositories do not establish deployed support. Run the probe
-before the first all-chat sync. An explicit chat-ID filter can work with an
+Deploy the complete-catalog backend before updating or using the corresponding
+MCP server or CLI. An older backend can ignore the request flag; there is no
+response capability marker to detect that mismatch. msgvault rejects unsupported
+CLI commands and malformed MCP pagination, but a successful probe does not prove
+that an older backend included every child thread. Changes in source repositories
+do not establish deployed support. An explicit chat-ID filter can work with an
 older compatible CLI because it does not need catalog discovery.
 
 ### Use the Inline CLI

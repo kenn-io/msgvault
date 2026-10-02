@@ -116,7 +116,7 @@ func TestCLICatalogDecodesAllCanonicalChatsAndPreservesRaw(t *testing.T) {
 
 	direct := `{"id":123,"title":"","peer_id":{"type":{"User":{"user_id":999}}},"future_metadata":{"nested":[1,2]}}`
 	child := `{"id":456,"title":"Reply","peer_id":{"type":{"Chat":{"chat_id":456}}},"parent_chat_id":123,"parent_message_id":7}`
-	conversations, err := cliDecodeCatalog([]byte(`{"chats":[`+child+`,`+direct+`],"subthreads_included":true,"dialogs":[],"spaces":[],"users":[],"messages":[],"folders":[]}`), 42)
+	conversations, err := cliDecodeCatalog([]byte(`{"chats":[`+child+`,`+direct+`],"dialogs":[],"spaces":[],"users":[],"messages":[],"folders":[]}`), 42)
 	requires.NoError(err)
 	requires.Len(conversations, 2)
 	assertions.Equal(int64(123), conversations[0].ID)
@@ -129,38 +129,34 @@ func TestCLICatalogDecodesAllCanonicalChatsAndPreservesRaw(t *testing.T) {
 	for i := range chats {
 		chats[i] = json.RawMessage(fmt.Sprintf(`{"id":%d,"title":"Fixture","peer_id":{"type":{"Chat":{"chat_id":%d}}}}`, i+1, i+1))
 	}
-	raw, err := json.Marshal(map[string]any{"chats": chats, "subthreads_included": true})
+	raw, err := json.Marshal(map[string]any{"chats": chats})
 	requires.NoError(err)
 	conversations, err = cliDecodeCatalog(raw, 42)
 	requires.NoError(err)
 	assertions.Len(conversations, cliPageSize+1, "catalog has no message-page cap or client limit")
-	conversations, err = cliDecodeCatalog([]byte(`{"chats":[],"subthreads_included":true}`), 42)
+	conversations, err = cliDecodeCatalog([]byte(`{"chats":[]}`), 42)
 	requires.NoError(err)
 	assertions.NotNil(conversations)
 	assertions.Empty(conversations)
 }
 
-func TestCLICatalogRejectsIncompleteOrAmbiguousShapes(t *testing.T) {
+func TestCLICatalogRejectsMalformedOrAmbiguousShapes(t *testing.T) {
 	for _, raw := range []string{
 		`{}`,
-		`{"chats":null,"subthreads_included":true}`,
-		`{"chats":[],"chats":[],"subthreads_included":true}`,
-		`{"chats":[null],"subthreads_included":true}`,
-		`{"chats":[{"id":1e3}],"subthreads_included":true}`,
-		`{"chats":[{"id":9007199254740992}],"subthreads_included":true}`,
-		`{"chats":[{"id":123,"peerId":{"chatId":123}}],"subthreads_included":true}`,
-		`{"chats":[{"id":123,"peer_id":{"type":{"Chat":{"chat_id":123}}}},{"id":123,"peer_id":{"type":{"Chat":{"chat_id":123}}}}],"subthreads_included":true}`,
+		`{"chats":null}`,
+		`{"chats":[],"chats":[]}`,
+		`{"chats":[null]}`,
+		`{"chats":[{"id":1e3}]}`,
+		`{"chats":[{"id":9007199254740992}]}`,
+		`{"chats":[{"id":123,"peerId":{"chatId":123}}]}`,
+		`{"chats":[{"id":123,"peer_id":{"type":{"Chat":{"chat_id":123}}}},{"id":123,"peer_id":{"type":{"Chat":{"chat_id":123}}}}]}`,
 	} {
 		_, err := cliDecodeCatalog([]byte(raw), 42)
 		require.Error(t, err)
 	}
 }
 
-func TestCLICatalogRequiresExplicitCompleteServerCapability(t *testing.T) {
-	for _, suffix := range []string{"", `,"subthreads_included":null`, `,"subthreads_included":false`} {
-		_, err := cliDecodeCatalog([]byte(`{"chats":[]`+suffix+`}`), 42)
-		require.ErrorContains(t, err, "upgraded Inline server")
-	}
+func TestCLIDiscoverReportsUnsupportedCatalogCommand(t *testing.T) {
 	_, err := NewCLIClient(cliProcessFixture(t, "exit 2\n")).Discover(context.Background())
 	require.ErrorContains(t, err, "upgrade Inline")
 	require.ErrorContains(t, err, "--include-subthreads")
@@ -228,7 +224,7 @@ case "$*" in
   "--version") printf '%s' 'inline 0.7.15' ;;
   "doctor --json --compact") printf '%s' '{"config":{"apiBaseUrl":"https://api.inline.chat/v1","realtimeUrl":"wss://api.inline.chat/realtime"},"paths":{"secretsPath":"discarded"}}' ;;
   "auth me --json --compact") printf '%s' '{"id":42,"first_name":"Example","last_name":"User"}' ;;
-  "chats list --include-subthreads --json --compact") printf '%s' '{"chats":[{"id":123,"title":"Fixture","peer_id":{"type":{"Chat":{"chat_id":123}}}}],"subthreads_included":true,"dialogs":[],"spaces":[],"users":[],"messages":[],"folders":[]}' ;;
+  "chats list --include-subthreads --json --compact") printf '%s' '{"chats":[{"id":123,"title":"Fixture","peer_id":{"type":{"Chat":{"chat_id":123}}}}],"dialogs":[],"spaces":[],"users":[],"messages":[],"folders":[]}' ;;
   "chats get --chat-id 123 --json --compact") printf '%s' '{"chat":{"id":123,"title":"Fixture","peer_id":{"type":{"Chat":{"chat_id":123}}}}}' ;;
   "chats get --chat-id 456 --json --compact") printf '%s' '{"chat":{"id":456,"title":"","peer_id":{"type":{"User":{"user_id":42}}}}}' ;;
   "messages list --chat-id 123 --limit 100 --offset-id 8 --json --compact") printf '%s' '{"messages":[{"id":7,"chat_id":123,"from_id":42,"date":1700000000,"message":"fixture"}]}' ;;

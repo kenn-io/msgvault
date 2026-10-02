@@ -146,8 +146,8 @@ func cliProductionEndpoint(value, scheme string) bool {
 func cliValidID(id int64) bool { return id > 0 && id <= cliMaxID }
 
 // Discover requests all accessible chats, including unopened linked subthreads.
-// The server capability marker is required even for an empty catalog, so an
-// older backend cannot silently turn an all-chat archive into a partial one.
+// The connected backend must support include_subthreads; deploy it before
+// enabling complete catalog discovery in the CLI.
 func (c *CLIClient) Discover(ctx context.Context) ([]Conversation, error) {
 	raw, err := c.run(ctx, "chats", "list", "--include-subthreads", "--json", "--compact")
 	if err != nil {
@@ -158,14 +158,10 @@ func (c *CLIClient) Discover(ctx context.Context) ([]Conversation, error) {
 
 func cliDecodeCatalog(raw []byte, accountUserID int64) ([]Conversation, error) {
 	var wire struct {
-		Chats              *[]json.RawMessage `json:"chats"`
-		SubthreadsIncluded *bool              `json:"subthreads_included"`
+		Chats *[]json.RawMessage `json:"chats"`
 	}
 	if jsonv2.Unmarshal(raw, &wire) != nil || wire.Chats == nil {
 		return nil, errors.New("unsupported Inline CLI chat catalog response")
-	}
-	if wire.SubthreadsIncluded == nil || !*wire.SubthreadsIncluded {
-		return nil, errors.New("complete chat discovery requires an upgraded Inline server with subthreads_included=true")
 	}
 	conversations := make([]Conversation, 0, len(*wire.Chats))
 	seen := make(map[int64]bool, len(*wire.Chats))

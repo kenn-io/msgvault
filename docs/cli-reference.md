@@ -1158,10 +1158,11 @@ includes hidden and archived chats and accessible child threads. The first run
 backfills currently readable history and resumes after interruption; later
 runs collect new messages and discover newly accessible chats.
 
-All-chat mode requires the connected backend and MCP server or CLI to expose
-the complete catalog marker. Unsupported catalogs fail with an
-update instruction. This requirement must be checked against the deployed
-service; see [catalog support](usage/inline.md#check-all-chat-catalog-support).
+All-chat mode requires the complete-catalog backend and corresponding MCP server
+or CLI. Deploy the backend first: an older backend can ignore the subthread
+request, and the response does not identify that mismatch. Unsupported CLI
+commands and malformed MCP pagination still fail; see
+[catalog support](usage/inline.md#check-all-chat-catalog-support).
 
 ```bash
 msgvault sync-inline
@@ -1173,7 +1174,7 @@ msgvault sync-inline --probe
 | Flag | Default | Description |
 |---|---|---|
 | `--full` | `false` | Re-fetch available history within the account's capture scope and refresh existing messages |
-| `--probe` | `false` | Check identity and read contracts, reporting capability and counts without importing or printing sampled message text |
+| `--probe` | `false` | Check identity and read contracts, reporting catalog shape and counts without importing or printing sampled message text |
 | `--no-media` | `false` | Defer attachment downloads while keeping message and media metadata |
 | `--limit` | `0` | Total messages of work per account this run; `0` is unlimited, and unfinished history or refresh work resumes later |
 
