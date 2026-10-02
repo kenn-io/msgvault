@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -58,9 +59,14 @@ func (c *Config) FastmailAPIToken(s FastmailSource) (string, error) {
 		return "", fmt.Errorf("read Fastmail token file: %w", err)
 	}
 	defer func() { _ = tokens.Close() }()
+	file, err := tokens.Open(rel)
+	if err != nil {
+		return "", fmt.Errorf("read Fastmail token file: %w", err)
+	}
+	defer func() { _ = file.Close() }()
 	// Windows has no mode bits to check, as with the service account key.
 	if runtime.GOOS != "windows" {
-		info, err := tokens.Stat(rel)
+		info, err := file.Stat()
 		if err != nil {
 			return "", fmt.Errorf("read Fastmail token file: %w", err)
 		}
@@ -68,7 +74,7 @@ func (c *Config) FastmailAPIToken(s FastmailSource) (string, error) {
 			return "", fmt.Errorf("fastmail token file %s permissions are too open (%04o); use chmod 600", path, info.Mode().Perm())
 		}
 	}
-	data, err := tokens.ReadFile(rel)
+	data, err := io.ReadAll(file)
 	if err != nil {
 		return "", fmt.Errorf("read Fastmail token file: %w", err)
 	}
