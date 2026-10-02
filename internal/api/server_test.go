@@ -1875,6 +1875,58 @@ func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {
 	}
 }
 
+// bufferedBodyTestListener makes the synthetic headers available before
+// net/http starts its short read deadline. This keeps scheduling before the
+// request arrives separate from the body deadline exercised by the test.
+type bufferedBodyTestListener struct {
+	net.Listener
+
+	headersOnly bool
+}
+
+type bufferedBodyTestConn struct {
+	net.Conn
+
+	reader io.Reader
+}
+
+func (c *bufferedBodyTestConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+
+func (l bufferedBodyTestListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, fmt.Errorf("accept buffered test connection: %w", err)
+	}
+	fail := func(err error) (net.Conn, error) {
+		_ = conn.Close()
+		return nil, err
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return fail(err)
+	}
+	reader := bufio.NewReader(conn)
+	var headers bytes.Buffer
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return fail(err)
+		}
+		headers.WriteString(line)
+		if line == "\r\n" {
+			break
+		}
+	}
+	if !l.headersOnly {
+		if _, err := reader.Peek(1); err != nil {
+			return fail(err)
+		}
+	}
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		return fail(err)
+	}
+	return &bufferedBodyTestConn{Conn: conn, reader: io.MultiReader(&headers, reader)}, nil
+}
+
 func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing.T) {
 	t.Parallel()
 	const ordinaryReadTimeout = 100 * time.Millisecond
@@ -1906,7 +1958,7 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 	require.NoError(t, err, "listen")
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- srv.StartOnListener(listener)
+		serveErr <- srv.StartOnListener(bufferedBodyTestListener{Listener: listener})
 	}()
 	t.Cleanup(func() {
 		// net/http delays closing connections with unread request data, then

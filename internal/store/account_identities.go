@@ -157,7 +157,7 @@ func (s *Store) AddAccountIdentityContext(
 		address,
 		signal,
 		func(ctx context.Context, tx *loggedTx) error {
-			return refreshSourceMessageAttributionContext(ctx, tx, sourceID, "")
+			return refreshIdentityMessageAttributionContext(ctx, tx, sourceID, []normalizedIdentityConfirmation{{identifier: strings.TrimSpace(address)}}, "")
 		},
 	)
 }
@@ -178,8 +178,8 @@ func (s *Store) AddAccountIdentityAndRefreshMessageAttributionContext(
 		address,
 		signal,
 		func(ctx context.Context, tx *loggedTx) error {
-			return refreshSourceMessageAttributionContext(
-				ctx, tx, sourceID, excludeSourceMessageID,
+			return refreshIdentityMessageAttributionContext(
+				ctx, tx, sourceID, []normalizedIdentityConfirmation{{identifier: strings.TrimSpace(address)}}, excludeSourceMessageID,
 			)
 		},
 	)
@@ -552,7 +552,7 @@ func (s *Store) RemoveAccountIdentityContext(
 		if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 			return err
 		}
-		return refreshSourceMessageAttributionContext(ctx, tx, sourceID, "")
+		return refreshIdentityMessageAttributionContext(ctx, tx, sourceID, []normalizedIdentityConfirmation{{identifier: strings.TrimSpace(address)}}, "")
 	})
 	if err != nil {
 		return 0, err

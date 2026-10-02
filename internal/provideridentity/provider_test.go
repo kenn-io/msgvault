@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/fastmail"
+	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -70,7 +71,7 @@ func TestAutoRefreshAppliesOnlyStrongEvidenceAndRetryIsIdempotent(t *testing.T) 
 	requirements.Len(first, 3)
 	for _, outcome := range first {
 		assertions.True(outcome.Added)
-		assertions.Equal([]string{"provider-alias"}, outcome.Signals)
+		assertions.Equal([]string{"masked-email", "provider-alias"}, outcome.Signals)
 	}
 
 	retry, enabled, err := provideridentity.AutoRefresh(t.Context(), cfg, st, source.ID, factory)
@@ -159,4 +160,20 @@ func TestAutoRefreshRecordsFailureSoNoOpSyncsRetry(t *testing.T) {
 	assertions.True(enabled)
 	assertions.Equal(2, inventory.calls, "a recorded failure owes a retry")
 	requirements.Len(outcomes, 1)
+}
+
+func TestFastmailMaskedGroupExcludesOrdinarySendAsAndPendingMasks(t *testing.T) {
+	evidence := provideridentity.Evidence([]fastmail.Record{
+		{Identifier: "old-mask@example.test", Kind: "masked-email", State: "disabled"},
+		{Identifier: "send-as@example.test", Kind: "identity", State: "enabled"},
+		{Identifier: "pending-mask@example.test", Kind: "masked-email", State: "pending"},
+	})
+	confirmations := identityops.ExternalEvidenceConfirmations(evidence)
+	require.Len(t, confirmations, 2)
+	byAddress := map[string][]string{}
+	for _, confirmation := range confirmations {
+		byAddress[confirmation.Identifier] = confirmation.Signals
+	}
+	assert.Equal(t, []string{"masked-email", "provider-alias"}, byAddress["old-mask@example.test"])
+	assert.Equal(t, []string{"provider-alias"}, byAddress["send-as@example.test"])
 }

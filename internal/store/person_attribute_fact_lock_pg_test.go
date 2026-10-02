@@ -187,34 +187,36 @@ func waitForManualPersonAttributeTargetLock(
 	t *testing.T, st *Store, personID int64, blockerPID int, writeDone <-chan error,
 ) {
 	t.Helper()
-	requirements := require.New(t)
-	deadline := time.NewTimer(5 * time.Second)
-	t.Cleanup(func() { deadline.Stop() })
+	waitCtx, cancelWait := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelWait()
 	for {
 		select {
 		case err := <-writeDone:
-			requirements.NoError(err)
-			requirements.FailNow("manual person attribute write bypassed the target lock")
-		case <-deadline.C:
-			requirements.FailNow("manual person attribute write did not wait for the target lock")
+			require.NoError(t, err)
+			require.FailNow(t, "manual person attribute write bypassed the target lock")
+		case <-waitCtx.Done():
+			require.FailNow(t, "manual person attribute write did not wait for the target lock")
 		default:
 		}
 
-		probeCtx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-		probe, err := st.db.BeginTx(probeCtx, nil)
-		requirements.NoError(err)
+		// Opening a connection is setup, not evidence about the lock. Start
+		// the short lock probe only after the transaction is ready.
+		probe, err := st.db.BeginTx(waitCtx, nil)
+		require.NoError(t, err)
+		probeCtx, cancel := context.WithTimeout(waitCtx, 50*time.Millisecond)
 		lockErr := st.lockProfileIdentityKeyTxContext(
 			probeCtx, probe, "person-fact-generation", personID)
 		_ = probe.Rollback()
 		cancel()
 		if errors.Is(lockErr, context.DeadlineExceeded) {
-			requirements.Eventually(func() bool {
+			require.NoError(t, waitCtx.Err(), "manual person attribute write did not wait for the target lock")
+			require.Eventually(t, func() bool {
 				return personAttributePostgreSQLWaitingWriterPID(t, st, blockerPID) > 0
 			}, time.Second, postgresLockQueuePoll,
 				"manual write held the generation lock but did not wait for the target lock")
 			return
 		}
-		requirements.NoError(lockErr)
+		require.NoError(t, lockErr)
 	}
 }
 

@@ -3897,6 +3897,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_source_message_id ON messages(source_mes
 -- column, not here: a legacy DB missing search_fts would fail this index
 -- during the schema-file Exec and roll back the whole apply. [cr2-10]
 
+-- idx_message_recipients_email_from is built concurrently by Store.
 CREATE INDEX IF NOT EXISTS idx_message_recipients_message ON message_recipients(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_recipients_participant ON message_recipients(participant_id, recipient_type);
 
@@ -4090,3 +4091,25 @@ CREATE INDEX IF NOT EXISTS idx_meeting_actions_status
     ON meeting_action_items(status, message_id, ordinal);
 CREATE INDEX IF NOT EXISTS idx_meeting_actions_assignee
     ON meeting_action_items(assignee_email, message_id, ordinal);
+
+-- Provider inventory metadata is separate from confirmed ownership.
+CREATE TABLE IF NOT EXISTS provider_identity_snapshots (
+ source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ provider TEXT NOT NULL,
+ state TEXT NOT NULL,
+ PRIMARY KEY (source_id,provider)
+);
+CREATE TABLE IF NOT EXISTS provider_identity_records (
+ source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ provider TEXT NOT NULL,
+ provider_id TEXT NOT NULL,
+ identifier TEXT NOT NULL,
+ kind TEXT NOT NULL,
+ state TEXT NOT NULL,
+ for_domain TEXT NOT NULL,
+ description TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ last_message_at TEXT NOT NULL,
+ removed BOOLEAN NOT NULL DEFAULT FALSE,
+ PRIMARY KEY (source_id,provider,provider_id)
+);

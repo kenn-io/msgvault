@@ -70,6 +70,9 @@ type Store struct {
 	// owned by the worker process, not by a durable sync_runs row.
 	syncExecutionLocks *syncExecutionLockState
 
+	providerIdentityChecksMu sync.Mutex
+	providerIdentityChecks   map[int64]time.Time
+
 	cardDAVPersonOperationsMu sync.Mutex
 	cardDAVPersonOperations   map[int64]*cardDAVPersonOperation
 
@@ -1067,6 +1070,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_participants_email_lower", "ON participants(LOWER(email_address))"},
 		{"idx_participant_identifiers_value_lower", "ON participant_identifiers(LOWER(identifier_value))"},
 		{"idx_person_match_scoring_contact_lookup", "ON participant_contact_observations(address_kind, normalized_value, participant_id) WHERE active_until IS NULL AND superseded_at IS NULL"},
+		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -1144,6 +1148,12 @@ func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTempl
 }
 
 func queryInChunksContext[T any](ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
+	return queryInChunksWithValueExprContext(ctx, db, ids, prefixArgs, queryTemplate, "?", fn)
+}
+
+// valueExpr is a trusted SQL expression containing one placeholder. This lets
+// indexed lookups normalize bound values using the database's own case rules.
+func queryInChunksWithValueExprContext[T any](ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate, valueExpr string, fn func(*loggedRows) error) error {
 	const chunkSize = 500
 	for i := 0; i < len(ids); i += chunkSize {
 		if err := ctx.Err(); err != nil {
@@ -1156,7 +1166,7 @@ func queryInChunksContext[T any](ctx context.Context, db chunkQuerier, ids []T, 
 		placeholders := make([]string, len(chunk))
 		args := slices.Clone(prefixArgs)
 		for j, id := range chunk {
-			placeholders[j] = "?"
+			placeholders[j] = valueExpr
 			args = append(args, id)
 		}
 
@@ -1634,6 +1644,15 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// path. PostgreSQL does not rebuild the table but shares the ordering.
 	if err := s.ensureRecipientEnvelopeUniqueIndex(ctx); err != nil {
 		return fmt.Errorf("ensure idx_message_recipients_envelope unique: %w", err)
+	}
+
+	if !s.IsPostgreSQL() {
+		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_message_recipients_email_from ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'`)
+			return err
+		}); err != nil {
+			return fmt.Errorf("create identity From-envelope index: %w", err)
+		}
 	}
 
 	// Create the message watermark, contextual embedding journal, and attachment

@@ -508,3 +508,27 @@ func TestEnsureRecipientEnvelopeUniqueIndex_PGLegacyConstraintDrop(t *testing.T)
 	require.NoError(err, "read migration ledger")
 	assert.True(applied, "migration must be marked applied")
 }
+
+func TestInitSchemaLegacyRecipientTableCreatesFromAddressIndexAfterColumns(t *testing.T) {
+	require := require.New(t)
+
+	st, err := Open(filepath.Join(t.TempDir(), "legacy_from_index.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	// This is the pre-envelope table shape. InitSchema must add the column
+	// before creating any address index, through the production upgrade path.
+	_, err = st.db.Exec(`CREATE TABLE message_recipients (
+		id INTEGER PRIMARY KEY,
+		message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+		participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+		recipient_type TEXT NOT NULL,
+		display_name TEXT,
+		UNIQUE(message_id, participant_id, recipient_type)
+	)`)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	var indexes int
+	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_message_recipients_email_from'`).Scan(&indexes))
+	assert.Equal(t, 1, indexes)
+	require.NoError(st.InitSchema(), "index creation is idempotent")
+}

@@ -64,28 +64,34 @@ func newClient(apiToken string, httpClient *http.Client, sessionURL string) *Cli
 // more records than that limit (Fastmail advertises 4096) fail with a typed
 // *ObjectLimitError instead of an opaque method error.
 func (c *Client) ListIdentityRecords(ctx context.Context) ([]Record, error) {
+	snapshot, err := c.ListIdentitySnapshot(ctx)
+	return snapshot.Records, err
+}
+
+// ListIdentitySnapshot reads complete provider metadata and collection states.
+func (c *Client) ListIdentitySnapshot(ctx context.Context) (Snapshot, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return Snapshot{}, err
 	}
 
 	sessionURL, err := parseEndpoint(c.sessionURL)
 	if err != nil {
-		return nil, errors.New("invalid JMAP session endpoint")
+		return Snapshot{}, errors.New("invalid JMAP session endpoint")
 	}
 	session, err := c.fetchSession(ctx, sessionURL)
 	if err != nil {
-		return nil, err
+		return Snapshot{}, err
 	}
 	if !hasCapability(session.Capabilities, CoreCapability) {
-		return nil, &CapabilityError{Capability: CoreCapability}
+		return Snapshot{}, &CapabilityError{Capability: CoreCapability}
 	}
 	if !hasCapability(session.Capabilities, MaskedEmailCapability) {
-		return nil, &CapabilityError{Capability: MaskedEmailCapability}
+		return Snapshot{}, &CapabilityError{Capability: MaskedEmailCapability}
 	}
 
 	maskedAccountID, err := selectCapabilityAccount(session, MaskedEmailCapability)
 	if err != nil {
-		return nil, err
+		return Snapshot{}, err
 	}
 
 	using := []string{CoreCapability, MaskedEmailCapability}
@@ -107,19 +113,19 @@ func (c *Client) ListIdentityRecords(ctx context.Context) ([]Record, error) {
 
 	apiURL, err := resolveAPIURL(sessionURL, session.APIURL)
 	if err != nil {
-		return nil, err
+		return Snapshot{}, err
 	}
 	requestBody, err := buildJMAPRequest(using, methods)
 	if err != nil {
-		return nil, errors.New("encode JMAP identity request")
+		return Snapshot{}, errors.New("encode JMAP identity request")
 	}
 	response, err := c.callMethods(ctx, apiURL, requestBody, methods)
 	if err != nil {
-		return nil, err
+		return Snapshot{}, err
 	}
 	records, err := parseMethodResponses(apiURL, response, methods, coreObjectLimit(session.Capabilities))
 	if err != nil {
-		return nil, err
+		return Snapshot{}, err
 	}
 	sort.Slice(records, func(i, j int) bool {
 		left := strings.ToLower(strings.TrimSpace(records[i].Identifier))
@@ -135,7 +141,7 @@ func (c *Client) ListIdentityRecords(ctx context.Context) ([]Record, error) {
 		}
 		return records[i].Identifier < records[j].Identifier
 	})
-	return records, nil
+	return Snapshot{Records: records, State: methodResponseState(response)}, nil
 }
 
 func (c *Client) fetchSession(ctx context.Context, endpoint *url.URL) (sessionResponse, error) {
@@ -320,8 +326,9 @@ func buildJMAPRequest(using []string, methods []methodExpectation) ([]byte, erro
 			return nil, err
 		}
 		arguments, err := json.Marshal(struct {
-			AccountID string `json:"accountId"`
-		}{AccountID: method.accountID}, json.Deterministic(true))
+			AccountID  string   `json:"accountId"`
+			Properties []string `json:"properties"`
+		}{AccountID: method.accountID, Properties: methodProperties(method.method)}, json.Deterministic(true))
 		if err != nil {
 			return nil, err
 		}
@@ -364,6 +371,10 @@ func parseMethodResponses(
 	methods []methodExpectation,
 	maxObjectsInGet int64,
 ) ([]Record, error) {
+	limit := maxObjectsInGet
+	if limit <= 0 {
+		limit = 4096
+	}
 	expected := make(map[string]methodExpectation, len(methods))
 	for _, method := range methods {
 		expected[method.callID] = method
@@ -409,8 +420,20 @@ func parseMethodResponses(
 			if result.AccountID != method.accountID {
 				return nil, fmt.Errorf("unexpected account in %s response from %s", method.method, endpoint.Host)
 			}
+			if len(result.NotFound) != 0 {
+				return nil, errors.New("incomplete MaskedEmail/get inventory")
+			}
+			if int64(len(result.List)) > limit {
+				return nil, &ObjectLimitError{Method: method.method, MaxObjectsInGet: limit}
+			}
 			for _, item := range result.List {
+				if item.ID == "" || item.Email == "" {
+					return nil, errors.New("incomplete MaskedEmail/get object")
+				}
 				records = append(records, Record{
+					ID: item.ID, AccountID: method.accountID,
+					ForDomain: item.ForDomain, Description: item.Description,
+					CreatedAt: item.CreatedAt, LastMessageAt: item.LastMessageAt,
 					Identifier: item.Email,
 					State:      item.State,
 					Kind:       "masked-email",
@@ -424,8 +447,18 @@ func parseMethodResponses(
 			if result.AccountID != method.accountID {
 				return nil, fmt.Errorf("unexpected account in %s response from %s", method.method, endpoint.Host)
 			}
+			if len(result.NotFound) != 0 {
+				return nil, errors.New("incomplete Identity/get inventory")
+			}
+			if int64(len(result.List)) > limit {
+				return nil, &ObjectLimitError{Method: method.method, MaxObjectsInGet: limit}
+			}
 			for _, item := range result.List {
+				if item.ID == "" || item.Email == "" {
+					return nil, errors.New("incomplete Identity/get object")
+				}
 				records = append(records, Record{
+					ID: item.ID, AccountID: method.accountID,
 					Identifier: item.Email,
 					State:      "enabled",
 					Kind:       "identity",
@@ -448,4 +481,35 @@ func methodNames(methods []methodExpectation) string {
 		names = append(names, method.method)
 	}
 	return strings.Join(names, " and ")
+}
+
+func methodProperties(method string) []string {
+	if method == maskedEmailGet {
+		return []string{"id", "email", "state", "forDomain", "description", "createdAt", "lastMessageAt"}
+	}
+	return []string{"id", "email"}
+}
+
+func methodResponseState(response jmapResponse) string {
+	states := make(map[string]string, len(response.MethodResponses))
+	for _, raw := range response.MethodResponses {
+		var tuple []jsontext.Value
+		if json.Unmarshal(raw, &tuple) != nil || len(tuple) != 3 {
+			return ""
+		}
+		var result struct {
+			AccountID string `json:"accountId"`
+			State     string `json:"state"`
+		}
+		var method string
+		if json.Unmarshal(tuple[0], &method) != nil || json.Unmarshal(tuple[1], &result) != nil || result.State == "" {
+			return ""
+		}
+		states[method+":"+result.AccountID] = result.State
+	}
+	encoded, err := json.Marshal(states, json.Deterministic(true))
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }

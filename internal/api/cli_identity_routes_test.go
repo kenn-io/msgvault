@@ -973,3 +973,27 @@ func TestCLIIdentityMutationsRejectExplicitNonPositiveSourceIDWithoutMutation(t 
 		})
 	}
 }
+
+func TestCLIIdentityDiscoverProviderObjectLimitIsActionableWithoutWrites(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
+	srv.cfg.Fastmail = []config.FastmailSource{{SourceID: source.ID, APIToken: "synthetic-token"}}
+	require.NoError(wrapped.AddAccountIdentity(source.ID, "old@example.test", "manual"))
+	before, err := wrapped.ListAccountIdentities(source.ID)
+	require.NoError(err)
+	inventory := &cliIdentityProviderInventory{err: &fastmail.ObjectLimitError{Method: "MaskedEmail/get", MaxObjectsInGet: 4096}}
+	srv.fastmailInventoryFactory = func(string) fastmailIdentityInventory { return inventory }
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/identities/discover", strings.NewReader(fmt.Sprintf(`{"source_id":%d,"provider":true,"apply":true}`, source.ID)))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusBadRequest, response.Code)
+	assert.Contains(response.Body.String(), "4096")
+	assert.Contains(response.Body.String(), "fastmail_object_limit")
+	after, err := wrapped.ListAccountIdentities(source.ID)
+	require.NoError(err)
+	assert.Equal(before, after)
+	assert.NotContains(response.Body.String(), "synthetic-token")
+}

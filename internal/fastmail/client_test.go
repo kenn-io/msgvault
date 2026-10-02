@@ -78,12 +78,12 @@ func TestListIdentityRecordsIncludesHistoricalMaskedAliases(t *testing.T) {
 	methodRequest := <-methodRequests
 	require.NoError(methodRequest.err)
 	assert.Equal([]Record{
-		{Identifier: "*@example.test", State: "enabled", Kind: "identity"},
-		{Identifier: "Active@example.test", State: "enabled", Kind: "masked-email"},
-		{Identifier: "deleted@example.test", State: "deleted", Kind: "masked-email"},
-		{Identifier: "old@example.test", State: "disabled", Kind: "masked-email"},
-		{Identifier: "send-as@example.test", State: "enabled", Kind: "identity"},
-		{Identifier: "waiting@example.test", State: "pending", Kind: "masked-email"},
+		{ID: "identity-1", AccountID: "submission-account", Identifier: "*@example.test", State: "enabled", Kind: "identity"},
+		{ID: "1", AccountID: "masked-account", Identifier: "Active@example.test", State: "enabled", Kind: "masked-email"},
+		{ID: "3", AccountID: "masked-account", Identifier: "deleted@example.test", State: "deleted", Kind: "masked-email"},
+		{ID: "2", AccountID: "masked-account", Identifier: "old@example.test", State: "disabled", Kind: "masked-email"},
+		{ID: "identity-2", AccountID: "submission-account", Identifier: "send-as@example.test", State: "enabled", Kind: "identity"},
+		{ID: "4", AccountID: "masked-account", Identifier: "waiting@example.test", State: "pending", Kind: "masked-email"},
 	}, got)
 
 	require.Len(methodRequest.request.MethodCalls, 2)
@@ -134,7 +134,7 @@ func TestListIdentityRecordsWorksWithMaskedEmailCapabilityOnly(t *testing.T) {
 	methodRequest := <-methodRequests
 	require.NoError(methodRequest.err)
 	assert.Equal([]Record{
-		{Identifier: "masked@example.test", State: "enabled", Kind: "masked-email"},
+		{ID: "1", AccountID: "masked-only", Identifier: "masked@example.test", State: "enabled", Kind: "masked-email"},
 	}, got)
 	require.Len(methodRequest.request.MethodCalls, 1)
 	assert.Equal([]string{CoreCapability, MaskedEmailCapability}, methodRequest.request.Using)
@@ -181,7 +181,7 @@ func TestListIdentityRecordsSkipsSubmissionWithoutAccessibleAccount(t *testing.T
 	got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
 	require.NoError(err)
 	assert.Equal([]Record{
-		{Identifier: "historical@example.test", State: "disabled", Kind: "masked-email"},
+		{ID: "1", AccountID: "masked-only", Identifier: "historical@example.test", State: "disabled", Kind: "masked-email"},
 	}, got)
 	methodRequest := <-methodRequests
 	require.NoError(methodRequest.err)

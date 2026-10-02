@@ -2304,6 +2304,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_reply_to_message_id ON messages(reply_to
     WHERE reply_to_message_id IS NOT NULL;
 
 -- Message recipients
+-- idx_message_recipients_email_from is built after legacy column migrations in Store.
 CREATE INDEX IF NOT EXISTS idx_message_recipients_message ON message_recipients(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_recipients_participant ON message_recipients(participant_id, recipient_type);
 
@@ -4523,3 +4524,25 @@ CREATE INDEX IF NOT EXISTS idx_meeting_actions_status
     ON meeting_action_items(status, message_id, ordinal);
 CREATE INDEX IF NOT EXISTS idx_meeting_actions_assignee
     ON meeting_action_items(assignee_email, message_id, ordinal);
+
+-- Provider inventory metadata is separate from confirmed ownership.
+CREATE TABLE IF NOT EXISTS provider_identity_snapshots (
+ source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ provider TEXT NOT NULL,
+ state TEXT NOT NULL,
+ PRIMARY KEY (source_id,provider)
+);
+CREATE TABLE IF NOT EXISTS provider_identity_records (
+ source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ provider TEXT NOT NULL,
+ provider_id TEXT NOT NULL,
+ identifier TEXT NOT NULL,
+ kind TEXT NOT NULL,
+ state TEXT NOT NULL,
+ for_domain TEXT NOT NULL,
+ description TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ last_message_at TEXT NOT NULL,
+ removed BOOLEAN NOT NULL DEFAULT FALSE,
+ PRIMARY KEY (source_id,provider,provider_id)
+);

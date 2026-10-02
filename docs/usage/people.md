@@ -492,7 +492,7 @@ account identifier or display name:
 ```toml
 [[fastmail]]
 source_id = 14
-api_token = "replace-with-a-Fastmail-API-token"
+api_token_env = "FASTMAIL_API_TOKEN"
 auto_confirm_identities = false
 ```
 
@@ -510,5 +510,25 @@ after successful mailbox syncs. A changed mailbox refreshes immediately; a
 no-change sync rechecks only when the last successful provider refresh is more
 than 24 hours old or the prior attempt failed.
 
-The API token is stored in `config.toml`; protect that file like the rest of the
-msgvault data directory.
+Choose one token source: inline `api_token`, `api_token_env`, or a `0600`
+`api_token_file` under the tokens directory. See the [configuration reference](../configuration.md#fastmail).
+
+Automatic refreshes request only identity and mask metadata. msgvault saves the
+provider object ID, domain, description, timestamps and state separately from
+confirmed ownership. Vanished masks are marked removed; disabled, deleted and removed
+masks remain confirmed. An unchanged JMAP collection state writes no inventory
+or identity rows. Successful no-op polls keep the daemon’s in-memory freshness
+marker current; restarting the daemon may repeat one poll.
+
+Confirmed masks carry the provider-neutral `masked-email` category alongside
+`provider-alias`. The stored inventory identifies Fastmail separately as the
+provider. Matching uses local confirmed identities and indexed message
+addresses, without a provider request for each match. Other masked-email
+services need their own discovery adapters; only Fastmail discovery is currently
+configured here.
+
+Fastmail advertises a limit of 4,096 objects per `/get` call. Its Masked Email
+extension has no query or changes method for pagination. A larger inventory
+causes `identity discover --provider` and automatic refresh to report the
+object limit and preserve existing identities and provider records. See
+[Fastmail's API reference](https://www.fastmail.com/dev/#masked-email-api).
