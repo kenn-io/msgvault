@@ -7,6 +7,9 @@ package query
 import (
 	"maps"
 	"time"
+
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // AggregateRow represents a single row in an aggregate view.
@@ -222,6 +225,8 @@ const (
 
 // MessageFilter specifies which messages to retrieve.
 type MessageFilter struct {
+	AccountScopes []search.AccountScope // virtual account scope; intersects physical source filters
+
 	// Filter by aggregate key
 	Sender        string // filter by sender email
 	SenderName    string // filter by sender display name (COALESCE(display_name, email))
@@ -311,6 +316,7 @@ func (f *MessageFilter) HasEmptyTargets() bool {
 // copy would share the underlying map between the original and copy.
 func (f *MessageFilter) Clone() MessageFilter {
 	clone := *f
+	clone.AccountScopes = search.CloneAccountScopes(f.AccountScopes)
 	if f.EmptyValueTargets != nil {
 		clone.EmptyValueTargets = make(map[ViewType]bool, len(f.EmptyValueTargets))
 		maps.Copy(clone.EmptyValueTargets, f.EmptyValueTargets)
@@ -324,6 +330,8 @@ func (f *MessageFilter) Clone() MessageFilter {
 
 // AggregateOptions configures an aggregate query.
 type AggregateOptions struct {
+	AccountScopes []search.AccountScope
+
 	// Account filter
 	SourceID  *int64  // nil means all accounts
 	SourceIDs []int64 // multi-source filter (collections)
@@ -362,6 +370,8 @@ func DefaultAggregateOptions() AggregateOptions {
 
 // AccountInfo represents a source account.
 type AccountInfo struct {
+	VirtualAccounts []store.VirtualAccount `json:"virtual_accounts,omitempty"`
+
 	ID          int64
 	SourceType  string
 	Identifier  string // email address

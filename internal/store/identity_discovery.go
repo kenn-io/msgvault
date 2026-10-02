@@ -385,6 +385,7 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 		}
 
 		inserted := false
+		var addedAddresses []string
 		for _, confirmation := range confirmations {
 			added, err := s.mergeAccountIdentitySignalsTx(
 				ctx,
@@ -398,6 +399,9 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 				return err
 			}
 			inserted = inserted || added
+			if added {
+				addedAddresses = append(addedAddresses, confirmation.identifier)
+			}
 			outcomes = append(outcomes, IdentityConfirmationOutcome{
 				Identifier: confirmation.identifier,
 				Added:      added,
@@ -411,6 +415,9 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 			return err
 		}
 		if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
+			return err
+		}
+		if err := s.recomputeAccountIdentitiesWith(ctx, tx, sourceID, addedAddresses, nil); err != nil {
 			return err
 		}
 		participantIDs, err := participantIDsForConfirmationsContext(ctx, tx, sourceID, confirmations)

@@ -40,7 +40,8 @@ import (
 // from the current roster when queried.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
-const CacheSchemaVersion = 30
+// v31 adds scalar account attribution and identity group membership.
+const CacheSchemaVersion = 31
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

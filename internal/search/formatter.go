@@ -16,7 +16,7 @@ func Format(q *Query) string {
 		return ""
 	}
 
-	var parts []string
+	parts := FormatAccountScopes(q.AccountScopes)
 	for _, term := range q.TextTerms {
 		parts = append(parts, formatSearchValue(term, true))
 	}

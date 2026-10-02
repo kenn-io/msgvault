@@ -1,0 +1,10 @@
+From: sender@example.test
+Date: Mon, 1 Jan 2024 12:00:00 +0000
+Subject: Synthetic route
+To: other@example.test
+Content-Type: message/rfc822
+
+X-Delivered-To: mask@example.org
+To: work@example.com
+
+Nested synthetic message

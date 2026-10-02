@@ -120,7 +120,7 @@ func (s *Store) PersistGmailDraftContext(
 		if data.MIMEAttachmentReplacement != nil {
 			return nil, errors.New("gmail draft persistence cannot replace attachments")
 		}
-		return prepareGmailDraftMessage(ctx, tx, receipt.SourceID, data)
+		return s.prepareGmailDraftMessage(ctx, tx, receipt.SourceID, data)
 	}
 	after := func(ctx context.Context, tx *loggedTx, _ *MessagePersistData, messageID int64) error {
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
@@ -378,7 +378,7 @@ func (s *Store) PublishGmailDraftReplacementContext(
 			if !bytes.Equal(data.RawMIME, draft.Pending.Raw) {
 				return nil, errors.New("replacement MIME does not match the claimed candidate")
 			}
-			return prepareGmailDraftMessage(ctx, tx, draft.SourceID, data)
+			return s.prepareGmailDraftMessage(ctx, tx, draft.SourceID, data)
 		}
 		messageID, err := s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, build, prepare, nil)
 		if err != nil {
@@ -462,7 +462,7 @@ func (s *Store) AdoptGmailDraftObservationContext(
 				if data == nil || data.Message == nil || data.Message.SourceID != draft.SourceID || data.Message.SourceMessageID != observed.GmailMessageID {
 					return nil, errors.New("observed message identity does not match receipt")
 				}
-				return prepareGmailDraftMessage(ctx, tx, draft.SourceID, data)
+				return s.prepareGmailDraftMessage(ctx, tx, draft.SourceID, data)
 			}
 			after := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, messageID int64) error {
 				if data.MIMEAttachmentReplacement == nil {
@@ -575,7 +575,7 @@ func (s *Store) FinishGmailDraftDeleteContext(
 	return finished, nil
 }
 
-func prepareGmailDraftMessage(
+func (s *Store) prepareGmailDraftMessage(
 	ctx context.Context,
 	tx *loggedTx,
 	sourceID int64,
@@ -595,7 +595,7 @@ func prepareGmailDraftMessage(
 			Info:          LabelInfo{Name: "DRAFT", Type: "system"},
 		})
 	}
-	labelIDs, err := ensureMessageLabelRefsWith(boundQuerier{ctx: ctx, q: tx}, sourceID, refs)
+	labelIDs, err := s.ensureMessageLabelRefsWith(ctx, tx, sourceID, refs)
 	if err != nil {
 		return nil, fmt.Errorf("resolve Gmail draft labels: %w", err)
 	}

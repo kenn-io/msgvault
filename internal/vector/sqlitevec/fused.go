@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -354,6 +355,20 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 	   %s`,
 		store.LiveMessagesWhere("m", true), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
 		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL)
+	accountClauses, accountValues := search.AppendAccountConditions(nil, nil, req.Filter.AccountScopes, "m", "account_identity_group_memberships")
+	var accountArgs []any
+	for i, clause := range accountClauses {
+		for strings.Contains(clause, "?") {
+			index := len(accountArgs)
+			name := fmt.Sprintf("account_scope_%d", index)
+			clause = strings.Replace(clause, "?", ":"+name, 1)
+			accountArgs = append(accountArgs, sql.Named(name, accountValues[index]))
+		}
+		accountClauses[i] = clause
+	}
+	if len(accountClauses) > 0 {
+		filterWhere += " AND " + strings.Join(accountClauses, " AND ")
+	}
 
 	// buildQuery interpolates a fresh query string for a given chunkK,
 	// so the widening loop below can re-issue the fused CTE with a
@@ -492,6 +507,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 	filterArgs = append(filterArgs, ccGroupArgs...)
 	filterArgs = append(filterArgs, bccGroupArgs...)
 	filterArgs = append(filterArgs, labelGroupArgs...)
+	filterArgs = append(filterArgs, accountArgs...)
 
 	// Two ceilings bound the widening loop. The generation-wide
 	// chunkCeiling is the hard upper bound on currentChunkK so the

@@ -214,6 +214,9 @@ func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCo
 					"COALESCE(TRY_CAST(has_attachments AS BOOLEAN), false) AS has_attachments",
 				},
 				optionalCols: []optionalCol{
+					{name: "account_address", replaceExpr: "CAST(account_address AS VARCHAR) AS account_address", defaultExpr: "NULL::VARCHAR AS account_address"},
+					{name: "account_path", replaceExpr: "CAST(account_path AS VARCHAR) AS account_path", defaultExpr: "NULL::VARCHAR AS account_path"},
+					{name: "account_attribution_basis", replaceExpr: "CAST(account_attribution_basis AS VARCHAR) AS account_attribution_basis", defaultExpr: "NULL::VARCHAR AS account_attribution_basis"},
 					{
 						name:        "attachment_count",
 						replaceExpr: "COALESCE(TRY_CAST(attachment_count AS INTEGER), 0) AS attachment_count",
@@ -428,6 +431,23 @@ func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCo
 			return fmt.Errorf("create view %s: %w", d.def.name, err)
 		}
 	}
+	return createAccountGroupView(ctx, db, analyticsDir)
+}
+
+func createAccountGroupView(ctx context.Context, db *sql.DB, analyticsDir string) error {
+	groupPath := filepath.Join(analyticsDir, "account_identity_group_memberships", "*.parquet")
+	files, err := filepath.Glob(groupPath)
+	if err != nil {
+		return err
+	}
+	stmt := `CREATE OR REPLACE VIEW account_identity_group_memberships AS SELECT NULL::BIGINT AS source_id,NULL::VARCHAR AS group_key,NULL::VARCHAR AS address_key WHERE FALSE`
+	if len(files) > 0 {
+		stmt = "CREATE OR REPLACE VIEW account_identity_group_memberships AS SELECT CAST(source_id AS BIGINT) AS source_id, CAST(group_key AS VARCHAR) AS group_key, CAST(address_key AS VARCHAR) AS address_key FROM read_parquet('" + strings.ReplaceAll(groupPath, "'", "''") + "')"
+	}
+	if _, err = db.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("create account group view: %w", err)
+	}
+
 	return nil
 }
 
@@ -780,3 +800,32 @@ LEFT JOIN message_recipients mr ON mr.message_id = m.id
 LEFT JOIN participants p ON p.id = mr.participant_id
 GROUP BY c.id, c.source_conversation_id, c.title, c.conversation_type
 `
+
+// Attribution remains available when legacy analytical views are disabled.
+func createAccountAttributionView(ctx context.Context, db *sql.DB, analyticsDir string, columns map[string]bool) error {
+	var fields []string
+	for _, field := range []string{"id", "source_id", "message_type", "account_address", "account_path", "account_attribution_basis"} {
+		typ := "VARCHAR"
+		if field == "id" || field == "source_id" {
+			typ = "BIGINT"
+		}
+		expression := "NULL::" + typ
+		if field == "account_attribution_basis" {
+			expression = "'not-derived'"
+		}
+		if analyticsDir != "" && columns[field] {
+			expression = "CAST(" + field + " AS " + typ + ")"
+		}
+		fields = append(fields, expression+" AS "+field)
+	}
+	stmt := "CREATE OR REPLACE VIEW message_accounts AS SELECT " + strings.Join(fields, ",")
+	if analyticsDir == "" {
+		// A metadata-only engine has no analytics publication to read.
+		stmt += " WHERE FALSE"
+	} else {
+		path := strings.ReplaceAll(filepath.Join(analyticsDir, "messages", "**", "*.parquet"), "'", "''")
+		stmt += " FROM read_parquet('" + path + "',hive_partitioning=true,union_by_name=true)"
+	}
+	_, err := db.ExecContext(ctx, stmt)
+	return err
+}

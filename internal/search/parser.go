@@ -12,6 +12,10 @@ import (
 
 // Query represents a parsed search query with all supported filters.
 type Query struct {
+	// Plain operators share alternatives, but never merge into transported scopes.
+	accountOperatorScopeIndexes map[bool]int
+	AccountScopes               []AccountScope // attributed account OR groups, intersected across dimensions
+
 	TextTerms       []string   // Full-text search terms
 	FromAddrs       []string   // from: filters
 	ToAddrs         []string   // to: filters
@@ -115,7 +119,7 @@ type UnsupportedOperator struct {
 
 // IsEmpty returns true if the query has no search criteria.
 func (q *Query) IsEmpty() bool {
-	return len(q.TextTerms) == 0 &&
+	return len(q.AccountScopes) == 0 && len(q.TextTerms) == 0 &&
 		len(q.FromAddrs) == 0 &&
 		len(q.ToAddrs) == 0 &&
 		len(q.CcAddrs) == 0 &&
@@ -216,6 +220,9 @@ const (
 )
 
 var operators = map[string]operatorFn{
+	"account_scope": structuredAccountOperator,
+	"account":       accountOperator(false),
+	"received":      accountOperator(true),
 	"from": func(q *Query, v string, _ time.Time) error {
 		q.FromAddrs = append(q.FromAddrs, normalizeAddr(v))
 		return nil
@@ -600,7 +607,7 @@ func parseRelativeDate(value string, now time.Time) *time.Time {
 // HasOperators returns true if the query contains any structured
 // operators beyond plain text terms.
 func (q *Query) HasOperators() bool {
-	return len(q.FromAddrs) > 0 ||
+	return len(q.AccountScopes) > 0 || len(q.FromAddrs) > 0 ||
 		len(q.ToAddrs) > 0 ||
 		len(q.CcAddrs) > 0 ||
 		len(q.BccAddrs) > 0 ||

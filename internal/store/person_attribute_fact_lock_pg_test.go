@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"os"
 	"testing"
 	"time"
@@ -187,35 +186,45 @@ func waitForManualPersonAttributeTargetLock(
 	t *testing.T, st *Store, personID int64, blockerPID int, writeDone <-chan error,
 ) {
 	t.Helper()
-	requirements := require.New(t)
-	deadline := time.NewTimer(5 * time.Second)
-	t.Cleanup(func() { deadline.Stop() })
-	for {
+	var writerPID int
+	require.Eventually(t, func() bool {
 		select {
 		case err := <-writeDone:
-			requirements.NoError(err)
-			requirements.FailNow("manual person attribute write bypassed the target lock")
-		case <-deadline.C:
-			requirements.FailNow("manual person attribute write did not wait for the target lock")
+			require.NoError(t, err)
+			require.FailNow(t, "manual person attribute write bypassed the target lock")
 		default:
 		}
+		writerPID = personAttributePostgreSQLWaitingWriterPID(t, st, blockerPID)
+		return writerPID > 0
+	}, postgresLockQueueBudget, postgresLockQueuePoll,
+		"manual person attribute write did not wait for the target lock")
 
-		probeCtx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-		probe, err := st.db.BeginTx(probeCtx, nil)
-		requirements.NoError(err)
-		lockErr := st.lockProfileIdentityKeyTxContext(
+	// Establish the probe connection before waiting on the generation lock.
+	// Observe its actual blocker instead of treating a short connection or
+	// authentication timeout as proof that the generation lock is held.
+	probeCtx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	probe, err := st.db.BeginTx(probeCtx, nil)
+	require.NoError(t, err)
+	defer func() { _ = probe.Rollback() }()
+	var probePID int
+	require.NoError(t, probe.QueryRowContext(probeCtx, `SELECT pg_backend_pid()`).Scan(&probePID))
+	probeDone := make(chan error, 1)
+	go func() {
+		probeDone <- st.lockProfileIdentityKeyTxContext(
 			probeCtx, probe, "person-fact-generation", personID)
-		_ = probe.Rollback()
+	}()
+	defer func() {
 		cancel()
-		if errors.Is(lockErr, context.DeadlineExceeded) {
-			requirements.Eventually(func() bool {
-				return personAttributePostgreSQLWaitingWriterPID(t, st, blockerPID) > 0
-			}, time.Second, postgresLockQueuePoll,
-				"manual write held the generation lock but did not wait for the target lock")
-			return
-		}
-		requirements.NoError(lockErr)
-	}
+		<-probeDone
+	}()
+	require.Eventually(t, func() bool {
+		var blocked bool
+		require.NoError(t, st.db.QueryRowContext(t.Context(),
+			`SELECT $1 = ANY(pg_blocking_pids($2))`, writerPID, probePID).Scan(&blocked))
+		return blocked
+	}, postgresLockQueueBudget, postgresLockQueuePoll,
+		"manual write waited for the target without holding the generation lock")
 }
 
 func personAttributePostgreSQLWaitingWriterPID(t *testing.T, st *Store, blockerPID int) int {

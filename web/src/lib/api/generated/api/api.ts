@@ -74,6 +74,7 @@ import type {
   CliOriginalMessageResponse,
   CliRebuildFTSEvent,
   CliSearchResponse,
+  CliSourceAccountsResponse,
   CliStatsResponse,
   CommunicationService,
   CommunicationServicesResponse,
@@ -1241,6 +1242,17 @@ export const searchCLI = (
 ) => {
   return orvalFetch<CliSearchResponse>(
     { url: `/api/v1/cli/search`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary List physical source metadata without message counts
+ */
+export const listCLISourceAccounts = (
+  options?: SecondParameter<typeof orvalFetch<CliSourceAccountsResponse>>,
+) => {
+  return orvalFetch<CliSourceAccountsResponse>(
+    { url: `/api/v1/cli/source-accounts`, method: "GET" },
     options,
   );
 };

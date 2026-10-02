@@ -448,7 +448,6 @@ func TestInactiveOrganizationAttributeDefinitionAllowsSupersede(t *testing.T) {
 }
 
 func TestOrganizationAttributeSupersedeRetriesDeadlock(t *testing.T) {
-	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL row locks are required for attribute retry regression")
@@ -463,56 +462,20 @@ func TestOrganizationAttributeSupersedeRetriesDeadlock(t *testing.T) {
 		Value:          textAttributeValue("stale"),
 		Source:         store.ProvenanceUser,
 	})
-	require.NoError(err)
+	require.NoError(t, err)
 
-	blocker, err := st.DB().BeginTx(ctx, nil)
-	require.NoError(err)
-	t.Cleanup(func() { _ = blocker.Rollback() })
-	var lockedID int64
-	require.NoError(blocker.QueryRowContext(ctx,
-		`SELECT id FROM organizations WHERE id = $1 FOR UPDATE`, organization.ID).Scan(&lockedID))
-	require.Equal(organization.ID, lockedID)
-
-	writeDone := make(chan error, 1)
-	go func() {
-		_, supersedeErr := st.SupersedeOrganizationAttributeValueContext(ctx,
-			store.OrganizationAttributeSupersedeInput{
-				OrganizationID:  organization.ID,
-				DefinitionSlug:  definition.Slug,
-				ExpectedValueID: &write.Value.ID,
-			})
-		writeDone <- supersedeErr
-	}()
-	require.Eventually(func() bool {
-		return postgreSQLWaitingLockCount(t, st) >= 1
-	}, 5*time.Second, 10*time.Millisecond, "supersede did not reach the organization lock")
-
-	blockerDefinitionDone := make(chan error, 1)
-	go func() {
-		var id int64
-		definitionErr := blocker.QueryRowContext(ctx,
-			`SELECT id FROM attribute_definitions WHERE id = $1 FOR UPDATE`, definition.ID).Scan(&id)
-		if definitionErr == nil {
-			definitionErr = blocker.Commit()
-		} else {
-			_ = blocker.Rollback()
-		}
-		blockerDefinitionDone <- definitionErr
-	}()
-
-	var writeErr, blockerErr error
-	select {
-	case writeErr = <-writeDone:
-	case <-ctx.Done():
-		require.FailNow("supersede did not finish after the deadlock detector", ctx.Err())
-	}
-	select {
-	case blockerErr = <-blockerDefinitionDone:
-	case <-ctx.Done():
-		require.FailNow("blocker did not finish after the deadlock detector", ctx.Err())
-	}
-	require.NoError(blockerErr, "blocker must release the organization lock")
-	require.NoError(writeErr, "organization supersede must retry a transient PostgreSQL deadlock")
+	err = forcePostgreSQLDeadlock(ctx, t, st,
+		postgreSQLRowLock{table: "organizations", id: organization.ID},
+		postgreSQLRowLock{table: "attribute_definitions", id: definition.ID},
+		func(ctx context.Context) error {
+			_, supersedeErr := st.SupersedeOrganizationAttributeValueContext(ctx,
+				store.OrganizationAttributeSupersedeInput{
+					OrganizationID: organization.ID, DefinitionSlug: definition.Slug,
+					ExpectedValueID: &write.Value.ID,
+				})
+			return supersedeErr
+		})
+	require.NoError(t, err, "organization supersede must retry a transient PostgreSQL deadlock")
 }
 
 func TestDeletePersonRejectsOrganizationStoredRecordReferences(t *testing.T) {

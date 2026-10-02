@@ -4,6 +4,22 @@
 
 export type FilterMessagesParams = {
   /**
+   * Exact attributed email addresses; repeated values are alternatives
+   */
+  account_addresses?: string[];
+  /**
+   * Identity group keys, such as fastmail-masked:<account>
+   */
+  account_groups?: string[];
+  /**
+   * Only messages without an attributed account
+   */
+  account_unattributed?: boolean;
+  /**
+   * JSON account scope intersections for structured clients
+   */
+  account_scopes?: string;
+  /**
    * Sender email/address filter
    */
   sender?: string;

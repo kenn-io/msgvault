@@ -86,7 +86,11 @@ func TestQuerySQLToolConfinesDaemonOwnerCredentialsToArchive(t *testing.T) {
 		dir := filepath.Join(analyticsDir, dataset)
 		require.NoError(os.MkdirAll(dir, 0o700))
 		path := strings.ReplaceAll(filepath.ToSlash(filepath.Join(dir, "rows.parquet")), "'", "''")
-		_, err := fixtureDB.Exec("COPY (SELECT 'synthetic archive row' AS subject) TO '" + path + "' (FORMAT PARQUET)")
+		selectSQL := "SELECT 'synthetic archive row' AS subject"
+		if dataset == "account_identity_group_memberships" {
+			selectSQL = "SELECT 0::BIGINT AS source_id, ''::VARCHAR AS group_key, ''::VARCHAR AS address_key WHERE false"
+		}
+		_, err := fixtureDB.Exec("COPY (" + selectSQL + ") TO '" + path + "' (FORMAT PARQUET)")
 		require.NoError(err)
 	}
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)

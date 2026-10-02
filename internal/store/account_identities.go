@@ -248,6 +248,9 @@ func (s *Store) addAccountIdentityOnce(
 					return err
 				}
 			}
+			if err := s.recomputeAccountIdentitiesWith(ctx, tx, sourceID, []string{addr}, nil); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -337,6 +340,13 @@ func (s *Store) mergeAccountIdentitySignalsTxWith(
 				merged, wantKey, sourceID, existingAddr,
 			); err != nil {
 				return false, true, fmt.Errorf("update source_signal: %w", err)
+			}
+			// A new masked membership changes virtual groups without changing
+			// ownership. Invalidate analytics while preserving identity revisions.
+			if !strings.Contains(","+existing+",", ",fastmail-masked-email,") && strings.Contains(","+merged+",", ",fastmail-masked-email,") {
+				if err := s.bumpDerivedDataRevision(tx); err != nil {
+					return false, true, err
+				}
 			}
 		}
 		return false, true, nil
@@ -552,7 +562,10 @@ func (s *Store) RemoveAccountIdentityContext(
 		if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 			return err
 		}
-		return refreshSourceMessageAttributionContext(ctx, tx, sourceID, "")
+		if err := refreshSourceMessageAttributionContext(ctx, tx, sourceID, ""); err != nil {
+			return err
+		}
+		return s.recomputeAccountIdentitiesWith(ctx, tx, sourceID, []string{address}, nil)
 	})
 	if err != nil {
 		return 0, err

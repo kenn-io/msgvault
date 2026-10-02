@@ -217,10 +217,12 @@ func TestMeetingProjectionPublicRawWritesLockMessageBeforeRaw(t *testing.T) {
 			requirements := require.New(t)
 			base := newRFC822IDBackfillBackendStore(t)
 			_, id := projectionFixture(t, base, "raw-lock", "meeting_json", meetingProjectionRaw)
-			statement := make(chan string, 1)
+			statement := make(chan struct{}, 1)
+			var statements []string
 			var once sync.Once
 			gate := &meetingProjectionGate{before: func(_ context.Context, query string, _ []driver.NamedValue) error {
-				once.Do(func() { statement <- query })
+				statements = append(statements, query)
+				once.Do(func() { statement <- struct{}{} })
 				return nil
 			}}
 			st := gatedMeetingProjectionStore(t, base, gate)
@@ -239,13 +241,7 @@ func TestMeetingProjectionPublicRawWritesLockMessageBeforeRaw(t *testing.T) {
 				}
 			}()
 			select {
-			case first := <-statement:
-				if base.IsPostgreSQL() {
-					assertions.Contains(first, "FROM messages WHERE id =")
-					assertions.Contains(first, "FOR UPDATE")
-				} else {
-					assertions.Contains(first, "UPDATE embedding_change_clock")
-				}
+			case <-statement:
 			case <-ctx.Done():
 				requirements.NoError(ctx.Err(), "raw write did not attempt its first statement")
 			}
@@ -256,6 +252,24 @@ func TestMeetingProjectionPublicRawWritesLockMessageBeforeRaw(t *testing.T) {
 			case <-ctx.Done():
 				requirements.NoError(ctx.Err(), "raw write did not finish")
 			}
+			// Identity serialization precedes the meeting lock. Verify the lock
+			// protects the first raw access through the real database driver.
+			lockIndex, rawIndex := -1, -1
+			for i, query := range statements {
+				isLock := strings.HasPrefix(query, "UPDATE embedding_change_clock")
+				if base.IsPostgreSQL() {
+					isLock = strings.Contains(query, "FROM messages WHERE id =") && strings.Contains(query, "FOR UPDATE")
+				}
+				if isLock && lockIndex < 0 {
+					lockIndex = i
+				}
+				if strings.Contains(query, "message_raw") && rawIndex < 0 {
+					rawIndex = i
+				}
+			}
+			requirements.GreaterOrEqual(lockIndex, 0, "message/writer lock observed")
+			requirements.GreaterOrEqual(rawIndex, 0, "raw access observed")
+			assertions.Less(lockIndex, rawIndex, "lock precedes raw access")
 			content, _ := readProjection(t, base, id)
 			assertions.Empty(content.Actions)
 		})

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1694,12 +1695,88 @@ func (s *Store) UpdateSourceDisplayNameContext(
 // The sync_config column is JSONB on PG; the dialect supplies the
 // appropriate placeholder cast (?::JSONB on PG, bare ? on SQLite).
 func (s *Store) UpdateSourceSyncConfig(sourceID int64, configJSON string) error {
-	_, err := s.db.Exec(fmt.Sprintf(`
-		UPDATE sources
-		SET sync_config = %s, updated_at = %s
-		WHERE id = ?
-	`, s.dialect.JSONBindExpr(), s.dialect.Now()), configJSON, sourceID)
-	return err
+	ctx := context.Background()
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		var sourceType string
+		var old sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT source_type,sync_config FROM sources WHERE id=?`+s.dialect.SelectForUpdate(), sourceID).Scan(&sourceType, &old)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if sourceType == "gcal" {
+			// Provider refreshes rewrite sync_config. Keep the explicit archive mapping
+			// unless the caller supplies account_address, including an explicit clear.
+			var before, after map[string]any
+			if old.Valid && old.String != "" {
+				if err = json.Unmarshal([]byte(old.String), &before); err != nil {
+					return err
+				}
+			}
+			if err = json.Unmarshal([]byte(configJSON), &after); err != nil {
+				return err
+			}
+			if after == nil {
+				after = make(map[string]any)
+			}
+			if _, supplied := after["account_address"]; !supplied && before["account_address"] != nil {
+				after["account_address"] = before["account_address"]
+			}
+			encoded, err := json.Marshal(after)
+			if err != nil {
+				return err
+			}
+			configJSON = string(encoded)
+			if _, err = tx.ExecContext(ctx, fmt.Sprintf(`UPDATE sources SET sync_config=%s, updated_at=%s WHERE id=?`, s.dialect.JSONBindExpr(), s.dialect.Now()), configJSON, sourceID); err != nil {
+				return err
+			}
+			mappingChanged := false
+			for _, key := range []string{"calendar_id", "account_email", "account_address"} {
+				beforeValue, _ := before[key].(string)
+				afterValue, ok := after[key].(string)
+				if !ok && after[key] != nil {
+					return fmt.Errorf("calendar %s must be a string", key)
+				}
+				if beforeValue != afterValue {
+					mappingChanged = true
+				}
+			}
+			if !mappingChanged {
+				return nil
+			}
+			rows, err := tx.QueryContext(ctx, `SELECT id FROM messages WHERE source_id=? AND message_type='calendar_event' ORDER BY id`, sourceID)
+			if err != nil {
+				return err
+			}
+			var ids []int64
+			for rows.Next() {
+				var id int64
+				if err = rows.Scan(&id); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				ids = append(ids, id)
+			}
+			err = rows.Err()
+			_ = rows.Close()
+			if err != nil {
+				return err
+			}
+			for _, id := range ids {
+				if err = s.refreshAccountAttributionWith(ctx, tx, id, nil); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		_, err = tx.ExecContext(ctx, fmt.Sprintf(`UPDATE sources SET sync_config=%s,updated_at=%s WHERE id=?`, s.dialect.JSONBindExpr(), s.dialect.Now()), configJSON, sourceID)
+		return err
+	})
 }
 
 // UpdateSourceIdentifier updates the identifier column for an existing source.

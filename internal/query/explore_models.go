@@ -1,6 +1,10 @@
 package query
 
-import "time"
+import (
+	"time"
+
+	"go.kenn.io/msgvault/internal/search"
+)
 
 // ExploreRequest is the canonical modality-neutral analytical request. The
 // API layer validates the finite grouping/sort catalog before constructing it.
@@ -50,6 +54,8 @@ type IdentityPredicate struct {
 
 // Context narrows the archive before logical chat rows are aggregated.
 type Context struct {
+	AccountScopes []search.AccountScope `json:"account_scopes,omitempty"`
+
 	SourceIDs      []int64            `json:"source_ids,omitempty"`
 	ParticipantIDs []int64            `json:"participant_ids,omitempty"`
 	Domains        []string           `json:"domains,omitempty"`

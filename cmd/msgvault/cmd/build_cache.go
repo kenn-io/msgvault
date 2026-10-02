@@ -1464,6 +1464,11 @@ func buildCacheLocked(
 		return nil, fmt.Errorf("export sources: %w", err)
 	}
 
+	groupsDir := filepath.Join(staging.root, "account_identity_group_memberships")
+	if err := runExport("account_identity_group_memberships", fmt.Sprintf(`COPY (%s) TO '%s/groups.parquet' (FORMAT PARQUET, COMPRESSION 'zstd')`, sourceSnapshot.accountGroupSelectSQL("sqlite_db."), strings.ReplaceAll(groupsDir, "'", "''"))); err != nil {
+		return nil, fmt.Errorf("export account groups: %w", err)
+	}
+
 	// 7. Export conversations (for Gmail thread IDs)
 	conversationsDir := filepath.Join(staging.root, tableConversations)
 	escapedConversationsDir := strings.ReplaceAll(conversationsDir, "'", "''")
@@ -1501,6 +1506,7 @@ func buildCacheLocked(
 		SELECT
 			m.id,
 			m.source_id,
+ `+sourceSnapshot.accountColumnsSQL("m")+`,
 			COALESCE(%s, '') AS source_message_id,
 			%s AS rfc822_message_id,
 			m.conversation_id,
@@ -1554,6 +1560,7 @@ func buildCacheLocked(
 			SELECT
 				m.id,
 				m.source_id,
+ `+sourceSnapshot.accountColumnsSQL("m")+`,
 				COALESCE(%s, '') AS source_message_id,
 				%s AS rfc822_message_id,
 				m.conversation_id,
@@ -1903,6 +1910,8 @@ type cacheSourceSnapshot struct {
 	hasAttachmentMIME           bool
 	hasAttachmentMetadata       bool
 	hasMessageSourceAttribution bool
+	hasAccountAttribution       bool
+	hasAccountGroups            bool
 	hasRecipientEnvelope        bool
 	// csvSnapshot records that the sqlite_db tables are CSV views exported
 	// from SQLite, not the attached database itself. It is set once at
@@ -2024,6 +2033,9 @@ func (s *cacheSourceSnapshot) identityPresenceSQL(emailRef, presenceRef string) 
 // read transaction. sqlite_scanner needs no preparation because DuckDB's
 // transaction reads the attached database directly.
 func (s *cacheSourceSnapshot) Prepare() error {
+	if err := s.inspectAccountAttribution(); err != nil {
+		return err
+	}
 	return s.prepareTables(s.tables())
 }
 
@@ -2031,6 +2043,9 @@ func (s *cacheSourceSnapshot) Prepare() error {
 // fallback path. sqlite_scanner needs no materialization. Derived refreshes
 // use this to avoid exporting unrelated multi-million-row junction tables.
 func (s *cacheSourceSnapshot) PrepareDatasets(names ...string) error {
+	if err := s.inspectAccountAttribution(); err != nil {
+		return err
+	}
 	wanted := make(map[string]bool, len(names))
 	for _, name := range names {
 		wanted[name] = true
@@ -2079,8 +2094,8 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 		recipientEnvelopeColumn = "email_address"
 		recipientEnvelopePresence = emailPresence + " AS envelope_present"
 	}
-	messageColumns := "id, source_id, source_message_id, rfc822_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type, list_id, is_from_me"
-	messageTypes := "types={'id': 'BIGINT', 'source_id': 'BIGINT', 'source_message_id': 'VARCHAR', 'rfc822_message_id': 'VARCHAR', 'conversation_id': 'BIGINT', 'subject': 'VARCHAR', 'snippet': 'VARCHAR', 'sent_at': 'TIMESTAMP', 'size_estimate': 'BIGINT', 'has_attachments': 'BOOLEAN', 'attachment_count': 'INTEGER', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP', 'sender_id': 'BIGINT', 'message_type': 'VARCHAR', 'list_id': 'VARCHAR', 'is_from_me': 'BOOLEAN'"
+	messageColumns := "id, source_id, source_message_id, rfc822_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type, list_id, is_from_me, " + s.accountColumnsSQL("")
+	messageTypes := "types={'id': 'BIGINT', 'source_id': 'BIGINT', 'source_message_id': 'VARCHAR', 'rfc822_message_id': 'VARCHAR', 'conversation_id': 'BIGINT', 'subject': 'VARCHAR', 'snippet': 'VARCHAR', 'sent_at': 'TIMESTAMP', 'size_estimate': 'BIGINT', 'has_attachments': 'BOOLEAN', 'attachment_count': 'INTEGER', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP', 'sender_id': 'BIGINT', 'message_type': 'VARCHAR', 'list_id': 'VARCHAR', 'is_from_me': 'BOOLEAN', 'account_address': 'VARCHAR', 'account_path': 'VARCHAR', 'account_attribution_basis': 'VARCHAR'"
 	if s.hasMessageSourceAttribution {
 		messageColumns += ", source_is_from_me"
 		messageTypes += ", 'source_is_from_me': 'BOOLEAN'"
@@ -2109,6 +2124,7 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number, " + emailPresence + " AS primary_email_present FROM participants",
 			"types={'id': 'BIGINT', 'email_address': 'VARCHAR', 'domain': 'VARCHAR', 'display_name': 'VARCHAR', 'phone_number': 'VARCHAR', 'primary_email_present': 'BOOLEAN'}",
 			identityColumns("email_address")},
+		{"account_identity_group_memberships", s.accountGroupSelectSQL(""), "types={'source_id': 'BIGINT', 'group_key': 'VARCHAR', 'address_key': 'VARCHAR'}", identityColumns("group_key", "address_key")},
 		{"account_identities", "SELECT source_id, address FROM account_identities",
 			"types={'source_id': 'BIGINT', 'address': 'VARCHAR'}",
 			identityColumns("address")},
@@ -2750,4 +2766,38 @@ func init() {
 		"Internal: scheduled staleness-derived build with lock-held interval recheck",
 	)
 	_ = buildCacheCmd.Flags().MarkHidden("scheduled-auto")
+}
+
+func (s *cacheSourceSnapshot) inspectAccountAttribution() error {
+	var columns, groups int
+	if err := s.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name IN ('account_address','account_path','account_attribution_basis')`).Scan(&columns); err != nil {
+		return err
+	}
+	if err := s.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='account_identity_group_memberships'`).Scan(&groups); err != nil {
+		return err
+	}
+	s.hasAccountAttribution = columns == 3
+	s.hasAccountGroups = groups > 0
+	return nil
+}
+
+func (s *cacheSourceSnapshot) accountColumnsSQL(alias string) string {
+	if !s.hasAccountAttribution {
+		return "CAST(NULL AS VARCHAR) AS account_address, CAST(NULL AS VARCHAR) AS account_path, 'not-derived' AS account_attribution_basis"
+	}
+	if alias != "" {
+		alias += "."
+	}
+	return alias + "account_address, " + alias + "account_path, " + alias + "account_attribution_basis"
+}
+
+func (s *cacheSourceSnapshot) accountGroupSelectSQL(prefix string) string {
+	if !s.hasAccountGroups {
+		return "SELECT CAST(NULL AS BIGINT) AS source_id, CAST(NULL AS VARCHAR) AS group_key, CAST(NULL AS VARCHAR) AS address_key WHERE FALSE"
+	}
+	if s.csvSnapshot && prefix != "" {
+		return "SELECT source_id,group_key,address_key FROM " + prefix + "account_identity_group_memberships"
+	}
+	// sqlite_scanner exposes tables, so derive the Store view from its base tables.
+	return "SELECT ai.source_id, 'fastmail-masked:' || LOWER(src.identifier) AS group_key, ai.address_key FROM " + prefix + "account_identities ai JOIN " + prefix + "sources src ON src.id=ai.source_id WHERE (',' || ai.source_signal || ',') LIKE '%,fastmail-masked-email,%'"
 }

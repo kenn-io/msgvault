@@ -44,6 +44,7 @@ func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q 
 		rebind = identityRebind
 	}
 
+	f.AccountScopes = search.CloneAccountScopes(q.AccountScopes)
 	groupFilters := []struct {
 		addrs []string
 		dst   *[][]int64
@@ -139,6 +140,7 @@ func ApplyMessageFilter(
 		}
 	}
 
+	f.AccountScopes = append(f.AccountScopes, search.CloneAccountScopes(structured.AccountScopes)...)
 	derived := query.MergeFilterIntoQuery(&search.Query{}, structured)
 	intersectSourceIDs(f, derived.AccountIDs)
 	intersectConversationIDs(f, derived.ConversationIDs)

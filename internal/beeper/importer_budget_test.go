@@ -326,8 +326,8 @@ func TestImportStopsAfterIncrementalPageAndResumesFromCursor(t *testing.T) {
 }
 
 func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	f := newFakeBeeper(t)
 	chat := budgetTestChat("!deadline:beeper.local", 2, base)
@@ -335,7 +335,7 @@ func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
 	imp, _, done := newTestImporter(t, f)
 	defer done()
 	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
-	require.NoError(err)
+	requirements.NoError(err)
 	f.appendMsg(chat.ID, fakeMsg{
 		ID: chat.ID + "-new", SortKey: 2, Timestamp: base.Add(2 * time.Minute),
 		Text: "new message", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
@@ -348,32 +348,36 @@ func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
 
 	sumCh := make(chan *ImportSummary, 1)
 	errCh := make(chan error, 1)
+	// The scheduled budget includes database preparation before the HTTP
+	// request. Give that work room to reach the blocked request on PostgreSQL.
+	const blockedRequestBudget = 10 * time.Second
+	const requestTransitionTimeout = 30 * time.Second
 	go func() {
 		sum, importErr := imp.Import(context.Background(), ImportOptions{
-			AccountID: "signal", StopAt: time.Now().Add(150 * time.Millisecond),
+			AccountID: "signal", StopAt: time.Now().Add(blockedRequestBudget),
 		})
 		sumCh <- sum
 		errCh <- importErr
 	}()
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
-		require.FailNow("scheduled import did not enter the blocked provider request")
+	case <-time.After(requestTransitionTimeout):
+		requirements.FailNow("scheduled import did not enter the blocked provider request")
 	}
 	select {
 	case sum := <-sumCh:
-		require.NoError(<-errCh, "a spent request budget completes as resumable work")
-		require.NotNil(sum)
-		assert.True(sum.Stopped)
-	case <-time.After(2 * time.Second):
-		require.FailNow("request context did not cancel at the scheduled budget")
+		requirements.NoError(<-errCh, "a spent request budget completes as resumable work")
+		requirements.NotNil(sum)
+		assertions.True(sum.Stopped)
+	case <-time.After(requestTransitionTimeout):
+		requirements.FailNow("request context did not cancel at the scheduled budget")
 	}
-	assert.Equal(2, countBeeperMessages(t, imp), "the interrupted page must not advance its cursor")
+	assertions.Equal(2, countBeeperMessages(t, imp), "the interrupted page must not advance its cursor")
 
 	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
-	require.NoError(err)
-	assert.False(sum.Stopped)
-	assert.Equal(3, countBeeperMessages(t, imp), "the next run resumes the interrupted page")
+	requirements.NoError(err)
+	assertions.False(sum.Stopped)
+	assertions.Equal(3, countBeeperMessages(t, imp), "the next run resumes the interrupted page")
 }
 
 func TestImportStopsAfterReconcilePage(t *testing.T) {

@@ -340,7 +340,8 @@ import (
 // Existing person edits, clears, and idempotent re-promotion are preserved.
 // 2.35.0 adds scope_escalation_source_type to staged-deletion plans so local
 // CLI clients can authorize Microsoft Graph mail before starting the worker.
-const APISchemaVersion = "2.35.0"
+// 2.36.0 adds received/account attribution filters and virtual account children.
+const APISchemaVersion = "2.36.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1127,7 +1128,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			"readiness": {"ExploreCacheUnavailableResponseReadinessAbsent", "ExploreCacheUnavailableResponseReadinessBuilding", "ExploreCacheUnavailableResponseReadinessInterrupted", "ExploreCacheUnavailableResponseReadinessStaleSchema", "ExploreCacheUnavailableResponseReadinessDrifted"},
 		},
 		"ExploreFilter": {
-			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity"},
+			"dimension": {"ExploreFilterDimensionAccount", "ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity"},
 		},
 		"ExploreGroupSort": {
 			"direction": {"ExploreGroupSortDirectionAsc", "ExploreGroupSortDirectionDesc"},

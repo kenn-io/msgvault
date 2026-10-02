@@ -408,7 +408,7 @@ func searchMessagesOutputSchema() *jsonschema.Schema {
 }
 
 func accountProperty() *jsonschema.Schema {
-	return stringSchema("Filter by account email address (use get_stats to list available accounts)")
+	return stringSchema("Filter by physical account email, virtual account key, or identity group (use get_stats to list accounts)")
 }
 
 func afterProperty() *jsonschema.Schema {
@@ -740,8 +740,8 @@ func listMessagesDefinition(_ *handlers) toolDefinition {
 func getStatsDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolGetStats,
-		"Get archive overview: total messages, size, attachment count, and accounts.",
-		closedObject(map[string]*jsonschema.Schema{}),
+		"Get archive overview: total messages, size, attachment count, and accounts. Optionally scope statistics to an account.",
+		closedObject(map[string]*jsonschema.Schema{toolArgAccount: accountProperty()}),
 		outputSchemaFor[getStatsResponse](),
 		(*handlers).getStats,
 	)

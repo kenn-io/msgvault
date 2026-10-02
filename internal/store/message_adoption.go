@@ -34,6 +34,9 @@ func (s *Store) AdoptMessageSourceIDContext(
 	}
 	var changed bool
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
 			return err
 		}

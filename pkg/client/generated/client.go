@@ -327,6 +327,10 @@ type ClientInterface interface {
 	SearchCLI(ctx context.Context, options *SearchCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchCLIResponse, error)
 	SearchCLIWithResponse(ctx context.Context, options *SearchCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchCLIResp, error)
 
+	// ListCLISourceAccounts List physical source metadata without message counts
+	ListCLISourceAccounts(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListCLISourceAccountsResponse, error)
+	ListCLISourceAccountsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListCLISourceAccountsResp, error)
+
 	// GetCLIStats Get CLI-compatible archive statistics
 	GetCLIStats(ctx context.Context, options *GetCLIStatsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIStatsResponse, error)
 	GetCLIStatsWithResponse(ctx context.Context, options *GetCLIStatsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIStatsResp, error)
@@ -5587,6 +5591,68 @@ func (c *Client) SearchCLI(ctx context.Context, options *SearchCLIRequestOptions
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/search")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListCLISourceAccounts List physical source metadata without message counts
+func (c *Client) ListCLISourceAccounts(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListCLISourceAccountsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/cli/source-accounts",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListCLISourceAccountsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListCLISourceAccountsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListCLISourceAccountsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListCLISourceAccountsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListCLISourceAccountsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/cli/source-accounts")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

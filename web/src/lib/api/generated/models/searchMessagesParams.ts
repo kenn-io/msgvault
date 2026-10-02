@@ -72,6 +72,10 @@ export type SearchMessagesParams = {
    */
   list_id?: string;
   /**
+   * JSON account scope intersections (vector or hybrid mode)
+   */
+  account_scopes?: string;
+  /**
    * Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)
    */
   time_period?: string;

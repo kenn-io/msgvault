@@ -76,6 +76,11 @@ var MessagesNonContentColumns = []string{
 	// attribution provenance migration for no reader-visible difference.
 	"source_is_from_me",
 	"identity_is_from_me",
+	// Account facts are derived routing projections, absent from ChangedMessage.
+	// Their own derived-data revision and journal invalidate account filters.
+	"account_address",
+	"account_path",
+	"account_attribution_basis",
 	"reply_to_message_id", // threading pointer; conversation_id is the routing key
 	"thread_position",     // ordering within a thread, derived
 	"is_read",             // local read state

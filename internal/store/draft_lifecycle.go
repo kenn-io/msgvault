@@ -70,6 +70,9 @@ func (t draftTable[D]) lockTx(ctx context.Context, s *Store, tx *loggedTx, draft
 // inTx runs fn in one transaction after locking and loading the draft row.
 func (t draftTable[D]) inTx(ctx context.Context, s *Store, draftID string, fn func(tx *loggedTx, draft D) error) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := t.lockTx(ctx, s, tx, draftID); err != nil {
 			return err
 		}

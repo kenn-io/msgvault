@@ -264,6 +264,7 @@ func optsToFilterConditions(d Dialect, opts AggregateOptions, prefix string) ([]
 	conditions, args = appendSourceFilter(
 		conditions, args, prefix, opts.SourceID, opts.SourceIDs,
 	)
+	conditions, args = search.AppendAccountConditions(conditions, args, opts.AccountScopes, strings.TrimSuffix(prefix, "."), "account_identity_group_memberships")
 	// Normalize absolute instants through the active backend dialect.
 	if opts.After != nil {
 		conditions = append(conditions, d.DateComparison(prefix+"sent_at", ">="))
@@ -333,6 +334,7 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter) (stri
 	conditions, args = appendSourceFilter(
 		conditions, args, prefix, filter.SourceID, filter.SourceIDs,
 	)
+	conditions, args = search.AppendAccountConditions(conditions, args, filter.AccountScopes, "m", "account_identity_group_memberships")
 
 	if filter.ConversationID != nil {
 		conditions = append(conditions, prefix+"conversation_id = ?")
@@ -647,13 +649,15 @@ func (e *SQLiteEngine) Aggregate(ctx context.Context, groupBy ViewType, opts Agg
 }
 
 func aggregateHasExplicitMessageType(filter MessageFilter, opts AggregateOptions) bool {
-	if filter.MessageType != "" {
+	// An attributed account supplies its own email/calendar type scope.
+	if strings.TrimSpace(filter.MessageType) != "" || len(filter.AccountScopes) > 0 || len(opts.AccountScopes) > 0 {
 		return true
 	}
 	if opts.SearchQuery == "" {
 		return false
 	}
-	return len(search.Parse(opts.SearchQuery).MessageTypes) > 0
+	parsed := search.Parse(opts.SearchQuery)
+	return len(parsed.MessageTypes) > 0 || len(parsed.AccountScopes) > 0
 }
 
 func sqliteMessageTypeCondition(alias string, messageTypes []string) (string, []any) {
@@ -1284,8 +1288,8 @@ func (e *SQLiteEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, err
 	return getMessageRawShared(ctx, e.db, e.dialect.Rebind, "", id)
 }
 
-// ListAccounts returns all source accounts.
-func (e *SQLiteEngine) ListAccounts(ctx context.Context) ([]AccountInfo, error) {
+// ListSourceAccounts reads physical source metadata without message aggregates.
+func (e *SQLiteEngine) ListSourceAccounts(ctx context.Context) ([]AccountInfo, error) {
 	rows, err := e.queryContext(ctx, `
 		SELECT id, source_type, identifier, COALESCE(display_name, ''), last_sync_at
 		FROM sources
@@ -1310,7 +1314,26 @@ func (e *SQLiteEngine) ListAccounts(ctx context.Context) ([]AccountInfo, error) 
 		accounts = append(accounts, acc)
 	}
 
-	return accounts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return accounts, nil
+}
+
+// ListAccounts includes virtual children and their live archive totals.
+func (e *SQLiteEngine) ListAccounts(ctx context.Context) ([]AccountInfo, error) {
+	accounts, err := e.ListSourceAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	virtual, err := store.ReadVirtualAccountsContext(ctx, e.db, e.dialect.Rebind)
+	if err != nil {
+		return nil, err
+	}
+	for i := range accounts {
+		accounts[i].VirtualAccounts = virtual[accounts[i].ID]
+	}
+	return accounts, nil
 }
 
 // GetTotalStats returns overall statistics.
@@ -1504,6 +1527,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	}
 
 	conditions, args = appendSourceFilter(conditions, args, "m.", filter.SourceID, filter.SourceIDs)
+	conditions, args = search.AppendAccountConditions(conditions, args, filter.AccountScopes, "m", "account_identity_group_memberships")
 	if filter.ConversationID != nil {
 		conditions = append(conditions, "m.conversation_id = ?")
 		args = append(args, *filter.ConversationID)
@@ -2018,6 +2042,7 @@ func (e *SQLiteEngine) buildSearchQueryPartsWithVisibility(ctx context.Context, 
 
 	// Account filter
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, q.AccountIDs)
+	conditions, args = search.AppendAccountConditions(conditions, args, q.AccountScopes, "m", "account_identity_group_memberships")
 	conditions, args = appendConversationFilter(
 		conditions, args, "m.conversation_id", q.ConversationIDs,
 	)
@@ -2356,6 +2381,7 @@ func searchResultsSQL(ftsJoin, whereClause string) string {
 func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// Copy all fields from original query (preserves any future non-slice fields)
 	merged := *q
+	merged.AccountScopes = append(search.CloneAccountScopes(q.AccountScopes), search.CloneAccountScopes(filter.AccountScopes)...)
 
 	// Deep copy slices to avoid mutating original (shallow copy + append can
 	// mutate if original slice has spare capacity)

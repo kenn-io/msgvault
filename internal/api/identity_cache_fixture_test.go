@@ -32,6 +32,14 @@ func ensureIdentityCacheFixtureDatasets(
 		personDisplayNamesPath,
 	))
 	require.NoError(t, err, "write empty person_display_names fixture dataset")
+	groupsDir := filepath.Join(analyticsDir, "account_identity_group_memberships")
+	require.NoError(t, os.MkdirAll(groupsDir, 0o755))
+	groupsPath := filepath.ToSlash(filepath.Join(groupsDir, "groups.parquet"))
+	_, err = db.Exec(fmt.Sprintf(
+		"COPY (SELECT 0::BIGINT AS source_id, ''::VARCHAR AS group_key, ''::VARCHAR AS address_key WHERE false) TO '%s' (FORMAT PARQUET)",
+		groupsPath,
+	))
+	require.NoError(t, err, "write empty account groups fixture dataset")
 	_, err = identityindex.Build(context.Background(), db, identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,
 		StagedBaseRoot: analyticsDir,

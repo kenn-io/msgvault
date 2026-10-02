@@ -344,6 +344,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[cliInitDBResponse](apiV1, "initCLIArchive", http.MethodPost, "/cli/init-db", "Initialize the archive for CLI use", s.handleCLIInitDB)
 	registerAPIV1RawHumaJSONRoute[cliStatsResponse](apiV1, "getCLIStats", http.MethodGet, "/cli/stats", "Get CLI-compatible archive statistics", s.handleCLIStats)
 	registerAPIV1RawHumaJSONRoute[cliSearchResponse](apiV1, "searchCLI", http.MethodGet, "/cli/search", "Search messages for CLI output", s.handleCLISearch)
+	registerAPIV1RawHumaJSONRoute[cliSourceAccountsResponse](apiV1, "listCLISourceAccounts", http.MethodGet, "/cli/source-accounts", "List physical source metadata without message counts", s.handleCLISourceAccounts)
 	registerAPIV1RawHumaJSONRoute[cliAccountsResponse](apiV1, "listCLIAccounts", http.MethodGet, "/cli/accounts", "List accounts for CLI output", s.handleCLIAccounts)
 	registerAPIV1RawHumaJSONRoute[cliCacheStatsResponse](apiV1, "getCLICacheStats", http.MethodGet, "/cli/cache-stats", "Get CLI-compatible analytics cache statistics", s.handleCLICacheStats)
 	registerAPIV1RawHumaNDJSONRoute[CLICacheBuildEvent](apiV1, "buildCLICache", http.MethodPost, "/cli/build-cache", "Build the CLI analytics cache", s.handleCLIBuildCache)
@@ -974,6 +975,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryRequiredIntegerParam("message_id", "Seed message ID"),
 			queryIntegerParam(limitParam, "Maximum number of rows to return"),
 			queryStringParam("account", "Account email or configured source identifier", false),
+			queryStringParam("account_scopes", "JSON account scope intersections for structured clients", false),
 			queryStringParam("message_type", "Message type filter", false),
 			queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
 			queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
@@ -1081,6 +1083,10 @@ func paginationParams(pageName, pageSizeName string) []*huma.Param {
 
 func aggregateOptionParams() []*huma.Param {
 	return []*huma.Param{
+		queryRefArrayParam("account_addresses", "Exact attributed email addresses; repeated values are alternatives"),
+		queryRefArrayParam("account_groups", "Identity group keys, such as fastmail-masked:<account>"),
+		queryBooleanParam("account_unattributed", "Only messages without an attributed account"),
+		queryStringParam("account_scopes", "JSON account scope intersections for structured clients", false),
 		queryStringParam("sort", "Sort field: count, size, attachment_size, or name", false),
 		queryStringParam("direction", "Sort direction: asc or desc", false),
 		queryIntegerParam(limitParam, "Maximum number of rows to return (default 100; values below 1 fall back to the default)"),
@@ -1106,6 +1112,10 @@ func messageFilterParams() []*huma.Param {
 
 func messageFilterScopeParams() []*huma.Param {
 	return []*huma.Param{
+		queryRefArrayParam("account_addresses", "Exact attributed email addresses; repeated values are alternatives"),
+		queryRefArrayParam("account_groups", "Identity group keys, such as fastmail-masked:<account>"),
+		queryBooleanParam("account_unattributed", "Only messages without an attributed account"),
+		queryStringParam("account_scopes", "JSON account scope intersections for structured clients", false),
 		queryStringParam("sender", "Sender email/address filter", false),
 		queryStringParam("sender_name", "Sender display-name filter", false),
 		queryStringParam(recipientParam, "Recipient email/address filter", false),
@@ -1135,6 +1145,7 @@ func semanticMessageFilterParams() []*huma.Param {
 		queryStringParam("domain", "Exact sender domain filter (vector or hybrid mode only)", false),
 		queryStringParam("label", "Exact case-insensitive label filter (vector or hybrid mode only)", false),
 		queryStringParam("list_id", "Exact case-insensitive RFC 2919 List-Id filter (vector or hybrid mode only)", false),
+		queryStringParam("account_scopes", "JSON account scope intersections (vector or hybrid mode)", false),
 		queryStringParam("time_period", "Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)", false),
 		queryStringParam("time_granularity", "Time bucket granularity (vector or hybrid mode only)", false),
 		queryIntegerParam("source_id", "Exact source ID (vector or hybrid mode only)"),

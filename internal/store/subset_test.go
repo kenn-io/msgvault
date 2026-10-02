@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1312,6 +1313,38 @@ func TestCopySubset_Basic(t *testing.T) {
 	hasViolation := fkRows.Next()
 	require.NoError(fkRows.Err(), "foreign_key_check rows")
 	assert.False(hasViolation, "foreign key violations found in destination database")
+}
+
+func TestCopySubsetResetsAccountFactsWithoutOwnership(t *testing.T) {
+	for _, includeIdentity := range []bool{false, true} {
+		t.Run(strconv.FormatBool(includeIdentity), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			sourcePath := createTestSourceDB(t, t.TempDir(), 3)
+			source, err := Open(sourcePath)
+			require.NoError(err)
+			require.NoError(source.AddAccountIdentity(1, "owner@example.org", "manual"))
+			_, err = source.DB().Exec(`UPDATE messages SET account_address='owner@example.org',account_path='inbound',account_attribution_basis='visible-recipient'`)
+			require.NoError(err)
+			require.NoError(source.Close())
+			destinationDir := filepath.Join(t.TempDir(), "subset")
+			_, err = CopySubset(sourcePath, destinationDir, 2, includeIdentity)
+			require.NoError(err)
+			destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(destination.Close()) })
+			var pending, ownership int64
+			require.NoError(destination.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE account_address IS NULL AND account_path IS NULL AND account_attribution_basis='not-derived'`).Scan(&pending))
+			require.NoError(destination.DB().QueryRow(`SELECT COUNT(*) FROM account_identities`).Scan(&ownership))
+			assert.Equal(int64(0), ownership, "participant identity opt-in does not copy account ownership")
+			assert.Equal(int64(2), pending, "copied messages must not retain facts whose confirmed identities were omitted")
+			catalog, err := destination.ListVirtualAccountsContext(t.Context())
+			require.NoError(err)
+			require.Len(catalog[1], 1)
+			assert.True(catalog[1][0].Unattributed)
+			assert.Equal(int64(2), catalog[1][0].MessageCount)
+		})
+	}
 }
 
 func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
@@ -3408,7 +3441,9 @@ func TestCopySubset_LegacySourceWithoutOAuthApp(t *testing.T) {
 	require.NoError(err)
 	// SQLite doesn't support DROP COLUMN before 3.35. Rebuild the
 	// table without oauth_app to simulate an old schema.
+	// The legacy schema predates the account view that references sources.
 	_, err = db.Exec(`
+		DROP VIEW account_identity_group_memberships;
 		CREATE TABLE sources_old AS
 			SELECT id, source_type, identifier, display_name,
 			       google_user_id, last_sync_at, sync_cursor,
@@ -3904,8 +3939,9 @@ func TestCopySubset_LegacySourceWithoutContentChangedAt(t *testing.T) {
 // `messages`. But the `INSERT INTO message_bodies` that follows it fires
 // trg_message_bodies_content_changed_ins and schema.sql's pre-existing
 // trg_message_bodies_last_modified_ins, and both of those write the parent row
-// directly. The result is a split: a copied message that HAS a body carries
-// copy-time values for both columns, and a bodyless one carries the source's.
+// directly. With already-pending account attribution, a copied message with a
+// body carries copy-time values for both columns; a bodyless one keeps the
+// source's. Clearing derived account attribution also updates last_modified.
 //
 // That split is accepted, not repaired — a subset is a new archive whose feed
 // consumers start from an empty cursor, and last_modified has behaved this way

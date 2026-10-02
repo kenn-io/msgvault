@@ -169,21 +169,27 @@ func TestEmailHeaderRepairRejectsWrongSourceAndCancellation(t *testing.T) {
 }
 
 func TestEmailHeaderRepairRollsBackWhenRevisionWriteFails(t *testing.T) {
-	assertions := assert.New(t)
 	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	id := f.CreateMessage("repair")
 	requirements.NoError(st.SetMessageMetadata(id, sql.NullString{String: `{"other":true}`, Valid: true}))
-	var err error
+	beforeRevision, err := st.DerivedDataRevisionContext(t.Context())
+	requirements.NoError(err)
 	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`ALTER TABLE archive_metadata ADD CONSTRAINT reject_email_revision CHECK (key <> 'derived_data_revision')`)
+		// Existing message projections can already have a revision row. Reject
+		// subsequent writes without rejecting installation of the fault itself.
+		_, err = st.DB().Exec(`ALTER TABLE archive_metadata ADD CONSTRAINT reject_email_revision CHECK (key <> 'derived_data_revision') NOT VALID`)
 	} else {
 		_, err = st.DB().Exec(`CREATE TRIGGER reject_email_revision BEFORE INSERT ON archive_metadata
    WHEN NEW.key = 'derived_data_revision' BEGIN SELECT RAISE(ABORT,'synthetic revision failure'); END`)
 	}
 	requirements.NoError(err)
 	requirements.Error(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, id, "repair@example.test", "parent@example.test"))
+	afterRevision, err := st.DerivedDataRevisionContext(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(beforeRevision, afterRevision, "failed repair preserves the derived revision")
 	var rfcID sql.NullString
 	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), id).Scan(&rfcID))
 	assertions.False(rfcID.Valid)

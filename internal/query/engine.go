@@ -109,6 +109,12 @@ type Engine interface {
 	Close() error
 }
 
+// SourceAccountLister resolves physical account metadata without message totals.
+// Account selectors can use it before loading the virtual-account catalog.
+type SourceAccountLister interface {
+	ListSourceAccounts(ctx context.Context) ([]AccountInfo, error)
+}
+
 // DeletionSearchMode selects the search predicate used while resolving an
 // exact, source-bound deletion target set.
 type DeletionSearchMode string

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-27"
+last_edited: "2026-10-02"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -47,6 +47,8 @@ msgvault supports a local subset of Gmail-like search syntax.
 | `subject:` | Subject text | `subject:meeting` |
 | `label:` | Gmail label | `label:INBOX`, `label:SENT` |
 | `list:` / `list-id:` | RFC 2919 List-Id literal substring | `list:announce.example.org` |
+| `account:` | Exact attributed email/calendar account or identity group | `account:work@example.org`, `account:fastmail-masked:inbox@example.net` |
+| `received:` | Exact attributed inbound email account | `received:work@example.org` |
 | `has:attachment` | Has attachments | `has:attachment` |
 | `before:` | Before date | `before:2024-06-01` |
 | `after:` | After date | `after:2024-01-01` |
@@ -63,6 +65,41 @@ List-Id matching is case-insensitive and treats `%`, `_`, and `\` literally.
 Quote a value when it contains spaces, for example
 `list-id:"Example Announcements"`. Repeating `list:` or `list-id:` uses AND
 semantics: every supplied substring must occur in the stored List-Id.
+
+### Forwarded mail and virtual accounts
+
+Confirm an alias for its physical source before using account attribution.
+`received:work@example.org` finds inbound mail delivered to that alias, including
+forwarded messages. `account:work@example.org` also includes provider-marked sent
+mail from that address and mapped calendar events. Addresses match exactly,
+ignoring case; dots and plus suffixes stay significant.
+
+Original-recipient headers take precedence over delivery chains and To/Cc.
+Conflicting confirmed aliases remain unattributed. Without stronger evidence,
+a confirmed source inbox can be used as a labelled fallback. For IMAP, the inbox
+is the validated mailbox username from connection configuration or the source
+URL. The connection URL itself is not an address. Header attribution does not
+authorize sending from an address. `received:unattributed` finds
+processed inbound ambiguity or missing evidence; `account:unattributed` also
+includes sent/calendar ambiguity and legacy rows awaiting repair.
+
+Repeated `account:` values are alternatives. Repeated `received:` values are
+alternatives in a separate group. The two groups intersect each other and all
+other filters. `--account` and collections still select physical sources.
+
+Fastmail masked identities can share `account:fastmail-masked:<account>` when
+provider inventory stamps their confirmed identities as masked addresses.
+This group stays one picker entry even with thousands of masks.
+`received:<masked-address>` always selects one exact address.
+
+The TUI account picker and Web UI account filter show virtual children for
+multi-identity sources, groups, and an unattributed bucket. They preserve the
+physical source's credentials and sync schedule. Child counts plus unattributed
+partition the eligible email/calendar messages; source-deleted counts are
+reported separately. The Web UI reports pending initial attribution repair.
+Older archives need [`repair-account-attribution`](../cli-reference.md#repair-account-attribution)
+before exact identity filters cover their historical mail. New ingestion and
+identity confirmation/removal maintain attribution automatically.
 
 ### Domain Search
 

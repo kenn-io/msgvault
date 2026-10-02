@@ -166,6 +166,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 			values: `(2::BIGINT, 2::BIGINT), (3::BIGINT, 2::BIGINT)`,
 		},
 		{dir: "person_display_names", file: "person_display_names.parquet", columns: "participant_id, person_id, display_name", values: `(0::BIGINT, 0::BIGINT, '')`, empty: true},
+		{dir: "account_identity_group_memberships", file: "groups.parquet", columns: "source_id, group_key, address_key", values: `(0::BIGINT, ''::VARCHAR, ''::VARCHAR)`, empty: true},
 	}
 	for _, table := range tables {
 		dir := filepath.Join(analyticsDir, table.dir)

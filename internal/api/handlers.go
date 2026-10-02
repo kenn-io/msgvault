@@ -989,6 +989,7 @@ func parseSearchQueryRequest(r *http.Request, query string) *search.Query {
 }
 
 var semanticSearchStructuredFilterParamNames = []string{
+	"account_scopes",
 	"sender",
 	recipientParam,
 	"domain",
@@ -1354,6 +1355,11 @@ func parseRequiredInt64Query(r *http.Request, name string) (int64, error) {
 
 func (s *Server) similarSearchFilter(r *http.Request) (vector.Filter, *apiHTTPError) {
 	var filter vector.Filter
+	scopes, err := parseAccountScopes(r)
+	if err != nil {
+		return filter, apiHTTPErrorFromParam(err)
+	}
+	filter.AccountScopes = scopes
 	if account := r.URL.Query().Get("account"); account != "" {
 		cliStore, apiErr := s.cliStore()
 		if apiErr != nil {
@@ -2370,6 +2376,11 @@ func parseTextSortField(s string) (query.TextSortField, bool) {
 // handler can reject them with a 400; out-of-range limits are clamped.
 func parseAggregateOptions(r *http.Request) (query.AggregateOptions, error) {
 	opts := query.DefaultAggregateOptions()
+	scopes, scopeErr := parseAccountScopes(r)
+	if scopeErr != nil {
+		return opts, scopeErr
+	}
+	opts.AccountScopes = scopes
 
 	if v := r.URL.Query().Get("sort"); v != "" {
 		field, ok := parseSortField(v)
@@ -2453,6 +2464,11 @@ func requestWithoutParams(r *http.Request, keys ...string) *http.Request {
 
 func parseMessageFilter(r *http.Request) (query.MessageFilter, error) {
 	var filter query.MessageFilter
+	scopes, scopeErr := parseAccountScopes(r)
+	if scopeErr != nil {
+		return filter, scopeErr
+	}
+	filter.AccountScopes = scopes
 	filter.Pagination.Limit = -1 // sentinel: "not provided"
 
 	filter.Sender = r.URL.Query().Get("sender")
@@ -3670,6 +3686,7 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 	for _, name := range []string{
 		"sender", "sender_name", recipientParam, "recipient_name", "domain", "label", "list_id",
 		"message_type", "time_period", "time_granularity", "conversation_id", "after", "before", "empty_targets",
+		"account_scopes", "account_addresses", "account_groups", "account_unattributed",
 	} {
 		if _, present := r.URL.Query()[name]; present {
 			opts.Filter = &filter

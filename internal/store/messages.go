@@ -791,6 +791,9 @@ func (s *Store) listUnresolvedMessageReplies(
 func (s *Store) SetMessageMetadata(messageID int64, metadata sql.NullString) error {
 	ctx := context.Background()
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
 			return err
 		}
@@ -800,7 +803,11 @@ func (s *Store) SetMessageMetadata(messageID int64, metadata sql.NullString) err
 		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
 			return err
 		}
-		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		err := s.refreshAccountAttributionWith(ctx, tx, messageID, nil)
+		return err
 	})
 }
 
@@ -920,6 +927,9 @@ func (s *Store) updateMessageOnDedup(
 ) (bool, error) {
 	var changed bool
 	err := s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(context.Background(), tx); err != nil {
+			return err
+		}
 		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
 			return err
 		}
@@ -1237,6 +1247,9 @@ func (s *Store) UpsertMessage(msg *Message) (int64, error) {
 	ctx := context.Background()
 	var id int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		q := boundQuerier{ctx: ctx, q: tx}
 		if s.dialect.DriverName() != postgresDriverName {
 			// Reserve the writer before upsertMessageWith reads prior journal state.
@@ -1249,7 +1262,11 @@ func (s *Store) UpsertMessage(msg *Message) (int64, error) {
 		if err != nil {
 			return err
 		}
-		return s.refreshMeetingProjectionWith(ctx, tx, id)
+		if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
+			return err
+		}
+		err = s.refreshAccountAttributionWith(ctx, tx, id, nil)
+		return err
 	})
 	return id, err
 }
@@ -1887,8 +1904,8 @@ func (s *Store) PersistRepairMessageWithParticipantsContext(
 				data.Message.SourceID, data.Message.SourceMessageID,
 			)
 		}
-		labelIDs, err := ensureMessageLabelRefsWith(
-			boundQuerier{ctx: ctx, q: tx}, expected.SourceID, data.LabelRefs,
+		labelIDs, err := s.ensureMessageLabelRefsWith(
+			ctx, tx, expected.SourceID, data.LabelRefs,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("resolve repair message labels: %w", err)
@@ -1972,6 +1989,9 @@ func (s *Store) persistMessageWithParticipantsTx(
 	afterPersist messagePersistAfter,
 ) (int64, error) {
 	var messageID int64
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return 0, err
+	}
 	if s.dialect.DriverName() != postgresDriverName {
 		// Reserve SQLite's writer slot before any prior-state or related
 		// snapshot reads. Otherwise a concurrent commit can leave this
@@ -1987,14 +2007,6 @@ func (s *Store) persistMessageWithParticipantsTx(
 		}
 		if participant.EmailAddress == "" {
 			hasPhoneParticipant = true
-		}
-	}
-	if hasPhoneParticipant {
-		// Phone participants write participant_identifiers, which participant
-		// merges rewrite under the identity lock. Take it before the directory
-		// lock, the same order MergeParticipants uses.
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return 0, err
 		}
 	}
 	if len(participants) > 1 || hasPhoneParticipant {
@@ -2178,6 +2190,19 @@ func (s *Store) persistMessageWith(
 			return 0, fmt.Errorf("upsert fts: %w", err)
 		}
 	}
+	if len(data.RawMIME) == 0 && len(data.Recipients) > 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM message_account_evidence WHERE message_id=? AND NOT EXISTS(SELECT 1 FROM message_raw WHERE message_id=? AND raw_format='mime')`, messageID, messageID); err != nil {
+			return 0, err
+		}
+	}
+
+	var raw []byte
+	if data.RawFormat == "" || data.RawFormat == "mime" {
+		raw = data.RawMIME
+	}
+	if err := s.refreshAccountAttributionWith(ctx, tx, messageID, raw); err != nil {
+		return 0, err
+	}
 	return messageID, nil
 }
 
@@ -2356,7 +2381,11 @@ func (s *Store) EnsureParticipantsBatch(addresses []mime.Address) (map[string]in
 
 // ReplaceMessageRecipients replaces all recipients for a message atomically.
 func (s *Store) ReplaceMessageRecipients(messageID int64, recipientType string, participantIDs []int64, displayNames []string) error {
-	return s.withTx(func(tx *loggedTx) error {
+	ctx := context.Background()
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockMessageForRecipientWrite(tx, messageID); err != nil {
 			return err
 		}
@@ -2370,13 +2399,17 @@ func (s *Store) ReplaceMessageRecipients(messageID int64, recipientType string, 
 		}); err != nil {
 			return err
 		}
-		if recipientType != "from" {
-			return nil
+		if recipientType == "from" {
+			if err := refreshMessageAttributionWith(tx, messageID); err != nil {
+				return err
+			}
 		}
-		// 'from' rows are attribution input: the message upsert's CTE could not
-		// see the envelope rows this call just replaced, and importers on this
-		// granular path never reach persistMessageWith's final recompute.
-		return refreshMessageAttributionWith(tx, messageID)
+		// Envelope-only evidence must be rebuilt after a snapshot replacement.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM message_account_evidence WHERE message_id=? AND NOT EXISTS (SELECT 1 FROM message_raw WHERE message_id=? AND raw_format='mime')`, messageID, messageID); err != nil {
+			return err
+		}
+		err := s.refreshAccountAttributionWith(ctx, tx, messageID, nil)
+		return err
 	})
 }
 
@@ -2478,12 +2511,29 @@ func (s *Store) EnsureLabel(
 	sourceLabelID, name, labelType string,
 ) (int64, error) {
 	var id int64
-	err := s.withTx(func(tx *loggedTx) error {
-		var txErr error
-		id, txErr = ensureLabelWith(
-			tx, sourceID, sourceLabelID, name, labelType, nil,
-		)
-		return txErr
+	err := s.withTxContext(context.Background(), func(tx *loggedTx) error {
+		ctx := context.Background()
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		// Standalone callers preserve provider role metadata on canonical-ID
+		// adoption; a name merge keeps the surviving canonical label's role.
+		var role string
+		err := tx.QueryRowContext(ctx, `SELECT COALESCE(system_role,'') FROM labels WHERE source_id=? AND source_label_id=?`, sourceID, sourceLabelID).Scan(&role)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = tx.QueryRowContext(ctx, `SELECT COALESCE(system_role,'') FROM labels WHERE source_id=? AND name=?`, sourceID, name).Scan(&role)
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		resolved, err := s.ensureLabelsBatchWith(ctx, tx, sourceID, map[string]LabelInfo{
+			sourceLabelID: {Name: name, Type: labelType, SystemRole: role},
+		})
+		if err != nil {
+			return err
+		}
+		id = resolved[sourceLabelID]
+		return nil
 	})
 	return id, err
 }
@@ -2675,14 +2725,123 @@ func IsSystemLabel(sourceLabelID string) bool {
 func (s *Store) EnsureLabelsBatch(
 	sourceID int64, labels map[string]LabelInfo,
 ) (map[string]int64, error) {
+	return s.EnsureLabelsBatchContext(context.Background(), sourceID, labels)
+}
+
+// EnsureLabelsBatchContext also refreshes accounts affected by changed Sent roles.
+func (s *Store) EnsureLabelsBatchContext(
+	ctx context.Context, sourceID int64, labels map[string]LabelInfo,
+) (map[string]int64, error) {
 	var result map[string]int64
-	err := s.withTx(func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		var err error
-		result, err = ensureLabelsBatchWith(tx, sourceID, labels)
+		result, err = s.ensureLabelsBatchWith(ctx, tx, sourceID, labels)
 		return err
 	})
 	if err != nil {
 		return nil, err
+	}
+	return result, nil
+}
+
+// ensureLabelsBatchWith captures affected memberships before descriptor merges
+// can remove a label. Only a change to canonical Sent semantics needs repair.
+func (s *Store) ensureLabelsBatchWith(
+	ctx context.Context, tx *loggedTx, sourceID int64, labels map[string]LabelInfo,
+) (map[string]int64, error) {
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return nil, err
+	}
+	var sourceType string
+	if err := tx.QueryRowContext(ctx, `SELECT source_type FROM sources WHERE id=?`, sourceID).Scan(&sourceType); err != nil {
+		return nil, fmt.Errorf("read label source: %w", err)
+	}
+	type descriptor struct {
+		id              int64
+		key, name, role string
+	}
+	byKey := make(map[string]descriptor)
+	byName := make(map[string]descriptor)
+	rows, err := tx.QueryContext(ctx, `SELECT id,COALESCE(source_label_id,''),name,COALESCE(system_role,'') FROM labels WHERE source_id=?`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("read label roles: %w", err)
+	}
+	for rows.Next() {
+		var d descriptor
+		if err := rows.Scan(&d.id, &d.key, &d.name, &d.role); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		byKey[d.key], byName[d.name] = d, d
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	isSent := func(key, role string) bool {
+		return role == LabelSystemRoleSent || (sourceType == "gmail" && key == "SENT")
+	}
+	affectedLabels := make(map[int64]struct{})
+	for key, info := range labels {
+		wantSent := isSent(key, info.SystemRole)
+		if old, ok := byKey[key]; ok && isSent(old.key, old.role) != wantSent {
+			affectedLabels[old.id] = struct{}{}
+		}
+		if old, ok := byName[info.Name]; ok && old.key != key {
+			// Snapshot cross-renames move this name away before any merge.
+			if incoming, renamed := labels[old.key]; renamed && incoming.Name != old.name {
+				continue
+			}
+			if isSent(old.key, old.role) != wantSent {
+				affectedLabels[old.id] = struct{}{}
+			}
+		}
+	}
+	labelIDs := make([]int64, 0, len(affectedLabels))
+	for id := range affectedLabels {
+		labelIDs = append(labelIDs, id)
+	}
+	slices.Sort(labelIDs)
+	messageIDs := make(map[int64]struct{})
+	for len(labelIDs) > 0 {
+		n := min(len(labelIDs), 900)
+		args := make([]any, n)
+		for i, id := range labelIDs[:n] {
+			args[i] = id
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT message_id FROM message_labels WHERE label_id IN (`+strings.TrimSuffix(strings.Repeat("?,", n), ",")+`) GROUP BY message_id`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("read messages affected by label role: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			messageIDs[id] = struct{}{}
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		labelIDs = labelIDs[n:]
+	}
+	result, err := ensureLabelsBatchWith(boundQuerier{ctx: ctx, q: tx}, sourceID, labels)
+	if err != nil {
+		return nil, err
+	}
+	ordered := make([]int64, 0, len(messageIDs))
+	for id := range messageIDs {
+		ordered = append(ordered, id)
+	}
+	slices.Sort(ordered)
+	for _, id := range ordered {
+		if err := s.refreshAccountAttributionWith(ctx, tx, id, nil); err != nil {
+			return nil, fmt.Errorf("refresh account after label role change: %w", err)
+		}
 	}
 	return result, nil
 }
@@ -2726,8 +2885,8 @@ func ensureLabelsBatchWith(
 	return result, nil
 }
 
-func ensureMessageLabelRefsWith(
-	q querier, sourceID int64, refs []MessageLabelRef,
+func (s *Store) ensureMessageLabelRefsWith(
+	ctx context.Context, tx *loggedTx, sourceID int64, refs []MessageLabelRef,
 ) ([]int64, error) {
 	labels := make(map[string]LabelInfo, len(refs))
 	for _, ref := range refs {
@@ -2736,7 +2895,7 @@ func ensureMessageLabelRefsWith(
 		}
 		labels[ref.SourceLabelID] = ref.Info
 	}
-	resolved, err := ensureLabelsBatchWith(q, sourceID, labels)
+	resolved, err := s.ensureLabelsBatchWith(ctx, tx, sourceID, labels)
 	if err != nil {
 		return nil, err
 	}
@@ -2773,8 +2932,16 @@ func (s *Store) MessageLabelIDsContext(ctx context.Context, messageID int64) ([]
 
 // ReplaceMessageLabels replaces all labels for a message atomically.
 func (s *Store) ReplaceMessageLabels(messageID int64, labelIDs []int64) error {
-	return s.withTx(func(tx *loggedTx) error {
-		return replaceMessageLabelsTx(tx, messageID, labelIDs)
+	ctx := context.Background()
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		if err := replaceMessageLabelsTx(boundQuerier{ctx: ctx, q: tx}, messageID, labelIDs); err != nil {
+			return err
+		}
+		err := s.refreshAccountAttributionWith(ctx, tx, messageID, nil)
+		return err
 	})
 }
 
@@ -2785,6 +2952,9 @@ func (s *Store) ReconcileMessageLabels(
 ) (bool, error) {
 	var changed bool
 	err := s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(context.Background(), tx); err != nil {
+			return err
+		}
 		var err error
 		changed, err = s.reconcileMessageLabelsTx(
 			tx, messageID, labelIDs, replace)
@@ -2812,6 +2982,9 @@ func (s *Store) reconcileMessageLabelsTx(
 func (s *Store) reconcileMessageLabelsTxContext(
 	ctx context.Context, tx *loggedTx, messageID int64, labelIDs []int64, replace bool,
 ) (bool, error) {
+	if err := s.lockMessageForRecipientWrite(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
+		return false, err
+	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT label_id FROM message_labels WHERE message_id = ?
 	`, messageID)
@@ -2859,7 +3032,8 @@ func (s *Store) reconcileMessageLabelsTxContext(
 		); err != nil {
 			return false, err
 		}
-		return true, nil
+		err = s.refreshAccountAttributionWith(ctx, tx, messageID, nil)
+		return true, err
 	}
 
 	missing := make([]int64, 0, len(desired))
@@ -2874,7 +3048,8 @@ func (s *Store) reconcileMessageLabelsTxContext(
 	if err := s.addMessageLabelsTx(boundQuerier{ctx: ctx, q: tx}, messageID, missing); err != nil {
 		return false, err
 	}
-	return true, nil
+	err = s.refreshAccountAttributionWith(ctx, tx, messageID, nil)
+	return true, err
 }
 
 func replaceMessageLabelsTx(tx querier, messageID int64, labelIDs []int64) error {
@@ -2911,6 +3086,9 @@ func (s *Store) AddMessageLabels(messageID int64, labelIDs []int64) error {
 		return nil
 	}
 	return s.withTx(func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(context.Background(), tx); err != nil {
+			return err
+		}
 		changed, err := s.reconcileMessageLabelsTx(
 			tx, messageID, labelIDs, false,
 		)
@@ -2954,17 +3132,21 @@ func (s *Store) RemoveMessageLabels(messageID int64, labelIDs []int64) error {
 	if len(labelIDs) == 0 {
 		return nil
 	}
-	if s.syncGeneration != nil {
-		return s.withTx(func(tx *loggedTx) error {
-			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
-				return err
-			}
-			return execInChunks(tx, labelIDs, []any{messageID},
-				`DELETE FROM message_labels WHERE message_id = ? AND label_id IN (%s)`)
-		})
-	}
-	return execInChunks(s.db, labelIDs, []any{messageID},
-		`DELETE FROM message_labels WHERE message_id = ? AND label_id IN (%s)`)
+	ctx := context.Background()
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		if err := execInChunksContext(ctx, tx, labelIDs, []any{messageID}, `DELETE FROM message_labels WHERE message_id=? AND label_id IN (%s)`); err != nil {
+			return err
+		}
+		err := s.refreshAccountAttributionWith(ctx, tx, messageID, nil)
+		return err
+	})
 }
 
 // SetReplyTo links a channel reply to its parent by resolving the parent's
@@ -5517,6 +5699,9 @@ func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error
 func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, format string) error {
 	ctx := context.Background()
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
 			return err
 		}
@@ -5526,7 +5711,14 @@ func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, form
 		if err := upsertMessageRawWithFormat(boundQuerier{ctx: ctx, q: tx}, messageID, rawData, format); err != nil {
 			return err
 		}
-		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		if format != "mime" {
+			return nil
+		}
+		err := s.refreshAccountAttributionWith(ctx, tx, messageID, rawData)
+		return err
 	})
 }
 

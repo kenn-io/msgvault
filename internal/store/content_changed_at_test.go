@@ -742,6 +742,7 @@ func TestContentChangedAt_BackfillStopsWhenTheContextIsCancelled(t *testing.T) {
 // Returns the id, having checked the row really landed on it.
 func seedMessageAtID(t *testing.T, st *store.Store, n int, id int64) int64 {
 	t.Helper()
+	requirements := require.New(t)
 	if st.IsPostgreSQL() {
 		// The default lower bound of a bigint identity is 1, so an id below that
 		// needs MINVALUE lowered before RESTART will accept it. MINVALUE is only
@@ -753,15 +754,27 @@ func seedMessageAtID(t *testing.T, st *store.Store, n int, id int64) int64 {
 				`ALTER TABLE messages ALTER COLUMN id SET MINVALUE %d RESTART WITH %d`, id, id)
 		}
 		_, err := st.DB().Exec(alter)
-		require.NoErrorf(t, err, "reposition the messages identity sequence to %d", id)
+		requirements.NoErrorf(err, "reposition the messages identity sequence to %d", id)
 		got := seedMessage(t, st, n)
-		require.Equalf(t, id, got, "message %d did not land on the requested id", n)
+		requirements.Equalf(id, got, "message %d did not land on the requested id", n)
 		return id
 	}
 	got := seedMessage(t, st, n)
-	_, err := st.DB().Exec(
-		st.Rebind(`UPDATE messages SET id = ? WHERE id = ?`), id, got)
-	require.NoErrorf(t, err, "move message %d to id %d", n, id)
+	// Preserve the derived account evidence while remapping this fixture's key.
+	tx, err := st.DB().Begin()
+	requirements.NoError(err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`PRAGMA defer_foreign_keys=ON`)
+	requirements.NoError(err)
+	for _, stmt := range []string{
+		`UPDATE messages SET id=? WHERE id=?`,
+		`UPDATE message_account_evidence SET message_id=? WHERE message_id=?`,
+		`UPDATE message_account_mentions SET message_id=? WHERE message_id=?`,
+	} {
+		_, err = tx.Exec(stmt, id, got)
+		requirements.NoErrorf(err, "move message %d to id %d", n, id)
+	}
+	requirements.NoError(tx.Commit())
 	return id
 }
 

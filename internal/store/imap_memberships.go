@@ -183,6 +183,9 @@ func (s *Store) applyIMAPMailboxDeltas(
 		return errors.New("apply IMAP mailbox deltas: nil authoritative topology")
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if syncRunID > 0 {
 			if err := validateCurrentSyncGeneration(
 				ctx, tx, sourceID, syncRunID, SyncStatusCompleted,
@@ -339,7 +342,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 				}
 				labelIDs = append(labelIDs, labelID)
 			}
-			if err := replaceMessageLabelsTx(tx, messageID, labelIDs); err != nil {
+			if _, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, labelIDs, true); err != nil {
 				return fmt.Errorf("replace labels for IMAP message %d: %w", messageID, err)
 			}
 			if len(mailboxes) == 0 {
@@ -1089,6 +1092,9 @@ func (s *Store) RepairIMAPSourceLabels(
 ) (IMAPLabelRepairSummary, error) {
 	var summary IMAPLabelRepairSummary
 	txErr := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		messageIDs, err := distinctIMAPMembershipMessageIDs(ctx, tx, sourceID)
 		if err != nil {
 			return err

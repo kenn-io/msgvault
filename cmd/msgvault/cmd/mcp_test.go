@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 func TestMCPWriteHelpDisclosesMutationClassesAndProfileOptIn(t *testing.T) {
@@ -517,4 +518,31 @@ func TestNormalizeMCPHTTPAddr(t *testing.T) {
 		_, err := normalizeMCPHTTPAddr("not-a-port", false, false)
 		require.Error(t, err, "expected error for non-port, non-host:port")
 	})
+}
+
+func TestDaemonMCPSimilarPreservesAccountScopes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	source := int64(7)
+	scopes := []search.AccountScope{{SourceID: &source, Addresses: []string{"work@example.org"}}}
+	testCtx := withStoreResolverConfig(t, &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}})
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": api.APISchemaVersion, "vector": map[string]any{"status": "ready", "text_enabled": true}}))
+		case "/api/v1/search/similar":
+			var got []search.AccountScope
+			assert.NoError(json.Unmarshal([]byte(r.URL.Query().Get("account_scopes")), &got))
+			assert.Equal(scopes, got)
+			assert.Empty(r.URL.Query().Get("account"))
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"seed_message_id": 11, "returned": 0, "generation": map[string]any{"id": 1, "model": "fake", "dimension": 4, "fingerprint": "fake:4", "state": "active"}, "messages": []any{}}))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	require.NotNil(opts.SimilarSearcher)
+	got, err := opts.SimilarSearcher.FindSimilar(testCtx, mcpserver.SimilarSearchRequest{MessageID: 11, AccountScopes: scopes})
+	require.NoError(err)
+	assert.Equal(int64(11), got.SeedMessageID)
 }

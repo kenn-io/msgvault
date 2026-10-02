@@ -39,12 +39,13 @@ const (
 )
 
 type ExploreFilter struct {
-	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,mailing_list,after,before,deletion,identity"`
+	Dimension string   `json:"dimension" enum:"account,source,participant,domain,message_type,mailing_list,after,before,deletion,identity"`
 	Values    []string `json:"values" minItems:"1"`
 }
 
 // Explore filter dimension names, matching ExploreFilter.Dimension's enum tag.
 const (
+	exploreFilterAccount     = explorecatalog.FilterAccount
 	exploreFilterSource      = explorecatalog.FilterSource
 	exploreFilterParticipant = explorecatalog.FilterParticipant
 	exploreFilterDomain      = explorecatalog.FilterDomain
@@ -999,6 +1000,36 @@ func exploreContext(filters []ExploreFilter) (query.Context, error) {
 			return result, fmt.Errorf("filter dimension %q requires at least one value", filter.Dimension)
 		}
 		switch filter.Dimension {
+		case exploreFilterAccount:
+			if len(filter.Values) != 1 {
+				return result, errors.New("account filter requires one virtual key, address, or group")
+			}
+			value := filter.Values[0]
+			var scope search.AccountScope
+			if strings.HasPrefix(value, "identity:") || strings.HasPrefix(value, "group:") || strings.HasPrefix(value, "unattributed:") {
+				source, address, unattributed, err := store.ParseVirtualAccountKey(value)
+				if err != nil {
+					return result, err
+				}
+				scope.SourceID = &source
+				scope.Unattributed = unattributed
+				if !unattributed {
+					parsed, err := search.ParseAccountSelector(address, false)
+					if err != nil {
+						return result, err
+					}
+					scope.Addresses = parsed.Addresses
+					scope.Groups = parsed.Groups
+				}
+			} else {
+				parsed, err := search.ParseAccountSelector(value, false)
+				if err != nil {
+					return result, err
+				}
+				scope = parsed
+			}
+			result.AccountScopes = append(result.AccountScopes, scope)
+
 		case exploreFilterSource:
 			ids := make([]int64, len(filter.Values))
 			for i, value := range filter.Values {
@@ -1433,6 +1464,7 @@ func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter
 // combined predicate can match no messages and the resolver should skip
 // the index entirely.
 func applyLexicalFilterPushdown(parsed *search.Query, filters query.Context) bool {
+	parsed.AccountScopes = append(parsed.AccountScopes, search.CloneAccountScopes(filters.AccountScopes)...)
 	if len(filters.SourceIDs) > 0 {
 		if len(parsed.AccountIDs) == 0 {
 			parsed.AccountIDs = slices.Clone(filters.SourceIDs)

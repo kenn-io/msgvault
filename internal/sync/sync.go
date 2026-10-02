@@ -1577,7 +1577,7 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 		}
 	}
 
-	return s.store.EnsureLabelsBatch(sourceID, labelInfos)
+	return s.store.EnsureLabelsBatchContext(ctx, sourceID, labelInfos)
 }
 
 // messageData holds all parsed data for a message before persistence.

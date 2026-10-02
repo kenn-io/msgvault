@@ -2,8 +2,10 @@ package daemonclient
 
 import (
 	"context"
+	scopejson "encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -322,6 +324,7 @@ func generatedFilterMessagesQuery(filter query.MessageFilter, paginated bool) ge
 		Domain:          optionalString(filter.Domain),
 		Label:           optionalString(filter.Label),
 		ListID:          optionalString(filter.ListID),
+		AccountScopes:   encodedAccountScopes(filter.AccountScopes),
 		MessageType:     optionalString(filter.MessageType),
 		TimePeriod:      optionalString(filter.TimeRange.Period),
 		TimeGranularity: optionalString(timeGranularityToString(filter.TimeRange.Granularity)),
@@ -348,7 +351,7 @@ func gmailIDsFilterQuery(filter query.MessageFilter) *generated.GetGmailIDsByFil
 	out := generated.GetGmailIDsByFilterQuery{
 		Sender: base.Sender, SenderName: base.SenderName,
 		Recipient: base.Recipient, RecipientName: base.RecipientName,
-		Domain: base.Domain, Label: base.Label, ListID: base.ListID, MessageType: base.MessageType,
+		Domain: base.Domain, Label: base.Label, ListID: base.ListID, AccountScopes: base.AccountScopes, MessageType: base.MessageType,
 		TimePeriod: base.TimePeriod, TimeGranularity: base.TimeGranularity,
 		ConversationID: base.ConversationID, SourceID: base.SourceID, SourceIds: copyInt64sPreserveNil(base.SourceIds),
 		AttachmentsOnly: base.AttachmentsOnly, HideDeleted: base.HideDeleted,
@@ -437,6 +440,7 @@ func fastSearchQuery(queryStr string, filter query.MessageFilter, statsGroupBy q
 		Domain:          fields.Domain,
 		Label:           fields.Label,
 		ListID:          fields.ListID,
+		AccountScopes:   fields.AccountScopes,
 		TimePeriod:      fields.TimePeriod,
 		TimeGranularity: fields.TimeGranularity,
 		ConversationID:  fields.ConversationID,
@@ -666,7 +670,7 @@ func (e *Engine) Aggregate(ctx context.Context, groupBy query.ViewType, opts que
 	if opts.SourceIDs != nil && len(opts.SourceIDs) == 0 {
 		return []query.AggregateRow{}, nil
 	}
-	if err := e.requireListIDCapability(ctx, search.Parse(opts.SearchQuery), query.MessageFilter{}, groupBy); err != nil {
+	if err := e.requireListIDCapability(ctx, search.Parse(opts.SearchQuery), query.MessageFilter{AccountScopes: opts.AccountScopes}, groupBy); err != nil {
 		return nil, err
 	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetAggregatesResp, error) {
@@ -682,6 +686,7 @@ func (e *Engine) Aggregate(ctx context.Context, groupBy query.ViewType, opts que
 				AttachmentsOnly: optionalBool(opts.WithAttachmentsOnly),
 				HideDeleted:     optionalBool(opts.HideDeletedFromSource),
 				SearchQuery:     optionalString(opts.SearchQuery),
+				AccountScopes:   encodedAccountScopes(opts.AccountScopes),
 				After:           optionalTimeRFC3339(opts.After),
 				Before:          optionalTimeRFC3339(opts.Before),
 			},
@@ -707,6 +712,7 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 	if sourceIDs != nil && len(sourceIDs) == 0 {
 		return []query.AggregateRow{}, nil
 	}
+	filter.AccountScopes = append(search.CloneAccountScopes(filter.AccountScopes), search.CloneAccountScopes(opts.AccountScopes)...)
 	if err := e.requireListIDCapability(ctx, search.Parse(opts.SearchQuery), filter, groupBy); err != nil {
 		return nil, err
 	}
@@ -725,6 +731,7 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 				Domain:          optionalString(filter.Domain),
 				Label:           optionalString(filter.Label),
 				ListID:          optionalString(filter.ListID),
+				AccountScopes:   encodedAccountScopes(filter.AccountScopes),
 				MessageType:     optionalString(filter.MessageType),
 				TimePeriod:      optionalString(filter.TimeRange.Period),
 				TimeGranularity: optionalString(timeGranularityToString(opts.TimeGranularity)),
@@ -1044,6 +1051,7 @@ func (e *Engine) SearchDeepWithStats(
 	queryParams.Domain = fields.Domain
 	queryParams.Label = fields.Label
 	queryParams.ListID = fields.ListID
+	queryParams.AccountScopes = fields.AccountScopes
 	queryParams.MessageType = fields.MessageType
 	queryParams.TimePeriod = fields.TimePeriod
 	queryParams.TimeGranularity = fields.TimeGranularity
@@ -1204,6 +1212,9 @@ func (e *Engine) GetDeletionTargetsBySearch(
 	if err := validateParsedSearchQuery(searchQuery); err != nil {
 		return nil, err
 	}
+	if err := e.requireListIDCapability(ctx, searchQuery, filter); err != nil {
+		return nil, err
+	}
 	queryString := search.Format(searchQuery)
 	if queryString == "" {
 		return e.GetDeletionTargetsByFilter(ctx, filter)
@@ -1246,6 +1257,9 @@ func (e *Engine) GetDeletionTargetsByAggregateSearch(
 	}
 	parsed := search.Parse(searchQuery)
 	if err := validateParsedSearchQuery(parsed); err != nil {
+		return nil, err
+	}
+	if err := e.requireListIDCapability(ctx, parsed, filter, groupBy); err != nil {
 		return nil, err
 	}
 	queryString := search.Format(parsed)
@@ -1306,6 +1320,15 @@ func (e *Engine) requireListIDCapability(
 func (c *Client) requireListIDCapability(
 	ctx context.Context, q *search.Query, filter query.MessageFilter, groupBy ...query.ViewType,
 ) error {
+	if len(filter.AccountScopes) > 0 || (q != nil && len(q.AccountScopes) > 0) {
+		supported, err := c.SupportsAPISchemaVersion(ctx, "2.36.0")
+		if err != nil {
+			return fmt.Errorf("check daemon account filter capability: %w", err)
+		}
+		if !supported {
+			return errors.New("account filters require daemon API schema 2.36.0 or newer")
+		}
+	}
 	if filter.ListID == "" && (q == nil || len(q.ListIDs) == 0) &&
 		!slices.Contains(groupBy, query.ViewLists) {
 		return nil
@@ -1341,6 +1364,26 @@ func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, b
 	return e.store.messageSummariesWithURLs(resp.JSON200.Messages), nil
 }
 
+// ListSourceAccounts fetches source metadata without archive count queries.
+func (e *Engine) ListSourceAccounts(ctx context.Context) ([]query.AccountInfo, error) {
+	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.ListCLISourceAccountsResp, error) {
+		return client.ListCLISourceAccountsWithResponse(ctx)
+	})
+	if err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+			// Older daemons expose their sources through the existing CLI catalog.
+			return e.ListAccounts(ctx)
+		}
+		return nil, err
+	}
+	result := make([]query.AccountInfo, 0, len(resp.JSON200.Accounts))
+	for _, acc := range resp.JSON200.Accounts {
+		result = append(result, query.AccountInfo{ID: acc.ID, SourceType: acc.Type, Identifier: acc.Email, DisplayName: stringValue(acc.DisplayName), LastSyncAt: copyTime(acc.LastSync)})
+	}
+	return result, nil
+}
+
 // ListAccounts returns all archive source accounts.
 func (e *Engine) ListAccounts(ctx context.Context) ([]query.AccountInfo, error) {
 	accounts, err := e.store.GetCLIAccounts(ctx)
@@ -1351,11 +1394,12 @@ func (e *Engine) ListAccounts(ctx context.Context) ([]query.AccountInfo, error) 
 	result := make([]query.AccountInfo, len(accounts))
 	for i, acc := range accounts {
 		result[i] = query.AccountInfo{
-			ID:          acc.ID,
-			SourceType:  acc.Type,
-			Identifier:  acc.Email,
-			DisplayName: acc.DisplayName,
-			LastSyncAt:  copyTime(acc.LastSync),
+			ID:              acc.ID,
+			VirtualAccounts: append([]store.VirtualAccount(nil), acc.VirtualAccounts...),
+			SourceType:      acc.Type,
+			Identifier:      acc.Email,
+			DisplayName:     acc.DisplayName,
+			LastSyncAt:      copyTime(acc.LastSync),
 		}
 	}
 	return result, nil
@@ -1496,6 +1540,7 @@ func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*q
 		params.Domain = fields.Domain
 		params.Label = fields.Label
 		params.ListID = fields.ListID
+		params.AccountScopes = fields.AccountScopes
 		params.MessageType = fields.MessageType
 		params.TimePeriod = fields.TimePeriod
 		params.TimeGranularity = fields.TimeGranularity
@@ -1573,4 +1618,17 @@ func requireAppliedSourceIDs(requested, applied []int64, surface string) error {
 
 func hasExplicitEmptyAccountScope(q *search.Query) bool {
 	return q != nil && q.AccountIDs != nil && len(q.AccountIDs) == 0
+}
+
+// The JSON transport preserves intersections between query and virtual scopes.
+func encodedAccountScopes(scopes []search.AccountScope) *string {
+	if len(scopes) == 0 {
+		return nil
+	}
+	data, err := scopejson.Marshal(scopes)
+	if err != nil {
+		panic(err)
+	} // AccountScope contains only JSON scalar fields.
+	value := string(data)
+	return &value
 }

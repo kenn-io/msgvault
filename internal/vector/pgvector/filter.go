@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -30,6 +31,21 @@ func escapeLikeSubject(s string) string {
 // applyFilterClauses uses it inline).
 func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 	var clauses []string
+	accountClauses, accountArgs := search.AppendAccountConditions(nil, nil, f.AccountScopes, "m", "account_identity_group_memberships")
+	argIndex := 0
+	for _, clause := range accountClauses {
+		var out strings.Builder
+		for _, piece := range strings.SplitAfter(clause, "?") {
+			if prefix, ok := strings.CutSuffix(piece, "?"); ok {
+				out.WriteString(prefix)
+				out.WriteString(bind(accountArgs[argIndex]))
+				argIndex++
+			} else {
+				out.WriteString(piece)
+			}
+		}
+		clauses = append(clauses, out.String())
+	}
 	if len(f.MessageIDs) > 0 {
 		clauses = append(clauses, fmt.Sprintf("m.id = ANY(%s::bigint[])", bind(int64Array(f.MessageIDs))))
 	}

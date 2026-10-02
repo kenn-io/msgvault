@@ -130,6 +130,7 @@ func cachePublishPlanForMode(replaceAll bool) cachePublishPlan {
 	}
 	for _, dataset := range []string{
 		tableParticipants,
+		"account_identity_group_memberships",
 		tableParticipantIdentifiers,
 		tableLabels,
 		"sources",

@@ -549,6 +549,10 @@ type SearchCLIResponse = CliSearchResponse
 
 type SearchCLIErrorResponse = ErrorResponse
 
+type ListCLISourceAccountsResponse = CliSourceAccountsResponse
+
+type ListCLISourceAccountsErrorResponse = ErrorResponse
+
 type GetCLIStatsResponse = CliStatsResponse
 
 type GetCLIStatsErrorResponse = ErrorResponse
@@ -4033,6 +4037,13 @@ type SearchCLIResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *SearchCLIResponse
+}
+
+type ListCLISourceAccountsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCLISourceAccountsResponse
 }
 
 type GetCLIStatsResp struct {

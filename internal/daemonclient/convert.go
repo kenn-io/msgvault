@@ -482,6 +482,21 @@ func cliAccountsFromGenerated(resp *generated.ListCLIAccountsResponse) []CLIAcco
 			MessageCount:       account.MessageCount,
 			SourceDeletedCount: account.SourceDeletedCount,
 			LastSync:           account.LastSync,
+			VirtualAccounts:    virtualAccountsFromGenerated(account.VirtualAccounts),
+		}
+	}
+	return out
+}
+
+func virtualAccountsFromGenerated(accounts []generated.VirtualAccount) []store.VirtualAccount {
+	out := make([]store.VirtualAccount, len(accounts))
+	for i, account := range accounts {
+		out[i] = store.VirtualAccount{
+			Key: account.Key, SourceID: account.SourceID,
+			AccountAddress: stringValue(account.AccountAddress), Group: stringValue(account.Group),
+			Unattributed: account.Unattributed != nil && *account.Unattributed,
+			MessageCount: account.MessageCount, SourceDeletedCount: account.SourceDeletedCount,
+			PendingCount: int64Value(account.PendingCount),
 		}
 	}
 	return out

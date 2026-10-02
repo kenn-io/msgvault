@@ -584,6 +584,7 @@ func TestGeneratedEnumNamesPreserveSavedViewCompatibilityAndQualifyExploration(t
 	assertions.Equal(generated.Files, generated.SavedViewStateEnvelopePresentation("files"))
 	assertions.Equal(generated.Table, generated.SavedViewStateEnvelopePresentation("table"))
 	assertions.Equal(generated.Timeline, generated.SavedViewStateEnvelopePresentation("timeline"))
+	assertions.Equal(generated.ExploreFilterDimensionAccount, generated.ExploreFilterDimension("account"))
 	assertions.Equal(generated.ExploreFilterDimensionAfter, generated.ExploreFilterDimension("after"))
 	assertions.Equal(generated.ExploreFilterDimensionIdentity, generated.ExploreFilterDimension("identity"))
 	assertions.Equal(generated.ExploreGroupSortDirectionAsc, generated.ExploreGroupSortDirection("asc"))

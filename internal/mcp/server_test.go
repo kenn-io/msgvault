@@ -3609,7 +3609,7 @@ func TestFindSimilarMessages_UsesDaemonSearcher(t *testing.T) {
 	hasAttachment := true
 	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	h := &handlers{
-		engine: &querytest.MockEngine{},
+		engine: &querytest.MockEngine{Accounts: []query.AccountInfo{{ID: 7, Identifier: "alice@example.com"}}},
 		similarSearcher: similarSearcherFunc(func(_ context.Context, req SimilarSearchRequest) (*SimilarSearchResult, error) {
 			gotReq = req
 			return &SimilarSearchResult{

@@ -827,6 +827,8 @@ type cliIdentityRowResponse struct {
 }
 
 type cliAccountResponse struct {
+	VirtualAccounts []store.VirtualAccount `json:"virtual_accounts,omitempty"`
+
 	ID                 int64      `json:"id"`
 	Email              string     `json:"email"`
 	Type               string     `json:"type"`
@@ -1733,6 +1735,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"purge-excluded-media",
 		"repair-dates",
 		"repair-identity",
+		"repair-account-attribution",
 		"repair-labels",
 		"repair-list-ids",
 		"repair-senders",
@@ -2554,6 +2557,45 @@ func (s *Server) handleCLIRebuildFTS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type cliSourceAccountResponse struct {
+	ID          int64      `json:"id"`
+	Email       string     `json:"email"`
+	Type        string     `json:"type"`
+	DisplayName string     `json:"display_name,omitempty"`
+	LastSync    *time.Time `json:"last_sync,omitempty"`
+}
+
+type cliSourceAccountsResponse struct {
+	Accounts []cliSourceAccountResponse `json:"accounts"`
+}
+
+// Source resolution needs identifiers, never a full-archive count query.
+func (s *Server) handleCLISourceAccounts(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Database not available")
+		return
+	}
+	cliStore, apiErr := s.cliStore()
+	if apiErr != nil {
+		writeAPIHTTPError(w, apiErr)
+		return
+	}
+	sources, err := bindCLIStoreContext(r.Context(), cliStore).ListSources("")
+	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list source accounts")
+		return
+	}
+	accounts := make([]cliSourceAccountResponse, 0, len(sources))
+	for _, src := range sources {
+		metadata := newCLIAccountResponse(src, 0, 0)
+		accounts = append(accounts, cliSourceAccountResponse{ID: metadata.ID, Email: metadata.Email, Type: metadata.Type, DisplayName: metadata.DisplayName, LastSync: metadata.LastSync})
+	}
+	writeJSON(w, http.StatusOK, cliSourceAccountsResponse{Accounts: accounts})
+}
+
 func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 	if s.store == nil {
 		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Database not available")
@@ -2614,6 +2656,19 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		accounts = append(accounts, newCLIAccountResponse(src, count, sourceDeleted))
+	}
+
+	if reader, ok := s.store.(interface {
+		ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
+	}); ok {
+		virtual, err := reader.ListVirtualAccountsContext(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list virtual accounts")
+			return
+		}
+		for i := range accounts {
+			accounts[i].VirtualAccounts = virtual[accounts[i].ID]
+		}
 	}
 
 	response.Accounts = accounts

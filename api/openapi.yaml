@@ -1993,6 +1993,10 @@ components:
           type: integer
         type:
           type: string
+        virtual_accounts:
+          items:
+            $ref: "#/components/schemas/VirtualAccount"
+          type: array
       required:
         - id
         - email
@@ -2387,6 +2391,36 @@ components:
           type: integer
       required:
         - results
+      type: object
+    CliSourceAccountResponse:
+      additionalProperties: true
+      properties:
+        display_name:
+          type: string
+        email:
+          type: string
+        id:
+          format: int64
+          type: integer
+        last_sync:
+          format: date-time
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - email
+        - type
+      type: object
+    CliSourceAccountsResponse:
+      additionalProperties: true
+      properties:
+        accounts:
+          items:
+            $ref: "#/components/schemas/CliSourceAccountResponse"
+          type: array
+      required:
+        - accounts
       type: object
     CliStatsResponse:
       additionalProperties: true
@@ -4288,6 +4322,7 @@ components:
       properties:
         dimension:
           enum:
+            - account
             - source
             - participant
             - domain
@@ -11529,6 +11564,7 @@ components:
             - participant
             - domain
             - mailing_list
+            - account
             - message_type
             - after
             - before
@@ -13571,6 +13607,35 @@ components:
       required:
         - status
       type: object
+    VirtualAccount:
+      additionalProperties: true
+      properties:
+        account_address:
+          type: string
+        group:
+          type: string
+        key:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+        pending_count:
+          format: int64
+          type: integer
+        source_deleted_count:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        unattributed:
+          type: boolean
+      required:
+        - key
+        - source_id
+        - message_count
+        - source_deleted_count
+      type: object
     VisualBuildRequest:
       additionalProperties: false
       properties:
@@ -13678,7 +13743,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.35.0
+  version: 2.36.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -13893,6 +13958,30 @@ paths:
           name: view_type
           schema:
             type: string
+        - description: Exact attributed email addresses; repeated values are alternatives
+          in: query
+          name: account_addresses
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Identity group keys, such as fastmail-masked:<account>
+          in: query
+          name: account_groups
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Only messages without an attributed account
+          in: query
+          name: account_unattributed
+          schema:
+            type: boolean
+        - description: JSON account scope intersections for structured clients
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: "Sort field: count, size, attachment_size, or name"
           in: query
           name: sort
@@ -13979,6 +14068,30 @@ paths:
           in: query
           name: view_type
           required: true
+          schema:
+            type: string
+        - description: Exact attributed email addresses; repeated values are alternatives
+          in: query
+          name: account_addresses
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Identity group keys, such as fastmail-masked:<account>
+          in: query
+          name: account_groups
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Only messages without an attributed account
+          in: query
+          name: account_unattributed
+          schema:
+            type: boolean
+        - description: JSON account scope intersections for structured clients
+          in: query
+          name: account_scopes
           schema:
             type: string
         - description: "Sort field: count, size, attachment_size, or name"
@@ -16977,6 +17090,27 @@ paths:
       security:
         - apiKey: []
       summary: Search messages for CLI output
+      tags:
+        - API
+  /api/v1/cli/source-accounts:
+    get:
+      operationId: listCLISourceAccounts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliSourceAccountsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List physical source metadata without message counts
       tags:
         - API
   /api/v1/cli/stats:
@@ -20012,6 +20146,30 @@ paths:
     get:
       operationId: filterMessages
       parameters:
+        - description: Exact attributed email addresses; repeated values are alternatives
+          in: query
+          name: account_addresses
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Identity group keys, such as fastmail-masked:<account>
+          in: query
+          name: account_groups
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Only messages without an attributed account
+          in: query
+          name: account_unattributed
+          schema:
+            type: boolean
+        - description: JSON account scope intersections for structured clients
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Sender email/address filter
           in: query
           name: sender
@@ -20151,6 +20309,30 @@ paths:
     get:
       operationId: getGmailIDsByFilter
       parameters:
+        - description: Exact attributed email addresses; repeated values are alternatives
+          in: query
+          name: account_addresses
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Identity group keys, such as fastmail-masked:<account>
+          in: query
+          name: account_groups
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Only messages without an attributed account
+          in: query
+          name: account_unattributed
+          schema:
+            type: boolean
+        - description: JSON account scope intersections for structured clients
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Sender email/address filter
           in: query
           name: sender
@@ -26246,6 +26428,11 @@ paths:
           name: list_id
           schema:
             type: string
+        - description: JSON account scope intersections (vector or hybrid mode)
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)
           in: query
           name: time_period
@@ -26443,6 +26630,30 @@ paths:
         - description: "Exact search scope: body; omit for composite full-text search"
           in: query
           name: scope
+          schema:
+            type: string
+        - description: Exact attributed email addresses; repeated values are alternatives
+          in: query
+          name: account_addresses
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Identity group keys, such as fastmail-masked:<account>
+          in: query
+          name: account_groups
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Only messages without an attributed account
+          in: query
+          name: account_unattributed
+          schema:
+            type: boolean
+        - description: JSON account scope intersections for structured clients
+          in: query
+          name: account_scopes
           schema:
             type: string
         - description: Sender email/address filter; not supported when scope=body
@@ -26645,6 +26856,30 @@ paths:
           name: view_type
           schema:
             type: string
+        - description: Exact attributed email addresses; repeated values are alternatives
+          in: query
+          name: account_addresses
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Identity group keys, such as fastmail-masked:<account>
+          in: query
+          name: account_groups
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Only messages without an attributed account
+          in: query
+          name: account_unattributed
+          schema:
+            type: boolean
+        - description: JSON account scope intersections for structured clients
+          in: query
+          name: account_scopes
+          schema:
+            type: string
         - description: Sender email/address filter
           in: query
           name: sender
@@ -26800,6 +27035,11 @@ paths:
         - description: Account email or configured source identifier
           in: query
           name: account
+          schema:
+            type: string
+        - description: JSON account scope intersections for structured clients
+          in: query
+          name: account_scopes
           schema:
             type: string
         - description: Message type filter
@@ -28337,6 +28577,30 @@ paths:
         - description: Aggregate view type for grouping
           in: query
           name: group_by
+          schema:
+            type: string
+        - description: Exact attributed email addresses; repeated values are alternatives
+          in: query
+          name: account_addresses
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Identity group keys, such as fastmail-masked:<account>
+          in: query
+          name: account_groups
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Only messages without an attributed account
+          in: query
+          name: account_unattributed
+          schema:
+            type: boolean
+        - description: JSON account scope intersections for structured clients
+          in: query
+          name: account_scopes
           schema:
             type: string
         - description: Sender email/address filter

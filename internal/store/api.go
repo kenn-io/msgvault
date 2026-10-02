@@ -720,6 +720,8 @@ func (s *Store) searchMessagesQueryImpl(
 			"m.source_id IN ("+strings.Join(placeholders, ",")+")")
 	}
 
+	conditions, args = search.AppendAccountConditions(conditions, args, q.AccountScopes, "m", "account_identity_group_memberships")
+
 	// conversation_id: filters one or more internal conversation scopes.
 	// Repeated operators are alternatives within the same dimension.
 	if q.ConversationIDs != nil {

@@ -786,7 +786,9 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	// it: trg_message_bodies_content_changed_ins, and schema.sql's pre-existing
 	// trg_message_bodies_last_modified_ins. So a copied message WITH a body
 	// leaves this function with both content_changed_at and last_modified set
-	// to the time of the copy; only a bodyless one keeps the source's values.
+	// to the time of the copy; a bodyless one keeps the source's values when its
+	// account facts were already pending. Resetting attributed account facts in
+	// copyMessages can also stamp last_modified.
 	// (Measured: a source row stamped 2001-02-03 04:05:06 arrives copy-stamped
 	// when it has a body and unchanged when it does not.)
 	//
@@ -2419,6 +2421,15 @@ func copyMessages(tx *sql.Tx) error {
 	if _, err := copyByName(tx, "messages",
 		`id IN (SELECT id FROM selected_messages)`); err != nil {
 		return fmt.Errorf("copy messages: %w", err)
+	}
+	// Subsets omit confirmed account ownership. Keep their routing facts pending
+	// until the destination confirms identities and derives its own projection.
+	if _, err := tx.Exec(`
+		UPDATE messages
+		SET account_address = NULL, account_path = NULL, account_attribution_basis = 'not-derived'
+		WHERE account_address IS NOT NULL OR account_path IS NOT NULL
+		   OR account_attribution_basis IS NOT 'not-derived'`); err != nil {
+		return fmt.Errorf("reset subset account attribution: %w", err)
 	}
 	return nil
 }
