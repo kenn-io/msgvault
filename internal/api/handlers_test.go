@@ -4305,6 +4305,7 @@ func TestSchedulerJobNameForSource(t *testing.T) {
 		{"gcal", gcal.SourceType, "alice@example.com/primary", "gcal:alice@example.com", true},
 		{"gcal no calendar id", gcal.SourceType, "alice@example.com", "", false},
 		{"granola", granola.SourceType, "acct-1", "granola:acct-1", true},
+		{"omi", "omi", "omi-work", "omi:omi-work", true},
 		{"circleback", circleback.SourceType, "acct-2", "circleback:acct-2", true},
 		{"notion meetings", notionmeetings.SourceType, "acct-3", "notion-meetings:acct-3", true},
 		{"muesli", muesli.SourceType, "mac", "muesli:mac", true},

@@ -567,6 +567,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Meeting sources (Granola/Circleback) mirror the gcal treatment: warn
 	// when enabled but unscheduled, then register the scheduled ones.
+	for _, src := range cfg.Omi {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("omi source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "0 */6 * * *") on the [[omi]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledOmiSources() {
+		source := src
+		if err := registerScheduledOmiJob(sched, state, s, source); err != nil {
+			logger.Error("failed to schedule omi source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled omi source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
 	for _, src := range cfg.Granola {
 		if src.Enabled && src.Schedule == "" {
 			logger.Warn("granola source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",

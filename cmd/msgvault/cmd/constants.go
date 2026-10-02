@@ -14,6 +14,7 @@ const (
 	sourceTypeBeeper         = "beeper"
 	sourceTypeSlack          = "slack"
 	sourceTypeSlackdump      = "slackdump"
+	sourceTypeOmi            = "omi"
 	sourceTypeGranola        = "granola"
 	sourceTypeCircleback     = "circleback"
 	sourceTypeNotionMeetings = "notion_meetings"

@@ -1095,6 +1095,35 @@ max_media_mb = 500
 | `max_media_mb` | `250` | Per-attachment download cap in MiB |
 | `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by the Teams account email |
 
+### Omi Sources
+
+Use one `[[omi]]` entry per hosted or self-hosted Omi account. Register each
+entry with `msgvault add-omi`; see [Omi setup](usage/meetings.md#omi).
+Use HTTPS for non-loopback backends. Plain HTTP is accepted only for loopback
+hosts such as `localhost`, `127.0.0.1`, or `[::1]`.
+
+```toml
+[[omi]]
+identifier = "omi-personal"
+account_email = "you@example.com"
+api_key = "omi_dev_..."
+# base_url = "http://localhost:8000" # self-hosted backend root
+schedule = "0 */6 * * *"
+enabled = true
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `identifier` | `default` for a single entry | Stable source label; required and unique when multiple entries exist |
+| `account_email` | required | Primary account identity; independent of the source label |
+| `api_key` | required for add/sync | Developer API key with `conversations:read` on this backend |
+| `base_url` | `https://api.omi.me` | HTTPS backend root, or HTTP loopback root, with optional proxy prefix; omit `/v1/dev`; credentials, query, and fragment are rejected |
+| `schedule` | empty | Five-field cron expression; empty disables daemon scheduling |
+| `enabled` | `false` | Enables scheduled sync when a schedule is present |
+
+Explicit CLI sync can run entries regardless of `enabled`. Credentials belong
+in the daemon's configuration, including when the CLI connects remotely.
+
 ### Granola Sources
 
 Granola meeting-notes sync is configured with top-level `[[granola]]` entries.
