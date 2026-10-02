@@ -214,13 +214,13 @@ func (c *CardDAVController) Status(ctx context.Context, name string) (CardDAVSta
 	if c == nil || c.manager != nil {
 		return c.scopedStatus(ctx)
 	}
-	knownNames := c.connectionNames()
-	if len(knownNames) == 0 || len(knownNames) == 1 && knownNames[0] == config.DefaultCardDAVConnection {
-		return c.scopedStatus(ctx)
-	}
 	summaries, err := c.Connections(ctx)
 	if err != nil {
 		return CardDAVStatusResponse{}, err
+	}
+	// Retained accounts still contribute history after their config is removed.
+	if len(summaries.Connections) == 0 || len(summaries.Connections) == 1 && summaries.Connections[0].Connection == config.DefaultCardDAVConnection {
+		return c.scopedStatus(ctx)
 	}
 	var result CardDAVStatusResponse
 	for _, summary := range summaries.Connections {

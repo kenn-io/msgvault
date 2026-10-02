@@ -84,6 +84,63 @@ func TestCardDAVConnectionsExposeOrphansAndRecoverByName(t *testing.T) {
 	assertions.True(body.Connections[0].Status.Available)
 }
 
+func TestCardDAVStatusIncludesOrphanedRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		defaultConfigured bool
+	}{
+		{name: "default remains configured", defaultConfigured: true},
+		{name: "no configured connections"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, require := assert.New(t), require.New(t)
+			controller, baseURL := multipleCardDAVController(t)
+			names := []string{"work"}
+			if tc.defaultConfigured {
+				names = []string{"default", "work"}
+			}
+			runIDs := make(map[string]int64)
+			for _, name := range names {
+				_, err := controller.Save(t.Context(), CardDAVAccountRequest{Connection: name, BaseURL: baseURL,
+					Username: name, Password: name + "-synthetic-secret", Enabled: new(true)})
+				require.NoError(err)
+				_, err = controller.Sync(t.Context(), CardDAVSyncRequest{Connection: name})
+				require.NoError(err)
+				runs, err := controller.store.CardDAVSyncStatusContext(t.Context(), store.AllCardDAVAccounts)
+				require.NoError(err)
+				require.NotNil(runs.Latest)
+				runIDs[name] = runs.Latest.ID
+			}
+			file, err := config.EditConfigTables(controller.cfg.ConfigFilePath(), mustReadMultipleConfig(t, controller.cfg.ConfigFilePath()).ETag,
+				[]config.TableEdit{{Path: []string{"carddav_connections", "work"}, Remove: true}})
+			require.NoError(err)
+			cfg, err := config.LoadConfigFile(file, controller.cfg.HomeDir)
+			require.NoError(err)
+			restarted := &CardDAVController{cfg: cfg, store: controller.store}
+			server := cardDAVReadServer(t, cfg, restarted, nil)
+			for _, selector := range []string{"", "?connection=default"} {
+				response := getCardDAVRead(t, server, "/api/v1/carddav/status"+selector)
+				require.Equal(http.StatusOK, response.Code, response.Body.String())
+				var status CardDAVStatusResponse
+				require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
+				if selector == "" {
+					require.NotNil(status.Latest, "aggregate status retains orphaned history")
+					assertions.Equal(runIDs["work"], status.Latest.ID)
+					assertions.Equal("work", status.Latest.Connection)
+					require.NotNil(status.LatestSuccessful)
+					assertions.Equal(runIDs["work"], status.LatestSuccessful.ID)
+				} else if tc.defaultConfigured {
+					require.NotNil(status.Latest)
+					assertions.Equal(runIDs["default"], status.Latest.ID)
+					assertions.Equal("default", status.Latest.Connection)
+				} else {
+					assertions.Nil(status.Latest)
+				}
+			}
+		})
+	}
+}
+
 func TestCardDAVSaveRejectsDuplicateAccountBeforeCredentials(t *testing.T) {
 	for _, state := range []string{"configured", "orphaned"} {
 		t.Run(state, func(t *testing.T) {
