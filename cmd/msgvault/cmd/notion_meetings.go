@@ -151,7 +151,7 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 			return nil
 		}
 	}
-	_, _ = fmt.Fprintln(out, "  Users token: no emails returned (enable Read user information including email addresses)")
+	_, _ = fmt.Fprintln(out, "  Users token: no verified emails on the first page (check Read user information including email addresses)")
 	return nil
 }
 

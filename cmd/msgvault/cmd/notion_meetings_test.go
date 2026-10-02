@@ -229,7 +229,7 @@ func TestNotionProbeUsersToken(t *testing.T) {
 		want  string
 	}{
 		{"available", []notionmeetings.User{verified}, nil, "Users token: available"},
-		{"no emails", []notionmeetings.User{{Object: "user", ID: "member"}}, nil, "Users token: no emails returned"},
+		{"no emails", []notionmeetings.User{{Object: "user", ID: "member"}}, nil, "Users token: no verified emails"},
 		{"missing capability", nil, notionmeetings.ErrUserInformation, "Users token: unavailable"},
 		{"request timeout", nil, fmt.Errorf("perform Notion request: %w", context.DeadlineExceeded), "Users token: unavailable"},
 	} {
