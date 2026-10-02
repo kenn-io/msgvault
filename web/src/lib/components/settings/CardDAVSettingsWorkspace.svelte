@@ -26,19 +26,27 @@
   const controller = new CardDAVController(untrack(() => client));
   const conflictsController = new CardDAVConflictsController(untrack(() => client));
 
-  onMount(() => { void Promise.all([controller.load(), conflictsController.load()]); });
+  const available = $derived(Boolean(controller.status?.available));
+
+  onMount(() => { void controller.load(); });
+  $effect(() => {
+    if (available) untrack(() => { void conflictsController.load(); });
+    else conflictsController.focusRequest = undefined;
+  });
   onDestroy(() => {
     controller.destroy();
     conflictsController.destroy();
   });
 
   async function accountSaved(): Promise<void> {
-    await Promise.all([controller.load(), conflictsController.load(), onSettingsRefresh()]);
+    const wasAvailable = available;
+    await Promise.all([controller.load(), onSettingsRefresh()]);
+    if (wasAvailable && available) await conflictsController.load();
   }
 
   $effect(() => {
     const request = cardDAVRequest;
-    if (!request?.conflictID) return;
+    if (!request?.conflictID || !available) return;
     untrack(() => {
       void conflictsController.openRequestedConflict({
         conflictID: request.conflictID!,
@@ -53,7 +61,7 @@
 <div class="carddav-settings" aria-label="CardDAV settings">
   <CardDAVAccountSettings {client} {settings} onSaved={accountSaved} />
   <CardDAVOperations {controller} />
-  <CardDAVConflicts controller={conflictsController} />
+  {#if available}<CardDAVConflicts controller={conflictsController} />{/if}
 </div>
 
 <style>

@@ -108,10 +108,12 @@ describe('CardDAVOperations', () => {
   });
 
   it('keeps retained books read-only until status confirms runtime readiness', async () => {
+    let statusReads = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
       if (path.endsWith('/status')) {
+        if (statusReads++ === 0) return Response.json({ configured: true, available: true, credential_configured: true, enabled: false, scheduled: false, schedule: '' });
         return Response.json({ error: 'unavailable', message: 'unsafe status detail' }, { status: 503 });
       }
       if (path.endsWith('/books')) {
@@ -128,6 +130,7 @@ describe('CardDAVOperations', () => {
     });
     const controller = new CardDAVController(createAPIClient(fetchFn));
     await controller.load();
+    await controller.retryStatus();
     render(CardDAVOperations, { controller });
 
     expect((screen.getByRole('button', { name: 'Retry CardDAV status' }) as HTMLButtonElement).disabled).toBe(false);

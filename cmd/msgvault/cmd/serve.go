@@ -1890,6 +1890,12 @@ func (a *storeAPIAdapter) SearchMessagesQueryContext(ctx context.Context, q *sea
 	return a.store.SearchMessagesQueryContext(ctx, q, offset, limit)
 }
 
+func (a *storeAPIAdapter) SearchMessageIDsQueryContext(
+	ctx context.Context, q *search.Query, limit int,
+) ([]int64, int64, error) {
+	return a.store.SearchMessageIDsQueryContext(ctx, q, limit)
+}
+
 func (a *storeAPIAdapter) NeedsFTSBackfill() bool {
 	return a.store.NeedsFTSBackfill()
 }

@@ -1266,3 +1266,51 @@ func TestFusedSearch_DimensionMismatch(t *testing.T) {
 	})
 	assert.ErrorIs(t, err, vector.ErrDimensionMismatch)
 }
+
+func TestKitFusionOrderingMissingLegsBoostAndFilters(t *testing.T) {
+	b, ctx := newFusedBackendForTest(t)
+	_, err := b.mainDB.ExecContext(ctx, `DELETE FROM messages; DELETE FROM messages_fts;
+ INSERT INTO messages(id, subject) VALUES (3, 'ordinary'), (7, 'ordinary'), (9, 'Priority report');
+ INSERT INTO messages_fts(rowid, subject, body) VALUES (3, 'ordinary', 'needle'), (7, 'ordinary', 'needle'), (9, 'Priority report', 'other');`)
+	require.NoError(t, err)
+	generation := seedAndEmbed(t, b, map[int64][]float32{
+		3: {0.8, 0.6, 0, 0}, 7: {1, 0, 0, 0}, 9: {0, 0, 1, 0},
+	})
+	installReadyFlatAccelerator(t, b, generation, 4)
+	request := vector.FusedRequest{Generation: generation, FTSTerms: []string{"needle"}, QueryVec: []float32{1, 0, 0, 0}, KPerSignal: 10, Limit: 10, RRFK: 60}
+	hits, _, err := b.FusedSearch(ctx, request)
+	require.NoError(t, err)
+	require.Len(t, hits, 3)
+	assert.Equal(t, []int64{3, 7, 9}, []int64{hits[0].MessageID, hits[1].MessageID, hits[2].MessageID})
+	assert.InDelta(t, 1.0/61+1.0/62, hits[0].RRFScore, 1e-12)
+	assert.InDelta(t, hits[0].RRFScore, hits[1].RRFScore, 0)
+	assert.True(t, math.IsNaN(hits[2].BM25Score))
+	assert.False(t, math.IsNaN(hits[2].VectorScore))
+
+	request.SubjectBoost = 3
+	request.SubjectTerms = []string{"priority"}
+	request.Limit = 1
+	hits, _, err = b.FusedSearch(ctx, request)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, int64(9), hits[0].MessageID)
+	assert.True(t, hits[0].SubjectBoosted)
+	assert.InDelta(t, 3.0/63, hits[0].RRFScore, 1e-12)
+
+	request.Filter.MessageIDs = []int64{7}
+	hits, _, err = b.FusedSearch(ctx, request)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, int64(7), hits[0].MessageID)
+	assert.False(t, hits[0].SubjectBoosted)
+	assert.InDelta(t, 2.0/61, hits[0].RRFScore, 1e-12)
+
+	// An unindexed message contributes through the lexical leg alone.
+	require.NoError(t, b.Delete(ctx, generation, []int64{7}))
+	hits, _, err = b.FusedSearch(ctx, request)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, int64(7), hits[0].MessageID)
+	assert.True(t, math.IsNaN(hits[0].VectorScore))
+	assert.False(t, math.IsNaN(hits[0].BM25Score))
+}

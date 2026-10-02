@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"math/rand"
 	"time"
+
+	"github.com/cenkalti/backoff/v7"
 )
 
 const (
@@ -48,27 +50,31 @@ const (
 func retryContendedWrite[T any](
 	ctx context.Context, s *Store, operation string, attempt func() (*T, error),
 ) (*T, error) {
-	var lastErr error
-	for i := range maxContendedWriteAttempts {
+	policy := backoff.NewExponentialBackOff()
+	// Center the interval at half the ceiling to preserve full jitter.
+	policy.InitialInterval = contendedWriteBackoffBase / 2
+	policy.MaxInterval = contendedWriteBackoffMax / 2
+	policy.Multiplier = 2
+	policy.RandomizationFactor = 1
+	write, err := backoff.Retry(ctx, func() (*T, error) {
 		write, err := attempt()
-		if err == nil {
-			return write, nil
+		if err != nil && (!s.dialect.IsConflictError(err) && !s.dialect.IsBusyError(err)) {
+			return nil, backoff.Permanent(err)
 		}
-		if !s.dialect.IsConflictError(err) && !s.dialect.IsBusyError(err) {
-			return nil, err
-		}
-		lastErr = err
-		if i == maxContendedWriteAttempts-1 {
-			break
-		}
-		select {
-		case <-time.After(contendedWriteBackoff(i)):
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+		return write, err
+	}, backoff.WithBackOff(policy), backoff.WithMaxTries(maxContendedWriteAttempts), backoff.WithMaxElapsedTime(0))
+	if err == nil {
+		return write, nil
+	}
+	retryErr := backoff.AsRetryError(err)
+	if errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+		return nil, retryErr.LastErr
+	}
+	if !errors.Is(retryErr.Cause, backoff.ErrExhausted) {
+		return nil, ctx.Err()
 	}
 	return nil, fmt.Errorf("%s: gave up after %d attempts: %w",
-		operation, maxContendedWriteAttempts, lastErr)
+		operation, maxContendedWriteAttempts, retryErr.LastErr)
 }
 
 // retryBusyWrite retries only lock and transaction contention. Callers whose
@@ -77,27 +83,31 @@ func retryContendedWrite[T any](
 func retryBusyWrite[T any](
 	ctx context.Context, s *Store, operation string, attempt func() (*T, error),
 ) (*T, error) {
-	var lastErr error
-	for i := range maxContendedWriteAttempts {
+	policy := backoff.NewExponentialBackOff()
+	// Center the interval at half the ceiling to preserve full jitter.
+	policy.InitialInterval = contendedWriteBackoffBase / 2
+	policy.MaxInterval = contendedWriteBackoffMax / 2
+	policy.Multiplier = 2
+	policy.RandomizationFactor = 1
+	write, err := backoff.Retry(ctx, func() (*T, error) {
 		write, err := attempt()
-		if err == nil {
-			return write, nil
+		if err != nil && !s.dialect.IsBusyError(err) {
+			return nil, backoff.Permanent(err)
 		}
-		if !s.dialect.IsBusyError(err) {
-			return nil, err
-		}
-		lastErr = err
-		if i == maxContendedWriteAttempts-1 {
-			break
-		}
-		select {
-		case <-time.After(contendedWriteBackoff(i)):
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+		return write, err
+	}, backoff.WithBackOff(policy), backoff.WithMaxTries(maxContendedWriteAttempts), backoff.WithMaxElapsedTime(0))
+	if err == nil {
+		return write, nil
+	}
+	retryErr := backoff.AsRetryError(err)
+	if errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+		return nil, retryErr.LastErr
+	}
+	if !errors.Is(retryErr.Cause, backoff.ErrExhausted) {
+		return nil, ctx.Err()
 	}
 	return nil, fmt.Errorf("%s: gave up after %d attempts: %w",
-		operation, maxContendedWriteAttempts, lastErr)
+		operation, maxContendedWriteAttempts, retryErr.LastErr)
 }
 
 // retryContendedWriteErr is retryContendedWrite for writers that return no
@@ -119,16 +129,4 @@ func retryBusyWriteErr(
 		return nil, attempt()
 	})
 	return err
-}
-
-// contendedWriteBackoff returns the delay before retrying the attempt after
-// the given zero-based one, growing exponentially to a cap. math/rand is fine
-// here — full jitter only has to spread competing writers apart, it is not
-// security-sensitive.
-func contendedWriteBackoff(attempt int) time.Duration {
-	ceiling := contendedWriteBackoffBase << attempt
-	if ceiling > contendedWriteBackoffMax || ceiling <= 0 {
-		ceiling = contendedWriteBackoffMax
-	}
-	return time.Duration(rand.Int63n(int64(ceiling))) //nolint:gosec // not security-sensitive
 }

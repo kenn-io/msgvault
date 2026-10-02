@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
 	"golang.org/x/oauth2"
 
 	"go.kenn.io/msgvault/internal/gmail"
@@ -123,21 +123,19 @@ func (c *Client) request(ctx context.Context, op gmail.Operation, method, path s
 
 	reqURL := c.baseURL + path
 
-	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			backoff := c.calculateBackoff(attempt)
-			c.logger.Debug("retrying calendar request", "attempt", attempt, "backoff", backoff, "path", path)
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(backoff):
-			}
-		}
+	policy := backoff.NewExponentialBackOff()
+	// The former full-jitter ceiling starts at two seconds.
+	policy.InitialInterval = time.Second
+	policy.MaxInterval = maxBackoff * time.Second / 2
+	policy.Multiplier = 2
+	policy.RandomizationFactor = 1
+	attempt := -1
+	body, err := backoff.Retry(ctx, func() ([]byte, error) {
+		attempt++
 
 		req, err := http.NewRequestWithContext(ctx, method, reqURL, io.Reader(nil))
 		if err != nil {
-			return nil, fmt.Errorf("create request: %w", err)
+			return nil, backoff.Permanent(fmt.Errorf("create request: %w", err))
 		}
 
 		resp, err := c.httpClient.Do(req)
@@ -151,17 +149,15 @@ func (c *Client) request(ctx context.Context, op gmail.Operation, method, path s
 			// keeps the normal retry policy.
 			var rerr *oauth2.RetrieveError
 			if errors.As(err, &rerr) && !isTransientTokenError(rerr) {
-				return nil, fmt.Errorf("oauth token for calendar request: %w", err)
+				return nil, backoff.Permanent(fmt.Errorf("oauth token for calendar request: %w", err))
 			}
-			lastErr = fmt.Errorf("http request: %w", err)
-			continue // retry on network errors
+			return nil, fmt.Errorf("http request: %w", err)
 		}
 
 		respBody, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
-			lastErr = fmt.Errorf("read response: %w", err)
-			continue
+			return nil, fmt.Errorf("read response: %w", err)
 		}
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -172,48 +168,47 @@ func (c *Client) request(ctx context.Context, op gmail.Operation, method, path s
 		case http.StatusTooManyRequests:
 			c.logger.Debug("calendar rate limited, backing off 30s", "path", path, "attempt", attempt)
 			c.rateLimiter.Throttle(30 * time.Second)
-			lastErr = errors.New("rate limited (429)")
-			continue
+			return nil, errors.New("rate limited (429)")
 
 		case http.StatusForbidden:
 			if isRateLimitError(respBody) {
 				c.logger.Debug("calendar quota exceeded, backing off 60s", "path", path, "attempt", attempt)
 				c.rateLimiter.Throttle(60 * time.Second)
-				lastErr = errors.New("quota exceeded (403)")
-				continue
+				return nil, errors.New("quota exceeded (403)")
 			}
-			return nil, fmt.Errorf("forbidden (403): %s", string(respBody))
+			return nil, backoff.Permanent(fmt.Errorf("forbidden (403): %s", string(respBody)))
 
 		case http.StatusInternalServerError, http.StatusBadGateway,
 			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-			lastErr = fmt.Errorf("server error (%d)", resp.StatusCode)
-			continue
+			return nil, fmt.Errorf("server error (%d)", resp.StatusCode)
 
 		case http.StatusUnauthorized:
-			return nil, errors.New("unauthorized (401): token may be invalid")
+			return nil, backoff.Permanent(errors.New("unauthorized (401): token may be invalid"))
 
 		case http.StatusGone:
-			return nil, &GoneError{Path: path}
+			return nil, backoff.Permanent(&GoneError{Path: path})
 
 		case http.StatusNotFound:
-			return nil, &NotFoundError{Path: path}
+			return nil, backoff.Permanent(&NotFoundError{Path: path})
 
 		default:
-			return nil, fmt.Errorf("request failed (%d): %s", resp.StatusCode, string(respBody))
+			return nil, backoff.Permanent(fmt.Errorf("request failed (%d): %s", resp.StatusCode, string(respBody)))
 		}
+	}, backoff.WithBackOff(policy), backoff.WithMaxTries(maxRetries+1), backoff.WithMaxElapsedTime(0),
+		backoff.WithNotify(func(_ error, delay time.Duration) {
+			c.logger.Debug("retrying calendar request", "attempt", attempt+1, "backoff", delay, "path", path)
+		}))
+	if err == nil {
+		return body, nil
 	}
-
-	return nil, fmt.Errorf("max retries exceeded: %w", lastErr)
-}
-
-// calculateBackoff returns full-jitter exponential backoff for a retry attempt.
-func (c *Client) calculateBackoff(attempt int) time.Duration {
-	base := float64(uint(1) << uint(attempt))
-	if base > maxBackoff {
-		base = maxBackoff
+	retryErr := backoff.AsRetryError(err)
+	if errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+		return nil, retryErr.LastErr
 	}
-	jittered := rand.Float64() * base //nolint:gosec // retry spread, not security-sensitive
-	return time.Duration(jittered * float64(time.Second))
+	if !errors.Is(retryErr.Cause, backoff.ErrExhausted) {
+		return nil, ctx.Err()
+	}
+	return nil, fmt.Errorf("max retries exceeded: %w", retryErr.LastErr)
 }
 
 // isTransientTokenError reports whether the token endpoint failed with a

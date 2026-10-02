@@ -87,7 +87,7 @@ test('calendar fills its card at medium and narrow widths without clipping edge 
     for (const name of ['3 messages on Jan 1, 2026', '1 message on Dec 31, 2026']) {
       const cell = calendar.getByRole('button', { name }).filter({ visible: true });
       await cell.hover();
-      const tooltip = page.getByRole('tooltip');
+      const tooltip = calendar.getByRole('tooltip');
       await expect(tooltip).toHaveText(name);
       await expect(tooltip).toBeVisible();
       const rootBox = await calendar.boundingBox();
@@ -106,7 +106,7 @@ test('Escape dismisses the current day but hovering another day reopens the tool
   const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
   const first = calendar.getByRole('button', { name: '3 messages on Jan 1, 2026' }).filter({ visible: true });
   const last = calendar.getByRole('button', { name: '1 message on Dec 31, 2026' }).filter({ visible: true });
-  const tooltip = page.getByRole('tooltip');
+  const tooltip = calendar.getByRole('tooltip');
   await first.hover();
   await expect(tooltip).toHaveText('3 messages on Jan 1, 2026');
   await page.keyboard.press('Escape');
@@ -144,7 +144,7 @@ test('calendar remains accessible in a narrow viewport with edge tooltips on scr
   for (const name of ['3 messages on Jan 1, 2026', '1 message on Dec 31, 2026']) {
     const cell = calendar.getByRole('button', { name }).filter({ visible: true });
     await cell.hover();
-    const tooltip = page.getByRole('tooltip');
+    const tooltip = calendar.getByRole('tooltip');
     await expect(tooltip).toHaveText(name);
     const tipBox = await tooltip.boundingBox();
     const cellBox = await cell.boundingBox();

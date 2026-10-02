@@ -1012,13 +1012,13 @@ func newExploreDuckDBFixtureWithRecipients(t *testing.T, recipientValues string)
 }
 
 func newExploreDuckDBFixtureWithMessagesAndRecipients(
-	t *testing.T, messageValues, recipientValues string, lastMessageID int64,
+	tb testing.TB, messageValues, recipientValues string, lastMessageID int64,
 ) (*query.DuckDBEngine, string) {
-	t.Helper()
-	analyticsDir := t.TempDir()
+	tb.Helper()
+	analyticsDir := tb.TempDir()
 	db, err := sql.Open("duckdb", "")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, db.Close()) })
 
 	tables := []struct {
 		dir, file, columns, values string
@@ -1043,28 +1043,28 @@ func newExploreDuckDBFixtureWithMessagesAndRecipients(
 	}
 	for _, table := range tables {
 		dir := filepath.Join(analyticsDir, table.dir)
-		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(tb, os.MkdirAll(dir, 0o755))
 		where := ""
 		if table.empty {
 			where = " WHERE false"
 		}
 		path := filepath.ToSlash(filepath.Join(dir, table.file))
 		_, err := db.Exec(fmt.Sprintf("COPY (SELECT * FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", table.values, table.columns, where, path))
-		require.NoError(t, err, "write %s", table.dir)
+		require.NoError(tb, err, "write %s", table.dir)
 	}
-	ensureIdentityCacheFixtureDatasets(t, db, analyticsDir)
+	ensureIdentityCacheFixtureDatasets(tb, db, analyticsDir)
 	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	state, err := json.Marshal(query.CacheSyncState{
 		LastMessageID: lastMessageID, LastSyncAt: time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC),
 		SchemaVersion: query.CacheSchemaVersion, PublishedAt: time.Date(2026, 7, 18, 12, 1, 0, 0, time.UTC),
 		DatasetFingerprint: fingerprint,
 	})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(query.CacheStatePath(analyticsDir), state, 0o600))
+	require.NoError(tb, err)
+	require.NoError(tb, os.WriteFile(query.CacheStatePath(analyticsDir), state, 0o600))
 
 	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, engine.Close()) })
 	return engine, analyticsDir
 }

@@ -52,8 +52,8 @@ github.com/cenkalti/backoff/v4 v4.3.0 h1:MyRJ/UdXutAwSAT+s3wNd7MfTIcy71VQueUuFK3
 github.com/cenkalti/backoff/v4 v4.3.0/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
 github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F97BxZthm/crw=
-github.com/cenkalti/backoff/v7 v7.0.0 h1:ZP+QAaaOnVUHo+ufFpZ835hbT3x2fy+h2lecVEosZ6A=
-github.com/cenkalti/backoff/v7 v7.0.0/go.mod h1:qcKBGwsu4hpxHtQ8tWYsQ+ifzx2+sS+Xx/3jfe30lI8=
+github.com/cenkalti/backoff/v7 v7.0.1 h1:+ulHti5s1d9QnfyOnLWVmQ/SaZ+TJQF9OdOI0i9BGZI=
+github.com/cenkalti/backoff/v7 v7.0.1/go.mod h1:qcKBGwsu4hpxHtQ8tWYsQ+ifzx2+sS+Xx/3jfe30lI8=
 github.com/cention-sany/utf7 v0.0.0-20170124080048-26cad61bd60a h1:MISbI8sU/PSK/ztvmWKFcI7UGb5/HQT7B+i3a2myKgI=
 github.com/cention-sany/utf7 v0.0.0-20170124080048-26cad61bd60a/go.mod h1:2GxOXOlEPAMFPfp014mK1SWq8G8BN8o7/dfYqJrVGn8=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
@@ -399,6 +399,8 @@ go.kenn.io/kata v0.18.1-0.20261001005735-0bf1e54c63d3 h1:8oega4wck83f4J71auZkCOy
 go.kenn.io/kata v0.18.1-0.20261001005735-0bf1e54c63d3/go.mod h1:RoD5oU7ZI/Q2oyzqEmYEd/hj48OqRcGXD85ujLxdlt8=
 go.kenn.io/kit v0.29.0 h1:JkNXp8kHX2oZcRbNIkUJ+0zpYYnrZX2jmmqid04uF5g=
 go.kenn.io/kit v0.29.0/go.mod h1:a9XcXDVmSOEbnUyPFewjCUF+ry0W8fHfu8v5pir0rsE=
+go.kenn.io/kit v0.29.2 h1:sTmIe+TpXc/TbDeGAOsikHw5EXe7WUWRMUR1lMDng6g=
+go.kenn.io/kit v0.29.2/go.mod h1:a9XcXDVmSOEbnUyPFewjCUF+ry0W8fHfu8v5pir0rsE=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0 h1:OyrsyzuttWTSur2qN/Lm0m2a8yqyIjUVBZcxFPuXq2o=

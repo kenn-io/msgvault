@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, EmptyState, SearchInput, SegmentedControl } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, SearchInput, SegmentedControl, Tooltip } from '@kenn-io/kit-ui';
 
   import type { DomainSummary, ExploreCacheUnavailable, PersonSummary } from '../../explore/models';
   import type { RelationshipFacet, RelationshipRow } from '../../relationships/models';
@@ -236,14 +236,13 @@
                so a touch scroll that starts on a row never selects it (which
                would also close the mobile drawer) and right/middle presses
                do nothing. -->
-          <!-- svelte-ignore a11y_click_events_have_key_events -- Enter on
-               the focused grid opens the same row via handleKeydown. -->
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus --
+               The grid owns focus and opens its active row with Enter. -->
           <div
             class="result-row"
             class:active={index === activeIndex}
             class:selected={view.target === activeTarget}
             role="row"
-            tabindex="-1"
             data-row-key={view.key}
             aria-selected={view.target === activeTarget}
             style:--reveal-index={index}
@@ -259,7 +258,7 @@
               />
               <div class="row-body">
                 <div class="row-main">
-                  <span class="label">{view.label}</span>
+                  <Tooltip text={view.label}><span class="label" title={view.label}>{view.label}</span></Tooltip>
                   <span class="last-at" data-mono>{compactDate(view.lastAt)}</span>
                 </div>
                 <span class="row-summary" data-mono>{view.summary}</span>
@@ -276,6 +275,7 @@
 </aside>
 
 <style>
+  .row-main :global(.kit-tooltip) { white-space: normal; overflow-wrap: anywhere; }
   .relationship-list {
     display: flex;
     min-width: 0;

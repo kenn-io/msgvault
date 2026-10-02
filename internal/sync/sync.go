@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
+
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/identityops"
@@ -355,26 +357,25 @@ func (s *Syncer) runPageIdentityDiscovery(
 	sourceID int64,
 	sourceMessageIDs []string,
 ) (parkedBacklog bool) {
-	backoff := identityDiscoveryRetryBackoff
-	var err error
-	for attempt := range identityDiscoveryAttempts {
-		if _, err = identityops.DiscoverStrongForSourceMessageIDs(
-			ctx, s.store, sourceID, sourceMessageIDs,
-		); err == nil {
-			return false
-		}
-		if ctx.Err() != nil || attempt == identityDiscoveryAttempts-1 {
-			break
-		}
-		s.logger.Warn(identityDiscoveryRetryLogMessage,
-			"source_id", sourceID, "attempt", attempt+1, "error", err)
-		select {
-		case <-time.After(backoff):
-		case <-ctx.Done():
-			return false
-		}
-		backoff *= 2
+	policy := backoff.NewExponentialBackOff()
+	policy.InitialInterval = identityDiscoveryRetryBackoff
+	policy.MaxInterval = 2 * identityDiscoveryRetryBackoff
+	policy.Multiplier = 2
+	attempt := 0
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
+		attempt++
+		_, err := identityops.DiscoverStrongForSourceMessageIDs(
+			ctx, s.store, sourceID, sourceMessageIDs)
+		return struct{}{}, err
+	}, backoff.WithBackOff(policy), backoff.WithMaxTries(identityDiscoveryAttempts),
+		backoff.WithMaxElapsedTime(0), backoff.WithNotify(func(err error, _ time.Duration) {
+			s.logger.Warn(identityDiscoveryRetryLogMessage,
+				"source_id", sourceID, "attempt", attempt, "error", err)
+		}))
+	if err == nil {
+		return false
 	}
+	err = backoff.AsRetryError(err).LastErr
 	if ctx.Err() != nil {
 		return false
 	}

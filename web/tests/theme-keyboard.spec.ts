@@ -12,7 +12,7 @@ const row = {
   source_id: 1,
   source_identifier: 'archive@example.com',
   source_type: 'synthetic',
-  participant_labels: ['Example Person'],
+  participant_labels: ['Example Person With A Long Archive Display Name'],
   participant_ids: [1],
   attachment_count: 1,
   attachment_size: 2048,
@@ -55,7 +55,7 @@ test.beforeEach(async ({ page }) => {
         id: 1, key: 'file:1', entry_key: 'message:1', message_id: 1, conversation_id: 1,
         occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
         source_identifier: 'archive@example.com', containing_title: 'Synthetic archive subject',
-        filename: 'synthetic.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048,
+        filename: 'SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048,
         content_state: 'missing_blob', content_available: false
       }],
       total_count: 1, cache_revision: 'cache-theme', search_provenance: {}
@@ -67,7 +67,7 @@ test.beforeEach(async ({ page }) => {
 
 test('compact workspace links preserve browser navigation and reopen the selected tab', async ({ page }) => {
   await selectWorkspace(page, 'Files');
-  await expect(page.getByText('synthetic.pdf', { exact: true })).toBeVisible();
+  await expect(page.getByText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\?workspace=files&mode=full_text$/);
   const filesURL = page.url();
 
@@ -75,9 +75,9 @@ test('compact workspace links preserve browser navigation and reopen the selecte
   await expect(page.getByText('Synthetic archive subject', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\?workspace=everything&mode=full_text$/);
   await page.goBack();
-  await expect(page.getByText('synthetic.pdf', { exact: true })).toBeVisible();
+  await expect(page.getByText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf', { exact: true })).toBeVisible();
   await page.goto(filesURL);
-  await expect(page.getByText('synthetic.pdf', { exact: true })).toBeVisible();
+  await expect(page.getByText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf', { exact: true })).toBeVisible();
 });
 
 test('query failures explain recovery in Everything and Files', async ({ page }) => {
@@ -99,7 +99,7 @@ test('query failures explain recovery in Everything and Files', async ({ page })
   await expect(page.getByText('0 files', { exact: true })).toHaveCount(0);
   await page.unroute('**/api/v1/files/search', failFiles);
   await page.getByRole('button', { name: 'Retry request' }).click();
-  await expect(page.getByText('synthetic.pdf', { exact: true })).toBeVisible();
+  await expect(page.getByText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf', { exact: true })).toBeVisible();
 });
 
 test('one registry drives selection, searchable help, palette, and editable suspension', async ({ page }) => {
@@ -291,3 +291,89 @@ function measureRenderedContrast(
   const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
   return (values[0]! + 0.05) / (values[1]! + 0.05);
 }
+
+test('Deletions keeps the global search shortcut available', async ({ page }) => {
+  await page.route('**/api/v1/deletions', route => route.fulfill({ json: { manifests: [] } }));
+  await selectWorkspace(page, 'Deletions');
+  await expect(page.getByRole('heading', { name: 'Deletions', exact: true })).toBeVisible();
+  await page.keyboard.press('/');
+  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toBeFocused();
+});
+
+test('truncated people and filenames disclose full labels on hover', async ({ page }) => {
+  const people = page.locator('.cell--people .kit-tooltip-trigger').first();
+  await people.hover();
+  await expect(page.getByRole('tooltip')).toHaveText('Example Person With A Long Archive Display Name');
+  await expect(page.getByRole('tooltip')).toBeInViewport();
+  await page.keyboard.press('Escape');
+  await selectWorkspace(page, 'Files');
+  const filename = page.getByRole('grid', { name: 'Files results' }).locator('.kit-tooltip-trigger').first();
+  await filename.hover();
+  const tooltip = page.getByRole('tooltip');
+  await expect(tooltip).toHaveText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf');
+  await expect(tooltip).toBeInViewport();
+  expect(await tooltip.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  const bounds = await tooltip.boundingBox();
+  const trigger = await filename.boundingBox();
+  expect(Math.abs(bounds!.y - trigger!.y)).toBeLessThan(100);
+});
+
+test('clicking a people label preserves Everything keyboard navigation and one grid tab stop', async ({ page }) => {
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [row, { ...row, key: 'message:2', title: 'Second archive subject' }],
+    total_count: 2, cache_revision: 'cache-theme', search_provenance: {}
+  } }));
+  await page.reload();
+  const grid = page.getByRole('grid', { name: 'Everything results' });
+  await grid.locator('.people-label').first().click();
+  await expect(grid).toBeFocused();
+  await page.keyboard.press('j');
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'everything-row-message-3a-2');
+  await page.keyboard.press('ArrowUp');
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'everything-row-message-3a-1');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('complementary', { name: 'Reading pane: Second archive subject' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(grid).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect.poll(() => grid.evaluate(element => element.contains(document.activeElement))).toBe(false);
+});
+
+test('clicking a filename returns to Files keyboard navigation without extra row tab stops', async ({ page }) => {
+  const files = [1, 2].map(id => ({
+    id, key: `file:${id}`, entry_key: `message:${id}`, message_id: id, conversation_id: id,
+    occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
+    source_identifier: 'archive@example.com', containing_title: `Containing item ${id}`,
+    filename: `Attachment ${id}.pdf`, mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048,
+    content_state: 'missing_blob', content_available: false
+  }));
+  await page.route('**/api/v1/files/search', route => route.fulfill({ json: {
+    files, total_count: 2, cache_revision: 'cache-theme', search_provenance: {}
+  } }));
+  for (const file of files) {
+    await page.route(`**/api/v1/files/${file.id}`, route => route.fulfill({ json: file }));
+  }
+  await selectWorkspace(page, 'Files');
+  const grid = page.getByRole('grid', { name: 'Files results' });
+  await grid.getByText('Attachment 1.pdf', { exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'View Attachment 1.pdf' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(grid).toBeFocused();
+  await page.keyboard.press('j');
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-2');
+  await page.keyboard.press('k');
+  await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-1');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'View Attachment 2.pdf' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(grid).toBeFocused();
+  for (const label of ['Sort by date', 'Sort by filename', 'Sort by size',
+    'Open containing item Containing item 1', 'Open containing item Containing item 2']) {
+    await page.keyboard.press('Tab');
+    await expect(grid.getByRole('button', { name: label, exact: true })).toBeFocused();
+  }
+  await page.keyboard.press('Tab');
+  await expect.poll(() => grid.evaluate(element => element.contains(document.activeElement))).toBe(false);
+});

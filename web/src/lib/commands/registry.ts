@@ -11,7 +11,7 @@ export const COMMAND_DEFINITIONS = [
   command('last-row', 'Move to last row', ['End'], ['end'], 'Navigate'),
   command('open-row', 'Open or drill into focused row', ['Enter'], ['enter'], 'Navigate'),
   command('close-layer', 'Close current layer or restore context', ['Esc'], ['escape'], 'Navigate'),
-  command('focus-search', 'Focus search', ['/'], ['/'], 'Navigate'),
+  command('focus-search', 'Focus search', ['/'], ['/'], 'Navigate', false, ['root', 'deletions']),
   command('toggle-selection', 'Toggle focused row selection', ['Space'], ['space'], 'Selection'),
   command('extend-selection', 'Extend selection to focused row', ['Shift', 'Space'], ['shift+space'], 'Selection'),
   command('select-visible', 'Select all visible rows', ['A'], ['a', 'shift+a'], 'Selection'),
@@ -34,6 +34,7 @@ export interface CommandDefinition {
   label: string;
   keys: readonly string[];
   combos: readonly string[];
+  scopes: readonly string[];
   section: string;
   keywords: string;
   destructive: boolean;
@@ -59,13 +60,15 @@ function command<ID extends string>(
   keys: readonly string[],
   combos: readonly string[],
   section: string,
-  destructive = false
+  destructive = false,
+  scopes: readonly string[] = ['root']
 ) {
   return {
     id,
     label,
     keys,
     combos,
+    scopes,
     section,
     keywords: `${section} ${label} ${keys.join(' ')}`,
     destructive,

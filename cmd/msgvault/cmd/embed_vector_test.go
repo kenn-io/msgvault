@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/personsearch"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
@@ -1144,4 +1145,70 @@ func TestNewProgressPrinter_DoesNotBypassThrottleAfterInitialTotal(t *testing.T)
 
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
 	require.Len(t, lines, 1, "progress emitted %d lines, want 1 throttled line after initial total:\n%s", len(lines), buf.String())
+}
+
+// Pin a pre-Kit generation, including its stored vector. Adopting the HTTP
+// client must neither schedule a rebuild nor replace the persisted identity.
+func TestKitMigrationReusesExistingGenerationForIndexAndSearch(t *testing.T) {
+	ctx := t.Context()
+	backend := openTestBackend(t)
+	const fingerprint = "legacy-model:4:p1-111111:c32768:e1"
+	cfg := vector.Config{Embeddings: vector.EmbeddingsConfig{Model: "legacy-model", Dimension: 4}}
+	cfg.ApplyDefaults()
+	require.Equal(t, fingerprint, cfg.GenerationFingerprint())
+	generation, err := backend.CreateGeneration(ctx, "legacy-model", 4, fingerprint)
+	require.NoError(t, err)
+	require.NoError(t, backend.Upsert(ctx, generation, []vector.Chunk{{MessageID: 1, Vector: []float32{1, 0, 0, 0}}}))
+	require.NoError(t, backend.ActivateGeneration(ctx, generation, true))
+
+	got, rebuilding, err := pickEmbedGeneration(ctx, backend, embedGenerationOpts{
+		Model: cfg.Embeddings.Model, Dimension: 4, Fingerprint: cfg.GenerationFingerprint(), Stderr: openStderrSink(t),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, generation, got)
+	assert.False(t, rebuilding)
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		var request struct {
+			Input []string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		assert.Equal(t, []string{"find existing message"}, request.Input)
+		_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1,0,0,0]}]}`))
+	}))
+	t.Cleanup(server.Close)
+	client := embed.NewClient(embed.Config{Endpoint: server.URL, Model: cfg.Embeddings.Model, Dimension: 4})
+	engine := hybrid.NewEngine(backend, nil, client, hybrid.Config{ExpectedFingerprint: cfg.GenerationFingerprint()})
+	hits, metadata, err := engine.Search(ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "find existing message", Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, int64(1), hits[0].MessageID)
+	assert.Equal(t, generation, metadata.Generation.ID)
+	assert.Equal(t, fingerprint, metadata.Generation.Fingerprint)
+	assert.Equal(t, int32(1), requests.Load(), "only the query is embedded")
+	building, err := backend.BuildingGeneration(ctx)
+	require.NoError(t, err)
+	assert.Nil(t, building)
+
+	for _, change := range []struct {
+		name  string
+		apply func(*vector.Config)
+	}{
+		{"model", func(c *vector.Config) { c.Embeddings.Model = "other-model" }},
+		{"recipe", func(c *vector.Config) { c.Embeddings.MaxInputChars++ }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			changed := cfg
+			change.apply(&changed)
+			_, err := vector.ResolveActiveForFingerprint(ctx, backend, changed.GenerationFingerprint())
+			require.ErrorIs(t, err, vector.ErrIndexStale)
+			_, _, err = pickEmbedGeneration(ctx, backend, embedGenerationOpts{Model: changed.Embeddings.Model, Dimension: 4, Fingerprint: changed.GenerationFingerprint(), Stderr: openStderrSink(t)})
+			require.ErrorIs(t, err, vector.ErrIndexStale)
+		})
+	}
 }
