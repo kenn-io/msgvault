@@ -12,6 +12,7 @@ type Source interface {
 	Recording(ctx context.Context, id string) (Recording, error)
 }
 
+// File holds recording metadata; DurationMS is measured in milliseconds.
 type File struct {
 	ID         string
 	Name       string
@@ -22,6 +23,7 @@ type File struct {
 	Blocks     []string
 }
 
+// FilePage includes the pagination checks supplied by Plaud, when present.
 type FilePage struct {
 	Files    []File
 	Total    *int
@@ -29,6 +31,7 @@ type FilePage struct {
 	Complete *bool
 }
 
+// Segment is a speaker's transcript text with offsets from the recording start.
 type Segment struct {
 	Speaker      string  `json:"speaker"`
 	Text         string  `json:"text"`
@@ -36,12 +39,14 @@ type Segment struct {
 	EndSeconds   float64 `json:"end_seconds,omitempty"`
 }
 
+// Note is one Plaud note tab, identified by its provider ID and data type.
 type Note struct {
 	ID      string `json:"id,omitempty"`
 	Type    string `json:"data_type"`
 	Content string `json:"content"`
 }
 
+// Recording combines file metadata, all note tabs, and the preferred transcript.
 type Recording struct {
 	File            File
 	Notes           []Note

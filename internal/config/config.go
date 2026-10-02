@@ -1983,8 +1983,8 @@ func (c *Config) validateMeetingSources() error {
 	}
 	for i := range c.Plaud {
 		id := c.Plaud[i].Identifier
-		if strings.TrimSpace(id) != id || id == "." || id == ".." || strings.ContainsAny(id, "/\\") {
-			return fmt.Errorf("[[plaud]]: unsafe identifier %q; use a label without path separators or surrounding whitespace", id)
+		if strings.TrimSpace(id) != id {
+			return fmt.Errorf("[[plaud]]: unsafe identifier %q; use a label without surrounding whitespace", id)
 		}
 		for _, r := range id {
 			if r < 32 || r == 127 {

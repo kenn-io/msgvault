@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/mail"
 	"regexp"
 	"strings"
 	"time"
@@ -17,15 +16,18 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// ErrContract means a Plaud response does not match the expected MCP data format.
 var ErrContract = errors.New("plaud MCP contract error")
 var wrapperStart = regexp.MustCompile(`<untrusted-user-data-([A-Za-z0-9_-]+)\s+source="plaud-recording">`)
 
+// Session reads Plaud data over MCP with rate limiting and transient retries.
 type Session struct {
 	cs         *mcp.ClientSession
 	limiter    *rate.Limiter
 	retryDelay time.Duration
 }
 
+// ToolInfo describes a tool exposed by the connected Plaud MCP server.
 type ToolInfo struct {
 	Name        string
 	Description string
@@ -34,7 +36,11 @@ type ToolInfo struct {
 
 func Connect(ctx context.Context, endpoint string, handler auth.OAuthHandler) (*Session, error) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "msgvault", Version: "dev"}, nil)
-	cs, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: endpoint, OAuthHandler: handler, DisableStandaloneSSE: true}, nil)
+	cs, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             endpoint,
+		OAuthHandler:         handler,
+		DisableStandaloneSSE: true,
+	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("connect to plaud MCP: %w", err)
 	}
@@ -122,13 +128,21 @@ func (s *Session) call(ctx context.Context, name string, args map[string]any) (*
 			transient = errors.As(err, &n) || transientFailure(err.Error())
 		}
 		if res != nil && res.IsError {
+			var messages []string
 			for _, c := range res.Content {
 				if t, ok := c.(*mcp.TextContent); ok {
-					v := strings.ToLower(t.Text)
-					transient = transient || transientFailure(v)
+					transient = transient || transientFailure(t.Text)
+					messages = append(messages, t.Text)
 				}
 			}
-			err = fmt.Errorf("plaud tool %s returned an error", name)
+			err = errors.New("tool returned an error")
+			message := []rune(strings.TrimSpace(strings.Join(messages, "\n")))
+			if len(message) > 1024 {
+				message = append(message[:1024], '…')
+			}
+			if len(message) > 0 {
+				err = fmt.Errorf("%w: %s", err, string(message))
+			}
 		}
 		if err == nil {
 			return res, nil
@@ -151,7 +165,10 @@ func (s *Session) call(ctx context.Context, name string, args map[string]any) (*
 // uses HTTP status descriptions for rejected streamable-HTTP requests.
 func transientFailure(message string) bool {
 	message = strings.ToLower(message)
-	for _, marker := range []string{"rate limit", "too many requests", "temporarily unavailable", "internal server error", "bad gateway", "service unavailable", "gateway timeout"} {
+	for _, marker := range []string{
+		"rate limit", "too many requests", "temporarily unavailable",
+		"internal server error", "bad gateway", "service unavailable", "gateway timeout",
+	} {
 		if strings.Contains(message, marker) {
 			return true
 		}
@@ -182,9 +199,8 @@ func (s *Session) CurrentUser(ctx context.Context) (string, error) {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return "", fmt.Errorf("%w: invalid current user", ErrContract)
 	}
-	email := strings.ToLower(strings.TrimSpace(v.Email))
-	addr, err := mail.ParseAddress(email)
-	if err != nil || addr.Address != email {
+	email, err := normalizeEmail(v.Email)
+	if err != nil {
 		return "", fmt.Errorf("%w: current user has no explicit account email", ErrContract)
 	}
 	return email, nil
@@ -293,10 +309,15 @@ func (s *Session) transcript(ctx context.Context, id, block string) ([]Segment, 
 			Next     string           `json:"next_cursor"`
 			Segments []jsontext.Value `json:"segments"`
 		}
-		if err := json.Unmarshal(raw, &p); err != nil || p.FileID != id || p.Block != block || p.Total == nil || p.Offset == nil || p.Returned == nil || p.Segments == nil {
+		if err := json.Unmarshal(raw, &p); err != nil {
 			return nil, fmt.Errorf("%w: invalid transcript page", ErrContract)
 		}
-		if *p.Total < 0 || *p.Offset != len(out) || *p.Returned != len(p.Segments) || len(out)+len(p.Segments) > *p.Total || total >= 0 && total != *p.Total {
+		if p.FileID != id || p.Block != block || p.Total == nil ||
+			p.Offset == nil || p.Returned == nil || p.Segments == nil {
+			return nil, fmt.Errorf("%w: invalid transcript page", ErrContract)
+		}
+		if *p.Total < 0 || *p.Offset != len(out) || *p.Returned != len(p.Segments) ||
+			len(out)+len(p.Segments) > *p.Total || (total >= 0 && total != *p.Total) {
 			return nil, fmt.Errorf("%w: inconsistent transcript pagination", ErrContract)
 		}
 		total = *p.Total
@@ -336,5 +357,6 @@ func emptyTranscriptResult(res *mcp.CallToolResult, block string) bool {
 		return false
 	}
 	text := strings.TrimSpace(tc.Text)
-	return text == fmt.Sprintf("Block %q has no content for this recording yet.", block) || strings.HasPrefix(text, fmt.Sprintf("Block %q not available for this recording. Available blocks:", block))
+	return text == fmt.Sprintf("Block %q has no content for this recording yet.", block) ||
+		strings.HasPrefix(text, fmt.Sprintf("Block %q not available for this recording. Available blocks:", block))
 }

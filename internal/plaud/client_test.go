@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,6 +77,29 @@ func TestTransientToolFailuresAreRetried(t *testing.T) {
 				assert.Equal("user@example.com", email)
 			}
 			assert.Equal(tc.want, calls)
+		})
+	}
+}
+
+func TestToolErrorsPreserveProviderMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name, message, want string
+	}{
+		{"not found", "Recording not found", "Recording not found"},
+		{"permission", "Permission denied", "Permission denied"},
+		{"bounded", strings.Repeat("é", 1100), strings.Repeat("é", 1024) + "…"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := resultSession(t, map[string]func(map[string]any) *mcp.CallToolResult{
+				"get_file": func(map[string]any) *mcp.CallToolResult {
+					return &mcp.CallToolResult{
+						IsError: true,
+						Content: []mcp.Content{&mcp.TextContent{Text: tc.message}},
+					}
+				},
+			})
+			_, err := s.Recording(context.Background(), "file-1")
+			require.EqualError(t, err, "plaud tool get_file: tool returned an error: "+tc.want)
 		})
 	}
 }

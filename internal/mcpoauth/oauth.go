@@ -394,7 +394,7 @@ func (m *Manager) browserFlow(ctx context.Context, conf *oauth2.Config) (*oauth2
 		oauth2.S256ChallengeOption(verifier),
 		oauth2.SetAuthURLParam("resource", m.endpoint),
 	)
-	fmt.Printf("Opening browser for MCP authorization...\n")
+	fmt.Printf("Opening browser for %s authorization...\n", m.provider.Name)
 	fmt.Printf("If the browser doesn't open, visit:\n%s\n\n", authURL)
 	if err := m.openBrowserFn(ctx, authURL); err != nil {
 		m.logger.Warn("failed to open browser", "error", err)

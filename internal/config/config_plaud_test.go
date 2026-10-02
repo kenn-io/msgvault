@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,14 +25,30 @@ account_email="owner@example.com"
 [[plaud]]
 identifier="work"
 account_email="other@example.com"`, "every entry needs an identifier"},
-		{"unsafe identifier", `[[plaud]]
-identifier="../work"
+		{"surrounding whitespace", `[[plaud]]
+identifier=" work "
+account_email="owner@example.com"`, "surrounding whitespace"},
+		{"control character", `[[plaud]]
+identifier="work\u0001"
 account_email="owner@example.com"`, "unsafe identifier"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Load(writeMeetingConfig(t, tt.body), "")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestPlaudConfigAcceptsPathLikeLabels(t *testing.T) {
+	for _, identifier := range []string{"../work", `work\team`, ".", ".."} {
+		t.Run(identifier, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			body := fmt.Sprintf("[[plaud]]\nidentifier=%q\naccount_email=\"owner@example.com\"", identifier)
+			cfg, err := Load(writeMeetingConfig(t, body), "")
+			require.NoError(err)
+			assert.Equal(identifier, cfg.Plaud[0].Identifier)
 		})
 	}
 }

@@ -25,7 +25,16 @@ type evidence struct {
 }
 
 func normalized(rec Recording) evidence {
-	e := evidence{Version: 1, FileID: rec.File.ID, Title: rec.File.Name, StartedAt: rec.File.StartedAt, DurationSeconds: rec.File.DurationMS / 1000, Notes: rec.Notes, Segments: rec.Segments, TranscriptBlock: rec.TranscriptBlock}
+	e := evidence{
+		Version:         1,
+		FileID:          rec.File.ID,
+		Title:           rec.File.Name,
+		StartedAt:       rec.File.StartedAt,
+		DurationSeconds: rec.File.DurationMS / 1000,
+		Notes:           rec.Notes,
+		Segments:        rec.Segments,
+		TranscriptBlock: rec.TranscriptBlock,
+	}
 	if e.StartedAt.IsZero() {
 		e.StartedAt = rec.File.CreatedAt
 	}
@@ -123,7 +132,11 @@ func (e *evidence) snapshot(sourceID int64, email string) (meetingarchive.Snapsh
 	if err != nil {
 		return meetingarchive.Snapshot{}, err
 	}
-	metadata, err := json.Marshal(map[string]any{"plaud_file_id": e.FileID, "duration_seconds": e.DurationSeconds, "source_participants": e.Speakers}, json.Deterministic(true))
+	metadata, err := json.Marshal(map[string]any{
+		"plaud_file_id":       e.FileID,
+		"duration_seconds":    e.DurationSeconds,
+		"source_participants": e.Speakers,
+	}, json.Deterministic(true))
 	if err != nil {
 		return meetingarchive.Snapshot{}, err
 	}
@@ -131,5 +144,17 @@ func (e *evidence) snapshot(sourceID int64, email string) (meetingarchive.Snapsh
 	if len(snippet) > 200 {
 		snippet = snippet[:200]
 	}
-	return meetingarchive.Snapshot{SourceID: sourceID, AccountEmail: email, SourceMessageID: e.FileID, SourceConversationID: e.FileID, Title: e.Title, StartedAt: e.StartedAt, Body: body.String(), Snippet: string(snippet), Metadata: metadata, Raw: raw, RawFormat: "plaud_json"}, nil
+	return meetingarchive.Snapshot{
+		SourceID:             sourceID,
+		AccountEmail:         email,
+		SourceMessageID:      e.FileID,
+		SourceConversationID: e.FileID,
+		Title:                e.Title,
+		StartedAt:            e.StartedAt,
+		Body:                 body.String(),
+		Snippet:              string(snippet),
+		Metadata:             metadata,
+		Raw:                  raw,
+		RawFormat:            "plaud_json",
+	}, nil
 }

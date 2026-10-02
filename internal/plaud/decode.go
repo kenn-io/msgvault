@@ -109,11 +109,14 @@ func decodeSegment(raw jsontext.Value) (Segment, error) {
 		Start   *float64       `json:"start_time"`
 		End     *float64       `json:"end_time"`
 	}
-	if err := json.Unmarshal(raw, &v); err != nil || v.Content == nil || strings.TrimSpace(*v.Content) == "" || v.Start != nil && (*v.Start < 0 || math.IsNaN(*v.Start) || math.IsInf(*v.Start, 0)) {
+	if err := json.Unmarshal(raw, &v); err != nil || v.Content == nil || strings.TrimSpace(*v.Content) == "" {
 		return Segment{}, fmt.Errorf("%w: invalid transcript segment", ErrContract)
 	}
 	s := Segment{Text: *v.Content, Speaker: "Unknown speaker"}
 	if v.Start != nil {
+		if *v.Start < 0 || math.IsNaN(*v.Start) || math.IsInf(*v.Start, 0) {
+			return Segment{}, fmt.Errorf("%w: invalid transcript segment", ErrContract)
+		}
 		s.StartSeconds = *v.Start
 	}
 	if v.End != nil {
