@@ -35,15 +35,20 @@ type scriptedGmailDraftClient struct {
 	sendAs      []gmail.SendAs
 	sendAsErr   error
 
-	createCalls int
-	getCalls    int
-	updateCalls int
-	deleteCalls int
-	listCalls   int
+	createThreads []string
+	createCalls   int
+	getCalls      int
+	updateCalls   int
+	deleteCalls   int
+	listCalls     int
 }
 
 func (c *scriptedGmailDraftClient) CreateDraft(_ context.Context, raw []byte, threadID string) (*gmail.Draft, error) {
 	c.createCalls++
+	c.createThreads = append(c.createThreads, threadID)
+	if threadID == "" {
+		threadID = "gmail-new-thread"
+	}
 	if c.createErr != nil {
 		return nil, c.createErr
 	}
@@ -336,7 +341,7 @@ func TestGmailDraftReplyAllInfersSenderAndIndexesCc(t *testing.T) {
 	assertions.Equal(created.MessageID, matches[0].ID)
 }
 
-func TestGmailDraftRejectsComposeAndCrossSourceReply(t *testing.T) {
+func TestGmailDraftRejectsCrossSourceReply(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	fixture := newGmailDraftTestFixture(t)
@@ -345,11 +350,6 @@ func TestGmailDraftRejectsComposeAndCrossSourceReply(t *testing.T) {
 	requirements.NoError(fixture.store.AddAccountIdentity(other.ID, other.Identifier, "manual"))
 	fixture.adapter.gmailDraftPolicy = append(fixture.adapter.gmailDraftPolicy,
 		config.GmailDraftSource{SourceID: other.ID, Enabled: true})
-	err = fixture.adapter.runCLIComposeDraft(t.Context(), api.CLIRunRequest{
-		Args: []string{"draft-compose", "--source-id", strconv.FormatInt(fixture.source.ID, 10), "--to", "recipient@example.test"},
-	}, nil)
-	requirements.ErrorContains(err, "draft_disabled")
-	requirements.EqualError(errors.Unwrap(err), "draft-compose requires an IMAP source")
 	err = fixture.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--source-id", strconv.FormatInt(other.ID, 10), "--body", "reply"},
 	}, nil)

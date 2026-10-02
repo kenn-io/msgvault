@@ -185,5 +185,8 @@ func (a *storeAPIAdapter) runCLIComposeDraft(
 	if err != nil {
 		return draftReplyError("invalid_compose_metadata", err)
 	}
+	if target.source.SourceType == "gmail" {
+		return a.runGmailReplyDraft(ctx, draftReplyIntent{JSON: intent.JSON}, target, draft, messageRFC822ID(draft.Parsed), emit)
+	}
 	return a.createDraft(ctx, target, draft, intent.JSON, emit)
 }

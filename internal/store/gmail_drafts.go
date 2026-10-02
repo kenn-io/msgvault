@@ -117,12 +117,12 @@ func (s *Store) PersistGmailDraftContext(
 		if data.Message.SourceID != receipt.SourceID || data.Message.SourceMessageID != receipt.GmailMessageID {
 			return nil, errors.New("source_key_conflict")
 		}
-		if data.MIMEAttachmentReplacement != nil {
-			return nil, errors.New("gmail draft persistence cannot replace attachments")
-		}
 		return prepareGmailDraftMessage(ctx, tx, receipt.SourceID, data)
 	}
-	after := func(ctx context.Context, tx *loggedTx, _ *MessagePersistData, messageID int64) error {
+	after := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, messageID int64) error {
+		if err := s.persistGmailDraftAttachments(ctx, tx, data, messageID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			INSERT INTO gmail_drafts (
 				draft_id, source_id, gmail_draft_id, current_message_id,
@@ -380,7 +380,7 @@ func (s *Store) PublishGmailDraftReplacementContext(
 			}
 			return prepareGmailDraftMessage(ctx, tx, draft.SourceID, data)
 		}
-		messageID, err := s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, build, prepare, nil)
+		messageID, err := s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, build, prepare, s.persistGmailDraftAttachments)
 		if err != nil {
 			return err
 		}
@@ -464,20 +464,8 @@ func (s *Store) AdoptGmailDraftObservationContext(
 				}
 				return prepareGmailDraftMessage(ctx, tx, draft.SourceID, data)
 			}
-			after := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, messageID int64) error {
-				if data.MIMEAttachmentReplacement == nil {
-					return nil
-				}
-				q := boundQuerier{ctx: ctx, q: tx}
-				if err := s.replaceMIMEAttachmentsWith(q, messageID, data.MIMEAttachmentReplacement); err != nil {
-					return fmt.Errorf("persist observed Gmail attachments: %w", err)
-				}
-				if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
-					return fmt.Errorf("recompute observed Gmail attachment stats: %w", err)
-				}
-				return nil
-			}
-			messageID, err = s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, build, prepare, after)
+
+			messageID, err = s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, build, prepare, s.persistGmailDraftAttachments)
 		} else if err != nil {
 			return fmt.Errorf("find observed Gmail message: %w", err)
 		}
@@ -573,6 +561,22 @@ func (s *Store) FinishGmailDraftDeleteContext(
 		return GmailDraft{}, err
 	}
 	return finished, nil
+}
+
+// persistGmailDraftAttachments keeps catalog changes inside the same transaction
+// as draft creation, replacement, or adoption. Source-key checks run first.
+func (s *Store) persistGmailDraftAttachments(ctx context.Context, tx *loggedTx, data *MessagePersistData, messageID int64) error {
+	if data.MIMEAttachmentReplacement == nil {
+		return nil
+	}
+	q := boundQuerier{ctx: ctx, q: tx}
+	if err := s.replaceMIMEAttachmentsWith(q, messageID, data.MIMEAttachmentReplacement); err != nil {
+		return fmt.Errorf("persist Gmail draft attachments: %w", err)
+	}
+	if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
+		return fmt.Errorf("recompute Gmail draft attachment stats: %w", err)
+	}
+	return nil
 }
 
 func prepareGmailDraftMessage(

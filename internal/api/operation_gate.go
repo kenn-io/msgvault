@@ -567,6 +567,9 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 			return "", true, nil
 		}
 		command := cliRunCommandWords(req.Args)
+		if command == CLIRunDraftSendAsCommand && cliRunArgsContainFlag(req.Args, "confirm") {
+			return "msgvault draft-send-as", false, nil
+		}
 		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] {
 			return "", true, nil
 		}

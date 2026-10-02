@@ -207,8 +207,13 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 Create one reply draft from an archived message to an authorized IMAP
 destination, or reply within its original Gmail account. The daemon requires
-the matching operator grant. `--from` is optional when exactly one confirmed
-identity is eligible.
+the matching operator grant. For Gmail replies, omitting `--from` selects a
+confirmed, primary or accepted send-as address matching the parent's To or Cc.
+If neither matches, the daemon checks Delivered-To and X-Original-To. Multiple
+matches within either group return `from_ambiguous`; choose `--from` explicitly.
+With no match, the existing rule applies: exactly one eligible confirmed
+identity is required. Explicit `--from` always wins. IMAP sender selection is
+unchanged.
 
 ```bash
 msgvault draft-reply <message-id> --body <text>
@@ -280,8 +285,8 @@ stores the Gmail draft and its `DRAFT` label after a confirmed response.
 
 ## draft-compose
 
-Create a new plain-text IMAP draft on one selected live source. Provide at least
-one `--to`, `--cc`, or `--bcc` value. The flags are repeatable and keep their
+Create a new plain-text IMAP or Gmail draft on one selected live source. Provide
+at least one `--to`, `--cc`, or `--bcc` value. The flags are repeatable and keep their
 envelope roles.
 
 ```bash
@@ -293,10 +298,11 @@ msgvault draft-compose --source-id 42 --to recipient@example.com \
 ```
 
 The source selector is required. The daemon applies the same host draft policy,
-confirmed identity check, delegated sender grant, UIDPLUS requirement, and
-structured provider outcomes as `draft-reply`. It stores the Bcc envelope in
-the draft so the mail application can use it. It never sends the message or
-validates provider send-as rights.
+confirmed identity check, delegated sender grant, and structured provider
+outcomes as `draft-reply`. IMAP also requires UIDPLUS. Gmail requires the From
+address to be primary or accepted in its send-as list and starts a new thread.
+It stores the Bcc envelope in the draft so the mail application can use it. Draft creation never sends mail.
+IMAP does not validate provider send-as rights.
 
 ### Beeper chat drafts
 
@@ -346,8 +352,8 @@ for another chat or account.
 
 ## draft-forward
 
-Create an IMAP draft that forwards an archived message and reuses its retained
-attachment files. Choose exactly one destination with `--account` or
+Create an IMAP or Gmail draft that forwards an archived message and reuses its
+retained attachment files. Choose exactly one destination with `--account` or
 `--source-id`, and provide at least one explicit `--to`, `--cc`, or `--bcc`.
 The parent message's Bcc recipients are never copied.
 This command requires owner access; agent tokens cannot invoke it.
@@ -365,9 +371,13 @@ those catalog references; it does not restore skipped or missing files from raw
 MIME. Empty attachment parts need no stored file.
 
 A pending, skipped, failed, unavailable, missing, unreadable, or unsupported
-occurrence stops the command before `APPEND`. It never creates a partial draft.
-The IMAP source must have an enabled `[[imap.drafts]]` entry, and the selected
-sender must be a confirmed identity on that source.
+occurrence stops the command before a provider write. It never creates a
+partial draft.
+The destination source must have an enabled `[[imap.drafts]]` or
+`[[gmail.drafts]]` entry, and the selected sender must be a confirmed identity
+on that source. Gmail also checks its primary or accepted send-as list. A
+Gmail forward starts a new thread, including when the parent is from another
+source. Forwarding remains owner-only.
 
 The draft has two inline plain-text parts: your editable note, then a
 `---------- Forwarded message ----------` separator with the original headers
@@ -383,8 +393,8 @@ header identifies the layout for note editing. A mail client that preserves
 custom headers may include it when you send the message. msgvault only creates
 the draft.
 
-When the server supplies a numeric `APPENDLIMIT`, msgvault checks the encoded
-size before uploading; otherwise the server's `APPEND` response decides. This
+For IMAP, when the server supplies a numeric `APPENDLIMIT`, msgvault checks the
+encoded size before uploading; otherwise the server's `APPEND` response decides. This
 upload check does not limit the memory used to build the draft.
 
 With `--json`, attachment preflight refusals emit a JSON object on stderr with
@@ -420,8 +430,8 @@ The creation result supplies the opaque `draft_id` and initial revision.
 - `--body` is required for edit; `--body=` sets an empty plain-text body.
 - `--json` emits one JSON result.
 
-`draft-edit --body` replaces the note in a draft created by `draft-forward` and
-keeps the quoted text and attachments. Other drafts must be `text/plain`; any
+For both IMAP and Gmail, `draft-edit --body` replaces the note in a draft
+created by `draft-forward` and keeps the quoted text and attachments. Other drafts must be `text/plain`; any
 other multipart draft returns `invalid_draft` before the provider draft changes.
 
 `draft-get` reads retained archive content, including discarded drafts, without
@@ -451,7 +461,7 @@ Recovery applies to IMAP drafts only. `draft-recover` refuses a Gmail draft ID
 with `not_supported` for the owner and `not_permitted` for delegated tokens.
 The delegated refusal does not reveal whether the draft exists. Gmail
 reconciliation uses edit and delete retries.
-Delegated tokens with `draft.create` can create Gmail reply drafts.
+Delegated tokens with `draft.create` can create Gmail reply or compose drafts.
 For a Gmail or IMAP draft, delegated `draft-get` accepts `draft.create`,
 `draft.edit`, or `draft.delete`. `draft-edit` requires `draft.edit`, and
 `draft-delete` requires `draft.delete`. Each command requires the source's exact
@@ -510,6 +520,7 @@ List Gmail send-as identities for an owner-invoked Gmail account:
 
 ```bash
 msgvault draft-send-as <account> [--json]
+msgvault draft-send-as <account> --confirm alias@example.com [--confirm another@example.com] [--json]
 ```
 
 Gmail accepts this read with `gmail.settings.basic`, `gmail.modify`,
@@ -518,6 +529,16 @@ when available. The command reports the address, display name, primary and
 default flags, verification status, and whether the
 address is a confirmed msgvault identity. Delegated agent tokens cannot run
 this command. It does not require `[[gmail.drafts]]` and never changes Gmail.
+
+Listing is read-only. To bootstrap sender identities, review the list, then
+repeat the command with `--confirm` for each address you own. The daemon checks
+all requested addresses against primary or accepted send-as entries before
+confirming them locally. Pending or absent addresses return `invalid_from`.
+Confirmation records the `gmail-send-as` signal and confirmation time, reports
+the applied outcomes, and refreshes the archive's identity-derived views. It
+does not expand existing agent tokens; issue a new token to grant the new
+sender. `treatAsAlias`, different domains, and SMTP relay settings do not
+replace Gmail verification or the local confirmation.
 
 ---
 

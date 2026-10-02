@@ -95,15 +95,12 @@ func (a *storeAPIAdapter) runCLIForwardDraft(
 	if err != nil {
 		return err
 	}
-	target, from, _, err := a.resolveDraftTarget(
+	target, from, _, err := a.resolveDraftTargetForKind(
 		ctx, &intent.MessageID, intent.Account, intent.SourceID, intent.SourceIDSet,
-		intent.From, nil,
+		intent.From, nil, "forward",
 	)
 	if err != nil {
 		return err
-	}
-	if target.source.SourceType != "imap" {
-		return draftReplyError("draft_disabled", errors.New("draft-forward requires an IMAP source"))
 	}
 	parent, err := msgmime.Parse(target.raw)
 	if err != nil {
@@ -146,6 +143,9 @@ func (a *storeAPIAdapter) runCLIForwardDraft(
 		}
 		target.forward = true
 		target.attachmentWrites = &writes
+		if target.source.SourceType == "gmail" {
+			return a.runGmailReplyDraft(ctx, draftReplyIntent{JSON: intent.JSON}, target, draft, messageRFC822ID(draft.Parsed), emit)
+		}
 		return a.createDraft(ctx, target, draft, intent.JSON, emit)
 	})
 }

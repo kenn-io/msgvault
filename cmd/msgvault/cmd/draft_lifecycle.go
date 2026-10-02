@@ -75,10 +75,11 @@ func newDraftRecoverCommand() *cobra.Command {
 func newDraftSendAsCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "draft-send-as <account>",
-		Short: "List Gmail send-as identities",
+		Short: "List or confirm Gmail send-as identities",
 		Args:  cobra.ExactArgs(1),
 		RunE:  runDaemonCLICommandHTTPFromCobra,
 	}
+	command.Flags().StringArray("confirm", nil, "confirm a primary or accepted Gmail sender locally, repeatable")
 	command.Flags().Bool("json", false, "emit one JSON result")
 	return command
 }

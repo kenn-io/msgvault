@@ -405,14 +405,20 @@ func TestMeetingImportReadsBodyBeforeWaitingOnOperationGate(t *testing.T) {
 			"Host: %s\r\n"+
 			"Content-Type: application/json\r\n"+
 			"X-Api-Key: %s\r\n"+
-			"Content-Length: %d\r\n\r\n"+
-			"%s",
+			"Expect: 100-continue\r\n"+
+			"Content-Length: %d\r\n\r\n",
 		listener.Addr().String(),
 		meetingImportTestAPIKey,
 		len(body),
-		body[:len(body)-1],
 	)
-	require.NoError(err, "write headers and partial body")
+	require.NoError(err, "write headers")
+	responseReader := bufio.NewReader(conn)
+	continued, err := http.ReadResponse(responseReader, &http.Request{Method: http.MethodPost})
+	require.NoError(err, "wait for server to start reading the body")
+	require.Equal(http.StatusContinue, continued.StatusCode)
+	require.NoError(continued.Body.Close())
+	_, err = conn.Write(body[:len(body)-1])
+	require.NoError(err, "write partial body")
 
 	time.Sleep(2 * ordinaryReadTimeout) //nolint:kennlint // outlasts the real socket read deadline
 	assert.False(gate.HasRequestWaiters(), "partial upload must not hold or queue on the mutation gate")
@@ -422,7 +428,7 @@ func TestMeetingImportReadsBodyBeforeWaitingOnOperationGate(t *testing.T) {
 		"validated meeting import waits on operation gate")
 	releaseGateOnce()
 
-	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodPost})
+	resp, err := http.ReadResponse(responseReader, &http.Request{Method: http.MethodPost})
 	require.NoError(err, "read meeting import response")
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(http.StatusCreated, resp.StatusCode)

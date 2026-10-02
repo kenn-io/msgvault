@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/gmail"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/sourceops"
@@ -50,6 +51,8 @@ type draftReplyTarget struct {
 	raw              []byte
 	forward          bool
 	attachmentWrites *[]store.AttachmentWrite
+	// Inventory read during sender inference, scoped to this command.
+	gmailSendAs *[]gmail.SendAs
 }
 
 type draftReplyOutput struct {
@@ -280,6 +283,17 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 	requestedFrom string,
 	grant *agentgrant.Grant,
 ) (draftReplyTarget, string, []string, error) {
+	kind := "compose"
+	if parentID != nil {
+		kind = "reply"
+	}
+	return a.resolveDraftTargetForKind(ctx, parentID, account, sourceID, sourceIDSet, requestedFrom, grant, kind)
+}
+
+func (a *storeAPIAdapter) resolveDraftTargetForKind(
+	ctx context.Context, parentID *int64, account string, sourceID int64,
+	sourceIDSet bool, requestedFrom string, grant *agentgrant.Grant, kind string,
+) (draftReplyTarget, string, []string, error) {
 	var parentSource *store.Source
 	if parentID != nil {
 		var err error
@@ -310,7 +324,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 	} else if parentSource != nil && (parentSource.SourceType == "imap" || parentSource.SourceType == "gmail") {
 		source = parentSource
 	} else if parentSource != nil {
-		return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", errors.New("an offline parent requires --account or --source-id for a live IMAP destination"))
+		return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", errors.New("an offline parent requires --account or --source-id for a live destination"))
 	} else {
 		return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", errors.New("--account or --source-id is required"))
 	}
@@ -323,7 +337,11 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		return draftReplyTarget{}, "", nil, draftReplyError("invalid_from", fmt.Errorf("list identities for source %d: %w", source.ID, err))
 	}
 	from, selfAddresses, err := a.selectDraftSender(identities, requestedFrom, grant, source)
-	if err != nil {
+	// Only an ambiguous implicit Gmail sender can be resolved from authorized
+	// parent headers. Refuse grants with no eligible sender before reading them.
+	coded, isCoded := errors.AsType[*api.CLIRunCodedError](err)
+	ambiguousGmailSender := source.SourceType == "gmail" && requestedFrom == "" && isCoded && coded.Code == "from_ambiguous"
+	if err != nil && !ambiguousGmailSender {
 		return draftReplyTarget{}, "", nil, err
 	}
 	var mailbox string
@@ -344,10 +362,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", fmt.Errorf("source %d sync config identifier does not match the source", source.ID))
 		}
 	case "gmail":
-		if parentSource == nil {
-			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("draft-compose requires an IMAP source"))
-		}
-		if parentSource.ID != source.ID {
+		if kind == "reply" && parentSource != nil && parentSource.ID != source.ID {
 			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("gmail draft replies must use the parent source"))
 		}
 		if err := authorizeGmailDraft(a.gmailDraftPolicy, source.ID, source.SourceType); err != nil {
@@ -371,6 +386,26 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_parent", fmt.Errorf("load raw MIME for message %d: %w", parent.ID, err))
 		}
 		target.parent, target.raw = parent, raw
+	}
+	if source.SourceType == "gmail" && requestedFrom == "" {
+		if kind == "reply" {
+			eligible, _ := confirmedDraftIdentities(identities)
+			if len(eligible) > 1 {
+				entries, readErr := a.readGmailDraftSendAs(ctx, source)
+				if readErr != nil {
+					return draftReplyTarget{}, "", nil, readErr
+				}
+				target.gmailSendAs = &entries
+				requestedFrom, err = addressedGmailDraftSender(target.raw, eligible, entries)
+				if err != nil {
+					return draftReplyTarget{}, "", nil, err
+				}
+			}
+		}
+		from, selfAddresses, err = a.selectDraftSender(identities, requestedFrom, grant, source)
+		if err != nil {
+			return draftReplyTarget{}, "", nil, err
+		}
 	}
 	return target, from, selfAddresses, nil
 }

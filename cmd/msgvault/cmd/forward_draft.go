@@ -9,7 +9,7 @@ func init() {
 func newDraftForwardCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "draft-forward <message-id>",
-		Short: "Create an IMAP draft forwarding an archived message",
+		Short: "Create an IMAP or Gmail draft forwarding an archived message",
 		Args:  cobra.ExactArgs(1),
 		RunE:  runDaemonCLICommandHTTPFromCobra,
 	}

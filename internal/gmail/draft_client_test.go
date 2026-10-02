@@ -431,3 +431,28 @@ func TestDraftMalformedSuccessIsRemoteUnknown(t *testing.T) {
 	require.ErrorAs(err, &writeErr)
 	assert.Equal("remote_unknown", writeErr.Code)
 }
+
+func TestSendAsInventoryPreservesVerificationAcrossAliasAndRelaySettings(t *testing.T) {
+	for _, settings := range []string{
+		`"treatAsAlias":true`,
+		`"treatAsAlias":false`,
+		`"treatAsAlias":true,"smtpMsa":{"host":"smtp.fastmail.example","port":465,"securityMode":"ssl"}`,
+		`"treatAsAlias":false,"smtpMsa":{"host":"smtp.workspace.example","port":587,"securityMode":"starttls"}`,
+	} {
+		t.Run(settings, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal("/gmail/v1/users/me/settings/sendAs", r.URL.Path)
+				_, err := io.WriteString(w, `{"sendAs":[{"sendAsEmail":"sender@different.example","verificationStatus":"accepted",`+settings+`},{"sendAsEmail":"pending@different.example","verificationStatus":"pending",`+settings+`}]}`)
+				assert.NoError(err)
+			}))
+			entries, err := client.ListSendAs(t.Context())
+			require.NoError(err)
+			require.Len(entries, 2)
+			assert.Equal("sender@different.example", entries[0].Email)
+			assert.Equal("accepted", entries[0].VerificationStatus)
+			assert.Equal("pending", entries[1].VerificationStatus)
+		})
+	}
+}
