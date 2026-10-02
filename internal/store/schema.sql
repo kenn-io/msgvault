@@ -2304,6 +2304,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_reply_to_message_id ON messages(reply_to
     WHERE reply_to_message_id IS NOT NULL;
 
 -- Message recipients
+-- idx_message_recipients_email_from is built after legacy column migrations in Store.
 CREATE INDEX IF NOT EXISTS idx_message_recipients_message ON message_recipients(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_recipients_participant ON message_recipients(participant_id, recipient_type);
 

@@ -120,7 +120,14 @@ func autoRefresh(
 	if factory == nil {
 		factory = NewFastmailInventory
 	}
-	inventory := factory(configured.APIToken)
+	token, err := cfg.FastmailAPIToken(*configured)
+	if err != nil {
+		// A token that cannot be read is a failed refresh, so the next
+		// no-op sync retries instead of trusting an earlier success.
+		err = fmt.Errorf("resolve Fastmail credential: %w", err)
+		return nil, true, errors.Join(err, recordRefreshOutcome(ctx, st, sourceID, err))
+	}
+	inventory := factory(token)
 	if inventory == nil {
 		return nil, true, errors.New("fastmail identity inventory unavailable")
 	}

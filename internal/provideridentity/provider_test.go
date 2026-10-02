@@ -160,3 +160,40 @@ func TestAutoRefreshRecordsFailureSoNoOpSyncsRetry(t *testing.T) {
 	assertions.Equal(2, inventory.calls, "a recorded failure owes a retry")
 	requirements.Len(outcomes, 1)
 }
+
+func TestAutoRefreshRecordsCredentialFailureSoNoOpSyncsRetry(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "primary@example.test")
+	requirements.NoError(err)
+	cfg := &config.Config{Fastmail: []config.FastmailSource{{
+		SourceID: source.ID, APITokenEnv: "MSGVAULT_TEST_FASTMAIL_REFRESH_TOKEN", AutoConfirmIdentities: true,
+	}}}
+	inventory := &countingInventory{records: []fastmail.Record{
+		{Identifier: "old@example.test", State: "disabled", Kind: "masked-email"},
+	}}
+	var tokens []string
+	factory := func(token string) provideridentity.Inventory {
+		tokens = append(tokens, token)
+		return inventory
+	}
+
+	t.Setenv("MSGVAULT_TEST_FASTMAIL_REFRESH_TOKEN", "synthetic-token")
+	_, _, err = provideridentity.AutoRefresh(t.Context(), cfg, st, source.ID, factory)
+	requirements.NoError(err)
+	assertions.Equal([]string{"synthetic-token"}, tokens)
+
+	// A changed mailbox with an unreadable token must not leave the earlier
+	// success in place, or idle syncs would skip the retry for a day.
+	t.Setenv("MSGVAULT_TEST_FASTMAIL_REFRESH_TOKEN", "")
+	_, enabled, err := provideridentity.AutoRefresh(t.Context(), cfg, st, source.ID, factory)
+	requirements.ErrorContains(err, "MSGVAULT_TEST_FASTMAIL_REFRESH_TOKEN")
+	assertions.True(enabled)
+	assertions.Equal(1, inventory.calls)
+
+	t.Setenv("MSGVAULT_TEST_FASTMAIL_REFRESH_TOKEN", "synthetic-token")
+	_, _, err = provideridentity.AutoRefreshIfDue(t.Context(), cfg, st, source.ID, factory)
+	requirements.NoError(err)
+	assertions.Equal(2, inventory.calls, "a recorded credential failure owes a retry")
+}

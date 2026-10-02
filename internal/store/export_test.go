@@ -339,3 +339,11 @@ func (s *Store) SetPersonNetworkSourceReadHookForTest(fn func(limit, count int))
 func (s *Store) SetCardDAVPublicationReviewBeforePersonLockHookForTest(fn func()) {
 	s.cardDAVReviewPersonLockHook = fn
 }
+
+// RefreshSourceMessageAttributionForTest runs the full-source attribution
+// refresh, the oracle the targeted identity refresh must agree with.
+func RefreshSourceMessageAttributionForTest(s *Store, sourceID int64) error {
+	return s.withTxContext(context.Background(), func(tx *loggedTx) error {
+		return refreshSourceMessageAttributionContext(context.Background(), tx, sourceID)
+	})
+}

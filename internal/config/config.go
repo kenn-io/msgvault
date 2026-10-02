@@ -381,6 +381,8 @@ type FastmailSource struct {
 	Account               string `toml:"account"`
 	SourceID              int64  `toml:"source_id,omitzero"`
 	APIToken              string `toml:"api_token"`
+	APITokenEnv           string `toml:"api_token_env,omitzero"`
+	APITokenFile          string `toml:"api_token_file,omitzero"`
 	AutoConfirmIdentities bool   `toml:"auto_confirm_identities"`
 
 	sourceIDConfigured bool
@@ -1180,8 +1182,8 @@ func (c *Config) validateFastmailSources(sourceIDConfigured []bool) error {
 		if _, err := source.Selector(); err != nil {
 			return fmt.Errorf("[[fastmail]] entry %d: %w", i+1, err)
 		}
-		if source.APIToken == "" {
-			return fmt.Errorf("[[fastmail]] entry %d: api_token is required", i+1)
+		if err := source.validateCredentialSource(); err != nil {
+			return fmt.Errorf("[[fastmail]] entry %d: %w", i+1, err)
 		}
 		if source.SourceID > 0 {
 			if seenSourceIDs[source.SourceID] {

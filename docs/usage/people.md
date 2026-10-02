@@ -492,7 +492,7 @@ account identifier or display name:
 ```toml
 [[fastmail]]
 source_id = 14
-api_token = "replace-with-a-Fastmail-API-token"
+api_token_env = "FASTMAIL_API_TOKEN"
 auto_confirm_identities = false
 ```
 
@@ -510,5 +510,6 @@ after successful mailbox syncs. A changed mailbox refreshes immediately; a
 no-change sync rechecks only when the last successful provider refresh is more
 than 24 hours old or the prior attempt failed.
 
-The API token is stored in `config.toml`; protect that file like the rest of the
-msgvault data directory.
+Choose one token source: inline `api_token`, `api_token_env`, or an
+owner-only `api_token_file` under the tokens directory. See the
+[configuration reference](../configuration.md#fastmail).

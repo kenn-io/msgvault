@@ -747,3 +747,55 @@ func waitForError(t *testing.T, done <-chan error) error {
 		return nil
 	}
 }
+
+// A list the server leaves out or nulls was not checked; reading it as an
+// empty inventory would report every address as gone.
+func TestListIdentityRecordsRejectsMissingOrNullList(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		masked  map[string]any
+		ident   map[string]any
+		wantErr string
+	}{
+		{"masked missing", map[string]any{"accountId": "masked-account"}, map[string]any{"accountId": "submission-account", "list": []any{}}, "MaskedEmail/get"},
+		{"masked null", map[string]any{"accountId": "masked-account", "list": nil}, map[string]any{"accountId": "submission-account", "list": []any{}}, "MaskedEmail/get"},
+		{"identity missing", map[string]any{"accountId": "masked-account", "list": []any{}}, map[string]any{"accountId": "submission-account"}, "Identity/get"},
+		{"identity null", map[string]any{"accountId": "masked-account", "list": []any{}}, map[string]any{"accountId": "submission-account", "list": nil}, "Identity/get"},
+		{"both empty", map[string]any{"accountId": "masked-account", "list": []any{}}, map[string]any{"accountId": "submission-account", "list": []any{}}, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newTestServer(t, func(baseURL string) sessionResponse {
+				return sessionResponse{
+					APIURL:       baseURL + "/jmap",
+					Capabilities: capabilitySet(CoreCapability, MaskedEmailCapability, SubmissionCapability),
+					Accounts: map[string]sessionAccount{
+						"masked-account":     {AccountCapabilities: capabilitySet(MaskedEmailCapability)},
+						"submission-account": {AccountCapabilities: capabilitySet(SubmissionCapability)},
+					},
+					PrimaryAccounts: map[string]string{
+						MaskedEmailCapability: "masked-account",
+						SubmissionCapability:  "submission-account",
+					},
+				}
+			}, func(w http.ResponseWriter, r *http.Request) {
+				assert.NoError(t, writeJSON(w, map[string]any{
+					"methodResponses": []any{
+						[]any{"MaskedEmail/get", tt.masked, "masked"},
+						[]any{"Identity/get", tt.ident, "identity"},
+					},
+				}))
+			})
+
+			assert := assert.New(t)
+			require := require.New(t)
+			got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
+			if tt.wantErr == "" {
+				require.NoError(err)
+				assert.Empty(got)
+				return
+			}
+			require.ErrorContains(err, "incomplete "+tt.wantErr)
+			assert.Nil(got)
+		})
+	}
+}

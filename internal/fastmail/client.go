@@ -409,6 +409,11 @@ func parseMethodResponses(
 			if result.AccountID != method.accountID {
 				return nil, fmt.Errorf("unexpected account in %s response from %s", method.method, endpoint.Host)
 			}
+			// A missing or null list means the server did not report the
+			// inventory, which is not the same as an empty one.
+			if result.List == nil {
+				return nil, fmt.Errorf("incomplete %s response from %s: missing list", method.method, endpoint.Host)
+			}
 			for _, item := range result.List {
 				records = append(records, Record{
 					Identifier: item.Email,
@@ -423,6 +428,9 @@ func parseMethodResponses(
 			}
 			if result.AccountID != method.accountID {
 				return nil, fmt.Errorf("unexpected account in %s response from %s", method.method, endpoint.Host)
+			}
+			if result.List == nil {
+				return nil, fmt.Errorf("incomplete %s response from %s: missing list", method.method, endpoint.Host)
 			}
 			for _, item := range result.List {
 				records = append(records, Record{

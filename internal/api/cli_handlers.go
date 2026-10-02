@@ -3050,7 +3050,16 @@ func (s *Server) handleCLIIdentityDiscover(w http.ResponseWriter, r *http.Reques
 			))
 			return
 		}
-		inventory := s.fastmailInventoryFactory(configured.APIToken)
+		token, tokenErr := s.cfg.FastmailAPIToken(*configured)
+		if tokenErr != nil {
+			writeAPIHTTPError(w, s.operationError(
+				opserr.Invalid(fmt.Errorf("resolve Fastmail credential for source %d: %w", source.ID, tokenErr)),
+				identityOperationErrorPolicy,
+				"Failed to discover identities",
+			))
+			return
+		}
+		inventory := s.fastmailInventoryFactory(token)
 		records, inventoryErr := inventory.ListIdentityRecords(r.Context())
 		if inventoryErr != nil {
 			writeAPIHTTPError(w, s.operationError(
