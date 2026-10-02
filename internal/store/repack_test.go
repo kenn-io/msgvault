@@ -181,7 +181,7 @@ func TestCommitRepackKeepsCanonicalIndexCASExactForCaseAliases(t *testing.T) {
 	require.NoError(getErr)
 	require.NotNil(entry)
 	assert.Equal(oldPack, entry.PackID)
-	has, getErr := st.HasPackRecord(newPack)
+	has, getErr := st.HasPackRecordContext(t.Context(), newPack)
 	require.NoError(getErr)
 	assert.False(has, "case-mismatched CAS must roll back the output record")
 }
@@ -323,7 +323,7 @@ func TestCommitRepackSwapsAllSelectedMappingsAtomically(t *testing.T) {
 		require.NotNil(entry)
 		assert.Equal(newA, entry.PackID)
 	}
-	has, err := st.HasPackRecord(newA)
+	has, err := st.HasPackRecordContext(t.Context(), newA)
 	require.NoError(err)
 	assert.True(has)
 }
@@ -365,7 +365,7 @@ func TestCommitRepackRejectsWhollyOmittedSelectedPack(t *testing.T) {
 		require.NotNil(entry)
 		assert.Equal(wantPack, entry.PackID)
 	}
-	has, err := st.HasPackRecord(newA)
+	has, err := st.HasPackRecordContext(t.Context(), newA)
 	require.NoError(err)
 	assert.False(has, "failed swap must roll back new pack records")
 }
@@ -481,7 +481,7 @@ func TestCommitRepackRejectsChangedExpectedMappingSets(t *testing.T) {
 			require.NoError(getErr)
 			assert.Equal(beforeA, afterA, "failed swap preserves pre-call mapping A")
 			assert.Equal(beforeB, afterB, "failed swap preserves pre-call mapping B")
-			has, getErr := st.HasPackRecord(newA)
+			has, getErr := st.HasPackRecordContext(t.Context(), newA)
 			require.NoError(getErr)
 			assert.False(has, "failed exact-set validation cannot publish a new record")
 		})
@@ -512,14 +512,14 @@ func TestDeleteEmptyPackRecordIsReferenceAware(t *testing.T) {
 	deleted, err := st.DeleteEmptyPackRecord(context.Background(), livePack)
 	require.NoError(err)
 	assert.False(deleted)
-	has, err := st.HasPackRecord(livePack)
+	has, err := st.HasPackRecordContext(t.Context(), livePack)
 	require.NoError(err)
 	assert.True(has)
 
 	deleted, err = st.DeleteEmptyPackRecord(context.Background(), stalePack)
 	require.NoError(err)
 	assert.True(deleted)
-	has, err = st.HasPackRecord(stalePack)
+	has, err = st.HasPackRecordContext(t.Context(), stalePack)
 	require.NoError(err)
 	assert.False(has)
 	entry, err := st.GetAttachmentPackEntry(staleHash)

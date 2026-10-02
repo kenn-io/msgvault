@@ -2462,7 +2462,7 @@ func TestStoreAPIAdapterInterceptsExplicitRepackInDaemonParent(t *testing.T) {
 	)
 
 	require.NoError(err)
-	has, err := f.store.HasPackRecord(oldPackID)
+	has, err := f.store.HasPackRecordContext(t.Context(), oldPackID)
 	require.NoError(err)
 	assert.False(has)
 	require.Len(events, 1)
@@ -2507,7 +2507,7 @@ func TestStoreAPIAdapterExplicitRepackAcceptsLoggingPassthroughFlags(t *testing.
 	)
 
 	require.NoError(err)
-	has, err := f.store.HasPackRecord(oldPackID)
+	has, err := f.store.HasPackRecordContext(t.Context(), oldPackID)
 	require.NoError(err)
 	assert.False(has)
 }
@@ -2572,7 +2572,7 @@ func TestStoreAPIAdapterRepackAfterSuccessfulRemovalOnly(t *testing.T) {
 				require.NoError(err)
 			}
 			assert.Equal(1, runnerCalls)
-			has, hasErr := f.store.HasPackRecord(oldPackID)
+			has, hasErr := f.store.HasPackRecordContext(t.Context(), oldPackID)
 			require.NoError(hasErr)
 			assert.Equal(!tt.wantRemoved, has)
 		})
@@ -2626,7 +2626,7 @@ func TestStoreAPIAdapterPostRemovalRepackCancellationPreservesSuccess(t *testing
 
 	require.NoError(err, "maintenance cancellation cannot erase committed removal success")
 	assert.Empty(events, "cancellation is informational, not a streamed warning")
-	has, err := f.store.HasPackRecord(oldPackID)
+	has, err := f.store.HasPackRecordContext(t.Context(), oldPackID)
 	require.NoError(err)
 	assert.True(has, "canceled cleanup remains inventoried for retry")
 	assert.Contains(f.logs.String(), "automatic attachment repack canceled")
@@ -2650,7 +2650,7 @@ func TestStoreAPIAdapterExplicitRepackCancellationFailsFast(t *testing.T) {
 	)
 
 	require.ErrorIs(err, context.Canceled)
-	has, getErr := f.store.HasPackRecord(oldPackID)
+	has, getErr := f.store.HasPackRecordContext(t.Context(), oldPackID)
 	require.NoError(getErr)
 	assert.True(has, "fail-fast cancellation leaves physical inventory untouched")
 }

@@ -34,7 +34,7 @@ func TestRepackRetriesExternalWindowsSharingViolation(t *testing.T) {
 
 	_, err = f.maint.Repack(context.Background(), packstore.RepackOptions{})
 	require.Error(err, "an external handle without delete sharing must defer physical cleanup")
-	has, hasErr := f.store.HasPackRecord(oldPackID)
+	has, hasErr := f.store.HasPackRecordContext(t.Context(), oldPackID)
 	require.NoError(hasErr)
 	assert.False(has, "the committed mapping swap removes stale catalog authority before physical cleanup")
 	assert.FileExists(oldPath)

@@ -80,7 +80,7 @@ func BenchmarkBackupRestoreLayouts(b *testing.B) {
 					var restored *store.Store
 					restored, restoreErr = store.OpenForTest(res.DBPath)
 					if restoreErr == nil {
-						restoreErr = restored.ClearAttachmentPackMetadata()
+						restoreErr = restored.ClearAttachmentPackMetadataContext(ctx)
 					}
 					if restored != nil {
 						restoreErr = errors.Join(restoreErr, restored.Close())

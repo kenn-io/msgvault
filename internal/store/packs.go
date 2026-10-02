@@ -154,25 +154,14 @@ type PackRecord struct {
 // canonical pack ID, and every entry must belong to that pack and carry a
 // canonical lowercase SHA-256 blob hash; any violation fails the whole call.
 func (s *Store) RecordPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
-	return s.RecordPackedBlobsContext(context.Background(), rec, entries)
+	return s.recordPackedBlobs(context.Background(), rec, entries, false, nil)
 }
 
-// RecordPackedBlobsContext is the request-aware form of RecordPackedBlobs.
-func (s *Store) RecordPackedBlobsContext(ctx context.Context, rec PackRecord, entries []PackIndexEntry) error {
-	return s.recordPackedBlobs(ctx, rec, entries, false, nil)
-}
-
-// RecordPackedBlobsWithAliases inserts a newly sealed pack while
+// RecordPackedBlobsWithAliasesContext inserts a newly sealed pack while
 // transactionally canonicalizing every local attachment hash spelling that
 // produced each entry. Unlike orphan adoption, existing index rows are not
 // replaced: ordinary packing must not overwrite a concurrently published
 // mapping.
-func (s *Store) RecordPackedBlobsWithAliases(rec PackRecord, packed []PackIndexAdoption) error {
-	return s.RecordPackedBlobsWithAliasesContext(context.Background(), rec, packed)
-}
-
-// RecordPackedBlobsWithAliasesContext is the request-aware form of
-// RecordPackedBlobsWithAliases.
 func (s *Store) RecordPackedBlobsWithAliasesContext(
 	ctx context.Context, rec PackRecord, packed []PackIndexAdoption,
 ) error {
@@ -191,27 +180,16 @@ func (s *Store) RecordPackedBlobsWithAliasesContext(
 // copy failed verification. Repointing instead of deleting stale rows before
 // adoption avoids a crash window with no readable packed index.
 func (s *Store) AdoptPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
-	return s.AdoptPackedBlobsContext(context.Background(), rec, entries)
+	return s.recordPackedBlobs(context.Background(), rec, entries, true, nil)
 }
 
-// AdoptPackedBlobsContext is the request-aware form of AdoptPackedBlobs.
-func (s *Store) AdoptPackedBlobsContext(ctx context.Context, rec PackRecord, entries []PackIndexEntry) error {
-	return s.recordPackedBlobs(ctx, rec, entries, true, nil)
-}
-
-// AdoptPackedBlobsWithAliases records a reconciled orphan pack and repoints
+// AdoptPackedBlobsWithAliasesContext records a reconciled orphan pack and repoints
 // each canonical index entry while transactionally canonicalizing the local
 // attachment rows that reference it through the supplied original spellings.
 // URL-backed and empty paths remain unchanged; their case-equivalent hash
 // spelling may be exchanged with a local alias so the local hash and path stay
 // canonical. Validation of any entry or alias fails the entire call before
 // the transaction begins.
-func (s *Store) AdoptPackedBlobsWithAliases(rec PackRecord, adoptions []PackIndexAdoption) error {
-	return s.AdoptPackedBlobsWithAliasesContext(context.Background(), rec, adoptions)
-}
-
-// AdoptPackedBlobsWithAliasesContext is the request-aware form of
-// AdoptPackedBlobsWithAliases.
 func (s *Store) AdoptPackedBlobsWithAliasesContext(
 	ctx context.Context, rec PackRecord, adoptions []PackIndexAdoption,
 ) error {
@@ -320,13 +298,7 @@ func (s *Store) recordPackedBlobs(
 // local content and thumbnail path for blobHash to its content-addressed path.
 // URL-backed and empty paths are left unchanged.
 func (s *Store) CanonicalizeAttachmentBlobPaths(blobHash string) error {
-	return s.CanonicalizeAttachmentBlobPathsContext(context.Background(), blobHash)
-}
-
-// CanonicalizeAttachmentBlobPathsContext is the request-aware form of
-// CanonicalizeAttachmentBlobPaths.
-func (s *Store) CanonicalizeAttachmentBlobPathsContext(ctx context.Context, blobHash string) error {
-	return s.CanonicalizeAttachmentBlobAliasesContext(ctx, blobHash, []string{blobHash})
+	return s.CanonicalizeAttachmentBlobAliases(blobHash, []string{blobHash})
 }
 
 // CanonicalizeAttachmentBlobAliases transactionally rewrites every nonempty
@@ -336,14 +308,7 @@ func (s *Store) CanonicalizeAttachmentBlobPathsContext(ctx context.Context, blob
 // canonical per-message unique key, its hash spelling is exchanged with the
 // local row's alias so loose reads remain consistent with the local path.
 func (s *Store) CanonicalizeAttachmentBlobAliases(blobHash string, originalHashes []string) error {
-	return s.CanonicalizeAttachmentBlobAliasesContext(context.Background(), blobHash, originalHashes)
-}
-
-// CanonicalizeAttachmentBlobAliasesContext is the request-aware form of
-// CanonicalizeAttachmentBlobAliases.
-func (s *Store) CanonicalizeAttachmentBlobAliasesContext(
-	ctx context.Context, blobHash string, originalHashes []string,
-) error {
+	ctx := context.Background()
 	normalized, err := normalizeBlobHash(blobHash)
 	if err != nil {
 		return err
@@ -528,15 +493,10 @@ const resolveAttachmentBlobSQL = `
 	FROM requested
 	LEFT JOIN attachment_pack_index p ON p.blob_hash = requested.blob_hash`
 
-// ResolveAttachmentBlob determines attachment liveness and the optional pack
+// ResolveAttachmentBlobContext determines attachment liveness and the optional pack
 // location in one query. Attachment rows, rather than storage metadata, are
 // the liveness authority, so stale unreferenced index rows are never exposed
 // to the production read path.
-func (s *Store) ResolveAttachmentBlob(blobHash string) (AttachmentBlobLocation, error) {
-	return s.ResolveAttachmentBlobContext(context.Background(), blobHash)
-}
-
-// ResolveAttachmentBlobContext is the request-aware form of ResolveAttachmentBlob.
 func (s *Store) ResolveAttachmentBlobContext(ctx context.Context, blobHash string) (AttachmentBlobLocation, error) {
 	canonicalHash, err := normalizeBlobHash(blobHash)
 	if err != nil {
@@ -589,12 +549,8 @@ func (s *Store) ResolveAttachmentBlobContext(ctx context.Context, blobHash strin
 	return loc, nil
 }
 
-// ListReferencedBlobHashes returns every non-empty content or thumbnail hash
+// ListReferencedBlobHashesContext returns every non-empty content or thumbnail hash
 // named by an attachment row. A hash shared across columns appears once.
-func (s *Store) ListReferencedBlobHashes() (map[string]struct{}, error) {
-	return s.ListReferencedBlobHashesContext(context.Background())
-}
-
 func (s *Store) ListReferencedBlobHashesContext(ctx context.Context) (map[string]struct{}, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT content_hash FROM attachments
@@ -646,13 +602,9 @@ const pruneUnreferencedPackIndexSQL = `
 	WHERE blob_hash NOT IN (` + attachmentReferencedHashesSQL + `
 	)`
 
-// ListAttachmentPackEntries returns the live blob index rows owned by one
+// ListAttachmentPackEntriesContext returns the live blob index rows owned by one
 // pack, ordered by their position in the pack. Footer entries without a live
 // index row are dead and must not be served or restored by unpack.
-func (s *Store) ListAttachmentPackEntries(packID string) ([]PackIndexEntry, error) {
-	return s.ListAttachmentPackEntriesContext(context.Background(), packID)
-}
-
 func (s *Store) ListAttachmentPackEntriesContext(ctx context.Context, packID string) ([]PackIndexEntry, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
@@ -680,15 +632,11 @@ type UnpackedBlob struct {
 	Size           int64
 }
 
-// ListUnpackedBlobs returns every distinct local (non-URL) content and
+// ListUnpackedBlobsContext returns every distinct local (non-URL) content and
 // thumbnail blob that has no attachment_pack_index row, preserving all of its
 // DB-recorded relative candidate paths. Content blobs come first, then blobs
 // seen only as thumbnails (Size -1); a hash appearing as both is listed once
 // with content and thumbnail paths combined.
-func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
-	return s.ListUnpackedBlobsContext(context.Background())
-}
-
 func (s *Store) ListUnpackedBlobsContext(ctx context.Context) ([]UnpackedBlob, error) {
 	var blobs []UnpackedBlob
 	byHash := make(map[string]int)
@@ -796,13 +744,9 @@ func (s *Store) ListIndexedBlobHashes() (map[string]struct{}, error) {
 	return hashes, nil
 }
 
-// ListIndexedBlobEntries returns every packed blob mapping keyed by blob hash.
+// ListIndexedBlobEntriesContext returns every packed blob mapping keyed by blob hash.
 // It includes stale mappings so filesystem sweep can account for every index
 // row before reference pruning.
-func (s *Store) ListIndexedBlobEntries() (map[string]PackIndexEntry, error) {
-	return s.ListIndexedBlobEntriesContext(context.Background())
-}
-
 func (s *Store) ListIndexedBlobEntriesContext(ctx context.Context) (map[string]PackIndexEntry, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
@@ -825,11 +769,7 @@ func (s *Store) ListIndexedBlobEntriesContext(ctx context.Context) (map[string]P
 	return byHash, nil
 }
 
-// ListPackRecords returns all attachment pack records ordered by pack_id.
-func (s *Store) ListPackRecords() ([]PackRecord, error) {
-	return s.ListPackRecordsContext(context.Background())
-}
-
+// ListPackRecordsContext returns all attachment pack records ordered by pack_id.
 func (s *Store) ListPackRecordsContext(ctx context.Context) ([]PackRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT pack_id, entry_count, stored_bytes, created_at
@@ -857,12 +797,7 @@ func (s *Store) ListPackRecordsContext(ctx context.Context) ([]PackRecord, error
 	return recs, nil
 }
 
-// HasPackRecord reports whether the pack has an attachment_packs row.
-func (s *Store) HasPackRecord(packID string) (bool, error) {
-	return s.HasPackRecordContext(context.Background(), packID)
-}
-
-// HasPackRecordContext is the request-aware form of HasPackRecord.
+// HasPackRecordContext reports whether the pack has an attachment_packs row.
 func (s *Store) HasPackRecordContext(ctx context.Context, packID string) (bool, error) {
 	var one int
 	err := s.db.QueryRowContext(ctx, `
@@ -887,7 +822,7 @@ func (s *Store) CountPackIndexEntries(packID string) (int64, error) {
 	return n, nil
 }
 
-// ClearAttachmentPackMetadata deletes every attachment_pack_index and
+// ClearAttachmentPackMetadataContext deletes every attachment_pack_index and
 // attachment_packs row in one transaction. Missing tables are a no-op so
 // restoring a snapshot from before packed storage does not have to initialize
 // or migrate the rest of the database merely to perform this cleanup.
@@ -896,12 +831,6 @@ func (s *Store) CountPackIndexEntries(packID string) (int64, error) {
 // attachment files only — never production pack files — so any pack metadata
 // carried in the restored database points at packs that do not exist and must
 // be dropped before the vault is used.
-func (s *Store) ClearAttachmentPackMetadata() error {
-	return s.ClearAttachmentPackMetadataContext(context.Background())
-}
-
-// ClearAttachmentPackMetadataContext is the request-aware form of
-// ClearAttachmentPackMetadata.
 func (s *Store) ClearAttachmentPackMetadataContext(ctx context.Context) error {
 	indexExists, err := s.tableExistsContext(ctx, "attachment_pack_index")
 	if err != nil {
@@ -942,13 +871,8 @@ func (s *Store) tableExistsContext(ctx context.Context, name string) (bool, erro
 	return count > 0, nil
 }
 
-// DeletePackRecord removes a pack's index rows and its attachment_packs
+// DeletePackRecordContext removes a pack's index rows and its attachment_packs
 // row in one transaction (used by unpack).
-func (s *Store) DeletePackRecord(packID string) error {
-	return s.DeletePackRecordContext(context.Background(), packID)
-}
-
-// DeletePackRecordContext is the request-aware form of DeletePackRecord.
 func (s *Store) DeletePackRecordContext(ctx context.Context, packID string) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if _, err := tx.ExecContext(ctx, `
@@ -963,15 +887,10 @@ func (s *Store) DeletePackRecordContext(ctx context.Context, packID string) erro
 	})
 }
 
-// DeletePackIndexEntry removes one unreadable packed-blob mapping while
+// DeletePackIndexEntryContext removes one unreadable packed-blob mapping while
 // retaining the pack record and all other live entries. The packer calls this
 // only after a loose copy has been hash-verified and materialized canonically;
 // the old pack entry then becomes dead bytes for GC/repack accounting.
-func (s *Store) DeletePackIndexEntry(blobHash string) error {
-	return s.DeletePackIndexEntryContext(context.Background(), blobHash)
-}
-
-// DeletePackIndexEntryContext is the request-aware form of DeletePackIndexEntry.
 func (s *Store) DeletePackIndexEntryContext(ctx context.Context, blobHash string) error {
 	if _, err := s.db.ExecContext(ctx, `
 		DELETE FROM attachment_pack_index WHERE blob_hash = ?`, blobHash); err != nil {

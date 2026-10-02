@@ -1091,7 +1091,7 @@ func TestStore_RemoveSourceSerialized_PreservesPackedCaseAliasReferences(t *test
 			require.NotNil(entry)
 			assert.Equal(packID, entry.PackID)
 			for _, requested := range []string{hash, uppercase} {
-				loc, err := f.Store.ResolveAttachmentBlob(requested)
+				loc, err := f.Store.ResolveAttachmentBlobContext(t.Context(), requested)
 				require.NoError(err)
 				assert.True(loc.Referenced)
 				require.NotNil(loc.Pack)

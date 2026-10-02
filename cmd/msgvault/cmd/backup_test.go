@@ -653,7 +653,7 @@ func assertRestoredCLIBlob(t *testing.T, target, hash string, want []byte, packe
 	restored, err := store.OpenForTest(filepath.Join(target, "msgvault.db"))
 	require.NoError(err)
 	defer func() { require.NoError(restored.Close()) }()
-	records, err := restored.ListPackRecords()
+	records, err := restored.ListPackRecordsContext(t.Context())
 	require.NoError(err)
 	indexed, err := restored.ListIndexedBlobHashes()
 	require.NoError(err)

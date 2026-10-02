@@ -173,21 +173,21 @@ func (h *msgvaultPackHarness) Snapshot() packstoretest.CatalogState {
 		Members: make(map[packstore.Hash]bool), Entries: make(map[packstore.Hash]packstore.IndexEntry),
 		Packs: make(map[string]packstore.PackRecord),
 	}
-	references, err := h.store.ListReferencedBlobHashes()
+	references, err := h.store.ListReferencedBlobHashesContext(h.t.Context())
 	require.NoError(h.t, err)
 	for raw := range references {
 		hash, parseErr := packstore.ParseHash(raw)
 		require.NoError(h.t, parseErr)
 		state.Members[hash] = true
 	}
-	entries, err := h.store.ListIndexedBlobEntries()
+	entries, err := h.store.ListIndexedBlobEntriesContext(h.t.Context())
 	require.NoError(h.t, err)
 	for _, entry := range entries {
 		converted, convertErr := fromStoreEntryTest(entry)
 		require.NoError(h.t, convertErr)
 		state.Entries[converted.Hash] = converted
 	}
-	records, err := h.store.ListPackRecords()
+	records, err := h.store.ListPackRecordsContext(h.t.Context())
 	require.NoError(h.t, err)
 	for _, record := range records {
 		converted := fromStoreRecordTest(record)
