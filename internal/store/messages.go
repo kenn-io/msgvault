@@ -1193,15 +1193,16 @@ func upsertMessageSQL(now string) string {
 		reply_to_message_id,
 		is_from_me, source_is_from_me, identity_is_from_me,
 		subject, snippet, size_estimate,
-		has_attachments, attachment_count, archived_at
+		has_attachments, attachment_count, archived_at, last_modified
 	)
 	SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 	       (source_is_from_me OR identity_is_from_me),
 	       source_is_from_me, identity_is_from_me,
-	       ?, ?, ?, ?, ?, %s
+	       ?, ?, ?, ?, ?, %[1]s, %[1]s
 	FROM attribution
 	WHERE TRUE
 	ON CONFLICT(source_id, source_message_id) DO UPDATE SET
+		last_modified = excluded.last_modified,
 		embed_gen = CASE
 			WHEN COALESCE(messages.subject, '') <> COALESCE(excluded.subject, '')
 				OR COALESCE(messages.message_type, '') <> COALESCE(excluded.message_type, '') THEN NULL

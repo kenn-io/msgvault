@@ -47,6 +47,58 @@ func TestProjectorRunOnceDrainsQueueAndBuildsContactState(t *testing.T) {
 	assert.False(state.Stale)
 }
 
+func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, messageID, personID := projectorFixture(
+		t, time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC), false)
+	unchangedID := f.CreateMessage("already-stamped")
+	undatedID := f.CreateMessage("undated-bodyless")
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET last_modified = NULL WHERE id <> ?`), unchangedID)
+	require.NoError(err)
+	unchangedStamp := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET last_modified = ? WHERE id = ?`), unchangedStamp, unchangedID)
+	require.NoError(err)
+	projector, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
+	require.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	require.ErrorIs(err, store.ErrInvalidActivity)
+	require.ErrorContains(err, fmt.Sprintf("message %d", messageID))
+	// Reproduce an archive that already ran the original backfill but has
+	// since imported bodyless messages through a column without a DEFAULT.
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`DELETE FROM applied_migrations WHERE name = ?`), "messages_last_modified_null_repair")
+	require.NoError(err)
+	require.NoError(f.Store.InitSchema())
+	var stamp time.Time
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT last_modified FROM messages WHERE id = ?`), unchangedID).Scan(&stamp))
+	assert.Equal(unchangedStamp, stamp.UTC(), "repair must preserve existing timestamps")
+
+	result, err := projector.RunOnce(t.Context())
+	require.NoError(err)
+	assert.Equal(undatedID, result.Watermark, "projection must advance past both repaired rows")
+	queued, err := f.Store.ListActivityProjectionQueueContext(t.Context(), 10)
+	require.NoError(err)
+	assert.Empty(queued)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, time.Now())
+	require.NoError(err)
+	assert.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
+	assert.False(state.Stale)
+	revisions, err := f.Store.ContactRevisionsContext(t.Context())
+	require.NoError(err)
+	reconciled, ok, err := f.Store.ActivityReconciledRevisionsContext(t.Context())
+	require.NoError(err)
+	assert.True(ok)
+	assert.Equal(revisions, reconciled)
+
+	result, err = projector.RunOnce(t.Context())
+	require.NoError(err)
+	assert.Zero(result.Processed, "the next run must be an incremental no-op")
+}
+
 func TestProjectorIncludesChannelMembersWhenFromRecipientExists(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

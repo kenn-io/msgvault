@@ -2018,6 +2018,27 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return err
 	}
 
+	// Upgraded SQLite tables have no last_modified DEFAULT. Bodyless imports
+	// could therefore create new NULLs after the original backfill completed.
+	// The shared message upsert now stamps inserts and updates explicitly;
+	// repair existing NULLs once, without changing valid concurrency tokens.
+	if err := s.runOnceMigration(
+		ctx, migrationMessagesLastModifiedNullRepair, 1, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				_, err := tx.ExecContext(ctx,
+					`UPDATE messages SET last_modified = `+s.dialect.Now()+
+						` WHERE last_modified IS NULL`)
+				if err != nil {
+					return fmt.Errorf("repair NULL last_modified: %w", err)
+				}
+				return nil
+			})
+		},
+	); err != nil {
+		return err
+	}
+
 	// Backfill content_changed_at for rows that predate the column, in
 	// committed batches (backfillContentChangedAt). Gated on the ledger
 	// because the scan never finds work after the first completed run; no

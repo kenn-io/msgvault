@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -288,6 +289,33 @@ INSERT INTO message_bodies (message_id, body_text) VALUES (1, 'body one'), (2, '
 	got := readLM(t, st, 1)
 	assert.NotEqual(base, got,
 		"re-created trigger must bump last_modified on UPDATE after upgrade")
+
+	// The upgraded column has no DEFAULT. Bodyless imports must stamp it
+	// through the shared upsert, including when reimporting an existing NULL.
+	for _, persist := range []bool{false, true} {
+		msg := &store.Message{
+			SourceID: 1, ConversationID: 1, MessageType: "imessage",
+			SourceMessageID: fmt.Sprintf("bodyless-%t", persist),
+		}
+		for _, reimport := range []bool{false, true} {
+			var id int64
+			var err error
+			if persist {
+				id, err = st.PersistMessage(&store.MessagePersistData{Message: msg})
+			} else {
+				id, err = st.UpsertMessage(msg)
+			}
+			require.NoError(err)
+			var stamp sql.NullTime
+			require.NoError(st.DB().QueryRow(
+				`SELECT last_modified FROM messages WHERE id = ?`, id).Scan(&stamp))
+			assert.True(stamp.Valid, "bodyless upsert must stamp last_modified (reimport=%t)", reimport)
+			if !reimport {
+				_, err = st.DB().Exec(`UPDATE messages SET last_modified = NULL WHERE id = ?`, id)
+				require.NoError(err)
+			}
+		}
+	}
 }
 
 // TestLastModified_UpgradeReplacesBlanketTrigger reconstructs the archive every
