@@ -362,6 +362,10 @@ func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate Operati
 // DELETE /api/v1/agent-tokens/{id} uses a dynamic path; its exemption is
 // handled by the strings.HasPrefix check in operationGateRequest below.
 var operationGateExemptPaths = map[string]bool{
+	// Scoring coordinates the gate around local mutations, never provider I/O.
+	"/api/v1/identity/scoring/run":     true,
+	"/api/v1/identity/scoring/consent": true,
+	"/api/v1/identity/scoring/revoke":  true,
 	"/api/v1/carddav/google/authorize": true,
 	"/api/v1/carddav/google/callback":  true,
 	queryEndpointPath:                  true,

@@ -271,9 +271,10 @@ func (a *Archiver) linkPair(
 		if linked {
 			result.Linked++
 		}
-	case errors.Is(err, store.ErrPersonBindingConflict):
-		slog.Warn("meeting attendee identities belong to different persons; left for review",
-			"candidate_id", candidate.ID)
+	case errors.Is(err, store.ErrPersonBindingConflict),
+		errors.Is(err, store.ErrIdentityMatchReviewStale):
+		slog.Warn("meeting attendee identity match left for review",
+			"candidate_id", candidate.ID, "error", err)
 		result.Conflicts++
 	case errors.Is(err, store.ErrIdentityMatchRejected),
 		errors.Is(err, store.ErrIdentityMatchNotAccepted),

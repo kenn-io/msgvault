@@ -80,12 +80,12 @@ func TestOpenRemoteStoreRejectsAPISchemaMajorMismatch(t *testing.T) {
 	require.ErrorContains(err, `daemon API schema version "1.44.0" is incompatible`)
 }
 
-func TestOpenRemoteStoreRejectsOlderMinorSchema(t *testing.T) {
+func TestOpenRemoteStoreRejectsPreviousMajorSchema(t *testing.T) {
 	require := require.New(t)
 	_, testCtx := remoteSchemaStub(t, func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "ok", "api_schema_version": "2.13.0",
+			"status": "ok", "api_schema_version": "2.35.0",
 		})
 	})
 
@@ -93,14 +93,14 @@ func TestOpenRemoteStoreRejectsOlderMinorSchema(t *testing.T) {
 	if client != nil {
 		t.Cleanup(func() { _ = client.Close() })
 	}
-	require.ErrorContains(err, "requires API schema 2.14.0 or newer")
+	require.ErrorContains(err, `daemon API schema version "2.35.0" is incompatible`)
 }
 
-func TestOpenRemoteStoreAcceptsCompatiblePreviousMinorSchema(t *testing.T) {
+func TestOpenRemoteStoreAcceptsCompatibleNewerMinorSchema(t *testing.T) {
 	healthRequests, testCtx := remoteSchemaStub(t, func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "ok", "api_schema_version": "2.15.0",
+			"status": "ok", "api_schema_version": "3.1.0",
 		})
 	})
 
@@ -120,6 +120,54 @@ func TestOpenRemoteStoreRejectsDaemonWithoutSchemaVersion(t *testing.T) {
 	_, _, err := OpenHTTPStore(testCtx)
 	require.ErrorContains(err, "does not report an API schema version")
 	require.ErrorContains(err, "upgrade the daemon")
+}
+
+func TestIdentityCommandsRejectIncompatibleDaemonBeforeReadingOrWriting(t *testing.T) {
+	for _, command := range []struct {
+		name string
+		run  func(context.Context, *testing.T) (string, error)
+	}{
+		{"list", func(ctx context.Context, t *testing.T) (string, error) {
+			t.Helper()
+			return runIdentityMatchesCLI(ctx, t, "", "list")
+		}},
+		{"accept", func(ctx context.Context, t *testing.T) (string, error) {
+			t.Helper()
+			return runIdentityMatchesCLI(ctx, t, "", "accept", "17", "--review-token", "review-token-17")
+		}},
+		{"reject", func(ctx context.Context, t *testing.T) (string, error) {
+			t.Helper()
+			return runIdentityMatchesCLI(ctx, t, "", "reject", "17", "--review-token", "review-token-17")
+		}},
+		{"scoring", func(ctx context.Context, t *testing.T) (string, error) {
+			t.Helper()
+			return runPersonScoringCLI(ctx, t, "status")
+		}},
+	} {
+		t.Run(command.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			var operationRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/health" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"2.35.0"}`))
+					return
+				}
+				operationRequests.Add(1)
+				http.NotFound(w, r)
+			}))
+			t.Cleanup(server.Close)
+			ctx := withStoreResolverConfig(t, &config.Config{
+				Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+			})
+			remoteAPISchemaCheckEnabled = true
+			t.Cleanup(func() { remoteAPISchemaCheckEnabled = false })
+			_, err := command.run(ctx, t)
+			require.ErrorContains(err, "incompatible")
+			assert.Zero(operationRequests.Load())
+		})
+	}
 }
 
 func TestOpenRemoteStoreSurfacesHealthProbeFailure(t *testing.T) {
@@ -147,12 +195,12 @@ func TestDaemonRuntimeCompatibilityRejectsLegacyRecordWithoutSchemaVersion(t *te
 	require.ErrorContains(daemonRuntimeCompatibilityError(previousMajor),
 		`daemon API schema version "1.44.0" is incompatible`)
 
-	previousSupportedMinor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "2.15.0"}
-	require.NoError(daemonRuntimeCompatibilityError(previousSupportedMinor))
+	newerMinor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "3.1.0"}
+	require.NoError(daemonRuntimeCompatibilityError(newerMinor))
 
-	previousMinor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "2.13.0"}
-	require.ErrorContains(daemonRuntimeCompatibilityError(previousMinor),
-		"requires API schema 2.14.0 or newer")
+	previousSchema := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "2.35.0"}
+	require.ErrorContains(daemonRuntimeCompatibilityError(previousSchema),
+		`daemon API schema version "2.35.0" is incompatible`)
 }
 
 // agentDelegatedSchemaStub sets up a stub HTTP server that serves the health

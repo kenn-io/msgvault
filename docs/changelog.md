@@ -16,6 +16,11 @@ All notable changes to msgvault, grouped by release.
   behavior or to sync a disabled default account manually. See
   [connection selection](usage/people-carddav.md#select-connections-through-the-api).
 
+- **Upgrade clients and daemon together:** API schema 3.0.0 removes the
+  unguarded identity match accept/reject routes. Integrations must fetch a fresh
+  review token and use `/api/v1/identity/match-candidates/{id}/review/accept`
+  or `/review/reject`. See [API compatibility](api-server.md#api-compatibility).
+
 - `draft-compose --conversation` keeps a local draft for a Slack, Teams, or
   Discord conversation. The existing `draft-get`, `draft-edit`, and
   `draft-delete` commands manage it, and `draft-get --conversation` lists a

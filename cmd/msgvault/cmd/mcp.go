@@ -26,6 +26,10 @@ var mcpHTTPAddr string
 var mcpHTTPAllowInsecure bool
 var mcpHTTPAllowWrites bool
 var mcpAllowProfileWrites bool
+var mcpAllowIdentityDecisions bool
+var mcpAllowIdentityScoring bool
+var mcpAllowPersonMerges bool
+var mcpAllowCardDAVWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -67,6 +71,10 @@ Add to Claude Desktop config:
 
 		opts := daemonMCPServeOptions(ctx, st, state)
 		opts.AllowProfileWrites = mcpAllowProfileWrites
+		opts.AllowIdentityDecisions = mcpAllowIdentityDecisions
+		opts.AllowIdentityScoring = mcpAllowIdentityScoring
+		opts.AllowPersonMerges = mcpAllowPersonMerges
+		opts.AllowCardDAVWrites = mcpAllowCardDAVWrites
 
 		if mcpHTTPAddr != "" {
 			normalized, err := normalizeMCPHTTPAddr(
@@ -92,6 +100,9 @@ Add to Claude Desktop config:
 // savedViewsMinAPISchemaVersion is the first daemon API schema that runs Saved
 // Views through POST /api/v1/saved-views/{id}/run.
 const savedViewsMinAPISchemaVersion = "2.21.0"
+const personCardDAVMinAPISchemaVersion = "2.32.0"
+const identityReviewMinAPISchemaVersion = "3.0.0"
+const identityScoringMinAPISchemaVersion = "3.0.0"
 
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
@@ -173,6 +184,15 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, archiveSQLMinAPISchemaVersion) &&
 		(health.AnalyticsEngine == nil || *health.AnalyticsEngine != api.AnalyticsModePostgres) {
 		opts.ArchiveSQLQuerier = engine
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityReviewMinAPISchemaVersion) {
+		opts.IdentityReview = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personCardDAVMinAPISchemaVersion) {
+		opts.PersonCardDAV = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityScoringMinAPISchemaVersion) {
+		opts.IdentityScoring = st
 	}
 
 	return opts
@@ -333,11 +353,20 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
 		"Expose write-class MCP tools over HTTP. This permits attachment exports, "+
 			"deletion manifests, Saved View management, and profile writes separately enabled with "+
-			"--allow-profile-writes; enable it only for trusted, authenticated clients.")
+			"--allow-profile-writes, identity decisions, identity scoring, person merges, and CardDAV writes enabled "+
+			"with their separate opt-ins; enable it only for trusted, authenticated clients.")
 	mcpCmd.Flags().BoolVar(&mcpAllowProfileWrites, "allow-profile-writes", false,
 		"Expose person promotion and private Notes writes. Model tool calls "+
 			"can persist profile data, so enable this only for sessions where the user "+
 			"has explicitly authorized profile writes.")
+	mcpCmd.Flags().BoolVar(&mcpAllowIdentityDecisions, "allow-identity-decisions", false,
+		"Expose identity match accept/reject tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowIdentityScoring, "allow-identity-scoring", false,
+		"Expose manual identity scoring that sends evidence to the fixed Jev provider. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowPersonMerges, "allow-person-merges", false,
+		"Expose local person merge tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowCardDAVWrites, "allow-carddav-writes", false,
+		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
 	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
 	_ = mcpCmd.Flags().MarkHidden("force-sql")

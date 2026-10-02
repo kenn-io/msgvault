@@ -85,7 +85,8 @@
     {#if controller.history.length === 0}
       <p>No merge history on this page.</p>
     {:else}
-      <div class="table-scroll">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard users need to reach the overflow region) -->
+      <div class="table-scroll" role="region" aria-label="Scrollable Person merge history" tabindex="0">
         <table aria-label="Person merge history">
           <thead><tr><th scope="col">Merge</th><th scope="col">Created</th><th scope="col">Survivor</th><th scope="col">Absorbed</th><th scope="col">Current</th><th scope="col">Participants</th><th scope="col">Rows</th><th scope="col">Row actions</th><th scope="col">Review</th><th scope="col">Splits</th><th scope="col">Action</th></tr></thead>
           <tbody>

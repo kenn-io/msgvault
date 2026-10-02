@@ -2,13 +2,19 @@ package beeper
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/personmatch"
+	"go.kenn.io/msgvault/internal/personmatchpolicy"
+	"go.kenn.io/msgvault/internal/personmatchworker"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -599,6 +605,68 @@ func TestStableProviderMatchRetriesMissingLinkAfterSameRunFailure(t *testing.T) 
 	require.NotNil(after.DecidedAt)
 	assert.True(firstDecision.DecidedAt.Equal(*after.DecidedAt),
 		"retrying an accepted candidate must preserve its original decision time")
+}
+
+func TestStableProviderMatchContinuesAfterStaleReviewedAcceptance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	recorder := newObservationRecorder(st)
+	matcher := newIdentityMatcher(st)
+	cc := captureContext{
+		SourceID: newBeeperTestSource(t, st, "telegram"), AccountID: "telegram", Network: "Telegram",
+	}
+	var participants []int64
+	var lastResult *store.RecordContactObservationResult
+	for _, name := range []string{"left", "next", "right"} {
+		id := "@stale-" + name + ":beeper.local"
+		participant, err := st.EnsureParticipantByIdentifier(participantIdentifierType, id, "Stale Example")
+		require.NoError(err)
+		participants = append(participants, participant)
+		results, err := recorder.capture(ctx, participant, &User{
+			ID: id, Username: "@stale-" + name, Raw: []byte(`{"providerID":"stale-shared"}`),
+		}, cc)
+		require.NoError(err)
+		require.NotEmpty(results)
+		lastResult = results[0]
+	}
+	left, next, right := participants[0], participants[1], participants[2]
+	observation := lastResult.Observation
+	candidate, _, err := st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchParticipant, LeftID: right,
+		RightKind: store.IdentityMatchParticipant, RightID: left,
+		Basis:       store.IdentityMatchStableProviderID,
+		ServiceSlug: observation.ServiceSlug, ScopeKind: observation.ScopeKind, ScopeValue: observation.ScopeValue,
+		NormalizedValue: observation.ProviderUserID, State: store.IdentityMatchStateCandidate,
+		Source: store.ProvenanceArchiveObservation, SourceRef: observation.Envelope.SourceRef, SourceID: observation.SourceID,
+	})
+	require.NoError(err)
+	review, err := st.GetIdentityMatchReviewContext(ctx, candidate.ID)
+	require.NoError(err)
+	releaseFailure := installParticipantLinkFailure(t, st)
+	_, _, err = st.DecideIdentityMatchReviewedContext(ctx, candidate.ID,
+		review.ReviewToken, store.IdentityMatchStateAccepted, nil)
+	require.ErrorContains(err, "forced participant link failure")
+	releaseFailure()
+	pending, err := st.GetIdentityMatchReviewContext(ctx, candidate.ID)
+	require.NoError(err)
+	require.True(pending.ApplicationPending)
+
+	// Matching adds provider evidence, invalidating the interrupted review.
+	outcome, err := matcher.match(ctx, right, lastResult)
+	require.NoError(err)
+	assert.Equal([]int64{candidate.ID}, outcome.Conflicts)
+	assert.Len(outcome.AutoResolved, 1)
+	current, err := st.GetIdentityMatchReviewContext(ctx, candidate.ID)
+	require.NoError(err)
+	assert.Equal(store.IdentityMatchStateConflict, current.State)
+	assert.False(current.ApplicationPending)
+	assert.False(linked(t, st, left, right), "changed evidence needs a fresh review")
+	assert.True(linked(t, st, next, right), "the next provider pair still links")
+	repeated, err := matcher.match(ctx, right, lastResult)
+	require.NoError(err)
+	assert.Empty(repeated.Conflicts, "the conflict is counted once per import run")
 }
 
 func TestStaleAcceptedMatchUsesCurrentReviewOutcome(t *testing.T) {
@@ -1344,6 +1412,31 @@ func TestPhoneEmailNameAndMembershipOnlyAddEvidence(t *testing.T) {
 	assert.True(kinds[evidenceEmail], "a matching email is evidence")
 	assert.True(kinds[evidenceName], "a matching display name is evidence")
 	assert.True(kinds[evidenceMembership], "a shared conversation is evidence")
+
+	// Feed the real matcher output to the worker: phone evidence must block
+	// scoring before any participant information leaves the archive.
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_, _ = w.Write([]byte(`{"model":"jev-1.13.0","answers":{"same_person":{"type":"noul","noul":0.99}}}`))
+	}))
+	defer server.Close()
+	cfg := personmatch.Config{Enabled: true, ModelID: personmatch.ModelID,
+		MinimumProbability: 0.80, CredentialEnv: "MSGVAULT_JEV_MATCHER_FIXTURE",
+		BatchSize: 2, RetentionDeclaration: "fixture retention"}
+	t.Setenv(cfg.CredentialEnv, "fixture-key")
+	disclosure, err := cfg.Disclosure()
+	require.NoError(err)
+	_, _, err = st.GrantPersonMatchConsentContext(ctx, disclosure, "fixture_operator", nil)
+	require.NoError(err)
+	worker := personmatchworker.Worker{Store: st, Config: cfg, Endpoint: server.URL + "/v1/systemone", HTTPClient: server.Client()}
+	results, err := worker.Run(ctx, 1)
+	require.NoError(err)
+	require.Len(results, 1)
+	assert.Equal(personmatchpolicy.NeedsReview, results[0].ProposedAction)
+	assert.Contains(results[0].Blockers, "shared_contact_point")
+	assert.Equal("local_guard_blocked", results[0].Status)
+	assert.Zero(requests)
 }
 
 func TestEvidenceIsNotDuplicatedAcrossRuns(t *testing.T) {
@@ -1575,5 +1668,75 @@ func TestThreeParticipantCollisionExplainsAndReportsEveryConflict(t *testing.T) 
 		require.Len(candidate.Evidence, 1,
 			"every reported conflict must carry its matching explanation")
 		assert.Equal(evidenceName, candidate.Evidence[0].EvidenceKind)
+	}
+}
+
+func TestScoringBlocksOversizedBeeperServiceSlugs(t *testing.T) {
+	for _, size := range []int{128, 129, 64 * 1024} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			ctx := t.Context()
+			account := "service-size-fixture"
+			slug := strings.Repeat("x", size)
+			_, _, err := st.EnsureCommunicationServiceContext(ctx, store.CommunicationServiceInput{
+				Slug: slug, DisplayLabel: "Synthetic Service", Aliases: []string{account},
+				ScopePolicy: store.ScopePolicyOptional, Normalization: store.NormalizationNone, NormalizationVersion: 1,
+			})
+			require.NoError(err)
+			firstSource := newBeeperTestSource(t, st, account)
+			secondSource, err := st.GetOrCreateSource("gmail", "service-size@example.test")
+			require.NoError(err)
+			user := &User{ID: "@example:example.test", FullName: "Synthetic Person"}
+			left, err := newParticipantResolver(st, account).resolveUser(user)
+			require.NoError(err)
+			_, err = newObservationRecorder(st).capture(ctx, left, user, captureContext{
+				SourceID: firstSource, AccountID: account, Network: "Synthetic Service",
+			})
+			require.NoError(err)
+			right, err := st.EnsureParticipantByIdentifier("apple_id", "service-size-right", "Synthetic Person")
+			require.NoError(err)
+			candidate, _, err := st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+				LeftKind: store.IdentityMatchParticipant, LeftID: left,
+				RightKind: store.IdentityMatchParticipant, RightID: right,
+				Basis: store.IdentityMatchEmail, State: store.IdentityMatchStateCandidate,
+				Source: store.ProvenanceArchiveObservation, NormalizedValue: new("synthetic@example.test"),
+			})
+			require.NoError(err)
+			for _, evidence := range []store.IdentityMatchEvidenceInput{
+				{EvidenceKind: "email", Source: store.ProvenanceArchiveObservation, SourceID: &firstSource},
+				{EvidenceKind: "display_name", Source: store.ProvenanceArchiveObservation, SourceID: &secondSource.ID},
+			} {
+				_, err = st.AddIdentityMatchEvidenceContext(ctx, candidate.ID, evidence)
+				require.NoError(err)
+			}
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				_, _ = w.Write([]byte(`{"model":"jev-1.13.0","answers":{"same_person":{"type":"noul","noul":0.95}}}`))
+			}))
+			defer server.Close()
+			cfg := personmatch.Config{Enabled: true, ModelID: personmatch.ModelID, MinimumProbability: 0.8,
+				CredentialEnv: "MSGVAULT_SERVICE_SIZE_FIXTURE_KEY", BatchSize: 1, RetentionDeclaration: "fixture only"}
+			t.Setenv(cfg.CredentialEnv, "fixture-key")
+			disclosure, err := cfg.Disclosure()
+			require.NoError(err)
+			_, _, err = st.GrantPersonMatchConsentContext(ctx, disclosure, "fixture_operator", nil)
+			require.NoError(err)
+			worker := personmatchworker.Worker{Store: st, Config: cfg, Endpoint: server.URL, HTTPClient: server.Client()}
+			results, err := worker.Run(ctx, 1)
+			require.NoError(err)
+			require.Len(results, 1)
+			if size == 128 {
+				assert.EqualValues(1, requests.Load())
+				assert.Equal("scored", results[0].Status)
+				assert.Empty(results[0].Blockers)
+			} else {
+				assert.Zero(requests.Load(), "oversized service metadata must block disclosure")
+				assert.Equal("local_guard_blocked", results[0].Status)
+				assert.Equal([]string{"incomplete_guard_data"}, results[0].Blockers)
+			}
+		})
 	}
 }

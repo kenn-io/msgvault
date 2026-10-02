@@ -2101,6 +2101,58 @@ Use the [people guide](/docs/usage/people/) for the workflow. Observed contacts
 use participant IDs; saved profiles use person IDs. Each command below takes
 the ID named in its arguments.
 
+### identity matches
+
+Review archive-derived identity suggestions with a token from the current
+review snapshot:
+
+| Command | Purpose |
+|---|---|
+| `identity matches list [--state candidate] [--limit 100] [--offset 0] [--json]` | List candidate, accepted, rejected, conflict, or all match records |
+| `identity matches show <id> [--json]` | Inspect evidence, blockers, and the current review token |
+| `identity matches accept <id> --review-token <token> [--notes-file <path> | --notes-stdin] [--json]` | Accept the reviewed suggestion and apply its participant link |
+| `identity matches reject <id> --review-token <token> [--notes-file <path> | --notes-stdin] [--json]` | Reject the reviewed suggestion while retaining its record |
+
+Always inspect the match before deciding. Evidence or endpoint changes make a
+review token stale; fetch the match again and decide with its new token. A
+successful acceptance records the decision and applies the link. Review notes
+are private data. See [people and profiles](/docs/usage/people/#review-identity-matches)
+for how to review candidates safely.
+
+### person scoring
+
+Run a bounded scoring batch to create identity review suggestions and journal
+the results. Scoring never accepts matches. Configure the disabled-by-default
+[`people.identity_scoring`](configuration.md#people-identity-scoring) settings,
+inspect the provider disclosure and data fields, then consent to its fingerprint:
+
+```bash
+msgvault person scoring status
+msgvault person scoring consent <disclosure-fingerprint>
+msgvault person scoring run --limit 20
+msgvault person scoring history --limit 20
+```
+
+| Command | Purpose |
+|---|---|
+| `person scoring status [--json]` | Show readiness, credential availability, consent, blockers, and the provider disclosure |
+| `person scoring consent <disclosure-fingerprint> [--json]` | Consent to the exact current disclosure |
+| `person scoring revoke <disclosure-fingerprint> [--json]` | Withdraw that disclosure's consent without changing configuration |
+| `person scoring run [--limit <n>] [--json]` | Score and journal one batch; local blockers prevent provider requests for those pairs |
+| `person scoring history [--candidate-id <id>] [--limit <n>] [--before-id <id>] [--json]` | Read redacted judgments, optionally for one candidate or below a history cursor |
+
+`run --limit` defaults to the configured batch size and cannot exceed it.
+History defaults to 100 rows and accepts limits from 1 through 100. Candidate
+and cursor IDs must be nonnegative; zero means no filter. Use the returned
+`next_before_id` with `--before-id` for older history.
+
+Each run result includes its candidate's review token, proposed action, and
+blockers. If a batch stops early, completed results remain in the response and
+history, and the command reports the batch error. Inspect the candidate's
+current evidence before accepting a proposal. See the
+[people guide](usage/people.md#optional-identity-scoring) for the consent and
+provider boundaries.
+
 ### person notes
 
 Read, replace, or append private Notes while retaining earlier values:

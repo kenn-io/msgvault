@@ -20,6 +20,7 @@ save selected people in **Directory**. You can also use the
 | Look up public profile information | [External enrichment](/docs/usage/people-enrichment/) |
 | Sync contacts with an address book | [CardDAV contacts](/docs/usage/people-carddav/) |
 | Tell msgvault which accounts and aliases are mine | [Source identities](#discover-source-identities) |
+| Review suggested identity links | [Identity match review](#review-identity-matches) |
 
 Ordinary profile editing and identity discovery use your archive. Briefs,
 automatic fact extraction, semantic person search, and external enrichment
@@ -39,6 +40,75 @@ Observed contacts use **participant IDs**. Saved profiles use **person IDs**.
 Commands name the ID they require; the two are not interchangeable. Promotion
 creates a profile from an observed person. Subscribed CardDAV contacts can also
 create profiles when imported.
+
+## Review identity matches
+
+Msgvault can retain uncertain identity suggestions for a person to review.
+Inspect the endpoints, archive evidence, and blockers before deciding.
+
+The archive-observation seeder skips email addresses seen on more than 20
+participants because they create too many low-value pairs.
+
+```bash
+msgvault identity matches list
+msgvault identity matches show <candidate-id>
+msgvault identity matches accept <candidate-id> --review-token <token>
+# or
+msgvault identity matches reject <candidate-id> --review-token <token>
+```
+
+The token belongs to the evidence and endpoint snapshot you inspected. If
+evidence changes, the decision is rejected as stale; run `show` again and use
+its current token. Acceptance applies the participant link in the same guarded
+operation. A link into one saved profile extends its participant bindings. A
+candidate that spans two different saved profiles needs a separate person
+merge review.
+
+In the Web UI, a stale decision closes its dialog and refreshes the queue.
+Review the changed evidence, then reopen the decision. Your draft notes remain
+available; the open dialog never silently replaces the token you reviewed.
+
+Review notes are private profile data. Avoid putting unnecessary personal
+details in them. The matching CLI and token-guarded API are documented in the
+[CLI reference](/docs/cli-reference/#identity-matches) and
+[API reference](/docs/api-server/#identity-match-review-and-scoring).
+
+## Optional identity scoring
+
+Manual scoring creates identity review suggestions and records judgments. It
+requires a provider key, a retention declaration, and consent to the exact
+current disclosure. Local blockers are checked before sending eligible pairs
+to Typesafe Jev at the fixed endpoint in
+[configuration](../configuration.md#people-identity-scoring). A score proposes
+an action; you still review the candidate's evidence and token before deciding.
+
+The provider receives raw identity data for two participants: display names,
+email addresses, phone numbers, and up to eight identifiers each. Identifiers
+include email, phone, Beeper, Apple ID, WhatsApp, or iMessage values, with service
+and scope fields. Evidence includes identity classes, matching values, and
+source counts. `status` shows the exact field limits. Message bodies and
+freeform notes are outside this packet.
+
+Start by inspecting readiness and the disclosed endpoint, model, packet schema,
+and retention declaration:
+
+```bash
+msgvault person scoring status
+msgvault person scoring consent <disclosure-fingerprint>
+msgvault person scoring run --limit 20
+msgvault person scoring history --limit 20
+```
+
+Consent applies only while that disclosure fingerprint remains current. Use
+`msgvault person scoring revoke <disclosure-fingerprint>` to withdraw it;
+this leaves the configuration enabled. Each provider attempt has a 15-second
+timeout. Revocation waits for requests already admitted by the daemon, and
+later attempts recheck consent. Provider requests do not hold the archive's
+writer gate or a database write transaction.
+Scoring records redacted judgments; provider payloads and responses are not
+stored in the judgment history. See [identity scoring configuration](/docs/configuration/#people-identity-scoring)
+and the [API reference](/docs/api-server/#identity-match-review-and-scoring)
+for exact settings and routes.
 
 ## Promote a durable person
 

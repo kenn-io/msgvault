@@ -385,6 +385,82 @@ func TestRawHTTPLegacy(t *testing.T) {
 	task5AssertRawJSONParity(t, called.Result)
 }
 
+func TestMCPHTTPConfirmationWritesRequireModernProtocol(t *testing.T) {
+	backend := newIdentityReviewMCPBackend(t)
+	opts := ServeOptions{
+		Engine: &querytest.MockEngine{}, IdentityReview: backend, PersonCardDAV: backend,
+		IdentityScoring: newIdentityScoringMCPBackend(t), AllowIdentityDecisions: true,
+		AllowPersonMerges: true, AllowCardDAVWrites: true, AllowIdentityScoring: true,
+	}
+	handler := newMCPHTTPServer(opts, HTTPOptions{AllowWrites: true}).Handler
+	for _, version := range []string{"2025-03-26", "2025-06-18", "2025-11-25", task3ModernProtocolVersion} {
+		t.Run(version, func(t *testing.T) {
+			assert := assert.New(t)
+			listBody := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
+			readBody := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_identity_match","arguments":{"candidate_id":1}}}`
+			var listed, called task3RPCResponse
+			var recorder *httptest.ResponseRecorder
+			if version == task3ModernProtocolVersion {
+				listBody = `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
+				recorder, listed = task3Serve(handler, task3ModernRequest("tools/list", "", listBody))
+				task3RequireSuccess(t, recorder, listed)
+				recorder, called = task3Serve(handler, task3ModernRequest("tools/call", ToolGetIdentityMatch, task3ToolCallBody(2, ToolGetIdentityMatch, `{"candidate_id":1}`)))
+			} else {
+				initialize := fmt.Sprintf(`{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":%q,"capabilities":{"elicitation":{"form":{}}},"clientInfo":{"name":"confirmation-test","version":"1"}}}`, version)
+				initializeRecorder, initialized := task5LegacyHTTPPost(t, handler, "", initialize)
+				task3RequireSuccess(t, initializeRecorder, initialized)
+				recorder, listed = task5LegacyHTTPPost(t, handler, version, listBody)
+				task3RequireSuccess(t, recorder, listed)
+				recorder, called = task5LegacyHTTPPost(t, handler, version, readBody)
+			}
+			task3RequireSuccess(t, recorder, called)
+			assert.NotEqual(true, called.Result["isError"])
+			assert.InDelta(1, toolStructuredContent(t, called.Result)["id"], 0)
+			names := task3ToolNames(t, listed)
+			assert.Contains(names, ToolGetIdentityMatch)
+			for _, name := range []string{ToolAcceptIdentityMatch, ToolRejectIdentityMatch, ToolScoreIdentityMatches, ToolMergePerson, ToolApproveCardDAVPublication, ToolSyncCardDAV} {
+				if version == task3ModernProtocolVersion {
+					assert.Contains(names, name)
+				} else {
+					assert.NotContains(names, name)
+				}
+			}
+		})
+	}
+}
+
+func TestMCPStdioLegacyCanConfirmIdentityDecision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	backend := newIdentityReviewMCPBackend(t)
+	candidate, err := backend.GetIdentityMatch(t.Context(), 1)
+	require.NoError(err)
+	peer := newTask5RawStdioPeer(t, ServeOptions{
+		Engine: &querytest.MockEngine{}, IdentityReview: backend, AllowIdentityDecisions: true,
+	})
+	initialized := peer.call(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{"elicitation":{"form":{}}},"clientInfo":{"name":"confirmation-test","version":"1"}}}`)
+	require.Nil(initialized.Error)
+	peer.writeLiteralLine(t, `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`)
+	listed := peer.call(t, `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`)
+	require.Nil(listed.Error)
+	assert.Contains(task3ToolNames(t, listed), ToolRejectIdentityMatch)
+	_, raw := peer.callRaw(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"reject_identity_match","arguments":{"candidate_id":1,"review_token":%q}}}`, *candidate.ReviewToken))
+	var prompt struct {
+		ID     json.RawMessage     `json:"id"`
+		Method string              `json:"method"`
+		Params sdkmcp.ElicitParams `json:"params"`
+	}
+	require.NoError(json.Unmarshal([]byte(raw), &prompt))
+	require.Equal("elicitation/create", prompt.Method)
+	assert.Contains(prompt.Params.Message, "Reject")
+	result := peer.call(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"action":"accept","content":{"confirm":true}}}`, prompt.ID))
+	require.Nil(result.Error)
+	assert.NotEqual(true, result.Result["isError"])
+	readback, err := backend.GetIdentityMatch(t.Context(), 1)
+	require.NoError(err)
+	assert.Equal("rejected", readback.State)
+}
+
 func task3ToolNames(t *testing.T, response task3RPCResponse) []string {
 	t.Helper()
 	tools, ok := response.Result["tools"].([]any)

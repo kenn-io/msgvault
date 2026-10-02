@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-27"
+last_edited: "2026-10-01"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -29,9 +29,17 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.35.0**.
+it is separate from the binary release version. The current schema is **3.0.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 3.0.0 removes the unguarded
+`POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
+Use the corresponding `/review/accept` and `/review/reject` routes with a fresh
+review token. Upgrade the CLI and daemon together; clients with an incompatible
+schema fail before issuing archive requests. The HTTP prefix remains `/api/v1`.
+This schema also adds consented identity scoring. See
+[identity match review and scoring](#identity-match-review-and-scoring).
 
 Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
 `POST /api/v1/cli/delete-staged/plan` responses that require a permission
@@ -131,6 +139,48 @@ responses are bounded projections that omit raw vCards and resource hrefs;
 only the explicit publication preview route returns a raw vCard.
 See [release changes](changelog.md#upgrade-and-compatibility) for removed paths
 and the 1.x/2.x transition.
+
+### Identity match review and scoring
+
+Review identity suggestions through `GET /api/v1/identity/match-candidates`
+and `GET /api/v1/identity/match-candidates/{id}`. Responses include the
+evidence, blockers, and a `review_token` for that exact snapshot. Accept or
+reject with `POST /api/v1/identity/match-candidates/{id}/review/accept` or
+`.../review/reject`, passing the token in the request body. If the evidence or
+endpoints changed, the API returns `409 identity_match_review_stale`; fetch the
+candidate again and make a fresh decision. Other conflicts retain their own
+error codes, including `person_merge_required` when separate profiles need a
+merge review. The former `.../{id}/accept` and `.../{id}/reject` routes are
+removed; clients must use the reviewed routes and supply a token.
+
+Identity scoring runs only on request. `GET /api/v1/identity/scoring/status`
+returns `ready`, `blocker`, credential and consent status, the exact provider
+`disclosure`, its `disclosure_fingerprint`, and a `data_fields` description of
+the raw identity fields sent. `POST /api/v1/identity/scoring/consent` accepts
+`{"disclosure_fingerprint":"<fingerprint>"}` for the current disclosure.
+`POST /api/v1/identity/scoring/revoke` accepts the same body to withdraw that
+fingerprint's consent without changing configuration.
+
+`POST /api/v1/identity/scoring/run` accepts `{}` or `{"limit":20}`. The limit
+defaults to the configured batch size and cannot exceed it. The daemon creates
+review suggestions and checks local blockers before sending eligible pairs to
+the provider. It journals the results and never accepts matches.
+
+A completed or partially completed run returns HTTP 200 with `results` and
+`processed`. Each result has a candidate ID, review token, proposed action,
+status, and blockers. If the batch stops early, the response also has an
+`error` object with `code` and `message`; clients must inspect it even after
+HTTP 200. Completed results remain available. Error codes include
+`consent_required`, `scoring_scan_incomplete`, and `scoring_run_failed`.
+Preflight failures use the normal non-200 error response.
+
+`GET /api/v1/identity/scoring/history` returns redacted judgments. It accepts
+`candidate_id` (zero or omitted means all), `limit` (default 100, range 1–100),
+and `before_id` for older entries. Pass a returned `next_before_id` as the next
+request's `before_id`. The complete contracts are in `/openapi.json` from the
+daemon or printed by `msgvault openapi`. See
+[configuration](configuration.md#people-identity-scoring) and the
+[people guide](usage/people.md#optional-identity-scoring) for setup and consent.
 
 ### Archive and processing boundaries
 

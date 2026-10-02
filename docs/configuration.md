@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-30"
+last_edited: "2026-10-01"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -53,6 +53,45 @@ values remain in effect. Provider keys alone do not enable processing.
 - [Document indexing](usage/document-indexing.md): extraction, document vectors,
   and separate query consent.
 - [Vector search](usage/vector-search.md): text, person, and visual indexes.
+
+## People identity scoring
+
+Identity scoring is disabled by default. An operator starts each batch and
+consents to the exact disclosure shown by `msgvault person scoring status`.
+Scoring creates review suggestions and records judgments; it never accepts
+matches or links participants.
+
+```toml
+[people.identity_scoring]
+enabled = false
+model_id = "jev-1.13.0"
+minimum_probability = 0.80
+credential_env = "MSGVAULT_JEV_API_KEY"
+batch_size = 20
+retention_declaration = "provider retention policy accepted by the operator"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable consented identity scoring. Consent is still required. |
+| `model_id` | `jev-1.13.0` | Fixed provider model identifier. |
+| `minimum_probability` | `0.80` | Probability must be strictly greater than this threshold before local policy can propose acceptance. Accepted values are at least `0.80` and less than `1.00`. |
+| `credential_env` | empty | Name of the environment variable holding the provider key. The key value is read from the daemon environment and is never stored in `config.toml`. Required when enabled. |
+| `batch_size` | `20` | Default and maximum scoring batch size, from 1 through 100. |
+| `retention_declaration` | empty | Operator's exact declaration of the provider retention policy. Required when enabled and included in the consent fingerprint. |
+
+The provider endpoint is fixed at `https://api.typesafe.ai/v1/systemone`, with
+model `jev-1.13.0`. The disclosure binds that endpoint, model, packet schema,
+retention declaration, policy version, and question version. A change to any
+of them requires consent to the new fingerprint. `status` also prints the raw
+identity fields and limits covered by the packet schema.
+
+`msgvault person scoring revoke <fingerprint>` withdraws consent for that
+disclosure. It leaves the configuration enabled and retains prior judgments.
+Set `enabled = false` to disable scoring in the configuration. See
+[identity scoring](usage/people.md#optional-identity-scoring) for the workflow
+and [the API reference](api-server.md#identity-match-review-and-scoring) for
+endpoints.
 
 ## People sweep inference
 
