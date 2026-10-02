@@ -720,6 +720,10 @@ or unaddressed interface fails before opening a listener. Startup logs report
 the bound address and whether the bind came from a flag, environment, a config
 file, or the default.
 
+Config edits validate the saved settings without resolving network interfaces
+or reading server credentials. These resources must be available when the
+server starts; an unavailable interface or key does not block unrelated edits.
+
 Credentials use `api_key`, then `api_key_file`, then `api_key_env`. A selected
 file or named variable that is missing, empty, or unsafe fails without trying
 another source. Files must be regular, owned by the process user, at most
@@ -728,13 +732,27 @@ rejected. Windows files require an owner-only ACL. File reads trim surrounding
 whitespace and leave mounted permissions unchanged. Relative secret paths in
 an explicit `--config` resolve beside that file.
 
+Container secret mounts must meet these same rules. Docker Swarm can set the
+secret's `uid` to the process user and its `mode` to `0400`; see
+[Swarm secret options](https://docs.docker.com/reference/cli/docker/service/create/#create-a-service-with-secrets---secret).
+The default root-owned `0444` mount is rejected. With Docker Compose file
+mounts, set the host file's ownership and mode before mounting it.
+Kubernetes Secret volumes use symlinks and are not accepted directly. Use a
+Secret-backed environment variable, or provide a regular owner-only file.
+These restrictions apply to `api_key_file`, MCP's `--http-token-file`, and
+`credentials set --from-file`. `credentials set --stdin` reads a stream and
+can import a readable mounted secret through shell input redirection.
+
 When a secure non-loopback server has no configured credential source, it
-creates `<home>/tokens/server-api-key` with an unpredictable key and owner-only
-permissions. It reuses that key on later starts. An invalid existing key fails
-instead of being replaced. Local CLI clients discover the persisted key,
-including when they start the daemon themselves. `allow_insecure = true`
-retains the explicit unauthenticated mode. Startup logs name the credential
-file without printing its contents.
+creates `<data_dir>/tokens/server-api-key` with an unpredictable key and
+owner-only permissions. Persist `data_dir` to retain the key across restarts.
+It reuses that key on later starts, including loopback-only starts. The Web UI
+then requires login on `127.0.0.1` too; use the key from that file. An invalid
+existing key fails instead of being replaced. Local CLI clients discover the
+persisted key, including when they start the daemon themselves.
+`allow_insecure = true` skips this default key and retains the explicit
+unauthenticated mode; explicitly configured keys are still enforced. Startup
+logs name the credential file without printing its contents.
 
 `daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
 
@@ -1308,6 +1326,12 @@ Changing a stored key for vector or multimodal (visual) embeddings requires a da
 restart, like the other `[vector]` settings. Person enrichment and sweep keys
 apply on the next run.
 
+On unreleased `main`, a stored person-enrichment suppression key also takes
+precedence over a custom `suppression_key_env`. Previously, a custom variable
+won. Before upgrading an installation that has both, ensure the stored key
+matches the variable's value. If existing suppression records were made with
+a different key, enrichment stops with `ErrSuppressionKeyMismatch`.
+
 On unreleased `main`, the host owner can also install keys without the Web UI:
 
 ```sh
@@ -1529,7 +1553,12 @@ three environment variables selects that group's environment sources; within
 the group, inline wins over file, then named environment. A supplied empty
 credential variable is an error when that destination is used. Booleans accept
 Go's `strconv.ParseBool` values, such as `true`, `false`, `1`, and `0`; empty or
-invalid values fail. Origin and proxy lists trim whitespace between entries.
+invalid values fail. Origin and proxy lists trim whitespace and ignore empty
+entries, including a trailing comma. Explicit `export-token --to`, `--api-key`,
+and `--allow-insecure` choices are saved even when they match an environment
+override; environment-only values are not saved. The setup wizard also saves
+new choices that match an override; keeping existing settings leaves them
+unchanged on disk.
 
 For example, a supervised daemon can start without a config file:
 
@@ -1544,15 +1573,19 @@ features once published. No startup hook or entrypoint wrapper is required.
 
 ## File Locations
 
-All data lives under the msgvault home directory (`~/.msgvault` on macOS/Linux, `C:\Users\<you>\.msgvault` on Windows). The directory is created automatically on first use.
+The default home is `~/.msgvault` on macOS/Linux and `C:\Users\<you>\.msgvault`
+on Windows. It is created automatically; existing directory permissions are
+left unchanged. Configuration stays under the home unless `--config` selects
+another file. The data paths below use `[data].data_dir`, which defaults to the
+home; `[log].dir` can override the log location.
 
 | File | Description |
 |---|---|
-| `config.toml` | Configuration file |
+| `<home>/config.toml` | Configuration file |
 | `msgvault.db` | SQLite database (system of record when PostgreSQL is not configured) |
 | `attachments/` | Content-addressed attachment files |
-| `tokens/` | OAuth tokens per account |
-| `tokens/server-api-key` | Persisted daemon API key when a secure non-loopback server mints one |
+| `tokens/` | OAuth tokens and stored provider credentials |
+| `tokens/server-api-key` | Persisted daemon API key, reused on later loopback and non-loopback starts |
 | `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
 

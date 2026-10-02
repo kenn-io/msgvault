@@ -69,38 +69,40 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 2: Optionally configure remote NAS
-	runtimeRemoteURL, remoteURLFromEnvironment := os.LookupEnv("MSGVAULT_REMOTE_URL")
 	remoteURL, remoteAPIKey, err := setupRemoteServer(reader, secretsPath, cfg)
 	if err != nil {
 		return err
 	}
 
-	// Step 3: Update config
+	// Step 3: Persist choices made in the wizard, including values that match
+	// environment overrides. Keeping existing settings does not persist them.
+	var edits []config.Edit
 	if secretsPath != "" {
 		cfg.OAuth.ClientSecrets = secretsPath
+		edits = append(edits, config.Edit{Key: "oauth.client_secrets", Value: secretsPath})
 	}
 	if remoteURL != "" {
 		cfg.Remote.URL = remoteURL
-		cfg.Remote.APIKey = remoteAPIKey
-		// Auto-set for HTTP: target is Tailscale/LAN, not public internet.
-		if strings.HasPrefix(remoteURL, "http://") {
-			if remoteURLFromEnvironment && remoteURL == runtimeRemoteURL {
-				cfg.SetRuntimeRemoteAllowInsecure(true)
-			} else {
-				cfg.Remote.AllowInsecure = true
-			}
-		}
+		edits = append(edits,
+			config.Edit{Key: "remote.url", Value: remoteURL},
+			config.Edit{Key: "remote.api_key", Value: remoteAPIKey},
+			config.Edit{Key: "remote.allow_insecure", Value: strings.HasPrefix(remoteURL, "http://")},
+		)
 	}
 
 	// Only save if we configured something
-	if secretsPath != "" || remoteURL != "" {
-		if err := cfg.Save(); err != nil {
+	if len(edits) > 0 {
+		snapshot, err := config.ReadConfigFile(cfg.ConfigFilePath())
+		if err == nil {
+			_, err = config.EditConfigFilePrivate(cfg.ConfigFilePath(), snapshot.ETag, edits)
+		}
+		if err != nil {
 			return fmt.Errorf("save config: %w", err)
 		}
 		fmt.Printf("\nConfiguration saved to %s\n", cfg.ConfigFilePath())
 	}
 
-	printSetupNextSteps(cmd.OutOrStdout(), setupAddAccountCommand(&cfg.OAuth), remoteURL != "",
+	printSetupNextSteps(cmd.OutOrStdout(), setupAddAccountCommand(&cfg.OAuth), cfg.Remote.URL != "",
 		cfg.OAuth.ClientSecrets != "" && cfg.OAuth.ServiceAccountKey == "")
 	return nil
 }
@@ -218,7 +220,7 @@ func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *confi
 	if cfg.Remote.URL != "" {
 		fmt.Printf("Remote server already configured: %s\n", cfg.Remote.URL)
 		if promptYesNo(reader, "Keep existing configuration?") {
-			return cfg.Remote.URL, cfg.Remote.APIKey, nil
+			return "", "", nil
 		}
 	}
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 var (
@@ -238,21 +239,28 @@ func runExportToken(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Save remote config for future use
-	if cfg.Remote.URL != result.remoteURL ||
-		(persistInlineKey && cfg.Remote.APIKey != result.apiKey) ||
-		(result.allowInsecure && !cfg.Remote.AllowInsecure) {
-		cfg.Remote.URL = result.remoteURL
-		if persistInlineKey {
-			cfg.Remote.APIKey = result.apiKey
+	// Persist explicit choices even when they equal runtime overrides. Editing
+	// the file preserves unrelated configuration and leaves environment-only
+	// values and mounted credentials out of saved configuration.
+	var edits []config.Edit
+	if exportTokenTo != "" {
+		edits = append(edits, config.Edit{Key: "remote.url", Value: result.remoteURL})
+	}
+	if persistInlineKey {
+		edits = append(edits, config.Edit{Key: "remote.api_key", Value: result.apiKey})
+	}
+	if exportAllowInsecure {
+		edits = append(edits, config.Edit{Key: "remote.allow_insecure", Value: true})
+	}
+	if len(edits) > 0 {
+		snapshot, err := config.ReadConfigFile(cfg.ConfigFilePath())
+		if err == nil {
+			_, err = config.EditConfigFilePrivate(cfg.ConfigFilePath(), snapshot.ETag, edits)
 		}
-		if result.allowInsecure {
-			cfg.Remote.AllowInsecure = true
-		}
-		if err := cfg.Save(); err != nil {
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Note: Could not save remote config: %v\n", err)
 		} else {
-			fmt.Printf("Remote server saved to %s (future exports won't need --to/--api-key)\n",
+			fmt.Printf("Remote settings saved to %s\n",
 				cfg.ConfigFilePath())
 		}
 	}

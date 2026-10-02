@@ -883,24 +883,8 @@ func syncConfigDirectory(path string, open func(string) (syncDirectoryHandle, er
 }
 
 func validateEditableCandidate(cfg *Config) error {
-	// Validate effective runtime security without serializing runtime secrets.
-	effective := *cfg
-	if err := effective.applyRuntimeOverrides(RuntimeOverrides{}); err != nil {
-		return err
-	}
-	resolvedBind, err := ResolveBindAddress(effective.Server.BindAddr)
-	if err != nil {
-		return err
-	}
-	effective.Server.BindAddr = resolvedBind
-	if err := effective.ResolveServerKey(); err != nil {
-		return err
-	}
-	if !effective.Server.shouldAutoMintKey() {
-		if err := effective.Server.ValidateSecure(); err != nil {
-			return err
-		}
-	}
+	// Loading the candidate validates its configuration. Interfaces and secrets
+	// are checked when starting the server, not when editing unrelated fields.
 	if cfg.Vector.AnyLaneEnabled() {
 		if err := cfg.Vector.Validate(); err != nil {
 			return fmt.Errorf("vector config: %w", err)

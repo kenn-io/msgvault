@@ -30,8 +30,26 @@ func TestServeFlagsOverrideMalformedEnvironment(t *testing.T) { //nolint:paralle
 	require.NotNil(got)
 	assert.Equal("127.0.0.1", got.Server.BindAddr)
 	assert.Equal(8181, got.Server.APIPort)
+	assert.Equal("--bind", got.BindAddressSource())
 	if inv := invocationFromCommand(root); inv != nil && inv.logResult != nil {
 		inv.logResult.Close()
+	}
+}
+
+func TestServeBindSourceUsesConfiguredField(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	for _, tc := range []struct {
+		content string
+		want    string
+	}{
+		{"[web]\ntheme = 'dark'\n", "default"},
+		{"[server]\nbind_addr = '127.0.0.1'\n", path},
+	} {
+		require.NoError(t, os.WriteFile(path, []byte(tc.content), 0o600))
+		cfg, err := config.Load(path, "")
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, cfg.BindAddressSource())
 	}
 }
 
@@ -100,6 +118,7 @@ func TestServeUnknownInterfaceFailsBeforeMinting(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Server.BindAddr = "iface:msgvault-nonexistent-test-interface"
+	cfg.Data.DataDir = cfg.HomeDir
 	require.Error(t, prepareServeConfig(cfg))
 	_, err := os.Stat(cfg.ServerKeyFilePath())
 	require.ErrorIs(t, err, os.ErrNotExist)
@@ -140,6 +159,7 @@ func TestServeExplicitSecretFailureDoesNotMint(t *testing.T) {
 	cfg.HomeDir = t.TempDir()
 	cfg.Server.BindAddr = "0.0.0.0"
 	cfg.Server.APIKeyFile = filepath.Join(cfg.HomeDir, "missing-key")
+	cfg.Data.DataDir = cfg.HomeDir
 	require.Error(t, prepareServeConfig(cfg))
 	_, err := os.Stat(cfg.ServerKeyFilePath())
 	require.ErrorIs(t, err, os.ErrNotExist)
@@ -153,6 +173,7 @@ func TestServeExplicitInsecureDoesNotReadOrMintDefaultKey(t *testing.T) {
 	cfg.HomeDir = t.TempDir()
 	cfg.Server.BindAddr = "0.0.0.0"
 	cfg.Server.AllowInsecure = true
+	cfg.Data.DataDir = cfg.HomeDir
 	require.NoError(os.MkdirAll(filepath.Dir(cfg.ServerKeyFilePath()), 0o700))
 	require.NoError(os.WriteFile(cfg.ServerKeyFilePath(), nil, 0o600))
 	require.NoError(prepareServeConfig(cfg))

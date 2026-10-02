@@ -153,6 +153,30 @@ func TestSetupDoesNotPersistHTTPForRuntimeRemoteURL(t *testing.T) { //nolint:par
 	assert.NotContains(string(persisted), "allow_insecure = true")
 }
 
+func TestSetupPersistsExplicitRemoteMatchingEnvironment(t *testing.T) { //nolint:paralleltest // process environment
+	require := require.New(t)
+	assert := assert.New(t)
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[remote]\nurl = 'https://old.example.test'\n"), 0o600))
+	t.Setenv("MSGVAULT_REMOTE_URL", "http://archive.example.test:8080")
+	t.Setenv("MSGVAULT_REMOTE_ALLOW_INSECURE", "true")
+	cfg, err := config.Load(path, home)
+	require.NoError(err)
+	cmd := &cobra.Command{}
+	cmd.SetContext(withTestConfig(t, cfg))
+	cmd.SetIn(strings.NewReader("\nn\ny\narchive.example.test\n8080\n"))
+	cmd.SetOut(&bytes.Buffer{})
+	require.NoError(runSetup(cmd, nil))
+	snapshot, err := config.ReadConfigFile(path)
+	require.NoError(err)
+	saved, err := config.LoadConfigFile(snapshot, home)
+	require.NoError(err)
+	assert.Equal("http://archive.example.test:8080", saved.Remote.URL)
+	assert.True(saved.Remote.AllowInsecure)
+	assert.NotEmpty(saved.Remote.APIKey)
+}
+
 func TestSetupWithGoogleCredentialsPrintsGmailSteps(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

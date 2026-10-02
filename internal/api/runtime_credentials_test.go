@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/fileutil"
 )
 
 func TestSettingsUsesMintedServerKeyWithoutSeedingConfig(t *testing.T) { //nolint:paralleltest // isolates the fallback home
@@ -67,4 +68,31 @@ func TestSettingsReloadAppliesAllowInsecureBeforeResolvingDefaultServerKey(t *te
 	require.NotNil(byKey["server.allow_insecure"].Value)
 	require.NotNil(byKey["server.allow_insecure"].Value.Boolean)
 	assert.True(*byKey["server.allow_insecure"].Value.Boolean)
+}
+
+func TestSettingsEditsAfterServerCredentialFileDisappears(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Parallel()
+	home := t.TempDir()
+	keyPath := filepath.Join(home, "key")
+	key := "synthetic-runtime-api-key"
+	require.NoError(fileutil.SecureWriteFile(keyPath, []byte(key), 0o600))
+	configPath := filepath.Join(home, "config.toml")
+	require.NoError(os.WriteFile(configPath, []byte("[server]\napi_key_file = 'key'\n"), 0o600))
+	cfg, err := config.Load(configPath, home)
+	require.NoError(err)
+	require.NoError(cfg.PrepareServerKey())
+	srv := NewServer(cfg, nil, nil, slog.New(slog.DiscardHandler))
+	require.NoError(os.Remove(keyPath))
+	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", key)
+	require.Equal(http.StatusOK, get.Code, get.Body.String())
+	patch := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
+		[]byte(`{"updates":[{"key":"web.theme","value":{"string":"dark"}}]}`), get.Header().Get("ETag"), key)
+	require.Equal(http.StatusOK, patch.Code, patch.Body.String())
+	var body SettingsResponse
+	require.NoError(json.Unmarshal(patch.Body.Bytes(), &body))
+	assert.Equal("dark", *settingsByKey(body.Settings)["web.theme"].Value.String)
+	assert.True(settingsByKey(body.Settings)["server.api_key"].Secret.Configured)
+	assert.NotContains(patch.Body.String(), key)
 }
