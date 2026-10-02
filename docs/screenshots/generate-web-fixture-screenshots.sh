@@ -41,6 +41,9 @@ mkdir -p "$home_dir" "$scratch/output"
 # runtime record. Keep the host home and caches so toolchain shims still work.
 export MSGVAULT_HOME="$home_dir"
 export MSGVAULT_DATA_DIR="$home_dir"
+if [[ -z "${PLAYWRIGHT_BROWSERS_PATH:-}" && -d /ms-playwright ]]; then
+  export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+fi
 
 cat > "$home_dir/config.toml" <<'EOF'
 [server]
