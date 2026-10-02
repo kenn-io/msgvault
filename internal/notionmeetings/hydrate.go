@@ -267,8 +267,9 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 			}
 			page, err := list(ctx, cursor)
 			if err != nil {
-				if (h.userSource == nil && errors.Is(err, ErrUnauthorized)) || errors.Is(err, context.Canceled) ||
-					errors.Is(err, context.DeadlineExceeded) {
+				// Users-token failures, timeouts included, only cost attendee emails.
+				if ctx.Err() != nil || h.userSource == nil && (errors.Is(err, ErrUnauthorized) ||
+					errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 					return err
 				}
 				h.usersUnavailable = true
