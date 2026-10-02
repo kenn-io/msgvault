@@ -318,6 +318,15 @@ func (p PutSettingsPeopleInferenceKeyHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PatchSettingsPeopleInferencePolicyHeaders struct {
+	// IfMatch Exact strong config ETag from the settings read
+	IfMatch string `json:"If-Match" validate:"required"`
+}
+
+func (p PatchSettingsPeopleInferencePolicyHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type RevokeSettingsPeopleInferenceProviderHeaders struct {
 	// IfMatch Strong config ETag returned by the latest settings read
 	IfMatch string `json:"If-Match" validate:"required"`

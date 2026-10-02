@@ -11,13 +11,32 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
+
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+// NamedPersonPromoter is optional. Legacy embedders retain the original
+// promotion schema; supporting backends preserve the daemon's structured receipt.
+type NamedPersonPromoter interface {
+	PromoteWithDisplayName(ctx context.Context, participantID int64, name *string) (*OperationResult, error)
+}
+
+var namedPromotionDefinition = sync.OnceValue(func() toolDefinition {
+	definition := promotePersonDefinition(nil)
+	definition.outputSchema = operationalOutputSchema(definition.outputSchema, OperationFamilySources)
+	definition.description += " Optional display_name seeds a new profile; omitted or null uses observed names, empty leaves the name unset, and re-promotion preserves the existing name. An explicit name argument requires confirmation."
+	definition.inputSchema = closedObject(map[string]*jsonschema.Schema{
+		toolArgParticipantID: safeIDSchema("Observed participant ID to promote"),
+		"display_name":       {Types: []string{"string", "null"}, Description: "Optional initial name; null uses the observed name, empty leaves it unset"},
+	}, toolArgParticipantID)
+	return definition
+})
 
 type searchPeopleResponse struct {
 	Rows          []searchPeopleRow `json:"rows"`
@@ -478,6 +497,29 @@ func (h *handlers) promotePerson(ctx context.Context, req toolRequest) (*toolRes
 	participantID, err := requiredPeopleID(req.GetArguments(), toolArgParticipantID)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
+	}
+	if value, present := req.arguments["display_name"]; present {
+		backend, ok := h.peopleBackend.(NamedPersonPromoter)
+		if !ok {
+			return toolErrorResult("named promotion is unavailable"), nil
+		}
+		var name *string
+		if value != nil {
+			text, ok := value.(string)
+			if !ok {
+				return toolErrorResult("display_name must be a string or null"), nil
+			}
+			name = &text
+		}
+		message, err := json.Marshal(map[string]any{"operation": ToolPromotePerson, "participant_id": participantID, "display_name": name, "effect": "promote the participant's current identity cluster; seed the name only for a new profile; preserve an existing saved name"}, json.Deterministic(true))
+		if err != nil {
+			return nil, newInternalError("promote person disclosure", err)
+		}
+		if err := req.confirmUserAction(ctx, string(message)); err != nil {
+			return confirmationToolError(err)
+		}
+		result, err := backend.PromoteWithDisplayName(ctx, participantID, name)
+		return operationalToolResponse(ToolPromotePerson, result, err)
 	}
 	person, err := h.peopleBackend.Promote(ctx, participantID)
 	if err != nil {

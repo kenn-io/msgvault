@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/personenrollment"
 )
 
 const maxProviderCredentialBytes = 16 << 10
@@ -601,45 +602,36 @@ func personProviderConfigFromSnapshot(
 	return loaded.People.Sweep, nil
 }
 
-func applyPersonProviderSetOptions(
-	command *cobra.Command,
-	provider *peoplesweep.ProviderConfig,
-	options personProviderSetOptions,
-) {
+func applyPersonProviderSetOptions(command *cobra.Command, provider *peoplesweep.ProviderConfig, options personProviderSetOptions) error {
+	update := personenrollment.PolicyUpdate{}
 	flags := command.Flags()
-	if flags.Changed("model") {
-		provider.Model = options.model
-	}
-	if flags.Changed("retention-posture") {
-		provider.RetentionPosture = options.retentionPosture
-	}
-	if flags.Changed("training-posture") {
-		provider.TrainingPosture = options.trainingPosture
-	}
-	if flags.Changed("source") {
-		provider.AllowedSources = make([]peoplesweep.SourceClass, len(options.allowedSources))
-		for index, source := range options.allowedSources {
-			provider.AllowedSources[index] = peoplesweep.SourceClass(source)
+	for _, field := range []struct {
+		name   string
+		input  *string
+		target **string
+	}{
+		{"model", &options.model, &update.Model}, {"retention-posture", &options.retentionPosture, &update.RetentionPosture}, {"training-posture", &options.trainingPosture, &update.TrainingPosture}, {"source-since", &options.sourceSince, &update.SourceSince}, {"source-until", &options.sourceUntil, &update.SourceUntil}, {"reasoning-effort", &options.reasoningEffort, &update.ReasoningEffort}, {"reasoning-mode", &options.reasoningMode, &update.ReasoningMode},
+	} {
+		if flags.Changed(field.name) {
+			*field.target = field.input
 		}
 	}
-	if flags.Changed("source-since") {
-		provider.SourceSince = options.sourceSince
-	}
-	if flags.Changed("source-until") {
-		provider.SourceUntil = options.sourceUntil
+	if flags.Changed("source") {
+		update.AllowedSources = &options.allowedSources
 	}
 	if flags.Changed("allow-sensitive") {
-		provider.AllowSensitive = options.allowSensitive
-	}
-	if flags.Changed("reasoning-effort") {
-		provider.ReasoningEffort = options.reasoningEffort
-	}
-	if flags.Changed("reasoning-mode") {
-		provider.ReasoningMode = options.reasoningMode
+		update.AllowSensitive = &options.allowSensitive
 	}
 	if flags.Changed("request-timeout") {
-		provider.RequestTimeout = options.requestTimeout
+		timeout := options.requestTimeout.String()
+		update.RequestTimeout = &timeout
 	}
+	replacement, err := update.Apply(*provider)
+	if err != nil {
+		return err
+	}
+	*provider = replacement
+	return nil
 }
 
 func readExistingPersonProviderCredential(
@@ -894,10 +886,7 @@ func personProviderProfileEdit(name string, provider peoplesweep.ProviderConfig)
 }
 
 func personProviderProfileUpdateEdit(name string, provider peoplesweep.ProviderConfig) config.TableEdit {
-	return config.TableEdit{
-		Path:   []string{"people", "sweep", "providers", name},
-		Values: personProviderTableUpdateValues(provider),
-	}
+	return personenrollment.ProviderUpdateEdit(name, provider)
 }
 
 func personProviderBudgetEdit(prices *peoplesweep.BudgetConfig) config.TableEdit {
@@ -912,17 +901,6 @@ func personProviderBudgetEdit(prices *peoplesweep.BudgetConfig) config.TableEdit
 
 func personProviderTableValues(provider peoplesweep.ProviderConfig) map[string]any {
 	return peoplesweep.ProviderTOMLValues(provider)
-}
-
-func personProviderTableUpdateValues(provider peoplesweep.ProviderConfig) map[string]any {
-	values := personProviderTableValues(provider)
-	values["source_until"] = provider.SourceUntil
-	values["reasoning_effort"] = provider.ReasoningEffort
-	values["reasoning_mode"] = provider.ReasoningMode
-	if provider.Protocol == peoplesweep.ProtocolOpenAIChat {
-		values["token_limit_parameter"] = provider.TokenLimitParameter
-	}
-	return values
 }
 
 func acceptedPersonProviderCatalogPrices(
