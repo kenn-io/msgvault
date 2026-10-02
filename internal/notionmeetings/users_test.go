@@ -180,3 +180,16 @@ func TestHydratorGuestTimeoutKeepsContent(t *testing.T) {
 	assert.Equal(t, []string{"user-1"}, result.UnresolvedAttendeeIDs)
 	assert.Equal(t, map[string]bool{"user-1": true}, result.failedAttendeeIDs)
 }
+
+func TestHydratorUsersListTimeoutKeepsContent(t *testing.T) {
+	timeout := fmt.Errorf("perform Notion request: %w", context.DeadlineExceeded)
+	users := &fakeUserSource{errs: map[string]error{"list": timeout, "user-1": timeout, "user-2": timeout}}
+	h := NewHydrator(completeHydrationSource()).WithUserSource(users)
+	for range 2 {
+		result, err := h.Hydrate(t.Context(), hydrationMeeting())
+		require.NoError(t, err)
+		assert.Equal(t, "Test Speaker: Ready to ship.", result.Transcript)
+		assert.True(t, result.AttendeeResolutionDegraded)
+	}
+	assert.Equal(t, []string{""}, users.listed)
+}
