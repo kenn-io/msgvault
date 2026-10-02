@@ -323,8 +323,10 @@ func TestCatalogSchemas(t *testing.T) {
 		document        bool
 		savedViews      bool
 		directory       bool
+		sqlQuery        bool
 	}{
 		{name: "0000", opts: ServeOptions{Engine: &querytest.MockEngine{}}},
+		{name: "sql_query", opts: ServeOptions{Engine: &querytest.MockEngine{}, ArchiveSQLQuerier: &sqlToolEngine{}}, sqlQuery: true},
 		{name: "1000", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: remoteHybrid}, semantic: true},
 		{name: "0010", opts: ServeOptions{Engine: &querytest.MockEngine{}, SimilarSearcher: remoteSimilar}, similar: true},
 		{name: "1010", opts: ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: remoteHybrid, SimilarSearcher: remoteSimilar}, semantic: true, similar: true},
@@ -373,6 +375,9 @@ func TestCatalogSchemas(t *testing.T) {
 				}
 				if shape.savedViews {
 					expectedNames = append(expectedNames, ToolListSavedViews, ToolGetSavedView, ToolRunSavedView)
+				}
+				if shape.sqlQuery {
+					expectedNames = append(expectedNames, ToolQuerySQL)
 				}
 				if shape.directory {
 					expectedNames = append(expectedNames, ToolListDirectoryPeople)

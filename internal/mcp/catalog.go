@@ -243,7 +243,7 @@ func querySQLDefinition() toolDefinition {
 			"sql":   stringSchema("One read-only SQL statement"),
 			"fresh": booleanSchema("Request a background cache check including writes committed before this request"),
 		}, "sql"),
-		&jsonschema.Schema{Schema: schema202012, OneOf: []*jsonschema.Schema{result, accepted}},
+		&jsonschema.Schema{Schema: schema202012, Type: "object", OneOf: []*jsonschema.Schema{result, accepted}},
 		(*handlers).querySQL,
 	)
 	definition.availability = func(capabilities catalogCapabilities) bool { return capabilities.sqlQuery }
