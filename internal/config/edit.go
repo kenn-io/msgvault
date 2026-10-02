@@ -910,6 +910,9 @@ func validateEditableCandidate(cfg *Config) error {
 	for index, source := range cfg.Granola {
 		schedules[fmt.Sprintf("granola[%d].schedule", index)] = source.Schedule
 	}
+	for index, source := range cfg.Pocket {
+		schedules[fmt.Sprintf("pocket[%d].schedule", index)] = source.Schedule
+	}
 	for index, source := range cfg.Circleback {
 		schedules[fmt.Sprintf("circleback[%d].schedule", index)] = source.Schedule
 	}

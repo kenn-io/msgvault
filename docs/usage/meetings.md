@@ -1,7 +1,7 @@
 ---
 last_edited: "2026-09-28"
 title: Meeting Transcripts
-description: Archive AI meeting notes and transcripts from Granola, Circleback, Notion, and Muesli into your searchable local archive.
+description: Archive AI meeting notes and transcripts from Granola, Circleback, Pocket, Notion, and Muesli into your searchable local archive.
 ---
 
 Find meeting decisions and transcripts in the same archive as your email and
@@ -16,11 +16,12 @@ emails connect meetings to the people you already know in msgvault.
 | [Granola](#granola) | API key | Requires access to Granola's public API |
 | [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Notion integration token | At most 50 attendee-visible meetings per discovery query |
 | [Circleback](#circleback) | Browser authorization to its MCP server | Older note edits require a full refresh |
+| [Pocket](#pocket) | Personal API key | Requires Pocket API access and supported transcript/summary response shapes |
 | [Muesli](#muesli) | Local database on the same Mac | msgvault must run on the Mac where Muesli records |
 | [Another meeting source](#import-from-any-meeting-source) | Authenticated JSON import | Your integration supplies each meeting and its updates |
 
 Provider sync reads meeting data without changing the source service. Recording
-media is not downloaded by the Notion, Circleback, or Muesli integrations.
+media is not downloaded by the Notion, Circleback, Pocket, or Muesli integrations.
 
 ## Browse and search
 
@@ -132,7 +133,7 @@ Each meeting source has two distinct values:
 rejects a missing or invalid value with guidance to preserve the source label
 and add the account email separately.
 
-`add-granola`, `add-circleback`, `add-notion-meetings`, and `add-muesli` always confirm the primary email for their
+`add-granola`, `add-circleback`, `add-pocket`, `add-notion-meetings`, and `add-muesli` always confirm the primary email for their
 source. Add other confirmed aliases with the identity command:
 
 ```bash
@@ -418,6 +419,45 @@ msgvault remove-account notion-personal --type notion_meetings --yes
 
 A configured schedule will then refuse to recreate it until
 `add-notion-meetings` is run again.
+
+## Pocket
+
+Archive personal Pocket recordings with their transcripts, completed summaries,
+structured actions, speaker labels, and provider durations. This integration
+is available on `main`; check the release changelog for installed releases.
+
+1. Obtain a personal API key in Pocket Settings → Developer → API Keys,
+   as described in [Pocket's MCP setup](https://docs.heypocketai.com/docs/mcp).
+2. Add a [`[[pocket]]` entry](../configuration.md#pocket-sources) with your account
+   email and a stable label.
+3. Set `POCKET_API_KEY`, or your configured `api_key_env`, in the daemon's
+   environment and restart the daemon.
+4. Run `msgvault add-pocket personal`, then `msgvault sync-pocket personal`.
+
+REST discovers recordings and fetches their contents. Pocket's MCP
+`get_account_info` tool verifies the email and stable user ID before registration
+and every sync. Organization membership on a personal account is allowed;
+organization API keys and recordings belonging to other owners are outside
+this integration's scope.
+
+Each sync checks all recording metadata, so old edited meetings can be refreshed.
+Use [`--limit`, `--after`, and `--full`](../cli-reference.md#sync-pocket) to bound
+or repair a run. Missing, pending, or failed transcript and summary processing
+retains prior usable sections. A successfully completed empty section clears
+that section. Source disappearance never deletes archived evidence.
+
+The transcript and summarization parser supports the shapes documented in
+[Pocket's webhook examples](https://docs.heypocketai.com/docs/api/webhooks):
+speaker/text/start/end segments, and completed
+`v2.summary` and `v2.actionItems` packages. The [REST detail reference](https://docs.heypocketai.com/docs/api/recordings/get-recording-details)
+leaves those content fields unspecified. Tests use synthetic examples, not captured live
+REST responses; live shape compatibility and plan entitlement remain unverified.
+An incompatible non-null shape fails its recording without replacing existing
+evidence. API responses and combined archived evidence are limited to 64 MiB.
+
+Recording audio, source task updates, and fabricated speaker identities are
+not included. Names without email addresses remain speaker labels. The source
+does not generate a replacement summary or infer an action assignee.
 
 ## Circleback
 

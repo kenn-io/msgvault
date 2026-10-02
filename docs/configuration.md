@@ -1090,6 +1090,39 @@ the primary identity even if aliases already exist. Manage aliases with
 existing meeting attribution. A scheduled source must still be registered in
 the archive; removing it prevents the scheduler from silently recreating it.
 
+### Pocket Sources
+
+Pocket sync uses top-level `[[pocket]]` entries. This integration is available
+on `main`; check the release changelog before using it with an installed release.
+
+```toml
+[[pocket]]
+identifier = "personal"
+account_email = "you@example.com"
+api_key_env = "POCKET_API_KEY"
+enabled = true
+schedule = "15 */6 * * *"
+```
+
+| Field | Default | Purpose |
+|---|---|---|
+| `identifier` | `default` for one unnamed entry | Stable source label; multiple entries require unique labels |
+| `account_email` | Required | Explicit primary email; must match the live Pocket account |
+| `api_key_env` | `POCKET_API_KEY` | Environment variable holding a personal API key on the daemon host |
+| `enabled` | `false` | Enable scheduled sync |
+| `schedule` | Unset | Cron expression; an enabled source without a schedule is not synced automatically |
+
+Set the key in the daemon's environment and restart the daemon after changing
+it. A variable set only in a remote CLI shell does not reach the daemon.
+msgvault sends the key only to Pocket's fixed REST and MCP endpoints. It does
+not store the key in source configuration or raw meeting evidence.
+
+Run `msgvault add-pocket personal` to verify access and bind the source to the
+authenticated email and stable Pocket user ID. A replacement key for that same
+account works. Another account requires a new source label, even if the email
+matches. Removing an account does not revoke its Pocket key. See the
+[Pocket workflow](usage/meetings.md#pocket) for coverage and compatibility limits.
+
 ### Circleback Sources
 
 Circleback meeting sync is configured with top-level `[[circleback]]`

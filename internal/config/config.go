@@ -508,6 +508,7 @@ type Config struct {
 	Slack              SlackConfig                     `toml:"slack"`
 	Granola            []GranolaSource                 `toml:"granola"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
+	Pocket             []PocketSource                  `toml:"pocket"`
 	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
 	Muesli             []MuesliSource                  `toml:"muesli"`
 	Backup             BackupConfig                    `toml:"backup"`
@@ -1875,6 +1876,17 @@ func normalizedMeetingAccountEmail(value string) (string, bool) {
 // single entry with no identifier becomes "default" so the CLI argument can
 // be omitted in the common one-account case.
 func (c *Config) applyMeetingSourceDefaults() {
+	for i := range c.Pocket {
+		c.Pocket[i].Identifier = strings.TrimSpace(c.Pocket[i].Identifier)
+	}
+	if len(c.Pocket) == 1 && c.Pocket[0].Identifier == "" {
+		c.Pocket[0].Identifier = "default"
+	}
+	for i := range c.Pocket {
+		if c.Pocket[i].APIKeyEnv == "" {
+			c.Pocket[i].APIKeyEnv = "POCKET_API_KEY"
+		}
+	}
 	if len(c.Granola) == 1 && c.Granola[0].Identifier == "" {
 		c.Granola[0].Identifier = "default"
 	}
@@ -1906,6 +1918,27 @@ func (c *Config) validateMeetingSources() error {
 			seen[key] = true
 		}
 		return nil
+	}
+	pocketIDs := make([]string, len(c.Pocket))
+	for i, src := range c.Pocket {
+		pocketIDs[i] = src.Identifier
+	}
+	if err := check("pocket", pocketIDs); err != nil {
+		return err
+	}
+	for i := range c.Pocket {
+		src := &c.Pocket[i]
+		email, err := src.EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		src.AccountEmail = email
+		for j, char := range src.APIKeyEnv {
+			valid := char == '_' || char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || j > 0 && char >= '0' && char <= '9'
+			if !valid {
+				return fmt.Errorf("[[pocket]] identifier %q has invalid api_key_env", src.Identifier)
+			}
+		}
 	}
 	granolaIDs := make([]string, len(c.Granola))
 	for i, s := range c.Granola {

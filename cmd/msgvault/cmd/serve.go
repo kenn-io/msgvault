@@ -564,6 +564,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, src := range cfg.Pocket {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("pocket source is enabled but has no schedule; the daemon will not sync it", "source", src.Identifier)
+		}
+	}
+	for _, src := range cfg.ScheduledPocketSources() {
+		source := src
+		jobName, _ := api.SchedulerJobNameForSource("pocket", source.Identifier)
+		if err := sched.AddJob(scheduler.Job{
+			Name: jobName, Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredPocketSync(ctx, s, source)
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule pocket source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled pocket source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+
 	// Meeting sources (Granola/Circleback) mirror the gcal treatment: warn
 	// when enabled but unscheduled, then register the scheduled ones.
 	for _, src := range cfg.Granola {
