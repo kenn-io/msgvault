@@ -807,6 +807,51 @@ See [Meeting Transcripts](/docs/usage/meetings/) for setup and what gets stored.
 
 ---
 
+## add-pocket
+
+Verify a configured personal Pocket API key and register its meeting source.
+Available on `main`; consult the release changelog for installed releases.
+
+```bash
+msgvault add-pocket [identifier]
+```
+
+The identifier can be omitted when exactly one `[[pocket]]` entry is configured.
+The daemon reads the key from `api_key_env` (default `POCKET_API_KEY`). The live
+account email must match `account_email`. Registration binds the source to both
+that email and Pocket's stable user ID. A different account needs a new label.
+
+## sync-pocket
+
+Archive Pocket transcripts, completed summaries, and structured action items.
+
+```bash
+msgvault sync-pocket
+msgvault sync-pocket personal --limit 10
+msgvault sync-pocket personal --full --after 2026-01-01
+```
+
+Without an identifier, sync all configured Pocket sources. Each run enumerates
+all recording metadata and fetches selected recordings in least-attempted
+order, then newest meeting time and recording ID. Limited runs retain attempt
+order, including failed attempts, so one invalid recording does not block
+older meetings. Edits update the same archived message.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--limit` | `0` | Maximum detail fetches in this run; zero means unlimited; negative values fail |
+| `--after` | Unset | Include meetings dated on or after this UTC date (`YYYY-MM-DD`); implies `--full` |
+| `--full` | `false` | Repair derived projections and invalid sync state; preserve valid attempt order |
+| `--build-cache` | `false` | Request analytics cache refresh after sync |
+| `--no-build-cache` | `false` | Skip analytics cache refresh after sync |
+
+Failed or canceled runs preserve committed meetings and recoverable attempt
+state without advancing the last successful sync. Processing or missing
+sections retain prior usable content independently. Explicit successful empty
+sections clear it. Provider deletions do not remove archived meetings.
+
+See the [Pocket workflow](usage/meetings.md#pocket) for setup and limitations.
+
 ## add-notion-meetings
 
 Validate a configured read-only Notion integration and register its meeting
