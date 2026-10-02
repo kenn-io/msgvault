@@ -1168,7 +1168,7 @@ func TestBuiltExecutable_UsesProductionChildrenFTSExactUsageAndReplay(t *testing
 		binaryName += ".exe"
 	}
 	binary := filepath.Join(dir, binaryName)
-	build := exec.CommandContext(t.Context(), "go", "build", "-tags", "fts5 sqlite_vec", "-o", binary, ".")
+	build := exec.CommandContext(t.Context(), "go", "build", "-tags", "fts5 sqlite_vec goolm", "-o", binary, ".")
 	buildOutput, err := build.CombinedOutput()
 	require.NoError(t, err, string(buildOutput))
 

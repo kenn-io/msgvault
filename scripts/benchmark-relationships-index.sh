@@ -66,7 +66,7 @@ binary="$scratch/msgvault"
 mkdir -p "$benchmark_home"
 
 cd "$repo_root"
-CGO_ENABLED=1 go build -tags "fts5 sqlite_vec" -o "$binary" ./cmd/msgvault \
+CGO_ENABLED=1 go build -tags "fts5 sqlite_vec goolm" -o "$binary" ./cmd/msgvault \
   >"$scratch/build-binary.log" 2>&1
 
 "$binary" fake-vault \

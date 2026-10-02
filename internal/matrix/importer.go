@@ -7,6 +7,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -39,20 +41,50 @@ type RoomState struct {
 	GapFrom           string   `json:"gap_from,omitempty"`
 	GapTo             string   `json:"gap_to,omitempty"`
 	DeferredRelations []string `json:"deferred_relations,omitempty"`
+	// StagedCiphertext holds the ciphertext of decrypted events that this
+	// checkpoint stores: it is retained once the checkpoint is written, and a
+	// run interrupted before then retains it on resumption.
+	StagedCiphertext []StagedCiphertext `json:"staged_ciphertext,omitempty"`
+}
+
+// StagedCiphertext is a retainedCiphertext saved in a checkpoint.
+type StagedCiphertext struct {
+	EventID       string `json:"event_id"`
+	RoomID        string `json:"room_id"`
+	Ciphertext    string `json:"ciphertext"`
+	StoredMessage bool   `json:"stored_message,omitzero"`
 }
 
 type SyncState struct {
 	NextBatch string                `json:"next_batch,omitempty"`
 	Rooms     map[string]*RoomState `json:"rooms"`
+	// Undecryptable only carries entries written before pending events moved
+	// to matrix_undecryptable_events. Import migrates and clears it on load.
+	Undecryptable map[string]UndecryptableEvent `json:"undecryptable,omitempty"`
+	// PendingInStore marks state written once pending events live in the store.
+	PendingInStore bool `json:"pending_in_store"`
+	recoveryKnown  bool
+}
+
+type UndecryptableEvent struct {
+	RoomID         string `json:"room_id"`
+	EncryptedEvent string `json:"encrypted_event,omitempty"`
 }
 
 func newSyncState() *SyncState {
-	return &SyncState{Rooms: map[string]*RoomState{}}
+	return &SyncState{Rooms: map[string]*RoomState{}, PendingInStore: true, recoveryKnown: true}
 }
 
 func loadSyncState(blob string) (*SyncState, error) {
 	state := newSyncState()
 	if blob != "" {
+		var fields map[string]any
+		if err := json.Unmarshal([]byte(blob), &fields); err != nil {
+			return nil, fmt.Errorf("decode Matrix sync state: %w", err)
+		}
+		_, legacyKnown := fields["undecryptable"]
+		_, storeKnown := fields["pending_in_store"]
+		state.recoveryKnown = legacyKnown || storeKnown
 		if err := json.Unmarshal([]byte(blob), state); err != nil {
 			return nil, fmt.Errorf("decode Matrix sync state: %w", err)
 		}
@@ -60,6 +92,7 @@ func loadSyncState(blob string) (*SyncState, error) {
 	if state.Rooms == nil {
 		state.Rooms = map[string]*RoomState{}
 	}
+	state.PendingInStore = true
 	return state, nil
 }
 
@@ -77,12 +110,13 @@ type ImportOptions struct {
 }
 
 type ImportSummary struct {
-	RoomsProcessed      int64
-	MessagesProcessed   int64
-	MessagesAdded       int64
-	Undecryptable       int64
-	EventsSkipped       int64
-	RelationsUnresolved int64
+	RoomsProcessed         int64
+	MessagesProcessed      int64
+	MessagesAdded          int64
+	Undecryptable          int64
+	UndecryptableRecovered int64
+	EventsSkipped          int64
+	RelationsUnresolved    int64
 }
 
 type Importer struct {
@@ -104,7 +138,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return nil, err
 	}
 	state := newSyncState()
-	if !opts.Full {
+	if opts.Full {
+		// A full history replay resets cursors, but encrypted placeholders may
+		// outlive homeserver retention. Re-seed them from the local archive so
+		// newly arrived keys still recover ciphertext omitted by the replay.
+		state.recoveryKnown = false
+	} else {
 		var encoded string
 		checkpoint, checkpointErr := imp.store.GetLatestCheckpointedSyncByType(source.ID, SourceType)
 		if checkpointErr == nil && checkpoint.CursorBefore.Valid {
@@ -124,6 +163,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if err != nil {
 				return nil, err
 			}
+		} else {
+			// A first sync may follow a subset export, which starts Matrix sync
+			// over but keeps the placeholders it copied.
+			state.recoveryKnown = false
 		}
 	}
 	syncID, err := imp.store.StartSync(source.ID, SourceType)
@@ -139,7 +182,18 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			_ = scoped.FailSync(syncID, err.Error())
 		}
 	}()
-
+	if err = imp.migrateLegacyUndecryptable(source.ID, state); err != nil {
+		return sum, err
+	}
+	if imp.runtime.canDecrypt() && !state.recoveryKnown {
+		if err = imp.seedLegacyUndecryptable(ctx, source.ID); err != nil {
+			return sum, err
+		}
+		state.recoveryKnown = true
+		if err = imp.checkpoint(syncID, state, sum); err != nil {
+			return sum, err
+		}
+	}
 	since := state.NextBatch
 	// mautrix omits an empty set_presence parameter, which makes the homeserver
 	// mark the client online. The client-server spec defines "offline" as "the
@@ -151,6 +205,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return sum, fmt.Errorf("matrix sync: %w", err)
 	}
+	imp.runtime.ProcessSync(ctx, resp, since)
 	directRooms, err := imp.directRooms(ctx)
 	if err != nil {
 		return sum, err
@@ -172,6 +227,21 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 	}
 	state.NextBatch = resp.NextBatch
+	settleDeferred, err := imp.retryUndecryptable(ctx, source.ID, state, opts, sum)
+	if err != nil {
+		return sum, err
+	}
+	// Recovered relations whose targets are not archived live only in state.
+	// Checkpoint it, then retire their pending rows and placeholders while this
+	// run still owns the sync generation: once the sync completes, the scoped
+	// store rejects writes with ErrSyncRunSuperseded. A failure after this
+	// checkpoint resumes from it and replays the deferred relations.
+	if err = imp.checkpoint(syncID, state, sum); err != nil {
+		return sum, err
+	}
+	if err = settleDeferred(); err != nil {
+		return sum, err
+	}
 	if err = scoped.RecomputeConversationStatsContext(ctx, source.ID); err != nil {
 		return sum, fmt.Errorf("recompute Matrix conversation stats: %w", err)
 	}
@@ -316,13 +386,39 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 		}
 		return nil
 	}
+	// The ciphertext of a decrypted event is the proof that it was archived,
+	// so it is retained only once the decrypted event is stored. A relation
+	// carried in the room state is stored only by the next checkpoint, so its
+	// ciphertext waits for one. The checkpoint that stores the relation, and
+	// may advance the history cursor past its page, stages the ciphertext in
+	// the same write, so an interruption before it is retained cannot lose it.
+	var awaitingCheckpoint []retainedCiphertext
+	if err := imp.retainStaged(sourceID, rs); err != nil {
+		return err
+	}
+	checkpointRoom := func() error {
+		for _, item := range awaitingCheckpoint {
+			rs.StagedCiphertext = append(rs.StagedCiphertext, StagedCiphertext{
+				EventID: item.eventID, RoomID: item.roomID, Ciphertext: string(item.ciphertext), StoredMessage: item.storedMessage,
+			})
+		}
+		if err := imp.checkpoint(syncID, state, sum); err != nil {
+			return err
+		}
+		awaitingCheckpoint = nil
+		return imp.retainStaged(sourceID, rs)
+	}
 	persist := func(evt *event.Event) error {
 		if evt != nil {
 			evt.RoomID = roomID
 		}
 		err := imp.persistEvent(ctx, sourceID, convID, evt, sum)
 		if errors.Is(err, errRelationTargetMissing) {
-			return rememberDeferred(evt)
+			candidate, candidateErr := imp.deferredRelationAfterPersist(sourceID, evt)
+			if candidateErr != nil {
+				return candidateErr
+			}
+			return rememberDeferred(candidate)
 		}
 		return err
 	}
@@ -332,10 +428,42 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 				return err
 			}
 		}
-		if shouldDeferRelation(evt) {
-			return rememberDeferred(evt)
+		if evt != nil {
+			// /sync timeline events omit room_id, and Megolm sessions are
+			// looked up by room, so set it before the first decryption.
+			evt.RoomID = roomID
 		}
-		return persist(evt)
+		// relationForDeferral may replace the event with its plaintext, so a
+		// migrated pending row gets its ciphertext first: persisting the
+		// plaintext replaces the placeholder raw, which was the only copy.
+		if err := imp.recordLegacyCiphertext(sourceID, evt); err != nil {
+			return err
+		}
+		candidate, ciphertext, deferRelation, deferErr := imp.relationForDeferral(ctx, evt)
+		if deferErr != nil {
+			return deferErr
+		}
+		if deferRelation {
+			if err := rememberDeferred(candidate); err != nil {
+				return err
+			}
+			if ciphertext != nil {
+				awaitingCheckpoint = append(awaitingCheckpoint, retainedCiphertext{evt.ID.String(), roomID.String(), ciphertext, false})
+			}
+			return nil
+		}
+		if err := persist(candidate); err != nil {
+			return err
+		}
+		if ciphertext == nil {
+			return nil
+		}
+		retained := retainedCiphertext{evt.ID.String(), roomID.String(), ciphertext, parseContent(candidate) && eventPersistsOwnMessage(candidate)}
+		if _, carried := deferredIDs[candidate.ID]; carried {
+			awaitingCheckpoint = append(awaitingCheckpoint, retained)
+			return nil
+		}
+		return imp.retainDecrypted(sourceID, retained)
 	}
 	for _, evt := range room.Timeline.Events {
 		if err := ingest(evt); err != nil {
@@ -344,10 +472,10 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 	}
 	// Save relations before the first history request. A failed page fetch
 	// must not advance past work that needs an older target.
-	if err := imp.checkpoint(syncID, state, sum); err != nil {
+	if err := checkpointRoom(); err != nil {
 		return err
 	}
-	saveProgress := func(string) error { return imp.checkpoint(syncID, state, sum) }
+	saveProgress := func(string) error { return checkpointRoom() }
 	saveGap := func(end string) error {
 		if end != "" {
 			rs.GapFrom = end
@@ -373,7 +501,7 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 		}
 	}
 	rs.SyncedTo, rs.GapFrom, rs.GapTo = nextBatch, "", ""
-	if err := imp.checkpoint(syncID, state, sum); err != nil {
+	if err := checkpointRoom(); err != nil {
 		return err
 	}
 	if !rs.Backfilled {
@@ -397,16 +525,25 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 		return strings.Compare(a.ID.String(), b.ID.String())
 	})
 	// History is complete here, so a relation whose target is still missing
-	// points at something never archived and is dropped.
+	// points at something never archived and is dropped. An encrypted
+	// placeholder is an archived target: replies, reactions and redactions
+	// apply to it, and its edits are read from the homeserver's relations
+	// once it is decrypted.
 	for _, evt := range deferred {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if err := imp.replayDeferredRelation(ctx, sourceID, convID, evt, sum); err != nil {
 			if errors.Is(err, errRelationTargetMissing) {
+				if finalizeErr := imp.finalizeDeferredRecovery(sourceID, evt, sum); finalizeErr != nil {
+					return finalizeErr
+				}
 				sum.RelationsUnresolved++
 				continue
 			}
+			return err
+		}
+		if err := imp.finalizeDeferredRecovery(sourceID, evt, sum); err != nil {
 			return err
 		}
 	}
@@ -416,7 +553,28 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 	if opts.Progress != nil {
 		opts.Progress(fmt.Sprintf("%s: %d members", roomID, len(members)))
 	}
-	return imp.checkpoint(syncID, state, sum)
+	return checkpointRoom()
+}
+
+// recordLegacyCiphertext stores the ciphertext of a pending event that was
+// migrated without it, before the placeholder message is replaced.
+func (imp *Importer) recordLegacyCiphertext(sourceID int64, evt *event.Event) error {
+	if evt == nil || evt.Type != event.EventEncrypted {
+		return nil
+	}
+	pending, exists, err := imp.store.MatrixUndecryptableEvent(sourceID, evt.ID.String())
+	if err != nil || !exists || len(pending.RawEvent) > 0 {
+		return err
+	}
+	raw, err := json.Marshal(evt, json.Deterministic(true))
+	if err != nil {
+		return fmt.Errorf("encode legacy pending Matrix event %s: %w", evt.ID, err)
+	}
+	if pending.RoomID == "" {
+		pending.RoomID = evt.RoomID.String()
+	}
+	pending.RawEvent = raw
+	return imp.store.PutMatrixUndecryptableEvents(sourceID, []store.MatrixUndecryptableEvent{pending})
 }
 
 func relationReplayPriority(evt *event.Event) int {
@@ -440,6 +598,33 @@ func (imp *Importer) replayDeferredRelation(ctx context.Context, sourceID, convI
 	return imp.persistEvent(ctx, sourceID, convID, evt, sum)
 }
 
+func (imp *Importer) deferredRelationAfterPersist(sourceID int64, evt *event.Event) (*event.Event, error) {
+	if evt == nil || evt.Type != event.EventEncrypted {
+		return evt, nil
+	}
+	found, err := imp.store.MessageExistsBatch(sourceID, []string{evt.ID.String()})
+	if err != nil {
+		return nil, err
+	}
+	messageID := found[evt.ID.String()]
+	if messageID == 0 {
+		return evt, nil
+	}
+	raw, err := imp.store.GetMessageRaw(messageID)
+	if err != nil {
+		return nil, err
+	}
+	var retained event.Event
+	if err := json.Unmarshal(raw, &retained); err != nil {
+		return nil, fmt.Errorf("decode retained Matrix event %s: %w", evt.ID, err)
+	}
+	if retained.Type == event.EventEncrypted {
+		return evt, nil
+	}
+	retained.RoomID = evt.RoomID
+	return &retained, nil
+}
+
 func (imp *Importer) resolveDeferredReply(ctx context.Context, sourceID, convID int64, evt *event.Event, target id.EventID) error {
 	found, err := imp.store.MessageExistsBatch(sourceID, []string{evt.ID.String(), target.String()})
 	if err != nil {
@@ -457,6 +642,42 @@ func (imp *Importer) resolveDeferredReply(ctx context.Context, sourceID, convID 
 		return nil
 	}
 	return imp.store.SetMessageReplyContext(ctx, messageID, targetID)
+}
+
+func (imp *Importer) finalizeDeferredRecovery(sourceID int64, evt *event.Event, sum *ImportSummary) error {
+	if evt == nil || eventPersistsOwnMessage(evt) {
+		return nil
+	}
+	eventID := evt.ID.String()
+	// A run interrupted between the checkpoint carrying a recovered relation
+	// and retaining its ciphertext left the ciphertext only in the pending row.
+	pending, exists, err := imp.store.MatrixUndecryptableEvent(sourceID, eventID)
+	if err != nil {
+		return err
+	}
+	if exists && len(pending.RawEvent) > 0 {
+		if err := imp.retainEncryptedRaw(sourceID, eventID, pending.RoomID, pending.RawEvent); err != nil {
+			return err
+		}
+	}
+	found, err := imp.store.MessageExistsBatch(sourceID, []string{eventID})
+	if err != nil {
+		return err
+	}
+	if found[eventID] == 0 {
+		return imp.store.DeleteMatrixUndecryptableEvent(sourceID, eventID)
+	}
+	changed, err := imp.store.MarkMessageDeletedIfActive(sourceID, eventID)
+	if err != nil {
+		return err
+	}
+	if err := imp.store.DeleteMatrixUndecryptableEvent(sourceID, eventID); err != nil {
+		return err
+	}
+	if changed {
+		sum.UndecryptableRecovered++
+	}
+	return nil
 }
 
 // paginate walks room history backward from `from`, stopping at `to` when set.
@@ -496,6 +717,94 @@ func parseContent(evt *event.Event) bool {
 		return false
 	}
 	return true
+}
+
+// retainedCiphertext is the original ciphertext of a decrypted event, kept
+// once the decrypted event is durable.
+type retainedCiphertext struct {
+	eventID, roomID string
+	ciphertext      []byte
+	// storedMessage marks a decrypted message persisted in its own row, which
+	// replaced any encrypted placeholder for the event.
+	storedMessage bool
+}
+
+// retainStaged retains the ciphertext staged by the room's last checkpoint.
+// The next checkpoint drops it from the state.
+func (imp *Importer) retainStaged(sourceID int64, rs *RoomState) error {
+	for _, staged := range rs.StagedCiphertext {
+		if err := imp.retainDecrypted(sourceID, retainedCiphertext{
+			staged.EventID, staged.RoomID, []byte(staged.Ciphertext), staged.StoredMessage,
+		}); err != nil {
+			return err
+		}
+	}
+	rs.StagedCiphertext = nil
+	return nil
+}
+
+// retainDecrypted retains the ciphertext of a durable decrypted event. A
+// stored message also retires its pending row, as persistEncryptedEvent does:
+// left in place, retryUndecryptable would decrypt the event again and rewrite
+// the body over an edit applied since, which a homeserver without /relations
+// cannot restore. Deferred relations keep their pending rows until replayed.
+func (imp *Importer) retainDecrypted(sourceID int64, item retainedCiphertext) error {
+	if err := imp.retainEncryptedRaw(sourceID, item.eventID, item.roomID, item.ciphertext); err != nil {
+		return err
+	}
+	if !item.storedMessage {
+		return nil
+	}
+	return imp.store.DeleteMatrixUndecryptableEvent(sourceID, item.eventID)
+}
+
+// relationForDeferral decrypts an encrypted event so that a relation can be
+// deferred as its plaintext. It returns the original ciphertext when it
+// decrypted the event; the caller retains it only after the decrypted event or
+// the deferred relation is durable.
+func (imp *Importer) relationForDeferral(ctx context.Context, evt *event.Event) (candidate *event.Event, ciphertext []byte, deferRelation bool, err error) {
+	if evt == nil || evt.Type != event.EventEncrypted || imp.runtime == nil || !imp.runtime.canDecrypt() {
+		return evt, nil, shouldDeferRelation(evt), nil
+	}
+	if !parseContent(evt) {
+		// The normal persistence path counts and skips this event.
+		return evt, nil, false, nil
+	}
+	decrypted, err := imp.runtime.decrypt(ctx, evt)
+	if err != nil {
+		// The normal persistence path retains this encrypted event as a
+		// placeholder and retries it after more keys arrive.
+		//nolint:nilerr // A non-decryptable event is not a relation to defer.
+		return evt, nil, false, nil
+	}
+	if decryptedRedaction(decrypted) {
+		// The normal persistence path skips this payload.
+		return evt, nil, false, nil
+	}
+	ciphertext, err = json.Marshal(evt, json.Deterministic(true))
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("encode encrypted Matrix event %s: %w", evt.ID, err)
+	}
+	decrypted.RoomID = evt.RoomID
+	return decrypted, ciphertext, shouldDeferRelation(decrypted), nil
+}
+
+func (imp *Importer) retainEncryptedRaw(sourceID int64, eventID, roomID string, raw []byte) error {
+	if err := imp.store.StoreMatrixEncryptedEvent(sourceID, eventID, roomID, raw); err != nil {
+		return fmt.Errorf("retain encrypted Matrix event %s: %w", eventID, err)
+	}
+	return nil
+}
+
+// decryptedRedaction reports a decrypted payload that claims to be a
+// redaction. The homeserver authorizes only server-visible m.room.redaction
+// events, against the sender's power level or ownership of the target. An
+// encrypted payload is never checked, so any room member could use one to
+// erase another sender's archived event. Such payloads are skipped like
+// unsupported events and redactions are applied only from server-visible
+// events.
+func decryptedRedaction(evt *event.Event) bool {
+	return evt != nil && evt.Type == event.EventRedaction
 }
 
 func shouldDeferRelation(evt *event.Event) bool {
@@ -609,7 +918,7 @@ func (imp *Importer) persistEvent(ctx context.Context, sourceID, convID int64, e
 				return nil
 			}
 		}
-		_, err := imp.redact(ctx, sourceID, convID, evt.RoomID, target)
+		_, err := imp.redact(ctx, sourceID, convID, evt.RoomID, target, sum)
 		return err
 	}
 	if !parseContent(evt) {
@@ -621,10 +930,129 @@ func (imp *Importer) persistEvent(ctx context.Context, sourceID, convID int64, e
 		return fmt.Errorf("encode Matrix event %s: %w", evt.ID, err)
 	}
 	if evt.Type == event.EventEncrypted {
+		return imp.persistEncryptedEvent(ctx, sourceID, convID, evt, raw, sum)
+	}
+	return imp.persistPlainEvent(ctx, sourceID, convID, evt, raw, sum)
+}
+
+// persistEncryptedEvent archives the decrypted event, or a searchable
+// placeholder that later syncs retry once a key arrives.
+func (imp *Importer) persistEncryptedEvent(ctx context.Context, sourceID, convID int64, evt *event.Event, raw []byte, sum *ImportSummary) error {
+	encryptedEventID := evt.ID.String()
+	var decrypted *event.Event
+	decryptErr := errors.New("matrix crypto is unavailable")
+	if imp.runtime.canDecrypt() {
+		decrypted, decryptErr = imp.runtime.decrypt(ctx, evt)
+	}
+	if decryptErr != nil {
+		// An event decrypted by an earlier run is already archived, so a
+		// replay without its key must not add a placeholder for it.
+		decryptedBefore, err := imp.decryptedBefore(sourceID, encryptedEventID)
+		if err != nil || decryptedBefore {
+			return err
+		}
+		// A run that stopped after storing the plaintext but before retaining
+		// the ciphertext left a decrypted row: finish that run's write.
+		plaintextStored, err := imp.plaintextStored(sourceID, encryptedEventID)
+		if err != nil {
+			return err
+		}
+		if plaintextStored {
+			return imp.retainEncryptedRaw(sourceID, encryptedEventID, evt.RoomID.String(), raw)
+		}
+		if err := imp.rememberUndecryptable(sourceID, encryptedEventID, evt.RoomID.String(), raw); err != nil {
+			return err
+		}
 		sum.Undecryptable++
 		return imp.persistMessage(ctx, sourceID, convID, evt, raw, encryptedPlaceholder, nil, sum)
 	}
-	return imp.persistPlainEvent(ctx, sourceID, convID, evt, raw, sum)
+	ciphertext, roomID := raw, evt.RoomID.String()
+	evt = decrypted
+	if decryptedRedaction(evt) || !parseContent(evt) {
+		sum.EventsSkipped++
+		if err := imp.retainEncryptedRaw(sourceID, encryptedEventID, roomID, ciphertext); err != nil {
+			return err
+		}
+		return imp.discardRecoveredUnsupported(sourceID, encryptedEventID)
+	}
+	raw, err := json.Marshal(evt, json.Deterministic(true))
+	if err != nil {
+		return fmt.Errorf("encode decrypted Matrix event %s: %w", evt.ID, err)
+	}
+	// The retained ciphertext is the proof that this event was archived, so it
+	// is written only once the decrypted event is stored (or deferred as a
+	// relation whose target is not archived yet). A failed write then leaves
+	// the event to be decrypted again rather than assumed archived.
+	persistErr := imp.persistPlainEvent(ctx, sourceID, convID, evt, raw, sum)
+	if persistErr != nil && !errors.Is(persistErr, errRelationTargetMissing) {
+		return persistErr
+	}
+	if err := imp.retainEncryptedRaw(sourceID, encryptedEventID, roomID, ciphertext); err != nil {
+		return err
+	}
+	if persistErr != nil {
+		return persistErr
+	}
+	if !eventPersistsOwnMessage(evt) {
+		if _, err := imp.store.MarkMessageDeletedIfActive(sourceID, encryptedEventID); err != nil {
+			return err
+		}
+	}
+	return imp.store.DeleteMatrixUndecryptableEvent(sourceID, encryptedEventID)
+}
+
+// decryptedBefore reports whether this source already retained the
+// ciphertext of a decrypted event with this ID.
+func (imp *Importer) decryptedBefore(sourceID int64, eventID string) (bool, error) {
+	_, _, err := imp.store.MatrixEncryptedEvent(sourceID, eventID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// plaintextStored reports whether this event's archived row holds its
+// decrypted payload rather than an encrypted placeholder.
+func (imp *Importer) plaintextStored(sourceID int64, eventID string) (bool, error) {
+	found, err := imp.store.MessageExistsBatch(sourceID, []string{eventID})
+	if err != nil || found[eventID] == 0 {
+		return false, err
+	}
+	archivedType, err := imp.archivedRawType(found[eventID])
+	return archivedType != "" && archivedType != event.EventEncrypted.Type, err
+}
+
+// placeholderArchived reports whether an archived row still shows an
+// encrypted placeholder rather than a decrypted message.
+func (imp *Importer) placeholderArchived(messageID int64) (bool, error) {
+	archivedType, err := imp.archivedRawType(messageID)
+	if err != nil || archivedType == "" || archivedType == event.EventEncrypted.Type {
+		return true, err
+	}
+	body, err := imp.store.GetMessageBodyText(messageID)
+	if err != nil {
+		return false, err
+	}
+	return body == encryptedPlaceholder, nil
+}
+
+// archivedRawType returns the event type of an archived row's raw event, or
+// "" when the row has no raw event.
+func (imp *Importer) archivedRawType(messageID int64) (string, error) {
+	raw, err := imp.store.GetMessageRaw(messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var archived struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &archived); err != nil {
+		return "", fmt.Errorf("decode archived Matrix event %d: %w", messageID, err)
+	}
+	return archived.Type, nil
 }
 
 func (imp *Importer) persistPlainEvent(ctx context.Context, sourceID, convID int64, evt *event.Event, raw []byte, sum *ImportSummary) error {
@@ -646,7 +1074,7 @@ func (imp *Importer) persistPlainEvent(ctx context.Context, sourceID, convID int
 		if target == "" {
 			return nil
 		}
-		handled, err := imp.redact(ctx, sourceID, convID, evt.RoomID, target)
+		handled, err := imp.redact(ctx, sourceID, convID, evt.RoomID, target, sum)
 		if err == nil && !handled {
 			return errRelationTargetMissing
 		}
@@ -659,7 +1087,10 @@ func (imp *Importer) persistPlainEvent(ctx context.Context, sourceID, convID int
 
 // redact applies a Matrix redaction to whatever archived item the event ID
 // names in this room, and reports whether it found one.
-func (imp *Importer) redact(ctx context.Context, sourceID, convID int64, roomID id.RoomID, target id.EventID) (bool, error) {
+func (imp *Importer) redact(ctx context.Context, sourceID, convID int64, roomID id.RoomID, target id.EventID, sum *ImportSummary) (bool, error) {
+	if err := imp.cancelPendingDecryption(sourceID, convID, roomID, target); err != nil {
+		return false, err
+	}
 	deleted, err := imp.store.DeleteReactionBySourceID(sourceID, convID, target.String())
 	if err != nil || deleted {
 		return deleted, err
@@ -668,18 +1099,55 @@ func (imp *Importer) redact(ctx context.Context, sourceID, convID int64, roomID 
 	if err != nil {
 		return false, err
 	}
+	handled := false
 	if messageID := found[target.String()]; messageID != 0 {
 		message, err := imp.store.GetMessageRelationTarget(messageID)
 		if err != nil || message.ConversationID != convID {
 			return true, err
 		}
-		return true, imp.store.MarkMessageDeleted(sourceID, target.String())
+		if err := imp.store.MarkMessageDeleted(sourceID, target.String()); err != nil {
+			return true, err
+		}
+		handled = true
 	}
+	// A recovered encrypted edit keeps its retired placeholder row under the
+	// edit's event ID while the edit itself is applied to its target, so the
+	// applied-edit metadata is checked even when a row was found.
 	messageID, err := imp.store.MessageIDByMetadataValue(convID, editEventKey, target.String())
 	if err != nil || messageID == 0 {
-		return false, err
+		return handled, err
 	}
-	return true, imp.restoreAfterEditRedaction(ctx, roomID, messageID, target)
+	return true, imp.restoreAfterEditRedaction(ctx, sourceID, convID, roomID, messageID, target, sum)
+}
+
+// cancelPendingDecryption stops later retries from decrypting and restoring a
+// redacted event. Only a redaction from the event's own room may cancel the
+// retry: a redaction sent from another room is rejected, so the placeholder
+// must stay recoverable when its key arrives.
+func (imp *Importer) cancelPendingDecryption(sourceID, convID int64, roomID id.RoomID, target id.EventID) error {
+	pending, exists, err := imp.store.MatrixUndecryptableEvent(sourceID, target.String())
+	if err != nil || !exists {
+		return err
+	}
+	if pending.RoomID != "" {
+		if pending.RoomID != roomID.String() {
+			return nil
+		}
+	} else {
+		// Entries migrated from legacy state may lack a room; their archived
+		// placeholder row names the conversation instead.
+		found, err := imp.store.MessageExistsBatch(sourceID, []string{target.String()})
+		if err != nil {
+			return err
+		}
+		if messageID := found[target.String()]; messageID != 0 {
+			message, err := imp.store.GetMessageRelationTarget(messageID)
+			if err != nil || message.ConversationID != convID {
+				return err
+			}
+		}
+	}
+	return imp.store.DeleteMatrixUndecryptableEvent(sourceID, target.String())
 }
 
 func messageBody(content *event.MessageEventContent) string {
@@ -745,7 +1213,33 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64,
 	if err != nil {
 		return err
 	}
-	if existingID := existing[evt.ID.String()]; existingID != 0 {
+	existingID := existing[evt.ID.String()]
+	recovering, reconciling := false, false
+	if existingID != 0 && evt.Type != event.EventEncrypted {
+		// A pending event's row is usually still the encrypted placeholder. A
+		// recovery interrupted before its checkpoint may already have stored the
+		// plaintext and applied edits to it, which a homeserver without
+		// /relations cannot restore, so the archived row decides.
+		var pending bool
+		if _, pending, err = imp.store.MatrixUndecryptableEvent(sourceID, evt.ID.String()); err != nil {
+			return err
+		}
+		if pending {
+			if recovering, err = imp.placeholderArchived(existingID); err != nil {
+				return err
+			}
+			// The pending row is retired only after the recovery has read the
+			// edits sent while this was a placeholder. A recovery that stored the
+			// plaintext but stopped before that read finishes it here.
+			reconciling = !recovering
+		}
+	}
+	if existingID != 0 && !recovering {
+		if reconciling {
+			if err := imp.reconcileRecoveredEdits(ctx, sourceID, convID, evt.RoomID, existingID, sum); err != nil {
+				return err
+			}
+		}
 		// Matrix events never change, so only a reply link may still be missing.
 		if replyToMessageID != 0 {
 			return imp.store.SetMessageReplyContext(ctx, existingID, replyToMessageID)
@@ -778,8 +1272,15 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64,
 			return err
 		}
 	}
+	if recovering {
+		if err := imp.reconcileRecoveredEdits(ctx, sourceID, convID, evt.RoomID, messageID, sum); err != nil {
+			return err
+		}
+	}
 	sum.MessagesProcessed++
-	sum.MessagesAdded++
+	if existingID == 0 {
+		sum.MessagesAdded++
+	}
 	if replyTargetMissing {
 		return errRelationTargetMissing
 	}
@@ -795,6 +1296,8 @@ type appliedEdit struct {
 	TS      int64  `json:"matrix_edit_ts"`
 }
 
+// olderThan follows the Matrix spec for the most recent replacement: the later
+// origin_server_ts, then the lexicographically largest event ID on a tie.
 func (e appliedEdit) olderThan(evt *event.Event) bool {
 	return e.EventID == "" || e.TS < evt.Timestamp || (e.TS == evt.Timestamp && e.EventID < evt.ID.String())
 }
@@ -819,7 +1322,9 @@ func (imp *Importer) persistEdit(sourceID, convID int64, evt *event.Event, targe
 	if err != nil {
 		return err
 	}
-	if !validReplacement(original, evt) {
+	// An edit of an encrypted placeholder is picked up from the homeserver's
+	// relations once the original is decrypted.
+	if original.Type == event.EventEncrypted || !validReplacement(original, evt) {
 		return nil
 	}
 	current, err := imp.appliedEdit(messageID)
@@ -899,23 +1404,52 @@ func (imp *Importer) setBody(messageID int64, body string) error {
 	return imp.store.SetMessageSizeEstimate(messageID, int64(len(body)))
 }
 
+// reconcileRecoveredEdits applies the newest edit the homeserver lists for a
+// recovered message: edits that arrived while it was a placeholder could not
+// be applied. A failed lookup is returned so that the event stays pending and
+// a later sync reads the edits again; a homeserver without /relations has none
+// to offer, so the recovered text stands.
+func (imp *Importer) reconcileRecoveredEdits(ctx context.Context, sourceID, convID int64, roomID id.RoomID, messageID int64, sum *ImportSummary) error {
+	if err := imp.restoreAfterEditRedaction(ctx, sourceID, convID, roomID, messageID, "", sum); err != nil && !relationsUnavailable(err) {
+		return err
+	}
+	return nil
+}
+
 // restoreAfterEditRedaction asks the homeserver for the original's surviving
 // edits and shows the newest one, or the original text when none is left.
-func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, roomID id.RoomID, messageID int64, redacted id.EventID) error {
+// Without a redacted edit it reconciles a recovered message and only moves
+// forward: a recovery resumed after storing the text keeps the edit already
+// applied unless the homeserver lists a newer one.
+func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID, convID int64, roomID id.RoomID, messageID int64, redacted id.EventID, sum *ImportSummary) error {
 	original, err := imp.archivedEvent(messageID)
 	if err != nil {
 		return err
 	}
-	var newest *event.Event
+	var newest, newestEncrypted *event.Event
 	var newestContent *event.MessageEventContent
+	// An edit this device cannot decrypt may still be the newest one. It is
+	// kept pending and applied by a later sync once its key arrives, so it is
+	// never taken as evidence that no edit survives.
+	undecryptedEdit := false
 	from := ""
 	for {
 		page, err := imp.runtime.Client.GetRelations(ctx, roomID, original.ID, &mautrix.ReqGetRelations{RelationType: event.RelReplace, From: from})
 		if err != nil {
 			return fmt.Errorf("list Matrix edits of %s: %w", original.ID, err)
 		}
-		for _, edit := range page.Chunk {
-			if edit == nil || edit.ID == redacted {
+		for _, listed := range page.Chunk {
+			if listed == nil || listed.ID == redacted {
+				continue
+			}
+			edit, undecryptable, err := imp.decryptRelation(ctx, sourceID, convID, roomID, listed, sum)
+			if err != nil {
+				return err
+			}
+			if edit == nil {
+				if undecryptable && listed.Sender == original.Sender {
+					undecryptedEdit = true
+				}
 				continue
 			}
 			if edit.Content.Parsed == nil && edit.Content.ParseRaw(edit.Type) != nil {
@@ -926,7 +1460,10 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, roomID id.Ro
 				continue
 			}
 			if newest == nil || (appliedEdit{EventID: newest.ID.String(), TS: newest.Timestamp}).olderThan(edit) {
-				newest, newestContent = edit, content.NewContent
+				newest, newestContent, newestEncrypted = edit, content.NewContent, nil
+				if listed.Type == event.EventEncrypted {
+					newestEncrypted = listed
+				}
 			}
 		}
 		if page.NextBatch == "" || page.NextBatch == from {
@@ -934,16 +1471,140 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, roomID id.Ro
 		}
 		from = page.NextBatch
 	}
+	var current appliedEdit
+	if redacted == "" {
+		if current, err = imp.appliedEdit(messageID); err != nil {
+			return err
+		}
+	}
 	if newest != nil {
-		return imp.applyEdit(messageID, editedBody(original, newestContent), appliedEdit{EventID: newest.ID.String(), TS: newest.Timestamp})
+		if current.EventID != "" && !current.olderThan(newest) {
+			if current.EventID != newest.ID.String() {
+				return nil
+			}
+			// The edit is applied; an interrupted run may not have retained it.
+			return imp.retainRelationCiphertext(sourceID, newestEncrypted)
+		}
+		if err := imp.applyEdit(messageID, editedBody(original, newestContent), appliedEdit{EventID: newest.ID.String(), TS: newest.Timestamp}); err != nil {
+			return err
+		}
+		// An encrypted edit found only here is archived nowhere else, so its
+		// ciphertext is retained once the edit is applied, as on the other
+		// paths: subset exports copy it through the edit metadata, and a replay
+		// without the key sees the edit as decrypted before.
+		return imp.retainRelationCiphertext(sourceID, newestEncrypted)
+	}
+	if current.EventID != "" {
+		return nil
 	}
 	if err := imp.setBody(messageID, messageBody(original.Content.AsMessage())); err != nil {
 		return err
 	}
-	if err := imp.store.SetMessageEditedState(messageID, false); err != nil {
+	if err := imp.store.SetMessageEditedState(messageID, undecryptedEdit); err != nil {
 		return err
 	}
 	return imp.store.SetMessageMetadata(messageID, sql.NullString{})
+}
+
+func (imp *Importer) retainRelationCiphertext(sourceID int64, encrypted *event.Event) error {
+	if encrypted == nil {
+		return nil
+	}
+	raw, err := json.Marshal(encrypted, json.Deterministic(true))
+	if err != nil {
+		return fmt.Errorf("encode encrypted Matrix edit %s: %w", encrypted.ID, err)
+	}
+	return imp.retainEncryptedRaw(sourceID, encrypted.ID.String(), encrypted.RoomID.String(), raw)
+}
+
+// relationsUnavailable reports a homeserver that cannot list an event's
+// relations, so a recovered message keeps its original text.
+func relationsUnavailable(err error) bool {
+	var httpErr mautrix.HTTPError
+	return errors.As(err, &httpErr) && (httpErr.IsStatus(http.StatusNotFound) || errors.Is(err, mautrix.MUnrecognized))
+}
+
+// decryptRelation returns a related event in plaintext, or nil when it has no
+// usable plaintext; undecryptable reports an event encrypted with a key this
+// device does not hold. As in retryUndecryptable, a session missing locally is
+// fetched from the server-side backup before giving up. An event that still
+// cannot be decrypted is kept pending, so a later sync recovers it and applies
+// it to its target; the warning for a failed backup fetch is left to that
+// retry.
+func (imp *Importer) decryptRelation(ctx context.Context, sourceID, convID int64, roomID id.RoomID, evt *event.Event, sum *ImportSummary) (decrypted *event.Event, undecryptable bool, err error) {
+	if evt.Type != event.EventEncrypted {
+		return evt, false, nil
+	}
+	if !parseContent(evt) {
+		return nil, false, nil
+	}
+	evt.RoomID = roomID
+	decrypted, err = imp.runtime.decrypt(ctx, evt)
+	if err != nil && imp.runtime.canDecrypt() {
+		if backupErr := imp.runtime.fetchBackupSession(ctx, evt); backupErr != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, false, ctxErr
+			}
+		}
+		decrypted, err = imp.runtime.decrypt(ctx, evt)
+	}
+	if err != nil {
+		return nil, true, imp.keepRelationPending(ctx, sourceID, convID, evt, sum)
+	}
+	decrypted.RoomID = roomID
+	return decrypted, false, nil
+}
+
+// keepRelationPending keeps an undecryptable related event pending, so that
+// retryUndecryptable applies it to its target once its key arrives. A new
+// event is archived the way the timeline does, as a placeholder with a pending
+// row. An event decrypted by an earlier run whose key this device no longer
+// holds (after a device renewal, say) is pending again under a retired
+// placeholder: the edit it applied may just have been replaced by a redaction.
+// A placeholder whose retry a redaction cancelled stays as it is. A pending row
+// without its placeholder, left by a run that stopped between the two writes,
+// gets the placeholder now: retryUndecryptable would otherwise discard it.
+func (imp *Importer) keepRelationPending(ctx context.Context, sourceID, convID int64, evt *event.Event, sum *ImportSummary) error {
+	eventID := evt.ID.String()
+	_, pending, err := imp.store.MatrixUndecryptableEvent(sourceID, eventID)
+	if err != nil {
+		return err
+	}
+	decryptedBefore, err := imp.decryptedBefore(sourceID, eventID)
+	if err != nil {
+		return err
+	}
+	found, err := imp.store.MessageExistsBatch(sourceID, []string{eventID})
+	if err != nil {
+		return err
+	}
+	archived := found[eventID] != 0
+	if archived && (pending || !decryptedBefore) {
+		return nil
+	}
+	raw, err := json.Marshal(evt, json.Deterministic(true))
+	if err != nil {
+		return fmt.Errorf("encode encrypted Matrix relation %s: %w", evt.ID, err)
+	}
+	if !decryptedBefore {
+		if err := imp.rememberUndecryptable(sourceID, eventID, evt.RoomID.String(), raw); err != nil {
+			return err
+		}
+		sum.Undecryptable++
+		return imp.persistMessage(ctx, sourceID, convID, evt, raw, encryptedPlaceholder, nil, sum)
+	}
+	if !archived {
+		// retryUndecryptable recovers a pending event through its archived row,
+		// which is written first: a pending row without one is discarded.
+		if err := imp.persistMessage(ctx, sourceID, convID, evt, raw, encryptedPlaceholder, nil, sum); err != nil {
+			return err
+		}
+		if err := imp.store.MarkMessageDeleted(sourceID, eventID); err != nil {
+			return err
+		}
+	}
+	sum.Undecryptable++
+	return imp.rememberUndecryptable(sourceID, eventID, evt.RoomID.String(), raw)
 }
 
 func (imp *Importer) persistReaction(sourceID, convID int64, evt *event.Event) error {
@@ -970,6 +1631,342 @@ func (imp *Importer) persistReaction(sourceID, convID int64, evt *event.Event) e
 	return imp.store.UpsertReactionWithSourceID(
 		messageID, participantID, "emoji", relation.Key, evt.ID.String(), time.UnixMilli(evt.Timestamp).UTC(),
 	)
+}
+
+// undecryptableBatchSize bounds how many pending events are loaded at once.
+const undecryptableBatchSize = 500
+
+func (imp *Importer) rememberUndecryptable(sourceID int64, eventID, roomID string, raw []byte) error {
+	return imp.store.PutMatrixUndecryptableEvents(sourceID, []store.MatrixUndecryptableEvent{
+		{EventID: eventID, RoomID: roomID, RawEvent: raw},
+	})
+}
+
+// migrateLegacyUndecryptable moves pending events out of checkpoint state
+// written before they lived in matrix_undecryptable_events.
+func (imp *Importer) migrateLegacyUndecryptable(sourceID int64, state *SyncState) error {
+	if len(state.Undecryptable) == 0 {
+		state.Undecryptable = nil
+		return nil
+	}
+	eventIDs := make([]string, 0, len(state.Undecryptable))
+	for eventID := range state.Undecryptable {
+		eventIDs = append(eventIDs, eventID)
+	}
+	slices.Sort(eventIDs)
+	for batch := range slices.Chunk(eventIDs, undecryptableBatchSize) {
+		events := make([]store.MatrixUndecryptableEvent, 0, len(batch))
+		for _, eventID := range batch {
+			pending := state.Undecryptable[eventID]
+			events = append(events, store.MatrixUndecryptableEvent{
+				EventID: eventID, RoomID: pending.RoomID, RawEvent: []byte(pending.EncryptedEvent),
+			})
+		}
+		if err := imp.store.PutMatrixUndecryptableEvents(sourceID, events); err != nil {
+			return fmt.Errorf("migrate pending Matrix events: %w", err)
+		}
+	}
+	state.Undecryptable = nil
+	return nil
+}
+
+// recoveryPasses is the number of walks over the pending events: originals,
+// then other relations, then redactions.
+const recoveryPasses = 3
+
+// recoveryPass is the pass that recovers evt.
+func recoveryPass(evt *event.Event) int {
+	if eventPersistsOwnMessage(evt) {
+		return 0
+	}
+	return 1 + relationReplayPriority(evt)
+}
+
+type recoveredRelation struct {
+	eventID, roomID string
+	ciphertext      []byte
+	ownMessage      bool
+}
+
+// retryUndecryptable decrypts pending events with the keys now available. A
+// recovered relation whose target is not archived is carried in state, which
+// is durable only once the caller checkpoints it, so its placeholder and
+// pending row stay in place until the returned function runs after that.
+func (imp *Importer) retryUndecryptable(ctx context.Context, sourceID int64, state *SyncState, opts ImportOptions, sum *ImportSummary) (settleDeferred func() error, err error) {
+	var awaitingCursor []recoveredRelation
+	settleDeferred = func() error {
+		for _, item := range awaitingCursor {
+			if err := imp.retainEncryptedRaw(sourceID, item.eventID, item.roomID, item.ciphertext); err != nil {
+				return err
+			}
+			if !item.ownMessage {
+				if err := imp.store.MarkMessageDeleted(sourceID, item.eventID); err != nil {
+					return err
+				}
+			}
+			if err := imp.store.DeleteMatrixUndecryptableEvent(sourceID, item.eventID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if !imp.runtime.canDecrypt() {
+		return settleDeferred, nil
+	}
+	type recoveredEvent struct {
+		eventID        string
+		roomID         string
+		messageID      int64
+		conversationID int64
+		decrypted      *event.Event
+		raw            []byte
+		ciphertext     []byte
+	}
+	var backupErr error
+	backupFailures := 0
+	defer func() {
+		if backupErr == nil {
+			return
+		}
+		// Scheduled syncs pass no Progress, so the daemon log is the only
+		// signal that placeholders stay unrecovered.
+		slog.Warn("matrix key backup unavailable", "source_id", sourceID, "events", backupFailures, "error", backupErr)
+		if opts.Progress != nil {
+			opts.Progress(fmt.Sprintf("key backup unavailable for %d encrypted events: %v", backupFailures, backupErr))
+		}
+	}()
+	for pass := range recoveryPasses {
+		afterEventID := ""
+		for {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			batch, err := imp.store.MatrixUndecryptableEventsPage(sourceID, afterEventID, undecryptableBatchSize)
+			if err != nil {
+				return nil, err
+			}
+			if len(batch) == 0 {
+				break
+			}
+			afterEventID = batch[len(batch)-1].EventID
+			// Recovered events of this page are persisted before the next page is
+			// read, so memory stays bounded by one page. Persisted rows leave the
+			// pending table, which is the resumable progress. An edit of a
+			// placeholder is dropped, so originals are recovered in the first pass,
+			// other relations in the second and redactions in the third.
+			var recovered []recoveredEvent
+			eventIDs := make([]string, 0, len(batch))
+			for _, pending := range batch {
+				eventIDs = append(eventIDs, pending.EventID)
+			}
+			found, err := imp.store.MessageExistsBatch(sourceID, eventIDs)
+			if err != nil {
+				return nil, err
+			}
+			for _, pending := range batch {
+				eventID := pending.EventID
+				if !roomIncluded(pending.RoomID, opts.Rooms, opts.ExcludeRooms) {
+					continue
+				}
+				messageID := found[eventID]
+				if messageID == 0 {
+					if err := imp.store.DeleteMatrixUndecryptableEvent(sourceID, eventID); err != nil {
+						return nil, err
+					}
+					continue
+				}
+				raw := pending.RawEvent
+				if len(raw) == 0 {
+					raw, err = imp.store.GetMessageRaw(messageID)
+					if err != nil {
+						return nil, err
+					}
+				}
+				var encrypted event.Event
+				if err := json.Unmarshal(raw, &encrypted); err != nil || encrypted.Type != event.EventEncrypted {
+					continue
+				}
+				if len(pending.RawEvent) == 0 {
+					if err := imp.rememberUndecryptable(sourceID, eventID, pending.RoomID, raw); err != nil {
+						return nil, err
+					}
+				}
+				if encrypted.Content.Parsed == nil {
+					if err := encrypted.Content.ParseRaw(encrypted.Type); err != nil {
+						return nil, fmt.Errorf("parse archived Matrix event %d: %w", messageID, err)
+					}
+				}
+				if encrypted.RoomID == "" {
+					encrypted.RoomID = id.RoomID(pending.RoomID)
+				}
+				// Other devices keep adding sessions to the server-side backup, so
+				// when the stored keys cannot decrypt the event (missing session or
+				// one that starts at a later message index), fetch it from the
+				// backup and retry. A failure leaves the placeholder for a later
+				// sync instead of failing this one.
+				decrypted, err := imp.runtime.decrypt(ctx, &encrypted)
+				if err != nil && pass == 0 {
+					if err := imp.runtime.fetchBackupSession(ctx, &encrypted); err != nil {
+						if ctxErr := ctx.Err(); ctxErr != nil {
+							return nil, ctxErr
+						}
+						backupFailures++
+						if backupErr == nil {
+							backupErr = err
+						}
+					}
+					decrypted, err = imp.runtime.decrypt(ctx, &encrypted)
+				}
+				if err != nil {
+					continue
+				}
+				decrypted.RoomID = id.RoomID(pending.RoomID)
+				if decryptedRedaction(decrypted) || !parseContent(decrypted) {
+					if pass != 0 {
+						continue
+					}
+					sum.EventsSkipped++
+					if err := imp.retainEncryptedRaw(sourceID, eventID, pending.RoomID, raw); err != nil {
+						return nil, err
+					}
+					if err := imp.discardRecoveredUnsupported(sourceID, eventID); err != nil {
+						return nil, err
+					}
+					continue
+				}
+				if recoveryPass(decrypted) != pass {
+					continue
+				}
+				decryptedRaw, err := json.Marshal(decrypted, json.Deterministic(true))
+				if err != nil {
+					return nil, fmt.Errorf("encode recovered Matrix event %s: %w", decrypted.ID, err)
+				}
+				target, err := imp.store.GetMessageRelationTarget(messageID)
+				if err != nil {
+					return nil, err
+				}
+				recovered = append(recovered, recoveredEvent{
+					eventID: eventID, roomID: pending.RoomID, messageID: messageID, conversationID: target.ConversationID,
+					decrypted: decrypted, raw: decryptedRaw, ciphertext: raw,
+				})
+			}
+			slices.SortFunc(recovered, func(a, b recoveredEvent) int {
+				if a.decrypted.Timestamp != b.decrypted.Timestamp {
+					return cmp.Compare(a.decrypted.Timestamp, b.decrypted.Timestamp)
+				}
+				return strings.Compare(a.eventID, b.eventID)
+			})
+			for _, item := range recovered {
+				if err := imp.persistPlainEvent(ctx, sourceID, item.conversationID, item.decrypted, item.raw, sum); err != nil {
+					if errors.Is(err, errRelationTargetMissing) {
+						if err := rememberRecoveredRelation(state, item.roomID, item.decrypted); err != nil {
+							return nil, err
+						}
+						awaitingCursor = append(awaitingCursor, recoveredRelation{
+							eventID: item.eventID, roomID: item.roomID, ciphertext: item.ciphertext,
+							ownMessage: eventPersistsOwnMessage(item.decrypted),
+						})
+						sum.UndecryptableRecovered++
+						continue
+					}
+					return nil, err
+				}
+				if err := imp.retainEncryptedRaw(sourceID, item.eventID, item.roomID, item.ciphertext); err != nil {
+					return nil, err
+				}
+				if !eventPersistsOwnMessage(item.decrypted) {
+					if err := imp.store.MarkMessageDeleted(sourceID, item.eventID); err != nil {
+						return nil, err
+					}
+				}
+				if err := imp.store.DeleteMatrixUndecryptableEvent(sourceID, item.eventID); err != nil {
+					return nil, err
+				}
+				sum.UndecryptableRecovered++
+			}
+		}
+	}
+	return settleDeferred, nil
+}
+
+func (imp *Importer) seedLegacyUndecryptable(ctx context.Context, sourceID int64) error {
+	const pageSize = 500
+	var afterID int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rows, err := imp.store.ScanArchivedRawMessages(sourceID, rawFormat, afterID, pageSize)
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		seeded := make([]store.MatrixUndecryptableEvent, 0, len(rows))
+		for _, row := range rows {
+			afterID = row.MessageID
+			if row.Deleted || row.BodyText != encryptedPlaceholder {
+				continue
+			}
+			var evt event.Event
+			if err := json.Unmarshal(row.RawData, &evt); err != nil || evt.Type != event.EventEncrypted || evt.ID == "" {
+				continue
+			}
+			seeded = append(seeded, store.MatrixUndecryptableEvent{
+				EventID: evt.ID.String(), RoomID: evt.RoomID.String(), RawEvent: row.RawData,
+			})
+		}
+		if err := imp.store.PutMatrixUndecryptableEvents(sourceID, seeded); err != nil {
+			return err
+		}
+		if len(rows) < pageSize {
+			return nil
+		}
+	}
+}
+
+func rememberRecoveredRelation(state *SyncState, roomID string, evt *event.Event) error {
+	if evt == nil || evt.ID == "" {
+		return nil
+	}
+	rs := state.Rooms[roomID]
+	if rs == nil {
+		rs = &RoomState{}
+		state.Rooms[roomID] = rs
+	}
+	for _, encoded := range rs.DeferredRelations {
+		var existing event.Event
+		if err := json.Unmarshal([]byte(encoded), &existing); err != nil {
+			return fmt.Errorf("decode deferred Matrix relation: %w", err)
+		}
+		if existing.ID == evt.ID {
+			return nil
+		}
+	}
+	raw, err := json.Marshal(evt, json.Deterministic(true))
+	if err != nil {
+		return fmt.Errorf("encode recovered Matrix relation %s: %w", evt.ID, err)
+	}
+	rs.DeferredRelations = append(rs.DeferredRelations, string(raw))
+	return nil
+}
+
+func (imp *Importer) discardRecoveredUnsupported(sourceID int64, eventID string) error {
+	if err := imp.store.MarkMessageDeleted(sourceID, eventID); err != nil {
+		return err
+	}
+	return imp.store.DeleteMatrixUndecryptableEvent(sourceID, eventID)
+}
+
+func eventPersistsOwnMessage(evt *event.Event) bool {
+	if evt.Type != event.EventMessage && evt.Type != event.EventSticker {
+		return false
+	}
+	content := evt.Content.AsMessage()
+	// A replacement without m.new_content is never archived, so its
+	// placeholder is retired like any other relation's.
+	return content.RelatesTo.GetReplaceID() == ""
 }
 
 func snippet(body string) string {

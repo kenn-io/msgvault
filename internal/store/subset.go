@@ -845,6 +845,21 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			return nil, fmt.Errorf("copy reaction_source_events: %w", err)
 		}
 	}
+	// Applied edits are named only in the edited message's metadata, so their
+	// ciphertext rows are selected from there.
+	if present, err := sourceTableExists(tx, "matrix_encrypted_events"); err != nil {
+		return nil, fmt.Errorf("check matrix_encrypted_events: %w", err)
+	} else if present {
+		if _, err := copyByName(tx, "matrix_encrypted_events",
+			`source_id IN (SELECT id FROM sources)
+			 AND (event_id IN (SELECT source_message_id FROM messages)
+			   OR event_id IN (SELECT source_reaction_id FROM reaction_source_events)
+			   OR event_id IN (
+			       SELECT CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.matrix_edit_event_id') END
+			       FROM messages WHERE metadata IS NOT NULL))`); err != nil {
+			return nil, fmt.Errorf("copy matrix_encrypted_events: %w", err)
+		}
+	}
 
 	if _, err := copyByName(tx, "attachments",
 		`message_id IN (SELECT id FROM selected_messages)`); err != nil {

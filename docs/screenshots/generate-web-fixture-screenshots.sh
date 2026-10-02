@@ -60,7 +60,7 @@ EOF
 
 (cd "$repo_root" && make web-embed >/dev/null)
 binary="$scratch/msgvault"
-CGO_ENABLED=1 go build -buildvcs=false -tags "fts5 sqlite_vec" -trimpath -o "$binary" "$repo_root/cmd/msgvault"
+CGO_ENABLED=1 go build -buildvcs=false -tags "fts5 sqlite_vec goolm" -trimpath -o "$binary" "$repo_root/cmd/msgvault"
 plain_mbox="$scratch/enron-web-fixture.mbox"
 gzip -dc "$fixture_dir/enron-web-fixture.mbox.gz" > "$plain_mbox"
 owner_identifier="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["fixture"]["owner_identifier"])' "$fixture_dir/manifest.json")"

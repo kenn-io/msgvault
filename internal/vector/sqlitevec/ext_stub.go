@@ -15,7 +15,7 @@ import (
 // ErrNotBuilt is returned when sqlite-vec features are used in a build
 // that did not set the `sqlite_vec` build tag.
 var ErrNotBuilt = errors.New(
-	"sqlite-vec support not compiled in; rebuild with `go build -tags \"fts5 sqlite_vec\"`")
+	"sqlite-vec support not compiled in; rebuild with `go build -tags \"fts5 sqlite_vec goolm\"`")
 
 // RegisterExtension reports that sqlite-vec is unavailable in this build.
 func RegisterExtension() error { return ErrNotBuilt }

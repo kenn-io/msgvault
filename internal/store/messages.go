@@ -3134,21 +3134,39 @@ func (s *Store) ClearMessageRepliesContext(ctx context.Context, sourceID int64, 
 
 // MarkMessageDeleted marks a message as deleted from the source.
 func (s *Store) MarkMessageDeleted(sourceID int64, sourceMessageID string) error {
+	_, err := s.MarkMessageDeletedIfActive(sourceID, sourceMessageID)
+	return err
+}
+
+// MarkMessageDeletedIfActive marks a message as deleted from the source and
+// reports whether this call changed an active message.
+func (s *Store) MarkMessageDeletedIfActive(sourceID int64, sourceMessageID string) (bool, error) {
 	if err := s.requireSyncSource(sourceID); err != nil {
-		return err
+		return false, err
 	}
+	changed := false
 	write := func(q chunkQuerier) error {
-		_, err := q.Exec(fmt.Sprintf(`
+		result, err := q.Exec(fmt.Sprintf(`
 			UPDATE messages
 			SET deleted_from_source_at = %s
 			WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NULL
 		`, s.dialect.Now()), sourceID, sourceMessageID)
-		return err
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		changed = rows > 0
+		return nil
 	}
 	if s.syncGeneration == nil {
-		return write(s.db)
+		err := write(s.db)
+		return changed, err
 	}
-	return s.withTx(func(tx *loggedTx) error { return write(tx) })
+	err := s.withTx(func(tx *loggedTx) error { return write(tx) })
+	return changed, err
 }
 
 // ClearMessageDeletedFromSource clears the upstream tombstone when a message
@@ -6131,6 +6149,7 @@ type ArchivedRawMessage struct {
 	MessageID      int64
 	ConversationID int64
 	RawData        []byte
+	Deleted        bool
 	// BodyText is the currently stored plain-text body, so a caller
 	// re-deriving it can skip rows that would not change.
 	BodyText string
@@ -6142,7 +6161,8 @@ type ArchivedRawMessage struct {
 // callers loop until an empty batch comes back.
 func (s *Store) ScanArchivedRawMessages(sourceID int64, format string, afterID int64, limit int) ([]ArchivedRawMessage, error) {
 	rows, err := s.db.Query(s.Rebind(`
-		SELECT m.id, m.conversation_id, r.raw_data, r.compression, COALESCE(b.body_text, '')
+		SELECT m.id, m.conversation_id, r.raw_data, r.compression, COALESCE(b.body_text, ''),
+		       CASE WHEN m.deleted_from_source_at IS NULL THEN 0 ELSE 1 END
 		FROM messages m
 		JOIN message_raw r ON r.message_id = m.id
 		LEFT JOIN message_bodies b ON b.message_id = m.id
@@ -6159,7 +6179,7 @@ func (s *Store) ScanArchivedRawMessages(sourceID int64, format string, afterID i
 		var item ArchivedRawMessage
 		var raw []byte
 		var compression sql.NullString
-		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText); err != nil {
+		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText, &item.Deleted); err != nil {
 			return nil, err
 		}
 		if compression.Valid && compression.String == "zlib" {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync/atomic"
 	"testing"
@@ -58,7 +59,10 @@ func TestCredentialsRoundTripUsesPrivateFile(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	dir := t.TempDir()
-	want := Credentials{Homeserver: "https://matrix.example.org", UserID: "@archive:example.org", DeviceID: "DEVICE1", AccessToken: "secret"}
+	want := Credentials{Homeserver: "https://matrix.example.org", UserID: "@archive:example.org", DeviceID: "DEVICE1", AccessToken: "secret", PickleKey: "pickle"}
+	exists, err := CredentialsExist(dir, want.UserID)
+	require.NoError(err)
+	assert.False(exists)
 	require.NoError(SaveCredentials(dir, want))
 	got, err := LoadCredentials(dir, want.UserID)
 	require.NoError(err)
@@ -76,7 +80,7 @@ func TestCredentialsRoundTripUsesPrivateFile(t *testing.T) {
 func TestSaveCredentialsKeepsPublishedFileAfterReplaceFailure(t *testing.T) {
 	require := require.New(t)
 	dir := t.TempDir()
-	creds := Credentials{Homeserver: "https://matrix.example.org", UserID: "@archive:example.org", DeviceID: "DEVICE1", AccessToken: "secret"}
+	creds := Credentials{Homeserver: "https://matrix.example.org", UserID: "@archive:example.org", DeviceID: "DEVICE1", AccessToken: "secret", PickleKey: "pickle"}
 	original := secureReplaceCredentials
 	t.Cleanup(func() { secureReplaceCredentials = original })
 	secureReplaceCredentials = func(path string, data []byte, mode os.FileMode) error {
@@ -108,4 +112,61 @@ func TestSaveCredentialsKeepsExistingFileAfterUnpublishedReplaceFailure(t *testi
 	data, err := os.ReadFile(path)
 	require.NoError(err)
 	assert.Equal(t, "existing", string(data))
+}
+
+func TestSaveCredentialsKeepsPublishedReplacementForExistingDevice(t *testing.T) {
+	require := require.New(t)
+	dir := t.TempDir()
+	creds := Credentials{Homeserver: "https://matrix.example.org", UserID: "@archive:example.org", DeviceID: "DEVICE1", AccessToken: "secret"}
+	path := tokenPath(dir, creds.UserID)
+	require.NoError(os.WriteFile(path, []byte("existing"), 0o600))
+	original := secureReplaceCredentials
+	t.Cleanup(func() { secureReplaceCredentials = original })
+	secureReplaceCredentials = func(path string, _ []byte, mode os.FileMode) error {
+		require.NoError(os.WriteFile(path, []byte("replacement"), mode))
+		return fmt.Errorf("synthetic directory sync failure: %w", atomicfile.ErrPublished)
+	}
+
+	err := SaveCredentials(dir, creds)
+	require.ErrorContains(err, "synthetic directory sync failure")
+	data, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Equal(t, "replacement", string(data), "ordinary credential updates must not clean up an existing publication")
+}
+
+func TestLoadCredentialsUpgradesLegacyFileWithPickleKey(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dir := t.TempDir()
+	legacy := Credentials{
+		Homeserver: "https://matrix.example.org", UserID: "@archive:example.org",
+		DeviceID: "DEVICE1", AccessToken: "secret",
+	}
+	require.NoError(SaveCredentials(dir, legacy))
+	upgraded, err := LoadCredentials(dir, legacy.UserID)
+	require.NoError(err)
+	assert.NotEmpty(upgraded.PickleKey)
+	reloaded, err := LoadCredentials(dir, legacy.UserID)
+	require.NoError(err)
+	assert.Equal(upgraded, reloaded, "the generated crypto key must be durable across syncs")
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(tokenPath(dir, legacy.UserID))
+		require.NoError(err)
+		assert.Equal(os.FileMode(0o600), info.Mode().Perm())
+	}
+}
+
+func TestCryptoStorePathIsScopedToDedicatedDevice(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+	first := CryptoStorePath(dataDir, "@archive:example.org", "DEVICE1")
+	second := CryptoStorePath(dataDir, "@archive:example.org", "DEVICE2")
+	assert.NotEqual(first, second)
+	require.NoError(os.MkdirAll(filepath.Dir(first), 0o700))
+	require.NoError(os.WriteFile(first, []byte("crypto"), 0o600))
+	require.NoError(DeleteCryptoStore(dataDir, "@archive:example.org", "DEVICE1"))
+	_, err := os.Stat(first)
+	require.ErrorIs(err, os.ErrNotExist)
+	assert.DirExists(filepath.Dir(filepath.Dir(second)))
 }

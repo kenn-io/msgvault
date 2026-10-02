@@ -44,6 +44,7 @@ func TestLoginCreatesDedicatedNamedDevice(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("DEVICE1", creds.DeviceID)
 	assert.Equal("secret", creds.AccessToken)
+	assert.NotEmpty(creds.PickleKey)
 }
 
 func TestLoginExchangesSingleUseToken(t *testing.T) {
