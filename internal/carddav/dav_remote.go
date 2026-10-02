@@ -67,7 +67,12 @@ func (r *davRemote) Delete(ctx context.Context, href, etag string) error {
 }
 
 func (r *davRemote) do(ctx context.Context, request Request, budget *Budget) (*Response, error) {
-	response, err := r.client.Do(ctx, request)
+	var response *Response
+	err := GateRequest(ctx, func(ctx context.Context) error {
+		var err error
+		response, err = r.client.Do(ctx, request)
+		return err
+	})
 	if response != nil {
 		if budgetErr := budget.consume(response); budgetErr != nil {
 			return nil, budgetErr

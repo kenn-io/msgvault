@@ -335,7 +335,7 @@ func (s *Service) fetchPlan(
 ) (store.CardDAVSyncPlan, error) {
 	pull := func(token string) (store.CardDAVSyncPlan, error) {
 		var plan store.CardDAVSyncPlan
-		err := s.gate(ctx, func() error {
+		err := s.gate(ctx, func(ctx context.Context) error {
 			var err error
 			plan, err = s.remote.Pull(ctx, book, token, budget)
 			return err

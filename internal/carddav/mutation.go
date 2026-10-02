@@ -390,15 +390,15 @@ func (s *Service) executeMutation(ctx context.Context, pending *store.CardDAVPub
 		return err
 	}
 
-	var write func() error
+	var write func(context.Context) error
 	switch pending.PendingOperation {
 	case store.CardDAVMutationCreate, store.CardDAVMutationUpdate:
 		create := pending.PendingOperation == store.CardDAVMutationCreate
-		write = func() error {
+		write = func(ctx context.Context) error {
 			return s.remote.Put(ctx, pending.Href, pending.OutgoingBody, pending.RemoteETag, create)
 		}
 	case store.CardDAVMutationDelete:
-		write = func() error { return s.remote.Delete(ctx, pending.Href, pending.RemoteETag) }
+		write = func(ctx context.Context) error { return s.remote.Delete(ctx, pending.Href, pending.RemoteETag) }
 	default:
 		return store.ErrCardDAVInvalidPlan
 	}
@@ -484,7 +484,7 @@ func (s *Service) recoverCreate(ctx context.Context, pending *store.CardDAVPubli
 	// retry durably: a transient PUT failure or process exit would otherwise
 	// strand the pending publication forever. Concurrent attempts are still
 	// fenced by If-None-Match: * and the publication mutation revision.
-	err = s.gate(ctx, func() error {
+	err = s.gate(ctx, func(ctx context.Context) error {
 		return s.remote.Put(ctx, pending.Href, pending.OutgoingBody, "", true)
 	})
 	if err != nil && !isStatus(err, http.StatusPreconditionFailed) {

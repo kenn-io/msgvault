@@ -18,7 +18,8 @@ var ErrInvalidSyncToken = errors.New("CardDAV sync token is no longer valid")
 //
 // Errors keep their CardDAV meaning, because the Service branches on them: a
 // *StatusError with 404 or 410 for an absent card, 412 for a failed version
-// check, and 429 or RetryAfter for a pause.
+// check, and 429 or RetryAfter for a pause. A Remote that sends more than one
+// request in a call sends each one through GateRequest.
 type Remote interface {
 	// Discover lists the address books that the entered URL reaches.
 	Discover(ctx context.Context, entered string) (Discovery, error)
@@ -45,13 +46,25 @@ func NewRemoteService(st *store.Store, remote Remote) *Service {
 	return &Service{store: st, remote: remote}
 }
 
+type gateKey struct{}
+
+// GateRequest runs one request of a Remote call behind the connection's retry
+// gate. A pause from one request then stops the next request of the same
+// call, also when the Remote would fall back to another request shape.
+func GateRequest(ctx context.Context, request func(context.Context) error) error {
+	if s, ok := ctx.Value(gateKey{}).(*Service); ok {
+		return s.gate(ctx, request)
+	}
+	return request(ctx)
+}
+
 // gate runs one remote call behind the connection's retry gate, and saves a
 // new gate when the remote asks for a pause.
-func (s *Service) gate(ctx context.Context, call func() error) error {
+func (s *Service) gate(ctx context.Context, call func(context.Context) error) error {
 	if err := s.checkRetry(ctx); err != nil {
 		return err
 	}
-	err := call()
+	err := call(context.WithValue(ctx, gateKey{}, s))
 	if status := retryStatus(err); status != nil {
 		if gateErr := s.setRetry(ctx, time.Now().Add(status.RetryAfter).UTC()); gateErr != nil {
 			return errors.Join(err, gateErr)
@@ -63,7 +76,7 @@ func (s *Service) gate(ctx context.Context, call func() error) error {
 func (s *Service) fetchCanonical(ctx context.Context, href string) (store.CardDAVRemoteResource, bool, error) {
 	var resource store.CardDAVRemoteResource
 	var absent bool
-	err := s.gate(ctx, func() error {
+	err := s.gate(ctx, func(ctx context.Context) error {
 		var err error
 		resource, absent, err = s.remote.Get(ctx, href)
 		return err

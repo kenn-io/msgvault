@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
@@ -117,4 +118,25 @@ func TestServiceSyncsAndPublishesThroughAnyRemote(t *testing.T) {
 	conflicts, err := st.ListCardDAVConflictsContext(t.Context(), true, store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	assert.Empty(conflicts)
+}
+
+func TestPullStopsFallbackAfterRetryAfter(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))
+	t.Cleanup(server.Close)
+	service, st, _ := newPullService(t, server, true)
+
+	_, err := service.Sync(t.Context(), SyncOptions{})
+	require.Error(err)
+	assert.Equal(1, requests, "the snapshot fallback must not run after a pause")
+	gate, err := st.GetCardDAVRetryAfterContext(t.Context(), store.DefaultCardDAVAccountID)
+	require.NoError(err)
+	assert.NotNil(gate)
 }
