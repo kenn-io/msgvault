@@ -119,7 +119,7 @@ func TestMigrateFutureArchiveReleasesLocks(t *testing.T) {
 	conf := lifecycleTestConfig(t.TempDir())
 	s, err := store.OpenForTest(conf.DatabaseDSN())
 	require.NoError(err)
-	_, err = s.DB().Exec("PRAGMA user_version = 2")
+	_, err = s.DB().Exec(fmt.Sprintf("PRAGMA user_version = %d", store.SchemaVersion+1))
 	require.NoError(err)
 	require.NoError(s.Close())
 	cmd := commandWithInvocation(t, newMigrateCommand(), conf, invocationOptions{})

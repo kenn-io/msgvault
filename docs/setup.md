@@ -42,39 +42,10 @@ msgvault --help
 ## Vendor a pinned binary
 
 Applications can download a release archive directly from
-[GitHub Releases](https://github.com/kenn-io/msgvault/releases). Pin the tag and
-verify the matching entry in that release's `SHA256SUMS` before extracting it.
-Fail the download if the archive or checksum is missing.
-
-The v0.20.0 release uses this asset naming pattern:
-
-| Platform | Archive name |
-|---|---|
-| macOS | `msgvault_<version>_darwin_<arch>.tar.gz` |
-| Linux | `msgvault_<version>_linux_<arch>.tar.gz` |
-| Windows | `msgvault_<version>_windows_<arch>.zip` |
-
-`<version>` excludes the tag's leading `v`. `<arch>` is `amd64` or `arm64`.
-The executable is `msgvault` on macOS/Linux and `msgvault.exe` on Windows.
-There are no unversioned binary aliases. Select an archive from the pinned
-release's asset list; repository-owned release publishers have been removed,
-so this pattern does not promise a release schedule.
-
-For example, download and verify the Linux AMD64 archive without running an
-installer:
-
-```bash
-set -eu
-tag=v0.20.0
-asset="msgvault_${tag#v}_linux_amd64.tar.gz"
-base="https://github.com/kenn-io/msgvault/releases/download/$tag"
-curl -fL "$base/$asset" -o "$asset"
-curl -fL "$base/SHA256SUMS" -o SHA256SUMS
-awk -v asset="$asset" '$2 == asset { print; found = 1 } END { if (!found) exit 1 }' \
-  SHA256SUMS > selected-checksum
-sha256sum -c selected-checksum
-tar -xzf "$asset"
-```
+[GitHub Releases](https://github.com/kenn-io/msgvault/releases). Pin the tag,
+pick the archive for your platform from that release's asset list, and check it
+against the release's `SHA256SUMS` before extracting it. Fail the download if
+the archive or its checksum entry is missing.
 
 ### Migrate before replacing the executable
 

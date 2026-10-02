@@ -2,16 +2,19 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"strconv"
 )
 
 // SchemaVersion is the main archive schema contract. Increase it whenever the
-// archive schema or a required migration changes. API, cache and optional vector
-// backend versions are independent. Zero identifies pre-contract archives.
+// archive schema or a required migration changes; TestSchemaVersionContract
+// catches most missed bumps. API, cache and optional vector backend versions are
+// independent. Zero identifies pre-contract archives.
 const SchemaVersion = 1
+
+// schemaVersionMarkerKey holds the PostgreSQL copy of SchemaVersion, which
+// SQLite keeps in PRAGMA user_version.
+const schemaVersionMarkerKey = "schema_version"
 
 // SchemaVersionContext reads the stored completion marker without migrating.
 // The marker certifies required InitSchemaContext work, not physical integrity.
@@ -25,13 +28,9 @@ func (s *Store) SchemaVersionContext(ctx context.Context) (int, error) {
 		if !exists {
 			return 0, nil
 		}
-		var value string
-		err := s.db.QueryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key = 'schema_version'`).Scan(&value)
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, nil
-		}
-		if err != nil {
-			return 0, fmt.Errorf("read archive schema version: %w", err)
+		value, ok, err := s.GetArchiveMarker(ctx, schemaVersionMarkerKey)
+		if err != nil || !ok {
+			return 0, err
 		}
 		version, err = strconv.Atoi(value)
 		if err != nil {
@@ -49,14 +48,10 @@ func (s *Store) SchemaVersionContext(ctx context.Context) (int, error) {
 }
 
 func (s *Store) stampSchemaVersionContext(ctx context.Context) error {
-	var err error
 	if s.IsPostgreSQL() {
-		_, err = s.db.ExecContext(ctx, s.Rebind(`INSERT INTO archive_metadata (key, value) VALUES ('schema_version', ?)
-   ON CONFLICT (key) DO UPDATE SET value = excluded.value`), strconv.Itoa(SchemaVersion))
-	} else {
-		_, err = s.db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion))
+		return s.SetArchiveMarker(ctx, schemaVersionMarkerKey, strconv.Itoa(SchemaVersion))
 	}
-	if err != nil {
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
 		return fmt.Errorf("publish archive schema version: %w", err)
 	}
 	return nil

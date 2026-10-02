@@ -58,7 +58,7 @@ func TestSchemaVersionDatabaseDoesNotMigrate(t *testing.T) {
 	_, err = s.DB().Exec("CREATE TABLE sentinel (value TEXT); INSERT INTO sentinel VALUES ('keep')")
 	require.NoError(err)
 	require.NoError(s.Close())
-	for _, version := range []int{0, 1, 2} {
+	for _, version := range []int{0, store.SchemaVersion, store.SchemaVersion + 1} {
 		s, err = store.OpenForTest(conf.DatabaseDSN())
 		require.NoError(err)
 		_, err = s.DB().Exec(fmt.Sprintf("PRAGMA user_version = %d", version))
