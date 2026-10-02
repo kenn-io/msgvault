@@ -982,6 +982,11 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.Muesli[i].DBPath = expandPath(cfg.Muesli[i].DBPath)
 		cfg.Muesli[i].ContactsPath = expandPath(cfg.Muesli[i].ContactsPath)
 	}
+	// Secret references belong to the daemon's config home, including when
+	// config.toml is loaded from its default location.
+	for i := range cfg.NotionMeetings {
+		cfg.NotionMeetings[i].UsersTokenFile = resolveRelative(expandPath(cfg.NotionMeetings[i].UsersTokenFile), cfg.HomeDir)
+	}
 	for name, app := range cfg.OAuth.Apps {
 		app.ClientSecrets = expandPath(app.ClientSecrets)
 		app.ServiceAccountKey = expandPath(app.ServiceAccountKey)
@@ -1789,13 +1794,15 @@ type CirclebackSource struct {
 }
 
 // NotionMeetingsSource is one configured Notion AI Meeting Notes identity.
-// Authentication uses a read-only integration token stored in config.toml.
+// Meeting access and optional workspace user access use separate credentials.
 type NotionMeetingsSource struct {
-	Identifier   string `toml:"identifier"`
-	AccountEmail string `toml:"account_email"`
-	Token        string `toml:"token"`
-	Schedule     string `toml:"schedule"`
-	Enabled      bool   `toml:"enabled"`
+	UsersTokenEnv  string `toml:"users_token_env"`
+	UsersTokenFile string `toml:"users_token_file"`
+	Identifier     string `toml:"identifier"`
+	AccountEmail   string `toml:"account_email"`
+	Token          string `toml:"token"`
+	Schedule       string `toml:"schedule"`
+	Enabled        bool   `toml:"enabled"`
 }
 
 // EffectiveAccountEmail returns the normalized primary identity configured

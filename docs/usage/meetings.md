@@ -337,16 +337,21 @@ a workspace-wide export.
 
 ### Configure and register
 
-Create a Notion integration with AI Meeting Notes and Read Content access.
-Grant User Information access if you want attendee IDs resolved to verified
-emails and relationship participants. Without it, meetings still sync, but
-attendees remain display-only names or IDs.
+Use a personal access token (PAT) or integration with AI Meeting Notes and
+Read Content access for meeting content. PATs cannot list workspace users or
+retrieve other users, and have no User Information capability toggle.
+For attendee emails, create an internal integration in the same workspace
+with **Read user information including email addresses**, then supply its token
+through `users_token_env` or `users_token_file`. Keep the meeting PAT so discovery
+continues to use the meeting owner's attendee visibility.
 
 ```toml
 [[notion_meetings]]
 identifier = "notion-personal"
 account_email = "you@example.com"
 token = "ntn_..."
+users_token_env = "NOTION_USERS_TOKEN" # optional workspace integration
+# users_token_file = "secrets/notion-users-token" # use instead of users_token_env
 schedule = "15 */6 * * *"         # optional daemon schedule
 enabled = true
 ```
@@ -361,7 +366,51 @@ msgvault sync-notion-meetings notion-personal --probe
 
 Both commands print capability and result-count diagnostics without printing
 meeting titles, notes, transcripts, attendee details, block IDs, page URLs, or
-the token.
+the tokens. Probe output distinguishes a PAT restriction from missing integration
+capabilities, reports the optional user token separately, and checks individual
+user access and verified-email availability when a visible meeting supplies an
+attendee ID.
+
+### Notion attendee emails
+
+The user-resolution integration lists workspace members and retrieves missing
+attendee IDs individually, including guests omitted from the list. Only Notion
+users with `person.email_verified = true` and a usable email become anchored
+participants. Lookups are cached for each run. A 403 for one guest leaves that
+attendee unresolved without preventing other attendees or content from syncing.
+People without a Notion account cannot be resolved through this integration.
+
+To include external invitees, first [sync Google Calendar](calendar.md) for the
+same `account_email`. The Notion importer joins against those archived events:
+
+- A Notion page link matching the meeting page or retrieved block's parent is
+  an exact match (`notion_link`, confidence `1`). Links in descriptions,
+  locations, conference data, attachments, and source URLs are considered.
+  Both `notion.so` and `notion.site` page URLs, including Notion Calendar
+  meeting-notes links, are recognized.
+- An event with a Notion link to another page cannot match by heuristic.
+  For events without a Notion link, starts must be within five minutes. Matching
+  titles and ends within five minutes score `0.8`; a matching title with shared
+  resolved attendee emails scores `0.9`. A partially matching title requires
+  shared attendee emails and scores `0.8`.
+- Multiple distinct plausible events leave Calendar invitees unresolved, even
+  when one heuristic scores higher. Identical copies of the same event across
+  calendars count as one match. Cancelled events and resource invitees are excluded.
+  All-day events cannot match by time heuristic.
+
+Matched Calendar invitees become email participants without a Notion user
+anchor. Direct Notion-resolved emails are retained. Display names never bind a
+Notion ID to a Calendar email. The raw archive and metadata record
+`calendar_match`, its `basis` and `confidence`, archive event identifiers,
+matching signals, and attendee emails. Confidence is a rule score, not a
+statistical probability. Unresolved Notion IDs remain visible separately.
+Unreadable Calendar evidence adds an archive warning while meeting content
+continues to sync.
+
+After adding either path, run `msgvault sync-notion-meetings <identifier> --full`
+to update participants on existing visible meetings. This does not expand the
+50-meeting discovery window. These attendee-resolution options are newer than
+the latest release.
 
 ### Sync and discovery limit
 
@@ -405,8 +454,10 @@ object, note blocks, Markdown, attendee labels, resolved user details, and
 warnings for later inspection.
 
 Notion's `created_by` user is stored as creator metadata and is never assumed
-to be the organizer. Only attendees with provider-verified email addresses
-become participant rows. Unknown IDs and names remain display-only evidence.
+to be the organizer. Verified Notion users and matched Calendar invitees
+become participant rows through exact emails. Unknown IDs and names remain
+display-only evidence. Calendar attribution is recorded separately from Notion
+user verification.
 
 If registration reports invalid token, Meeting Notes access, or Read Content
 errors, correct that integration capability and rerun `add-notion-meetings`.

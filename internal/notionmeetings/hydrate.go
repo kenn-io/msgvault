@@ -18,6 +18,8 @@ const (
 	maxHydrationBlocks   = 10000
 )
 
+var errHydrationRequestLimit = errors.New("notion meeting hydration exceeded request limit")
+
 type hydrationSource interface {
 	RetrievePageMarkdown(ctx context.Context, pageID string, includeTranscript bool) (*MarkdownPage, error)
 	RetrieveBlock(ctx context.Context, blockID string) (*Block, error)
@@ -32,6 +34,9 @@ type blockTree struct {
 }
 
 type HydratedMeeting struct {
+	failedAttendeeIDs map[string]bool
+	CalendarMatch     *calendarMatch
+
 	Discovery                  MeetingNote
 	MeetingBlock               *Block
 	SummaryTree                blockTree
@@ -58,7 +63,21 @@ type resolvedUser struct {
 	EmailVerified bool     `json:"email_verified,omitzero"`
 }
 
+// UserSource is used only for workspace members and guest identities.
+type UserSource interface {
+	ListUsers(ctx context.Context, cursor string) (*UserPage, error)
+	RetrieveUser(ctx context.Context, id string) (*User, error)
+}
+
+type userLookup struct {
+	user *User
+	err  error
+}
+
 type Hydrator struct {
+	userSource UserSource
+	lookups    map[string]userLookup
+
 	source           hydrationSource
 	users            map[string]User
 	usersRead        bool
@@ -71,7 +90,13 @@ type Hydrator struct {
 }
 
 func NewHydrator(source hydrationSource) *Hydrator {
-	return &Hydrator{source: source}
+	return &Hydrator{source: source, lookups: map[string]userLookup{}}
+}
+
+// WithUserSource routes user requests to a separate credential.
+func (h *Hydrator) WithUserSource(source UserSource) *Hydrator {
+	h.userSource = source
+	return h
 }
 
 func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedMeeting, error) {
@@ -237,11 +262,24 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 		seen := map[string]struct{}{}
 		for {
 			if err := h.reserveRequest(); err != nil {
-				return err
+				if !errors.Is(err, errHydrationRequestLimit) {
+					return err
+				}
+				h.usersUnavailable = true
+				h.usersFailure = err
+				h.usersRead = true
+				break
 			}
-			page, err := h.source.ListUsers(ctx, cursor)
+			list := h.source.ListUsers
+			if h.userSource != nil {
+				list = h.userSource.ListUsers
+			}
+			page, err := list(ctx, cursor)
+			if err == nil && page == nil {
+				err = ErrMalformedResponse
+			}
 			if err != nil {
-				if errors.Is(err, ErrUnauthorized) || errors.Is(err, context.Canceled) ||
+				if (h.userSource == nil && errors.Is(err, ErrUnauthorized)) || errors.Is(err, context.Canceled) ||
 					errors.Is(err, context.DeadlineExceeded) {
 					return err
 				}
@@ -282,24 +320,78 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 	if h.usersUnavailable {
 		result.AttendeeResolutionDegraded = true
 		if h.usersIncomplete {
-			result.Warnings = append(result.Warnings,
-				fmt.Sprintf("Notion User Information pagination was incomplete: %v", h.usersFailure))
+			result.Warnings = append(result.Warnings, fmt.Sprintf(
+				"Notion User Information pagination was incomplete: %v; attempting per-attendee retrieval where supported",
+				h.usersFailure,
+			))
 		} else if errors.Is(h.usersFailure, ErrUserInformation) {
-			result.Warnings = append(result.Warnings, "Notion User Information access unavailable; attendee emails were not resolved")
-		} else {
 			result.Warnings = append(result.Warnings,
-				fmt.Sprintf("Notion User Information lookup failed: %v; attendee emails were not resolved", h.usersFailure))
+				"Notion User Information access unavailable; attempting per-attendee retrieval where supported")
+		} else {
+			result.Warnings = append(result.Warnings, fmt.Sprintf(
+				"Notion User Information lookup failed: %v; attempting per-attendee retrieval where supported",
+				h.usersFailure,
+			))
 		}
 	}
 
+	result.failedAttendeeIDs = map[string]bool{}
+	requestLimitWarningAdded := false
 	for _, id := range result.Discovery.MeetingNotes.CalendarEvent.Attendees {
 		user, ok := h.users[id]
+		if !ok {
+			retrieval := h.userSource
+			if retrieval == nil {
+				retrieval, _ = h.source.(UserSource)
+			}
+			if retrieval == nil && h.usersUnavailable {
+				result.failedAttendeeIDs[id] = true
+			} else if retrieval != nil {
+				lookup, cached := h.lookups[id]
+				if !cached {
+					if err := h.reserveRequest(); err != nil {
+						if !errors.Is(err, errHydrationRequestLimit) {
+							return err
+						}
+						lookup.err = err
+					} else {
+						lookup.user, lookup.err = retrieval.RetrieveUser(ctx, id)
+						if lookup.err == nil && (lookup.user == nil || lookup.user.ID != id || lookup.user.Object != "user") {
+							lookup.err = ErrMalformedResponse
+						}
+						if lookup.user != nil {
+							if err := h.reserveBytes(lookup.user.Raw); err != nil {
+								return err
+							}
+						}
+						h.lookups[id] = lookup
+					}
+				}
+				if errors.Is(lookup.err, context.Canceled) || errors.Is(lookup.err, context.DeadlineExceeded) {
+					return lookup.err
+				}
+				if lookup.err != nil {
+					if errors.Is(lookup.err, errHydrationRequestLimit) {
+						if !requestLimitWarningAdded {
+							result.Warnings = append(result.Warnings, "Notion user lookup skipped because the hydration request limit was reached")
+							requestLimitWarningAdded = true
+						}
+					} else if len(result.failedAttendeeIDs) == 0 {
+						result.Warnings = append(result.Warnings, "Notion attendee user lookup unavailable; retained display-only identity")
+					}
+					result.failedAttendeeIDs[id] = true
+					result.AttendeeResolutionDegraded = true
+				} else {
+					user, ok = *lookup.user, true
+				}
+			}
+		}
 		label := id
 		if ok && strings.TrimSpace(user.Name) != "" {
 			label = strings.TrimSpace(user.Name)
 		}
 		result.AttendeeLabels = append(result.AttendeeLabels, label)
-		if !ok || !user.Person.EmailVerified || strings.TrimSpace(user.Person.Email) == "" {
+		if !ok || user.Type != "person" || !user.Person.EmailVerified || strings.TrimSpace(user.Person.Email) == "" {
 			result.UnresolvedAttendeeIDs = append(result.UnresolvedAttendeeIDs, id)
 			continue
 		}
@@ -319,7 +411,7 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 func (h *Hydrator) reserveRequest() error {
 	h.requests++
 	if h.requests > maxHydrationRequests {
-		return errors.New("notion meeting hydration exceeded request limit")
+		return errHydrationRequestLimit
 	}
 	return nil
 }

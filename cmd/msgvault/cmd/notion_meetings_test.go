@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/notionmeetings"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -194,4 +199,131 @@ func TestRunConfiguredNotionMeetingsSyncRefusesRemovedSource(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "add-notion-meetings removed")
+}
+
+type fakeNotionUsersProbe struct {
+	listed    int
+	retrieved int
+	listErr   error
+	userErr   error
+}
+
+func (f *fakeNotionUsersProbe) ListUsers(context.Context, string) (*notionmeetings.UserPage, error) {
+	f.listed++
+	return &notionmeetings.UserPage{}, f.listErr
+}
+func (f *fakeNotionUsersProbe) RetrieveUser(context.Context, string) (*notionmeetings.User, error) {
+	f.retrieved++
+	return &notionmeetings.User{Object: "user", ID: "guest"}, f.userErr
+}
+
+func TestNotionProbeSeparateCredentialAndPATDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"available", nil, "User-resolution token: User Information available"},
+		{"missing capability", notionmeetings.ErrUserInformation, "User-resolution token: User Information unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			users := &fakeNotionUsersProbe{listErr: tc.err}
+			meeting := notionmeetings.MeetingNote{ID: "private-meeting", Parent: notionmeetings.Parent{PageID: "private-page"}, MeetingNotes: notionmeetings.MeetingNotesData{CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"guest"}}}}
+			var out bytes.Buffer
+			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}}, block: &notionmeetings.Block{}, usersErr: &notionmeetings.APIError{Kind: notionmeetings.ErrUserInformation, Status: 403, Code: "restricted_resource", PersonalAccessToken: true}}, users)
+			require.NoError(t, err)
+			assert.Contains(out.String(), "personal access token cannot list users or retrieve other users")
+			assert.Contains(out.String(), tc.want)
+			assert.NotContains(out.String(), "private-meeting")
+			assert.NotContains(out.String(), "guest")
+			assert.Equal(1, users.listed)
+			if tc.err == nil {
+				assert.Equal(1, users.retrieved)
+				assert.Contains(out.String(), "verified email: unavailable")
+			}
+		})
+	}
+}
+
+func TestConfiguredNotionClientsKeepCredentialsSeparate(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	meetingFactory, usersFactory := newNotionMeetingsClient, newNotionUsersClient
+	t.Cleanup(func() { newNotionMeetingsClient, newNotionUsersClient = meetingFactory, usersFactory })
+	t.Setenv("MSGVAULT_TEST_NOTION_USERS_TOKEN", "internal-example")
+	var meetingToken, usersToken string
+	newNotionMeetingsClient = func(_ string, token string) notionmeetings.Source { meetingToken = token; return nil }
+	newNotionUsersClient = func(_ string, token string) notionmeetings.UserSource {
+		usersToken = token
+		return &fakeNotionUsersProbe{}
+	}
+	_, users, err := configuredNotionClients(config.NotionMeetingsSource{Token: "pat-example", UsersTokenEnv: "MSGVAULT_TEST_NOTION_USERS_TOKEN"})
+	require.NoError(err)
+	require.NotNil(users)
+	assert.Equal("pat-example", meetingToken)
+	assert.Equal("internal-example", usersToken)
+	_, users, err = configuredNotionClients(config.NotionMeetingsSource{Token: "pat-example"})
+	require.NoError(err)
+	assert.Nil(users)
+}
+
+type countingNotionSyncSource struct {
+	notionmeetings.Source
+
+	queries int
+}
+
+func (s *countingNotionSyncSource) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
+	s.queries++
+	return &notionmeetings.QueryResult{}, nil
+}
+
+func TestNotionSyncValidatesAllUserCredentialsBeforeRequests(t *testing.T) {
+	for _, credential := range []string{"missing env", "missing file", "both references"} {
+		t.Run(credential, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			home := t.TempDir()
+			cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, NotionMeetings: []config.NotionMeetingsSource{
+				{Identifier: "first", Token: "example-meeting-token", AccountEmail: "user@example.com"},
+				{Identifier: "later", Token: "example-meeting-token", AccountEmail: "user@example.com"},
+			}}
+			t.Setenv("MSGVAULT_TEST_NOTION_MISSING_USERS_TOKEN", "")
+			switch credential {
+			case "missing env":
+				cfg.NotionMeetings[1].UsersTokenEnv = "MSGVAULT_TEST_NOTION_MISSING_USERS_TOKEN"
+			case "missing file":
+				cfg.NotionMeetings[1].UsersTokenFile = filepath.Join(home, "missing-users-token")
+			case "both references":
+				cfg.NotionMeetings[1].UsersTokenEnv = "MSGVAULT_TEST_NOTION_MISSING_USERS_TOKEN"
+				cfg.NotionMeetings[1].UsersTokenFile = filepath.Join(home, "missing-users-token")
+			}
+			st, err := store.Open(cfg.DatabaseDSN())
+			require.NoError(err)
+			t.Cleanup(func() { _ = st.Close() })
+			require.NoError(st.InitSchema())
+			_, err = st.GetOrCreateSource(notionmeetings.SourceType, "first")
+			require.NoError(err)
+
+			t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+			factory, rebuild := newNotionMeetingsClient, rebuildNotionMeetingsCacheAfterWrite
+			probe, full, limit, after := syncNotionMeetingsProbe, syncNotionMeetingsFull, syncNotionMeetingsLimit, syncNotionMeetingsAfter
+			t.Cleanup(func() {
+				newNotionMeetingsClient, rebuildNotionMeetingsCacheAfterWrite = factory, rebuild
+				syncNotionMeetingsProbe, syncNotionMeetingsFull, syncNotionMeetingsLimit, syncNotionMeetingsAfter = probe, full, limit, after
+			})
+			syncNotionMeetingsProbe, syncNotionMeetingsFull, syncNotionMeetingsLimit, syncNotionMeetingsAfter = false, false, 0, ""
+			client := &countingNotionSyncSource{}
+			newNotionMeetingsClient = func(string, string) notionmeetings.Source { return client }
+			var out bytes.Buffer
+			cmd := &cobra.Command{Use: syncNotionMeetingsCmd.Use, RunE: syncNotionMeetingsCmd.RunE}
+			cmd.SetOut(&out)
+			cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			err = cmd.RunE(cmd, nil)
+			require.Error(err)
+			assert.Contains(err.Error(), "users_token_")
+			assert.Zero(client.queries, "a later invalid credential must prevent all Notion requests")
+			assert.Empty(out.String(), "no source should start syncing before credential validation completes")
+		})
+	}
 }
