@@ -974,26 +974,34 @@ func TestCLIIdentityMutationsRejectExplicitNonPositiveSourceIDWithoutMutation(t 
 	}
 }
 
-func TestCLIIdentityDiscoverProviderObjectLimitIsActionableWithoutWrites(t *testing.T) {
+func TestCLIIdentityDiscoverProviderResolvesTokenFromEnvironment(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
-	srv.cfg.Fastmail = []config.FastmailSource{{SourceID: source.ID, APIToken: "synthetic-token"}}
-	require.NoError(wrapped.AddAccountIdentity(source.ID, "old@example.test", "manual"))
-	before, err := wrapped.ListAccountIdentities(source.ID)
-	require.NoError(err)
-	inventory := &cliIdentityProviderInventory{err: &fastmail.ObjectLimitError{Method: "MaskedEmail/get", MaxObjectsInGet: 4096}}
-	srv.fastmailInventoryFactory = func(string) fastmailIdentityInventory { return inventory }
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/identities/discover", strings.NewReader(fmt.Sprintf(`{"source_id":%d,"provider":true,"apply":true}`, source.ID)))
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, request)
-	require.Equal(http.StatusBadRequest, response.Code)
-	assert.Contains(response.Body.String(), "4096")
-	assert.Contains(response.Body.String(), "fastmail_object_limit")
-	after, err := wrapped.ListAccountIdentities(source.ID)
-	require.NoError(err)
-	assert.Equal(before, after)
-	assert.NotContains(response.Body.String(), "synthetic-token")
+	srv, _, source := newCLIIdentityDiscoveryTestServer(t)
+	srv.cfg.Fastmail = []config.FastmailSource{{SourceID: source.ID, APITokenEnv: "MSGVAULT_TEST_CLI_FASTMAIL_TOKEN"}}
+	var tokens []string
+	srv.fastmailInventoryFactory = func(token string) fastmailIdentityInventory {
+		tokens = append(tokens, token)
+		return &cliIdentityProviderInventory{}
+	}
+	discover := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/identities/discover", strings.NewReader(fmt.Sprintf(`{"source_id":%d,"provider":true}`, source.ID)))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, request)
+		return response
+	}
+
+	t.Setenv("MSGVAULT_TEST_CLI_FASTMAIL_TOKEN", "")
+	response := discover()
+	require.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+	assert.Contains(response.Body.String(), "invalid_identity")
+	assert.Contains(response.Body.String(), "MSGVAULT_TEST_CLI_FASTMAIL_TOKEN")
+	assert.Empty(tokens, "an unreadable token never reaches the provider")
+
+	t.Setenv("MSGVAULT_TEST_CLI_FASTMAIL_TOKEN", "synthetic-env-token")
+	response = discover()
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	assert.Equal([]string{"synthetic-env-token"}, tokens)
 }

@@ -83,7 +83,7 @@ func TestAutomaticProviderIdentityRefreshIsOptInAndRunsAfterIMAPCompletion(t *te
 		requirements.NoError(err)
 		requirements.Len(identities, 1)
 		assertions.Equal("old@example.test", identities[0].Address)
-		assertions.Equal("masked-email,provider-alias", identities[0].SourceSignal)
+		assertions.Equal("provider-alias", identities[0].SourceSignal)
 	})
 }
 
@@ -228,7 +228,7 @@ func TestAutomaticProviderIdentityRefreshRunsAfterIncrementalGmailCompletion(t *
 	requirements.NoError(err)
 	requirements.Len(identities, 1)
 	assertions.Equal("historical@example.test", identities[0].Address)
-	assertions.Equal("masked-email,provider-alias", identities[0].SourceSignal)
+	assertions.Equal("provider-alias", identities[0].SourceSignal)
 }
 
 func runAutomaticProviderSync(

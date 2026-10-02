@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/fastmail"
-	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -71,7 +70,7 @@ func TestAutoRefreshAppliesOnlyStrongEvidenceAndRetryIsIdempotent(t *testing.T) 
 	requirements.Len(first, 3)
 	for _, outcome := range first {
 		assertions.True(outcome.Added)
-		assertions.Equal([]string{"masked-email", "provider-alias"}, outcome.Signals)
+		assertions.Equal([]string{"provider-alias"}, outcome.Signals)
 	}
 
 	retry, enabled, err := provideridentity.AutoRefresh(t.Context(), cfg, st, source.ID, factory)
@@ -162,18 +161,39 @@ func TestAutoRefreshRecordsFailureSoNoOpSyncsRetry(t *testing.T) {
 	requirements.Len(outcomes, 1)
 }
 
-func TestFastmailMaskedGroupExcludesOrdinarySendAsAndPendingMasks(t *testing.T) {
-	evidence := provideridentity.Evidence([]fastmail.Record{
-		{Identifier: "old-mask@example.test", Kind: "masked-email", State: "disabled"},
-		{Identifier: "send-as@example.test", Kind: "identity", State: "enabled"},
-		{Identifier: "pending-mask@example.test", Kind: "masked-email", State: "pending"},
-	})
-	confirmations := identityops.ExternalEvidenceConfirmations(evidence)
-	require.Len(t, confirmations, 2)
-	byAddress := map[string][]string{}
-	for _, confirmation := range confirmations {
-		byAddress[confirmation.Identifier] = confirmation.Signals
+func TestAutoRefreshRecordsCredentialFailureSoNoOpSyncsRetry(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "primary@example.test")
+	requirements.NoError(err)
+	cfg := &config.Config{Fastmail: []config.FastmailSource{{
+		SourceID: source.ID, APITokenEnv: "MSGVAULT_TEST_FASTMAIL_REFRESH_TOKEN", AutoConfirmIdentities: true,
+	}}}
+	inventory := &countingInventory{records: []fastmail.Record{
+		{Identifier: "old@example.test", State: "disabled", Kind: "masked-email"},
+	}}
+	var tokens []string
+	factory := func(token string) provideridentity.Inventory {
+		tokens = append(tokens, token)
+		return inventory
 	}
-	assert.Equal(t, []string{"masked-email", "provider-alias"}, byAddress["old-mask@example.test"])
-	assert.Equal(t, []string{"provider-alias"}, byAddress["send-as@example.test"])
+
+	t.Setenv("MSGVAULT_TEST_FASTMAIL_REFRESH_TOKEN", "synthetic-token")
+	_, _, err = provideridentity.AutoRefresh(t.Context(), cfg, st, source.ID, factory)
+	requirements.NoError(err)
+	assertions.Equal([]string{"synthetic-token"}, tokens)
+
+	// A changed mailbox with an unreadable token must not leave the earlier
+	// success in place, or idle syncs would skip the retry for a day.
+	t.Setenv("MSGVAULT_TEST_FASTMAIL_REFRESH_TOKEN", "")
+	_, enabled, err := provideridentity.AutoRefresh(t.Context(), cfg, st, source.ID, factory)
+	requirements.ErrorContains(err, "MSGVAULT_TEST_FASTMAIL_REFRESH_TOKEN")
+	assertions.True(enabled)
+	assertions.Equal(1, inventory.calls)
+
+	t.Setenv("MSGVAULT_TEST_FASTMAIL_REFRESH_TOKEN", "synthetic-token")
+	_, _, err = provideridentity.AutoRefreshIfDue(t.Context(), cfg, st, source.ID, factory)
+	requirements.NoError(err)
+	assertions.Equal(2, inventory.calls, "a recorded credential failure owes a retry")
 }

@@ -157,7 +157,7 @@ func (s *Store) AddAccountIdentityContext(
 		address,
 		signal,
 		func(ctx context.Context, tx *loggedTx) error {
-			return refreshIdentityMessageAttributionContext(ctx, tx, sourceID, []normalizedIdentityConfirmation{{identifier: strings.TrimSpace(address)}}, "")
+			return refreshIdentityMessageAttributionContext(ctx, tx, sourceID, []string{address}, "")
 		},
 	)
 }
@@ -179,7 +179,7 @@ func (s *Store) AddAccountIdentityAndRefreshMessageAttributionContext(
 		signal,
 		func(ctx context.Context, tx *loggedTx) error {
 			return refreshIdentityMessageAttributionContext(
-				ctx, tx, sourceID, []normalizedIdentityConfirmation{{identifier: strings.TrimSpace(address)}}, excludeSourceMessageID,
+				ctx, tx, sourceID, []string{address}, excludeSourceMessageID,
 			)
 		},
 	)
@@ -531,19 +531,32 @@ func (s *Store) RemoveAccountIdentityContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		res, err := tx.ExecContext(ctx,
-			`DELETE FROM account_identities WHERE source_id = ? AND `+match.WhereClause("address"),
+		// Refresh with the stored spellings: an email-shaped address deletes
+		// case-insensitively, but non-email identifiers match them exactly.
+		rows, err := tx.QueryContext(ctx,
+			`DELETE FROM account_identities WHERE source_id = ? AND `+match.WhereClause("address")+` RETURNING address`,
 			sourceID, match.BindValue(),
 		)
 		if err != nil {
 			return fmt.Errorf("remove account identity: %w", err)
 		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("rows affected: %w", err)
+		var deleted []string
+		for rows.Next() {
+			var stored string
+			if err := rows.Scan(&stored); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan removed account identity: %w", err)
+			}
+			deleted = append(deleted, stored)
 		}
-		removed = n
-		if n == 0 {
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("remove account identity: %w", err)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("remove account identity: %w", err)
+		}
+		removed = int64(len(deleted))
+		if removed == 0 {
 			return nil
 		}
 		if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
@@ -552,7 +565,7 @@ func (s *Store) RemoveAccountIdentityContext(
 		if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 			return err
 		}
-		return refreshIdentityMessageAttributionContext(ctx, tx, sourceID, []normalizedIdentityConfirmation{{identifier: strings.TrimSpace(address)}}, "")
+		return refreshIdentityMessageAttributionContext(ctx, tx, sourceID, deleted, "")
 	})
 	if err != nil {
 		return 0, err

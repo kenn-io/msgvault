@@ -27,7 +27,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
-	"go.kenn.io/msgvault/internal/fastmail"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -3053,20 +3052,16 @@ func (s *Server) handleCLIIdentityDiscover(w http.ResponseWriter, r *http.Reques
 		}
 		token, tokenErr := s.cfg.FastmailAPIToken(*configured)
 		if tokenErr != nil {
-			writeAPIHTTPError(w, s.operationError(opserr.Invalid(tokenErr), identityOperationErrorPolicy, "Failed to discover identities"))
+			writeAPIHTTPError(w, s.operationError(
+				opserr.Invalid(fmt.Errorf("resolve Fastmail credential for source %d: %w", source.ID, tokenErr)),
+				identityOperationErrorPolicy,
+				"Failed to discover identities",
+			))
 			return
 		}
 		inventory := s.fastmailInventoryFactory(token)
 		records, inventoryErr := inventory.ListIdentityRecords(r.Context())
 		if inventoryErr != nil {
-			if limitErr, ok := errors.AsType[*fastmail.ObjectLimitError](inventoryErr); ok {
-				limit := limitErr.MaxObjectsInGet
-				if limit <= 0 {
-					limit = 4096
-				}
-				writeError(w, http.StatusBadRequest, "fastmail_object_limit", fmt.Sprintf("Fastmail identity inventory exceeds the JMAP limit of %d objects per get call; existing identities were not changed", limit))
-				return
-			}
 			writeAPIHTTPError(w, s.operationError(
 				opserr.Internal(fmt.Errorf("fastmail identity inventory request failed: %w", inventoryErr)),
 				identityOperationErrorPolicy,

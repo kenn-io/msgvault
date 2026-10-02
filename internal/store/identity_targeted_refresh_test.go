@@ -14,7 +14,7 @@ import (
 // The immutable From envelope must drive the repair, and another envelope
 // carried by that same participant must not enter the affected set.
 func TestIdentityTargetedRefreshUsesEnvelopeAndSource(t *testing.T) {
-	for _, path := range []string{"single", "batch", "provider"} {
+	for _, path := range []string{"single", "batch"} {
 		t.Run(path, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -42,8 +42,6 @@ func TestIdentityTargetedRefreshUsesEnvelopeAndSource(t *testing.T) {
 				err = f.Store.AddAccountIdentity(f.Source.ID, "mask@example.test", "manual")
 			case "batch":
 				_, err = f.Store.AddAccountIdentitiesBatchContext(t.Context(), f.Source.ID, confirmations)
-			case "provider":
-				_, _, err = f.Store.ApplyProviderIdentitySnapshotContext(t.Context(), f.Source.ID, "fastmail", "first", []store.ProviderIdentityRecord{{ID: "mask", Identifier: "mask@example.test", Kind: "masked-email", State: "enabled"}}, confirmations)
 			}
 			require.NoError(err)
 			got, err := f.Store.GetMessageIsFromMe(target)
@@ -105,7 +103,7 @@ func TestIdentityTargetedRefreshPreservesDatabaseCaseRules(t *testing.T) {
 
 func TestIdentityTargetedRefreshPreservesLegacyParticipantCaseRules(t *testing.T) {
 	for _, location := range []string{"email", "identifier"} {
-		for _, path := range []string{"single", "batch", "provider"} {
+		for _, path := range []string{"single", "batch"} {
 			t.Run(location+"/"+path, func(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
@@ -138,10 +136,6 @@ func TestIdentityTargetedRefreshPreservesLegacyParticipantCaseRules(t *testing.T
 					err = f.Store.AddAccountIdentity(f.Source.ID, address, "manual")
 				case "batch":
 					_, err = f.Store.AddAccountIdentitiesBatchContext(t.Context(), f.Source.ID, confirmations)
-				case "provider":
-					_, _, err = f.Store.ApplyProviderIdentitySnapshotContext(t.Context(), f.Source.ID,
-						"fastmail", "first", []store.ProviderIdentityRecord{{ID: "mask", Identifier: address,
-							Kind: "masked-email", State: "enabled"}}, confirmations)
 				}
 				require.NoError(err)
 				got, err = f.Store.GetMessageIsFromMe(id)

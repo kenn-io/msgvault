@@ -540,13 +540,15 @@ token only to discover masked and send-as addresses that belong to that source.
 | `account` | — | Unambiguous source identifier or display name; mutually exclusive with `source_id` |
 | `api_token` | — | Inline Fastmail API token |
 | `api_token_env` | — | Environment variable containing the token |
-| `api_token_file` | — | Token file under `<data_dir>/tokens/`; relative names resolve there; permissions must be `0600` |
+| `api_token_file` | — | Token file under `<data_dir>/tokens/`; relative names resolve there |
 | `auto_confirm_identities` | `false` | Refresh and apply strong provider identity evidence after successful mailbox syncs |
 
 Exactly one credential field is required. An unset or empty environment variable,
-an unreadable or empty file, or file permissions other than `0600` causes the
-request to fail. msgvault does not fall back to another credential. Resolved
-tokens are never written back to configuration.
+or a missing or empty file, fails the refresh; msgvault doesn't fall back to
+another credential. On macOS and Linux the token file must be readable only by
+its owner (`chmod 600`). Windows has no mode bits to check, so restrict the file
+yourself or use `api_token_env`. The daemon reads the variable or file each time
+it refreshes, so set it in the daemon's environment.
 
 Exactly one source selector is required. Prefer `source_id` when two sources
 share an identifier or display name. With automatic confirmation disabled,
@@ -1532,7 +1534,7 @@ client_id = "your-azure-app-client-id"
 # Optional source-scoped Fastmail alias inventory.
 [[fastmail]]
 source_id = 14
-api_token = "replace-with-a-Fastmail-API-token"
+api_token_env = "FASTMAIL_API_TOKEN"
 auto_confirm_identities = false
 
 [discord]

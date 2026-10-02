@@ -1778,8 +1778,7 @@ func TestWaitForDaemonExitWithProgressGivesUpAtGrace(t *testing.T) {
 		func(daemon.RuntimeRecord) bool { return true })
 
 	assert.False(t, exited, "wait must give up at the grace deadline")
-	// The grace deadline may expire during the quiet phase. Progress output
-	// is covered by TestWaitForDaemonExitWithProgressExplainsLongStops.
+	assert.Contains(t, out.String(), "Waiting up to")
 }
 
 func TestWaitForDaemonExitWithProgressQuietOnFastExit(t *testing.T) {

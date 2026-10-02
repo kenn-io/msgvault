@@ -4,7 +4,6 @@ package provideridentity
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,40 +19,6 @@ import (
 // in-memory implementation; the production implementation is the JMAP client.
 type Inventory interface {
 	ListIdentityRecords(ctx context.Context) ([]fastmail.Record, error)
-}
-
-// SnapshotInventory supplies a complete JMAP inventory and opaque state.
-// Legacy injected inventories retain the evidence-only contract.
-type SnapshotInventory interface {
-	ListIdentitySnapshot(ctx context.Context) (fastmail.Snapshot, error)
-}
-
-// SnapshotStore atomically persists metadata and confirmed ownership.
-type SnapshotStore interface {
-	ApplyProviderIdentitySnapshotContext(ctx context.Context, sourceID int64, provider, state string, records []store.ProviderIdentityRecord, confirmations []store.IdentityConfirmation) ([]store.IdentityConfirmationOutcome, bool, error)
-}
-
-// Snapshot is the shared provider pipeline input. Evidence is validated by
-// identityops; metadata never establishes ownership on its own.
-type Snapshot struct {
-	Provider string
-	State    string
-	Records  []store.ProviderIdentityRecord
-	Evidence []identityops.ExternalEvidence
-}
-
-func ApplySnapshot(ctx context.Context, st SnapshotStore, sourceID int64, snapshot Snapshot) ([]store.IdentityConfirmationOutcome, bool, error) {
-	return st.ApplyProviderIdentitySnapshotContext(ctx, sourceID, snapshot.Provider, snapshot.State, snapshot.Records, identityops.ExternalEvidenceConfirmations(snapshot.Evidence))
-}
-
-func FastmailSnapshot(snapshot fastmail.Snapshot) Snapshot {
-	result := Snapshot{Provider: "fastmail", State: snapshot.State, Evidence: Evidence(snapshot.Records)}
-	for _, record := range snapshot.Records {
-		// JMAP object IDs are scoped to their data type and account.
-		key, _ := json.Marshal([]string{record.Kind, record.AccountID, record.ID})
-		result.Records = append(result.Records, store.ProviderIdentityRecord{ID: string(key), Identifier: record.Identifier, Kind: record.Kind, State: record.State, ForDomain: record.ForDomain, Description: record.Description, CreatedAt: record.CreatedAt, LastMessageAt: record.LastMessageAt})
-	}
-	return result
 }
 
 // Factory binds one provider token to an inventory client.
@@ -81,7 +46,7 @@ func NewFastmailInventory(apiToken string) Inventory {
 // Evidence maps provider states to confirmation strength. Historical disabled
 // and deleted aliases remain authoritative; pending aliases stay review-only.
 func Evidence(records []fastmail.Record) []identityops.ExternalEvidence {
-	evidence := make([]identityops.ExternalEvidence, 0, 2*len(records))
+	evidence := make([]identityops.ExternalEvidence, 0, len(records))
 	for _, record := range records {
 		state := strings.ToLower(strings.TrimSpace(record.State))
 		item := identityops.ExternalEvidence{
@@ -94,10 +59,6 @@ func Evidence(records []fastmail.Record) []identityops.ExternalEvidence {
 			item.RejectedReason = "wildcard identity"
 		}
 		evidence = append(evidence, item)
-		if record.Kind == "masked-email" {
-			item.Signal = identityops.SignalMaskedEmail
-			evidence = append(evidence, item)
-		}
 	}
 	return evidence
 }
@@ -147,23 +108,13 @@ func autoRefresh(
 	if configured == nil || !configured.AutoConfirmIdentities {
 		return []store.IdentityConfirmationOutcome{}, false, nil
 	}
-	checks, _ := st.(interface {
-		ProviderIdentityCheckFresh(sourceID int64, staleAfter time.Duration) bool
-		ProviderIdentityCheckFailed(sourceID int64) bool
-		NoteProviderIdentityCheck(sourceID int64, successful bool)
-	})
 	if skipIfFresh {
-		if checks != nil && checks.ProviderIdentityCheckFresh(sourceID, RefreshStaleAfter) {
-			return []store.IdentityConfirmationOutcome{}, true, nil
+		state, found, stateErr := st.ProviderIdentityRefreshStateContext(ctx, sourceID)
+		if stateErr != nil {
+			return nil, true, fmt.Errorf("read provider identity refresh state: %w", stateErr)
 		}
-		if checks == nil || !checks.ProviderIdentityCheckFailed(sourceID) {
-			state, found, stateErr := st.ProviderIdentityRefreshStateContext(ctx, sourceID)
-			if stateErr != nil {
-				return nil, true, fmt.Errorf("read provider identity refresh state: %w", stateErr)
-			}
-			if found && state.Fresh(time.Now(), RefreshStaleAfter) {
-				return []store.IdentityConfirmationOutcome{}, true, nil
-			}
+		if found && state.Fresh(time.Now(), RefreshStaleAfter) {
+			return []store.IdentityConfirmationOutcome{}, true, nil
 		}
 	}
 	if factory == nil {
@@ -171,38 +122,14 @@ func autoRefresh(
 	}
 	token, err := cfg.FastmailAPIToken(*configured)
 	if err != nil {
-		return nil, true, fmt.Errorf("resolve Fastmail credential: %w", err)
+		// A token that cannot be read is a failed refresh, so the next
+		// no-op sync retries instead of trusting an earlier success.
+		err = fmt.Errorf("resolve Fastmail credential: %w", err)
+		return nil, true, errors.Join(err, recordRefreshOutcome(ctx, st, sourceID, err))
 	}
 	inventory := factory(token)
 	if inventory == nil {
 		return nil, true, errors.New("fastmail identity inventory unavailable")
-	}
-	if reader, ok := inventory.(SnapshotInventory); ok {
-		writer, ok := st.(SnapshotStore)
-		if !ok {
-			return nil, true, errors.New("provider metadata store unavailable")
-		}
-		snapshot, readErr := reader.ListIdentitySnapshot(ctx)
-		if readErr != nil {
-			if checks != nil {
-				checks.NoteProviderIdentityCheck(sourceID, false)
-			}
-			return nil, true, errors.Join(readErr, recordRefreshOutcome(ctx, st, sourceID, readErr))
-		}
-		outcomes, changed, applyErr := ApplySnapshot(ctx, writer, sourceID, FastmailSnapshot(snapshot))
-		if applyErr != nil {
-			if checks != nil {
-				checks.NoteProviderIdentityCheck(sourceID, false)
-			}
-			return nil, true, errors.Join(applyErr, recordRefreshOutcome(ctx, st, sourceID, applyErr))
-		}
-		if !changed {
-			if checks != nil {
-				checks.NoteProviderIdentityCheck(sourceID, true)
-			}
-			return outcomes, true, nil
-		}
-		return outcomes, true, recordRefreshOutcome(ctx, st, sourceID, nil)
 	}
 	records, err := inventory.ListIdentityRecords(ctx)
 	if err == nil {
@@ -222,13 +149,7 @@ func autoRefresh(
 // a retry is owed. A recording failure surfaces to the caller: it means the
 // next no-op sync will re-poll the provider, which the operator should see.
 func recordRefreshOutcome(ctx context.Context, st Store, sourceID int64, refreshErr error) error {
-	err := st.RecordProviderIdentityRefreshOutcomeContext(ctx, sourceID, refreshErr)
-	if checks, ok := st.(interface {
-		NoteProviderIdentityCheck(sourceID int64, successful bool)
-	}); ok {
-		checks.NoteProviderIdentityCheck(sourceID, err == nil && refreshErr == nil)
-	}
-	if err != nil {
+	if err := st.RecordProviderIdentityRefreshOutcomeContext(ctx, sourceID, refreshErr); err != nil {
 		return fmt.Errorf("record provider identity refresh outcome: %w", err)
 	}
 	return nil

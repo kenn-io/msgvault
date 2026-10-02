@@ -170,7 +170,7 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 				}
 			}
 			if insertedForSource {
-				if err := refreshSourceMessageAttributionContext(ctx, tx, src.ID, ""); err != nil {
+				if err := refreshSourceMessageAttributionContext(ctx, tx, src.ID); err != nil {
 					return fmt.Errorf("refresh migrated identity attribution (source=%d): %w", src.ID, err)
 				}
 			}

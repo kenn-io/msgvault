@@ -351,10 +351,9 @@ func TestMeetingImportBodyLimitDoesNotReadPastBoundary(t *testing.T) {
 }
 
 func TestMeetingImportReadsBodyBeforeWaitingOnOperationGate(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
-
-	t.Parallel()
 	const ordinaryReadTimeout = 100 * time.Millisecond
 
 	gate := NewSerialOperationGate()
@@ -386,7 +385,7 @@ func TestMeetingImportReadsBodyBeforeWaitingOnOperationGate(t *testing.T) {
 	require.NoError(err, "listen")
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- srv.StartOnListener(bufferedBodyTestListener{Listener: listener, headersOnly: true})
+		serveErr <- srv.StartOnListener(listener)
 	}()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -406,20 +405,14 @@ func TestMeetingImportReadsBodyBeforeWaitingOnOperationGate(t *testing.T) {
 			"Host: %s\r\n"+
 			"Content-Type: application/json\r\n"+
 			"X-Api-Key: %s\r\n"+
-			"Expect: 100-continue\r\n"+
-			"Content-Length: %d\r\n\r\n",
+			"Content-Length: %d\r\n\r\n"+
+			"%s",
 		listener.Addr().String(),
 		meetingImportTestAPIKey,
 		len(body),
+		body[:len(body)-1],
 	)
-	require.NoError(err, "write headers")
-	responseReader := bufio.NewReader(conn)
-	continued, err := http.ReadResponse(responseReader, &http.Request{Method: http.MethodPost})
-	require.NoError(err, "wait for server to start reading the body")
-	require.Equal(http.StatusContinue, continued.StatusCode)
-	require.NoError(continued.Body.Close())
-	_, err = conn.Write(body[:len(body)-1])
-	require.NoError(err, "write partial body")
+	require.NoError(err, "write headers and partial body")
 
 	time.Sleep(2 * ordinaryReadTimeout) //nolint:kennlint // outlasts the real socket read deadline
 	assert.False(gate.HasRequestWaiters(), "partial upload must not hold or queue on the mutation gate")
@@ -429,7 +422,7 @@ func TestMeetingImportReadsBodyBeforeWaitingOnOperationGate(t *testing.T) {
 		"validated meeting import waits on operation gate")
 	releaseGateOnce()
 
-	resp, err := http.ReadResponse(responseReader, &http.Request{Method: http.MethodPost})
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodPost})
 	require.NoError(err, "read meeting import response")
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(http.StatusCreated, resp.StatusCode)

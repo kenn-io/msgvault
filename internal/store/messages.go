@@ -1718,7 +1718,6 @@ func refreshSourceMessageAttributionContext(
 	ctx context.Context,
 	q contextQuerier,
 	sourceID int64,
-	excludeSourceMessageID string,
 ) error {
 	// InitSchema assigns source provenance to every legacy row once. Runtime
 	// identity changes therefore only need to update the derived and effective
@@ -1729,14 +1728,13 @@ func refreshSourceMessageAttributionContext(
 		SET identity_is_from_me = %[2]s,
 		    is_from_me = (%[1]s OR %[2]s)
 		WHERE source_id = ?
-		  AND (? = '' OR source_message_id <> ?)
 		  AND (
 		    identity_is_from_me <> %[2]s
 		    OR is_from_me IS NULL
 		    OR is_from_me <> (%[1]s OR %[2]s)
 		  )
 	`, messageSourceAttribution, messageIdentityAttributionMatch),
-		sourceID, excludeSourceMessageID, excludeSourceMessageID)
+		sourceID)
 	if err != nil {
 		return fmt.Errorf("refresh source message attribution: %w", err)
 	}
@@ -1778,6 +1776,98 @@ func refreshParticipantMessageAttributionContext(
 		return fmt.Errorf("refresh participant message attribution: %w", err)
 	}
 	return nil
+}
+
+// refreshIdentityMessageAttributionContext recomputes attribution for only the
+// messages a change to these identity addresses can affect: messages whose
+// From envelope carries one of them (found through
+// idx_message_recipients_email_from, including rows with no sender), and
+// messages with no From envelope whose sender matches one by participant
+// email or identifier. It writes the same values as
+// refreshSourceMessageAttributionContext would for those rows.
+func refreshIdentityMessageAttributionContext(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceID int64,
+	addresses []string,
+	excludeSourceMessageID string,
+) error {
+	addresses = uniqueTrimmedAddresses(addresses)
+	if len(addresses) == 0 {
+		return nil
+	}
+	messageIDs := make(map[int64]struct{})
+	scanID := func(rows *loggedRows) error {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		messageIDs[id] = struct{}{}
+		return nil
+	}
+	// LOWER(?) folds the bound value with the database's own case rules, which
+	// is what messageIdentityAttributionMatch compares with.
+	if err := queryInChunksWithValueExprContext(ctx, tx, addresses, []any{sourceID}, `
+		SELECT mr.message_id FROM message_recipients mr CROSS JOIN messages m
+		WHERE m.id = mr.message_id AND m.source_id = ?
+		  AND mr.recipient_type = 'from' AND LOWER(mr.email_address) IN (%s)
+	`, "LOWER(?)", scanID); err != nil {
+		return fmt.Errorf("resolve identity envelope messages: %w", err)
+	}
+	participants, err := participantIDsForAddressesContext(ctx, tx, addresses)
+	if err != nil {
+		return err
+	}
+	if err := queryInChunksContext(ctx, tx, participants, []any{sourceID}, `
+		SELECT m.id FROM messages m
+		WHERE m.source_id = ? AND m.sender_id IN (%s)
+		  AND NOT EXISTS (
+		      SELECT 1 FROM message_recipients mr
+		      WHERE mr.message_id = m.id
+		        AND mr.recipient_type = 'from'
+		        AND mr.email_address IS NOT NULL
+		        AND TRIM(mr.email_address) <> ''
+		  )
+	`, scanID); err != nil {
+		return fmt.Errorf("resolve legacy identity sender messages: %w", err)
+	}
+	ids := make([]int64, 0, len(messageIDs))
+	for id := range messageIDs {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	update := fmt.Sprintf(`
+		UPDATE messages
+		SET identity_is_from_me = %[2]s,
+		    is_from_me = (%[1]s OR %[2]s)
+		WHERE (? = '' OR source_message_id <> ?)
+		  AND id IN (%%s)
+		  AND (
+		    identity_is_from_me <> %[2]s
+		    OR is_from_me IS NULL
+		    OR is_from_me <> (%[1]s OR %[2]s)
+		  )
+	`, messageSourceAttribution, messageIdentityAttributionMatch)
+	if err := execInChunksContext(ctx, tx, ids, []any{excludeSourceMessageID, excludeSourceMessageID}, update); err != nil {
+		return fmt.Errorf("refresh identity message attribution: %w", err)
+	}
+	return nil
+}
+
+func uniqueTrimmedAddresses(addresses []string) []string {
+	seen := make(map[string]struct{}, len(addresses))
+	result := make([]string, 0, len(addresses))
+	for _, address := range addresses {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			continue
+		}
+		if _, ok := seen[address]; !ok {
+			seen[address] = struct{}{}
+			result = append(result, address)
+		}
+	}
+	return result
 }
 
 // refreshMessageAttributionWith recomputes one message's identity attribution

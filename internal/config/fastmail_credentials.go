@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -44,7 +43,7 @@ func (c *Config) FastmailAPIToken(s FastmailSource) (string, error) {
 	}
 	root, err := filepath.Abs(c.TokensDir())
 	if err != nil {
-		return "", errors.New("resolve Fastmail tokens directory")
+		return "", fmt.Errorf("resolve Fastmail tokens directory: %w", err)
 	}
 	path := strings.TrimSpace(s.APITokenFile)
 	if !filepath.IsAbs(path) {
@@ -54,36 +53,28 @@ func (c *Config) FastmailAPIToken(s FastmailSource) (string, error) {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", errors.New("fastmail token file must be under the tokens directory")
 	}
-	directory, err := os.OpenRoot(root)
+	tokens, err := os.OpenRoot(root)
 	if err != nil {
-		return "", errors.New("read Fastmail token file")
+		return "", fmt.Errorf("read Fastmail token file: %w", err)
 	}
-	defer func() { _ = directory.Close() }()
-	file, err := directory.Open(rel)
+	defer func() { _ = tokens.Close() }()
+	// Windows has no mode bits to check, as with the service account key.
+	if runtime.GOOS != "windows" {
+		info, err := tokens.Stat(rel)
+		if err != nil {
+			return "", fmt.Errorf("read Fastmail token file: %w", err)
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			return "", fmt.Errorf("fastmail token file %s permissions are too open (%04o); use chmod 600", path, info.Mode().Perm())
+		}
+	}
+	data, err := tokens.ReadFile(rel)
 	if err != nil {
-		return "", errors.New("read Fastmail token file")
-	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return "", errors.New("fastmail token file must be a regular file")
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
-		return "", errors.New("fastmail token file must have permissions 0600")
-	}
-	if info.Size() > 64<<10 {
-		return "", errors.New("fastmail token file is too large")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, (64<<10)+1))
-	if err != nil {
-		return "", errors.New("read Fastmail token file: unavailable")
-	}
-	if len(data) > 64<<10 {
-		return "", errors.New("fastmail token file is too large")
+		return "", fmt.Errorf("read Fastmail token file: %w", err)
 	}
 	token := strings.TrimSpace(string(data))
 	if token == "" {
-		return "", errors.New("fastmail token file is empty")
+		return "", fmt.Errorf("fastmail token file %s is empty", path)
 	}
 	return token, nil
 }

@@ -21,10 +21,6 @@ const (
 	SignalSentFolder    = "sent-folder"
 	SignalSentLabel     = "sent-label"
 
-	// SignalMaskedEmail classifies a masked address independently of its provider.
-	// Provider provenance is stored in the provider inventory, not this category.
-	SignalMaskedEmail = "masked-email"
-
 	classificationConfirmed = "confirmed"
 	classificationStrong    = "strong"
 	classificationWeak      = "weak"
@@ -444,15 +440,6 @@ func ApplyExternalEvidence(
 		return outcomes, err
 	}
 	return outcomes, nil
-}
-
-// ExternalEvidenceConfirmations validates provider evidence with the same
-// concrete-mailbox and strength rules as discovery. The snapshot transaction
-// decides which changed records need these confirmations.
-func ExternalEvidenceConfirmations(evidence []ExternalEvidence) []store.IdentityConfirmation {
-	result := DiscoverResult{}
-	MergeExternalEvidence(&result, evidence)
-	return strongConfirmations(result.Candidates, nil)
 }
 
 // DiscoverStrongForSourceMessageIDs refreshes one bounded ingestion batch's

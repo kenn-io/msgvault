@@ -13,22 +13,9 @@ const (
 
 // Record is one provider-reported address that can supply identity evidence.
 type Record struct {
-	ID            string
-	AccountID     string
-	ForDomain     string
-	Description   string
-	CreatedAt     string
-	LastMessageAt string
-	Identifier    string
-	State         string
-	Kind          string
-}
-
-// Snapshot is a complete inventory with an opaque composite JMAP state.
-// An empty State means the server did not provide all collection states.
-type Snapshot struct {
-	Records []Record
-	State   string
+	Identifier string
+	State      string
+	Kind       string
 }
 
 // CapabilityError reports that an explicit provider operation cannot proceed
@@ -84,26 +71,16 @@ type jmapResponse struct {
 }
 
 type maskedEmailGetResponse struct {
-	State     string   `json:"state"`
-	NotFound  []string `json:"notFound"`
-	AccountID string   `json:"accountId"`
+	AccountID string `json:"accountId"`
 	List      []struct {
-		ID            string `json:"id"`
-		Email         string `json:"email"`
-		State         string `json:"state"`
-		ForDomain     string `json:"forDomain"`
-		Description   string `json:"description"`
-		CreatedAt     string `json:"createdAt"`
-		LastMessageAt string `json:"lastMessageAt"`
+		Email string `json:"email"`
+		State string `json:"state"`
 	} `json:"list"`
 }
 
 type identityGetResponse struct {
-	State     string   `json:"state"`
-	NotFound  []string `json:"notFound"`
-	AccountID string   `json:"accountId"`
+	AccountID string `json:"accountId"`
 	List      []struct {
-		ID    string `json:"id"`
 		Email string `json:"email"`
 	} `json:"list"`
 }

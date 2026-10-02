@@ -78,12 +78,12 @@ func TestListIdentityRecordsIncludesHistoricalMaskedAliases(t *testing.T) {
 	methodRequest := <-methodRequests
 	require.NoError(methodRequest.err)
 	assert.Equal([]Record{
-		{ID: "identity-1", AccountID: "submission-account", Identifier: "*@example.test", State: "enabled", Kind: "identity"},
-		{ID: "1", AccountID: "masked-account", Identifier: "Active@example.test", State: "enabled", Kind: "masked-email"},
-		{ID: "3", AccountID: "masked-account", Identifier: "deleted@example.test", State: "deleted", Kind: "masked-email"},
-		{ID: "2", AccountID: "masked-account", Identifier: "old@example.test", State: "disabled", Kind: "masked-email"},
-		{ID: "identity-2", AccountID: "submission-account", Identifier: "send-as@example.test", State: "enabled", Kind: "identity"},
-		{ID: "4", AccountID: "masked-account", Identifier: "waiting@example.test", State: "pending", Kind: "masked-email"},
+		{Identifier: "*@example.test", State: "enabled", Kind: "identity"},
+		{Identifier: "Active@example.test", State: "enabled", Kind: "masked-email"},
+		{Identifier: "deleted@example.test", State: "deleted", Kind: "masked-email"},
+		{Identifier: "old@example.test", State: "disabled", Kind: "masked-email"},
+		{Identifier: "send-as@example.test", State: "enabled", Kind: "identity"},
+		{Identifier: "waiting@example.test", State: "pending", Kind: "masked-email"},
 	}, got)
 
 	require.Len(methodRequest.request.MethodCalls, 2)
@@ -134,7 +134,7 @@ func TestListIdentityRecordsWorksWithMaskedEmailCapabilityOnly(t *testing.T) {
 	methodRequest := <-methodRequests
 	require.NoError(methodRequest.err)
 	assert.Equal([]Record{
-		{ID: "1", AccountID: "masked-only", Identifier: "masked@example.test", State: "enabled", Kind: "masked-email"},
+		{Identifier: "masked@example.test", State: "enabled", Kind: "masked-email"},
 	}, got)
 	require.Len(methodRequest.request.MethodCalls, 1)
 	assert.Equal([]string{CoreCapability, MaskedEmailCapability}, methodRequest.request.Using)
@@ -181,7 +181,7 @@ func TestListIdentityRecordsSkipsSubmissionWithoutAccessibleAccount(t *testing.T
 	got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
 	require.NoError(err)
 	assert.Equal([]Record{
-		{ID: "1", AccountID: "masked-only", Identifier: "historical@example.test", State: "disabled", Kind: "masked-email"},
+		{Identifier: "historical@example.test", State: "disabled", Kind: "masked-email"},
 	}, got)
 	methodRequest := <-methodRequests
 	require.NoError(methodRequest.err)
@@ -745,5 +745,55 @@ func waitForError(t *testing.T, done <-chan error) error {
 	case <-time.After(2 * time.Second):
 		require.Fail(t, "timed out waiting for client result")
 		return nil
+	}
+}
+
+// A list the server leaves out or nulls was not checked; reading it as an
+// empty inventory would report every address as gone.
+func TestListIdentityRecordsRejectsMissingOrNullList(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		masked  map[string]any
+		ident   map[string]any
+		wantErr string
+	}{
+		{"masked missing", map[string]any{"accountId": "masked-account"}, map[string]any{"accountId": "submission-account", "list": []any{}}, "MaskedEmail/get"},
+		{"masked null", map[string]any{"accountId": "masked-account", "list": nil}, map[string]any{"accountId": "submission-account", "list": []any{}}, "MaskedEmail/get"},
+		{"identity missing", map[string]any{"accountId": "masked-account", "list": []any{}}, map[string]any{"accountId": "submission-account"}, "Identity/get"},
+		{"identity null", map[string]any{"accountId": "masked-account", "list": []any{}}, map[string]any{"accountId": "submission-account", "list": nil}, "Identity/get"},
+		{"both empty", map[string]any{"accountId": "masked-account", "list": []any{}}, map[string]any{"accountId": "submission-account", "list": []any{}}, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newTestServer(t, func(baseURL string) sessionResponse {
+				return sessionResponse{
+					APIURL:       baseURL + "/jmap",
+					Capabilities: capabilitySet(CoreCapability, MaskedEmailCapability, SubmissionCapability),
+					Accounts: map[string]sessionAccount{
+						"masked-account":     {AccountCapabilities: capabilitySet(MaskedEmailCapability)},
+						"submission-account": {AccountCapabilities: capabilitySet(SubmissionCapability)},
+					},
+					PrimaryAccounts: map[string]string{
+						MaskedEmailCapability: "masked-account",
+						SubmissionCapability:  "submission-account",
+					},
+				}
+			}, func(w http.ResponseWriter, r *http.Request) {
+				assert.NoError(t, writeJSON(w, map[string]any{
+					"methodResponses": []any{
+						[]any{"MaskedEmail/get", tt.masked, "masked"},
+						[]any{"Identity/get", tt.ident, "identity"},
+					},
+				}))
+			})
+
+			got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				assert.Empty(t, got)
+				return
+			}
+			require.ErrorContains(t, err, "incomplete "+tt.wantErr)
+			assert.Nil(t, got)
+		})
 	}
 }

@@ -384,7 +384,7 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 			return err
 		}
 
-		var inserted []normalizedIdentityConfirmation
+		var inserted []string
 		for _, confirmation := range confirmations {
 			added, err := s.mergeAccountIdentitySignalsTx(
 				ctx,
@@ -398,7 +398,7 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 				return err
 			}
 			if added {
-				inserted = append(inserted, confirmation)
+				inserted = append(inserted, confirmation.identifier)
 			}
 			outcomes = append(outcomes, IdentityConfirmationOutcome{
 				Identifier: confirmation.identifier,
@@ -406,7 +406,16 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 				Signals:    confirmation.signals,
 			})
 		}
-		return s.refreshConfirmedIdentityAttributionTx(ctx, tx, sourceID, inserted)
+		if len(inserted) == 0 {
+			return nil
+		}
+		if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
+			return err
+		}
+		if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
+			return err
+		}
+		return refreshIdentityMessageAttributionContext(ctx, tx, sourceID, inserted, "")
 	})
 	if err != nil {
 		return nil, err
@@ -414,24 +423,15 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 	return outcomes, nil
 }
 
-// participantIDsForConfirmationsContext resolves current participant identifiers
-// using the same case rules as messageIdentityAttributionMatch. The caller uses
-// these only for legacy messages without an authoritative From envelope.
-func participantIDsForConfirmationsContext(
+// participantIDsForAddressesContext resolves the participants whose current
+// email or identifier matches one of the addresses, using the same case rules
+// as messageIdentityAttributionMatch. The caller uses them only for legacy
+// messages without an authoritative From envelope.
+func participantIDsForAddressesContext(
 	ctx context.Context,
 	tx *loggedTx,
-	confirmations []normalizedIdentityConfirmation,
+	addresses []string,
 ) ([]int64, error) {
-	addresses := make([]string, 0, len(confirmations))
-	seen := make(map[string]struct{}, len(confirmations))
-	for _, confirmation := range confirmations {
-		address := strings.TrimSpace(confirmation.identifier)
-		if _, ok := seen[address]; !ok {
-			seen[address] = struct{}{}
-			addresses = append(addresses, address)
-		}
-	}
-
 	participantIDs := make(map[int64]struct{})
 	scanParticipantID := func(rows *loggedRows) error {
 		var id int64

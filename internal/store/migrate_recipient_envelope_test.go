@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -531,4 +533,30 @@ func TestInitSchemaLegacyRecipientTableCreatesFromAddressIndexAfterColumns(t *te
 	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_message_recipients_email_from'`).Scan(&indexes))
 	assert.Equal(t, 1, indexes)
 	require.NoError(st.InitSchema(), "index creation is idempotent")
+}
+
+// The first build of the From-address index scans message_recipients, which
+// takes a while on a large archive, so startup must say what it is doing.
+func TestInitSchemaLogsFromAddressIndexBuildOnlyWhenBuilding(t *testing.T) {
+	require := require.New(t)
+
+	st, err := Open(filepath.Join(t.TempDir(), "from_index_log.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema())
+	_, err = st.db.Exec(`DROP INDEX idx_message_recipients_email_from`)
+	require.NoError(err)
+
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	require.NoError(st.InitSchema())
+	assert.Contains(t, logs.String(), `"msg":"building index","index":"idx_message_recipients_email_from"`)
+	assert.Contains(t, logs.String(), `"msg":"built index","index":"idx_message_recipients_email_from"`)
+
+	logs.Reset()
+	require.NoError(st.InitSchema())
+	assert.NotContains(t, logs.String(), "idx_message_recipients_email_from", "an existing index is not announced")
 }

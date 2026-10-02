@@ -70,9 +70,6 @@ type Store struct {
 	// owned by the worker process, not by a durable sync_runs row.
 	syncExecutionLocks *syncExecutionLockState
 
-	providerIdentityChecksMu sync.Mutex
-	providerIdentityChecks   map[int64]time.Time
-
 	cardDAVPersonOperationsMu sync.Mutex
 	cardDAVPersonOperations   map[int64]*cardDAVPersonOperation
 
@@ -1007,6 +1004,30 @@ func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context,
 	return nil
 }
 
+// ensureFromAddressIndex builds the SQLite From-address index that targeted
+// identity refreshes look up. The first build scans message_recipients, which
+// can take minutes on a large archive, so it logs before and after.
+func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
+	const name = "idx_message_recipients_email_from"
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?)`, name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	started := time.Now()
+	slog.Info("building index", slog.String("index", name), slog.String("table", "message_recipients"))
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+name+` ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'`)
+		return err
+	}); err != nil {
+		return err
+	}
+	slog.Info("built index", slog.String("index", name), slog.Duration("elapsed", time.Since(started)))
+	return nil
+}
+
 // buildLargeIndexesConcurrently creates big-table indexes without blocking
 // writers. CREATE INDEX CONCURRENTLY cannot run inside a transaction (unlike
 // the runMaintenance escape hatch, which only disables the pool-wide
@@ -1646,15 +1667,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure idx_message_recipients_envelope unique: %w", err)
 	}
 
-	if !s.IsPostgreSQL() {
-		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-			_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_message_recipients_email_from ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'`)
-			return err
-		}); err != nil {
-			return fmt.Errorf("create identity From-envelope index: %w", err)
-		}
-	}
-
 	// Create the message watermark, contextual embedding journal, and attachment
 	// change journal triggers. This must run after the migration loop above,
 	// which adds the legacy columns referenced by those triggers.
@@ -1924,6 +1936,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return err
 		}); err != nil {
 			return fmt.Errorf("create deletion timestamp indexes: %w", err)
+		}
+
+		if err := s.ensureFromAddressIndex(ctx); err != nil {
+			return fmt.Errorf("create identity From-envelope index: %w", err)
 		}
 	}
 
