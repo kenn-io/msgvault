@@ -786,14 +786,16 @@ func TestListIdentityRecordsRejectsMissingOrNullList(t *testing.T) {
 				}))
 			})
 
+			assert := assert.New(t)
+			require := require.New(t)
 			got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
 			if tt.wantErr == "" {
-				require.NoError(t, err)
-				assert.Empty(t, got)
+				require.NoError(err)
+				assert.Empty(got)
 				return
 			}
-			require.ErrorContains(t, err, "incomplete "+tt.wantErr)
-			assert.Nil(t, got)
+			require.ErrorContains(err, "incomplete "+tt.wantErr)
+			assert.Nil(got)
 		})
 	}
 }

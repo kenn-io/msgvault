@@ -53,12 +53,13 @@ func TestFastmailCredentialSources(t *testing.T) {
 			assert.Equal(tt.want, got)
 		})
 	}
+	assert := assert.New(t)
 	require := require.New(t)
 	if runtime.GOOS != "windows" {
 		require.NoError(os.Chmod(path, 0400))
 		got, err := cfg.FastmailAPIToken(FastmailSource{APITokenFile: "fastmail"})
 		require.NoError(err, "owner-only read access is private enough")
-		assert.Equal(t, "synthetic-file-token", got)
+		assert.Equal("synthetic-file-token", got)
 		require.NoError(os.Chmod(path, 0640))
 		_, err = cfg.FastmailAPIToken(FastmailSource{APITokenFile: "fastmail"})
 		require.ErrorContains(err, "chmod 600")
@@ -66,7 +67,7 @@ func TestFastmailCredentialSources(t *testing.T) {
 		require.NoError(os.Chmod(path, 0644))
 		got, err := cfg.FastmailAPIToken(FastmailSource{APITokenFile: "fastmail"})
 		require.NoError(err, "Windows has no mode bits to check")
-		assert.Equal(t, "synthetic-file-token", got)
+		assert.Equal("synthetic-file-token", got)
 	}
 }
 
