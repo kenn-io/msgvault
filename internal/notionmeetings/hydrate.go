@@ -325,8 +325,8 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 		user, ok := h.users[id]
 		if !ok && h.userSource != nil {
 			found, err := h.lookupUser(ctx, id)
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return err
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
 			if err != nil {
 				if len(result.failedAttendeeIDs) == 0 {
@@ -368,8 +368,8 @@ func (h *Hydrator) lookupUser(ctx context.Context, id string) (*User, error) {
 			return nil, err
 		}
 		lookup.user, lookup.err = h.userSource.RetrieveUser(ctx, id)
-		if errors.Is(lookup.err, context.Canceled) || errors.Is(lookup.err, context.DeadlineExceeded) {
-			return nil, lookup.err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		h.lookups[id] = lookup
 		if lookup.err == nil {
