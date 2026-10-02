@@ -166,6 +166,10 @@ The flag does not remove existing identities or prevent the one-time legacy
 configuration cannot be read, automatic identity confirmation logs a warning
 and skips the write.
 
+Removing the last confirmed identity also saves the no-default choice for
+future syncs. To restore automatic confirmation, run the source's add command
+with `--no-default-identity=false`.
+
 ---
 
 ## add-imap
@@ -2381,7 +2385,7 @@ msgvault identity import [<account>] [--source-id <id>] (--file <path> | --stdin
 | `--json` | `list`, `show`, `discover`, `import` | Output structured JSON; discovery also suppresses progress |
 | `--signal` | `add` | Evidence signal name (default `manual`) |
 | `--apply` | `discover` | After the complete preview scan, confirm strong evidence |
-| `--provider` | `discover` | Include the source's configured `[[fastmail]]` alias inventory |
+| `--provider` | `discover` | Include the authenticated Gmail profile or the source's configured `[[fastmail]]` alias inventory |
 | `--confirm <address>` | `discover` | Explicitly confirm one weak candidate; repeatable and requires `--apply` |
 | `--file <path>` / `--stdin` | `import` | Read a text or JSON identity list from exactly one input |
 | `--signal` | `import` | Evidence signal recorded for imported identities (default `manual`) |

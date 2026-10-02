@@ -119,6 +119,7 @@ func (s *Syncer) RepairMessage(ctx context.Context, request RepairRequest) (_ *R
 			persist := buildPreparedSnapshot(
 				prepared, participantIndex, participantIDs, attachmentWrites)
 			persist.LabelRefs = labelRefs
+			persist.MergeMetadata = true
 			return persist
 		},
 	)

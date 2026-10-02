@@ -14,7 +14,49 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestImportMbox_GoogleGroupsMetadataQuality(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, thread string
+		want         int
+	}{
+		{"provider thread", "123456", 2},
+		{"fallback conversation", "0", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			// Exported provider threads need no References or In-Reply-To header.
+			raw := fmt.Sprintf("From synthetic@example.test Mon Jan 1 12:00:00 +0000 2024\r\nFrom: Synthetic Sender <sender@example.test>\r\nTo: archive@example.test\r\nMessage-ID: <group-copy@example.test>\r\nX-Google-Groups: synthetic-group\r\nX-GM-THRID: %s\r\nSubject: Topic\r\n\r\nSynthetic message.\r\n", tc.thread)
+			path := filepath.Join(t.TempDir(), "group.mbox")
+			require.NoError(os.WriteFile(path, []byte(raw), 0600))
+			summary, err := ImportMbox(t.Context(), f.Store, path, MboxImportOptions{SourceType: "google-groups", Identifier: "synthetic-group", NoResume: true})
+			require.NoError(err)
+			assert.Equal(int64(1), summary.MessagesAdded)
+			require.Zero(summary.Errors)
+			source, err := f.Store.GetSourceByTypeAndIdentifier("google-groups", "synthetic-group")
+			require.NoError(err)
+			require.NotNil(source)
+			single, err := f.Store.GetDuplicateGroupMessages("group-copy@example.test", source.ID)
+			require.NoError(err)
+			require.Len(single, 1)
+			assert.Equal(tc.want, single[0].MetadataQuality)
+			batch, err := f.Store.GetDuplicateGroupMessagesBatch([]string{"group-copy@example.test"}, source.ID)
+			require.NoError(err)
+			require.Len(batch["group-copy@example.test"], 1)
+			assert.Equal(tc.want, batch["group-copy@example.test"][0].MetadataQuality)
+			candidates, err := f.Store.GetAllRawMIMECandidates(source.ID)
+			require.NoError(err)
+			require.Len(candidates, 1)
+			assert.Equal(tc.want, candidates[0].MetadataQuality)
+		})
+	}
+}
 
 // Groups exports may have thread IDs without References or In-Reply-To.
 // Losing those IDs splits replies; losing group labels makes a multi-group

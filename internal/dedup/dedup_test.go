@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -606,7 +607,7 @@ func TestEngine_FormatMethodology_MentionsSentPolicy(t *testing.T) {
 	)
 	assert.Contains(t,
 		out,
-		"Tiebreakers: has raw MIME > when all eligible copies have matching normalized MIME, more attachments > attachment signal > larger payload > more labels > earlier archived_at > lower id.",
+		"Tiebreakers: has raw MIME > when all eligible copies have matching normalized MIME, more attachments > attachment signal > larger payload; then metadata quality > more labels > earlier archived_at > lower id.",
 		"methodology missing payload completeness order",
 	)
 }
@@ -1690,4 +1691,33 @@ func TestEngine_PlanChangedErrorReportsCommittedDerivationAndNoBatch(t *testing.
 	require.ErrorContains(err, "1 RFC822 Message-ID derivation was committed")
 	require.ErrorContains(err,
 		"no duplicate messages were hidden and no dedup batch was created; rerun deduplicate to review the updated plan")
+}
+
+// Metadata quality must choose the richer copy before labels in both passes.
+func TestEngine_MetadataQualityBeforeLabels(t *testing.T) {
+	t.Parallel()
+	for _, contentHash := range []bool{false, true} {
+		t.Run(fmt.Sprintf("content_hash_%t", contentHash), func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			f := storetest.New(t)
+			older := addMessage(t, f.Store, f.Source, "older", "quality@example.test", false)
+			richer := addMessage(t, f.Store, f.Source, "richer", "quality@example.test", false)
+			linkLabel(t, f.Store, f.Source.ID, older, "extra", "Extra", "user")
+			require.NoError(f.Store.RecordEmailHeadersContext(t.Context(), f.Source.ID, richer, "", "parent@example.test"))
+			if contentHash {
+				setRFC822MessageID(t, f.Store, older, "")
+				setRFC822MessageID(t, f.Store, richer, "")
+				raw := []byte("Subject: Quality\r\n\r\nIdentical body")
+				require.NoError(f.Store.UpsertMessageRaw(older, raw))
+				require.NoError(f.Store.UpsertMessageRaw(richer, raw))
+			}
+			engine := dedup.NewEngine(f.Store, dedup.Config{AccountSourceIDs: []int64{f.Source.ID}, ContentHashFallback: contentHash}, nil)
+			report, err := engine.Scan(t.Context())
+			require.NoError(err)
+			require.Len(report.Groups, 1)
+			group := report.Groups[0]
+			assert.Equal(t, richer, group.Messages[group.Survivor].ID)
+		})
+	}
 }

@@ -483,6 +483,26 @@ Exactly one of `--file` and `--stdin` is required. `--signal` changes the
 recorded evidence name from its `manual` default. Imported provider state is
 reporting metadata only; imports never remove a previously confirmed identity.
 
+## Gmail profile evidence
+
+For a Gmail source, `--provider` includes the address returned by its
+authenticated Gmail profile. The daemon uses the source's existing OAuth app
+or service-account credentials. It does not open a browser or request wider
+permissions. The profile must match the selected source under Gmail's account
+equivalence rules before it can supply strong `oauth` evidence.
+
+```bash
+# Preview provider and archived evidence together
+msgvault identity discover --source-id 14 --provider
+
+# Confirm strong candidates from that preview
+msgvault identity discover --source-id 14 --provider --apply
+```
+
+Preview does not confirm ownership. Ordinary sync only adds `oauth` provenance
+to matching addresses that are already confirmed; it does not restore removed
+identities.
+
 ## Fastmail alias inventory
 
 An optional Fastmail JMAP token can add masked and send-as addresses to the same

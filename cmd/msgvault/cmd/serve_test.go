@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +33,7 @@ import (
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/personenrichment"
+	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -2854,6 +2856,118 @@ func TestRunScheduledGmailSync_ReauthGuidance(t *testing.T) {
 			assert.Contains(err.Error(), "msgvault add-account user@example.com"+tc.flags+" --headless")
 		})
 	}
+}
+
+func TestDaemonGmailClientUsesSourceCredentialsWithoutScopeUpgrade(t *testing.T) {
+	// Credential fixtures set process environment; keep these cases sequential.
+	t.Run("named OAuth app", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		tokenPath, restore := seedTokenEnv(t, fmt.Sprintf(`{"access_token":"synthetic-access","expiry":"2099-01-01T00:00:00Z","scopes":[%q]}`, oauth.ScopeGmailReadonly))
+		defer restore()
+		cfg := testConfigValue()
+		logger := testLoggerValue()
+		cfg.OAuth.ClientSecrets = filepath.Join(filepath.Dir(filepath.Dir(tokenPath)), "client_secret.json")
+		ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+		before, err := os.ReadFile(tokenPath)
+		require.NoError(err)
+		cfg.OAuth.Apps = map[string]config.OAuthApp{"archive": {ClientSecrets: cfg.OAuth.ClientSecrets}}
+		source := &store.Source{SourceType: "gmail", Identifier: scopeEscalationAccount, OAuthApp: sql.NullString{String: "archive", Valid: true}}
+		var selected string
+		client, err := newDaemonGmailClient(ctx, source.Identifier, source, func(app string) (*oauth.Manager, error) {
+			selected = app
+			return oauth.NewManager(cfg.OAuth.Apps[app].ClientSecrets, cfg.TokensDir(), logger)
+		}, invocationFromContext(ctx))
+		require.NoError(err)
+		t.Cleanup(func() { _ = client.Close() })
+		assert.Equal("archive", selected)
+		after, err := os.ReadFile(tokenPath)
+		require.NoError(err)
+		assert.Equal(before, after, "reading a profile must not upgrade the stored grant")
+	})
+	t.Run("named service account", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		cfg := testConfigValue()
+		ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+		// A missing source-bound key fails locally. It must never fall back to
+		// the otherwise configured interactive OAuth app or open authorization.
+		cfg.OAuth.Apps = map[string]config.OAuthApp{"delegated": {ServiceAccountKey: filepath.Join(t.TempDir(), "missing-key.json")}}
+		source := &store.Source{SourceType: "gmail", Identifier: scopeEscalationAccount, OAuthApp: sql.NullString{String: "delegated", Valid: true}}
+		called := false
+		client, err := newDaemonGmailClient(ctx, source.Identifier, source, func(string) (*oauth.Manager, error) {
+			called = true
+			return nil, errors.New("unexpected OAuth fallback")
+		}, invocationFromContext(ctx))
+		require.ErrorContains(err, "service account")
+		credentialErr, ok := errors.AsType[*provideridentity.GmailCredentialError](err)
+		require.True(ok)
+		assert.Contains(credentialErr.Remediation(), "service_account_key")
+		assert.Nil(client)
+		assert.False(called)
+	})
+}
+
+func TestDaemonGmailClientCredentialFailures(t *testing.T) {
+	// Token fixtures set process environment; keep these cases sequential.
+	for _, tc := range []struct {
+		name, providerCode, remediation string
+		removeToken                     bool
+	}{
+		{"missing token", "", "msgvault add-account", true},
+		{"revoked token", "invalid_grant", "expired or been revoked", false},
+		{"unexpected provider error", "server_error", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			tokenPath, restore := seedTokenEnv(t, `{"access_token":"expired","refresh_token":"synthetic-refresh","expiry":"2000-01-01T00:00:00Z"}`)
+			defer restore()
+			cfg := testConfigValue()
+			cfg.OAuth.ClientSecrets = filepath.Join(filepath.Dir(filepath.Dir(tokenPath)), "client_secret.json")
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = fmt.Fprintf(w, `{"error":%q,"error_description":"synthetic-secret-token"}`, tc.providerCode)
+			}))
+			t.Cleanup(provider.Close)
+			var secrets map[string]map[string]any
+			require.NoError(json.Unmarshal([]byte(fakeClientSecrets), &secrets))
+			secrets["installed"]["token_uri"] = provider.URL
+			encoded, err := json.Marshal(secrets)
+			require.NoError(err)
+			require.NoError(os.WriteFile(cfg.OAuth.ClientSecrets, encoded, 0600))
+			if tc.removeToken {
+				require.NoError(os.Remove(tokenPath))
+			}
+			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			source := &store.Source{SourceType: "gmail", Identifier: scopeEscalationAccount}
+			client, err := newDaemonGmailClient(ctx, source.Identifier, source, oauthManagerCache(invocationFromContext(ctx)), invocationFromContext(ctx))
+			require.Error(err)
+			assert.Nil(client)
+			credentialErr, ok := errors.AsType[*provideridentity.GmailCredentialError](err)
+			if tc.remediation == "" {
+				assert.False(ok, "unexpected provider errors must remain internal")
+				return
+			}
+			require.True(ok)
+			assert.Contains(credentialErr.Remediation(), tc.remediation)
+			assert.NotContains(credentialErr.Remediation(), "synthetic-secret-token")
+		})
+	}
+	t.Run("missing OAuth configuration", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		cfg := &config.Config{}
+		ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+		source := &store.Source{SourceType: "gmail", Identifier: "owner@example.test"}
+		client, err := newDaemonGmailClient(ctx, source.Identifier, source, oauthManagerCache(invocationFromContext(ctx)), invocationFromContext(ctx))
+		require.Error(err)
+		assert.Nil(client)
+		credentialErr, ok := errors.AsType[*provideridentity.GmailCredentialError](err)
+		require.True(ok)
+		assert.Contains(credentialErr.Remediation(), "OAuth app and client-secrets file")
+	})
 }
 
 // TestRunScheduledIMAPSync_NoCredentials verifies that the IMAP path

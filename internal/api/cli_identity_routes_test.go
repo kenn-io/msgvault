@@ -19,9 +19,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/fastmail"
+	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/opserr"
+	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"golang.org/x/oauth2"
 )
 
 type cliIdentityProviderInventory struct {
@@ -48,6 +52,7 @@ type cliIdentityDiscoveryTestStore struct {
 		[]store.IdentityConfirmation,
 	) ([]store.IdentityConfirmationOutcome, error)
 	listSourcesErr error
+	realDiscovery  bool
 }
 
 func (s *cliIdentityDiscoveryTestStore) ListSources(sourceType string) ([]*store.Source, error) {
@@ -58,9 +63,12 @@ func (s *cliIdentityDiscoveryTestStore) ListSources(sourceType string) ([]*store
 }
 
 func (s *cliIdentityDiscoveryTestStore) CountIdentityDiscoveryMessagesContext(
-	_ context.Context,
-	_ int64,
+	ctx context.Context,
+	sourceID int64,
 ) (int64, error) {
+	if s.realDiscovery {
+		return s.Store.CountIdentityDiscoveryMessagesContext(ctx, sourceID)
+	}
 	if s.countErr != nil {
 		return 0, s.countErr
 	}
@@ -70,9 +78,12 @@ func (s *cliIdentityDiscoveryTestStore) CountIdentityDiscoveryMessagesContext(
 func (s *cliIdentityDiscoveryTestStore) ScanIdentityDiscoveryPageContext(
 	ctx context.Context,
 	sourceID, afterID int64,
-	_ int,
+	limit int,
 ) (store.IdentityDiscoveryPage, error) {
 	s.scannedSourceIDs = append(s.scannedSourceIDs, sourceID)
+	if s.realDiscovery {
+		return s.Store.ScanIdentityDiscoveryPageContext(ctx, sourceID, afterID, limit)
+	}
 	if afterID == 0 {
 		return s.page, nil
 	}
@@ -970,6 +981,125 @@ func TestCLIIdentityMutationsRejectExplicitNonPositiveSourceIDWithoutMutation(t 
 			} else {
 				assertions.Empty(identities)
 			}
+		})
+	}
+}
+
+func TestCLIIdentityDiscoverGmailProfilePreviewAndApply(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	srv, wrapped, _ := newCLIIdentityDiscoveryTestServer(t)
+	wrapped.realDiscovery = true
+	source, err := wrapped.GetOrCreateSource("gmail", "OWNER@example.test")
+	require.NoError(err)
+	other, err := wrapped.GetOrCreateSource("gmail", "other@example.test")
+	require.NoError(err)
+	// An IMAP source can use the same address; select the exact Gmail source.
+	imapSource, err := wrapped.GetOrCreateSource("imap", source.Identifier)
+	require.NoError(err)
+	var selectedSourceIDs []int64
+	srv.gmailProfileAddress = func(ctx context.Context, selected *store.Source) (string, error) {
+		selectedSourceIDs = append(selectedSourceIDs, selected.ID)
+		return "owner@example.test", nil
+	}
+	preview := discoverResultEvent(t, postDiscoverNDJSON(t, srv, fmt.Sprintf(`{"source_id":%d,"provider":true}`, source.ID)))
+	identities, err := wrapped.ListAccountIdentities(source.ID)
+	require.NoError(err)
+	assert.Empty(identities, "preview must not take ownership")
+	var found bool
+	for _, candidate := range preview.Candidates {
+		if candidate.Identifier == "owner@example.test" {
+			found = true
+			assert.Equal([]string{"oauth"}, candidate.Signals)
+		}
+	}
+	require.True(found, "authenticated profile must be proposed")
+	assert.Len(preview.Candidates, 1, "zero archived messages still yield provider evidence")
+	_ = discoverResultEvent(t, postDiscoverNDJSON(t, srv, fmt.Sprintf(`{"source_id":%d,"provider":true,"apply":true}`, source.ID)))
+	identities, err = wrapped.ListAccountIdentities(source.ID)
+	require.NoError(err)
+	var signal string
+	for _, identity := range identities {
+		if identity.Address == "owner@example.test" {
+			signal = identity.SourceSignal
+		}
+	}
+	assert.Equal("oauth", signal)
+	untouched, err := wrapped.ListAccountIdentities(other.ID)
+	require.NoError(err)
+	assert.Empty(untouched)
+	untouched, err = wrapped.ListAccountIdentities(imapSource.ID)
+	require.NoError(err)
+	assert.Empty(untouched)
+	assert.Equal([]int64{source.ID, source.ID}, selectedSourceIDs)
+	requireIdentityDiscoveryCacheBuild(t, wrapped)
+}
+
+func TestCLIIdentityDiscoverGmailProfileFailurePrecedesScan(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		profile func(context.Context, *store.Source) (string, error)
+		status  int
+		message string
+	}{
+		{"unavailable", nil, http.StatusBadRequest, ""},
+		{"mismatched", func(context.Context, *store.Source) (string, error) { return "other@example.test", nil }, http.StatusBadRequest, ""},
+		{"provider failure", func(context.Context, *store.Source) (string, error) { return "", errors.New("synthetic-secret-token") }, http.StatusInternalServerError, ""},
+		{"arbitrary invalid error", func(context.Context, *store.Source) (string, error) {
+			return "", opserr.Invalid(errors.New("synthetic-secret-token"))
+		}, http.StatusInternalServerError, ""},
+		{"missing credentials", func(context.Context, *store.Source) (string, error) {
+			return "", provideridentity.NewGmailCredentialError(provideridentity.GmailTokenMissing, errors.New("synthetic-secret-token"))
+		}, http.StatusBadRequest, "msgvault add-account"},
+		{"revoked credentials", func(context.Context, *store.Source) (string, error) {
+			return "", fmt.Errorf("profile: %w", provideridentity.NewGmailCredentialError(provideridentity.GmailAuthorizationRevoked, errors.New("synthetic-secret-token")))
+		}, http.StatusBadRequest, "expired or been revoked"},
+		{"provider revoked authorization", func(context.Context, *store.Source) (string, error) {
+			return "", provideridentity.ClassifyGmailProfileError(&oauth2.RetrieveError{ErrorCode: "invalid_grant", ErrorDescription: "synthetic-secret-token"}, false)
+		}, http.StatusBadRequest, "expired or been revoked"},
+		{"cached token rejected", func(context.Context, *store.Source) (string, error) {
+			return "", provideridentity.ClassifyGmailProfileError(fmt.Errorf("synthetic-secret-token: %w", &gmail.StatusError{StatusCode: http.StatusUnauthorized}), false)
+		}, http.StatusBadRequest, "expired or been revoked"},
+		{"service-account authorization rejected", func(context.Context, *store.Source) (string, error) {
+			return "", provideridentity.ClassifyGmailProfileError(&oauth2.RetrieveError{ErrorCode: "invalid_grant", ErrorDescription: "synthetic-secret-token"}, true)
+		}, http.StatusBadRequest, "domain-wide delegation"},
+		{"provider transient failure", func(context.Context, *store.Source) (string, error) {
+			return "", provideridentity.ClassifyGmailProfileError(&oauth2.RetrieveError{ErrorCode: "server_error", ErrorDescription: "synthetic-secret-token"}, false)
+		}, http.StatusInternalServerError, ""},
+		{"OAuth configuration", func(context.Context, *store.Source) (string, error) {
+			return "", provideridentity.NewGmailCredentialError(provideridentity.GmailOAuthConfiguration, errors.New("synthetic-secret-token"))
+		}, http.StatusBadRequest, "OAuth app and client-secrets file"},
+		{"service-account configuration", func(context.Context, *store.Source) (string, error) {
+			return "", provideridentity.NewGmailCredentialError(provideridentity.GmailServiceAccountConfiguration, errors.New("synthetic-secret-token"))
+		}, http.StatusBadRequest, "service_account_key"},
+		{"unknown credential issue", func(context.Context, *store.Source) (string, error) {
+			return "", provideridentity.NewGmailCredentialError(0, errors.New("synthetic-secret-token"))
+		}, http.StatusInternalServerError, ""},
+		{"canceled", func(context.Context, *store.Source) (string, error) { return "", context.Canceled }, http.StatusServiceUnavailable, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			assert := assert.New(t)
+			srv, wrapped, _ := newCLIIdentityDiscoveryTestServer(t)
+			source, err := wrapped.GetOrCreateSource("gmail", "primary@example.test")
+			require.NoError(err)
+			srv.gmailProfileAddress = tc.profile
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/identities/discover", strings.NewReader(fmt.Sprintf(`{"source_id":%d,"provider":true,"apply":true}`, source.ID)))
+			req.Header.Set("Content-Type", "application/json")
+			resp := httptest.NewRecorder()
+			srv.Router().ServeHTTP(resp, req)
+			assert.Equal(tc.status, resp.Code, "body: %s", resp.Body.String())
+			assert.NotContains(resp.Body.String(), "synthetic-secret-token")
+			if tc.message != "" {
+				assert.Contains(resp.Body.String(), tc.message)
+			}
+			assert.Empty(wrapped.scannedSourceIDs)
+			identities, err := wrapped.ListAccountIdentities(source.ID)
+			require.NoError(err)
+			assert.Empty(identities)
 		})
 	}
 }

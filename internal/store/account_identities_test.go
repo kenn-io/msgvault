@@ -514,6 +514,35 @@ func TestRemoveAccountIdentity_Hit(t *testing.T) {
 	assert.Empty(rows)
 }
 
+func TestRemoveAccountIdentity_SavesDefaultIdentityOptOutAfterLastRemoval(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+
+	require.NoError(st.UpdateSourceSyncConfig(f.Source.ID,
+		`{"account_email":"owner@example.test","no_default_identity":false}`))
+	require.NoError(st.AddAccountIdentity(f.Source.ID, "owner@example.test", "account-identifier"))
+	require.NoError(st.AddAccountIdentity(f.Source.ID, "alias@example.test", "manual"))
+
+	removed, err := st.RemoveAccountIdentity(f.Source.ID, "alias@example.test")
+	require.NoError(err)
+	require.EqualValues(1, removed)
+	source, err := st.GetSourceByID(f.Source.ID)
+	require.NoError(err)
+	require.JSONEq(`{"account_email":"owner@example.test","no_default_identity":false}`,
+		source.SyncConfig.String)
+
+	removed, err = st.RemoveAccountIdentity(f.Source.ID, "owner@example.test")
+	require.NoError(err)
+	require.EqualValues(1, removed)
+	source, err = st.GetSourceByID(f.Source.ID)
+	require.NoError(err)
+	require.True(source.SyncConfig.Valid)
+	assert.JSONEq(`{"account_email":"owner@example.test","no_default_identity":true}`,
+		source.SyncConfig.String)
+}
+
 func TestRemoveAccountIdentity_Miss(t *testing.T) {
 	f := storetest.New(t)
 	st := f.Store

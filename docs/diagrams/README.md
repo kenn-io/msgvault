@@ -12,7 +12,7 @@ screenshot plus an ImageMagick trim/pad.
 | `account-collection-concept.html`   | `docs/assets/generated/concepts/account-collection-concept.png`    | Accounts, Identities, and Collections    |
 | `deduplication-concept.html`        | `docs/assets/generated/concepts/deduplication-concept.png`         | Deduplication                            |
 | `safety-ladder-concept.html`        | `docs/assets/generated/concepts/safety-ladder-concept.png`         | Deduplication (the five-rung safety ladder) |
-| `survivor-selection-concept.html`   | `docs/assets/generated/concepts/survivor-selection-concept.png`    | Deduplication (survivor selection)       |
+| `survivor-selection-concept.html`   | `docs/assets/generated/concepts/survivor-selection-concept.png`    | HTML reference; Deduplication uses Mermaid |
 | `oauth-multi-account-concept.html`  | `docs/assets/generated/concepts/oauth-multi-account-concept.png`   | Accounts page and the OAuth Setup guide  |
 
 ## Building
@@ -80,3 +80,7 @@ The deduplication and safety-ladder raster captures are currently omitted from
 the public reading path. Their HTML sources now distinguish IMAP Trash from
 explicit permanent deletion; regenerate and inspect both before restoring any
 links to the captures on the generated-assets branch.
+
+The survivor-selection guide uses Mermaid while its raster awaits regeneration.
+Its HTML source includes the source metadata quality tier; inspect a regenerated
+PNG before restoring the raster to the public reading path.

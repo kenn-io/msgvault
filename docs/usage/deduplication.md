@@ -25,20 +25,54 @@ Survivor selection is deterministic and explainable, and the reasoning is printe
 
 **Stage 2, priority list.** Among the eligible copies, msgvault prefers, in order:
 
-1. Source type, following `--prefer` or the default order `gmail,imap,mbox,emlx,hey`.
+1. Source type, following `--prefer` or the default order `gmail,imap,msmail,mbox,emlx,hey`.
 2. Presence of the complete raw MIME payload.
 3. More attachments.
 4. An attachment-presence signal when attachment counts tie.
 5. A larger payload.
-6. Richer label or folder metadata.
-7. Earlier archive timestamp.
-8. A stable row ID, as the final tie-breaker.
+6. Higher source metadata quality.
+7. Richer label or folder metadata.
+8. Earlier archive timestamp.
+9. A stable row ID, as the final tie-breaker.
 
-Earlier rules win outright; later rules apply only when all earlier ones tie. The attachment-count, attachment-presence, and payload-size rules apply only when every eligible copy has raw MIME and all their normalized MIME hashes match. A shared `Message-ID` alone cannot make those payload-completeness signals authoritative. The survivor inherits the union of labels from the copies it replaces, and backfills raw MIME from a non-survivor if it was missing the original payload.
+Earlier rules win outright; later rules apply only when all earlier ones tie.
+The attachment-count, attachment-presence, and payload-size rules apply only
+when every eligible copy has raw MIME and all their normalized MIME hashes
+match. A shared `Message-ID` alone cannot make those payload-completeness
+signals authoritative.
 
-<figure data-lightbox style="margin: 1.5rem 0; text-align: center;">
-  <img src="/docs/assets/generated/concepts/survivor-selection-concept.png" alt="Survivor selection filters to eligible sent copies first, then considers source preference and raw MIME. Only when every eligible copy has matching normalized MIME does it compare attachments, attachment presence, and payload size before labels, archive time, and stable row ID." loading="lazy" style="width: 100%; display: block;" />
-</figure>
+Source metadata quality counts three independent facts, one point each: a
+native Gmail, IMAP, or Microsoft Mail message ID, threading evidence, and an
+RFC822 `Message-ID`.
+Threading evidence means a recorded Gmail provider thread ID, preserved Google
+Groups grouping derived from a valid exported `X-GM-THRID`, an `In-Reply-To`
+header in archived metadata, or a resolved reply parent. Generic import and
+fallback conversation IDs do not count. Older Gmail rows without recorded provider
+thread evidence use their stored reply facts; ordinary sync does not backfill
+this evidence for messages it skips. This comparison applies even when
+normalized MIME hashes differ.
+
+The survivor inherits the union of labels from the copies it replaces, and
+backfills raw MIME from a non-survivor if it was missing the original payload.
+
+```mermaid
+flowchart TD
+    A[Duplicate group] --> B{Any sent copy?}
+    B -- Yes --> C[Keep sent copies eligible]
+    B -- No --> D[Keep all copies eligible]
+    C --> E[1. Source preference]
+    D --> E
+    E --> F[2. Raw MIME present]
+    F --> G{All eligible normalized MIME hashes match?}
+    G -- Yes --> H[3. Attachment count]
+    H --> I[4. Attachment presence]
+    I --> J[5. Payload size]
+    J --> K[6. Source metadata quality]
+    G -- No --> K
+    K --> L[7. Label or folder richness]
+    L --> M[8. Earlier archive timestamp]
+    M --> N[9. Stable row ID]
+```
 
 ## Choosing a Scope
 

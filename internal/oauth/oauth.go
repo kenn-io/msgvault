@@ -872,7 +872,7 @@ func missingScopes(required, granted []string) []string {
 	return missing
 }
 
-// sameGoogleAccount returns true if two email addresses belong to the
+// SameGoogleAccount returns true if two email addresses belong to the
 // same Google account. This covers the common alias cases:
 //   - exact match (case-insensitive)
 //   - gmail.com dot-insensitive (first.last@gmail.com == firstlast@gmail.com)
@@ -881,7 +881,7 @@ func missingScopes(required, granted []string) []string {
 //
 // For Google Workspace domains we cannot verify aliases without an
 // admin API call, so we fall back to exact-match only.
-func sameGoogleAccount(expected, canonical string) bool {
+func SameGoogleAccount(expected, canonical string) bool {
 	if strings.EqualFold(expected, canonical) {
 		return true
 	}
@@ -1336,7 +1336,7 @@ func fetchTokenProfileEmailFromEndpoint(
 		return "", fmt.Errorf("parse profile for %s: response did not include an email address", email)
 	}
 
-	if !sameGoogleAccount(email, profileEmail) {
+	if !SameGoogleAccount(email, profileEmail) {
 		return "", &TokenMismatchError{Expected: email, Actual: profileEmail}
 	}
 
@@ -1432,7 +1432,7 @@ func RevokeStoredCredential(ctx context.Context, tokensDir, email string) error 
 // case, dots, plus-addresses, googlemail.com.
 //
 // Read-only decisions use this to fail closed: authorization accepts alias
-// variants (sameGoogleAccount), so without this check a --readonly run
+// variants (SameGoogleAccount), so without this check a --readonly run
 // through an alias spelling would read as a fresh account while an
 // equivalent stored spelling kept an unnarrowed, possibly write-capable
 // credential.
@@ -1465,7 +1465,7 @@ func EquivalentStoredGrantInUse(tokensDir, email string, remainingEmails []strin
 		return false
 	}
 	for _, remainingEmail := range remainingEmails {
-		if !sameGoogleAccount(email, remainingEmail) {
+		if !SameGoogleAccount(email, remainingEmail) {
 			continue
 		}
 		remaining, err := m.loadTokenFile(remainingEmail)
@@ -1498,7 +1498,7 @@ func findEquivalentTokenEmails(tokensDir, email string) []string {
 			}
 		}
 		stored := strings.TrimSuffix(name, ".json")
-		if sameGoogleAccount(email, stored) {
+		if SameGoogleAccount(email, stored) {
 			equivalents = append(equivalents, stored)
 		}
 	}

@@ -72,6 +72,30 @@ func TestRepairMessageLeavesSentAttributionToIdentityDiscovery(t *testing.T) {
 		"identity attribution comes from confirmed identities, not the SENT label")
 }
 
+func TestRepairMessagePreservesMetadataAndRecordsProviderThread(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, stored, want string }{
+		{"object", `{"custom":{"keep":true},"email_in_reply_to":"<parent@example.test>"}`, `{"custom":{"keep":true},"email_in_reply_to":"<parent@example.test>","gmail_thread_id":"provider-thread"}`},
+		{"malformed", `{"partial":true,`, `{"gmail_thread_id":"provider-thread"}`},
+		{"array", `[{"old":"value"}]`, `{"gmail_thread_id":"provider-thread"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			env := newTestEnv(t)
+			source := env.CreateSource(t)
+			id := seedRepairRow(t, env.Store, source.ID, "gmail-metadata", "old-thread", "old")
+			require.NoError(env.Store.SetMessageMetadata(id, sql.NullString{Valid: true, String: tc.stored}))
+			env.Mock.Messages["gmail-metadata"] = repairRaw("gmail-metadata", "provider-thread", "repaired", "body", nil)
+			_, err := env.Syncer.RepairMessage(t.Context(), RepairRequest{Reference: "gmail-metadata", SourceID: source.ID})
+			require.NoError(err)
+			var encoded string
+			require.NoError(env.Store.DB().QueryRow(`SELECT metadata FROM messages WHERE id = ?`, id).Scan(&encoded))
+			assert.JSONEq(t, tc.want, encoded)
+		})
+	}
+}
+
 func TestRepairMessageRejectsAmbiguousNumericInterpretations(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
@@ -1142,4 +1143,122 @@ func TestStore_GetDuplicateGroupMessagesBatch_FiltersBySourceID(t *testing.T) {
 	require.Len(scoped["rfc822-scoped"], 2)
 	assert.Equal(idA, scoped["rfc822-scoped"][0].ID)
 	assert.Equal(idB, scoped["rfc822-scoped"][1].ID)
+}
+
+func TestStore_DedupMetadataQuality(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, sourceType, metadata string
+		want                       int
+	}{
+		{"gmail provider and RFC ID", "gmail", `{}`, 2},
+		{"imap provider and RFC ID", "imap", `{}`, 2},
+		{"msmail provider and RFC ID", "msmail", `{}`, 2},
+		{"synthetic import IDs", "mbox", `{}`, 1},
+		{"genuine gmail thread", "gmail", `{"gmail_thread_id":"src"}`, 3},
+		{"import reply", "mbox", `{"email_in_reply_to":"parent@example.test"}`, 2},
+		{"orphan reply", "gmail", `{"email_in_reply_to":"missing@example.test"}`, 3},
+		{"thread categories count once", "gmail", `{"gmail_thread_id":"src","email_in_reply_to":"parent@example.test"}`, 3},
+		{"whitespace thread", "gmail", `{"gmail_thread_id":"  "}`, 2},
+		{"mistyped header", "gmail", `{"email_in_reply_to":123}`, 2},
+		{"null header", "gmail", `{"email_in_reply_to":null}`, 2},
+		{"import cannot claim provider thread", "emlx", `{"gmail_thread_id":"src"}`, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE sources SET source_type = ? WHERE id = ?"), tc.sourceType, f.Source.ID)
+			require.NoError(err)
+			id := newRFC822Message(t, f, "src", "quality@example.test")
+			require.NoError(f.Store.SetMessageMetadata(id, sql.NullString{String: tc.metadata, Valid: true}))
+			require.NoError(f.Store.UpsertMessageRaw(id, []byte("Subject: Quality\r\n\r\nBody")))
+			single, err := f.Store.GetDuplicateGroupMessages("quality@example.test")
+			require.NoError(err)
+			require.Len(single, 1)
+			assert.Equal(tc.want, single[0].MetadataQuality)
+			batch, err := f.Store.GetDuplicateGroupMessagesBatch([]string{"quality@example.test"})
+			require.NoError(err)
+			require.Len(batch["quality@example.test"], 1)
+			assert.Equal(tc.want, batch["quality@example.test"][0].MetadataQuality)
+			raw, err := f.Store.GetAllRawMIMECandidates()
+			require.NoError(err)
+			require.Len(raw, 1)
+			assert.Equal(tc.want, raw[0].MetadataQuality)
+		})
+	}
+}
+
+func TestStore_DedupMetadataQualityRejectsFallbackConversationKeys(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, sourceType, key string }{
+		{"group fallback", "google-groups", "generated-fallback"},
+		{"incomplete provider marker", "google-groups", "google-groups:invalid"},
+		{"other import cannot claim group thread", "mbox", "google-groups:" + strings.Repeat("0", 64)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE sources SET source_type = ? WHERE id = ?"), tc.sourceType, f.Source.ID)
+			require.NoError(err)
+			_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE conversations SET source_conversation_id = ? WHERE id = ?"), tc.key, f.ConvID)
+			require.NoError(err)
+			id := newRFC822Message(t, f, "src", "conversation@example.test")
+			require.NoError(f.Store.UpsertMessageRaw(id, []byte("Subject: Fallback\r\n\r\nBody")))
+			single, err := f.Store.GetDuplicateGroupMessages("conversation@example.test")
+			require.NoError(err)
+			require.Len(single, 1)
+			assert.Equal(1, single[0].MetadataQuality)
+			batch, err := f.Store.GetDuplicateGroupMessagesBatch([]string{"conversation@example.test"})
+			require.NoError(err)
+			require.Len(batch["conversation@example.test"], 1)
+			assert.Equal(1, batch["conversation@example.test"][0].MetadataQuality)
+			raw, err := f.Store.GetAllRawMIMECandidates()
+			require.NoError(err)
+			require.Len(raw, 1)
+			assert.Equal(1, raw[0].MetadataQuality)
+		})
+	}
+}
+
+func TestStore_DedupMetadataQualityMissingFacts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, metadata string
+		parent         bool
+		want           int
+	}{
+		{"null metadata", "", false, 0},
+		{"whitespace header", `{"email_in_reply_to":" "}`, false, 0},
+		{"resolved reply parent", "", true, 1},
+		{"mistyped provider thread", `{"gmail_thread_id":true}`, false, 0},
+		{"unrelated metadata", `{"note":"saved"}`, false, 0},
+		{"damaged metadata", `{"gmail_thread_id":"partial",`, false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			f := storetest.New(t)
+			if tc.name == "damaged metadata" && f.Store.IsPostgreSQL() {
+				t.Skip("PostgreSQL JSONB rejects malformed JSON at write time")
+			}
+			id := f.CreateMessage("  ")
+			if tc.metadata != "" {
+				require.NoError(f.Store.SetMessageMetadata(id, sql.NullString{String: tc.metadata, Valid: true}))
+			}
+			if tc.parent {
+				parent := f.CreateMessage("parent")
+				_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET reply_to_message_id = ? WHERE id = ?"), parent, id)
+				require.NoError(err)
+			}
+			require.NoError(f.Store.UpsertMessageRaw(id, []byte("Subject: Missing facts\r\n\r\nBody")))
+			raw, err := f.Store.GetAllRawMIMECandidates()
+			require.NoError(err)
+			require.Len(raw, 1)
+			assert.Equal(t, tc.want, raw[0].MetadataQuality)
+		})
+	}
 }

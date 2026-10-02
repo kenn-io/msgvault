@@ -48,6 +48,7 @@ type DuplicateMessageRow struct {
 	SourceType       string
 	SourceIdentifier string
 	SourceMessageID  string
+	MetadataQuality  int
 	Subject          string
 	SentAt           time.Time
 	ArchivedAt       time.Time
@@ -79,6 +80,7 @@ type ContentHashCandidate struct {
 	SourceType       string
 	SourceIdentifier string
 	SourceMessageID  string
+	MetadataQuality  int
 	Subject          string
 	SentAt           time.Time
 	ArchivedAt       time.Time
@@ -259,6 +261,12 @@ func (s *Store) FindDuplicatesByRFC822ID(sourceIDs ...int64) ([]DuplicateGroupKe
 const duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identifier,
 		       m.source_message_id,
 		       COALESCE(m.subject, ''), m.sent_at, m.archived_at,
+		       COALESCE(m.rfc822_message_id, ''), COALESCE(CAST(m.metadata AS TEXT), ''),
+		       CASE WHEN m.reply_to_message_id IS NOT NULL THEN 1 ELSE 0 END AS has_reply_parent,
+		       CASE WHEN s.source_type = 'google-groups' THEN
+		           COALESCE((SELECT c.source_conversation_id FROM conversations c
+		               WHERE c.id = m.conversation_id AND c.source_id = m.source_id), '')
+		           ELSE '' END AS provider_thread_key,
 		       (CASE WHEN mr.message_id IS NOT NULL THEN 1 ELSE 0 END) AS has_raw,
 		       COALESCE(m.size_estimate, 0) AS payload_bytes,
 		       COALESCE(m.attachment_count, 0) AS attachment_count,
@@ -328,10 +336,12 @@ func (s *Store) GetDuplicateGroupMessages(
 	for rows.Next() {
 		var dm DuplicateMessageRow
 		var sentAt, archivedAt sql.NullTime
+		var evidence duplicateMetadataEvidence
 		var hasRaw, hasAttachments, isFromMe, hasSent int
 		if err := rows.Scan(
 			&dm.ID, &dm.SourceID, &dm.SourceType, &dm.SourceIdentifier,
 			&dm.SourceMessageID, &dm.Subject, &sentAt, &archivedAt,
+			&evidence.rfc822ID, &evidence.metadata, &evidence.hasReplyParent, &evidence.providerThreadKey,
 			&hasRaw, &dm.PayloadBytes, &dm.AttachmentCount, &hasAttachments,
 			&dm.LabelCount, &isFromMe, &hasSent,
 			&dm.FromEmail,
@@ -344,6 +354,7 @@ func (s *Store) GetDuplicateGroupMessages(
 		if archivedAt.Valid {
 			dm.ArchivedAt = archivedAt.Time
 		}
+		dm.MetadataQuality = evidence.quality(dm.SourceType, dm.SourceMessageID)
 		dm.HasRawMIME = hasRaw == 1
 		dm.HasAttachments = hasAttachments == 1
 		dm.IsFromMe = isFromMe == 1
@@ -431,10 +442,12 @@ func (s *Store) GetDuplicateGroupMessagesBatchContext(
 			var dm DuplicateMessageRow
 			var rfc822ID string
 			var sentAt, archivedAt sql.NullTime
+			var evidence duplicateMetadataEvidence
 			var hasRaw, hasAttachments, isFromMe, hasSent int
 			if err := rows.Scan(
 				&rfc822ID, &dm.ID, &dm.SourceID, &dm.SourceType, &dm.SourceIdentifier,
 				&dm.SourceMessageID, &dm.Subject, &sentAt, &archivedAt,
+				&evidence.rfc822ID, &evidence.metadata, &evidence.hasReplyParent, &evidence.providerThreadKey,
 				&hasRaw, &dm.PayloadBytes, &dm.AttachmentCount, &hasAttachments,
 				&dm.LabelCount, &isFromMe, &hasSent,
 				&dm.FromEmail,
@@ -447,6 +460,7 @@ func (s *Store) GetDuplicateGroupMessagesBatchContext(
 			if archivedAt.Valid {
 				dm.ArchivedAt = archivedAt.Time
 			}
+			dm.MetadataQuality = evidence.quality(dm.SourceType, dm.SourceMessageID)
 			dm.HasRawMIME = hasRaw == 1
 			dm.HasAttachments = hasAttachments == 1
 			dm.IsFromMe = isFromMe == 1
@@ -539,6 +553,12 @@ func (s *Store) GetAllRawMIMECandidates(
 		SELECT m.id, m.source_id, s.source_type, s.identifier,
 		       m.source_message_id,
 		       COALESCE(m.subject, ''), m.sent_at, m.archived_at,
+		       COALESCE(m.rfc822_message_id, ''), COALESCE(CAST(m.metadata AS TEXT), ''),
+		       CASE WHEN m.reply_to_message_id IS NOT NULL THEN 1 ELSE 0 END AS has_reply_parent,
+		       CASE WHEN s.source_type = 'google-groups' THEN
+		           COALESCE((SELECT c.source_conversation_id FROM conversations c
+		               WHERE c.id = m.conversation_id AND c.source_id = m.source_id), '')
+		           ELSE '' END AS provider_thread_key,
 		       COALESCE(m.size_estimate, 0) AS payload_bytes,
 		       COALESCE(m.attachment_count, 0) AS attachment_count,
 		       CASE WHEN COALESCE(m.has_attachments, FALSE) THEN 1 ELSE 0 END AS has_attachments,
@@ -585,10 +605,12 @@ func (s *Store) GetAllRawMIMECandidates(
 	for rows.Next() {
 		var c ContentHashCandidate
 		var sentAt, archivedAt sql.NullTime
+		var evidence duplicateMetadataEvidence
 		var hasAttachments, isFromMe, hasSent int
 		if err := rows.Scan(
 			&c.ID, &c.SourceID, &c.SourceType, &c.SourceIdentifier,
 			&c.SourceMessageID, &c.Subject, &sentAt, &archivedAt,
+			&evidence.rfc822ID, &evidence.metadata, &evidence.hasReplyParent, &evidence.providerThreadKey,
 			&c.PayloadBytes, &c.AttachmentCount, &hasAttachments,
 			&c.LabelCount, &isFromMe, &hasSent, &c.FromEmail,
 		); err != nil {
@@ -600,6 +622,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		if archivedAt.Valid {
 			c.ArchivedAt = archivedAt.Time
 		}
+		c.MetadataQuality = evidence.quality(c.SourceType, c.SourceMessageID)
 		c.HasAttachments = hasAttachments == 1
 		c.IsFromMe = isFromMe == 1
 		c.HasSentLabel = hasSent == 1

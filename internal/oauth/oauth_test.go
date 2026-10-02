@@ -1113,8 +1113,8 @@ func TestSameGoogleAccount(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := sameGoogleAccount(tt.expected, tt.canonical)
-			assert.Equal(t, tt.want, got, "sameGoogleAccount(%q, %q)", tt.expected, tt.canonical)
+			got := SameGoogleAccount(tt.expected, tt.canonical)
+			assert.Equal(t, tt.want, got, "SameGoogleAccount(%q, %q)", tt.expected, tt.canonical)
 		})
 	}
 }

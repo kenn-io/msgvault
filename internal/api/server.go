@@ -437,6 +437,7 @@ type Server struct {
 	personAgendaOperations   PersonAgendaOperations
 	taskIdentityResolver     TaskIdentityResolver
 	fastmailInventoryFactory provideridentity.Factory
+	gmailProfileAddress      func(context.Context, *store.Source) (string, error)
 	// personBriefGenerator runs one manual, forced person brief through the
 	// daemon's people sweep worker. Nil in every process that does not own the
 	// worker, which makes POST /people/{id}/brief/generate report unavailable.
@@ -578,6 +579,9 @@ type ServerOptions struct {
 	// FastmailInventoryFactory is the provider-read seam used by identity
 	// discovery. Nil constructs the production JMAP client.
 	FastmailInventoryFactory provideridentity.Factory
+	// GmailProfileAddress reads one profile using the selected source credentials.
+	// Nil leaves Gmail provider discovery unavailable. Ordinary sync does not use it.
+	GmailProfileAddress func(context.Context, *store.Source) (string, error)
 }
 
 // NewServer creates a new API server.
@@ -656,6 +660,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		personAgendaOperations:   opts.PersonAgendaOperations,
 		taskIdentityResolver:     opts.TaskIdentityResolver,
 		fastmailInventoryFactory: fastmailInventoryFactory,
+		gmailProfileAddress:      opts.GmailProfileAddress,
 		started:                  make(chan struct{}),
 	}
 	s.analyticsState.Store(&analyticsEngineState{

@@ -71,19 +71,16 @@ func setDefaultIdentityOptOut(cmd *cobra.Command, s *store.Store, source *store.
 	return nil
 }
 
-// confirmDefaultIdentity writes one confirmed identifier to a freshly
-// created source's identity. Best-effort: any error is logged and swallowed
-// so a partially failed identity write never breaks ingest. Empty identifiers
-// are a silent no-op.
+// confirmDefaultIdentity writes one confirmed identifier to a source that has
+// no saved opt-out or existing confirmed identity. Best-effort: any error is
+// logged and swallowed so a partially failed identity write never breaks
+// ingest. Empty identifiers are a silent no-op.
 //
 // Skips the write when the source opted out or already has an identity row.
-// add-account / add-imap / add-o365 / import-* commands all call this on
-// every invocation (including reruns and rebinds), so without this guard
-// an identity the user explicitly removed via `identity remove` would be
-// re-added on the next ingest re-run, silently affecting dedup sent-copy
-// detection. The guard preserves the documented "freshly created source"
-// intent while degrading gracefully if the user has removed every
-// identity (in which case the default is restored, which is desirable).
+// Removing a source's last confirmed identity saves the default-identity
+// opt-out, so scheduled sync and later add-command reruns cannot restore the
+// removed identifier. A source can explicitly clear that choice with
+// --no-default-identity=false.
 //
 // **Ordering note:** ingest commands MUST call confirmDefaultIdentity
 // BEFORE runPostSourceCreateMigrations on the same invocation. The

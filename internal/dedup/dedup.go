@@ -183,6 +183,7 @@ type DuplicateMessage struct {
 	SourceType       string
 	SourceIdentifier string
 	SourceMessageID  string
+	MetadataQuality  int
 	Subject          string
 	SentAt           time.Time
 	HasRawMIME       bool
@@ -434,7 +435,8 @@ func (e *Engine) duplicateMessage(
 	return DuplicateMessage{
 		ID: row.ID, SourceID: row.SourceID, SourceType: row.SourceType,
 		SourceIdentifier: row.SourceIdentifier, SourceMessageID: row.SourceMessageID,
-		Subject: row.Subject, SentAt: row.SentAt, HasRawMIME: row.HasRawMIME,
+		MetadataQuality: row.MetadataQuality,
+		Subject:         row.Subject, SentAt: row.SentAt, HasRawMIME: row.HasRawMIME,
 		PayloadBytes: row.PayloadBytes, AttachmentCount: row.AttachmentCount,
 		HasAttachments: row.HasAttachments, LabelCount: row.LabelCount,
 		ArchivedAt: row.ArchivedAt, IsFromMe: row.IsFromMe,
@@ -595,6 +597,7 @@ func (e *Engine) scanNormalizedHashGroups(
 						SourceType:       item.candidate.SourceType,
 						SourceIdentifier: item.candidate.SourceIdentifier,
 						SourceMessageID:  item.candidate.SourceMessageID,
+						MetadataQuality:  item.candidate.MetadataQuality,
 						Subject:          item.candidate.Subject,
 						SentAt:           item.candidate.SentAt,
 						HasRawMIME:       true,
@@ -905,6 +908,9 @@ func (e *Engine) isBetter(
 		if better, decided := payloadCompletenessPreference(candidate, current); decided {
 			return better
 		}
+	}
+	if candidate.MetadataQuality != current.MetadataQuality {
+		return candidate.MetadataQuality > current.MetadataQuality
 	}
 	if candidate.LabelCount != current.LabelCount {
 		return candidate.LabelCount > current.LabelCount
@@ -1635,8 +1641,9 @@ func (e *Engine) formatSurvivorMethodology(sb *strings.Builder) {
 		fmt.Fprintf(sb, "  %d. %s\n", i+1, sourceType)
 	}
 	sb.WriteString("  Tiebreakers: has raw MIME > when all eligible copies have matching normalized MIME, " +
-		"more attachments > attachment signal > larger payload > more labels > " +
-		"earlier archived_at > lower id.\n\n")
+		"more attachments > attachment signal > larger payload; then metadata quality > more labels > " +
+		"earlier archived_at > lower id.\n")
+	sb.WriteString("  Metadata quality: one point each for native provider message ID, threading evidence, and Message-ID.\n\n")
 }
 
 func (e *Engine) formatSentMethodology(sb *strings.Builder) {
