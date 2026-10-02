@@ -136,25 +136,95 @@ func TestSchemaVersionPostgresMalformedAndFuture(t *testing.T) {
 	check.Zero(version, "missing legacy metadata must not be created by probe")
 }
 
-// schemaContractDigests records, per SchemaVersion, the digest of the schema
-// files and migration list that version certifies. Append only.
-var schemaContractDigests = []string{
-	1: "3809495eed9b8cc44c4f3d9615bf2ea9966074a4546d754985ed4e7403af64b6",
-}
+// schemaContractDigests and schemaContractPostgresDigests record, per
+// SchemaVersion, the digest of what that version builds on each backend.
+// Append only.
+var (
+	schemaContractDigests = []string{
+		1: "99160ef94757713c504e16818c9d664932699459ad2d8090e89c60d40e5120d2",
+	}
+	schemaContractPostgresDigests = []string{
+		1: "f4dea875d11e5728cd2f0bcbd81e67b8d6356e73b96cc5491494564d6a1064d6",
+	}
+)
 
 func TestSchemaVersionContract(t *testing.T) {
-	digest := schemaContractDigest(t)
-	last := len(schemaContractDigests) - 1
-	if last != store.SchemaVersion || schemaContractDigests[last] != digest {
-		t.Fatalf("schema files or migration list changed without a SchemaVersion bump: "+
-			"set store.SchemaVersion to %d and append %q to schemaContractDigests", last+1, digest)
+	checkSchemaContract(t, "schemaContractDigests", schemaContractDigests, schemaContractDigest(t))
+	if s := testutil.NewTestStore(t); s.IsPostgreSQL() {
+		checkSchemaContract(t, "schemaContractPostgresDigests", schemaContractPostgresDigests, schemaContractPostgresDigest(t, s))
+	} else if len(schemaContractPostgresDigests) != len(schemaContractDigests) {
+		assert.Failf(t, "missing PostgreSQL schema digest", "append the PostgreSQL digest for SchemaVersion %d to schemaContractPostgresDigests; "+
+			"this test prints it when run with MSGVAULT_TEST_DB set to a PostgreSQL URL", store.SchemaVersion)
 	}
 }
 
+func checkSchemaContract(t *testing.T, list string, digests []string, digest string) {
+	t.Helper()
+	last := len(digests) - 1
+	if last != store.SchemaVersion || digests[last] != digest {
+		assert.Failf(t, "SchemaVersion not bumped", "schema or migration list changed without a SchemaVersion bump: "+
+			"set store.SchemaVersion to %d and append %q to %s", max(last+1, store.SchemaVersion), digest, list)
+	}
+}
+
+// schemaContractPostgresDigest hashes the tables, columns, constraints,
+// indexes, views, triggers and functions a fresh PostgreSQL archive gets, plus
+// its migration ledger. Schema names are stripped because each test runs in
+// its own database or schema; extension-owned objects are skipped.
+func schemaContractPostgresDigest(t *testing.T, s *store.Store) string {
+	t.Helper()
+	parts := queryStrings(t, s, `
+WITH ns AS (SELECT oid, nspname FROM pg_namespace WHERE nspname = current_schema()),
+own AS (SELECT c.oid, c.relname, c.relkind FROM pg_class c JOIN ns ON c.relnamespace = ns.oid
+	WHERE NOT EXISTS (SELECT 1 FROM pg_depend d
+		WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'))
+SELECT replace(def, (SELECT nspname FROM ns) || '.', '') FROM (
+	SELECT 'column ' || o.relname || '.' || a.attname || ' ' || format_type(a.atttypid, a.atttypmod) ||
+		CASE WHEN a.attnotnull THEN ' not null' ELSE '' END ||
+		CASE WHEN a.attidentity <> '' THEN ' identity ' || a.attidentity::text ELSE '' END ||
+		coalesce(' collate ' || coll.collname, '') ||
+		coalesce(' default ' || pg_get_expr(ad.adbin, ad.adrelid), '') ||
+		CASE WHEN a.attgenerated <> '' THEN ' generated' ELSE '' END AS def
+	FROM own o JOIN pg_attribute a ON a.attrelid = o.oid
+	LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+	LEFT JOIN pg_type ty ON ty.oid = a.atttypid
+	LEFT JOIN pg_collation coll ON coll.oid = a.attcollation AND a.attcollation <> ty.typcollation
+	WHERE o.relkind IN ('r', 'p', 'v', 'm') AND a.attnum > 0 AND NOT a.attisdropped
+	UNION ALL
+	SELECT 'constraint ' || o.relname || '.' || con.conname || ' ' || pg_get_constraintdef(con.oid)
+	FROM own o JOIN pg_constraint con ON con.conrelid = o.oid
+	-- PostgreSQL 18 lists NOT NULL as constraints; attnotnull already covers it.
+	WHERE con.contype <> 'n'
+	UNION ALL
+	SELECT 'index ' || pg_get_indexdef(o.oid) FROM own o WHERE o.relkind = 'i'
+	UNION ALL
+	SELECT 'sequence ' || o.relname || ' ' || format_type(sq.seqtypid, NULL) || ' ' || sq.seqstart || ' ' ||
+		sq.seqincrement || ' ' || sq.seqmin || ' ' || sq.seqmax || ' ' || sq.seqcache || ' ' || sq.seqcycle
+	FROM own o JOIN pg_sequence sq ON sq.seqrelid = o.oid
+	UNION ALL
+	SELECT 'view ' || o.relname || ' ' || pg_get_viewdef(o.oid) FROM own o WHERE o.relkind IN ('v', 'm')
+	UNION ALL
+	SELECT 'trigger ' || pg_get_triggerdef(tg.oid) FROM own o JOIN pg_trigger tg ON tg.tgrelid = o.oid
+	WHERE NOT tg.tgisinternal
+	UNION ALL
+	SELECT 'function ' || pg_get_functiondef(p.oid) FROM pg_proc p JOIN ns ON p.pronamespace = ns.oid
+	WHERE p.prokind IN ('f', 'p')
+		AND NOT EXISTS (SELECT 1 FROM pg_depend d
+			WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
+) defs ORDER BY 1`)
+	for i, part := range parts {
+		parts[i] = normalizeSQL(part)
+	}
+	parts = append(parts, queryStrings(t, s, `SELECT name || ' ' || version FROM applied_migrations ORDER BY name`)...)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
 // schemaContractDigest hashes what InitSchemaContext builds on a fresh SQLite
-// archive (schema objects and migration ledger rows) plus the FTS and
-// PostgreSQL schema files. FTS objects exist only under the fts5 build tag, so
-// they come from schema_sqlite.sql instead.
+// archive (schema objects and migration ledger rows) plus both dialects'
+// legacy column statements and the FTS and PostgreSQL schema files. FTS
+// objects exist only under the fts5 build tag, so they come from
+// schema_sqlite.sql instead.
 func schemaContractDigest(t *testing.T) string {
 	t.Helper()
 	s, err := store.OpenForTest(filepath.Join(t.TempDir(), "contract.db"))
@@ -168,6 +238,13 @@ func schemaContractDigest(t *testing.T) string {
 		parts = append(parts, normalizeSQL(object))
 	}
 	parts = append(parts, queryStrings(t, s, `SELECT name || ' ' || version FROM applied_migrations ORDER BY name`)...)
+	// Legacy ADD COLUMN statements only run on old archives, so a fresh one
+	// never shows them.
+	for _, d := range []store.Dialect{&store.SQLiteDialect{}, &store.PostgreSQLDialect{}} {
+		for _, m := range d.LegacyColumnMigrations() {
+			parts = append(parts, normalizeSQL(m.SQL))
+		}
+	}
 	for _, name := range []string{"schema_sqlite.sql", "schema_pg.sql"} {
 		data, err := os.ReadFile(name)
 		require.NoError(t, err)

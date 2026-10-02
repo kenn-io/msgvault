@@ -314,11 +314,13 @@ ignored.
 `internal/store/schema_version.go` owns `store.SchemaVersion`, the monotonic
 integer for required main archive schema work. Increase it whenever the main
 archive schema or a required migration changes. `TestSchemaVersionContract`
-hashes the schema a fresh archive gets, its migration ledger, and the FTS and
-PostgreSQL schema files, and fails until the version moves; its message gives
-the new digest to append. It can't see PostgreSQL-only DDL written in Go or a
-repair that leaves a fresh archive's schema and ledger unchanged, so bump the
-version by hand for those. SQLite exposes the marker in
+hashes the schema and migration ledger a fresh archive gets on each backend,
+plus the legacy column statements only older archives run, and fails until
+the version moves; its message gives the digest to append. The
+PostgreSQL digest is checked when the store tests run with `MSGVAULT_TEST_DB`
+set to a PostgreSQL URL, as CI's PostgreSQL lane does. A data-only repair that
+runs outside the migration ledger leaves both digests alone, so bump the version
+by hand for one. SQLite exposes the marker in
 `PRAGMA user_version`; PostgreSQL uses the
 `schema_version` key in `archive_metadata`. `InitSchemaContext` refuses future versions before DDL
 and stamps this version only after its required steps succeed, using the caller's
