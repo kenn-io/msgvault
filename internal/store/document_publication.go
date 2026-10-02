@@ -214,6 +214,10 @@ func (s *Store) ClaimDocumentExtraction(
 				return ErrDocumentExtractionCurrent
 			}
 		}
+		createdAt, err := documentAttemptCreatedAt(q, input)
+		if err != nil {
+			return err
+		}
 		if _, err := q.Exec(`
 			INSERT INTO document_extractions
 				(id, profile_id, rebuild_id, canonical_blob_hash, extraction_input_key,
@@ -221,7 +225,7 @@ func (s *Store) ClaimDocumentExtraction(
 			VALUES (?, ?, ?, ?, ?, ?, 'staging', ?, ?, ?, ?, ?)`,
 			input.ExtractionID, input.ProfileID, nullIfEmpty(input.RebuildID), input.CanonicalBlobHash,
 			input.ExtractionInputKey, input.OccurrenceMIMEType, input.LeaseOwner, input.LeaseUntil,
-			input.LocalBytes, input.SourceSequence, time.Now().UTC(),
+			input.LocalBytes, input.SourceSequence, createdAt,
 		); err != nil {
 			return fmt.Errorf("create staging document extraction: %w", err)
 		}
@@ -626,6 +630,31 @@ func (s *Store) PublishDocumentExtraction(
 
 func canonicalCASPath(contentHash string) string {
 	return contentHash[:2] + "/" + contentHash
+}
+
+// documentAttemptCreatedAt orders a new attempt after every earlier attempt
+// for the same owner. Failure diagnostics pick the newest attempt by
+// created_at and break ties by caller-chosen ID, so a clock that repeats a
+// value (Windows wall time is coarse) or steps backward must not tie or invert
+// the order. The one-microsecond step survives PostgreSQL timestamp precision.
+func documentAttemptCreatedAt(q boundQuerier, input DocumentExtractionClaimInput) (time.Time, error) {
+	now := time.Now().UTC()
+	var latest time.Time
+	err := q.QueryRow(`
+		SELECT created_at FROM document_extractions
+		WHERE profile_id = ? AND canonical_blob_hash = ? AND extraction_input_key = ?
+		ORDER BY created_at DESC LIMIT 1`,
+		input.ProfileID, input.CanonicalBlobHash, input.ExtractionInputKey).Scan(&latest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return now, nil
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read latest document extraction attempt: %w", err)
+	}
+	if now.After(latest) {
+		return now, nil
+	}
+	return latest.UTC().Add(time.Microsecond), nil
 }
 
 func validateDocumentClaimInput(input DocumentExtractionClaimInput) error {

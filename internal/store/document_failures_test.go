@@ -105,6 +105,41 @@ func TestDocumentFailureDiagnosticsPersistAcrossRetryAndRebuild(t *testing.T) {
 	assert.Empty(status.Failures)
 }
 
+func TestDocumentFailureDiagnosticsFollowNewestAttemptWhenClockRepeats(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "z-earlier", ProfileID: profile.ID, CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "clock-worker", LeaseUntil: time.Now().Add(time.Hour), LocalBytes: 128, SourceSequence: 1,
+	})
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
+	require.NoError(err)
+	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: claim, ReasonCode: "invalid_local_source", Detail: "earlier failure", Terminal: true,
+	}))
+	// A coarse or stepped-back clock: the earlier attempt's timestamp is not
+	// before the time the next claim reads, and its ID sorts after the next one.
+	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET created_at = ? WHERE id = ?"),
+		time.Now().Add(time.Hour).UTC(), "z-earlier")
+	require.NoError(err)
+	changed, err := f.Store.RetryDocumentExtraction(t.Context(), profile.ID, hash)
+	require.NoError(err)
+	require.True(changed)
+	input.ExtractionID = "a-later"
+	claim, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
+	require.NoError(err)
+	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: claim, ReasonCode: "provider_transient", Detail: "later failure", Terminal: true,
+	}))
+	status, err := f.Store.GetDocumentIndexStatusForScope(t.Context(), profile.ID, "original", profile.AllowedMediaTypes, nil)
+	require.NoError(err)
+	require.Len(status.Failures, 1)
+	assert.Equal("provider_transient", status.Failures[0].ReasonCode, "diagnostics report the newest attempt")
+	assert.Equal("later failure", status.Failures[0].Detail)
+}
+
 func TestDocumentFailureDiagnosticsBoundAndLegacyFallback(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
