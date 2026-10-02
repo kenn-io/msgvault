@@ -699,7 +699,12 @@
     </div>
   {/if}
 
-  <div class="results-split" class:results-split--right={previewRight} bind:clientWidth={resultsWidth}>
+  <div
+    class="results-split"
+    class:results-split--open={Boolean(readingTargetKey)}
+    class:results-split--right={previewRight}
+    bind:clientWidth={resultsWidth}
+  >
     <SplitPane
       ariaLabel="Resize reading pane"
       storageKey={previewRight ? 'msgvault.reading-pane.right-size' : 'msgvault.reading-pane.size'}
@@ -894,11 +899,24 @@
   }
 
   /* The reading pane provides its own surface; the split's secondary pane
-   * only frames it with the hairline above the drag handle. */
+   * frames it on every edge except the one beside the drag handle. The
+   * handle is the divider, so neither frame draws a border on that edge. */
   .results-split :global([data-pane='secondary']) {
     border: 1px solid var(--border-default);
     border-top: 0;
     border-radius: 0 0 var(--radius-md) var(--radius-md);
+  }
+
+  .results-split--open:not(.results-split--right) :global(:is(.everything-table, .group-table)) {
+    border-bottom: 0;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .results-split--open.results-split--right :global(:is(.everything-table, .group-table)) {
+    border-right: 0;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
   }
 
   .results-split--right :global([data-pane]) {

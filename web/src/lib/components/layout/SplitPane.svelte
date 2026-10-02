@@ -238,12 +238,14 @@
     flex: 1;
   }
 
+  /* The wrapper spans the split's cross axis; the kit handle stretches to
+   * fill it and owns its own thickness. */
   .handle-reset {
     display: flex;
     flex: none;
   }
 
-  .handle-reset :global(.kit-split-resize-handle--horizontal) {
-    height: 100%;
+  .split-pane--vertical > .handle-reset {
+    flex-direction: column;
   }
 </style>

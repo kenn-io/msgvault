@@ -72,8 +72,13 @@ test('the bottom reading pane opens on a single click, resizes, and persists its
 
   const resize = page.getByRole('separator', { name: 'Resize reading pane' });
   const beforeResize = paneBox!.height;
-  await resize.press('ArrowUp');
-  await resize.press('ArrowUp');
+  // The handle spans the split, so a pointer can grab and drag it.
+  await expect(resize).toBeVisible();
+  const handleBox = (await resize.boundingBox())!;
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2 - 48);
+  await page.mouse.up();
   await expect.poll(async () => (await page.locator('[data-pane="secondary"]').boundingBox())!.height)
     .toBe(beforeResize + 48);
 
