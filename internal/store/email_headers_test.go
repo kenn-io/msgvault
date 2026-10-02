@@ -209,7 +209,47 @@ func TestEmailHeadersFenceSupersededSync(t *testing.T) {
 	requirements.NoError(err)
 	requirements.ErrorIs(stale.RecordEmailHeadersContext(t.Context(), f.Source.ID, id, "child@example.test", ""), store.ErrSyncRunSuperseded)
 	requirements.ErrorIs(stale.ResolveEmailReplyParentsContext(t.Context(), f.Source.ID, 0, nil), store.ErrSyncRunSuperseded)
+	requirements.ErrorIs(stale.RecordPstEmailHeadersContext(t.Context(), f.Source.ID, id, "child@example.test", "parent@example.test", "parent@example.test"), store.ErrSyncRunSuperseded)
 	var reply sql.NullInt64
 	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), id).Scan(&reply))
 	assertions.False(reply.Valid)
+}
+
+func TestPstEmailHeaderRepair(t *testing.T) {
+	for _, tc := range []struct {
+		name, storedID, metadata, incomingID, parent, key string
+		wantMetadata                                      string
+	}{
+		{"fill", "", `{"unrelated":42}`, "<child@example.test>", "<parent@example.test>", "root@example.test", `{"unrelated":42,"email_in_reply_to":"parent@example.test","pst_thread_key":"root@example.test"}`},
+		{"conflicting own ID rejects parent", "original@example.test", `{}`, "other@example.test", "parent@example.test", "parent@example.test", `{}`},
+		{"conflicting parent rejects key", "child@example.test", `{"email_in_reply_to":"original-parent@example.test"}`, "child@example.test", "other-parent@example.test", "other-parent@example.test", `{"email_in_reply_to":"original-parent@example.test"}`},
+		{"references with existing ID", "child@example.test", `{}`, "child@example.test", "", "root@example.test", `{"pst_thread_key":"root@example.test"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			st := f.Store
+			id := f.CreateMessage("child")
+			_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id = ?, metadata = ? WHERE id = ?`), tc.storedID, tc.metadata, id)
+			require.NoError(err)
+			require.NoError(st.RecordPstEmailHeadersContext(t.Context(), f.Source.ID, id, tc.incomingID, tc.parent, tc.key))
+			metadata, err := st.GetMessageMetadata(id)
+			require.NoError(err)
+			assert.JSONEq(tc.wantMetadata, metadata.String)
+			before, err := st.DerivedDataRevision()
+			require.NoError(err)
+			require.NoError(st.RecordPstEmailHeadersContext(t.Context(), f.Source.ID, id, tc.incomingID, tc.parent, tc.key))
+			after, err := st.DerivedDataRevision()
+			require.NoError(err)
+			assert.Equal(before, after)
+			var gotID string
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), id).Scan(&gotID))
+			want := tc.storedID
+			if want == "" {
+				want = "child@example.test"
+			}
+			assert.Equal(want, gotID)
+		})
+	}
 }

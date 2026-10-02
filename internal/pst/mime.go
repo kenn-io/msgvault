@@ -17,7 +17,8 @@ import (
 //
 // Strategy:
 //  1. If TransportHeaders is non-empty, use those verbatim as the message
-//     headers (stripping any existing MIME content headers we'll replace).
+//     headers, filling missing threading headers from MAPI and stripping
+//     existing MIME content headers we will replace.
 //  2. Otherwise, synthesize headers from MAPI properties.
 //  3. Build the body as multipart/alternative when both text and HTML are
 //     present, or as a simple text/plain or text/html part when only one
@@ -30,7 +31,8 @@ func BuildRFC5322(msg *MessageEntry, attachments []AttachmentEntry) ([]byte, err
 
 	// Write message-identifying headers.
 	if msg.TransportHeaders != "" {
-		writeTransportHeaders(&headerBuf, msg.TransportHeaders)
+		present := writeTransportHeaders(&headerBuf, msg.TransportHeaders)
+		writeThreadingHeaders(&headerBuf, msg, present)
 	} else {
 		writeSynthesizedHeaders(&headerBuf, msg)
 	}
@@ -143,39 +145,44 @@ func writeHTMLPart(mw *multipart.Writer, html string) {
 
 // writeTransportHeaders writes the original transport headers to buf,
 // stripping any existing MIME content headers that we will replace.
-func writeTransportHeaders(buf *bytes.Buffer, headers string) {
-	// Normalise line endings.
+func writeTransportHeaders(buf *bytes.Buffer, headers string) map[string]bool {
 	headers = strings.ReplaceAll(headers, "\r\n", "\n")
 	headers = strings.ReplaceAll(headers, "\r", "\n")
-
-	lines := strings.Split(headers, "\n")
-
-	skipContinuation := false
-	for _, line := range lines {
+	present := make(map[string]bool)
+	var field []string
+	flush := func() {
+		if len(field) == 0 {
+			return
+		}
+		name, value, _ := strings.Cut(field[0], ":")
+		name = strings.ToLower(name)
+		switch name {
+		case "mime-version", "content-type", "content-transfer-encoding":
+			return
+		case "message-id", "in-reply-to", "references":
+			if strings.TrimSpace(value+strings.Join(field[1:], "")) == "" {
+				return
+			}
+			present[name] = true
+		}
+		for _, line := range field {
+			buf.WriteString(line)
+			buf.WriteString("\r\n")
+		}
+	}
+	for line := range strings.SplitSeq(headers, "\n") {
 		if line == "" {
-			// End of headers.
 			break
 		}
-		// Folded header continuation lines start with whitespace.
-		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
-			if !skipContinuation {
-				buf.WriteString(line)
-				buf.WriteString("\r\n")
-			}
+		if line[0] == ' ' || line[0] == '\t' {
+			field = append(field, line)
 			continue
 		}
-		// New header field — strip MIME content headers we'll rebuild.
-		lower := strings.ToLower(line)
-		if strings.HasPrefix(lower, "mime-version:") ||
-			strings.HasPrefix(lower, "content-type:") ||
-			strings.HasPrefix(lower, "content-transfer-encoding:") {
-			skipContinuation = true
-			continue
-		}
-		skipContinuation = false
-		buf.WriteString(line)
-		buf.WriteString("\r\n")
+		flush()
+		field = []string{line}
 	}
+	flush()
+	return present
 }
 
 // writeSynthesizedHeaders writes RFC 5322 headers synthesized from MAPI
@@ -208,28 +215,25 @@ func writeSynthesizedHeaders(buf *bytes.Buffer, msg *MessageEntry) {
 		writeHeader(buf, "Subject", mime.QEncoding.Encode("utf-8", msg.Subject))
 	}
 
-	if msg.MessageID != "" {
-		mid := sanitizeHeaderValue(msg.MessageID)
-		if !strings.HasPrefix(mid, "<") {
-			mid = "<" + mid + ">"
-		}
-		writeHeader(buf, "Message-Id", mid)
-	}
-
-	if msg.InReplyTo != "" {
-		irt := sanitizeHeaderValue(msg.InReplyTo)
-		if !strings.HasPrefix(irt, "<") {
-			irt = "<" + irt + ">"
-		}
-		writeHeader(buf, "In-Reply-To", irt)
-	}
-
-	if msg.References != "" {
-		writeHeader(buf, "References", sanitizeHeaderValue(msg.References))
-	}
-
+	writeThreadingHeaders(buf, msg, nil)
 	writeHeader(buf, "X-Msgvault-Source", "pst")
 	writeHeader(buf, "X-Msgvault-Synthesized", "true")
+}
+
+// writeThreadingHeaders fills only fields not supplied by transport headers.
+func writeThreadingHeaders(buf *bytes.Buffer, msg *MessageEntry, present map[string]bool) {
+	for _, field := range []struct{ name, value string }{
+		{"Message-Id", msg.MessageID}, {"In-Reply-To", msg.InReplyTo}, {"References", msg.References},
+	} {
+		value := strings.TrimSpace(sanitizeHeaderValue(field.value))
+		if present[strings.ToLower(field.name)] || value == "" {
+			continue
+		}
+		if field.name != "References" && !strings.HasPrefix(value, "<") {
+			value = "<" + value + ">"
+		}
+		writeHeader(buf, field.name, value)
+	}
 }
 
 func writeHeader(buf *bytes.Buffer, name, value string) {

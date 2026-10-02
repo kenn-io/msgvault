@@ -64,7 +64,13 @@ func LegacyMessageIDMatchKey(value string) string {
 // ParseMessageIDs extracts canonical message and reply IDs from the top-level
 // headers without decoding attachments or accepting header-shaped body text.
 func ParseMessageIDs(raw []byte) (messageID, inReplyTo string) {
+	messageID, inReplyTo, _ = ParseThreadingHeaders(raw)
+	return messageID, inReplyTo
+}
+
+// ParseThreadingHeaders reads email identifiers and the ordered References
+// chain from top-level headers without decoding bodies or attachments.
+func ParseThreadingHeaders(raw []byte) (messageID, inReplyTo string, references []string) {
 	headers := tokenizeHeaders(raw)
-	return NormalizeMessageID(firstHeader(headers, "message-id")),
-		NormalizeMessageID(firstHeader(headers, "in-reply-to"))
+	return NormalizeMessageID(firstHeader(headers, "message-id")), NormalizeMessageID(firstHeader(headers, "in-reply-to")), parseReferences(firstHeader(headers, "references"))
 }

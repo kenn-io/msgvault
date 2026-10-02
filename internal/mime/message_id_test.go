@@ -67,3 +67,11 @@ func TestNormalizeLegacyMessageID(t *testing.T) {
 		})
 	}
 }
+
+func TestParseThreadingHeaders(t *testing.T) {
+	raw := []byte("Message-ID: <child@example.test>\r\nIn-Reply-To: <parent@example.test>\r\nReferences: <root@example.test>\r\n\t<parent@example.test>\r\n\r\nReferences: <body@example.test>\r\n")
+	id, parent, refs := ParseThreadingHeaders(raw)
+	assert.Equal(t, "child@example.test", id)
+	assert.Equal(t, "parent@example.test", parent)
+	assert.Equal(t, []string{"root@example.test", "parent@example.test"}, refs)
+}

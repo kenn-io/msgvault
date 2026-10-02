@@ -17,6 +17,19 @@ const emailReplyBatchSize = 200
 // RecordEmailHeadersContext fills missing imported header facts without replacing
 // the archived message. The cache revision and a repaired RFC ID commit together.
 func (s *Store) RecordEmailHeadersContext(ctx context.Context, sourceID, messageID int64, rfcID, inReplyTo string) error {
+	return s.recordEmailHeadersContext(ctx, sourceID, messageID, rfcID, inReplyTo, "", false)
+}
+
+const pstThreadMetadataKey = "pst_thread_key"
+
+// RecordPstEmailHeadersContext repairs accepted PST header facts without
+// replacing archived content. The durable thread key lets finalization resume
+// after interruption without moving a previously merged message back.
+func (s *Store) RecordPstEmailHeadersContext(ctx context.Context, sourceID, messageID int64, rfcID, inReplyTo, threadKey string) error {
+	return s.recordEmailHeadersContext(ctx, sourceID, messageID, rfcID, inReplyTo, mime.NormalizeMessageID(threadKey), true)
+}
+
+func (s *Store) recordEmailHeadersContext(ctx context.Context, sourceID, messageID int64, rfcID, inReplyTo, threadKey string, pst bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -24,7 +37,7 @@ func (s *Store) RecordEmailHeadersContext(ctx context.Context, sourceID, message
 		return err
 	}
 	rfcID, inReplyTo = mime.NormalizeMessageID(rfcID), mime.NormalizeMessageID(inReplyTo)
-	if rfcID == "" && inReplyTo == "" {
+	if rfcID == "" && inReplyTo == "" && threadKey == "" {
 		return nil
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
@@ -32,44 +45,73 @@ func (s *Store) RecordEmailHeadersContext(ctx context.Context, sourceID, message
 			return err
 		}
 		var storedID, metadata sql.NullString
-		if err := tx.QueryRowContext(ctx, `SELECT rfc822_message_id, metadata FROM messages
-   WHERE id = ? AND source_id = ? AND message_type = 'email'`+s.dialect.SelectForUpdate(),
-			messageID, sourceID).Scan(&storedID, &metadata); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT rfc822_message_id, metadata FROM messages WHERE id = ? AND source_id = ? AND message_type = 'email'`+s.dialect.SelectForUpdate(), messageID, sourceID).Scan(&storedID, &metadata); err != nil {
 			return fmt.Errorf("read email header target: %w", err)
 		}
-		fillID := storedID.String == "" && rfcID != ""
-		if inReplyTo != "" {
-			fields := make(map[string]jsontext.Value)
-			if metadata.Valid && metadata.String != "" {
-				if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
-					return fmt.Errorf("decode email metadata: %w", err)
-				}
-				if fields == nil {
-					fields = make(map[string]jsontext.Value)
-				}
-			}
-			if _, exists := fields[emailReplyMetadataKey]; !exists {
-				value, err := json.Marshal(inReplyTo, json.Deterministic(true))
-				if err != nil {
-					return err
-				}
-				fields[emailReplyMetadataKey] = value
-				encoded, err := json.Marshal(fields, json.Deterministic(true))
-				if err != nil {
-					return err
-				}
-				if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE messages SET metadata = %s WHERE id = ?`, s.dialect.JSONBindExpr()), string(encoded), messageID); err != nil {
-					return err
-				}
-			}
-		}
-		if !fillID {
+		if pst && storedID.String != "" && rfcID != "" && mime.NormalizeMessageID(storedID.String) != rfcID {
 			return nil
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, rfcID, messageID); err != nil {
-			return err
+		fields := make(map[string]jsontext.Value)
+		if (pst || inReplyTo != "") && metadata.Valid && metadata.String != "" {
+			if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
+				return fmt.Errorf("decode email metadata: %w", err)
+			}
+			if fields == nil {
+				fields = make(map[string]jsontext.Value)
+			}
 		}
-		return s.bumpDerivedDataRevision(tx)
+		if pst && inReplyTo != "" {
+			if value, ok := fields[emailReplyMetadataKey]; ok {
+				var storedParent string
+				if err := json.Unmarshal(value, &storedParent); err != nil {
+					return fmt.Errorf("decode email parent ID: %w", err)
+				}
+				if mime.NormalizeMessageID(storedParent) != inReplyTo {
+					threadKey = ""
+				}
+			}
+		}
+		changed := false
+		for _, fact := range []struct{ key, value string }{{emailReplyMetadataKey, inReplyTo}, {pstThreadMetadataKey, threadKey}} {
+			if fact.value == "" {
+				continue
+			}
+			if _, exists := fields[fact.key]; exists {
+				continue
+			}
+			value, err := json.Marshal(fact.value, json.Deterministic(true))
+			if err != nil {
+				return err
+			}
+			fields[fact.key] = value
+			changed = true
+		}
+		if changed {
+			encoded, err := json.Marshal(fields, json.Deterministic(true))
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE messages SET metadata = %s WHERE id = ?`, s.dialect.JSONBindExpr()), string(encoded), messageID); err != nil {
+				return err
+			}
+		}
+		if threadKey != "" {
+			if value, exists := fields[pstThreadMetadataKey]; exists {
+				if err := json.Unmarshal(value, &threadKey); err != nil {
+					return fmt.Errorf("decode PST thread key: %w", err)
+				}
+			}
+			if _, err := ensureConversation(boundQuerier{ctx: ctx, q: tx}, s.dialect, sourceID, threadKey, "(no subject)"); err != nil {
+				return fmt.Errorf("ensure PST thread target: %w", err)
+			}
+		}
+		if storedID.String == "" && rfcID != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, rfcID, messageID); err != nil {
+				return err
+			}
+			return s.bumpDerivedDataRevision(tx)
+		}
+		return nil
 	})
 }
 

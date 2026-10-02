@@ -103,6 +103,12 @@ const defaultMaxPstMessageBytes int64 = 128 << 20 // 128 MiB
 func ImportPst(
 	ctx context.Context, st *store.Store, pstPath string, opts PstImportOptions,
 ) (retSummary *PstImportSummary, retErr error) {
+	return importPstWithBatchSize(ctx, st, pstPath, opts, 200)
+}
+
+func importPstWithBatchSize(
+	ctx context.Context, st *store.Store, pstPath string, opts PstImportOptions, batchSize int,
+) (retSummary *PstImportSummary, retErr error) {
 	if opts.SourceType == "" {
 		opts.SourceType = "pst"
 	}
@@ -316,10 +322,7 @@ func ImportPst(
 	}
 
 	// Batching constants (same as MBOX/EMLX importers).
-	const (
-		batchSize  = 200
-		batchBytes = 32 << 20 // 32 MiB
-	)
+	const batchBytes = 32 << 20 // 32 MiB
 
 	type pendingPstMessage struct {
 		Raw          []byte
@@ -341,6 +344,9 @@ func ImportPst(
 	)
 
 	saveCp := func(fi int, fp string, mi int64) {
+		if checkpointBlocked {
+			return
+		}
 		if err := savePstCheckpoint(st, syncID, cpFile, archiveID, fi, fp, mi, &cp); err != nil {
 			cp.ErrorsCount++
 			summary.Errors++
@@ -372,9 +378,12 @@ func ImportPst(
 			log.Warn("existence check (any) failed", "error", errAny)
 		}
 
-		for _, p := range pending {
+		for i, p := range pending {
 			if ctx.Err() != nil {
-				saveCp(p.FolderIndex, p.FolderPath, p.MsgIndex)
+				if i > 0 {
+					lastProcessed := pending[i-1]
+					saveCp(lastProcessed.FolderIndex, lastProcessed.FolderPath, lastProcessed.MsgIndex)
+				}
 				summary.Duration = time.Since(start)
 				return true
 			}
@@ -382,32 +391,33 @@ func ImportPst(
 			cp.MessagesProcessed++
 			summary.MessagesProcessed++
 
-			// Deduplicate: if exists with raw, just ensure labels are applied.
-			if errWithRaw == nil {
-				if msgID, exists := existingWithRaw[p.SourceMsgID]; exists {
-					summary.MessagesSkipped++
-					if p.LabelID != 0 {
-						if err := st.AddMessageLabels(msgID, []int64{p.LabelID}); err != nil {
-							log.Warn("add labels to existing message", "error", err)
-						}
-					}
-					if !checkpointBlocked && cp.MessagesProcessed%int64(opts.CheckpointInterval) == 0 {
-						saveCp(p.FolderIndex, p.FolderPath, p.MsgIndex)
-					}
-					continue
-				}
-			} else {
-				// Fall back to individual check.
+			// Re-import repairs header facts while preserving archived content.
+			existingID, exists := existingWithRaw[p.SourceMsgID]
+			if errWithRaw != nil {
 				one, err := st.MessageExistsWithRawBatch(src.ID, []string{p.SourceMsgID})
 				if err == nil {
-					if msgID, exists := one[p.SourceMsgID]; exists {
-						summary.MessagesSkipped++
-						if p.LabelID != 0 {
-							_ = st.AddMessageLabels(msgID, []int64{p.LabelID})
-						}
-						continue
+					existingID, exists = one[p.SourceMsgID]
+				}
+			}
+			if exists {
+				if err := recordPstMessageHeadersByID(ctx, st, src.ID, existingID, p.Raw); err != nil {
+					cp.ErrorsCount++
+					summary.Errors++
+					checkpointBlocked = true
+					hardErrors = true
+					log.Warn("repair PST message headers", "error", err)
+					continue
+				}
+				summary.MessagesSkipped++
+				if p.LabelID != 0 {
+					if err := st.AddMessageLabels(existingID, []int64{p.LabelID}); err != nil {
+						log.Warn("add labels to existing message", "error", err)
 					}
 				}
+				if cp.MessagesProcessed%int64(opts.CheckpointInterval) == 0 {
+					saveCp(p.FolderIndex, p.FolderPath, p.MsgIndex)
+				}
+				continue
 			}
 
 			alreadyExists := false
@@ -420,12 +430,15 @@ func ImportPst(
 				lblIDs = []int64{p.LabelID}
 			}
 
-			if err := ingestFn(ctx, st, src.ID, opts.Identifier, opts.AttachmentsDir,
-				lblIDs, p.SourceMsgID, p.RawHash, p.Raw, p.FallbackDate, log,
-			); err != nil {
+			ingestErr := ingestFn(ctx, st, src.ID, opts.Identifier, opts.AttachmentsDir,
+				lblIDs, p.SourceMsgID, p.RawHash, p.Raw, p.FallbackDate, log)
+			if ingestErr == nil && opts.IngestFunc == nil {
+				ingestErr = recordPstMessageHeaders(ctx, st, src.ID, p.SourceMsgID, p.Raw)
+			}
+			if ingestErr != nil {
 				cp.ErrorsCount++
 				summary.Errors++
-				log.Warn("failed to ingest message", "source_msg_id", p.SourceMsgID, "error", err)
+				log.Warn("failed to ingest message", "source_msg_id", p.SourceMsgID, "error", ingestErr)
 				checkpointBlocked = true
 				hardErrors = true
 				continue
@@ -439,7 +452,7 @@ func ImportPst(
 				summary.MessagesAdded++
 			}
 
-			if !checkpointBlocked && cp.MessagesProcessed%int64(opts.CheckpointInterval) == 0 {
+			if cp.MessagesProcessed%int64(opts.CheckpointInterval) == 0 {
 				saveCp(p.FolderIndex, p.FolderPath, p.MsgIndex)
 			}
 		}
@@ -447,10 +460,8 @@ func ImportPst(
 		clear(pending)
 		pending = pending[:0]
 		pendingBytes = 0
-		// Reset checkpoint blocking so future successful batches can checkpoint.
-		// checkpointBlocked is set when an ingest error occurs within a batch;
-		// once the batch completes, we allow checkpointing again.
-		checkpointBlocked = false
+		// Keep checkpoint blocking across batches. A message that failed repair or
+		// ingestion remains unprocessed, so later checkpoints must not move past it.
 		return false
 	}
 
@@ -599,6 +610,9 @@ func ImportPst(
 	summary.Duration = time.Since(start)
 	summary.HardErrors = hardErrors
 
+	if err := ctx.Err(); err != nil {
+		return summary, err
+	}
 	finalMsg := fmt.Sprintf("folders:%d messages:%d", summary.FoldersImported, summary.MessagesProcessed)
 	if hardErrors {
 		if err := st.FailSync(syncID, fmt.Sprintf("completed with %d errors", cp.ErrorsCount)); err != nil {
@@ -607,7 +621,19 @@ func ImportPst(
 		return summary, nil
 	}
 
-	if err := st.CompleteSync(syncID, finalMsg); err != nil {
+	if err := st.ResolveEmailReplyParentsContext(ctx, src.ID, 0, nil); err != nil {
+		if ctx.Err() == nil {
+			failSync(err.Error())
+		}
+		return summary, fmt.Errorf("resolve PST email replies: %w", err)
+	}
+	if err := st.ReconcilePstEmailThreadsContext(ctx, src.ID); err != nil {
+		if ctx.Err() == nil {
+			failSync(err.Error())
+		}
+		return summary, fmt.Errorf("reconcile PST email threads: %w", err)
+	}
+	if err := st.CompleteSyncContext(ctx, syncID, finalMsg); err != nil {
 		return summary, fmt.Errorf("complete sync: %w", err)
 	}
 
