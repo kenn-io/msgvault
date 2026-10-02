@@ -31,6 +31,10 @@ var ErrNotFound = errors.New("graph resource not found")
 // scope a write needs.
 var ErrForbidden = errors.New("graph request forbidden")
 
+// ErrPreconditionFailed classifies a write that failed its If-Match check: a
+// 412, or a 400 ErrorInvalidChangeKey for a malformed change key.
+var ErrPreconditionFailed = errors.New("graph precondition failed")
+
 // ErrGone classifies an expired delta token: 410 Gone, or a syncStateNotFound
 // error. The caller must restart the delta walk without a token.
 var ErrGone = errors.New("graph delta token expired")
@@ -77,13 +81,15 @@ func (c *Client) get(ctx context.Context, rawURL string) ([]byte, error) {
 }
 
 func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
-	return c.do(ctx, http.MethodGet, rawURL, nil, maxBytes)
+	return c.do(ctx, http.MethodGet, rawURL, nil, maxBytes, "", false)
 }
 
 // do sends one request with retries. A GET succeeds on 200 only. Any other
 // method succeeds on any 2xx, because Graph answers a move with 201 and a
-// permanentDelete with 204. A non-nil body is sent as JSON.
-func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, maxBytes int64) ([]byte, error) {
+// permanentDelete with 204. A non-nil body is sent as JSON. A non-empty ifMatch
+// is sent as If-Match. With once, only a 429 is retried, because Graph applied
+// nothing; a network error or a 5xx can follow an applied write.
+func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, maxBytes int64, ifMatch string, once bool) ([]byte, error) {
 	reqURL, err := c.resolveRequestURL(rawURL)
 	if err != nil {
 		return nil, err
@@ -126,6 +132,9 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		for k, v := range c.Headers {
 			req.Header.Set(k, v)
 		}
+		if ifMatch != "" {
+			req.Header.Set("If-Match", ifMatch)
+		}
 		resp, err := c.http.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -135,6 +144,9 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 				return nil, err
 			}
 			if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
+				return nil, err
+			}
+			if once {
 				return nil, err
 			}
 			lastErr = err
@@ -153,20 +165,23 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		if readErr != nil {
 			// A connection that breaks mid-body is transient, like a 5xx.
 			lastErr = fmt.Errorf("graph %s %s: read body: %w", method, reqURL, readErr)
+			if once {
+				return nil, lastErr
+			}
 			continue
 		}
 		if closeErr != nil {
 			return nil, fmt.Errorf("graph %s %s: close body: %w", method, reqURL, closeErr)
 		}
-		expired := false
-		if resp.StatusCode >= http.StatusBadRequest {
-			var graphError struct {
-				Error struct {
-					Code string `json:"code"`
-				} `json:"error"`
-			}
-			expired = json.Unmarshal(body, &graphError) == nil && graphError.Error.Code == "syncStateNotFound"
+		var graphError struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
 		}
+		if resp.StatusCode >= http.StatusBadRequest {
+			_ = json.Unmarshal(body, &graphError)
+		}
+		expired := graphError.Error.Code == "syncStateNotFound"
 		switch {
 		case ok(resp.StatusCode):
 			if maxBytes > 0 && int64(len(body)) > maxBytes {
@@ -177,8 +192,12 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrGone)
 		case resp.StatusCode == http.StatusNotFound:
 			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrNotFound)
+		case resp.StatusCode == http.StatusPreconditionFailed || graphError.Error.Code == "ErrorInvalidChangeKey":
+			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrPreconditionFailed)
 		case resp.StatusCode == http.StatusForbidden:
 			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrForbidden)
+		case resp.StatusCode >= 500 && once:
+			return nil, fmt.Errorf("graph %s %s: status %d: %s", method, reqURL, resp.StatusCode, string(body))
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			lastErr = fmt.Errorf("graph %s %s: status %d", method, reqURL, resp.StatusCode)
 			retryAfter = resp.Header.Get("Retry-After")
@@ -251,15 +270,31 @@ func (c *Client) BaseURL() string {
 // Post sends body as JSON to url and discards the response body. A nil body
 // sends an empty request.
 func (c *Client) Post(ctx context.Context, url string, body any) error {
+	_, err := c.Send(ctx, http.MethodPost, url, body, "")
+	return err
+}
+
+// Send sends body as JSON with method and returns the response body. A nil
+// body sends an empty request. A non-empty ifMatch is sent as If-Match.
+func (c *Client) Send(ctx context.Context, method, url string, body any, ifMatch string) ([]byte, error) {
 	var reqBody []byte
 	if body != nil {
 		var err error
 		if reqBody, err = json.Marshal(body); err != nil {
-			return fmt.Errorf("graph POST %s: encode body: %w", url, err)
+			return nil, fmt.Errorf("graph %s %s: encode body: %w", method, url, err)
 		}
 	}
-	_, err := c.do(ctx, http.MethodPost, url, reqBody, 0)
-	return err
+	return c.do(ctx, method, url, reqBody, 0, ifMatch, false)
+}
+
+// SendOnce is Send for a write that must not repeat, such as a create. It
+// retries only a 429.
+func (c *Client) SendOnce(ctx context.Context, method, url string, body any) ([]byte, error) {
+	reqBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("graph %s %s: encode body: %w", method, url, err)
+	}
+	return c.do(ctx, method, url, reqBody, 0, "", true)
 }
 
 // GetJSON fetches url and unmarshals the JSON body into out.

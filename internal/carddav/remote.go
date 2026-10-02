@@ -95,3 +95,9 @@ func (s *Service) operationTimeout() time.Duration {
 	timeout, _ := s.remote.Limits()
 	return timeout
 }
+
+// NewRemoteResource parses a vCard into the resource that a Remote returns
+// from Pull and Get.
+func NewRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteResource, error) {
+	return parseRemoteResource(href, etag, body)
+}
