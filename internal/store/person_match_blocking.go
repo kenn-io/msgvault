@@ -112,6 +112,9 @@ func (s *Store) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, l
 	created := 0
 	for _, item := range pairs {
 		candidateCreated := false
+		if s.personMatchBlockingBeforeLockHook != nil {
+			s.personMatchBlockingBeforeLockHook()
+		}
 		err := s.withTxContext(ctx, func(tx *loggedTx) error {
 			if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 				return err
@@ -122,34 +125,6 @@ func (s *Store) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, l
 			}
 			if _, linked := componentOf(item.left, edges)[item.right]; linked {
 				return nil
-			}
-			// Use the same pair/value key as pending_pairs. Existing scoped rows
-			// keep their decisions and receive support instead of being bypassed
-			// by a new unscoped suggestion.
-			candidateRows, err := tx.QueryContext(ctx, `SELECT id FROM identity_match_candidates
-				WHERE left_kind = 'participant' AND right_kind = 'participant'
-				  AND left_id = ? AND right_id = ? AND basis = 'email' AND normalized_value = ?
-				ORDER BY id`, item.left, item.right, item.value)
-			if err != nil {
-				return fmt.Errorf("load existing person match candidates: %w", err)
-			}
-			candidateIDs, err := scanInt64Rows(candidateRows)
-			_ = candidateRows.Close()
-			if err != nil {
-				return err
-			}
-			if len(candidateIDs) == 0 {
-				input := IdentityMatchCandidateInput{LeftKind: IdentityMatchParticipant, LeftID: item.left,
-					RightKind: IdentityMatchParticipant, RightID: item.right,
-					Basis: IdentityMatchEmail, NormalizedValue: &item.value,
-					State: IdentityMatchStateCandidate, Source: ProvenanceArchiveObservation}
-				candidate, wasCreated, err := s.upsertIdentityMatchCandidateTx(ctx, tx, input,
-					IdentityMatchParticipant, item.left, IdentityMatchParticipant, item.right, nil, false)
-				if err != nil {
-					return err
-				}
-				candidateIDs = append(candidateIDs, candidate.ID)
-				candidateCreated = wasCreated
 			}
 			observations, err := tx.QueryContext(ctx, `SELECT participant_id, normalized_value, source_id
 				FROM participant_contact_observations
@@ -185,6 +160,46 @@ func (s *Store) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, l
 				return err
 			}
 			_ = observations.Close()
+			// Discovery ran before the identity lock. Skip the pair if an import
+			// ended either side's email since then.
+			shared := false
+			for _, entry := range support {
+				if len(entry.left) > 0 && len(entry.right) > 0 {
+					shared = true
+					break
+				}
+			}
+			if !shared {
+				return nil
+			}
+			// Use the same pair/value key as pending_pairs. Existing scoped rows
+			// keep their decisions and receive support instead of being bypassed
+			// by a new unscoped suggestion.
+			candidateRows, err := tx.QueryContext(ctx, `SELECT id FROM identity_match_candidates
+				WHERE left_kind = 'participant' AND right_kind = 'participant'
+				  AND left_id = ? AND right_id = ? AND basis = 'email' AND normalized_value = ?
+				ORDER BY id`, item.left, item.right, item.value)
+			if err != nil {
+				return fmt.Errorf("load existing person match candidates: %w", err)
+			}
+			candidateIDs, err := scanInt64Rows(candidateRows)
+			_ = candidateRows.Close()
+			if err != nil {
+				return err
+			}
+			if len(candidateIDs) == 0 {
+				input := IdentityMatchCandidateInput{LeftKind: IdentityMatchParticipant, LeftID: item.left,
+					RightKind: IdentityMatchParticipant, RightID: item.right,
+					Basis: IdentityMatchEmail, NormalizedValue: &item.value,
+					State: IdentityMatchStateCandidate, Source: ProvenanceArchiveObservation}
+				candidate, wasCreated, err := s.upsertIdentityMatchCandidateTx(ctx, tx, input,
+					IdentityMatchParticipant, item.left, IdentityMatchParticipant, item.right, nil, false)
+				if err != nil {
+					return err
+				}
+				candidateIDs = append(candidateIDs, candidate.ID)
+				candidateCreated = wasCreated
+			}
 			for value, entry := range support {
 				if len(entry.left) == 0 || len(entry.right) == 0 {
 					continue

@@ -116,6 +116,7 @@ type Store struct {
 	senderRepairMessageLockHook           func()
 	personOperationBeforeIdentityLockHook func()
 	personMergeAfterSnapshotHook          func()
+	personMatchBlockingBeforeLockHook     func()
 	personEnrichmentClock                 func() time.Time
 	personEnrichmentBudgetBarrier         func()
 	personEnrichmentRunBarrier            func(phase string)

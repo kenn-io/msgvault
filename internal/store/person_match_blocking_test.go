@@ -323,3 +323,37 @@ func TestPersonMatchBlockingPreservesScopedCandidateDecisions(t *testing.T) {
 		})
 	}
 }
+
+func TestPersonMatchBlockingSkipsPairWhoseEmailEndsBeforeLock(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	fixture := storetest.New(t)
+	st := fixture.Store
+	left, err := st.EnsureParticipantByIdentifier("beeper", "blocking-ended-left", "Ended Left")
+	require.NoError(err)
+	right, err := st.EnsureParticipantByIdentifier("apple_id", "blocking-ended-right", "Ended Right")
+	require.NoError(err)
+	otherSource, err := st.GetOrCreateSource("beeper", "blocking-ended-second")
+	require.NoError(err)
+	for _, item := range []struct{ participantID, sourceID int64 }{{left, fixture.Source.ID}, {right, otherSource.ID}} {
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_contact_observations
+			(participant_id, source_id, address_kind, original_value, normalized_value, source)
+			VALUES (?, ?, 'email', 'ended@example.test', 'ended@example.test', ?)`),
+			item.participantID, item.sourceID, store.ProvenanceArchiveObservation)
+		require.NoError(err)
+	}
+	// An import ends the right participant's email after discovery chose the pair.
+	release := st.SetPersonMatchBlockingBeforeLockHookForTest(func() {
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participant_contact_observations
+			SET active_until = CURRENT_TIMESTAMP WHERE participant_id = ?`), right)
+		assert.NoError(err)
+	})
+	defer release()
+
+	created, err := st.EnsurePersonMatchScoringCandidatesContext(t.Context(), 2)
+	require.NoError(err)
+	assert.Zero(created)
+	candidates, err := st.ListIdentityMatchReviewsContext(t.Context(), []store.IdentityMatchState{store.IdentityMatchStateCandidate}, 10, 0)
+	require.NoError(err)
+	assert.Empty(candidates, "a pair without a shared active email must not become a suggestion")
+}

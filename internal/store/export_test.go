@@ -232,6 +232,13 @@ func (s *Store) SetPersonOperationBeforeIdentityLockHookForTest(fn func()) func(
 	return func() { s.personOperationBeforeIdentityLockHook = nil }
 }
 
+// SetPersonMatchBlockingBeforeLockHookForTest runs fn after scoring candidate
+// discovery has chosen its pairs and before each pair takes the identity lock.
+func (s *Store) SetPersonMatchBlockingBeforeLockHookForTest(fn func()) func() {
+	s.personMatchBlockingBeforeLockHook = fn
+	return func() { s.personMatchBlockingBeforeLockHook = nil }
+}
+
 // SetPersonMergeAfterSnapshotHookForTest installs a barrier after a merge has
 // captured its reversal snapshot but before it mutates referenced rows.
 func (s *Store) SetPersonMergeAfterSnapshotHookForTest(fn func()) func() {
