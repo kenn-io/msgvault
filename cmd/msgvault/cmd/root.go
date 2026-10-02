@@ -234,6 +234,9 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // work without local configuration or a local daemon are permitted; all others
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
+	if cmd.Name() == "mcp" {
+		return true
+	}
 	switch cmd.Name() {
 	case "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover":
 		return true

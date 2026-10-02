@@ -354,7 +354,7 @@ func TestPersonMergeRequiredOpenAPIContract(t *testing.T) {
 	document := OpenAPIDocument()
 	operations := []*huma.Operation{
 		document.Paths["/api/v1/identity/links"].Post,
-		document.Paths["/api/v1/identity/match-candidates/{id}/accept"].Post,
+		document.Paths["/api/v1/identity/match-candidates/{id}/review/accept"].Post,
 	}
 	for _, operation := range operations {
 		require.NotNil(operation)

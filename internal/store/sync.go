@@ -69,6 +69,7 @@ func (s *Store) ScopedToSync(sourceID, syncRunID int64) *Store {
 		cardDAVConflictResolveSnapshotHook:    base.cardDAVConflictResolveSnapshotHook,
 		cardDAVTombstonePrepareSnapshotHook:   base.cardDAVTombstonePrepareSnapshotHook,
 		identityMatchAcceptBeforeDecisionHook: base.identityMatchAcceptBeforeDecisionHook,
+		identityMatchReviewAfterDecisionHook:  base.identityMatchReviewAfterDecisionHook,
 		personOperationBeforeIdentityLockHook: base.personOperationBeforeIdentityLockHook,
 		personMergeAfterSnapshotHook:          base.personMergeAfterSnapshotHook,
 

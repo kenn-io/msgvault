@@ -637,6 +637,13 @@ func (s *Store) applyCardDAVResourceTx(
 func (s *Store) acceptCardDAVIdentityMatchCandidateContext(
 	ctx context.Context, candidateID int64, decidedBy string, notes *string,
 ) (*IdentityMatchCandidate, int64, error) {
+	return s.acceptCardDAVIdentityMatchCandidateReviewedContext(
+		ctx, candidateID, decidedBy, notes, nil)
+}
+
+func (s *Store) acceptCardDAVIdentityMatchCandidateReviewedContext(
+	ctx context.Context, candidateID int64, decidedBy string, notes *string, reviewToken *string,
+) (*IdentityMatchCandidate, int64, error) {
 	if decidedBy != string(ProvenanceUser) {
 		return nil, 0, ErrIdentityMatchNotAcceptable
 	}
@@ -652,6 +659,32 @@ func (s *Store) acceptCardDAVIdentityMatchCandidateContext(
 		if candidate.LeftKind != IdentityMatchCardDAVResource ||
 			candidate.RightKind != IdentityMatchPerson {
 			return ErrIdentityMatchEndpointUnsupported
+		}
+		if reviewToken != nil {
+			actual, fingerprintErr := identityMatchFingerprintContext(ctx, tx, candidate, true)
+			if fingerprintErr != nil {
+				return fingerprintErr
+			}
+			if actual != *reviewToken {
+				if candidate.State == IdentityMatchStateAccepted && candidate.DecidedBy != nil &&
+					*candidate.DecidedBy == string(ProvenanceUser) {
+					matches, receiptErr := identityMatchReviewReceiptMatchesTxContext(
+						ctx, tx, candidate, IdentityMatchStateAccepted, *reviewToken)
+					if receiptErr != nil {
+						return receiptErr
+					}
+					if matches {
+						accepted = candidate
+						return nil
+					}
+				}
+				return ErrIdentityMatchReviewStale
+			}
+			if candidate.State == IdentityMatchStateAccepted && candidate.DecidedBy != nil &&
+				*candidate.DecidedBy == string(ProvenanceUser) {
+				accepted = candidate
+				return nil
+			}
 		}
 		resource, err := scanCardDAVResource(tx.QueryRowContext(ctx,
 			cardDAVResourceSelect+` WHERE id = ?`+s.dialect.SelectForUpdate(),
@@ -716,6 +749,12 @@ func (s *Store) acceptCardDAVIdentityMatchCandidateContext(
 			resource.ID, IdentityMatchPerson,
 		); err != nil {
 			return fmt.Errorf("reject competing CardDAV identity candidates: %w", err)
+		}
+		if reviewToken != nil {
+			if err := recordIdentityMatchReviewReceiptTxContext(
+				ctx, tx, candidate.ID, IdentityMatchStateAccepted, *reviewToken); err != nil {
+				return err
+			}
 		}
 		accepted, err = getIdentityMatchCandidateTx(ctx, tx, candidate.ID)
 		return err
