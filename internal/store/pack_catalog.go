@@ -127,7 +127,11 @@ func (c *PackCatalog) ListIndexed(ctx context.Context) ([]packstore.IndexEntry, 
 		return nil, err
 	}
 	if pass, ok := ctx.Value(packVerificationKey{}).(*PackVerificationPass); ok {
-		return fromStorePackEntries(pass.entries)
+		entries, err := c.store.listPackVerificationWindow(ctx, pass)
+		if err != nil {
+			return nil, err
+		}
+		return fromStorePackEntries(entries)
 	}
 	raw, err := c.store.ListIndexedBlobEntriesContext(ctx)
 	if err != nil {

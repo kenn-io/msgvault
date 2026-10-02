@@ -293,3 +293,27 @@ func TestPackCatalogCancellationWhileWaitingForDatabase(t *testing.T) {
 		})
 	}
 }
+
+func TestPackVerificationWindowListsRowsAsKitReadsThem(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	hash := "aa11223344556677889900aabbccddeeff00112233445566778899aabbccddee"
+	oldPack, newPack := pack.NewPackID(), pack.NewPackID()
+	created := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	require.NoError(st.RecordPackedBlobs(store.PackRecord{PackID: oldPack, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
+		[]store.PackIndexEntry{{BlobHash: hash, PackID: oldPack, Offset: 6, StoredLen: 64, RawLen: 64}}))
+	ctx, pass, err := st.BeginPackVerification(t.Context(), 128, 32<<20)
+	require.NoError(err)
+	// A repack that commits before Pack takes the maintenance lease moves the
+	// row; repair must see the new location, or it deletes a live mapping.
+	require.NoError(st.AdoptPackedBlobs(store.PackRecord{PackID: newPack, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
+		[]store.PackIndexEntry{{BlobHash: hash, PackID: newPack, Offset: 6, StoredLen: 64, RawLen: 64}}))
+	indexed, err := store.NewPackCatalog(st).ListIndexed(ctx)
+	require.NoError(err)
+	require.Len(indexed, 1)
+	assert.Equal(newPack, indexed[0].PackID)
+	more, err := st.FinishPackVerification(t.Context(), pass)
+	require.NoError(err)
+	assert.False(more)
+}
