@@ -462,7 +462,8 @@ Sign in from SSH, a server, or a container without opening a local browser:
 msgvault add-o365 you@outlook.com --headless
 ```
 
-For Graph mail, add `--graph`. Teams uses `msgvault add-teams --headless`.
+For Graph mail, add `--graph`. For Teams, run
+`msgvault add-teams you@example.com --headless`.
 Open the printed Microsoft URL on another device and enter the code. Complete
 sign-in there; msgvault saves the token on the server.
 

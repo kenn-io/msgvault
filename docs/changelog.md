@@ -55,9 +55,10 @@ adds reviewed identity tools for agents and reduces repeated sync and search wor
   `add-o365 --graph` when IMAP is unavailable. Staged deletion supports these accounts,
   including moving messages to Deleted Items and permanent deletion. Deletion requires
   `Mail.ReadWrite` consent and that permission in the app registration.
-- Sign in to Microsoft 365 and Teams without a local browser using `add-o365 --headless`
-  or `add-teams --headless`. msgvault prints a Microsoft URL and a code to use on
-  another device.
+- Sign in to Microsoft 365 and Teams without a local browser using
+  `msgvault add-o365 you@example.com --headless` or
+  `msgvault add-teams you@example.com --headless`. msgvault prints a Microsoft URL
+  and a code to use on another device.
 - Create and manage plain-text Gmail reply drafts, compose fresh IMAP drafts, and
   reply-all to archived mail. Enable drafts for each source. Delegated agents can read,
   edit, and delete managed drafts within their granted account access.
