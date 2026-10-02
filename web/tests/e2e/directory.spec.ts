@@ -256,6 +256,7 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   await expect(toggle).toBeFocused();
 
   const reveal = maintenance.getByRole('button', { name: 'Show sensitive eligible fields' });
+  await expect(reveal).toBeEnabled();
   await reveal.focus();
   await page.keyboard.press('Enter');
   await expect(maintenance.getByText('Private note')).toBeVisible();

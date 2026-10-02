@@ -66,9 +66,9 @@
     error = null;
     try {
       const result = decision === 'accept'
-        ? await controller.acceptIdentity(candidate.id, undefined, reviewContext)
-        : await controller.rejectIdentity(candidate.id, undefined, reviewContext);
-      if (result.ok) {
+        ? await controller.acceptIdentity(candidate.id, undefined, reviewContext, candidate.review_token)
+        : await controller.rejectIdentity(candidate.id, undefined, reviewContext, candidate.review_token);
+      if (result.ok || result.kind === 'stale') {
         onClose();
       } else if (result.kind === 'merge_required') {
         conflict = result.conflict;

@@ -459,7 +459,8 @@ func (m *identityMatcher) matchStableProviderID(
 			outcome.Conflicts = append(outcome.Conflicts, candidate.ID)
 			m.resolved[memoKey] = struct{}{}
 		case errors.Is(err, store.ErrIdentityMatchNotAccepted),
-			errors.Is(err, store.ErrIdentityMatchNotFound):
+			errors.Is(err, store.ErrIdentityMatchNotFound),
+			errors.Is(err, store.ErrIdentityMatchReviewStale):
 			if staleErr := m.handleStaleAcceptedMatch(
 				ctx, candidate, memoKey, outcome,
 			); staleErr != nil {

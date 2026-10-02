@@ -676,6 +676,7 @@ func init() {
 	identityCmd.AddCommand(identityRemoveCmd)
 	identityCmd.AddCommand(identityDiscoverCmd)
 	identityCmd.AddCommand(identityImportCmd)
+	identityCmd.AddCommand(newIdentityMatchesCommand())
 
 	identityListCmd.Flags().StringVar(&identityListAccount,
 		"account", "", "Restrict to a single account")
