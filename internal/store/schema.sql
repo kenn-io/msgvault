@@ -1595,6 +1595,22 @@ CREATE TABLE IF NOT EXISTS matrix_undecryptable_events (
     PRIMARY KEY(source_id, event_id)
 );
 
+CREATE TABLE IF NOT EXISTS matrix_media_cache (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    source_attachment_id TEXT NOT NULL,
+    filename TEXT,
+    mime_type TEXT,
+    storage_path TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    media_type TEXT,
+    PRIMARY KEY(message_id, source_attachment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_matrix_media_cache_content_hash_lower
+    ON matrix_media_cache(LOWER(content_hash));
+CREATE INDEX IF NOT EXISTS idx_matrix_media_cache_storage_path
+    ON matrix_media_cache(storage_path);
+
 -- ============================================================================
 -- ATTACHMENTS & MEDIA
 -- ============================================================================

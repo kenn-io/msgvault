@@ -385,6 +385,16 @@ func canonicalizeAttachmentBlobPathsTx(ctx context.Context, tx *loggedTx, blobHa
 		canonical, blobHash, blobHash, lookupHash, canonical, blobHash); err != nil {
 		return fmt.Errorf("canonicalize thumbnail_path for %s: %w", blobHash, err)
 	}
+	if _, err := tx.Exec(`
+		UPDATE matrix_media_cache SET storage_path = ?, content_hash = ?
+		WHERE (content_hash = ? OR content_hash = ?)
+		  AND (storage_path != ? OR content_hash != ?)
+		  AND storage_path != ''
+		  AND LOWER(storage_path) NOT LIKE 'http://%'
+		  AND LOWER(storage_path) NOT LIKE 'https://%'`,
+		canonical, blobHash, blobHash, lookupHash, canonical, blobHash); err != nil {
+		return fmt.Errorf("canonicalize Matrix media cache path for %s: %w", blobHash, err)
+	}
 	return nil
 }
 
@@ -478,7 +488,10 @@ const attachmentReferencedHashesSQL = `
 	WHERE content_hash IS NOT NULL AND content_hash != ''
 	UNION
 	SELECT LOWER(thumbnail_hash) FROM attachments
-	WHERE thumbnail_hash IS NOT NULL AND thumbnail_hash != ''`
+	WHERE thumbnail_hash IS NOT NULL AND thumbnail_hash != ''
+	UNION
+	SELECT LOWER(content_hash) FROM matrix_media_cache
+	WHERE content_hash != ''`
 
 const resolveAttachmentBlobSQL = `
 	WITH requested(blob_hash) AS (VALUES (CAST(? AS TEXT)))
@@ -487,6 +500,8 @@ const resolveAttachmentBlobSQL = `
 	                   WHERE LOWER(a.content_hash) = ?)
 	           OR EXISTS (SELECT 1 FROM attachments a
 	                      WHERE LOWER(a.thumbnail_hash) = ?)
+	           OR EXISTS (SELECT 1 FROM matrix_media_cache c
+	                      WHERE LOWER(c.content_hash) = ?)
 	       ) THEN 1 ELSE 0 END,
 	       p.blob_hash, p.pack_id, p.pack_offset,
 	       p.stored_len, p.raw_len, p.flags, p.crc32c
@@ -521,7 +536,7 @@ func (s *Store) ResolveAttachmentBlobContext(ctx context.Context, blobHash strin
 	var hash, packID sql.NullString
 	var offset, storedLen, rawLen, flags, crc sql.NullInt64
 	err = s.db.QueryRowContext(ctx, s.dialect.Rebind(resolveAttachmentBlobSQL),
-		canonicalHash, canonicalHash, canonicalHash).
+		canonicalHash, canonicalHash, canonicalHash, canonicalHash).
 		Scan(&referenced, &hash, &packID, &offset, &storedLen, &rawLen, &flags, &crc)
 	if err != nil {
 		return AttachmentBlobLocation{}, fmt.Errorf("resolve attachment blob %s: %w", blobHash, err)
@@ -557,7 +572,10 @@ func (s *Store) ListReferencedBlobHashesContext(ctx context.Context) (map[string
 		WHERE content_hash IS NOT NULL AND content_hash != ''
 		UNION
 		SELECT thumbnail_hash FROM attachments
-		WHERE thumbnail_hash IS NOT NULL AND thumbnail_hash != ''`)
+		WHERE thumbnail_hash IS NOT NULL AND thumbnail_hash != ''
+		UNION
+		SELECT content_hash FROM matrix_media_cache
+		WHERE content_hash != ''`)
 	if err != nil {
 		return nil, fmt.Errorf("list referenced attachment blob hashes: %w", err)
 	}
@@ -718,6 +736,19 @@ func (s *Store) ListUnpackedBlobsContext(ctx context.Context) ([]UnpackedBlob, e
 		                  WHERE p.blob_hash = LOWER(attachments.thumbnail_hash))
 		GROUP BY thumbnail_hash, thumbnail_path
 		ORDER BY MIN(id), thumbnail_path`, false); err != nil {
+		return nil, err
+	}
+	if err := collect(`
+		SELECT content_hash, storage_path, COALESCE(MAX(size), -1)
+		FROM matrix_media_cache
+		WHERE content_hash != ''
+		  AND storage_path != ''
+		  AND LOWER(storage_path) NOT LIKE 'http://%'
+		  AND LOWER(storage_path) NOT LIKE 'https://%'
+		  AND NOT EXISTS (SELECT 1 FROM attachment_pack_index p
+		                  WHERE p.blob_hash = LOWER(matrix_media_cache.content_hash))
+		GROUP BY content_hash, storage_path
+		ORDER BY MIN(message_id), storage_path`, true); err != nil {
 		return nil, err
 	}
 	return blobs, nil

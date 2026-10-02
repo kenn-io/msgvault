@@ -845,6 +845,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			return nil, fmt.Errorf("copy reaction_source_events: %w", err)
 		}
 	}
+	if present, err := sourceTableExists(tx, "matrix_media_cache"); err != nil {
+		return nil, fmt.Errorf("check matrix_media_cache: %w", err)
+	} else if present {
+		if _, err := copyByName(tx, "matrix_media_cache",
+			`message_id IN (SELECT id FROM messages)`); err != nil {
+			return nil, fmt.Errorf("copy matrix_media_cache: %w", err)
+		}
+	}
 	// Applied edits are named only in the edited message's metadata, so their
 	// ciphertext rows are selected from there.
 	if present, err := sourceTableExists(tx, "matrix_encrypted_events"); err != nil {

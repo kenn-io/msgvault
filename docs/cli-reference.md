@@ -1170,9 +1170,11 @@ msgvault sync-matrix --full
 |---|---|---|
 | `--account` | all registered | Sync only this exact Matrix user ID |
 | `--full` | `false` | Ignore stored cursors and re-fetch complete joined-room history |
+| `--no-media` | `false` | Record media metadata without downloading bytes this run |
 
 Room selection and scheduled sync are controlled by `[matrix]`. A message is
-kept when decryption fails, and later syncs retry encrypted placeholders.
+kept even when decryption or media retrieval fails; later syncs retry encrypted
+placeholders, and a full sync retries media.
 
 ---
 

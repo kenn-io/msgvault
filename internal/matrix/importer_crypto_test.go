@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/testutil"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/crypto"
@@ -84,7 +85,8 @@ func TestImporterDecryptsRealMegolmEvent(t *testing.T) {
 	require.NoError(err)
 	encryptedEvent.ID = "$encrypted-2"
 	encryptedEvent.Content = event.Content{Parsed: encryptedContent}
-	require.NoError(NewImporter(st, runtime).persistEvent(ctx, source.ID, conversationID, encryptedEvent, &ImportSummary{}))
+	require.NoError(NewImporter(st, runtime).persistEvent(ctx, source.ID, conversationID, encryptedEvent,
+		attachmentpolicy.Conversation{}, ImportOptions{}, &ImportSummary{}))
 	messageIDs, err := st.MessageExistsBatch(source.ID, []string{"$encrypted-2"})
 	require.NoError(err)
 	body, err := st.GetMessageBodyText(messageIDs["$encrypted-2"])

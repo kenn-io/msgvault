@@ -5783,32 +5783,35 @@ func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, form
 // has not run yet.
 func (s *Store) AttachmentPathsUniqueToSource(sourceID int64) ([]string, error) {
 	rows, err := s.db.Query(`
-		WITH source_blob_paths(blob_hash, blob_path) AS (
-		    SELECT a.content_hash, a.storage_path
+		WITH all_blob_paths(source_id, blob_hash, blob_path) AS (
+		    SELECT m.source_id, a.content_hash, a.storage_path
 		    FROM attachments a
 		    JOIN messages m ON m.id = a.message_id
-		    WHERE m.source_id = ?
-		      AND a.content_hash IS NOT NULL AND a.content_hash != ''
+		    WHERE a.content_hash IS NOT NULL AND a.content_hash != ''
 		    UNION
-		    SELECT a.thumbnail_hash, a.thumbnail_path
+		    SELECT m.source_id, a.thumbnail_hash, a.thumbnail_path
 		    FROM attachments a
 		    JOIN messages m ON m.id = a.message_id
-		    WHERE m.source_id = ?
-		      AND a.thumbnail_hash IS NOT NULL AND a.thumbnail_hash != ''
+		    WHERE a.thumbnail_hash IS NOT NULL AND a.thumbnail_hash != ''
+		    UNION
+		    SELECT m.source_id, c.content_hash, c.storage_path
+		    FROM matrix_media_cache c
+		    JOIN messages m ON m.id = c.message_id
+		    WHERE c.content_hash != ''
 		)
 		SELECT DISTINCT sb.blob_path
-		FROM source_blob_paths sb
-		WHERE sb.blob_path IS NOT NULL
+		FROM all_blob_paths sb
+		WHERE sb.source_id = ?
+		  AND sb.blob_path IS NOT NULL
 		  AND sb.blob_path != ''
 		  AND sb.blob_path NOT LIKE 'http://%'
 		  AND sb.blob_path NOT LIKE 'https://%'
 		  AND NOT EXISTS (
-		      SELECT 1 FROM attachments a2
-		      JOIN messages m2 ON m2.id = a2.message_id
-		      WHERE m2.source_id != ?
-		        AND (a2.content_hash = sb.blob_hash OR a2.thumbnail_hash = sb.blob_hash)
+		      SELECT 1 FROM all_blob_paths other
+		      WHERE other.source_id != sb.source_id
+		        AND other.blob_hash = sb.blob_hash
 		  )
-	`, sourceID, sourceID, sourceID)
+	`, sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -5825,20 +5828,24 @@ func (s *Store) AttachmentPathsUniqueToSource(sourceID int64) ([]string, error) 
 	return paths, rows.Err()
 }
 
-// IsAttachmentPathReferenced returns true if any attachment record still
-// points to the given content or thumbnail path. Use this immediately before
+// IsAttachmentPathReferenced returns true if any current attachment or cached
+// Matrix media still points to the given content or thumbnail path. Use this immediately before
 // deleting a file to guard against a concurrent sync that added a new
 // reference after the candidate list was collected.
 func (s *Store) IsAttachmentPathReferenced(storagePath string) (bool, error) {
-	var count int
+	var referenced bool
 	err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM attachments WHERE storage_path = ? OR thumbnail_path = ?`,
-		storagePath, storagePath,
-	).Scan(&count)
+		`SELECT EXISTS(
+			SELECT 1 FROM attachments WHERE storage_path = ? OR thumbnail_path = ?
+			UNION ALL
+			SELECT 1 FROM matrix_media_cache WHERE storage_path = ?
+		)`,
+		storagePath, storagePath, storagePath,
+	).Scan(&referenced)
 	if err != nil {
 		return true, err // fail safe: treat error as referenced
 	}
-	return count > 0, nil
+	return referenced, nil
 }
 
 // UpsertAttachment is the compatibility write path for callers without stable
@@ -5873,6 +5880,30 @@ func (s *Store) RecomputeMessageAttachmentStats(messageID int64) error {
 			return err
 		}
 		return recomputeMessageAttachmentStatsWith(q, messageID)
+	}
+	if s.syncGeneration == nil {
+		return write(s.db)
+	}
+	return s.withTx(func(tx *loggedTx) error { return write(tx) })
+}
+
+// RecomputeMessageSizeEstimate refreshes one message's body-plus-stored-media
+// byte estimate after attachment reconciliation.
+func (s *Store) RecomputeMessageSizeEstimate(messageID int64) error {
+	write := func(q querier) error {
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		var body sql.NullString
+		err := q.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read message body for size estimate: %w", err)
+		}
+		_, err = q.Exec(`UPDATE messages SET size_estimate = ? + (
+			SELECT COALESCE(SUM(size), 0) FROM attachments
+			WHERE message_id = ? AND content_hash IS NOT NULL AND content_hash != ''
+		) WHERE id = ?`, len(body.String), messageID, messageID)
+		return err
 	}
 	if s.syncGeneration == nil {
 		return write(s.db)
@@ -6141,6 +6172,16 @@ func (s *Store) beeperAttachmentMetadataChangedTx(
 // can keep already-downloaded media without re-fetching it.
 func (s *Store) MessageBeeperAttachments(messageID int64) (map[string]AttachmentRef, error) {
 	return s.messageProviderAttachments(messageID, "beeper:")
+}
+
+// ReplaceMessageMatrixAttachments replaces Matrix-managed media occurrences.
+func (s *Store) ReplaceMessageMatrixAttachments(messageID int64, refs []AttachmentRef) error {
+	return s.replaceMessageProviderAttachments(messageID, "matrix:", refs)
+}
+
+// MessageMatrixAttachments returns Matrix-managed media keyed by MXC identity.
+func (s *Store) MessageMatrixAttachments(messageID int64) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachments(messageID, "matrix:")
 }
 
 // ArchivedRawMessage is one archived message paired with the verbatim provider

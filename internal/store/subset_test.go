@@ -1314,6 +1314,31 @@ func TestCopySubset_Basic(t *testing.T) {
 	assert.False(hasViolation, "foreign key violations found in destination database")
 }
 
+func TestCopySubsetPreservesMatrixMediaCache(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDir := t.TempDir()
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	srcDB := createTestSourceDB(t, srcDir, 1)
+	db, err := sql.Open("sqlite3", srcDB)
+	require.NoError(err)
+	_, err = db.Exec(`INSERT INTO matrix_media_cache
+		(message_id, source_attachment_id, storage_path, content_hash, size)
+		VALUES (1, 'matrix:mxc://example.org/original', 'aa/hash', 'hash', 7)`)
+	require.NoError(err)
+	require.NoError(db.Close())
+
+	_, err = CopySubset(srcDB, dstDir, 1, false)
+	require.NoError(err)
+	destination, err := sql.Open("sqlite3", filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	defer func() { _ = destination.Close() }()
+	var path string
+	require.NoError(destination.QueryRow(`SELECT storage_path FROM matrix_media_cache
+		WHERE message_id = 1`).Scan(&path))
+	assert.Equal("aa/hash", path)
+}
+
 func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 	require := require.New(t)
 	srcDir := t.TempDir()

@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"maunium.net/go/mautrix"
@@ -559,7 +560,8 @@ func relatedEditFixture(t *testing.T, st *store.Store) (*keyBackupFixture, *Runt
 	require.NoError(err)
 	conversationID, err := st.EnsureConversation(source.ID, fixture.roomID.String(), "Example room")
 	require.NoError(err)
-	require.NoError(NewImporter(st, runtime).persistEvent(t.Context(), source.ID, conversationID, original, &ImportSummary{}))
+	require.NoError(NewImporter(st, runtime).persistEvent(t.Context(), source.ID, conversationID, original,
+		attachmentpolicy.Conversation{}, ImportOptions{}, &ImportSummary{}))
 	originalKnown = true
 	return fixture, runtime, source, func(events string) { timeline.Store(&events) }
 }

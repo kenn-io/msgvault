@@ -87,8 +87,8 @@ msgvault sync-matrix
 # Re-read complete history to pick up anything missed.
 msgvault sync-matrix --full
 
-# Sync one registered Matrix user.
-msgvault sync-matrix --account @archive:example.org
+# Sync one registered Matrix user and defer media bytes.
+msgvault sync-matrix --account @archive:example.org --no-media
 ```
 
 The first run takes a Matrix `/sync` snapshot, then walks backward through each
@@ -113,6 +113,8 @@ mark the account online, and `unavailable` would mark it idle.
 
 - Text, notice, and emote events, with HTML formatted bodies converted to
   searchable plain text.
+- Images, video, audio, and files under the shared chat
+  [media policy](../configuration.md#media-policy).
 - Edits, redactions, reactions, and reply relationships.
 - Current joined-room membership as conversation participants. The account's
   `m.direct` map distinguishes direct chats from groups.
@@ -128,13 +130,25 @@ events after processing newly received keys. They are never silently dropped.
 Matrix messages use per-message semantic indexing. Once imported, their text is
 available to keyword, semantic, and people workflows enabled for the archive.
 
+## Media behavior and limits
+
+By default, eligible media is downloaded for direct chats and groups with at
+most 20 participants, with a 250 MiB per-file cap. `--no-media` records pending
+metadata without downloading bytes. A later `--full` sync retries pending or
+failed Matrix media; content-addressed storage avoids duplicate files.
+
+Encrypted Matrix attachments are decrypted locally after download. A failed
+download or decryption leaves a typed failure marker while the message and raw
+event remain archived. Changing policy affects future downloads. Use
+`msgvault purge-excluded-media` to remove stored bytes that a new policy would
+exclude.
+
 ## Current limits
 
-- Matrix attachment download is not included.
 - Only rooms the account has joined are archived. Invited, knocked, and left
   rooms are not imported.
 - Room filters accept stable room IDs, not aliases or display names.
 - Historical membership is not reconstructed. The current joined-member list
-  is the conversation roster used for participants.
+  is the conversation roster used for participant and media-policy decisions.
 - A homeserver or SSO provider that does not expose a login token requires a
   password or app password for the dedicated device.

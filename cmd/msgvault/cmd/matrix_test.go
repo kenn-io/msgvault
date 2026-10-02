@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -23,11 +24,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/atomicfile"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	matrixsource "go.kenn.io/msgvault/internal/matrix"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/id"
 )
 
 func TestReadMatrixSecretFilePreservesPasswordWhitespace(t *testing.T) {
@@ -75,7 +79,7 @@ func TestRunConfiguredMatrixSyncRefreshesCacheAfterFailedAttempt(t *testing.T) {
 		return refreshErr
 	}
 
-	err := runConfiguredMatrixSync(ctx, st)
+	err := runConfiguredMatrixSync(ctx, st, nil)
 	require.ErrorContains(err, "no Matrix accounts registered")
 	require.ErrorIs(err, refreshErr)
 	assert.Equal(t, 1, calls)
@@ -320,7 +324,7 @@ func TestRunMatrixSyncReleasesCryptoRuntimeOnEveryPath(t *testing.T) {
 
 	for _, fail := range []bool{false, true, false} {
 		failSync.Store(fail)
-		err := runMatrixSync(t.Context(), st, cfg, "", false, nil, io.Discard)
+		err := runMatrixSync(t.Context(), st, cfg, "", false, true, nil, nil, io.Discard)
 		if fail {
 			require.Error(err)
 		} else {
@@ -601,4 +605,104 @@ func TestAddMatrixRenewalLogoutTimeoutKeepsBothLoginsRecoverable(t *testing.T) {
 	logins, loggedOut := server.snapshot()
 	assert.Equal(1, logins)
 	assert.NotContains(loggedOut, "Bearer fresh")
+}
+
+func TestRunMatrixCLICommandStreamsEachAccountAsItSyncs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	// Each /sync request records how many account summaries the daemon had
+	// already emitted, so buffered output shows up as zero for both accounts.
+	var summariesEmitted atomic.Int64
+	var mu sync.Mutex
+	seenAtSync := map[string][]int64{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /_matrix/client/v3/sync", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		token := r.Header.Get("Authorization")
+		seenAtSync[token] = append(seenAtSync[token], summariesEmitted.Load())
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"next_batch":"s1"}`))
+	})
+	mux.HandleFunc("GET /_matrix/client/v3/user/{user}/account_data/{type}", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	home := t.TempDir()
+	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
+	st := testutil.NewTestStore(t)
+	for _, account := range []string{"first", "second"} {
+		userID := "@" + account + ":example.org"
+		require.NoError(matrixsource.SaveCredentials(cfg.TokensDir(), matrixsource.Credentials{
+			Homeserver: server.URL, UserID: userID, DeviceID: "DEV", AccessToken: account,
+		}))
+		_, err := st.GetOrCreateSource(sourceTypeMatrix, userID)
+		require.NoError(err)
+	}
+	original := openMatrixRuntime
+	t.Cleanup(func() { openMatrixRuntime = original })
+	openMatrixRuntime = func(_ context.Context, creds matrixsource.Credentials, _ string) (*matrixsource.Runtime, error) {
+		client, err := mautrix.NewClient(creds.Homeserver, id.UserID(creds.UserID), creds.AccessToken)
+		if err != nil {
+			return nil, fmt.Errorf("create test Matrix client: %w", err)
+		}
+		return &matrixsource.Runtime{Client: client}, nil
+	}
+	adapter := &storeAPIAdapter{store: st, config: cfg}
+
+	var events []api.CLIRunEvent
+	err := adapter.runMatrixCLICommand(t.Context(), []string{"sync-matrix"}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		if strings.HasPrefix(event.Data, "Matrix @") {
+			summariesEmitted.Add(1)
+		}
+		return nil
+	})
+	require.NoError(err)
+	require.Len(events, 2)
+	assert.Equal(cliStreamStdout, events[0].Type)
+	assert.True(strings.HasPrefix(events[0].Data, "Matrix @first:example.org: "), events[0].Data)
+	assert.True(strings.HasPrefix(events[1].Data, "Matrix @second:example.org: "), events[1].Data)
+	mu.Lock()
+	secondSyncs := append([]int64(nil), seenAtSync["Bearer second"]...)
+	mu.Unlock()
+	require.NotEmpty(secondSyncs)
+	assert.Equal(int64(1), secondSyncs[0], "the first account's summary reaches the client before the second account syncs")
+
+	// An emission failure is returned, later output is dropped, and the
+	// remaining account still syncs.
+	emitErr := errors.New("client went away")
+	var calls int
+	err = adapter.runMatrixCLICommand(t.Context(), []string{"sync-matrix"}, func(api.CLIRunEvent) error {
+		calls++
+		return emitErr
+	})
+	require.ErrorIs(err, emitErr)
+	assert.Equal(1, calls)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Len(seenAtSync["Bearer second"], len(secondSyncs)+1, "the second account still syncs")
+}
+
+func TestParseMatrixSyncCLIArgs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	account, full, noMedia, err := parseMatrixSyncCLIArgs([]string{
+		"sync-matrix", "--account=@archive:example.org", "--full", "--no-media",
+		"--log-level=debug", "--log-sql", "--log-sql-slow-ms=25", "--verbose",
+	})
+	require.NoError(err)
+	assert.Equal("@archive:example.org", account)
+	assert.True(full)
+	assert.True(noMedia)
+
+	account, full, noMedia, err = parseMatrixSyncCLIArgs([]string{"sync-matrix", "unexpected"})
+	require.ErrorContains(err, "no positional arguments")
+	assert.Empty(account)
+	assert.False(full || noMedia)
+	account, full, noMedia, err = parseMatrixSyncCLIArgs([]string{"sync-matrix", "--build-cache", "--no-build-cache"})
+	require.ErrorContains(err, "mutually exclusive")
+	assert.Empty(account)
+	assert.False(full || noMedia)
 }

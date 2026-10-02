@@ -317,6 +317,28 @@ func TestRunScheduledSourceSkipsPackWithoutNewBlobs(t *testing.T) {
 	assert.Nil(f.packedEntry(hash), "nothing was pending")
 }
 
+func TestMatrixMediaMutationMarksPackPendingAfterNewBlobs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	mutate := matrixMediaMutation(f.maintenance)
+	existing := f.addLoose([]byte("loose before the matrix sync"))
+
+	require.NoError(mutate(context.Background(), func() error { return nil }))
+	require.NoError(f.maintenance.runPendingPack(context.Background()))
+	assert.Nil(f.packedEntry(existing), "a write that stored no blob must not mark pack pending")
+
+	var hash string
+	require.NoError(mutate(context.Background(), func() error {
+		hash = f.ingestLoose([]byte("new matrix media blob"))
+		return nil
+	}))
+	assert.Nil(f.packedEntry(hash), "a media write must not pack inline")
+
+	require.NoError(f.maintenance.runPendingPack(context.Background()))
+	assert.NotNil(f.packedEntry(hash), "the pack job packs the new media blob")
+}
+
 func TestRunScheduledSourceDefersPackAfterNewBlobs(t *testing.T) {
 	assert := assert.New(t)
 	f := newAttachmentMaintenanceFixture(t)

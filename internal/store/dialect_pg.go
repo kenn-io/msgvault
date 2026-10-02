@@ -2345,6 +2345,9 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 //     and cascade-reachable from sources.
 //   - matrix_encrypted_events and matrix_undecryptable_events: written during
 //     Matrix syncs and cascade-reachable from sources.
+//   - matrix_media_cache: written by CacheMatrixAttachment during Matrix media
+//     archiving; cascades from messages, which cascade from sources, so it is
+//     an indirect cascade target.
 //
 // collections is included (despite not being a direct sources cascade target)
 // so a concurrent collection rename cannot race the collection_sources cascade.
@@ -2369,7 +2372,7 @@ var exclusiveLockTables = []string{
 	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
-	"matrix_encrypted_events", "matrix_undecryptable_events",
+	"matrix_encrypted_events", "matrix_undecryptable_events", "matrix_media_cache",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the

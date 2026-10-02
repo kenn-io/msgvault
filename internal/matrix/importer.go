@@ -7,12 +7,15 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/export"
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -102,11 +105,15 @@ func (s *SyncState) marshal() (string, error) {
 }
 
 type ImportOptions struct {
-	UserID       string
-	Full         bool
-	Rooms        []string
-	ExcludeRooms []string
-	Progress     func(string)
+	UserID         string
+	Full           bool
+	NoMedia        bool
+	Rooms          []string
+	ExcludeRooms   []string
+	AttachmentsDir string
+	MediaPolicy    attachmentpolicy.Policy
+	Progress       func(string)
+	MediaMutation  func(context.Context, func() error) error
 }
 
 type ImportSummary struct {
@@ -116,6 +123,8 @@ type ImportSummary struct {
 	Undecryptable          int64
 	UndecryptableRecovered int64
 	EventsSkipped          int64
+	AttachmentsDownloaded  int64
+	AttachmentsPending     int64
 	RelationsUnresolved    int64
 }
 
@@ -339,6 +348,7 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 	if err := imp.store.SetConversationMemberCount(convID, len(members)); err != nil {
 		return err
 	}
+	conversation := attachmentpolicy.Conversation{Type: roomType, ParticipantCount: len(members)}
 	deferred, err := decodeDeferredRelations(rs.DeferredRelations)
 	if err != nil {
 		return fmt.Errorf("decode deferred Matrix relations for room %s: %w", roomID, err)
@@ -412,7 +422,7 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 		if evt != nil {
 			evt.RoomID = roomID
 		}
-		err := imp.persistEvent(ctx, sourceID, convID, evt, sum)
+		err := imp.persistEvent(ctx, sourceID, convID, evt, conversation, opts, sum)
 		if errors.Is(err, errRelationTargetMissing) {
 			candidate, candidateErr := imp.deferredRelationAfterPersist(sourceID, evt)
 			if candidateErr != nil {
@@ -533,7 +543,7 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := imp.replayDeferredRelation(ctx, sourceID, convID, evt, sum); err != nil {
+		if err := imp.replayDeferredRelation(ctx, sourceID, convID, evt, conversation, opts, sum); err != nil {
 			if errors.Is(err, errRelationTargetMissing) {
 				if finalizeErr := imp.finalizeDeferredRecovery(sourceID, evt, sum); finalizeErr != nil {
 					return finalizeErr
@@ -584,7 +594,7 @@ func relationReplayPriority(evt *event.Event) int {
 	return 0
 }
 
-func (imp *Importer) replayDeferredRelation(ctx context.Context, sourceID, convID int64, evt *event.Event, sum *ImportSummary) error {
+func (imp *Importer) replayDeferredRelation(ctx context.Context, sourceID, convID int64, evt *event.Event, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
 	if evt != nil && (evt.Type == event.EventMessage || evt.Type == event.EventSticker) {
 		if !parseContent(evt) {
 			sum.EventsSkipped++
@@ -595,7 +605,7 @@ func (imp *Importer) replayDeferredRelation(ctx context.Context, sourceID, convI
 			return imp.resolveDeferredReply(ctx, sourceID, convID, evt, content.RelatesTo.GetReplyTo())
 		}
 	}
-	return imp.persistEvent(ctx, sourceID, convID, evt, sum)
+	return imp.persistEvent(ctx, sourceID, convID, evt, conversation, opts, sum)
 }
 
 func (imp *Importer) deferredRelationAfterPersist(sourceID int64, evt *event.Event) (*event.Event, error) {
@@ -897,7 +907,7 @@ func (imp *Importer) participant(userID id.UserID, displayName string) (int64, e
 	return pid, nil
 }
 
-func (imp *Importer) persistEvent(ctx context.Context, sourceID, convID int64, evt *event.Event, sum *ImportSummary) error {
+func (imp *Importer) persistEvent(ctx context.Context, sourceID, convID int64, evt *event.Event, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
 	if evt == nil || evt.ID == "" {
 		return nil
 	}
@@ -918,7 +928,7 @@ func (imp *Importer) persistEvent(ctx context.Context, sourceID, convID int64, e
 				return nil
 			}
 		}
-		_, err := imp.redact(ctx, sourceID, convID, evt.RoomID, target, sum)
+		_, err := imp.redact(ctx, sourceID, convID, evt.RoomID, target, conversation, opts, sum)
 		return err
 	}
 	if !parseContent(evt) {
@@ -930,14 +940,14 @@ func (imp *Importer) persistEvent(ctx context.Context, sourceID, convID int64, e
 		return fmt.Errorf("encode Matrix event %s: %w", evt.ID, err)
 	}
 	if evt.Type == event.EventEncrypted {
-		return imp.persistEncryptedEvent(ctx, sourceID, convID, evt, raw, sum)
+		return imp.persistEncryptedEvent(ctx, sourceID, convID, evt, raw, conversation, opts, sum)
 	}
-	return imp.persistPlainEvent(ctx, sourceID, convID, evt, raw, sum)
+	return imp.persistPlainEvent(ctx, sourceID, convID, evt, raw, conversation, opts, sum)
 }
 
 // persistEncryptedEvent archives the decrypted event, or a searchable
 // placeholder that later syncs retry once a key arrives.
-func (imp *Importer) persistEncryptedEvent(ctx context.Context, sourceID, convID int64, evt *event.Event, raw []byte, sum *ImportSummary) error {
+func (imp *Importer) persistEncryptedEvent(ctx context.Context, sourceID, convID int64, evt *event.Event, raw []byte, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
 	encryptedEventID := evt.ID.String()
 	var decrypted *event.Event
 	decryptErr := errors.New("matrix crypto is unavailable")
@@ -964,7 +974,7 @@ func (imp *Importer) persistEncryptedEvent(ctx context.Context, sourceID, convID
 			return err
 		}
 		sum.Undecryptable++
-		return imp.persistMessage(ctx, sourceID, convID, evt, raw, encryptedPlaceholder, nil, sum)
+		return imp.persistMessage(ctx, sourceID, convID, evt, raw, encryptedPlaceholder, nil, conversation, opts, sum)
 	}
 	ciphertext, roomID := raw, evt.RoomID.String()
 	evt = decrypted
@@ -983,7 +993,7 @@ func (imp *Importer) persistEncryptedEvent(ctx context.Context, sourceID, convID
 	// is written only once the decrypted event is stored (or deferred as a
 	// relation whose target is not archived yet). A failed write then leaves
 	// the event to be decrypted again rather than assumed archived.
-	persistErr := imp.persistPlainEvent(ctx, sourceID, convID, evt, raw, sum)
+	persistErr := imp.persistPlainEvent(ctx, sourceID, convID, evt, raw, conversation, opts, sum)
 	if persistErr != nil && !errors.Is(persistErr, errRelationTargetMissing) {
 		return persistErr
 	}
@@ -1055,17 +1065,19 @@ func (imp *Importer) archivedRawType(messageID int64) (string, error) {
 	return archived.Type, nil
 }
 
-func (imp *Importer) persistPlainEvent(ctx context.Context, sourceID, convID int64, evt *event.Event, raw []byte, sum *ImportSummary) error {
+func (imp *Importer) persistPlainEvent(ctx context.Context, sourceID, convID int64, evt *event.Event, raw []byte, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
 	switch evt.Type {
 	case event.EventMessage, event.EventSticker:
-		content := evt.Content.AsMessage()
+		// The body keeps the sticker's own text; media handling sees an image.
+		body := messageBody(evt.Content.AsMessage())
+		content := mediaContent(evt)
 		if target := content.RelatesTo.GetReplaceID(); target != "" {
 			if content.NewContent == nil {
 				return nil
 			}
-			return imp.persistEdit(sourceID, convID, evt, target, content.NewContent)
+			return imp.persistEdit(ctx, sourceID, convID, evt, target, content.NewContent, conversation, opts, sum)
 		}
-		return imp.persistMessage(ctx, sourceID, convID, evt, raw, messageBody(content), content, sum)
+		return imp.persistMessage(ctx, sourceID, convID, evt, raw, body, content, conversation, opts, sum)
 	case event.EventRedaction:
 		target := evt.Redacts
 		if target == "" {
@@ -1074,7 +1086,7 @@ func (imp *Importer) persistPlainEvent(ctx context.Context, sourceID, convID int
 		if target == "" {
 			return nil
 		}
-		handled, err := imp.redact(ctx, sourceID, convID, evt.RoomID, target, sum)
+		handled, err := imp.redact(ctx, sourceID, convID, evt.RoomID, target, conversation, opts, sum)
 		if err == nil && !handled {
 			return errRelationTargetMissing
 		}
@@ -1087,7 +1099,7 @@ func (imp *Importer) persistPlainEvent(ctx context.Context, sourceID, convID int
 
 // redact applies a Matrix redaction to whatever archived item the event ID
 // names in this room, and reports whether it found one.
-func (imp *Importer) redact(ctx context.Context, sourceID, convID int64, roomID id.RoomID, target id.EventID, sum *ImportSummary) (bool, error) {
+func (imp *Importer) redact(ctx context.Context, sourceID, convID int64, roomID id.RoomID, target id.EventID, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) (bool, error) {
 	if err := imp.cancelPendingDecryption(sourceID, convID, roomID, target); err != nil {
 		return false, err
 	}
@@ -1117,7 +1129,7 @@ func (imp *Importer) redact(ctx context.Context, sourceID, convID int64, roomID 
 	if err != nil || messageID == 0 {
 		return handled, err
 	}
-	return true, imp.restoreAfterEditRedaction(ctx, sourceID, convID, roomID, messageID, target, sum)
+	return true, imp.restoreAfterEditRedaction(ctx, sourceID, convID, roomID, messageID, target, conversation, opts, sum)
 }
 
 // cancelPendingDecryption stops later retries from decrypting and restoring a
@@ -1186,7 +1198,7 @@ func messageBody(content *event.MessageEventContent) string {
 	return textutil.SanitizeTerminalMultiline(label)
 }
 
-func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64, evt *event.Event, raw []byte, body string, content *event.MessageEventContent, sum *ImportSummary) error {
+func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64, evt *event.Event, raw []byte, body string, content *event.MessageEventContent, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
 	var replyToMessageID int64
 	replyTargetMissing := false
 	if content != nil && content.RelatesTo != nil {
@@ -1236,11 +1248,19 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64,
 	}
 	if existingID != 0 && !recovering {
 		if reconciling {
-			if err := imp.reconcileRecoveredEdits(ctx, sourceID, convID, evt.RoomID, existingID, sum); err != nil {
+			if err := imp.reconcileRecoveredEdits(ctx, sourceID, convID, evt.RoomID, existingID, conversation, opts, sum); err != nil {
 				return err
 			}
 		}
-		// Matrix events never change, so only a reply link may still be missing.
+		// Matrix events never change, so only a reply link or media an earlier
+		// run could not download may still be missing.
+		if current, err := imp.appliedEdit(existingID); err != nil {
+			return err
+		} else if current.EventID == "" {
+			if err := imp.retryMissingMedia(ctx, existingID, content, conversation, opts, sum); err != nil {
+				return err
+			}
+		}
 		if replyToMessageID != 0 {
 			return imp.store.SetMessageReplyContext(ctx, existingID, replyToMessageID)
 		}
@@ -1254,11 +1274,13 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64,
 		return err
 	}
 	when := time.UnixMilli(evt.Timestamp).UTC()
+	media := content != nil && content.MsgType.IsMedia()
 	msg := &store.Message{
 		ConversationID: convID, SourceID: sourceID, SourceMessageID: evt.ID.String(), MessageType: SourceType,
 		SentAt: sql.NullTime{Time: when, Valid: evt.Timestamp > 0}, ReceivedAt: sql.NullTime{Time: when, Valid: evt.Timestamp > 0},
 		SenderID: sql.NullInt64{Int64: senderID, Valid: senderID != 0}, IsFromMe: evt.Sender == imp.runtime.Client.UserID,
 		Snippet: sql.NullString{String: snippet(body), Valid: body != ""}, SizeEstimate: int64(len(body)),
+		HasAttachments: media, AttachmentCount: boolInt(media),
 	}
 	messageID, err := imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message: msg, BodyText: sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: rawFormat,
@@ -1267,13 +1289,18 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64,
 	if err != nil {
 		return fmt.Errorf("persist Matrix event %s: %w", evt.ID, err)
 	}
+	if content != nil {
+		if err := imp.applyMedia(ctx, messageID, content, conversation, opts, sum); err != nil {
+			return err
+		}
+	}
 	if replyToMessageID != 0 {
 		if err := imp.store.SetMessageReplyContext(ctx, messageID, replyToMessageID); err != nil {
 			return err
 		}
 	}
 	if recovering {
-		if err := imp.reconcileRecoveredEdits(ctx, sourceID, convID, evt.RoomID, messageID, sum); err != nil {
+		if err := imp.reconcileRecoveredEdits(ctx, sourceID, convID, evt.RoomID, messageID, conversation, opts, sum); err != nil {
 			return err
 		}
 	}
@@ -1302,7 +1329,7 @@ func (e appliedEdit) olderThan(evt *event.Event) bool {
 	return e.EventID == "" || e.TS < evt.Timestamp || (e.TS == evt.Timestamp && e.EventID < evt.ID.String())
 }
 
-func (imp *Importer) persistEdit(sourceID, convID int64, evt *event.Event, target id.EventID, content *event.MessageEventContent) error {
+func (imp *Importer) persistEdit(ctx context.Context, sourceID, convID int64, evt *event.Event, target id.EventID, content *event.MessageEventContent, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
 	found, err := imp.store.MessageExistsBatch(sourceID, []string{target.String()})
 	if err != nil {
 		return err
@@ -1328,10 +1355,16 @@ func (imp *Importer) persistEdit(sourceID, convID int64, evt *event.Event, targe
 		return nil
 	}
 	current, err := imp.appliedEdit(messageID)
-	if err != nil || !current.olderThan(evt) {
+	if err != nil {
 		return err
 	}
-	return imp.applyEdit(messageID, editedBody(original, content), appliedEdit{EventID: evt.ID.String(), TS: evt.Timestamp})
+	if current.EventID == evt.ID.String() {
+		return imp.retryMissingMedia(ctx, messageID, content, conversation, opts, sum)
+	}
+	if !current.olderThan(evt) {
+		return nil
+	}
+	return imp.applyEdit(ctx, messageID, editedBody(original, content), content, appliedEdit{EventID: evt.ID.String(), TS: evt.Timestamp}, conversation, opts, sum)
 }
 
 // validReplacement applies Matrix's replacement rules: same sender and event
@@ -1380,12 +1413,15 @@ func (imp *Importer) appliedEdit(messageID int64) (appliedEdit, error) {
 	return edit, nil
 }
 
-func (imp *Importer) applyEdit(messageID int64, body string, edit appliedEdit) error {
+func (imp *Importer) applyEdit(ctx context.Context, messageID int64, body string, content *event.MessageEventContent, edit appliedEdit, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
 	metadata, err := json.Marshal(edit, json.Deterministic(true))
 	if err != nil {
 		return err
 	}
 	if err := imp.setBody(messageID, body); err != nil {
+		return err
+	}
+	if err := imp.applyMedia(ctx, messageID, content, conversation, opts, sum); err != nil {
 		return err
 	}
 	if err := imp.store.SetMessageEdited(messageID); err != nil {
@@ -1409,19 +1445,20 @@ func (imp *Importer) setBody(messageID int64, body string) error {
 // be applied. A failed lookup is returned so that the event stays pending and
 // a later sync reads the edits again; a homeserver without /relations has none
 // to offer, so the recovered text stands.
-func (imp *Importer) reconcileRecoveredEdits(ctx context.Context, sourceID, convID int64, roomID id.RoomID, messageID int64, sum *ImportSummary) error {
-	if err := imp.restoreAfterEditRedaction(ctx, sourceID, convID, roomID, messageID, "", sum); err != nil && !relationsUnavailable(err) {
+func (imp *Importer) reconcileRecoveredEdits(ctx context.Context, sourceID, convID int64, roomID id.RoomID, messageID int64, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
+	if err := imp.restoreAfterEditRedaction(ctx, sourceID, convID, roomID, messageID, "", conversation, opts, sum); err != nil && !relationsUnavailable(err) {
 		return err
 	}
 	return nil
 }
 
 // restoreAfterEditRedaction asks the homeserver for the original's surviving
-// edits and shows the newest one, or the original text when none is left.
-// Without a redacted edit it reconciles a recovered message and only moves
-// forward: a recovery resumed after storing the text keeps the edit already
-// applied unless the homeserver lists a newer one.
-func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID, convID int64, roomID id.RoomID, messageID int64, redacted id.EventID, sum *ImportSummary) error {
+// edits and shows the newest one, or the original text when none is left or
+// the homeserver cannot list them for a redaction. Without a redacted edit it
+// reconciles a recovered message and only moves forward: a recovery resumed
+// after storing the text keeps the edit already applied unless the homeserver
+// lists a newer one.
+func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID, convID int64, roomID id.RoomID, messageID int64, redacted id.EventID, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
 	original, err := imp.archivedEvent(messageID)
 	if err != nil {
 		return err
@@ -1436,13 +1473,20 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID, co
 	for {
 		page, err := imp.runtime.Client.GetRelations(ctx, roomID, original.ID, &mautrix.ReqGetRelations{RelationType: event.RelReplace, From: from})
 		if err != nil {
+			if redacted != "" && relationsUnavailable(err) {
+				// A homeserver that cannot list edits must not stall the sync
+				// on this redaction, so show the original text.
+				slog.Warn("matrix relations unavailable; showing original text after edit redaction", "event_id", original.ID, "error", err)
+				newest = nil
+				break
+			}
 			return fmt.Errorf("list Matrix edits of %s: %w", original.ID, err)
 		}
 		for _, listed := range page.Chunk {
 			if listed == nil || listed.ID == redacted {
 				continue
 			}
-			edit, undecryptable, err := imp.decryptRelation(ctx, sourceID, convID, roomID, listed, sum)
+			edit, undecryptable, err := imp.decryptRelation(ctx, sourceID, convID, roomID, listed, conversation, opts, sum)
 			if err != nil {
 				return err
 			}
@@ -1485,7 +1529,7 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID, co
 			// The edit is applied; an interrupted run may not have retained it.
 			return imp.retainRelationCiphertext(sourceID, newestEncrypted)
 		}
-		if err := imp.applyEdit(messageID, editedBody(original, newestContent), appliedEdit{EventID: newest.ID.String(), TS: newest.Timestamp}); err != nil {
+		if err := imp.applyEdit(ctx, messageID, editedBody(original, newestContent), newestContent, appliedEdit{EventID: newest.ID.String(), TS: newest.Timestamp}, conversation, opts, sum); err != nil {
 			return err
 		}
 		// An encrypted edit found only here is archived nowhere else, so its
@@ -1498,6 +1542,9 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID, co
 		return nil
 	}
 	if err := imp.setBody(messageID, messageBody(original.Content.AsMessage())); err != nil {
+		return err
+	}
+	if err := imp.applyMedia(ctx, messageID, mediaContent(original), conversation, opts, sum); err != nil {
 		return err
 	}
 	if err := imp.store.SetMessageEditedState(messageID, undecryptedEdit); err != nil {
@@ -1531,7 +1578,7 @@ func relationsUnavailable(err error) bool {
 // cannot be decrypted is kept pending, so a later sync recovers it and applies
 // it to its target; the warning for a failed backup fetch is left to that
 // retry.
-func (imp *Importer) decryptRelation(ctx context.Context, sourceID, convID int64, roomID id.RoomID, evt *event.Event, sum *ImportSummary) (decrypted *event.Event, undecryptable bool, err error) {
+func (imp *Importer) decryptRelation(ctx context.Context, sourceID, convID int64, roomID id.RoomID, evt *event.Event, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) (decrypted *event.Event, undecryptable bool, err error) {
 	if evt.Type != event.EventEncrypted {
 		return evt, false, nil
 	}
@@ -1549,7 +1596,7 @@ func (imp *Importer) decryptRelation(ctx context.Context, sourceID, convID int64
 		decrypted, err = imp.runtime.decrypt(ctx, evt)
 	}
 	if err != nil {
-		return nil, true, imp.keepRelationPending(ctx, sourceID, convID, evt, sum)
+		return nil, true, imp.keepRelationPending(ctx, sourceID, convID, evt, conversation, opts, sum)
 	}
 	decrypted.RoomID = roomID
 	return decrypted, false, nil
@@ -1564,7 +1611,7 @@ func (imp *Importer) decryptRelation(ctx context.Context, sourceID, convID int64
 // A placeholder whose retry a redaction cancelled stays as it is. A pending row
 // without its placeholder, left by a run that stopped between the two writes,
 // gets the placeholder now: retryUndecryptable would otherwise discard it.
-func (imp *Importer) keepRelationPending(ctx context.Context, sourceID, convID int64, evt *event.Event, sum *ImportSummary) error {
+func (imp *Importer) keepRelationPending(ctx context.Context, sourceID, convID int64, evt *event.Event, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
 	eventID := evt.ID.String()
 	_, pending, err := imp.store.MatrixUndecryptableEvent(sourceID, eventID)
 	if err != nil {
@@ -1591,12 +1638,12 @@ func (imp *Importer) keepRelationPending(ctx context.Context, sourceID, convID i
 			return err
 		}
 		sum.Undecryptable++
-		return imp.persistMessage(ctx, sourceID, convID, evt, raw, encryptedPlaceholder, nil, sum)
+		return imp.persistMessage(ctx, sourceID, convID, evt, raw, encryptedPlaceholder, nil, conversation, opts, sum)
 	}
 	if !archived {
 		// retryUndecryptable recovers a pending event through its archived row,
 		// which is written first: a pending row without one is discarded.
-		if err := imp.persistMessage(ctx, sourceID, convID, evt, raw, encryptedPlaceholder, nil, sum); err != nil {
+		if err := imp.persistMessage(ctx, sourceID, convID, evt, raw, encryptedPlaceholder, nil, conversation, opts, sum); err != nil {
 			return err
 		}
 		if err := imp.store.MarkMessageDeleted(sourceID, eventID); err != nil {
@@ -1631,6 +1678,193 @@ func (imp *Importer) persistReaction(sourceID, convID int64, evt *event.Event) e
 	return imp.store.UpsertReactionWithSourceID(
 		messageID, participantID, "emoji", relation.Key, evt.ID.String(), time.UnixMilli(evt.Timestamp).UTC(),
 	)
+}
+
+// mediaContent returns the content whose media the message keeps. Sticker
+// content carries a media URL but no msgtype, so it is handled as an image,
+// both on first import and when an archived sticker is restored.
+func mediaContent(evt *event.Event) *event.MessageEventContent {
+	content := evt.Content.AsMessage()
+	if evt.Type != event.EventSticker || content.MsgType != "" {
+		return content
+	}
+	image := *content
+	image.MsgType = event.MsgImage
+	return &image
+}
+
+// applyMedia makes the message's Matrix attachments match the content it
+// shows, then refreshes its attachment stats and size estimate.
+func (imp *Importer) applyMedia(ctx context.Context, messageID int64, content *event.MessageEventContent, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
+	if content.MsgType.IsMedia() {
+		if err := imp.persistMedia(ctx, messageID, content, conversation, opts, sum); err != nil {
+			return err
+		}
+	} else {
+		if _, err := imp.cacheStoredMatrixAttachments(messageID); err != nil {
+			return err
+		}
+		if err := imp.store.ReplaceMessageMatrixAttachments(messageID, nil); err != nil {
+			return err
+		}
+	}
+	if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
+		return err
+	}
+	return imp.store.RecomputeMessageSizeEstimate(messageID)
+}
+
+// retryMissingMedia reapplies the shown media when a replayed event finds it
+// pending or failed, so a later sync can still download it.
+func (imp *Importer) retryMissingMedia(ctx context.Context, messageID int64, content *event.MessageEventContent, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
+	if content == nil || !content.MsgType.IsMedia() {
+		return nil
+	}
+	attachments, err := imp.store.MessageMatrixAttachments(messageID)
+	if err != nil {
+		return err
+	}
+	for _, attachment := range attachments {
+		if attachment.State == attachmentpolicy.StateStored {
+			return nil
+		}
+	}
+	return imp.applyMedia(ctx, messageID, content, conversation, opts, sum)
+}
+
+func (imp *Importer) persistMedia(ctx context.Context, messageID int64, content *event.MessageEventContent, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
+	existing, err := imp.cacheStoredMatrixAttachments(messageID)
+	if err != nil {
+		return err
+	}
+	uri := content.URL
+	if content.File != nil {
+		uri = content.File.URL
+	}
+	if uri == "" {
+		return imp.store.ReplaceMessageMatrixAttachments(messageID, nil)
+	}
+	var size int64
+	var mimeType string
+	if content.Info != nil {
+		size = int64(content.Info.Size)
+		mimeType = content.Info.MimeType
+	}
+	ref := store.AttachmentRef{
+		Filename: content.GetFileName(), MimeType: mimeType, StoragePath: string(uri), Size: int(size),
+		SourceAttachmentID: "matrix:" + string(uri), MediaType: strings.TrimPrefix(string(content.MsgType), "m."),
+		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceProviderExplicit,
+		State: attachmentpolicy.StatePending,
+	}
+	archived, seen := existing[ref.SourceAttachmentID]
+	if seen && int64(archived.Size) > size {
+		size = int64(archived.Size)
+		ref.Size = archived.Size
+	}
+	if seen && archived.ContentHash != "" && archived.StoragePath != "" {
+		ref.StoragePath = archived.StoragePath
+		ref.ContentHash = archived.ContentHash
+		ref.Size = archived.Size
+		ref.State = attachmentpolicy.StateStored
+		return imp.store.ReplaceMessageMatrixAttachments(messageID, []store.AttachmentRef{ref})
+	}
+	if cached, ok, err := imp.store.CachedMatrixAttachment(messageID, ref.SourceAttachmentID); err != nil {
+		return err
+	} else if ok {
+		ref.StoragePath = cached.StoragePath
+		ref.ContentHash = cached.ContentHash
+		ref.Size = cached.Size
+		ref.State = attachmentpolicy.StateStored
+		return imp.store.ReplaceMessageMatrixAttachments(messageID, []store.AttachmentRef{ref})
+	}
+	if opts.NoMedia || opts.AttachmentsDir == "" {
+		sum.AttachmentsPending++
+		return imp.store.ReplaceMessageMatrixAttachments(messageID, []store.AttachmentRef{ref})
+	}
+	if reason := opts.MediaPolicy.Evaluate(conversation, size); reason != "" {
+		ref.State, ref.SkipReason = attachmentpolicy.StateSkipped, reason
+		return imp.store.ReplaceMessageMatrixAttachments(messageID, []store.AttachmentRef{ref})
+	}
+	parsed, err := uri.Parse()
+	if err != nil {
+		return imp.persistMediaFailure(messageID, ref, sum)
+	}
+	resp, err := imp.runtime.Client.Download(ctx, parsed)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("download Matrix media: %w", err)
+		}
+		return imp.persistMediaFailure(messageID, ref, sum)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	limit := opts.MediaPolicy.MaxBytes
+	if limit <= 0 {
+		limit = attachmentpolicy.DefaultChatMaxBytes
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return imp.persistMediaFailure(messageID, ref, sum)
+	}
+	if int64(len(data)) > limit {
+		ref.State, ref.SkipReason, ref.Size = attachmentpolicy.StateSkipped, attachmentpolicy.SkipSizeCap, len(data)
+		return imp.store.ReplaceMessageMatrixAttachments(messageID, []store.AttachmentRef{ref})
+	}
+	if content.File != nil {
+		if err := content.File.DecryptInPlace(data); err != nil {
+			return imp.persistMediaFailure(messageID, ref, sum)
+		}
+	}
+	write := func() error {
+		attachment := &msgmime.Attachment{Filename: ref.Filename, ContentType: mimeType, Content: data}
+		storagePath, err := export.StoreAttachmentFileIncludingEmpty(opts.AttachmentsDir, attachment)
+		if err != nil {
+			return fmt.Errorf("store Matrix media: %w", err)
+		}
+		ref.StoragePath, ref.ContentHash, ref.Size = storagePath, attachment.ContentHash, len(data)
+		ref.State = attachmentpolicy.StateStored
+		if err := imp.store.CacheMatrixAttachment(messageID, ref); err != nil {
+			return err
+		}
+		if err := imp.store.ReplaceMessageMatrixAttachments(messageID, []store.AttachmentRef{ref}); err != nil {
+			return err
+		}
+		sum.AttachmentsDownloaded++
+		return nil
+	}
+	if opts.MediaMutation != nil {
+		return opts.MediaMutation(ctx, write)
+	}
+	return write()
+}
+
+func (imp *Importer) cacheStoredMatrixAttachments(messageID int64) (map[string]store.AttachmentRef, error) {
+	existing, err := imp.store.MessageMatrixAttachments(messageID)
+	if err != nil {
+		return nil, err
+	}
+	for _, archived := range existing {
+		if archived.ContentHash != "" && archived.StoragePath != "" {
+			if err := imp.store.CacheMatrixAttachment(messageID, archived); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return existing, nil
+}
+
+func (imp *Importer) persistMediaFailure(messageID int64, ref store.AttachmentRef, sum *ImportSummary) error {
+	ref.State, ref.SkipReason = attachmentpolicy.StateFailed, attachmentpolicy.SkipFetchFailure
+	sum.AttachmentsPending++
+	return imp.store.ReplaceMessageMatrixAttachments(messageID, []store.AttachmentRef{ref})
 }
 
 // undecryptableBatchSize bounds how many pending events are loaded at once.
@@ -1718,6 +1952,7 @@ func (imp *Importer) retryUndecryptable(ctx context.Context, sourceID int64, sta
 		roomID         string
 		messageID      int64
 		conversationID int64
+		conversation   attachmentpolicy.Conversation
 		decrypted      *event.Event
 		raw            []byte
 		ciphertext     []byte
@@ -1845,9 +2080,13 @@ func (imp *Importer) retryUndecryptable(ctx context.Context, sourceID int64, sta
 				if err != nil {
 					return nil, err
 				}
+				conversation, err := imp.store.AttachmentConversation(messageID)
+				if err != nil {
+					return nil, err
+				}
 				recovered = append(recovered, recoveredEvent{
 					eventID: eventID, roomID: pending.RoomID, messageID: messageID, conversationID: target.ConversationID,
-					decrypted: decrypted, raw: decryptedRaw, ciphertext: raw,
+					conversation: conversation, decrypted: decrypted, raw: decryptedRaw, ciphertext: raw,
 				})
 			}
 			slices.SortFunc(recovered, func(a, b recoveredEvent) int {
@@ -1857,7 +2096,7 @@ func (imp *Importer) retryUndecryptable(ctx context.Context, sourceID int64, sta
 				return strings.Compare(a.eventID, b.eventID)
 			})
 			for _, item := range recovered {
-				if err := imp.persistPlainEvent(ctx, sourceID, item.conversationID, item.decrypted, item.raw, sum); err != nil {
+				if err := imp.persistPlainEvent(ctx, sourceID, item.conversationID, item.decrypted, item.raw, item.conversation, opts, sum); err != nil {
 					if errors.Is(err, errRelationTargetMissing) {
 						if err := rememberRecoveredRelation(state, item.roomID, item.decrypted); err != nil {
 							return nil, err
@@ -1975,4 +2214,11 @@ func snippet(body string) string {
 		return string(runes[:100])
 	}
 	return body
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }

@@ -56,7 +56,7 @@ adds reviewed identity tools for agents and reduces repeated sync and search wor
 - **Native Matrix sync.** Add a dedicated read-only Matrix device on any
   homeserver, restore its encrypted room-key backup, and archive joined-room
   history with incremental `/sync` checkpoints. Messages, edits, redactions,
-  reactions, replies, and participants enter the normal
+  reactions, replies, participants, and policy-eligible media enter the normal
   chat archive. Undecryptable events remain as retryable placeholders. See
   [Matrix](usage/matrix.md).
 
