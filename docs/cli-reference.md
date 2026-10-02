@@ -1688,8 +1688,8 @@ inline: when one writes new loose blobs, the daemon's `attachment-pack` job
 (every 6 hours) packs them, and the daily `attachment-maintenance` job packs
 and repacks. Each automatic pack pass has a 256 MiB soft raw-byte budget and
 finishes its current blob before stopping for that byte limit. Scheduled packing
-and daily attachment maintenance also have a one-minute runtime budget and
-yield to queued scheduled work. Each scheduled pack pass verifies at most 128
+and daily attachment maintenance also stop after one minute, which lets queued
+scheduled work run. Each scheduled pack pass verifies at most 128
 existing packed blobs or 32 MiB of their raw content, allowing one oversized
 blob. Its durable hash cursor resumes verification after a restart, while new
 loose blobs can be packed during each pass. Manual unpacking reads the full

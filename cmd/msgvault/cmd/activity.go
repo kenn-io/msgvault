@@ -18,7 +18,10 @@ const (
 	activityBuildSubcommand      = "build"
 	activityProjectionJob        = "activity-projection"
 	activityProjectionMaxBatches = 10
-	activityProjectionMaxRuntime = time.Minute
+	// The scheduler asks a preemptible job to stop after it has held the gate
+	// for a minute while other work waits. Projection stops at its next batch
+	// boundary; the longer hard limit leaves room for that batch to commit.
+	activityProjectionMaxRuntime = 2 * time.Minute
 )
 
 func newActivityCommand() *cobra.Command {

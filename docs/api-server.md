@@ -1892,10 +1892,11 @@ Beeper support preemption: after holding the gate for a minute while others
 are queued, they are asked to stop at their next safe point. If they are
 still running five seconds later, the scheduler cancels their context. An
 interrupted run goes back behind waiting jobs immediately; it does not wait
-for another schedule tick. Activity projection, attachment packing, and daily
-attachment maintenance also yield to queued work and have one-minute runtime
-budgets. Activity projection limits each pass to ten batches and saves its
-reconciliation progress. IMAP full passes do not support scheduled preemption.
+for another schedule tick. Activity projection also supports preemption: it
+stops after its current batch, limits each pass to ten batches, and stops at
+two minutes regardless. It saves its reconciliation progress. Attachment
+packing and daily attachment maintenance stop after one minute and resume
+behind waiting work. IMAP full passes do not support scheduled preemption.
 Other jobs keep their own runtime budgets. Waiting API requests can still
 interrupt scheduled work. `GET /api/v1/sources/status` reports the same
 state for every scheduled source as `scheduler_queued`, `scheduler_pending`,

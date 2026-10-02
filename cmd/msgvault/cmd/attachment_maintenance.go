@@ -19,7 +19,9 @@ import (
 )
 
 const (
-	automaticAttachmentBytes      = int64(256 << 20)
+	automaticAttachmentBytes = int64(256 << 20)
+	// Kit's Pack and Repack cannot stop at a checkpoint on request, so the
+	// scheduled jobs are not preemptible. This limit alone returns the gate.
 	automaticAttachmentMaxRuntime = time.Minute
 	attachmentMaintenanceJob      = "attachment-maintenance"
 	attachmentMaintenanceCron     = "17 3 * * *"
@@ -389,10 +391,9 @@ func runScheduledSource(
 
 func registerAttachmentMaintenanceJob(sched *scheduler.Scheduler, maintenance *attachmentMaintenance) error {
 	return sched.AddJob(scheduler.Job{
-		Name:        attachmentMaintenanceJob,
-		Preemptible: true,
-		MaxRuntime:  automaticAttachmentMaxRuntime,
-		Schedule:    attachmentMaintenanceCron,
+		Name:       attachmentMaintenanceJob,
+		MaxRuntime: automaticAttachmentMaxRuntime,
+		Schedule:   attachmentMaintenanceCron,
 		Run: func(ctx context.Context) error {
 			return maintenance.daily(ctx)
 		},
@@ -404,11 +405,10 @@ func registerAttachmentPackJob(sched *scheduler.Scheduler, maintenance *attachme
 	// counts cannot tell us what a previous daemon left loose.
 	maintenance.markPackPending()
 	return sched.AddJob(scheduler.Job{
-		Name:        attachmentPackJob,
-		Preemptible: true,
-		MaxRuntime:  automaticAttachmentMaxRuntime,
-		Schedule:    attachmentPackCron,
-		Run:         maintenance.runPendingPack,
+		Name:       attachmentPackJob,
+		MaxRuntime: automaticAttachmentMaxRuntime,
+		Schedule:   attachmentPackCron,
+		Run:        maintenance.runPendingPack,
 	})
 }
 
