@@ -401,7 +401,7 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 			return
 		}
 		defer done()
-		runCtx, endRun := s.jobContext("embed", false)
+		runCtx, endRun := s.jobContext("embed", false, 0)
 		defer endRun()
 		job.Run(runCtx)
 	})
@@ -449,7 +449,7 @@ func (s *Scheduler) SetDocumentVectorJob(job func(context.Context) error, schedu
 			return
 		}
 		defer done()
-		runCtx, endRun := s.jobContext("document-vector", false)
+		runCtx, endRun := s.jobContext("document-vector", false, 0)
 		defer endRun()
 		if runErr := job(runCtx); runErr != nil {
 			s.logger.Error("scheduled document vector reconciliation failed", "error", runErr)
@@ -549,7 +549,7 @@ func (s *Scheduler) runSync(email string) {
 	preemptionPolicy := s.accountPreemptionPolicy
 	s.mu.RUnlock()
 	preemptible := preemptionPolicy == nil || preemptionPolicy(email)
-	runCtx, endRun := s.jobContext("sync "+email, preemptible)
+	runCtx, endRun := s.jobContext("sync "+email, preemptible, 0)
 	err := s.syncFunc(runCtx, email)
 	endRun()
 	yielded := yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
@@ -591,7 +591,7 @@ func (s *Scheduler) runSync(email string) {
 	}
 	s.mu.RUnlock()
 	if postSync != nil {
-		embedCtx, endEmbed := s.jobContext("post-sync embed", false)
+		embedCtx, endEmbed := s.jobContext("post-sync embed", false, 0)
 		postSync.Run(embedCtx)
 		endEmbed()
 	}
@@ -602,7 +602,7 @@ func (s *Scheduler) runSync(email string) {
 	}
 	s.mu.RUnlock()
 	if documentVectorPostSync != nil {
-		documentCtx, endDocument := s.jobContext("post-sync document vector", false)
+		documentCtx, endDocument := s.jobContext("post-sync document vector", false, 0)
 		if documentErr := documentVectorPostSync(documentCtx); documentErr != nil {
 			s.logger.Error("post-sync document vector reconciliation failed", "error", documentErr)
 		}
@@ -748,7 +748,7 @@ func (s *Scheduler) startVisualPostSync() {
 			return
 		}
 		defer done()
-		visualCtx, endVisual := s.jobContext("post-sync multimodal", false)
+		visualCtx, endVisual := s.jobContext("post-sync multimodal", false, 0)
 		defer endVisual()
 		if err := run(visualCtx); err != nil {
 			s.logger.Error("post-sync multimodal pass failed", "error", err)
@@ -899,8 +899,13 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	budgetExpired := errors.Is(context.Cause(runCtx), jobctx.ErrRunBudgetExceeded)
 	if budgetExpired && !jobctx.HasProgress(runCtx) {
 		delete(s.genericPending, name)
-		err = errors.Join(jobctx.ErrRunBudgetExceeded, callbackErrorAfterYield(runCtx, err))
+		err = errors.Join(fmt.Errorf("%w before committing progress", jobctx.ErrRunBudgetExceeded),
+			callbackErrorAfterYield(runCtx, err))
 		s.genericLastErr[name] = err
+		s.logger.Warn("scheduled job reached its runtime limit before committing progress; waiting for the next trigger",
+			"job", name,
+			"max_runtime", maxRuntime,
+			"error", err)
 		return err
 	}
 	yielded := budgetExpired || yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
@@ -984,14 +989,15 @@ var preemptAfter = time.Minute
 // cooperative preemption request (see jobctx.WithPreemption), raised once the
 // run has held the gate for preemptAfter while other scheduled runs queue
 // behind it. Jobs that have not stopped at the next poll are cancelled with
-// ErrYieldedToWaiter. Other jobs keep their own runtime budgets. The returned
-// stop function must be called when the job finishes.
-func (s *Scheduler) jobContext(label string, preemptible bool, budgets ...time.Duration) (context.Context, func()) {
+// ErrYieldedToWaiter. A positive maxRuntime ends the run with cause
+// jobctx.ErrRunBudgetExceeded. Other jobs keep their own runtime budgets. The
+// returned stop function must be called when the job finishes.
+func (s *Scheduler) jobContext(label string, preemptible bool, maxRuntime time.Duration) (context.Context, func()) {
 	started := time.Now()
 	baseCtx := jobctx.WithProgress(s.ctx)
 	stopBudget := func() {}
-	if len(budgets) > 0 && budgets[0] > 0 {
-		baseCtx, stopBudget = context.WithTimeoutCause(baseCtx, budgets[0], jobctx.ErrRunBudgetExceeded)
+	if maxRuntime > 0 {
+		baseCtx, stopBudget = context.WithTimeoutCause(baseCtx, maxRuntime, jobctx.ErrRunBudgetExceeded)
 	}
 	preemptCtx, requestPreemption := jobctx.WithPreemption(baseCtx)
 	yc, canYield := s.work.(YieldChecker)

@@ -698,7 +698,7 @@ func TestPendingPackCheckpointsVerificationAndStillPacksNewBlobs(t *testing.T) {
 	assert.Equal(t, existing+1, stats.BlobsRestored, "manual unpack must see the full catalog")
 }
 
-func TestCompletedPackVerificationDoesNotMaskRepackBudgetFailure(t *testing.T) {
+func TestCompletedPackVerificationRecordsNoProgress(t *testing.T) {
 	f := newAttachmentMaintenanceFixture(t)
 	ctx := jobctx.WithProgress(t.Context())
 	require.NoError(t, f.maintenance.runScheduledPack(ctx))

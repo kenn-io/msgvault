@@ -3229,6 +3229,7 @@ func TestJobBudgetPreservesCallbackFailure(t *testing.T) {
 		s := New(nil)
 		defer func() { <-s.Stop().Done() }()
 		runs := 0
+		release := make(chan struct{})
 		require.NoError(s.AddJob(Job{Name: "bounded-error", Schedule: "0 0 1 1 *", MaxRuntime: time.Minute, Run: func(ctx context.Context) error {
 			runs++
 			if runs == 1 {
@@ -3236,13 +3237,23 @@ func TestJobBudgetPreservesCallbackFailure(t *testing.T) {
 				<-ctx.Done()
 				return errors.Join(sourceErr, ctx.Err())
 			}
-			return sourceErr
+			select {
+			case <-release:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}}))
 		require.NoError(s.StartJob("bounded-error"))
-		time.Sleep(2 * time.Minute)
+		time.Sleep(time.Minute + time.Second)
 		synctest.Wait()
-		assert.Equal(2, runs)
-		assert.Equal(sourceErr.Error(), s.JobStatus()[0].LastError)
+		// The follow-up is still running, so LastError comes from the first pass.
+		assert.Equal(2, runs, "committed progress queues a follow-up")
+		assert.Equal(sourceErr.Error(), s.JobStatus()[0].LastError,
+			"the budget filters its own cancellation but keeps the callback's failure")
+		close(release)
+		synctest.Wait()
+		assert.Empty(s.JobStatus()[0].LastError)
 	})
 }
 
@@ -3251,7 +3262,8 @@ func TestJobBudgetWithoutCheckpointReportsFailureAndWaitsForTick(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		var runs int
-		s := New(nil)
+		var logs bytes.Buffer
+		s := New(nil).WithLogger(slog.New(slog.NewTextHandler(&logs, nil)))
 		defer func() { <-s.Stop().Done() }()
 		require.NoError(s.AddJob(Job{Name: "slow-batch", Schedule: "0 0 1 1 *", MaxRuntime: time.Minute, Run: func(ctx context.Context) error {
 			runs++
@@ -3265,7 +3277,9 @@ func TestJobBudgetWithoutCheckpointReportsFailureAndWaitsForTick(t *testing.T) {
 		time.Sleep(5 * time.Minute)
 		synctest.Wait()
 		assert.Equal(1, runs, "a pass without a checkpoint must not spin in immediate retries")
-		assert.Contains(s.JobStatus()[0].LastError, "runtime budget")
+		assert.Contains(s.JobStatus()[0].LastError, "runtime budget exceeded before committing progress")
+		assert.Contains(logs.String(), "level=WARN msg=\"scheduled job reached its runtime limit before committing progress",
+			"operators see the failure in the daemon log, not only in status")
 		assert.False(s.JobStatus()[0].Pending)
 		assert.False(s.JobStatus()[0].Running)
 		s.onJobTick("slow-batch")

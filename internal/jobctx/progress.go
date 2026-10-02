@@ -7,7 +7,7 @@ import (
 )
 
 // ErrRunBudgetExceeded is the cause of a scheduled pass's runtime deadline.
-var ErrRunBudgetExceeded = errors.New("scheduled job runtime budget exceeded without a checkpoint")
+var ErrRunBudgetExceeded = errors.New("scheduled job runtime budget exceeded")
 
 type progressKey struct{}
 
