@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/spf13/cobra"
 	activitypkg "go.kenn.io/msgvault/internal/activity"
@@ -14,8 +15,10 @@ import (
 )
 
 const (
-	activityBuildSubcommand = "build"
-	activityProjectionJob   = "activity-projection"
+	activityBuildSubcommand      = "build"
+	activityProjectionJob        = "activity-projection"
+	activityProjectionMaxBatches = 10
+	activityProjectionMaxRuntime = time.Minute
 )
 
 func newActivityCommand() *cobra.Command {
@@ -105,16 +108,26 @@ func registerActivityProjectionJob(
 		Timezone:              activityConfig.Timezone,
 		MaxDirectCounterparts: activityConfig.MaxDirectCounterparts,
 		BatchSize:             activityConfig.BatchSize,
+		MaxBatches:            activityProjectionMaxBatches,
 		Log:                   log,
 	})
 	if err != nil {
 		return err
 	}
 	return sched.AddJob(scheduler.Job{
-		Name:     activityProjectionJob,
-		Schedule: activityConfig.Schedule,
+		Name:        activityProjectionJob,
+		Preemptible: true,
+		MaxRuntime:  activityProjectionMaxRuntime,
+		Schedule:    activityConfig.Schedule,
 		Run: func(ctx context.Context) error {
 			result, runErr := projector.RunOnce(ctx)
+			if errors.Is(runErr, activitypkg.ErrWorkRemaining) {
+				log.Info("activity projection pass complete; continuing behind queued work", "processed", result.Processed, "batches", result.Batches)
+				return scheduler.ErrReschedule
+			}
+			if runErr != nil && (errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded)) {
+				return runErr
+			}
 			if runErr != nil {
 				log.Error("activity projection failed",
 					"error", runErr,

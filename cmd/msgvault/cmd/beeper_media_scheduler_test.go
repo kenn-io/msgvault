@@ -313,7 +313,10 @@ func TestBeeperMediaScheduledRoute(t *testing.T) {
 	// The queued follow-up resumes with the same operation ID after the request.
 	server.hang.Store(false)
 	releaseRequest()
-	require.Eventually(func() bool { return !sched.JobStatus()[0].Running }, time.Minute, 10*time.Millisecond)
+	require.Eventually(func() bool {
+		status := sched.JobStatus()[0]
+		return !status.Running && !status.Queued && !status.Pending && !status.LastRun.IsZero()
+	}, time.Minute, 10*time.Millisecond)
 	assert.Equal(map[string]string{destination: "retained::source"}, retentionRows(t, st))
 	server.mu.Lock()
 	require.Len(server.operations, 2)

@@ -26,6 +26,11 @@ type WorkTracker interface {
 	BeginWorkContext(ctx context.Context) (func(), bool)
 }
 
+// LabeledWorkTracker lets the scheduler identify the job holding the gate.
+type LabeledWorkTracker interface {
+	BeginLabeledWorkContext(ctx context.Context, label string) (func(), bool)
+}
+
 // YieldChecker is optionally implemented by work trackers that can report a
 // waiter the running job should yield to. Scheduled jobs are resumable, so
 // they step aside rather than block an interactive command for their whole
@@ -70,6 +75,11 @@ type Job struct {
 	// Preemptible permits cancellation for another scheduled job. Enable only
 	// when the job can resume from persisted progress after cancellation.
 	Preemptible bool
+	// MaxRuntime bounds a pass after it acquires the gate. On expiry the
+	// scheduler queues a follow-up only if the pass committed progress.
+	// Expiry without progress reports an error and waits for the next trigger.
+	// Enable only for jobs that can resume committed progress. Zero disables it.
+	MaxRuntime time.Duration
 }
 
 type JobStatus struct {
@@ -109,6 +119,7 @@ type Scheduler struct {
 	genericLastErr     map[string]error
 	genericFuncs       map[string]func(context.Context) error
 	genericPreemptible map[string]bool
+	genericMaxRuntime  map[string]time.Duration
 	genericQueued      map[string]bool
 	genericPending     map[string]bool
 	genericStartedAt   map[string]time.Time
@@ -169,6 +180,7 @@ func New(syncFunc SyncFunc) *Scheduler {
 		genericLastErr:     make(map[string]error),
 		genericFuncs:       make(map[string]func(context.Context) error),
 		genericPreemptible: make(map[string]bool),
+		genericMaxRuntime:  make(map[string]time.Duration),
 		genericQueued:      make(map[string]bool),
 		genericPending:     make(map[string]bool),
 		genericStartedAt:   make(map[string]time.Time),
@@ -246,6 +258,7 @@ func (s *Scheduler) onAccountTick(email string) {
 		return
 	}
 	s.running[email] = true
+	s.queued[email] = true
 	s.wg.Add(1)
 	s.mu.Unlock()
 	s.runSync(email)
@@ -283,6 +296,9 @@ func (s *Scheduler) AddAccountsFromConfig(cfg *config.Config) (int, []error) {
 }
 
 func (s *Scheduler) AddJob(job Job) error {
+	if job.MaxRuntime < 0 {
+		return errors.New("job runtime budget must be non-negative")
+	}
 	if job.Name == "" || job.Run == nil {
 		return errors.New("job name and run function are required")
 	}
@@ -304,6 +320,7 @@ func (s *Scheduler) AddJob(job Job) error {
 	s.genericSchedules[job.Name] = job.Schedule
 	s.genericFuncs[job.Name] = job.Run
 	s.genericPreemptible[job.Name] = job.Preemptible
+	s.genericMaxRuntime[job.Name] = job.MaxRuntime
 	s.logger.Info("scheduled job", "job", job.Name, "schedule", job.Schedule, "next_run", s.nextRun(entryID))
 	return nil
 }
@@ -321,6 +338,7 @@ func (s *Scheduler) RemoveJob(name string) {
 	delete(s.genericSchedules, name)
 	delete(s.genericFuncs, name)
 	delete(s.genericPreemptible, name)
+	delete(s.genericMaxRuntime, name)
 	delete(s.genericLastRun, name)
 	delete(s.genericLastErr, name)
 	delete(s.genericPending, name)
@@ -378,7 +396,7 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 		if s.isStopped() {
 			return
 		}
-		done, ok := s.beginWork()
+		done, ok := s.beginWork("embed")
 		if !ok {
 			return
 		}
@@ -426,7 +444,7 @@ func (s *Scheduler) SetDocumentVectorJob(job func(context.Context) error, schedu
 		if s.isStopped() {
 			return
 		}
-		done, ok := s.beginWork()
+		done, ok := s.beginWork("document-vector")
 		if !ok {
 			return
 		}
@@ -511,7 +529,7 @@ func (s *Scheduler) runSync(email string) {
 	s.mu.Lock()
 	s.queued[email] = true
 	s.mu.Unlock()
-	done, ok := s.beginWork()
+	done, ok := s.beginWork("sync " + email)
 	s.mu.Lock()
 	delete(s.queued, email)
 	if ok {
@@ -597,15 +615,11 @@ func callbackErrorAfterYield(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
 	}
-	if yieldedToWaiter(ctx) {
-		return withoutYieldCancellation(err)
+	if yieldedToWaiter(ctx) || errors.Is(context.Cause(ctx), jobctx.ErrRunBudgetExceeded) {
+		_, filtered := filterYieldCancellation(err, errors.Is(ctx.Err(), context.DeadlineExceeded))
+		return filtered
 	}
 	return err
-}
-
-func withoutYieldCancellation(err error) error {
-	_, filtered := filterYieldCancellation(err)
-	return filtered
 }
 
 type yieldFilteredError struct {
@@ -617,7 +631,7 @@ func (e yieldFilteredError) Error() string { return e.message }
 
 func (e yieldFilteredError) Unwrap() error { return e.cause }
 
-func filterYieldCancellation(err error) (bool, error) {
+func filterYieldCancellation(err error, deadlineExpired bool) (bool, error) {
 	if err == nil {
 		return false, nil
 	}
@@ -626,7 +640,7 @@ func filterYieldCancellation(err error) (bool, error) {
 		kept := make([]error, 0, len(causes))
 		changed := false
 		for _, cause := range causes {
-			filteredOut, filtered := filterYieldCancellation(cause)
+			filteredOut, filtered := filterYieldCancellation(cause, deadlineExpired)
 			changed = changed || filteredOut
 			if filtered != nil {
 				kept = append(kept, filtered)
@@ -639,7 +653,7 @@ func filterYieldCancellation(err error) (bool, error) {
 	}
 	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
 		cause := wrapped.Unwrap()
-		changed, filtered := filterYieldCancellation(cause)
+		changed, filtered := filterYieldCancellation(cause, deadlineExpired)
 		if !changed {
 			return false, err
 		}
@@ -655,7 +669,7 @@ func filterYieldCancellation(err error) (bool, error) {
 		}
 		return true, yieldFilteredError{message: message, cause: filtered}
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, ErrYieldedToWaiter) {
+	if errors.Is(err, context.Canceled) || (deadlineExpired && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, jobctx.ErrRunBudgetExceeded))) || errors.Is(err, ErrYieldedToWaiter) {
 		return true, nil
 	}
 	return false, err
@@ -686,6 +700,7 @@ func (s *Scheduler) finishAccountRun(email string) {
 	delete(s.startedAt, email)
 	if s.pending[email] && !s.stopped {
 		delete(s.pending, email)
+		s.queued[email] = true
 		s.wg.Add(1)
 		go s.runSync(email)
 		return
@@ -728,7 +743,7 @@ func (s *Scheduler) startVisualPostSync() {
 				s.startVisualPostSync()
 			}
 		}()
-		done, ok := s.beginWork()
+		done, ok := s.beginWork("post-sync multimodal")
 		if !ok {
 			return
 		}
@@ -768,6 +783,7 @@ func (s *Scheduler) TriggerSync(email string) error {
 	}
 
 	s.running[email] = true
+	s.queued[email] = true
 	s.wg.Add(1)
 	go s.runSync(email)
 	return nil
@@ -846,6 +862,7 @@ func (s *Scheduler) reserveGenericJob(name string, coalesce bool) (run func(cont
 		return nil, false, nil
 	}
 	s.genericRunning[name] = true
+	s.genericQueued[name] = true
 	s.wg.Add(1)
 	return run, true, nil
 }
@@ -860,8 +877,9 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	s.mu.Lock()
 	s.genericQueued[name] = true
 	preemptible := s.genericPreemptible[name]
+	maxRuntime := s.genericMaxRuntime[name]
 	s.mu.Unlock()
-	done, ok := s.beginWork()
+	done, ok := s.beginWork(name)
 	s.mu.Lock()
 	delete(s.genericQueued, name)
 	if ok {
@@ -873,12 +891,19 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	}
 	defer done()
 
-	runCtx, endRun := s.jobContext(name, preemptible)
+	runCtx, endRun := s.jobContext(name, preemptible, maxRuntime)
 	err := run(runCtx)
 	endRun()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	yielded := yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
+	budgetExpired := errors.Is(context.Cause(runCtx), jobctx.ErrRunBudgetExceeded)
+	if budgetExpired && !jobctx.HasProgress(runCtx) {
+		delete(s.genericPending, name)
+		err = errors.Join(jobctx.ErrRunBudgetExceeded, callbackErrorAfterYield(runCtx, err))
+		s.genericLastErr[name] = err
+		return err
+	}
+	yielded := budgetExpired || yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
 	if errors.Is(err, ErrReschedule) {
 		s.genericPending[name] = true
 		s.logger.Info("scheduled job has remaining work; queued follow-up",
@@ -918,6 +943,7 @@ func (s *Scheduler) finishGenericRun(name string) {
 	current := s.genericFuncs[name]
 	if s.genericPending[name] && !s.stopped && current != nil {
 		delete(s.genericPending, name)
+		s.genericQueued[name] = true
 		s.wg.Add(1)
 		go func() { _ = s.runJob(name, current) }()
 		return
@@ -926,14 +952,20 @@ func (s *Scheduler) finishGenericRun(name string) {
 	s.genericRunning[name] = false
 }
 
-func (s *Scheduler) beginWork() (func(), bool) {
+func (s *Scheduler) beginWork(label string) (func(), bool) {
 	if s.work == nil {
 		return func() {}, true
 	}
 	s.mu.Lock()
 	s.queuedRuns++
 	s.mu.Unlock()
-	done, ok := s.work.BeginWorkContext(s.ctx)
+	var done func()
+	var ok bool
+	if labeled, supportsLabels := s.work.(LabeledWorkTracker); supportsLabels {
+		done, ok = labeled.BeginLabeledWorkContext(s.ctx, label)
+	} else {
+		done, ok = s.work.BeginWorkContext(s.ctx)
+	}
 	s.mu.Lock()
 	s.queuedRuns--
 	s.mu.Unlock()
@@ -954,12 +986,17 @@ var preemptAfter = time.Minute
 // behind it. Jobs that have not stopped at the next poll are cancelled with
 // ErrYieldedToWaiter. Other jobs keep their own runtime budgets. The returned
 // stop function must be called when the job finishes.
-func (s *Scheduler) jobContext(label string, preemptible bool) (context.Context, func()) {
+func (s *Scheduler) jobContext(label string, preemptible bool, budgets ...time.Duration) (context.Context, func()) {
 	started := time.Now()
-	preemptCtx, requestPreemption := jobctx.WithPreemption(s.ctx)
+	baseCtx := jobctx.WithProgress(s.ctx)
+	stopBudget := func() {}
+	if len(budgets) > 0 && budgets[0] > 0 {
+		baseCtx, stopBudget = context.WithTimeoutCause(baseCtx, budgets[0], jobctx.ErrRunBudgetExceeded)
+	}
+	preemptCtx, requestPreemption := jobctx.WithPreemption(baseCtx)
 	yc, canYield := s.work.(YieldChecker)
 	if s.work == nil {
-		return preemptCtx, func() {}
+		return preemptCtx, stopBudget
 	}
 	ctx, cancel := context.WithCancelCause(preemptCtx)
 	go func() {
@@ -992,7 +1029,7 @@ func (s *Scheduler) jobContext(label string, preemptible bool) (context.Context,
 			}
 		}
 	}()
-	return ctx, func() { cancel(nil) }
+	return ctx, func() { cancel(nil); stopBudget() }
 }
 
 func (s *Scheduler) hasQueuedRuns() bool {
@@ -1025,7 +1062,7 @@ func (s *Scheduler) Status() []AccountStatus {
 	for email, entryID := range s.jobs {
 		status := AccountStatus{
 			Email:     email,
-			Running:   s.running[email],
+			Running:   !s.startedAt[email].IsZero(),
 			LastRun:   s.lastRun[email],
 			NextRun:   s.nextRun(entryID),
 			Schedule:  s.schedules[email],
@@ -1052,7 +1089,7 @@ func (s *Scheduler) JobStatus() []JobStatus {
 		}
 		out = append(out, JobStatus{
 			Name:      name,
-			Running:   s.genericRunning[name],
+			Running:   !s.genericStartedAt[name].IsZero(),
 			LastRun:   s.genericLastRun[name],
 			NextRun:   s.nextRun(entryID),
 			Schedule:  s.genericSchedules[name],

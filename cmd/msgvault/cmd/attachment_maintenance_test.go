@@ -23,6 +23,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -355,18 +356,26 @@ func TestPendingPackContinuesAfterByteBudget(t *testing.T) {
 				f.maintenance.markPackPending()
 				require.ErrorIs(f.maintenance.daily(context.Background()), scheduler.ErrReschedule,
 					"a bounded daily pass must request another pass for the remaining backlog")
-				require.NoError(f.maintenance.daily(context.Background()))
-			} else {
-				sched := scheduler.New(nil).WithLogger(f.maintenance.logger)
-				t.Cleanup(func() { <-sched.Stop().Done() })
-				require.NoError(registerAttachmentPackJob(sched, f.maintenance))
-				require.NoError(sched.TriggerJob(attachmentPackJob))
-				require.Eventually(func() bool {
-					statuses := sched.JobStatus()
-					return len(statuses) == 1 && !statuses[0].Running && !statuses[0].LastRun.IsZero()
-				}, time.Minute, 100*time.Millisecond,
-					"the scheduler must run the bounded pack follow-up")
 			}
+			sched := scheduler.New(nil).WithLogger(f.maintenance.logger)
+			t.Cleanup(func() { <-sched.Stop().Done() })
+			jobName := attachmentPackJob
+			if daily {
+				jobName = attachmentMaintenanceJob
+				require.NoError(registerAttachmentMaintenanceJob(sched, f.maintenance))
+			} else {
+				require.NoError(registerAttachmentPackJob(sched, f.maintenance))
+			}
+			require.NoError(sched.TriggerJob(jobName))
+			require.Eventually(func() bool {
+				statuses := sched.JobStatus()
+				return len(statuses) == 1 && !statuses[0].Running && !statuses[0].Queued && !statuses[0].Pending && !statuses[0].LastRun.IsZero()
+			}, time.Minute, 100*time.Millisecond, "bounded follow-ups drain packing and verification")
+			assert.Empty(sched.JobStatus()[0].LastError)
+			if daily {
+				assert.Contains(f.logs.String(), "automatic attachment repack complete", "the final daily follow-up must repack")
+			}
+
 			for _, hash := range hashes {
 				assert.NotNil(f.packedEntry(hash), "the next pass must pack the remaining blobs")
 			}
@@ -663,4 +672,60 @@ func TestAttachmentIngestMutationLeaseWaitsForMaintenance(t *testing.T) {
 		require.Fail("ingest did not start after maintenance released its lease")
 	}
 	require.NoError(<-done)
+}
+
+func TestPendingPackCheckpointsVerificationAndStillPacksNewBlobs(t *testing.T) {
+	require := require.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	const existing = 140
+	for i := range existing {
+		f.addLoose([]byte(fmt.Sprintf("existing packed content %d", i)))
+	}
+	_, err := f.maintenance.pack(t.Context(), 0)
+	require.NoError(err)
+	fresh := f.addLoose([]byte("new attachment while verification is pending"))
+	f.maintenance.markPackPending()
+	require.ErrorIs(f.maintenance.runPendingPack(t.Context()), scheduler.ErrReschedule)
+	require.NotNil(f.packedEntry(fresh), "new blobs must not wait for the whole verification cycle")
+	// A reconstructed daemon resumes the durable verification cursor.
+	resumed, err := newAttachmentMaintenance(f.store, f.dir, nil, true)
+	require.NoError(err)
+	defer func() { require.NoError(resumed.close()) }()
+	resumed.markPackPending()
+	require.NoError(resumed.runPendingPack(t.Context()))
+	stats, err := resumed.unpack(t.Context())
+	require.NoError(err)
+	assert.Equal(t, existing+1, stats.BlobsRestored, "manual unpack must see the full catalog")
+}
+
+func TestCompletedPackVerificationDoesNotMaskRepackBudgetFailure(t *testing.T) {
+	f := newAttachmentMaintenanceFixture(t)
+	ctx := jobctx.WithProgress(t.Context())
+	require.NoError(t, f.maintenance.runScheduledPack(ctx))
+	assert.False(t, jobctx.HasProgress(ctx), "an empty completed scan provides no resume point for a cancelled repack")
+}
+
+func TestDailyMaintenanceVerificationFollowupsReclaimDeadPacks(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	deadPackID := f.makeZeroLivePack([]byte("dead pack awaiting daily collection"))
+	for i := range 140 {
+		f.addLoose([]byte(fmt.Sprintf("live packed content %d", i)))
+	}
+	_, err := f.maintenance.pack(t.Context(), 0)
+	require.NoError(err)
+	sched := scheduler.New(nil).WithLogger(f.maintenance.logger)
+	t.Cleanup(func() { <-sched.Stop().Done() })
+	require.NoError(registerAttachmentMaintenanceJob(sched, f.maintenance))
+	require.NoError(sched.TriggerJob(attachmentMaintenanceJob))
+	require.Eventually(func() bool {
+		status := sched.JobStatus()[0]
+		return !status.Running && !status.Queued && !status.Pending && !status.LastRun.IsZero()
+	}, 10*time.Second, 10*time.Millisecond, "daily follow-ups must finish verification and repacking")
+	assert.Empty(sched.JobStatus()[0].LastError)
+	recorded, err := f.store.HasPackRecord(deadPackID)
+	require.NoError(err)
+	assert.False(recorded, "the final verification window must reach physical GC")
+	assert.Contains(f.logs.String(), "automatic attachment repack complete")
 }

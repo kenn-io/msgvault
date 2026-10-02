@@ -1686,10 +1686,17 @@ rerun as new loose content arrives. Bounded packing also runs after successful
 attachment-producing commands sent to the daemon. Scheduled syncs never pack
 inline: when one writes new loose blobs, the daemon's `attachment-pack` job
 (every 6 hours) packs them, and the daily `attachment-maintenance` job packs
-and repacks. Each automatic pack pass has a 256 MiB raw-byte budget and finishes
-its current blob before stopping. It queues another pass behind waiting work
-if the backlog remains. The first pack tick after a restart also checks for
-blobs left by the previous daemon.
+and repacks. Each automatic pack pass has a 256 MiB soft raw-byte budget and
+finishes its current blob before stopping for that byte limit. Scheduled packing
+and daily attachment maintenance also have a one-minute runtime budget and
+yield to queued scheduled work. Each scheduled pack pass verifies at most 128
+existing packed blobs or 32 MiB of their raw content, allowing one oversized
+blob. Its durable hash cursor resumes verification after a restart, while new
+loose blobs can be packed during each pass. Manual unpacking reads the full
+catalog. Cancellation preserves committed packs. A pass with committed
+progress resumes behind waiting work; runtime expiry without a checkpoint
+records an error and waits for the next trigger. The first pack tick after a
+restart also checks for blobs left by the previous daemon.
 This command processes the complete eligible backlog immediately.
 
 With `[data].loose_attachments = true`, automatic packing is disabled and this

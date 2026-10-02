@@ -224,3 +224,72 @@ func fromStoreEntryTest(entry store.PackIndexEntry) (packstore.IndexEntry, error
 	return packstore.IndexEntry{Hash: hash, PackID: entry.PackID, Offset: entry.Offset,
 		StoredLen: entry.StoredLen, RawLen: entry.RawLen, Flags: entry.Flags, CRC32C: entry.CRC32C}, nil
 }
+
+func TestPackCatalogCancellationWhileWaitingForDatabase(t *testing.T) {
+	// Catalog discovery must pass cancellation into SQL, not only check it
+	// before starting. A held connection models contention without a large fixture.
+	for _, method := range []string{
+		"references", "unpacked", "indexed", "packs", "entries", "resolve", "has-record",
+		"record", "adopt", "delete-record", "delete-entry", "clear-metadata",
+	} {
+		t.Run(method, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			hash, err := packstore.ParseHash(pack.ComputeBlobID([]byte("catalog cancellation")).String())
+			require.NoError(err)
+			st.DB().SetMaxOpenConns(1)
+			conn, err := st.DB().Conn(t.Context())
+			require.NoError(err)
+			defer func() { _ = conn.Close() }()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			initial := st.DB().Stats().WaitCount
+			done := make(chan error, 1)
+			catalog := store.NewPackCatalog(st)
+			go func() {
+				var err error
+				switch method {
+				case "references":
+					_, err = catalog.ListReferences(ctx)
+				case "unpacked":
+					_, err = catalog.ListUnpacked(ctx)
+				case "indexed":
+					_, err = catalog.ListIndexed(ctx)
+				case "packs":
+					_, err = catalog.ListPackRecords(ctx)
+				case "entries":
+					_, err = catalog.ListPackEntries(ctx, "synthetic-pack")
+				case "resolve":
+					_, err = catalog.Resolve(ctx, hash)
+				case "has-record":
+					_, err = catalog.HasPackRecord(ctx, pack.NewPackID())
+				case "record":
+					err = catalog.RecordPack(ctx, packstore.PackRecord{
+						PackID: pack.NewPackID(), CreatedAt: time.Now(),
+					}, nil)
+				case "adopt":
+					err = catalog.AdoptPack(ctx, packstore.PackRecord{
+						PackID: pack.NewPackID(), CreatedAt: time.Now(),
+					}, nil)
+				case "delete-record":
+					err = catalog.DeletePackRecord(ctx, pack.NewPackID())
+				case "delete-entry":
+					err = catalog.DeleteIndexEntry(ctx, hash)
+				case "clear-metadata":
+					err = catalog.ClearPackMetadata(ctx)
+				}
+				done <- err
+			}()
+			require.Eventually(func() bool { return st.DB().Stats().WaitCount > initial }, 5*time.Second, 10*time.Millisecond)
+			cancel()
+			select {
+			case err := <-done:
+				require.ErrorIs(err, context.Canceled)
+			case <-time.After(5 * time.Second):
+				require.NoError(conn.Close())
+				<-done
+				require.FailNow("catalog discovery ignored cancellation while waiting for SQL")
+			}
+		})
+	}
+}

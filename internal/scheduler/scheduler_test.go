@@ -2618,6 +2618,7 @@ func TestTickWhileQueuedIsDropped(t *testing.T) {
 		status := s.Status()
 		require.Len(status, 1)
 		assert.True(status[0].Queued, "run waiting for the gate is reported as queued")
+		assert.False(status[0].Running, "a queued account is not running")
 		assert.True(status[0].StartedAt.IsZero(), "a queued run has not started")
 
 		s.onAccountTick("a@example.com")
@@ -2653,7 +2654,7 @@ func TestStatusReportsStartedWhileExecuting(t *testing.T) {
 		assert.False(account.StartedAt.IsZero(), "executing run reports its start")
 		job := s.JobStatus()[0]
 		assert.True(job.Queued, "generic job waiting for the gate is queued")
-		assert.True(job.Running)
+		assert.False(job.Running, "waiting for the gate is queued, not running")
 
 		close(release)
 		synctest.Wait()
@@ -3158,4 +3159,125 @@ func TestJobFollowUpRunsReregisteredFunction(t *testing.T) {
 		assert.Equal(int32(1), oldRuns.Load())
 		assert.Equal(int32(1), newRuns.Load(), "the follow-up runs the job as currently registered")
 	})
+}
+
+func TestJobRuntimeBudgetResumesWithoutWaiter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var runs int
+		s := New(nil)
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddJob(Job{Name: "maintenance", Schedule: "0 0 1 1 *", MaxRuntime: 30 * time.Second, Run: func(ctx context.Context) error {
+			runs++
+			if runs == 1 {
+				jobctx.RecordProgress(ctx)
+				<-ctx.Done()
+				return context.Cause(ctx)
+			}
+			return nil
+		}}))
+		require.NoError(s.StartJob("maintenance"))
+		synctest.Wait()
+		time.Sleep(31 * time.Second)
+		synctest.Wait()
+		assert.Equal(2, runs)
+		status := s.JobStatus()[0]
+		assert.Empty(status.LastError)
+		assert.False(status.LastRun.IsZero())
+	})
+}
+
+func TestYieldPreservesIndependentDeadlineFailure(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(ErrYieldedToWaiter)
+	require.ErrorIs(t, callbackErrorAfterYield(ctx, context.DeadlineExceeded), context.DeadlineExceeded)
+}
+
+func TestJobBudgetStartsAfterGateAdmission(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		gate := newSerialWorkTracker()
+		release, ok := gate.BeginWork()
+		require.True(ok)
+		var runs int
+		s := New(nil).WithWorkTracker(gate)
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddJob(Job{Name: "bounded", Schedule: "0 0 1 1 *", MaxRuntime: 30 * time.Second, Run: func(ctx context.Context) error {
+			runs++
+			assert.NoError(ctx.Err(), "time spent queued does not consume the runtime budget")
+			return nil
+		}}))
+		require.NoError(s.StartJob("bounded"))
+		synctest.Wait()
+		time.Sleep(2 * time.Minute)
+		assert.True(s.JobStatus()[0].Queued)
+		assert.False(s.JobStatus()[0].Running)
+		release()
+		synctest.Wait()
+		assert.Equal(1, runs)
+		assert.Empty(s.JobStatus()[0].LastError)
+	})
+}
+
+func TestJobBudgetPreservesCallbackFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		sourceErr := errors.New("maintenance catalog unavailable")
+		s := New(nil)
+		defer func() { <-s.Stop().Done() }()
+		runs := 0
+		require.NoError(s.AddJob(Job{Name: "bounded-error", Schedule: "0 0 1 1 *", MaxRuntime: time.Minute, Run: func(ctx context.Context) error {
+			runs++
+			if runs == 1 {
+				jobctx.RecordProgress(ctx)
+				<-ctx.Done()
+				return errors.Join(sourceErr, ctx.Err())
+			}
+			return sourceErr
+		}}))
+		require.NoError(s.StartJob("bounded-error"))
+		time.Sleep(2 * time.Minute)
+		synctest.Wait()
+		assert.Equal(2, runs)
+		assert.Equal(sourceErr.Error(), s.JobStatus()[0].LastError)
+	})
+}
+
+func TestJobBudgetWithoutCheckpointReportsFailureAndWaitsForTick(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var runs int
+		s := New(nil)
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddJob(Job{Name: "slow-batch", Schedule: "0 0 1 1 *", MaxRuntime: time.Minute, Run: func(ctx context.Context) error {
+			runs++
+			if runs == 1 {
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return nil
+		}}))
+		require.NoError(s.StartJob("slow-batch"))
+		time.Sleep(5 * time.Minute)
+		synctest.Wait()
+		assert.Equal(1, runs, "a pass without a checkpoint must not spin in immediate retries")
+		assert.Contains(s.JobStatus()[0].LastError, "runtime budget")
+		assert.False(s.JobStatus()[0].Pending)
+		assert.False(s.JobStatus()[0].Running)
+		s.onJobTick("slow-batch")
+		synctest.Wait()
+		assert.Equal(2, runs)
+		assert.Empty(s.JobStatus()[0].LastError)
+	})
+}
+
+func TestBudgetFiltersCancellationCause(t *testing.T) {
+	ctx, cancel := context.WithTimeoutCause(t.Context(), 0, jobctx.ErrRunBudgetExceeded)
+	defer cancel()
+	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+	assert.NoError(t, callbackErrorAfterYield(ctx, context.Cause(ctx)))
 }

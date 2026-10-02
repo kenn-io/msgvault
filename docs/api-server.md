@@ -1882,19 +1882,26 @@ Scheduler state and per-account schedule details.
 ```
 
 The daemon runs scheduled work one job at a time. While a sync waits for
-another job to finish, its entry reports `"queued": true`. While it runs,
-`started_at` gives when it began. A schedule tick that fires during a run
+another job to finish, its entry reports `"queued": true` and `"running": false`.
+`"running": true` means it acquired the operation gate; `started_at` gives when
+it began. The top-level `running` field reports whether the scheduler is active.
+A schedule tick that fires during a run
 sets `"pending": true`, and the scheduler runs the sync once more when the
-current run ends. Account syncs (Gmail, IMAP, Teams, and Discord), Slack, and
+current run ends. Resumable account syncs (Gmail, Teams, and Discord), Slack, and
 Beeper support preemption: after holding the gate for a minute while others
 are queued, they are asked to stop at their next safe point. If they are
 still running five seconds later, the scheduler cancels their context. An
 interrupted run goes back behind waiting jobs immediately; it does not wait
-for another schedule tick. Maintenance and other jobs without resumable
-checkpoints keep their own runtime budgets. Waiting API requests can still
+for another schedule tick. Activity projection, attachment packing, and daily
+attachment maintenance also yield to queued work and have one-minute runtime
+budgets. Activity projection limits each pass to ten batches and saves its
+reconciliation progress. IMAP full passes do not support scheduled preemption.
+Other jobs keep their own runtime budgets. Waiting API requests can still
 interrupt scheduled work. `GET /api/v1/sources/status` reports the same
 state for every scheduled source as `scheduler_queued`, `scheduler_pending`,
-and `scheduler_started_at`.
+and `scheduler_started_at`. Compare queued state and the last successful sync
+to detect a source that is waiting too long. Health's `operation.label` names
+the job holding the gate, such as `activity-projection` or `attachment-pack`.
 
 ---
 

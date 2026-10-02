@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -1198,4 +1199,152 @@ func projectorManyFixture(
 
 func formatProjectorID(value int64) string {
 	return strconv.FormatInt(value, 10)
+}
+
+func TestRevisionReconciliationResumesAcrossBoundedRuns(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, lastID := projectorManyFixture(t, 7)
+	initial, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
+	require.NoError(err)
+	_, err = initial.RunOnce(t.Context())
+	require.NoError(err)
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "alias@example.com", "manual"))
+	revisions, err := f.Store.ContactRevisionsContext(t.Context())
+	require.NoError(err)
+	var total int
+	previousCursor := int64(-1)
+	for range 10 {
+		// Reconstruct the projector to prove progress is durable.
+		observed := &recordActivityScanStore{Store: f.Store}
+		p, err := NewProjector(observed, Options{Timezone: "UTC", BatchSize: 1, MaxBatches: 2})
+		require.NoError(err)
+		result, err := p.RunOnce(t.Context())
+		require.True(err == nil || errors.Is(err, ErrWorkRemaining), "%v", err)
+		require.NotEmpty(observed.afterIDs)
+		assert.Greater(observed.afterIDs[0], previousCursor, "a new projector resumes beyond the previous pass start")
+		previousCursor = observed.afterIDs[0]
+		assert.LessOrEqual(result.Batches, 2)
+		total += result.Processed
+		if err == nil {
+			break
+		}
+		got, reconciled, err := f.Store.ActivityReconciledRevisionsContext(t.Context())
+		require.NoError(err)
+		assert.True(reconciled)
+		assert.NotEqual(revisions, got, "partial runs cannot declare the epoch reconciled")
+	}
+	assert.Equal(7, total, "committed batches are not replayed on resume")
+	got, reconciled, err := f.Store.ActivityReconciledRevisionsContext(t.Context())
+	require.NoError(err)
+	assert.True(reconciled)
+	assert.Equal(revisions, got)
+	candidates, err := f.Store.ScanForActivityProjectionContext(t.Context(), 0, 10)
+	require.NoError(err)
+	assert.Empty(candidates)
+	watermark, err := f.Store.ActivityWatermarkContext(t.Context())
+	require.NoError(err)
+	assert.Equal(lastID, watermark)
+}
+
+func TestRevisionReconciliationRestartsCursorAfterIdentityChange(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, _ := projectorManyFixture(t, 5)
+	initial, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
+	require.NoError(err)
+	_, err = initial.RunOnce(t.Context())
+	require.NoError(err)
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "first-alias@example.com", "manual"))
+	limited, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1, MaxBatches: 2})
+	require.NoError(err)
+	result, err := limited.RunOnce(t.Context())
+	require.ErrorIs(err, ErrWorkRemaining)
+	assert.Equal(2, result.Processed)
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "second-alias@example.com", "manual"))
+	var total int
+	for range 10 {
+		result, err = limited.RunOnce(t.Context())
+		total += result.Processed
+		require.True(err == nil || errors.Is(err, ErrWorkRemaining), "%v", err)
+		if err == nil {
+			break
+		}
+	}
+	assert.Equal(5, total, "a new revision restarts below the saved cursor")
+	candidates, err := f.Store.ScanForActivityProjectionContext(t.Context(), 0, 10)
+	require.NoError(err)
+	assert.Empty(candidates)
+}
+
+func TestBoundedProjectionCompletesConfigurationTransitions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, _ := projectorManyFixture(t, 7)
+	for _, timezone := range []string{"UTC", "America/New_York"} {
+		var total int
+		for range 15 {
+			p, err := NewProjector(f.Store, Options{Timezone: timezone, BatchSize: 1, MaxBatches: 2})
+			require.NoError(err)
+			result, err := p.RunOnce(t.Context())
+			require.True(err == nil || errors.Is(err, ErrWorkRemaining), "%v", err)
+			assert.LessOrEqual(result.Batches, 2)
+			total += result.Processed
+			if err == nil {
+				break
+			}
+		}
+		assert.Equal(7, total, "a partial configuration pass resumes from its committed cursor")
+		transition, err := f.Store.ActivityTimezoneTransitionContext(t.Context())
+		require.NoError(err)
+		assert.False(transition.Active)
+		assert.Equal(timezone, transition.Target)
+	}
+}
+
+func TestProjectionYieldsAtBatchBoundary(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, _ := projectorManyFixture(t, 5)
+	initial, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
+	require.NoError(err)
+	_, err = initial.RunOnce(t.Context())
+	require.NoError(err)
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "yield-alias@example.com", "manual"))
+	ctx, preempt := jobctx.WithPreemption(t.Context())
+	st := &preemptAfterActivityBatchStore{Store: f.Store, preempt: preempt}
+	p, err := NewProjector(st, Options{Timezone: "UTC", BatchSize: 1})
+	require.NoError(err)
+	result, err := p.RunOnce(ctx)
+	require.ErrorIs(err, ErrWorkRemaining)
+	assert.Equal(1, result.Processed)
+	require.NoError(ctx.Err(), "cooperative yield finishes the committed batch")
+	result, err = initial.RunOnce(t.Context())
+	require.NoError(err)
+	assert.Equal(4, result.Processed)
+}
+
+type preemptAfterActivityBatchStore struct {
+	*store.Store
+
+	preempt func()
+}
+
+func (s *preemptAfterActivityBatchStore) ProjectActivityBatchContext(ctx context.Context, items []store.ActivityProjection) (store.ActivityProjectionResult, error) {
+	result, err := s.Store.ProjectActivityBatchContext(ctx, items)
+	if err == nil {
+		s.preempt()
+	}
+	return result, err
+}
+
+type recordActivityScanStore struct {
+	*store.Store
+
+	afterIDs []int64
+}
+
+func (s *recordActivityScanStore) ScanForActivityProjectionContext(ctx context.Context, afterID int64, limit int) ([]store.ActivityCandidate, error) {
+	s.afterIDs = append(s.afterIDs, afterID)
+	return s.Store.ScanForActivityProjectionContext(ctx, afterID, limit)
 }
