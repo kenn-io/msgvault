@@ -5,7 +5,7 @@ back up your archive. What gets saved depends on source access and your media
 settings. Optional hosted processing sends selected data to the providers you
 configure.
 
-See the [0.20.0 changelog](/docs/changelog/#0200) for new features and upgrade
+See the [0.21.0 changelog](/docs/changelog/#0210) for new features and upgrade
 steps.
 
 1. [Capture](#capture)
@@ -86,8 +86,8 @@ not scan message bodies.
 Select messages and create a deletion manifest: a saved list you can review
 before removing mail from a provider. A separate CLI command requires your
 consent to execute it. Gmail and IMAP move messages to Trash by default;
-permanent deletion needs an explicit option. Archived content remains
-available unless you separately purge it locally.
+Microsoft Graph mail uses Deleted Items. Permanent deletion needs an explicit
+option. Archived content remains available unless you separately purge it locally.
 
 [Deleting email](/docs/usage/deletion/)
 

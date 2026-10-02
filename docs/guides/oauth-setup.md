@@ -456,7 +456,17 @@ msgvault sync-full you@outlook.com
 
 ### Headless Servers
 
-On a headless server (SSH, VPS, Docker), authorize on a machine with a browser and copy the token file to the server:
+Sign in from SSH, a server, or a container without opening a local browser:
+
+```bash
+msgvault add-o365 you@outlook.com --headless
+```
+
+For Graph mail, add `--graph`. Teams uses `msgvault add-teams --headless`.
+Open the printed Microsoft URL on another device and enter the code. Complete
+sign-in there; msgvault saves the token on the server.
+
+You can also authorize on another machine and copy its token. For IMAP mail:
 
 1. On your local machine, run `msgvault add-o365 you@outlook.com` and complete the browser flow.
 2. Copy the token to the server:

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-10-02"
 title: Documentation
 description: Set up your archive, find messages and files, maintain people, and operate msgvault.
 ---
@@ -12,12 +12,12 @@ the archive through the browser, terminal, CLI, or an agent.
 
 <p class="hero-actions">
   <a class="md-button md-button--primary" href="/docs/setup/">Get started</a>
-  <a class="md-button" href="/docs/changelog/#0200">Changelog</a>
+  <a class="md-button" href="/docs/changelog/#0210">Changelog</a>
 </p>
 
-!!! note "Returning after 0.19?"
-    The [0.20.0 changelog](changelog.md#0200) lists the new capabilities.
-    Read the [upgrade notes](changelog.md#upgrade-and-compatibility) before
+!!! note "Upgrading to 0.21?"
+    The [0.21.0 changelog](changelog.md#0210) lists the new capabilities.
+    Read the [upgrade notes](changelog.md#before-upgrading) before
     opening an existing archive with the new version.
 
 ## Start an archive
@@ -59,7 +59,7 @@ limit an archive view.
 | Verify stored mail | [Archive verification](guides/verification.md) |
 | Hide duplicate copies | [Deduplication](usage/deduplication.md) |
 | Remove mail from a provider | [Deletion staging and execution](usage/deletion.md) |
-| Prepare an email for review in a mail client | [Managed IMAP drafts](usage/imap.md#drafts) |
+| Prepare a message draft for review | [Mail drafts](cli-reference.md#draft-reply), [Beeper drafts](cli-reference.md#beeper-chat-drafts), and [local chat drafts](cli-reference.md#local-chat-drafts) |
 | Keep a recoverable copy | [Backup and restore](usage/backup.md) |
 | Take data elsewhere | [Exporting](usage/exporting.md) |
 | Diagnose a problem | [Troubleshooting](troubleshooting.md) and [FAQ](faq.md) |

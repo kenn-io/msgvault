@@ -11,7 +11,7 @@ look up a person's history, and work from a browser, terminal, or AI assistant.
 msgvault is usable through the CLI, browser application, terminal interface,
 HTTP API, MCP server, and bundled agent skills. It is alpha software — back up
 your data.
-[See what changed in 0.20.0 and read the upgrade notes](/docs/changelog/#0200).
+[See what changed in 0.21.0 and read the upgrade notes](/docs/changelog/#0210).
 
 ## Install
 
@@ -86,9 +86,10 @@ have not heard from recently.
 
 ## Browse your archive
 
-Search messages, browse files, and maintain contacts in the browser. Save a
-useful view or share its URL with someone who has access to your archive.
-Use Back and Forward to return to earlier views.
+Use the grouped sidebar to browse messages, files, and people. Press `/` to
+search from any page. Save the current view from Everything or Files, or share
+its URL with someone who has access to your archive. Use Back and Forward to
+return to earlier views.
 
 Maintain profiles, review identities and merges, publish contacts through
 CardDAV, and catch up with a saved conversation brief in **Directory**.
@@ -146,7 +147,8 @@ to Trash or permanently delete it.
   You can create it from the CLI, Web UI, TUI, or MCP. Staging does not remove
   provider messages; execution is a separate CLI command.
 - **Execute:** the CLI requires explicit client consent. Gmail and IMAP default
-  to moving messages to Trash; permanent deletion requires explicit opt-in.
+  to moving messages to Trash; Microsoft Graph mail uses Deleted Items. Permanent
+  deletion requires explicit opt-in.
   Archived messages and attachments remain available; msgvault records their
   deletion from their source.
 - **Restore:** back up SQLite archives with snapshots of the database and
@@ -160,7 +162,7 @@ Use msgvault alongside your mail client and provider exports. Keep searching
 your saved history after messages leave the provider.
 
 - **Mail client:** read, compose, and send mail. msgvault can prepare managed
-  IMAP drafts for review there; it does not send mail.
+  IMAP drafts and Gmail reply drafts for review there; it does not send mail.
 - **Export archive:** keep a snapshot in a provider's format. Import supported
   exports into msgvault to browse and search them alongside other sources.
 - **msgvault:** keep captured history available after it leaves the provider.

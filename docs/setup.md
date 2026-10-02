@@ -9,7 +9,7 @@ terminal. The Gmail walkthrough below includes Google OAuth setup. For other
 mail providers, chats, meetings, contacts, or local exports, use
 [Choose a Source](guides/sources.md) after installation.
 
-Already using 0.19? Read [the changelog’s upgrade notes](changelog.md#upgrade-and-compatibility) before
+Already have an archive? Read [the upgrade notes](changelog.md#before-upgrading) before
 opening an existing archive with a newer build.
 
 ## Install Release

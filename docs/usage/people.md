@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-25"
+last_edited: "2026-10-02"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -285,6 +285,14 @@ RFC3339 timestamp.
 messages with citations. The guide covers enrollment, generation, reading in
 Directory or the TUI, refresh timing, and saved versions. Email-only contacts
 cannot receive a brief yet.
+
+## Keep a person’s follow-ups in view
+
+Enable the [Kata connection](../configuration.md#integrationskata) to see live
+todos on a person's Directory page. Create or unlink tasks there, and link
+existing tasks with the [CLI](../cli-reference.md#person-agenda) or API. Edit
+and complete tasks in Kata. Tasks stay in Kata; this connection requires Kata
+API schema 0.21.0 or later.
 
 ## Configure provider-backed person sweeps
 

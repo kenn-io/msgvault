@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-30"
+last_edited: "2026-10-02"
 title: Document Attachment Indexing
 description: Find words and topics inside archived documents, with explicit control over provider uploads.
 ---
@@ -127,9 +127,9 @@ store_chunk_text = true
 enabled = true
 ```
 
-Document extraction includes standalone attachments by default. On `main` after
-v0.20.0, set `include_inline = true` when your mail client marks ordinary attached
-documents as inline. Only authenticated document formats with authoritative role
+Document extraction includes standalone attachments by default. In v0.21.0, set
+`include_inline = true` when your mail client marks ordinary attached documents
+as inline. Only authenticated document formats with authoritative role
 provenance become eligible. Avatar, preview, sticker, and unknown roles stay out
 of scope. The setting also applies to local CSV conversion.
 
@@ -357,7 +357,7 @@ ledger; later vector operations finish the cleanup.
 
 ## Diagnose extraction failures
 
-On `main` after v0.20.0, a failed build reports each document hash, reason code,
+In v0.21.0, a failed build reports each document hash, reason code,
 and available local cause. For example, `invalid_local_source` can include
 `PDF structure is malformed`. Size mismatches and spool capacity
 failures have separate details. `documents status --capabilities <manifest>`

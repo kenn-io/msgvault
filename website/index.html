@@ -133,7 +133,7 @@
           </div>
         </div>
         <p class="install-hint">Installers fetch the latest release and verify its SHA-256 checksum. Also on <a href="https://prefix.dev/channels/conda-forge/packages/msgvault">conda-forge</a>, or <a href="/docs/setup/">build from source</a>.<span data-install-status aria-live="polite"></span></p>
-        <p class="caption"><a href="/docs/changelog/#0200">See what changed in 0.20.0 and read the upgrade notes</a>.</p>
+        <p class="caption"><a href="/docs/changelog/#0210">See what changed in 0.21.0 and read the upgrade notes</a>.</p>
       </section>
 
       <section class="site-section" aria-labelledby="record-title">
@@ -194,7 +194,7 @@
             <p class="section-index">03 / Browser</p>
             <h2 id="operation-title">Browse your archive.</h2>
           </div>
-          <p>Search messages, browse files, and maintain contacts in the browser. Save a useful view or share its URL with someone who has access to your archive. Use Back and Forward to return to earlier views.</p>
+          <p>Use the grouped sidebar to browse messages, files, and people. Press <kbd>/</kbd> to search from any page. Save the current view from Everything or Files, or share its URL with someone who has access to your archive. Use Back and Forward to return to earlier views.</p>
         </div>
         <figure class="capture">
           <a href="/docs/assets/static/relationships-dark-comfortable-darwin.png" data-lightbox>
@@ -291,7 +291,7 @@
           <article class="choice">
             <p class="choice-label">Execute</p>
             <h3>Delete provider copies.</h3>
-            <p>Execution is a separate CLI step with explicit client consent. Gmail and IMAP default to moving messages to Trash; permanent deletion requires explicit opt-in. Archived messages and attachments remain available; msgvault records that they were deleted from their source.</p>
+            <p>Execution is a separate CLI step with explicit client consent. Gmail and IMAP default to moving messages to Trash; Microsoft Graph mail uses Deleted Items. Permanent deletion requires explicit opt-in. Archived messages and attachments remain available; msgvault records that they were deleted from their source.</p>
           </article>
           <article class="choice">
             <p class="choice-label">Restore</p>
@@ -313,7 +313,7 @@
           <article class="boundary">
             <p class="choice-label">Mail client</p>
             <h3>Handle day-to-day mail.</h3>
-            <p>Use a mail client to read, compose, and send mail. msgvault can prepare managed IMAP drafts for review there; it does not send mail.</p>
+            <p>Use a mail client to read, compose, and send mail. msgvault can prepare managed IMAP drafts and Gmail reply drafts for review there; it does not send mail.</p>
           </article>
           <article class="boundary">
             <p class="choice-label">Export archive</p>

@@ -1,12 +1,12 @@
 ---
-last_edited: "2026-09-30"
+last_edited: "2026-10-02"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
 
 Find a command by task below, or use `msgvault COMMAND --help` for the flags
 in your installed binary. This reference follows current `main`; see
-[the 0.20.0 changelog](changelog.md#0200) for features and upgrade notes.
+[the 0.21.0 changelog](changelog.md#0210) for features and upgrade notes.
 
 | Task | Commands and guides |
 |---|---|
@@ -326,9 +326,8 @@ including in error responses. A creator's `draft_exists` result carries the
 draft ID without its text. `draft-get` shows the draft as
 Beeper last reported it, which can differ from the text sent because Beeper
 formats it. Edit and delete read the composer first and return `draft_conflict`
-when someone changed it in Beeper; msgvault never replaces text it did not
-write. Beeper has no conditional write, so a change typed between that read and
-the write can still be cleared. A write Beeper refuses before anything changed
+when someone changed it in Beeper. Beeper has no conditional write, so text typed
+between that read and the write can still be cleared. A write Beeper refuses before anything changed
 returns `provider_rejected`; a new draft whose text Beeper refused is
 discarded, so the chat is free for another `draft-compose`. A write with an
 unknown outcome returns `remote_unknown` and keeps the draft's pending
@@ -1862,7 +1861,7 @@ review their disclosure and preflight.
 and bound to a stable index revision; restart pagination after a stale-cursor
 error.
 
-On `main` after v0.20.0, build failures include available local causes alongside
+In v0.21.0, build failures include available local causes alongside
 the document hash and reason code. `documents status` lists up to 20 current
 failed documents, including failed replacements in an active rebuild. JSON
 output adds `status.failures` and `status.failures_exhausted`. Each failure has

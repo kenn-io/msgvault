@@ -26,7 +26,7 @@ Use the browser, terminal, CLI, HTTP API, or an AI assistant through MCP.
 
 > **Alpha software.** APIs, storage format, and CLI flags may change. Back up
 > your data. This README follows current `main`; see the
-> [0.20.0 changelog](docs/changelog.md#0200) for features and upgrade steps.
+> [0.21.0 changelog](docs/changelog.md#0210) for features and upgrade steps.
 
 ## What you can do
 
@@ -119,7 +119,7 @@ first sync, and running on your own server.
 | I want to… | Read |
 |---|---|
 | Understand the product | [Product overview](https://msgvault.io/) and [archive lifecycle](https://msgvault.io/guide/) |
-| Catch up after 0.19 | [Changelog and upgrade notes](docs/changelog.md#0200) |
+| Upgrade an existing archive | [Changelog and upgrade notes](docs/changelog.md#0210) |
 | Search messages and attachments | [Searching](docs/usage/searching.md) and [document indexing](docs/usage/document-indexing.md) |
 | Maintain contacts and relationships | [People and profiles](docs/usage/people.md) |
 | Import local text-message history | [Text message imports](docs/usage/text-messages.md) |

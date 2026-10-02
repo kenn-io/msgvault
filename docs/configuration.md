@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-01"
+last_edited: "2026-10-02"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -414,7 +414,7 @@ and local derivative cleanup remain automatic and make no provider requests.
 | `message_types` | `[]` | Include all supported message sources, or restrict extraction to the listed types |
 | `include_inline` | `false` | Also include inline attachments with an authorized document media type and authoritative role provenance |
 
-Inline scope support is available on `main` after v0.20.0. Some mail clients mark
+Inline scope support is available in v0.21.0. Some mail clients mark
 ordinary document attachments as inline. Set `include_inline = true` to include
 them; other roles remain excluded. This changes the consent fingerprint. Run
 `msgvault documents consent-mistral --capabilities <manifest> --yes` again before

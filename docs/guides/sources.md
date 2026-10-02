@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-25"
+last_edited: "2026-10-02"
 title: Choose a Source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
@@ -19,7 +19,7 @@ non-Google provider.
 |---|---|---|
 | Gmail or Google Workspace | [Gmail setup](../setup.md#configure-oauth) | Google OAuth app and account authorization; read-only access is an option |
 | An IMAP mailbox | [IMAP sync](../usage/imap.md) | Server address and credentials, often an app password |
-| Microsoft 365 mail | [Microsoft 365 setup](../cli-reference.md#add-o365) | A Microsoft OAuth app and IMAP access |
+| Microsoft 365 or Outlook.com mail | [Microsoft mail setup](oauth-setup.md#microsoft-365-outlook-hotmail) | A Microsoft OAuth app; choose IMAP or Graph mail access |
 | Maildir or Maildir++ archive | [Maildir import](../usage/importing.md#import-maildir) | A stable snapshot with `cur`, `new`, and `tmp` directories |
 | MailMate-style `.mailbox` directories | [EML import](../usage/importing.md) | A `.mailbox` tree containing `.eml` files and an archive identifier |
 | MBOX, Apple Mail, or Outlook PST | [Local email import](../usage/importing.md) | An exported mailbox or readable local mail directory |
