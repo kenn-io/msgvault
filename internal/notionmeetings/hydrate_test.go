@@ -403,7 +403,7 @@ func TestHydratorDegradesWhenUserInformationIsUnavailable(t *testing.T) {
 	assert.Empty(hydrated.Attendees)
 	assert.True(hydrated.AttendeeResolutionDegraded)
 	assert.Equal([]string{"user-1", "user-2"}, hydrated.UnresolvedAttendeeIDs)
-	assert.Contains(hydrated.Warnings, "Notion User Information access unavailable; attendee emails were not resolved")
+	assert.Contains(hydrated.Warnings, "Notion User Information access unavailable; attempting per-attendee retrieval where supported")
 
 	snapshot, err := hydrated.ArchiveSnapshot(17, "work", "user@example.com")
 	require.NoError(err)
@@ -493,12 +493,56 @@ func TestHydratorDegradesAndCachesTransientUserListingFailure(t *testing.T) {
 	assert.Empty(first.Attendees)
 	assert.True(first.AttendeeResolutionDegraded)
 	assert.Equal([]string{"user-1", "user-2"}, first.AttendeeLabels)
-	assert.Contains(first.Warnings, "Notion User Information lookup failed: rate limit exceeded; attendee emails were not resolved")
+	assert.Contains(first.Warnings, "Notion User Information lookup failed: rate limit exceeded; attempting per-attendee retrieval where supported")
 
 	second, err := hydrator.Hydrate(context.Background(), hydrationMeeting())
 	require.NoError(err)
 	assert.Empty(second.Attendees)
 	assert.True(second.AttendeeResolutionDegraded)
-	assert.Contains(second.Warnings, "Notion User Information lookup failed: rate limit exceeded; attendee emails were not resolved")
+	assert.Contains(second.Warnings, "Notion User Information lookup failed: rate limit exceeded; attempting per-attendee retrieval where supported")
 	assert.Equal(1, source.usersCalls)
+}
+
+func TestHydratorKeepsMeetingContentWhenUserLookupBudgetIsExhausted(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	source := completeHydrationSource()
+	const requestsOutsideChildPages = 6 // meeting block, three content roots, Markdown, and user listing
+	childPageCount := maxHydrationRequests - requestsOutsideChildPages
+	childPages := make(map[string]*BlockPage, childPageCount)
+	for index := range childPageCount {
+		cursor := ""
+		if index > 0 {
+			cursor = fmt.Sprintf("page-%d", index)
+		}
+		page := &BlockPage{Raw: json.RawMessage(`{}`)}
+		if index < childPageCount-1 {
+			page.HasMore = true
+			page.NextCursor = fmt.Sprintf("page-%d", index+1)
+		}
+		childPages[cursor] = page
+	}
+	source.children["notes-1"] = childPages
+	users := &fakeUserSource{
+		pages: map[string]*UserPage{"": {Results: []User{{
+			Object: "user", ID: "user-1", Name: "Test Attendee", Type: "person",
+			Person: UserPerson{Email: "attendee@example.com", EmailVerified: true},
+		}}}},
+		users: map[string]*User{"user-2": {
+			Object: "user", ID: "user-2", Name: "Second Attendee", Type: "person",
+			Person: UserPerson{Email: "second@example.com", EmailVerified: true},
+		}},
+	}
+
+	hydrated, err := NewHydrator(source).WithUserSource(users).Hydrate(t.Context(), hydrationMeeting())
+	require.NoError(err)
+	assert.Equal("Decide the release scope.", hydrated.Summary)
+	assert.Contains(hydrated.Notes, "Owner will prepare the rollout.")
+	assert.Equal("Test Speaker: Ready to ship.", hydrated.Transcript)
+	assert.True(hydrated.AttendeeResolutionDegraded)
+	require.Len(hydrated.Attendees, 1)
+	assert.Equal("attendee@example.com", hydrated.Attendees[0].Email)
+	assert.Equal([]string{"user-2"}, hydrated.UnresolvedAttendeeIDs)
+	assert.Empty(users.retrieved)
+	assert.Contains(hydrated.Warnings, "Notion user lookup skipped because the hydration request limit was reached")
 }

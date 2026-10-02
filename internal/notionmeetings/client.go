@@ -36,6 +36,8 @@ var (
 )
 
 type APIError struct {
+	PersonalAccessToken bool `json:"-"`
+
 	Kind   error  `json:"-"`
 	Status int    `json:"status"`
 	Code   string `json:"code,omitempty"`
@@ -176,6 +178,24 @@ func (c *Client) ListUsers(ctx context.Context, cursor string) (*UserPage, error
 	return &result, nil
 }
 
+// RetrieveUser includes guests, which ListUsers does not enumerate.
+func (c *Client) RetrieveUser(ctx context.Context, id string) (*User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("%w: blank user ID", ErrMalformedResponse)
+	}
+	var result User
+	raw, err := c.doJSON(ctx, http.MethodGet, "/v1/users/"+url.PathEscape(id), nil, &result, operationUsers)
+	if err != nil {
+		return nil, err
+	}
+	if result.Object != "user" || result.ID != id {
+		return nil, fmt.Errorf("%w: retrieved user has unexpected identity or object", ErrMalformedResponse)
+	}
+	result.Raw = raw
+	return &result, nil
+}
+
 func validateListEnvelope(raw jsontext.Value) error {
 	var envelope struct {
 		Results *jsontext.Value `json:"results"`
@@ -303,7 +323,8 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload any, t
 		}
 
 		var providerErr struct {
-			Code string `json:"code"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
 		}
 		_ = json.Unmarshal(body, &providerErr)
 		if transientStatus(resp.StatusCode) {
@@ -316,7 +337,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload any, t
 			}
 			continue
 		}
-		return nil, &APIError{Kind: classifyError(resp.StatusCode, op), Status: resp.StatusCode, Code: providerErr.Code}
+		return nil, &APIError{Kind: classifyError(resp.StatusCode, op), Status: resp.StatusCode, Code: providerErr.Code, PersonalAccessToken: op == operationUsers && resp.StatusCode == http.StatusForbidden && strings.Contains(strings.ToLower(providerErr.Message), "personal access tokens")}
 	}
 	return nil, ErrProvider
 }
