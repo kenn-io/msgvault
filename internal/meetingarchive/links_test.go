@@ -141,6 +141,59 @@ func TestLinkIdentitiesNeverJoinsTwoPeople(t *testing.T) {
 	assert.Equal(store.IdentityMatchStateConflict, candidates[0].State)
 }
 
+func TestLinkIdentitiesContinuesAfterStaleReviewedAcceptance(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite trigger interrupts the reviewed link transaction")
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newLinkFixture(t)
+	ctx := t.Context()
+	left := f.emailParticipant(t, "stale@example.test")
+	right := f.phoneParticipant(t, "+12025550101")
+	nextLeft := f.emailParticipant(t, "next@example.test")
+	nextRight := f.phoneParticipant(t, "+12025550102")
+	anchor := Anchor("meeting-import", "stale")
+	ref := "meeting-person:" + anchor
+	candidate, _, err := f.st.UpsertIdentityMatchCandidateContext(ctx, store.IdentityMatchCandidateInput{
+		LeftKind: store.IdentityMatchParticipant, LeftID: left,
+		RightKind: store.IdentityMatchParticipant, RightID: right,
+		Basis: store.IdentityMatchStableProviderID, NormalizedValue: &anchor,
+		State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation,
+		SourceRef: &ref, SourceID: &f.sourceID,
+	})
+	require.NoError(err)
+	review, err := f.st.GetIdentityMatchReviewContext(ctx, candidate.ID)
+	require.NoError(err)
+	// Keep the accepted decision while interrupting its separate link write.
+	_, err = f.st.DB().Exec(`CREATE TRIGGER fail_reviewed_link
+		BEFORE INSERT ON participant_links FOR EACH ROW BEGIN
+			SELECT RAISE(ABORT, 'interrupted reviewed link');
+		END`)
+	require.NoError(err)
+	_, _, err = f.st.DecideIdentityMatchReviewedContext(ctx, candidate.ID,
+		review.ReviewToken, store.IdentityMatchStateAccepted, nil)
+	require.ErrorContains(err, "interrupted reviewed link")
+	_, err = f.st.DB().Exec(`DROP TRIGGER fail_reviewed_link`)
+	require.NoError(err)
+	pending, err := f.st.GetIdentityMatchReviewContext(ctx, candidate.ID)
+	require.NoError(err)
+	require.True(pending.ApplicationPending)
+
+	// The import adds new observations before it resumes the reviewed pair.
+	result, err := f.archiver.LinkIdentities(ctx, f.sourceID, []Person{
+		{Email: "stale@example.test", Phone: "+12025550101", Anchor: anchor},
+		{Email: "next@example.test", Phone: "+12025550102", Anchor: Anchor("meeting-import", "next")},
+	})
+	require.NoError(err)
+	assert.Equal(1, result.Conflicts)
+	assert.Equal(1, result.Linked)
+	current, err := f.st.GetIdentityMatchReviewContext(ctx, candidate.ID)
+	require.NoError(err)
+	assert.Equal(store.IdentityMatchStateConflict, current.State)
+	assert.False(current.ApplicationPending)
+	assert.False(f.linked(t, left, right), "changed evidence needs a fresh review")
+	assert.True(f.linked(t, nextLeft, nextRight), "the next independent pair still links")
+}
+
 func TestLinkIdentitiesSendsReusedAddressToReview(t *testing.T) {
 	assert := assert.New(t)
 	f := newLinkFixture(t)

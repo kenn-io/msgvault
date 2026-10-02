@@ -21,7 +21,7 @@ import (
 )
 
 // allowedDelegatedOps is the exact set. Keep in sync with delegatedOperationAllowed.
-var allowedDelegatedOps = []string{"runCLI", "getHealth"}
+var allowedDelegatedOps = []string{"runCLI", "getHealth", "getMCPCapabilities"}
 
 // stubSourceResolverStore wraps mockStore and adds GetSourceByIDContext.
 type stubSourceStore struct {

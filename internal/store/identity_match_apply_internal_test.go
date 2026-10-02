@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -8,6 +9,96 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestReviewedIdentityMatchRequiresFreshReviewAfterCandidateCollapse(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		reviewSurvivor bool
+		restart        bool
+	}{
+		{name: "reviewed loser"},
+		{name: "reviewed survivor", reviewSurvivor: true},
+		{name: "reviewed loser after restart", restart: true},
+		{name: "reviewed survivor after restart", reviewSurvivor: true, restart: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			dbPath := filepath.Join(t.TempDir(), "review-collapse.db")
+			st, err := OpenForTest(dbPath)
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			require.NoError(st.InitSchema())
+			absorbed, err := st.EnsureParticipantByIdentifier("beeper", "@absorbed:example.test", "Absorbed Example")
+			require.NoError(err)
+			survivor, err := st.EnsureParticipantByIdentifier("beeper", "@survivor:example.test", "Survivor Example")
+			require.NoError(err)
+			other, err := st.EnsureParticipantByIdentifier("beeper", "@other:example.test", "Other Example")
+			require.NoError(err)
+			winner, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), IdentityMatchCandidateInput{
+				LeftKind: IdentityMatchParticipant, LeftID: survivor,
+				RightKind: IdentityMatchParticipant, RightID: other,
+				Basis: IdentityMatchEmail, State: IdentityMatchStateCandidate, Source: ProvenanceArchiveObservation,
+			})
+			require.NoError(err)
+			loser, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), IdentityMatchCandidateInput{
+				LeftKind: IdentityMatchParticipant, LeftID: absorbed,
+				RightKind: IdentityMatchParticipant, RightID: other,
+				Basis: IdentityMatchEmail, State: IdentityMatchStateCandidate, Source: ProvenanceArchiveObservation,
+			})
+			require.NoError(err)
+			reviewedID, unreviewedID := loser.ID, winner.ID
+			if test.reviewSurvivor {
+				reviewedID, unreviewedID = winner.ID, loser.ID
+			}
+			_, err = st.AddIdentityMatchEvidenceContext(t.Context(), unreviewedID, IdentityMatchEvidenceInput{
+				EvidenceKind: "email", Detail: new("unreviewed@example.test"), Source: ProvenanceArchiveObservation,
+			})
+			require.NoError(err)
+			review, err := st.GetIdentityMatchReviewContext(t.Context(), reviewedID)
+			require.NoError(err)
+			decisionCtx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			st.identityMatchReviewAfterDecisionHook = func() {
+				require.NoError(st.MergeParticipants(absorbed, survivor))
+				if test.restart {
+					cancel()
+				}
+			}
+			_, _, err = st.DecideIdentityMatchReviewedContext(decisionCtx, reviewedID,
+				review.ReviewToken, IdentityMatchStateAccepted, nil)
+			st.identityMatchReviewAfterDecisionHook = nil
+			if test.restart {
+				require.ErrorIs(err, context.Canceled)
+				require.NoError(st.Close())
+				st, err = OpenForTest(dbPath)
+				require.NoError(err)
+			} else {
+				require.ErrorIs(err, ErrIdentityMatchReviewStale)
+			}
+			applied, err := st.ApplyAcceptedIdentityMatchesContext(t.Context(), 10)
+			require.NoError(err)
+			assert.Zero(applied)
+			members, err := st.ClusterMembers(survivor)
+			require.NoError(err)
+			assert.NotContains(members, other)
+			fresh, err := st.GetIdentityMatchReviewContext(t.Context(), winner.ID)
+			require.NoError(err)
+			assert.Equal(IdentityMatchStateConflict, fresh.State)
+			assert.True(fresh.Actionable)
+			assert.False(fresh.ApplicationPending)
+			_, _, err = st.DecideIdentityMatchReviewedContext(t.Context(), winner.ID,
+				review.ReviewToken, IdentityMatchStateAccepted, nil)
+			require.ErrorIs(err, ErrIdentityMatchReviewStale)
+			_, _, err = st.DecideIdentityMatchReviewedContext(t.Context(), winner.ID,
+				fresh.ReviewToken, IdentityMatchStateAccepted, nil)
+			require.NoError(err)
+			members, err = st.ClusterMembers(survivor)
+			require.NoError(err)
+			assert.Contains(members, other)
+		})
+	}
+}
 
 func TestApplyAcceptedIdentityMatchesDoesNotRebuildConnectivityPerSatisfiedCandidate(
 	t *testing.T,

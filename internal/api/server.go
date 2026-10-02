@@ -271,6 +271,8 @@ type Server struct {
 	cardDAV                *CardDAVController
 	logger                 *slog.Logger
 	requestTimeout         time.Duration
+	// Empty in production; API tests use a local Jev fixture.
+	personMatchScoringEndpoint string
 	// readTimeout is the ordinary connection read ceiling used by http.Server.
 	// Tests shrink it to exercise protective slow-body handling without waiting
 	// for the production timeout.
@@ -1126,7 +1128,8 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 			serveMeetingImportWithReadDeadline(w, r, next)
 			return
 		}
-		if cardDAVRequestNeedsProtectiveCeiling(r) {
+		if cardDAVRequestNeedsProtectiveCeiling(r) ||
+			(r.Method == http.MethodPost && r.URL.Path == "/api/v1/identity/scoring/run") {
 			serveWithProtectiveRequestDeadline(w, r, next)
 			return
 		}

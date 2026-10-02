@@ -24,6 +24,9 @@ import (
 func TestMCPWriteHelpDisclosesMutationClassesAndProfileOptIn(t *testing.T) {
 	assert := assert.New(t)
 	require.NotNil(t, mcpCmd.Flags().Lookup("allow-profile-writes"))
+	for _, name := range []string{"allow-identity-decisions", "allow-identity-scoring", "allow-person-merges", "allow-carddav-writes"} {
+		require.NotNil(t, mcpCmd.Flags().Lookup(name))
+	}
 	var output bytes.Buffer
 	previousOutput := mcpCmd.OutOrStdout()
 	mcpCmd.SetOut(&output)
@@ -35,6 +38,10 @@ func TestMCPWriteHelpDisclosesMutationClassesAndProfileOptIn(t *testing.T) {
 	assert.Contains(help, "deletion manifests")
 	assert.Contains(help, "person promotion")
 	assert.Contains(help, "private Notes writes")
+	assert.Contains(help, "allow-identity-decisions")
+	assert.Contains(help, "allow-identity-scoring")
+	assert.Contains(help, "allow-person-merges")
+	assert.Contains(help, "allow-carddav-writes")
 }
 
 func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
@@ -108,6 +115,10 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	savedHTTPAddr := mcpHTTPAddr
 	savedAllowInsecure := mcpHTTPAllowInsecure
 	savedAllowProfileWrites := mcpAllowProfileWrites
+	savedAllowIdentityDecisions := mcpAllowIdentityDecisions
+	savedAllowIdentityScoring := mcpAllowIdentityScoring
+	savedAllowPersonMerges := mcpAllowPersonMerges
+	savedAllowCardDAVWrites := mcpAllowCardDAVWrites
 	savedServeHTTP := serveMCPHTTPWithOptions
 	allowWritesFlag := mcpCmd.Flags().Lookup("http-allow-writes")
 	require.NotNil(allowWritesFlag, "mcp command must define --http-allow-writes")
@@ -115,11 +126,19 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	mcpHTTPAddr = "0.0.0.0:8081"
 	mcpHTTPAllowInsecure = true
 	mcpAllowProfileWrites = true
+	mcpAllowIdentityDecisions = true
+	mcpAllowIdentityScoring = true
+	mcpAllowPersonMerges = true
+	mcpAllowCardDAVWrites = true
 	t.Cleanup(func() {
 		assert.NoError(allowWritesFlag.Value.Set("false"))
 		mcpHTTPAddr = savedHTTPAddr
 		mcpHTTPAllowInsecure = savedAllowInsecure
 		mcpAllowProfileWrites = savedAllowProfileWrites
+		mcpAllowIdentityDecisions = savedAllowIdentityDecisions
+		mcpAllowIdentityScoring = savedAllowIdentityScoring
+		mcpAllowPersonMerges = savedAllowPersonMerges
+		mcpAllowCardDAVWrites = savedAllowCardDAVWrites
 		serveMCPHTTPWithOptions = savedServeHTTP
 	})
 
@@ -137,6 +156,10 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 
 	require.ErrorIs(err, wantErr)
 	assert.True(gotServeOpts.AllowProfileWrites)
+	assert.True(gotServeOpts.AllowIdentityDecisions)
+	assert.True(gotServeOpts.AllowIdentityScoring)
+	assert.True(gotServeOpts.AllowPersonMerges)
+	assert.True(gotServeOpts.AllowCardDAVWrites)
 	assert.Equal(mcpserver.HTTPOptions{
 		Addr:               "0.0.0.0:8081",
 		DiscoveryDirectory: filepath.Join(home, "mcp"),
@@ -207,7 +230,13 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			var healthRequests atomic.Int32
+			var discoveryRequests atomic.Int32
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/mcp/capabilities" {
+					discoveryRequests.Add(1)
+					http.NotFound(w, r)
+					return
+				}
 				assert.Equal("/api/v1/health", r.URL.Path, "startup must not request archive statistics")
 				healthRequests.Add(1)
 				if tt.health == "" {
@@ -223,6 +252,7 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 			assert.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
 			assert.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
 			assert.Equal(int32(1), healthRequests.Load(), "reuse the schema probe")
+			assert.Equal(int32(1), discoveryRequests.Load(), "probe optional operations once")
 		})
 	}
 }
@@ -260,7 +290,9 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	require.ErrorAs(err, &coded)
 	assert.Equal("vector_initializing", coded.APIErrorCode())
 	path := <-requests
-	assert.Equal("/api/v1/health", path, "startup should only probe health")
+	assert.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
+	path = <-requests
+	assert.Equal("/api/v1/health", path, "startup probes configured lanes")
 	path = <-requests
 	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
 }
@@ -279,6 +311,9 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		wantMeetings   bool
 		wantAgenda     bool
 		wantArchiveSQL bool
+		wantReview     bool
+		wantScoring    bool
+		wantCardDAV    bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -293,6 +328,9 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "person agenda predecessor", schemaVersion: "2.29.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true},
 		{name: "person agenda schema", schemaVersion: "2.30.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true},
 		{name: "archive SQL schema", schemaVersion: "2.31.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true},
+		{name: "person CardDAV schema", schemaVersion: "2.32.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
+		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
+		{name: "identity review and scoring schema", schemaVersion: "2.36.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -328,6 +366,9 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
 			assert.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
 			assert.Equal(tt.wantArchiveSQL, opts.ArchiveSQLQuerier != nil)
+			assert.Equal(tt.wantReview, opts.IdentityReview != nil)
+			assert.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
+			assert.Equal(tt.wantScoring, opts.IdentityScoring != nil)
 		})
 	}
 }

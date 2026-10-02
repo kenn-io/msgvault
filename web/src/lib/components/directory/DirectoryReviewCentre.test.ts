@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -23,6 +23,9 @@ function candidate(id: number, state = 'candidate'): IdentityMatchCandidate {
     basis: 'stable_provider_id',
     source: 'synthetic',
     state,
+    review_token: `token-${id}-${state}`,
+    actionable: state === 'candidate',
+    application_pending: false,
     evidence: [],
     created_at: '2026-08-01T10:00:00Z',
     updated_at: '2026-08-02T11:00:00Z'
@@ -54,6 +57,47 @@ function renderReview(controller: DirectoryReviewController) {
 }
 
 describe('DirectoryReviewCentre', () => {
+  it.each([
+    { action: 'Link identities', state: 'accepted' },
+    { action: 'Keep separate', state: 'rejected' }
+  ])('closes a stale $action decision until the refreshed evidence is reviewed again', async ({ action, state }) => {
+    const tokens: string[] = [];
+    const refreshed = { ...candidate(17), review_token: 'fresh-token', source_ref: 'Refreshed source evidence' };
+    const controller = new DirectoryReviewController(createAPIClient(vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      if (request.method === 'POST') {
+        tokens.push((await request.json()).review_token);
+        if (tokens.length === 1) {
+          return Response.json({ error: 'identity_match_review_stale', message: 'Changed' }, { status: 409 });
+        }
+        return Response.json({ candidate: candidate(17, state), identity_revision: 5, cache_state: 'ready' });
+      }
+      return page([refreshed]);
+    })));
+    controller.rows = [candidate(17)];
+    renderReview(controller);
+
+    await fireEvent.click(screen.getByRole('button', { name: action }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Decision notes' }), {
+      target: { value: 'Retain this review note' }
+    });
+    await fireEvent.click(within(screen.getByRole('dialog', { name: action })).getByRole('button', { name: action }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByRole('alert').textContent).toContain('Review the refreshed evidence before deciding.');
+    expect(screen.getByText('Refreshed source evidence')).toBeDefined();
+    expect(tokens).toEqual(['token-17-candidate']);
+    const trigger = screen.getByRole('button', { name: action });
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+
+    await fireEvent.click(trigger);
+    expect(screen.getByRole('textbox', { name: 'Decision notes' })).toHaveProperty('value', 'Retain this review note');
+    expect(tokens).toEqual(['token-17-candidate']);
+    await fireEvent.click(within(screen.getByRole('dialog', { name: action })).getByRole('button', { name: action }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(tokens).toEqual(['token-17-candidate', 'fresh-token']);
+  });
+
   it('selects the read-only imported relationship queue without identity requests', async () => {
     const calls: Array<{ method: string; path: string; status: string | null }> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

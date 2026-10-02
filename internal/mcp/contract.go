@@ -5,10 +5,19 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type toolRequest struct {
-	arguments map[string]any
+	arguments                     map[string]any
+	session                       *sdkmcp.ServerSession
+	inputResponses                sdkmcp.InputResponseMap
+	toolName                      string
+	requestState                  string
+	confirmations                 *confirmationChallenges
+	confirmationSessionKey        string
+	requireConfirmationSessionKey bool
 }
 
 func (r toolRequest) GetArguments() map[string]any {
