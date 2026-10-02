@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -230,6 +231,7 @@ func TestNotionProbeUsersToken(t *testing.T) {
 		{"available", []notionmeetings.User{verified}, nil, "Users token: available"},
 		{"no emails", []notionmeetings.User{{Object: "user", ID: "member"}}, nil, "Users token: no emails returned"},
 		{"missing capability", nil, notionmeetings.ErrUserInformation, "Users token: unavailable"},
+		{"request timeout", nil, fmt.Errorf("perform Notion request: %w", context.DeadlineExceeded), "Users token: unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			users := &fakeNotionUsersProbe{users: tc.users, listErr: tc.err}

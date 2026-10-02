@@ -138,8 +138,8 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 		return nil
 	}
 	page, err := users.ListUsers(ctx, "")
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "  Users token: unavailable (%v)\n", err)
