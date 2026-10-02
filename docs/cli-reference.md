@@ -207,13 +207,10 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 Create one reply draft from an archived message to an authorized IMAP
 destination, or reply within its original Gmail account. The daemon requires
-the matching operator grant. For Gmail replies, omitting `--from` selects a
-confirmed, primary or accepted send-as address matching the parent's To or Cc.
-If neither matches, the daemon checks Delivered-To and X-Original-To. Multiple
-matches within either group return `from_ambiguous`; choose `--from` explicitly.
-With no match, the existing rule applies: exactly one eligible confirmed
-identity is required. Explicit `--from` always wins. IMAP sender selection is
-unchanged.
+the matching operator grant. `--from` is optional when exactly one confirmed
+identity is eligible. When several are eligible, the reply uses the one the
+parent was sent to in its To or Cc. If none or more than one of them appear
+there, the command returns `from_ambiguous`; choose `--from` explicitly.
 
 ```bash
 msgvault draft-reply <message-id> --body <text>
@@ -520,7 +517,6 @@ List Gmail send-as identities for an owner-invoked Gmail account:
 
 ```bash
 msgvault draft-send-as <account> [--json]
-msgvault draft-send-as <account> --confirm alias@example.com [--confirm another@example.com] [--json]
 ```
 
 Gmail accepts this read with `gmail.settings.basic`, `gmail.modify`,
@@ -529,16 +525,6 @@ when available. The command reports the address, display name, primary and
 default flags, verification status, and whether the
 address is a confirmed msgvault identity. Delegated agent tokens cannot run
 this command. It does not require `[[gmail.drafts]]` and never changes Gmail.
-
-Listing is read-only. To bootstrap sender identities, review the list, then
-repeat the command with `--confirm` for each address you own. The daemon checks
-all requested addresses against primary or accepted send-as entries before
-confirming them locally. Pending or absent addresses return `invalid_from`.
-Confirmation records the `gmail-send-as` signal and confirmation time, reports
-the applied outcomes, and refreshes the archive's identity-derived views. It
-does not expand existing agent tokens; issue a new token to grant the new
-sender. `treatAsAlias`, different domains, and SMTP relay settings do not
-replace Gmail verification or the local confirmation.
 
 ---
 

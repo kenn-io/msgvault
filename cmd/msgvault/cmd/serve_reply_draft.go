@@ -14,7 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/gmail"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/sourceops"
@@ -51,8 +50,6 @@ type draftReplyTarget struct {
 	raw              []byte
 	forward          bool
 	attachmentWrites *[]store.AttachmentWrite
-	// Inventory read during sender inference, scoped to this command.
-	gmailSendAs *[]gmail.SendAs
 }
 
 type draftReplyOutput struct {
@@ -272,6 +269,44 @@ func (a *storeAPIAdapter) selectDraftSender(
 	return candidates[0], selfAddresses, nil
 }
 
+// addressedDraftSender settles an ambiguous implicit reply sender with the one
+// granted identity among the parent's stored To and Cc recipients.
+func (a *storeAPIAdapter) addressedDraftSender(
+	ctx context.Context,
+	parentID int64,
+	identities []store.AccountIdentity,
+	grant *agentgrant.Grant,
+	source *store.Source,
+	ambiguous error,
+) (string, []string, error) {
+	eligible, _ := confirmedDraftIdentities(identities)
+	ref := draftSourceRef(source)
+	var match string
+	for _, recipientType := range []string{"to", "cc"} {
+		recipients, err := a.store.GetMessageRecipientsContext(ctx, parentID, recipientType)
+		if err != nil {
+			return "", nil, draftReplyError("invalid_parent", fmt.Errorf("load parent recipients: %w", err))
+		}
+		for _, recipient := range recipients {
+			key := store.NormalizeIdentifierForCompare(recipient.EmailAddress)
+			if _, ok := eligible[key]; !ok || key == match {
+				continue
+			}
+			if grant != nil && !grant.AllowsSender(agentgrant.PermissionDraftCreate, ref, key) {
+				continue
+			}
+			if match != "" {
+				return "", nil, ambiguous
+			}
+			match = key
+		}
+	}
+	if match == "" {
+		return "", nil, ambiguous
+	}
+	return a.selectDraftSender(identities, eligible[match], grant, source)
+}
+
 // resolveDraftTarget performs source, grant, sender, policy, and provider
 // configuration checks before it reads an archived parent or opens IMAP.
 func (a *storeAPIAdapter) resolveDraftTarget(
@@ -337,11 +372,10 @@ func (a *storeAPIAdapter) resolveDraftTargetForKind(
 		return draftReplyTarget{}, "", nil, draftReplyError("invalid_from", fmt.Errorf("list identities for source %d: %w", source.ID, err))
 	}
 	from, selfAddresses, err := a.selectDraftSender(identities, requestedFrom, grant, source)
-	// Only an ambiguous implicit Gmail sender can be resolved from authorized
-	// parent headers. Refuse grants with no eligible sender before reading them.
-	coded, isCoded := errors.AsType[*api.CLIRunCodedError](err)
-	ambiguousGmailSender := source.SourceType == "gmail" && requestedFrom == "" && isCoded && coded.Code == "from_ambiguous"
-	if err != nil && !ambiguousGmailSender {
+	if coded, ok := errors.AsType[*api.CLIRunCodedError](err); ok && coded.Code == "from_ambiguous" && kind == "reply" && requestedFrom == "" {
+		from, selfAddresses, err = a.addressedDraftSender(ctx, *parentID, identities, grant, source, err)
+	}
+	if err != nil {
 		return draftReplyTarget{}, "", nil, err
 	}
 	var mailbox string
@@ -386,26 +420,6 @@ func (a *storeAPIAdapter) resolveDraftTargetForKind(
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_parent", fmt.Errorf("load raw MIME for message %d: %w", parent.ID, err))
 		}
 		target.parent, target.raw = parent, raw
-	}
-	if source.SourceType == "gmail" && requestedFrom == "" {
-		if kind == "reply" {
-			eligible, _ := confirmedDraftIdentities(identities)
-			if len(eligible) > 1 {
-				entries, readErr := a.readGmailDraftSendAs(ctx, source)
-				if readErr != nil {
-					return draftReplyTarget{}, "", nil, readErr
-				}
-				target.gmailSendAs = &entries
-				requestedFrom, err = addressedGmailDraftSender(target.raw, eligible, entries)
-				if err != nil {
-					return draftReplyTarget{}, "", nil, err
-				}
-			}
-		}
-		from, selfAddresses, err = a.selectDraftSender(identities, requestedFrom, grant, source)
-		if err != nil {
-			return draftReplyTarget{}, "", nil, err
-		}
 	}
 	return target, from, selfAddresses, nil
 }

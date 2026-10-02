@@ -164,14 +164,9 @@ func (a *storeAPIAdapter) runGmailReplyDraft(
 		return draftReplyError("invalid_source", fmt.Errorf("build Gmail client for source %d: %w", target.source.ID, err))
 	}
 	defer func() { _ = client.Close() }()
-	var sendAs []gmail.SendAs
-	if target.gmailSendAs != nil {
-		sendAs = *target.gmailSendAs
-	} else {
-		sendAs, err = client.ListSendAs(ctx)
-		if err != nil {
-			return draftReplyError(gmailReadErrorCode(err), err)
-		}
+	sendAs, err := client.ListSendAs(ctx)
+	if err != nil {
+		return draftReplyError(gmailReadErrorCode(err), err)
 	}
 	if err := validateGmailSendAs(sendAs, reply.Parsed.From[0].Email); err != nil {
 		return err
@@ -1200,10 +1195,9 @@ func parseDraftSendAsArgs(args []string) (string, bool, error) {
 }
 
 type gmailSendAsOutput struct {
-	SourceID int64                               `json:"source_id"`
-	Account  string                              `json:"account"`
-	Entries  []gmailSendAsRow                    `json:"send_as"`
-	Applied  []store.IdentityConfirmationOutcome `json:"applied,omitempty"`
+	SourceID int64            `json:"source_id"`
+	Account  string           `json:"account"`
+	Entries  []gmailSendAsRow `json:"send_as"`
 }
 
 type gmailSendAsRow struct {
@@ -1222,11 +1216,7 @@ func (a *storeAPIAdapter) runCLIDraftSendAs(ctx context.Context, req api.CLIRunR
 	if len(req.Env) != 0 || req.Cwd != "" {
 		return draftReplyError("invalid_args", errors.New("draft-send-as accepts no environment or working directory"))
 	}
-	listArgs, confirmations, err := parseSendAsConfirmations(req.Args)
-	if err != nil {
-		return err
-	}
-	account, jsonOutput, err := parseDraftSendAsArgs(listArgs)
+	account, jsonOutput, err := parseDraftSendAsArgs(req.Args)
 	if err != nil {
 		return err
 	}
@@ -1250,33 +1240,11 @@ func (a *storeAPIAdapter) runCLIDraftSendAs(ctx context.Context, req api.CLIRunR
 	if err != nil {
 		return draftReplyError(gmailReadErrorCode(err), err)
 	}
-	candidates := make([]store.IdentityConfirmation, 0, len(confirmations))
-	for _, address := range confirmations {
-		if err := validateGmailSendAs(entries, address); err != nil {
-			return err
-		}
-		candidates = append(candidates, store.IdentityConfirmation{Identifier: address, Signals: []string{"gmail-send-as"}})
-	}
-	var applied []store.IdentityConfirmationOutcome
-	if len(candidates) > 0 {
-		applied, err = a.store.AddAccountIdentitiesBatchContext(ctx, source.ID, candidates)
-		if len(applied) > 0 {
-			refreshCtx, cancelRefresh := localDraftEvidenceContext(ctx)
-			defer cancelRefresh()
-			a.refreshDraftCache(refreshCtx, source)
-			if a.logger != nil {
-				a.logger.Info("owner confirmed Gmail send-as identities", "source_id", source.ID, "confirmations", len(applied))
-			}
-		}
-		if err != nil {
-			return draftReplyError("identity_confirmation_failed", err)
-		}
-	}
 	identities, err := a.store.ListAccountIdentitiesContext(ctx, source.ID)
 	if err != nil {
 		return draftReplyError("invalid_from", err)
 	}
-	output := gmailSendAsOutput{SourceID: source.ID, Account: source.Identifier, Entries: make([]gmailSendAsRow, len(entries)), Applied: applied}
+	output := gmailSendAsOutput{SourceID: source.ID, Account: source.Identifier, Entries: make([]gmailSendAsRow, len(entries))}
 	confirmed, _ := confirmedDraftIdentities(identities)
 	for i, entry := range entries {
 		_, isConfirmed := confirmed[store.NormalizeIdentifierForCompare(entry.Email)]
@@ -1301,9 +1269,6 @@ func (a *storeAPIAdapter) runCLIDraftSendAs(ctx context.Context, req api.CLIRunR
 		fmt.Fprintf(&data, "%s\t%s\tprimary=%t\tdefault=%t\tverification=%s\tconfirmed=%t\n",
 			textutil.SanitizeTerminal(entry.Email), textutil.SanitizeTerminal(entry.DisplayName),
 			entry.Primary, entry.Default, textutil.SanitizeTerminal(entry.VerificationStatus), entry.ConfirmedIdentity)
-	}
-	if len(applied) > 0 {
-		fmt.Fprintf(&data, "Confirmed %d Gmail send-as identity(s).\n", len(applied))
 	}
 	return emit(api.CLIRunEvent{Type: cliStreamStdout, Data: data.String()})
 }

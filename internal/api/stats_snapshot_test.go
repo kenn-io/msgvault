@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -52,32 +51,26 @@ func getStatsResponse(t *testing.T, srv *Server) StatsResponse {
 }
 
 func TestHandleStatsReturnsStaleSnapshotWhenSlow(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		st := &slowStatsStore{mockStore: &mockStore{}, release: make(chan struct{})}
-		srv := NewServerWithOptions(ServerOptions{
-			Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-			Store:  st,
-			Logger: testLogger(),
-		})
-		defer func() {
-			close(st.release)
-			require.NoError(srv.Shutdown(context.Background()))
-		}()
-		srv.statsSnapshotWait = 50 * time.Millisecond
-
-		first := getStatsResponse(t, srv)
-		assert.EqualValues(1, first.TotalMessages)
-		assert.False(first.Stale)
-
-		started := time.Now()
-		second := getStatsResponse(t, srv)
-		assert.Less(time.Since(started), 5*time.Second, "a slow stats query does not hold the request")
-		assert.True(second.Stale, "the previous snapshot is flagged stale")
-		assert.EqualValues(1, second.TotalMessages)
-		assert.False(second.AsOf.IsZero())
+	assert := assert.New(t)
+	st := &slowStatsStore{mockStore: &mockStore{}, release: make(chan struct{})}
+	t.Cleanup(func() { close(st.release) })
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Logger: testLogger(),
 	})
+	srv.statsSnapshotWait = 50 * time.Millisecond
+
+	first := getStatsResponse(t, srv)
+	assert.EqualValues(1, first.TotalMessages)
+	assert.False(first.Stale)
+
+	started := time.Now()
+	second := getStatsResponse(t, srv)
+	assert.Less(time.Since(started), 5*time.Second, "a slow stats query does not hold the request")
+	assert.True(second.Stale, "the previous snapshot is flagged stale")
+	assert.EqualValues(1, second.TotalMessages)
+	assert.False(second.AsOf.IsZero())
 }
 
 // slowVectorBackend blocks stats until the caller's deadline.
