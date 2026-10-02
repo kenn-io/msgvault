@@ -14,4 +14,9 @@ export type ListCardDAVRunsParams = {
    * @minimum 1
    */
   before_id?: number;
+  /**
+   * Saved connection name; omit for all connections
+   * @pattern ^[a-z][a-z0-9_-]{0,63}$
+   */
+  connection?: string;
 };

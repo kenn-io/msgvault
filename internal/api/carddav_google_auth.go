@@ -10,18 +10,21 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/carddav"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
 )
 
 type CardDAVGoogleAuthorizeRequest struct {
+	Connection  string `json:"connection,omitempty"`
 	Email       string `json:"email"`
 	OAuthApp    string `json:"oauth_app,omitempty"`
 	RedirectURI string `json:"redirect_uri"`
 }
 
 type CardDAVGoogleAuthorizeResponse struct {
-	URL   string `json:"url"`
-	State string `json:"state"`
+	Connection string `json:"connection,omitempty"`
+	URL        string `json:"url"`
+	State      string `json:"state"`
 }
 
 type CardDAVGoogleCallbackRequest struct {
@@ -30,8 +33,11 @@ type CardDAVGoogleCallbackRequest struct {
 }
 
 type cardDAVGoogleAuthorization struct {
-	flow    *oauth.WebAuthorization
-	expires time.Time
+	connection string
+	email      string
+	oauthApp   string
+	flow       *oauth.WebAuthorization
+	expires    time.Time
 }
 
 func (s *Server) handleGoogleCardDAVAuthorize(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +47,13 @@ func (s *Server) handleGoogleCardDAVAuthorize(w http.ResponseWriter, r *http.Req
 	}
 	var req CardDAVGoogleAuthorizeRequest
 	if !decodeCardDAV(w, r, &req) {
+		return
+	}
+	if req.Connection == "" {
+		req.Connection = config.DefaultCardDAVConnection
+	}
+	if err := config.ValidateCardDAVConnectionName(req.Connection); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid connection selector")
 		return
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
@@ -81,19 +94,25 @@ func (s *Server) handleGoogleCardDAVAuthorize(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusServiceUnavailable, "oauth_busy", "Too many pending sign-ins. Wait ten minutes and try again")
 		return
 	}
-	c.googleAuthorizations[flow.State] = cardDAVGoogleAuthorization{flow: flow, expires: time.Now().Add(10 * time.Minute)}
-	writeJSON(w, http.StatusOK, CardDAVGoogleAuthorizeResponse{URL: flow.URL, State: flow.State})
+	c.googleAuthorizations[flow.State] = cardDAVGoogleAuthorization{connection: req.Connection, email: req.Email, oauthApp: req.OAuthApp, flow: flow, expires: time.Now().Add(10 * time.Minute)}
+	writeJSON(w, http.StatusOK, CardDAVGoogleAuthorizeResponse{Connection: req.Connection, URL: flow.URL, State: flow.State})
 }
 
 func (c *CardDAVController) takeGoogleAuthorization(state string) (*oauth.WebAuthorization, error) {
-	c.googleAuthMu.Lock()
-	defer c.googleAuthMu.Unlock()
-	pending, ok := c.googleAuthorizations[state]
-	delete(c.googleAuthorizations, state)
+	entry, err := c.takeGoogleAuthorizationEntry(state)
+	return entry.flow, err
+}
+
+func (c *CardDAVController) takeGoogleAuthorizationEntry(state string) (cardDAVGoogleAuthorization, error) {
+	root := c.root()
+	root.googleAuthMu.Lock()
+	defer root.googleAuthMu.Unlock()
+	pending, ok := root.googleAuthorizations[state]
+	delete(root.googleAuthorizations, state)
 	if !ok || time.Now().After(pending.expires) {
-		return nil, errors.New("sign-in for Google Contacts expired or was already used; connect again")
+		return cardDAVGoogleAuthorization{}, errors.New("sign-in for Google Contacts expired or was already used; connect again")
 	}
-	return pending.flow, nil
+	return pending, nil
 }
 
 func (s *Server) handleGoogleCardDAVCallback(w http.ResponseWriter, r *http.Request) {
@@ -105,12 +124,12 @@ func (s *Server) handleGoogleCardDAVCallback(w http.ResponseWriter, r *http.Requ
 	if !decodeCardDAV(w, r, &req) {
 		return
 	}
-	flow, err := s.cardDAV.takeGoogleAuthorization(req.State)
+	entry, err := s.cardDAV.takeGoogleAuthorizationEntry(req.State)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "oauth_expired", err.Error())
 		return
 	}
-	if err := flow.Complete(r.Context(), req.State, req.Code); err != nil {
+	if err := entry.flow.Complete(r.Context(), req.State, req.Code); err != nil {
 		if unavailable, ok := errors.AsType[*oauth.AuthorizationUnavailableError](err); ok {
 			if unavailable.RetryAfter > 0 {
 				seconds := max(int64(1), int64((unavailable.RetryAfter+time.Second-1)/time.Second))
@@ -126,7 +145,7 @@ func (s *Server) handleGoogleCardDAVCallback(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "oauth_failed", "Google authorization failed. Select the requested account and grant all requested permissions, then try again")
 		return
 	}
-	if err := s.cardDAV.ReconcileSchedule(); err != nil {
+	if err := s.cardDAV.reconcileGoogleSchedules(entry); err != nil {
 		s.logger.Error("reconcile CardDAV schedule after Google authorization", "error", err)
 		writeError(w, http.StatusServiceUnavailable, "carddav_schedule_failed", "Google Contacts authorized, but scheduling failed. Save the CardDAV account to retry")
 		return

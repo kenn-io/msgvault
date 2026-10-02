@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-29"
+last_edited: "2026-10-01"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,14 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+- **CardDAV sync API breaking change:** omitting `connection` from
+  `POST /api/v1/carddav/sync` now syncs all enabled connections. With at least one
+  enabled connection, it returns HTTP 200 even if every sync fails; API and
+  `pkg/client` callers must inspect `status` and each connection's outcome.
+  Send `{"connection":"default"}` for the previous single-account HTTP error
+  behavior or to sync a disabled default account manually. See
+  [connection selection](usage/people-carddav.md#select-connections-through-the-api).
 
 - `draft-compose --conversation` keeps a local draft for a Slack, Teams, or
   Discord conversation. The existing `draft-get`, `draft-edit`, and

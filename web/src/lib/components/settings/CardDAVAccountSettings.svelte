@@ -9,32 +9,26 @@
   import type { APIClient } from '../../api/client';
   import type { CardDAVAccountRequest as GeneratedCardDAVAccountRequest } from '../../api/generated/models';
   import { authorizeGoogleContacts } from '../../settings/google-authorization';
-  import type { SettingState } from '../../settings/catalog';
+  import type { CardDAVAccountValues } from '../../carddav/account-settings';
   import CronField from './CronField.svelte';
   type CardDAVAccountRequest = GeneratedCardDAVAccountRequest;
   type Action = 'test' | 'save' | 'authorize';
-  interface AccountSettingsSnapshot {
-    provider: string;
-    oauthApp: string;
-    baseURL: string;
-    username: string;
-    passwordConfigured: boolean;
-    enabled: boolean;
-    schedule: string;
-  }
   let {
     client,
-    settings,
+    values,
+    connection = undefined,
     onSaved = () => undefined,
   }: {
     client: APIClient;
-    settings: SettingState[];
+    values: CardDAVAccountValues;
+    connection?: string;
     onSaved?: () => void | Promise<void>;
   } = $props();
-  let provider = $state(settingString('carddav.provider'));
-  let oauthApp = $state(settingString('carddav.oauth_app'));
-  let persistedProvider = $state(settingString('carddav.provider'));
-  let persistedOAuthApp = $state(settingString('carddav.oauth_app'));
+  const initialValues = untrack(() => values);
+  let provider = $state(initialValues.provider);
+  let oauthApp = $state(initialValues.oauthApp);
+  let persistedProvider = $state(initialValues.provider);
+  let persistedOAuthApp = $state(initialValues.oauthApp);
   const googleURL = 'https://www.googleapis.com/.well-known/carddav';
   const google = $derived(provider === 'google');
   function shellQuote(value: string): string { return "'" + value.replaceAll("'", "'\\''") + "'"; }
@@ -43,17 +37,17 @@
     password = '';
     if (value !== 'google') oauthApp = '';
   }
-  let baseURL = $state(settingString('carddav.base_url'));
-  let username = $state(settingString('carddav.username'));
+  let baseURL = $state(initialValues.baseURL);
+  let username = $state(initialValues.username);
   const authorizationCommand = $derived(`msgvault carddav authorize-google ${shellQuote(username || 'you@example.com')}${oauthApp ? ` --oauth-app ${shellQuote(oauthApp)}` : ''}`);
   let password = $state('');
-  let persistedBaseURL = $state(settingString('carddav.base_url'));
-  let persistedUsername = $state(settingString('carddav.username'));
-  let persistedPasswordConfigured = $state(settingSecretConfigured('carddav.password'));
-  let enabled = $state(settingBoolean('carddav.enabled'));
-  let schedule = $state(settingString('carddav.schedule'));
-  let persistedEnabled = $state(settingBoolean('carddav.enabled'));
-  let persistedSchedule = $state(settingString('carddav.schedule'));
+  let persistedBaseURL = $state(initialValues.baseURL);
+  let persistedUsername = $state(initialValues.username);
+  let persistedPasswordConfigured = $state(initialValues.passwordConfigured);
+  let enabled = $state(initialValues.enabled);
+  let schedule = $state(initialValues.schedule);
+  let persistedEnabled = $state(initialValues.enabled);
+  let persistedSchedule = $state(initialValues.schedule);
   const uid = $props.id();
   let activeAction = $state<Action | undefined>();
   let error = $state('');
@@ -63,7 +57,7 @@
   let actionGeneration = 0;
   let disposed = false;
   $effect(() => {
-    const snapshot = settingsSnapshot(settings);
+    const snapshot = values;
     untrack(() => reconcileSettings(snapshot));
   });
   $effect(() => {
@@ -80,29 +74,7 @@
     requestController?.abort();
     requestController = undefined;
   });
-  function settingString(key: string, source: SettingState[] = settings): string {
-    const value = source.find((setting) => setting.key === key)?.value;
-    return value && 'string' in value ? value.string : '';
-  }
-  function settingBoolean(key: string, source: SettingState[] = settings): boolean {
-    const value = source.find((setting) => setting.key === key)?.value;
-    return Boolean(value && 'boolean' in value && value.boolean);
-  }
-  function settingSecretConfigured(key: string, source: SettingState[] = settings): boolean {
-    return source.find((setting) => setting.key === key)?.secret?.configured === true;
-  }
-  function settingsSnapshot(source: SettingState[]): AccountSettingsSnapshot {
-    return {
-      provider: settingString('carddav.provider', source),
-      oauthApp: settingString('carddav.oauth_app', source),
-      baseURL: settingString('carddav.base_url', source),
-      username: settingString('carddav.username', source),
-      passwordConfigured: settingSecretConfigured('carddav.password', source),
-      enabled: settingBoolean('carddav.enabled', source),
-      schedule: settingString('carddav.schedule', source),
-    };
-  }
-  function reconcileSettings(next: AccountSettingsSnapshot) {
+  function reconcileSettings(next: CardDAVAccountValues) {
     if (provider === persistedProvider) provider = next.provider;
     if (oauthApp === persistedOAuthApp) oauthApp = next.oauthApp;
     persistedProvider = next.provider;
@@ -119,6 +91,7 @@
   }
   function requestBody(): CardDAVAccountRequest {
     const body: CardDAVAccountRequest = {
+      connection,
       base_url: baseURL,
       username,
       enabled,
@@ -159,7 +132,7 @@
     error = '';
     status = '';
     try {
-      await authorizeGoogleContacts(client, username, oauthApp, controller.signal);
+      await authorizeGoogleContacts(client, username, oauthApp, controller.signal, connection);
       if (current(generation)) status = 'Google Contacts authorized. Test and save the connection to use it.';
     } catch (cause) {
       if (current(generation)) error = cause instanceof Error ? cause.message : 'Google sign-in failed.';

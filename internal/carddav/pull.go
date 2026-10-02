@@ -31,6 +31,8 @@ const (
 )
 
 type Service struct {
+	connectionName                   string
+	connectionGeneration             int64
 	conflictOperationMappingReadHook func()
 	store                            *store.Store
 	client                           *Client
@@ -44,13 +46,31 @@ func NewService(st *store.Store, client *Client) *Service {
 type SyncOptions struct {
 	Full    bool
 	Trigger store.CardDAVSyncTrigger
+	// OnRunStarted lets an aggregate caller attribute this exact lease without
+	// racing a later sync when reading history. It runs before network work.
+	OnRunStarted func(int64)
 }
 
 type SyncResult struct {
-	Books   int `json:"books"`
-	Created int `json:"created"`
-	Updated int `json:"updated"`
-	Removed int `json:"removed"`
+	Books       int                     `json:"books"`
+	Created     int                     `json:"created"`
+	Updated     int                     `json:"updated"`
+	Removed     int                     `json:"removed"`
+	Status      string                  `json:"status,omitempty" enum:"succeeded,partial,failed"`
+	Connections []ConnectionSyncOutcome `json:"connections,omitempty"`
+}
+
+type ConnectionSyncOutcome struct {
+	Connection   string `json:"connection"`
+	AccountID    int64  `json:"account_id,omitzero"`
+	RunID        *int64 `json:"run_id,omitempty"`
+	Status       string `json:"status" enum:"succeeded,partial,failed"`
+	Books        int    `json:"books"`
+	Created      int    `json:"created"`
+	Updated      int    `json:"updated"`
+	Removed      int    `json:"removed"`
+	ErrorCode    string `json:"error_code,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
 }
 
 // Sync fetches complete network plans before entering the store's fenced
@@ -68,9 +88,14 @@ func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncRes
 	if trigger == "" {
 		trigger = store.CardDAVSyncTriggerManual
 	}
+	accountID, err := s.scopedAccountID(ctx)
+	if err != nil {
+		return SyncResult{}, err
+	}
 	run, err := s.store.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{
-		Trigger: trigger,
-		Full:    options.Full,
+		AccountID: accountID,
+		Trigger:   trigger,
+		Full:      options.Full,
 	})
 	if err != nil {
 		return SyncResult{}, err
@@ -89,13 +114,16 @@ func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncRes
 		}
 		err = errors.Join(publicCardDAVSyncError(syncErr), finishErr)
 	}()
+	if options.OnRunStarted != nil {
+		options.OnRunStarted(run.ID)
+	}
 	return s.sync(ctx, options)
 }
 
 func (s *Service) sync(ctx context.Context, options SyncOptions) (SyncResult, error) {
 	operationCtx, cancel := context.WithTimeout(ctx, s.client.operationTimeout)
 	defer cancel()
-	if err := s.store.CheckCardDAVRetryAfterContext(operationCtx); err != nil {
+	if err := s.checkRetry(operationCtx); err != nil {
 		return SyncResult{}, err
 	}
 	// Resolve ambiguous publication outcomes before interpreting remote changes.
@@ -108,7 +136,7 @@ func (s *Service) sync(ctx context.Context, options SyncOptions) (SyncResult, er
 	var failures []error
 	budget := &operationBudget{remaining: s.client.operationBytes}
 	var total SyncResult
-	books, err := s.store.ListCardDAVAddressBooksContext(operationCtx)
+	books, err := s.scopedBooks(operationCtx)
 	if err != nil {
 		return total, err
 	}
@@ -230,14 +258,14 @@ func (s *Service) syncBook(
 ) (*store.CardDAVApplyResult, error) {
 	state := &bookSyncState{}
 	for attempt := range 2 {
-		account, err := s.store.GetCardDAVAccountContext(ctx)
+		account, err := s.scopedAccount(ctx)
 		if err != nil {
 			return nil, err
 		}
 		if account == nil {
 			return nil, store.ErrCardDAVStalePlan
 		}
-		books, err := s.store.ListCardDAVAddressBooksContext(ctx)
+		books, err := s.scopedBooks(ctx)
 		if err != nil {
 			return nil, err
 		}

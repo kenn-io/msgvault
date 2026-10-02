@@ -230,7 +230,7 @@ func assertCardDAVRoleReconcileUpgrade(t *testing.T, st *store.Store) {
 	require.NoError(t, err, "recreate the pre-role-reconcile address book schema")
 	require.NoError(t, st.InitSchema(), "upgrade legacy CardDAV role state")
 
-	upgraded, err := st.ListCardDAVAddressBooksContext(t.Context())
+	upgraded, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(t, err)
 	require.Len(t, upgraded, 1)
 	assert.False(t, upgraded[0].NeedsFullReconcile)
@@ -255,7 +255,7 @@ func assertCardDAVSyncTokenUpgrade(t *testing.T, st *store.Store) {
 	require.NoError(t, err, "recreate the pre-sync-token address book schema")
 	require.NoError(t, st.InitSchema(), "upgrade legacy CardDAV address books")
 
-	upgraded, err := st.ListCardDAVAddressBooksContext(t.Context())
+	upgraded, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(t, err)
 	require.Len(t, upgraded, 1)
 	assert.Empty(t, upgraded[0].SyncToken)
@@ -265,7 +265,7 @@ func assertCardDAVSyncTokenUpgrade(t *testing.T, st *store.Store) {
 		SyncRevision: upgraded[0].SyncRevision, NextSyncToken: "token-after-upgrade",
 	})
 	require.NoError(t, err)
-	upgraded, err = st.ListCardDAVAddressBooksContext(t.Context())
+	upgraded, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(t, err)
 	assert.Equal(t, "token-after-upgrade", upgraded[0].SyncToken)
 }

@@ -10,14 +10,23 @@ function responseMessage(error: unknown, fallback: string): string {
 
 // A same-origin channel also works when the identity provider severs the
 // popup's opener through Cross-Origin-Opener-Policy.
-export async function authorizeGoogleContacts(client: APIClient, email: string, oauthApp: string, signal: AbortSignal): Promise<void> {
+export async function authorizeGoogleContacts(
+  client: APIClient,
+  email: string,
+  oauthApp: string,
+  signal: AbortSignal,
+  connection?: string
+): Promise<void> {
   const popup = window.open('about:blank', '_blank', 'popup,width=540,height=720');
   if (!popup) throw new Error('Allow pop-up windows for msgvault, then connect Google again.');
   const channel = new BroadcastChannel(channelName);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let abort: (() => void) | undefined;
   try {
-    const { data, error } = await beginGoogleCardDAVAuthorization({ email, oauth_app: oauthApp, redirect_uri: `${window.location.origin}/` }, { ...client, signal });
+    const { data, error } = await beginGoogleCardDAVAuthorization(
+      { connection, email, oauth_app: oauthApp, redirect_uri: `${window.location.origin}/` },
+      { ...client, signal }
+    );
     if (!data) throw new Error(responseMessage(error, 'Unable to start Google sign-in.'));
     const code = await new Promise<string>((resolve, reject) => {
       abort = () => reject(new Error('Google sign-in canceled.'));

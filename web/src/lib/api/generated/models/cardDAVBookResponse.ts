@@ -3,6 +3,8 @@
  */
 
 export interface CardDAVBookResponse {
+  account_id?: number;
+  connection?: string;
   id: number;
   lookup_source: boolean;
   name: string;

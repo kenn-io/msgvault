@@ -15,6 +15,9 @@ type fusedSearchCandidate struct {
 	semantic *store.DocumentSearchResult
 }
 
+// Keep Docbank fusion here: ranks can have gaps after occurrence deduplication.
+// Kit search/rrf derives contiguous ranks from list positions, which would
+// change these scores and their ordering.
 func fuseSearchResults(
 	lexical, semantic []store.DocumentSearchResult, limit int,
 ) ([]store.DocumentSearchResult, bool, error) {

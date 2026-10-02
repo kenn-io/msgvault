@@ -13,6 +13,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/carddav"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/textutil"
 	apiclient "go.kenn.io/msgvault/pkg/client"
@@ -20,7 +21,7 @@ import (
 )
 
 func newAddCardDAVCmd() *cobra.Command {
-	var schedule string
+	var schedule, connection string
 	var disabled, google bool
 	var oauthApp string
 	cmd := &cobra.Command{Use: "add-carddav <base-url> <username> | --google <email>", Short: "Discover and configure a CardDAV account", Args: func(cmd *cobra.Command, args []string) error {
@@ -30,11 +31,14 @@ func newAddCardDAVCmd() *cobra.Command {
 		return cobra.ExactArgs(2)(cmd, args)
 	}}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		selector, err := cardDAVCLIConnection(cmd, connection)
+		if err != nil {
+			return err
+		}
 		if !google && oauthApp != "" {
 			return usageErr(cmd, errors.New("--oauth-app requires --google"))
 		}
 		var password string
-		var err error
 		if !google {
 			password, err = readCardDAVPassword()
 			if err != nil {
@@ -50,7 +54,7 @@ func newAddCardDAVCmd() *cobra.Command {
 			return err
 		}
 		defer func() { _ = client.Close() }()
-		body := generated.SaveCardDAVAccountBody{BaseURL: baseURL, Username: username, Password: &password, Enabled: !disabled}
+		body := generated.SaveCardDAVAccountBody{BaseURL: baseURL, Username: username, Password: &password, Enabled: !disabled, Connection: selector}
 		if google {
 			provider := generated.Google
 			body.Provider = &provider
@@ -70,6 +74,7 @@ func newAddCardDAVCmd() *cobra.Command {
 			textutil.SanitizeTerminal(resp.JSON200.Username), resp.JSON200.Books)
 		return nil
 	}
+	cmd.Flags().StringVar(&connection, "connection", "", "Connection name (default when omitted)")
 	cmd.Flags().BoolVar(&google, "google", false, "Use Google Contacts with an authorized OAuth token")
 	cmd.Flags().StringVar(&oauthApp, "oauth-app", "", "Named Google OAuth application")
 	cmd.Flags().StringVar(&schedule, "schedule", "", "cron schedule for background synchronization")
@@ -100,14 +105,19 @@ func readCardDAVPassword() (string, error) {
 
 func newSyncCardDAVCmd() *cobra.Command {
 	var full bool
-	cmd := &cobra.Command{Use: "sync-carddav", Short: "Synchronize the configured CardDAV account", Args: cobra.NoArgs}
+	var connection string
+	cmd := &cobra.Command{Use: "sync-carddav", Short: "Synchronize enabled CardDAV connections", Args: cobra.NoArgs}
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		selector, err := cardDAVCLIConnection(cmd, connection)
+		if err != nil {
+			return err
+		}
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = client.Close() }()
-		body := generated.SyncCardDAVBody{Full: &full}
+		body := generated.SyncCardDAVBody{Full: &full, Connection: selector}
 		resp, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.SyncCardDAVResp, error) {
 			return api.SyncCardDAVWithResponse(cmd.Context(), &generated.SyncCardDAVRequestOptions{Body: &body})
 		})
@@ -115,8 +125,21 @@ func newSyncCardDAVCmd() *cobra.Command {
 			return err
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "CardDAV sync: %d books, %d created, %d updated, %d removed\n", resp.JSON200.Books, resp.JSON200.Created, resp.JSON200.Updated, resp.JSON200.Removed)
+		if resp.JSON200.Status != nil && *resp.JSON200.Status != "succeeded" {
+			for _, outcome := range resp.JSON200.Connections {
+				if outcome.Status != "succeeded" {
+					code := "sync_failed"
+					if outcome.ErrorCode != nil {
+						code = *outcome.ErrorCode
+					}
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "CardDAV %s: %s\n", textutil.SanitizeTerminal(outcome.Connection), textutil.SanitizeTerminal(code))
+				}
+			}
+			return fmt.Errorf("CardDAV sync %s", *resp.JSON200.Status)
+		}
 		return nil
 	}
+	cmd.Flags().StringVar(&connection, "connection", "", "Sync one saved connection, including disabled connections")
 	cmd.Flags().BoolVar(&full, "full", false, "force a full address-book reconciliation")
 	return cmd
 }
@@ -124,6 +147,7 @@ func newSyncCardDAVCmd() *cobra.Command {
 func newCardDAVCmd() *cobra.Command {
 	root := &cobra.Command{Use: "carddav", Short: "Manage CardDAV connections, books, and conflicts"}
 	books := &cobra.Command{Use: "books", Short: "List discovered CardDAV address books", Args: cobra.NoArgs, RunE: runCardDAVBooks}
+	books.Flags().String("connection", "", "List books for one saved connection")
 	var writeTarget, subscribed, lookup bool
 	setRole := &cobra.Command{Use: "set-role <book-id>", Short: "Set all roles for a CardDAV address book", Args: cobra.ExactArgs(1)}
 	setRole.RunE = func(cmd *cobra.Command, args []string) error {
@@ -154,26 +178,34 @@ func newCardDAVCmd() *cobra.Command {
 	conflicts.AddCommand(&cobra.Command{Use: "show <conflict-id>", Short: "Show safe base, local, and remote summaries for a CardDAV conflict", Args: cobra.ExactArgs(1), RunE: runCardDAVConflictShow})
 	resolve := &cobra.Command{Use: "resolve <conflict-id> <keep_local|keep_remote>", Short: "Resolve one CardDAV conflict", Args: cobra.ExactArgs(2), RunE: runCardDAVResolve}
 	conflicts.AddCommand(resolve)
-	root.AddCommand(books, conflicts, newAuthorizeGoogleCardDAVCmd())
+	root.AddCommand(books, conflicts, newAuthorizeGoogleCardDAVCmd(), &cobra.Command{Use: "connections", Short: "List saved CardDAV connections", Args: cobra.NoArgs, RunE: runCardDAVConnections})
 	return root
 }
 
 func runCardDAVBooks(cmd *cobra.Command, _ []string) error {
+	name, err := cmd.Flags().GetString("connection")
+	if err != nil {
+		return fmt.Errorf("read CardDAV connection flag: %w", err)
+	}
+	selector, err := cardDAVCLIConnection(cmd, name)
+	if err != nil {
+		return err
+	}
 	client, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = client.Close() }()
 	resp, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ListCardDAVBooksResp, error) {
-		return api.ListCardDAVBooksWithResponse(cmd.Context())
+		return api.ListCardDAVBooksWithResponse(cmd.Context(), &generated.ListCardDAVBooksRequestOptions{Query: &generated.ListCardDAVBooksQuery{Connection: selector}})
 	})
 	if err != nil {
 		return err
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "ID\tNAME\tWRITE\tSUBSCRIBED\tLOOKUP\tRECONCILE")
+	_, _ = fmt.Fprintln(w, "ID\tCONNECTION\tNAME\tWRITE\tSUBSCRIBED\tLOOKUP\tRECONCILE")
 	for _, b := range resp.JSON200.Books {
-		_, _ = fmt.Fprintf(w, "%d\t%s\t%t\t%t\t%t\t%t\n", b.ID,
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%t\t%t\t%t\t%t\n", b.ID, cardDAVCLIOptionalString(b.Connection),
 			textutil.SanitizeTerminal(b.Name), b.WriteTarget, b.Subscribed,
 			b.LookupSource, b.NeedsFullReconcile)
 	}
@@ -301,4 +333,48 @@ func newPersonCardDAVCommand(action string, publish bool) *cobra.Command {
 func init() {
 	rootCmd.AddCommand(newAddCardDAVCmd(), newSyncCardDAVCmd(), newCardDAVCmd())
 	personCmd.AddCommand(newPersonCardDAVCommand("publish", true), newPersonCardDAVCommand("unpublish", false))
+}
+
+func cardDAVCLIConnection(cmd *cobra.Command, name string) (*string, error) {
+	if name == "" && !cmd.Flags().Changed("connection") {
+		return nil, nil //nolint:nilnil // A nil selector deliberately means aggregate sync or an unfiltered read.
+	}
+	if err := config.ValidateCardDAVConnectionName(name); err != nil {
+		return nil, usageErr(cmd, fmt.Errorf("invalid CardDAV connection: %w", err))
+	}
+	return &name, nil
+}
+
+func cardDAVCLIOptionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return textutil.SanitizeTerminal(*value)
+}
+
+func runCardDAVConnections(cmd *cobra.Command, _ []string) error {
+	client, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
+	response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ListCardDAVConnectionsResp, error) {
+		return api.ListCardDAVConnectionsWithResponse(cmd.Context())
+	})
+	if err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "CONNECTION\tENABLED\tAVAILABLE\tSTATE")
+	for _, connection := range response.JSON200.Connections {
+		state := "configured"
+		if connection.Orphaned {
+			state = "orphaned (restore configuration)"
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%t\t%t\t%s\n", textutil.SanitizeTerminal(connection.Connection), connection.Status.Enabled, connection.Status.Available, state)
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flush CardDAV connections: %w", err)
+	}
+	return nil
 }

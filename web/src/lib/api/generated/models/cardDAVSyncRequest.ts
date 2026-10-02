@@ -3,5 +3,6 @@
  */
 
 export interface CardDAVSyncRequest {
+  connection?: string;
   full?: boolean;
 }

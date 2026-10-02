@@ -132,16 +132,29 @@ type ListAttributeDefinitionsQuery struct {
 	IncludeHidden *bool `json:"include_hidden,omitempty"`
 }
 
+type ListCardDAVBooksQuery struct {
+	// Connection Saved connection name; omit for all connections
+	Connection *string `json:"connection,omitempty"`
+}
+
 type ListCardDAVRunsQuery struct {
 	// Limit Maximum runs to return (default 25, max 100)
 	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
 
 	// BeforeID Return runs with IDs lower than this cursor
 	BeforeID *int64 `json:"before_id,omitempty" validate:"omitempty,gte=1"`
+
+	// Connection Saved connection name; omit for all connections
+	Connection *string `json:"connection,omitempty"`
 }
 
 func (l ListCardDAVRunsQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type GetCardDAVStatusQuery struct {
+	// Connection Saved connection name; omit for all connections
+	Connection *string `json:"connection,omitempty"`
 }
 
 type GetCLIAttachmentQuery struct {

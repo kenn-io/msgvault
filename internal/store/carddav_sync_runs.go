@@ -39,8 +39,9 @@ const (
 )
 
 type CardDAVSyncRunStart struct {
-	Trigger CardDAVSyncTrigger
-	Full    bool
+	AccountID int64
+	Trigger   CardDAVSyncTrigger
+	Full      bool
 }
 
 type CardDAVSyncRunFinish struct {
@@ -54,6 +55,7 @@ type CardDAVSyncRunFinish struct {
 }
 
 type CardDAVSyncRun struct {
+	AccountID    int64
 	ID           int64
 	Trigger      CardDAVSyncTrigger
 	Full         bool
@@ -88,7 +90,7 @@ var (
 	)
 )
 
-const cardDAVSyncRunColumns = `id, trigger, full_sync, state, started_at, finished_at,
+const cardDAVSyncRunColumns = `id, account_id, trigger, full_sync, state, started_at, finished_at,
 	books, created, updated, removed, error_code, error_message`
 
 func (s *Store) StartCardDAVSyncRunContext(
@@ -97,10 +99,13 @@ func (s *Store) StartCardDAVSyncRunContext(
 	if input.Trigger != CardDAVSyncTriggerManual && input.Trigger != CardDAVSyncTriggerScheduled {
 		return nil, fmt.Errorf("%w: trigger must be manual or scheduled", ErrCardDAVSyncRunInvalid)
 	}
+	if input.AccountID < 1 {
+		return nil, fmt.Errorf("%w: account ID must be positive", ErrCardDAVSyncRunInvalid)
+	}
 	var run *CardDAVSyncRun
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		row := tx.QueryRowContext(ctx, `INSERT INTO carddav_sync_runs (trigger, full_sync, state)
-			VALUES (?, ?, 'running') RETURNING `+cardDAVSyncRunColumns, input.Trigger, input.Full)
+		row := tx.QueryRowContext(ctx, `INSERT INTO carddav_sync_runs (account_id, trigger, full_sync, state)
+			VALUES (?, ?, ?, 'running') RETURNING `+cardDAVSyncRunColumns, input.AccountID, input.Trigger, input.Full)
 		var err error
 		run, err = scanCardDAVSyncRun(row)
 		if err != nil {
@@ -157,19 +162,25 @@ func (s *Store) FinishCardDAVSyncRunContext(
 	return run, nil
 }
 
-func (s *Store) CardDAVSyncStatusContext(ctx context.Context) (CardDAVSyncStatus, error) {
+func (s *Store) CardDAVSyncStatusContext(ctx context.Context, accountID int64) (CardDAVSyncStatus, error) {
+	condition := ""
+	var args []any
+	if accountID != AllCardDAVAccounts {
+		condition = " AND account_id = ?"
+		args = append(args, accountID)
+	}
 	var status CardDAVSyncStatus
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
-		status.Active, err = getCardDAVSyncRun(ctx, tx, `state = 'running'`, nil)
+		status.Active, err = getCardDAVSyncRun(ctx, tx, `state = 'running'`+condition, args)
 		if err != nil {
 			return err
 		}
-		status.Latest, err = getCardDAVSyncRun(ctx, tx, `1 = 1`, nil)
+		status.Latest, err = getCardDAVSyncRun(ctx, tx, `1 = 1`+condition, args)
 		if err != nil {
 			return err
 		}
-		status.LatestSuccessful, err = getCardDAVSyncRun(ctx, tx, `state = 'succeeded'`, nil)
+		status.LatestSuccessful, err = getCardDAVSyncRun(ctx, tx, `state = 'succeeded'`+condition, args)
 		return err
 	})
 	if err != nil {
@@ -179,7 +190,7 @@ func (s *Store) CardDAVSyncStatusContext(ctx context.Context) (CardDAVSyncStatus
 }
 
 func (s *Store) ListCardDAVSyncRunsContext(
-	ctx context.Context, limit int, beforeID *int64,
+	ctx context.Context, limit int, beforeID *int64, accountID int64,
 ) ([]CardDAVSyncRun, error) {
 	if limit == 0 {
 		limit = cardDAVSyncRunDefaultLimit
@@ -187,11 +198,15 @@ func (s *Store) ListCardDAVSyncRunsContext(
 	if limit < 1 || limit > cardDAVSyncRunMaxLimit || (beforeID != nil && *beforeID <= 0) {
 		return nil, fmt.Errorf("%w: limit must be 1-100 and before ID positive", ErrCardDAVSyncRunInvalid)
 	}
-	query := `SELECT ` + cardDAVSyncRunColumns + ` FROM carddav_sync_runs`
+	query := `SELECT ` + cardDAVSyncRunColumns + ` FROM carddav_sync_runs WHERE 1 = 1`
 	args := make([]any, 0, 2)
 	if beforeID != nil {
-		query += ` WHERE id < ?`
+		query += ` AND id < ?`
 		args = append(args, *beforeID)
+	}
+	if accountID != AllCardDAVAccounts {
+		query += ` AND account_id = ?`
+		args = append(args, accountID)
 	}
 	query += ` ORDER BY id DESC LIMIT ?`
 	args = append(args, limit)
@@ -316,7 +331,7 @@ func scanCardDAVSyncRun(sc scanner) (*CardDAVSyncRun, error) {
 	var run CardDAVSyncRun
 	var started requiredTimestamp
 	var finished nullableTimestamp
-	if err := sc.Scan(&run.ID, &run.Trigger, &run.Full, &run.State, &started, &finished,
+	if err := sc.Scan(&run.ID, &run.AccountID, &run.Trigger, &run.Full, &run.State, &started, &finished,
 		&run.Books, &run.Created, &run.Updated, &run.Removed, &run.ErrorCode, &run.ErrorMessage); err != nil {
 		return nil, err
 	}

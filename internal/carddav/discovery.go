@@ -154,7 +154,8 @@ func (s *Service) PersistDiscovery(
 	}
 	homeURLs := discoveryHomeURLStrings(discovery)
 	input := store.CardDAVDiscoveryInput{
-		BaseURL: baseURL, Username: username, CredentialsChanged: credentialsChanged,
+		ConnectionName: s.ConnectionName(),
+		BaseURL:        baseURL, Username: username, CredentialsChanged: credentialsChanged,
 		PrincipalURL: discovery.PrincipalURL.String(), HomeURL: discovery.HomeURL.String(), HomeURLs: homeURLs,
 		Books: make([]store.CardDAVDiscoveredBook, 0, len(discovery.Books)),
 	}

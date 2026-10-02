@@ -85,7 +85,7 @@ func (s *Service) ListConflicts(ctx context.Context) ([]store.CardDAVConflict, e
 	if s == nil || s.store == nil {
 		return nil, errors.New("CardDAV service is not configured")
 	}
-	return s.store.ListCardDAVConflictsContext(ctx, true)
+	return s.store.ListCardDAVConflictsContext(ctx, true, store.AllCardDAVAccounts)
 }
 
 func (s *Service) GetConflict(ctx context.Context, id int64) (*store.CardDAVConflict, error) {
@@ -243,7 +243,7 @@ func (s *Service) recordPublicationConflict(
 			return err
 		}
 		if snapshot.Fingerprint != pending.LocalHash {
-			books, err := s.store.ListCardDAVAddressBooksContext(ctx)
+			books, err := s.scopedBooks(ctx)
 			if err != nil {
 				return err
 			}

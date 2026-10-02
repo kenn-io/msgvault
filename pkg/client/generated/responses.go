@@ -151,6 +151,8 @@ type ListCardDAVBooksErrorResponse = ErrorResponse
 
 type ListCardDAVBooksErrorResponseJSON = ErrorResponse
 
+type ListCardDAVBooksErrorResponseJSON503 = ErrorResponse
+
 type UpdateCardDAVBookRolesResponse = CardDAVBookResponse
 
 type UpdateCardDAVBookRolesErrorResponse = ErrorResponse
@@ -192,6 +194,12 @@ type ResolveCardDAVConflictErrorResponseJSON500 = ErrorResponse
 type ResolveCardDAVConflictErrorResponseJSON502 = ErrorResponse
 
 type ResolveCardDAVConflictErrorResponseJSON503 = ErrorResponse
+
+type ListCardDAVConnectionsResponse = CardDAVConnectionsResponse
+
+type ListCardDAVConnectionsErrorResponse = ErrorResponse
+
+type ListCardDAVConnectionsErrorResponseJSON = ErrorResponse
 
 type BeginGoogleCardDAVAuthorizationResponse = CardDAVGoogleAuthorizeResponse
 
@@ -290,6 +298,8 @@ type GetCardDAVStatusResponse = CardDAVStatusResponse
 type GetCardDAVStatusErrorResponse = ErrorResponse
 
 type GetCardDAVStatusErrorResponseJSON = ErrorResponse
+
+type GetCardDAVStatusErrorResponseJSON503 = ErrorResponse
 
 type SyncCardDAVResponse = SyncResult
 
@@ -3509,8 +3519,9 @@ type ListCardDAVBooksResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *ListCardDAVBooksResponse
-	JSON500      *ListCardDAVBooksErrorResponse
-	JSON503      *ListCardDAVBooksErrorResponseJSON
+	JSON400      *ListCardDAVBooksErrorResponse
+	JSON500      *ListCardDAVBooksErrorResponseJSON
+	JSON503      *ListCardDAVBooksErrorResponseJSON503
 	Headers503   *ListCardDAVBooksResp503Headers
 }
 
@@ -3577,6 +3588,20 @@ type ResolveCardDAVConflictResp struct {
 	JSON502      *ResolveCardDAVConflictErrorResponseJSON502
 	JSON503      *ResolveCardDAVConflictErrorResponseJSON503
 	Headers503   *ResolveCardDAVConflictResp503Headers
+}
+
+type ListCardDAVConnectionsResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type ListCardDAVConnectionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCardDAVConnectionsResponse
+	JSON500      *ListCardDAVConnectionsErrorResponse
+	JSON503      *ListCardDAVConnectionsErrorResponseJSON
+	Headers503   *ListCardDAVConnectionsResp503Headers
 }
 
 type BeginGoogleCardDAVAuthorizationResp503Headers struct {
@@ -3717,8 +3742,9 @@ type GetCardDAVStatusResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetCardDAVStatusResponse
-	JSON500      *GetCardDAVStatusErrorResponse
-	JSON503      *GetCardDAVStatusErrorResponseJSON
+	JSON400      *GetCardDAVStatusErrorResponse
+	JSON500      *GetCardDAVStatusErrorResponseJSON
+	JSON503      *GetCardDAVStatusErrorResponseJSON503
 	Headers503   *GetCardDAVStatusResp503Headers
 }
 

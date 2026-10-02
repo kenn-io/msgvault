@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS archive_metadata (
 -- lives in schema.sql's carddav_address_book_urls table so canonical and alias
 -- URLs cannot collide across columns.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_carddav_one_write_target
-    ON carddav_address_books(account_id) WHERE is_write_target = TRUE;
+    ON carddav_address_books((1)) WHERE is_write_target = TRUE;
 CREATE INDEX IF NOT EXISTS idx_carddav_resources_person
     ON carddav_resources(person_id) WHERE person_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_carddav_publications_pending

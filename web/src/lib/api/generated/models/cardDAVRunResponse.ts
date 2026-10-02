@@ -6,7 +6,9 @@ import type { CardDAVRunResponseState } from "./cardDAVRunResponseState";
 import type { CardDAVRunResponseTrigger } from "./cardDAVRunResponseTrigger";
 
 export interface CardDAVRunResponse {
+  account_id: number;
   books: number;
+  connection?: string;
   created: number;
   error_code?: CardDAVRunResponseErrorCode;
   error_message?: string;

@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS sources (
     UNIQUE(source_type, identifier)
 );
 
--- One external CardDAV connection. Passwords remain in the private token file
+-- External CardDAV connections. Passwords remain in the private token file
 -- and are never persisted here.
 CREATE TABLE IF NOT EXISTS carddav_discovery_lock (
     singleton SMALLINT PRIMARY KEY CHECK (singleton = 1)
@@ -109,6 +109,7 @@ INSERT INTO carddav_discovery_lock(singleton) VALUES (1) ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS carddav_sync_runs (
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    account_id    BIGINT NOT NULL DEFAULT 1 CHECK (account_id > 0),
     trigger       TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')),
     full_sync     BOOLEAN NOT NULL DEFAULT FALSE,
     state         TEXT NOT NULL CHECK (state IN ('running', 'succeeded', 'failed', 'cancelled', 'partial')),
@@ -128,7 +129,7 @@ CREATE TABLE IF NOT EXISTS carddav_sync_runs (
            (state IN ('failed', 'cancelled', 'partial') AND error_code <> ''))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_carddav_sync_runs_one_active
-    ON carddav_sync_runs((1)) WHERE state = 'running';
+    ON carddav_sync_runs(account_id) WHERE state = 'running';
 CREATE INDEX IF NOT EXISTS idx_carddav_sync_runs_state_id
     ON carddav_sync_runs(state, id DESC);
 CREATE INDEX IF NOT EXISTS idx_carddav_sync_runs_operations_order
@@ -245,7 +246,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_operation_token_keys_one_active
     ON operation_token_keys(state) WHERE state = 'active';
 
 CREATE TABLE IF NOT EXISTS carddav_accounts (
-    id                    SMALLINT PRIMARY KEY CHECK (id = 1),
+    id                    BIGINT PRIMARY KEY CONSTRAINT carddav_accounts_id_positive CHECK (id > 0),
+    connection_name       TEXT NOT NULL DEFAULT 'default' CONSTRAINT idx_carddav_account_connection_name UNIQUE,
     base_url              TEXT NOT NULL,
     username              TEXT NOT NULL,
     principal_url         TEXT NOT NULL,
@@ -258,7 +260,7 @@ CREATE TABLE IF NOT EXISTS carddav_accounts (
 );
 
 CREATE TABLE IF NOT EXISTS carddav_account_home_urls (
-    account_id      SMALLINT NOT NULL REFERENCES carddav_accounts(id) ON DELETE CASCADE,
+    account_id      BIGINT NOT NULL REFERENCES carddav_accounts(id) ON DELETE CASCADE,
     home_url        TEXT NOT NULL,
     discovery_index INTEGER NOT NULL CHECK (discovery_index >= 0),
     PRIMARY KEY (account_id, home_url),
@@ -266,14 +268,14 @@ CREATE TABLE IF NOT EXISTS carddav_account_home_urls (
 );
 
 CREATE TABLE IF NOT EXISTS carddav_retry_gate (
-    account_id     SMALLINT PRIMARY KEY REFERENCES carddav_accounts(id) ON DELETE CASCADE,
+    account_id     BIGINT PRIMARY KEY REFERENCES carddav_accounts(id) ON DELETE CASCADE,
     retry_after_at TIMESTAMPTZ NOT NULL,
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS carddav_address_books (
     id                       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    account_id               SMALLINT NOT NULL REFERENCES carddav_accounts(id) ON DELETE CASCADE,
+    account_id               BIGINT NOT NULL REFERENCES carddav_accounts(id) ON DELETE CASCADE,
     canonical_url            TEXT NOT NULL,
     discovery_alias_url      TEXT,
     display_name             TEXT NOT NULL,
@@ -298,7 +300,7 @@ CREATE TABLE IF NOT EXISTS carddav_address_books (
 
 
 CREATE TABLE IF NOT EXISTS carddav_address_book_urls (
-    account_id       SMALLINT NOT NULL REFERENCES carddav_accounts(id) ON DELETE CASCADE,
+    account_id       BIGINT NOT NULL REFERENCES carddav_accounts(id) ON DELETE CASCADE,
     address_book_id  BIGINT NOT NULL REFERENCES carddav_address_books(id) ON DELETE CASCADE,
     url_role         TEXT NOT NULL CHECK (url_role IN ('canonical', 'alias')),
     normalized_url   TEXT NOT NULL,
@@ -307,7 +309,7 @@ CREATE TABLE IF NOT EXISTS carddav_address_book_urls (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_carddav_one_write_target
-    ON carddav_address_books(account_id) WHERE is_write_target = TRUE;
+    ON carddav_address_books((1)) WHERE is_write_target = TRUE;
 CREATE TABLE IF NOT EXISTS participants (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     email_address TEXT,

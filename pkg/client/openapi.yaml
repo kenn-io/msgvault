@@ -1290,6 +1290,8 @@ components:
       properties:
         base_url:
           type: string
+        connection:
+          type: string
         enabled:
           type: boolean
         oauth_app:
@@ -1348,6 +1350,11 @@ components:
       type: object
     CardDAVBookResponse:
       properties:
+        account_id:
+          format: int64
+          type: integer
+        connection:
+          type: string
         id:
           format: int64
           type: integer
@@ -1547,6 +1554,35 @@ components:
       required:
         - conflicts
       type: object
+    CardDAVConnectionResponse:
+      properties:
+        account_id:
+          format: int64
+          type: integer
+        connection:
+          type: string
+        oauth_app:
+          type: string
+        orphaned:
+          type: boolean
+        provider:
+          type: string
+        status:
+          $ref: "#/components/schemas/CardDAVStatusResponse"
+      required:
+        - connection
+        - orphaned
+        - status
+      type: object
+    CardDAVConnectionsResponse:
+      properties:
+        connections:
+          items:
+            $ref: "#/components/schemas/CardDAVConnectionResponse"
+          type: array
+      required:
+        - connections
+      type: object
     CardDAVContactSummaryResponse:
       properties:
         display_name:
@@ -1579,6 +1615,8 @@ components:
     CardDAVGoogleAuthorizeRequest:
       additionalProperties: false
       properties:
+        connection:
+          type: string
         email:
           type: string
         oauth_app:
@@ -1591,6 +1629,8 @@ components:
       type: object
     CardDAVGoogleAuthorizeResponse:
       properties:
+        connection:
+          type: string
         state:
           type: string
         url:
@@ -1712,9 +1752,14 @@ components:
       type: object
     CardDAVRunResponse:
       properties:
+        account_id:
+          format: int64
+          type: integer
         books:
           format: int64
           type: integer
+        connection:
+          type: string
         created:
           format: int64
           type: integer
@@ -1763,6 +1808,7 @@ components:
           format: int64
           type: integer
       required:
+        - account_id
         - id
         - trigger
         - full
@@ -1840,6 +1886,8 @@ components:
     CardDAVSyncRequest:
       additionalProperties: false
       properties:
+        connection:
+          type: string
         full:
           type: boolean
       type: object
@@ -2449,6 +2497,46 @@ components:
           type: integer
       required:
         - reported_score
+      type: object
+    ConnectionSyncOutcome:
+      properties:
+        account_id:
+          format: int64
+          type: integer
+        books:
+          format: int64
+          type: integer
+        connection:
+          type: string
+        created:
+          format: int64
+          type: integer
+        error_code:
+          type: string
+        error_message:
+          type: string
+        removed:
+          format: int64
+          type: integer
+        run_id:
+          format: int64
+          type: integer
+        status:
+          enum:
+            - succeeded
+            - partial
+            - failed
+          type: string
+        updated:
+          format: int64
+          type: integer
+      required:
+        - connection
+        - status
+        - books
+        - created
+        - updated
+        - removed
       type: object
     ContactState:
       properties:
@@ -6506,6 +6594,11 @@ components:
     OperationRunDetail:
       additionalProperties: false
       properties:
+        account_id:
+          format: int64
+          type: integer
+        connection:
+          type: string
         counters:
           items:
             $ref: "#/components/schemas/OperationPublicCounter"
@@ -6582,6 +6675,11 @@ components:
     OperationRunSummary:
       additionalProperties: false
       properties:
+        account_id:
+          format: int64
+          type: integer
+        connection:
+          type: string
         counters:
           items:
             $ref: "#/components/schemas/OperationPublicCounter"
@@ -12433,12 +12531,22 @@ components:
         books:
           format: int64
           type: integer
+        connections:
+          items:
+            $ref: "#/components/schemas/ConnectionSyncOutcome"
+          type: array
         created:
           format: int64
           type: integer
         removed:
           format: int64
           type: integer
+        status:
+          enum:
+            - succeeded
+            - partial
+            - failed
+          type: string
         updated:
           format: int64
           type: integer
@@ -14414,6 +14522,13 @@ paths:
   /api/v1/carddav/books:
     get:
       operationId: listCardDAVBooks
+      parameters:
+        - description: Saved connection name; omit for all connections
+          in: query
+          name: connection
+          schema:
+            pattern: ^[a-z][a-z0-9_-]{0,63}$
+            type: string
       responses:
         "200":
           content:
@@ -14421,6 +14536,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/CardDAVBooksResponse"
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "500":
           content:
             application/json:
@@ -14699,6 +14820,46 @@ paths:
       security:
         - apiKey: []
       summary: Resolve a CardDAV conflict
+      tags:
+        - API
+  /api/v1/carddav/connections:
+    get:
+      operationId: listCardDAVConnections
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVConnectionsResponse"
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+          headers:
+            Retry-After:
+              description: Seconds until CardDAV retry is safe
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List saved CardDAV connections
       tags:
         - API
   /api/v1/carddav/google/authorize:
@@ -15190,6 +15351,12 @@ paths:
             format: int64
             minimum: 1
             type: integer
+        - description: Saved connection name; omit for all connections
+          in: query
+          name: connection
+          schema:
+            pattern: ^[a-z][a-z0-9_-]{0,63}$
+            type: string
       responses:
         "200":
           content:
@@ -15229,6 +15396,13 @@ paths:
   /api/v1/carddav/status:
     get:
       operationId: getCardDAVStatus
+      parameters:
+        - description: Saved connection name; omit for all connections
+          in: query
+          name: connection
+          schema:
+            pattern: ^[a-z][a-z0-9_-]{0,63}$
+            type: string
       responses:
         "200":
           content:
@@ -15236,6 +15410,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/CardDAVStatusResponse"
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "500":
           content:
             application/json:

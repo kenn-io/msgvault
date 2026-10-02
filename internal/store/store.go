@@ -1367,6 +1367,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		freshPostgreSQLSchema = !messagesTableExists
 	}
 
+	if err := s.prepareCardDAVSyncRunAccountColumn(ctx); err != nil {
+		return err
+	}
+
 	// Load and execute schema files provided by the dialect.
 	for _, filename := range s.dialect.SchemaFiles() {
 		schema, err := schemaFS.ReadFile(filename)
@@ -1538,6 +1542,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
 		}
+	}
+	if err := s.runOnceMigration(ctx, migrationCardDAVMultipleAccounts, 1, false, s.ensureCardDAVMultiAccountSchema); err != nil {
+		return fmt.Errorf("migrate CardDAV connections: %w", err)
 	}
 	if err := s.ensureCacheSourceAttribution(ctx); err != nil {
 		return err

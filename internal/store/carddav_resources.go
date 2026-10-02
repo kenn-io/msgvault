@@ -106,7 +106,7 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		var generation int64
 		if err := tx.QueryRowContext(ctx, `SELECT connection_generation
-			FROM carddav_accounts WHERE id = 1`+s.dialect.SelectForUpdate()).Scan(&generation); err != nil {
+			FROM carddav_accounts WHERE id = (SELECT account_id FROM carddav_address_books WHERE id = ?)`+s.dialect.SelectForUpdate(), plan.AddressBookID).Scan(&generation); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrCardDAVStalePlan
 			}

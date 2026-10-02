@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 
+	"go.kenn.io/kit/search/rrf"
+
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
@@ -83,28 +85,38 @@ func (b *Backend) fuseSignals(
 	}
 
 	byMessage := make(map[int64]vector.FusedHit, len(bm25Hits)+len(vectorHits))
-	for _, hit := range bm25Hits {
+	lexicalKeys := make([]int64, len(bm25Hits))
+	semanticKeys := make([]int64, len(vectorHits))
+	for i, hit := range bm25Hits {
+		lexicalKeys[i] = hit.MessageID
 		hit.VectorScore = math.NaN()
 		byMessage[hit.MessageID] = hit
 	}
 	for i, vectorHit := range vectorHits {
+		semanticKeys[i] = vectorHit.MessageID
 		hit, exists := byMessage[vectorHit.MessageID]
 		if !exists {
-			hit = vector.FusedHit{
-				MessageID: vectorHit.MessageID,
-				BM25Score: math.NaN(),
-				RRFScore:  0,
-			}
+			hit = vector.FusedHit{MessageID: vectorHit.MessageID, BM25Score: math.NaN()}
 		}
 		hit.VectorScore = vectorHit.Score
-		hit.RRFScore += 1.0 / float64(req.RRFK+i+1)
-		byMessage[hit.MessageID] = hit
+		byMessage[vectorHit.MessageID] = hit
 	}
-	hits := make([]vector.FusedHit, 0, len(byMessage))
-	for _, hit := range byMessage {
-		hits = append(hits, hit)
+	// Kit receives only identities. NaN means a missing signal in MsgVault's
+	// result contract, and must not become a shared fusion score or key.
+	fused, err := rrf.Fuse(float64(req.RRFK), []rrf.Leg[int64]{
+		{Name: "lexical", Weight: 1, Keys: lexicalKeys},
+		{Name: "semantic", Weight: 1, Keys: semanticKeys},
+	})
+	if err != nil {
+		return nil, vector.SearchMetadata{}, fmt.Errorf("fuse search signals: %w", err)
 	}
-	sort.SliceStable(hits, func(i, j int) bool {
+	hits := make([]vector.FusedHit, len(fused))
+	for i, result := range fused {
+		hit := byMessage[result.Key]
+		hit.RRFScore = result.Score
+		hits[i] = hit
+	}
+	sort.Slice(hits, func(i, j int) bool {
 		if hits[i].RRFScore != hits[j].RRFScore {
 			return hits[i].RRFScore > hits[j].RRFScore
 		}

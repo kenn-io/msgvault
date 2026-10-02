@@ -564,24 +564,6 @@
     background: var(--bg-primary);
   }
 
-  /* Machined, draggable pane boundary: the kit handle spans 4px of grab
-   * area but paints only a centered hairline, so the rail reads as a single
-   * machined edge until hovered/focused, when the accent fills the grip. */
-  .relationships-hub :global(.kit-split-resize-handle) {
-    background: linear-gradient(
-      to right,
-      transparent calc(50% - 0.5px),
-      var(--border-muted) calc(50% - 0.5px),
-      var(--border-muted) calc(50% + 0.5px),
-      transparent calc(50% + 0.5px)
-    );
-  }
-
-  .relationships-hub :global(.kit-split-resize-handle:hover),
-  .relationships-hub :global(.kit-split-resize-handle:focus-visible) {
-    background: var(--accent-blue);
-  }
-
   .pane-center-and-reading {
     display: flex;
     min-width: 0;

@@ -40,7 +40,8 @@ func TestNativeOperationRecoveryRunsBeforeDaemonServices(t *testing.T) {
 	_, err = st.StartSync(source.ID, "incremental")
 	require.NoError(err)
 	_, err = st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{
-		Trigger: store.CardDAVSyncTriggerScheduled,
+		AccountID: store.DefaultCardDAVAccountID,
+		Trigger:   store.CardDAVSyncTriggerScheduled,
 	})
 	require.NoError(err)
 	ledgers := []struct {

@@ -369,3 +369,14 @@ func isVoyageSizeMessage(message string) bool {
 	}
 	return false
 }
+
+func prependPrefix(inputs []string, prefix string) []string {
+	if prefix == "" || len(inputs) == 0 {
+		return inputs
+	}
+	prefixed := make([]string, len(inputs))
+	for i, input := range inputs {
+		prefixed[i] = prefix + input
+	}
+	return prefixed
+}

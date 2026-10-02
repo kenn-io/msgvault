@@ -57,7 +57,7 @@ func TestPullConflictBlocksOnlyMappingAndAdvancesBookFence(t *testing.T) {
 
 	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	beforeRevision := books[0].SyncRevision
 	alice, err := st.GetCardDAVResourceContext(t.Context(), book.ID, server.URL+"/books/personal/alice.vcf")
@@ -84,7 +84,7 @@ func TestPullConflictBlocksOnlyMappingAndAdvancesBookFence(t *testing.T) {
 
 	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	books, err = st.ListCardDAVAddressBooksContext(t.Context())
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.Equal(beforeRevision+1, books[0].SyncRevision)
 
@@ -785,7 +785,7 @@ func TestSyncSkipsConflictedPublicationAndStillAdvancesToken(t *testing.T) {
 
 	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	for _, candidate := range books {
 		if candidate.ID == book.ID {
@@ -979,7 +979,7 @@ func TestPullTombstoneCompletesTimedOutKeepLocalWithoutDeleteReplay(t *testing.T
 	require.NoError(err)
 	assert.Equal(store.CardDAVConflictResolved, resolved.Status)
 	assert.Equal(store.CardDAVResolutionKeepLocal, resolved.Resolution)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(books, 1)
 	assert.Equal("token-after-tombstone", books[0].SyncToken)
@@ -1030,7 +1030,7 @@ func TestKeepLocalTombstoneThrottleClearsIntentAndPersistsGate(t *testing.T) {
 	after, getErr := st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
 	require.NoError(getErr)
 	assert.Equal(before.MappingRevision, after.MappingRevision)
-	gate, getErr := st.GetCardDAVRetryAfterContext(t.Context())
+	gate, getErr := st.GetCardDAVRetryAfterContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(getErr)
 	require.NotNil(gate)
 	assert.WithinDuration(started.Add(time.Hour), *gate, 5*time.Second)
@@ -1090,7 +1090,7 @@ func TestPullTombstoneCompletesTimedOutUnpublishAndRetainsPerson(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(store.CardDAVConflictResolved, resolved.Status)
 	assert.Equal(store.CardDAVResolutionKeepLocal, resolved.Resolution)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(books, 1)
 	assert.Equal("token-after-unpublish", books[0].SyncToken)

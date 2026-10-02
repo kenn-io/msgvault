@@ -485,40 +485,41 @@ func (b *BackupConfig) Validate() error {
 }
 
 type Config struct {
-	Data           DataConfig                      `toml:"data"`
-	Log            LogConfig                       `toml:"log"`
-	OAuth          OAuthConfig                     `toml:"oauth"`
-	Microsoft      MicrosoftConfig                 `toml:"microsoft"`
-	Sync           SyncConfig                      `toml:"sync"`
-	Chat           ChatConfig                      `toml:"chat"`
-	Server         ServerConfig                    `toml:"server"`
-	Analytics      AnalyticsConfig                 `toml:"analytics"`
-	Web            WebConfig                       `toml:"web"`
-	Integrations   IntegrationsConfig              `toml:"integrations"`
-	Remote         RemoteConfig                    `toml:"remote"`
-	Vector         vector.Config                   `toml:"vector"`
-	Identity       IdentityConfig                  `toml:"identity"`
-	Fastmail       []FastmailSource                `toml:"fastmail"`
-	CardDAV        CardDAVConfig                   `toml:"carddav"`
-	Accounts       []AccountSchedule               `toml:"accounts"`
-	SynctechSMS    SynctechSMSConfig               `toml:"synctech_sms"`
-	GCal           []GCalSource                    `toml:"gcal"`
-	Beeper         BeeperConfig                    `toml:"beeper"`
-	Slack          SlackConfig                     `toml:"slack"`
-	Inline         InlineConfig                    `toml:"inline"`
-	Granola        []GranolaSource                 `toml:"granola"`
-	Circleback     []CirclebackSource              `toml:"circleback"`
-	NotionMeetings []NotionMeetingsSource          `toml:"notion_meetings"`
-	Muesli         []MuesliSource                  `toml:"muesli"`
-	Backup         BackupConfig                    `toml:"backup"`
-	Discord        DiscordConfig                   `toml:"discord"`
-	Attachments    documentindex.AttachmentsConfig `toml:"attachments"`
-	Activity       ActivityConfig                  `toml:"activity"`
-	People         PeopleConfig                    `toml:"people"`
-	Teams          TeamsConfig                     `toml:"teams"`
-	Deletion       DeletionConfig                  `toml:"deletion"`
-	IMAP           IMAPConfig                      `toml:"imap"`
-	Gmail          GmailConfig                     `toml:"gmail"`
+	Data               DataConfig                      `toml:"data"`
+	Log                LogConfig                       `toml:"log"`
+	OAuth              OAuthConfig                     `toml:"oauth"`
+	Microsoft          MicrosoftConfig                 `toml:"microsoft"`
+	Sync               SyncConfig                      `toml:"sync"`
+	Chat               ChatConfig                      `toml:"chat"`
+	Server             ServerConfig                    `toml:"server"`
+	Analytics          AnalyticsConfig                 `toml:"analytics"`
+	Web                WebConfig                       `toml:"web"`
+	Integrations       IntegrationsConfig              `toml:"integrations"`
+	Remote             RemoteConfig                    `toml:"remote"`
+	Vector             vector.Config                   `toml:"vector"`
+	Identity           IdentityConfig                  `toml:"identity"`
+	Fastmail           []FastmailSource                `toml:"fastmail"`
+	CardDAV            CardDAVConfig                   `toml:"carddav"`
+	CardDAVConnections map[string]CardDAVConfig        `toml:"carddav_connections,omitempty"`
+	Accounts           []AccountSchedule               `toml:"accounts"`
+	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
+	GCal               []GCalSource                    `toml:"gcal"`
+	Beeper             BeeperConfig                    `toml:"beeper"`
+	Slack              SlackConfig                     `toml:"slack"`
+	Inline             InlineConfig                    `toml:"inline"`
+	Granola            []GranolaSource                 `toml:"granola"`
+	Circleback         []CirclebackSource              `toml:"circleback"`
+	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
+	Muesli             []MuesliSource                  `toml:"muesli"`
+	Backup             BackupConfig                    `toml:"backup"`
+	Discord            DiscordConfig                   `toml:"discord"`
+	Attachments        documentindex.AttachmentsConfig `toml:"attachments"`
+	Activity           ActivityConfig                  `toml:"activity"`
+	People             PeopleConfig                    `toml:"people"`
+	Teams              TeamsConfig                     `toml:"teams"`
+	Deletion           DeletionConfig                  `toml:"deletion"`
+	IMAP               IMAPConfig                      `toml:"imap"`
+	Gmail              GmailConfig                     `toml:"gmail"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
@@ -936,6 +937,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		if key.String() == "carddav.password" {
 			return nil, errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json")
 		}
+		if len(key) >= 3 && key[0] == "carddav_connections" && key[2] == "password" {
+			return nil, errors.New("carddav_connections passwords are not allowed in config; store them in private connection token files")
+		}
 		if strings.HasPrefix(key.String(), "imap.drafts.") {
 			return nil, fmt.Errorf("unknown IMAP draft config key %q", key.String())
 		}
@@ -1028,6 +1032,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, errors.New("carddav.provider must be empty or \"google\"")
 	}
 	if _, _, err := cfg.CardDAV.TrustedDestination(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateCardDAVConnections(); err != nil {
 		return nil, err
 	}
 	cfg.Integrations.Tasks.ApplyDefaults()

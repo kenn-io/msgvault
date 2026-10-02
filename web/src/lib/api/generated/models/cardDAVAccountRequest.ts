@@ -5,6 +5,7 @@ import type { CardDAVAccountRequestProvider } from "./cardDAVAccountRequestProvi
 
 export interface CardDAVAccountRequest {
   base_url: string;
+  connection?: string;
   enabled: boolean;
   oauth_app?: string;
   password?: string;

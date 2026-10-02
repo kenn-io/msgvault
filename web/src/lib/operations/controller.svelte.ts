@@ -1,3 +1,4 @@
+import type { SyncResult } from '../api/generated/models';
 import {
   getOperationRun as generatedGetOperationRun,
   getOperationStatus as generatedGetOperationStatus,
@@ -279,6 +280,20 @@ export class OperationsController {
         outcome = 'conflict';
       } else if (!result.response.ok) {
         this.actionError = 'Unable to start the operation.';
+        outcome = 'failed';
+      } else if (
+        action === 'carddav_sync' &&
+        result.data &&
+        'status' in result.data &&
+        (result.data.status === 'partial' || result.data.status === 'failed')
+      ) {
+        const names =
+          'connections' in result.data
+            ? ((result.data as SyncResult).connections ?? [])
+                .filter((connection) => connection.status !== 'succeeded')
+                .map((connection) => connection.connection)
+            : [];
+        this.actionError = `CardDAV sync ${result.data.status}. Connections needing attention: ${names.join(', ')}.`;
         outcome = 'failed';
       }
     } catch {

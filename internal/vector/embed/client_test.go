@@ -60,6 +60,11 @@ func writeEmbeddings(t *testing.T, w http.ResponseWriter, vecs [][]float32) {
 	require.NoError(t, json.NewEncoder(w).Encode(payload), "encode response")
 }
 
+type embeddingRequest struct {
+	Input []string `json:"input"`
+	Model string   `json:"model"`
+}
+
 func decodeRequest(t *testing.T, r *http.Request) embeddingRequest {
 	t.Helper()
 	var req embeddingRequest
@@ -361,7 +366,7 @@ func TestClient_Embed_DimensionMismatch(t *testing.T) {
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3})
 	_, err := c.Embed(context.Background(), []string{"a"})
 	require.Error(t, err, "expected dimension mismatch error")
-	assert.ErrorContains(t, err, "dimension mismatch")
+	assert.ErrorIs(t, err, vector.ErrInvalidProviderVector)
 }
 
 func TestClient_Embed_Retries5xx(t *testing.T) {
@@ -402,7 +407,7 @@ func TestClient_Embed_Does_Not_Retry_4xx(t *testing.T) {
 	require.Error(t, err, "expected error for 4xx")
 	assert.Equal(int32(1), attempts.Load(), "no retry on 4xx")
 	require.ErrorContains(t, err, "400")
-	assert.ErrorContains(err, "No models loaded")
+	assert.ErrorIs(err, ErrPermanent4xx)
 }
 
 func TestClient_Embed_AuthHeader(t *testing.T) {
@@ -454,7 +459,7 @@ func TestClient_Embed_GivesUpAfterMaxRetries(t *testing.T) {
 	_, err := c.Embed(context.Background(), []string{"a"})
 	require.Error(t, err, "expected error after exhausting retries")
 	assert.Equal(t, int32(2), attempts.Load())
-	assert.ErrorContains(t, err, "giving up")
+	assert.NotErrorIs(t, err, ErrPermanent4xx)
 }
 
 func TestClient_Embed_ContextCanceledDuringBackoff(t *testing.T) {
@@ -510,7 +515,7 @@ func TestClient_Embed_MissingIndex(t *testing.T) {
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3})
 	_, err := c.Embed(context.Background(), []string{"a", "b"})
 	require.Error(t, err, "expected missing embedding error")
-	assert.ErrorContains(t, err, "missing embedding at index 1")
+	assert.ErrorIs(t, err, vector.ErrInvalidProviderShape)
 }
 
 // TestClient_Embed_Retries429 verifies 429 Too Many Requests is
@@ -644,39 +649,27 @@ func TestClient_parseRetryAfter(t *testing.T) {
 	assert.LessOrEqual(got, time.Hour, "parseRetryAfter(%q) duration <= 1h", future)
 }
 
-// TestClient_Embed_RetryAfterZero_RetriesImmediately regresses the
-// bug where Retry-After: 0 was indistinguishable from "no override"
-// and fell back to exponential backoff. With the (Duration, bool)
-// return, an explicit zero must take precedence and retry without
-// waiting. We assert by measuring elapsed time across two attempts:
-// the second attempt must start far sooner than the default
-// 200ms backoff for attempt #1.
-func TestClient_Embed_RetryAfterZero_RetriesImmediately(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	var calls int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if calls == 1 {
-			w.Header().Set("Retry-After", "0")
-			w.WriteHeader(http.StatusTooManyRequests)
-			return
-		}
-		writeEmbeddings(t, w, [][]float32{{1, 0, 0, 0}})
-	}))
-	defer srv.Close()
-
-	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 4, MaxRetries: 3})
-	start := time.Now()
-	vecs, err := c.Embed(context.Background(), []string{"hello"})
-	elapsed := time.Since(start)
-	require.NoError(err, "Embed")
-	require.Len(vecs, 1)
-	// Default backoff for attempt #1 is 1<<1 * 100ms = 200ms.
-	// Retry-After: 0 should drop that to ~0. Allow generous slack
-	// (50ms) for HTTP roundtrips on slow CI.
-	assert.Less(elapsed, 100*time.Millisecond, "Retry-After: 0 should bypass exponential backoff")
-	assert.Equal(2, calls)
+// The shared retry policy applies backoff even when Retry-After is zero.
+func TestClient_Embed_RetriesRateLimitAndTimeout(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusRequestTimeout} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) == 1 {
+					w.Header().Set("Retry-After", "0")
+					w.WriteHeader(status)
+					return
+				}
+				writeEmbeddings(t, w, [][]float32{{1, 0, 0, 0}})
+			}))
+			t.Cleanup(srv.Close)
+			c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 4, MaxRetries: 3})
+			vecs, err := c.Embed(t.Context(), []string{"hello"})
+			require.NoError(t, err)
+			require.Len(t, vecs, 1)
+			assert.Equal(t, int32(2), calls.Load())
+		})
+	}
 }
 
 func TestClient_Embed_4xxIsPermanent(t *testing.T) {
@@ -691,8 +684,7 @@ func TestClient_Embed_4xxIsPermanent(t *testing.T) {
 	_, err := c.Embed(context.Background(), []string{"hello"})
 	require.Error(t, err, "expected error on 400")
 	require.ErrorIs(t, err, ErrPermanent4xx)
-	// Existing contract: body must still be in the message.
-	assert.ErrorContains(t, err, "Invalid input")
+	assert.ErrorContains(t, err, "400")
 }
 
 func TestClient_Embed_5xxNotPermanent(t *testing.T) {
@@ -746,7 +738,7 @@ func TestClient_Embed_InvalidIndex(t *testing.T) {
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3})
 	_, err := c.Embed(context.Background(), []string{"a"})
 	require.Error(t, err, "expected invalid index error")
-	assert.ErrorContains(t, err, "invalid index")
+	assert.ErrorIs(t, err, vector.ErrInvalidProviderShape)
 }
 
 // TestClient_Embed_RejectsExtraOrDuplicateResponseItems catches provider
@@ -794,7 +786,7 @@ func TestClient_Embed_RejectsExtraOrDuplicateResponseItems(t *testing.T) {
 			_, err := client.Embed(context.Background(), []string{"a"})
 
 			require.Error(t, err)
-			assert.ErrorContains(t, err, "response count mismatch: got 2, expected 1")
+			assert.ErrorIs(t, err, vector.ErrInvalidProviderShape)
 		})
 	}
 }

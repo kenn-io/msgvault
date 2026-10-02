@@ -659,38 +659,13 @@ func (s *Server) handleClearOrganizationAttribute(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	dryRun, _, err := queryBool(r, "dry_run")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+	query, ok := s.attributeClearQuery(w, r)
+	if !ok {
 		return
-	}
-	expectedValueID, hasExpectedValueID, err := queryInt64(r, "expected_value_id")
-	if err != nil {
-		s.rejectBadParam(w, err)
-		return
-	}
-	if hasExpectedValueID && expectedValueID < 1 {
-		writeError(w, http.StatusBadRequest, "invalid_expected_value_id",
-			"expected_value_id must be a positive integer")
-		return
-	}
-	var expectedValueIDPtr *int64
-	if hasExpectedValueID {
-		expectedValueIDPtr = &expectedValueID
-	}
-	var ordinal *int64
-	if raw := strings.TrimSpace(r.URL.Query().Get("ordinal")); raw != "" {
-		parsed, parseErr := strconv.ParseInt(raw, 10, 64)
-		if parseErr != nil || parsed < 0 {
-			writeError(w, http.StatusBadRequest, "invalid_ordinal",
-				"ordinal must be a non-negative integer")
-			return
-		}
-		ordinal = &parsed
 	}
 	write, err := organizations.SupersedeOrganizationAttributeValueContext(r.Context(), store.OrganizationAttributeSupersedeInput{
-		OrganizationID: id, DefinitionSlug: slug, Ordinal: ordinal,
-		ExpectedValueID: expectedValueIDPtr, DryRun: dryRun,
+		OrganizationID: id, DefinitionSlug: slug, Ordinal: query.ordinal,
+		ExpectedValueID: query.expectedValueID, DryRun: query.dryRun,
 	})
 	if err != nil {
 		s.writeOrganizationError(w, err)

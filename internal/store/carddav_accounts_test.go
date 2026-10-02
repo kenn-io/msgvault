@@ -45,7 +45,7 @@ func TestCardDAVDiscoveryPersistsEveryHomeURL(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(input.HomeURLs, account.HomeURLs)
 
-	stored, err := st.GetCardDAVAccountContext(t.Context())
+	stored, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	assert.Equal(input.HomeURLs, stored.HomeURLs)
 }
@@ -62,7 +62,7 @@ func importCardDAVRoleTestPeople(
 	require.NoError(t, st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{
 		IsSubscribed: true, IsLookupSource: true,
 	}))
-	books, err = st.ListCardDAVAddressBooksContext(t.Context())
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(t, err)
 	book = books[1]
 	resources := make([]store.CardDAVRemoteResource, 0, len(slugs))
@@ -108,7 +108,7 @@ func TestCardDAVSetBookRolesAtomicallySwapsWriteTargetAndSchedulesWidening(t *te
 	})
 	require.NoError(err)
 
-	books, err = st.ListCardDAVAddressBooksContext(t.Context())
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.False(books[0].IsWriteTarget)
 	assert.True(books[0].IsSubscribed, "the old target remains materialized")
@@ -135,7 +135,7 @@ func TestCardDAVSetBookRolesRefusesUnsubscribingWriteTarget(t *testing.T) {
 	})
 	require.ErrorIs(err, store.ErrCardDAVWriteTargetSubscribed)
 
-	after, listErr := st.ListCardDAVAddressBooksContext(t.Context())
+	after, listErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(listErr)
 	assert.Equal(t, books, after)
 }
@@ -153,7 +153,7 @@ func TestCardDAVSetBookRolesClearsWriteTargetAndSubscriptionTogether(t *testing.
 	require.NoError(st.SetCardDAVBookRolesContext(
 		t.Context(), books[0].ID, store.CardDAVBookRoles{},
 	))
-	after, err := st.ListCardDAVAddressBooksContext(t.Context())
+	after, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.False(after[0].IsWriteTarget)
 	assert.False(after[0].IsSubscribed)
@@ -179,7 +179,7 @@ func TestCardDAVSetBookRolesPreservesScheduledReconcileAcrossNarrowing(t *testin
 	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), books[1].ID, store.CardDAVBookRoles{
 		IsSubscribed: true, IsLookupSource: false,
 	}))
-	after, err := st.ListCardDAVAddressBooksContext(t.Context())
+	after, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.True(t, after[1].NeedsFullReconcile,
 		"a later narrow role edit must not cancel the pending materializing pull")
@@ -208,7 +208,7 @@ func TestCardDAVSetBookRolesRejectsLifecycleDeniedWriteTarget(t *testing.T) {
 				IsWriteTarget: true, IsSubscribed: true, IsLookupSource: true,
 			})
 			require.ErrorIs(err, store.ErrCardDAVReadOnlyAddressBook)
-			after, listErr := st.ListCardDAVAddressBooksContext(t.Context())
+			after, listErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 			require.NoError(listErr)
 			assert.True(after[0].IsWriteTarget)
 			assert.False(after[1].IsWriteTarget)
@@ -245,7 +245,7 @@ func TestCardDAVSetBookRolesUnsubscribeDeletesOnlyUntouchedImportedPeople(t *tes
 	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{
 		IsSubscribed: true, IsLookupSource: true,
 	}))
-	books, err = st.ListCardDAVAddressBooksContext(t.Context())
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	book = books[1]
 
@@ -327,7 +327,7 @@ func TestCardDAVSetBookRolesUnsubscribePreservesUserLinkedImports(t *testing.T) 
 	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{
 		IsSubscribed: true, IsLookupSource: true,
 	}))
-	books, err = st.ListCardDAVAddressBooksContext(t.Context())
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	book = books[1]
 
@@ -611,7 +611,7 @@ func TestCardDAVIgnoredBookDropsLedgerOnceAndSurvivesAliasRediscovery(t *testing
 	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{
 		IsSubscribed: true, IsLookupSource: true,
 	}))
-	books, err = st.ListCardDAVAddressBooksContext(t.Context())
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	book = books[1]
 	input := remoteResource(book.CanonicalURL+"ignored.vcf", "ignored", "Ignored", "ignored@example.test", `"one"`)
@@ -624,7 +624,7 @@ func TestCardDAVIgnoredBookDropsLedgerOnceAndSurvivesAliasRediscovery(t *testing
 	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{}))
 	_, err = st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
 	require.ErrorIs(err, store.ErrCardDAVResourceNotFound)
-	ignoredBooks, err := st.ListCardDAVAddressBooksContext(t.Context())
+	ignoredBooks, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	ignoredBook := ignoredBooks[1]
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
@@ -764,7 +764,7 @@ func TestCardDAVDiscoveryRetainsBookWithPendingPublicationIntent(t *testing.T) {
 	})
 	require.NoError(err)
 	require.NotEmpty(pending.PendingOperation)
-	account, err := st.GetCardDAVAccountContext(t.Context())
+	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(account)
 
@@ -794,7 +794,7 @@ func TestCardDAVDiscoveryRetainsBookWithSettledPublicationOwnership(t *testing.T
 	resourceBefore, err := st.GetCardDAVResourceContext(t.Context(), book.ID, settledRemote.Href)
 	require.NoError(err)
 
-	account, err := st.GetCardDAVAccountContext(t.Context())
+	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(account)
 	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
@@ -838,11 +838,11 @@ func TestCardDAVDiscoveryRetainsBookWithClearedPublicationRetryState(t *testing.
 	require.NoError(err)
 	assert.True(cleared.Desired)
 	assert.Empty(cleared.PendingOperation)
-	gateBefore, err := st.GetCardDAVRetryAfterContext(t.Context())
+	gateBefore, err := st.GetCardDAVRetryAfterContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(gateBefore)
 
-	account, err := st.GetCardDAVAccountContext(t.Context())
+	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(account)
 	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
@@ -856,7 +856,7 @@ func TestCardDAVDiscoveryRetainsBookWithClearedPublicationRetryState(t *testing.
 	after, err := st.GetCardDAVPublicationContext(t.Context(), personID)
 	require.NoError(err)
 	assert.Empty(after.PendingOperation)
-	gateAfter, err := st.GetCardDAVRetryAfterContext(t.Context())
+	gateAfter, err := st.GetCardDAVRetryAfterContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(gateAfter)
 	assert.Equal(gateBefore.UTC(), gateAfter.UTC())
@@ -905,7 +905,7 @@ func TestCardDAVDiscoveryRetainsBookWithUnresolvedConflictIntent(t *testing.T) {
 	require.NoError(err)
 	require.Len(books, 1)
 	assert.Equal(book.ID, books[0].ID)
-	conflicts, err := st.ListCardDAVConflictsContext(t.Context(), true)
+	conflicts, err := st.ListCardDAVConflictsContext(t.Context(), true, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(conflicts, 1)
 	assert.Equal(initial.Href, conflicts[0].Href)
@@ -936,7 +936,7 @@ func TestCardDAVSetBookRolesRejectsWriteTargetSwapWithPendingMutation(t *testing
 		IsWriteTarget: true, IsSubscribed: true, IsLookupSource: true,
 	})
 	require.ErrorIs(err, store.ErrCardDAVRoleChangePending)
-	after, listErr := st.ListCardDAVAddressBooksContext(t.Context())
+	after, listErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(listErr)
 	assert.True(after[0].IsWriteTarget)
 	assert.False(after[1].IsWriteTarget)
@@ -959,7 +959,7 @@ func TestCardDAVSetBookRolesRejectsWriteTargetSwapWithSettledPublication(t *test
 		IsWriteTarget: true, IsSubscribed: true, IsLookupSource: true,
 	})
 	require.ErrorIs(err, store.ErrCardDAVRoleChangePending)
-	after, listErr := st.ListCardDAVAddressBooksContext(t.Context())
+	after, listErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(listErr)
 	assert.True(after[0].IsWriteTarget)
 	assert.False(after[1].IsWriteTarget)
@@ -989,7 +989,7 @@ func TestCardDAVSetBookRolesRejectsWriteTargetSwapWhenProposedTargetHasPublicati
 		IsWriteTarget: true, IsSubscribed: true, IsLookupSource: true,
 	})
 	require.ErrorIs(err, store.ErrCardDAVRoleChangePending)
-	after, listErr := st.ListCardDAVAddressBooksContext(t.Context())
+	after, listErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(listErr)
 	assert.True(after[0].IsWriteTarget)
 	assert.False(after[1].IsWriteTarget)
@@ -1051,7 +1051,7 @@ func TestCardDAVSetBookRolesRejectsWriteTargetSwapWithPendingConflictIntent(t *t
 
 			err = st.SetCardDAVBookRolesContext(t.Context(), targetBook.ID, roles)
 			require.ErrorIs(err, store.ErrCardDAVRoleChangePending)
-			afterBooks, listErr := st.ListCardDAVAddressBooksContext(t.Context())
+			afterBooks, listErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 			require.NoError(listErr)
 			var actualTargetID int64
 			for _, book := range afterBooks {
@@ -1106,7 +1106,7 @@ func TestCardDAVSetBookRolesRejectsTransitionWithUnresolvedConflict(t *testing.T
 
 			err = st.SetCardDAVBookRolesContext(t.Context(), targetBook.ID, roles)
 			require.ErrorIs(err, store.ErrCardDAVRoleChangePending)
-			afterBooks, listErr := st.ListCardDAVAddressBooksContext(t.Context())
+			afterBooks, listErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 			require.NoError(listErr)
 			assert.Equal(expectedTargetID, cardDAVRoleTestWriteTargetID(afterBooks))
 			afterConflict, conflictErr := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
@@ -1138,7 +1138,7 @@ func TestCardDAVSetBookRolesAllowsTransitionWithResolvedConflict(t *testing.T) {
 		IsWriteTarget: true, IsSubscribed: true, IsLookupSource: true,
 	})
 	require.NoError(err)
-	afterBooks, err := st.ListCardDAVAddressBooksContext(t.Context())
+	afterBooks, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.Equal(books[1].ID, cardDAVRoleTestWriteTargetID(afterBooks))
 	afterConflict, err := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
@@ -1168,7 +1168,7 @@ func TestCardDAVSetBookRolesRejectsNonTargetNarrowingWithUnresolvedConflict(t *t
 			err = st.SetCardDAVBookRolesContext(t.Context(), conflictBook.ID, test.roles)
 
 			require.ErrorIs(err, store.ErrCardDAVRoleChangePending)
-			afterBooks, listErr := st.ListCardDAVAddressBooksContext(t.Context())
+			afterBooks, listErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 			require.NoError(listErr)
 			require.Len(afterBooks, 2)
 			assert.True(afterBooks[0].IsSubscribed)
@@ -1214,7 +1214,7 @@ func TestCardDAVSetBookRolesRejectsNonTargetNarrowingWithPendingPublication(t *t
 	after, getErr := st.GetCardDAVPublicationContext(t.Context(), personID)
 	require.NoError(getErr)
 	assert.Equal(pending.PendingOperation, after.PendingOperation)
-	afterBooks, listErr := st.ListCardDAVAddressBooksContext(t.Context())
+	afterBooks, listErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(listErr)
 	assert.True(afterBooks[0].IsSubscribed)
 }
@@ -1238,7 +1238,7 @@ func TestCardDAVSetBookRolesAllowsResolvedConflictNarrowingAndKeepsAudit(t *test
 	err = st.SetCardDAVBookRolesContext(t.Context(), conflictBook.ID, store.CardDAVBookRoles{})
 
 	require.NoError(err)
-	afterBooks, listErr := st.ListCardDAVAddressBooksContext(t.Context())
+	afterBooks, listErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(listErr)
 	require.Len(afterBooks, 2)
 	assert.False(afterBooks[0].IsSubscribed)
@@ -1399,11 +1399,11 @@ func TestCardDAVDiscoveryBumpsConnectionGenerationForConnectionOrCredentialChang
 	require.NoError(err)
 	assert.Equal(changed.ConnectionGeneration+1, credentialChanged.ConnectionGeneration)
 
-	loaded, err := st.GetCardDAVAccountContext(t.Context())
+	loaded, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(loaded)
 	assert.Equal(credentialChanged, loaded)
-	listed, err := st.ListCardDAVAddressBooksContext(t.Context())
+	listed, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.Len(listed, 1)
 }
@@ -1425,7 +1425,7 @@ func TestCardDAVDiscoveryRejectsIncompleteSnapshotWithoutChangingStoredBooks(t *
 	}
 	_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), input)
 	require.ErrorContains(err, "duplicate")
-	after, err := st.ListCardDAVAddressBooksContext(t.Context())
+	after, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.Equal(t, before, after)
 }
@@ -1485,7 +1485,7 @@ func TestCardDAVDiscoveryCanonicalURLChangeInvalidatesIncrementalSync(t *testing
 		SyncRevision: book.SyncRevision, NextSyncToken: "incremental-token",
 	})
 	require.NoError(err)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(books, 1)
 	book = books[0]
@@ -1544,11 +1544,11 @@ func TestCardDAVDiscoveryRejectsTwoBooksClaimingOneStoredURLIdentity(t *testing.
 	_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), input)
 	require.ErrorContains(err, "match the same stored book")
 
-	afterAccount, err := st.GetCardDAVAccountContext(t.Context())
+	afterAccount, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(afterAccount)
 	assert.Equal(*beforeAccount, *afterAccount)
-	afterBooks, err := st.ListCardDAVAddressBooksContext(t.Context())
+	afterBooks, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.Equal(beforeBooks, afterBooks)
 }
@@ -1650,7 +1650,7 @@ func TestCardDAVDiscoveryRejectsCredentialRotationWithPendingRemoteFirstIntent(t
 		_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), input)
 
 		require.ErrorContains(err, "pending remote-first")
-		afterAccount, getErr := st.GetCardDAVAccountContext(t.Context())
+		afterAccount, getErr := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 		require.NoError(getErr)
 		require.NotNil(afterAccount)
 		assert.Equal(account.ConnectionGeneration, afterAccount.ConnectionGeneration)
@@ -1674,7 +1674,7 @@ func TestCardDAVDiscoveryRejectsCredentialRotationWithPendingRemoteFirstIntent(t
 		_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), input)
 
 		require.ErrorContains(err, "pending remote-first")
-		afterAccount, getErr := st.GetCardDAVAccountContext(t.Context())
+		afterAccount, getErr := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 		require.NoError(getErr)
 		require.NotNil(afterAccount)
 		assert.Equal(account.ConnectionGeneration, afterAccount.ConnectionGeneration)
@@ -1880,7 +1880,7 @@ func TestCardDAVIdentityChangeWaitsForResolvedConflictAuditSweep(t *testing.T) {
 	changed.Username = "bob"
 
 	require.ErrorIs(st.ValidateCardDAVConnectionChangeContext(
-		t.Context(), changed.BaseURL, changed.Username, false), store.ErrCardDAVIdentityChangeOwned)
+		t.Context(), changed.BaseURL, changed.Username, false, "default"), store.ErrCardDAVIdentityChangeOwned)
 	_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), changed)
 	require.ErrorIs(err, store.ErrCardDAVIdentityChangeOwned)
 	after, getErr := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
@@ -1892,7 +1892,7 @@ func TestCardDAVIdentityChangeWaitsForResolvedConflictAuditSweep(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), removed)
 	require.NoError(st.ValidateCardDAVConnectionChangeContext(
-		t.Context(), changed.BaseURL, changed.Username, false))
+		t.Context(), changed.BaseURL, changed.Username, false, "default"))
 	afterAccount, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), changed)
 	require.NoError(err)
 	require.Len(books, 1)

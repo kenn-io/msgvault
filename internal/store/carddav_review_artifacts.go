@@ -44,7 +44,7 @@ func (s *Store) validatePendingCreateTx(ctx context.Context, tx *loggedTx, pendi
 		return nil, ErrCardDAVStalePlan
 	}
 	var generation, revision int64
-	if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts WHERE id=1`).Scan(&generation); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts WHERE id=(SELECT account_id FROM carddav_address_books WHERE id=?)`, current.AddressBookID).Scan(&generation); err != nil {
 		return nil, err
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT sync_revision FROM carddav_address_books WHERE id=?`, current.AddressBookID).Scan(&revision); err != nil {
@@ -201,14 +201,14 @@ func (s *Store) loadCardDAVConflictReviewSourceTx(ctx context.Context, tx *logge
 	if err != nil {
 		return nil, err
 	}
-	account, err := getCardDAVAccountFrom(ctx, tx.Tx, s.Rebind)
+	account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, conflict.AddressBookID)
 	if err != nil {
 		return nil, err
 	}
 	if account == nil {
 		return nil, ErrCardDAVConflictStale
 	}
-	books, err := listCardDAVBooksFrom(ctx, tx.Tx, s.Rebind)
+	books, err := listCardDAVBooksFrom(ctx, tx.Tx, s.Rebind, account.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -248,13 +248,7 @@ func (s *Store) lockCardDAVConflictReviewTx(ctx context.Context, tx *loggedTx, c
 	if err != nil {
 		return nil, err
 	}
-	if lock := s.dialect.RowWriterLockSQL("carddav_accounts", "connection_generation"); lock != "" {
-		if _, err := tx.ExecContext(ctx, lock, 1); err != nil {
-			return nil, err
-		}
-	}
-	var id int64
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM carddav_accounts WHERE id=1`+s.dialect.SelectForUpdate()).Scan(&id); err != nil {
+	if err := s.lockCardDAVPublicationTargetTx(ctx, tx, identity.AddressBookID); err != nil {
 		return nil, err
 	}
 	if _, err := s.lockCardDAVConflictResolutionBookTx(ctx, tx, identity.AddressBookID); err != nil {

@@ -18,7 +18,7 @@ func TestQueuedConflictPreviewRejectsPersonReboundByMerge(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }))
 	t.Cleanup(server.Close)
 	service, st, oldID, book := seededMutationServiceForServer(t, server)
-	account, err := st.GetCardDAVAccountContext(t.Context())
+	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	body := conflictCard("person", "Person")
 	hash, err := SemanticHash(body)
@@ -26,7 +26,7 @@ func TestQueuedConflictPreviewRejectsPersonReboundByMerge(t *testing.T) {
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{{Href: book.CanonicalURL + "person.vcf", RemoteUID: "person", RemoteETag: `"base"`, RemoteBody: body, SemanticHash: hash}}})
 	require.NoError(err)
 	appendInferenceReviewNote(t, st, oldID, "Local inference")
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"person.vcf")
 	require.NoError(err)
@@ -94,7 +94,7 @@ func TestNonWriteConflictPreservesOrdinaryPublicationAcrossRecovery(t *testing.T
 			require.NoError(err)
 			s := books[1]
 			require.NoError(st.SetCardDAVBookRolesContext(t.Context(), s.ID, store.CardDAVBookRoles{IsSubscribed: true}))
-			books, err = st.ListCardDAVAddressBooksContext(t.Context())
+			books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 			require.NoError(err)
 			s = books[1]
 			body := conflictCard("person", "Remote base")
@@ -105,7 +105,7 @@ func TestNonWriteConflictPreservesOrdinaryPublicationAcrossRecovery(t *testing.T
 			appendInferenceReviewNote(t, st, personID, "Later inferred change")
 			mapping, err := st.GetCardDAVResourceContext(t.Context(), s.ID, s.CanonicalURL+"person.vcf")
 			require.NoError(err)
-			books, err = st.ListCardDAVAddressBooksContext(t.Context())
+			books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 			require.NoError(err)
 			s = books[1]
 			remoteBody := conflictCard("person", "Remote changed")
@@ -183,7 +183,7 @@ func TestLegacyNonWriteConflictRecoveryDoesNotEnrollPublication(t *testing.T) {
 	appendInferenceReviewNote(t, st, personID, "Approved local inference")
 	mapping, err := st.GetCardDAVResourceForPersonContext(t.Context(), book.ID, personID)
 	require.NoError(err)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	book = books[0]
 	remote := store.CardDAVRemoteResource{Href: mapping.Href, RemoteUID: "person", RemoteETag: `"changed"`, RemoteBody: conflictCard("person", "Changed remote")}
@@ -233,7 +233,7 @@ func TestConflictOwnedAbsentCreateRecovery(t *testing.T) {
 			body := conflictCard("person", "Remote base")
 			hash, err := SemanticHash(body)
 			require.NoError(err)
-			account, err := st.GetCardDAVAccountContext(t.Context())
+			account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 			require.NoError(err)
 			_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{{Href: book.CanonicalURL + "person.vcf", RemoteUID: "person", RemoteETag: `"base"`, RemoteBody: body, SemanticHash: hash}}})
 			require.NoError(err)
@@ -241,7 +241,7 @@ func TestConflictOwnedAbsentCreateRecovery(t *testing.T) {
 			appendInferenceReviewNote(t, st, personID, "First inference")
 			mapping, err := st.GetCardDAVResourceForPersonContext(t.Context(), book.ID, personID)
 			require.NoError(err)
-			books, err := st.ListCardDAVAddressBooksContext(t.Context())
+			books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 			require.NoError(err)
 			book = books[0]
 			capture, needed, err := service.prepareMappingConflict(t.Context(), book, *mapping, nil, true)

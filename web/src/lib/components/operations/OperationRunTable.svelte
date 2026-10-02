@@ -46,7 +46,7 @@
           aria-current={selectedID === run.id ? 'true' : undefined}
           onclick={(event) => onSelect(run.id, event.currentTarget)}
         >
-          <span class="row-title">{OPERATION_KIND_LABELS[run.kind]}</span>
+          <span class="row-title">{OPERATION_KIND_LABELS[run.kind]}{#if run.connection} · {run.connection}{/if}</span>
           {@render runState(run)}
           <span>{triggerLabel(run.trigger)} · <time datetime={run.started_at}>{formatDateTime(run.started_at)}</time></span>
           <span>{operationDuration(run)} · {counterSummary(run.counters)}</span>
@@ -75,7 +75,7 @@
               data-run-id={run.id}
               aria-label={`Open ${OPERATION_KIND_LABELS[run.kind]} run`}
               onclick={(event) => onSelect(run.id, event.currentTarget)}
-            >{OPERATION_KIND_LABELS[run.kind]}</button>
+            >{OPERATION_KIND_LABELS[run.kind]}{#if run.connection} · {run.connection}{/if}</button>
           </td>
           <td>{triggerLabel(run.trigger)}</td>
           <td>{@render runState(run)}</td>

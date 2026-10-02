@@ -1,6 +1,7 @@
 <script lang="ts">
   import { SplitResizeHandle, type SplitResizeEvent } from '@kenn-io/kit-ui';
   import { untrack, type Snippet } from 'svelte';
+  import { splitHandleSize } from './split-handle';
 
   interface Props {
     ariaLabel: string;
@@ -48,7 +49,6 @@
 
   const keyboardStep = 24;
   const vertical = $derived(orientation === 'vertical');
-  const handleThickness = 4;
   const minSized = $derived(vertical ? minSecondary ?? 160 : minPrimary);
   const minOther = $derived(vertical ? minPrimary : minSecondary ?? 320);
 
@@ -83,7 +83,7 @@
 
   const maximum = $derived.by(() => {
     const byAvailable = available > 0
-      ? Math.max(0, available - minOther - handleThickness)
+      ? Math.max(0, available - minOther - splitHandleSize)
       : Math.max(minSized, sizedSize);
     return !vertical && maxPrimary !== undefined ? Math.min(byAvailable, maxPrimary) : byAvailable;
   });
@@ -238,12 +238,14 @@
     flex: 1;
   }
 
+  /* The wrapper spans the split's cross axis; the kit handle stretches to
+   * fill it and owns its own thickness. */
   .handle-reset {
     display: flex;
     flex: none;
   }
 
-  .handle-reset :global(.kit-split-resize-handle--horizontal) {
-    height: 100%;
+  .split-pane--vertical > .handle-reset {
+    flex-direction: column;
   }
 </style>

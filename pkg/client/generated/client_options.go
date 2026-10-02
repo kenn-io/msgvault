@@ -834,6 +834,50 @@ func (o *TestCardDAVAccountRequestOptions) GetHeader() (map[string]string, error
 	return nil, nil
 }
 
+// ListCardDAVBooksRequestOptions is the options needed to make a request to ListCardDAVBooks.
+type ListCardDAVBooksRequestOptions struct {
+	Query *ListCardDAVBooksQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListCardDAVBooksRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListCardDAVBooksRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListCardDAVBooksRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListCardDAVBooksRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListCardDAVBooksRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // UpdateCardDAVBookRolesRequestOptions is the options needed to make a request to UpdateCardDAVBookRoles.
 type UpdateCardDAVBookRolesRequestOptions struct {
 	PathParams *UpdateCardDAVBookRolesPath
@@ -1351,6 +1395,50 @@ func (o *ListCardDAVRunsRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ListCardDAVRunsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetCardDAVStatusRequestOptions is the options needed to make a request to GetCardDAVStatus.
+type GetCardDAVStatusRequestOptions struct {
+	Query *GetCardDAVStatusQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetCardDAVStatusRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetCardDAVStatusRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetCardDAVStatusRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetCardDAVStatusRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetCardDAVStatusRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 

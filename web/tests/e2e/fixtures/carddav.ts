@@ -121,6 +121,28 @@ export async function installCardDAV(page: Page, options: CardDAVFixtureOptions 
 
     if (method === 'GET') {
       requests.push(capture(method, url));
+      if (url.pathname === '/api/v1/carddav/connections') {
+        return route.fulfill({
+          json: {
+            connections:
+              accountPhase === 'configured'
+                ? [
+                    {
+                      connection: 'default',
+                      account_id: 1,
+                      status: {
+                        ...currentStatus(syncPhase, runningStatusReads),
+                        account: {
+                          base_url: 'https://carddav.example.test/',
+                          username: 'synthetic-user'
+                        }
+                      }
+                    }
+                  ]
+                : []
+          }
+        });
+      }
       if (url.pathname === '/api/v1/carddav/status') {
         if (accountPhase !== 'configured') return route.fulfill({ json: unavailableStatus() });
         if (syncPhase === 'running') {
@@ -275,6 +297,7 @@ function safeUnknownAccountBody(body: unknown): Record<string, string | boolean>
   if (!body || typeof body !== 'object' || Array.isArray(body)) return {};
   const source = body as Record<string, unknown>;
   const safe: Record<string, string | boolean> = {};
+  if (typeof source.connection === 'string') safe.connection = source.connection;
   if (typeof source.base_url === 'string') safe.base_url = source.base_url;
   if (typeof source.username === 'string') safe.username = source.username;
   if (typeof source.enabled === 'boolean') safe.enabled = source.enabled;
@@ -358,6 +381,8 @@ function currentStatus(phase: 'idle' | 'running' | 'terminal', runningStatusRead
 
 function activeRun(id: number, updated: number): Run {
   return {
+    account_id: 1,
+    connection: 'default',
     id,
     state: 'running',
     trigger: 'manual',
@@ -374,6 +399,8 @@ function activeRun(id: number, updated: number): Run {
 function historyRun(id: number): Run {
   const day = id === 102 ? '28' : id === 91 ? '27' : '26';
   return {
+    account_id: 1,
+    connection: 'default',
     id,
     state: 'succeeded',
     trigger: 'manual',

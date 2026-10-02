@@ -217,7 +217,7 @@ func TestSyncContinuesAfterOneBookFailsAndReconcilesPublications(t *testing.T) {
 	_, publicationErr := st.GetCardDAVPublicationContext(t.Context(), personID)
 	require.ErrorIs(publicationErr, store.ErrCardDAVPublicationNotFound,
 		"publication reconciliation must still run after an independent book failure")
-	runs, listErr := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	runs, listErr := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(listErr)
 	require.Len(runs, 1)
 	assert.Equal(store.CardDAVSyncRunPartial, runs[0].State)
@@ -344,7 +344,7 @@ func TestSyncRecordsOneSucceededManualRunWithExactCounters(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(SyncResult{Books: 1, Created: 1}, result)
 
-	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(runs, 1)
 	assert.Equal(store.CardDAVSyncTriggerManual, runs[0].Trigger)
@@ -367,7 +367,7 @@ func TestSyncRecordsExplicitScheduledTrigger(t *testing.T) {
 
 	_, err := service.Sync(t.Context(), SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
 	require.NoError(err)
-	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(runs, 1)
 	assert.Equal(t, store.CardDAVSyncTriggerScheduled, runs[0].Trigger)
@@ -396,7 +396,7 @@ func TestSyncCancellationFinishesRunWithUncancelledCleanupContext(t *testing.T) 
 	err := <-done
 	close(releaseRequest)
 	require.ErrorIs(err, context.Canceled)
-	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(runs, 1)
 	assert.Equal(store.CardDAVSyncRunCancelled, runs[0].State)
@@ -411,13 +411,13 @@ func TestSyncActiveClaimPreventsNetworkAndSecondRun(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
 	t.Cleanup(server.Close)
 	service, st, _ := newPullService(t, server, true)
-	_, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	_, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 
 	_, err = service.Sync(t.Context(), SyncOptions{})
 	require.ErrorIs(err, store.ErrCardDAVSyncActive)
 	assert.Zero(requests)
-	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.Len(runs, 1)
 }
@@ -435,7 +435,7 @@ func TestSyncTotalFailureRecordsSafeFailedTerminalState(t *testing.T) {
 	require.Error(err)
 	assert.Equal(SyncResult{}, result)
 	assert.Equal("CardDAV server request failed.", err.Error())
-	runs, listErr := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	runs, listErr := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(listErr)
 	require.Len(runs, 1)
 	assert.Equal(store.CardDAVSyncRunFailed, runs[0].State)
@@ -857,7 +857,7 @@ func TestManualFullSyncMarksSnapshotAsCompleteReconciliation(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			service, st, book := newPullService(t, server, supportsSync)
-			account, err := st.GetCardDAVAccountContext(t.Context())
+			account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 			require.NoError(err)
 			require.NotNil(account)
 
@@ -1035,7 +1035,7 @@ func TestInitialSyncFallsBackToEnumeratedSnapshotWhenEmptyTokenIsRejected(t *tes
 		"PROPFIND 1",
 		"REPORT addressbook-multiget /books/personal/alice.vcf,/books/personal/bob.vcf",
 	}, state.requests)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(books, 1)
 	assert.Equal("token-1", books[0].SyncToken, "the token read before the listing must be stored")
@@ -1057,7 +1057,7 @@ func TestInitialSyncFallsBackToEnumeratedSnapshotWhenEmptyTokenIsRejected(t *tes
 		"REPORT sync-collection token-1",
 		"REPORT addressbook-multiget /books/personal/alice.vcf",
 	}, state.requests)
-	books, err = st.ListCardDAVAddressBooksContext(t.Context())
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.Equal("token-2", books[0].SyncToken)
 }
@@ -1079,11 +1079,11 @@ func TestGoogleInitialSyncSkipsEmptyTokenSyncCollection(t *testing.T) {
 		"PROPFIND 1",
 		"REPORT addressbook-multiget /books/personal/alice.vcf,/books/personal/bob.vcf",
 	}, state.requests, "Google never receives the empty-token sync-collection it rejects")
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(books, 1)
 	assert.Equal("token-1", books[0].SyncToken)
-	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(runs, 1)
 	assert.Equal(store.CardDAVSyncRunSucceeded, runs[0].State)
@@ -1242,7 +1242,7 @@ func TestEnumeratedSnapshotWarnsWhenCollectionOmitsSyncToken(t *testing.T) {
 	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
 	assert.Contains(logged.String(), "level=WARN")
 	assert.Contains(logged.String(), "no sync token")
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(books, 1)
 	assert.Empty(books[0].SyncToken)
