@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -496,7 +497,7 @@ func TestIdentityMatchJudgmentWrapsBeforeReportingDone(t *testing.T) {
 
 func TestIdentityMatchJudgmentFullSweepPersistsAcrossReopen(t *testing.T) {
 	for _, count := range []int{128, 129, 256} {
-		t.Run(fmt.Sprint(count), func(t *testing.T) {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := storetest.New(t).Store
