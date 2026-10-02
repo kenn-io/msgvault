@@ -73,6 +73,22 @@ func registered(t *testing.T) (*store.Store, *store.Source) {
 	return st, src
 }
 
+func TestRegisterSourceSetsDisplayNameAndPreservesOwner(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := RegisterSource(st, " work ", "user@example.com")
+	require.NoError(err)
+	assert.Equal("work", src.DisplayName.String)
+
+	_, err = RegisterSource(st, "work", "other@example.com")
+	require.Error(err)
+	src, err = st.GetSourceByTypeAndIdentifier(SourceType, "work")
+	require.NoError(err)
+	assert.Equal("work", src.DisplayName.String)
+	assert.NoError(ValidateOwner(src, "user@example.com"))
+}
+
 func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -146,13 +162,12 @@ func TestImporterEnumeratesShortPagesBeyondFiveHundred(t *testing.T) {
 	sum, err := NewImporter(st, f).Import(context.Background(), ImportOptions{Identifier: "personal", AccountEmail: "user@example.com", Limit: 1})
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MeetingsAdded)
-	assert.
-		// Enumeration cannot stop at a short page or the filtered-search cap.
-		Equal("f-000", f.read[0])
+	// Enumeration cannot stop at a short page or the filtered-search cap.
+	assert.Equal("f-000", f.read[0])
 	assert.Equal(504, f.lastPage)
 }
 
-func TestLimitedDateScopedRunsRotateAndRetainWatermark(t *testing.T) {
+func TestLimitedDateScopedRunsRotate(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, src := registered(t)
@@ -169,7 +184,6 @@ func TestLimitedDateScopedRunsRotateAndRetainWatermark(t *testing.T) {
 	require.NoError(err)
 	var state syncState
 	require.NoError(json.Unmarshal([]byte(last.CursorAfter.String), &state))
-	assert.Zero(state.ReconciledAt)
 	require.Len(state.LastChecked, 3)
 }
 
@@ -198,6 +212,51 @@ func TestLimitedRunsStartWithNewestUnseenRecordings(t *testing.T) {
 	}
 
 	assert.Equal([]string{"z-new", "m-created", "a-old"}, f.read)
+}
+
+func TestLimitedRunsRotatePastFailedRecordings(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		limit      int
+		wantErrors []bool
+	}{
+		{name: "one recording", limit: 1, wantErrors: []bool{true, false, false, true}},
+		{name: "mixed batch", limit: 2, wantErrors: []bool{true, true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, src := registered(t)
+			f := sourceFixture("a", "b", "c")
+			f.fail["a"] = ErrContract
+			opts := ImportOptions{Identifier: "personal", AccountEmail: "user@example.com", Limit: tc.limit}
+			for index, wantError := range tc.wantErrors {
+				// Recreate the importer so rotation must come from the archive.
+				imp := NewImporter(st, f)
+				imp.now = func() time.Time { return time.Date(2026, 9, 1, index, 0, 0, 0, time.UTC) }
+				sum, err := imp.Import(t.Context(), opts)
+				if wantError {
+					require.ErrorIs(err, ErrContract)
+					assert.Equal(int64(1), sum.Errors)
+				} else {
+					require.NoError(err)
+				}
+				latest, err := st.GetLatestSync(src.ID)
+				require.NoError(err)
+				if wantError {
+					assert.Equal("failed", latest.Status)
+				} else {
+					assert.Equal("completed", latest.Status)
+				}
+			}
+			assert.Equal([]string{"a", "b", "c", "a"}, f.read)
+			ids, err := st.MessageExistsBatch(src.ID, []string{"a", "b", "c"})
+			require.NoError(err)
+			assert.Zero(ids["a"])
+			assert.NotZero(ids["b"])
+			assert.NotZero(ids["c"])
+		})
+	}
 }
 
 func TestFailureKeepsLastSuccessfulCursorAndPartialWrites(t *testing.T) {

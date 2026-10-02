@@ -889,9 +889,9 @@ msgvault sync-plaud work --probe
 
 | Flag | Description |
 |---|---|
-| `--limit n` | Hydrate at most n recordings; newest first, then successful runs rotate through least recently checked. Failed selected recordings retry in the same window. 0 is unlimited; negatives fail |
+| `--limit n` | Hydrate at most n recordings; newest first, then rotate through least recently attempted. Failed recordings retry on their next turn. 0 is unlimited; negatives fail |
 | `--full` | Force archive repair, preserving stable source and file IDs |
-| `--after YYYY-MM-DD` | Filter recording dates locally; implies `--full` and does not advance exhaustive reconciliation state |
+| `--after YYYY-MM-DD` | Filter recording dates locally; implies `--full` and retains rotation progress |
 | `--probe` | Print tool names, input schemas, and first-page counts without personal content or archive writes; requires an identifier when multiple accounts are configured |
 | `--build-cache` | Refresh analytics cache after sync |
 | `--no-build-cache` | Skip analytics cache refresh; mutually exclusive with `--build-cache` |
@@ -901,8 +901,8 @@ the live account owner and checks complete content for edits. Sync refuses an
 unregistered source before authentication; run `add-plaud` first.
 
 Missing pending transcripts and notes preserve previous evidence. Deleted
-recordings remain archived. Failed and canceled runs preserve prior successful
-sync state and refresh committed changes before returning the error. See the
+recordings remain archived. Failed and canceled runs save rotation progress and
+refresh committed changes before returning the error. See the
 [meeting guide](usage/meetings.md#plaud) for pagination and consistency limits.
 
 ## add-circleback

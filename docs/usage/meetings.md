@@ -471,20 +471,17 @@ existing records while preserving stable file IDs. `--after` filters by
 recording date locally and implies `--full`.
 
 `--limit` bounds the recordings hydrated per run. New recordings come first;
-then successful runs rotate through the least recently checked records.
-Date-scoped runs retain this rotation state without advancing the exhaustive
-reconciliation checkpoint. Plaud pagination is eventually consistent, so
-changes during a run may be reconciled on a later run.
-
-Rotation advances only after a successful run. If a selected recording fails,
-the previous rotation checkpoint stays in place and the next limited run retries
-the same window until the failure clears.
+then runs rotate through the least recently attempted recordings. Failed and
+date-scoped runs save this rotation state too. A failed recording remains
+eligible on its next turn, so it cannot block later recordings in limited runs.
+Plaud pagination is eventually consistent, so changes during a run may be
+reconciled on a later run.
 
 A recording awaiting transcription can still archive its metadata and notes.
 Later runs retry pending content. Temporarily missing transcripts or note tabs
 preserve the previously archived content. Recordings deleted from Plaud remain
-in the archive. A failed or canceled run preserves the prior successful sync
-state and refreshes search and cache for additions or updates already committed.
+in the archive. A failed or canceled run remains marked failed and refreshes
+search and cache for additions or updates already committed.
 
 `--probe` prints tool names, input schemas, and a first-page recording count.
 It prints no meeting titles, file IDs, transcripts, or note bodies. It helps

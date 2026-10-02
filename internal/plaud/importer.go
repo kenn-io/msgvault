@@ -14,8 +14,10 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+// SourceType identifies Plaud accounts in the archive.
 const SourceType = "plaud"
 
+// ImportOptions controls one sync of a registered Plaud account.
 type ImportOptions struct {
 	Identifier   string
 	AccountEmail string
@@ -25,6 +27,7 @@ type ImportOptions struct {
 	Progress     func(current, total int, title string)
 }
 
+// ImportSummary reports committed changes and errors from a sync.
 type ImportSummary struct {
 	SourceID          int64
 	MeetingsProcessed int64
@@ -34,6 +37,7 @@ type ImportSummary struct {
 	Duration          time.Duration
 }
 
+// Importer archives recording metadata, transcripts, and notes from Plaud.
 type Importer struct {
 	store  *store.Store
 	client Source
@@ -45,9 +49,8 @@ func NewImporter(st *store.Store, src Source) *Importer {
 }
 
 type syncState struct {
-	Version      int                  `json:"version"`
-	LastChecked  map[string]time.Time `json:"last_checked"`
-	ReconciledAt time.Time            `json:"reconciled_at,omitzero"`
+	Version     int                  `json:"version"`
+	LastChecked map[string]time.Time `json:"last_checked"`
 }
 
 func normalizeEmail(email string) (string, error) {
@@ -86,7 +89,12 @@ func RegisterSource(st *store.Store, identifier, email string) (*store.Source, e
 	if err != nil {
 		return nil, err
 	}
+	// The local identifier can outlive configuration edits. Reauthorization
+	// must not reassign its archive to another account.
 	if err := st.BindMeetingSourceOwner(src.ID, email); err != nil {
+		return nil, err
+	}
+	if err := st.UpdateSourceDisplayName(src.ID, identifier); err != nil {
 		return nil, err
 	}
 	if err := st.AddAccountIdentity(src.ID, email, "account-email"); err != nil {
@@ -116,13 +124,23 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	started := imp.now().UTC()
 	sum = &ImportSummary{SourceID: src.ID}
 	state := syncState{Version: 1, LastChecked: map[string]time.Time{}}
-	last, err := imp.store.GetLastSuccessfulSync(src.ID)
-	if err == nil && last.CursorAfter.Valid && last.CursorAfter.String != "" {
-		if json.Unmarshal([]byte(last.CursorAfter.String), &state) != nil || state.Version != 1 || state.LastChecked == nil {
+	cursor := ""
+	last, err := imp.store.GetLatestCheckpointedSync(src.ID)
+	if err == nil {
+		cursor = last.CursorBefore.String
+	} else if errors.Is(err, store.ErrSyncRunNotFound) {
+		last, err = imp.store.GetLastSuccessfulSync(src.ID)
+		if err == nil {
+			cursor = last.CursorAfter.String
+		}
+	}
+	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
+		return sum, err
+	}
+	if cursor != "" {
+		if json.Unmarshal([]byte(cursor), &state) != nil || state.Version != 1 || state.LastChecked == nil {
 			return sum, errors.New("invalid plaud sync state")
 		}
-	} else if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-		return sum, err
 	}
 	run, err := imp.store.StartSync(src.ID, SourceType)
 	if err != nil {
@@ -130,7 +148,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	scoped := imp.store.ScopedToSync(src.ID, run)
 	checkpoint := func() *store.Checkpoint {
-		return &store.Checkpoint{MessagesProcessed: sum.MeetingsProcessed, MessagesAdded: sum.MeetingsAdded, MessagesUpdated: sum.MeetingsUpdated, ErrorsCount: sum.Errors}
+		return &store.Checkpoint{
+			PageToken:         cursor,
+			MessagesProcessed: sum.MeetingsProcessed,
+			MessagesAdded:     sum.MeetingsAdded,
+			MessagesUpdated:   sum.MeetingsUpdated,
+			ErrorsCount:       sum.Errors,
+		}
 	}
 	defer func() {
 		sum.Duration = imp.now().UTC().Sub(started)
@@ -174,6 +198,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			break
 		}
 		sum.MeetingsProcessed++
+		// A failed recording must not hold every later limited run in place.
+		state.LastChecked[f.ID] = started
 		rec, err := imp.client.Recording(ctx, f.ID)
 		if err == nil && rec.File.ID != f.ID {
 			err = fmt.Errorf("%w: detail file identity mismatch", ErrContract)
@@ -217,11 +243,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			failures = append(failures, err)
 			continue
 		}
-		state.LastChecked[f.ID] = started
 		if opts.Progress != nil {
 			opts.Progress(index+1, len(candidates), f.Name)
 		}
 	}
+	raw, err := json.Marshal(state, json.Deterministic(true))
+	if err != nil {
+		return sum, errors.Join(errors.Join(failures...), err)
+	}
+	cursor = string(raw)
 	if len(failures) > 0 {
 		return sum, errors.Join(failures...)
 	}
@@ -229,17 +259,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		sum.Errors++
 		return sum, err
 	}
-	if opts.Limit == 0 && opts.CreatedAfter == nil {
-		state.ReconciledAt = started
-	}
-	raw, err := json.Marshal(state, json.Deterministic(true))
-	if err != nil {
-		return sum, err
-	}
 	if err := scoped.UpdateSyncCheckpoint(run, checkpoint()); err != nil {
 		return sum, err
 	}
-	return sum, scoped.CompleteSync(run, string(raw))
+	return sum, scoped.CompleteSync(run, cursor)
 }
 
 func recordingDate(file File) time.Time {
