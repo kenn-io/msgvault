@@ -140,10 +140,12 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 	if o.BindAddr != nil {
 		c.runtimeConfigState.bindAddr.capture(c.Server.BindAddr, *o.BindAddr)
 		c.Server.BindAddr = *o.BindAddr
+		c.bindSource = "--bind"
 	} else if v, ok := os.LookupEnv("MSGVAULT_BIND_ADDR"); ok {
 		bindSupplied = true
 		c.runtimeConfigState.bindAddr.capture(c.Server.BindAddr, v)
 		c.Server.BindAddr = v
+		c.bindSource = "MSGVAULT_BIND_ADDR"
 	}
 	if bindSupplied && strings.TrimSpace(c.Server.BindAddr) == "" {
 		return errors.New("server bind address is empty")
@@ -173,47 +175,38 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 	for _, entry := range []struct {
 		name        string
 		destination *bool
+		record      *runtimeSaveValue[bool]
 	}{
-		{"MSGVAULT_ALLOW_INSECURE", &c.Server.AllowInsecure},
-		{"MSGVAULT_CORS_CREDENTIALS", &c.Server.CORSCredentials},
-		{"MSGVAULT_REMOTE_ALLOW_INSECURE", &c.Remote.AllowInsecure},
+		{"MSGVAULT_ALLOW_INSECURE", &c.Server.AllowInsecure, &c.runtimeConfigState.allowInsecure},
+		{"MSGVAULT_CORS_CREDENTIALS", &c.Server.CORSCredentials, &c.runtimeConfigState.corsCredentials},
+		{"MSGVAULT_REMOTE_ALLOW_INSECURE", &c.Remote.AllowInsecure, &c.runtimeConfigState.remoteAllowInsecure},
 	} {
 		if v, ok := os.LookupEnv(entry.name); ok {
 			value, err := strconv.ParseBool(v)
 			if err != nil {
 				return fmt.Errorf("%s must be a boolean", entry.name)
 			}
-			switch entry.name {
-			case "MSGVAULT_ALLOW_INSECURE":
-				c.runtimeConfigState.allowInsecure.capture(*entry.destination, value)
-			case "MSGVAULT_CORS_CREDENTIALS":
-				c.runtimeConfigState.corsCredentials.capture(*entry.destination, value)
-			case "MSGVAULT_REMOTE_ALLOW_INSECURE":
-				c.runtimeConfigState.remoteAllowInsecure.capture(*entry.destination, value)
-			}
+			entry.record.capture(*entry.destination, value)
 			*entry.destination = value
 		}
 	}
 	for _, entry := range []struct {
 		name        string
 		destination *[]string
+		record      *runtimeSaveStrings
 	}{
-		{"MSGVAULT_CORS_ORIGINS", &c.Server.CORSOrigins}, {"MSGVAULT_TRUSTED_PROXIES", &c.Server.TrustedProxies},
+		{"MSGVAULT_CORS_ORIGINS", &c.Server.CORSOrigins, &c.runtimeConfigState.corsOrigins},
+		{"MSGVAULT_TRUSTED_PROXIES", &c.Server.TrustedProxies, &c.runtimeConfigState.trustedProxies},
 	} {
 		if v, ok := os.LookupEnv(entry.name); ok {
 			original := slices.Clone(*entry.destination)
 			*entry.destination = []string{}
-			if v != "" {
-				for part := range strings.SplitSeq(v, ",") {
-					*entry.destination = append(*entry.destination, strings.TrimSpace(part))
+			for part := range strings.SplitSeq(v, ",") {
+				if part = strings.TrimSpace(part); part != "" {
+					*entry.destination = append(*entry.destination, part)
 				}
 			}
-			switch entry.name {
-			case "MSGVAULT_CORS_ORIGINS":
-				c.runtimeConfigState.corsOrigins.capture(original, *entry.destination)
-			case "MSGVAULT_TRUSTED_PROXIES":
-				c.runtimeConfigState.trustedProxies.capture(original, *entry.destination)
-			}
+			entry.record.capture(original, *entry.destination)
 		}
 	}
 	c.Server.credential.sources = environmentSecret("MSGVAULT_API_KEY")
@@ -224,13 +217,6 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 		}
 	}
 	return nil
-}
-
-// SetRuntimeRemoteAllowInsecure marks a setup-derived HTTP allowance as
-// runtime-only so saving other configuration does not make it permanent.
-func (c *Config) SetRuntimeRemoteAllowInsecure(value bool) {
-	c.runtimeConfigState.remoteAllowInsecure.capture(c.Remote.AllowInsecure, value)
-	c.Remote.AllowInsecure = value
 }
 
 func (c *Config) credentialPath(path string) string {
@@ -248,25 +234,16 @@ func (c *Config) resolveCredentialPaths() {
 	c.Server.APIKeyFile = c.credentialPath(c.Server.APIKeyFile)
 	c.Remote.APIKeyFile = c.credentialPath(c.Remote.APIKeyFile)
 	c.Integrations.Docbank.APIKeyFile = c.credentialPath(c.Integrations.Docbank.APIKeyFile)
-	c.Server.defaultKeyFile = c.ServerKeyFilePath()
 }
 
-// ServerKeyFilePath is the default persisted daemon credential, under home.
+// ServerKeyFilePath is the default persisted daemon credential, under data_dir.
 func (c *Config) ServerKeyFilePath() string {
-	return filepath.Join(c.HomeDir, "tokens", providercredentials.ServerKeyFilename)
+	return filepath.Join(c.TokensDir(), providercredentials.ServerKeyFilename)
 }
 
 // HasCredentialSource distinguishes explicit input from default minting.
 func (s *ServerConfig) HasCredentialSource() bool {
 	return s.APIKey != "" || s.APIKeyFile != "" || s.APIKeyEnv != "" || s.credential.sources != nil
-}
-
-func (s *ServerConfig) hasPersistedKey() bool {
-	if s.defaultKeyFile == "" {
-		return false
-	}
-	_, err := os.Lstat(s.defaultKeyFile)
-	return err == nil
 }
 
 // ResolveServerKey reads only the selected server credential. Repeated calls

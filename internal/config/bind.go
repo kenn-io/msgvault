@@ -7,6 +7,14 @@ import (
 	"strings"
 )
 
+// BindAddressSource reports where the loaded bind address came from.
+func (c *Config) BindAddressSource() string {
+	if c.bindSource != "" {
+		return c.bindSource
+	}
+	return "default"
+}
+
 // ResolveBindAddress resolves an interface selector to one usable address.
 // It never falls back to another interface or a wildcard bind.
 func ResolveBindAddress(address string) (string, error) {

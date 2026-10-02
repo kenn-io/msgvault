@@ -28,6 +28,8 @@ test ! -e "$scratch/config.toml"
 msgvault daemon stop
 unset MSGVAULT_BIND_ADDR MSGVAULT_API_PORT
 
+# The following loopback daemon reuses the key minted above. CLI clients read
+# that key from tokens/ when they connect to the daemon.
 cat > "$scratch/config.toml" <<'EOF'
 [server]
 api_port = 8080

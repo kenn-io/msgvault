@@ -2042,6 +2042,35 @@ func TestEditAllowsAutoMintForSecureNonLoopbackWithoutMintingKey(t *testing.T) {
 	assert.Contains(t, string(contents), `theme = "dark"`)
 }
 
+func TestEditDoesNotRequireLiveServerResources(t *testing.T) { //nolint:paralleltest // process environment
+	t.Setenv("MSGVAULT_TEST_UNAVAILABLE_KEY", "")
+	t.Setenv("MSGVAULT_API_PORT", "invalid-runtime-port")
+	for _, server := range []string{
+		"bind_addr = 'iface:msgvault-nonexistent-test-interface'",
+		"api_key_env = 'MSGVAULT_TEST_UNAVAILABLE_KEY'",
+		"api_key_file = 'missing-key'",
+	} {
+		t.Run(server, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(os.WriteFile(path, []byte("[server]\n"+server+"\n[web]\ntheme = 'system'\n"), 0o600))
+			before, err := ReadConfigFile(path)
+			require.NoError(err)
+			after, err := EditConfigFile(path, before.ETag, []Edit{{Key: "web.theme", Value: "dark"}})
+			require.NoError(err)
+			cfg, err := LoadConfigFile(after, "")
+			require.NoError(err)
+			assert.Equal("dark", cfg.Web.Theme)
+			_, err = cfg.ResolveServerBindAddress()
+			if err == nil {
+				err = cfg.PrepareServerKey()
+			}
+			assert.Error(err, "startup must still reject unavailable resources")
+		})
+	}
+}
+
 func unsetServerKeyEnvironmentForTest(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{"MSGVAULT_API_KEY", "MSGVAULT_API_KEY_FILE", "MSGVAULT_API_KEY_ENV"} {

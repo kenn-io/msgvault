@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"errors"
-	"os"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
@@ -11,19 +10,6 @@ import (
 func addServeConfigFlags(cmd *cobra.Command) {
 	cmd.Flags().String("bind", "", "Bind address or iface:NAME (overrides environment and config)")
 	cmd.Flags().Int("port", 0, "HTTP API port (0 chooses an open port; overrides environment and config)")
-}
-
-func serveBindSource(cmd *cobra.Command, cfg *config.Config) string {
-	if flag := cmd.Flags().Lookup("bind"); flag != nil && flag.Changed {
-		return "--bind"
-	}
-	if _, present := os.LookupEnv("MSGVAULT_BIND_ADDR"); present {
-		return "MSGVAULT_BIND_ADDR"
-	}
-	if _, err := os.Stat(cfg.ConfigFilePath()); err == nil {
-		return cfg.ConfigFilePath()
-	}
-	return "default"
 }
 
 func serveRuntimeOverrides(cmd *cobra.Command) config.RuntimeOverrides {

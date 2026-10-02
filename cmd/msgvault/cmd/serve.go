@@ -222,7 +222,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	logger.Info("Server listener bound", "address", apiListener.Addr().String(), "bind_source", serveBindSource(cmd, cfg))
+	logger.Info("Server listener bound", "address", apiListener.Addr().String(), "bind_source", cfg.BindAddressSource())
 	listenerReserved := true
 	defer func() {
 		if listenerReserved {

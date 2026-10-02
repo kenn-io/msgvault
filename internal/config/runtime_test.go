@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -348,7 +349,7 @@ func TestRuntimeAgentAccessSnapshotAcceptsEnvironmentCredential(t *testing.T) { 
 	assert.Empty(cfg.Server.APIKey)
 }
 
-func TestRuntimeEnsureHomeTightensExistingDirectory(t *testing.T) {
+func TestRuntimeEnsureHomePreservesExistingDirectoryPermissions(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	if runtime.GOOS == "windows" {
@@ -361,7 +362,7 @@ func TestRuntimeEnsureHomeTightensExistingDirectory(t *testing.T) {
 	require.NoError(cfg.EnsureHomeDir())
 	info, err := os.Stat(home)
 	require.NoError(err)
-	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
 }
 
 func TestRuntimeEnsureHomeLeavesCustomConfigParentPermissions(t *testing.T) {
@@ -383,7 +384,7 @@ func TestRuntimeEnsureHomeLeavesCustomConfigParentPermissions(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o777), info.Mode().Perm())
 }
 
-func TestRuntimeEnsureHomeTightensExplicitHomeWithCustomConfig(t *testing.T) {
+func TestRuntimeEnsureHomePreservesExplicitHomeWithCustomConfig(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	if runtime.GOOS == "windows" {
@@ -405,8 +406,42 @@ func TestRuntimeEnsureHomeTightensExplicitHomeWithCustomConfig(t *testing.T) {
 
 	homeInfo, err := os.Stat(home)
 	require.NoError(err)
-	assert.Equal(os.FileMode(0o700), homeInfo.Mode().Perm())
+	assert.Equal(os.FileMode(0o777), homeInfo.Mode().Perm())
 	configInfo, err := os.Stat(configDir)
 	require.NoError(err)
 	assert.Equal(os.FileMode(0o777), configInfo.Mode().Perm())
+}
+
+func TestServerKeySurvivesHomeReplacementWithPersistentData(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Parallel()
+	data := t.TempDir()
+	var firstKey string
+	for range 2 {
+		home := t.TempDir()
+		path := filepath.Join(home, "config.toml")
+		require.NoError(fileutil.SecureWriteFile(path,
+			[]byte(fmt.Sprintf("[data]\ndata_dir = %q\n[server]\nbind_addr = '0.0.0.0'\n", filepath.ToSlash(data))), 0o600))
+		cfg, err := Load(path, home)
+		require.NoError(err)
+		require.NoError(cfg.PrepareServerKey())
+		persisted, err := os.ReadFile(filepath.Join(data, "tokens", "server-api-key"))
+		require.NoError(err)
+		assert.Equal(cfg.Server.AuthenticationKey()+"\n", string(persisted))
+		if firstKey == "" {
+			firstKey = cfg.Server.AuthenticationKey()
+		} else {
+			assert.Equal(firstKey, cfg.Server.AuthenticationKey())
+		}
+	}
+}
+
+func TestRuntimeListsIgnoreEmptyEntries(t *testing.T) { //nolint:paralleltest // process environment
+	t.Setenv("MSGVAULT_CORS_ORIGINS", " https://ui.example.test, ,")
+	t.Setenv("MSGVAULT_TRUSTED_PROXIES", ",127.0.0.1, , ::1,")
+	cfg, err := Load("", t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"https://ui.example.test"}, cfg.Server.CORSOrigins)
+	assert.Equal(t, []string{"127.0.0.1", "::1"}, cfg.Server.TrustedProxies)
 }

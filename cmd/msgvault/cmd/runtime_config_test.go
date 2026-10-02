@@ -60,34 +60,55 @@ func TestRuntimeLocalIgnoresUnusedRemoteSecret(t *testing.T) { //nolint:parallel
 }
 
 func TestExportTokenKeepsMountedKeyOutOfSavedConfig(t *testing.T) { //nolint:paralleltest // command flags are legacy globals
-	assert := assert.New(t)
-	require := require.New(t)
-	home := t.TempDir()
-	keyFile := filepath.Join(home, "key")
-	require.NoError(fileutil.SecureWriteFile(keyFile, []byte("mounted-export-key"), 0o600))
-	path := filepath.Join(home, "config.toml")
-	require.NoError(fileutil.SecureWriteFile(path, []byte("[remote]\nurl = \"http://old.example.test\"\napi_key_file = \"key\"\nallow_insecure = true\n"), 0o600))
-	cfg, err := config.Load(path, home)
-	require.NoError(err)
-	require.NoError(os.MkdirAll(cfg.TokensDir(), 0o700))
-	require.NoError(fileutil.SecureWriteFile(filepath.Join(cfg.TokensDir(), "account@example.test.json"), []byte(`{"access_token":"synthetic-access-token"}`), 0o600))
-	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("mounted-export-key", r.Header.Get("X-Api-Key"))
-		w.WriteHeader(http.StatusCreated)
-	}))
-	t.Cleanup(daemon.Close)
 	previousURL, previousKey, previousAllow := exportTokenTo, exportTokenAPIKey, exportAllowInsecure
-	exportTokenTo, exportTokenAPIKey, exportAllowInsecure = daemon.URL, "", false
 	t.Cleanup(func() {
 		exportTokenTo, exportTokenAPIKey, exportAllowInsecure = previousURL, previousKey, previousAllow
 	})
-	command := &cobra.Command{}
-	command.Flags().String("api-key", "", "")
-	command.SetContext(withStoreResolverConfig(t, cfg))
-	require.NoError(runExportToken(command, []string{"account@example.test"}))
-	saved, err := os.ReadFile(path)
-	require.NoError(err)
-	assert.NotContains(string(saved), "mounted-export-key")
-	assert.Contains(string(saved), "api_key_file")
-	assert.Contains(string(saved), daemon.URL)
+	for _, tt := range []struct {
+		name             string
+		explicitURL      bool
+		explicitInsecure bool
+	}{
+		{name: "explicit URL matches environment", explicitURL: true},
+		{name: "explicit allow-insecure matches environment", explicitInsecure: true},
+		{name: "environment only"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			home := t.TempDir()
+			keyFile := filepath.Join(home, "key")
+			require.NoError(fileutil.SecureWriteFile(keyFile, []byte("mounted-export-key"), 0o600))
+			path := filepath.Join(home, "config.toml")
+			require.NoError(fileutil.SecureWriteFile(path, []byte("[remote]\nurl = \"http://old.example.test\"\napi_key_file = \"key\"\nallow_insecure = false\n"), 0o600))
+			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal("mounted-export-key", r.Header.Get("X-Api-Key"))
+				w.WriteHeader(http.StatusCreated)
+			}))
+			t.Cleanup(daemon.Close)
+			t.Setenv("MSGVAULT_REMOTE_URL", daemon.URL)
+			t.Setenv("MSGVAULT_REMOTE_ALLOW_INSECURE", "true")
+			cfg, err := config.Load(path, home)
+			require.NoError(err)
+			require.NoError(os.MkdirAll(cfg.TokensDir(), 0o700))
+			require.NoError(fileutil.SecureWriteFile(filepath.Join(cfg.TokensDir(), "account@example.test.json"), []byte(`{"access_token":"synthetic-access-token"}`), 0o600))
+			exportTokenTo, exportTokenAPIKey, exportAllowInsecure = "", "", tt.explicitInsecure
+			wantURL := "http://old.example.test"
+			if tt.explicitURL {
+				exportTokenTo, wantURL = daemon.URL, daemon.URL
+			}
+			command := &cobra.Command{}
+			command.Flags().String("api-key", "", "")
+			command.SetContext(withStoreResolverConfig(t, cfg))
+			require.NoError(runExportToken(command, []string{"account@example.test"}))
+			snapshot, err := config.ReadConfigFile(path)
+			require.NoError(err)
+			saved, err := config.LoadConfigFile(snapshot, home)
+			require.NoError(err)
+			assert.Equal(wantURL, saved.Remote.URL)
+			assert.Equal(tt.explicitInsecure, saved.Remote.AllowInsecure)
+			assert.Equal(keyFile, saved.Remote.APIKeyFile)
+			assert.Empty(saved.Remote.APIKey)
+		})
+	}
 }

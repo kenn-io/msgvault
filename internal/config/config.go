@@ -233,8 +233,7 @@ type ServerConfig struct {
 	DaemonAutoRestart string        `toml:"daemon_auto_restart"` // never, newer, or always
 	DaemonAutoStart   *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
 
-	credential     runtimeCredential
-	defaultKeyFile string
+	credential runtimeCredential
 }
 
 func (s *ServerConfig) ApplyDefaults() {
@@ -254,9 +253,6 @@ func (s *ServerConfig) DaemonAutoStartEnabled() bool {
 func (s *ServerConfig) Validate() error {
 	if s.APIPort < 0 || s.APIPort > 65535 {
 		return fmt.Errorf("invalid [server] api_port %d: must be between 0 and 65535 (0 auto-selects an open port)", s.APIPort)
-	}
-	if s.AgentAccess && !s.HasCredentialSource() && environmentSecret("MSGVAULT_API_KEY") == nil && s.AuthenticationKey() == "" && !s.hasPersistedKey() && (s.IsLoopback() || s.AllowInsecure) {
-		return errors.New("invalid [server] agent_access: requires api_key to be set")
 	}
 	switch s.DaemonAutoRestart {
 	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
@@ -533,10 +529,10 @@ type Config struct {
 	Gmail              GmailConfig                     `toml:"gmail"`
 
 	// Computed paths (not from config file)
-	HomeDir                  string `toml:"-"`
-	manageHomeDirPermissions bool   `toml:"-"`
-	configPath               string // resolved path to the loaded config file
-	runtimeConfigState       runtimeConfigState
+	HomeDir            string `toml:"-"`
+	bindSource         string
+	configPath         string // resolved path to the loaded config file
+	runtimeConfigState runtimeConfigState
 }
 
 // IMAPConfig contains operator-owned settings for IMAP mutations.
@@ -792,16 +788,11 @@ func DefaultHome() string {
 	return filepath.Join(home, ".msgvault")
 }
 
-func isDefaultHomeDir(path string) bool {
-	return path != "" && filepath.Clean(path) == filepath.Clean(DefaultHome())
-}
-
 // NewDefaultConfig returns a configuration with default values.
 func NewDefaultConfig() *Config {
 	homeDir := DefaultHome()
 	cfg := &Config{
-		HomeDir:                  homeDir,
-		manageHomeDirPermissions: true,
+		HomeDir: homeDir,
 		Data: DataConfig{
 			DataDir: homeDir,
 		},
@@ -943,7 +934,6 @@ func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverr
 			cfg.HomeDir = filepath.Dir(decodePath)
 			cfg.Data.DataDir = cfg.HomeDir
 		}
-		cfg.manageHomeDirPermissions = homeDir != "" || isDefaultHomeDir(cfg.HomeDir)
 		cfg.configPath = decodePath
 		cfg.resolveCredentialPaths()
 		if overrides != nil {
@@ -970,7 +960,6 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.HomeDir = filepath.Dir(path)
 		cfg.Data.DataDir = cfg.HomeDir
 	}
-	cfg.manageHomeDirPermissions = homeOverride || isDefaultHomeDir(cfg.HomeDir)
 
 	// Multimodal defaults depend on the decoded credential destination. Reset
 	// the pre-filled section so changing endpoint cannot silently carry the
@@ -988,6 +977,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 				"forward slashes (C:/Games/msgvault) or single quotes ('C:\\Games\\msgvault')", err)
 		}
 		return nil, fmt.Errorf("decode config: %w", err)
+	}
+	if metadata.IsDefined("server", "bind_addr") {
+		cfg.bindSource = path
 	}
 	if metadata.IsDefined("people", "identity_scoring", "minimum_probability") &&
 		cfg.People.IdentityScoring.MinimumProbability == 0 {
@@ -1424,18 +1416,7 @@ func (c *Config) LogsDir() string {
 
 // EnsureHomeDir creates the msgvault home directory if it doesn't exist.
 func (c *Config) EnsureHomeDir() error {
-	if err := fileutil.SecureMkdirAll(c.HomeDir, 0700); err != nil {
-		return err
-	}
-	if !c.manageHomeDirPermissions {
-		return nil
-	}
-	info, err := os.Stat(c.HomeDir)
-	if err != nil {
-		return err
-	}
-	// Remove access for other users without making a read-only home writable.
-	return fileutil.SecureChmod(c.HomeDir, info.Mode().Perm()&0o700)
+	return fileutil.SecureMkdirAll(c.HomeDir, 0700)
 }
 
 // ConfigFilePath returns the path to the config file.
@@ -1451,6 +1432,8 @@ func (c *Config) ConfigFilePath() string {
 // Save writes the current configuration to disk atomically.
 // Uses temp file + rename to prevent partial writes on crash.
 // Enforces 0600 permissions regardless of existing file mode.
+// Values still matching runtime overrides are not persisted. Use EditConfigFile
+// for explicit assignments, including values equal to an active override.
 func (c *Config) Save() error {
 	return c.saveWithHooks(configSaveHooks{})
 }
