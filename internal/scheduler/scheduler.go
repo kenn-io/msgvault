@@ -396,7 +396,7 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 		if s.isStopped() {
 			return
 		}
-		done, ok := s.beginWork("embed")
+		done, ok := s.beginWork("scheduled embedding")
 		if !ok {
 			return
 		}
@@ -444,7 +444,7 @@ func (s *Scheduler) SetDocumentVectorJob(job func(context.Context) error, schedu
 		if s.isStopped() {
 			return
 		}
-		done, ok := s.beginWork("document-vector")
+		done, ok := s.beginWork("scheduled document indexing")
 		if !ok {
 			return
 		}
@@ -529,7 +529,7 @@ func (s *Scheduler) runSync(email string) {
 	s.mu.Lock()
 	s.queued[email] = true
 	s.mu.Unlock()
-	done, ok := s.beginWork("sync " + email)
+	done, ok := s.beginWork("scheduled sync of " + email)
 	s.mu.Lock()
 	delete(s.queued, email)
 	if ok {
@@ -743,7 +743,7 @@ func (s *Scheduler) startVisualPostSync() {
 				s.startVisualPostSync()
 			}
 		}()
-		done, ok := s.beginWork("post-sync multimodal")
+		done, ok := s.beginWork("post-sync multimodal indexing")
 		if !ok {
 			return
 		}
