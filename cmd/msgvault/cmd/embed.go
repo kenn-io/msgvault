@@ -43,12 +43,17 @@ Pass --backstop for a full-scan pass that ignores the per-generation
 watermark, catching any straggler messages the incremental scan skipped.`,
 	RunE: runEmbeddingsResume,
 }
-var embeddingsListCmd = &cobra.Command{
-	Use:   cmdUseList,
-	Short: "List vector embedding generations",
-	Args:  cobra.NoArgs,
-	RunE:  runEmbeddingsListCommand,
+var embeddingsListCmd = newEmbeddingsListCommand()
+
+func newEmbeddingsListCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use: cmdUseList, Short: "List vector embedding generations",
+		Args: cobra.NoArgs, RunE: runEmbeddingsListCommand,
+	}
+	command.Flags().Bool(flagJSON, false, "Output structured generation metadata and coverage without host paths or diagnostics")
+	return command
 }
+
 var embeddingsRetireCmd = &cobra.Command{
 	Use:   "retire <generation-id>",
 	Short: "Retire a vector embedding generation",

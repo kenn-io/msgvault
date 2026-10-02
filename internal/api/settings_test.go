@@ -534,6 +534,37 @@ max_requests_per_day = 50
 	assertions.Equal(int64(50), loaded.People.Enrichment.Providers[1].MaxRequestsPerDay)
 }
 
+func TestPutSettingsDisabledEnrichmentProviderPreservesEmptyTargets(t *testing.T) {
+	t.Parallel()
+	requirements, assertions := require.New(t), assert.New(t)
+	srv, path := newSettingsTestServer(t, `[people.enrichment]
+enabled = false
+
+[[people.enrichment.providers]]
+name = "exa-primary"
+kind = "exa"
+enabled = false
+endpoint = "https://exa.example.test/search"
+target_keys = ["attribute:bio"]
+`)
+	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+	requirements.Equal(http.StatusOK, get.Code)
+	put := performSettingsRequest(t, srv, http.MethodPut,
+		"/api/v1/settings/person-enrichment/providers/exa-primary",
+		[]byte(`{"kind":"exa","enabled":false,"endpoint":"https://exa.example.test/search","allowed_identifiers":[],"target_keys":[],"allow_sensitive_targets":false,"retention_posture":"zero_retention","training_posture":"no_training","refresh_interval":"1h","request_timeout":"1m","max_retries":2,"max_requests_per_run":0,"max_requests_per_day":0}`),
+		get.Header().Get("ETag"), "")
+	requirements.Equal(http.StatusOK, put.Code, put.Body.String())
+	loaded, err := config.Load(path, "")
+	requirements.NoError(err)
+	requirements.Len(loaded.People.Enrichment.Providers, 1)
+	provider := loaded.People.Enrichment.Providers[0]
+	assertions.False(provider.Enabled)
+	assertions.Empty(provider.AllowedIdentifiers)
+	assertions.Empty(provider.TargetKeys)
+	assertions.Zero(provider.MaxRequestsPerRun)
+	assertions.Zero(provider.MaxRequestsPerDay)
+}
+
 func TestPatchSettingsFirstEnrichmentEnableGeneratesPrivateSuppressionKey(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)

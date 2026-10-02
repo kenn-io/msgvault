@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -60,15 +59,23 @@ func visualOperationPassScope(
 }
 
 type visualBuildRequest struct {
+	VisualOperationGuard
+
 	Consent bool `json:"consent"`
 }
 
+type visualResumeRequest struct{ VisualOperationGuard }
+
 type visualRetryRequest struct {
+	VisualOperationGuard
+
 	MessageID int64  `json:"message_id"`
 	BlobHash  string `json:"blob_hash"`
 }
 
 type visualRetireRequest struct {
+	VisualOperationGuard
+
 	GenerationID int64 `json:"generation_id"`
 }
 
@@ -114,29 +121,52 @@ func (s *Server) handleVisualStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVisualRun(w http.ResponseWriter, r *http.Request) {
+	var request visualResumeRequest
+	if err := decodeVisualOperationRequest(w, r, &request, &request.VisualOperationGuard, true); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_visual_guard", "Visual resume request is invalid")
+		return
+	}
 	s.vectorMu.RLock()
 	run, statusFn := s.visualRun, s.visualStatus
+	policy := s.visualPolicy
 	s.vectorMu.RUnlock()
+	if !checkVisualRequestGuard(w, request.VisualOperationGuard, policy) {
+		return
+	}
+	if run != nil {
+		original := run
+		run = func(ctx context.Context, scope operations.PassScope) error {
+			return s.guardVisualCallback(ctx, request.VisualOperationGuard, policy, func(ctx context.Context) error { return original(ctx, scope) })
+		}
+	}
 	s.runVisualOperation(w, r, run, statusFn, visualOperationResume, nil, "visual_resume_failed")
 }
 
 func (s *Server) handleVisualBuild(w http.ResponseWriter, r *http.Request) {
 	var request visualBuildRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
-	if err := json.UnmarshalRead(r.Body, &request); err != nil || !request.Consent {
+	if err := decodeVisualOperationRequest(w, r, &request, &request.VisualOperationGuard, false); err != nil || !request.Consent {
 		writeError(w, http.StatusBadRequest, "visual_consent_required", "Explicit hosted-processing consent is required")
 		return
 	}
 	s.vectorMu.RLock()
 	build, statusFn := s.visualBuild, s.visualStatus
+	policy := s.visualPolicy
 	s.vectorMu.RUnlock()
+	if !checkVisualRequestGuard(w, request.VisualOperationGuard, policy) {
+		return
+	}
+	if build != nil {
+		original := build
+		build = func(ctx context.Context, scope operations.PassScope) error {
+			return s.guardVisualCallback(ctx, request.VisualOperationGuard, policy, func(ctx context.Context) error { return original(ctx, scope) })
+		}
+	}
 	s.runVisualOperation(w, r, build, statusFn, visualOperationBuild, nil, "visual_build_failed")
 }
 
 func (s *Server) handleVisualRetry(w http.ResponseWriter, r *http.Request) {
 	var request visualRetryRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
-	if err := json.UnmarshalRead(r.Body, &request); err != nil || request.MessageID <= 0 || strings.TrimSpace(request.BlobHash) == "" {
+	if err := decodeVisualOperationRequest(w, r, &request, &request.VisualOperationGuard, false); err != nil || request.MessageID <= 0 || strings.TrimSpace(request.BlobHash) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_visual_owner", "message_id and blob_hash are required")
 		return
 	}
@@ -144,13 +174,17 @@ func (s *Server) handleVisualRetry(w http.ResponseWriter, r *http.Request) {
 	request.BlobHash = strings.ToLower(strings.TrimSpace(request.BlobHash))
 	s.vectorMu.RLock()
 	retry, statusFn := s.visualRetry, s.visualStatus
+	policy := s.visualPolicy
 	s.vectorMu.RUnlock()
+	if !checkVisualRequestGuard(w, request.VisualOperationGuard, policy) {
+		return
+	}
 	if retry == nil {
 		writeError(w, http.StatusServiceUnavailable, "visual_search_not_ready", "Visual attachment search is not initialized")
 		return
 	}
 	s.runVisualOperation(w, r, func(ctx context.Context, scope operations.PassScope) error {
-		return retry(ctx, scope, request.MessageID, request.BlobHash)
+		return s.guardVisualCallback(ctx, request.VisualOperationGuard, policy, func(ctx context.Context) error { return retry(ctx, scope, request.MessageID, request.BlobHash) })
 	}, statusFn, visualOperationRetry, &request, "visual_retry_failed")
 }
 
@@ -191,6 +225,10 @@ func (s *Server) runVisualOperation(
 		return
 	}
 	if err := run(r.Context(), scope); err != nil {
+		if errors.Is(err, ErrVisualPolicyChanged) {
+			writeVisualPolicyChanged(w)
+			return
+		}
 		writeError(w, http.StatusBadGateway, errorCode, err.Error())
 		return
 	}
@@ -206,14 +244,17 @@ func (s *Server) runVisualOperation(
 
 func (s *Server) handleVisualRetire(w http.ResponseWriter, r *http.Request) {
 	var request visualRetireRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
-	if err := json.UnmarshalRead(r.Body, &request); err != nil || request.GenerationID <= 0 {
+	if err := decodeVisualOperationRequest(w, r, &request, &request.VisualOperationGuard, false); err != nil || request.GenerationID <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid_visual_generation", "generation_id must be positive")
 		return
 	}
 	s.vectorMu.RLock()
 	retire, statusFn := s.visualRetire, s.visualStatus
+	policy := s.visualPolicy
 	s.vectorMu.RUnlock()
+	if !checkVisualRequestGuard(w, request.VisualOperationGuard, policy) {
+		return
+	}
 	if retire == nil || statusFn == nil {
 		writeError(w, http.StatusServiceUnavailable, "visual_search_not_ready", "Visual attachment search is not initialized")
 		return
@@ -223,7 +264,11 @@ func (s *Server) handleVisualRetire(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "visual_generation_changed", "The configured visual generation does not match")
 		return
 	}
-	if err := retire(r.Context()); err != nil {
+	if err := s.guardVisualCallback(r.Context(), request.VisualOperationGuard, policy, retire); err != nil {
+		if errors.Is(err, ErrVisualPolicyChanged) {
+			writeVisualPolicyChanged(w)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "visual_retire_failed", err.Error())
 		return
 	}

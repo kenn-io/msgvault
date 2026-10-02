@@ -162,7 +162,7 @@ func TestSetupStatusTracksBothDocumentVectorConsentPurposes(t *testing.T) {
 	env.consent = setupConsentFromStore(testCtx, cfg, fixture.Store)
 	lane = documentVectorsLane(cfg, env)
 	assert.Equal(laneStatePending, lane.State)
-	assert.Equal(map[string]string{"document_embedding": consentMissing, "query_embedding": consentMissing}, lane.ConsentPurposes)
+	assert.Equal(map[string]string{"document_embedding": consentStale, "query_embedding": consentStale}, lane.ConsentPurposes)
 }
 
 func TestDocumentVectorStatusWorksWhenEmbeddingsAreDisabled(t *testing.T) {

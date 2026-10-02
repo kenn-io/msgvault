@@ -232,6 +232,7 @@ func writeHumaError(ctx huma.Context, status int, code string, message string) {
 }
 
 func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
+	s.registerMCPCapabilitiesRoute(api, apiV1)
 	s.registerSessionRoutes(api)
 	registerRawHumaJSONRoute[HealthResponse](api, huma.Operation{
 		OperationID: "health",
@@ -304,6 +305,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerPersonRelationshipRoutes(apiV1)
 	s.registerIdentityLinkRoutes(apiV1)
 	s.registerIdentityMatchRoutes(apiV1)
+	s.registerPersonMatchScoringRoutes(apiV1)
 	s.registerTaskIntegrationRoutes(apiV1)
 	s.registerTaskLinkRoutes(apiV1)
 	s.registerSearchCoverageRoute(apiV1)
@@ -335,8 +337,10 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(apiV1, visualSearchOp, s.handleVisualSearch)
 	registerAPIV1RawHumaJSONRoute[visual.Status](apiV1, "getVisualAttachmentStatus", http.MethodGet, "/multimodal/status", "Get visual attachment embedding status", s.handleVisualStatus)
+	registerAPIV1RawHumaJSONRoute[LaneReadinessResponse](apiV1, "getLaneReadiness", http.MethodGet, "/lanes/readiness", "Read sanitized configured and initialized lane readiness", s.handleLaneReadiness)
+	registerAPIV1RawHumaJSONRoute[VisualRuntimePolicy](apiV1, "getVisualRuntimePolicy", http.MethodGet, "/multimodal/policy", "Get the initialized visual upload policy", s.handleVisualRuntimePolicy)
 	registerAPIV1RawHumaJSONRouteWithRequest[visualBuildRequest, visual.Status](apiV1, "startVisualAttachmentBuild", http.MethodPost, "/multimodal/build", "Consent and run one bounded visual attachment embedding pass", s.handleVisualBuild)
-	registerAPIV1RawHumaJSONRoute[visual.Status](apiV1, "resumeVisualAttachmentBuild", http.MethodPost, "/multimodal/run", "Resume one bounded visual attachment embedding pass", s.handleVisualRun)
+	registerAPIV1RawHumaJSONRouteWithRequest[visualResumeRequest, visual.Status](apiV1, "resumeVisualAttachmentBuild", http.MethodPost, "/multimodal/run", "Resume one bounded visual attachment embedding pass", s.handleVisualRun)
 	registerAPIV1RawHumaJSONRouteWithRequest[visualRetryRequest, visual.Status](apiV1, "retryVisualAttachmentOwner", http.MethodPost, "/multimodal/retry", "Retry one visual attachment owner", s.handleVisualRetry)
 	retireVisualOp := withAPIKeySecurity(huma.Operation{OperationID: "retireVisualAttachmentGeneration", Method: http.MethodPost, Path: "/multimodal/retire", Tags: []string{"Search"}, Summary: "Retire the visual attachment generation", Responses: rawHumaResponses(http.StatusNoContent)})
 	retireVisualOp.RequestBody = jsonRequestBodyFor[visualRetireRequest](apiV1)
@@ -736,6 +740,10 @@ func rawAPIV1Operation(operationID, method, path, summary string) huma.Operation
 
 func rawRouteParameters(operationID string) []*huma.Param {
 	switch operationID {
+	case "getVisualAttachmentStatus":
+		coverage := queryStringParam("coverage", "Set 1 for an explicit rate-limited archive media coverage scan; omitted status reads only progress", false)
+		coverage.Schema.Enum = []any{"0", "1"}
+		return []*huma.Param{coverage}
 	case "listOperationRuns":
 		kind := queryStringParam("kind", "Exact operation kind", false)
 		kind.Schema.Enum = stringsToAny(operationKindValues())
@@ -882,7 +890,9 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryIntegerParam(limitParam, "Maximum candidates to return (default 100, max 500)"),
 			queryIntegerParam("offset", "Zero-based candidate offset"),
 		}
-	case "acceptIdentityMatchCandidate", "rejectIdentityMatchCandidate":
+	case "acceptIdentityMatchCandidate", "rejectIdentityMatchCandidate",
+		"getIdentityMatchCandidate", "reviewAcceptIdentityMatchCandidate",
+		"reviewRejectIdentityMatchCandidate":
 		return []*huma.Param{pathIntegerParam("Identity match candidate ID")}
 	case "searchIntegrationTasks":
 		return []*huma.Param{queryStringParam("q", "Task title search within the configured project", true)}

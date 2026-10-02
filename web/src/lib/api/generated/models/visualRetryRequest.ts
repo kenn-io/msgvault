@@ -4,5 +4,11 @@
 
 export interface VisualRetryRequest {
   blob_hash: string;
+  /** @minLength 1 */
+  expected_generation_fingerprint?: string;
+  /** @minimum 1 */
+  expected_generation_id?: number;
+  /** @minLength 1 */
+  expected_policy_fingerprint?: string;
   message_id: number;
 }

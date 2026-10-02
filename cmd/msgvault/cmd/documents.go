@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/fileutil"
+	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/personscope"
 	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
@@ -173,6 +174,7 @@ type documentRebuildStatus struct {
 }
 
 type documentBuildResult struct {
+	RunID           int64
 	Reconciled      int
 	Changes         int
 	Processed       int
@@ -243,6 +245,7 @@ func newDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 		Short: "Manage document attachment indexing",
 	}
 	parent.AddCommand(newProbeMistralCmd(deps))
+	parent.AddCommand(newDocumentPolicyCmd(deps))
 	parent.AddCommand(newConsentMistralCmd(deps))
 	parent.AddCommand(newBuildDocumentsCmd(deps))
 	parent.AddCommand(newResumeDocumentsCmd(deps))
@@ -360,11 +363,12 @@ func newConsentMistralCmd(deps documentsCommandDeps) *cobra.Command {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(command, args, nil)
 			}
-			return runConsentMistral(command, capabilityPath, confirmed, deps)
+			return executeDocumentJSON(command, func() error { return runConsentMistral(command, capabilityPath, confirmed, deps) })
 		},
 	}
 	command.Flags().StringVar(&capabilityPath, "capabilities", "", "Authenticated Mistral capability manifest")
 	command.Flags().BoolVar(&confirmed, "yes", false, "Confirm the configured upload and provider privacy policy")
+	addDocumentJSONFlags(command)
 	_ = command.MarkFlagRequired("capabilities")
 	return command
 }
@@ -386,13 +390,14 @@ func newBuildDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(command, args, documentProviderForwardEnv(invocationFromCommand(command)))
 			}
-			return runBuildDocuments(command, capabilityPath, limit, mode, confirmed, deps)
+			return executeDocumentJSON(command, func() error { return runBuildDocuments(command, capabilityPath, limit, mode, confirmed, deps) })
 		},
 	}
 	command.Flags().StringVar(&capabilityPath, "capabilities", "", "Authenticated Mistral capability manifest")
 	command.Flags().IntVar(&limit, "limit", 100, "Maximum canonical documents to process")
 	command.Flags().BoolVar(&fullRebuild, "full-rebuild", false, "Replace current extractions for all eligible documents")
 	command.Flags().BoolVar(&confirmed, "yes", false, "Confirm the disclosed provider uploads for this build")
+	addDocumentJSONFlags(command)
 	_ = command.MarkFlagRequired("capabilities")
 	return command
 }
@@ -409,12 +414,15 @@ func newResumeDocumentsCmd(deps documentsCommandDeps) *cobra.Command {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(command, args, documentProviderForwardEnv(invocationFromCommand(command)))
 			}
-			return runBuildDocuments(command, capabilityPath, limit, documentBuildResume, confirmed, deps)
+			return executeDocumentJSON(command, func() error {
+				return runBuildDocuments(command, capabilityPath, limit, documentBuildResume, confirmed, deps)
+			})
 		},
 	}
 	command.Flags().StringVar(&capabilityPath, "capabilities", "", "Authenticated Mistral capability manifest")
 	command.Flags().IntVar(&limit, "limit", 100, "Maximum canonical documents to process")
 	command.Flags().BoolVar(&confirmed, "yes", false, "Confirm the disclosed provider uploads for this resume pass")
+	addDocumentJSONFlags(command)
 	_ = command.MarkFlagRequired("capabilities")
 	return command
 }
@@ -447,11 +455,12 @@ func newRetryDocumentCmd(deps documentsCommandDeps) *cobra.Command {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(command, args, nil)
 			}
-			return runRetryDocument(command, capabilityPath, canonicalBlobHash, deps)
+			return executeDocumentJSON(command, func() error { return runRetryDocument(command, capabilityPath, canonicalBlobHash, deps) })
 		},
 	}
 	command.Flags().StringVar(&capabilityPath, "capabilities", "", "Authenticated Mistral capability manifest")
 	command.Flags().StringVar(&canonicalBlobHash, "hash", "", "Exact lowercase attachment SHA-256")
+	addDocumentJSONFlags(command)
 	_ = command.MarkFlagRequired("capabilities")
 	_ = command.MarkFlagRequired("hash")
 	return command
@@ -590,13 +599,19 @@ func runConsentMistral(
 	if err != nil {
 		return err
 	}
+	if err := guardDocumentFingerprint(command, profile); err != nil {
+		return err
+	}
 	if !documentsConfig.Enabled {
 		return errors.New("document consent requires attachments.documents.enabled=true")
 	}
-	printDocumentConsentDisclosure(
-		command.OutOrStdout(), documentsConfig, profile, inputPolicy,
-	)
+	if !documentJSONOutput(command) {
+		printDocumentConsentDisclosure(command.OutOrStdout(), documentsConfig, profile, inputPolicy)
+	}
 	if !confirmed {
+		if documentJSONOutput(command) {
+			return &documentCommandError{code: "document_confirmation_required"}
+		}
 		return errors.New("document consent requires --yes after reviewing the configured retention and training postures")
 	}
 	if manifest.MaxUnits < documentsConfig.MaxPagesPerDocument || len(inputPolicy.AllowedMediaTypes) == 0 {
@@ -630,6 +645,13 @@ func runConsentMistral(
 		}
 	} else if err := bootstrapDocumentOccurrencesIfConsented(command.Context(), st); err != nil {
 		return err
+	}
+	if documentJSONOutput(command) {
+		consentedAt, err := st.GetDocumentProviderConsentTime(command.Context(), profile.ID, profile.Fingerprint)
+		if err != nil {
+			return err
+		}
+		return writeDocumentJSON(command, mcpserver.DocumentConsent{ProfileID: profile.ID, Fingerprint: profile.Fingerprint, ExactConsent: true, ConsentedAt: consentedAt})
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(),
 		"Recorded Mistral document consent for profile %s (%d authenticated format(s), retention=%s, training=%s).\n",
@@ -707,12 +729,15 @@ func runBuildDocuments(
 	if state == nil || state.cfg == nil {
 		return errors.New("document build requires loaded configuration")
 	}
-	cfg := state.cfg
+	dataDirectory := state.cfg.Data.DataDir
 	if limit <= 0 || limit > 10_000 {
 		return errors.New("document build limit must be between 1 and 10000")
 	}
 	documentsConfig, manifest, inputPolicy, profile, err := configuredDocumentProfile(capabilityPath, invocationFromCommand(command))
 	if err != nil {
+		return err
+	}
+	if err := guardDocumentFingerprint(command, profile); err != nil {
 		return err
 	}
 	if !documentsConfig.Enabled {
@@ -723,6 +748,9 @@ func runBuildDocuments(
 		return err
 	}
 	if !confirmed {
+		if documentJSONOutput(command) {
+			return &documentCommandError{code: "document_confirmation_required"}
+		}
 		_, _ = fmt.Fprintln(command.OutOrStdout(), "Document build upload preflight:")
 		printDocumentConsentDisclosure(
 			command.OutOrStdout(), documentsConfig, profile, inputPolicy,
@@ -742,6 +770,9 @@ func runBuildDocuments(
 		return err
 	}
 	if !consentStatus.ProfileEnabled || !consentStatus.ExactConsent {
+		if documentJSONOutput(command) {
+			return &documentCommandError{code: "document_consent_required"}
+		}
 		return errors.New("document build requires exact consent; run `msgvault documents consent-mistral --capabilities <manifest> --yes`")
 	}
 	if err := repairHistoricalAttachmentRoles(command.Context(), st); err != nil {
@@ -763,9 +794,9 @@ func runBuildDocuments(
 	if err != nil {
 		return err
 	}
-	printDocumentBuildPreflight(
-		command.OutOrStdout(), documentsConfig, profile, inputPolicy, status, limit, mode,
-	)
+	if !documentJSONOutput(command) {
+		printDocumentBuildPreflight(command.OutOrStdout(), documentsConfig, profile, inputPolicy, status, limit, mode)
+	}
 	attachments, closeAttachments, err := deps.openAttachments(command.Context(), st)
 	if err != nil {
 		return err
@@ -779,8 +810,11 @@ func runBuildDocuments(
 		command.Context(), st,
 		newOperationPassScope("cli:document-extraction", operations.TriggerManual),
 		st, attachments, processor, documentsConfig, manifest,
-		inputPolicy.AllowedMediaTypes, profile, limit, "documents-cli", cfg.Data.DataDir, mode, &reconcileResult,
+		inputPolicy.AllowedMediaTypes, profile, limit, "documents-cli", dataDirectory, mode, &reconcileResult,
 	)
+	if documentJSONOutput(command) {
+		return documentBuildJSONResult(command, st, profile, documentsConfig, inputPolicy.AllowedMediaTypes, result, err)
+	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(),
 		"Reconciled %d attachment(s), consumed %d change(s); indexed %d document(s), %d unit(s), skipped %d, failed %d.\n",
 		result.Reconciled, result.Changes, result.Processed, result.Units, result.Skipped, result.Failed)
@@ -861,6 +895,7 @@ func executeDocumentBuild(
 	if terminal != nil {
 		return documentBuildResultFromOperationRun(terminal)
 	}
+	result.RunID, _ = pass.id.Int64()
 	defer func() {
 		pass.finish(ctx, documentExtractionCounters(result), runErr)
 	}()
@@ -1029,7 +1064,9 @@ func documentBuildResultFromOperationRun(run *operations.Run) (documentBuildResu
 	if err != nil {
 		return documentBuildResult{}, err
 	}
+	runID, _ := run.ID.Int64()
 	return documentBuildResult{
+		RunID:     runID,
 		Processed: int(counters.Succeeded), Failed: int(counters.Failed),
 	}, operations.TerminalReplayOutcome(run)
 }
@@ -1136,6 +1173,9 @@ func runRetryDocument(
 	if err != nil {
 		return err
 	}
+	if err := guardDocumentFingerprint(command, profile); err != nil {
+		return err
+	}
 	st, cleanup, err := deps.openStore(command.Context())
 	if err != nil {
 		return err
@@ -1147,6 +1187,9 @@ func runRetryDocument(
 	}
 	if !changed {
 		return errors.New("no terminal or retryable document extraction matched the exact profile and hash")
+	}
+	if documentJSONOutput(command) {
+		return writeDocumentJSON(command, mcpserver.DocumentRetry{ProfileID: profile.ID, Fingerprint: profile.Fingerprint, CanonicalBlobHash: canonicalBlobHash, Reset: true})
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(), "Scheduled document %s for retry under profile %s.\n",
 		canonicalBlobHash, profile.ID)
@@ -1392,7 +1435,7 @@ func configuredDocumentProfile(
 			errors.New("document operation requires loaded configuration")
 	}
 	cfg := state.cfg
-	documentsConfig := &cfg.Attachments.Documents
+	documentsConfig := cloneDocumentConfig(&cfg.Attachments.Documents)
 	if documentsConfig.RetentionPosture == documentindex.RetentionUnknown ||
 		documentsConfig.TrainingPosture == documentindex.TrainingUnknown {
 		return nil, mistral.CapabilityManifest{}, documentindex.ResolvedInputPolicy{}, store.DocumentExtractionProfile{},

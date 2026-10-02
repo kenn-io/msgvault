@@ -270,7 +270,7 @@ func meetingScopeSchemaProperties() map[string]*jsonschema.Schema {
 func meetingIDArraySchema(description string, requireOne bool) *jsonschema.Schema {
 	maximum := 100
 	schema := &jsonschema.Schema{
-		Type: "array", Description: description, Items: safeIDSchema("Meeting message ID"), MaxItems: &maximum,
+		Type: mcpSchemaArray, Description: description, Items: safeIDSchema("Meeting message ID"), MaxItems: &maximum,
 	}
 	if requireOne {
 		minimum := 1
@@ -288,7 +288,7 @@ func meetingNonEmptyIDArraySchema(description string) *jsonschema.Schema {
 func meetingStringArraySchema(description string) *jsonschema.Schema {
 	minimum, maximum := 1, 100
 	return &jsonschema.Schema{
-		Type: "array", Description: description, Items: stringSchema("Domain"),
+		Type: mcpSchemaArray, Description: description, Items: stringSchema("Domain"),
 		MinItems: &minimum, MaxItems: &maximum,
 	}
 }

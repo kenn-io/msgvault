@@ -143,7 +143,7 @@ func (c *Client) SearchVisualAttachmentsFiltered(ctx context.Context, options Vi
 // scan, which re-reads every candidate blob; the daemon serializes it.
 func (c *Client) VisualStatusWithCoverage(ctx context.Context) (*visual.Status, error) {
 	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetVisualAttachmentStatusResp, error) {
-		return client.GetVisualAttachmentStatusWithResponse(ctx, func(_ context.Context, req *http.Request) error {
+		return client.GetVisualAttachmentStatusWithResponse(ctx, &generated.GetVisualAttachmentStatusRequestOptions{}, func(_ context.Context, req *http.Request) error {
 			query := req.URL.Query()
 			query.Set("coverage", "1")
 			req.URL.RawQuery = query.Encode()
@@ -162,7 +162,7 @@ func (c *Client) VisualStatusWithCoverage(ctx context.Context) (*visual.Status, 
 
 func (c *Client) RunVisualBuildPass(ctx context.Context) (*visual.Status, error) {
 	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.ResumeVisualAttachmentBuildResp, error) {
-		return client.ResumeVisualAttachmentBuildWithResponse(ctx)
+		return client.ResumeVisualAttachmentBuildWithResponse(ctx, &generated.ResumeVisualAttachmentBuildRequestOptions{})
 	})
 	if err != nil {
 		return nil, err

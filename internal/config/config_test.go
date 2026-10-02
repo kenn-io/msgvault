@@ -15,6 +15,64 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPersonMatchConfigLoadsWithoutCredentialValue(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte(`[people.identity_scoring]
+enabled = true
+model_id = "jev-1.13.0"
+minimum_probability = 0.8
+credential_env = "JEV_SCORER_KEY"
+batch_size = 12
+retention_declaration = "operator-confirmed-retention-v1"
+`), 0o600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	assert.True(cfg.People.IdentityScoring.Enabled)
+	assert.Equal("JEV_SCORER_KEY", cfg.People.IdentityScoring.CredentialEnv)
+	assert.Equal(12, cfg.People.IdentityScoring.BatchSize)
+
+	var encoded bytes.Buffer
+	require.NoError(toml.NewEncoder(&encoded).Encode(cfg))
+	assert.Contains(encoded.String(), `credential_env = "JEV_SCORER_KEY"`)
+}
+
+func TestPersonMatchConfigRejectsInvalidEnabledSettings(t *testing.T) {
+	for name, tc := range map[string]struct{ key, value, message string }{
+		"model alias":       {"model_id", `"jev-latest"`, "model_id must be jev-1.13.0"},
+		"threshold":         {"minimum_probability", "0.79", "minimum_probability must be between"},
+		"zero threshold":    {"minimum_probability", "0", "minimum_probability must be between"},
+		"zero batch":        {"batch_size", "0", "batch_size must be between"},
+		"key name":          {"credential_env", `"BAD-NAME"`, "credential_env must be an environment variable name"},
+		"missing key name":  {"credential_env", `""`, "credential_env is required"},
+		"missing retention": {"retention_declaration", `""`, "retention_declaration is required"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fields := map[string]string{"enabled": "true", "credential_env": `"FIXTURE_SCORING_KEY"`, "retention_declaration": `"fixture retention"`}
+			fields[tc.key] = tc.value
+			var content strings.Builder
+			content.WriteString("[people.identity_scoring]\n")
+			for key, value := range fields {
+				fmt.Fprintf(&content, "%s = %s\n", key, value)
+			}
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(path, []byte(content.String()), 0o600))
+			_, err := Load(path, "")
+			assert.ErrorContains(t, err, tc.message)
+		})
+	}
+}
+
+func TestPersonMatchConfigRejectsUnrecognizedCredentialFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`[people.identity_scoring]
+api_key = ""
+`), 0o600))
+	_, err := Load(path, "")
+	assert.ErrorContains(t, err, "unknown people.identity_scoring config key")
+}
+
 func TestCardDAVConfigLoadsWithoutSerializingAPassword(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

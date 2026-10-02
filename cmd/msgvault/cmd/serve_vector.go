@@ -17,6 +17,7 @@ import (
 
 	"go.kenn.io/docbank/document/voyage"
 
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -730,6 +731,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			// misconfiguration must not take message vector search down.
 			logger.Error("multimodal lane unavailable", "error", err)
 		default:
+			visualRuntime.GuardPolicyCheck = visualRuntimePolicyGuard(mainStore, cfg, visualRuntime)
 			features.Visual = visualRuntime
 		}
 	}
@@ -927,7 +929,18 @@ func newVisualRuntime(
 	if err != nil {
 		return nil, err
 	}
-	return &visualFeatures{Archive: mainStore, Backend: visualBackend, Provider: provider, Reconciler: reconciler, Worker: worker, Generation: generation, PolicyFingerprint: provider.PolicyFingerprint(), ScopeCheck: scopeCheck}, nil
+	policy := api.VisualRuntimePolicy{
+		GenerationID: generation.ID, GenerationFingerprint: generation.Fingerprint,
+		CurrentPolicyFingerprint: provider.PolicyFingerprint(), Provider: vecCfg.Multimodal.Provider,
+		Model: generation.Model, Dimension: generation.Dimension,
+		SourceIDs: slices.Clone(buildScope.SourceIDs), MessageTypes: slices.Clone(buildScope.MessageTypes),
+		IncludeImages: vecCfg.Multimodal.ImagesEnabled(), IncludeVideo: vecCfg.Multimodal.VideoEnabled(),
+		IncludeAnimatedGIFs: vecCfg.Multimodal.AnimatedGIFsEnabled(), MaxContextChars: vecCfg.Multimodal.MaxContextChars,
+		MaxMediaBytes: mediaPolicy.MaxBytes, MaxMediaPixels: mediaPolicy.MaxPixels, MaxOwnersPerPass: 2,
+		// The actual Voyage policy and manifest make no retention/training claims.
+		RetentionPosture: "unspecified", TrainingPosture: "unspecified", AuthorizedCapabilities: provider.AuthorizedCapabilities(),
+	}
+	return &visualFeatures{Archive: mainStore, Backend: visualBackend, Provider: provider, Reconciler: reconciler, Worker: worker, Generation: generation, PolicyFingerprint: provider.PolicyFingerprint(), RuntimePolicy: policy, ScopeCheck: scopeCheck}, nil
 }
 
 // visualScopeCheck re-resolves the configured multimodal account scope and

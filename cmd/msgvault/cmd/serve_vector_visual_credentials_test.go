@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -81,6 +82,44 @@ func TestSetupVisualConsentMatchesCurrentGenerationAndManifest(t *testing.T) {
 	assert.True(setupConsentFromStore(t.Context(), c, st).Visual, "new policy consent")
 	c.Vector.Multimodal.CapabilitiesFile = filepath.Join(c.HomeDir, "missing.json")
 	assert.False(setupConsentFromStore(t.Context(), c, st).Visual, "manifest cannot be read")
+}
+
+func TestVisualRuntimePolicyGuardRefusesChangedConfigOrManifest(t *testing.T) {
+	requirements := require.New(t)
+	c := config.NewDefaultConfig()
+	c.HomeDir = t.TempDir()
+	c.Vector.Multimodal.Enabled = true
+	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Model: c.Vector.Multimodal.Model, Dimension: c.Vector.Multimodal.Dimension, Media: media.Policy{MaxBytes: 20 << 20, MaxPixels: 16_000_000, AllowStill: true, AllowVideo: true}})
+	requirements.NoError(err)
+	manifest, err := voyagetest.SyntheticManifest(policy, voyage.CapabilityQueryText)
+	requirements.NoError(err)
+	c.Vector.Multimodal.CapabilitiesFile = filepath.Join(c.HomeDir, "capabilities.json")
+	requirements.NoError(writeVisualCapabilityManifest(c.Vector.Multimodal.CapabilitiesFile, manifest))
+	requirements.NoError(c.Save())
+	st := testutil.NewSQLiteTestStore(t)
+	vec, err := resolvedVectorConfig(st, c.Vector)
+	requirements.NoError(err)
+	fingerprint, err := policy.Fingerprint(manifest)
+	requirements.NoError(err)
+	check := visualRuntimePolicyGuard(st, c, &visualFeatures{Generation: store.VisualGeneration{Fingerprint: vec.MultimodalGenerationFingerprint()}, PolicyFingerprint: fingerprint})
+	requirements.NoError(check(t.Context()))
+	c.Vector.Multimodal.MaxContextChars++
+	requirements.NoError(c.Save())
+	requirements.Error(check(t.Context()), "changed on-disk config must not grant the old runtime fresh consent")
+	c.Vector.Multimodal.MaxContextChars--
+	requirements.NoError(c.Save())
+	requirements.NoError(check(t.Context()))
+	changed, err := voyagetest.SyntheticManifest(policy, voyage.CapabilityQueryText, voyage.CapabilityImagePNG)
+	requirements.NoError(err)
+	requirements.NoError(os.Remove(c.Vector.Multimodal.CapabilitiesFile))
+	requirements.NoError(writeVisualCapabilityManifest(c.Vector.Multimodal.CapabilitiesFile, changed))
+	requirements.Error(check(t.Context()), "changed capability authority must require reinitialization")
+	requirements.NoError(os.Remove(c.Vector.Multimodal.CapabilitiesFile))
+	requirements.NoError(writeVisualCapabilityManifest(c.Vector.Multimodal.CapabilitiesFile, manifest))
+	requirements.NoError(check(t.Context()))
+	c.Vector.Multimodal.Enabled = false
+	requirements.NoError(c.Save())
+	requirements.Error(check(t.Context()))
 }
 
 func (f visualCredentialRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -218,6 +257,14 @@ func TestNewVisualRuntimeUsesStoredCredentialSnapshotAndRejectsRedirectReplay(t 
 		visualRuntimeCredential{APIKey: apiKey, HTTPClient: httpClient},
 	)
 	require.NoError(t, err)
+	assertions := assert.New(t)
+	assertions.Equal(runtime.Generation.ID, runtime.RuntimePolicy.GenerationID)
+	assertions.Equal(runtime.Generation.Fingerprint, runtime.RuntimePolicy.GenerationFingerprint)
+	assertions.Equal(runtime.PolicyFingerprint, runtime.RuntimePolicy.CurrentPolicyFingerprint)
+	assertions.Equal([]string{voyage.CapabilityQueryText}, runtime.RuntimePolicy.AuthorizedCapabilities)
+	assertions.Equal("unspecified", runtime.RuntimePolicy.RetentionPosture)
+	assertions.Equal("unspecified", runtime.RuntimePolicy.TrainingPosture)
+	assertions.Empty(authorization, "constructing the installed policy must not contact the provider")
 	_, _, err = runtime.Provider.EmbedQuery(testCtx, visual.QueryInput{Text: "private query"})
 	require.Error(t, err)
 	assert.Equal(t, "Bearer stored-at-startup", authorization)
