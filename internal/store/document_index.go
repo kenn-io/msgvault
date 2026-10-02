@@ -921,7 +921,18 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 			LEFT JOIN document_extraction_heads h ON h.extraction_id = e.id
 			WHERE e.updated_at < ?
 			  AND (e.state != 'staging' OR e.lease_until IS NULL OR e.lease_until < `+s.dialect.Now()+`)
-			  AND ((h.extraction_id IS NULL AND e.state != 'terminal') OR NOT EXISTS (
+			  AND ((h.extraction_id IS NULL AND e.state != 'terminal'
+		        AND NOT (e.state = 'staging' AND EXISTS (
+		            SELECT 1 FROM document_extraction_profiles p
+		            WHERE p.id = e.profile_id AND p.provider = 'docling'
+		              AND p.enabled = TRUE AND p.retired_at IS NULL
+		              AND EXISTS (
+		                  SELECT 1 FROM document_provider_consents c
+		                  WHERE c.profile_id = p.id AND c.profile_fingerprint = p.fingerprint
+		                    AND c.retention_posture = p.retention_posture
+		                    AND c.training_posture = p.training_posture
+		              )
+		        ))) OR NOT EXISTS (
 			      SELECT 1 FROM document_occurrences o
 			      JOIN messages m ON m.id = o.message_id
 			      WHERE o.canonical_blob_hash = e.canonical_blob_hash
@@ -1012,13 +1023,46 @@ func (s *Store) RetryDocumentExtraction(
 				return fmt.Errorf("check active rebuild failure before retry: %w", err)
 			}
 			if !activeRebuildFailure {
-				return errors.New("document extraction is already current for this profile")
+				// A route change leaves the old head serving until replacement
+				// succeeds. Permit retrying only a failed route the head cannot cover.
+				var failedReplacementRoute bool
+				if err := tx.QueryRow(`
+					SELECT EXISTS (
+						SELECT 1 FROM document_extractions e
+						JOIN document_extraction_heads h
+						  ON h.profile_id = e.profile_id
+						 AND h.canonical_blob_hash = e.canonical_blob_hash
+						 AND h.extraction_input_key = e.extraction_input_key
+						JOIN document_extractions he ON he.id = h.extraction_id
+						WHERE e.profile_id = ? AND e.canonical_blob_hash = ?
+						  AND e.state IN ('terminal', 'tombstoned')
+						  AND e.source_media_type IS NOT NULL
+						  AND he.source_media_type IS NOT NULL
+						  AND e.source_media_type <> he.source_media_type
+					)`, profileID, canonicalBlobHash).Scan(&failedReplacementRoute); err != nil {
+					return fmt.Errorf("check failed document replacement route before retry: %w", err)
+				}
+				if !failedReplacementRoute {
+					return errors.New("document extraction is already current for this profile")
+				}
+				retryScope = `
+				  AND EXISTS (
+				      SELECT 1 FROM document_extraction_heads h
+				      JOIN document_extractions he ON he.id = h.extraction_id
+				      WHERE h.profile_id = document_extractions.profile_id
+				        AND h.canonical_blob_hash = document_extractions.canonical_blob_hash
+				        AND h.extraction_input_key = document_extractions.extraction_input_key
+				        AND document_extractions.source_media_type IS NOT NULL
+				        AND he.source_media_type IS NOT NULL
+				        AND document_extractions.source_media_type <> he.source_media_type
+				  )`
+			} else {
+				retryScope = `
+				  AND EXISTS (
+				      SELECT 1 FROM document_extraction_rebuilds r
+				      WHERE r.id = document_extractions.rebuild_id AND r.state = 'building'
+				  )`
 			}
-			retryScope = `
-			  AND EXISTS (
-			      SELECT 1 FROM document_extraction_rebuilds r
-			      WHERE r.id = document_extractions.rebuild_id AND r.state = 'building'
-			  )`
 		}
 		var terminalRows int
 		if err := tx.QueryRow(`

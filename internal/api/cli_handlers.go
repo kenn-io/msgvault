@@ -1660,7 +1660,7 @@ func cliRunCommandAllowed(args []string) bool {
 			}
 		}
 		switch args[1] {
-		case "build", "consent-mistral", "purge-derived", "resume", "retire", "retry":
+		case "build", "consent-mistral", "consent-docling", "purge-derived", "resume", "retire", "retry":
 			return true
 		default:
 			return false

@@ -9,6 +9,43 @@ import (
 	"go.kenn.io/msgvault/internal/documentindex"
 )
 
+func TestDoclingMutationsRouteWithoutCapabilityFiles(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		args, wantArgs []string
+		forwardKey     bool
+	}{
+		{"consent", []string{"documents", "consent-docling", "--yes"}, []string{"documents", "consent-docling", "--yes"}, false},
+		{"build", []string{"documents", "build", "--yes"}, []string{"documents", "build", "--yes"}, true},
+		{"resume", []string{"documents", "resume", "--yes"}, []string{"documents", "resume", "--yes"}, true},
+		{"retry", []string{"documents", "retry", "--hash", "synthetic-hash"}, []string{"documents", "retry", "--hash=synthetic-hash"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
+				assert.Equal(t, test.wantArgs, req.Args)
+				if test.forwardKey {
+					assert.Equal(t, map[string]string{"SYNTHETIC_DOCLING_KEY": "synthetic-key"}, req.Env)
+				} else {
+					assert.Empty(t, req.Env)
+				}
+			}, `{"type":"complete"}`)
+			ctx := configureRemoteDaemonForTest(t, server.URL)
+			cfg := invocationFromContext(ctx).cfg
+			cfg.Attachments.Documents.Provider = documentindex.ProviderDocling
+			cfg.Attachments.Documents.Endpoint = "https://docling.example.com"
+			cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(string) bool { return false })
+			cfg.Attachments.Documents.APIKeyEnv = "SYNTHETIC_DOCLING_KEY"
+			t.Setenv("SYNTHETIC_DOCLING_KEY", "synthetic-key")
+			t.Setenv("MISTRAL_API_KEY", "synthetic-unused-key")
+			root := &cobra.Command{Use: "msgvault"}
+			root.AddCommand(newDocumentsCmd(documentsCommandDeps{}))
+			root.SetArgs(test.args)
+			require.NoError(t, root.ExecuteContext(ctx))
+			assert.Equal(t, int32(1), requests.Load())
+		})
+	}
+}
+
 func TestDocumentVectorCommandsRouteWithConfiguredRemote(t *testing.T) {
 	cfg := testConfigValue()
 

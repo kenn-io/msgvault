@@ -14,6 +14,117 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func TestDoclingExpiredClaimRequiresManualRetry(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	profile.ID = "profile-docling-recovery"
+	profile.Fingerprint = strings.Repeat("c", 64)
+	profile.Provider = "docling"
+	profile.Endpoint = "http://127.0.0.1:5001"
+	profile.Model = "docling.serve-v1"
+	profile.Region = "operator_network"
+	profile.RetentionPosture = "operator-controlled"
+	profile.TrainingPosture = "operator-controlled"
+	_, err := f.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
+	require.NoError(err)
+	require.NoError(f.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
+		ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
+		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
+	}))
+	input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "docling-interrupted", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "worker-interrupted", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1,
+	})
+	_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
+	require.NoError(err)
+	past := time.Now().UTC().Add(-time.Minute)
+	for _, table := range []string{"document_extractions", "document_extraction_claims"} {
+		_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE "+table+" SET lease_until = ? WHERE profile_id = ?"), past, profile.ID)
+		require.NoError(err)
+	}
+	gc, err := f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(time.Minute), 10)
+	require.NoError(err)
+	assert.Equal(0, gc.ExtractionsRemoved, "an interrupted live Docling owner must retain its retry barrier")
+	input.ExtractionID = "docling-resumed"
+	input.LeaseOwner = "worker-resumed"
+	_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
+	require.ErrorContains(err, "manual retry")
+	var state, reason string
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT state, failure_reason FROM document_extractions WHERE id = ?"), "docling-interrupted").Scan(&state, &reason))
+	assert.Equal("terminal", state)
+	assert.Equal("provider_manual_retry_required", reason)
+	// A stale candidate must also remain suppressed after recovery releases the claim.
+	input.ExtractionID = "docling-stale-candidate"
+	_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
+	require.ErrorContains(err, "manual retry")
+	retried, err := f.Store.RetryDocumentExtraction(t.Context(), profile.ID, hash)
+	require.NoError(err)
+	assert.True(retried)
+	input.ExtractionID = "docling-explicit-retry"
+	_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
+	require.NoError(err)
+}
+
+func TestDoclingExpiredInactiveClaimCanBeGarbageCollected(t *testing.T) {
+	for _, mode := range []string{"retired", "disabled", "consent_mismatch"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			profile, hash := seedDocumentPublicationAuthority(t, f)
+			profile.ID = "profile-docling-inactive"
+			profile.Fingerprint = strings.Repeat("c", 64)
+			profile.Provider = "docling"
+			profile.Endpoint = "http://127.0.0.1:5001"
+			profile.Model = "docling.serve-v1"
+			profile.Region = "operator_network"
+			profile.RetentionPosture = "operator-controlled"
+			profile.TrainingPosture = "operator-controlled"
+			_, err := f.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
+			require.NoError(err)
+			require.NoError(f.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
+				ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
+				RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
+			}))
+			input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+				ExtractionID: "docling-inactive-interrupted", ProfileID: profile.ID,
+				CanonicalBlobHash: hash, ExtractionInputKey: "original",
+				LeaseOwner: "worker-interrupted", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+				LocalBytes: 128, SourceSequence: 1,
+			})
+			_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
+			require.NoError(err)
+			past := time.Now().UTC().Add(-time.Minute)
+			for _, table := range []string{"document_extractions", "document_extraction_claims"} {
+				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE "+table+" SET lease_until = ? WHERE profile_id = ?"), past, profile.ID)
+				require.NoError(err)
+			}
+			switch mode {
+			case "retired":
+				changed, err := f.Store.RetireDocumentExtractionProfile(t.Context(), profile.ID)
+				require.NoError(err)
+				assert.True(changed)
+			case "disabled":
+				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extraction_profiles SET enabled = FALSE WHERE id = ?"), profile.ID)
+				require.NoError(err)
+			case "consent_mismatch":
+				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_provider_consents SET profile_fingerprint = ? WHERE profile_id = ?"), strings.Repeat("d", 64), profile.ID)
+				require.NoError(err)
+			}
+			gc, err := f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(time.Minute), 10)
+			require.NoError(err)
+			assert.Equal(1, gc.ExtractionsRemoved)
+			var claims int
+			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM document_extraction_claims WHERE profile_id = ?"), profile.ID).Scan(&claims))
+			assert.Zero(claims)
+		})
+	}
+}
+
 func TestDocumentExtractionClaimNormalizesNonUTCTimeZone(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
@@ -173,6 +284,29 @@ func TestDocumentExtractionPublicationRejectsInvalidSpanBeforeMutation(t *testin
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
 		`SELECT state FROM document_extractions WHERE id = ?`), claim.ExtractionID).Scan(&state))
 	assert.Equal(t, "staging", state)
+}
+
+func TestMistralCSVPublicationRequiresConversionReceipt(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthorityForMediaTypes(t, f, []string{"text/csv"})
+	for _, update := range []string{
+		"UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?",
+		"UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?",
+	} {
+		_, err := f.Store.DB().Exec(f.Store.Rebind(update), hash)
+		require.NoError(err)
+	}
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "mistral-csv-without-receipt", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "synthetic-mistral-worker", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1,
+	}))
+	require.NoError(err)
+	publication := publicationFor(t, claim, "synthetic CSV", strings.Repeat("f", 64))
+	publication.SourceBytes = claim.LocalBytes
+	require.ErrorContains(f.Store.PublishDocumentExtraction(t.Context(), publication), "requires conversion receipt")
 }
 
 func TestDocumentExtractionPublicationPersistsCSVReceiptAndCountsGeneratedBytes(t *testing.T) {

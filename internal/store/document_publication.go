@@ -15,9 +15,10 @@ import (
 )
 
 var (
-	ErrDocumentExtractionClaimed   = errors.New("document extraction owner is already claimed")
-	ErrDocumentExtractionCurrent   = errors.New("document extraction owner already has a current head")
-	ErrDocumentExtractionFenceLost = errors.New("document extraction claim fence is no longer current")
+	ErrDocumentExtractionClaimed             = errors.New("document extraction owner is already claimed")
+	ErrDocumentExtractionCurrent             = errors.New("document extraction owner already has a current head")
+	ErrDocumentExtractionFenceLost           = errors.New("document extraction claim fence is no longer current")
+	ErrDocumentExtractionManualRetryRequired = errors.New("document extraction requires manual retry after an interrupted Docling claim")
 )
 
 type DocumentExtractionClaimInput struct {
@@ -130,7 +131,8 @@ type DocumentExtractionPublication struct {
 
 // ClaimDocumentExtraction creates an immutable staging revision and acquires
 // the one owner-level lease. A later claimant can replace only an expired
-// lease and receives a larger monotonic fence.
+// lease and receives a larger monotonic fence. Docling interruptions instead
+// become terminal failures until the operator explicitly retries.
 func (s *Store) ClaimDocumentExtraction(
 	ctx context.Context,
 	input DocumentExtractionClaimInput,
@@ -140,6 +142,7 @@ func (s *Store) ClaimDocumentExtraction(
 		return DocumentExtractionClaim{}, err
 	}
 	claim := DocumentExtractionClaim{DocumentExtractionClaimInput: input}
+	manualRetryRecovered := false
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		var eligible bool
@@ -156,6 +159,10 @@ func (s *Store) ClaimDocumentExtraction(
 		}
 		if !eligible {
 			return errors.New("document extraction profile is not enabled with exact consent")
+		}
+		var provider string
+		if err := q.QueryRow(`SELECT provider FROM document_extraction_profiles WHERE id = ?`, input.ProfileID).Scan(&provider); err != nil {
+			return fmt.Errorf("read document extraction provider: %w", err)
 		}
 		if err := q.QueryRow(`
 			SELECT EXISTS (
@@ -229,6 +236,12 @@ func (s *Store) ClaimDocumentExtraction(
 		); err != nil {
 			return fmt.Errorf("create staging document extraction: %w", err)
 		}
+		claimReplacement := ""
+		if provider == "docling" {
+			// The remote job can outlive this lease. Never replace its claim
+			// automatically, even when no local worker remains.
+			claimReplacement = " AND FALSE"
+		}
 		claimSQL := `
 			INSERT INTO document_extraction_claims
 				(profile_id, canonical_blob_hash, extraction_input_key,
@@ -241,16 +254,44 @@ func (s *Store) ClaimDocumentExtraction(
 				lease_fence = document_extraction_claims.lease_fence + 1,
 				lease_until = EXCLUDED.lease_until,
 				updated_at = ` + s.dialect.Now() + `
-			WHERE document_extraction_claims.lease_until <= ` + s.dialect.Now() + `
+			WHERE document_extraction_claims.lease_until <= ` + s.dialect.Now() + claimReplacement + `
 			RETURNING lease_fence`
 		if err := q.QueryRow(claimSQL,
 			input.ProfileID, input.CanonicalBlobHash, input.ExtractionInputKey,
 			input.ExtractionID, input.LeaseOwner, input.LeaseUntil,
 		).Scan(&claim.LeaseFence); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
+				if provider == "docling" {
+					recovered, recoveryErr := s.failExpiredDoclingClaim(q, input)
+					if recoveryErr != nil {
+						return recoveryErr
+					}
+					if recovered {
+						if _, err := q.Exec(`DELETE FROM document_extractions WHERE id = ?`, input.ExtractionID); err != nil {
+							return fmt.Errorf("remove unused Docling staging revision: %w", err)
+						}
+						manualRetryRecovered = true
+						return nil // Commit the terminal failure before returning its error.
+					}
+				}
 				return ErrDocumentExtractionClaimed
 			}
 			return fmt.Errorf("claim document extraction owner: %w", err)
+		}
+		if provider == "docling" {
+			// Check after acquiring the owner claim: a stale candidate may
+			// have been selected before another worker recovered the failure.
+			var terminal bool
+			if err := q.QueryRow(`SELECT EXISTS (
+				SELECT 1 FROM document_extractions
+				WHERE profile_id = ? AND canonical_blob_hash = ?
+				  AND extraction_input_key = ? AND state = 'terminal'
+			)`, input.ProfileID, input.CanonicalBlobHash, input.ExtractionInputKey).Scan(&terminal); err != nil {
+				return fmt.Errorf("check Docling manual retry barrier: %w", err)
+			}
+			if terminal {
+				return ErrDocumentExtractionManualRetryRequired
+			}
 		}
 		if _, err := q.Exec(`
 			UPDATE document_extractions
@@ -281,7 +322,36 @@ func (s *Store) ClaimDocumentExtraction(
 		}
 		return nil
 	})
+	if err == nil && manualRetryRecovered {
+		return DocumentExtractionClaim{}, ErrDocumentExtractionManualRetryRequired
+	}
 	return claim, err
+}
+
+// The claim upsert has locked this owner row before recovery. Keeping failure
+// recording in the same transaction prevents concurrent automatic resubmission.
+func (s *Store) failExpiredDoclingClaim(q boundQuerier, input DocumentExtractionClaimInput) (bool, error) {
+	old := DocumentExtractionClaim{DocumentExtractionClaimInput: input}
+	err := q.QueryRow(`
+		SELECT c.extraction_id, c.lease_owner, c.lease_fence
+		FROM document_extraction_claims c
+		JOIN document_extractions e ON e.id = c.extraction_id
+		WHERE c.profile_id = ? AND c.canonical_blob_hash = ?
+		  AND c.extraction_input_key = ? AND e.state = 'staging'
+		  AND c.lease_until <= `+s.dialect.Now(),
+		input.ProfileID, input.CanonicalBlobHash, input.ExtractionInputKey,
+	).Scan(&old.ExtractionID, &old.LeaseOwner, &old.LeaseFence)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read interrupted Docling claim: %w", err)
+	}
+	err = s.failDocumentExtractionInTx(q, DocumentExtractionFailure{
+		Claim: old, Terminal: true, ReasonCode: "provider_manual_retry_required",
+		Detail: "Previous Docling claim expired; inspect the service job before retrying.",
+	})
+	return err == nil, err
 }
 
 type DocumentExtractionFailure struct {
@@ -305,88 +375,91 @@ func (s *Store) FailDocumentExtraction(ctx context.Context, failure DocumentExtr
 		return err
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		q := boundQuerier{ctx: ctx, q: tx}
-		if err := persistDocumentExtractionConversion(q, s.dialect, failure.Claim.ExtractionID, failure.Claim.CanonicalBlobHash, failure.Claim.LocalBytes, failure.Claim.OccurrenceMIMEType, failure.Conversion); err != nil {
-			return err
+		return s.failDocumentExtractionInTx(boundQuerier{ctx: ctx, q: tx}, failure)
+	})
+}
+
+func (s *Store) failDocumentExtractionInTx(q boundQuerier, failure DocumentExtractionFailure) error {
+	if err := persistDocumentExtractionConversion(q, s.dialect, failure.Claim.ExtractionID, failure.Claim.CanonicalBlobHash, failure.Claim.LocalBytes, failure.Claim.OccurrenceMIMEType, failure.Conversion); err != nil {
+		return err
+	}
+	state := "tombstoned"
+	var terminalReason any
+	var nextRetry any = failure.RetryAt
+	var hadServingHead bool
+	if failure.Terminal {
+		state = "terminal"
+		terminalReason = failure.ReasonCode
+		nextRetry = nil
+		if err := q.QueryRow(`
+			SELECT EXISTS (
+				SELECT 1 FROM document_extraction_heads
+				WHERE canonical_blob_hash = ? AND extraction_input_key = ?
+			)`, failure.Claim.CanonicalBlobHash, failure.Claim.ExtractionInputKey,
+		).Scan(&hadServingHead); err != nil {
+			return fmt.Errorf("check document heads before terminal suppression: %w", err)
 		}
-		state := "tombstoned"
-		var terminalReason any
-		var nextRetry any = failure.RetryAt
-		var hadServingHead bool
-		if failure.Terminal {
-			state = "terminal"
-			terminalReason = failure.ReasonCode
-			nextRetry = nil
-			if err := q.QueryRow(`
-				SELECT EXISTS (
-					SELECT 1 FROM document_extraction_heads
-					WHERE canonical_blob_hash = ? AND extraction_input_key = ?
-				)`, failure.Claim.CanonicalBlobHash, failure.Claim.ExtractionInputKey,
-			).Scan(&hadServingHead); err != nil {
-				return fmt.Errorf("check document heads before terminal suppression: %w", err)
-			}
-		}
-		result, err := q.Exec(`
-			UPDATE document_extractions
-			SET state = ?, attempt_count = attempt_count + 1,
-			    request_count = ?, retry_count = ?, provider_latency_ms = ?,
-			    next_retry_at = ?, terminal_reason = ?, failure_reason = ?, failure_detail = ?, lease_owner = NULL,
-			    lease_until = NULL, updated_at = `+s.dialect.Now()+`
-			WHERE id = ? AND profile_id = ? AND canonical_blob_hash = ?
-			  AND extraction_input_key = ? AND state = 'staging'
-			  AND lease_owner = ? AND lease_fence = ?`,
-			state, failure.RequestCount, failure.RetryCount, failure.ProviderLatencyMS,
-			nextRetry, terminalReason, failure.ReasonCode, CleanDocumentFailureDetail(failure.Detail), failure.Claim.ExtractionID,
-			failure.Claim.ProfileID, failure.Claim.CanonicalBlobHash,
-			failure.Claim.ExtractionInputKey, failure.Claim.LeaseOwner,
-			failure.Claim.LeaseFence,
-		)
-		if err != nil {
-			return fmt.Errorf("record document extraction failure: %w", err)
-		}
-		updated, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("read document extraction failure result: %w", err)
-		}
-		if updated != 1 {
-			return ErrDocumentExtractionFenceLost
-		}
+	}
+	result, err := q.Exec(`
+		UPDATE document_extractions
+		SET state = ?, attempt_count = attempt_count + 1,
+		    request_count = ?, retry_count = ?, provider_latency_ms = ?,
+		    next_retry_at = ?, terminal_reason = ?, failure_reason = ?, failure_detail = ?, lease_owner = NULL,
+		    lease_until = NULL, updated_at = `+s.dialect.Now()+`
+		WHERE id = ? AND profile_id = ? AND canonical_blob_hash = ?
+		  AND extraction_input_key = ? AND state = 'staging'
+		  AND lease_owner = ? AND lease_fence = ?`,
+		state, failure.RequestCount, failure.RetryCount, failure.ProviderLatencyMS,
+		nextRetry, terminalReason, failure.ReasonCode, CleanDocumentFailureDetail(failure.Detail), failure.Claim.ExtractionID,
+		failure.Claim.ProfileID, failure.Claim.CanonicalBlobHash,
+		failure.Claim.ExtractionInputKey, failure.Claim.LeaseOwner,
+		failure.Claim.LeaseFence,
+	)
+	if err != nil {
+		return fmt.Errorf("record document extraction failure: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read document extraction failure result: %w", err)
+	}
+	if updated != 1 {
+		return ErrDocumentExtractionFenceLost
+	}
+	result, err = q.Exec(`
+		DELETE FROM document_extraction_claims
+		WHERE profile_id = ? AND canonical_blob_hash = ?
+		  AND extraction_input_key = ? AND extraction_id = ?
+		  AND lease_owner = ? AND lease_fence = ?`,
+		failure.Claim.ProfileID, failure.Claim.CanonicalBlobHash,
+		failure.Claim.ExtractionInputKey, failure.Claim.ExtractionID,
+		failure.Claim.LeaseOwner, failure.Claim.LeaseFence,
+	)
+	if err != nil {
+		return fmt.Errorf("release failed document extraction claim: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil || deleted != 1 {
+		return ErrDocumentExtractionFenceLost
+	}
+	if failure.Terminal {
 		result, err = q.Exec(`
-			DELETE FROM document_extraction_claims
+			DELETE FROM document_extraction_heads
 			WHERE profile_id = ? AND canonical_blob_hash = ?
-			  AND extraction_input_key = ? AND extraction_id = ?
-			  AND lease_owner = ? AND lease_fence = ?`,
+			  AND extraction_input_key = ? AND extraction_id = ?`,
 			failure.Claim.ProfileID, failure.Claim.CanonicalBlobHash,
 			failure.Claim.ExtractionInputKey, failure.Claim.ExtractionID,
-			failure.Claim.LeaseOwner, failure.Claim.LeaseFence,
 		)
 		if err != nil {
-			return fmt.Errorf("release failed document extraction claim: %w", err)
+			return fmt.Errorf("suppress terminal document extraction head: %w", err)
 		}
-		deleted, err := result.RowsAffected()
-		if err != nil || deleted != 1 {
-			return ErrDocumentExtractionFenceLost
+		if _, rowsErr := result.RowsAffected(); rowsErr != nil {
+			return fmt.Errorf("read terminal document head suppression result: %w", rowsErr)
 		}
-		if failure.Terminal {
-			result, err = q.Exec(`
-				DELETE FROM document_extraction_heads
-				WHERE profile_id = ? AND canonical_blob_hash = ?
-				  AND extraction_input_key = ? AND extraction_id = ?`,
-				failure.Claim.ProfileID, failure.Claim.CanonicalBlobHash,
-				failure.Claim.ExtractionInputKey, failure.Claim.ExtractionID,
-			)
-			if err != nil {
-				return fmt.Errorf("suppress terminal document extraction head: %w", err)
-			}
-			if _, rowsErr := result.RowsAffected(); rowsErr != nil {
-				return fmt.Errorf("read terminal document head suppression result: %w", rowsErr)
-			}
-			if hadServingHead {
-				return bumpDocumentIndexRevision(q)
-			}
+		if hadServingHead {
+			return bumpDocumentIndexRevision(q)
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 func (s *Store) RenewDocumentExtractionClaim(
@@ -470,6 +543,17 @@ func (s *Store) PublishDocumentExtraction(
 		}
 		if !current {
 			return ErrDocumentExtractionFenceLost
+		}
+		if publication.OccurrenceMIMEType == "text/csv" && publication.Conversion == nil {
+			var provider string
+			if err := q.QueryRow(`SELECT provider FROM document_extraction_profiles WHERE id = ?`, publication.ProfileID).Scan(&provider); err != nil {
+				return fmt.Errorf("read CSV document extraction provider: %w", err)
+			}
+			// Docling uploads the original CSV. Hosted Mistral still
+			// requires the authenticated local CSV-to-PDF lineage.
+			if provider != "docling" {
+				return errors.New("CSV document extraction publication requires conversion receipt")
+			}
 		}
 		var sourceSequence int64
 		if err := q.QueryRow(`
@@ -691,10 +775,8 @@ func validateDocumentPublication(publication DocumentExtractionPublication) erro
 	); err != nil {
 		return fmt.Errorf("document extraction publication has invalid normalized identity: %w", err)
 	}
-	if publication.OccurrenceMIMEType == "text/csv" {
-		if publication.SourceBytes <= 0 || publication.Conversion == nil {
-			return errors.New("CSV document extraction publication requires conversion receipt")
-		}
+	if publication.OccurrenceMIMEType == "text/csv" && publication.SourceBytes <= 0 {
+		return errors.New("CSV document extraction publication requires positive source bytes")
 	}
 	if err := validateDocumentExtractionConversion(publication.CanonicalBlobHash, publication.OccurrenceMIMEType, publication.SourceBytes, publication.Conversion); err != nil {
 		return err

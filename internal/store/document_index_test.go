@@ -216,6 +216,46 @@ func TestDocumentCandidatesReprocessOwnerWhenRepresentativeRouteChanges(t *testi
 	assert.Empty(documentCandidates(t, f, profile, nil))
 }
 
+func TestRetryDocumentExtractionAllowsFailedReplacementRoute(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthorityForMediaTypes(t, f, []string{"application/pdf", "text/csv"})
+	publishSearchDocument(t, f, profile, hash, "PDF route evidence", "failed-route-pdf-head")
+	attachmentID := seededDocumentAttachmentID(t, f, hash)
+
+	_, err := f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE attachments SET mime_type = ? WHERE id = ?`), "text/csv", attachmentID)
+	require.NoError(err)
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 2)
+	require.NoError(err)
+	require.True(eligible)
+
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "failed-route-csv", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "worker-csv", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 2, RequireNoHead: true,
+	}))
+	require.NoError(err)
+	require.Equal("text/csv", claim.OccurrenceMIMEType)
+	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: claim, ReasonCode: "provider_rejected", Terminal: true,
+	}))
+
+	changed, err := f.Store.RetryDocumentExtraction(t.Context(), profile.ID, hash)
+	require.NoError(err)
+	require.True(changed)
+	var headID string
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		`SELECT extraction_id FROM document_extraction_heads WHERE profile_id = ? AND canonical_blob_hash = ?`),
+		profile.ID, hash).Scan(&headID))
+	assert.Equal("failed-route-pdf-head", headID, "retrying the failed CSV replacement must preserve the old PDF head")
+	candidates := documentCandidates(t, f, profile, nil)
+	require.Len(candidates, 1)
+	assert.Equal("text/csv", candidates[0].MIMEType)
+}
+
 func TestDocumentCandidatesReprocessOwnerWhenReplacedStableKeyChangesRoute(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
