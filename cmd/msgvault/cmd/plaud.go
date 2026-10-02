@@ -29,6 +29,8 @@ const plaudConfigHint = `Add to your config.toml:
 
 Then run 'msgvault add-plaud work' on the daemon host to authorize via browser`
 
+const plaudCheckOwnerOnlyFlag = "check-owner-only"
+
 func resolvePlaudSource(args []string, cfg *config.Config) (*config.PlaudSource, error) {
 	if cfg == nil {
 		return nil, errors.New("configuration is unavailable")
@@ -58,8 +60,14 @@ func newAddPlaudCmd() *cobra.Command {
 	cmd := newAddPlaudLocalCmd()
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
-			if err := preflightAddPlaudAuthorize(cmd, args); err != nil {
-				return err
+			checkOnly, err := cmd.Flags().GetBool(plaudCheckOwnerOnlyFlag)
+			if err != nil {
+				return fmt.Errorf("read Plaud owner-check flag: %w", err)
+			}
+			if !checkOnly {
+				if err := preflightAddPlaudAuthorize(cmd, args); err != nil {
+					return err
+				}
 			}
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
@@ -67,11 +75,23 @@ func newAddPlaudCmd() *cobra.Command {
 	}
 	return cmd
 }
+
 func newAddPlaudLocalCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "add-plaud [identifier]", Short: "Authorize and register a Plaud cloud account", Long: "Authorize a configured Plaud account using browser OAuth on the daemon host. The live account email must match account_email before registration.", Args: cobra.MaximumNArgs(1), RunE: runAddPlaudLocal}
+	cmd := &cobra.Command{
+		Use:   "add-plaud [identifier]",
+		Short: "Authorize and register a Plaud cloud account",
+		Long:  "Authorize a configured Plaud account using browser OAuth on the daemon host. The live account email must match account_email before registration.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE:  runAddPlaudLocal,
+	}
 	registerOAuthPreflightedFlag(cmd)
+	cmd.Flags().Bool(plaudCheckOwnerOnlyFlag, false, "Internal: Check the archive owner before browser authorization")
+	if err := cmd.Flags().MarkHidden(plaudCheckOwnerOnlyFlag); err != nil {
+		panic(err)
+	}
 	return cmd
 }
+
 func preflightAddPlaudAuthorize(cmd *cobra.Command, args []string) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
@@ -88,7 +108,13 @@ func preflightAddPlaudAuthorize(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := validatePlaudOwnerBeforeAuthorization(state, src.Identifier, email); err != nil {
+	runArgs, err := daemonCLIArgsFromCobra(cmd, args)
+	if err != nil {
+		return err
+	}
+	// The daemon owns the archive. Check its binding before replacing tokens.
+	runArgs = append(runArgs, "--"+plaudCheckOwnerOnlyFlag)
+	if err := runDaemonCLICommandHTTPWithEnv(cmd, runArgs, nil, false, false); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Authorizing %s with Plaud...\n", src.Identifier)
@@ -100,6 +126,7 @@ func preflightAddPlaudAuthorize(cmd *cobra.Command, args []string) error {
 	}
 	return nil
 }
+
 func runAddPlaudLocal(cmd *cobra.Command, args []string) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
@@ -115,6 +142,13 @@ func runAddPlaudLocal(cmd *cobra.Command, args []string) error {
 	}
 	if err := validatePlaudOwnerBeforeAuthorization(state, src.Identifier, email); err != nil {
 		return err
+	}
+	checkOnly, err := cmd.Flags().GetBool(plaudCheckOwnerOnlyFlag)
+	if err != nil {
+		return fmt.Errorf("read Plaud owner-check flag: %w", err)
+	}
+	if checkOnly {
+		return nil
 	}
 	done, err := oauthPreflighted(cmd)
 	if err != nil {
@@ -191,15 +225,12 @@ func validatePlaudLiveEmail(configured, live string) error {
 	}
 	return nil
 }
+
 func registerPlaudAccount(st *store.Store, identifier, email, live string) (*store.Source, error) {
 	if err := validatePlaudLiveEmail(email, live); err != nil {
 		return nil, err
 	}
-	normalized, err := (config.PlaudSource{Identifier: identifier, AccountEmail: email}).EffectiveAccountEmail()
-	if err != nil {
-		return nil, err
-	}
-	return plaud.RegisterSource(st, identifier, normalized)
+	return plaud.RegisterSource(st, identifier, email)
 }
 
 func validatePlaudOwnerBeforeAuthorization(state *invocation, identifier, email string) error {
@@ -426,24 +457,26 @@ func probePlaud(cmd *cobra.Command, src *config.PlaudSource) error {
 	defer func() { _ = session.Close() }()
 	return runPlaudProbe(cmd.Context(), cmd.OutOrStdout(), session)
 }
+
 func runPlaudProbe(ctx context.Context, out io.Writer, session plaudProbeSession) error {
 	tools, err := session.ToolInventory(ctx)
 	if err != nil {
-		return errors.New("plaud tool inventory failed")
+		return fmt.Errorf("plaud tool inventory failed: %w", err)
 	}
 	_, _ = fmt.Fprintln(out, "Tools:")
 	for _, tool := range tools {
 		schema, err := json.Marshal(tool.InputSchema, json.Deterministic(true))
 		if err != nil {
-			return errors.New("format Plaud tool schema failed")
+			return fmt.Errorf("format Plaud tool schema failed: %w", err)
 		}
 		_, _ = fmt.Fprintf(out, "  %s\n    Input schema: %s\n", tool.Name, strings.TrimSpace(string(schema)))
 	}
 	page, err := session.ListFiles(ctx, 1, 100)
 	if err != nil {
-		return errors.New("plaud first-page count failed; verify provider contract")
+		return fmt.Errorf("plaud first-page count failed; verify provider contract: %w", err)
 	}
 	_, _ = fmt.Fprintf(out, "First-page recordings: %d\n", len(page.Files))
 	return nil
 }
+
 func init() { rootCmd.AddCommand(newAddPlaudCmd(), newSyncPlaudCmd()) }

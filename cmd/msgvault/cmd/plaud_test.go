@@ -3,10 +3,15 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
+	"flag"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync/atomic"
@@ -14,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/plaud"
@@ -125,11 +132,14 @@ func TestPlaudOwnerMismatchStopsBeforeAuthorization(t *testing.T) {
 		AccountEmail: "replacement@example.com",
 		Endpoint:     server.URL,
 	}}
-	cmd := newAddPlaudLocalCmd()
-	cmd.SetContext(testInvocationContext(context.Background(), cfg, invocationOptions{}))
-	cmd.SetArgs([]string{"work"})
-	err := cmd.Execute()
-	require.ErrorContains(err, "plaud source owner differs or is unconfirmed")
+	rawSource, err := json.Marshal(cfg.Plaud[0])
+	require.NoError(err)
+	child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestPlaudOwnerCheckProcess$", "--", "add-plaud", "work") //nolint:gosec // Re-executes this test binary with fixed arguments.
+	child.Env = append(daemonCLIChildEnv(os.Environ(), os.Getpid(), nil),
+		"MSGVAULT_TEST_PLAUD_SOURCE="+string(rawSource), "MSGVAULT_TEST_PLAUD_HOME="+cfg.HomeDir)
+	output, err := child.CombinedOutput()
+	require.Error(err)
+	assert.Contains(string(output), "plaud source owner differs or is unconfirmed")
 	assert.Zero(requests.Load())
 }
 func TestPlaudOwnerPreflightAllowsUnboundSource(t *testing.T) {
@@ -147,6 +157,123 @@ func TestPlaudOwnerPreflightAllowsUnboundSource(t *testing.T) {
 	}()
 
 	require.NoError(validatePlaudOwnerBeforeAuthorization(state, "work", "owner@example.com"))
+}
+
+func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Setenv(daemonCLISubprocessEnv, "")
+	cfg := lifecycleTestConfig(t.TempDir())
+	var oauthRequests atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		oauthRequests.Add(1)
+		http.Error(w, "unexpected authorization", http.StatusUnauthorized)
+	}))
+	t.Cleanup(upstream.Close)
+	cfg.Plaud = []config.PlaudSource{{Identifier: "work", AccountEmail: "replacement@example.com", Endpoint: upstream.URL}}
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	_, err = plaud.RegisterSource(st, "work", "owner@example.com")
+	require.NoError(err)
+	require.NoError(st.Close())
+	owner, err := tryAcquireWriteOwnerLock(cfg.Data.DataDir)
+	require.NoError(err)
+	t.Cleanup(func() { _ = owner.Close() })
+	require.NoError(os.MkdirAll(cfg.TokensDir(), 0700))
+	tokenPath := plaud.NewManager("", cfg.TokensDir(), nil).TokenPath("work")
+	require.NoError(os.WriteFile(tokenPath, []byte("existing token"), 0600))
+
+	var requests atomic.Int32
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
+	mux.HandleFunc("/api/v1/cli/run", func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		var req daemonCLIRunTestRequest
+		if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
+			return
+		}
+		assert.Contains([][]string{
+			{"add-plaud", "work", "--check-owner-only"},
+			{"add-plaud", "--check-owner-only", "work"},
+		}, req.Args)
+		rawSource, err := json.Marshal(cfg.Plaud[0])
+		if !assert.NoError(err) {
+			return
+		}
+		child := exec.CommandContext(r.Context(), os.Args[0], "-test.run=^TestPlaudOwnerCheckProcess$", "--") //nolint:gosec // Re-executes this test binary; request arguments come from the fixture CLI.
+		child.Args = append(child.Args, req.Args...)
+		child.Env = append(daemonCLIChildEnv(os.Environ(), os.Getpid(), nil),
+			"MSGVAULT_TEST_PLAUD_SOURCE="+string(rawSource), "MSGVAULT_TEST_PLAUD_HOME="+cfg.HomeDir)
+		output, runErr := child.CombinedOutput()
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		assert.NoError(json.MarshalWrite(w, api.CLIRunEvent{Type: "stderr", Data: string(output)}))
+		_, _ = fmt.Fprintln(w)
+		event := api.CLIRunEvent{Type: "complete"}
+		if runErr != nil {
+			event = api.CLIRunEvent{Type: "error", Error: classifyDaemonCLIWaitErr(runErr, req.Args).Error()}
+		}
+		assert.NoError(json.MarshalWrite(w, event))
+		_, _ = fmt.Fprintln(w)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	host, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(err)
+	_, err = daemonRuntimeStore(cfg.Data.DataDir).Write(daemon.RuntimeRecord{
+		PID: os.Getpid(), Network: daemon.NetworkTCP, Address: server.Listener.Addr().String(),
+		Service: daemonService, Version: Version,
+		Metadata: map[string]string{
+			runtimeHost: host, runtimePort: port,
+			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion), runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeAuthFingerprint: daemonAPIKeyFingerprint(""), runtimeCreateTime: matchingProcessCreateTime(t),
+		},
+	})
+	require.NoError(err)
+	cmd := newAddPlaudCmd()
+	var stderr bytes.Buffer
+	cmd.SetErr(&stderr)
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	cmd.SetArgs([]string{"work"})
+	err = cmd.Execute()
+	require.ErrorIs(err, errCLISubprocessProxied)
+	assert.Contains(stderr.String(), "plaud source owner differs or is unconfirmed")
+
+	// An explicit check-only frontend invocation must also stop before OAuth.
+	cfg.Plaud[0].AccountEmail = "owner@example.com"
+	cmd = newAddPlaudCmd()
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	cmd.SetArgs([]string{"work", "--check-owner-only"})
+	require.NoError(cmd.Execute())
+	assert.Equal(int32(2), requests.Load())
+	assert.Zero(oauthRequests.Load())
+	token, err := os.ReadFile(tokenPath)
+	require.NoError(err)
+	assert.Equal("existing token", string(token))
+}
+
+// TestPlaudOwnerCheckProcess runs the production command in its own process so
+// the daemon-child marker does not bypass the frontend's archive-owner check.
+func TestPlaudOwnerCheckProcess(t *testing.T) {
+	rawSource := os.Getenv("MSGVAULT_TEST_PLAUD_SOURCE")
+	if rawSource == "" {
+		return
+	}
+	require := require.New(t)
+	dataDir := os.Getenv("MSGVAULT_TEST_PLAUD_HOME")
+	require.NotEmpty(dataDir)
+	cfg := lifecycleTestConfig(dataDir)
+	cfg.Plaud = []config.PlaudSource{{}}
+	require.NoError(json.Unmarshal([]byte(rawSource), &cfg.Plaud[0]))
+	args := flag.Args()
+	require.NotEmpty(args)
+	cmd := newAddPlaudCmd()
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	cmd.SetArgs(args[1:])
+	if err := cmd.Execute(); err != nil {
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
 func TestPlaudScheduledMissingSourceStopsBeforeAuth(t *testing.T) {
 	st := testutil.NewTestStore(t)
@@ -178,13 +305,34 @@ func TestPlaudPartialCanceledImportRefreshesDetachedContext(t *testing.T) {
 	assert.Zero(calls)
 }
 
-type plaudProbeFixture struct{}
-
-func (plaudProbeFixture) ToolInventory(context.Context) ([]plaud.ToolInfo, error) {
-	return []plaud.ToolInfo{{Name: "list_files", Description: "Find recordings", InputSchema: []byte(`{"type":"object"}`)}}, nil
+type plaudProbeFixture struct {
+	inventoryErr error
+	listErr      error
 }
-func (plaudProbeFixture) ListFiles(context.Context, int, int) (plaud.FilePage, error) {
-	return plaud.FilePage{Files: []plaud.File{{ID: "private-id", Name: "Private meeting title"}}}, nil
+
+func (f plaudProbeFixture) ToolInventory(context.Context) ([]plaud.ToolInfo, error) {
+	return []plaud.ToolInfo{{Name: "list_files", Description: "Find recordings", InputSchema: []byte(`{"type":"object"}`)}}, f.inventoryErr
+}
+func (f plaudProbeFixture) ListFiles(context.Context, int, int) (plaud.FilePage, error) {
+	return plaud.FilePage{Files: []plaud.File{{ID: "private-id", Name: "Private meeting title"}}}, f.listErr
+}
+
+func TestPlaudProbePreservesFailureCause(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		session plaudProbeFixture
+		cause   error
+	}{
+		{"inventory", plaudProbeFixture{inventoryErr: context.Canceled}, context.Canceled},
+		{"list", plaudProbeFixture{listErr: plaud.ErrContract}, plaud.ErrContract},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			err := runPlaudProbe(t.Context(), &out, tc.session)
+			require.ErrorIs(t, err, tc.cause)
+			assert.Contains(t, err.Error(), tc.cause.Error())
+		})
+	}
 }
 func TestPlaudProbePrintsToolsAndCountsOnly(t *testing.T) {
 	assert := assert.New(t)
