@@ -29,6 +29,14 @@ expected_assets=(
   "relationships-light-compact-darwin.png"
 )
 
+# Curated additions may be published without making older asset snapshots
+# unusable. Keep exact names so unrelated local files cannot be published.
+optional_assets=(
+  "google-oauth/audience.png"
+  "google-oauth/client-created.png"
+  "google-oauth/unverified-app.png"
+)
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [--source DIR] [--push]
@@ -91,11 +99,14 @@ source_dir="$(cd "$source_dir" 2>/dev/null && pwd)" || {
   exit 1
 }
 
-for asset in "${expected_assets[@]}"; do
+for asset in "${expected_assets[@]}" "${optional_assets[@]}"; do
   if [[ -L "$source_dir/$asset" ]]; then
     printf 'static docs asset source must not be a symlink: %s\n' "$asset" >&2
     exit 1
   fi
+done
+
+for asset in "${expected_assets[@]}"; do
   if [[ ! -f "$source_dir/$asset" ]]; then
     printf 'static docs asset source is missing expected asset: %s\n' "$asset" >&2
     exit 1
@@ -105,7 +116,7 @@ done
 is_expected_asset() {
   local path="$1"
   local asset
-  for asset in "${expected_assets[@]}"; do
+  for asset in "${expected_assets[@]}" "${optional_assets[@]}"; do
     [[ "$asset" == "$path" ]] && return 0
   done
   return 1
@@ -133,7 +144,8 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$asset_repo"
-for asset in "${expected_assets[@]}"; do
+for asset in "${expected_assets[@]}" "${optional_assets[@]}"; do
+  [[ -f "$source_dir/$asset" ]] || continue
   mkdir -p "$asset_repo/$(dirname "$asset")"
   cp "$source_dir/$asset" "$asset_repo/$asset"
 done
