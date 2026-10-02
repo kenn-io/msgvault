@@ -26,18 +26,18 @@ var errMediaTooLarge = errors.New("inline media exceeds configured size cap")
 func mediaURL(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" || u.Fragment != "" {
-		return "", errors.New("Inline media requires a trusted HTTPS download URL")
+		return "", errors.New("inline media requires a trusted HTTPS download URL")
 	}
 	host := strings.ToLower(u.Hostname())
 	if !r2Host.MatchString(host) && (host != ProductionOrigin || u.Path != "/file") {
-		return "", errors.New("Inline media host is not an allowed production origin")
+		return "", errors.New("inline media host is not an allowed production origin")
 	}
 	return u.String(), nil
 }
 
 func (imp *Importer) download(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
 	if maxBytes <= 0 {
-		return nil, errors.New("Inline media download requires a positive size cap")
+		return nil, errors.New("inline media download requires a positive size cap")
 	}
 	validated, err := mediaURL(rawURL)
 	if err != nil {
@@ -50,15 +50,15 @@ func (imp *Importer) download(ctx context.Context, rawURL string, maxBytes int64
 	// Signed URLs carry their own limited authorization. Account headers,
 	// cookies, and API transports must never be used by this downloader.
 	client := &http.Client{Timeout: 10 * time.Minute, Transport: imp.mediaTransport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-		return errors.New("Inline media redirects are refused")
+		return errors.New("inline media redirects are refused")
 	}}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, errors.New("Inline media download failed")
+		return nil, errors.New("inline media download failed")
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Inline media returned HTTP %d", response.StatusCode)
+		return nil, fmt.Errorf("inline media returned HTTP %d", response.StatusCode)
 	}
 	if response.ContentLength > maxBytes {
 		return nil, errMediaTooLarge
@@ -101,7 +101,7 @@ func mediaReference(media Media) (store.AttachmentRef, error) {
 		return store.AttachmentRef{}, errors.New("invalid Inline media identity or metadata")
 	}
 	if uint64(media.Size) > uint64(^uint(0)>>1) {
-		return store.AttachmentRef{}, errors.New("Inline media size exceeds archive representation")
+		return store.AttachmentRef{}, errors.New("inline media size exceeds archive representation")
 	}
 	metadata, err := json.Marshal(media, json.Deterministic(true))
 	if err != nil {
@@ -150,10 +150,10 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, conversa
 	var providerMessageID int64
 	for _, item := range media {
 		if item.ChatID != conversation.ID {
-			return errors.New("Inline media belongs to a different chat")
+			return errors.New("inline media belongs to a different chat")
 		}
 		if providerMessageID != 0 && item.MessageID != providerMessageID {
-			return errors.New("Inline media crosses message identities")
+			return errors.New("inline media crosses message identities")
 		}
 		providerMessageID = item.MessageID
 		ref, refErr := mediaReference(item)
@@ -162,7 +162,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, conversa
 		}
 		key := ref.SourceAttachmentID
 		if seen[key] {
-			return errors.New("Inline media occurrence is repeated")
+			return errors.New("inline media occurrence is repeated")
 		}
 		seen[key] = true
 		if prior, ok := refs[key]; ok {
@@ -214,7 +214,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, conversa
 	for _, item := range refreshed {
 		key := "inline:" + item.ID
 		if item.ChatID != conversation.ID || item.MessageID != providerMessageID || !seen[key] || fresh[key].ID != "" {
-			return errors.New("Inline file refresh does not match archived message media")
+			return errors.New("inline file refresh does not match archived message media")
 		}
 		fresh[key] = item
 	}
@@ -283,7 +283,7 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, conversa
 			return fmt.Errorf("store Inline media: %w", storeErr)
 		}
 		if path == "" {
-			return errors.New("Inline attachment storage is unavailable")
+			return errors.New("inline attachment storage is unavailable")
 		}
 		ref.StoragePath = path
 		ref.ContentHash = attachment.ContentHash
@@ -340,7 +340,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (sum
 			return sum, readErr
 		}
 		if conversation.ID != chatID {
-			return sum, errors.New("Inline backfill chat response does not match selection")
+			return sum, errors.New("inline backfill chat response does not match selection")
 		}
 		if _, err = scoped.persistConversation(source.ID, conversation); err != nil {
 			return sum, err

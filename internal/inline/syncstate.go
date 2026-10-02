@@ -2,6 +2,7 @@ package inline
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 )
 
@@ -37,26 +38,26 @@ func LoadSyncState(blob, account string) (*SyncState, error) {
 		return nil, fmt.Errorf("decode Inline checkpoint: %w", err)
 	}
 	if state.Account != account || state.Chats == nil {
-		return nil, fmt.Errorf("Inline checkpoint belongs to another account or is incomplete")
+		return nil, errors.New("inline checkpoint belongs to another account or is incomplete")
 	}
 	seen := map[int64]bool{}
 	for _, id := range state.RepairScope {
 		if !validID(id) || seen[id] {
-			return nil, fmt.Errorf("invalid Inline repair scope")
+			return nil, errors.New("invalid Inline repair scope")
 		}
 		seen[id] = true
 	}
 	for key, chat := range state.Chats {
 		if chat == nil {
-			return nil, fmt.Errorf("Inline checkpoint chat %q is null", key)
+			return nil, fmt.Errorf("inline checkpoint chat %q is null", key)
 		}
 		for _, id := range []int64{chat.Head, chat.HistoryBefore, chat.ScanBefore, chat.ScanHead, chat.ScanFloor, chat.RepairBefore, chat.RepairHead} {
 			if id < 0 || id > MaxID {
-				return nil, fmt.Errorf("invalid Inline checkpoint cursor")
+				return nil, errors.New("invalid Inline checkpoint cursor")
 			}
 		}
 		if chat.ScanActive && (!chat.Initialized || (chat.ScanHead > 0 && chat.ScanHead < chat.ScanFloor)) {
-			return nil, fmt.Errorf("invalid Inline scan bounds")
+			return nil, errors.New("invalid Inline scan bounds")
 		}
 	}
 	return state, nil

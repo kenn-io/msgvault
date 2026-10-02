@@ -36,7 +36,7 @@ type messageMetadata struct {
 
 func (imp *Importer) validateOptions(ctx context.Context, opts ImportOptions) (ImportOptions, error) {
 	if imp.store == nil || imp.client == nil {
-		return opts, errors.New("Inline importer requires a store and client")
+		return opts, errors.New("inline importer requires a store and client")
 	}
 	if !validID(opts.Account.UserID) || opts.Limit < 0 {
 		return opts, errors.New("valid Inline account and non-negative message limit required")
@@ -49,7 +49,7 @@ func (imp *Importer) validateOptions(ctx context.Context, opts ImportOptions) (I
 	seen := map[int64]bool{}
 	for _, id := range opts.ChatIDs {
 		if !validID(id) || seen[id] {
-			return opts, errors.New("Inline selected chat IDs must be valid and unique")
+			return opts, errors.New("inline selected chat IDs must be valid and unique")
 		}
 		seen[id] = true
 	}
@@ -66,7 +66,7 @@ func (imp *Importer) validateOptions(ctx context.Context, opts ImportOptions) (I
 		return opts, err
 	}
 	if actual.UserID != opts.Account.UserID || actualOrigin != origin {
-		return opts, errors.New("Inline client authenticated a different account")
+		return opts, errors.New("inline client authenticated a different account")
 	}
 	if len(opts.ChatIDs) == 0 {
 		catalog, discoverErr := imp.client.Discover(ctx)
@@ -75,7 +75,7 @@ func (imp *Importer) validateOptions(ctx context.Context, opts ImportOptions) (I
 		}
 		for _, chat := range catalog {
 			if !validID(chat.ID) || seen[chat.ID] {
-				return opts, errors.New("Inline discovery returned an invalid or repeated chat identity")
+				return opts, errors.New("inline discovery returned an invalid or repeated chat identity")
 			}
 			seen[chat.ID] = true
 			opts.ChatIDs = append(opts.ChatIDs, chat.ID)
@@ -89,7 +89,7 @@ func (imp *Importer) loadState(sourceID int64, account string) (*SyncState, erro
 	checkpoint, err := imp.store.GetLatestCheckpointedSync(sourceID)
 	if err == nil {
 		if !checkpoint.CursorBefore.Valid {
-			return nil, errors.New("Inline checkpoint is missing")
+			return nil, errors.New("inline checkpoint is missing")
 		}
 		return LoadSyncState(checkpoint.CursorBefore.String, account)
 	}
@@ -99,7 +99,7 @@ func (imp *Importer) loadState(sourceID int64, account string) (*SyncState, erro
 	previous, err := imp.store.GetLastSuccessfulSync(sourceID)
 	if err == nil {
 		if !previous.CursorAfter.Valid {
-			return nil, errors.New("Inline completed cursor is missing")
+			return nil, errors.New("inline completed cursor is missing")
 		}
 		return LoadSyncState(previous.CursorAfter.String, account)
 	}
@@ -206,7 +206,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			return sum, fmt.Errorf("read selected Inline chat %d: %w", chatID, err)
 		}
 		if conversation.ID != chatID {
-			return sum, errors.New("Inline conversation response does not match selected chat")
+			return sum, errors.New("inline conversation response does not match selected chat")
 		}
 		var conversationID int64
 		conversationID, err = scoped.persistConversation(source.ID, conversation)
@@ -390,11 +390,11 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, conversationI
 		return err
 	}
 	if message.IsFromMe && message.SenderID != opts.Account.UserID {
-		return errors.New("Inline sent-by-me marker contradicts sender identity")
+		return errors.New("inline sent-by-me marker contradicts sender identity")
 	}
 	for _, media := range message.Media {
 		if media.ChatID != message.ChatID || media.MessageID != message.ID {
-			return errors.New("Inline message media belongs to another message")
+			return errors.New("inline message media belongs to another message")
 		}
 	}
 	key := messageKey(message.ChatID, message.ID)

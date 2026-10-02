@@ -25,12 +25,13 @@ func (f mediaRoundTripper) RoundTrip(request *http.Request) (*http.Response, err
 
 func TestMediaURLRestrictsOriginsAndRefusesRedirectsWithoutCredentials(t *testing.T) {
 	assertions := assert.New(t)
+	requires := require.New(t)
 
 	for _, url := range []string{
 		"https://api.inline.chat/file?signature=synthetic", "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/key?signature=synthetic", "https://bucket.0123456789abcdef0123456789abcdef.eu.r2.cloudflarestorage.com/key",
 	} {
 		_, err := mediaURL(url)
-		assertions.NoError(err)
+		requires.NoError(err)
 	}
 	for _, url := range []string{"http://api.inline.chat/file", "https://api.inline.chat/other", "https://api.inline.chat:443/file", "https://user@api.inline.chat/file", "https://api.inline.chat.evil.example/file", "https://127.0.0.1/file", "https://r2.cloudflarestorage.com/file", "https://example.com/file", "https://api.inline.chat/file#fragment"} {
 		_, err := mediaURL(url)

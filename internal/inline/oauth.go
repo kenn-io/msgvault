@@ -99,25 +99,25 @@ func (m *OAuthManager) validateCredentials(c *OAuthCredentials) error {
 		return err
 	}
 	if c.Version != credentialVersion || c.Endpoint != m.endpoint || c.Resource != MCPResource || c.ClientID == "" || len(c.ClientID) > 512 || c.AuthEndpoint != issuer+"/oauth/authorize" || c.TokenEndpoint != issuer+"/oauth/token" {
-		return errors.New("Inline credentials have an invalid endpoint, client, version, or audience")
+		return errors.New("inline credentials have an invalid endpoint, client, version, or audience")
 	}
 	if !slices.Contains(c.Scopes, "messages:read") {
-		return errors.New("Inline credentials lack messages:read")
+		return errors.New("inline credentials lack messages:read")
 	}
 	for _, scope := range c.Scopes {
 		if !slices.Contains(inlineReadScopes, scope) {
-			return errors.New("Inline archive credentials must contain only messages:read and offline_access")
+			return errors.New("inline archive credentials must contain only messages:read and offline_access")
 		}
 	}
 	if c.Token.AccessToken == "" || c.Token.RefreshToken == "" || !strings.EqualFold(c.Token.TokenType, "Bearer") || c.Token.Expiry.IsZero() {
-		return errors.New("Inline credentials lack a bounded bearer token or refresh token")
+		return errors.New("inline credentials lack a bounded bearer token or refresh token")
 	}
 	return nil
 }
 
 func (m *OAuthManager) decodeCredentials(payload []byte) (*OAuthCredentials, error) {
 	if len(payload) > 1<<20 {
-		return nil, errors.New("Inline credential document is too large")
+		return nil, errors.New("inline credential document is too large")
 	}
 	var c OAuthCredentials
 	if err := json.Unmarshal(payload, &c); err != nil {
@@ -149,11 +149,11 @@ func (m *OAuthManager) AuthorizePayload(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("discover Inline OAuth: %w", err)
 	}
 	if meta.Issuer != issuer || meta.Authorization != issuer+"/oauth/authorize" || meta.Token != issuer+"/oauth/token" || meta.Registration != issuer+"/oauth/register" || !slices.Contains(meta.ChallengeMethods, "S256") {
-		return nil, errors.New("Inline authorization server metadata has an unsupported issuer, endpoint, or PKCE method")
+		return nil, errors.New("inline authorization server metadata has an unsupported issuer, endpoint, or PKCE method")
 	}
 	for _, scope := range inlineReadScopes {
 		if !slices.Contains(meta.Scopes, scope) {
-			return nil, errors.New("Inline authorization server does not advertise the required read scopes")
+			return nil, errors.New("inline authorization server does not advertise the required read scopes")
 		}
 	}
 	flowCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -177,7 +177,7 @@ func (m *OAuthManager) AuthorizePayload(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("register Inline OAuth client: %w", err)
 	}
 	if reg.ClientID == "" || (reg.AuthMethod != "" && reg.AuthMethod != "none") || !slices.Contains(reg.RedirectURIs, redirect) {
-		return nil, errors.New("Inline OAuth registration did not confirm the public client callback")
+		return nil, errors.New("inline OAuth registration did not confirm the public client callback")
 	}
 	verifier := oauth2.GenerateVerifier()
 	var stateBytes [32]byte
@@ -219,11 +219,11 @@ func (m *OAuthManager) waitForCode(ctx context.Context, ln net.Listener, authURL
 		}
 		var response callback
 		if r.URL.Query().Get("error") != "" {
-			response.err = errors.New("Inline authorization was declined")
+			response.err = errors.New("inline authorization was declined")
 		} else {
 			response.code = r.URL.Query().Get("code")
 			if response.code == "" {
-				response.err = errors.New("Inline authorization callback lacks a code")
+				response.err = errors.New("inline authorization callback lacks a code")
 			}
 		}
 		select {
@@ -306,14 +306,14 @@ func (m *OAuthManager) exchange(ctx context.Context, endpoint string, form url.V
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("Inline token endpoint returned HTTP %d; reauthorize with add-inline if the grant was revoked", resp.StatusCode)
+		return nil, nil, fmt.Errorf("inline token endpoint returned HTTP %d; reauthorize with add-inline if the grant was revoked", resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(data) > 1<<20 {
-		return nil, nil, errors.New("Inline token response is too large")
+		return nil, nil, errors.New("inline token response is too large")
 	}
 	var v struct {
 		Access  string  `json:"access_token"`
@@ -326,24 +326,24 @@ func (m *OAuthManager) exchange(ctx context.Context, endpoint string, form url.V
 		return nil, nil, errors.New("malformed Inline token response")
 	}
 	if v.Access == "" || !strings.EqualFold(v.Type, "Bearer") || v.Expires <= 0 || v.Expires > 7*24*60*60 {
-		return nil, nil, errors.New("Inline token response lacks a bounded bearer token")
+		return nil, nil, errors.New("inline token response lacks a bounded bearer token")
 	}
 	if v.Refresh == "" {
 		v.Refresh = oldRefresh
 	}
 	if v.Refresh == "" {
-		return nil, nil, errors.New("Inline token response lacks a refresh token")
+		return nil, nil, errors.New("inline token response lacks a refresh token")
 	}
 	scopes := slices.Clone(inlineReadScopes)
 	if v.Scope != nil {
 		scopes = strings.Fields(*v.Scope)
 	}
 	if !slices.Contains(scopes, "messages:read") {
-		return nil, nil, errors.New("Inline token response lacks messages:read")
+		return nil, nil, errors.New("inline token response lacks messages:read")
 	}
 	for _, scope := range scopes {
 		if !slices.Contains(inlineReadScopes, scope) {
-			return nil, nil, errors.New("Inline token response granted an unrequested scope")
+			return nil, nil, errors.New("inline token response granted an unrequested scope")
 		}
 	}
 	return &oauth2.Token{AccessToken: v.Access, RefreshToken: v.Refresh, TokenType: "Bearer", Expiry: time.Now().Add(time.Duration(v.Expires) * time.Second)}, scopes, nil
@@ -358,7 +358,7 @@ func (m *OAuthManager) HTTPClientFromPayload(_ context.Context, payload []byte) 
 		return nil, err
 	}
 	if !c.Token.Valid() {
-		return nil, errors.New("Inline authorization payload expired; authorize again")
+		return nil, errors.New("inline authorization payload expired; authorize again")
 	}
 	return m.authenticatedClient(oauth2.StaticTokenSource(&c.Token)), nil
 }
@@ -385,7 +385,7 @@ type inlineOriginTransport struct {
 
 func (t *inlineOriginTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Scheme+"://"+req.URL.Host != t.origin || req.URL.Path != t.path || req.URL.User != nil {
-		return nil, errors.New("Inline bearer credentials may only be sent to their MCP endpoint")
+		return nil, errors.New("inline bearer credentials may only be sent to their MCP endpoint")
 	}
 	return t.base.RoundTrip(req)
 }
@@ -400,7 +400,7 @@ func (m *OAuthManager) HTTPClient(ctx context.Context, identifier string) (*http
 
 func (m *OAuthManager) TokenSource(ctx context.Context, identifier string) (oauth2.TokenSource, error) {
 	if identifier == "" {
-		return nil, errors.New("Inline account identifier is required")
+		return nil, errors.New("inline account identifier is required")
 	}
 	if err := m.withLock(ctx, identifier, func() error { _, err := m.load(identifier); return err }); err != nil {
 		return nil, fmt.Errorf("load Inline credentials; run add-inline to authorize: %w", err)
@@ -445,7 +445,7 @@ func (s *inlineTokenSource) Token() (*oauth2.Token, error) {
 	// Reloading under the lock on every call observes removal, reauthorization,
 	// and another process's rotation. No stale refresh snapshot is cached.
 	if token == nil {
-		return nil, errors.New("Inline token refresh failed")
+		return nil, errors.New("inline token refresh failed")
 	}
 	return token, nil
 }
@@ -483,7 +483,7 @@ func (m *OAuthManager) DeleteToken(identifier string) error {
 
 func (m *OAuthManager) withLock(ctx context.Context, identifier string, fn func() error) (err error) {
 	if identifier == "" || m.tokensDir == "" {
-		return errors.New("Inline token directory and account identifier are required")
+		return errors.New("inline token directory and account identifier are required")
 	}
 	if err := fileutil.SecureMkdirAll(m.tokensDir, 0700); err != nil {
 		return err
@@ -496,7 +496,7 @@ func (m *OAuthManager) withLock(ctx context.Context, identifier string, fn func(
 		return fmt.Errorf("lock Inline credential store: %w", err)
 	}
 	if !locked {
-		return errors.New("Inline credential store is busy")
+		return errors.New("inline credential store is busy")
 	}
 	defer func() { err = errors.Join(err, lock.Unlock()) }()
 	return fn()

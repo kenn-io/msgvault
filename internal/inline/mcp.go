@@ -202,11 +202,11 @@ func (c *MCPClient) call(ctx context.Context, name string, args map[string]any) 
 		result, err = c.session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	}
 	if err != nil {
-		return nil, fmt.Errorf("Inline tool %s: %w", name, err)
+		return nil, fmt.Errorf("inline tool %s: %w", name, err)
 	}
 	raw, err := inlineToolJSON(result)
 	if err != nil {
-		return nil, fmt.Errorf("Inline tool %s: %w", name, err)
+		return nil, fmt.Errorf("inline tool %s: %w", name, err)
 	}
 	return raw, nil
 }
@@ -216,7 +216,7 @@ func inlineToolJSON(result *mcp.CallToolResult) ([]byte, error) {
 		return nil, fmt.Errorf("%w: missing tool result", ErrContract)
 	}
 	if result.IsError {
-		return nil, errors.New("Inline tool rejected the read; check account access and messages:read authorization")
+		return nil, errors.New("inline tool rejected the read; check account access and messages:read authorization")
 	}
 	if result.StructuredContent != nil {
 		data, err := json.Marshal(result.StructuredContent, json.Deterministic(true))
@@ -549,13 +549,13 @@ func (c *MCPClient) Messages(ctx context.Context, chatID, beforeID int64) (Page,
 
 func (c *MCPClient) Files(ctx context.Context, chatID int64, messageIDs []int64) ([]Media, error) {
 	if !validID(chatID) || len(messageIDs) == 0 || len(messageIDs) > 20 {
-		return nil, errors.New("Inline files require a chat and 1-20 message IDs")
+		return nil, errors.New("inline files require a chat and 1-20 message IDs")
 	}
 	ids := make([]string, 0, len(messageIDs))
 	wanted := make(map[int64]bool, len(messageIDs))
 	for _, id := range messageIDs {
 		if !validID(id) || wanted[id] {
-			return nil, errors.New("Inline files require distinct positive message IDs")
+			return nil, errors.New("inline files require distinct positive message IDs")
 		}
 		wanted[id] = true
 		ids = append(ids, strconv.FormatInt(id, 10))

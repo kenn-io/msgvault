@@ -126,7 +126,7 @@ func newInlineOAuthServer(t *testing.T) *inlineOAuthServer {
 func inlineOAuthWriteJSON(t *testing.T, w http.ResponseWriter, value any) {
 	t.Helper()
 	data, err := json.Marshal(value)
-	if !assert.NoError(t, err) {
+	if !assert.NoError(t, err) { //nolint:testifylint // This helper runs in HTTP handler goroutines; report the failure and return HTTP 500 without calling FailNow.
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

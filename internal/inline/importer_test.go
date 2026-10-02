@@ -552,7 +552,7 @@ func TestValidatePageRejectsIdentityAndCursorMismatch(t *testing.T) {
 		require.Error(t, validatePage(page, 1, 0))
 	}
 	require.Error(t, validatePage(Page{Messages: []Message{message}}, 1, 3))
-	assert.NoError(t, validatePage(Page{Messages: []Message{message}, HasMore: true, NextBeforeID: 3}, 1, 0))
+	require.NoError(t, validatePage(Page{Messages: []Message{message}, HasMore: true, NextBeforeID: 3}, 1, 0))
 }
 
 func TestLoadSyncStateRejectsForeignAccountAndMalformedCursor(t *testing.T) {

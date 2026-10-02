@@ -304,7 +304,7 @@ func TestMCPEndpointValidation(t *testing.T) {
 		require.Error(t, err)
 	}
 	_, err := validateMCPEndpoint(DefaultMCPEndpoint)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestMCPPhotoVideoWithoutMIMEPreserveKind(t *testing.T) {
@@ -507,7 +507,7 @@ func TestMCPResponseByteLimitChecksOverflowAndExactEOF(t *testing.T) {
 			if err == nil {
 				var body []byte
 				body, err = io.ReadAll(resp.Body)
-				assertions.NoError(resp.Body.Close(), "the response byte limit must still permit closing the HTTP body")
+				requires.NoError(resp.Body.Close(), "the response byte limit must still permit closing the HTTP body")
 				if !tc.invalid {
 					assertions.Equal(tc.body, string(body))
 				}

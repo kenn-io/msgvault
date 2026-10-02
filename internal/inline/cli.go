@@ -77,13 +77,13 @@ func (c *CLIClient) run(ctx context.Context, args ...string) ([]byte, error) {
 		return nil, errors.New("inline CLI output exceeds the bounded response limit")
 	}
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("Inline CLI request stopped: %w", ctx.Err())
+		return nil, fmt.Errorf("inline CLI request stopped: %w", ctx.Err())
 	}
 	if err != nil {
 		// CLI diagnostics can contain account or message data. Preserve the exit
 		// condition, but never echo subprocess output into archive logs.
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-			return nil, fmt.Errorf("Inline CLI exited with status %d; check authentication with inline auth me", exitErr.ExitCode())
+			return nil, fmt.Errorf("inline CLI exited with status %d; check authentication with inline auth me", exitErr.ExitCode())
 		}
 		return nil, fmt.Errorf("start Inline CLI: %w", err)
 	}
@@ -112,7 +112,7 @@ func (c *CLIClient) Me(ctx context.Context) (Account, error) {
 		} `json:"config"`
 	}
 	if jsonv2.Unmarshal(diagnostics, &doctor) != nil || !cliProductionEndpoint(doctor.Config.APIBaseURL, "https") || !cliProductionEndpoint(doctor.Config.RealtimeURL, "wss") {
-		return Account{}, errors.New("Inline CLI must use the production API and realtime endpoints")
+		return Account{}, errors.New("inline CLI must use the production API and realtime endpoints")
 	}
 	raw, err := c.run(ctx, "auth", "me", "--json", "--compact")
 	if err != nil {
@@ -298,7 +298,7 @@ func cliDecodePage(raw []byte, chatID, beforeID int64) (Page, error) {
 			return Page{}, err
 		}
 		if seen[message.ID] || (beforeID != 0 && message.ID >= beforeID) {
-			return Page{}, errors.New("Inline CLI history did not advance exclusively by message ID")
+			return Page{}, errors.New("inline CLI history did not advance exclusively by message ID")
 		}
 		seen[message.ID] = true
 		page.Messages = append(page.Messages, message)
@@ -352,12 +352,12 @@ func (c *CLIClient) Files(ctx context.Context, chatID int64, messageIDs []int64)
 			Missing  []int64            `json:"missingMessageIds"`
 		}
 		if jsonv2.Unmarshal(raw, &wire) != nil || wire.Messages == nil || len(wire.Missing) != 0 {
-			return nil, errors.New("Inline CLI file lookup did not return all requested messages")
+			return nil, errors.New("inline CLI file lookup did not return all requested messages")
 		}
 		messages = *wire.Messages
 	}
 	if len(messages) != len(requested) {
-		return nil, errors.New("Inline CLI file lookup returned an incomplete message set")
+		return nil, errors.New("inline CLI file lookup returned an incomplete message set")
 	}
 	var media []Media
 	for _, rawMessage := range messages {
@@ -366,7 +366,7 @@ func (c *CLIClient) Files(ctx context.Context, chatID int64, messageIDs []int64)
 			return nil, err
 		}
 		if !requested[message.ID] {
-			return nil, errors.New("Inline CLI file lookup returned an unexpected message")
+			return nil, errors.New("inline CLI file lookup returned an unexpected message")
 		}
 		delete(requested, message.ID)
 		media = append(media, message.Media...)
