@@ -202,7 +202,7 @@ func TestCardDAVPublicationThrottleRollbackRestoresMappedRevisionAndPreservesLon
 	assert.Equal(resource.MappingRevision+1, prepared.MappingRevision)
 
 	longGate := time.Now().Add(time.Hour).UTC()
-	require.NoError(st.SetCardDAVRetryAfterContext(t.Context(), longGate))
+	require.NoError(st.SetCardDAVRetryAfterContext(t.Context(), longGate, store.DefaultCardDAVAccountID))
 	require.NoError(st.RollbackCardDAVPublicationThrottleContext(t.Context(), prepared, time.Now().Add(time.Minute)))
 	after, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
 	require.NoError(err)
@@ -210,7 +210,7 @@ func TestCardDAVPublicationThrottleRollbackRestoresMappedRevisionAndPreservesLon
 	publication, err := st.GetCardDAVPublicationContext(t.Context(), *resource.PersonID)
 	require.NoError(err)
 	assert.Empty(publication.PendingOperation)
-	gate, err := st.GetCardDAVRetryAfterContext(t.Context())
+	gate, err := st.GetCardDAVRetryAfterContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(gate)
 	assert.WithinDuration(longGate, *gate, time.Second)

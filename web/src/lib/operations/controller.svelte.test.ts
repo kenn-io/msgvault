@@ -778,3 +778,41 @@ describe('OperationsController.refreshStatus', () => {
     }
   });
 });
+
+it.each(['partial', 'failed'] as const)(
+  'reports an aggregate CardDAV %s response as a failed action and refreshes state',
+  async (status) => {
+    let reads = 0;
+    const client = createAPIClient(async (input) => {
+      const request = requestOf(input);
+      if (request.method === 'POST')
+        return Response.json({
+          ...syncResult(),
+          status,
+          connections: [
+            {
+              connection: 'work',
+              status,
+              error_code: 'connection_unavailable',
+              error_message: 'private arbitrary upstream detail'
+            }
+          ]
+        });
+      reads++;
+      return Response.json(
+        new URL(request.url).pathname.endsWith('/status')
+          ? statusResponse({
+              carddav_sync: { supported_actions: ['carddav_sync'] }
+            })
+          : runsResponse([])
+      );
+    });
+    const controller = new OperationsController(client);
+    await controller.applyURLState(operationState());
+    expect(await controller.runAction('carddav_sync')).toBe('failed');
+    expect(reads).toBe(4);
+    expect(controller.snapshot.actionError).toContain('work');
+    expect(controller.snapshot.actionError).not.toContain('private arbitrary');
+    controller.destroy();
+  }
+);

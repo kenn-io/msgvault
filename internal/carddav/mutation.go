@@ -43,7 +43,7 @@ func (s *Service) ReconcilePublications(ctx context.Context) error {
 // lost is not mistaken for a new remote edit. Settled desired publications
 // remain in the normal post-pull reconciliation phase.
 func (s *Service) recoverPendingPublications(ctx context.Context) (map[int64]bool, error) {
-	ids, err := s.store.ListCardDAVPublicationPersonIDsContext(ctx)
+	ids, err := s.scopedPublicationIDs(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func (s *Service) recoverPendingPublications(ctx context.Context) (map[int64]boo
 }
 
 func (s *Service) reconcilePublications(ctx context.Context, skip map[int64]bool) error {
-	ids, err := s.store.ListCardDAVPublicationPersonIDsContext(ctx)
+	ids, err := s.scopedPublicationIDs(ctx)
 	if err != nil {
 		return err
 	}
@@ -133,11 +133,15 @@ func (s *Service) mutateUnlocked(ctx context.Context, mutation Mutation) error {
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, s.client.operationTimeout)
 	defer cancel()
-	if err := s.store.CheckCardDAVRetryAfterContext(operationCtx); err != nil {
+	existing, publicationErr := s.store.GetCardDAVPublicationContext(operationCtx, mutation.PersonID)
+	if publicationErr == nil && existing.AddressBookID > 0 {
+		if err := s.requireOwnBook(operationCtx, existing.AddressBookID); err != nil {
+			return err
+		}
+	}
+	if err := s.checkRetry(operationCtx); err != nil {
 		return err
 	}
-
-	existing, publicationErr := s.store.GetCardDAVPublicationContext(operationCtx, mutation.PersonID)
 	if publicationErr == nil && existing.PendingOperation != "" {
 		if conflict, conflictErr := s.store.GetUnresolvedCardDAVConflictForMappingContext(
 			operationCtx, existing.AddressBookID, existing.Href,
@@ -166,14 +170,14 @@ func (s *Service) mutateUnlocked(ctx context.Context, mutation Mutation) error {
 		return s.publishCurrentUnlocked(operationCtx, mutation.PersonID, "")
 	}
 
-	account, err := s.store.GetCardDAVAccountContext(operationCtx)
+	account, err := s.scopedAccount(operationCtx)
 	if err != nil {
 		return err
 	}
 	if account == nil {
 		return store.ErrCardDAVNoWriteTarget
 	}
-	books, err := s.store.ListCardDAVAddressBooksContext(operationCtx)
+	books, err := s.scopedBooks(operationCtx)
 	if err != nil {
 		return err
 	}
@@ -363,7 +367,10 @@ func stripServerOwnedProperties(body []byte, version vcard.Version) ([]byte, err
 }
 
 func (s *Service) executeMutation(ctx context.Context, pending *store.CardDAVPublication) error {
-	books, err := s.store.ListCardDAVAddressBooksContext(ctx)
+	if err := s.requireOwnBook(ctx, pending.AddressBookID); err != nil {
+		return err
+	}
+	books, err := s.scopedBooks(ctx)
 	if err != nil {
 		return err
 	}
@@ -636,13 +643,13 @@ func (s *Service) fetchCanonical(ctx context.Context, href string) (store.CardDA
 }
 
 func (s *Service) doRequest(ctx context.Context, request Request) (*Response, error) {
-	if err := s.store.CheckCardDAVRetryAfterContext(ctx); err != nil {
+	if err := s.checkRetry(ctx); err != nil {
 		return nil, err
 	}
 	response, err := s.client.Do(ctx, request)
 	if status := retryStatus(err); status != nil {
 		gate := time.Now().Add(status.RetryAfter).UTC()
-		if gateErr := s.store.SetCardDAVRetryAfterContext(ctx, gate); gateErr != nil {
+		if gateErr := s.setRetry(ctx, gate); gateErr != nil {
 			return response, errors.Join(err, gateErr)
 		}
 	}
@@ -672,7 +679,7 @@ func isAbsentStatusCode(code int) bool {
 
 func (s *Service) recoverPendingConflictMutations(ctx context.Context) error {
 	var failures []error
-	conflicts, err := s.store.ListCardDAVConflictsContext(ctx, true)
+	conflicts, err := s.scopedConflicts(ctx)
 	if err != nil {
 		return err
 	}

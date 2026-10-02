@@ -136,8 +136,8 @@ type ClientInterface interface {
 	TestCardDAVAccountWithResponse(ctx context.Context, options *TestCardDAVAccountRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TestCardDAVAccountResp, error)
 
 	// ListCardDAVBooks List CardDAV address books
-	ListCardDAVBooks(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVBooksResponse, error)
-	ListCardDAVBooksWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVBooksResp, error)
+	ListCardDAVBooks(ctx context.Context, options *ListCardDAVBooksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVBooksResponse, error)
+	ListCardDAVBooksWithResponse(ctx context.Context, options *ListCardDAVBooksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVBooksResp, error)
 
 	// UpdateCardDAVBookRoles Update CardDAV address book roles
 	UpdateCardDAVBookRoles(ctx context.Context, options *UpdateCardDAVBookRolesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateCardDAVBookRolesResponse, error)
@@ -154,6 +154,10 @@ type ClientInterface interface {
 	// ResolveCardDAVConflict Resolve a CardDAV conflict
 	ResolveCardDAVConflict(ctx context.Context, options *ResolveCardDAVConflictRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveCardDAVConflictResponse, error)
 	ResolveCardDAVConflictWithResponse(ctx context.Context, options *ResolveCardDAVConflictRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveCardDAVConflictResp, error)
+
+	// ListCardDAVConnections List saved CardDAV connections
+	ListCardDAVConnections(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVConnectionsResponse, error)
+	ListCardDAVConnectionsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVConnectionsResp, error)
 
 	// BeginGoogleCardDAVAuthorization Start Google Contacts authorization in a browser
 	BeginGoogleCardDAVAuthorization(ctx context.Context, options *BeginGoogleCardDAVAuthorizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BeginGoogleCardDAVAuthorizationResponse, error)
@@ -188,8 +192,8 @@ type ClientInterface interface {
 	ListCardDAVRunsWithResponse(ctx context.Context, options *ListCardDAVRunsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVRunsResp, error)
 
 	// GetCardDAVStatus Get CardDAV synchronization status
-	GetCardDAVStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetCardDAVStatusResponse, error)
-	GetCardDAVStatusWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetCardDAVStatusResp, error)
+	GetCardDAVStatus(ctx context.Context, options *GetCardDAVStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCardDAVStatusResponse, error)
+	GetCardDAVStatusWithResponse(ctx context.Context, options *GetCardDAVStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCardDAVStatusResp, error)
 
 	// SyncCardDAV Trigger CardDAV synchronization
 	SyncCardDAV(ctx context.Context, options *SyncCardDAVRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SyncCardDAVResponse, error)
@@ -2646,11 +2650,12 @@ func (c *Client) TestCardDAVAccount(ctx context.Context, options *TestCardDAVAcc
 }
 
 // ListCardDAVBooks List CardDAV address books
-func (c *Client) ListCardDAVBooks(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVBooksResponse, error) {
+func (c *Client) ListCardDAVBooks(ctx context.Context, options *ListCardDAVBooksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVBooksResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/carddav/books",
 		Method:     "GET",
+		Options:    options,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -2954,6 +2959,68 @@ func (c *Client) ResolveCardDAVConflict(ctx context.Context, options *ResolveCar
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/carddav/conflicts/{id}/resolve")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListCardDAVConnections List saved CardDAV connections
+func (c *Client) ListCardDAVConnections(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVConnectionsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/carddav/connections",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListCardDAVConnectionsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListCardDAVConnectionsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListCardDAVConnectionsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListCardDAVConnectionsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListCardDAVConnectionsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/carddav/connections")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -3468,11 +3535,12 @@ func (c *Client) ListCardDAVRuns(ctx context.Context, options *ListCardDAVRunsRe
 }
 
 // GetCardDAVStatus Get CardDAV synchronization status
-func (c *Client) GetCardDAVStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetCardDAVStatusResponse, error) {
+func (c *Client) GetCardDAVStatus(ctx context.Context, options *GetCardDAVStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCardDAVStatusResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/carddav/status",
 		Method:     "GET",
+		Options:    options,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)

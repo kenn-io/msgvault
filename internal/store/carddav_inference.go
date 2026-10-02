@@ -457,15 +457,7 @@ func (s *Store) loadCardDAVPublicationReviewSourceTx(
 		return nil, err
 	}
 	source.Publication = publication
-	account, err := getCardDAVAccountFrom(ctx, tx.Tx, s.Rebind)
-	if err != nil {
-		return nil, err
-	}
-	if account == nil {
-		return nil, ErrCardDAVNoWriteTarget
-	}
-	source.ConnectionGeneration = account.ConnectionGeneration
-	books, err := listCardDAVBooksFrom(ctx, tx.Tx, s.Rebind)
+	books, err := listCardDAVBooksFrom(ctx, tx.Tx, s.Rebind, AllCardDAVAccounts)
 	if err != nil {
 		return nil, err
 	}
@@ -489,6 +481,14 @@ func (s *Store) loadCardDAVPublicationReviewSourceTx(
 		}
 		return nil, ErrCardDAVNoWriteTarget
 	}
+	account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, source.Book.ID)
+	if err != nil {
+		return nil, err
+	}
+	if account == nil {
+		return nil, ErrCardDAVNoWriteTarget
+	}
+	source.ConnectionGeneration = account.ConnectionGeneration
 	resource, err := findCardDAVResourceForPersonTx(ctx, tx, source.Book.ID, personID, "")
 	if err != nil && !errors.Is(err, ErrCardDAVResourceNotFound) {
 		return nil, err
@@ -607,17 +607,17 @@ func (s *Store) loadCardDAVPublicationReviewRequiredTx(ctx context.Context, tx *
 	if err != nil {
 		return err
 	}
-	account, err := getCardDAVAccountFrom(ctx, tx.Tx, s.Rebind)
+	bookID := source.AddressBookID
+	if !source.HasPublication {
+		bookID = source.ProspectiveBookID
+	}
+	account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, bookID)
 	if err != nil {
 		return err
 	}
 	generation := int64(0)
 	if account != nil {
 		generation = account.ConnectionGeneration
-	}
-	bookID := source.AddressBookID
-	if !source.HasPublication {
-		bookID = source.ProspectiveBookID
 	}
 	source.InferenceReviewRequired = state.ReviewRequired(generation, bookID)
 	if source.PendingOperation == CardDAVMutationCreate {
@@ -710,13 +710,20 @@ func (s *Store) putCardDAVPublicationEnvelopeTx(ctx context.Context, tx *loggedT
 }
 
 func (s *Store) lockCardDAVPublicationTargetTx(ctx context.Context, tx *loggedTx, bookID int64) error {
+	account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, bookID)
+	if err != nil {
+		return err
+	}
+	if account == nil {
+		return ErrCardDAVAddressBookNotFound
+	}
 	if lock := s.dialect.RowWriterLockSQL("carddav_accounts", "connection_generation"); lock != "" {
-		if _, err := tx.ExecContext(ctx, lock, 1); err != nil {
+		if _, err := tx.ExecContext(ctx, lock, account.ID); err != nil {
 			return err
 		}
 	}
 	var locked int64
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM carddav_accounts WHERE id = 1`+s.dialect.SelectForUpdate()).Scan(&locked); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM carddav_accounts WHERE id = ?`+s.dialect.SelectForUpdate(), account.ID).Scan(&locked); err != nil {
 		return err
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM carddav_address_books WHERE id = ?`+s.dialect.SelectForUpdate(), bookID).Scan(&locked); err != nil {

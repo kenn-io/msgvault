@@ -63,7 +63,7 @@ func TestCardDAVApplyPersistsLosslessEnvelopeAndMaterializesSubscribedPerson(t *
 	assert.Equal(input.Href, envelope.SourceResourceUID)
 	assert.Equal(*resource.PersonID, envelope.PersonID)
 
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.Equal("token-1", books[0].SyncToken)
 	assert.Equal(book.SyncRevision+1, books[0].SyncRevision)
@@ -160,7 +160,7 @@ func TestCardDAVResourceMovePreservesConcurrentLocalEditConflict(t *testing.T) {
 	require.NoError(err)
 	assert.NotEqual(beforeMove.Fingerprint, afterMove.Fingerprint,
 		"rewritten provenance changes the projection fingerprint")
-	conflicts, err := st.ListCardDAVConflictsContext(t.Context(), true)
+	conflicts, err := st.ListCardDAVConflictsContext(t.Context(), true, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(conflicts, 1)
 	assert.Equal(newHref, conflicts[0].Href)
@@ -627,7 +627,7 @@ func TestCardDAVCandidateAcceptanceBindsPersonAndPreservesReviewedDecisions(t *t
 	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{
 		IsSubscribed: true, IsLookupSource: true,
 	}))
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(books, 1)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
@@ -824,7 +824,7 @@ func TestCardDAVApplyFenceRollsBackWholePlan(t *testing.T) {
 	require.ErrorIs(err, store.ErrCardDAVStalePlan)
 	_, err = st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
 	require.ErrorIs(err, store.ErrCardDAVResourceNotFound)
-	books, listErr := st.ListCardDAVAddressBooksContext(t.Context())
+	books, listErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(listErr)
 	assert.Empty(t, books[0].SyncToken)
 }
@@ -856,7 +856,7 @@ func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) 
 	// A canonical UID match is locally governed and is only unmapped.
 	var curatedID int64
 	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid) VALUES ('curated-uid') RETURNING id`).Scan(&curatedID))
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	curated := remoteResource(book.CanonicalURL+"curated.vcf", "curated-uid", "Curated", "curated@example.test", `"two"`)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
@@ -864,7 +864,7 @@ func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) 
 		SyncRevision: books[0].SyncRevision, ReplaceAll: true, Upserts: []store.CardDAVRemoteResource{curated},
 	})
 	require.NoError(err)
-	books, err = st.ListCardDAVAddressBooksContext(t.Context())
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -878,7 +878,7 @@ func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) 
 
 	// A user edit changes the imported person's projection, so a concurrent
 	// remote deletion retains the mapping and records an edit/delete conflict.
-	books, err = st.ListCardDAVAddressBooksContext(t.Context())
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	edited := remoteResource(book.CanonicalURL+"edited.vcf", "remote-edited", "Edited", "edited@example.test", `"three"`)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
@@ -896,7 +896,7 @@ func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) 
 	require.NoError(err)
 	localSnapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), *editedResource.PersonID)
 	require.NoError(err)
-	books, err = st.ListCardDAVAddressBooksContext(t.Context())
+	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -917,7 +917,7 @@ func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) 
 	require.NoError(err)
 	_, err = st.GetCardDAVResourceContext(t.Context(), book.ID, editedResource.Href)
 	require.NoError(err)
-	conflicts, err := st.ListCardDAVConflictsContext(t.Context(), true)
+	conflicts, err := st.ListCardDAVConflictsContext(t.Context(), true, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(conflicts, 1)
 	assert.True(conflicts[0].RemoteTombstone)
@@ -1033,7 +1033,7 @@ func TestCardDAVTombstoneRetainsImportedProjectionForUserEditedPerson(t *testing
 	_, err = st.DB().Exec(st.Rebind(
 		`INSERT INTO daily_note_entry_persons (entry_id, person_id) VALUES (?, ?)`), noteID, personID)
 	require.NoError(err)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(books, 1)
 
@@ -1079,7 +1079,7 @@ func TestCardDAVTombstoneRetainsTrackedImportedPerson(t *testing.T) {
 	tracked, err := st.SetPersonTrackingContext(t.Context(), personID, true)
 	require.NoError(err)
 	assert.True(tracked.Tracked)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(books, 1)
 

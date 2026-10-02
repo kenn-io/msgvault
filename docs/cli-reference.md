@@ -2256,24 +2256,32 @@ for direction and date examples.
 
 ## add-carddav, sync-carddav, and carddav
 
-Connect one CardDAV account, choose its address-book roles, and resolve sync
+Connect CardDAV accounts, choose their address-book roles, and resolve sync
 conflicts. Publishing or resolving a conflict can change the external address
 book; see the [CardDAV guide](/docs/usage/people-carddav/).
 
 | Command | Purpose |
 |---|---|
-| `add-carddav <base-url> <username> [--schedule <cron>] [--disabled]` | Discover and save an account; password is prompted or read from piped stdin |
-| `add-carddav --google <email> [--oauth-app <name>] [--schedule <cron>] [--disabled]` | Connect Google Contacts using an authorized account token |
+| `add-carddav <base-url> <username> [--connection <name>] [--schedule <cron>] [--disabled]` | Discover and save an account; password is prompted or read from piped stdin |
+| `add-carddav --google <email> [--connection <name>] [--oauth-app <name>] [--schedule <cron>] [--disabled]` | Connect Google Contacts using an authorized account token |
 | `carddav authorize-google <email> [--oauth-app <name>] [--no-browser]` | Authorize Google Contacts in the browser, preserving existing Google permissions |
-| `sync-carddav [--full]` | Synchronize the account; `--full` reconciles complete books |
+| `sync-carddav [--connection <name>] [--full]` | Synchronize all enabled connections, or the selected connection; `--full` reconciles complete books |
+| `carddav connections` | List connection names, enablement, runtime availability and orphaned accounts |
 | `person publish <person-id>` / `person unpublish <person-id>` | Publish a saved profile or remove its remote card |
 | `person publish <person-id> --preview` | Print the exact vCard and approval token as JSON without publishing |
 | `person publish <person-id> --approve <token>` | Approve reviewed changes; conflict previews also need explicit `keep_local` resolution |
-| `carddav books` | List discovered books and their roles |
+| `carddav books [--connection <name>]` | List discovered books, owning connection names and roles |
 | `carddav books set-role <book-id> [--write-target] [--subscribed] [--lookup-source]` | Replace all three roles; omitted flags become false |
 | `carddav conflicts list` | List unresolved conflicts |
 | `carddav conflicts show <conflict-id>` | Compare bounded base, local, and remote summaries |
 | `carddav conflicts resolve <conflict-id> <keep_local\|keep_remote>` | Choose the local or remote side explicitly |
+
+Unqualified `add-carddav` saves `default`. Explicit sync selects one saved
+connection, including a disabled connection for manual repair. Unqualified sync
+with no enabled connection fails as unavailable. Aggregate sync prints counts
+and safe failure codes per connection, and exits nonzero for partial or failed
+outcomes. Book IDs, publication commands and conflict commands remain global;
+network operations use the owning connection's credentials.
 
 Directory and integrations can also use the
 [publication API](/docs/usage/people-carddav/#sync-and-publish-selected-people).

@@ -1705,11 +1705,12 @@ func (c *Client) TestCardDAVAccountWithResponse(ctx context.Context, options *Te
 }
 
 // ListCardDAVBooks List CardDAV address books
-func (c *Client) ListCardDAVBooksWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVBooksResp, error) {
+func (c *Client) ListCardDAVBooksWithResponse(ctx context.Context, options *ListCardDAVBooksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVBooksResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/carddav/books",
 		Method:     "GET",
+		Options:    options,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -1745,11 +1746,11 @@ func (c *Client) ListCardDAVBooksWithResponse(ctx context.Context, reqEditors ..
 			}
 		}
 		return out, nil
-	case 500:
-		out.JSON500 = new(ListCardDAVBooksErrorResponse)
+	case 400:
+		out.JSON400 = new(ListCardDAVBooksErrorResponse)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON500); err != nil {
+			if err := json.Unmarshal(bodyBytes, out.JSON400); err != nil {
 				return out, &runtime.ResponseDecodeError{
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
@@ -1761,8 +1762,24 @@ func (c *Client) ListCardDAVBooksWithResponse(ctx context.Context, reqEditors ..
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 500:
+		out.JSON500 = new(ListCardDAVBooksErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON500); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ListCardDAVBooksErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 503:
-		out.JSON503 = new(ListCardDAVBooksErrorResponseJSON)
+		out.JSON503 = new(ListCardDAVBooksErrorResponseJSON503)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON503); err != nil {
@@ -1770,7 +1787,7 @@ func (c *Client) ListCardDAVBooksWithResponse(ctx context.Context, reqEditors ..
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "ListCardDAVBooksErrorResponseJSON",
+					TargetType:    "ListCardDAVBooksErrorResponseJSON503",
 					Body:          bodyBytes,
 					Err:           err,
 				}
@@ -2250,6 +2267,87 @@ func (c *Client) ResolveCardDAVConflictWithResponse(ctx context.Context, options
 			}
 		}
 		out.Headers503 = &ResolveCardDAVConflictResp503Headers{
+			RetryAfter: resp.Headers.Get("Retry-After"),
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	default:
+		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
+}
+
+// ListCardDAVConnections List saved CardDAV connections
+func (c *Client) ListCardDAVConnectionsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVConnectionsResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/carddav/connections",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/carddav/connections")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &ListCardDAVConnectionsResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 200:
+		out.JSON200 = new(ListCardDAVConnectionsResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ListCardDAVConnectionsResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, nil
+	case 500:
+		out.JSON500 = new(ListCardDAVConnectionsErrorResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON500); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ListCardDAVConnectionsErrorResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 503:
+		out.JSON503 = new(ListCardDAVConnectionsErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON503); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ListCardDAVConnectionsErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		out.Headers503 = &ListCardDAVConnectionsResp503Headers{
 			RetryAfter: resp.Headers.Get("Retry-After"),
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
@@ -3267,11 +3365,12 @@ func (c *Client) ListCardDAVRunsWithResponse(ctx context.Context, options *ListC
 }
 
 // GetCardDAVStatus Get CardDAV synchronization status
-func (c *Client) GetCardDAVStatusWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetCardDAVStatusResp, error) {
+func (c *Client) GetCardDAVStatusWithResponse(ctx context.Context, options *GetCardDAVStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCardDAVStatusResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/carddav/status",
 		Method:     "GET",
+		Options:    options,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -3307,11 +3406,11 @@ func (c *Client) GetCardDAVStatusWithResponse(ctx context.Context, reqEditors ..
 			}
 		}
 		return out, nil
-	case 500:
-		out.JSON500 = new(GetCardDAVStatusErrorResponse)
+	case 400:
+		out.JSON400 = new(GetCardDAVStatusErrorResponse)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON500); err != nil {
+			if err := json.Unmarshal(bodyBytes, out.JSON400); err != nil {
 				return out, &runtime.ResponseDecodeError{
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
@@ -3323,8 +3422,24 @@ func (c *Client) GetCardDAVStatusWithResponse(ctx context.Context, reqEditors ..
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 500:
+		out.JSON500 = new(GetCardDAVStatusErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON500); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetCardDAVStatusErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 503:
-		out.JSON503 = new(GetCardDAVStatusErrorResponseJSON)
+		out.JSON503 = new(GetCardDAVStatusErrorResponseJSON503)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON503); err != nil {
@@ -3332,7 +3447,7 @@ func (c *Client) GetCardDAVStatusWithResponse(ctx context.Context, reqEditors ..
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "GetCardDAVStatusErrorResponseJSON",
+					TargetType:    "GetCardDAVStatusErrorResponseJSON503",
 					Body:          bodyBytes,
 					Err:           err,
 				}

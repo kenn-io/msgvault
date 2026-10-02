@@ -24,7 +24,7 @@ import (
 func TestCardDAVStatusUnconfiguredRemainsReadable(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = cfg.HomeDir
@@ -38,23 +38,23 @@ func TestCardDAVStatusUnconfiguredRemainsReadable(t *testing.T) {
 	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	var status CardDAVStatusResponse
 	require.NoError(json.NewDecoder(resp.Body).Decode(&status))
-	assert.False(status.Configured)
-	assert.False(status.Available)
-	assert.False(status.CredentialConfigured)
-	assert.False(status.Enabled)
-	assert.False(status.Scheduled)
-	assert.Nil(status.Account)
-	assert.Empty(status.RepairReason)
-	assert.Nil(status.Active)
-	assert.Nil(status.Latest)
-	assert.Nil(status.LatestSuccessful)
-	assert.NotContains(resp.Body.String(), "password")
+	assertions.False(status.Configured)
+	assertions.False(status.Available)
+	assertions.False(status.CredentialConfigured)
+	assertions.False(status.Enabled)
+	assertions.False(status.Scheduled)
+	assertions.Nil(status.Account)
+	assertions.Empty(status.RepairReason)
+	assertions.Nil(status.Active)
+	assertions.Nil(status.Latest)
+	assertions.Nil(status.LatestSuccessful)
+	assertions.NotContains(resp.Body.String(), "password")
 }
 
 func TestCardDAVStatusPreservesIncompleteSavedEnablementAndRuntimeAvailability(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = cfg.HomeDir
@@ -67,12 +67,12 @@ func TestCardDAVStatusPreservesIncompleteSavedEnablementAndRuntimeAvailability(t
 	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	var status CardDAVStatusResponse
 	require.NoError(json.NewDecoder(resp.Body).Decode(&status))
-	assert.False(status.Configured)
-	assert.True(status.Enabled)
-	assert.True(status.Available)
-	assert.Equal("0 3 * * *", status.Schedule)
-	assert.Nil(status.Account)
-	assert.Empty(status.RepairReason)
+	assertions.False(status.Configured)
+	assertions.True(status.Enabled)
+	assertions.True(status.Available)
+	assertions.Equal("0 3 * * *", status.Schedule)
+	assertions.Nil(status.Account)
+	assertions.Empty(status.RepairReason)
 }
 
 func cardDAVReadServer(t *testing.T, cfg *config.Config, controller *CardDAVController, sched SyncScheduler) *Server {
@@ -113,7 +113,7 @@ func TestCardDAVStatusReportsStableCredentialRepairReasons(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			require := require.New(t)
-			assert := assert.New(t)
+			assertions := assert.New(t)
 			cfg := config.NewDefaultConfig()
 			cfg.HomeDir = t.TempDir()
 			cfg.Data.DataDir = cfg.HomeDir
@@ -131,9 +131,9 @@ func TestCardDAVStatusReportsStableCredentialRepairReasons(t *testing.T) {
 			require.Equal(http.StatusOK, resp.Code, resp.Body.String())
 			var status CardDAVStatusResponse
 			require.NoError(json.NewDecoder(resp.Body).Decode(&status))
-			assert.Equal(tt.want, status.RepairReason)
-			assert.NotContains(resp.Body.String(), "synthetic-secret")
-			assert.NotContains(resp.Body.String(), "permission denied")
+			assertions.Equal(tt.want, status.RepairReason)
+			assertions.NotContains(resp.Body.String(), "synthetic-secret")
+			assertions.NotContains(resp.Body.String(), "permission denied")
 		})
 	}
 }
@@ -141,7 +141,7 @@ func TestCardDAVStatusReportsStableCredentialRepairReasons(t *testing.T) {
 func TestCardDAVStatusRedactsSavedAccountURLSecrets(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = cfg.HomeDir
@@ -156,16 +156,16 @@ func TestCardDAVStatusRedactsSavedAccountURLSecrets(t *testing.T) {
 	var status CardDAVStatusResponse
 	require.NoError(json.NewDecoder(resp.Body).Decode(&status))
 	require.NotNil(status.Account)
-	assert.Equal("https://contacts.example/dav", status.Account.BaseURL)
+	assertions.Equal("https://contacts.example/dav", status.Account.BaseURL)
 	for _, private := range []string{"synthetic-password", "synthetic-query", "private-fragment", "access_token"} {
-		assert.NotContains(resp.Body.String(), private)
+		assertions.NotContains(resp.Body.String(), private)
 	}
 }
 
 func TestNewCardDAVControllerKeepsUnreadableCredentialAvailableForRepairStatus(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	cfg, st, _ := savedCardDAVFixture(t)
 	credentialPath := filepath.Join(cfg.TokensDir(), "carddav.json")
 	require.NoError(os.Remove(credentialPath))
@@ -174,19 +174,19 @@ func TestNewCardDAVControllerKeepsUnreadableCredentialAvailableForRepairStatus(t
 	var logs bytes.Buffer
 	controller, err := NewCardDAVController(cfg, st, slog.New(slog.NewTextHandler(&logs, nil)))
 	require.NoError(err)
-	assert.Nil(controller.Current())
-	assert.Contains(logs.String(), "level=WARN")
-	assert.Contains(logs.String(), "CardDAV credential is unreadable")
-	status, err := controller.Status(t.Context())
+	assertions.Nil(controller.Current())
+	assertions.Contains(logs.String(), "level=WARN")
+	assertions.Contains(logs.String(), "CardDAV credential is unreadable")
+	status, err := controller.Status(t.Context(), "")
 	require.NoError(err)
-	assert.Equal("credential_unavailable", status.RepairReason)
-	assert.False(status.CredentialConfigured)
+	assertions.Equal("credential_unavailable", status.RepairReason)
+	assertions.False(status.CredentialConfigured)
 }
 
 func TestCardDAVStatusSeparatesRuntimeEnablementAndMatchingSchedule(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	cfg, st, service := savedCardDAVFixture(t)
 	cfg.CardDAV.Enabled = false
 	next := time.Date(2026, 8, 29, 1, 0, 0, 0, time.UTC)
@@ -203,23 +203,23 @@ func TestCardDAVStatusSeparatesRuntimeEnablementAndMatchingSchedule(t *testing.T
 	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	var status CardDAVStatusResponse
 	require.NoError(json.NewDecoder(resp.Body).Decode(&status))
-	assert.True(status.Configured)
-	assert.True(status.Available)
-	assert.True(status.CredentialConfigured)
-	assert.False(status.Enabled)
-	assert.True(status.Scheduled)
-	assert.Equal(cfg.CardDAV.Schedule, status.Schedule)
+	assertions.True(status.Configured)
+	assertions.True(status.Available)
+	assertions.True(status.CredentialConfigured)
+	assertions.False(status.Enabled)
+	assertions.True(status.Scheduled)
+	assertions.Equal(cfg.CardDAV.Schedule, status.Schedule)
 	require.NotNil(status.NextScheduledAt)
-	assert.Equal(next, *status.NextScheduledAt)
-	assert.Empty(status.RepairReason)
+	assertions.Equal(next, *status.NextScheduledAt)
+	assertions.Empty(status.RepairReason)
 
 	controller.service = nil
 	resp = getCardDAVRead(t, cardDAVReadServer(t, cfg, controller, nil), "/api/v1/carddav/status")
 	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	require.NoError(json.NewDecoder(resp.Body).Decode(&status))
-	assert.False(status.Available)
-	assert.True(status.CredentialConfigured)
-	assert.Equal("runtime_unavailable", status.RepairReason)
+	assertions.False(status.Available)
+	assertions.True(status.CredentialConfigured)
+	assertions.Equal("runtime_unavailable", status.RepairReason)
 }
 
 func TestCardDAVStatusIgnoresUnavailableAndUnrelatedSchedulers(t *testing.T) {
@@ -235,13 +235,13 @@ func TestCardDAVStatusIgnoresUnavailableAndUnrelatedSchedulers(t *testing.T) {
 	for name, sched := range map[string]SyncScheduler{"nil": nil, "stopped": stopped, "unrelated": unrelated} {
 		t.Run(name, func(t *testing.T) {
 			require := require.New(t)
-			assert := assert.New(t)
+			assertions := assert.New(t)
 			resp := getCardDAVRead(t, cardDAVReadServer(t, cfg, controller, sched), "/api/v1/carddav/status")
 			require.Equal(http.StatusOK, resp.Code, resp.Body.String())
 			var status CardDAVStatusResponse
 			require.NoError(json.NewDecoder(resp.Body).Decode(&status))
-			assert.False(status.Scheduled)
-			assert.Nil(status.NextScheduledAt)
+			assertions.False(status.Scheduled)
+			assertions.Nil(status.NextScheduledAt)
 		})
 	}
 }
@@ -249,18 +249,18 @@ func TestCardDAVStatusIgnoresUnavailableAndUnrelatedSchedulers(t *testing.T) {
 func TestCardDAVStatusProjectsLatestFailureAndSuccessfulRun(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = cfg.HomeDir
 	st := testutil.NewTestStore(t)
-	success, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual, Full: true})
+	success, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual, Full: true})
 	require.NoError(err)
 	_, err = st.FinishCardDAVSyncRunContext(t.Context(), success.ID, store.CardDAVSyncRunFinish{
 		State: store.CardDAVSyncRunSucceeded, Books: 2, Created: 3, Updated: 4, Removed: 5,
 	})
 	require.NoError(err)
-	failed, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerScheduled})
+	failed, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerScheduled})
 	require.NoError(err)
 	_, err = st.FinishCardDAVSyncRunContext(t.Context(), failed.ID, store.CardDAVSyncRunFinish{
 		State: store.CardDAVSyncRunFailed, Books: 1, ErrorCode: "upstream_failed", ErrorMessage: "CardDAV server request failed.",
@@ -273,25 +273,25 @@ func TestCardDAVStatusProjectsLatestFailureAndSuccessfulRun(t *testing.T) {
 	var status CardDAVStatusResponse
 	require.NoError(json.NewDecoder(resp.Body).Decode(&status))
 	require.NotNil(status.Latest)
-	assert.Equal(failed.ID, status.Latest.ID)
-	assert.Equal("failed", status.Latest.State)
-	assert.Equal("upstream_failed", status.Latest.ErrorCode)
+	assertions.Equal(failed.ID, status.Latest.ID)
+	assertions.Equal("failed", status.Latest.State)
+	assertions.Equal("upstream_failed", status.Latest.ErrorCode)
 	require.NotNil(status.LatestSuccessful)
-	assert.Equal(success.ID, status.LatestSuccessful.ID)
-	assert.Equal(int64(2), status.LatestSuccessful.Books)
-	assert.Equal(int64(3), status.LatestSuccessful.Created)
-	assert.NotContains(resp.Body.String(), "connection_generation")
+	assertions.Equal(success.ID, status.LatestSuccessful.ID)
+	assertions.Equal(int64(2), status.LatestSuccessful.Books)
+	assertions.Equal(int64(3), status.LatestSuccessful.Created)
+	assertions.NotContains(resp.Body.String(), "connection_generation")
 }
 
 func TestCardDAVStatusAndRunsCollapseUnknownStoredFailureProjection(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = cfg.HomeDir
 	st := testutil.NewTestStore(t)
-	run, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	run, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 	_, err = st.FinishCardDAVSyncRunContext(t.Context(), run.ID, store.CardDAVSyncRunFinish{
 		State: store.CardDAVSyncRunFailed, ErrorCode: "future_provider_failure",
@@ -304,23 +304,24 @@ func TestCardDAVStatusAndRunsCollapseUnknownStoredFailureProjection(t *testing.T
 	for _, path := range []string{"/api/v1/carddav/status", "/api/v1/carddav/runs"} {
 		resp := getCardDAVRead(t, srv, path)
 		require.Equal(http.StatusOK, resp.Code, resp.Body.String())
-		assert.Contains(resp.Body.String(), `"error_code":"sync_failed"`)
-		assert.Contains(resp.Body.String(), `"error_message":"CardDAV sync failed."`)
-		assert.NotContains(resp.Body.String(), "future_provider_failure")
-		assert.NotContains(resp.Body.String(), "tenant-internal-marker")
+		assertions.Contains(resp.Body.String(), `"error_code":"sync_failed"`)
+		assertions.Contains(resp.Body.String(), `"error_message":"CardDAV sync failed."`)
+		assertions.NotContains(resp.Body.String(), "future_provider_failure")
+		assertions.NotContains(resp.Body.String(), "tenant-internal-marker")
 	}
 }
 
 func TestCardDAVStatusProjectsActiveRunExactly(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = cfg.HomeDir
 	st := testutil.NewTestStore(t)
 	active, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{
-		Trigger: store.CardDAVSyncTriggerScheduled, Full: true,
+		AccountID: store.DefaultCardDAVAccountID,
+		Trigger:   store.CardDAVSyncTriggerScheduled, Full: true,
 	})
 	require.NoError(err)
 	controller := &CardDAVController{cfg: cfg, store: st}
@@ -330,27 +331,27 @@ func TestCardDAVStatusProjectsActiveRunExactly(t *testing.T) {
 	var status CardDAVStatusResponse
 	require.NoError(json.NewDecoder(resp.Body).Decode(&status))
 	require.NotNil(status.Active)
-	assert.Equal(active.ID, status.Active.ID)
-	assert.Equal("scheduled", status.Active.Trigger)
-	assert.True(status.Active.Full)
-	assert.Equal("running", status.Active.State)
-	assert.Nil(status.Active.FinishedAt)
+	assertions.Equal(active.ID, status.Active.ID)
+	assertions.Equal("scheduled", status.Active.Trigger)
+	assertions.True(status.Active.Full)
+	assertions.Equal("running", status.Active.State)
+	assertions.Nil(status.Active.FinishedAt)
 	require.NotNil(status.Latest)
-	assert.Equal(active.ID, status.Latest.ID)
-	assert.Nil(status.LatestSuccessful)
+	assertions.Equal(active.ID, status.Latest.ID)
+	assertions.Nil(status.LatestSuccessful)
 }
 
 func TestCardDAVRunHistoryPagesNewestFirstWithoutRuntimeService(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = cfg.HomeDir
 	st := testutil.NewTestStore(t)
 	var ids []int64
 	for i := range 3 {
-		run, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual, Full: i == 0})
+		run, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual, Full: i == 0})
 		require.NoError(err)
 		ids = append(ids, run.ID)
 		_, err = st.FinishCardDAVSyncRunContext(t.Context(), run.ID, store.CardDAVSyncRunFinish{State: store.CardDAVSyncRunSucceeded, Books: int64(i + 1)})
@@ -364,18 +365,18 @@ func TestCardDAVRunHistoryPagesNewestFirstWithoutRuntimeService(t *testing.T) {
 	var firstPage CardDAVRunsResponse
 	require.NoError(json.NewDecoder(first.Body).Decode(&firstPage))
 	require.Len(firstPage.Runs, 2)
-	assert.Equal([]int64{ids[2], ids[1]}, []int64{firstPage.Runs[0].ID, firstPage.Runs[1].ID})
+	assertions.Equal([]int64{ids[2], ids[1]}, []int64{firstPage.Runs[0].ID, firstPage.Runs[1].ID})
 	require.NotNil(firstPage.NextBeforeID)
-	assert.Equal(ids[1], *firstPage.NextBeforeID)
+	assertions.Equal(ids[1], *firstPage.NextBeforeID)
 
 	second := getCardDAVRead(t, srv, "/api/v1/carddav/runs?limit=2&before_id="+strconv.FormatInt(*firstPage.NextBeforeID, 10))
 	require.Equal(http.StatusOK, second.Code, second.Body.String())
 	var secondPage CardDAVRunsResponse
 	require.NoError(json.NewDecoder(second.Body).Decode(&secondPage))
 	require.Len(secondPage.Runs, 1)
-	assert.Equal(ids[0], secondPage.Runs[0].ID)
-	assert.Nil(secondPage.NextBeforeID)
-	assert.NotContains(first.Body.String(), "connection_generation")
+	assertions.Equal(ids[0], secondPage.Runs[0].ID)
+	assertions.Nil(secondPage.NextBeforeID)
+	assertions.NotContains(first.Body.String(), "connection_generation")
 }
 
 func TestCardDAVRunHistoryRejectsInvalidPagination(t *testing.T) {
@@ -393,15 +394,15 @@ func TestCardDAVRunHistoryRejectsInvalidPagination(t *testing.T) {
 
 func TestCardDAVStatusAndRunsMapMissingDependenciesAndStorageFailureSafely(t *testing.T) {
 	t.Parallel()
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = cfg.HomeDir
 	for _, path := range []string{"/api/v1/carddav/status", "/api/v1/carddav/runs"} {
 		missing := getCardDAVRead(t, cardDAVReadServer(t, cfg, nil, nil), path)
-		assert.Equal(http.StatusServiceUnavailable, missing.Code, path+": "+missing.Body.String())
+		assertions.Equal(http.StatusServiceUnavailable, missing.Code, path+": "+missing.Body.String())
 		missingStore := getCardDAVRead(t, cardDAVReadServer(t, cfg, &CardDAVController{cfg: cfg}, nil), path)
-		assert.Equal(http.StatusServiceUnavailable, missingStore.Code, path+": "+missingStore.Body.String())
+		assertions.Equal(http.StatusServiceUnavailable, missingStore.Code, path+": "+missingStore.Body.String())
 	}
 
 	st := testutil.NewTestStore(t)
@@ -410,8 +411,42 @@ func TestCardDAVStatusAndRunsMapMissingDependenciesAndStorageFailureSafely(t *te
 	controller := &CardDAVController{cfg: cfg, store: st}
 	for _, path := range []string{"/api/v1/carddav/status", "/api/v1/carddav/runs"} {
 		failed := getCardDAVRead(t, cardDAVReadServer(t, cfg, controller, nil), path)
-		assert.Equal(http.StatusInternalServerError, failed.Code, path+": "+failed.Body.String())
-		assert.NotContains(failed.Body.String(), "no such table")
-		assert.NotContains(failed.Body.String(), "carddav_sync_runs")
+		assertions.Equal(http.StatusInternalServerError, failed.Code, path+": "+failed.Body.String())
+		assertions.NotContains(failed.Body.String(), "no such table")
+		assertions.NotContains(failed.Body.String(), "carddav_sync_runs")
+	}
+}
+
+func TestCardDAVStatusReportsSelectedAndAggregateSchedules(t *testing.T) {
+	assertions := assert.New(t)
+	require := require.New(t)
+
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.CardDAVConnections = map[string]config.CardDAVConfig{"work": {Enabled: true}, "personal": {Enabled: true}}
+	controller := &CardDAVController{cfg: cfg, store: testutil.NewTestStore(t)}
+	next := time.Date(2026, 10, 1, 1, 0, 0, 0, time.UTC)
+	sched := newMockScheduler()
+	sched.jobStatuses = []JobStatus{{Name: "carddav:work", NextRun: next}, {Name: "carddav:personal", NextRun: next.Add(time.Hour)}, {Name: "unrelated", NextRun: next.Add(-time.Hour)}}
+	server := cardDAVReadServer(t, cfg, controller, sched)
+	for _, tc := range []struct {
+		query     string
+		scheduled bool
+		next      time.Time
+	}{
+		{"", true, next}, {"?connection=work", true, next}, {"?connection=personal", true, next.Add(time.Hour)}, {"?connection=default", false, time.Time{}},
+	} {
+		response := getCardDAVRead(t, server, "/api/v1/carddav/status"+tc.query)
+		require.Equal(http.StatusOK, response.Code, response.Body.String())
+		var status CardDAVStatusResponse
+		require.NoError(json.NewDecoder(response.Body).Decode(&status))
+		assertions.Equal(tc.scheduled, status.Scheduled)
+		if tc.scheduled {
+			require.NotNil(status.NextScheduledAt)
+			assertions.Equal(tc.next, *status.NextScheduledAt)
+		} else {
+			assertions.Nil(status.NextScheduledAt)
+		}
 	}
 }

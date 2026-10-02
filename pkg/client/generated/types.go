@@ -1121,13 +1121,14 @@ func (c Candidate) Validate() error {
 }
 
 type CardDAVAccountRequest struct {
-	BaseURL  string                         `json:"base_url" validate:"required"`
-	Enabled  bool                           `json:"enabled"`
-	OauthApp *string                        `json:"oauth_app,omitzero"`
-	Password *string                        `json:"password,omitzero"`
-	Provider *CardDAVAccountRequestProvider `json:"provider,omitempty"`
-	Schedule *string                        `json:"schedule,omitzero"`
-	Username string                         `json:"username" validate:"required"`
+	BaseURL    string                         `json:"base_url" validate:"required"`
+	Connection *string                        `json:"connection,omitzero"`
+	Enabled    bool                           `json:"enabled"`
+	OauthApp   *string                        `json:"oauth_app,omitzero"`
+	Password   *string                        `json:"password,omitzero"`
+	Provider   *CardDAVAccountRequestProvider `json:"provider,omitempty"`
+	Schedule   *string                        `json:"schedule,omitzero"`
+	Username   string                         `json:"username" validate:"required"`
 }
 
 func (c CardDAVAccountRequest) Validate() error {
@@ -1175,13 +1176,15 @@ func (c CardDAVAddressBookIdentityResponse) Validate() error {
 }
 
 type CardDAVBookResponse struct {
-	ID                 int64  `json:"id"`
-	LookupSource       bool   `json:"lookup_source"`
-	Name               string `json:"name" validate:"required"`
-	NeedsFullReconcile bool   `json:"needs_full_reconcile"`
-	Subscribed         bool   `json:"subscribed"`
-	URL                string `json:"url" validate:"required"`
-	WriteTarget        bool   `json:"write_target"`
+	AccountID          *int64  `json:"account_id,omitempty"`
+	Connection         *string `json:"connection,omitzero"`
+	ID                 int64   `json:"id"`
+	LookupSource       bool    `json:"lookup_source"`
+	Name               string  `json:"name" validate:"required"`
+	NeedsFullReconcile bool    `json:"needs_full_reconcile"`
+	Subscribed         bool    `json:"subscribed"`
+	URL                string  `json:"url" validate:"required"`
+	WriteTarget        bool    `json:"write_target"`
 }
 
 func (c CardDAVBookResponse) Validate() error {
@@ -1380,6 +1383,50 @@ func (c CardDAVConflictsResponse) Validate() error {
 	return errors
 }
 
+type CardDAVConnectionResponse struct {
+	AccountID  *int64                `json:"account_id,omitempty"`
+	Connection string                `json:"connection" validate:"required"`
+	OauthApp   *string               `json:"oauth_app,omitzero"`
+	Orphaned   bool                  `json:"orphaned"`
+	Provider   *string               `json:"provider,omitzero"`
+	Status     CardDAVStatusResponse `json:"status"`
+}
+
+func (c CardDAVConnectionResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Connection, "required"); err != nil {
+		errors = errors.Append("Connection", err)
+	}
+	if v, ok := any(c.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CardDAVConnectionsResponse struct {
+	Connections []CardDAVConnectionResponse `json:"connections" validate:"required"`
+}
+
+func (c CardDAVConnectionsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range c.Connections {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Connections[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CardDAVContactSummaryResponse struct {
 	DisplayName *string                            `json:"display_name,omitzero"`
 	Emails      []string                           `json:"emails" validate:"required"`
@@ -1408,6 +1455,7 @@ func (c CardDAVContactSummaryResponse) Validate() error {
 }
 
 type CardDAVGoogleAuthorizeRequest struct {
+	Connection  *string `json:"connection,omitzero"`
 	Email       string  `json:"email" validate:"required"`
 	OauthApp    *string `json:"oauth_app,omitzero"`
 	RedirectURI string  `json:"redirect_uri" validate:"required"`
@@ -1418,8 +1466,9 @@ func (c CardDAVGoogleAuthorizeRequest) Validate() error {
 }
 
 type CardDAVGoogleAuthorizeResponse struct {
-	State string `json:"state" validate:"required"`
-	URL   string `json:"url" validate:"required"`
+	Connection *string `json:"connection,omitzero"`
+	State      string  `json:"state" validate:"required"`
+	URL        string  `json:"url" validate:"required"`
 }
 
 func (c CardDAVGoogleAuthorizeResponse) Validate() error {
@@ -1548,7 +1597,9 @@ func (c CardDAVResolveRequest) Validate() error {
 }
 
 type CardDAVRunResponse struct {
+	AccountID    int64                        `json:"account_id"`
 	Books        int64                        `json:"books"`
+	Connection   *string                      `json:"connection,omitzero"`
 	Created      int64                        `json:"created"`
 	ErrorCode    *CardDAVRunResponseErrorCode `json:"error_code,omitempty"`
 	ErrorMessage *string                      `json:"error_message,omitzero"`
@@ -1681,7 +1732,8 @@ func (c CardDAVStatusResponse) Validate() error {
 }
 
 type CardDAVSyncRequest struct {
-	Full *bool `json:"full,omitempty"`
+	Connection *string `json:"connection,omitzero"`
+	Full       *bool   `json:"full,omitempty"`
 }
 
 type Catalog struct {
@@ -2267,6 +2319,35 @@ func (c CommunicationServicesResponse) Validate() error {
 
 type ConfidenceInputs struct {
 	ReportedScore int64 `json:"reported_score"`
+}
+
+type ConnectionSyncOutcome struct {
+	AccountID    *int64                      `json:"account_id,omitempty"`
+	Books        int64                       `json:"books"`
+	Connection   string                      `json:"connection" validate:"required"`
+	Created      int64                       `json:"created"`
+	ErrorCode    *string                     `json:"error_code,omitzero"`
+	ErrorMessage *string                     `json:"error_message,omitzero"`
+	Removed      int64                       `json:"removed"`
+	RunID        *int64                      `json:"run_id,omitempty"`
+	Status       ConnectionSyncOutcomeStatus `json:"status" validate:"required"`
+	Updated      int64                       `json:"updated"`
+}
+
+func (c ConnectionSyncOutcome) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Connection, "required"); err != nil {
+		errors = errors.Append("Connection", err)
+	}
+	if v, ok := any(c.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ContactState struct {
@@ -6043,6 +6124,8 @@ func (o OperationPublicError) Validate() error {
 }
 
 type OperationRunDetail struct {
+	AccountID        *int64                               `json:"account_id,omitempty"`
+	Connection       *string                              `json:"connection,omitzero"`
 	Counters         []OperationPublicCounter             `json:"counters" validate:"required"`
 	ErrorData        *OperationPublicError                `json:"error,omitempty"`
 	FinishedAt       *time.Time                           `json:"finished_at,omitempty"`
@@ -6121,6 +6204,8 @@ func (o OperationRunDetail) Validate() error {
 }
 
 type OperationRunSummary struct {
+	AccountID  *int64                      `json:"account_id,omitempty"`
+	Connection *string                     `json:"connection,omitzero"`
 	Counters   []OperationPublicCounter    `json:"counters" validate:"required"`
 	ErrorData  *OperationPublicError       `json:"error,omitempty"`
 	FinishedAt *time.Time                  `json:"finished_at,omitempty"`
@@ -12046,10 +12131,34 @@ func (s Summary) Validate() error {
 }
 
 type SyncResult struct {
-	Books   int64 `json:"books"`
-	Created int64 `json:"created"`
-	Removed int64 `json:"removed"`
-	Updated int64 `json:"updated"`
+	Books       int64                   `json:"books"`
+	Connections []ConnectionSyncOutcome `json:"connections,omitempty"`
+	Created     int64                   `json:"created"`
+	Removed     int64                   `json:"removed"`
+	Status      *SyncResultStatus       `json:"status,omitempty"`
+	Updated     int64                   `json:"updated"`
+}
+
+func (s SyncResult) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range s.Connections {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Connections[%d]", i), err)
+			}
+		}
+	}
+	if s.Status != nil {
+		if v, ok := any(s.Status).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Status", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type SyncRunItemStatus struct {

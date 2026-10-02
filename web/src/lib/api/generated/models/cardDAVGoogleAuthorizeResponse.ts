@@ -3,6 +3,7 @@
  */
 
 export interface CardDAVGoogleAuthorizeResponse {
+  connection?: string;
   state: string;
   url: string;
   [key: string]: unknown;

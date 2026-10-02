@@ -17,31 +17,31 @@ import (
 )
 
 func TestCardDAVCommandsExposeSafeOperatorSurface(t *testing.T) {
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	require := require.New(t)
 
 	add := newAddCardDAVCmd()
-	assert.Nil(add.Flags().Lookup("password"), "passwords must never be accepted on argv")
-	assert.Equal("add-carddav", add.Name())
+	assertions.Nil(add.Flags().Lookup("password"), "passwords must never be accepted on argv")
+	assertions.Equal("add-carddav", add.Name())
 
 	root := newCardDAVCmd()
 	books, _, err := root.Find([]string{"books"})
 	require.NoError(err)
-	assert.Equal("books", books.Name())
+	assertions.Equal("books", books.Name())
 	setRole, _, err := root.Find([]string{"books", "set-role"})
 	require.NoError(err)
-	assert.Equal("set-role", setRole.Name())
+	assertions.Equal("set-role", setRole.Name())
 	resolve, _, err := root.Find([]string{"conflicts", "resolve"})
 	require.NoError(err)
-	assert.Equal("resolve", resolve.Name())
+	assertions.Equal("resolve", resolve.Name())
 	show, _, err := root.Find([]string{"conflicts", "show"})
 	require.NoError(err)
-	assert.Equal("show", show.Name())
-	assert.Equal("Show safe base, local, and remote summaries for a CardDAV conflict", show.Short)
+	assertions.Equal("show", show.Name())
+	assertions.Equal("Show safe base, local, and remote summaries for a CardDAV conflict", show.Short)
 }
 
 func TestCardDAVCLIProductionRoutes(t *testing.T) {
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	require := require.New(t)
 
 	requests := make([]string, 0, 8)
@@ -51,18 +51,18 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "PUT /api/v1/carddav/account":
 			var body map[string]any
-			assert.NoError(json.NewDecoder(r.Body).Decode(&body))
-			assert.Equal("https://contacts.example/dav", body["base_url"])
-			assert.Equal("alice", body["username"])
-			assert.Equal("synthetic-password", body["password"])
-			assert.Equal("0 3 * * *", body["schedule"])
+			assertions.NoError(json.NewDecoder(r.Body).Decode(&body))
+			assertions.Equal("https://contacts.example/dav", body["base_url"])
+			assertions.Equal("alice", body["username"])
+			assertions.Equal("synthetic-password", body["password"])
+			assertions.Equal("0 3 * * *", body["schedule"])
 			_, _ = w.Write([]byte(`{"base_url":"https://contacts.example/dav","username":"alice","enabled":true,"schedule":"0 3 * * *","books":1}`))
 		case "GET /api/v1/carddav/books":
 			_, _ = w.Write([]byte(`{"books":[{"id":9,"name":"Personal","url":"https://contacts.example/books/personal/","write_target":true,"subscribed":true,"lookup_source":false,"needs_full_reconcile":false}]}`))
 		case "PATCH /api/v1/carddav/books/9":
 			var body map[string]bool
-			assert.NoError(json.NewDecoder(r.Body).Decode(&body))
-			assert.Equal(map[string]bool{"write_target": true, "subscribed": true, "lookup_source": true}, body)
+			assertions.NoError(json.NewDecoder(r.Body).Decode(&body))
+			assertions.Equal(map[string]bool{"write_target": true, "subscribed": true, "lookup_source": true}, body)
 			_, _ = w.Write([]byte(`{"id":9,"name":"Personal","url":"https://contacts.example/books/personal/","write_target":true,"subscribed":true,"lookup_source":true,"needs_full_reconcile":false}`))
 		case "GET /api/v1/carddav/conflicts":
 			_, _ = w.Write([]byte(`{"conflicts":[]}`))
@@ -70,8 +70,8 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":7,"address_book":{"id":9,"name":"Personal"},"status":"unresolved","base":{"state":"unavailable","emails":[],"phones":[]},"local":{"state":"present","display_name":"Local Alice","emails":["local@example.test"],"phones":[]},"remote":{"state":"present","display_name":"Remote Alice","emails":[],"phones":["+12025550123"]},"allowed_resolutions":["keep_local","keep_remote"],"created_at":"2026-08-28T09:10:11Z","updated_at":"2026-08-28T10:11:12Z"}`))
 		case "POST /api/v1/carddav/conflicts/7/resolve":
 			var body map[string]string
-			assert.NoError(json.NewDecoder(r.Body).Decode(&body))
-			assert.Equal("keep_remote", body["choice"])
+			assertions.NoError(json.NewDecoder(r.Body).Decode(&body))
+			assertions.Equal("keep_remote", body["choice"])
 			_, _ = w.Write([]byte(`{"id":7,"status":"resolved","resolution":"keep_remote"}`))
 		case "POST /api/v1/carddav/publications/11":
 			_, _ = w.Write([]byte(`{"person_id":11,"state":"published","desired":true,"address_book":{"id":9,"name":"Personal"}}`))
@@ -79,8 +79,8 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 			_, _ = w.Write([]byte(`{"person_id":11,"address_book":{"id":9,"name":"Personal"},"kind":"current","vcard":"BEGIN:VCARD\r\nEND:VCARD\r\n","approval_token":"synthetic-token","review_required":true}`))
 		case "POST /api/v1/carddav/publications/11/approve":
 			var body map[string]string
-			assert.NoError(json.NewDecoder(r.Body).Decode(&body))
-			assert.Equal("synthetic-token", body["approval_token"])
+			assertions.NoError(json.NewDecoder(r.Body).Decode(&body))
+			assertions.Equal("synthetic-token", body["approval_token"])
 			_, _ = w.Write([]byte(`{"person_id":11,"state":"published","desired":true,"address_book":{"id":9,"name":"Personal"}}`))
 		case "DELETE /api/v1/carddav/publications/11":
 			_, _ = w.Write([]byte(`{"person_id":11,"state":"unpublished","desired":false,"address_book":{"id":9,"name":"Personal"}}`))
@@ -128,12 +128,12 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 		invocation.cmd.SetArgs(invocation.args)
 		require.NoError(invocation.cmd.Execute())
 		if slices.Contains(invocation.args, "--preview") {
-			assert.Contains(out.String(), `"approval_token":"synthetic-token"`)
-			assert.Contains(out.String(), `"vcard":"BEGIN:VCARD`)
+			assertions.Contains(out.String(), `"approval_token":"synthetic-token"`)
+			assertions.Contains(out.String(), `"vcard":"BEGIN:VCARD`)
 		}
 	}
 
-	assert.Equal([]string{
+	assertions.Equal([]string{
 		"PUT /api/v1/carddav/account",
 		"GET /api/v1/carddav/books",
 		"PATCH /api/v1/carddav/books/9",
@@ -145,19 +145,19 @@ func TestCardDAVCLIProductionRoutes(t *testing.T) {
 		"POST /api/v1/carddav/publications/11/approve",
 		"DELETE /api/v1/carddav/publications/11",
 	}, requests)
-	assert.NotContains(strings.Join(requests, "\n"), "synthetic-password")
+	assertions.NotContains(strings.Join(requests, "\n"), "synthetic-password")
 }
 
 func TestCardDAVConflictShowPrintsSafeSummariesWithoutRawVCardFields(t *testing.T) {
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	require := require.New(t)
 	const localRawMarker = "synthetic-local-raw-card"
 	const remoteRawMarker = "synthetic-remote-raw-card"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(http.MethodGet, r.Method)
-		assert.Equal("/api/v1/carddav/conflicts/7", r.URL.Path)
+		assertions.Equal(http.MethodGet, r.Method)
+		assertions.Equal("/api/v1/carddav/conflicts/7", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+		assertions.NoError(json.NewEncoder(w).Encode(map[string]any{
 			"id": 7, "address_book": map[string]any{"id": 9, "name": "Personal"},
 			"status": "resolved", "resolution": "keep_remote",
 			"base": map[string]any{"state": "unavailable", "emails": []string{}, "phones": []string{}},
@@ -187,7 +187,7 @@ func TestCardDAVConflictShowPrintsSafeSummariesWithoutRawVCardFields(t *testing.
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"conflicts", "show", "7"})
 	require.NoError(cmd.Execute())
-	assert.JSONEq(`{
+	assertions.JSONEq(`{
 		"id":7,
 		"address_book":{"id":9,"name":"Personal"},
 		"status":"resolved",
@@ -200,14 +200,14 @@ func TestCardDAVConflictShowPrintsSafeSummariesWithoutRawVCardFields(t *testing.
 		"updated_at":"2026-08-28T10:11:12Z",
 		"resolved_at":"2026-08-28T11:12:13Z"
 	}`, stdout.String())
-	assert.NotContains(stdout.String(), "local_vcard")
-	assert.NotContains(stdout.String(), "remote_vcard")
-	assert.NotContains(stdout.String(), localRawMarker)
-	assert.NotContains(stdout.String(), remoteRawMarker)
+	assertions.NotContains(stdout.String(), "local_vcard")
+	assertions.NotContains(stdout.String(), "remote_vcard")
+	assertions.NotContains(stdout.String(), localRawMarker)
+	assertions.NotContains(stdout.String(), remoteRawMarker)
 }
 
 func TestCardDAVBooksSanitizesTerminalControls(t *testing.T) {
-	assert := assert.New(t)
+	assertions := assert.New(t)
 	require := require.New(t)
 	type bookResponse struct {
 		ID                 int64  `json:"id"`
@@ -220,10 +220,10 @@ func TestCardDAVBooksSanitizesTerminalControls(t *testing.T) {
 	}
 	malicious := "\x1b[31mPersonal\x1b[0m \x1b]8;;https://attacker.test\x07link\x1b]8;;\x07"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(http.MethodGet, r.Method)
-		assert.Equal("/api/v1/carddav/books", r.URL.Path)
+		assertions.Equal(http.MethodGet, r.Method)
+		assertions.Equal("/api/v1/carddav/books", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		assert.NoError(json.NewEncoder(w).Encode(struct {
+		assertions.NoError(json.NewEncoder(w).Encode(struct {
 			Books []bookResponse `json:"books"`
 		}{
 			Books: []bookResponse{{
@@ -245,20 +245,22 @@ func TestCardDAVBooksSanitizesTerminalControls(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"books"})
 	require.NoError(cmd.Execute())
-	assert.NotContains(stdout.String(), "\x1b")
-	assert.NotContains(stdout.String(), "https://attacker.test")
-	assert.Contains(stdout.String(), "Personal link")
+	assertions.NotContains(stdout.String(), "\x1b")
+	assertions.NotContains(stdout.String(), "https://attacker.test")
+	assertions.Contains(stdout.String(), "Personal link")
 }
 
 func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
+	assertions := assert.New(t)
+
 	var full bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/carddav/sync", r.URL.Path)
+		assertions.Equal(http.MethodPost, r.Method)
+		assertions.Equal("/api/v1/carddav/sync", r.URL.Path)
 		var body struct {
 			Full bool `json:"full"`
 		}
-		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assertions.NoError(json.NewDecoder(r.Body).Decode(&body))
 		full = body.Full
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"books":1,"created":2,"updated":3,"removed":4}`))
@@ -277,6 +279,104 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"--full"})
 	require.NoError(t, cmd.Execute())
-	assert.True(t, full)
-	assert.Equal(t, "CardDAV sync: 1 books, 2 created, 3 updated, 4 removed\n", stdout.String())
+	assertions.True(full)
+	assertions.Equal("CardDAV sync: 1 books, 2 created, 3 updated, 4 removed\n", stdout.String())
+}
+
+func TestCardDAVCLISelectsConnectionsAndReportsAggregateFailures(t *testing.T) {
+	for _, state := range []string{"succeeded", "partial", "failed"} {
+		t.Run(state, func(t *testing.T) {
+			assertions := assert.New(t)
+			require := require.New(t)
+
+			var requests []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests = append(requests, r.URL.RequestURI())
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/carddav/connections":
+					_, _ = w.Write([]byte(`{"connections":[{"connection":"work","account_id":2,"orphaned":false,"status":{"enabled":true,"available":true}},{"connection":"old","account_id":3,"orphaned":true,"status":{"enabled":false,"available":false}}]}`))
+				case "/api/v1/carddav/books":
+					assertions.Equal("work", r.URL.Query().Get("connection"))
+					_, _ = w.Write([]byte(`{"books":[{"id":9,"account_id":2,"connection":"work","name":"Work contacts","url":"https://contacts.example/books/","write_target":false,"subscribed":true,"lookup_source":false,"needs_full_reconcile":false}]}`))
+				case "/api/v1/carddav/sync":
+					var body map[string]any
+					if !assertions.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+						http.Error(w, "invalid synthetic request", http.StatusBadRequest)
+						return
+					}
+					if body["connection"] != nil {
+						assertions.Equal("work", body["connection"])
+						_, _ = w.Write([]byte(`{"books":1,"created":0,"updated":0,"removed":0}`))
+						return
+					}
+					_, _ = w.Write([]byte(`{"books":1,"created":0,"updated":0,"removed":0,"status":"` + state + `","connections":[{"connection":"work","status":"` + state + `","error_code":"connection_unavailable","error_message":"Connection unavailable","books":0,"created":0,"updated":0,"removed":0}]}`))
+				case "/api/v1/carddav/account":
+					var body map[string]any
+					if !assertions.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+						http.Error(w, "invalid synthetic request", http.StatusBadRequest)
+						return
+					}
+					assertions.Equal("work", body["connection"])
+					assertions.Equal("google", body["provider"])
+					_, _ = w.Write([]byte(`{"base_url":"https://www.googleapis.com/carddav/v1/principals/person@example.com/lists/","username":"person@example.com","enabled":true,"books":1}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			home := t.TempDir()
+			ctx := withStoreResolverConfig(t, &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+			for _, invocation := range []struct {
+				cmd     *cobra.Command
+				args    []string
+				failure bool
+			}{
+				{newCardDAVCmd(), []string{"connections"}, false},
+				{newCardDAVCmd(), []string{"books", "--connection", "work"}, false},
+				{newAddCardDAVCmd(), []string{"--google", "person@example.com", "--connection", "work"}, false},
+				{newSyncCardDAVCmd(), []string{"--connection", "work"}, false},
+				{newSyncCardDAVCmd(), nil, state != "succeeded"},
+			} {
+				var out, stderr bytes.Buffer
+				invocation.cmd.SetContext(ctx)
+				invocation.cmd.SetOut(&out)
+				invocation.cmd.SetErr(&stderr)
+				invocation.cmd.SetArgs(invocation.args)
+				err := invocation.cmd.Execute()
+				if slices.Equal(invocation.args, []string{"connections"}) {
+					assertions.Contains(out.String(), "orphaned (restore configuration)")
+				}
+				if invocation.failure {
+					require.Error(err)
+					assertions.Contains(stderr.String(), "work")
+					assertions.Contains(stderr.String(), "connection_unavailable")
+				} else {
+					require.NoError(err)
+				}
+				if len(invocation.args) > 0 && (invocation.args[0] == "books" || invocation.args[0] == "connections") {
+					assertions.Contains(out.String(), "work")
+				}
+			}
+			assertions.Len(requests, 5)
+		})
+	}
+}
+
+func TestCardDAVCLIRejectsInvalidConnectionBeforeRequest(t *testing.T) {
+	for _, command := range []*cobra.Command{newAddCardDAVCmd(), newSyncCardDAVCmd(), newCardDAVCmd()} {
+		args := []string{"--connection", "../invalid"}
+		switch command.Name() {
+		case "add-carddav":
+			args = append(args, "https://contacts.example/dav", "person")
+		case "carddav":
+			args = append([]string{"books"}, args...)
+		}
+		command.SetOut(&bytes.Buffer{})
+		command.SetErr(&bytes.Buffer{})
+		command.SetArgs(args)
+		err := command.Execute()
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "connection")
+	}
 }

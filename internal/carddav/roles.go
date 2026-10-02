@@ -36,12 +36,15 @@ func (s *Service) ListBooks(ctx context.Context) ([]store.CardDAVAddressBook, er
 	if s == nil || s.store == nil {
 		return nil, errors.New("CardDAV service is not configured")
 	}
-	return s.store.ListCardDAVAddressBooksContext(ctx)
+	return s.scopedBooks(ctx)
 }
 
 func (s *Service) SetBookRoles(ctx context.Context, bookID int64, roles BookRoles) error {
 	if s == nil || s.store == nil {
 		return errors.New("CardDAV service is not configured")
+	}
+	if err := s.requireOwnBook(ctx, bookID); err != nil {
+		return err
 	}
 	return s.store.SetCardDAVBookRolesContext(ctx, bookID, store.CardDAVBookRoles{
 		IsWriteTarget:  roles.WriteTarget,

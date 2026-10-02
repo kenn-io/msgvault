@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS sources (
     UNIQUE(source_type, identifier)
 );
 
--- One external CardDAV connection. Passwords never enter this schema; the
+-- External CardDAV connections. Passwords never enter this schema; the
 -- account row contains only non-secret connection identity and discovery
 -- fences used by remote-first synchronization.
 CREATE TABLE IF NOT EXISTS carddav_discovery_lock (
@@ -113,6 +113,7 @@ INSERT OR IGNORE INTO carddav_discovery_lock(singleton) VALUES (1);
 
 CREATE TABLE IF NOT EXISTS carddav_sync_runs (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id    INTEGER NOT NULL DEFAULT 1 CHECK (account_id > 0),
     trigger       TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')),
     full_sync     BOOLEAN NOT NULL DEFAULT FALSE CHECK (full_sync IN (FALSE, TRUE)),
     state         TEXT NOT NULL CHECK (state IN ('running', 'succeeded', 'failed', 'cancelled', 'partial')),
@@ -134,7 +135,7 @@ CREATE TABLE IF NOT EXISTS carddav_sync_runs (
            (state IN ('failed', 'cancelled', 'partial') AND error_code <> ''))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_carddav_sync_runs_one_active
-    ON carddav_sync_runs((1)) WHERE state = 'running';
+    ON carddav_sync_runs(account_id) WHERE state = 'running';
 CREATE INDEX IF NOT EXISTS idx_carddav_sync_runs_state_id
     ON carddav_sync_runs(state, id DESC);
 CREATE INDEX IF NOT EXISTS idx_carddav_sync_runs_operations_order
@@ -265,7 +266,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_operation_token_keys_one_active
     ON operation_token_keys(state) WHERE state = 'active';
 
 CREATE TABLE IF NOT EXISTS carddav_accounts (
-    id                    INTEGER PRIMARY KEY CHECK (id = 1),
+    id                    INTEGER PRIMARY KEY CHECK (id > 0),
+    connection_name       TEXT NOT NULL DEFAULT 'default' UNIQUE,
     base_url              TEXT NOT NULL,
     username              TEXT NOT NULL,
     principal_url         TEXT NOT NULL,

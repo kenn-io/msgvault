@@ -42,6 +42,9 @@ func (s *Service) PreviewPublication(ctx context.Context, personID int64) (*Publ
 	if err != nil {
 		return nil, err
 	}
+	if err := s.requireOwnBook(ctx, initial.Book.ID); err != nil {
+		return nil, err
+	}
 	if initial.Conflict != nil {
 		return s.previewConflictPublicationUnlocked(ctx, initial.Conflict.ID)
 	}
@@ -81,6 +84,11 @@ func (s *Service) PublishReviewedPerson(ctx context.Context, personID int64, tok
 	operationCtx, cancel := context.WithTimeout(ctx, s.client.operationTimeout)
 	defer cancel()
 	existing, err := s.store.GetCardDAVPublicationContext(operationCtx, personID)
+	if err == nil && existing.AddressBookID > 0 {
+		if err := s.requireOwnBook(operationCtx, existing.AddressBookID); err != nil {
+			return err
+		}
+	}
 	if err == nil && existing.PendingOperation == store.CardDAVMutationCreate {
 		return s.publishReviewedPendingUnlocked(operationCtx, personID, token)
 	}
@@ -90,6 +98,9 @@ func (s *Service) PublishReviewedPerson(ctx context.Context, personID int64, tok
 	source, err := s.store.LoadCardDAVPublicationReviewSourceContext(operationCtx, personID)
 	if err != nil {
 		return reviewArtifactSourceError(err)
+	}
+	if err := s.requireOwnBook(operationCtx, source.Book.ID); err != nil {
+		return err
 	}
 	if source.Conflict != nil {
 		return s.approveConflictPublicationUnlocked(operationCtx, source.Conflict.ID, token)
@@ -101,6 +112,9 @@ func (s *Service) currentPublicationPlan(ctx context.Context, personID int64) (*
 	var plan store.CardDAVPublicationPlan
 	source, err := s.store.LoadCardDAVPublicationReviewSourceContext(ctx, personID)
 	if err != nil {
+		return nil, plan, err
+	}
+	if err := s.requireOwnBook(ctx, source.Book.ID); err != nil {
 		return nil, plan, err
 	}
 	if source.Conflict != nil {

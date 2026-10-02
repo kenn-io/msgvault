@@ -223,11 +223,11 @@ func TestConflictOwnedIntentProtectsConnectionChangeUntilRollback(t *testing.T) 
 	st, c := approvedStandaloneConflict(t)
 	pending, err := st.PrepareCardDAVConflictLocalContext(t.Context(), store.CardDAVConflictLocalPlan{ConflictID: c.ID, ExpectedMappingRevision: c.MappingRevision, RemoteETag: c.RemoteETag, OutgoingSemanticHash: "approved"})
 	require.NoError(err)
-	account, err := st.GetCardDAVAccountContext(t.Context())
+	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
-	require.ErrorIs(st.ValidateCardDAVConnectionChangeContext(t.Context(), account.BaseURL, account.Username, true), store.ErrCardDAVCredentialChangePending)
+	require.ErrorIs(st.ValidateCardDAVConnectionChangeContext(t.Context(), account.BaseURL, account.Username, true, "default"), store.ErrCardDAVCredentialChangePending)
 	require.NoError(st.RollbackCardDAVConflictLocalIntentContext(t.Context(), *pending))
-	require.NoError(st.ValidateCardDAVConnectionChangeContext(t.Context(), account.BaseURL, account.Username, true))
+	require.NoError(st.ValidateCardDAVConnectionChangeContext(t.Context(), account.BaseURL, account.Username, true, "default"))
 }
 
 func TestConflictOwnedIntentRejectsPullBeforeAdvancingSyncToken(t *testing.T) {
@@ -254,7 +254,7 @@ func TestConflictOwnedIntentRejectsPullBeforeAdvancingSyncToken(t *testing.T) {
 			plan.Conflicts = []store.CardDAVConflictCapture{capture}
 			_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), plan)
 			require.ErrorIs(err, store.ErrCardDAVPublicationPending)
-			books, err := st.ListCardDAVAddressBooksContext(t.Context())
+			books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 			require.NoError(err)
 			assert.Equal(source.Book.SyncToken, books[0].SyncToken)
 			assert.Equal(source.Book.SyncRevision, books[0].SyncRevision)

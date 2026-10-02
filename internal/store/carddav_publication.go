@@ -26,6 +26,16 @@ var (
 	ErrCardDAVRetryAfter          = errors.New("CardDAV account is throttled")
 )
 
+// CardDAVRetryAfterError preserves the owning account's gate at the point a
+// transaction or preflight rejects work. Callers need no second account lookup.
+type CardDAVRetryAfterError struct {
+	AccountID int64
+	Until     time.Time
+}
+
+func (e *CardDAVRetryAfterError) Error() string { return ErrCardDAVRetryAfter.Error() }
+func (e *CardDAVRetryAfterError) Unwrap() error { return ErrCardDAVRetryAfter }
+
 type CardDAVPublicationPlan struct {
 	SourceFence              *CardDAVReviewArtifactFence
 	OutgoingEnvelopeMetadata []byte
@@ -119,19 +129,26 @@ func (s *Store) prepareCardDAVPublicationContext(ctx context.Context, plan CardD
 func (s *Store) prepareCardDAVPublicationTx(ctx context.Context, tx *loggedTx, plan CardDAVPublicationPlan, review *CardDAVReviewedPublicationPlan) (*CardDAVPublication, error) {
 	var prepared *CardDAVPublication
 	err := func() error {
+		account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, plan.AddressBookID)
+		if err != nil {
+			return err
+		}
+		if account == nil {
+			return ErrCardDAVNoWriteTarget
+		}
 		if lock := s.dialect.RowWriterLockSQL("carddav_accounts", "connection_generation"); lock != "" {
-			if _, err := tx.ExecContext(ctx, lock, 1); err != nil {
+			if _, err := tx.ExecContext(ctx, lock, account.ID); err != nil {
 				return err
 			}
 		}
-		if gate, err := getCardDAVRetryAfterFrom(ctx, tx); err != nil {
+		if gate, err := getCardDAVRetryAfterFrom(ctx, tx, account.ID); err != nil {
 			return err
 		} else if gate != nil && gate.After(time.Now()) {
-			return ErrCardDAVRetryAfter
+			return &CardDAVRetryAfterError{AccountID: account.ID, Until: *gate}
 		}
 		var generation int64
 		if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts
-			WHERE id = 1`+s.dialect.SelectForUpdate()).Scan(&generation); err != nil {
+			WHERE id = ?`+s.dialect.SelectForUpdate(), account.ID).Scan(&generation); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrCardDAVNoWriteTarget
 			}
@@ -454,7 +471,7 @@ func (s *Store) RefreshCardDAVPublicationFenceContext(
 			return ErrCardDAVPublicationNotFound
 		}
 		var generation, bookRevision int64
-		if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts WHERE id = 1`).Scan(&generation); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts WHERE id = (SELECT account_id FROM carddav_address_books WHERE id = ?)`, current.AddressBookID).Scan(&generation); err != nil {
 			return err
 		}
 		if generation != current.ConnectionGeneration {
@@ -524,7 +541,7 @@ func (s *Store) FenceCardDAVCreateCollisionContext(
 		}
 		var generation, bookRevision int64
 		if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts
-			WHERE id = 1`+s.dialect.SelectForUpdate()).Scan(&generation); err != nil {
+			WHERE id = (SELECT account_id FROM carddav_address_books WHERE id = ?)`+s.dialect.SelectForUpdate(), current.AddressBookID).Scan(&generation); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT sync_revision FROM carddav_address_books
@@ -594,8 +611,8 @@ func (s *Store) CommitCardDAVPublicationContext(
 			return ErrCardDAVStalePlan
 		}
 		var generation, bookRevision int64
-		if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts WHERE id = 1`+
-			s.dialect.SelectForUpdate()).Scan(&generation); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts WHERE id = (SELECT account_id FROM carddav_address_books WHERE id = ?)`+
+			s.dialect.SelectForUpdate(), current.AddressBookID).Scan(&generation); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT sync_revision FROM carddav_address_books WHERE id = ?`+
@@ -835,29 +852,36 @@ func (s *Store) rollbackCardDAVPublicationContext(
 			return ErrCardDAVStalePlan
 		}
 		if retryAfter != nil {
-			return s.setCardDAVRetryAfterFrom(ctx, tx, *retryAfter)
+			account, err := getCardDAVAccountForBookFrom(ctx, tx.Tx, s.Rebind, current.AddressBookID)
+			if err != nil {
+				return err
+			}
+			if account == nil {
+				return ErrCardDAVAddressBookNotFound
+			}
+			return s.setCardDAVRetryAfterFrom(ctx, tx, *retryAfter, account.ID)
 		}
 		return nil
 	})
 }
 
-func (s *Store) GetCardDAVRetryAfterContext(ctx context.Context) (*time.Time, error) {
-	return getCardDAVRetryAfterFrom(ctx, s.db)
+func (s *Store) GetCardDAVRetryAfterContext(ctx context.Context, accountID int64) (*time.Time, error) {
+	return getCardDAVRetryAfterFrom(ctx, s.db, accountID)
 }
 
-func (s *Store) CheckCardDAVRetryAfterContext(ctx context.Context) error {
-	gate, err := s.GetCardDAVRetryAfterContext(ctx)
+func (s *Store) CheckCardDAVRetryAfterContext(ctx context.Context, accountID int64) error {
+	gate, err := s.GetCardDAVRetryAfterContext(ctx, accountID)
 	if err != nil {
 		return err
 	}
 	if gate != nil && gate.After(time.Now()) {
-		return ErrCardDAVRetryAfter
+		return &CardDAVRetryAfterError{AccountID: accountID, Until: *gate}
 	}
 	return nil
 }
 
-func (s *Store) SetCardDAVRetryAfterContext(ctx context.Context, retryAfter time.Time) error {
-	err := s.setCardDAVRetryAfterFrom(ctx, s.db, retryAfter)
+func (s *Store) SetCardDAVRetryAfterContext(ctx context.Context, retryAfter time.Time, accountID int64) error {
+	err := s.setCardDAVRetryAfterFrom(ctx, s.db, retryAfter, accountID)
 	if err != nil {
 		return fmt.Errorf("set CardDAV retry gate: %w", err)
 	}
@@ -865,21 +889,35 @@ func (s *Store) SetCardDAVRetryAfterContext(ctx context.Context, retryAfter time
 }
 
 func (s *Store) setCardDAVRetryAfterFrom(
-	ctx context.Context, execer contextQuerier, retryAfter time.Time,
+	ctx context.Context, execer contextQuerier, retryAfter time.Time, accountID int64,
 ) error {
+	if accountID <= 0 {
+		return errors.New("CardDAV account ID must be positive")
+	}
 	gate := retryAfter.UTC()
 	_, err := execer.ExecContext(ctx, `INSERT INTO carddav_retry_gate (account_id, retry_after_at, updated_at)
-		VALUES (1, ?, `+s.dialect.Now()+`) ON CONFLICT(account_id) DO UPDATE SET
+		VALUES (?, ?, `+s.dialect.Now()+`) ON CONFLICT(account_id) DO UPDATE SET
 		retry_after_at = CASE
 			WHEN carddav_retry_gate.retry_after_at < excluded.retry_after_at THEN excluded.retry_after_at
 			ELSE carddav_retry_gate.retry_after_at
 		END,
-		updated_at = `+s.dialect.Now(), timeValue(&gate))
+		updated_at = `+s.dialect.Now(), accountID, timeValue(&gate))
 	return err
 }
 
-func (s *Store) ListCardDAVPublicationPersonIDsContext(ctx context.Context) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT person_id FROM carddav_publications ORDER BY person_id`)
+func (s *Store) ListCardDAVPublicationPersonIDsContext(ctx context.Context, accountID int64) ([]int64, error) {
+	query := `SELECT person_id FROM carddav_publications`
+	var args []any
+	if accountID != AllCardDAVAccounts {
+		// Unbound intents can only be reconciled by the current global write
+		// target. This also keeps abandoned rows away from accounts that cannot
+		// clean them.
+		query += ` WHERE address_book_id IN (SELECT id FROM carddav_address_books WHERE account_id = ?)
+   OR (address_book_id IS NULL AND EXISTS (
+    SELECT 1 FROM carddav_address_books WHERE account_id = ? AND is_write_target = TRUE AND is_subscribed = TRUE))`
+		args = append(args, accountID, accountID)
+	}
+	rows, err := s.db.QueryContext(ctx, query+` ORDER BY person_id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -895,9 +933,12 @@ func (s *Store) ListCardDAVPublicationPersonIDsContext(ctx context.Context) ([]i
 	return ids, rows.Err()
 }
 
-func getCardDAVRetryAfterFrom(ctx context.Context, queryer contextRowQuerier) (*time.Time, error) {
+func getCardDAVRetryAfterFrom(ctx context.Context, queryer contextRowQuerier, accountID int64) (*time.Time, error) {
+	if accountID <= 0 {
+		return nil, errors.New("CardDAV account ID must be positive")
+	}
 	var value sql.NullTime
-	err := queryer.QueryRowContext(ctx, `SELECT retry_after_at FROM carddav_retry_gate WHERE account_id = 1`).Scan(&value)
+	err := queryer.QueryRowContext(ctx, `SELECT retry_after_at FROM carddav_retry_gate WHERE account_id = ?`, accountID).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // No retry-gate row means synchronization is not throttled.
 	}

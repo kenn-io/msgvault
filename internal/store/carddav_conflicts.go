@@ -347,7 +347,7 @@ func (s *Store) PrepareCardDAVConflictLocalTombstoneContext(
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
 		var generation int64
 		if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts
-			WHERE id = 1`+s.dialect.SelectForUpdate()).Scan(&generation); err != nil {
+			WHERE id = (SELECT account_id FROM carddav_address_books WHERE id = ?)`+s.dialect.SelectForUpdate(), identity.AddressBookID).Scan(&generation); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrCardDAVNoWriteTarget
 			}
@@ -447,7 +447,7 @@ func (s *Store) RefreshCardDAVConflictMutationFenceContext(
 		}
 		var generation, bookRevision int64
 		if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts
-			WHERE id = 1`).Scan(&generation); err != nil {
+			WHERE id = (SELECT account_id FROM carddav_address_books WHERE id = ?)`, conflict.AddressBookID).Scan(&generation); err != nil {
 			return err
 		}
 		if generation != conflict.ConnectionGeneration {
@@ -489,7 +489,7 @@ func (s *Store) CommitCardDAVConflictLocalTombstoneContext(
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		var generation int64
 		if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts
-			WHERE id = 1`+s.dialect.SelectForUpdate()).Scan(&generation); err != nil {
+			WHERE id = (SELECT account_id FROM carddav_address_books WHERE id = ?)`+s.dialect.SelectForUpdate(), identity.AddressBookID).Scan(&generation); err != nil {
 			return err
 		}
 		book, err := s.lockCardDAVConflictResolutionBookTx(ctx, tx, identity.AddressBookID)
@@ -1135,14 +1135,19 @@ func (s *Store) GetUnresolvedCardDAVConflictForMappingContext(
 }
 
 func (s *Store) ListCardDAVConflictsContext(
-	ctx context.Context, unresolvedOnly bool,
+	ctx context.Context, unresolvedOnly bool, accountID int64,
 ) ([]CardDAVConflict, error) {
-	query := `SELECT ` + cardDAVConflictColumns + ` FROM carddav_conflicts`
+	query := `SELECT ` + cardDAVConflictColumns + ` FROM carddav_conflicts WHERE 1 = 1`
+	var args []any
 	if unresolvedOnly {
-		query += ` WHERE status = 'unresolved'`
+		query += ` AND status = 'unresolved'`
+	}
+	if accountID != AllCardDAVAccounts {
+		query += ` AND address_book_id IN (SELECT id FROM carddav_address_books WHERE account_id = ?)`
+		args = append(args, accountID)
 	}
 	query += ` ORDER BY updated_at DESC, id`
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list CardDAV conflicts: %w", err)
 	}

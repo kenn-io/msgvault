@@ -56,6 +56,8 @@ type OperationErrorResponse struct {
 }
 
 type OperationRunSummary struct {
+	AccountID  int64                    `json:"account_id,omitzero"`
+	Connection string                   `json:"connection,omitempty"`
 	ID         string                   `json:"id"`
 	Kind       operations.Kind          `json:"kind" enum:"carddav_sync,document_embedding,document_extraction,message_embedding,person_embedding,person_enrichment,person_sweep,source_sync,visual_embedding"`
 	Lane       operations.Lane          `json:"lane" enum:"contacts,documents,messages,person_facts,visual_attachments"`
@@ -815,8 +817,14 @@ func (s *Server) operationLaneConfigured(
 		if s.cardDAV == nil {
 			return false
 		}
-		status, err := s.cardDAV.Status(ctx)
-		return err == nil && status.Configured && status.Available && status.CredentialConfigured
+		connections, err := s.cardDAV.Connections(ctx)
+		if err != nil {
+			return false
+		}
+		return slices.ContainsFunc(connections.Connections, func(connection CardDAVConnectionResponse) bool {
+			status := connection.Status
+			return status.Enabled && status.Configured && status.Available && status.CredentialConfigured
+		})
 	case operations.KindDocumentEmbedding:
 		return s.cfg.Vector.Enabled && s.cfg.Attachments.Documents.Index.Embeddings.Enabled
 	case operations.KindDocumentExtraction:
@@ -1041,7 +1049,7 @@ func operationRunSummary(
 		return OperationRunSummary{}, err
 	}
 	summary := OperationRunSummary{
-		ID: ref, Kind: run.ID.Kind(), Lane: run.Lane, State: run.State,
+		ID: ref, AccountID: run.AccountID, Connection: run.Connection, Kind: run.ID.Kind(), Lane: run.Lane, State: run.State,
 		Trigger: run.Trigger, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt,
 		Counters: make([]OperationPublicCounter, 0, len(run.Counters)),
 	}

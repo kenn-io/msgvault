@@ -347,7 +347,7 @@ func TestCurrentPublicationApprovalScopeChangesAfterUnpublishAndNewTarget(t *tes
 	require.NoError(err)
 	require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
 	require.NoError(service.UnpublishPerson(t.Context(), personID))
-	account, err := st.GetCardDAVAccountContext(t.Context())
+	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	allowed := true
 	updatedAccount, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{

@@ -3,6 +3,7 @@
  */
 
 export interface CardDAVGoogleAuthorizeRequest {
+  connection?: string;
   email: string;
   oauth_app?: string;
   redirect_uri: string;

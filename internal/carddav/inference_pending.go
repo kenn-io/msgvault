@@ -10,6 +10,9 @@ import (
 // observePendingCreateUnlocked always reads the canonical href before offering
 // authorization or cancellation. An existing resource is settled or conflicted.
 func (s *Service) observePendingCreateUnlocked(ctx context.Context, pending *store.CardDAVPublication) (bool, error) {
+	if err := s.requireOwnBook(ctx, pending.AddressBookID); err != nil {
+		return false, err
+	}
 	remote, absent, err := s.fetchCanonical(ctx, pending.Href)
 	if err != nil {
 		return false, err
@@ -25,6 +28,13 @@ func (s *Service) observePendingCreateUnlocked(ctx context.Context, pending *sto
 }
 
 func (s *Service) pendingPublicationSourceUnlocked(ctx context.Context, personID int64) (*store.CardDAVPublicationReviewSource, error) {
+	identity, err := s.store.GetCardDAVPublicationContext(ctx, personID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireOwnBook(ctx, identity.AddressBookID); err != nil {
+		return nil, err
+	}
 	pending, err := s.store.RefreshCardDAVPublicationFenceContext(ctx, personID)
 	if err != nil {
 		return nil, err
@@ -84,6 +94,9 @@ func (s *Service) publishReviewedPendingUnlocked(ctx context.Context, personID i
 }
 
 func (s *Service) cancelPendingCreateUnlocked(ctx context.Context, pending *store.CardDAVPublication) error {
+	if err := s.requireOwnBook(ctx, pending.AddressBookID); err != nil {
+		return err
+	}
 	pending, err := s.store.RefreshCardDAVPublicationFenceContext(ctx, pending.PersonID)
 	if err != nil {
 		return err

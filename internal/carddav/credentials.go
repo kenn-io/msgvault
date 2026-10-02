@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"go.kenn.io/msgvault/internal/config"
 )
 
 const cardDAVTokenFilename = "carddav.json" // #nosec G101 -- This is a credential filename, not a credential value.
@@ -16,6 +18,19 @@ const cardDAVTokenFilename = "carddav.json" // #nosec G101 -- This is a credenti
 const maximumCredentialFileBytes = 1 << 20
 
 var ErrCredentialNotBound = errors.New("CardDAV credential is not bound to a connection")
+
+// ConnectionTokenDir isolates the discovery binding from other connections.
+// Google OAuth tokens still use the global token directory; only carddav.json
+// belongs here. Validate the name before deriving any filesystem path.
+func ConnectionTokenDir(tokenDir, name string) (string, error) {
+	if err := config.ValidateCardDAVConnectionName(name); err != nil {
+		return "", err
+	}
+	if name == config.DefaultCardDAVConnection {
+		return tokenDir, nil
+	}
+	return filepath.Join(tokenDir, "carddav-connections", name), nil
+}
 
 // Credential binds a password to the exact durable connection it may
 // authenticate. The generation closes the crash window between publishing the

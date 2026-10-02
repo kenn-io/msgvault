@@ -11,13 +11,21 @@ import (
 	"strings"
 )
 
+const (
+	// AllCardDAVAccounts selects every account in aggregate read operations.
+	AllCardDAVAccounts int64 = 0
+	// DefaultCardDAVAccountID is reserved for the original unnamed connection.
+	DefaultCardDAVAccountID int64 = 1
+)
+
 // CardDAVDiscoveryInput is one complete, successfully enumerated discovery
 // snapshot. Its Books list is authoritative for active books; deliberately
 // ignored books and books with unresolved remote-first work retain their stored
 // identity while temporarily absent.
 type CardDAVDiscoveryInput struct {
-	BaseURL  string
-	Username string
+	ConnectionName string
+	BaseURL        string
+	Username       string
 	// CredentialsChanged advances the connection fence even when the URL and
 	// username are unchanged, invalidating work authenticated with an old secret.
 	CredentialsChanged bool
@@ -44,6 +52,7 @@ type CardDAVDiscoveredBook struct {
 
 type CardDAVAccount struct {
 	ID                   int64
+	ConnectionName       string
 	BaseURL              string
 	Username             string
 	PrincipalURL         string
@@ -100,6 +109,10 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 	if err := validateCardDAVDiscoveryInput(input); err != nil {
 		return nil, nil, err
 	}
+	name := input.ConnectionName
+	if name == "" {
+		name = "default"
+	}
 	homeURLs := cardDAVDiscoveryHomeURLs(input)
 	tx, err := s.db.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -115,18 +128,26 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 		return nil, nil, err
 	}
 
-	account, err := getCardDAVAccountForUpdateFrom(ctx, tx, s.Rebind, s.dialect.SelectForUpdate())
+	account, err := getCardDAVAccountForUpdateFrom(ctx, tx, s.Rebind, s.dialect.SelectForUpdate(), name)
 	if err != nil {
 		return nil, nil, err
 	}
 	identityChanged := account != nil &&
 		(account.BaseURL != input.BaseURL || account.Username != input.Username)
-	if identityChanged || input.CredentialsChanged {
-		if err := cardDAVConnectionChangeBlocker(ctx, logged, identityChanged); err != nil {
+	if account != nil && (identityChanged || input.CredentialsChanged) {
+		if err := cardDAVConnectionChangeBlocker(ctx, logged, identityChanged, account.ID); err != nil {
 			return nil, nil, err
 		}
 	}
-	existing, err := listCardDAVBooksFrom(ctx, tx, s.Rebind)
+	accountID := DefaultCardDAVAccountID
+	if account != nil {
+		accountID = account.ID
+	} else if name != "default" {
+		if err := tx.QueryRowContext(ctx, s.Rebind(`SELECT COALESCE(MAX(id), ?) + 1 FROM carddav_accounts`), DefaultCardDAVAccountID).Scan(&accountID); err != nil {
+			return nil, nil, err
+		}
+	}
+	existing, err := listCardDAVBooksFrom(ctx, tx, s.Rebind, accountID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -147,18 +168,18 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 			return nil, nil, err
 		}
 		if _, err := logged.ExecContext(ctx,
-			`DELETE FROM carddav_address_books WHERE account_id = 1`); err != nil {
+			`DELETE FROM carddav_address_books WHERE account_id = ?`, accountID); err != nil {
 			return nil, nil, fmt.Errorf("delete prior CardDAV connection books: %w", err)
 		}
 		if _, err := logged.ExecContext(ctx,
-			`DELETE FROM carddav_retry_gate WHERE account_id = 1`); err != nil {
+			`DELETE FROM carddav_retry_gate WHERE account_id = ?`, accountID); err != nil {
 			return nil, nil, fmt.Errorf("clear prior CardDAV connection retry gate: %w", err)
 		}
 		existing = nil
 	}
 	firstDiscovery := account == nil || account.DiscoveryRevision == 0 || identityChanged
 	if account == nil {
-		account = &CardDAVAccount{ID: 1, ConnectionGeneration: 1}
+		account = &CardDAVAccount{ID: accountID, ConnectionName: name, ConnectionGeneration: 1}
 	} else if identityChanged || input.CredentialsChanged {
 		account.ConnectionGeneration++
 	}
@@ -170,9 +191,9 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 	account.DiscoveryRevision++
 	if _, err := tx.ExecContext(ctx, s.Rebind(`
 		INSERT INTO carddav_accounts (
-			id, base_url, username, principal_url, home_url,
+			id, connection_name, base_url, username, principal_url, home_url,
 			connection_generation, discovery_revision, discovered_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET
 			base_url = excluded.base_url,
 			username = excluded.username,
@@ -182,7 +203,7 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 			discovery_revision = excluded.discovery_revision,
 			discovered_at = CURRENT_TIMESTAMP,
 			updated_at = CURRENT_TIMESTAMP`),
-		account.ID, account.BaseURL, account.Username, account.PrincipalURL,
+		account.ID, account.ConnectionName, account.BaseURL, account.Username, account.PrincipalURL,
 		account.HomeURL, account.ConnectionGeneration, account.DiscoveryRevision,
 	); err != nil {
 		return nil, nil, fmt.Errorf("save CardDAV account discovery: %w", err)
@@ -223,7 +244,10 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 			return nil, nil, fmt.Errorf("clear discovered CardDAV address book URL identities: %w", err)
 		}
 	}
-	writeTargetChosen := false
+	var writeTargetChosen bool
+	if err := tx.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS (SELECT 1 FROM carddav_address_books WHERE is_write_target = TRUE) OR EXISTS (SELECT 1 FROM carddav_accounts WHERE id <> ?)`), accountID).Scan(&writeTargetChosen); err != nil {
+		return nil, nil, err
+	}
 	seenBookIDs := make(map[int64]bool, len(input.Books))
 	for index, discovered := range input.Books {
 		matched := matches[index]
@@ -322,7 +346,7 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 			return nil, nil, fmt.Errorf("prune unseen CardDAV address book: %w", err)
 		}
 	}
-	books, err := listCardDAVBooksFrom(ctx, tx, s.Rebind)
+	books, err := listCardDAVBooksFrom(ctx, tx, s.Rebind, accountID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -336,9 +360,9 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 // used by account setup. ReplaceCardDAVDiscoveryContext repeats the check
 // under the discovery transaction so a racing writer still fails closed.
 func (s *Store) ValidateCardDAVConnectionChangeContext(
-	ctx context.Context, baseURL, username string, credentialsChanged bool,
+	ctx context.Context, baseURL, username string, credentialsChanged bool, name string,
 ) error {
-	account, err := s.GetCardDAVAccountContext(ctx)
+	account, err := s.GetCardDAVAccountByNameContext(ctx, name)
 	if err != nil || account == nil {
 		return err
 	}
@@ -346,24 +370,24 @@ func (s *Store) ValidateCardDAVConnectionChangeContext(
 	if !identityChanged && !credentialsChanged {
 		return nil
 	}
-	return cardDAVConnectionChangeBlocker(ctx, s.db, identityChanged)
+	return cardDAVConnectionChangeBlocker(ctx, s.db, identityChanged, account.ID)
 }
 
 func cardDAVConnectionChangeBlocker(
-	ctx context.Context, queryer contextRowQuerier, identityChanged bool,
+	ctx context.Context, queryer contextRowQuerier, identityChanged bool, accountID int64,
 ) error {
 	query := `SELECT
-		EXISTS (SELECT 1 FROM carddav_publications WHERE pending_operation IS NOT NULL)
-		OR EXISTS (SELECT 1 FROM carddav_conflicts WHERE pending_operation IS NOT NULL OR local_mutation_intent IS NOT NULL)`
+		EXISTS (SELECT 1 FROM carddav_publications WHERE address_book_id IN (SELECT id FROM carddav_address_books WHERE account_id = ?) AND pending_operation IS NOT NULL)
+		OR EXISTS (SELECT 1 FROM carddav_conflicts WHERE address_book_id IN (SELECT id FROM carddav_address_books WHERE account_id = ?) AND (pending_operation IS NOT NULL OR local_mutation_intent IS NOT NULL))`
 	want := ErrCardDAVCredentialChangePending
 	if identityChanged {
 		query = `SELECT
-			EXISTS (SELECT 1 FROM carddav_publications)
-			OR EXISTS (SELECT 1 FROM carddav_conflicts)`
+			EXISTS (SELECT 1 FROM carddav_publications WHERE address_book_id IN (SELECT id FROM carddav_address_books WHERE account_id = ?))
+			OR EXISTS (SELECT 1 FROM carddav_conflicts WHERE address_book_id IN (SELECT id FROM carddav_address_books WHERE account_id = ?))`
 		want = ErrCardDAVIdentityChangeOwned
 	}
 	var blocked bool
-	if err := queryer.QueryRowContext(ctx, query).Scan(&blocked); err != nil {
+	if err := queryer.QueryRowContext(ctx, query, accountID, accountID).Scan(&blocked); err != nil {
 		return fmt.Errorf("check CardDAV connection change ownership: %w", err)
 	}
 	if blocked {
@@ -384,8 +408,7 @@ func cardDAVBookHasProtectedStateTx(
 	var protected bool
 	if err := tx.QueryRowContext(ctx, `WITH affected_books AS (
 		SELECT id FROM carddav_address_books
-		WHERE account_id = 1
-		  AND (id = ? OR (? AND is_write_target = TRUE))
+		WHERE id = ? OR (? AND is_write_target = TRUE)
 	)
 	SELECT
 		EXISTS (SELECT 1 FROM carddav_publications
@@ -445,12 +468,55 @@ func insertCardDAVBookURLIdentities(
 	return nil
 }
 
-func (s *Store) GetCardDAVAccountContext(ctx context.Context) (*CardDAVAccount, error) {
-	return getCardDAVAccountFrom(ctx, s.db.DB, s.Rebind)
+func (s *Store) GetCardDAVAccountByNameContext(ctx context.Context, name string) (*CardDAVAccount, error) {
+	return getCardDAVAccountForUpdateFrom(ctx, s.db.DB, s.Rebind, "", name)
 }
 
-func (s *Store) ListCardDAVAddressBooksContext(ctx context.Context) ([]CardDAVAddressBook, error) {
-	return listCardDAVBooksFrom(ctx, s.db.DB, s.Rebind)
+func (s *Store) GetCardDAVAccountByIDContext(ctx context.Context, id int64) (*CardDAVAccount, error) {
+	return getCardDAVAccountMatchingFrom(ctx, s.db.DB, s.Rebind, "id = ?", id, "")
+}
+
+func (s *Store) GetCardDAVAccountForBookContext(ctx context.Context, bookID int64) (*CardDAVAccount, error) {
+	return getCardDAVAccountForBookFrom(ctx, s.db.DB, s.Rebind, bookID)
+}
+
+func getCardDAVAccountForBookFrom(ctx context.Context, queryer cardDAVQueryer, rebind func(string) string, bookID int64) (*CardDAVAccount, error) {
+	return getCardDAVAccountMatchingFrom(ctx, queryer, rebind,
+		"id = (SELECT account_id FROM carddav_address_books WHERE id = ?)", bookID, "")
+}
+
+func (s *Store) ListCardDAVAccountsContext(ctx context.Context) ([]CardDAVAccount, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM carddav_accounts ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list CardDAV accounts: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	accounts := make([]CardDAVAccount, 0, len(ids))
+	for _, id := range ids {
+		account, err := s.GetCardDAVAccountByIDContext(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if account != nil {
+			accounts = append(accounts, *account)
+		}
+	}
+	return accounts, nil
+}
+
+func (s *Store) ListCardDAVAddressBooksContext(ctx context.Context, accountID int64) ([]CardDAVAddressBook, error) {
+	return listCardDAVBooksFrom(ctx, s.db.DB, s.Rebind, accountID)
 }
 
 // SetCardDAVBookRolesContext applies one complete role state. The account row
@@ -466,13 +532,45 @@ func (s *Store) SetCardDAVBookRolesContext(
 		return ErrCardDAVWriteTargetSubscribed
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		var generation int64
-		if err := tx.QueryRowContext(ctx, `SELECT connection_generation FROM carddav_accounts
-			WHERE id = 1`+s.dialect.SelectForUpdate()).Scan(&generation); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrCardDAVAddressBookNotFound
-			}
+		if err := lockCardDAVDiscoveryReplacement(ctx, tx.Tx, s.Rebind, s.IsPostgreSQL()); err != nil {
+			return err
+		}
+		// A target switch can affect a book owned by another connection. Lock
+		// every affected account before its books, in ID order, so publication
+		// cannot create protected work between this check and the role update.
+		accounts, err := tx.QueryContext(ctx, `SELECT id FROM carddav_accounts
+			WHERE EXISTS (SELECT 1 FROM carddav_address_books
+				WHERE account_id = carddav_accounts.id AND
+				(id = ? OR (? AND is_write_target = TRUE)))
+			ORDER BY id`+s.dialect.SelectForUpdate(), bookID, roles.IsWriteTarget)
+		if err != nil {
 			return fmt.Errorf("lock CardDAV account roles: %w", err)
+		}
+		for accounts.Next() {
+			var id int64
+			if err := accounts.Scan(&id); err != nil {
+				_ = accounts.Close()
+				return fmt.Errorf("read CardDAV account role lock: %w", err)
+			}
+		}
+		if err := errors.Join(accounts.Err(), accounts.Close()); err != nil {
+			return fmt.Errorf("close CardDAV account role locks: %w", err)
+		}
+		books, err := tx.QueryContext(ctx, `SELECT id FROM carddav_address_books
+			WHERE id = ? OR (? AND is_write_target = TRUE)
+			ORDER BY id`+s.dialect.SelectForUpdate(), bookID, roles.IsWriteTarget)
+		if err != nil {
+			return fmt.Errorf("lock CardDAV address book roles: %w", err)
+		}
+		for books.Next() {
+			var id int64
+			if err := books.Scan(&id); err != nil {
+				_ = books.Close()
+				return fmt.Errorf("read CardDAV address book role lock: %w", err)
+			}
+		}
+		if err := errors.Join(books.Err(), books.Close()); err != nil {
+			return fmt.Errorf("close CardDAV address book role locks: %w", err)
 		}
 
 		var current CardDAVBookRoles
@@ -526,7 +624,7 @@ func (s *Store) SetCardDAVBookRolesContext(
 			if _, err := tx.ExecContext(ctx, `UPDATE carddav_address_books SET
 				is_write_target = FALSE, sync_revision = sync_revision + 1,
 				updated_at = `+s.dialect.Now()+`
-				WHERE account_id = 1 AND is_write_target = TRUE AND id <> ?`, bookID); err != nil {
+				WHERE is_write_target = TRUE AND id <> ?`, bookID); err != nil {
 				return fmt.Errorf("release previous CardDAV write target: %w", err)
 			}
 		}
@@ -582,25 +680,23 @@ type cardDAVQueryer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-func getCardDAVAccountFrom(
-	ctx context.Context, queryer cardDAVQueryer, rebind func(string) string,
+func getCardDAVAccountForUpdateFrom(
+	ctx context.Context, queryer cardDAVQueryer, rebind func(string) string, suffix, name string,
 ) (*CardDAVAccount, error) {
-	return getCardDAVAccountForUpdateFrom(ctx, queryer, rebind, "")
+	return getCardDAVAccountMatchingFrom(ctx, queryer, rebind, "connection_name = ?", name, suffix)
 }
 
-func getCardDAVAccountForUpdateFrom(
-	ctx context.Context, queryer cardDAVQueryer, rebind func(string) string, suffix string,
-) (*CardDAVAccount, error) {
+func getCardDAVAccountMatchingFrom(ctx context.Context, queryer cardDAVQueryer, rebind func(string) string, predicate string, value any, suffix string) (*CardDAVAccount, error) {
 	var account CardDAVAccount
 	err := queryer.QueryRowContext(ctx, rebind(`
-		SELECT id, base_url, username, principal_url, home_url,
+		SELECT id, connection_name, base_url, username, principal_url, home_url,
 		       connection_generation, discovery_revision
-		FROM carddav_accounts WHERE id = 1`)+suffix).Scan(
-		&account.ID, &account.BaseURL, &account.Username, &account.PrincipalURL,
+		FROM carddav_accounts WHERE `+predicate)+suffix, value).Scan(
+		&account.ID, &account.ConnectionName, &account.BaseURL, &account.Username, &account.PrincipalURL,
 		&account.HomeURL, &account.ConnectionGeneration, &account.DiscoveryRevision,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil //nolint:nilnil // An unconfigured singleton account is a valid absence state.
+		return nil, nil //nolint:nilnil // An unconfigured account is a valid absence state.
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get CardDAV account: %w", err)
@@ -629,16 +725,22 @@ func getCardDAVAccountForUpdateFrom(
 }
 
 func listCardDAVBooksFrom(
-	ctx context.Context, queryer cardDAVQueryer, rebind func(string) string,
+	ctx context.Context, queryer cardDAVQueryer, rebind func(string) string, accountID int64,
 ) ([]CardDAVAddressBook, error) {
+	predicate := ""
+	var args []any
+	if accountID != AllCardDAVAccounts {
+		predicate = " WHERE account_id = ?"
+		args = append(args, accountID)
+	}
 	rows, err := queryer.QueryContext(ctx, rebind(`
 		SELECT id, account_id, canonical_url, discovery_alias_url, display_name,
 		       discovery_index, supports_sync_collection, supports_multiget,
 		       supported_vcard_versions, can_create, can_update, can_delete,
 		       is_write_target, is_subscribed, is_lookup_source,
 		       sync_token, sync_revision, needs_full_reconcile, last_seen_revision
-		FROM carddav_address_books
-		ORDER BY discovery_index, id`))
+		FROM carddav_address_books`+predicate+`
+		ORDER BY discovery_index, id`), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list CardDAV address books: %w", err)
 	}

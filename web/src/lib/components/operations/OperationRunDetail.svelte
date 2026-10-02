@@ -44,6 +44,7 @@
   </header>
 
   <dl class="facts">
+    {#if detail.connection}<div><dt>Connection</dt><dd>{detail.connection}</dd></div>{/if}
     <div><dt>State</dt><dd><Chip size="sm" tone={stateChip.tone} uppercase={false}>{stateChip.label}</Chip></dd></div>
     <div><dt>Trigger</dt><dd>{triggerLabel(detail.trigger)}</dd></div>
     <div><dt>Started</dt><dd><time datetime={detail.started_at}>{formatDateTime(detail.started_at, 'long')}</time></dd></div>

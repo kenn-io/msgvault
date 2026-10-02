@@ -9,6 +9,8 @@ import type { OperationRunSummaryState } from "./operationRunSummaryState";
 import type { OperationRunSummaryTrigger } from "./operationRunSummaryTrigger";
 
 export interface OperationRunSummary {
+  account_id?: number;
+  connection?: string;
   counters: OperationPublicCounter[];
   error?: OperationPublicError;
   finished_at?: string;

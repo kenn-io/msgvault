@@ -81,6 +81,7 @@ describe('CardDAVConflicts', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = new URL(request.url).pathname;
+      if (path.endsWith('/connections')) return Response.json({ connections: [] });
       if (path.endsWith('/status')) return Response.json({
         configured: true, available, credential_configured: true, enabled: true,
         scheduled: false, schedule: '', active: {
@@ -587,6 +588,7 @@ describe('CardDAVConflicts', () => {
         mutationSignal = request.signal;
         return mutation.promise;
       }
+      if (path === '/api/v1/carddav/connections') return Response.json({ connections: [] });
       if (path === '/api/v1/carddav/status') return Response.json({ configured: true, available: true, credential_configured: true, enabled: false, scheduled: false, schedule: '' });
       if (path === '/api/v1/carddav/books') return Response.json({ books: [] });
       if (path === '/api/v1/carddav/runs') return Response.json({ runs: [] });

@@ -1041,6 +1041,7 @@ describe('SettingsWorkspace', () => {
       if (path === '/api/v1/carddav/account/test') {
         const body = await request.clone().json();
         expect(body).toEqual({
+          connection: 'default',
           base_url: 'https://dav.example.test/', username: 'alice', password: 'changed-password',
           enabled: true, schedule: '0 3 * * *'
         });
@@ -1096,6 +1097,7 @@ describe('SettingsWorkspace', () => {
       if (path === '/api/v1/carddav/account') {
         const body = await request.clone().json();
         expect(body).toEqual({
+          connection: 'default',
           base_url: 'https://old.example.test/', username: 'alice', enabled: false, schedule: '0 2 * * *'
         });
         credentialFacts.push({ method: request.method, path, passwordPresent: Object.hasOwn(body, 'password') });
@@ -1159,6 +1161,7 @@ describe('SettingsWorkspace', () => {
       const path = new URL(request.url).pathname;
       requests.push({ method: request.method, path });
       if (path === '/api/v1/settings') return settingsResponse(initialSettings, '"etag-a"');
+      if (path === '/api/v1/carddav/connections') return Response.json({ connections: [] });
       if (path === '/api/v1/carddav/status') return Response.json({
         configured: false, available: false, credential_configured: false,
         enabled: false, scheduled: false, schedule: ''
@@ -1221,9 +1224,31 @@ describe('SettingsWorkspace', () => {
           ? cardDAVSettings({ baseURL: 'https://saved.example.test/', username: 'saved-user', schedule: '0 6 * * *' })
           : cardDAVSettings(), '"etag-a"');
       }
+      if (path === '/api/v1/carddav/connections') {
+        operationsReads += 1;
+        return Response.json({
+          connections: [
+            {
+              connection: 'default',
+              status: {
+                configured: true,
+                available: true,
+                credential_configured: true,
+                enabled: false,
+                scheduled: false,
+                schedule: saved ? '0 6 * * *' : '0 2 * * *',
+                account: saved
+                  ? { base_url: 'https://saved.example.test/', username: 'saved-user' }
+                  : { base_url: 'https://old.example.test/', username: 'alice' }
+              }
+            }
+          ]
+        });
+      }
       if (path === '/api/v1/carddav/account') {
         const body = await request.clone().json();
         expect(body).toEqual({
+          connection: 'default',
           base_url: 'https://saved.example.test/', username: 'saved-user', password: 'one-use-password',
           enabled: false, schedule: '0 6 * * *'
         });
@@ -1256,7 +1281,7 @@ describe('SettingsWorkspace', () => {
     ]));
     expect(JSON.stringify(credentialFacts)).not.toContain('one-use-password');
     await waitFor(() => expect(settingsReads).toBe(2));
-    await waitFor(() => expect(operationsReads).toBe(8));
+    await waitFor(() => expect(operationsReads).toBe(10));
 
     await openSettingsCategory('Appearance');
     expect(screen.getByRole('combobox', { name: 'Theme: Dark' })).toBeDefined();
@@ -1284,11 +1309,13 @@ describe('SettingsWorkspace', () => {
         const first = credentialFacts.length === 0;
         if (first) {
           expect(body).toEqual({
+            connection: 'default',
             base_url: 'https://dav.example.test/', username: 'alice', password: 'first-password',
             enabled: false, schedule: '0 2 * * *'
           });
         } else {
           expect(body).toEqual({
+            connection: 'default',
             base_url: 'https://dav.example.test/', username: 'alice', enabled: false, schedule: '0 4 * * *'
           });
         }
@@ -1589,6 +1616,7 @@ function daemonSetting(
 function cardDAVOperationsResponse(request: Request): Response | undefined {
   if (request.method !== 'GET') return undefined;
   const path = new URL(request.url).pathname;
+  if (path === '/api/v1/carddav/connections') return Response.json({ connections: [] });
   if (path === '/api/v1/carddav/status') return Response.json({
     configured: true,
     available: true,

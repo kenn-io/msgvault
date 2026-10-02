@@ -49,6 +49,7 @@ import type {
   CardDAVConflictDetailResponse,
   CardDAVConflictResolutionResponse,
   CardDAVConflictsResponse,
+  CardDAVConnectionsResponse,
   CardDAVGoogleAuthorizeRequest,
   CardDAVGoogleAuthorizeResponse,
   CardDAVGoogleCallbackRequest,
@@ -144,6 +145,7 @@ import type {
   GetCacheBuildStatusPathParameters,
   GetCardDAVConflictPathParameters,
   GetCardDAVPublicationPathParameters,
+  GetCardDAVStatusParams,
   GetConversationParams,
   GetConversationPathParameters,
   GetDeletionPathParameters,
@@ -198,6 +200,7 @@ import type {
   ImportJobResponse,
   LinkPersonAgendaItemPathParameters,
   ListAttributeDefinitionsParams,
+  ListCardDAVBooksParams,
   ListCardDAVRunsParams,
   ListChangedMessagesParams,
   ListCommunicationServicesParams,
@@ -727,10 +730,11 @@ export const testCardDAVAccount = (
  * @summary List CardDAV address books
  */
 export const listCardDAVBooks = (
+  params?: ListCardDAVBooksParams,
   options?: SecondParameter<typeof orvalFetch<CardDAVBooksResponse>>,
 ) => {
   return orvalFetch<CardDAVBooksResponse>(
-    { url: `/api/v1/carddav/books`, method: "GET" },
+    { url: `/api/v1/carddav/books`, method: "GET", params },
     options,
   );
 };
@@ -795,6 +799,17 @@ export const resolveCardDAVConflict = (
       headers: { "Content-Type": "application/json" },
       data: cardDAVResolveRequest,
     },
+    options,
+  );
+};
+/**
+ * @summary List saved CardDAV connections
+ */
+export const listCardDAVConnections = (
+  options?: SecondParameter<typeof orvalFetch<CardDAVConnectionsResponse>>,
+) => {
+  return orvalFetch<CardDAVConnectionsResponse>(
+    { url: `/api/v1/carddav/connections`, method: "GET" },
     options,
   );
 };
@@ -929,10 +944,11 @@ export const listCardDAVRuns = (
  * @summary Get CardDAV synchronization status
  */
 export const getCardDAVStatus = (
+  params?: GetCardDAVStatusParams,
   options?: SecondParameter<typeof orvalFetch<CardDAVStatusResponse>>,
 ) => {
   return orvalFetch<CardDAVStatusResponse>(
-    { url: `/api/v1/carddav/status`, method: "GET" },
+    { url: `/api/v1/carddav/status`, method: "GET", params },
     options,
   );
 };

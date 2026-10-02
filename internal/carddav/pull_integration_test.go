@@ -30,7 +30,7 @@ func TestSnapshot507NeverTombstonesOmittedResources(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	service, st, book := newPullService(t, server, false)
-	account, err := st.GetCardDAVAccountContext(t.Context())
+	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	seed := integrationRemoteResource(server.URL+"/books/personal/keep.vcf", "keep", `"seed"`)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
@@ -53,7 +53,7 @@ func TestSnapshotHTTP507NeverTombstonesOmittedResources(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	service, st, book := newPullService(t, server, false)
-	account, err := st.GetCardDAVAccountContext(t.Context())
+	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	seed := integrationRemoteResource(server.URL+"/books/personal/keep.vcf", "keep", `"seed"`)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{

@@ -424,10 +424,21 @@ provider behavior.
 
 When `service_account_key` is configured, `msgvault add-account <email>` validates the delegated Gmail profile and registers the account without storing a per-user refresh token. The service account key file must be owner-only on Unix-like systems, for example `chmod 600 /path/to/service-account.json`.
 
-### `[carddav]`
+### `[carddav]` and `[carddav_connections.<name>]` {#carddav}
+
+`[carddav]` is the `default` connection. Add named tables for other accounts;
+each uses the keys below and has its own credential binding, discovery,
+retry state and schedule. Names use 1–64 lowercase ASCII letters, digits,
+underscores or hyphens, starting with a letter. `default` is reserved for
+`[carddav]`.
 
 Connect through the [CardDAV account workflow](usage/people-carddav.md) so the
-daemon validates discovery before saving these settings.
+daemon validates discovery before saving these settings. The same `base_url`
+and `username` cannot belong to two connections, including disabled connections.
+For Google, account email is case insensitive and the OAuth app does not create
+a separate CardDAV account. Config edits and account saves reject duplicates.
+Removing a config table retains the account's archive data; see
+[recovering an orphaned connection](usage/people-carddav.md#recover-a-connection-removed-from-config).
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -439,6 +450,23 @@ daemon validates discovery before saving these settings.
 | `enabled` | `false` | Enable the configured connection |
 | `trusted_origin` | `""` | Exact HTTPS origin approved for private access, including its port; a trailing `/` is accepted. Applies only when it matches the account URL's origin. |
 | `trusted_addresses` | `[]` | Private IP addresses to dial for `trusted_origin`, without DNS. Accepts `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, and `fc00::/7`; rejects duplicates, IPv6 zones, loopback, and link-local addresses. |
+
+For example, a second connection uses:
+
+```toml
+[carddav_connections.work]
+base_url = "https://contacts.example.com/dav/"
+username = "you@example.com"
+enabled = true
+schedule = "0 */6 * * *"
+```
+
+Use `add-carddav --connection work` or **Add connection** in Settings to save
+its credential and discover books. Passwords are rejected in these TOML tables.
+The default binding remains `tokens/carddav.json`; named bindings use
+`tokens/carddav-connections/<name>/carddav.json`. Google authorizations are
+shared by account email and OAuth app, separately from these connection bindings.
+Scheduler job names are `carddav` for default and `carddav:<name>` otherwise.
 
 Set both trusted-destination keys together. See the
 [private-server setup](usage/people-carddav.md#private-servers) for an example,

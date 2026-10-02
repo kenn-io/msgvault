@@ -412,8 +412,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("configure CardDAV: %w", err)
 	}
-	cardDAVController.SetScheduleReconciler(func(cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations) error {
-		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger)
+	cardDAVController.SetConnectionScheduleReconciler(func(name string, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations) error {
+		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger, name)
 	})
 	if err := cardDAVController.ReconcileSchedule(); err != nil {
 		return err
@@ -928,33 +928,34 @@ func snapshotBeeperDraftPolicy(cfg *config.Config) []config.GmailDraftSource {
 	return append([]config.GmailDraftSource(nil), cfg.Beeper.Drafts...)
 }
 
-func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger) error {
+func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger, name string) error {
+	jobName := api.CardDAVJobNameForConnection(name)
 	if !cardDAVConfig.Enabled || cardDAVConfig.Schedule == "" {
-		sched.RemoveJob(api.CardDAVJobName)
+		sched.RemoveJob(jobName)
 		if cardDAVConfig.Enabled && cardDAVConfig.Schedule == "" {
 			logger.Warn("carddav is enabled but has no schedule — the daemon will not sync it",
-				"hint", `set a cron schedule (e.g. "0 */6 * * *") in [carddav]`)
+				"connection", name, "hint", `set a cron schedule (e.g. "0 */6 * * *") in [carddav]`)
 		}
 		return nil
 	}
 	if service == nil {
-		sched.RemoveJob(api.CardDAVJobName)
+		sched.RemoveJob(jobName)
 		hint := "save the CardDAV account with its password to repair the connection"
 		if cardDAVConfig.Provider == "google" {
 			hint = "connect Google in CardDAV account settings, then test and save the account"
 		}
 		logger.Warn("carddav credentials are unavailable or do not match saved discovery; skipping scheduled sync",
-			"hint", hint)
+			"connection", name, "hint", hint)
 		return nil
 	}
 	if err := sched.AddJob(scheduler.Job{
-		Name: api.CardDAVJobName, Schedule: cardDAVConfig.Schedule,
+		Name: jobName, Schedule: cardDAVConfig.Schedule,
 		Run: func(ctx context.Context) error {
 			_, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
 			return err
 		},
 	}); err != nil {
-		return fmt.Errorf("schedule CardDAV sync: %w", err)
+		return fmt.Errorf("schedule CardDAV connection %s: %w", name, err)
 	}
 	return nil
 }

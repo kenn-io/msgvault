@@ -424,6 +424,24 @@ func (c CardDAVStatusResponseRepairReason) Validate() error {
 	}
 }
 
+type ConnectionSyncOutcomeStatus string
+
+const (
+	ConnectionSyncOutcomeStatusFailed    ConnectionSyncOutcomeStatus = "failed"
+	ConnectionSyncOutcomeStatusPartial   ConnectionSyncOutcomeStatus = "partial"
+	ConnectionSyncOutcomeStatusSucceeded ConnectionSyncOutcomeStatus = "succeeded"
+)
+
+// Validate checks if the ConnectionSyncOutcomeStatus value is valid
+func (c ConnectionSyncOutcomeStatus) Validate() error {
+	switch c {
+	case ConnectionSyncOutcomeStatusFailed, ConnectionSyncOutcomeStatusPartial, ConnectionSyncOutcomeStatusSucceeded:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ConnectionSyncOutcomeStatus value, got: %v", c))
+	}
+}
+
 type CreateAttributeDefinitionRequestCardinality string
 
 const (
@@ -2361,6 +2379,24 @@ func (s SettingValidationFormat) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SettingValidationFormat value, got: %v", s))
+	}
+}
+
+type SyncResultStatus string
+
+const (
+	SyncResultStatusFailed    SyncResultStatus = "failed"
+	SyncResultStatusPartial   SyncResultStatus = "partial"
+	SyncResultStatusSucceeded SyncResultStatus = "succeeded"
+)
+
+// Validate checks if the SyncResultStatus value is valid
+func (s SyncResultStatus) Validate() error {
+	switch s {
+	case SyncResultStatusFailed, SyncResultStatusPartial, SyncResultStatusSucceeded:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SyncResultStatus value, got: %v", s))
 	}
 }
 

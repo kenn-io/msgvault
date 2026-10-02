@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-26"
+last_edited: "2026-09-30"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -8,24 +8,30 @@ CardDAV connects msgvault profiles to an external address book. Import contacts,
 keep subscribed books in sync, and publish selected saved people so their
 contact details are available in your usual contacts app.
 
-Msgvault is a CardDAV **client**. It connects to one configured account, which
-can contain several address books. Publishing, unpublishing, and choosing the
-local side of a conflict can change that external address book.
+Msgvault is a CardDAV **client**. Each connection uses one account and can
+contain several address books. You can configure multiple independent
+connections. Publishing, unpublishing, and choosing the local side of a conflict can change that external address book.
 
 ## Connect an address book
 
 In the Web UI, open **Settings → CardDAV account** to test and save a connection.
-The CLI can discover the same account:
+Select an existing connection or choose **Add connection** for another account.
+The CLI can discover the same accounts:
 
 ```bash
 msgvault add-carddav https://contacts.example.com/dav/ you@example.com
-msgvault carddav books
+msgvault add-carddav https://work-contacts.example.com/dav/ you@example.com --connection work
+msgvault carddav connections
+msgvault carddav books --connection work
 ```
 
 Use the base URL supplied by your CardDAV service. The command prompts for the
 password; it also accepts a piped password on standard input. The daemon stores
 the credential separately from `config.toml`, in its token directory's
-`carddav.json` file.
+`carddav.json` file for `default`, or
+`carddav-connections/<name>/carddav.json` for a named connection. Saving one
+connection preserves every other connection. See the [configuration reference](../configuration.md#carddav)
+for name rules and trusted private destinations.
 
 `--disabled` saves the connection without enabling synchronization. Add
 `--schedule "*/30 * * * *"` for background sync every 30 minutes. You can also
@@ -122,6 +128,8 @@ preserving private file permissions. Shared authorizations use the existing
 `tokens/carddav-google/<SHA-256 of the OAuth app name>/<email>.json`; the default
 app uses the hash of an empty name. The `carddav.json` connection
 record references that account and app; it does not contain a Google password.
+Each named connection has its own binding record. An account can belong to
+only one CardDAV connection, even when different OAuth apps authorize it.
 The daemon refreshes expired access tokens during requests and saves refreshed
 tokens. After revoking access, connect Google again to reauthorize.
 
@@ -133,9 +141,10 @@ rediscovery every two to four weeks. See [Google's CardDAV reference](https://de
 
 ## Choose what each book does
 
-On first discovery, msgvault selects the first address book that supports
-creation, updates, and deletion as the write target and subscribes to it. All
-discovered books initially allow identity lookup. Review these roles before
+On first discovery of the archive's first connection, msgvault selects the
+first address book that supports creation, updates, and deletion and subscribes
+to it. Additional connections start with identity lookup only and preserve the
+global write target. All discovered books initially allow identity lookup. Review these roles before
 your first sync:
 
 | Role | Effect |
@@ -152,8 +161,8 @@ msgvault carddav books set-role 4 --lookup-source
 ```
 
 `set-role` replaces **all three roles** for the book. Omitted flags become
-false. Only one book can be the write target. Msgvault rejects incompatible
-role changes when publications, pending writes, or conflicts still depend on
+false. Only one book across all connections can be the write target. Msgvault
+rejects incompatible role changes when publications, pending writes, or conflicts still depend on
 the book; resolve those dependencies first.
 
 ## Sync and publish selected people
@@ -164,9 +173,19 @@ Pull changes and reconcile existing publications with:
 msgvault sync-carddav
 ```
 
-Use `msgvault sync-carddav --full` for a full address-book reconciliation.
-Settings shows active and recent runs, counts, and errors; Operations also
-provides CardDAV status and advertised sync actions.
+Unqualified sync runs every configured, enabled connection. Use
+`msgvault sync-carddav --connection work` to sync one connection, including a
+disabled connection for manual repair. Add `--full` for a full address-book
+reconciliation. A failing connection does not stop the others; partial or failed
+aggregate results make the CLI exit nonzero. With no enabled connections,
+unqualified sync fails as unavailable.
+
+Settings shows the selected connection's status, books and history, and its
+sync buttons run that connection. Switching connections clears unsaved account
+fields, passwords and pending test or sign-in results. Operations shows all
+connections' attributed runs and offers aggregate sync. Its action is disabled
+while any CardDAV run is active. Schedules, retry gates and run leases are
+independent per connection.
 
 To publish a person, open their saved profile in **Directory** and turn on
 **Publish person to CardDAV**. A contact UID identifies that published person
@@ -232,6 +251,54 @@ without publishing or resolving the conflict. Then run
 The preview route is the one CardDAV response that returns a raw vCard, and
 it can include Private Notes. The Directory UI directs you to the CLI review
 commands when approval is required.
+
+### Recover a connection removed from config
+
+Removing a connection's config table leaves its account, books, contacts and
+publications in the archive. `msgvault carddav connections` lists it as
+**orphaned**, and Settings shows **Configuration missing**. Publishing and
+unpublishing through that connection are unavailable until it is restored.
+Existing publications can also block moving the write target to another book.
+
+Restore the original config table, or select the orphaned connection in Settings
+and save it with the same server URL and username. The CLI can also restore it:
+
+```bash
+msgvault add-carddav https://work-contacts.example.com/dav/ you@example.com --connection work
+```
+
+Use the original connection name (`default` for `[carddav]`). For Google, use
+`msgvault add-carddav --google you@example.com --connection work` and the original
+`--oauth-app` when one was selected. Restoring the same identity reconnects the
+existing account and books. Settle pending publications and conflicts before
+moving the write target. Adding the account under a different name is rejected.
+
+### Select connections through the API
+
+| Request | Without `connection` | With `connection` |
+|---|---|---|
+| `GET /api/v1/carddav/connections` | Summaries of configured and orphaned connections | No selector |
+| Account test/save request body | Save or test `default` | Save or test the named connection |
+| Status, runs and books query | Aggregate status or all rows | Selected connection |
+| Sync request body | All configured enabled connections | One saved connection, including disabled connections |
+
+For example, `POST /api/v1/carddav/sync` with `{"connection":"work"}` selects
+one connection. Invalid or unknown selectors return HTTP 400 before changing
+state; test and save allow a new valid name. Explicit sync keeps the existing
+HTTP error behavior. An aggregate sync with at least one enabled connection
+returns HTTP 200 with `status` (`succeeded`, `partial` or `failed`) and
+`connections` outcomes, even when every connection fails. Consumers must inspect
+those fields, including callers using `pkg/client`. This is a breaking change
+from the single-account API: omitted-selector sync no longer reports a provider
+throttle as HTTP 503 or missing Google authorization as HTTP 502. Send
+`{"connection":"default"}` to retain explicit single-connection error behavior
+and to sync a disabled default account manually. Outcomes include safe errors,
+counts, connection identity and the run ID when this request started a run; a busy or unavailable connection does
+not create a run.
+
+Publication and conflict routes use global IDs and route network operations to
+the persisted owner's connection. Store-only views stay available even when a
+connection's credential needs repair.
 
 ## Resolve competing edits
 

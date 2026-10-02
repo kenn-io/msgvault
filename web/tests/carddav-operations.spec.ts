@@ -87,6 +87,7 @@ test('keyboard journey configures CardDAV, reconciles roles, syncs history, and 
     path: '/api/v1/carddav/account/test',
     query: {},
     body: {
+      connection: 'default',
       base_url: 'https://carddav.example.test/',
       username: 'synthetic-user',
       enabled: true,
@@ -99,6 +100,7 @@ test('keyboard journey configures CardDAV, reconciles roles, syncs history, and 
     path: '/api/v1/carddav/account',
     query: {},
     body: {
+      connection: 'default',
       base_url: 'https://carddav.example.test/',
       username: 'synthetic-user',
       enabled: true,
@@ -147,7 +149,7 @@ test('keyboard journey configures CardDAV, reconciles roles, syncs history, and 
   await expect(activeSync).toContainText('2 updated');
   await expect(page.getByLabel('Latest CardDAV sync')).toContainText('Succeeded');
   expect(fixture.requests.filter(({ path }) => path === '/api/v1/carddav/sync')).toEqual([{
-    method: 'POST', path: '/api/v1/carddav/sync', query: {}, body: { full: false }
+    method: 'POST', path: '/api/v1/carddav/sync', query: {}, body: { full: false, connection: 'default' }
   }]);
 
   const loadMore = page.getByRole('button', { name: 'Load more history' });
@@ -155,7 +157,7 @@ test('keyboard journey configures CardDAV, reconciles roles, syncs history, and 
   await page.keyboard.press('Enter');
   await expect(page.getByRole('table', { name: 'CardDAV sync history' }).getByRole('row')).toHaveCount(4);
   expect(fixture.requests.filter(({ path, query }) => path === '/api/v1/carddav/runs' && query.before_id === '90'))
-    .toEqual([{ method: 'GET', path: '/api/v1/carddav/runs', query: { limit: '25', before_id: '90' } }]);
+    .toEqual([{ method: 'GET', path: '/api/v1/carddav/runs', query: { connection: 'default', limit: '25', before_id: '90' } }]);
 
   const conflictRow = page.getByRole('button', { name: 'Review conflict 41 in Synthetic contacts' });
   await conflictRow.focus();

@@ -56,12 +56,12 @@ func TestPostgreSQLCardDAVDiscoveryReplacementsSerializeCompleteSnapshots(t *tes
 	require.NoError(<-errs)
 	require.NoError(<-errs)
 
-	account, err := st.GetCardDAVAccountContext(ctx)
+	account, err := st.GetCardDAVAccountByIDContext(ctx, store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(account)
 	assert.Equal(int64(2), account.ConnectionGeneration)
 	assert.Equal(int64(2), account.DiscoveryRevision)
-	books, err := st.ListCardDAVAddressBooksContext(ctx)
+	books, err := st.ListCardDAVAddressBooksContext(ctx, store.AllCardDAVAccounts)
 	require.NoError(err)
 	got := make([]string, 0, len(books))
 	for _, book := range books {

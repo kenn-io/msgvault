@@ -22,8 +22,9 @@ func TestCardDAVSyncRunLifecycle(t *testing.T) {
 	ctx := t.Context()
 
 	started, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{
-		Trigger: store.CardDAVSyncTriggerManual,
-		Full:    true,
+		AccountID: store.DefaultCardDAVAccountID,
+		Trigger:   store.CardDAVSyncTriggerManual,
+		Full:      true,
 	})
 	require.NoError(err)
 	assert.Equal(store.CardDAVSyncRunRunning, started.State)
@@ -32,11 +33,12 @@ func TestCardDAVSyncRunLifecycle(t *testing.T) {
 	assert.Nil(started.FinishedAt)
 
 	_, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{
-		Trigger: store.CardDAVSyncTriggerScheduled,
+		AccountID: store.DefaultCardDAVAccountID,
+		Trigger:   store.CardDAVSyncTriggerScheduled,
 	})
 	require.ErrorIs(err, store.ErrCardDAVSyncActive)
 
-	status, err := st.CardDAVSyncStatusContext(ctx)
+	status, err := st.CardDAVSyncStatusContext(ctx, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.NotNil(status.Active)
 	assert.Equal(started.ID, status.Active.ID)
@@ -53,7 +55,7 @@ func TestCardDAVSyncRunLifecycle(t *testing.T) {
 	assert.NotNil(finished.FinishedAt)
 	assert.True(finished.FinishedAt.After(finished.StartedAt) || finished.FinishedAt.Equal(finished.StartedAt))
 
-	status, err = st.CardDAVSyncStatusContext(ctx)
+	status, err = st.CardDAVSyncStatusContext(ctx, store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.Nil(status.Active)
 	require.NotNil(status.Latest)
@@ -78,7 +80,7 @@ func TestCardDAVSyncRunConcurrentActiveClaim(t *testing.T) {
 	for range 2 {
 		workers.Go(func() {
 			<-start
-			_, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+			_, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 			results <- err
 		})
 	}
@@ -119,7 +121,7 @@ func TestCardDAVSyncRunTerminalStatesRetainCounters(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			run, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerScheduled})
+			run, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerScheduled})
 			require.NoError(err)
 			finished, err := st.FinishCardDAVSyncRunContext(ctx, run.ID, store.CardDAVSyncRunFinish{
 				State: tc.state, Books: 7, Created: 8, Updated: 9, Removed: 10,
@@ -141,9 +143,9 @@ func TestCardDAVSyncRunRejectsInvalidInputAndTransitions(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
 
-	_, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: "startup"})
+	_, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: "startup"})
 	require.ErrorIs(err, store.ErrCardDAVSyncRunInvalid)
-	run, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	run, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 
 	invalid := []store.CardDAVSyncRunFinish{
@@ -168,7 +170,7 @@ func TestCardDAVSyncRunRejectsInvalidInputAndTransitions(t *testing.T) {
 	}{
 		{limit: -1}, {limit: 101}, {limit: 1, before: new(int64(0))}, {limit: 1, before: new(int64(-1))},
 	} {
-		_, listErr := st.ListCardDAVSyncRunsContext(ctx, input.limit, input.before)
+		_, listErr := st.ListCardDAVSyncRunsContext(ctx, input.limit, input.before, store.AllCardDAVAccounts)
 		require.ErrorIs(listErr, store.ErrCardDAVSyncRunInvalid)
 	}
 }
@@ -180,13 +182,13 @@ func TestCardDAVSyncRunPaginationPreservesPublicHistory(t *testing.T) {
 	ctx := t.Context()
 	ids := make([]int64, 0, 103)
 	for range 103 {
-		run, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+		run, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 		require.NoError(err)
 		ids = append(ids, run.ID)
 		_, err = st.FinishCardDAVSyncRunContext(ctx, run.ID, store.CardDAVSyncRunFinish{State: store.CardDAVSyncRunSucceeded})
 		require.NoError(err)
 	}
-	active, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerScheduled})
+	active, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerScheduled})
 	require.NoError(err)
 
 	var terminalCount, activeCount int
@@ -195,12 +197,12 @@ func TestCardDAVSyncRunPaginationPreservesPublicHistory(t *testing.T) {
 	assert.Equal(103, terminalCount)
 	assert.Equal(1, activeCount)
 
-	page1, err := st.ListCardDAVSyncRunsContext(ctx, 2, nil)
+	page1, err := st.ListCardDAVSyncRunsContext(ctx, 2, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(page1, 2)
 	assert.Equal(active.ID, page1[0].ID)
 	before := page1[1].ID
-	page2, err := st.ListCardDAVSyncRunsContext(ctx, 2, &before)
+	page2, err := st.ListCardDAVSyncRunsContext(ctx, 2, &before, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(page2, 2)
 	assert.Less(page2[0].ID, before)
@@ -214,7 +216,7 @@ func TestCardDAVSyncRunPaginationPreservesPublicHistory(t *testing.T) {
 	gotIDs := make([]int64, 0, len(wantIDs))
 	var cursor *int64
 	for {
-		page, pageErr := st.ListCardDAVSyncRunsContext(ctx, 17, cursor)
+		page, pageErr := st.ListCardDAVSyncRunsContext(ctx, 17, cursor, store.AllCardDAVAccounts)
 		require.NoError(pageErr)
 		if len(page) == 0 {
 			break
@@ -247,13 +249,13 @@ func TestCardDAVSyncRunTerminalTransitionsSurvivePruneFailure(t *testing.T) {
 		BEGIN SELECT RAISE(ABORT, 'forced prune failure'); END`)
 	require.NoError(err)
 
-	run, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	run, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 	finished, err := st.FinishCardDAVSyncRunContext(ctx, run.ID, store.CardDAVSyncRunFinish{State: store.CardDAVSyncRunSucceeded})
 	require.NoError(err)
 	assert.Equal(store.CardDAVSyncRunSucceeded, finished.State)
 
-	orphan, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerScheduled})
+	orphan, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerScheduled})
 	require.NoError(err, "the committed finish must release the active-run constraint")
 	recovered, err := st.RecoverCardDAVSyncRunsContext(ctx)
 	require.NoError(err)
@@ -262,7 +264,7 @@ func TestCardDAVSyncRunTerminalTransitionsSurvivePruneFailure(t *testing.T) {
 	var state store.CardDAVSyncRunState
 	require.NoError(st.DB().QueryRow(`SELECT state FROM carddav_sync_runs WHERE id = ?`, orphan.ID).Scan(&state))
 	assert.Equal(store.CardDAVSyncRunFailed, state)
-	_, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	_, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err, "the committed recovery must release the active-run constraint")
 }
 
@@ -272,19 +274,19 @@ func TestCardDAVSyncRunRecoveryAndSafePublicErrors(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
 
-	orphan, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	orphan, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 	recovered, err := st.RecoverCardDAVSyncRunsContext(ctx)
 	require.NoError(err)
 	assert.Equal(int64(1), recovered)
-	runs, err := st.ListCardDAVSyncRunsContext(ctx, 0, nil)
+	runs, err := st.ListCardDAVSyncRunsContext(ctx, 0, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.NotEmpty(runs)
 	assert.Equal(orphan.ID, runs[0].ID)
 	assert.Equal(store.CardDAVSyncRunFailed, runs[0].State)
 	assert.Equal("daemon_restarted", runs[0].ErrorCode)
 	assert.NotEmpty(runs[0].ErrorMessage)
-	_, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerScheduled})
+	_, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerScheduled})
 	require.NoError(err)
 
 	_, err = st.FinishCardDAVSyncRunContext(ctx, runs[0].ID, store.CardDAVSyncRunFinish{
@@ -298,7 +300,8 @@ func TestCardDAVSyncRunRecoveryUsesDurableUsefulCounters(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	run, err := st.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{
-		Trigger: store.CardDAVSyncTriggerScheduled,
+		AccountID: store.DefaultCardDAVAccountID,
+		Trigger:   store.CardDAVSyncTriggerScheduled,
 	})
 	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
@@ -308,7 +311,7 @@ func TestCardDAVSyncRunRecoveryUsesDurableUsefulCounters(t *testing.T) {
 	recovered, err := st.RecoverCardDAVSyncRunsContext(t.Context())
 	require.NoError(err)
 	assert.Equal(int64(1), recovered)
-	got, err := st.ListCardDAVSyncRunsContext(t.Context(), 1, nil)
+	got, err := st.ListCardDAVSyncRunsContext(t.Context(), 1, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(got, 1)
 	assert.Equal(store.CardDAVSyncRunPartial, got[0].State)
@@ -348,7 +351,7 @@ func TestCardDAVSyncRunSchemaIndexesAndSQLiteReopenRecovery(t *testing.T) {
 	first, err := store.OpenForTest(path)
 	require.NoError(err)
 	require.NoError(first.InitSchema())
-	orphan, err := first.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	orphan, err := first.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 	require.NoError(first.Close())
 
@@ -359,12 +362,12 @@ func TestCardDAVSyncRunSchemaIndexesAndSQLiteReopenRecovery(t *testing.T) {
 	recovered, err := reopened.RecoverCardDAVSyncRunsContext(t.Context())
 	require.NoError(err)
 	assert.Equal(int64(1), recovered)
-	runs, err := reopened.ListCardDAVSyncRunsContext(t.Context(), 1, nil)
+	runs, err := reopened.ListCardDAVSyncRunsContext(t.Context(), 1, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(runs, 1)
 	assert.Equal(orphan.ID, runs[0].ID)
 	assert.Equal(store.CardDAVSyncRunFailed, runs[0].State)
-	_, err = reopened.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerScheduled})
+	_, err = reopened.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerScheduled})
 	require.NoError(err)
 }
 
@@ -394,7 +397,7 @@ func TestCardDAVSyncRunErrorProjectionIsUTF8BoundedAndRedacted(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
 
-	run, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	run, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 	long := strings.Repeat("界", 1000)
 	finished, err := st.FinishCardDAVSyncRunContext(ctx, run.ID, store.CardDAVSyncRunFinish{
@@ -404,7 +407,7 @@ func TestCardDAVSyncRunErrorProjectionIsUTF8BoundedAndRedacted(t *testing.T) {
 	assert.LessOrEqual(len(finished.ErrorMessage), 2000)
 	assert.True(utf8.ValidString(finished.ErrorMessage))
 
-	run, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	run, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 	unsafe := "Authorization: Bearer private-token password=hunter2 BEGIN:VCARD https://contacts.example.test/book"
 	finished, err = st.FinishCardDAVSyncRunContext(ctx, run.ID, store.CardDAVSyncRunFinish{
@@ -421,7 +424,7 @@ func TestCardDAVSyncRunErrorProjectionIsUTF8BoundedAndRedacted(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT error_message FROM carddav_sync_runs WHERE id = ?`), finished.ID).Scan(&stored))
 	assert.Equal(finished.ErrorMessage, stored)
 
-	run, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	run, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 	finished, err = st.FinishCardDAVSyncRunContext(ctx, run.ID, store.CardDAVSyncRunFinish{
 		State: store.CardDAVSyncRunFailed, ErrorCode: "password", ErrorMessage: "Safe-looking text",
@@ -430,7 +433,7 @@ func TestCardDAVSyncRunErrorProjectionIsUTF8BoundedAndRedacted(t *testing.T) {
 	assert.Equal("unsafe_error_redacted", finished.ErrorCode)
 	assert.NotContains(strings.ToLower(finished.ErrorMessage), "password")
 
-	run, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	run, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 	finished, err = st.FinishCardDAVSyncRunContext(ctx, run.ID, store.CardDAVSyncRunFinish{
 		State: store.CardDAVSyncRunFailed, ErrorCode: "google_authorization_required", ErrorMessage: unsafe,
@@ -441,7 +444,7 @@ func TestCardDAVSyncRunErrorProjectionIsUTF8BoundedAndRedacted(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT error_message FROM carddav_sync_runs WHERE id = ?`), finished.ID).Scan(&stored))
 	assert.Equal(finished.ErrorMessage, stored)
 
-	run, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{Trigger: store.CardDAVSyncTriggerManual})
+	run, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 	finished, err = st.FinishCardDAVSyncRunContext(ctx, run.ID, store.CardDAVSyncRunFinish{
 		State: store.CardDAVSyncRunFailed, ErrorCode: "remote_failure", ErrorMessage: string([]byte{'o', 'k', 0xff}),
@@ -468,7 +471,8 @@ func TestCardDAVSyncRunRedactsStandaloneCredentialMarkers(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			run, err := st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{
-				Trigger: store.CardDAVSyncTriggerManual,
+				AccountID: store.DefaultCardDAVAccountID,
+				Trigger:   store.CardDAVSyncTriggerManual,
 			})
 			require.NoError(err)
 			finished, err := st.FinishCardDAVSyncRunContext(ctx, run.ID, store.CardDAVSyncRunFinish{

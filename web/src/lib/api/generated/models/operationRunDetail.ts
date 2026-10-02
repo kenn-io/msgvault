@@ -11,6 +11,8 @@ import type { OperationRunDetailSupportedActionsItem } from "./operationRunDetai
 import type { OperationRunDetailTrigger } from "./operationRunDetailTrigger";
 
 export interface OperationRunDetail {
+  account_id?: number;
+  connection?: string;
   counters: OperationPublicCounter[];
   error?: OperationPublicError;
   finished_at?: string;

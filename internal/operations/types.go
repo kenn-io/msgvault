@@ -691,6 +691,8 @@ func ProjectCardDAVFailure(durableCode string) *PublicError {
 }
 
 type Run struct {
+	AccountID  int64
+	Connection string
 	ID         StableID
 	Lane       Lane
 	State      State

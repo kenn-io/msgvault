@@ -1648,17 +1648,21 @@ func TestCardDAVStatusAndRunHistoryOpenAPIContract(t *testing.T) {
 	requirements.NotNil(status)
 	requirements.NotNil(status.Get)
 	assertions.Equal("getCardDAVStatus", status.Get.OperationID)
+	requirements.Len(status.Get.Parameters, 1)
+	assertions.Equal("connection", status.Get.Parameters[0].Name)
+	assertions.Contains(status.Get.Responses, "400")
 	runs := doc.Paths["/api/v1/carddav/runs"]
 	requirements.NotNil(runs)
 	requirements.NotNil(runs.Get)
 	assertions.Equal("listCardDAVRuns", runs.Get.OperationID)
-	requirements.Len(runs.Get.Parameters, 2)
+	requirements.Len(runs.Get.Parameters, 3)
 	assertions.Equal("limit", runs.Get.Parameters[0].Name)
 	requirements.NotNil(runs.Get.Parameters[0].Schema.Minimum)
 	requirements.NotNil(runs.Get.Parameters[0].Schema.Maximum)
 	assertions.InDelta(1, *runs.Get.Parameters[0].Schema.Minimum, 0)
 	assertions.InDelta(100, *runs.Get.Parameters[0].Schema.Maximum, 0)
 	assertions.Equal("before_id", runs.Get.Parameters[1].Name)
+	assertions.Equal("connection", runs.Get.Parameters[2].Name)
 	requirements.NotNil(runs.Get.Parameters[1].Schema.Minimum)
 	assertions.InDelta(1, *runs.Get.Parameters[1].Schema.Minimum, 0)
 
@@ -1904,8 +1908,8 @@ func TestOpenAPIOperationServerAndClientSchemasMatch(t *testing.T) {
 	wantProperties := map[string][]string{
 		"OperationPublicCounter":   {"name", "unit", "value"},
 		"OperationPublicError":     {"code", "message"},
-		"OperationRunSummary":      {"id", "kind", "lane", "state", "trigger", "started_at", "finished_at", "counters", "error"},
-		"OperationRunDetail":       {"id", "kind", "lane", "state", "trigger", "started_at", "finished_at", "counters", "error", "related_status", "supported_actions"},
+		"OperationRunSummary":      {"id", "kind", "lane", "state", "trigger", "started_at", "finished_at", "counters", "error", "account_id", "connection"},
+		"OperationRunDetail":       {"id", "kind", "lane", "state", "trigger", "started_at", "finished_at", "counters", "error", "related_status", "supported_actions", "account_id", "connection"},
 		"OperationUnavailableKind": {"kind", "lane", "unavailable_code"},
 		"OperationRunsResponse":    {"runs", "next_cursor", "membership_revision", "unavailable_kinds"},
 		"OperationLaneStatus": {

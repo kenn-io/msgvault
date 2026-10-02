@@ -340,11 +340,11 @@ func TestCardDAVAccountSaveRollsBackPublishedFilesWhenDiscoveryStoreFails(t *tes
 	credential, loadErr := carddav.LoadCredential(cfg.TokensDir())
 	require.NoError(loadErr)
 	assert.Equal("old-password", credential.Password)
-	account, accountErr := st.GetCardDAVAccountContext(t.Context())
+	account, accountErr := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(accountErr)
 	require.NotNil(account)
 	assert.Equal("https://old.example/dav", account.BaseURL)
-	books, booksErr := st.ListCardDAVAddressBooksContext(t.Context())
+	books, booksErr := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(booksErr)
 	require.Len(books, 1)
 	assert.Equal("Old", books[0].DisplayName)
@@ -759,7 +759,7 @@ func TestCardDAVAccountSaveRepairsMissingCredentialAfterStartup(t *testing.T) {
 	assert.Same(candidate, controller.Current())
 	credential, err := carddav.LoadCredential(cfg.TokensDir())
 	require.NoError(err)
-	account, err := st.GetCardDAVAccountContext(t.Context())
+	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(account)
 	assert.Equal(account.ConnectionGeneration, credential.ConnectionGeneration)
@@ -808,7 +808,7 @@ func TestCardDAVAccountSavePasswordChangeAdvancesConnectionGeneration(t *testing
 	require := require.New(t)
 
 	cfg, st, candidate := savedCardDAVFixture(t)
-	before, err := st.GetCardDAVAccountContext(t.Context())
+	before, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(before)
 	controller, err := NewCardDAVController(cfg, st, slog.New(slog.DiscardHandler))
@@ -832,12 +832,12 @@ func TestCardDAVAccountSavePasswordChangeAdvancesConnectionGeneration(t *testing
 	require.NoError(err)
 	saved, err := carddav.LoadCredential(cfg.TokensDir())
 	require.NoError(err)
-	account, err := st.GetCardDAVAccountContext(t.Context())
+	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	require.NotNil(account)
 	assert.Equal(int64(2), saved.ConnectionGeneration)
 	assert.Equal(saved.ConnectionGeneration, account.ConnectionGeneration)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context())
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(books, 1)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
@@ -887,7 +887,7 @@ func TestCardDAVAccountSaveRejectsCredentialRotationBeforeDiscoveryWhenIntentIsP
 			require := require.New(t)
 
 			cfg, st, candidate := savedCardDAVFixture(t)
-			books, err := st.ListCardDAVAddressBooksContext(t.Context())
+			books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 			require.NoError(err)
 			require.Len(books, 1)
 			tc.seed(t, st, books[0])
@@ -913,7 +913,7 @@ func TestCardDAVAccountSaveRejectsCredentialRotationBeforeDiscoveryWhenIntentIsP
 			credential, loadErr := carddav.LoadCredential(cfg.TokensDir())
 			require.NoError(loadErr)
 			assert.Equal("old-password", credential.Password)
-			account, getErr := st.GetCardDAVAccountContext(t.Context())
+			account, getErr := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 			require.NoError(getErr)
 			require.NotNil(account)
 			assert.Equal(int64(1), account.ConnectionGeneration)
@@ -955,7 +955,7 @@ func TestCardDAVAccountSaveRejectsIdentityChangeBeforeDiscoveryWhenRemoteStateIs
 			require := require.New(t)
 
 			cfg, st, candidate := savedCardDAVFixture(t)
-			books, err := st.ListCardDAVAddressBooksContext(t.Context())
+			books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 			require.NoError(err)
 			require.Len(books, 1)
 			tc.seed(t, st, books[0])
@@ -981,7 +981,7 @@ func TestCardDAVAccountSaveRejectsIdentityChangeBeforeDiscoveryWhenRemoteStateIs
 			afterConfig, readErr := os.ReadFile(cfg.ConfigFilePath())
 			require.NoError(readErr)
 			assert.Equal(beforeConfig, afterConfig)
-			account, getErr := st.GetCardDAVAccountContext(t.Context())
+			account, getErr := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
 			require.NoError(getErr)
 			require.NotNil(account)
 			assert.Equal("old-user", account.Username)
@@ -1101,7 +1101,7 @@ func TestCardDAVAccountTestDoesNotCreateSyncRun(t *testing.T) {
 		Enabled: new(true),
 	})
 	require.NoError(err)
-	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil)
+	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	assert.Empty(t, runs)
 }
@@ -1503,7 +1503,7 @@ func TestCardDAVRetryGateResponseCarriesSafeRetryAfter(t *testing.T) {
 
 	_, st, _ := savedCardDAVFixture(t)
 	retryAt := time.Now().UTC().Add(90 * time.Second)
-	require.NoError(st.SetCardDAVRetryAfterContext(t.Context(), retryAt))
+	require.NoError(st.SetCardDAVRetryAfterContext(t.Context(), retryAt, store.DefaultCardDAVAccountID))
 	controller := &CardDAVController{
 		store:   st,
 		service: cardDAVErrorFixture{syncErr: store.ErrCardDAVRetryAfter},
@@ -1534,12 +1534,12 @@ func TestCardDAVFreshRateLimitsMapToServiceUnavailableWithRetryAfter(t *testing.
 	}
 
 	operation := httptest.NewRecorder()
-	srv.writeCardDAVOperationError(t.Context(), operation, statusErr, "CardDAV sync failed")
+	srv.writeCardDAVOperationError(operation, statusErr, "CardDAV sync failed")
 	require.Equal(http.StatusServiceUnavailable, operation.Code, operation.Body.String())
 	assert.Equal("17", operation.Header().Get("Retry-After"))
 
 	account := httptest.NewRecorder()
-	srv.writeCardDAVAccountError(t.Context(), account,
+	srv.writeCardDAVAccountError(account,
 		errors.Join(errCardDAVUpstream, statusErr), "CardDAV discovery failed")
 	require.Equal(http.StatusServiceUnavailable, account.Code, account.Body.String())
 	assert.Equal("17", account.Header().Get("Retry-After"))
@@ -1580,7 +1580,7 @@ func TestCardDAVAccountChangeOwnershipErrorsMapConflict(t *testing.T) {
 		config.ErrConfigConflict,
 	} {
 		resp := httptest.NewRecorder()
-		srv.writeCardDAVAccountError(t.Context(), resp, err, "CardDAV account change blocked")
+		srv.writeCardDAVAccountError(resp, err, "CardDAV account change blocked")
 		assert.Equal(t, http.StatusConflict, resp.Code, resp.Body.String())
 	}
 }

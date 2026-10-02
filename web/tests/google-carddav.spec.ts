@@ -1,13 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { installMixedArchive } from './e2e/fixtures/mixed-archive';
 import { installCardDAV } from './e2e/fixtures/carddav';
 
 test('Google Contacts opens sign-in and returns authorization to settings', async ({ page }, testInfo) => {
-  await installMixedArchive(page);
   await installCardDAV(page);
   let completed = false;
   await page.route('**/api/v1/carddav/google/authorize', async (route) => {
     const body = route.request().postDataJSON();
+    expect(body.connection).toBe('default');
     expect(body.email).toBe('person@example.com');
     expect(body.oauth_app).toBe('contacts');
     const callback = new URL(body.redirect_uri);

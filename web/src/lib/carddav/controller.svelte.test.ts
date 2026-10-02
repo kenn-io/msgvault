@@ -15,6 +15,8 @@ const idleStatus = {
 function run(id: number, state: 'running' | 'succeeded' = 'running', updated = 0) {
   return {
     id,
+    account_id: 1,
+    connection: 'default',
     trigger: 'manual' as const,
     full: false,
     state,
@@ -755,4 +757,98 @@ describe('CardDAVController', () => {
     expect(controller.nextBeforeID).toBe(11);
     controller.destroy();
   });
+});
+
+it('uses an explicit selected connection for manual sync while keeping books and history global', async () => {
+  const requests: Request[] = [];
+  const client = createAPIClient(async (input) => {
+    const request = requestOf(input);
+    requests.push(request);
+    const url = new URL(request.url);
+    if (request.method === 'POST') return Response.json({ books: 0, created: 0, updated: 0, removed: 0 });
+    if (url.pathname.endsWith('/status')) return Response.json(idleStatus);
+    if (url.pathname.endsWith('/books')) return Response.json({ books: [] });
+    return Response.json({ runs: [] });
+  });
+  const controller = new CardDAVController(client);
+  await controller.load();
+  await controller.sync(false, 'work');
+  expect(
+    await requests
+      .find((r) => r.method === 'POST')!
+      .clone()
+      .json()
+  ).toEqual({ full: false, connection: 'work' });
+  expect(
+    requests.filter((r) => r.method === 'GET').every((r) => !new URL(r.url).searchParams.has('connection'))
+  ).toBe(true);
+  controller.destroy();
+});
+
+it('scopes selected status, books, history and sync requests to their connection', async () => {
+  const requests: Request[] = [];
+  const client = createAPIClient(async (input) => {
+    const request = requestOf(input);
+    requests.push(request);
+    const url = new URL(request.url);
+    if (request.method === 'POST') return Response.json({ books: 0, created: 0, updated: 0, removed: 0 });
+    if (url.pathname.endsWith('/status')) return Response.json(idleStatus);
+    if (url.pathname.endsWith('/books')) return Response.json({ books: [] });
+    return Response.json({ runs: [] });
+  });
+  const controller = new CardDAVController(client, undefined, 'work');
+  await controller.load();
+  await controller.sync(false);
+  expect(
+    await requests
+      .find((r) => r.method === 'POST')!
+      .clone()
+      .json()
+  ).toEqual({ full: false, connection: 'work' });
+  expect(
+    requests
+      .filter((r) => r.method === 'GET')
+      .every((r) => new URL(r.url).searchParams.get('connection') === 'work')
+  ).toBe(true);
+  controller.destroy();
+});
+
+it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', async (status) => {
+  let bookReads = 0;
+  const client = createAPIClient(async (input) => {
+    const request = requestOf(input);
+    const path = new URL(request.url).pathname;
+    if (request.method === 'POST')
+      return Response.json({
+        books: 1,
+        created: 1,
+        updated: 0,
+        removed: 0,
+        status,
+        connections: [
+          {
+            connection: 'work',
+            status,
+            error_code: 'sync_failed',
+            error_message: 'private upstream detail',
+            books: 1,
+            created: 1,
+            updated: 0,
+            removed: 0
+          }
+        ]
+      });
+    if (path.endsWith('/books')) bookReads += 1;
+    return Response.json(
+      path.endsWith('/status') ? idleStatus : path.endsWith('/books') ? { books: [] } : { runs: [] }
+    );
+  });
+  const controller = new CardDAVController(client);
+  await controller.load();
+  await controller.sync(false);
+  expect(controller.syncError).toContain('work');
+  expect(controller.syncError).not.toContain('private upstream');
+  expect(controller.syncStatus).toBeNull();
+  expect(bookReads).toBe(status === 'partial' ? 2 : 1);
+  controller.destroy();
 });
