@@ -16,9 +16,7 @@ func archiveSnapshot(sourceID int64, accountEmail string, recording Recording, c
 	participants := []jsontext.Value{}
 	if calendar != nil {
 		event = calendar.Raw
-		for _, person := range calendar.Participants {
-			participants = append(participants, person.Raw)
-		}
+		participants = append(participants, calendar.Participants...)
 	}
 	raw, err := json.Marshal(struct {
 		Version      int              `json:"schema_version"`

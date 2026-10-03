@@ -30,6 +30,11 @@ func decodeTwenty(fields map[string]jsontext.Value) Content {
 		c.Summary = Section{State: StateUnavailable, Reason: reasonInvalidSection}
 	} else {
 		c.Summary = decodeStringField(summary, "markdown")
+		// Call Recorder stores its failure notice in the summary field; the
+		// raw evidence keeps the reason.
+		if c.Summary.State == StateAvailable && strings.HasPrefix(c.Summary.Text, "## Summary unavailable") {
+			c.Summary = Section{State: StateUnavailable, Reason: "summary_unavailable"}
+		}
 	}
 	c.Transcript = decodeTwentyTranscript(recording["transcript"])
 	var participants []struct {

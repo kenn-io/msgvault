@@ -34,7 +34,7 @@ type twentyCommandSource struct {
 }
 
 func (s *twentyCommandSource) Probe(context.Context) error { return s.probeErr }
-func (s *twentyCommandSource) ListRecordings(context.Context, string, int) (*twenty.Page, error) {
+func (s *twentyCommandSource) ListRecordings(context.Context, string, string, int) (*twenty.Page, error) {
 	s.listCalls++
 	if s.listCalls > 1 && s.nextErr != nil {
 		if s.cancel != nil {
@@ -43,9 +43,6 @@ func (s *twentyCommandSource) ListRecordings(context.Context, string, int) (*twe
 		return nil, s.nextErr
 	}
 	return s.page, s.listErr
-}
-func (s *twentyCommandSource) GetCalendar(context.Context, string) (*twenty.Calendar, error) {
-	return nil, errors.New("unexpected calendar lookup")
 }
 func twentySourceConfig(identifier string) config.TwentySource {
 	return config.TwentySource{Identifier: identifier, AccountEmail: "recorder@example.com", BaseURL: "https://api.twenty.com", APIKey: "example-key"}

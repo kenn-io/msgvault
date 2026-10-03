@@ -9,41 +9,46 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"go.kenn.io/msgvault/internal/httpretry"
 	"golang.org/x/time/rate"
 )
 
 const maxResponseBytes = 64 << 20
 const pageSize = 100
+const maxAttempts = 5
 
-const recordingFields = `id title status createdAt startedAt endedAt calendarEventId transcript summary { markdown }`
+const recordingFields = `id title status createdAt updatedAt startedAt endedAt calendarEventId transcript summary { markdown } calendarEvent { ` + calendarFields + ` }`
 const calendarFields = `id title startsAt endsAt`
-const participantFields = `id displayName handle isOrganizer`
-const recordingQuery = `query Recordings($after: String, $first: Int!) {
- callRecordings(first: $first, after: $after, orderBy: [{id: AscNullsLast}]) {
+const participantFields = `id calendarEventId displayName handle isOrganizer`
+const recordingQuery = `query Recordings($after: String, $first: Int!, $filter: CallRecordingFilterInput) {
+ callRecordings(first: $first, after: $after, filter: $filter, orderBy: [{updatedAt: AscNullsFirst}, {id: AscNullsFirst}]) {
  edges { node { ` + recordingFields + ` } } pageInfo { hasNextPage endCursor }
  } }`
-const calendarQuery = `query Calendar($id: UUID!) {
- calendarEvents(filter: {id: {eq: $id}}, first: 1) { edges { node { ` + calendarFields + ` } } }
- }`
-const participantQuery = `query Participants($id: UUID!, $after: String) {
- calendarEventParticipants(filter: {calendarEventId: {eq: $id}}, first: 100, after: $after, orderBy: [{id: AscNullsLast}]) {
+const recordingIDQuery = `query RecordingIDs($after: String, $filter: CallRecordingFilterInput) {
+ callRecordings(first: 1, after: $after, filter: $filter, orderBy: [{updatedAt: AscNullsFirst}, {id: AscNullsFirst}]) {
+ edges { node { id updatedAt } } pageInfo { hasNextPage endCursor }
+ } }`
+const participantQuery = `query Participants($ids: [UUID!]!, $after: String) {
+ calendarEventParticipants(filter: {calendarEventId: {in: $ids}}, first: 100, after: $after, orderBy: [{id: AscNullsLast}]) {
  edges { node { ` + participantFields + ` } } pageInfo { hasNextPage endCursor }
  } }`
 const probeQuery = `query Probe {
- callRecordings(first: 1, orderBy: [{id: AscNullsLast}]) { edges { node { ` + recordingFields + ` } } pageInfo { hasNextPage endCursor } }
+ callRecordings(first: 1, orderBy: [{updatedAt: AscNullsFirst}, {id: AscNullsFirst}]) { edges { node { ` + recordingFields + ` } } pageInfo { hasNextPage endCursor } }
  calendarEvents(first: 1) { edges { node { ` + calendarFields + ` } } }
  calendarEventParticipants(first: 1) { edges { node { ` + participantFields + ` } } pageInfo { hasNextPage endCursor } }
  }`
 
 var errResponseTooLarge = errors.New("twenty response exceeds 64 MiB")
-var errLinkedCalendarUnavailable = errors.New("linked Twenty calendar event is unavailable")
 
 type rateLimitIdentity struct {
 	origin     string
@@ -127,13 +132,9 @@ func NewClient(baseURL, apiKey string) (*Client, error) {
 	}}, nil
 }
 
+// query retries throttling, server errors and network failures, the way the
+// other meeting clients do, so one transient error does not fail a sync.
 func (c *Client) query(ctx context.Context, query string, variables map[string]any) (map[string]jsontext.Value, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("wait for Twenty rate limit: %w", err)
-	}
 	body, err := json.Marshal(struct {
 		Query     string         `json:"query"`
 		Variables map[string]any `json:"variables"`
@@ -141,9 +142,33 @@ func (c *Client) query(ctx context.Context, query string, variables map[string]a
 	if err != nil {
 		return nil, errors.New("encode Twenty request")
 	}
+	for attempt := 0; ; attempt++ {
+		data, retryAfter, err := c.send(ctx, body)
+		if retryAfter == nil || attempt+1 >= maxAttempts {
+			return data, err
+		}
+		timer := time.NewTimer(httpretry.RetryAfter(*retryAfter, attempt, httpretry.ProviderMaxRetryAfter))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// send makes one request. A non-nil retryAfter marks a transient failure and
+// carries the provider's Retry-After value, which may be empty.
+func (c *Client) send(ctx context.Context, body []byte) (map[string]jsontext.Value, *string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, nil, fmt.Errorf("wait for Twenty rate limit: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, errors.New("create Twenty request")
+		return nil, nil, errors.New("create Twenty request")
 	}
 	req.Header.Set("Authorization", "Bearer "+c.key)
 	req.Header.Set("Content-Type", "application/json")
@@ -151,35 +176,54 @@ func (c *Client) query(ctx context.Context, query string, variables map[string]a
 	response, err := c.http.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		}
-		return nil, errors.New("twenty request failed (network or timeout)")
+		return nil, new(string), errors.New("twenty request failed (network or timeout)")
 	}
 	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
+		retryAfter := response.Header.Get("Retry-After")
+		return nil, &retryAfter, fmt.Errorf("twenty API returned HTTP %d", response.StatusCode)
+	}
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("twenty API returned HTTP %d", response.StatusCode)
+		return nil, nil, fmt.Errorf("twenty API returned HTTP %d", response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
-		return nil, errors.New("read Twenty response")
+		return nil, new(string), errors.New("read Twenty response")
 	}
 	if len(data) > maxResponseBytes {
-		return nil, errResponseTooLarge
+		return nil, nil, errResponseTooLarge
 	}
 	var wire struct {
 		Data   map[string]jsontext.Value `json:"data"`
-		Errors jsontext.Value            `json:"errors"`
+		Errors []struct {
+			Extensions struct {
+				Code         string  `json:"code"`
+				RetryAfterMS float64 `json:"retryAfterMs"`
+			} `json:"extensions"`
+		} `json:"errors"`
 	}
 	if json.Unmarshal(data, &wire) != nil {
-		return nil, errors.New("invalid Twenty response JSON")
+		return nil, nil, errors.New("invalid Twenty response JSON")
 	}
-	if len(wire.Errors) > 0 && string(wire.Errors) != "null" && string(wire.Errors) != "[]" {
-		return nil, errors.New("twenty GraphQL request failed; check API key permissions and Call Recorder availability")
+	if len(wire.Errors) > 0 {
+		// Twenty reports its workspace request limit as a GraphQL error.
+		for _, graphqlErr := range wire.Errors {
+			if graphqlErr.Extensions.Code == "RATE_LIMITED" {
+				retryAfter := ""
+				if graphqlErr.Extensions.RetryAfterMS > 0 {
+					retryAfter = strconv.FormatInt(int64(math.Ceil(graphqlErr.Extensions.RetryAfterMS/1000)), 10)
+				}
+				return nil, &retryAfter, errors.New("twenty API rate limit reached")
+			}
+		}
+		return nil, nil, errors.New("twenty GraphQL request failed; check API key permissions and Call Recorder availability")
 	}
 	if wire.Data == nil {
-		return nil, errors.New("twenty response has no data")
+		return nil, nil, errors.New("twenty response has no data")
 	}
-	return wire.Data, nil
+	return wire.Data, nil, nil
 }
 
 type connection struct {
@@ -229,7 +273,7 @@ func (c *Client) Probe(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) ListRecordings(ctx context.Context, after string, first int) (*Page, error) {
+func (c *Client) ListRecordings(ctx context.Context, updatedSince, after string, first int) (*Page, error) {
 	if first < 1 || first > pageSize {
 		return nil, errors.New("twenty page size must be between 1 and 100")
 	}
@@ -237,12 +281,16 @@ func (c *Client) ListRecordings(ctx context.Context, after string, first int) (*
 	if after != "" {
 		cursor = after
 	}
-	data, err := c.query(ctx, recordingQuery, map[string]any{"after": cursor, "first": first})
+	variables := map[string]any{"after": cursor, "first": first, "filter": map[string]any{"updatedAt": map[string]any{"gte": updatedSince}}}
+	data, err := c.query(ctx, recordingQuery, variables)
 	// Full word-level transcripts can make a catalog page exceed the body
-	// bound. Retry the same cursor with fewer records, retaining the bound
-	// and the provider cursor rather than skipping oversized pages.
-	if errors.Is(err, errResponseTooLarge) && first > 1 {
-		return c.ListRecordings(ctx, after, first/2)
+	// bound. Retry the same cursor with fewer records, and step past a single
+	// recording that alone exceeds it so the importer can skip it.
+	if errors.Is(err, errResponseTooLarge) {
+		if first > 1 {
+			return c.ListRecordings(ctx, updatedSince, after, first/2)
+		}
+		return c.tooLargeRecording(ctx, variables, after)
 	}
 	if err != nil {
 		return nil, err
@@ -252,69 +300,96 @@ func (c *Client) ListRecordings(ctx context.Context, after string, first int) (*
 		return nil, err
 	}
 	page := &Page{Records: make([]Recording, 0, len(wire.Edges)), HasMore: *wire.PageInfo.HasNextPage, NextCursor: wire.PageInfo.EndCursor}
+	calendars := map[string]*Calendar{}
 	for _, edge := range wire.Edges {
 		var recording Recording
+		var fields map[string]jsontext.Value
+		if json.Unmarshal(edge.Node, &recording) != nil || json.Unmarshal(edge.Node, &fields) != nil {
+			return nil, errors.New("invalid Twenty recording fields")
+		}
+		event := fields["calendarEvent"]
+		delete(fields, "calendarEvent")
+		if recording.Raw, err = json.Marshal(fields, json.Deterministic(true)); err != nil {
+			return nil, errors.New("invalid Twenty recording fields")
+		}
+		if len(event) > 0 && string(event) != "null" {
+			var linked struct {
+				ID string `json:"id"`
+			}
+			if json.Unmarshal(event, &linked) != nil || linked.ID == "" || linked.ID != recording.CalendarEventID {
+				return nil, errors.New("linked Twenty calendar event identity mismatch")
+			}
+			if calendars[linked.ID] == nil {
+				calendars[linked.ID] = &Calendar{Raw: event.Clone(), Participants: []jsontext.Value{}}
+			}
+			recording.Calendar = calendars[linked.ID]
+		}
+		page.Records = append(page.Records, recording)
+	}
+	if err := c.readParticipants(ctx, calendars); err != nil {
+		return nil, err
+	}
+	return page, nil
+}
+
+func (c *Client) tooLargeRecording(ctx context.Context, variables map[string]any, after string) (*Page, error) {
+	data, err := c.query(ctx, recordingIDQuery, map[string]any{"after": variables["after"], "filter": variables["filter"]})
+	if err != nil {
+		return nil, err
+	}
+	wire, err := readConnection(data["callRecordings"], true, after)
+	if err != nil {
+		return nil, err
+	}
+	page := &Page{HasMore: *wire.PageInfo.HasNextPage, NextCursor: wire.PageInfo.EndCursor}
+	for _, edge := range wire.Edges {
+		recording := Recording{TooLarge: true}
 		if json.Unmarshal(edge.Node, &recording) != nil {
 			return nil, errors.New("invalid Twenty recording fields")
 		}
-		recording.Raw = edge.Node.Clone()
 		page.Records = append(page.Records, recording)
 	}
 	return page, nil
 }
 
-func (c *Client) GetCalendar(ctx context.Context, id string) (*Calendar, error) {
-	data, err := c.query(ctx, calendarQuery, map[string]any{"id": id})
-	if err != nil {
-		return nil, err
+// readParticipants fills every calendar on a page with one paged query
+// rather than a request per recording.
+func (c *Client) readParticipants(ctx context.Context, calendars map[string]*Calendar) error {
+	if len(calendars) == 0 {
+		return nil
 	}
-	events, err := readConnection(data["calendarEvents"], false, "")
-	if err != nil {
-		return nil, err
+	ids := make([]string, 0, len(calendars))
+	for id := range calendars {
+		ids = append(ids, id)
 	}
-	if len(events.Edges) == 0 {
-		return nil, errLinkedCalendarUnavailable
-	}
-	if len(events.Edges) != 1 {
-		return nil, errors.New("linked Twenty calendar event is unavailable")
-	}
-	var event struct {
-		ID string `json:"id"`
-	}
-	if json.Unmarshal(events.Edges[0].Node, &event) != nil || event.ID != id {
-		return nil, errors.New("linked Twenty calendar event identity mismatch")
-	}
-	calendar := &Calendar{Raw: events.Edges[0].Node.Clone(), Participants: []Participant{}}
-	seen := map[string]bool{}
+	slices.Sort(ids)
 	var after string
 	for {
 		var cursor any
 		if after != "" {
 			cursor = after
 		}
-		data, err := c.query(ctx, participantQuery, map[string]any{"id": id, "after": cursor})
+		data, err := c.query(ctx, participantQuery, map[string]any{"ids": ids, "after": cursor})
 		if err != nil {
-			return nil, err
+			return err
 		}
 		page, err := readConnection(data["calendarEventParticipants"], true, after)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, edge := range page.Edges {
-			var participant Participant
-			if json.Unmarshal(edge.Node, &participant) != nil {
-				return nil, errors.New("invalid Twenty calendar participant fields")
+			var participant struct {
+				CalendarEventID string `json:"calendarEventId"`
 			}
-			participant.Raw = edge.Node.Clone()
-			calendar.Participants = append(calendar.Participants, participant)
+			if json.Unmarshal(edge.Node, &participant) != nil || calendars[participant.CalendarEventID] == nil {
+				return errors.New("invalid Twenty calendar participant fields")
+			}
+			calendar := calendars[participant.CalendarEventID]
+			calendar.Participants = append(calendar.Participants, edge.Node.Clone())
 		}
 		if !*page.PageInfo.HasNextPage {
-			return calendar, nil
+			return nil
 		}
 		after = page.PageInfo.EndCursor
-		if seen[after] {
-			return nil, errors.New("twenty participant pagination repeated a cursor")
-		}
-		seen[after] = true
 	}
 }

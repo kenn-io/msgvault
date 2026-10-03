@@ -943,16 +943,16 @@ msgvault sync-twenty work --full
 msgvault sync-twenty work --probe
 ```
 
-Every unlimited run rescans recording IDs and linked calendar participants.
-Unchanged evidence skips writes; late transcripts and attendee edits converge
-on the existing meeting. With no identifier, sync visits all configured sources.
+Each run reads recordings updated since the last successful run; late
+summaries and transcripts update the existing meeting. Recordings that can't be
+archived are skipped and reported instead of failing the run. With no identifier, sync visits all configured sources.
 API failures fail the run while retaining previously committed meetings.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--limit` | `0` | Maximum eligible meetings processed, including unchanged ones (`0` = unlimited); stopped scans report partial coverage |
+| `--limit` | `0` | Maximum eligible meetings processed (`0` = unlimited); stopped scans report partial coverage and the next run continues |
 | `--after` | — | Inclusive local UTC occurrence-date lower bound (`YYYY-MM-DD`) |
-| `--full` | `false` | Force archive projections and attribution refresh even for matching evidence |
+| `--full` | `false` | Rescan every recording and refresh archive projections and attribution |
 | `--probe` | `false` | Check read access without printing content or writing the archive; requires one source |
 | `--build-cache` | `false` | Request a cache build after manual sync |
 | `--no-build-cache` | `false` | Skip the cache build after manual sync |

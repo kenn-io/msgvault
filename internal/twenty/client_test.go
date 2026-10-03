@@ -15,9 +15,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/time/rate"
 )
 
 type twentyTransport func(*http.Request) (*http.Response, error)
+
+const epoch = "1970-01-01T00:00:00Z"
 
 func (f twentyTransport) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
 
@@ -30,10 +33,10 @@ func TestClientPacesRequestsWithinTwentyRateLimit(t *testing.T) {
 		client.http.Transport = twentyTransport(func(*http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":{"callRecordings":{"edges":[],"pageInfo":{"hasNextPage":false}}}}`)), Header: make(http.Header)}, nil
 		})
-		_, err = client.ListRecordings(t.Context(), "", 1)
+		_, err = client.ListRecordings(t.Context(), epoch, "", 1)
 		require.NoError(err)
 		started := time.Now()
-		_, err = client.ListRecordings(t.Context(), "", 1)
+		_, err = client.ListRecordings(t.Context(), epoch, "", 1)
 		require.NoError(err)
 		assert.GreaterOrEqual(time.Since(started), 650*time.Millisecond, "sustained requests must stay below the documented 100 per minute")
 	})
@@ -58,9 +61,9 @@ func TestClientsShareRateLimitForSameOriginAndCredential(t *testing.T) {
 		first.http.Transport = transport
 		second.http.Transport = transport
 
-		_, err = first.ListRecordings(t.Context(), "", 1)
+		_, err = first.ListRecordings(t.Context(), epoch, "", 1)
 		require.NoError(err)
-		_, err = second.ListRecordings(t.Context(), "", 1)
+		_, err = second.ListRecordings(t.Context(), epoch, "", 1)
 		require.NoError(err)
 
 		require.Len(started, 2)
@@ -82,29 +85,37 @@ func TestClientRecordingPage(t *testing.T) {
 		if !assert.NoError(json.UnmarshalRead(r.Body, &request)) {
 			return
 		}
-		assert.Contains(request.Query, "id: AscNullsLast")
+		assert.Contains(request.Query, "orderBy: [{updatedAt: AscNullsFirst}, {id: AscNullsFirst}]")
 		assert.Equal("cursor-1", request.Variables["after"])
 		assert.InDelta(2, request.Variables["first"], 1e-9)
-		_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[{"node":{"id":"recording-1","title":"Planning","status":"COMPLETED","transcript":null,"summary":{"markdown":"Summary"},"calendarEventId":null}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-2"}}}}`)
+		assert.Equal(map[string]any{"updatedAt": map[string]any{"gte": "2026-09-01T10:00:00Z"}}, request.Variables["filter"])
+		_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[{"node":{"id":"recording-1","title":"Planning","status":"COMPLETED","updatedAt":"2026-09-02T10:00:00Z","transcript":null,"summary":{"markdown":"Summary"},"calendarEventId":null,"calendarEvent":null}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-2"}}}}`)
 	}))
 	defer srv.Close()
 	client, err := NewClient(srv.URL, "example-key")
 	require.NoError(err)
-	page, err := client.ListRecordings(t.Context(), "cursor-1", 2)
+	page, err := client.ListRecordings(t.Context(), "2026-09-01T10:00:00Z", "cursor-1", 2)
 	require.NoError(err)
 	require.Len(page.Records, 1)
 	assert.Equal("recording-1", page.Records[0].ID)
 	assert.Equal("Planning", page.Records[0].Title)
+	assert.Equal("2026-09-02T10:00:00Z", page.Records[0].UpdatedAt)
 	assert.Empty(page.Records[0].CalendarEventID)
+	assert.Nil(page.Records[0].Calendar)
 	assert.Contains(string(page.Records[0].Raw), `"markdown":"Summary"`)
+	assert.NotContains(string(page.Records[0].Raw), `"calendarEvent"`)
 	assert.True(page.HasMore)
 	assert.Equal("cursor-2", page.NextCursor)
 }
 
-func TestClientCalendarReadsEveryParticipantPage(t *testing.T) {
+// Calendar events arrive nested in the recording page, and one paged query
+// reads every participant on the page instead of a request per recording.
+func TestClientRecordingPageReadsCalendarsInBulk(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
+	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
 		var request struct {
 			Query     string         `json:"query"`
 			Variables map[string]any `json:"variables"`
@@ -112,30 +123,78 @@ func TestClientCalendarReadsEveryParticipantPage(t *testing.T) {
 		if !assert.NoError(json.UnmarshalRead(r.Body, &request)) {
 			return
 		}
-		assert.Equal("event-1", request.Variables["id"])
 		switch {
-		case strings.Contains(request.Query, "calendarEvents("):
-			_, _ = fmt.Fprint(w, `{"data":{"calendarEvents":{"edges":[{"node":{"id":"event-1","title":"Planning","startsAt":"2026-09-01T10:00:00Z"}}]}}}`)
+		case strings.Contains(request.Query, "callRecordings("):
+			recordings := []any{}
+			for i, event := range []string{"event-1", "event-2", "event-1"} {
+				recordings = append(recordings, map[string]any{"node": map[string]any{"id": fmt.Sprintf("recording-%d", i), "calendarEventId": event, "calendarEvent": map[string]any{"id": event, "startsAt": "2026-09-01T10:00:00Z"}}})
+			}
+			assert.NoError(json.MarshalWrite(w, map[string]any{"data": map[string]any{"callRecordings": map[string]any{"edges": recordings, "pageInfo": map[string]any{"hasNextPage": false}}}}))
 		case request.Variables["after"] == nil:
-			edges := []any{map[string]any{"node": map[string]any{"id": "person-1", "handle": "organizer@example.com", "displayName": "Organizer", "isOrganizer": true}}}
-			for i := 2; i <= 100; i++ {
-				edges = append(edges, map[string]any{"node": map[string]any{"id": fmt.Sprintf("person-%d", i), "handle": fmt.Sprintf("attendee%d@example.com", i)}})
+			assert.Equal([]any{"event-1", "event-2"}, request.Variables["ids"])
+			edges := []any{}
+			for i := range 100 {
+				edges = append(edges, map[string]any{"node": map[string]any{"id": fmt.Sprintf("person-%d", i), "calendarEventId": "event-1", "handle": fmt.Sprintf("attendee%d@example.com", i)}})
 			}
 			assert.NoError(json.MarshalWrite(w, map[string]any{"data": map[string]any{"calendarEventParticipants": map[string]any{"edges": edges, "pageInfo": map[string]any{"hasNextPage": true, "endCursor": "next"}}}}))
 		default:
 			assert.Equal("next", request.Variables["after"])
-			_, _ = fmt.Fprint(w, `{"data":{"calendarEventParticipants":{"edges":[{"node":{"id":"person-2","handle":"attendee@example.com","displayName":"Attendee","isOrganizer":false}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"calendarEventParticipants":{"edges":[{"node":{"id":"person-x","calendarEventId":"event-2","handle":"other@example.com"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}`)
 		}
 	}))
 	defer srv.Close()
-	client, err := NewClient(srv.URL, "example-key")
+	client, err := NewClient(srv.URL, "bulk-example-key")
 	require.NoError(err)
-	calendar, err := client.GetCalendar(t.Context(), "event-1")
+	client.limiter = rate.NewLimiter(rate.Inf, 1)
+	page, err := client.ListRecordings(t.Context(), epoch, "", 100)
 	require.NoError(err)
-	require.Len(calendar.Participants, 101)
-	assert.Equal("organizer@example.com", calendar.Participants[0].Handle)
-	assert.True(calendar.Participants[0].IsOrganizer)
-	assert.Equal("attendee@example.com", calendar.Participants[100].Handle)
+	require.Len(page.Records, 3)
+	assert.Equal(3, requests)
+	require.NotNil(page.Records[0].Calendar)
+	assert.Len(page.Records[0].Calendar.Participants, 100)
+	assert.Same(page.Records[0].Calendar, page.Records[2].Calendar)
+	require.Len(page.Records[1].Calendar.Participants, 1)
+	assert.Contains(string(page.Records[1].Calendar.Participants[0]), "other@example.com")
+	assert.Contains(string(page.Records[1].Calendar.Raw), `"event-2"`)
+}
+
+func TestClientRetriesTransientFailures(t *testing.T) {
+	for name, failure := range map[string]func(http.ResponseWriter){
+		"429": func(w http.ResponseWriter) {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+		},
+		"503": func(w http.ResponseWriter) {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+		},
+		"graphql rate limit": func(w http.ResponseWriter) {
+			_, _ = fmt.Fprint(w, `{"data":null,"errors":[{"message":"Rate limit reached","extensions":{"code":"RATE_LIMITED","retryAfterMs":1}}]}`)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				client, err := NewClient("https://retry.twenty.example", "retry-"+name+"-example-key")
+				require.NoError(err)
+				requests := 0
+				client.http.Transport = twentyTransport(func(*http.Request) (*http.Response, error) {
+					requests++
+					recorder := httptest.NewRecorder()
+					if requests < 3 {
+						failure(recorder)
+					} else {
+						_, _ = fmt.Fprint(recorder, `{"data":{"callRecordings":{"edges":[],"pageInfo":{"hasNextPage":false}}}}`)
+					}
+					return recorder.Result(), nil
+				})
+				_, err = client.ListRecordings(t.Context(), epoch, "", 1)
+				require.NoError(err)
+				assert.Equal(3, requests)
+			})
+		})
+	}
 }
 
 func TestClientRejectsBrokenAndPartialResponses(t *testing.T) {
@@ -157,7 +216,7 @@ func TestClientRejectsBrokenAndPartialResponses(t *testing.T) {
 			defer srv.Close()
 			client, err := NewClient(srv.URL, "example-key")
 			require.NoError(err)
-			_, err = client.ListRecordings(t.Context(), "current", 100)
+			_, err = client.ListRecordings(t.Context(), epoch, "current", 100)
 			require.Error(err)
 			assert.NotContains(err.Error(), "example-key")
 			assert.NotContains(err.Error(), "secret response")
@@ -201,12 +260,12 @@ func TestClientRejectsRedirectAndCancellation(t *testing.T) {
 	defer srv.Close()
 	client, err := NewClient(srv.URL, "example-key")
 	require.NoError(err)
-	_, err = client.ListRecordings(t.Context(), "", 1)
+	_, err = client.ListRecordings(t.Context(), epoch, "", 1)
 	require.Error(err)
 	assert.Zero(hits)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = client.ListRecordings(ctx, "", 1)
+	_, err = client.ListRecordings(ctx, epoch, "", 1)
 	require.ErrorIs(err, context.Canceled)
 }
 
@@ -215,15 +274,24 @@ func TestClientHTTPFailuresAreRedacted(t *testing.T) {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
+			requests := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				w.Header().Set("Retry-After", "0")
 				w.WriteHeader(status)
 				_, _ = fmt.Fprint(w, "example-key private content")
 			}))
 			defer srv.Close()
 			client, err := NewClient(srv.URL, "example-key")
 			require.NoError(err)
-			_, err = client.ListRecordings(t.Context(), "", 1)
+			client.limiter = rate.NewLimiter(rate.Inf, 1)
+			_, err = client.ListRecordings(t.Context(), epoch, "", 1)
 			require.ErrorContains(err, strconv.Itoa(status))
+			if status >= http.StatusTooManyRequests {
+				assert.Equal(maxAttempts, requests, "transient failures are retried a bounded number of times")
+			} else {
+				assert.Equal(1, requests)
+			}
 			assert.NotContains(err.Error(), "private content")
 			assert.NotContains(err.Error(), "example-key")
 		})
@@ -248,38 +316,13 @@ func TestValidateBaseURL(t *testing.T) {
 func TestClientRejectsMismatchedCalendar(t *testing.T) {
 	require := require.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprint(w, `{"data":{"calendarEvents":{"edges":[{"node":{"id":"another-event"}}]}}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[{"node":{"id":"recording-1","calendarEventId":"event-1","calendarEvent":{"id":"another-event"}}}],"pageInfo":{"hasNextPage":false}}}}`)
 	}))
 	defer srv.Close()
-	client, err := NewClient(srv.URL, "example-key")
+	client, err := NewClient(srv.URL, "mismatch-example-key")
 	require.NoError(err)
-	_, err = client.GetCalendar(t.Context(), "event-1")
+	_, err = client.ListRecordings(t.Context(), epoch, "", 1)
 	require.ErrorContains(err, "mismatch")
-}
-
-func TestClientMissingCalendarEventReturnsNoCalendarEvidence(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	requests := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		var request struct {
-			Query string `json:"query"`
-		}
-		if !assert.NoError(json.UnmarshalRead(r.Body, &request)) {
-			return
-		}
-		assert.Contains(request.Query, "calendarEvents(")
-		_, _ = fmt.Fprint(w, `{"data":{"calendarEvents":{"edges":[]}}}`)
-	}))
-	defer srv.Close()
-	client, err := NewClient(srv.URL, "missing-calendar-example-key")
-	require.NoError(err)
-
-	calendar, err := client.GetCalendar(t.Context(), "deleted-event")
-	require.ErrorContains(err, "linked Twenty calendar event is unavailable")
-	assert.Nil(calendar)
-	assert.Equal(1, requests, "participant lookup requires an existing calendar event")
 }
 
 func TestClientBoundsResponseAndPageSize(t *testing.T) {
@@ -295,10 +338,10 @@ func TestClientBoundsResponseAndPageSize(t *testing.T) {
 	defer srv.Close()
 	client, err := NewClient(srv.URL, "example-key")
 	require.NoError(err)
-	_, err = client.ListRecordings(t.Context(), "", 1)
+	_, err = client.ListRecordings(t.Context(), epoch, "", 1)
 	require.ErrorContains(err, "exceeds")
 	for _, first := range []int{-1, 0, 101} {
-		_, err = client.ListRecordings(t.Context(), "", first)
+		_, err = client.ListRecordings(t.Context(), epoch, "", first)
 		require.ErrorContains(err, "page size")
 	}
 }
@@ -333,7 +376,7 @@ func TestClientRetriesOversizedRecordingPagesWithoutSkippingCursor(t *testing.T)
 	defer srv.Close()
 	client, err := NewClient(srv.URL, "example-key")
 	require.NoError(err)
-	page, err := client.ListRecordings(t.Context(), "catalog-cursor", 2)
+	page, err := client.ListRecordings(t.Context(), epoch, "catalog-cursor", 2)
 	require.NoError(err)
 	require.Len(page.Records, 1)
 	assert.Equal("recording-1", page.Records[0].ID)
@@ -342,4 +385,40 @@ func TestClientRetriesOversizedRecordingPagesWithoutSkippingCursor(t *testing.T)
 	assert.Equal(pageRequest{First: 2, After: "catalog-cursor"}, <-requests)
 	assert.Equal(pageRequest{First: 1, After: "catalog-cursor"}, <-requests)
 	assert.Empty(requests)
+}
+
+func TestClientStepsPastSingleOversizedRecording(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if !assert.NoError(json.UnmarshalRead(r.Body, &request)) {
+			return
+		}
+		if strings.Contains(request.Query, "RecordingIDs") {
+			assert.Equal("catalog-cursor", request.Variables["after"])
+			assert.NotNil(request.Variables["filter"])
+			_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[{"node":{"id":"huge","updatedAt":"2026-09-01T10:00:00Z"}}],"pageInfo":{"hasNextPage":true,"endCursor":"after-huge"}}}}`)
+			return
+		}
+		chunk := strings.Repeat(" ", 1<<20)
+		for range 65 {
+			if _, err := fmt.Fprint(w, chunk); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+	client, err := NewClient(srv.URL, "oversized-example-key")
+	require.NoError(err)
+	client.limiter = rate.NewLimiter(rate.Inf, 1)
+	page, err := client.ListRecordings(t.Context(), epoch, "catalog-cursor", 1)
+	require.NoError(err)
+	require.Len(page.Records, 1)
+	assert.Equal(Recording{ID: "huge", UpdatedAt: "2026-09-01T10:00:00Z", TooLarge: true}, page.Records[0])
+	assert.True(page.HasMore)
+	assert.Equal("after-huge", page.NextCursor)
 }

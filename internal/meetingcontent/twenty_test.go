@@ -127,3 +127,13 @@ func FuzzTwentyPreservesWordText(f *testing.F) {
 		assert.Equal(want, c.Transcript.Segments[0].Text)
 	})
 }
+
+func TestTwentySummaryUnavailableNoticeIsNotASummary(t *testing.T) {
+	assert := assert.New(t)
+	raw := []byte(`{"schema_version":1,"recording":{"summary":{"markdown":"## Summary unavailable\n\nThe call was too short."},"transcript":[{"words":[{"text":"Hello"}]}]}}`)
+	c := Decode("twenty_json", raw, nil)
+	assert.Equal(StateUnavailable, c.Summary.State)
+	assert.Equal("summary_unavailable", c.Summary.Reason)
+	assert.Empty(c.Summary.Text)
+	assert.Equal(StateAvailable, c.Transcript.State)
+}

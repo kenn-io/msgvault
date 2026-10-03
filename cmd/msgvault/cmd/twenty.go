@@ -237,6 +237,9 @@ func finishTwentyImport(identifier string, summary *twenty.ImportSummary, import
 }
 func writeTwentySummary(out io.Writer, summary *twenty.ImportSummary) {
 	_, _ = fmt.Fprintf(out, "\nTwenty sync complete!\n  Meetings processed: %d\n  Meetings added: %d\n  Meetings updated: %d\n  Empty: %d\n", summary.MeetingsProcessed, summary.MeetingsAdded, summary.MeetingsUpdated, summary.SkippedEmpty)
+	if summary.SkippedInvalid > 0 {
+		_, _ = fmt.Fprintf(out, "  Skipped (invalid evidence): %d\n", summary.SkippedInvalid)
+	}
 	if summary.PartialCoverage {
 		_, _ = fmt.Fprintln(out, "  Coverage: partial (limit stopped catalog scan)")
 	}
@@ -269,7 +272,7 @@ func runConfiguredTwentySync(ctx context.Context, st *store.Store, source config
 func init() {
 	syncTwentyCmd.Flags().IntVar(&syncTwentyLimit, "limit", 0, "max eligible meetings processed (0 = unlimited)")
 	syncTwentyCmd.Flags().StringVar(&syncTwentyAfter, "after", "", "local meeting-date lower bound (YYYY-MM-DD, UTC)")
-	syncTwentyCmd.Flags().BoolVar(&syncTwentyFull, "full", false, "force archive projections and attribution refresh")
+	syncTwentyCmd.Flags().BoolVar(&syncTwentyFull, "full", false, "rescan every recording and refresh archive projections and attribution")
 	syncTwentyCmd.Flags().BoolVar(&syncTwentyProbe, "probe", false, "validate read access without printing content or writing the archive")
 	rootCmd.AddCommand(addTwentyCmd)
 	rootCmd.AddCommand(addManualSyncCacheFlags(syncTwentyCmd))

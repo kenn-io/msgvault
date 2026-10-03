@@ -160,21 +160,27 @@ without writing the archive or printing meeting content. With several
 configured sources, specify one for registration or probing; ordinary sync
 without an identifier syncs them all.
 
-Every unlimited run scans the whole catalog and refreshes linked calendar
-participants. Requests are paced for Twenty's documented API rate limit.
-Recording pages above the 64 MiB response cap are retried from the same cursor
-with fewer recordings. If a one-recording response still exceeds the cap, sync
-reports an error and preserves the existing archive.
-Unchanged evidence skips the archive write; late summaries, transcripts, and
-attendee edits update the same meeting. Pending, failed, or empty transcript
-markers are never archived as text. A usable summary can be archived while
-the transcript is pending. Empty recordings are reconsidered on the next run.
+Each run reads only recordings updated since the previous successful run,
+along with their calendar events and participants, a page at a time. Late
+summaries and transcripts update the recording, so the next run picks them up
+and updates the same meeting. Attendee edits made after the recording show up
+on the next `--full` run. Requests are paced for Twenty's documented API rate
+limit, and rate limits, server errors, and network failures are retried.
+Pending, failed, or empty transcript markers are never archived as text, and
+Call Recorder's "Summary unavailable" notice is not archived as a summary. A
+usable summary can be archived while the transcript is pending.
+
+A recording that can't be archived, such as one with no usable time or one
+too large for the 64 MiB response or content cap, is skipped, reported in the
+sync summary, and recorded on the sync run. The sync carries on with the next
+recording and retries the skipped one when it changes in Twenty.
 
 `--after` is an inclusive local UTC meeting-date filter. Occurrence time uses
 the recording start, then calendar start, then recording creation time.
-`--limit` caps eligible meetings, including unchanged ones, and reports partial
-coverage when discovery stops early. `--full` refreshes projections and
-attribution even when evidence matches. Run it after changing account identities.
+`--limit` caps eligible meetings and reports partial coverage when discovery
+stops early; the next run continues where it stopped. `--full` rescans every
+recording and refreshes projections and attribution even when evidence
+matches. Run it after changing account identities.
 
 Raw evidence retains the returned recording, calendar, and participant fields.
 Calendar email handles supply identities; speaker names and display-only
@@ -182,7 +188,8 @@ handles remain display evidence. Duration uses valid recording start/end,
 then scheduled calendar time, then transcript timing. Structured actions are
 unsupported; summary prose does not create action items.
 
-Recordings deleted in Twenty remain archived. API, permission, hydration, and
+Recordings deleted in Twenty remain archived, and a recording whose calendar
+event is deleted keeps the attendees already archived. API, permission, and
 cancellation failures fail the sync and preserve previously committed evidence.
 Removing the local source prevents scheduled sync from recreating it; use
 `add-twenty` to register it again.

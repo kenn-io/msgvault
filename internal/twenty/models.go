@@ -13,19 +13,24 @@ const (
 
 type Source interface {
 	Probe(ctx context.Context) error
-	ListRecordings(ctx context.Context, cursor string, first int) (*Page, error)
-	GetCalendar(ctx context.Context, id string) (*Calendar, error)
+	// ListRecordings returns recordings updated at or after updatedSince in
+	// updatedAt order, each with its linked calendar event and participants.
+	ListRecordings(ctx context.Context, updatedSince, cursor string, first int) (*Page, error)
 }
 
 type Recording struct {
 	ID              string         `json:"id"`
 	Title           string         `json:"title"`
-	Status          string         `json:"status"`
 	CreatedAt       string         `json:"createdAt"`
+	UpdatedAt       string         `json:"updatedAt"`
 	StartedAt       string         `json:"startedAt"`
-	EndedAt         string         `json:"endedAt"`
 	CalendarEventID string         `json:"calendarEventId"`
 	Raw             jsontext.Value `json:"-"`
+	// Calendar is nil when the recording has no readable calendar event.
+	Calendar *Calendar `json:"-"`
+	// TooLarge marks a recording whose fields exceed the response bound; only
+	// its ID and UpdatedAt are set.
+	TooLarge bool `json:"-"`
 }
 
 type Page struct {
@@ -34,15 +39,7 @@ type Page struct {
 	NextCursor string
 }
 
-type Participant struct {
-	ID          string         `json:"id"`
-	Handle      string         `json:"handle"`
-	DisplayName string         `json:"displayName"`
-	IsOrganizer bool           `json:"isOrganizer"`
-	Raw         jsontext.Value `json:"-"`
-}
-
 type Calendar struct {
 	Raw          jsontext.Value
-	Participants []Participant
+	Participants []jsontext.Value
 }
