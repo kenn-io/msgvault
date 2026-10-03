@@ -117,7 +117,13 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 	var retryAfter string
 	for attempt := range maxRetries {
 		if attempt > 0 {
-			if err := sleepCtx(ctx, httpretry.RetryAfter(retryAfter, attempt-1, maxRetryAfter)); err != nil {
+			delay := httpretry.RetryAfter(retryAfter, attempt-1, maxRetryAfter)
+			// A wait that outlasts the caller's deadline would end as a
+			// cancellation and lose the throttling status.
+			if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < delay {
+				return nil, fmt.Errorf("graph %s %s: retry wait exceeds the deadline: %w", method, reqURL, lastErr)
+			}
+			if err := sleepCtx(ctx, delay); err != nil {
 				return nil, err
 			}
 		}

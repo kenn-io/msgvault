@@ -273,3 +273,24 @@ func TestSendOnceRetriesOnlyThrottling(t *testing.T) {
 		assert.Equal(2, calls)
 	})
 }
+
+// A Retry-After longer than the caller's deadline returns the throttling
+// status at once instead of a cancellation.
+func TestGetReturnsThrottlingWhenRetryOutlastsDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Retry-After", "600")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		httpClient := srv.Client()
+		c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000)
+		c.http.Transport = httpClient.Transport
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+		defer cancel()
+		_, err := c.GetRaw(ctx, "/message")
+		throttled, ok := errors.AsType[*ThrottledError](err)
+		require.True(t, ok, "error: %v", err)
+		assert.Equal(t, 600*time.Second, throttled.RetryAfter)
+		assert.NoError(t, ctx.Err())
+	})
+}
