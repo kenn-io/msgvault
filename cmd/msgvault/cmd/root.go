@@ -216,6 +216,9 @@ in a single binary.`,
 // and the skills group, which only writes agent skill files).
 func skipsConfigLoad(cmd *cobra.Command) bool {
 	switch cmd.Name() {
+	case "schema-version":
+		database, _ := cmd.Flags().GetBool("database")
+		return !database
 	case "version", "update", "quickstart", "openapi", "completion",
 		embeddingsOptimizeWorkerName,
 		cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:

@@ -1350,6 +1350,14 @@ func (s *Store) InitSchema() error {
 // for the other ledger-gated migrations: a cancelled one is not marked applied,
 // so the next open runs it again.
 func (s *Store) InitSchemaContext(ctx context.Context) error {
+	version, err := s.SchemaVersionContext(ctx)
+	if err != nil {
+		return err
+	}
+	if version > SchemaVersion {
+		return fmt.Errorf("archive schema version %d is newer than this binary's version %d; use a newer msgvault binary", version, SchemaVersion)
+	}
+
 	// A missing messages table identifies a fresh PostgreSQL schema. Build the
 	// canonical Message-ID expression index inline after the schema files create
 	// the empty table: CREATE INDEX is cheap there, while making every fresh test
@@ -2191,7 +2199,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// the archive's actual data distribution.
 	s.optimizeSQLiteBestEffort(ctx, "schema initialization")
 
-	return nil
+	return s.stampSchemaVersionContext(ctx)
 }
 
 // runOnceMigration runs fn when the applied_migrations ledger has no entry for
