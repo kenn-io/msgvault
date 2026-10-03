@@ -23,8 +23,9 @@ var errAccountSelectionConflict = errors.New(
 
 // resolveAccount reads the account argument. A physical source identifier
 // keeps its old meaning; a virtual account key from get_stats selects one
-// identity or the unattributed rows of its source; any other exact address
-// selects mail attributed to it on every source.
+// identity or the unattributed rows of its source; the exact address of a
+// confirmed identity selects mail attributed to it on every source. Any other
+// value is "account not found", so a typo never silently matches nothing.
 func (h *handlers) resolveAccount(ctx context.Context, account string) (accountSelection, error) {
 	if account == "" {
 		return accountSelection{}, nil
@@ -53,7 +54,35 @@ func (h *handlers) resolveAccount(ctx context.Context, account string) (accountS
 	if parseErr != nil {
 		return accountSelection{}, err
 	}
+	known, knownErr := h.isConfirmedIdentity(ctx, address)
+	if knownErr != nil {
+		return accountSelection{}, newInternalError("list virtual accounts", knownErr)
+	}
+	if !known {
+		return accountSelection{}, err
+	}
 	return accountSelection{scope: &search.AccountScope{Addresses: []string{address}}}, nil
+}
+
+// isConfirmedIdentity reports whether any source lists address as a confirmed
+// identity in the virtual account catalog.
+func (h *handlers) isConfirmedIdentity(ctx context.Context, address string) (bool, error) {
+	lister, ok := h.engine.(query.VirtualAccountLister)
+	if !ok {
+		return false, nil
+	}
+	catalog, err := lister.ListVirtualAccounts(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, children := range catalog {
+		if slices.ContainsFunc(children, func(v store.VirtualAccount) bool {
+			return !v.Unattributed && v.AccountAddress == address
+		}) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // scopes returns the selection as filter scopes.

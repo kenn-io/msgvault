@@ -8,6 +8,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // MockEngine implements query.Engine for testing. Each method delegates to an
@@ -21,6 +22,7 @@ type MockEngine struct {
 	AttachmentsByHash map[string][]query.AttachmentInfo
 	Stats             *query.TotalStats
 	Accounts          []query.AccountInfo
+	VirtualAccounts   map[int64][]store.VirtualAccount
 	AggregateRows     []query.AggregateRow
 	GmailIDs          []string
 	DeletionTargets   []query.DeletionTarget
@@ -296,6 +298,10 @@ func (m *MockEngine) SearchByDomains(ctx context.Context, domains []string, afte
 
 func (m *MockEngine) ListAccounts(_ context.Context) ([]query.AccountInfo, error) {
 	return m.Accounts, nil
+}
+
+func (m *MockEngine) ListVirtualAccounts(_ context.Context) (map[int64][]store.VirtualAccount, error) {
+	return m.VirtualAccounts, nil
 }
 
 func (m *MockEngine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*query.TotalStats, error) {

@@ -61,6 +61,8 @@ func TestAccountArgumentSelectsVirtualAccounts(t *testing.T) {
 	assert.Equal([]int64{forwarded}, ids(store.VirtualIdentityKey(f.Source.ID, "work@example.org")))
 	assert.Equal([]int64{conflict}, ids(store.VirtualUnattributedKey(f.Source.ID)))
 	assert.Equal([]int64{forwarded}, ids("work@example.org"), "an exact address selects its account on every source")
+	_, err := h.resolveAccount(t.Context(), "wrok@example.org")
+	require.ErrorContains(err, "account not found", "a mistyped address keeps the old error")
 	assert.ElementsMatch([]int64{forwarded, conflict}, ids(f.Source.Identifier), "a source identifier keeps its old meaning")
 
 	stats := runTool[getStatsResponse](t, "get_stats", h.getStats, map[string]any{})
@@ -76,7 +78,10 @@ func TestAccountArgumentSelectsVirtualAccounts(t *testing.T) {
 func TestForwardedAccountResolvesAddressesAndKeys(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	h := &handlers{engine: &querytest.MockEngine{Accounts: []query.AccountInfo{{ID: 1, Identifier: "alice@example.com"}}}}
+	h := &handlers{engine: &querytest.MockEngine{
+		Accounts:        []query.AccountInfo{{ID: 1, Identifier: "alice@example.com"}},
+		VirtualAccounts: map[int64][]store.VirtualAccount{1: {{SourceID: 1, AccountAddress: "work@example.org"}}},
+	}}
 	source := int64(1)
 	for account, want := range map[string]struct {
 		name   string
@@ -91,6 +96,8 @@ func TestForwardedAccountResolvesAddressesAndKeys(t *testing.T) {
 		assert.Equal(want.name, name, account)
 		assert.Equal(want.scopes, scopes, account)
 	}
+	_, _, err := h.resolveForwardedAccount(t.Context(), "wrok@example.org")
+	require.ErrorContains(err, "account not found", "a mistyped address is not a cross-source scope")
 }
 
 func TestAccountSelectionIntersectsQueryAccounts(t *testing.T) {
