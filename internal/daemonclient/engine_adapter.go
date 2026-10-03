@@ -969,7 +969,8 @@ func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int)
 	if err := validateParsedSearchQuery(q); err != nil {
 		return nil, err
 	}
-	if err := e.requireListIDCapability(ctx, q, query.MessageFilter{}); err != nil {
+	q, scoped := hoistQueryScopes(q, query.MessageFilter{})
+	if err := e.requireListIDCapability(ctx, q, scoped); err != nil {
 		return nil, err
 	}
 	if hasExplicitEmptyAccountScope(q) {
@@ -984,6 +985,7 @@ func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int)
 	if err != nil {
 		return nil, err
 	}
+	queryParams.AccountScopes = encodedAccountScopes(scoped.AccountScopes)
 
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.DeepSearchResp, error) {
 		return client.DeepSearchWithResponse(ctx, &generated.DeepSearchRequestOptions{
@@ -1089,7 +1091,8 @@ func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit
 	if err := validateParsedSearchQuery(q); err != nil {
 		return nil, err
 	}
-	if err := e.requireListIDCapability(ctx, q, query.MessageFilter{}); err != nil {
+	q, scoped := hoistQueryScopes(q, query.MessageFilter{})
+	if err := e.requireListIDCapability(ctx, q, scoped); err != nil {
 		return nil, err
 	}
 	if q == nil || len(q.TextTerms) == 0 {
@@ -1104,6 +1107,7 @@ func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit
 		return nil, err
 	}
 	queryParams.Scope = optionalString("body")
+	queryParams.AccountScopes = encodedAccountScopes(scoped.AccountScopes)
 
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.DeepSearchResp, error) {
 		return client.DeepSearchWithResponse(ctx, &generated.DeepSearchRequestOptions{Query: queryParams})
@@ -1144,6 +1148,7 @@ func (e *Engine) SearchFastCount(ctx context.Context, q *search.Query, filter qu
 // total count, and aggregate stats in a single operation.
 func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter query.MessageFilter, statsGroupBy query.ViewType, limit, offset int) (*query.SearchFastResult, error) {
+	q, filter = hoistQueryScopes(q, filter)
 	if err := e.requireListIDCapability(ctx, q, filter, statsGroupBy); err != nil {
 		return nil, err
 	}
@@ -1613,6 +1618,18 @@ func requireAppliedSourceIDs(requested, applied []int64, surface string) error {
 		return fmt.Errorf("daemon did not confirm %s source IDs; upgrade the daemon to API schema 2.17.0 or newer", surface)
 	}
 	return nil
+}
+
+// hoistQueryScopes moves a query's account scopes into the filter, which
+// the daemon transport carries as account_scopes; query text can't.
+func hoistQueryScopes(q *search.Query, filter query.MessageFilter) (*search.Query, query.MessageFilter) {
+	if q == nil || len(q.AccountScopes) == 0 {
+		return q, filter
+	}
+	stripped := *q
+	stripped.AccountScopes = nil
+	filter.AccountScopes = append(search.CloneAccountScopes(filter.AccountScopes), search.CloneAccountScopes(q.AccountScopes)...)
+	return &stripped, filter
 }
 
 func hasExplicitEmptyAccountScope(q *search.Query) bool {

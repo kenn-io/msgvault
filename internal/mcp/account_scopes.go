@@ -18,9 +18,6 @@ type accountSelection struct {
 	scope    *search.AccountScope
 }
 
-var errUnattributedNeedsFilter = errors.New(
-	"an unattributed account can't narrow a text query; use search_metadata or list_messages")
-
 var errAccountSelectionConflict = errors.New(
 	"the account argument and the query's account: operator select different addresses")
 
@@ -73,16 +70,18 @@ func (a accountSelection) applyToFilter(filter *query.MessageFilter) {
 	filter.AccountScopes = append(filter.AccountScopes, a.scopes()...)
 }
 
-// applyToQuery narrows a query that travels as text, where only the source
-// and the account: operator can express the selection.
+// applyToQuery narrows a parsed query. An address selection becomes the
+// account: operator; the unattributed bucket, which no operator can express,
+// rides the query's structured scopes.
 func (a accountSelection) applyToQuery(q *search.Query) error {
-	if a.scope != nil && a.scope.Unattributed {
-		return errUnattributedNeedsFilter
-	}
 	if a.sourceID != nil {
 		q.AccountIDs = []int64{*a.sourceID}
 	}
 	if a.scope == nil {
+		return nil
+	}
+	if a.scope.Unattributed {
+		q.AccountScopes = append(q.AccountScopes, a.scopes()...)
 		return nil
 	}
 	if len(q.AccountAddrs) == 0 {
