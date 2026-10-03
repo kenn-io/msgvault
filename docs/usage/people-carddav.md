@@ -143,8 +143,9 @@ rediscovery every two to four weeks. See [Google's CardDAV reference](https://de
 
 Microsoft 365 and Outlook.com do not support CardDAV. msgvault reads and
 writes their contacts through Microsoft Graph instead, with the same roles,
-publishing and conflict review as a CardDAV server. Each Outlook contact
-folder is one address book, including the default **Contacts** folder.
+publishing and conflict review as a CardDAV server. The default **Contacts**
+folder and each folder inside it is one address book. Microsoft Graph does
+not list contact folders outside **Contacts**.
 
 1. Set up the Microsoft app registration from the
    [Microsoft Graph mail setup](../guides/oauth-setup.md#microsoft-graph-mail-sync), and add the delegated

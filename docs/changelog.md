@@ -22,7 +22,7 @@ All notable changes to msgvault, grouped by release.
 - Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Msgvault never sends.
 - CardDAV sync supports Microsoft 365 and Outlook.com contacts through
   Microsoft Graph. `msgvault add-carddav --microsoft <email>` signs in and
-  saves the connection, and each Outlook contact folder is an address book.
+  saves the connection. Contacts and each folder inside it is an address book.
   See [Microsoft contacts](usage/people-carddav.md#microsoft-contacts).
 
 ## 0.21.0

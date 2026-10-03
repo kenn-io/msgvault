@@ -43,6 +43,8 @@
   let baseURL = $state(initialValues.baseURL);
   let username = $state(initialValues.username);
   const authorizationCommand = $derived(`msgvault carddav authorize-google ${shellQuote(username || 'you@example.com')}${oauthApp ? ` --oauth-app ${shellQuote(oauthApp)}` : ''}`);
+  // add-carddav saves the account, so the command names the connection being edited.
+  const microsoftCommand = $derived(`msgvault add-carddav --microsoft ${shellQuote(username || 'you@example.com')}${connection && connection !== 'default' ? ` --connection ${shellQuote(connection)}` : ''}`);
   let password = $state('');
   let persistedBaseURL = $state(initialValues.baseURL);
   let persistedUsername = $state(initialValues.username);
@@ -282,7 +284,7 @@
         <p>For a remote daemon, copy the authorized token to that host before testing. <a href="https://msgvault.io/docs/usage/people-carddav/#google-contacts" target="_blank" rel="noreferrer">Google Contacts setup</a></p>
       </details>
     {:else if microsoft}
-      <p>Sign in from the terminal before you save: <code class="authorization-command">msgvault add-carddav --microsoft {shellQuote(username || 'you@example.com')}</code></p>
+      <p>Sign in from the terminal before you save: <code class="authorization-command">{microsoftCommand}</code></p>
       <p>Your Microsoft app registration needs the delegated <code>Contacts.ReadWrite</code> permission. <a href="https://msgvault.io/docs/usage/people-carddav/#microsoft-contacts" target="_blank" rel="noreferrer">Microsoft contacts setup</a></p>
     {:else}
       <div class="field">
