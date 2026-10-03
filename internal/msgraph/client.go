@@ -313,14 +313,15 @@ func (c *Client) Send(ctx context.Context, method, url string, body any, ifMatch
 	return c.do(ctx, method, url, reqBody, 0, ifMatch, false)
 }
 
-// SendOnce is Send for a write that must not repeat, such as a create. It
-// retries only a 429.
-func (c *Client) SendOnce(ctx context.Context, method, url string, body any) ([]byte, error) {
+// SendOnce is Send for a write that must not repeat: a create, or a
+// conditional update whose repeat would fail its own If-Match. It retries
+// only a 429.
+func (c *Client) SendOnce(ctx context.Context, method, url string, body any, ifMatch string) ([]byte, error) {
 	reqBody, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("graph %s %s: encode body: %w", method, url, err)
 	}
-	return c.do(ctx, method, url, reqBody, 0, "", true)
+	return c.do(ctx, method, url, reqBody, 0, ifMatch, true)
 }
 
 // GetJSON fetches url and unmarshals the JSON body into out.

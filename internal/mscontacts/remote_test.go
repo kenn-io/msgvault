@@ -34,8 +34,10 @@ type fakeGraph struct {
 	deletes  int
 	lists    int
 	dropPost bool
-	expire   bool
-	failWith int // status for every request, when set
+	// dropPatch applies the next PATCH and then answers 503.
+	dropPatch bool
+	expire    bool
+	failWith  int // status for every request, when set
 }
 
 type fakeChange struct {
@@ -236,6 +238,11 @@ func (f *fakeGraph) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			next.ETag = `W/"` + strconv.Itoa(f.version+1) + `"`
 			f.contacts[c.ID] = &next
 			f.record(c.ParentFolderID, c.ID, false)
+			if f.dropPatch {
+				f.dropPatch = false
+				reply(http.StatusServiceUnavailable, nil)
+				return
+			}
 			reply(http.StatusOK, next)
 		case http.MethodDelete:
 			f.deletes++
@@ -550,4 +557,29 @@ func TestUpdatedOutlookContactReadsBackWithoutConflict(t *testing.T) {
 	conflicts, err := f.store.ListCardDAVConflictsContext(t.Context(), true, store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	assert.Empty(conflicts)
+}
+
+func TestLostUpdateResponseIsRecoveredWithoutConflict(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFixture(t)
+	personID := f.alice(t)
+	require.NoError(f.service.PublishPerson(t.Context(), personID))
+	_, err := f.store.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "alice@example.test",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+	f.fake.dropPatch = true
+
+	require.Error(f.service.PublishPerson(t.Context(), personID))
+	f.sync(t)
+
+	assert.Equal(1, f.fake.patches, "the applied update is not sent again")
+	conflicts, err := f.store.ListCardDAVConflictsContext(t.Context(), true, store.DefaultCardDAVAccountID)
+	require.NoError(err)
+	assert.Empty(conflicts)
+	publication, err := f.store.GetCardDAVPublicationContext(t.Context(), personID)
+	require.NoError(err)
+	assert.Empty(publication.PendingOperation)
 }

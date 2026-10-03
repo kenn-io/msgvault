@@ -286,7 +286,7 @@ func (r *Remote) Put(ctx context.Context, href string, body []byte, etag string,
 			return &carddav.StatusError{StatusCode: http.StatusPreconditionFailed}
 		}
 		fields.Properties = []singleValueExtendedProperty{{ID: uidProperty, Value: uid}, {ID: vcardProperty, Value: string(body)}}
-		_, err = r.graph.SendOnce(ctx, http.MethodPost, book, fields)
+		_, err = r.graph.SendOnce(ctx, http.MethodPost, book, fields, "")
 		return statusError(err)
 	}
 	if !found {
@@ -296,7 +296,9 @@ func (r *Remote) Put(ctx context.Context, href string, body []byte, etag string,
 		return &carddav.StatusError{StatusCode: http.StatusPreconditionFailed}
 	}
 	fields.Properties = []singleValueExtendedProperty{{ID: vcardProperty, Value: string(body)}}
-	_, err = r.graph.Send(ctx, http.MethodPatch, r.base+"/me/contacts/"+url.PathEscape(current.ID), fields, etag)
+	// A repeat after an applied PATCH would fail its If-Match and look like a
+	// conflict, so an unclear failure is left to the service's recovery read.
+	_, err = r.graph.SendOnce(ctx, http.MethodPatch, r.base+"/me/contacts/"+url.PathEscape(current.ID), fields, etag)
 	return statusError(err)
 }
 

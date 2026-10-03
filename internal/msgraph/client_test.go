@@ -263,12 +263,12 @@ func TestSendOnceRetriesOnlyThrottling(t *testing.T) {
 		c.http.Transport = httpClient.Transport
 
 		statuses, calls = []int{http.StatusServiceUnavailable, http.StatusCreated}, 0
-		_, err := c.SendOnce(t.Context(), http.MethodPost, "/contacts", map[string]string{})
+		_, err := c.SendOnce(t.Context(), http.MethodPost, "/contacts", map[string]string{}, "")
 		require.Error(err)
 		assert.Equal(1, calls)
 
 		statuses, calls = []int{http.StatusTooManyRequests, http.StatusCreated}, 0
-		_, err = c.SendOnce(t.Context(), http.MethodPost, "/contacts", map[string]string{})
+		_, err = c.SendOnce(t.Context(), http.MethodPost, "/contacts", map[string]string{}, "")
 		require.NoError(err)
 		assert.Equal(2, calls)
 	})
