@@ -35,6 +35,8 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 		return decodeNotion(fields)
 	case "muesli_json":
 		return decodeMuesli(fields)
+	case "twenty_json":
+		return decodeTwenty(fields)
 	case "meeting_json":
 		return decodeGeneric(fields)
 	default:
