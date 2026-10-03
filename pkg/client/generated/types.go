@@ -237,6 +237,7 @@ func (a Address) Validate() error {
 }
 
 type AgentTokenIssueRequest struct {
+	ExpiresAt        *time.Time          `json:"expires_at,omitempty"`
 	Label            string              `json:"label" validate:"required"`
 	Permissions      []string            `json:"permissions" validate:"required"`
 	SenderSelections map[string][]string `json:"sender_selections,omitempty"`
@@ -250,6 +251,7 @@ func (a AgentTokenIssueRequest) Validate() error {
 type AgentTokenIssueResponse struct {
 	CreatedAt   time.Time              `json:"created_at" validate:"required"`
 	DaemonURL   string                 `json:"daemon_url" validate:"required"`
+	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
 	ID          string                 `json:"id" validate:"required"`
 	Label       string                 `json:"label" validate:"required"`
 	Permissions []string               `json:"permissions" validate:"required"`
@@ -322,6 +324,7 @@ func (a AgentTokenSourceView) Validate() error {
 
 type AgentTokenView struct {
 	CreatedAt   time.Time              `json:"created_at" validate:"required"`
+	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
 	ID          string                 `json:"id" validate:"required"`
 	Label       string                 `json:"label" validate:"required"`
 	Permissions []string               `json:"permissions" validate:"required"`

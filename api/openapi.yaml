@@ -281,6 +281,9 @@ components:
     AgentTokenIssueRequest:
       additionalProperties: false
       properties:
+        expires_at:
+          format: date-time
+          type: string
         label:
           type: string
         permissions:
@@ -310,6 +313,9 @@ components:
           format: date-time
           type: string
         daemon_url:
+          type: string
+        expires_at:
+          format: date-time
           type: string
         id:
           type: string
@@ -368,6 +374,9 @@ components:
       additionalProperties: true
       properties:
         created_at:
+          format: date-time
+          type: string
+        expires_at:
           format: date-time
           type: string
         id:
@@ -14065,7 +14074,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.0.0
+  version: 3.1.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -14222,7 +14231,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: List active agent grants
+      summary: List agent grants
       tags:
         - API
     post:

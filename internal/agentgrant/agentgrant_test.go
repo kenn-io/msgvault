@@ -3,10 +3,32 @@ package agentgrant
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestExpiredGrantsRemainManageable(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		registry := NewRegistry()
+		id, secret, _, err := registry.IssueExpires("reader", []Permission{PermissionSearchRead}, []SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Now().Add(time.Hour))
+		requirements.NoError(err)
+		time.Sleep(2 * time.Hour)
+		_, allowed := registry.Lookup(secret)
+		assertions.False(allowed)
+		listed := registry.List()
+		requirements.Len(listed, 1, "expired grants must remain visible to the owner")
+		assertions.Equal(id, listed[0].ID)
+		assertions.True(listed[0].ExpiresAt.Before(time.Now()))
+		requirements.True(registry.Revoke(id))
+		assertions.Empty(registry.List())
+	})
+}
 
 // TestGrantPermissionsDoNotImply covers proof matrix rows 12 and 13.
 func TestGrantPermissionsDoNotImply(t *testing.T) {

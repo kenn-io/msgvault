@@ -381,5 +381,6 @@ type StatsOptions struct {
 	HideDeletedFromSource bool           // exclude messages where deleted_from_source_at IS NOT NULL
 	SearchQuery           string         // when set, stats reflect only messages matching this search
 	SearchScope           bool           // include all message types when SearchQuery has no explicit message_type
+	AllMessageTypes       bool           // count every message type, as ListMessages does, on the engine's own dataset
 	GroupBy               ViewType       // when set, search filters on this view's key columns instead of subject+sender
 }

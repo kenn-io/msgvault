@@ -466,7 +466,7 @@ export const addAccount = (
   );
 };
 /**
- * @summary List active agent grants
+ * @summary List agent grants
  */
 export const listAgentTokens = (
   options?: SecondParameter<typeof orvalFetch<AgentTokenListResponse>>,

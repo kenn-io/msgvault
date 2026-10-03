@@ -72,7 +72,7 @@ func hasExplicitMessageTypeSearch(searchQuery string) bool {
 // message-type scope as search, while an explicit message_type remains
 // authoritative in either mode.
 func shouldDefaultStatsToEmail(opts StatsOptions) bool {
-	return !opts.SearchScope && !hasExplicitMessageTypeSearch(opts.SearchQuery)
+	return !opts.SearchScope && !opts.AllMessageTypes && !hasExplicitMessageTypeSearch(opts.SearchQuery)
 }
 
 // effectiveStatsFilter returns the complete message scope for a stats query.

@@ -72,6 +72,8 @@ in a single binary.`,
 				if inv.options.homeDir != "" {
 					return errors.New("--home is not allowed in agent-delegated mode")
 				}
+				inv.cfg = &config.Config{}
+				inv.logger = slog.New(slog.DiscardHandler)
 				cmd.SilenceUsage = false
 				return nil
 			}
@@ -235,7 +237,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
 	switch cmd.Name() {
-	case "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover":
+	case "search", "show-message", "stats", "mcp", "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover":
 		return true
 	}
 	return false

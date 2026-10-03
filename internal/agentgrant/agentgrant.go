@@ -15,15 +15,23 @@ import (
 type Permission string
 
 const (
-	PermissionDraftCreate Permission = "draft.create"
-	PermissionDraftEdit   Permission = "draft.edit"
-	PermissionDraftDelete Permission = "draft.delete"
+	PermissionSearchRead     Permission = "search.read"
+	PermissionMessageRead    Permission = "message.read"
+	PermissionAttachmentRead Permission = "attachment.read"
+	PermissionStatsRead      Permission = "stats.read"
+	PermissionDraftCreate    Permission = "draft.create"
+	PermissionDraftEdit      Permission = "draft.edit"
+	PermissionDraftDelete    Permission = "draft.delete"
 )
 
 var knownPermissions = map[string]Permission{
-	string(PermissionDraftCreate): PermissionDraftCreate,
-	string(PermissionDraftEdit):   PermissionDraftEdit,
-	string(PermissionDraftDelete): PermissionDraftDelete,
+	string(PermissionSearchRead):     PermissionSearchRead,
+	string(PermissionMessageRead):    PermissionMessageRead,
+	string(PermissionAttachmentRead): PermissionAttachmentRead,
+	string(PermissionStatsRead):      PermissionStatsRead,
+	string(PermissionDraftCreate):    PermissionDraftCreate,
+	string(PermissionDraftEdit):      PermissionDraftEdit,
+	string(PermissionDraftDelete):    PermissionDraftDelete,
 }
 
 func KnownPermission(s string) (Permission, bool) {
@@ -47,6 +55,7 @@ type Grant struct {
 	Permissions []Permission
 	Sources     []SourceRef
 	CreatedAt   time.Time
+	ExpiresAt   time.Time
 }
 
 func (g Grant) HasPermission(p Permission) bool {
@@ -86,6 +95,7 @@ func cloneGrant(g Grant) Grant {
 		Label:       g.Label,
 		Permissions: append([]Permission(nil), g.Permissions...),
 		CreatedAt:   g.CreatedAt,
+		ExpiresAt:   g.ExpiresAt,
 		Sources:     make([]SourceRef, len(g.Sources)),
 	}
 	for i, source := range g.Sources {
@@ -117,6 +127,15 @@ func NewRegistry() *Registry {
 }
 
 func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) (id, secret string, g Grant, err error) {
+	return r.IssueExpires(label, perms, sources, time.Time{})
+}
+
+// IssueExpires is Issue with an optional expiry; a zero time never expires.
+func (r *Registry) IssueExpires(label string, perms []Permission, sources []SourceRef, expires time.Time) (id, secret string, g Grant, err error) {
+	if !expires.IsZero() && !expires.After(time.Now()) {
+		return "", "", Grant{}, errors.New("agentgrant: expiry must be in the future")
+	}
+
 	if label == "" {
 		return "", "", Grant{}, errors.New("agentgrant: label must not be empty")
 	}
@@ -175,6 +194,7 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef) 
 		Permissions: append([]Permission(nil), perms...),
 		Sources:     append([]SourceRef(nil), sources...),
 		CreatedAt:   time.Now(),
+		ExpiresAt:   expires,
 	}
 
 	r.mu.Lock()
@@ -191,13 +211,14 @@ func (r *Registry) Lookup(secret string) (Grant, bool) {
 	defer r.mu.Unlock()
 
 	for _, e := range r.entries {
-		if subtle.ConstantTimeCompare(digest[:], e.digest[:]) == 1 {
+		if subtle.ConstantTimeCompare(digest[:], e.digest[:]) == 1 && (e.grant.ExpiresAt.IsZero() || time.Now().Before(e.grant.ExpiresAt)) {
 			return cloneGrant(e.grant), true
 		}
 	}
 	return Grant{}, false
 }
 
+// List returns every grant, including expired ones so the owner can revoke them.
 func (r *Registry) List() []Grant {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -1320,7 +1320,10 @@ func (c *Client) requireListIDCapability(
 	return nil
 }
 
-func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {
+func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]query.MessageSummary, error) {
+	if len(sourceIDs) > 0 {
+		return nil, errors.New("domain search over the daemon API does not take an account filter")
+	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.SearchMessagesByDomainsResp, error) {
 		return client.SearchMessagesByDomainsWithResponse(ctx, &generated.SearchMessagesByDomainsRequestOptions{
 			Query: &generated.SearchMessagesByDomainsQuery{

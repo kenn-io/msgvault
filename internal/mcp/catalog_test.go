@@ -698,6 +698,7 @@ func (e *numericCaptureEngine) SearchByDomains(
 	_, _ *time.Time,
 	limit int,
 	offset int,
+	_ []int64,
 ) ([]query.MessageSummary, error) {
 	e.limit, e.offset = limit, offset
 	return []query.MessageSummary{}, nil

@@ -287,7 +287,7 @@ func (m *MockEngine) GetDeletionTargetsByMessageIDs(ctx context.Context, ids []i
 	return m.defaultDeletionTargets(), nil
 }
 
-func (m *MockEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {
+func (m *MockEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]query.MessageSummary, error) {
 	if m.SearchByDomainsFunc != nil {
 		return m.SearchByDomainsFunc(ctx, domains, after, before, limit, offset)
 	}
