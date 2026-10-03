@@ -184,8 +184,9 @@ for `localhost` and for loopback, private (`10.0.0.0/8`, `172.16.0.0/12`,
 `192.168.0.0/16`, `fc00::/7`), and link-local IP addresses, so a Docling
 server on another machine in your LAN can use its default port. Other hostnames
 and public addresses require HTTPS, because DNS could send a name to a public
-host. Over plain HTTP, document bytes and any API key cross your network
-unencrypted, and the consent disclosure says so. Msgvault sends private document bytes only to that
+host. Over plain HTTP, document bytes cross your network unencrypted, and the
+consent disclosure says so. An API key needs HTTPS unless the server is on
+loopback. Msgvault sends private document bytes only to that
 origin, disables ambient HTTP proxies, and does not follow redirects. It never
 switches to a hosted extractor.
 

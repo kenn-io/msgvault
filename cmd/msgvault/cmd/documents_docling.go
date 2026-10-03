@@ -110,7 +110,7 @@ func printDoclingConsentDisclosure(w io.Writer, c *documentindex.DocumentsConfig
 	_, _ = fmt.Fprintf(w, "- Scope includes %s in the configured formats and message sources.\n", roles)
 	_, _ = fmt.Fprintf(w, "- Original private document bytes and media types are sent only to %s. Original filenames are withheld.\n", profile.Endpoint)
 	if strings.HasPrefix(profile.Endpoint, "http://") {
-		_, _ = fmt.Fprintln(w, "- This endpoint uses plain HTTP, so document bytes and any API key cross your local network unencrypted.")
+		_, _ = fmt.Fprintln(w, "- This endpoint uses plain HTTP, so document bytes travel unencrypted.")
 	}
 	if c.APIKeyEnv == "" {
 		_, _ = fmt.Fprintln(w, "- No API key is configured for this endpoint.")
@@ -158,11 +158,6 @@ func newDocumentBuildWorker(st *store.Store, attachments documentindex.DocumentA
 	c *documentindex.DocumentsConfig, manifest mistral.CapabilityManifest, profileID, leaseOwner, dataDirectory string,
 	rebuild *store.DocumentExtractionRebuild) (documentCandidateProcessor, error) {
 	if c.Provider == documentindex.ProviderDocling {
-		if c.APIKeyEnv != "" {
-			if _, err := c.ResolveAPIKey(); err != nil {
-				return nil, err
-			}
-		}
 		provider, err := documentindex.NewDoclingClient(c)
 		if err != nil {
 			return nil, err

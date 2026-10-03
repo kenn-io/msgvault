@@ -764,6 +764,11 @@ func runBuildDocuments(
 		if err != nil {
 			return err
 		}
+	} else if documentsConfig.APIKeyEnv != "" {
+		// Check before a full rebuild is recorded, as Mistral's processor does.
+		if _, err := documentsConfig.ResolveAPIKey(); err != nil {
+			return err
+		}
 	}
 	result, err := executeDocumentBuild(
 		command.Context(), st,

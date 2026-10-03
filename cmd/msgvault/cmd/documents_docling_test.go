@@ -113,12 +113,14 @@ func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uplo
 	requirements.NoError(os.Unsetenv(cfg.Attachments.Documents.APIKeyEnv))
 	_, err = run("consent-docling", "--yes")
 	requirements.NoError(err)
-	for _, operation := range []string{"build", "resume"} {
-		_, err = run(operation, "--yes")
+	for _, args := range [][]string{{"build", "--yes"}, {"build", "--full-rebuild", "--yes"}, {"resume", "--yes"}} {
+		_, err = run(args...)
 		requirements.ErrorContains(err, "requires nonempty environment variable SYNTHETIC_DOCLING_BUILD_KEY")
-		var claims int
+		var claims, rebuilds int
 		requirements.NoError(fixture.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extractions").Scan(&claims))
 		assertions.Zero(claims, "missing credentials must not claim or suppress attachments")
+		requirements.NoError(fixture.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_rebuilds").Scan(&rebuilds))
+		assertions.Zero(rebuilds, "missing credentials must not leave a rebuild behind")
 		assertions.Zero(uploads.Load())
 	}
 	cfg.Attachments.Documents.APIKeyEnv = ""

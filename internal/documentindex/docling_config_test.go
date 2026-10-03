@@ -79,6 +79,29 @@ func TestDoclingEndpointRequiresHTTPSOutsidePrivateNetworks(t *testing.T) {
 	}
 }
 
+func TestDoclingAPIKeyRequiresHTTPSOffLoopback(t *testing.T) {
+	for _, test := range []struct {
+		endpoint string
+		valid    bool
+	}{
+		{endpoint: "http://192.168.1.20:5001"},
+		{endpoint: "http://[fe80::1]:5001"},
+		{endpoint: "http://127.0.0.1:5001", valid: true},
+		{endpoint: "https://192.168.1.20:5001", valid: true},
+	} {
+		t.Run(test.endpoint, func(t *testing.T) {
+			c := doclingTestConfig()
+			c.Endpoint, c.APIKeyEnv = test.endpoint, "SYNTHETIC_DOCLING_KEY"
+			err := c.Validate()
+			if test.valid {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, "api_key_env")
+		})
+	}
+}
+
 func TestDoclingPolicyBindsUploadAuthorityWithoutCredentials(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
