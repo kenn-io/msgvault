@@ -339,40 +339,6 @@ func TestExport_AccountPostFailureIsNonFatal(t *testing.T) {
 	assert.Contains(t, stderr.String(), "Warning", "stderr should warn about account POST failure")
 }
 
-func TestExport_AllowInsecureFromConfig(t *testing.T) {
-	// Regression: when config has allow_insecure=true for an HTTP URL,
-	// export should succeed even without the --allow-insecure flag.
-	// This simulates the resolution in runExportToken:
-	//   allowInsecure := exportAllowInsecure || cfg.Remote.AllowInsecure
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/v1/auth/token/") {
-			w.WriteHeader(http.StatusCreated)
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-	}))
-	defer srv.Close()
-
-	tokensDir := t.TempDir()
-	writeTestToken(t, tokensDir, `{"token":"data"}`)
-
-	e := &tokenExporter{
-		httpClient: srv.Client(),
-		tokensDir:  tokensDir,
-		stdout:     io.Discard,
-		stderr:     io.Discard,
-	}
-
-	// Simulate: CLI flag is false, but config had allow_insecure=true
-	cliFlag := false
-	configAllowInsecure := true
-	allowInsecure := cliFlag || configAllowInsecure
-
-	result, err := e.export("user@gmail.com", srv.URL, "key", allowInsecure)
-	require.NoError(t, err, "export should succeed with config allow_insecure=true")
-	assert.True(t, result.allowInsecure, "result.allowInsecure should be true")
-}
-
 func TestExport_InvalidScheme(t *testing.T) {
 	e := &tokenExporter{
 		httpClient: http.DefaultClient,

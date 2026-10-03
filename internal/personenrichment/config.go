@@ -107,6 +107,9 @@ func (c Config) Validate() error {
 		if name == "" {
 			return fmt.Errorf("[people.enrichment.providers.%d] name is required", i)
 		}
+		if name == "suppression" {
+			return fmt.Errorf("reserved provider name %q for suppression credentials", name)
+		}
 		if _, exists := seen[name]; exists {
 			return fmt.Errorf("duplicate provider name %q", name)
 		}

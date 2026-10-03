@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/providercredentials"
 )
 
 func TestOpenHTTPStoreUsesConfiguredRemoteWithoutDaemonAutostart(t *testing.T) {
@@ -200,6 +201,59 @@ func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
 	assert.True(started, "local daemon should be started")
 	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
 	assert.Equal("http://127.0.0.1:9911", info.URL)
+}
+
+func TestOpenHTTPStoreUsesMintedKeyAfterLocalDaemonStartup(t *testing.T) { //nolint:paralleltest // process environment and daemon startup hooks
+	unsetServerKeyEnvironmentForTest(t)
+	dataDir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key, err := providercredentials.ReadSecretFile(filepath.Join(dataDir, "tokens", providercredentials.ServerKeyFilename))
+		if err != nil || r.Header.Get("X-Api-Key") != key {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	cfg := lifecycleTestConfig(dataDir)
+	cfg.Server.BindAddr = "0.0.0.0"
+	testCtx := withStoreResolverConfig(t, cfg)
+	waitCh := make(chan error)
+	stubStartServeBackgroundProcess(t, func(c *config.Config, _ backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		_, err := providercredentials.EnsureServerKey(filepath.Dir(c.ServerKeyFilePath()))
+		require.NoError(t, err)
+		return &backgroundServeProcess{PID: 4242, LogPath: "/tmp/msgvault-serve.log", Wait: waitCh}, nil
+	})
+	stubWaitForBackgroundServeReady(t, func(
+		ctx context.Context,
+		_ string,
+		_ <-chan error,
+		_ time.Duration,
+	) (*DaemonRuntime, bool, error) {
+		require.NoError(t, ctx.Err())
+		key, err := providercredentials.ReadSecretFile(filepath.Join(dataDir, "tokens", providercredentials.ServerKeyFilename))
+		require.NoError(t, err)
+		return daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint(key)), true, nil
+	})
+
+	st, info, err := OpenHTTPStore(testCtx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.True(t, info.StartedLocalDaemon)
+	_, err = st.GetHealth(testCtx)
+	require.NoError(t, err, "the CLI client must use the key minted by the daemon")
+}
+
+func unsetServerKeyEnvironmentForTest(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"MSGVAULT_API_KEY", "MSGVAULT_API_KEY_FILE", "MSGVAULT_API_KEY_ENV"} {
+		envName := name
+		original, _ := os.LookupEnv(envName)
+		t.Setenv(envName, original)
+		require.NoError(t, os.Unsetenv(envName))
+	}
 }
 
 func TestOpenHTTPStoreDisabledAutoStartDoesNotStartDaemon(t *testing.T) {

@@ -257,7 +257,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	// Preserve the existing keyless mode: secure startup confines the daemon to
 	// loopback unless the operator explicitly opts into unauthenticated remote
 	// access, and every request remains authorized when no key is configured.
-	if s.cfg.Server.APIKey == "" {
+	if s.cfg.Server.AuthenticationKey() == "" {
 		return requestAuthentication{
 			Mode:                  AuthModeLoopback,
 			trustedForCLIDuration: isLoopbackRequest(r),
@@ -271,7 +271,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
 		authHeader = authHeader[7:]
 	}
-	if constantTimeAPIKeyEqual(authHeader, s.cfg.Server.APIKey) {
+	if constantTimeAPIKeyEqual(authHeader, s.cfg.Server.AuthenticationKey()) {
 		return requestAuthentication{
 			Mode:                  AuthModeAPIKey,
 			trustedForCLIDuration: true,

@@ -856,7 +856,7 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 		return err
 	}
 
-	if s.cfg.Server.APIKey == "" {
+	if s.cfg.Server.AuthenticationKey() == "" {
 		s.logger.Warn("API server running without authentication — set [server] api_key in config.toml")
 	}
 
