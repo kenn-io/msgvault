@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -81,7 +82,7 @@ func mcpDraftTestSession(ctx context.Context, t *testing.T) *sdkmcp.ClientSessio
 	cmd.SetContext(ctx)
 	done := make(chan error, 1)
 	go func() { done <- mcpCmd.RunE(cmd, nil) }()
-	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "draft-routing-test", Version: "1"}, nil)
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "draft-routing-test", Version: "1"}, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}})
 	session, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		cancel()
@@ -105,6 +106,22 @@ func mcpDraftTestSession(ctx context.Context, t *testing.T) *sdkmcp.ClientSessio
 	})
 	require.NoError(err)
 	return session
+}
+
+func mcpDraftConfirmedCall(t *testing.T, session *sdkmcp.ClientSession, params *sdkmcp.CallToolParams) (*sdkmcp.CallToolResult, error) {
+	t.Helper()
+	require := require.New(t)
+	pending, err := session.CallTool(t.Context(), params)
+	require.NoError(err)
+	require.True(pending.NeedsInput())
+	require.NotEmpty(pending.RequestState)
+	params.RequestState = pending.RequestState
+	params.InputResponses = sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}
+	result, err := session.CallTool(t.Context(), params)
+	if err != nil {
+		return nil, fmt.Errorf("call confirmed draft tool: %w", err)
+	}
+	return result, nil
 }
 
 func mcpDraftToolNames(t *testing.T, session *sdkmcp.ClientSession) []string {
@@ -142,7 +159,7 @@ func TestMCPDelegatedDraftToolsUseAgentGrant(t *testing.T) {
 		require := require.New(t)
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{"draft.create"}), t)
 		assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_get", "draft_recover", "draft_reply"}, mcpDraftToolNames(t, session))
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
+		result, err := mcpDraftConfirmedCall(t, session, &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
 		require.NoError(err)
 		assert.False(result.IsError)
 		structured, ok := result.StructuredContent.(map[string]any)
@@ -158,7 +175,7 @@ func TestMCPDelegatedDraftToolsUseAgentGrant(t *testing.T) {
 		require.NoError(err)
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, other.ID, []string{"draft.create"}), t)
 		before := providerCalls.Load()
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
+		result, err := mcpDraftConfirmedCall(t, session, &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
 		require.NoError(err)
 		assert.True(result.IsError)
 		require.NotEmpty(result.Content)
@@ -173,7 +190,7 @@ func TestMCPDelegatedDraftToolsUseAgentGrant(t *testing.T) {
 		require := require.New(t)
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{"draft.delete"}), t)
 		before := providerCalls.Load()
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftEdit, Arguments: map[string]any{"draft_id": "test-draft", "revision": 1, "body": "replacement"}})
+		result, err := mcpDraftConfirmedCall(t, session, &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftEdit, Arguments: map[string]any{"draft_id": "test-draft", "revision": 1, "body": "replacement"}})
 		require.NoError(err)
 		assert.True(result.IsError)
 		text := mcpDraftResultText(t, result)
@@ -203,7 +220,7 @@ func TestMCPDelegatedNeverSendsOwnerCredential(t *testing.T) {
 	ctx := mcpDraftAgentContext(t, server, fixture.source.ID, []string{"draft.create"})
 	record.Store(true)
 	session := mcpDraftTestSession(ctx, t)
-	_, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
+	_, err := mcpDraftConfirmedCall(t, session, &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
 	require.NoError(err)
 	mu.Lock()
 	defer mu.Unlock()
@@ -247,7 +264,7 @@ func TestMCPOwnerDraftGetMatchesCLI(t *testing.T) {
 	server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), nil)
 	ctx := withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
 	session := mcpDraftTestSession(ctx, t)
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
+	result, err := mcpDraftConfirmedCall(t, session, &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
 	require.NoError(err)
 	require.False(result.IsError)
 	structured, ok := result.StructuredContent.(map[string]any)
