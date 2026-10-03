@@ -990,8 +990,6 @@ func parseSearchQueryRequest(r *http.Request, query string) *search.Query {
 
 var semanticSearchStructuredFilterParamNames = []string{
 	"account_scopes",
-	"account_addresses",
-	"account_unattributed",
 	"sender",
 	recipientParam,
 	"domain",
@@ -3688,7 +3686,7 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 	for _, name := range []string{
 		"sender", "sender_name", recipientParam, "recipient_name", "domain", "label", "list_id",
 		"message_type", "time_period", "time_granularity", "conversation_id", "after", "before", "empty_targets",
-		"account_scopes", "account_addresses", "account_unattributed",
+		"account_scopes",
 	} {
 		if _, present := r.URL.Query()[name]; present {
 			opts.Filter = &filter

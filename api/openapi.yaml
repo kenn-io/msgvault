@@ -14313,18 +14313,6 @@ paths:
           name: view_type
           schema:
             type: string
-        - description: Exact attributed account addresses; repeated values are alternatives
-          in: query
-          name: account_addresses
-          schema:
-            items:
-              type: string
-            type: array
-        - description: Include messages no confirmed account claims
-          in: query
-          name: account_unattributed
-          schema:
-            type: boolean
         - description: JSON list of account scopes that intersect, for structured clients
           in: query
           name: account_scopes
@@ -14418,18 +14406,6 @@ paths:
           required: true
           schema:
             type: string
-        - description: Exact attributed account addresses; repeated values are alternatives
-          in: query
-          name: account_addresses
-          schema:
-            items:
-              type: string
-            type: array
-        - description: Include messages no confirmed account claims
-          in: query
-          name: account_unattributed
-          schema:
-            type: boolean
         - description: JSON list of account scopes that intersect, for structured clients
           in: query
           name: account_scopes
@@ -20807,18 +20783,6 @@ paths:
     get:
       operationId: filterMessages
       parameters:
-        - description: Exact attributed account addresses; repeated values are alternatives
-          in: query
-          name: account_addresses
-          schema:
-            items:
-              type: string
-            type: array
-        - description: Include messages no confirmed account claims
-          in: query
-          name: account_unattributed
-          schema:
-            type: boolean
         - description: JSON list of account scopes that intersect, for structured clients
           in: query
           name: account_scopes
@@ -20963,18 +20927,6 @@ paths:
     get:
       operationId: getGmailIDsByFilter
       parameters:
-        - description: Exact attributed account addresses; repeated values are alternatives
-          in: query
-          name: account_addresses
-          schema:
-            items:
-              type: string
-            type: array
-        - description: Include messages no confirmed account claims
-          in: query
-          name: account_unattributed
-          schema:
-            type: boolean
         - description: JSON list of account scopes that intersect, for structured clients
           in: query
           name: account_scopes
@@ -27075,18 +27027,6 @@ paths:
           name: list_id
           schema:
             type: string
-        - description: Exact attributed account addresses (vector or hybrid mode only)
-          in: query
-          name: account_addresses
-          schema:
-            items:
-              type: string
-            type: array
-        - description: Include messages no confirmed account claims (vector or hybrid mode only)
-          in: query
-          name: account_unattributed
-          schema:
-            type: boolean
         - description: JSON list of account scopes that intersect (vector or hybrid mode only)
           in: query
           name: account_scopes
@@ -27291,18 +27231,6 @@ paths:
           name: scope
           schema:
             type: string
-        - description: Exact attributed account addresses; repeated values are alternatives
-          in: query
-          name: account_addresses
-          schema:
-            items:
-              type: string
-            type: array
-        - description: Include messages no confirmed account claims
-          in: query
-          name: account_unattributed
-          schema:
-            type: boolean
         - description: JSON list of account scopes that intersect, for structured clients
           in: query
           name: account_scopes
@@ -27508,18 +27436,6 @@ paths:
           name: view_type
           schema:
             type: string
-        - description: Exact attributed account addresses; repeated values are alternatives
-          in: query
-          name: account_addresses
-          schema:
-            items:
-              type: string
-            type: array
-        - description: Include messages no confirmed account claims
-          in: query
-          name: account_unattributed
-          schema:
-            type: boolean
         - description: JSON list of account scopes that intersect, for structured clients
           in: query
           name: account_scopes
@@ -29224,18 +29140,6 @@ paths:
           name: group_by
           schema:
             type: string
-        - description: Exact attributed account addresses; repeated values are alternatives
-          in: query
-          name: account_addresses
-          schema:
-            items:
-              type: string
-            type: array
-        - description: Include messages no confirmed account claims
-          in: query
-          name: account_unattributed
-          schema:
-            type: boolean
         - description: JSON list of account scopes that intersect, for structured clients
           in: query
           name: account_scopes

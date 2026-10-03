@@ -4,14 +4,6 @@
 
 export type GetGmailIDsByFilterParams = {
   /**
-   * Exact attributed account addresses; repeated values are alternatives
-   */
-  account_addresses?: string[];
-  /**
-   * Include messages no confirmed account claims
-   */
-  account_unattributed?: boolean;
-  /**
    * JSON list of account scopes that intersect, for structured clients
    */
   account_scopes?: string;

@@ -23,19 +23,16 @@ func TestParseAccountScopes(t *testing.T) {
 	}
 	source := int64(7)
 	scopes, err := parseAccountScopes(request(url.Values{
-		"account_scopes":       {`[{"source_id":7,"unattributed":true}]`},
-		"account_addresses":    {"Work@Example.org", "mask@example.org"},
-		"account_unattributed": {"true"},
+		"account_scopes": {`[{"source_id":7,"unattributed":true},{"addresses":["work@example.org"]}]`},
 	}))
 	require.NoError(t, err)
 	assert.Equal([]search.AccountScope{
 		{SourceID: &source, Unattributed: true},
-		{Addresses: []string{"work@example.org", "mask@example.org"}, Unattributed: true},
+		{Addresses: []string{"work@example.org"}},
 	}, scopes)
 
 	for name, values := range map[string]url.Values{
-		"display name":   {"account_addresses": {"Name <a@example.org>"}},
-		"bad bool":       {"account_unattributed": {"yes"}},
+		"display name":   {"account_scopes": {`[{"addresses":["Name <a@example.org>"]}]`}},
 		"unknown member": {"account_scopes": {`[{"groups":["x"]}]`}},
 		"empty scope":    {"account_scopes": {`[{}]`}},
 	} {

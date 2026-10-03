@@ -1084,8 +1084,6 @@ func paginationParams(pageName, pageSizeName string) []*huma.Param {
 
 func aggregateOptionParams() []*huma.Param {
 	return []*huma.Param{
-		queryRefArrayParam("account_addresses", "Exact attributed account addresses; repeated values are alternatives"),
-		queryBooleanParam("account_unattributed", "Include messages no confirmed account claims"),
 		queryStringParam("account_scopes", "JSON list of account scopes that intersect, for structured clients", false),
 		queryStringParam("sort", "Sort field: count, size, attachment_size, or name", false),
 		queryStringParam("direction", "Sort direction: asc or desc", false),
@@ -1112,8 +1110,6 @@ func messageFilterParams() []*huma.Param {
 
 func messageFilterScopeParams() []*huma.Param {
 	return []*huma.Param{
-		queryRefArrayParam("account_addresses", "Exact attributed account addresses; repeated values are alternatives"),
-		queryBooleanParam("account_unattributed", "Include messages no confirmed account claims"),
 		queryStringParam("account_scopes", "JSON list of account scopes that intersect, for structured clients", false),
 		queryStringParam("sender", "Sender email/address filter", false),
 		queryStringParam("sender_name", "Sender display-name filter", false),
@@ -1144,8 +1140,6 @@ func semanticMessageFilterParams() []*huma.Param {
 		queryStringParam("domain", "Exact sender domain filter (vector or hybrid mode only)", false),
 		queryStringParam("label", "Exact case-insensitive label filter (vector or hybrid mode only)", false),
 		queryStringParam("list_id", "Exact case-insensitive RFC 2919 List-Id filter (vector or hybrid mode only)", false),
-		queryRefArrayParam("account_addresses", "Exact attributed account addresses (vector or hybrid mode only)"),
-		queryBooleanParam("account_unattributed", "Include messages no confirmed account claims (vector or hybrid mode only)"),
 		queryStringParam("account_scopes", "JSON list of account scopes that intersect (vector or hybrid mode only)", false),
 		queryStringParam("time_period", "Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)", false),
 		queryStringParam("time_granularity", "Time bucket granularity (vector or hybrid mode only)", false),

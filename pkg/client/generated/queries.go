@@ -12,12 +12,6 @@ type GetAggregatesQuery struct {
 	// ViewType Aggregate view type
 	ViewType *string `json:"view_type,omitempty"`
 
-	// AccountAddresses Exact attributed account addresses; repeated values are alternatives
-	AccountAddresses []string `json:"account_addresses,omitempty"`
-
-	// AccountUnattributed Include messages no confirmed account claims
-	AccountUnattributed *bool `json:"account_unattributed,omitempty"`
-
 	// AccountScopes JSON list of account scopes that intersect, for structured clients
 	AccountScopes *string `json:"account_scopes,omitempty"`
 
@@ -58,12 +52,6 @@ type GetAggregatesQuery struct {
 type GetSubAggregatesQuery struct {
 	// ViewType Aggregate view type
 	ViewType string `json:"view_type" validate:"required"`
-
-	// AccountAddresses Exact attributed account addresses; repeated values are alternatives
-	AccountAddresses []string `json:"account_addresses,omitempty"`
-
-	// AccountUnattributed Include messages no confirmed account claims
-	AccountUnattributed *bool `json:"account_unattributed,omitempty"`
 
 	// AccountScopes JSON list of account scopes that intersect, for structured clients
 	AccountScopes *string `json:"account_scopes,omitempty"`
@@ -560,12 +548,6 @@ type ListChangedMessagesQuery struct {
 }
 
 type FilterMessagesQuery struct {
-	// AccountAddresses Exact attributed account addresses; repeated values are alternatives
-	AccountAddresses []string `json:"account_addresses,omitempty"`
-
-	// AccountUnattributed Include messages no confirmed account claims
-	AccountUnattributed *bool `json:"account_unattributed,omitempty"`
-
 	// AccountScopes JSON list of account scopes that intersect, for structured clients
 	AccountScopes *string `json:"account_scopes,omitempty"`
 
@@ -637,12 +619,6 @@ type FilterMessagesQuery struct {
 }
 
 type GetGmailIDsByFilterQuery struct {
-	// AccountAddresses Exact attributed account addresses; repeated values are alternatives
-	AccountAddresses []string `json:"account_addresses,omitempty"`
-
-	// AccountUnattributed Include messages no confirmed account claims
-	AccountUnattributed *bool `json:"account_unattributed,omitempty"`
-
 	// AccountScopes JSON list of account scopes that intersect, for structured clients
 	AccountScopes *string `json:"account_scopes,omitempty"`
 
@@ -1124,12 +1100,6 @@ type SearchMessagesQuery struct {
 	// ListID Exact case-insensitive RFC 2919 List-Id filter (vector or hybrid mode only)
 	ListID *string `json:"list_id,omitempty"`
 
-	// AccountAddresses Exact attributed account addresses (vector or hybrid mode only)
-	AccountAddresses []string `json:"account_addresses,omitempty"`
-
-	// AccountUnattributed Include messages no confirmed account claims (vector or hybrid mode only)
-	AccountUnattributed *bool `json:"account_unattributed,omitempty"`
-
 	// AccountScopes JSON list of account scopes that intersect (vector or hybrid mode only)
 	AccountScopes *string `json:"account_scopes,omitempty"`
 
@@ -1162,12 +1132,6 @@ type DeepSearchQuery struct {
 
 	// Scope Exact search scope: body; omit for composite full-text search
 	Scope *string `json:"scope,omitempty"`
-
-	// AccountAddresses Exact attributed account addresses; repeated values are alternatives
-	AccountAddresses []string `json:"account_addresses,omitempty"`
-
-	// AccountUnattributed Include messages no confirmed account claims
-	AccountUnattributed *bool `json:"account_unattributed,omitempty"`
 
 	// AccountScopes JSON list of account scopes that intersect, for structured clients
 	AccountScopes *string `json:"account_scopes,omitempty"`
@@ -1270,12 +1234,6 @@ type FastSearchQuery struct {
 
 	// ViewType Stats grouping view type
 	ViewType *string `json:"view_type,omitempty"`
-
-	// AccountAddresses Exact attributed account addresses; repeated values are alternatives
-	AccountAddresses []string `json:"account_addresses,omitempty"`
-
-	// AccountUnattributed Include messages no confirmed account claims
-	AccountUnattributed *bool `json:"account_unattributed,omitempty"`
 
 	// AccountScopes JSON list of account scopes that intersect, for structured clients
 	AccountScopes *string `json:"account_scopes,omitempty"`
@@ -1394,12 +1352,6 @@ type GetTotalStatsQuery struct {
 
 	// GroupBy Aggregate view type for grouping
 	GroupBy *string `json:"group_by,omitempty"`
-
-	// AccountAddresses Exact attributed account addresses; repeated values are alternatives
-	AccountAddresses []string `json:"account_addresses,omitempty"`
-
-	// AccountUnattributed Include messages no confirmed account claims
-	AccountUnattributed *bool `json:"account_unattributed,omitempty"`
 
 	// AccountScopes JSON list of account scopes that intersect, for structured clients
 	AccountScopes *string `json:"account_scopes,omitempty"`

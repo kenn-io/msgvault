@@ -72,14 +72,6 @@ export type SearchMessagesParams = {
    */
   list_id?: string;
   /**
-   * Exact attributed account addresses (vector or hybrid mode only)
-   */
-  account_addresses?: string[];
-  /**
-   * Include messages no confirmed account claims (vector or hybrid mode only)
-   */
-  account_unattributed?: boolean;
-  /**
    * JSON list of account scopes that intersect (vector or hybrid mode only)
    */
   account_scopes?: string;
