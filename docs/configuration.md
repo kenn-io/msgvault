@@ -1042,6 +1042,22 @@ all_sources_upload_consent = true # allow audio from every captured source to le
 | `api_key_env` | — | Name of the daemon environment variable that holds the Docbank API key. It is read for each request and sent as `X-Api-Key` |
 | `all_sources_upload_consent` | `false` | Allow stored audio and explicit source transcripts from every captured source, including future providers, to be sent to `url`. Without it the job only records local state |
 | `asr_profile` | — | Optional Docbank processing profile for stored audio without usable source text. An empty value retains audio without requesting processing. Msgvault rejects `supplied-transcript`, which Docbank reserves for supplied transcript input. |
+| `reference_consent` | `false` | Send Loom/Cap links from every message source and native Teams recording pointers to `url` as references. This consent is separate from audio upload consent. |
+| `reference_origins` | `[]` | Exact origins for self-hosted Cap, such as `https://cap.example.test`. Include only scheme, host and optional port. Register each origin in Docbank too. |
+
+With `enabled = true` and `reference_consent = true`, the daemon routes Loom and
+Cap links from normalized message text and HTML across every message source,
+including existing messages and links behind display text. It also routes native
+Teams recording pointers from typed attachment records.
+It submits references with acquisition disabled. Docbank records outcome
+`access_required` or `unsupported`. Coverage stays `unprocessed` until media is imported.
+Delivery log events include Docbank's
+`source_id` and `occurrence_id` for `docbank media import-artifact`.
+
+A definite submission rejection leaves the reference blocked until the daemon restarts
+and sets up the enabled, consented route. Fix the rejection, then restart the
+daemon to reconsider it. Waiting for the next scheduled minute leaves it blocked.
+Transient failures and uncertain sends keep their scheduled retry and receipt recovery.
 
 The former Beeper-only `upload_consent` setting no longer enables uploads.
 Existing users must explicitly set `all_sources_upload_consent = true` to resume

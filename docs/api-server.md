@@ -1341,7 +1341,7 @@ is outside it:
 |---|---|---|
 | Labels | `message_labels` | No — and label re-sync is the most frequent change in a mail archive |
 | Recipients (to/cc/bcc) | `message_recipients` | No |
-| Attachment metadata (filenames, hashes, sizes, storage paths) | `attachments` | No — but `has_attachments` and `attachment_count` are message columns, so an attachment set that changes those does appear |
+| Attachment metadata (filenames, hashes, sizes, storage paths) | `attachments` | Changes appear when they change the message's `has_attachments` or `attachment_count`, or a native `teams:recording:` pointer's ID or storage URL. Other attachment metadata changes don't move the watermark. |
 | Raw MIME | `message_raw` | No — including raw MIME added after the message row |
 | Read state and platform flags (`is_read`, `read_at`, `is_edited`, `archived_at`) | `messages` | No |
 | Threading and identity pointers (`reply_to_message_id`, `rfc822_message_id`) | `messages` | No |

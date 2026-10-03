@@ -4091,3 +4091,24 @@ CREATE INDEX IF NOT EXISTS idx_meeting_actions_status
     ON meeting_action_items(status, message_id, ordinal);
 CREATE INDEX IF NOT EXISTS idx_meeting_actions_assignee
     ON meeting_action_items(assignee_email, message_id, ordinal);
+
+CREATE TABLE IF NOT EXISTS recording_references (
+    destination_key TEXT NOT NULL,
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    route_key TEXT NOT NULL,
+    ref_sha256 TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    occurrence_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending','uncertain','retained','blocked','withdrawn')),
+    next_action_at TIMESTAMPTZ NOT NULL,
+    error_code TEXT NOT NULL DEFAULT '',
+    source_id TEXT NOT NULL DEFAULT '',
+    occurrence_id TEXT NOT NULL DEFAULT '',
+    outcome TEXT NOT NULL DEFAULT '',
+    coverage_state TEXT NOT NULL DEFAULT '',
+    last_send_at TIMESTAMPTZ,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (destination_key, message_id, route_key)
+);
+CREATE INDEX IF NOT EXISTS idx_recording_references_due
+    ON recording_references(destination_key, state, next_action_at);

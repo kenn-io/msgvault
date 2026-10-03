@@ -6219,9 +6219,42 @@ func (s *Store) MessageSlackAttachments(messageID int64) (map[string]AttachmentR
 // rows (source_attachment_id 'teams:inline:%'), whose URL-backed storage_path
 // records a durable pending/skipped/failed outcome, not a link attachment.
 func (s *Store) ReplaceMessageLinkAttachments(messageID int64, refs []AttachmentRef) error {
-	return s.replaceMessageAttachmentsWhere(messageID,
-		`(storage_path LIKE 'http://%' OR storage_path LIKE 'https://%')
-		 AND COALESCE(source_attachment_id, '') NOT LIKE 'teams:inline:%'`, false, refs)
+	return s.withTx(func(tx *loggedTx) error {
+		before, err := recordingPointerSet(tx, messageID)
+		if err != nil {
+			return err
+		}
+		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID,
+			`(storage_path LIKE 'http://%' OR storage_path LIKE 'https://%')
+			 AND COALESCE(source_attachment_id, '') NOT LIKE 'teams:inline:%'`, false, refs); err != nil {
+			return err
+		}
+		after, err := recordingPointerSet(tx, messageID)
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(before, after) {
+			_, err = tx.Exec(`UPDATE messages SET content_changed_at = `+s.dialect.ContentChangedNow()+` WHERE id = ?`, messageID)
+		}
+		return err
+	})
+}
+
+func recordingPointerSet(tx *loggedTx, messageID int64) ([]string, error) {
+	rows, err := tx.Query(`SELECT source_attachment_id, storage_path FROM attachments WHERE message_id=? AND source_attachment_id LIKE 'teams:recording:%' ORDER BY source_attachment_id, storage_path`, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var pointers []string
+	for rows.Next() {
+		var id, path string
+		if err := rows.Scan(&id, &path); err != nil {
+			return nil, err
+		}
+		pointers = append(pointers, id+"\x00"+path)
+	}
+	return pointers, rows.Err()
 }
 
 // LabelIDContext finds a label by its provider ID within a source.

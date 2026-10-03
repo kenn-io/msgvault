@@ -148,6 +148,44 @@ type Receipt struct {
 	SuppliedInputID  string `json:"supplied_input_id,omitempty"`
 }
 
+// ReferenceRequest URLs are access material; never log or store them.
+type ReferenceRequest struct {
+	OperationID  string     `json:"operation_id"`
+	ReferenceURL string     `json:"reference_url"`
+	CanonicalURL string     `json:"canonical_url,omitempty"`
+	Acquire      bool       `json:"acquire"`
+	Occurrence   Occurrence `json:"occurrence"`
+}
+
+func (c *Client) SubmitReference(ctx context.Context, request ReferenceRequest) (Receipt, error) {
+	var receipt Receipt
+	err := c.jsonRequest(ctx, http.MethodPost, "/api/v1/media/sources", request, &receipt)
+	if err = validateReceipt(receipt, request.OperationID, err); err != nil {
+		return Receipt{}, err
+	}
+	if receipt.OccurrenceID == "" {
+		return Receipt{}, ErrInvalidReceipt
+	}
+	return receipt, nil
+}
+
+func (c *Client) OperationReceipt(ctx context.Context, operationID string) (Receipt, error) {
+	var receipt Receipt
+	err := c.jsonRequest(ctx, http.MethodGet, "/api/v1/media/operations/"+url.PathEscape(operationID), nil, &receipt)
+	if err = validateReceipt(receipt, operationID, err); err != nil {
+		return Receipt{}, err
+	}
+	if receipt.OccurrenceID == "" {
+		return Receipt{}, ErrInvalidReceipt
+	}
+	return receipt, nil
+}
+
+func IsNotFound(err error) bool {
+	httpErr, ok := errors.AsType[*HTTPError](err)
+	return ok && httpErr.Status == http.StatusNotFound
+}
+
 type JobStatus struct {
 	JobID       string `json:"job_id"`
 	State       string `json:"state"`
@@ -384,7 +422,15 @@ func (c *Client) jsonRequest(ctx context.Context, method, endpoint string, body 
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &HTTPError{Status: resp.StatusCode, Code: statusCode(resp.StatusCode)}
+		code := statusCode(resp.StatusCode)
+		var envelope struct {
+			Code string `json:"code"`
+		}
+		// Admit one known server code, rather than retaining echoed access material.
+		if json.Unmarshal(data, &envelope) == nil && envelope.Code == "capability_unavailable" {
+			code = envelope.Code
+		}
+		return &HTTPError{Status: resp.StatusCode, Code: code}
 	}
 	if out == nil {
 		return nil
