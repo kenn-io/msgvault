@@ -68,3 +68,16 @@ func ValidateTrustedDestination(origin *url.URL, addresses []netip.Addr) (*url.U
 	copyOrigin.Path = ""
 	return &copyOrigin, validated, nil
 }
+
+// ExplicitPrivateAddress reports whether addr belongs to a private range that
+// an exact, operator-configured origin may use. It does not allow loopback,
+// link-local, multicast, or other prohibited address classes.
+func ExplicitPrivateAddress(addr netip.Addr) bool {
+	if !addr.IsValid() || addr.Zone() != "" {
+		return false
+	}
+	addr = addr.Unmap()
+	return slices.ContainsFunc(explicitPrivatePrefixes, func(prefix netip.Prefix) bool {
+		return prefix.Contains(addr)
+	})
+}

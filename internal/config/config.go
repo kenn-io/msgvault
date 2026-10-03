@@ -512,6 +512,7 @@ type Config struct {
 	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
+	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Granola            []GranolaSource                 `toml:"granola"`
 	Plaud              []PlaudSource                   `toml:"plaud"`
@@ -1144,6 +1145,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
+	if err := cfg.validateChatwootSources(); err != nil {
+		return nil, err
+	}
 	cfg.applyMeetingSourceDefaults()
 	if err := cfg.validateMeetingSources(); err != nil {
 		return nil, err

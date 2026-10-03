@@ -573,6 +573,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, source := range cfg.Chatwoot {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("chatwoot profile is enabled but has no schedule", "profile", source.Identifier,
+				"hint", `set a cron schedule on the [[chatwoot]] profile`)
+		}
+	}
+	for _, source := range cfg.ScheduledChatwootSources() {
+		if err := registerScheduledChatwootJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredChatwootSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Chatwoot", "profile", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled Chatwoot", "profile", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+
 	// Meeting sources mirror the gcal treatment: warn
 	// when enabled but unscheduled, then register the scheduled ones.
 	for _, src := range cfg.Granola {

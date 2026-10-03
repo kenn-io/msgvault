@@ -44,6 +44,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Microsoft Teams](https://msgvault.io/docs/usage/teams.md)
 - [Discord](https://msgvault.io/docs/usage/discord.md)
 - [Beeper](https://msgvault.io/docs/usage/beeper.md)
+- [Chatwoot](https://msgvault.io/docs/guides/chatwoot.md): shared inboxes, employee attribution, media, and calls
 - [Slack](https://msgvault.io/docs/usage/slack.md)
 - [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)
 

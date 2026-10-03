@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,21 +99,30 @@ func Render(archiveUID string, entries []Entry, options PacketOptions) (*PacketR
 func normalizeEntry(entry Entry) Entry {
 	entry = cloneEntry(entry)
 	participants := append([]Participant{}, entry.Participants...)
-	byEmailRole := make(map[string]int, len(participants))
+	byIdentity := make(map[string][]int, len(participants))
 	for index, participant := range participants {
-		if key := participantEmailRoleKey(participant); key != "" {
-			byEmailRole[key] = index
+		for _, key := range participantIdentityKeys(participant) {
+			byIdentity[key] = append(byIdentity[key], index)
 		}
 	}
 	for _, source := range entry.Content.SourceParticipants {
-		if key := participantEmailRoleKey(source); key != "" {
-			if index, exists := byEmailRole[key]; exists {
-				if strings.TrimSpace(participants[index].Name) == "" {
-					participants[index].Name = strings.TrimSpace(source.Name)
-				}
-				continue
+		matched := matchingParticipant(source, participants, byIdentity)
+		if matched >= 0 {
+			if strings.TrimSpace(participants[matched].Name) == "" {
+				participants[matched].Name = strings.TrimSpace(source.Name)
 			}
-			byEmailRole[key] = len(participants)
+			if participants[matched].Phone == "" {
+				participants[matched].Phone = strings.TrimSpace(source.Phone)
+			}
+			for _, key := range participantIdentityKeys(participants[matched]) {
+				if !slices.Contains(byIdentity[key], matched) {
+					byIdentity[key] = append(byIdentity[key], matched)
+				}
+			}
+			continue
+		}
+		for _, key := range participantIdentityKeys(source) {
+			byIdentity[key] = append(byIdentity[key], len(participants))
 		}
 		participants = append(participants, source)
 	}
@@ -159,6 +169,44 @@ func participantEmailRoleKey(participant Participant) string {
 		return role + "\x00phone\x00" + phone
 	}
 	return ""
+}
+
+func participantIdentityKeys(participant Participant) []string {
+	var keys []string
+	role := strings.TrimSpace(participant.Role) + "\x00"
+	if positiveParticipantID(participant.ParticipantID) != nil {
+		keys = append(keys, fmt.Sprintf("%sid:%d", role, *participant.ParticipantID))
+	}
+	if key := participantEmailRoleKey(participant); key != "" {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// A durable ID outranks addresses. An address shared by several participants
+// cannot select one person, and never joins different durable IDs.
+func matchingParticipant(source Participant, participants []Participant, byIdentity map[string][]int) int {
+	keys := participantIdentityKeys(source)
+	if positiveParticipantID(source.ParticipantID) != nil && len(keys) > 0 {
+		if matches := byIdentity[keys[0]]; len(matches) == 1 {
+			return matches[0]
+		}
+	}
+	matched := -1
+	for _, key := range keys {
+		for _, index := range byIdentity[key] {
+			candidate := participants[index]
+			if positiveParticipantID(source.ParticipantID) != nil && positiveParticipantID(candidate.ParticipantID) != nil &&
+				*source.ParticipantID != *candidate.ParticipantID {
+				continue
+			}
+			if matched >= 0 && matched != index {
+				return -1
+			}
+			matched = index
+		}
+	}
+	return matched
 }
 
 func participantLess(left, right Participant) bool {

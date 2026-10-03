@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-03"
 title: Choose a Source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
@@ -37,14 +37,15 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Slackdump export | [Slackdump import](../usage/slack.md) | Local directory or ZIP; no Slack token needed |
 | Microsoft Teams | [Teams sync](../usage/teams.md) | Chats, self-chat, channels, replies, and available media |
 | Discord | [Discord sync](../usage/discord.md) | Bot-accessible guild channels, threads, and forums; personal DMs are outside this integration |
+| Chatwoot | [Chatwoot sync](chatwoot.md) | Shared inboxes, contact and employee messages, media, and linked call meetings; available on `main` |
 | Beeper Desktop | [Beeper sync](../usage/beeper.md) | History and media exposed by the running local Beeper API |
 | WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
 
-Chat media has size and room-participant limits. A message can be archived
+Some chat providers apply size and room-participant limits to media. A message can be archived
 without all its media. Review [media policy](../configuration.md#media-policy)
-before a large sync and use the provider's backfill command to retry eligible
-missing downloads.
+before a large sync. Providers with a backfill command use it to retry eligible
+missing downloads; Chatwoot retries through its normal sync.
 
 ## Meetings, calendars, and contacts
 
