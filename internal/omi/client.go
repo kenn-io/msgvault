@@ -24,6 +24,9 @@ const RawFormat = "omi_json"
 const DefaultBaseURL = "https://api.omi.me"
 const PageSize = 200 // Upstream clamps the list endpoint to 200 records.
 
+// TranscriptListsPerHour is Omi's per-key budget for transcript list requests.
+const TranscriptListsPerHour = 25
+
 // NormalizeBaseURL accepts a backend root, including a reverse-proxy prefix.
 func NormalizeBaseURL(value string) (string, error) {
 	if value == "" {
@@ -52,6 +55,16 @@ func isLoopbackHost(host string) bool {
 	return err == nil && addr.Unmap().IsLoopback()
 }
 
+// retryDelay honors a 429's Retry-After for up to an hour, because Omi's
+// transcript budget is a fixed hourly window and earlier retries are refused.
+func retryDelay(resp *http.Response, attempt int) time.Duration {
+	maximum := httpretry.ProviderMaxRetryAfter
+	if resp.StatusCode == http.StatusTooManyRequests {
+		maximum = time.Hour
+	}
+	return httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, maximum)
+}
+
 type Client struct {
 	baseURL string
 	apiKey  string
@@ -62,7 +75,7 @@ type Client struct {
 func NewClient(baseURL, apiKey string) *Client {
 	return &Client{baseURL: baseURL, apiKey: apiKey,
 		http:    &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
-		limiter: rate.NewLimiter(rate.Limit(100.0/60), 1),
+		limiter: rate.NewLimiter(rate.Every(time.Hour/TranscriptListsPerHour), TranscriptListsPerHour),
 	}
 }
 
@@ -153,7 +166,7 @@ func (c *Client) ListConversations(ctx context.Context, p ListParams) ([]Convers
 			if attempt == 7 {
 				break
 			}
-			timer := time.NewTimer(httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, httpretry.ProviderMaxRetryAfter))
+			timer := time.NewTimer(retryDelay(resp, attempt))
 			select {
 			case <-ctx.Done():
 				timer.Stop()

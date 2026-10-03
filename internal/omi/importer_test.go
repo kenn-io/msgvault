@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/testutil"
 	"golang.org/x/time/rate"
@@ -586,4 +587,24 @@ func TestImportIncrementalWatermark(t *testing.T) {
 	ids, err := st.MessageExistsBatch(src.ID, []string{"ancient", "old", "new", "newest"})
 	require.NoError(err)
 	assert.Len(ids, 4)
+}
+
+func TestClientPacesTranscriptListsToHourlyBudget(t *testing.T) {
+	assert := assert.New(t)
+	limiter := NewClient(DefaultBaseURL, "omi_dev_synthetic").limiter
+	now := time.Now()
+	for range TranscriptListsPerHour {
+		assert.Zero(limiter.ReserveN(now, 1).DelayFrom(now), "a fresh key can spend its hourly burst")
+	}
+	assert.Equal(time.Hour/TranscriptListsPerHour, limiter.ReserveN(now, 1).DelayFrom(now))
+}
+
+func TestRetryDelayWaitsOutHourlyWindow(t *testing.T) {
+	assert := assert.New(t)
+	limited := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"3000"}}}
+	assert.Equal(3000*time.Second, retryDelay(limited, 0), "a 429 waits until Omi's hourly window reopens")
+	limited.Header.Set("Retry-After", "7200")
+	assert.Equal(time.Hour, retryDelay(limited, 0))
+	unavailable := &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{"Retry-After": {"3000"}}}
+	assert.Equal(httpretry.ProviderMaxRetryAfter, retryDelay(unavailable, 0))
 }

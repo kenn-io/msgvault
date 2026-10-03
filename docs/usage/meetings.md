@@ -293,9 +293,9 @@ configured account email records archive ownership; it does not establish who
 organized the meeting or mean that Omi verified the address.
 
 Omi allows 25 transcript list requests per hour per API key, and each request
-returns up to 200 conversations. The first sync reads all history, so an
-archive over about 5,000 conversations pauses for the hourly limit and can
-take several hours. Later syncs read only conversations created since the last
+returns up to 200 conversations. msgvault paces requests to that budget and
+waits out the hour when Omi says it's spent. The first sync reads all history,
+so an archive over about 5,000 conversations takes hours. Later syncs read only conversations created since the last
 complete sync, reaching back 48 hours to catch conversations that finished
 processing late and recent edits. That is usually one request. The API has no
 updated-since filter, so edits to older conversations, and conversations that
