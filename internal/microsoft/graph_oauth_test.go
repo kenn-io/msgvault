@@ -245,6 +245,7 @@ func TestGraphMailWriteManager_Scopes(t *testing.T) {
 	assert.False(ok)
 	_, err = writeMgr.TokenSource(t.Context(), "user@company.com")
 	require.ErrorContains(err, "Mail.ReadWrite")
+	require.ErrorContains(err, "--mail-write")
 
 	require.NoError(writeMgr.saveToken("user@company.com", token, GraphMailWriteScopes(), "org-tid"))
 	ok, err = writeMgr.HasScopes("user@company.com")

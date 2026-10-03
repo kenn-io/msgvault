@@ -149,6 +149,7 @@ type ServeOptions struct {
 	// PersonCardDAV is present only when the daemon serves revision-guarded
 	// person merge and token-guarded CardDAV publication routes.
 	PersonCardDAV PersonCardDAVBackend
+	MessageTags   MessageTagBackend
 	// IdentityScoring exposes consented manual scoring. Consent is
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
@@ -340,6 +341,7 @@ func newMCPServerWithPolicy(
 		personAgendaBackend: opts.PersonAgendaBackend,
 		identityReview:      opts.IdentityReview,
 		personCardDAV:       opts.PersonCardDAV,
+		messageTags:         opts.MessageTags,
 		identityScoring:     opts.IdentityScoring,
 	}
 

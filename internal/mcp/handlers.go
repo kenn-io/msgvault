@@ -149,6 +149,7 @@ type handlers struct {
 	personAgendaBackend PersonAgendaBackend
 	identityReview      IdentityReviewBackend
 	personCardDAV       PersonCardDAVBackend
+	messageTags         MessageTagBackend
 	identityScoring     IdentityScoringBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the

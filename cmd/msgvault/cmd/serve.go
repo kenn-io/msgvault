@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -1552,15 +1553,17 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
-	store                   *store.Store
-	config                  *config.Config
-	options                 invocationOptions
-	logger                  *slog.Logger
-	draftPolicy             []config.IMAPDraftSource
-	draftClientFactory      func(context.Context, *store.Source) (*imaplib.Client, error)
-	gmailDraftPolicy        []config.GmailDraftSource
-	beeperDraftPolicy       []config.GmailDraftSource
-	gmailDraftClientFactory func(context.Context, *store.Source) (gmail.DraftAPI, error)
+	store                     *store.Store
+	config                    *config.Config
+	options                   invocationOptions
+	logger                    *slog.Logger
+	draftPolicy               []config.IMAPDraftSource
+	draftClientFactory        func(context.Context, *store.Source) (*imaplib.Client, error)
+	gmailDraftPolicy          []config.GmailDraftSource
+	beeperDraftPolicy         []config.GmailDraftSource
+	gmailDraftClientFactory   func(context.Context, *store.Source) (gmail.DraftAPI, error)
+	emailTagClientFactory     func(context.Context, *store.Source) (gmail.API, error)
+	microsoftTagClientFactory func(context.Context, *store.Source, bool) (*msmail.Client, error)
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
 	// the same best-effort hook the meeting importer uses.
 	draftCacheRefresh     func(context.Context, string) error
@@ -4018,6 +4021,7 @@ func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Lo
 func newDaemonGmailClient(
 	ctx context.Context, email string, src *store.Source,
 	getOAuthMgr func(string) (*oauth.Manager, error), state *invocation,
+	serviceAccountScopes ...[]string,
 ) (client gmail.API, serviceAccount bool, err error) {
 	if state == nil {
 		state = invocationFromContext(ctx)
@@ -4037,7 +4041,11 @@ func newDaemonGmailClient(
 
 	saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName)
 	if saKeyPath != "" {
-		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
+		scopes := oauth.Scopes
+		if len(serviceAccountScopes) > 0 && len(serviceAccountScopes[0]) > 0 {
+			scopes = serviceAccountScopes[0]
+		}
+		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, scopes)
 		if saErr != nil {
 			return nil, false, provideridentity.NewGmailCredentialError(
 				provideridentity.GmailServiceAccountConfiguration,

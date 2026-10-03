@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-01"
+last_edited: "2026-10-04"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -29,7 +29,7 @@ browser login, secure remote deployment, search states, and keyboard controls.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.0.0**.
+it is separate from the binary release version. The current schema is **3.1.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -139,6 +139,57 @@ responses are bounded projections that omit raw vCards and resource hrefs;
 only the explicit publication preview route returns a raw vCard.
 See [release changes](changelog.md#upgrade-and-compatibility) for removed paths
 and the 1.x/2.x transition.
+
+### Native email tags
+
+Read or update one archived message's live Gmail labels, IMAP keywords, or
+Microsoft Graph categories through the same routes.
+Requires API schema 3.1.0 and owner authorization. Delegated agent tokens cannot
+use these routes. The daemon owns provider credentials and serializes access
+with that source's sync execution.
+
+| Method and path | Contract |
+|---|---|
+| `GET /api/v1/messages/{id}/tags` | Read current native tags; optional `mailbox` query selects an exact recorded IMAP copy |
+| `POST /api/v1/messages/{id}/tags` | Apply `add` and `remove` arrays, optional `mailbox`, and optional `dry_run` |
+
+`id` is the positive archived message ID. Each array allows at most 100 tags
+of 1–255 UTF-8 bytes. Tags are deduplicated; overlapping add and remove sets
+are rejected. IMAP further restricts tags to ASCII keyword atoms and compares
+them without case. Gmail requires existing user label IDs. Microsoft Graph
+requires category names and `Mail.ReadWrite` for writes. See
+[`message-tags`](cli-reference.md#message-tags) for provider requirements.
+
+```json
+{"add":["Label_123"],"remove":["Label_456"],"dry_run":true}
+```
+
+The result contains `message_id`, `source_id`, `provider`, `tags`, `before`,
+`available_tags` (`id` and `name`), `dry_run`, and `verified`. IMAP also returns
+`mailbox`, `uidvalidity`, `uid`, the observed `flags`, and
+`can_create_keywords` when new persistent keywords are supported. Gmail
+returns all current label IDs, including system labels, while `available_tags`
+contains only editable user labels. IMAP returns custom keywords in `tags`.
+Microsoft Graph returns `provider: "msmail"` and category names in `tags`;
+`available_tags` describes the observed categories, without a master-category
+catalog or a `MailboxSettings.Read` requirement.
+
+Reads return verified observed state. Previews return the projected tags with
+`verified: false` and never update the archive. Successful writes require
+provider readback, then persist the observed Gmail labels, IMAP membership
+flags, or Microsoft categories. Microsoft categories use separate
+`Category: <name>` archive labels and survive later folder syncs. IMAP folder
+labels and local read state are unchanged. Gmail and Microsoft category changes
+mark derived data stale and request a cache refresh.
+
+Errors contain `error`, `message`, and, when available, `result` with the last
+observed state. `remote_unknown` and `verification_failed` return HTTP 502;
+read tags before retrying because a write may have applied. HTTP 500
+`remote_accepted_local_failed` preserves verified provider evidence and asks
+for a sync. Invalid tags return 400, insufficient provider scope returns 403,
+a missing archived message returns 404, and stale provider identity or an active
+sync returns 409. Unsupported providers or persistent keyword support return
+501. See the generated OpenAPI contract for response schemas.
 
 ### Identity match review and scoring
 

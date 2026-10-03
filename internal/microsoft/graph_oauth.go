@@ -109,6 +109,7 @@ func NewGraphMailManager(clientID, tenantID, redirectURI, tokensDir string, logg
 func NewGraphMailWriteManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
 	m := NewGraphMailManager(clientID, tenantID, redirectURI, tokensDir, logger)
 	m.scopes = GraphMailWriteScopes()
+	m.reauthCmd = "msgvault add-o365 %s --graph --mail-write"
 	return m
 }
 
