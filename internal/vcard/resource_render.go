@@ -781,6 +781,17 @@ func isInlineMediaName(name string) bool {
 	}
 }
 
+// IsInlineMedia reports whether a PHOTO, LOGO, SOUND, or KEY property carries
+// its bytes inline, as a data URI or a base64 transfer encoding.
+func IsInlineMedia(property Property) bool {
+	if !isInlineMediaName(property.Name) {
+		return false
+	}
+	value := strings.TrimLeft(property.RawValue, " 	")
+	return len(value) >= 5 && strings.EqualFold(value[:5], "data:") ||
+		propertyIsBase64Encoded(property)
+}
+
 func propertyIsBase64Encoded(property Property) bool {
 	for _, parameter := range property.Parameters {
 		if !strings.EqualFold(parameter.Name, "ENCODING") && !parameter.Bare {

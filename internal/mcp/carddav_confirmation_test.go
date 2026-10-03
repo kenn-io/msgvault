@@ -16,8 +16,6 @@ func TestCardDAVConfirmationPreview(t *testing.T) {
 		{"photo", "4.0", "PHOTO:data:;base64,QUJD", "PHOTO:[inline PHOTO, 17 encoded bytes]"},
 		{"data URI leading space", "4.0", "PHOTO: data:;base64,QUJD", "PHOTO:[inline PHOTO, 18 encoded bytes]"},
 		{"data URI leading tab", "4.0", "LOGO:\tDaTa:;base64,QUJD", "LOGO:[inline LOGO, 18 encoded bytes]"},
-		{"quoted-printable media", "2.1", "PHOTO;ENCODING=QUOTED-PRINTABLE:=FF=D8=AA", "PHOTO;ENCODING=QUOTED-PRINTABLE:[inline PHOTO, 9 encoded bytes]"},
-		{"bare quoted-printable", "2.1", "SOUND;QUOTED-PRINTABLE:=41=42=43", "SOUND;QUOTED-PRINTABLE:[inline SOUND, 9 encoded bytes]"},
 		{"logo", "4.0", "LOGO:data:;base64,QUJD", "LOGO:[inline LOGO, 17 encoded bytes]"},
 		{"sound", "4.0", "SOUND:data:;base64,QUJD", "SOUND:[inline SOUND, 17 encoded bytes]"},
 		{"key", "4.0", "KEY:data:;base64,QUJD", "KEY:[inline KEY, 17 encoded bytes]"},

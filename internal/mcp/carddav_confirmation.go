@@ -17,25 +17,7 @@ func cardDAVConfirmationPreview(body string) string {
 	}
 	for i := range document.Cards[0].Properties {
 		property := &document.Cards[0].Properties[i]
-		switch property.Name {
-		case "PHOTO", "LOGO", "SOUND", "KEY":
-		default:
-			continue
-		}
-		value := strings.TrimLeft(property.RawValue, " \t")
-		inline := len(value) >= 5 && strings.EqualFold(value[:5], "data:")
-		for _, encoding := range property.Parameters {
-			if encoding.Name != "ENCODING" && !encoding.Bare {
-				continue
-			}
-			for _, value := range encoding.Values {
-				token := strings.TrimSpace(value.Decoded)
-				if strings.EqualFold(token, "b") || strings.EqualFold(token, "BASE64") || strings.EqualFold(token, "QUOTED-PRINTABLE") {
-					inline = true
-				}
-			}
-		}
-		if inline {
+		if vcard.IsInlineMedia(*property) {
 			property.RawValue = fmt.Sprintf("[inline %s, %d encoded bytes]", property.Name, len(property.RawValue))
 		}
 	}
