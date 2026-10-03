@@ -170,7 +170,7 @@ func TestImporterEnumeratesShortPagesBeyondFiveHundred(t *testing.T) {
 func TestLimitedDateScopedRunsRotate(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st, src := registered(t)
+	st, _ := registered(t)
 	f := sourceFixture("c", "a", "b")
 	imp := NewImporter(st, f)
 	after := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -180,11 +180,6 @@ func TestLimitedDateScopedRunsRotate(t *testing.T) {
 		require.NoError(err)
 	}
 	assert.Equal([]string{"a", "b", "c", "a"}, f.read)
-	last, err := st.GetLastSuccessfulSync(src.ID)
-	require.NoError(err)
-	var state syncState
-	require.NoError(json.Unmarshal([]byte(last.CursorAfter.String), &state))
-	require.Len(state.LastChecked, 3)
 }
 
 func TestLimitedRunsStartWithNewestUnseenRecordings(t *testing.T) {
@@ -259,7 +254,47 @@ func TestLimitedRunsRotatePastFailedRecordings(t *testing.T) {
 	}
 }
 
-func TestFailureKeepsLastSuccessfulCursorAndPartialWrites(t *testing.T) {
+func TestRotationStateDoesNotAccumulateInRunHistory(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, src := registered(t)
+	f := sourceFixture("a", "b", "c")
+	f.fail["a"] = ErrContract
+	opts := ImportOptions{Identifier: "personal", AccountEmail: "user@example.com", Limit: 1}
+	for index := range 6 {
+		imp := NewImporter(st, f)
+		imp.now = func() time.Time { return time.Date(2026, 9, 1, index, 0, 0, 0, time.UTC) }
+		_, err := imp.Import(t.Context(), opts)
+		if index%3 == 0 {
+			require.ErrorIs(err, ErrContract)
+		} else {
+			require.NoError(err)
+		}
+	}
+	assert.Equal([]string{"a", "b", "c", "a", "b", "c"}, f.read)
+
+	var runs, processed, added, failures, cursorBytes int
+	err := st.DB().QueryRow(`
+		SELECT COUNT(*), SUM(messages_processed), SUM(messages_added), SUM(errors_count),
+		       SUM(LENGTH(COALESCE(cursor_before, '')) + LENGTH(COALESCE(cursor_after, '')))
+		FROM sync_runs WHERE source_id = ?
+	`, src.ID).Scan(&runs, &processed, &added, &failures, &cursorBytes)
+	require.NoError(err)
+	assert.Equal(6, runs)
+	assert.Equal(6, processed)
+	assert.Equal(2, added)
+	assert.Equal(2, failures)
+	assert.Zero(cursorBytes, "run history must not retain recording inventory snapshots")
+
+	src, err = st.GetSourceByTypeAndIdentifier(SourceType, opts.Identifier)
+	require.NoError(err)
+	var state syncState
+	require.NoError(json.Unmarshal([]byte(src.SyncCursor.String), &state))
+	assert.Len(state.LastChecked, 3)
+	assert.NoError(ValidateOwner(src, "user@example.com"))
+}
+
+func TestFailureKeepsLastSuccessfulRunAndPartialWrites(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, src := registered(t)
@@ -281,7 +316,11 @@ func TestFailureKeepsLastSuccessfulCursorAndPartialWrites(t *testing.T) {
 	after, err := st.GetLastSuccessfulSync(src.ID)
 	require.NoError(err)
 	assert.Equal(before.ID, after.ID)
-	assert.Equal(before.CursorAfter, after.CursorAfter)
+	ids, err := st.MessageExistsBatch(src.ID, []string{"a"})
+	require.NoError(err)
+	body, err := st.GetMessageBodyText(ids["a"])
+	require.NoError(err)
+	assert.Contains(body, "A landed change")
 }
 
 func TestOwnerAndMissingSourceRefusedBeforeContent(t *testing.T) {

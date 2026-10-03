@@ -123,25 +123,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	started := imp.now().UTC()
 	sum = &ImportSummary{SourceID: src.ID}
-	state := syncState{Version: 1, LastChecked: map[string]time.Time{}}
-	cursor := ""
-	last, err := imp.store.GetLatestCheckpointedSync(src.ID)
-	if err == nil {
-		cursor = last.CursorBefore.String
-	} else if errors.Is(err, store.ErrSyncRunNotFound) {
-		last, err = imp.store.GetLastSuccessfulSync(src.ID)
-		if err == nil {
-			cursor = last.CursorAfter.String
-		}
-	}
-	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-		return sum, err
-	}
-	if cursor != "" {
-		if json.Unmarshal([]byte(cursor), &state) != nil || state.Version != 1 || state.LastChecked == nil {
-			return sum, errors.New("invalid plaud sync state")
-		}
-	}
 	run, err := imp.store.StartSync(src.ID, SourceType)
 	if err != nil {
 		return sum, err
@@ -149,7 +130,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	scoped := imp.store.ScopedToSync(src.ID, run)
 	checkpoint := func() *store.Checkpoint {
 		return &store.Checkpoint{
-			PageToken:         cursor,
 			MessagesProcessed: sum.MeetingsProcessed,
 			MessagesAdded:     sum.MeetingsAdded,
 			MessagesUpdated:   sum.MeetingsUpdated,
@@ -162,6 +142,18 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			retErr = errors.Join(retErr, scoped.FailSyncWithCheckpoint(run, retErr.Error(), checkpoint()))
 		}
 	}()
+	// Read the current rotation state after acquiring this source's sync run.
+	current, err := scoped.GetSourceByID(src.ID)
+	if err != nil {
+		return sum, err
+	}
+	state := syncState{Version: 1, LastChecked: map[string]time.Time{}}
+	if current.SyncCursor.String != "" {
+		if json.Unmarshal([]byte(current.SyncCursor.String), &state) != nil ||
+			state.Version != 1 || state.LastChecked == nil {
+			return sum, errors.New("invalid plaud sync state")
+		}
+	}
 	files, err := imp.enumerate(ctx)
 	if err != nil {
 		sum.Errors++
@@ -251,7 +243,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return sum, errors.Join(errors.Join(failures...), err)
 	}
-	cursor = string(raw)
+	// Rotation is current source state, not a snapshot to retain in every run.
+	if err := scoped.UpdateSourceSyncState(src.ID, string(raw)); err != nil {
+		return sum, errors.Join(errors.Join(failures...), err)
+	}
 	if len(failures) > 0 {
 		return sum, errors.Join(failures...)
 	}
@@ -262,7 +257,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err := scoped.UpdateSyncCheckpoint(run, checkpoint()); err != nil {
 		return sum, err
 	}
-	return sum, scoped.CompleteSync(run, cursor)
+	return sum, scoped.CompleteSync(run, "")
 }
 
 func recordingDate(file File) time.Time {

@@ -1606,6 +1606,19 @@ func (s *Store) UpdateSourceSyncCursor(sourceID int64, cursor string) error {
 	return err
 }
 
+// UpdateSourceSyncState replaces adapter progress without marking a successful
+// sync. Unlike a run checkpoint, this retains only the source's current state.
+func (s *Store) UpdateSourceSyncState(sourceID int64, state string) error {
+	return s.withSyncSourceWriteContext(context.Background(), sourceID, func(q querier) error {
+		_, err := q.Exec(fmt.Sprintf(`
+			UPDATE sources
+			SET sync_cursor = ?, updated_at = %s
+			WHERE id = ?
+		`, s.dialect.Now()), state, sourceID)
+		return err
+	})
+}
+
 // TouchSourceLastSyncAt records that a source-level sync completed even when
 // the adapter does not maintain a cursor.
 func (s *Store) TouchSourceLastSyncAt(sourceID int64) error {

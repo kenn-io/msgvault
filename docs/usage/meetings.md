@@ -474,6 +474,7 @@ recording date locally and implies `--full`.
 then runs rotate through the least recently attempted recordings. Failed and
 date-scoped runs save this rotation state too. A failed recording remains
 eligible on its next turn, so it cannot block later recordings in limited runs.
+Rotation state is stored once per source; run history retains outcomes and counts.
 Plaud pagination is eventually consistent, so changes during a run may be
 reconciled on a later run.
 
