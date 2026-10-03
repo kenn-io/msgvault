@@ -27,6 +27,10 @@ const PageSize = 200 // Upstream clamps the list endpoint to 200 records.
 // TranscriptListsPerHour is Omi's per-key budget for transcript list requests.
 const TranscriptListsPerHour = 25
 
+// RequestInterval spaces requests evenly with no burst, so one client never
+// exceeds the hourly budget.
+var RequestInterval = time.Hour / TranscriptListsPerHour
+
 // NormalizeBaseURL accepts a backend root, including a reverse-proxy prefix.
 func NormalizeBaseURL(value string) (string, error) {
 	if value == "" {
@@ -55,14 +59,13 @@ func isLoopbackHost(host string) bool {
 	return err == nil && addr.Unmap().IsLoopback()
 }
 
-// retryDelay honors a 429's Retry-After for up to an hour, because Omi's
-// transcript budget is a fixed hourly window and earlier retries are refused.
+// retryDelay makes Omi's 429 the authority: its transcript budget is a fixed
+// hourly window, so honor Retry-After and otherwise wait out the whole hour.
 func retryDelay(resp *http.Response, attempt int) time.Duration {
-	maximum := httpretry.ProviderMaxRetryAfter
 	if resp.StatusCode == http.StatusTooManyRequests {
-		maximum = time.Hour
+		return httpretry.RetryAfterAtWithBase(resp.Header.Get("Retry-After"), attempt, time.Hour, time.Hour, time.Now())
 	}
-	return httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, maximum)
+	return httpretry.RetryAfter(resp.Header.Get("Retry-After"), attempt, httpretry.ProviderMaxRetryAfter)
 }
 
 type Client struct {
@@ -75,7 +78,7 @@ type Client struct {
 func NewClient(baseURL, apiKey string) *Client {
 	return &Client{baseURL: baseURL, apiKey: apiKey,
 		http:    &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
-		limiter: rate.NewLimiter(rate.Every(time.Hour/TranscriptListsPerHour), TranscriptListsPerHour),
+		limiter: rate.NewLimiter(rate.Every(RequestInterval), 1),
 	}
 }
 

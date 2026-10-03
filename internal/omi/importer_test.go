@@ -593,10 +593,10 @@ func TestClientPacesTranscriptListsToHourlyBudget(t *testing.T) {
 	assert := assert.New(t)
 	limiter := NewClient(DefaultBaseURL, "omi_dev_synthetic").limiter
 	now := time.Now()
-	for range TranscriptListsPerHour {
-		assert.Zero(limiter.ReserveN(now, 1).DelayFrom(now), "a fresh key can spend its hourly burst")
+	assert.Zero(limiter.ReserveN(now, 1).DelayFrom(now))
+	for i := 1; i <= TranscriptListsPerHour; i++ {
+		assert.Equal(time.Duration(i)*time.Hour/TranscriptListsPerHour, limiter.ReserveN(now, 1).DelayFrom(now), "requests are spaced evenly, so no hour holds a 26th")
 	}
-	assert.Equal(time.Hour/TranscriptListsPerHour, limiter.ReserveN(now, 1).DelayFrom(now))
 }
 
 func TestRetryDelayWaitsOutHourlyWindow(t *testing.T) {
@@ -605,6 +605,10 @@ func TestRetryDelayWaitsOutHourlyWindow(t *testing.T) {
 	assert.Equal(3000*time.Second, retryDelay(limited, 0), "a 429 waits until Omi's hourly window reopens")
 	limited.Header.Set("Retry-After", "7200")
 	assert.Equal(time.Hour, retryDelay(limited, 0))
+	limited.Header.Del("Retry-After")
+	assert.Equal(time.Hour, retryDelay(limited, 0), "a 429 without Retry-After waits out the whole window")
+	limited.Header.Set("Retry-After", "soon")
+	assert.Equal(time.Hour, retryDelay(limited, 3))
 	unavailable := &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{"Retry-After": {"3000"}}}
 	assert.Equal(httpretry.ProviderMaxRetryAfter, retryDelay(unavailable, 0))
 }

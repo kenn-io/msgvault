@@ -293,18 +293,20 @@ configured account email records archive ownership; it does not establish who
 organized the meeting or mean that Omi verified the address.
 
 Omi allows 25 transcript list requests per hour per API key, and each request
-returns up to 200 conversations. msgvault paces requests to that budget and
-waits out the hour when Omi says it's spent. The first sync reads all history,
-so an archive over about 5,000 conversations takes hours. Later syncs read only conversations created since the last
-complete sync, reaching back 48 hours to catch conversations that finished
-processing late and recent edits. That is usually one request. The API has no
-updated-since filter, so edits to older conversations, and conversations that
-finish processing or are unlocked more than 48 hours after they were created,
-appear after `sync-omi --full`, which rescans history and rewrites derived
-projections in place. `--after YYYY-MM-DD` bounds creation dates and implies `--full`;
-`--limit` caps conversations processed, including unchanged ones. Runs with
-either flag leave the sync watermark where it was. An enabled entry with a
-schedule supports daemon sync and **Sync Now**.
+returns up to 200 conversations. msgvault spaces requests evenly across that
+budget, about one every two and a half minutes. If Omi still answers that the
+budget is spent, msgvault waits as long as Omi says, or a full hour when Omi
+doesn't say. The first sync reads all history, so an archive over about 5,000
+conversations takes hours. Later syncs read only conversations created since
+the last complete sync, reaching back 48 hours to catch conversations that
+finished processing late and recent edits. That is usually one request. The
+API has no updated-since filter, so edits to older conversations, and
+conversations that finish processing or are unlocked more than 48 hours after
+they were created, appear after `sync-omi --full`, which rescans history and
+rewrites derived projections in place. `--after YYYY-MM-DD` bounds creation
+dates and implies `--full`; `--limit` caps conversations processed, including
+unchanged ones. Runs with either flag leave the sync watermark where it was.
+An enabled entry with a schedule supports daemon sync and **Sync Now**.
 
 Conversations with useful summaries or actions and no transcript are archived
 with unavailable transcript coverage. If a later response omits an already
@@ -321,7 +323,8 @@ archived records when they disappear upstream. Omi currently removes locked
 and malformed records after applying pagination. msgvault continues through
 short pages, but an entirely filtered page is indistinguishable from the end
 of history and can hide older conversations. The API has no total or next-page
-cursor to resolve that ambiguity. Rate-limit failures leave committed meetings
+cursor to resolve that ambiguity, and incremental syncs never reach back that
+far, so run `sync-omi --full` once Omi unlocks them. Rate-limit failures leave committed meetings
 in place and the next run can retry.
 
 ## Granola

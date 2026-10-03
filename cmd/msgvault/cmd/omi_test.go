@@ -13,12 +13,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/omi"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestConfiguredOmiSyncAndCacheRefresh(t *testing.T) {
+	unpacedOmiClients(t)
 	for _, failing := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "partial error"}[failing], func(t *testing.T) {
 			require := require.New(t)
@@ -68,6 +70,7 @@ func TestConfiguredOmiSyncAndCacheRefresh(t *testing.T) {
 }
 
 func TestManualOmiUsesInvocationConfiguration(t *testing.T) {
+	unpacedOmiClients(t)
 	require := require.New(t)
 	assert := assert.New(t)
 	markDaemonCLISubprocessForTest(t)
@@ -116,6 +119,7 @@ func TestManualOmiUsesInvocationConfiguration(t *testing.T) {
 }
 
 func TestScheduledOmiRequestsCacheRefreshWithDaemonInvocation(t *testing.T) {
+	unpacedOmiClients(t)
 	require := require.New(t)
 	assert := assert.New(t)
 	// This queue is SQLite-only; PostgreSQL intentionally skips analytics builds.
@@ -168,6 +172,7 @@ func TestScheduledOmiRequestsCacheRefreshWithDaemonInvocation(t *testing.T) {
 }
 
 func TestDaemonManualOmiQueuesCacheRefreshAfterRealImport(t *testing.T) {
+	unpacedOmiClients(t)
 	markDaemonCLISubprocessForTest(t)
 	oldLimit, oldAfter, oldFull := syncOmiLimit, syncOmiAfter, syncOmiFull
 	syncOmiLimit, syncOmiAfter, syncOmiFull = 1, "", false
@@ -253,4 +258,12 @@ func TestDaemonManualOmiQueuesCacheRefreshAfterRealImport(t *testing.T) {
 			assert.Equal(1, count)
 		})
 	}
+}
+
+// unpacedOmiClients lifts Omi's hourly pacing for fake servers.
+func unpacedOmiClients(t *testing.T) {
+	t.Helper()
+	previous := omi.RequestInterval
+	omi.RequestInterval = 0
+	t.Cleanup(func() { omi.RequestInterval = previous })
 }
