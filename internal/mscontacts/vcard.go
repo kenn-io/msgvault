@@ -37,6 +37,10 @@ type contact struct {
 	BusinessAddress physicalAddress               `json:"businessAddress"`
 	OtherAddress    physicalAddress               `json:"otherAddress"`
 	Properties      []singleValueExtendedProperty `json:"singleValueExtendedProperties,omitzero"`
+
+	// untypedPhones are vCard TEL values without a home, work or cell TYPE.
+	// placePhones assigns them to Graph fields.
+	untypedPhones []string `json:"-"`
 }
 
 type emailAddress struct {
@@ -105,6 +109,7 @@ func (c contact) body(uid string) ([]byte, error) {
 		return c.toVCard(uid, nil)
 	}
 	sent, err := contactFromVCard([]byte(saved))
+	placePhones(&sent, &c)
 	if err == nil && reflect.DeepEqual(sent.fields(), c.fields()) {
 		return []byte(saved), nil
 	}
@@ -197,6 +202,32 @@ func (c contact) toVCard(uid string, extra []vcard.Property) ([]byte, error) {
 	return vcard.Marshal(vcard.Document{Cards: []vcard.Card{card}})
 }
 
+// placePhones assigns the phones of c that have no TYPE. A number that
+// current already holds keeps its Outlook field; any other number becomes a
+// business phone.
+func placePhones(c, current *contact) {
+	digits := func(number string) string {
+		return strings.Map(func(r rune) rune {
+			if r >= '0' && r <= '9' {
+				return r
+			}
+			return -1
+		}, number)
+	}
+	for _, number := range c.untypedPhones {
+		key := digits(number)
+		switch {
+		case current != nil && c.MobilePhone == "" && digits(current.MobilePhone) == key:
+			c.MobilePhone = number
+		case current != nil && slices.ContainsFunc(current.HomePhones, func(home string) bool { return digits(home) == key }):
+			c.HomePhones = append(c.HomePhones, number)
+		default:
+			c.BusinessPhones = append(c.BusinessPhones, number)
+		}
+	}
+	c.untypedPhones = nil
+}
+
 // contactFromVCard maps a vCard to the Graph contact fields. Properties that
 // Graph cannot hold are dropped.
 func contactFromVCard(body []byte) (contact, error) {
@@ -264,8 +295,10 @@ func contactFromVCard(body []byte) (contact, error) {
 				c.MobilePhone = number
 			case slices.Contains(kinds, "home"):
 				c.HomePhones = append(c.HomePhones, number)
-			default:
+			case slices.Contains(kinds, "cell") || slices.Contains(kinds, "work"):
 				c.BusinessPhones = append(c.BusinessPhones, number)
+			default:
+				c.untypedPhones = append(c.untypedPhones, number)
 			}
 		case "ORG":
 			org := parts(property, 2)

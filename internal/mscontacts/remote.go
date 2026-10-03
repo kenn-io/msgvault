@@ -24,8 +24,9 @@ const GraphBaseURL = "https://graph.microsoft.com/v1.0"
 // contact that msgvault created. Outlook contacts do not have it.
 const uidProperty = "String {6f3a1c52-8d4e-4b7a-9c1f-2e5d7a9b0c3d} Name msgvaultUID"
 
-// vcardProperty holds the full vCard that msgvault last wrote, including the
-// properties that Graph has no field for.
+// vcardProperty holds the full vCard that msgvault last wrote to a contact,
+// including what Graph cannot hold: properties without a field, and details
+// such as a phone TYPE. Every create and update sets it.
 const vcardProperty = "String {6f3a1c52-8d4e-4b7a-9c1f-2e5d7a9b0c3d} Name msgvaultVCard"
 
 const (
@@ -270,6 +271,11 @@ func (r *Remote) Put(ctx context.Context, href string, body []byte, etag string,
 	if err != nil {
 		return err
 	}
+	if found {
+		placePhones(&fields, &current)
+	} else {
+		placePhones(&fields, nil)
+	}
 	if create {
 		book, kind, uid, err := r.parseHref(href)
 		if err != nil || kind != "uid" {
@@ -288,9 +294,7 @@ func (r *Remote) Put(ctx context.Context, href string, body []byte, etag string,
 	if current.ETag != etag {
 		return &carddav.StatusError{StatusCode: http.StatusPreconditionFailed}
 	}
-	if current.uid() != "" {
-		fields.Properties = []singleValueExtendedProperty{{ID: vcardProperty, Value: string(body)}}
-	}
+	fields.Properties = []singleValueExtendedProperty{{ID: vcardProperty, Value: string(body)}}
 	_, err = r.graph.Send(ctx, http.MethodPatch, r.base+"/me/contacts/"+url.PathEscape(current.ID), fields, etag)
 	return statusError(err)
 }

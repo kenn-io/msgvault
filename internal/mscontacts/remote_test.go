@@ -427,6 +427,12 @@ func TestUnmappedVCardPropertiesAreDropped(t *testing.T) {
 	assert.Equal("1", mapped.MobilePhone)
 	assert.Equal([]string{"2"}, mapped.BusinessPhones, "a second mobile number becomes a business phone")
 	assert.Nil(mapped.Birthday, "Graph needs a year")
+
+	mapped, err = contactFromVCard([]byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Ann\r\nTEL:tel:+1 555 0100\r\nTEL:+1 555 0199\r\nEND:VCARD\r\n"))
+	require.NoError(err)
+	placePhones(&mapped, &contact{HomePhones: []string{"+15550100"}})
+	assert.Equal([]string{"+1 555 0100"}, mapped.HomePhones, "an untyped number keeps its Outlook field")
+	assert.Equal([]string{"+1 555 0199"}, mapped.BusinessPhones)
 }
 
 func TestPublishWithUnmappedPropertySettles(t *testing.T) {
@@ -499,4 +505,33 @@ func TestGraphFailuresReachTheRetryGateAndRunHistory(t *testing.T) {
 	gate, err := f.store.GetCardDAVRetryAfterContext(t.Context(), store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	assert.NotNil(gate, "a 429 that outlasts Graph's retries pauses the connection")
+}
+
+// An Outlook contact that msgvault later updates is written in msgvault's
+// form, which Graph stores with losses: a phone without TYPE becomes a
+// business phone. The update must read back as sent, not as a conflict.
+func TestUpdatedOutlookContactReadsBackWithoutConflict(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFixture(t)
+	f.fake.put("test", contact{DisplayName: "Bob Outlook", MobilePhone: "+1 555 0100"})
+	f.sync(t)
+	var personID int64
+	require.NoError(f.store.DB().QueryRow(`SELECT id FROM persons WHERE display_name = 'Bob Outlook'`).Scan(&personID))
+	_, err := f.store.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "bob@example.test",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+
+	require.NoError(f.service.PublishPerson(t.Context(), personID))
+	f.sync(t)
+
+	assert.Equal(1, f.fake.patches)
+	updated := f.fake.contacts[f.fake.changes[0].contactID]
+	assert.Equal("+15550100", updated.MobilePhone, "the number stays in its Outlook field")
+	assert.Empty(updated.BusinessPhones)
+	conflicts, err := f.store.ListCardDAVConflictsContext(t.Context(), true, store.DefaultCardDAVAccountID)
+	require.NoError(err)
+	assert.Empty(conflicts)
 }
