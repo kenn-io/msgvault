@@ -6,7 +6,9 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"net/mail"
+	"slices"
 	"strings"
 	"time"
 
@@ -47,6 +49,9 @@ type syncState struct {
 	// UpdatedAfter is the newest updatedAt among recordings already handled.
 	// The next run lists recordings updated at or after it.
 	UpdatedAfter string `json:"updated_after,omitempty"`
+	// UpdatedAfterIDs are the recordings handled at exactly UpdatedAfter, so
+	// repeated limited runs move past timestamp ties.
+	UpdatedAfterIDs []string `json:"updated_after_ids,omitempty"`
 }
 
 // Import lists recordings in updatedAt order from the last run's watermark,
@@ -101,6 +106,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return sum, err
 	}
 	watermark, _ := time.Parse(time.RFC3339Nano, state.UpdatedAfter)
+	boundary := map[string]bool{}
+	for _, id := range state.UpdatedAfterIDs {
+		boundary[id] = true
+	}
+	covered := maps.Clone(boundary)
 	since := time.Unix(0, 0).UTC()
 	if !opts.Full && !watermark.IsZero() {
 		since = watermark
@@ -129,12 +139,22 @@ scan:
 			if recording.ID == "" {
 				return sum, errors.New("twenty discovery returned a recording without an ID")
 			}
+			updated, updatedErr := time.Parse(time.RFC3339Nano, recording.UpdatedAt)
+			if !opts.Full && updatedErr == nil && updated.Equal(since) && covered[recording.ID] {
+				continue
+			}
 			processed, err := imp.importRecording(ctx, archiver, scoped, syncID, source.ID, opts, recording, sum)
 			if err != nil {
 				return sum, err
 			}
-			if updated, err := time.Parse(time.RFC3339Nano, recording.UpdatedAt); err == nil && advance && updated.After(watermark) {
-				watermark = updated
+			if updatedErr == nil && advance {
+				if updated.After(watermark) {
+					watermark = updated
+					clear(boundary)
+				}
+				if updated.Equal(watermark) {
+					boundary[recording.ID] = true
+				}
 			}
 			if !processed {
 				continue
@@ -160,8 +180,9 @@ scan:
 	if err := scoped.UpdateSyncCheckpoint(syncID, checkpoint()); err != nil {
 		return sum, err
 	}
-	if !watermark.IsZero() {
+	if advance && !watermark.IsZero() {
 		state.UpdatedAfter = watermark.UTC().Format(time.RFC3339Nano)
+		state.UpdatedAfterIDs = slices.Sorted(maps.Keys(boundary))
 	}
 	cursorAfter, err := json.Marshal(state, json.Deterministic(true))
 	if err != nil {

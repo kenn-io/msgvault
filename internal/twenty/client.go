@@ -42,8 +42,11 @@ const participantQuery = `query Participants($ids: [UUID!]!, $after: String) {
  calendarEventParticipants(filter: {calendarEventId: {in: $ids}}, first: 100, after: $after, orderBy: [{id: AscNullsLast}]) {
  edges { node { ` + participantFields + ` } } pageInfo { hasNextPage endCursor }
  } }`
+
+// The probe filters recordings to none so it checks field access without
+// downloading a transcript that could exceed the response bound.
 const probeQuery = `query Probe {
- callRecordings(first: 1, orderBy: [{updatedAt: AscNullsFirst}, {id: AscNullsFirst}]) { edges { node { ` + recordingFields + ` } } pageInfo { hasNextPage endCursor } }
+ callRecordings(first: 1, filter: {id: {eq: "00000000-0000-0000-0000-000000000000"}}) { edges { node { ` + recordingFields + ` } } pageInfo { hasNextPage endCursor } }
  calendarEvents(first: 1) { edges { node { ` + calendarFields + ` } } }
  calendarEventParticipants(first: 1) { edges { node { ` + participantFields + ` } } pageInfo { hasNextPage endCursor } }
  }`
@@ -282,7 +285,7 @@ func (c *Client) ListRecordings(ctx context.Context, updatedSince, after string,
 		cursor = after
 	}
 	variables := map[string]any{"after": cursor, "first": first, "filter": map[string]any{"updatedAt": map[string]any{"gte": updatedSince}}}
-	data, err := c.query(ctx, recordingQuery, variables)
+	page, err := c.recordingPage(ctx, variables, after)
 	// Full word-level transcripts can make a catalog page exceed the body
 	// bound. Retry the same cursor with fewer records, and step past a single
 	// recording that alone exceeds it so the importer can skip it.
@@ -290,8 +293,13 @@ func (c *Client) ListRecordings(ctx context.Context, updatedSince, after string,
 		if first > 1 {
 			return c.ListRecordings(ctx, updatedSince, after, first/2)
 		}
-		return c.tooLargeRecording(ctx, variables, after)
+		return c.nextRecordingAlone(ctx, variables, after)
 	}
+	return page, err
+}
+
+func (c *Client) recordingPage(ctx context.Context, variables map[string]any, after string) (*Page, error) {
+	data, err := c.query(ctx, recordingQuery, variables)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +340,10 @@ func (c *Client) ListRecordings(ctx context.Context, updatedSince, after string,
 	return page, nil
 }
 
-func (c *Client) tooLargeRecording(ctx context.Context, variables map[string]any, after string) (*Page, error) {
+// nextRecordingAlone finds the recording after the cursor by ID, then reads
+// it by itself. The recording at the cursor can change between requests, so
+// only a recording whose own read exceeds the bound is marked too large.
+func (c *Client) nextRecordingAlone(ctx context.Context, variables map[string]any, after string) (*Page, error) {
 	data, err := c.query(ctx, recordingIDQuery, map[string]any{"after": variables["after"], "filter": variables["filter"]})
 	if err != nil {
 		return nil, err
@@ -343,11 +354,20 @@ func (c *Client) tooLargeRecording(ctx context.Context, variables map[string]any
 	}
 	page := &Page{HasMore: *wire.PageInfo.HasNextPage, NextCursor: wire.PageInfo.EndCursor}
 	for _, edge := range wire.Edges {
-		recording := Recording{TooLarge: true}
-		if json.Unmarshal(edge.Node, &recording) != nil {
+		var candidate Recording
+		if json.Unmarshal(edge.Node, &candidate) != nil {
 			return nil, errors.New("invalid Twenty recording fields")
 		}
-		page.Records = append(page.Records, recording)
+		alone, err := c.recordingPage(ctx, map[string]any{"after": nil, "first": 1, "filter": map[string]any{"id": map[string]any{"eq": candidate.ID}}}, "")
+		switch {
+		case errors.Is(err, errResponseTooLarge):
+			candidate.TooLarge = true
+			page.Records = append(page.Records, candidate)
+		case err != nil:
+			return nil, err
+		default:
+			page.Records = append(page.Records, alone.Records...)
+		}
 	}
 	return page, nil
 }

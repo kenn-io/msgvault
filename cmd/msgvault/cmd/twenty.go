@@ -112,9 +112,10 @@ var syncTwentyCmd = &cobra.Command{
 	Use: "sync-twenty [identifier]", Short: "Sync Twenty Call Recorder meetings",
 	Long: `Sync summaries and diarized transcripts from Twenty's read-only API.
 
-Every unlimited run rescans the catalog and linked calendar participants.
---after filters meeting dates locally. --limit caps eligible meetings and
-reports incomplete scans. --probe validates access without archive writes.`,
+Each run reads recordings updated since the last successful run. --full
+rescans every recording, which also picks up later attendee edits. --after
+filters meeting dates locally. --limit caps eligible meetings and reports
+incomplete scans. --probe validates access without archive writes.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)

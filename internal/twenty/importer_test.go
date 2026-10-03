@@ -213,12 +213,12 @@ func TestImportTwentyPaginationFiltersAndLimit(t *testing.T) {
 	assert.Equal(int64(101), sum.MeetingsAdded)
 	assert.NotZero(archivedID(t, st, "r100"))
 	assert.False(sum.PartialCoverage)
-	opts.Limit = 1
+	opts.Limit, opts.Full = 1, true
 	sum, err = NewImporter(st, f).Import(context.Background(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MeetingsProcessed)
 	assert.True(sum.PartialCoverage)
-	opts.Limit = 0
+	opts.Limit, opts.Full = 0, false
 	opts.StartedAfter = time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
 	sum, err = NewImporter(st, f).Import(context.Background(), opts)
 	require.NoError(err)
@@ -248,6 +248,29 @@ func TestImportTwentyFailsWithoutOverwritingEvidence(t *testing.T) {
 	require.Error(err)
 	_, err = st.GetSourceByTypeAndIdentifier(SourceType, "work")
 	require.ErrorIs(err, store.ErrSourceNotFound)
+}
+
+// Repeated limited runs must move past recordings that share an updatedAt.
+func TestImportTwentyRepeatedLimitedRunsPassTimestampTies(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, f, opts := newImportFixture(t)
+	f.pages[""].Records = []Recording{recordingFixture(t, "r1", `[]`), recordingFixture(t, "r2", `[]`), recordingFixture(t, "r3", `[]`)}
+	opts.Limit = 1
+	for _, id := range []string{"r1", "r2", "r3"} {
+		sum, err := NewImporter(st, f).Import(t.Context(), opts)
+		require.NoError(err)
+		assert.Equal(int64(1), sum.MeetingsAdded, id)
+		assert.NotZero(archivedID(t, st, id))
+	}
+	sum, err := NewImporter(st, f).Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(sum.MeetingsProcessed)
+	f.pages[""].Records = append(f.pages[""].Records, updated(t, recordingFixture(t, "r4", `[]`), "2026-09-01T12:00:00Z"))
+	sum, err = NewImporter(st, f).Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(int64(1), sum.MeetingsAdded)
+	assert.NotZero(archivedID(t, st, "r4"))
 }
 
 func TestImportTwentySkipsRecordingOverContentLimit(t *testing.T) {

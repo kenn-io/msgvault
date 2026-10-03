@@ -237,6 +237,7 @@ func TestClientProbeChecksAllObjects(t *testing.T) {
 		for _, collection := range []string{"callRecordings", "calendarEvents", "calendarEventParticipants"} {
 			assert.Contains(request.Query, collection)
 		}
+		assert.Contains(request.Query, `00000000-0000-0000-0000-000000000000`, "the probe must not download a transcript")
 		_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[],"pageInfo":{"hasNextPage":false}},"calendarEvents":{"edges":[]},"calendarEventParticipants":{"edges":[],"pageInfo":{"hasNextPage":false}}}}`)
 	}))
 	defer srv.Close()
@@ -404,6 +405,9 @@ func TestClientStepsPastSingleOversizedRecording(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[{"node":{"id":"huge","updatedAt":"2026-09-01T10:00:00Z"}}],"pageInfo":{"hasNextPage":true,"endCursor":"after-huge"}}}}`)
 			return
 		}
+		if request.Variables["after"] == nil {
+			assert.Equal(map[string]any{"id": map[string]any{"eq": "huge"}}, request.Variables["filter"])
+		}
 		chunk := strings.Repeat(" ", 1<<20)
 		for range 65 {
 			if _, err := fmt.Fprint(w, chunk); err != nil {
@@ -421,4 +425,44 @@ func TestClientStepsPastSingleOversizedRecording(t *testing.T) {
 	assert.Equal(Recording{ID: "huge", UpdatedAt: "2026-09-01T10:00:00Z", TooLarge: true}, page.Records[0])
 	assert.True(page.HasMore)
 	assert.Equal("after-huge", page.NextCursor)
+}
+
+// The recording that overflowed can change before the ID lookup, so the next
+// recording is read by itself and kept when it fits.
+func TestClientKeepsNextRecordingThatFitsAfterOverflow(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if !assert.NoError(json.UnmarshalRead(r.Body, &request)) {
+			return
+		}
+		switch {
+		case strings.Contains(request.Query, "RecordingIDs"):
+			_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[{"node":{"id":"healthy","updatedAt":"2026-09-01T10:00:00Z"}}],"pageInfo":{"hasNextPage":false,"endCursor":"after-healthy"}}}}`)
+		case request.Variables["after"] == nil:
+			assert.Equal(map[string]any{"id": map[string]any{"eq": "healthy"}}, request.Variables["filter"])
+			_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[{"node":{"id":"healthy","updatedAt":"2026-09-01T10:00:00Z","summary":{"markdown":"Fits"}}}],"pageInfo":{"hasNextPage":false}}}}`)
+		default:
+			chunk := strings.Repeat(" ", 1<<20)
+			for range 65 {
+				if _, err := fmt.Fprint(w, chunk); err != nil {
+					return
+				}
+			}
+		}
+	}))
+	defer srv.Close()
+	client, err := NewClient(srv.URL, "refetch-example-key")
+	require.NoError(err)
+	client.limiter = rate.NewLimiter(rate.Inf, 1)
+	page, err := client.ListRecordings(t.Context(), epoch, "catalog-cursor", 1)
+	require.NoError(err)
+	require.Len(page.Records, 1)
+	assert.False(page.Records[0].TooLarge)
+	assert.Contains(string(page.Records[0].Raw), "Fits")
+	assert.Equal("after-healthy", page.NextCursor)
 }
