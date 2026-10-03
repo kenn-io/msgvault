@@ -69,7 +69,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 2: Optionally configure remote NAS
-	remoteURL, remoteAPIKey, err := setupRemoteServer(reader, secretsPath, cfg)
+	remoteURL, remoteAPIKey, replacingRemote, err := setupRemoteServer(reader, secretsPath, cfg)
 	if err != nil {
 		return err
 	}
@@ -79,12 +79,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		cfg.OAuth.ClientSecrets = secretsPath
 	}
 	if remoteURL != "" {
-		cfg.Remote.URL = remoteURL
-		cfg.Remote.APIKey = remoteAPIKey
-		// Auto-set for HTTP: target is Tailscale/LAN, not public internet.
-		if strings.HasPrefix(remoteURL, "http://") {
-			cfg.Remote.AllowInsecure = true
-		}
+		applySetupRemoteConfig(cfg, remoteURL, remoteAPIKey, replacingRemote)
 	}
 
 	// Only save if we configured something
@@ -202,7 +197,7 @@ func setupOAuthSecrets(reader *bufio.Reader, cfg *config.Config) (string, error)
 	return path, nil
 }
 
-func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *config.Config) (string, string, error) {
+func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *config.Config) (string, string, bool, error) {
 	fmt.Println()
 	fmt.Println("Step 2: Remote NAS Server (Optional)")
 	fmt.Println("-------------------------------------")
@@ -213,13 +208,13 @@ func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *confi
 	if cfg.Remote.URL != "" {
 		fmt.Printf("Remote server already configured: %s\n", cfg.Remote.URL)
 		if promptYesNo(reader, "Keep existing configuration?") {
-			return cfg.Remote.URL, cfg.Remote.APIKey, nil
+			return cfg.Remote.URL, cfg.Remote.APIKey, false, nil
 		}
 	}
 
 	if !promptYesNo(reader, "Configure remote NAS server?") {
 		fmt.Println("Skipping remote server configuration.")
-		return "", "", nil
+		return "", "", false, nil
 	}
 
 	// Get hostname/IP
@@ -229,7 +224,7 @@ func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *confi
 
 	if host == "" {
 		fmt.Println("Skipping remote server configuration.")
-		return "", "", nil
+		return "", "", false, nil
 	}
 
 	// Get port
@@ -254,7 +249,7 @@ func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *confi
 	// This is an interactive CLI session, not a logged pipeline.
 	apiKey, err := generateAPIKey()
 	if err != nil {
-		return "", "", fmt.Errorf("generate API key: %w", err)
+		return "", "", false, fmt.Errorf("generate API key: %w", err)
 	}
 
 	// codeql[go/clear-text-logging] -- setup is an interactive CLI flow and
@@ -284,7 +279,21 @@ func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string, cfg *confi
 		fmt.Println("  3. SSH to NAS and run: docker-compose up -d")
 	}
 
-	return url, apiKey, nil
+	return url, apiKey, true, nil
+}
+
+func applySetupRemoteConfig(cfg *config.Config, remoteURL, remoteAPIKey string, replacing bool) {
+	if replacing {
+		cfg.Remote.APIKeyFile = ""
+		cfg.Remote.SigningKeyID = ""
+		cfg.Remote.SigningSecretFile = ""
+	}
+	cfg.Remote.URL = remoteURL
+	cfg.Remote.APIKey = remoteAPIKey
+	// Auto-set for HTTP: target is Tailscale/LAN, not public internet.
+	if strings.HasPrefix(remoteURL, "http://") {
+		cfg.Remote.AllowInsecure = true
+	}
 }
 
 func generateAPIKey() (string, error) {

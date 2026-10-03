@@ -259,6 +259,15 @@ is required. Three API-key authentication methods are supported:
 
 If no `api_key` is configured, authentication is not required regardless of bind address. The separate `allow_insecure` / security validation prevents starting without an API key on non-loopback addresses.
 
+### Restricted signed ingress
+
+An optional second native listener admits dedicated API credentials with a fixed
+RFC 9421 HMAC-SHA256 signature. It requires signing, applies explicit operation
+grants, and excludes the UI, provider credentials, and administrative routes.
+The main listener retains its authentication defaults and rejects signing claims and dedicated ingress
+credentials. See [signed remote CLI access](guides/remote-deployment.md#signed-remote-cli-access)
+for the allowed operation matrix, canonical proxy target, limits, and recovery.
+
 ## Historical import jobs {#historical-import-jobs}
 
 Start a Gmail or IMAP history backfill and poll its progress without keeping an

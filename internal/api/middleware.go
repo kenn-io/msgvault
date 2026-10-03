@@ -242,6 +242,17 @@ func (s *Server) requestAuthentication(r *http.Request) requestAuthentication {
 }
 
 func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication {
+	if restrictedRequest(r) {
+		return requestAuthentication{Mode: AuthModeAPIKey}
+	}
+	for header := range r.Header {
+		if strings.EqualFold(header, "Signature") || strings.EqualFold(header, "Signature-Input") {
+			return requestAuthentication{Mode: AuthModeRequired}
+		}
+	}
+	if s.restrictedCredentialPresented(r) {
+		return requestAuthentication{Mode: AuthModeRequired}
+	}
 	// Agent token takes priority: if the header is present, the request must
 	// authenticate as a delegated caller; we never fall through to other modes.
 	if agentVal, agentPresent := agentTokenHeaderValue(r); agentPresent {

@@ -216,18 +216,19 @@ func (a *AnalyticsConfig) Validate() error {
 
 // ServerConfig holds HTTP API server configuration.
 type ServerConfig struct {
-	APIPort           int           `toml:"api_port"`            // HTTP server port; 0 (the default) auto-selects an open port at daemon startup and clients discover it via the daemon runtime record. Set api_port explicitly for a stable port (e.g. remote/NAS deployments).
-	BindAddr          string        `toml:"bind_addr"`           // Bind address (default: 127.0.0.1)
-	APIKey            string        `toml:"api_key"`             // API authentication key
-	AllowInsecure     bool          `toml:"allow_insecure"`      // Allow unauthenticated non-loopback access
-	AgentAccess       bool          `toml:"agent_access"`        // Enable restricted agent grant tokens (requires api_key)
-	CORSOrigins       []string      `toml:"cors_origins"`        // Allowed CORS origins (empty = disabled)
-	CORSCredentials   bool          `toml:"cors_credentials"`    // Allow credentials in CORS
-	CORSMaxAge        int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
-	TrustedProxies    []string      `toml:"trusted_proxies"`     // Reverse proxy IP/CIDR allowlist for forwarded scheme and host
-	DaemonIdleTimeout time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
-	DaemonAutoRestart string        `toml:"daemon_auto_restart"` // never, newer, or always
-	DaemonAutoStart   *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
+	RemoteIngress     RemoteIngressConfig `toml:"remote_ingress,omitzero"`
+	APIPort           int                 `toml:"api_port"`            // HTTP server port; 0 (the default) auto-selects an open port at daemon startup and clients discover it via the daemon runtime record. Set api_port explicitly for a stable port (e.g. remote/NAS deployments).
+	BindAddr          string              `toml:"bind_addr"`           // Bind address (default: 127.0.0.1)
+	APIKey            string              `toml:"api_key"`             // API authentication key
+	AllowInsecure     bool                `toml:"allow_insecure"`      // Allow unauthenticated non-loopback access
+	AgentAccess       bool                `toml:"agent_access"`        // Enable restricted agent grant tokens (requires api_key)
+	CORSOrigins       []string            `toml:"cors_origins"`        // Allowed CORS origins (empty = disabled)
+	CORSCredentials   bool                `toml:"cors_credentials"`    // Allow credentials in CORS
+	CORSMaxAge        int                 `toml:"cors_max_age"`        // Preflight cache duration in seconds
+	TrustedProxies    []string            `toml:"trusted_proxies"`     // Reverse proxy IP/CIDR allowlist for forwarded scheme and host
+	DaemonIdleTimeout time.Duration       `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
+	DaemonAutoRestart string              `toml:"daemon_auto_restart"` // never, newer, or always
+	DaemonAutoStart   *bool               `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
 }
 
 func (s *ServerConfig) ApplyDefaults() {
@@ -271,7 +272,7 @@ func (s *ServerConfig) Validate() error {
 			return fmt.Errorf("invalid [server] trusted_proxies entry %q: must be an IP address or CIDR", entry)
 		}
 	}
-	return nil
+	return s.RemoteIngress.Validate()
 }
 
 // IsLoopback returns true if the bind address is a loopback address.
@@ -364,9 +365,13 @@ type SynctechSMSSource struct {
 // RemoteConfig holds configuration for a remote msgvault server.
 // Used by export-token to remember the NAS/server destination.
 type RemoteConfig struct {
-	URL           string `toml:"url"`            // Remote server URL (e.g., http://nas:8080)
-	APIKey        string `toml:"api_key"`        // API key for authentication
-	AllowInsecure bool   `toml:"allow_insecure"` // Allow HTTP (insecure) for trusted networks
+	APIKeyFile        string `toml:"api_key_file,omitzero"`
+	SigningKeyID      string `toml:"signing_key_id,omitzero"`
+	SigningSecretFile string `toml:"signing_secret_file,omitzero"`
+	MaxRequestBytes   int64  `toml:"max_request_bytes,omitzero"`
+	URL               string `toml:"url"`            // Remote server URL (e.g., http://nas:8080)
+	APIKey            string `toml:"api_key"`        // API key for authentication
+	AllowInsecure     bool   `toml:"allow_insecure"` // Allow HTTP (insecure) for trusted networks
 }
 
 // IdentityConfig holds the user's curated identity addresses.
@@ -1008,6 +1013,11 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 			app.ServiceAccountKey = resolveRelative(app.ServiceAccountKey, cfg.HomeDir)
 			cfg.OAuth.Apps[name] = app
 		}
+	}
+
+	cfg.resolveSigningPaths(explicit)
+	if err := cfg.Remote.Validate(); err != nil {
+		return nil, err
 	}
 
 	// Re-apply numeric defaults over any zero-valued vector fields that

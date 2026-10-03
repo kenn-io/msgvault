@@ -222,7 +222,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 		return true
 	}
 	for c := cmd; c != nil; c = c.Parent() {
-		if c == skillsCmd {
+		if c == skillsCmd || c.Name() == "signing" {
 			return true
 		}
 	}

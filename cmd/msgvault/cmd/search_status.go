@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
 // Vars rather than consts so tests can shorten them. The quiet window keeps
@@ -29,12 +31,12 @@ func startSearchStatus(ctx context.Context, prefix string, info HTTPStoreInfo) f
 	line := &searchStatusLine{
 		out:    os.Stderr,
 		prefix: prefix,
-		fetchOp: daemonOperationFetcher(info.URL, httpStoreAPIKey(info, func() *config.Config {
+		fetchOp: configuredDaemonOperationFetcher(info, func() *config.Config {
 			if state := invocationFromContext(ctx); state != nil {
 				return state.cfg
 			}
 			return nil
-		}())),
+		}()),
 		tty: isatty.IsTerminal(os.Stderr.Fd()) ||
 			isatty.IsCygwinTerminal(os.Stderr.Fd()),
 		start: time.Now(),
@@ -141,4 +143,38 @@ func httpStoreAPIKey(info HTTPStoreInfo, cfg *config.Config) string {
 		return cfg.Remote.APIKey
 	}
 	return cfg.Server.APIKey
+}
+
+func configuredDaemonOperationFetcher(info HTTPStoreInfo, cfg *config.Config) func(context.Context) *api.OperationHealth {
+	if info.Kind != HTTPStoreConfiguredRemote || cfg == nil {
+		return daemonOperationFetcher(info.URL, httpStoreAPIKey(info, cfg))
+	}
+	remoteCfg, err := configuredRemoteClientConfig(cfg)
+	if err != nil {
+		return func(context.Context) *api.OperationHealth { return nil }
+	}
+	if !cfg.Remote.SigningEnabled() {
+		return daemonOperationFetcher(info.URL, remoteCfg.APIKey)
+	}
+	remoteCfg.Timeout = 2 * time.Second
+	client, err := daemonclient.New(remoteCfg)
+	if err != nil {
+		return func(context.Context) *api.OperationHealth { return nil }
+	}
+	typed, err := client.GeneratedClient()
+	if err != nil {
+		return func(context.Context) *api.OperationHealth { return nil }
+	}
+	return func(ctx context.Context) *api.OperationHealth {
+		response, err := typed.GetHealthWithResponse(ctx)
+		if err != nil || response.StatusCode != http.StatusOK || response.JSON200 == nil || response.JSON200.Operation == nil {
+			return nil
+		}
+		operation := response.JSON200.Operation
+		health := &api.OperationHealth{Busy: operation.Busy, StartedAt: operation.StartedAt}
+		if operation.Label != nil {
+			health.Label = *operation.Label
+		}
+		return health
+	}
 }

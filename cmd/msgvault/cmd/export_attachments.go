@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -41,7 +42,7 @@ func runExportAttachments(cmd *cobra.Command, args []string) error {
 }
 
 type cliAttachmentClient interface {
-	GetCLIAttachment(ctx context.Context, contentHash string) ([]byte, error)
+	OpenCLIAttachment(ctx context.Context, contentHash string) (io.ReadCloser, error)
 }
 
 func runExportAttachmentsHTTP(cmd *cobra.Command, idStr string) error {
@@ -136,12 +137,12 @@ func exportAttachmentsFromHTTP(
 		}
 
 		filename := resolveExportAttachmentFilename(att.Filename, att.ContentHash, usedNames)
-		data, err := client.GetCLIAttachment(ctx, att.ContentHash)
+		body, err := client.OpenCLIAttachment(ctx, att.ContentHash)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", att.Filename, err))
 			continue
 		}
-		exported, err := writeExportAttachmentBytes(outputDir, filename, data)
+		exported, err := writeExportAttachmentStream(outputDir, filename, body)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", att.Filename, err))
 			continue
@@ -171,29 +172,33 @@ func resolveExportAttachmentFilename(original, contentHash string, usedNames map
 	return filename
 }
 
-func writeExportAttachmentBytes(outputDir, filename string, data []byte) (export.ExportedFile, error) {
+func writeExportAttachmentStream(outputDir, filename string, body io.ReadCloser) (export.ExportedFile, error) {
+	if body == nil {
+		return export.ExportedFile{}, errors.New("attachment response body is nil")
+	}
 	destPath := filepath.Join(outputDir, filename)
 	dst, finalPath, err := export.CreateExclusiveFile(destPath, 0600)
 	if err != nil {
-		return export.ExportedFile{}, fmt.Errorf("create output file: %w", err)
+		return export.ExportedFile{}, errors.Join(
+			fmt.Errorf("create output file: %w", err),
+			wrapAttachmentExportError("verify downloaded attachment", body.Close()),
+		)
 	}
 
-	n, writeErr := dst.Write(data)
-	closeErr := dst.Close()
+	n, copyErr := io.Copy(dst, body)
+	fileCloseErr := dst.Close()
+	bodyCloseErr := body.Close()
+	writeErr := errors.Join(
+		wrapAttachmentExportError("write", copyErr),
+		wrapAttachmentExportError("close file", fileCloseErr),
+		wrapAttachmentExportError("verify downloaded attachment", bodyCloseErr),
+	)
 	if writeErr != nil {
 		_ = os.Remove(finalPath)
-		return export.ExportedFile{}, fmt.Errorf("write: %w", writeErr)
-	}
-	if closeErr != nil {
-		_ = os.Remove(finalPath)
-		return export.ExportedFile{}, fmt.Errorf("close: %w", closeErr)
-	}
-	if n != len(data) {
-		_ = os.Remove(finalPath)
-		return export.ExportedFile{}, errors.New("write: short write")
+		return export.ExportedFile{}, writeErr
 	}
 
-	return export.ExportedFile{Path: finalPath, Size: int64(n)}, nil
+	return export.ExportedFile{Path: finalPath, Size: n}, nil
 }
 
 func printExportAttachmentsResult(result export.DirExportResult, attachmentCount int, outputDir string) error {

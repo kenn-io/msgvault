@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-22"
+last_edited: "2026-10-03"
 title: Remote Deployment
 description: Run msgvault in Docker on a remote host and provision it from a machine with a browser.
 ---
@@ -16,6 +16,245 @@ The flow is built on three capabilities:
 
 !!! note "Version Requirement"
     Remote deployment requires msgvault with NAS/Docker support (`setup`, `export-token`, and the token upload API). Check that your installed version includes these commands before proceeding.
+
+## Signed remote CLI access
+
+Native request signing is unreleased; use a release that includes it
+before exposing this listener. The daemon keeps the archive and provider
+credentials. A normal CLI uses HTTPS and dedicated API and signing credentials.
+Responses and exported attachments still reveal archive content to that client.
+Signing does not protect data from a compromised client holding both credentials.
+
+The main API retains its private deployment defaults and rejects signing claims
+and dedicated ingress credentials. The opt-in restricted
+listener always requires a valid native `X-Api-Key` and request signature. It
+never enables a public route, changes a firewall, or configures a reverse proxy.
+The signing configuration does not grant account isolation: allowed readers can
+query the shared archive, including attachments and derived metadata.
+
+### Prepare credentials and replay state
+
+Create a dedicated API credential and a separate signing secret on the daemon
+host. Store both in private regular files. The signing secret is base64 encoding
+of exactly 64 random bytes. The API credential must contain 32 to 512 visible
+ASCII characters. Credential files must be owned by the daemon user
+and readable only by that user. Do not reuse the main API credential. Deliver
+the two client files through an existing secure channel; do not put their values
+in command arguments, repository files, or logs.
+
+Initialize the replay state once, before enabling ingress:
+
+```sh
+msgvault signing init-state --file /srv/msgvault/signing-replay.json
+```
+
+This command creates an exclusive, private state file and does not open an
+archive. Starting a verifier requires an existing valid file; it never silently
+creates or replaces missing state. Keep the state and its `.lock` file on a
+local filesystem with reliable atomic rename and fsync semantics. Its parent
+directory must be owned by the daemon user and deny writes by other users.
+On Windows, use an owner-only DACL for the files and state directory.
+
+### Configure the daemon
+
+```toml
+[server.remote_ingress]
+enabled = true
+listen = "127.0.0.1:8081"
+external_url = "https://archive.example.test/msgvault"
+trusted_proxies = ["127.0.0.1", "::1"]
+replay_state_file = "/srv/msgvault/signing-replay.json"
+max_request_bytes = 16777216
+max_concurrent = 4
+
+[[server.remote_ingress.clients]]
+client_id = "archive-reader"
+api_key_file = "/srv/msgvault/reader-api-key"
+grants = []
+
+[[server.remote_ingress.clients.keys]]
+key_id = "reader-1"
+secret_file = "/srv/msgvault/reader-signing-secret"
+```
+
+The listener defaults to loopback. An explicitly selected bind address must be
+loopback or private. Only connections from `trusted_proxies` can reach its
+verified route surface. Configure the existing HTTPS proxy to strip exactly
+`/msgvault` and preserve the escaped remainder, raw query, covered headers and
+body bytes. Forwarded host, scheme and prefix headers never select the signed
+authority or target. Keep the main API private and route only this listener.
+
+The external URL must use HTTPS, contain no user information, query or fragment,
+and name exactly the public origin and prefix. The prefix must agree with the
+client configuration. Do not normalize ambiguous paths, decompress request
+bodies, inject covered headers, or follow redirects at the proxy.
+
+### Configure the normal CLI
+
+```toml
+[remote]
+url = "https://archive.example.test/msgvault"
+api_key_file = "/home/example/.config/msgvault/reader-api-key"
+signing_key_id = "reader-1"
+signing_secret_file = "/home/example/.config/msgvault/reader-signing-secret"
+max_request_bytes = 16777216
+```
+
+The existing remote command selection applies. `--local` explicitly selects the
+local daemon. Unsupported operations fail at the restricted listener; they never
+fall back to a local archive. A signed client requires the complete signing
+configuration and a native API key. It pins credentials to this HTTPS origin
+and prefix, refuses redirects and signs every retry with a fresh nonce. There is
+no discovery negotiation or unsigned retry fallback. Unsigned private clients
+continue to use the existing `api_key` configuration.
+If a connection loses its response, the client returns an error rather than
+letting the HTTP transport resend the same signed attempt. Check the result of
+a mutation before retrying it.
+
+### Allowed operations
+
+| CLI or API operation | Restricted ingress default |
+| --- | --- |
+| Schema and operation status (`GET /api/v1/health`) | Allowed |
+| `stats`, `list-accounts`, `cache-stats`, FTS `search` | Allowed |
+| `show-message`, raw/original message reads, thread export | Allowed with bounded reads |
+| `export-attachment`, attachment reads used by exports | Allowed with size and integrity checks |
+| `collection list/show`, `identity list` | Allowed |
+| `collection create/add/remove/delete` | Requires `collections-write` |
+| SQL queries, vector/hybrid routes, TUI browse/mutations | Denied |
+| Sync, verification repair, imports, cache/FTS rebuild, uploads | Denied |
+| OAuth/provider setup, tokens, administrator routes, UI, OpenAPI, pprof | Denied |
+| Local files, configuration and signing state administration | Local only |
+
+`collections-write` changes collection metadata and membership; it never permits
+provider sends/deletes, archive deletion, arbitrary CLI execution or filesystem
+access. Add it deliberately to one client's `grants`, then restart the daemon.
+This version has no finer account or per-message access policy. Keep different
+owners' archives and credentials separate.
+
+Every native daemonclient transport is signed: typed generated requests, direct
+HTTP, streaming/download requests and busy-operation retries. The restricted
+listener intentionally excludes streaming mutation and upload endpoints. The
+main private API retains its existing authentication and rejects signing claims.
+Point signed clients at the restricted listener.
+Provider configuration remains local administration. Run those commands on the
+daemon host; this ingress provides no remote provider setup. `export-token` is
+unavailable when request signing is configured.
+
+### Limits and failure behavior
+
+The restricted listener bounds headers at 16 KiB, request targets at 8 KiB and
+request bodies at 16 MiB by default (configurable up to 64 MiB). Bodies are hashed
+into private temporary files; large files are not buffered in memory. Its default
+concurrency is four requests (maximum 32). A global and per-client budget allows
+10 requests per second with a burst of 20, independent of caller-supplied IP
+headers. Headers have a five-second read budget; body reads have 30 seconds.
+Other requests and response writes have a five-minute budget. Attachment
+streams have a five-minute first-response and write-idle budget, refreshed as
+data is written; their total duration is uncapped. Reverse proxies should
+enforce matching connection and header limits.
+
+Restricted search reports existing or unconfirmed index state without starting
+backfill. The server owner runs index maintenance privately. Search returns at
+most 500 results per request. Thread reads return at most 500
+members; an entire-thread export exceeding this limit fails without truncation.
+Message details, raw MIME and original MIME are limited to 16 MiB before database
+allocation or decompression. Attachment downloads stream up to 1 GiB. The CLI's
+`export-attachments` and binary or `--base64` output from `export-attachment`
+use that stream. The JSON mode of `export-attachment` buffers the attachment and
+is limited to 32 MiB in signed mode. Other buffered signed-client responses are
+bounded at 32 MiB, and error bodies at 64 KiB.
+Exceeding a limit returns an error; a truncated attachment never passes its
+existing content-hash verification. Cancellation releases request resources and
+removes temporary body files.
+
+Missing, invalid, expired, future-dated, revoked or replayed signatures fail with
+401. A valid client calling an ungranted route receives 403. Size limits return
+413 or 431; saturated concurrency/rate budgets return 429. Startup quarantine or
+failed replay persistence returns 503. Errors never disclose credential values
+or message bodies.
+For an explicit 429 rejection, a signed native request waits one second and
+retries at most twice with fresh signatures. Nonempty bodies must have a native
+rewind function; otherwise the client returns the rejection. Cancellation stops
+the wait. Unsigned clients keep their existing retry behavior.
+
+### Rotation, revocation and recovery
+
+A client can have one or two signing keys. Each key has a globally unique
+`key_id`; `not_before` and `not_after` are Unix seconds. For a rotation, give the
+old key a finite expiry, give the new key an activation time and limit their
+overlap to 24 hours. Restart the daemon, deliver the new secret and key ID, then
+remove the old key after clients have switched. Requests must expire within the
+accepted key's validity window. Remove a client or key and restart to revoke it;
+there is no live reload or revocation discovery.
+
+All listeners in one process use one verifier. Its bounded nonce map admits a
+nonce atomically, and fsyncs the maximum admitted expiry before executing a
+request. A restart enforces both a 36-second monotonic quarantine and wall time
+past the persisted expiry. A backward or frozen wall clock fences verification
+until time passes the retained expiry and resumes progressing. Persistence errors
+poison the verifier until recovery. The process
+holds an exclusive file lock; a second verifier using that state cannot start.
+Do not restore an older replay-state snapshot with the same accepted keys. Use
+separate signing keys for active replicas with different state files.
+
+If state is missing or corrupt, stop ingress, rotate every accepted signing key,
+archive the broken state and initialize a new file explicitly. Reinitialize
+state only after revoking the old keys. Clients may need to wait through startup
+quarantine before requests succeed. Signing cannot make an old state backup safe
+under reused credentials.
+
+### Fixed wire profile
+
+The profile uses RFC 9421 label `sig1`, HMAC-SHA256 and the RFC 9530 `sha-256`
+Content-Digest, including for an empty body. It covers these components in order:
+`@method`, `@target-uri`, `content-digest`, `content-type`, `x-api-key`. The required
+parameters are `created`, `expires`, `nonce`, `alg="hmac-sha256"`, and `keyid`.
+The client emits them in that order; the verifier accepts canonical transmitted
+order with exactly those five parameters. Creation and expiry are integer Unix
+seconds, with exactly a 30-second lifetime and at most five seconds of future
+clock skew. A request is
+expired when its expiry is reached. Each attempt uses a cryptographically random
+24-byte base64url nonce. Key IDs are restricted ASCII Structured Field strings.
+
+The target includes the configured external origin and prefix, the exact escaped
+path and the raw query in its original order. Covered headers must appear exactly
+once. Trailers, content encodings and ambiguous escaped paths are rejected. The
+parser deliberately accepts only this fixed profile, rather than arbitrary
+RFC signature dictionaries or alternate component orders. Signature parameters
+are authenticated in their transmitted order. `Content-Type` is always present;
+the client supplies `application/octet-stream` when absent.
+
+For example, an empty synthetic health request has this signature base (lines
+are separated by LF, with no final LF):
+
+```text
+"@method": GET
+"@target-uri": https://archive.example.test/msgvault/api/v1/health
+"content-digest": sha-256=:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=:
+"content-type": application/octet-stream
+"x-api-key": example-key-012345678901234567890123
+"@signature-params": ("@method" "@target-uri" "content-digest" "content-type" "x-api-key");created=1791000000;expires=1791000030;nonce="abcdefghijklmnopqrstuvwx01234567";alg="hmac-sha256";keyid="reader-1"
+```
+
+`Signature-Input` contains `sig1=` followed by that final parameter value.
+`Signature` contains `sig1=:` followed by the base64 HMAC of these bytes and a
+closing `:`. The example time, nonce, and API credential are illustrative;
+provision fresh random credentials and let the native CLI generate live requests.
+
+See [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) and
+[RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) for the signature-base and
+digest formats. The native implementation has no shared signing service.
+
+### Before publishing ingress
+
+Use released client and server versions that include tested native signing.
+Route HTTPS only to the restricted listener. Check the final proxy's prefix and
+query handling, unsigned rejection, signed read access and signed denial of UI,
+provider and administrative routes. Provision dedicated client credentials
+through secure delivery and keep the main API private. Keep a rollback that
+removes the public route. Starting msgvault performs none of these publication
+steps.
 
 ## Setup Flow Overview
 

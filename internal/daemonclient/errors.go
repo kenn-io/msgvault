@@ -96,7 +96,10 @@ func handleRawErrorResponse(
 	resp *http.Response,
 	decodeErrorBody func(status int, body []byte) error,
 ) error {
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (64<<10)+1))
+	if len(body) > 64<<10 {
+		return fmt.Errorf("API error (%d): error response exceeds 64 KiB", resp.StatusCode)
+	}
 	if err != nil {
 		return fmt.Errorf("API error (%d): could not read response body: %w", resp.StatusCode, err)
 	}

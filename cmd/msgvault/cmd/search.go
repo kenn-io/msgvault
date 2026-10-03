@@ -207,6 +207,9 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 		// Pre-0.18 daemons built the index synchronously inside the request.
 		fmt.Fprintf(os.Stderr, "Built search index (%d messages indexed).\n", resp.IndexedMessages)
 	}
+	if resp.IndexState == "checking" && info.Kind == HTTPStoreConfiguredRemote && state.cfg != nil && state.cfg.Remote.SigningEnabled() {
+		fmt.Fprintln(os.Stderr, "Note: search index completeness is not confirmed; results may be incomplete. Ask the server owner to check its index.")
+	}
 	if resp.IndexState == "building" {
 		fmt.Fprintln(os.Stderr,
 			"Note: the search index is rebuilding or awaiting a rebuild in the background; results may be incomplete until it finishes.")

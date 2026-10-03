@@ -12,6 +12,7 @@ import (
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/requestsign"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 	"go.opentelemetry.io/otel/propagation"
@@ -31,6 +32,9 @@ const (
 
 // Config holds configuration for creating a daemon HTTP client.
 type Config struct {
+	SigningKeyID     string
+	SigningSecret    []byte
+	MaxRequestBytes  int64
 	URL              string
 	APIKey           string
 	AgentToken       string
@@ -53,6 +57,7 @@ type Client struct {
 	rootContext      context.Context
 	requestMode      RequestMode
 	localDaemonToken string
+	signed           bool
 }
 
 // SetBusyNotifier registers a callback invoked when the daemon reports that
@@ -141,6 +146,20 @@ func New(cfg Config) (*Client, error) {
 	}
 	httpClient.Timeout = timeout
 
+	if cfg.SigningKeyID != "" || len(cfg.SigningSecret) != 0 {
+		if cfg.APIKey == "" || cfg.AgentToken != "" || cfg.LocalDaemonToken != "" {
+			return nil, errors.New("request signing requires a dedicated native API key")
+		}
+		transport, err := requestsign.NewTransport(cfg.URL, cfg.SigningKeyID, cfg.SigningSecret, cfg.MaxRequestBytes, httpClient.Transport)
+		if err != nil {
+			return nil, err
+		}
+		httpClient.Transport = transport
+		httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("signed client does not follow redirects")
+		}
+	}
+
 	// Delegated callers must not follow redirects: a redirect to a login page
 	// would silently drop the agent token header, making the error opaque.
 	if cfg.AgentToken != "" {
@@ -157,6 +176,7 @@ func New(cfg Config) (*Client, error) {
 		rootContext:      rootContext,
 		requestMode:      cfg.RequestMode,
 		localDaemonToken: cfg.LocalDaemonToken,
+		signed:           cfg.SigningKeyID != "" || len(cfg.SigningSecret) != 0,
 	}
 	if _, err := c.GeneratedClient(); err != nil {
 		return nil, err
@@ -200,8 +220,9 @@ func (c *Client) GeneratedClient() (*apiclient.Client, error) {
 	apiClient, err := apiclient.New(
 		c.baseURL,
 		runtime.WithHTTPClient(httpDoer{
-			client:      c.httpClient,
-			rootContext: c.requestContext(),
+			client:          c.httpClient,
+			rootContext:     c.requestContext(),
+			boundedResponse: c.signed,
 		}),
 		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.agentToken, c.requestMode, c.localDaemonToken)),
 	)
@@ -263,7 +284,7 @@ func (c *Client) doGeneratedRequestWithHTTPClient(
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	resp, err := doRequestWithRootContext(c.requestContext(), httpClient, req)
+	resp, err := doRequestWithRateRetry(c.requestContext(), httpClient, req, c.signed)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -280,8 +301,9 @@ func httpClientWithoutTimeout(client *http.Client) *http.Client {
 }
 
 type httpDoer struct {
-	client      *http.Client
-	rootContext context.Context
+	client          *http.Client
+	rootContext     context.Context
+	boundedResponse bool
 }
 
 func (d httpDoer) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
@@ -292,7 +314,61 @@ func (d httpDoer) Do(ctx context.Context, req *http.Request) (*http.Response, er
 	if ctx != nil {
 		req = req.WithContext(ctx)
 	}
-	return doRequestWithRootContext(d.rootContext, client, req)
+	resp, err := doRequestWithRateRetry(d.rootContext, client, req, d.boundedResponse)
+	if err != nil {
+		return nil, err
+	}
+	if d.boundedResponse {
+		limit := int64(32 << 20)
+		description := "32 MiB"
+		if resp.StatusCode >= 400 {
+			limit = 64 << 10
+			description = "64 KiB"
+		}
+		if resp.ContentLength > limit {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("remote response exceeds %s buffered limit", description)
+		}
+		resp.Body = &boundedResponseBody{ReadCloser: resp.Body, remaining: limit, description: description}
+	}
+	return resp, nil
+}
+
+// Restricted ingress rejects excess work before execution. Retry only those
+// explicit rejections, at most twice, through the signing transport. A body
+// without a native rewind function remains the caller's responsibility.
+func doRequestWithRateRetry(root context.Context, client *http.Client, req *http.Request, signed bool) (*http.Response, error) {
+	if root == nil {
+		root = context.Background()
+	}
+	getBody := req.GetBody
+	empty := req.Body == nil || req.Body == http.NoBody
+	for attempt := 0; ; attempt++ {
+		resp, err := doRequestWithRootContext(root, client, req)
+		if err != nil || !signed || resp.StatusCode != http.StatusTooManyRequests || attempt == 2 || !empty && getBody == nil {
+			return resp, err
+		}
+		_ = resp.Body.Close()
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-req.Context().Done():
+			timer.Stop()
+			return nil, req.Context().Err()
+		case <-root.Done():
+			timer.Stop()
+			return nil, root.Err()
+		case <-timer.C:
+		}
+		req = req.Clone(req.Context())
+		if empty {
+			req.Body = nil
+		} else {
+			req.Body, err = getBody()
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 }
 
 func doRequestWithRootContext(
@@ -396,4 +472,33 @@ func (c *Client) GetHealth(ctx context.Context) (*DaemonHealth, error) {
 		}
 	}
 	return health, nil
+}
+
+// boundedResponseBody reports overflow instead of treating a truncated response
+// as a successful EOF. Streaming attachment paths retain their native verifier.
+type boundedResponseBody struct {
+	io.ReadCloser
+
+	remaining   int64
+	description string
+}
+
+func (b *boundedResponseBody) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if b.remaining == 0 {
+		var probe [1]byte
+		n, err := b.ReadCloser.Read(probe[:])
+		if n > 0 {
+			return 0, fmt.Errorf("remote response exceeds %s buffered limit", b.description)
+		}
+		return 0, err
+	}
+	if int64(len(p)) > b.remaining {
+		p = p[:b.remaining]
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.remaining -= int64(n)
+	return n, err
 }

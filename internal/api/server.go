@@ -249,6 +249,8 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
+	remoteIngress   *restrictedIngress
+	remoteIngressMu sync.Mutex
 	// statsSnapshots and accountCountSnapshots bound /stats and
 	// /cli/accounts latency under load (see snapshotCache). Background
 	// computations run on importContext, the server-lifetime context that
@@ -856,6 +858,12 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 		return err
 	}
 
+	if err := s.startRestrictedListener(); err != nil {
+		_ = ln.Close()
+		s.signalStarted(err)
+		return err
+	}
+
 	if s.cfg.Server.APIKey == "" {
 		s.logger.Warn("API server running without authentication — set [server] api_key in config.toml")
 	}
@@ -883,11 +891,15 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 	s.signalStarted(nil)
 
 	s.logger.Info("starting API server", "addr", ln.Addr().String())
-	return server.Serve(ln)
+	err := server.Serve(ln)
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return errors.Join(err, s.closeRestrictedIngress(cleanupCtx))
 }
 
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
+	remoteErr := s.closeRestrictedIngress(ctx)
 	s.importMu.Lock()
 	s.importsClosed = true
 	if s.cancelImports != nil {
@@ -927,10 +939,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	server := s.server
 	s.serverMu.RUnlock()
 	if server == nil {
-		return importJobsErr
+		return errors.Join(importJobsErr, remoteErr)
 	}
 	s.logger.Info("shutting down API server")
-	return errors.Join(importJobsErr, server.Shutdown(ctx))
+	return errors.Join(importJobsErr, remoteErr, server.Shutdown(ctx))
 }
 
 // Router returns the HTTP router for testing.
@@ -1127,6 +1139,10 @@ func serveWithProtectiveRequestDeadline(
 
 func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if restrictedRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if r.Method == http.MethodPost &&
 			r.URL.Path == meetingImportEndpointPath &&
 			s.apiRequestAuthorized(r) {
