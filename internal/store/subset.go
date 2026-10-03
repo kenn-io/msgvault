@@ -837,6 +837,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy reactions: %w", err)
 	}
+	if present, err := sourceTableExists(tx, "reaction_source_events"); err != nil {
+		return nil, fmt.Errorf("check reaction_source_events: %w", err)
+	} else if present {
+		if _, err := copyByName(tx, "reaction_source_events",
+			`reaction_id IN (SELECT id FROM reactions)`); err != nil {
+			return nil, fmt.Errorf("copy reaction_source_events: %w", err)
+		}
+	}
 
 	if _, err := copyByName(tx, "attachments",
 		`message_id IN (SELECT id FROM selected_messages)`); err != nil {
@@ -860,6 +868,12 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		WHERE message_id IN (SELECT id FROM selected_messages)
 		  AND label_id IN (SELECT id FROM labels)`); err != nil {
 		return nil, fmt.Errorf("copy message_labels: %w", err)
+	}
+
+	// A Matrix cursor can carry pending relation events from rooms outside
+	// the subset, so exports start Matrix sync over.
+	if _, err := tx.Exec(`UPDATE sources SET sync_cursor = NULL WHERE source_type = 'matrix'`); err != nil {
+		return nil, fmt.Errorf("clear Matrix subset cursors: %w", err)
 	}
 
 	if _, err := tx.Exec(

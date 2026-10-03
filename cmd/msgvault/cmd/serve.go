@@ -545,6 +545,25 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if cfg.Matrix.Enabled && cfg.Matrix.Schedule == "" {
+		logger.Warn("matrix is enabled but has no schedule — the daemon will not sync it",
+			"hint", `set a cron schedule (e.g. "*/30 * * * *") on the [matrix] entry`)
+	}
+	if cfg.Matrix.Enabled && cfg.Matrix.Schedule != "" {
+		if err := sched.AddJob(scheduler.Job{
+			Name: api.MatrixJobName, Schedule: cfg.Matrix.Schedule, Preemptible: true,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
+					return runConfiguredMatrixSync(ctx, s)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule matrix sync", "error", err)
+		} else {
+			logger.Info("scheduled matrix sync", "schedule", cfg.Matrix.Schedule)
+		}
+	}
+
 	if cfg.Slack.Enabled && cfg.Slack.Schedule == "" {
 		logger.Warn("slack is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
 			"hint", `set a cron schedule (e.g. "*/30 * * * *") on the [slack] entry`)

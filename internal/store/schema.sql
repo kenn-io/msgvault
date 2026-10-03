@@ -1563,6 +1563,17 @@ CREATE TABLE IF NOT EXISTS reactions (
     UNIQUE(message_id, participant_id, reaction_type, reaction_value)
 );
 
+-- Provider reaction event IDs, so a later redaction removes the right reaction.
+-- Two equivalent events share one visible reaction until both are redacted.
+CREATE TABLE IF NOT EXISTS reaction_source_events (
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    source_reaction_id TEXT NOT NULL,
+    reaction_id INTEGER NOT NULL REFERENCES reactions(id) ON DELETE CASCADE,
+    PRIMARY KEY(source_id, source_reaction_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reaction_source_events_reaction
+    ON reaction_source_events(reaction_id);
+
 -- ============================================================================
 -- ATTACHMENTS & MEDIA
 -- ============================================================================

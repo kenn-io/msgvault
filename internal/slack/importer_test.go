@@ -1442,7 +1442,7 @@ func TestCrashBeforeSweepStampsCoverage(t *testing.T) {
 	f.mu.Lock()
 	f.onHistory = func(channelID string) {
 		if channelID == "D01" {
-			_, _ = st.DB().Exec(`DROP TABLE reactions`)
+			_ = dropReactionsTable(st.DB())
 		}
 	}
 	f.mu.Unlock()
@@ -1658,7 +1658,7 @@ func TestFailedRunPersistsFinalState(t *testing.T) {
 	f.conv("D01").Msgs = append(f.conv("D01").Msgs, fakeMsg{TS: badMsg, User: "UALICE", Text: "plain"})
 	f.onHistory = func(channelID string) {
 		if channelID == "D01" {
-			_, _ = st.DB().Exec(`DROP TABLE reactions`)
+			_ = dropReactionsTable(st.DB())
 		}
 	}
 	f.mu.Unlock()
@@ -1741,7 +1741,7 @@ func TestStoreWriteFailureHoldsCursorAndResumes(t *testing.T) {
 	f.conv("C01").Msgs = append(f.conv("C01").Msgs, fakeMsg{TS: fresh, User: "UALICE", Text: "reacted",
 		Reactions: []map[string]any{{"name": "tada", "users": []string{"UME", "UBOB"}, "count": 2}}})
 	f.mu.Unlock()
-	_, err = st.DB().Exec(`DROP TABLE reactions`)
+	err = dropReactionsTable(st.DB())
 	require.NoError(err)
 
 	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
@@ -3169,7 +3169,7 @@ func TestTombstonePlaceholderRetriesIncompletePersistence(t *testing.T) {
 	// Break the final auxiliary snapshot write. The message row and body have
 	// already been upserted, but the tombstone is not complete and must remain
 	// eligible for retry.
-	_, err := st.DB().Exec(`DROP TABLE reactions`)
+	err := dropReactionsTable(st.DB())
 	require.NoError(err)
 	_, err = imp.Import(context.Background(), opts)
 	require.Error(err, "the auxiliary store failure must abort the run")
@@ -3591,4 +3591,14 @@ func TestMaintenanceRepairsRecentReplyUnderAncientRoot(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("recent reply (stealth edit)", readBody(),
 		"--maintenance must repair a recent reply even when its thread root predates the rescan window")
+}
+
+// dropReactionsTable breaks reaction writes on both backends; PostgreSQL
+// refuses to drop reactions while reaction_source_events references it.
+func dropReactionsTable(db *sql.DB) error {
+	if _, err := db.Exec(`DROP TABLE IF EXISTS reaction_source_events`); err != nil {
+		return err
+	}
+	_, err := db.Exec(`DROP TABLE reactions`)
+	return err
 }

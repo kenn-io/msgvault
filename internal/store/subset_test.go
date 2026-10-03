@@ -3120,6 +3120,13 @@ func TestCopySubset_ReactionParticipants(t *testing.T) {
 			 reaction_type, reaction_value)
 		VALUES (1, 1, 100, 'emoji', 'thumbsup')`)
 	require.NoError(err, "insert reaction")
+	_, err = db.Exec(`
+		INSERT INTO reaction_source_events (source_id, source_reaction_id, reaction_id)
+		SELECT source_id, '$reaction', 1 FROM messages WHERE id = 1`)
+	require.NoError(err, "insert reaction source event")
+	_, err = db.Exec(`UPDATE sources SET source_type = 'matrix', sync_cursor = '{"rooms":{"!private":{"deferred_relations":["secret"]}}}'
+		WHERE id = (SELECT source_id FROM messages WHERE id = 1)`)
+	require.NoError(err, "seed Matrix cursor")
 	_ = db.Close()
 
 	result, err := CopySubset(srcDB, dstDir, 5, false)
@@ -3144,6 +3151,14 @@ func TestCopySubset_ReactionParticipants(t *testing.T) {
 	require.NoError(dstDB.QueryRow(
 		"SELECT COUNT(*) FROM reactions",
 	).Scan(&rxnCount))
+	var sourceEventCount int64
+	require.NoError(dstDB.QueryRow(
+		"SELECT COUNT(*) FROM reaction_source_events WHERE source_reaction_id = '$reaction'",
+	).Scan(&sourceEventCount))
+	assert.Equal(int64(1), sourceEventCount, "reaction source events")
+	var cursor sql.NullString
+	require.NoError(dstDB.QueryRow("SELECT sync_cursor FROM sources WHERE source_type = 'matrix'").Scan(&cursor))
+	assert.False(cursor.Valid, "Matrix cursors stay out of subsets")
 	assert.Equal(int64(1), rxnCount, "reactions count")
 
 	// FK integrity

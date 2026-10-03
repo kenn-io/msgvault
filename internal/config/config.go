@@ -506,6 +506,7 @@ type Config struct {
 	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
+	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Granola            []GranolaSource                 `toml:"granola"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
@@ -1505,6 +1506,15 @@ type BeeperConfig struct {
 	// Drafts lets the daemon write native chat drafts on these sources. The
 	// entries have the same shape as [[gmail.drafts]].
 	Drafts []GmailDraftSource `toml:"drafts"`
+}
+
+// MatrixConfig configures native Matrix archive sources ([matrix] table).
+// Credentials live under the data directory, never here.
+type MatrixConfig struct {
+	Enabled      bool     `toml:"enabled"`
+	Schedule     string   `toml:"schedule"`
+	Rooms        []string `toml:"rooms"`
+	ExcludeRooms []string `toml:"exclude_rooms"`
 }
 
 // SlackConfig configures Slack workspace archive sources ([slack] table).

@@ -1064,6 +1064,54 @@ After adding, sync with `msgvault sync-beeper`.
 
 ---
 
+## add-matrix
+
+Register a Matrix account as a native `matrix` source. The command logs in a
+dedicated device named `msgvault (read-only)`. See
+[Matrix](/docs/usage/matrix/).
+
+```bash
+msgvault add-matrix \
+  --homeserver https://matrix.example.org \
+  --user-id @archive:example.org \
+  --password-file /path/to/password
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--homeserver` | required | Base URL of the Matrix homeserver |
+| `--user-id` | required | Full Matrix user ID |
+| `--password-file` | prompt or stdin | Read the account password from a file |
+| `--login-token-file` | — | Read a single-use `m.login.token` obtained from an SSO/login flow; mutually exclusive with `--password-file` |
+| `--no-default-identity` | `false` | Do not auto-confirm the Matrix user ID as this source's "me" identity |
+
+The access token is written to an owner-only file under `tokens/`. Running it
+again for a registered user renews the login in place and keeps its history.
+
+---
+
+## sync-matrix
+
+Sync joined rooms for every registered Matrix account. The first run backfills
+history per room through `/messages`; later runs use a persisted `/sync`
+`next_batch` token. Per-account failures do not stop other accounts.
+
+```bash
+msgvault sync-matrix
+msgvault sync-matrix --account @archive:example.org
+msgvault sync-matrix --full
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--account` | all registered | Sync only this exact Matrix user ID |
+| `--full` | `false` | Ignore stored cursors and re-fetch complete joined-room history |
+
+Room selection and scheduled sync are controlled by `[matrix]`. Encrypted
+events are kept as raw placeholders.
+
+---
+
 ## sync-beeper
 
 Sync chats from Beeper Desktop for every registered Beeper account (all

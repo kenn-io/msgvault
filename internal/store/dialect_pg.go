@@ -2326,7 +2326,7 @@ var exclusiveLockTables = []string{
 	"sync_runs", "sources", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"meeting_details", "meeting_action_items",
-	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions",
+	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,
 	identityMatchEvidenceTableName, identityMatchEvidenceSourcesTableName,
 	// persons and person_participants: MergeParticipants (reached from the
