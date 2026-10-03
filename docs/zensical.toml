@@ -39,6 +39,7 @@ nav = [
     {"Microsoft Teams" = "usage/teams.md"},
     {"Discord" = "usage/discord.md"},
     {"Beeper" = "usage/beeper.md"},
+    {"Chatwoot" = "guides/chatwoot.md"},
     {"Slack" = "usage/slack.md"},
     {"Meeting Notes and Transcripts" = "usage/meetings.md"},
   ]},

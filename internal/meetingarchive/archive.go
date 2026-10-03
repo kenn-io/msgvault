@@ -10,6 +10,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,11 +30,14 @@ var ErrUnavailable = errors.New("meeting archiver is unavailable")
 // further identities of the same human; with an Anchor they are linked to the
 // recipient identity through LinkIdentities. Names never match anything.
 type Person struct {
-	Name        string
-	Email       string
-	Phone       string // E.164
-	OtherEmails []string
-	OtherPhones []string
+	Name  string
+	Email string
+	Phone string // E.164
+	// ParticipantID references an existing participant resolved by the provider.
+	// Zero retains the canonical email/phone resolution path.
+	ParticipantID int64
+	OtherEmails   []string
+	OtherPhones   []string
 	// Anchor is a stable, provider-scoped identifier for this human, built
 	// with Anchor(). Empty means the provider asserts no stable identity.
 	Anchor string
@@ -56,6 +60,9 @@ type Snapshot struct {
 	RawFormat            string
 	Organizer            *Person
 	Attendees            []Person
+	// OwnerAttribution records explicit personal ownership from provider actor IDs.
+	// Nil preserves canonical email/phone-derived ownership.
+	OwnerAttribution *bool
 }
 
 type Result struct {
@@ -95,6 +102,14 @@ func (a *Archiver) Upsert(
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
+	if snapshot.Organizer != nil && snapshot.Organizer.ParticipantID < 0 {
+		return Result{}, errors.New("meeting organizer participant ID cannot be negative")
+	}
+	for _, attendee := range snapshot.Attendees {
+		if attendee.ParticipantID < 0 {
+			return Result{}, errors.New("meeting attendee participant ID cannot be negative")
+		}
+	}
 
 	existing, err := a.store.MessageMetadataBatch(snapshot.SourceID, []string{snapshot.SourceMessageID})
 	if err != nil {
@@ -117,11 +132,15 @@ func (a *Archiver) Upsert(
 		organizerAddress = organizer.Phone
 	}
 	expectedIsFromMe := organizerAddress != "" && identities.Contains(organizerAddress)
+	if snapshot.OwnerAttribution != nil {
+		expectedIsFromMe = *snapshot.OwnerAttribution
+	}
 
 	if existed && !opts.Force {
 		storedRaw, rawErr := a.store.GetMessageRaw(existingMessageID)
 		storedIsFromMe, attributionErr := a.store.GetMessageIsFromMe(existingMessageID)
-		if rawErr == nil && attributionErr == nil && bytes.Equal(storedRaw, snapshot.Raw) &&
+		participantsMatch, participantErr := a.resolvedParticipantsMatch(ctx, existingMessageID, snapshot)
+		if rawErr == nil && attributionErr == nil && participantErr == nil && participantsMatch && bytes.Equal(storedRaw, snapshot.Raw) &&
 			storedIsFromMe == expectedIsFromMe && equalMetadata([]byte(existingMessage.Metadata.String), snapshot.Metadata) {
 			if err := a.store.RecomputeConversationStatsForMessageContext(ctx, existingMessageID); err != nil {
 				return Result{}, fmt.Errorf("recompute meeting conversation stats: %w", err)
@@ -136,26 +155,36 @@ func (a *Archiver) Upsert(
 	}
 
 	participants := make([]store.ParticipantPersistData, 0, len(snapshot.Attendees)+1)
-	hasOrganizer := organizer.PrimaryKey() != ""
-	if hasOrganizer {
+	hasOrganizer := organizer.ParticipantID > 0 || organizer.PrimaryKey() != ""
+	organizerOffset := -1
+	if hasOrganizer && organizer.ParticipantID == 0 {
+		organizerOffset = len(participants)
 		participants = append(participants, persistData(organizer))
 	}
 
 	attendeeNames := make([]string, 0, len(snapshot.Attendees))
 	attendeeEmails := make([]string, 0, len(snapshot.Attendees))
 	attendeeAddresses := make([]string, 0, len(snapshot.Attendees))
+	attendeeOffsets := make([]int, 0, len(snapshot.Attendees))
+	resolvedAttendeeIDs := make([]int64, 0, len(snapshot.Attendees))
 	seenAttendees := make(map[string]bool, len(snapshot.Attendees))
 	for _, raw := range snapshot.Attendees {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
 		attendee := raw.Normalized()
-		key := attendee.PrimaryKey()
+		key := archiveParticipantKey(attendee)
 		if key == "" || seenAttendees[key] {
 			continue
 		}
 		seenAttendees[key] = true
-		participants = append(participants, persistData(attendee))
+		offset := -1
+		if attendee.ParticipantID == 0 {
+			offset = len(participants)
+			participants = append(participants, persistData(attendee))
+		}
+		attendeeOffsets = append(attendeeOffsets, offset)
+		resolvedAttendeeIDs = append(resolvedAttendeeIDs, attendee.ParticipantID)
 		attendeeNames = append(attendeeNames, attendee.Name)
 		attendeeEmails = append(attendeeEmails, attendee.Email)
 		if attendee.Email != "" {
@@ -174,19 +203,25 @@ func (a *Archiver) Upsert(
 		ctx,
 		participants,
 		func(participantIDs []int64) *store.MessagePersistData {
-			attendeeOffset := 0
 			var senderID int64
 			var fromIDs []int64
 			var fromNames []string
 			var fromEmails []string
 			if hasOrganizer {
-				senderID = participantIDs[0]
-				attendeeOffset = 1
+				senderID = organizer.ParticipantID
+				if organizerOffset >= 0 {
+					senderID = participantIDs[organizerOffset]
+				}
 				fromIDs = []int64{senderID}
 				fromNames = []string{organizerName}
 				fromEmails = []string{organizerEmail}
 			}
-			attendeeIDs := participantIDs[attendeeOffset:]
+			attendeeIDs := append([]int64{}, resolvedAttendeeIDs...)
+			for index, offset := range attendeeOffsets {
+				if offset >= 0 {
+					attendeeIDs[index] = participantIDs[offset]
+				}
+			}
 			conversationParticipants := make([]store.ConversationParticipantRef, 0, len(attendeeIDs))
 			for _, participantID := range attendeeIDs {
 				conversationParticipants = append(conversationParticipants, store.ConversationParticipantRef{
@@ -198,12 +233,13 @@ func (a *Archiver) Upsert(
 			return &store.MessagePersistData{
 				Message: &store.Message{
 					SourceID:                snapshot.SourceID,
+					PreserveAttachmentStats: true,
 					SourceMessageID:         snapshot.SourceMessageID,
 					MessageType:             MessageType,
 					SentAt:                  sql.NullTime{Time: snapshot.StartedAt, Valid: !snapshot.StartedAt.IsZero()},
 					SenderID:                sql.NullInt64{Int64: senderID, Valid: senderID != 0},
 					IsFromMe:                expectedIsFromMe,
-					IdentityDerivedIsFromMe: expectedIsFromMe,
+					IdentityDerivedIsFromMe: expectedIsFromMe && snapshot.OwnerAttribution == nil,
 					Subject:                 sql.NullString{String: snapshot.Title, Valid: snapshot.Title != ""},
 					Snippet:                 sql.NullString{String: snapshot.Snippet, Valid: snapshot.Snippet != ""},
 					SizeEstimate:            int64(len(snapshot.Body)),
@@ -290,4 +326,55 @@ func snapshotPeople(snapshot Snapshot) []Person {
 		people = append(people, *snapshot.Organizer)
 	}
 	return append(people, snapshot.Attendees...)
+}
+
+// archiveParticipantKey keeps explicitly resolved people distinct even when
+// they share an address. Canonical providers retain primary-address deduping.
+func archiveParticipantKey(person Person) string {
+	if person.ParticipantID > 0 {
+		return fmt.Sprintf("participant:%d", person.ParticipantID)
+	}
+	return person.PrimaryKey()
+}
+
+// Independently resolved IDs are part of the archived projection even when
+// their provider raw evidence and derived text have not changed.
+func (a *Archiver) resolvedParticipantsMatch(ctx context.Context, messageID int64, snapshot Snapshot) (bool, error) {
+	var senderID int64
+	mixed := false
+	if snapshot.Organizer != nil {
+		organizer := snapshot.Organizer.Normalized()
+		senderID = organizer.ParticipantID
+		mixed = senderID == 0 && organizer.PrimaryKey() != ""
+	}
+	hasResolved := senderID > 0
+	var attendeeIDs []int64
+	seen := make(map[string]bool, len(snapshot.Attendees))
+	for _, raw := range snapshot.Attendees {
+		attendee := raw.Normalized()
+		key := archiveParticipantKey(attendee)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		if attendee.ParticipantID > 0 {
+			hasResolved = true
+			attendeeIDs = append(attendeeIDs, attendee.ParticipantID)
+		} else {
+			mixed = true
+		}
+	}
+	if !hasResolved {
+		return true, nil
+	}
+	if mixed {
+		return false, nil
+	}
+	storedSender, storedAttendees, err := a.store.MeetingArchivedParticipantIDsContext(ctx, messageID)
+	if err != nil {
+		return false, err
+	}
+	slices.Sort(attendeeIDs)
+	slices.Sort(storedAttendees)
+	return senderID == storedSender && slices.Equal(attendeeIDs, storedAttendees), nil
 }

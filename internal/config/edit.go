@@ -883,6 +883,9 @@ func syncConfigDirectory(path string, open func(string) (syncDirectoryHandle, er
 }
 
 func validateEditableCandidate(cfg *Config) error {
+	if err := cfg.validateChatwootSources(); err != nil {
+		return err
+	}
 	if err := cfg.Server.ValidateSecure(); err != nil {
 		return err
 	}
