@@ -429,10 +429,7 @@ func runServeRestart(cmd *cobra.Command, c *config.Config) error {
 	if c == nil {
 		return errors.New("nil config")
 	}
-	if _, err := resolveServeBind(c.Server.BindAddr); err != nil {
-		return err
-	}
-	if err := c.ResolveServerKey(); err != nil {
+	if err := prepareServeConfig(c); err != nil {
 		return err
 	}
 	if err := stopLiveDaemonsWithAPIKey(cmd, c.Data.DataDir, c.Server.AuthenticationKey(), true); err != nil {
@@ -483,6 +480,9 @@ func stopLiveDaemonsWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string
 func stopDaemonRuntimeForUpgradeImpl(c config.Config, rt *DaemonRuntime, logger *slog.Logger) error {
 	if rt == nil {
 		return nil
+	}
+	if err := prepareServeConfig(&c); err != nil {
+		return fmt.Errorf("validate replacement daemon: %w", err)
 	}
 	if err := stopDaemonRuntimeRecord(os.Stdout, c.Data.DataDir, rt.Record,
 		c.Server.AuthenticationKey(), serveStopGraceTimeout, logger); err != nil {

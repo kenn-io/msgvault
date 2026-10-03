@@ -1624,7 +1624,9 @@ Go's `strconv.ParseBool` values, such as `true`, `false`, `1`, and `0`; empty or
 invalid values fail. Origin and proxy lists trim whitespace and ignore empty
 entries, including a trailing comma. Explicit `export-token --to`, `--api-key`,
 and `--allow-insecure` choices are saved even when they match an environment
-override; environment-only values are not saved. The setup wizard also saves
+override; environment-only values are not saved. An explicit
+`--allow-insecure=false` overrides the environment and saved configuration,
+requires HTTPS, and saves `false` after a successful export. The setup wizard also saves
 new choices that match an override; keeping existing settings leaves them
 unchanged on disk.
 

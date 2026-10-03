@@ -1007,7 +1007,11 @@ func TestRunServeStartAlreadyRunningWritesOnlyStdout(t *testing.T) {
 		err, "write runtime")
 
 	cmd, stdout, stderr := lifecycleTestCommand()
-	require.NoError(runServeStart(cmd, lifecycleTestConfig(dataDir)))
+	cfg := lifecycleTestConfig(dataDir)
+	cfg.Server.BindAddr = "0.0.0.0"
+	require.NoError(runServeStart(cmd, cfg))
+	_, err = os.Stat(cfg.ServerKeyFilePath())
+	require.ErrorIs(err, os.ErrNotExist, "reusing a daemon must not mint a replacement key")
 	assert.Equal(
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
 			" (pid "+strconv.Itoa(os.Getpid())+")\n",
@@ -1445,51 +1449,71 @@ func TestRunServeRestartStartsWhenNoDaemonIsRunning(t *testing.T) {
 	assert.Empty(t, stderr.String())
 }
 
-func TestRunServeRestartRejectsMissingInterfaceBeforeStoppingDaemon(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	dataDir := t.TempDir()
-	standIn := startBlockingDaemonStandIn(t)
-	created, ok := processCreateTimeMillis(standIn.Process.Pid)
-	require.True(ok, "read stand-in process create time")
-	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
-		PID:     standIn.Process.Pid,
-		Network: daemon.NetworkTCP,
-		Address: net.JoinHostPort("127.0.0.1", "1"),
-		Service: daemonService,
-		Version: Version,
-		Metadata: map[string]string{
-			runtimeHost:             "127.0.0.1",
-			runtimePort:             "1",
-			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
-			runtimeAPISchemaVersion: api.APISchemaVersion,
-			runtimeCreateTime:       strconv.FormatInt(created, 10),
-			runtimeShutdownToken:    "stand-in-shutdown-token",
-		},
-	})
-	require.NoError(err, "write live daemon runtime")
+func TestDaemonReplacementRejectsInvalidConfigBeforeStopping(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		bind        string
+		agentAccess bool
+		upgrade     bool
+		wantError   string
+	}{
+		{"restart missing interface", "iface:msgvault-nonexistent-restart-interface", false, false, "resolve bind interface"},
+		{"restart missing agent key", "127.0.0.1", true, false, "agent_access"},
+		{"upgrade missing agent key", "127.0.0.1", true, true, "agent_access"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			dataDir := t.TempDir()
+			standIn := startBlockingDaemonStandIn(t)
+			created, ok := processCreateTimeMillis(standIn.Process.Pid)
+			require.True(ok, "read stand-in process create time")
+			record := daemon.RuntimeRecord{
+				PID:     standIn.Process.Pid,
+				Network: daemon.NetworkTCP,
+				Address: net.JoinHostPort("127.0.0.1", "1"),
+				Service: daemonService,
+				Version: Version,
+				Metadata: map[string]string{
+					runtimeHost:             "127.0.0.1",
+					runtimePort:             "1",
+					runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+					runtimeAPISchemaVersion: api.APISchemaVersion,
+					runtimeCreateTime:       strconv.FormatInt(created, 10),
+					runtimeShutdownToken:    "stand-in-shutdown-token",
+				},
+			}
+			_, err := daemonRuntimeStore(dataDir).Write(record)
+			require.NoError(err, "write live daemon runtime")
 
-	var shutdownRequests atomic.Int32
-	previousShutdown := requestDaemonShutdownForRun
-	requestDaemonShutdownForRun = func(daemon.RuntimeRecord) (bool, error) {
-		shutdownRequests.Add(1)
-		if err := standIn.Process.Kill(); err != nil {
-			return false, err
-		}
-		_ = standIn.Wait()
-		return true, nil
+			var shutdownRequests atomic.Int32
+			previousShutdown := requestDaemonShutdownForRun
+			requestDaemonShutdownForRun = func(daemon.RuntimeRecord) (bool, error) {
+				shutdownRequests.Add(1)
+				if err := standIn.Process.Kill(); err != nil {
+					return false, err
+				}
+				_ = standIn.Wait()
+				return true, nil
+			}
+			t.Cleanup(func() { requestDaemonShutdownForRun = previousShutdown })
+			stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+				return nil, errors.New("invalid replacement must not be launched")
+			})
+			cfg := lifecycleTestConfig(dataDir)
+			cfg.Server.BindAddr = tt.bind
+			cfg.Server.AgentAccess = tt.agentAccess
+			if tt.upgrade {
+				err = stopDaemonRuntimeForUpgradeImpl(*cfg, daemonRuntimeFromRecord(record), slog.New(slog.DiscardHandler))
+			} else {
+				cmd, _, _ := lifecycleTestCommand()
+				err = runServeRestart(cmd, cfg)
+			}
+			require.ErrorContains(err, tt.wantError)
+			assert.Zero(shutdownRequests.Load(), "reject an invalid replacement before stopping the daemon")
+			assert.True(daemon.ProcessAlive(standIn.Process.Pid), "the existing daemon must keep running")
+		})
 	}
-	t.Cleanup(func() { requestDaemonShutdownForRun = previousShutdown })
-	cfg := lifecycleTestConfig(dataDir)
-	cfg.Server.BindAddr = "iface:msgvault-nonexistent-restart-interface"
-	cmd, _, _ := lifecycleTestCommand()
-
-	err = runServeRestart(cmd, cfg)
-
-	require.Error(err)
-	require.ErrorContains(err, "resolve bind interface")
-	assert.Zero(shutdownRequests.Load(), "an invalid replacement bind must be rejected before stopping the daemon")
-	assert.True(daemon.ProcessAlive(standIn.Process.Pid), "the existing daemon must keep running")
 }
 
 func TestRunServeStartNotReadyPrintsWebUIURLForFixedPort(t *testing.T) {

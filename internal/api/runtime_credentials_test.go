@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -95,4 +96,38 @@ func TestSettingsEditsAfterServerCredentialFileDisappears(t *testing.T) {
 	assert.Equal("dark", *settingsByKey(body.Settings)["web.theme"].Value.String)
 	assert.True(settingsByKey(body.Settings)["server.api_key"].Secret.Configured)
 	assert.NotContains(patch.Body.String(), key)
+}
+
+func TestSettingsPreservesServeFlagsOverInvalidEnvironment(t *testing.T) { //nolint:paralleltest // process environment
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Setenv("MSGVAULT_BIND_ADDR", " ")
+	t.Setenv("MSGVAULT_API_PORT", "invalid-port")
+	bind, port := "127.0.0.2", 8181
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	require.NoError(fileutil.SecureWriteFile(path, []byte("[server]\nbind_addr = '127.0.0.1'\napi_port = 8080\n"), 0o600))
+	cfg, err := config.LoadWithOverrides(path, home, config.RuntimeOverrides{BindAddr: &bind, APIPort: &port})
+	require.NoError(err)
+	require.NoError(cfg.PrepareServerKey())
+	srv := NewServer(cfg, nil, nil, slog.New(slog.DiscardHandler))
+	get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+	require.Equal(http.StatusOK, get.Code, get.Body.String())
+	patch := performSettingsRequest(t, srv, http.MethodPatch, settingsPath,
+		[]byte(`{"updates":[{"key":"web.theme","value":{"string":"dark"}}]}`), get.Header().Get("ETag"), "")
+	require.Equal(http.StatusOK, patch.Code, patch.Body.String())
+	for _, response := range []*httptest.ResponseRecorder{get, patch} {
+		var body SettingsResponse
+		require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+		settings := settingsByKey(body.Settings)
+		assert.Equal(bind, *settings["server.bind_addr"].Value.String)
+		assert.Equal(port, *settings["server.api_port"].Value.Integer)
+	}
+	snapshot, err := config.ReadConfigFile(cfg.ConfigFilePath())
+	require.NoError(err)
+	saved, err := config.LoadConfigFile(snapshot, home)
+	require.NoError(err)
+	assert.Equal("dark", saved.Web.Theme)
+	assert.Equal("127.0.0.1", saved.Server.BindAddr)
+	assert.Equal(8080, saved.Server.APIPort)
 }

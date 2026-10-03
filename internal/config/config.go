@@ -918,6 +918,12 @@ func LoadConfigFileWithOverrides(
 	return loadConfigFile(snapshot, homeDir, &overrides)
 }
 
+// ReloadConfigFile returns the captured config with the original CLI overrides,
+// so a flag that masked an environment value at startup still takes precedence.
+func (c *Config) ReloadConfigFile(snapshot ConfigFile) (*Config, error) {
+	return LoadConfigFileWithOverrides(snapshot, c.HomeDir, c.runtimeConfigState.flags)
+}
+
 func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverrides) (*Config, error) {
 	cfg := NewDefaultConfig()
 	if homeDir != "" {
