@@ -140,6 +140,9 @@ func Parse(raw []byte) (*Message, error) {
 	msg.Attachments = append(msg.Attachments, processParts(env.Attachments, false)...)
 	msg.Attachments = append(msg.Attachments, processParts(env.Inlines, true)...)
 	msg.Attachments = append(msg.Attachments, processMalformedOtherParts(env.OtherParts)...)
+	// enmime can list one inline octet-stream part in both categories.
+	// Preserve physical occurrences so parsed evidence matches keyed storage.
+	msg.Attachments = DistinctAttachments(msg.Attachments)
 
 	// Collect any parsing errors
 	for _, e := range env.Errors {
@@ -624,7 +627,7 @@ func makeAttachment(part *enmime.Part, isInline bool) Attachment {
 		Size:        len(content),
 		ContentHash: hex.EncodeToString(hash[:]),
 		Content:     content,
-		IsInline:    isInline,
+		IsInline:    isInline || disposition == "inline",
 	}
 }
 
