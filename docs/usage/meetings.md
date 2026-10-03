@@ -176,9 +176,11 @@ sync summary, and recorded on the sync run. The sync carries on with the next
 recording and retries the skipped one when it changes in Twenty.
 
 `--after` is an inclusive local UTC meeting-date filter. Occurrence time uses
-the recording start, then calendar start, then recording creation time.
-`--limit` caps eligible meetings and reports partial coverage when discovery
-stops early; the next run continues where it stopped. `--full` rescans every
+the recording start, then calendar start, then recording creation time. A run
+with `--after` leaves the sync position unchanged, so it suits one-off
+backfills. `--limit` caps eligible meetings and reports partial coverage when
+discovery stops early; the next run without `--after` continues where it
+stopped. `--full` rescans every
 recording and refreshes projections and attribution even when evidence
 matches. Run it after changing account identities.
 

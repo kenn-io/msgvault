@@ -950,8 +950,8 @@ API failures fail the run while retaining previously committed meetings.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--limit` | `0` | Maximum eligible meetings processed (`0` = unlimited); stopped scans report partial coverage and the next run continues |
-| `--after` | — | Inclusive local UTC occurrence-date lower bound (`YYYY-MM-DD`) |
+| `--limit` | `0` | Maximum eligible meetings processed (`0` = unlimited); stopped scans report partial coverage, and the next run without `--after` continues |
+| `--after` | — | Inclusive local UTC occurrence-date lower bound (`YYYY-MM-DD`); leaves the sync position unchanged |
 | `--full` | `false` | Rescan every recording and refresh archive projections and attribution |
 | `--probe` | `false` | Check read access without printing content or writing the archive; requires one source |
 | `--build-cache` | `false` | Request a cache build after manual sync |
