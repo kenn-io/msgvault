@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,8 +37,12 @@ type fakeGraph struct {
 	dropPost bool
 	// dropPatch applies the next PATCH and then answers 503.
 	dropPatch bool
-	expire    bool
-	failWith  int // status for every request, when set
+	// rejectPatch answers the next PATCH with 503 without applying it.
+	rejectPatch bool
+	// onLookup runs when a UID lookup arrives.
+	onLookup func()
+	expire   bool
+	failWith int // status for every request, when set
 }
 
 type fakeChange struct {
@@ -179,6 +184,9 @@ func (f *fakeGraph) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.lists++
 		values := []contact{}
 		filter := query.Get("$filter")
+		if filter != "" && f.onLookup != nil {
+			f.onLookup()
+		}
 		for _, c := range f.contacts {
 			if c.ParentFolderID != segments[2] {
 				continue
@@ -218,6 +226,11 @@ func (f *fakeGraph) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case http.MethodGet:
 			reply(http.StatusOK, f.view(*c, expand))
 		case http.MethodPatch:
+			if f.rejectPatch {
+				f.rejectPatch = false
+				reply(http.StatusServiceUnavailable, nil)
+				return
+			}
 			if r.Header.Get("If-Match") != c.ETag {
 				fail(http.StatusPreconditionFailed, "ErrorIrresolvableConflict")
 				return
@@ -582,4 +595,51 @@ func TestLostUpdateResponseIsRecoveredWithoutConflict(t *testing.T) {
 	publication, err := f.store.GetCardDAVPublicationContext(t.Context(), personID)
 	require.NoError(err)
 	assert.Empty(publication.PendingOperation)
+}
+
+// publishedAliceWithNewEmail publishes alice, then gives her a new email, so
+// the next publish is an update.
+func publishedAliceWithNewEmail(t *testing.T, f *fixture) int64 {
+	t.Helper()
+	personID := f.alice(t)
+	require.NoError(t, f.service.PublishPerson(t.Context(), personID))
+	_, err := f.store.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "alice@example.test",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(t, err)
+	return personID
+}
+
+func TestUpdateRejectedBeforeApplyIsSentAgain(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFixture(t)
+	personID := publishedAliceWithNewEmail(t, f)
+	f.fake.rejectPatch = true
+
+	require.NoError(f.service.PublishPerson(t.Context(), personID))
+
+	assert.Equal(1, f.fake.patches)
+	assert.Contains(f.fake.published()[0].EmailAddresses, emailAddress{Name: "alice@example.test", Address: "alice@example.test"})
+	conflicts, err := f.store.ListCardDAVConflictsContext(t.Context(), true, store.DefaultCardDAVAccountID)
+	require.NoError(err)
+	assert.Empty(conflicts)
+}
+
+func TestRetryGateSetDuringLookupStopsTheWrite(t *testing.T) {
+	require := require.New(t)
+	f := newFixture(t)
+	personID := publishedAliceWithNewEmail(t, f)
+	var gateErr error
+	f.fake.onLookup = func() {
+		f.fake.onLookup = nil
+		gateErr = f.store.SetCardDAVRetryAfterContext(context.Background(), time.Now().Add(time.Hour), store.DefaultCardDAVAccountID)
+	}
+
+	err := f.service.PublishPerson(t.Context(), personID)
+
+	require.NoError(gateErr)
+	require.ErrorIs(err, store.ErrCardDAVRetryAfter)
+	require.Equal(0, f.fake.patches, "the write after the lookup waits for the gate")
 }

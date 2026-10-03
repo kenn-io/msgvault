@@ -163,7 +163,11 @@ func (r *Remote) Pull(
 func pages(ctx context.Context, r *Remote, start string, budget *carddav.Budget, fn func([]contact)) (string, error) {
 	link := start
 	for {
-		body, err := r.graph.GetRawLimited(ctx, link, pageBytes)
+		var body []byte
+		err := r.call(ctx, func(ctx context.Context) (err error) {
+			body, err = r.graph.GetRawLimited(ctx, link, pageBytes)
+			return err
+		})
 		if err != nil {
 			return "", err
 		}
@@ -225,8 +229,10 @@ func (r *Remote) lookup(ctx context.Context, href string) (c contact, book strin
 		filter := url.QueryEscape("singleValueExtendedProperties/Any(ep: ep/id eq '" + uidProperty +
 			"' and ep/value eq '" + strings.ReplaceAll(key, "'", "''") + "')")
 		var page msgraph.ListResponse[contact]
-		if err := r.graph.GetJSON(ctx, book+"?$filter="+filter+"&$expand="+expandUID(), &page); err != nil {
-			return contact{}, book, false, statusError(err)
+		if err := r.call(ctx, func(ctx context.Context) error {
+			return r.graph.GetJSON(ctx, book+"?$filter="+filter+"&$expand="+expandUID(), &page)
+		}); err != nil {
+			return contact{}, book, false, err
 		}
 		if len(page.Value) > 1 {
 			return contact{}, book, false, fmt.Errorf("graph contact folder has %d contacts with UID %q", len(page.Value), key)
@@ -236,12 +242,14 @@ func (r *Remote) lookup(ctx context.Context, href string) (c contact, book strin
 		}
 		return page.Value[0], book, true, nil
 	}
-	err = r.graph.GetJSON(ctx, r.base+"/me/contacts/"+url.PathEscape(key)+"?$expand="+expandUID(), &c)
+	err = r.call(ctx, func(ctx context.Context) error {
+		return r.graph.GetJSON(ctx, r.base+"/me/contacts/"+url.PathEscape(key)+"?$expand="+expandUID(), &c)
+	})
 	if errors.Is(err, msgraph.ErrNotFound) {
 		return contact{}, book, false, nil
 	}
 	if err != nil {
-		return contact{}, book, false, statusError(err)
+		return contact{}, book, false, err
 	}
 	// A contact moved to another folder is absent from this book.
 	return c, book, r.bookURL(c.ParentFolderID) == book, nil
@@ -286,8 +294,10 @@ func (r *Remote) Put(ctx context.Context, href string, body []byte, etag string,
 			return &carddav.StatusError{StatusCode: http.StatusPreconditionFailed}
 		}
 		fields.Properties = []singleValueExtendedProperty{{ID: uidProperty, Value: uid}, {ID: vcardProperty, Value: string(body)}}
-		_, err = r.graph.SendOnce(ctx, http.MethodPost, book, fields, "")
-		return statusError(err)
+		return r.call(ctx, func(ctx context.Context) error {
+			_, err := r.graph.SendOnce(ctx, http.MethodPost, book, fields, "")
+			return err
+		})
 	}
 	if !found {
 		return &carddav.StatusError{StatusCode: http.StatusNotFound}
@@ -296,10 +306,20 @@ func (r *Remote) Put(ctx context.Context, href string, body []byte, etag string,
 		return &carddav.StatusError{StatusCode: http.StatusPreconditionFailed}
 	}
 	fields.Properties = []singleValueExtendedProperty{{ID: vcardProperty, Value: string(body)}}
-	// A repeat after an applied PATCH would fail its If-Match and look like a
-	// conflict, so an unclear failure is left to the service's recovery read.
-	_, err = r.graph.SendOnce(ctx, http.MethodPatch, r.base+"/me/contacts/"+url.PathEscape(current.ID), fields, etag)
-	return statusError(err)
+	patch := func(ctx context.Context) error {
+		_, err := r.graph.SendOnce(ctx, http.MethodPatch, r.base+"/me/contacts/"+url.PathEscape(current.ID), fields, etag)
+		return err
+	}
+	// A blind repeat after an applied PATCH would fail its If-Match and look
+	// like a conflict. Graph changes the ETag on every update, so an
+	// unchanged ETag proves that the failed PATCH was not applied.
+	err = r.call(ctx, patch)
+	if err != nil && unclear(err) {
+		if after, _, found, lookupErr := r.lookup(ctx, href); lookupErr == nil && found && after.ETag == etag {
+			err = r.call(ctx, patch)
+		}
+	}
+	return err
 }
 
 // Delete moves the contact to Deleted Items. Graph ignores If-Match on
@@ -315,8 +335,10 @@ func (r *Remote) Delete(ctx context.Context, href, etag string) error {
 	if current.ETag != etag {
 		return &carddav.StatusError{StatusCode: http.StatusPreconditionFailed}
 	}
-	_, err = r.graph.Send(ctx, http.MethodDelete, r.base+"/me/contacts/"+url.PathEscape(current.ID), nil, "")
-	return statusError(err)
+	return r.call(ctx, func(ctx context.Context) error {
+		_, err := r.graph.Send(ctx, http.MethodDelete, r.base+"/me/contacts/"+url.PathEscape(current.ID), nil, "")
+		return err
+	})
 }
 
 func (r *Remote) CreateHref(collectionURL, uid string) (string, error) {
@@ -325,6 +347,19 @@ func (r *Remote) CreateHref(collectionURL, uid string) (string, error) {
 		return "", carddav.ErrUnsafeTarget
 	}
 	return collectionURL + "/uid/" + url.PathEscape(uid), nil
+}
+
+// call sends one Graph request behind the connection's retry gate, as the
+// carddav.Remote contract requires for calls that send several requests.
+func (r *Remote) call(ctx context.Context, request func(context.Context) error) error {
+	return carddav.GateRequest(ctx, func(ctx context.Context) error { return statusError(request(ctx)) })
+}
+
+// unclear reports a write failure that does not say whether Graph applied
+// the write: no HTTP status that the service branches on.
+func unclear(err error) bool {
+	_, status := errors.AsType[*carddav.StatusError](err)
+	return !status && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
 }
 
 // statusError adds the CardDAV status that the service branches on. A 429
