@@ -146,7 +146,8 @@ func TestMCPCardDAVUnavailableErrorIsActionable(t *testing.T) {
 func TestMCPPersonCardDAVCompletionPublicationAndSyncRoutes(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	const privateCard = "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Private\\, Test\r\nEND:VCARD\r\n"
+	photoData := strings.Repeat("QUJD", 12*1024)
+	privateCard := "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Private\\, Test\r\nPHOTO:data:image/png;base64," + photoData + "\r\nEMAIL:contact@example.com\r\nEND:VCARD\r\n"
 	var approved atomic.Bool
 	var syncBlocked atomic.Bool
 	syncBlocked.Store(true)
@@ -199,6 +200,7 @@ func TestMCPPersonCardDAVCompletionPublicationAndSyncRoutes(t *testing.T) {
 	assert.Equal(true, toolStructuredContent(t, publication)["inference_review_required"])
 	preview := rawCallTool(t, opts, ToolPreviewCardDAVPublication, map[string]any{"person_id": float64(7)})
 	assert.Equal(privateCard, toolStructuredContent(t, preview)["vcard"])
+	assert.Equal("token-1", toolStructuredContent(t, preview)["approval_token"])
 	stale := confirmedCallTool(t, opts, ToolApproveCardDAVPublication, map[string]any{"person_id": float64(7), "approval_token": "old-token"}, true)
 	assert.Equal(true, stale["isError"])
 	assert.Contains(fmt.Sprint(stale), "carddav_review_stale")
@@ -208,6 +210,10 @@ func TestMCPPersonCardDAVCompletionPublicationAndSyncRoutes(t *testing.T) {
 		assert.Contains(message, `"Private, Test" (person 7)`)
 		assert.Contains(message, "Personal")
 		assert.Contains(message, "queues")
+		assert.Contains(message, "[inline PHOTO, 49174 encoded bytes]")
+		assert.Contains(message, "EMAIL:contact@example.com")
+		assert.NotContains(message, photoData)
+		assert.Less(len(message), 2048)
 	})
 	assert.NotEqual(true, approvedResult["isError"])
 	assert.True(approved.Load())
