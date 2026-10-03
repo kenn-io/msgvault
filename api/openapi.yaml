@@ -5221,6 +5221,23 @@ components:
         - fingerprint
         - state
       type: object
+    HybridRerankSummary:
+      additionalProperties: true
+      properties:
+        applied:
+          type: boolean
+        candidates:
+          format: int64
+          type: integer
+        fallback:
+          type: string
+        model:
+          type: string
+      required:
+        - applied
+        - model
+        - candidates
+      type: object
     HybridSearchItem:
       additionalProperties: true
       properties:
@@ -5326,6 +5343,8 @@ components:
           type: boolean
         query:
           type: string
+        rerank:
+          $ref: "#/components/schemas/HybridRerankSummary"
         results:
           items:
             $ref: "#/components/schemas/HybridSearchItem"
@@ -5361,6 +5380,9 @@ components:
           format: int64
           type: integer
         query_embedding_ms:
+          format: int64
+          type: integer
+        rerank_ms:
           format: int64
           type: integer
         retrieval_ms:
@@ -12040,6 +12062,9 @@ components:
       additionalProperties: true
       properties:
         bm25:
+          format: double
+          type: number
+        rerank:
           format: double
           type: number
         rrf:
@@ -26928,6 +26953,11 @@ paths:
           name: min_score
           schema:
             type: number
+        - description: Rescore the top vector or hybrid hits with the configured [vector.rerank] provider. Omitted follows [vector.rerank].default; true fails with 503 rerank_unavailable when reranking is not configured
+          in: query
+          name: rerank
+          schema:
+            type: boolean
         - description: Message type filter; repeat or comma-separate for multiple values
           in: query
           name: message_type

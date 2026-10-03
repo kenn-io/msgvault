@@ -28,6 +28,7 @@ const (
 	Filename                                 = "provider-credentials.json" // #nosec G101 -- filename, not a credential.
 	VectorEmbeddingsID                       = "vector.embeddings"
 	VectorMultimodalID                       = "vector.multimodal"
+	VectorRerankID                           = "vector.rerank"
 	PeopleSweepID                            = "people.sweep"
 	PersonEnrichmentSuppressionID            = "people.enrichment/suppression"
 	StoredSuppressionEnvironment             = "MSGVAULT_STORED_PERSON_ENRICHMENT_SUPPRESSION_KEY"
@@ -90,7 +91,7 @@ func PersonEnrichmentID(name string) string {
 
 func ValidateID(id string) error {
 	switch id {
-	case VectorEmbeddingsID, VectorMultimodalID, PeopleSweepID:
+	case VectorEmbeddingsID, VectorMultimodalID, VectorRerankID, PeopleSweepID:
 		return nil
 	}
 	if !strings.HasPrefix(id, personEnrichmentCredentialIDPrefix) {
@@ -443,6 +444,8 @@ func recordKind(id string) string {
 		return "vector_embeddings"
 	case VectorMultimodalID:
 		return "vector_multimodal"
+	case VectorRerankID:
+		return "vector_rerank"
 	case PeopleSweepID:
 		return "people_sweep"
 	case PersonEnrichmentSuppressionID:

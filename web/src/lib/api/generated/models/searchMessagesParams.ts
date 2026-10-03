@@ -36,6 +36,10 @@ export type SearchMessagesParams = {
    */
   min_score?: number;
   /**
+   * Rescore the top vector or hybrid hits with the configured [vector.rerank] provider. Omitted follows [vector.rerank].default; true fails with 503 rerank_unavailable when reranking is not configured
+   */
+  rerank?: boolean;
+  /**
    * Message type filter; repeat or comma-separate for multiple values
    */
   message_type?: string;

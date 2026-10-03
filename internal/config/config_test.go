@@ -3,6 +3,8 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,6 +15,8 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/providercredentials"
+	"go.kenn.io/msgvault/internal/vector/rerank"
 )
 
 func TestPersonMatchConfigLoadsWithoutCredentialValue(t *testing.T) {
@@ -2100,6 +2104,67 @@ strip_signatures = false
 	assert.False(cfg.Vector.Preprocess.StripSignaturesEnabled(), "StripSignaturesEnabled() should be false (user explicitly set)")
 	// Omitted sibling stays at default true.
 	assert.True(cfg.Vector.Preprocess.StripQuotesEnabled(), "StripQuotesEnabled() should be true (unset → default)")
+}
+
+func TestLoadRerankCredentialForCustomEndpoint(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, keySetting, wantAuthorization string
+	}{
+		{"omitted key variable", "", ""},
+		{"explicit key variable", `api_key_env = "OPENROUTER_API_KEY"`, "Bearer synthetic-test-key"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			headers := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				headers <- r.Header.Get("Authorization")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"results":[{"index":0,"relevance_score":0.8}]}`))
+			}))
+			t.Cleanup(server.Close)
+			content := fmt.Sprintf(`[vector]
+enabled = true
+[vector.embeddings]
+endpoint = "http://127.0.0.1:1/v1"
+model = "fixture"
+dimension = 1
+[vector.rerank]
+enabled = true
+endpoint = %q
+%s
+`, server.URL, tt.keySetting)
+			cfg, err := LoadConfigFile(ConfigFile{
+				Exists: true, Path: filepath.Join(t.TempDir(), "config.toml"), Content: []byte(content),
+			}, "")
+			require.NoError(err)
+			key, _, err := (providercredentials.Snapshot{}).Resolve(
+				providercredentials.VectorRerankID, cfg.Vector.Rerank.Endpoint, cfg.Vector.Rerank.APIKeyEnv,
+				func(name string) (string, bool) {
+					return "synthetic-test-key", name == "OPENROUTER_API_KEY"
+				})
+			require.NoError(err)
+			client, err := rerank.NewCohereClient(rerank.CohereOptions{
+				Endpoint: cfg.Vector.Rerank.Endpoint, Model: cfg.Vector.Rerank.Model, APIKey: key,
+			})
+			require.NoError(err)
+			_, err = client.Rerank(t.Context(), rerank.Request{
+				Query: "parcel", Candidates: []string{"delivery tomorrow"},
+			})
+			require.NoError(err)
+			assert.Equal(t, tt.wantAuthorization, <-headers)
+		})
+	}
+}
+
+func TestLoadRejectsRerankWithoutVector(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[vector.rerank]\nenabled = true\n"), 0o600))
+	_, err := Load(path, "")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "vector.rerank.enabled: requires vector.enabled = true")
 }
 
 func TestLoadAllowsIndependentMultimodalVectorLane(t *testing.T) {

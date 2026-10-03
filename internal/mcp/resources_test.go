@@ -439,6 +439,7 @@ func (s task4DaemonHybridErrorSearcher) SearchHybrid(
 		Offset:         req.Offset,
 		IncludeMatches: req.IncludeMatches,
 		MinScore:       req.MinScore,
+		Rerank:         req.Rerank,
 	})
 	return nil, err
 }
@@ -653,6 +654,16 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 			status: http.StatusServiceUnavailable, tool: ToolSemanticSearchMessages,
 			args: map[string]any{"query": "needle", "mode": searchModeHybrid},
 			want: "vector_init_failed: vector search failed to initialize",
+			opts: func(client *daemonclient.Client) ServeOptions {
+				return ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: task4DaemonHybridErrorSearcher{client}}
+			},
+		},
+		{
+			name: "hybrid rerank unavailable", path: "/api/v1/search", code: "rerank_unavailable",
+			status: http.StatusServiceUnavailable, tool: ToolSemanticSearchMessages,
+			args: map[string]any{"query": "needle", "mode": searchModeHybrid, "rerank": true},
+			want: "rerank_unavailable: search reranking is not configured on this server; " +
+				"enable [vector.rerank] and configure its API key, or omit rerank",
 			opts: func(client *daemonclient.Client) ServeOptions {
 				return ServeOptions{Engine: &querytest.MockEngine{}, HybridSearcher: task4DaemonHybridErrorSearcher{client}}
 			},

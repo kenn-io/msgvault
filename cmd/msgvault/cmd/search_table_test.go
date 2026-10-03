@@ -105,7 +105,7 @@ func TestSearchTableHybridScoreWidthsAndBoostBudget(t *testing.T) {
 			t.Run(fmt.Sprintf("%t/%d", explain, width), func(t *testing.T) {
 				assert := assert.New(t)
 				var out bytes.Buffer
-				require.NoError(t, writeHybridResultsTableWidth(&out, rows, explain, width))
+				require.NoError(t, writeHybridResultsTableWidth(&out, rows, explain, false, width))
 				lines := strings.Split(out.String(), "\n")
 				for _, line := range lines[:4] {
 					assert.True(utf8.ValidString(line))
@@ -153,7 +153,7 @@ func TestSearchTableKeycapGraphemesFitSenderAndSubject(t *testing.T) {
 	}
 	t.Run("hybrid subject", func(t *testing.T) {
 		var out bytes.Buffer
-		require.NoError(t, writeHybridResultsTableWidth(&out, []daemonclient.CLIHybridSearchResult{{ID: 1, FromEmail: "F", Subject: "a" + strings.Repeat("1️⃣", 6), SubjectBoosted: true}}, false, 33))
+		require.NoError(t, writeHybridResultsTableWidth(&out, []daemonclient.CLIHybridSearchResult{{ID: 1, FromEmail: "F", Subject: "a" + strings.Repeat("1️⃣", 6), SubjectBoosted: true}}, false, false, 33))
 		line := strings.Split(out.String(), "\n")[2]
 		assert.LessOrEqual(t, ansi.StringWidth(line), 33)
 		assert.Contains(t, line, " *")
@@ -176,7 +176,7 @@ func TestSearchTablePropagatesEveryWriteError(t *testing.T) {
 		require.ErrorIs(t, err, io.ErrClosedPipe)
 	}
 	for _, writes := range []int{0, 1, 2} {
-		err := writeHybridResultsTableWidth(&searchTableFailAfterWriter{remaining: writes}, []daemonclient.CLIHybridSearchResult{{ID: 1}}, true, 80)
+		err := writeHybridResultsTableWidth(&searchTableFailAfterWriter{remaining: writes}, []daemonclient.CLIHybridSearchResult{{ID: 1}}, true, false, 80)
 		require.ErrorIs(t, err, io.ErrClosedPipe)
 	}
 }
@@ -206,7 +206,7 @@ func FuzzSearchTableFullText(f *testing.F) {
 		assert.Contains(out.String(), subject)
 		for _, explain := range []bool{false, true} {
 			out.Reset()
-			require.NoError(writeHybridResultsTableWidth(&out, []daemonclient.CLIHybridSearchResult{{ID: 1, Message: message, SubjectBoosted: true}}, explain, 0))
+			require.NoError(writeHybridResultsTableWidth(&out, []daemonclient.CLIHybridSearchResult{{ID: 1, Message: message, SubjectBoosted: true}}, explain, false, 0))
 			assert.Contains(out.String(), from)
 			assert.Contains(out.String(), subject+" *")
 		}

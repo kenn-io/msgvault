@@ -247,6 +247,7 @@ func (s daemonMCPHybridSearcher) SearchHybrid(
 		Offset:         req.Offset,
 		IncludeMatches: req.IncludeMatches,
 		MinScore:       req.MinScore,
+		Rerank:         req.Rerank,
 	})
 	if err != nil {
 		return nil, err
@@ -262,6 +263,7 @@ func (s daemonMCPHybridSearcher) SearchHybrid(
 			RRFScore:         hit.RRFScore,
 			BM25Score:        hit.BM25Score,
 			VectorScore:      hit.VectorScore,
+			RerankScore:      hit.RerankScore,
 			SubjectBoosted:   hit.SubjectBoosted,
 			MatchesTruncated: hit.MatchesTruncated,
 		}
@@ -288,7 +290,9 @@ func (s daemonMCPHybridSearcher) SearchHybrid(
 			QueryEmbeddingMS: resp.Timings.QueryEmbeddingMS,
 			RetrievalMS:      resp.Timings.RetrievalMS,
 			HydrationMS:      resp.Timings.HydrationMS,
+			RerankMS:         resp.Timings.RerankMS,
 		},
+		Rerank: mcpHybridRerank(resp.Rerank),
 		Generation: mcpserver.HybridGeneration{
 			ID:          resp.Generation.ID,
 			Model:       resp.Generation.Model,
@@ -297,6 +301,18 @@ func (s daemonMCPHybridSearcher) SearchHybrid(
 			State:       resp.Generation.State,
 		},
 	}, nil
+}
+
+func mcpHybridRerank(rerank *daemonclient.CLIHybridRerank) *mcpserver.HybridRerank {
+	if rerank == nil {
+		return nil
+	}
+	return &mcpserver.HybridRerank{
+		Applied:    rerank.Applied,
+		Model:      rerank.Model,
+		Candidates: rerank.Candidates,
+		Fallback:   rerank.Fallback,
+	}
 }
 
 type daemonMCPSimilarSearcher struct {
