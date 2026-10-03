@@ -411,7 +411,7 @@ func TestSearchPersonSweepMessagesPreservesNewestFirstCandidateRanking(t *testin
 }
 
 func TestPersonSweepAuthenticatedChatSenderCanBeDirectSelf(t *testing.T) {
-	for _, sourceType := range []string{"slack", "slackdump"} {
+	for _, sourceType := range []string{"slack", "slackdump", "chatwoot"} {
 		t.Run(sourceType, func(t *testing.T) {
 			f := newPersonSweepJournalFixture(t, true, false)
 			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(

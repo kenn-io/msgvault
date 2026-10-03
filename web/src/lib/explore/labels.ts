@@ -162,7 +162,7 @@ function kindPresentation(icon: string, label: string): EntryKindPresentation {
 // (internal/identityindex/schema.go).
 const CHAT_MESSAGE_TYPES = new Set([
   'chat', 'text', 'google_chat', 'whatsapp', 'imessage', 'sms', 'mms', 'rcs',
-  'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'fbmessenger'
+  'google_voice_text', 'teams', 'discord', 'beeper', 'chatwoot', 'slack', 'fbmessenger'
 ]);
 
 // The server-assigned kind wins; the message type covers rows and archive messages without one.

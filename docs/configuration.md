@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-03"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1055,6 +1055,49 @@ Docbank daemon's processing consent still decides whether a configured profile
 may run. The route inspects stored CAS bytes, so MIME claims do not expand
 Docbank's WAV and MP3 capability. Capture gaps and unsupported formats remain
 typed local states.
+
+### `[[chatwoot]]` {#chatwoot}
+
+Configure one account per Chatwoot instance. Each registered inbox becomes a
+separate archive source. See [Chatwoot setup](guides/chatwoot.md) for token and
+inbox registration. This integration is available on `main`.
+
+```toml
+[[chatwoot]]
+identifier = "support"
+url = "https://chatwoot.example.com"
+account_id = 9
+api_key_env = "MSGVAULT_CHATWOOT_TOKEN"
+enabled = true
+schedule = "*/30 * * * *"
+inboxes = []
+exclude_inboxes = []
+self_agent_ids = []
+include_private = true
+media = true
+max_media_mb = 250
+reconcile_interval_hours = 24
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | required | Unique local profile label for commands; does not determine archive identity |
+| `url` | required | Absolute instance URL, including a deployment subpath if needed; HTTPS is required off loopback, while HTTP is allowed for localhost and loopback IPs; credentials, query, and fragment are rejected |
+| `account_id` | required | Positive numeric Chatwoot account ID |
+| `api_key_env` | `MSGVAULT_CHATWOOT_TOKEN` | Environment variable containing the user token on the daemon host |
+| `enabled` | `false` | Enable scheduled sync; manual commands remain available |
+| `schedule` | — | Five-field cron expression; empty means manual sync only |
+| `inboxes` | all accessible | Positive inbox IDs to register and sync |
+| `exclude_inboxes` | — | Positive inbox IDs to exclude; wins over `inboxes` |
+| `self_agent_ids` | — | Positive user IDs representing the archive owner; outgoing replies alone do not establish ownership |
+| `include_private` | `true` | Include private notes; disabling does not remove already archived notes |
+| `media` | `true` | Download attachment and call-recording bytes; retain metadata and source transcripts when disabled |
+| `max_media_mb` | `250` | Per-attachment cap in MiB; zero selects the default; negative/overflowing values are rejected |
+| `reconcile_interval_hours` | `24` | Complete old-history reconciliation interval; zero selects the default; negative/overflowing values are rejected |
+
+Duplicate profile labels (case-insensitive) and duplicate canonical instance/account
+pairs are rejected. Scheme, host, default port, and trailing slash normalization
+keep instance identities stable. Add another profile for another account or instance.
 
 ### `[slack]`
 

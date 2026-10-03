@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-03"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1032,6 +1032,45 @@ Backfill re-fetches each selected source message that has pending attachments
 to obtain fresh signed CDN URLs. An incomplete attachment is unrecoverable if
 the source message has since been deleted. See
 [Discord](/docs/usage/discord/#attachment-backfill-and-limits).
+
+---
+
+## add-chatwoot
+
+Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
+Available on `main`. The daemon reads each profile's token environment variable
+and validates access with the account API.
+
+```bash
+msgvault add-chatwoot [identifier]
+```
+
+With no identifier, register all configured profiles. Include/exclude inbox
+filters apply; no selected inboxes is an error. Re-run after adding inboxes.
+See [Chatwoot setup](guides/chatwoot.md).
+
+---
+
+## sync-chatwoot
+
+Sync Chatwoot conversations, media, and linked voice-call meetings. Available
+on `main`. Only registered inboxes selected by the profile's filters are synced.
+No identifier selects all configured profiles. Partial success is retained and
+healthy inboxes continue after another inbox fails.
+
+```bash
+msgvault sync-chatwoot [identifier] [--inbox 7] [--limit 100] [--full] [--no-media]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--inbox` | all included registered inboxes | Numeric inbox ID to sync; repeat for multiple inboxes; excluded or unregistered IDs are rejected |
+| `--limit` | `0` | Messages per conversation this run; zero means no message limit; unfinished history resumes |
+| `--full` | `false` | Reconcile all available history and update existing rows in place |
+| `--no-media` | `false` | Skip attachment downloads for this run, retaining metadata and available transcripts |
+
+Sync polls all conversation statuses and refreshes old audio/call artifacts.
+See [Chatwoot](guides/chatwoot.md) for attribution, privacy, and API compatibility.
 
 ---
 
