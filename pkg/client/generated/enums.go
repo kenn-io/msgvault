@@ -1008,6 +1008,45 @@ func (m MeetingScopeRequestDeletion) Validate() error {
 	}
 }
 
+type MessageRecordingState string
+
+const (
+	MessageRecordingStateFailed       MessageRecordingState = "failed"
+	MessageRecordingStateMediaMissing MessageRecordingState = "media_missing"
+	MessageRecordingStateMissing      MessageRecordingState = "missing"
+	MessageRecordingStateProcessing   MessageRecordingState = "processing"
+	MessageRecordingStateReady        MessageRecordingState = "ready"
+	MessageRecordingStateUnavailable  MessageRecordingState = "unavailable"
+	MessageRecordingStateUnsupported  MessageRecordingState = "unsupported"
+)
+
+// Validate checks if the MessageRecordingState value is valid
+func (m MessageRecordingState) Validate() error {
+	switch m {
+	case MessageRecordingStateFailed, MessageRecordingStateMediaMissing, MessageRecordingStateMissing, MessageRecordingStateProcessing, MessageRecordingStateReady, MessageRecordingStateUnavailable, MessageRecordingStateUnsupported:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageRecordingState value, got: %v", m))
+	}
+}
+
+type MessageTranscriptOrigin string
+
+const (
+	MessageTranscriptOriginGenerated MessageTranscriptOrigin = "generated"
+	MessageTranscriptOriginSupplied  MessageTranscriptOrigin = "supplied"
+)
+
+// Validate checks if the MessageTranscriptOrigin value is valid
+func (m MessageTranscriptOrigin) Validate() error {
+	switch m {
+	case MessageTranscriptOriginGenerated, MessageTranscriptOriginSupplied:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageTranscriptOrigin value, got: %v", m))
+	}
+}
+
 type NetworkEdgeKind string
 
 const (

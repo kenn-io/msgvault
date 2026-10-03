@@ -6,6 +6,12 @@ description: Release history for msgvault
 
 All notable changes to msgvault, grouped by release.
 
+## Unreleased
+
+- **Transcripts beside recordings:** the Web reader shows each recording's
+  Docbank transcript, or why there isn't one, under the expanded message.
+  `GET /api/v1/messages/{id}/recordings` serves the same list (API schema 3.1.0).
+
 ## 0.21.0
 <small>2026-10-02</small>
 

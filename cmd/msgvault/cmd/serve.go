@@ -718,6 +718,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	schedAdapter := &schedulerAdapter{scheduler: sched, media: mediaSched}
 
+	messageRecordings, err := newMessageRecordingReader(ctx, s, cfg.Integrations.Docbank)
+	if err != nil {
+		logger.Warn("Message recordings unavailable", "error", err)
+	}
+
 	// Create and start API server
 	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
@@ -747,6 +752,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		OperationGate:                 operationGate,
 		OperationHistoryReader:        storeAdapter,
 		BlobStore:                     blobStore,
+		MessageRecordings:             messageRecordings,
 	}
 	apiOpts.GmailProfileAddress = func(ctx context.Context, source *store.Source) (string, error) {
 		client, serviceAccount, err := newDaemonGmailClient(

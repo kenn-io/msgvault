@@ -594,3 +594,31 @@ func testWAV() []byte {
 	binary.LittleEndian.PutUint32(data[40:44], uint32(len(audio)))
 	return data
 }
+
+func TestNewMessageRecordingReader(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := storetest.New(t).Store
+
+	reader, err := newMessageRecordingReader(t.Context(), st, config.DocbankIntegrationConfig{URL: "https://docbank.example.com"})
+	require.NoError(err)
+	assert.Nil(reader)
+
+	_, err = newMessageRecordingReader(t.Context(), st, config.DocbankIntegrationConfig{Enabled: true, URL: "ftp://x"})
+	require.Error(err)
+
+	archiveUID, err := st.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	for _, consent := range []bool{false, true} {
+		reader, err = newMessageRecordingReader(t.Context(), st, config.DocbankIntegrationConfig{
+			Enabled: true, URL: "https://docbank.example.com/", APIKeyEnv: beeperMediaTestKeyEnv,
+			AllSourcesUploadConsent: consent,
+		})
+		require.NoError(err)
+		require.NotNil(reader)
+		assert.Equal(beeperMediaDestinationKey("https://docbank.example.com", archiveUID), reader.Destination)
+		assert.Equal(consent, reader.UploadConsent)
+		assert.NotNil(reader.Client)
+		assert.Same(st, reader.Store)
+	}
+}

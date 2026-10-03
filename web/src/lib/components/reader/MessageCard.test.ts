@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createAPIClient } from '../../api/client';
 import type { ArchiveMessageDetail } from '../../archive/types';
 import MessageCard from './MessageCard.svelte';
 
@@ -191,5 +192,30 @@ describe('MessageCard', () => {
     expect(container.querySelector('pre')).not.toBeNull();
     expect(container.querySelector('iframe')).toBeNull();
     expect(screen.queryByText('⋯')).toBeNull();
+  });
+
+  it('requests recordings once for an expanded card with attachments', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ message_id: 42, recordings: [] }));
+    const attachments = [{ filename: 'voice.wav', mimeType: 'audio/wav', sizeBytes: 44 }];
+    render(MessageCard, {
+      props: { message: detail({ attachments }), expanded: true, client: createAPIClient(fetchFn) }
+    });
+
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1));
+    const request = fetchFn.mock.calls[0][0] as Request;
+    expect(new URL(request.url).pathname).toBe('/api/v1/messages/42/recordings');
+    expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+  });
+
+  it('makes no recordings request without attachments or while collapsed', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ message_id: 42, recordings: [] }));
+    const attachments = [{ filename: 'voice.wav', mimeType: 'audio/wav', sizeBytes: 44 }];
+    render(MessageCard, { props: { message: detail(), expanded: true, client: createAPIClient(fetchFn) } });
+    render(MessageCard, {
+      props: { message: detail({ attachments }), expanded: false, client: createAPIClient(fetchFn) }
+    });
+
+    await Promise.resolve();
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });

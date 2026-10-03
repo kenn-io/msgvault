@@ -307,6 +307,15 @@ FROM beeper_media_deliveries
 GROUP BY phase, coverage_state;
 ```
 
+### Read transcripts in the Web reader
+
+Open a conversation in the Web reader and expand a message with audio. Each
+recording shows its filename, size and transcript state. A ready transcript
+says whether it came from the provider or was generated, and marks partial
+text. Lines show their start time and speaker when Docbank recorded them.
+The Web reader is the only client for now. msgvault reads the text from
+Docbank each time you open the message and does not store it.
+
 ## Scheduled sync
 
 Let the daemon run incremental syncs on a schedule:

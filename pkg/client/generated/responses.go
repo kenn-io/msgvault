@@ -1625,6 +1625,10 @@ type GetMessageInlinePartErrorResponseJSON501 = ErrorResponse
 
 type GetMessageInlinePartErrorResponseJSON503 = ErrorResponse
 
+type ListMessageRecordingsResponse = MessageRecordingsResponse
+
+type ListMessageRecordingsErrorResponse = ErrorResponse
+
 type ListMessageTasksResponse = TaskLinkLookupResponse
 
 type ListMessageTasksErrorResponse = ErrorResponse
@@ -4787,6 +4791,13 @@ type GetMessageInlinePartResp struct {
 	JSON500      *GetMessageInlinePartErrorResponseJSON500
 	JSON501      *GetMessageInlinePartErrorResponseJSON501
 	JSON503      *GetMessageInlinePartErrorResponseJSON503
+}
+
+type ListMessageRecordingsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListMessageRecordingsResponse
 }
 
 type ListMessageTasksResp struct {

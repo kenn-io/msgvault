@@ -5909,6 +5909,57 @@ func (m MessageRecord) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
+type MessageRecording struct {
+	AttachmentID int64                 `json:"attachment_id"`
+	Filename     string                `json:"filename" validate:"required"`
+	SizeBytes    int64                 `json:"size_bytes"`
+	State        MessageRecordingState `json:"state" validate:"required"`
+	Transcript   *MessageTranscript    `json:"transcript,omitempty"`
+}
+
+func (m MessageRecording) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Filename, "required"); err != nil {
+		errors = errors.Append("Filename", err)
+	}
+	if v, ok := any(m.State).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("State", err)
+		}
+	}
+	if m.Transcript != nil {
+		if v, ok := any(m.Transcript).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Transcript", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MessageRecordingsResponse struct {
+	MessageID  int64              `json:"message_id"`
+	Recordings []MessageRecording `json:"recordings" validate:"required"`
+}
+
+func (m MessageRecordingsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range m.Recordings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Recordings[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MessageSummary struct {
 	Bcc             []string `json:"bcc,omitempty"`
 	Cc              []string `json:"cc,omitempty"`
@@ -5932,6 +5983,43 @@ type MessageSummary struct {
 }
 
 func (m MessageSummary) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MessageTranscript struct {
+	Origin  MessageTranscriptOrigin `json:"origin" validate:"required"`
+	Partial bool                    `json:"partial"`
+	Units   []MessageTranscriptUnit `json:"units" validate:"required"`
+}
+
+func (m MessageTranscript) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Origin).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Origin", err)
+		}
+	}
+	for i, item := range m.Units {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Units[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MessageTranscriptUnit struct {
+	EndMs   *int64  `json:"end_ms,omitempty"`
+	Speaker *string `json:"speaker,omitzero"`
+	StartMs *int64  `json:"start_ms,omitempty"`
+	Text    string  `json:"text" validate:"required"`
+}
+
+func (m MessageTranscriptUnit) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 

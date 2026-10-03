@@ -6462,6 +6462,49 @@ components:
         - account
         - source_type
       type: object
+    MessageRecording:
+      additionalProperties: true
+      properties:
+        attachment_id:
+          format: int64
+          type: integer
+        filename:
+          type: string
+        size_bytes:
+          format: int64
+          type: integer
+        state:
+          enum:
+            - ready
+            - processing
+            - missing
+            - failed
+            - unsupported
+            - media_missing
+            - unavailable
+          type: string
+        transcript:
+          $ref: "#/components/schemas/MessageTranscript"
+      required:
+        - attachment_id
+        - filename
+        - size_bytes
+        - state
+      type: object
+    MessageRecordingsResponse:
+      additionalProperties: true
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        recordings:
+          items:
+            $ref: "#/components/schemas/MessageRecording"
+          type: array
+      required:
+        - message_id
+        - recordings
+      type: object
     MessageSummary:
       additionalProperties: true
       properties:
@@ -6525,6 +6568,41 @@ components:
         - labels
         - has_attachments
         - size_bytes
+      type: object
+    MessageTranscript:
+      additionalProperties: true
+      properties:
+        origin:
+          enum:
+            - supplied
+            - generated
+          type: string
+        partial:
+          type: boolean
+        units:
+          items:
+            $ref: "#/components/schemas/MessageTranscriptUnit"
+          type: array
+      required:
+        - origin
+        - partial
+        - units
+      type: object
+    MessageTranscriptUnit:
+      additionalProperties: true
+      properties:
+        end_ms:
+          format: int64
+          type: integer
+        speaker:
+          type: string
+        start_ms:
+          format: int64
+          type: integer
+        text:
+          type: string
+      required:
+        - text
       type: object
     Metrics:
       additionalProperties: true
@@ -14065,7 +14143,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.0.0
+  version: 3.1.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -21140,6 +21218,35 @@ paths:
       security:
         - apiKey: []
       summary: Get an inline MIME part
+      tags:
+        - API
+  /api/v1/messages/{id}/recordings:
+    get:
+      operationId: listMessageRecordings
+      parameters:
+        - description: Message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageRecordingsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a message's recordings with transcript state
       tags:
         - API
   /api/v1/messages/{id}/tasks:

@@ -97,26 +97,10 @@ func addBeeperMediaRoute(
 	cfg config.DocbankIntegrationConfig,
 	logger *slog.Logger,
 ) error {
-	endpoint := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	lookupKey := func() (string, error) {
-		if cfg.APIKeyEnv == "" {
-			return "", errors.New("docbank API key environment name is missing")
-		}
-		key, ok := os.LookupEnv(cfg.APIKeyEnv)
-		if !ok || key == "" {
-			return "", errors.New("docbank API key is unavailable")
-		}
-		return key, nil
-	}
-	client, err := docbankmedia.NewClient(endpoint, lookupKey)
+	client, destination, err := docbankMediaClient(ctx, st, cfg)
 	if err != nil {
 		return err
 	}
-	archiveUID, err := st.ArchiveUIDContext(ctx)
-	if err != nil {
-		return err
-	}
-	destination := beeperMediaDestinationKey(endpoint, archiveUID)
 	// Without upload consent the job only records local discovery.
 	var submitClient *docbankmedia.Client
 	if cfg.AllSourcesUploadConsent {
@@ -145,6 +129,49 @@ func addBeeperMediaRoute(
 			return nil
 		},
 	})
+}
+
+// docbankMediaClient builds the Docbank client and the destination key that
+// the media job and the Web reader share.
+func docbankMediaClient(
+	ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig,
+) (*docbankmedia.Client, string, error) {
+	endpoint := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
+	lookupKey := func() (string, error) {
+		if cfg.APIKeyEnv == "" {
+			return "", errors.New("docbank API key environment name is missing")
+		}
+		key, ok := os.LookupEnv(cfg.APIKeyEnv)
+		if !ok || key == "" {
+			return "", errors.New("docbank API key is unavailable")
+		}
+		return key, nil
+	}
+	client, err := docbankmedia.NewClient(endpoint, lookupKey)
+	if err != nil {
+		return nil, "", err
+	}
+	archiveUID, err := st.ArchiveUIDContext(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	return client, beeperMediaDestinationKey(endpoint, archiveUID), nil
+}
+
+// newMessageRecordingReader returns nil when the Docbank integration is off.
+func newMessageRecordingReader(
+	ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig,
+) (*api.MessageRecordingReader, error) {
+	if !cfg.Enabled {
+		return nil, nil //nolint:nilnil // A nil reader serves an empty recordings list.
+	}
+	client, destination, err := docbankMediaClient(ctx, st, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &api.MessageRecordingReader{
+		Store: st, Client: client, Destination: destination, UploadConsent: cfg.AllSourcesUploadConsent,
+	}, nil
 }
 
 func beeperMediaDestinationKey(endpoint, archiveUID string) string {

@@ -6349,6 +6349,55 @@ components:
         - account
         - source_type
       type: object
+    MessageRecording:
+      properties:
+        attachment_id:
+          format: int64
+          type: integer
+        filename:
+          type: string
+        size_bytes:
+          format: int64
+          type: integer
+        state:
+          enum:
+            - ready
+            - processing
+            - missing
+            - failed
+            - unsupported
+            - media_missing
+            - unavailable
+          type: string
+          x-enum-names:
+            - MessageRecordingStateReady
+            - MessageRecordingStateProcessing
+            - MessageRecordingStateMissing
+            - MessageRecordingStateFailed
+            - MessageRecordingStateUnsupported
+            - MessageRecordingStateMediaMissing
+            - MessageRecordingStateUnavailable
+        transcript:
+          $ref: "#/components/schemas/MessageTranscript"
+      required:
+        - attachment_id
+        - filename
+        - size_bytes
+        - state
+      type: object
+    MessageRecordingsResponse:
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        recordings:
+          items:
+            $ref: "#/components/schemas/MessageRecording"
+          type: array
+      required:
+        - message_id
+        - recordings
+      type: object
     MessageSummary:
       properties:
         bcc:
@@ -6411,6 +6460,42 @@ components:
         - labels
         - has_attachments
         - size_bytes
+      type: object
+    MessageTranscript:
+      properties:
+        origin:
+          enum:
+            - supplied
+            - generated
+          type: string
+          x-enum-names:
+            - MessageTranscriptOriginSupplied
+            - MessageTranscriptOriginGenerated
+        partial:
+          type: boolean
+        units:
+          items:
+            $ref: "#/components/schemas/MessageTranscriptUnit"
+          type: array
+      required:
+        - origin
+        - partial
+        - units
+      type: object
+    MessageTranscriptUnit:
+      properties:
+        end_ms:
+          format: int64
+          type: integer
+        speaker:
+          type: string
+        start_ms:
+          format: int64
+          type: integer
+        text:
+          type: string
+      required:
+        - text
       type: object
     Metrics:
       properties:
@@ -13731,7 +13816,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.0.0
+  version: 3.1.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -20828,6 +20913,35 @@ paths:
       security:
         - apiKey: []
       summary: Get an inline MIME part
+      tags:
+        - API
+  /api/v1/messages/{id}/recordings:
+    get:
+      operationId: listMessageRecordings
+      parameters:
+        - description: Message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageRecordingsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a message's recordings with transcript state
       tags:
         - API
   /api/v1/messages/{id}/tasks:

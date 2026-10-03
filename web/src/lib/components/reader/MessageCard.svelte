@@ -5,6 +5,7 @@
   import type { ArchiveMessageDetail, MessageViewMode } from '../../archive/types';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import ContentFrame from './ContentFrame.svelte';
+  import MessageRecordings from './MessageRecordings.svelte';
 
   interface Props {
     message: ArchiveMessageDetail;
@@ -118,6 +119,9 @@
         {/if}
       </section>
     </div>
+    {#if client && message.attachments.length > 0}
+      <MessageRecordings {client} messageId={message.id} />
+    {/if}
   </article>
 {:else}
   <button

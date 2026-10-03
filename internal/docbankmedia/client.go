@@ -21,6 +21,8 @@ const (
 	maxMetadataBytes   = 64 << 10
 	maxTranscriptBytes = 16 << 20
 	maxMediaBytes      = 2 << 30
+	// A transcript read returns supplied text in JSON units, which can roughly double it.
+	maxTranscriptResponseBytes = 2*maxTranscriptBytes + maxResponseBytes
 )
 
 var (
@@ -155,6 +157,38 @@ type JobStatus struct {
 	FailureCode string `json:"failure_code,omitzero"`
 }
 
+// MediaTimeSpan is one half-open interval in retained media, in milliseconds.
+type MediaTimeSpan struct {
+	StartMS int64 `json:"start_ms"`
+	EndMS   int64 `json:"end_ms"`
+}
+
+type MediaTranscriptUnit struct {
+	Text     string         `json:"text"`
+	TimeSpan *MediaTimeSpan `json:"time_span,omitempty"`
+	Speaker  string         `json:"speaker,omitempty"`
+}
+
+type MediaTranscriptEvidence struct {
+	Origin       string                `json:"origin"`
+	Completeness string                `json:"completeness"`
+	Truncated    bool                  `json:"truncated"`
+	HasOmissions bool                  `json:"has_omissions"`
+	Units        []MediaTranscriptUnit `json:"units"`
+}
+
+// MediaTranscript is Docbank's transcript evidence for one exact media version.
+type MediaTranscript struct {
+	VaultUID         string                   `json:"vault_uid"`
+	SourceID         string                   `json:"source_id"`
+	SourceVersionID  string                   `json:"source_version_id"`
+	ContentVersionID string                   `json:"content_version_id"`
+	EvidenceState    string                   `json:"evidence_state"`
+	CoverageState    string                   `json:"coverage_state"`
+	OperationState   string                   `json:"operation_state"`
+	Transcript       *MediaTranscriptEvidence `json:"transcript,omitempty"`
+}
+
 // NewClient validates the destination without making a network request.
 // HTTPS is required for remote destinations; HTTP is allowed only on loopback.
 func NewClient(baseURL string, lookupKey func() (string, error)) (*Client, error) {
@@ -255,6 +289,31 @@ func (c *Client) JobStatus(ctx context.Context, jobID string) (JobStatus, error)
 	return status, nil
 }
 
+// Transcript reads one exact retained version's transcript evidence.
+func (c *Client) Transcript(
+	ctx context.Context, sourceID, sourceVersionID, contentVersionID string,
+) (MediaTranscript, error) {
+	if sourceID == "" || sourceVersionID == "" || contentVersionID == "" {
+		return MediaTranscript{}, fmt.Errorf("%w: transcript requires an exact media version", ErrInvalidRequest)
+	}
+	endpoint := "/api/v1/media/sources/" + url.PathEscape(sourceID) + "/versions/" +
+		url.PathEscape(sourceVersionID) + "/transcript?" +
+		url.Values{"content_version_id": {contentVersionID}}.Encode()
+	var transcript MediaTranscript
+	if err := c.jsonRequestLimit(ctx, http.MethodGet, endpoint, nil, &transcript, maxTranscriptResponseBytes); err != nil {
+		return MediaTranscript{}, err
+	}
+	// Docbank echoes the requested tuple, and only ready evidence carries text.
+	evidence := transcript.Transcript
+	if transcript.VaultUID == "" || transcript.SourceID != sourceID ||
+		transcript.SourceVersionID != sourceVersionID || transcript.ContentVersionID != contentVersionID ||
+		(transcript.EvidenceState == "ready") != (evidence != nil) ||
+		(evidence != nil && evidence.Origin != "supplied" && evidence.Origin != "generated") {
+		return MediaTranscript{}, ErrInvalidReceipt
+	}
+	return transcript, nil
+}
+
 func (c *Client) multipart(
 	ctx context.Context, endpoint string, metadata any, filename, mediaType string, content io.Reader,
 ) (Receipt, error) {
@@ -296,7 +355,7 @@ func (c *Client) multipart(
 		<-writeResult
 		return Receipt{}, transportError(err)
 	}
-	body, readErr := readResponse(resp)
+	body, readErr := readResponse(resp, maxResponseBytes)
 	_ = resp.Body.Close()
 	if readErr != nil {
 		_ = reader.CloseWithError(readErr)
@@ -353,6 +412,12 @@ func writeMultipart(
 }
 
 func (c *Client) jsonRequest(ctx context.Context, method, endpoint string, body any, out any) error {
+	return c.jsonRequestLimit(ctx, method, endpoint, body, out, maxResponseBytes)
+}
+
+func (c *Client) jsonRequestLimit(
+	ctx context.Context, method, endpoint string, body any, out any, limit int64,
+) error {
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -379,7 +444,7 @@ func (c *Client) jsonRequest(ctx context.Context, method, endpoint string, body 
 		return transportError(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	data, err := readResponse(resp)
+	data, err := readResponse(resp, limit)
 	if err != nil {
 		return err
 	}
@@ -417,12 +482,12 @@ func (c *Client) setAPIKey(req *http.Request) error {
 	return nil
 }
 
-func readResponse(resp *http.Response) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+func readResponse(resp *http.Response, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("read Docbank response: %w", err)
 	}
-	if len(data) > maxResponseBytes {
+	if int64(len(data)) > limit {
 		return nil, ErrResponseTooLarge
 	}
 	return data, nil
