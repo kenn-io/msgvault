@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -266,4 +267,70 @@ func unpacedOmiClients(t *testing.T) {
 	previous := omi.RequestInterval
 	omi.RequestInterval = 0
 	t.Cleanup(func() { omi.RequestInterval = previous })
+	resetOmiClientsForTest(t)
+}
+
+func resetOmiClientsForTest(t *testing.T) {
+	t.Helper()
+	reset := func() {
+		omiClients.Lock()
+		defer omiClients.Unlock()
+		clear(omiClients.byKey)
+	}
+	reset()
+	t.Cleanup(reset)
+}
+
+// Scheduled runs and aliases sharing one key must share its pacing, or a
+// frequent schedule spends a fresh request token on every run.
+func TestScheduledOmiRunsSharePacingAcrossRunsAndAliases(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	const interval = 300 * time.Millisecond
+	previous := omi.RequestInterval
+	omi.RequestInterval = interval
+	t.Cleanup(func() { omi.RequestInterval = previous })
+	resetOmiClientsForTest(t)
+	originalRefresh := rebuildOmiCacheAfterScheduledSync
+	rebuildOmiCacheAfterScheduledSync = func(context.Context, string) error { return nil }
+	t.Cleanup(func() { rebuildOmiCacheAfterScheduledSync = originalRefresh })
+
+	var mu sync.Mutex
+	var requests []time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		requests = append(requests, time.Now())
+		mu.Unlock()
+		_, _ = w.Write([]byte("[]"))
+	}))
+	t.Cleanup(server.Close)
+
+	st := testutil.NewTestStore(t)
+	state := testInvocationWithConfig(lifecycleTestConfig(t.TempDir()))
+	sched := scheduler.New(nil).WithLogger(testDiscardLogger())
+	t.Cleanup(func() { <-sched.Stop().Done() })
+	for _, id := range []string{"work", "alias"} {
+		_, err := st.GetOrCreateSource(sourceTypeOmi, id)
+		require.NoError(err)
+		// A trailing slash still names the same backend and key.
+		baseURL := server.URL
+		if id == "alias" {
+			baseURL += "/"
+		}
+		require.NoError(registerScheduledOmiJob(sched, state, st, config.OmiSource{Identifier: id, AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: baseURL, Enabled: true, Schedule: "* * * * *"}))
+	}
+	for _, job := range []string{"omi:work", "omi:work", "omi:alias"} {
+		require.NoError(sched.TriggerJob(job))
+	}
+	for _, status := range sched.JobStatus() {
+		assert.Empty(status.LastError, status.Name)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(requests, 3)
+	for i := 1; i < len(requests); i++ {
+		// Allow for request latency between the limiter and the server.
+		assert.GreaterOrEqual(requests[i].Sub(requests[i-1]), interval-50*time.Millisecond, "request %d", i)
+	}
 }

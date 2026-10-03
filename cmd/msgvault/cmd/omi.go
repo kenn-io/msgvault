@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,6 +30,31 @@ var (
 	rebuildOmiCacheAfterWrite         = rebuildCacheAfterManualSync
 	rebuildOmiCacheAfterScheduledSync = rebuildCacheAfterScheduledSync
 )
+
+type omiClientKey struct{ baseURL, apiKey string }
+
+var omiClients = struct {
+	sync.Mutex
+
+	byKey map[omiClientKey]*omi.Client
+}{byKey: map[omiClientKey]*omi.Client{}}
+
+// sharedOmiClient keeps one client per backend and key for the process
+// lifetime, so the hourly request pacing spans scheduled runs and aliases.
+func sharedOmiClient(baseURL, apiKey string) *omi.Client {
+	key := omiClientKey{baseURL: baseURL, apiKey: apiKey}
+	if normalized, err := omi.NormalizeBaseURL(baseURL); err == nil {
+		key.baseURL = normalized
+	}
+	omiClients.Lock()
+	defer omiClients.Unlock()
+	client, ok := omiClients.byKey[key]
+	if !ok {
+		client = newOmiClient(baseURL, apiKey)
+		omiClients.byKey[key] = client
+	}
+	return client
+}
 
 const omiConfigHint = `Add to your config.toml:
 
@@ -105,7 +131,7 @@ Examples:
 		}
 
 		// Probe conversation access with transcript inclusion.
-		client := newOmiClient(src.BaseURL, src.APIKey)
+		client := sharedOmiClient(src.BaseURL, src.APIKey)
 		if _, err := client.ListConversations(cmd.Context(), omi.ListParams{Limit: 1}); err != nil {
 			return fmt.Errorf("validate Omi API key: %w", err)
 		}
@@ -232,7 +258,7 @@ Examples:
 			src := validated.source
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Omi for %s\n\n", src.Identifier)
 
-			imp := omi.NewImporter(s, newOmiClient(src.BaseURL, src.APIKey))
+			imp := omi.NewImporter(s, sharedOmiClient(src.BaseURL, src.APIKey))
 			sum, err := imp.Import(ctx, omi.ImportOptions{
 				Identifier:   src.Identifier,
 				AccountEmail: validated.accountEmail,
@@ -316,7 +342,7 @@ func runConfiguredOmiSync(ctx context.Context, st *store.Store, src config.OmiSo
 	if err != nil {
 		return err
 	}
-	imp := omi.NewImporter(st, newOmiClient(src.BaseURL, src.APIKey))
+	imp := omi.NewImporter(st, sharedOmiClient(src.BaseURL, src.APIKey))
 	sum, err := imp.Import(ctx, omi.ImportOptions{
 		Identifier:   src.Identifier,
 		AccountEmail: accountEmail,
