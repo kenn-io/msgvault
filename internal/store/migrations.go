@@ -69,6 +69,7 @@ const (
 	migrationOrganizationDomainIDNA      = "organization_domain_idna_v1"
 	migrationGmailChatClassification     = "gmail_chat_classification_v1"
 	migrationSyncRunResumeMetadata       = "sync_run_resume_metadata_v1"
+	migrationDraftAuthored               = "draft_authored_v1"
 	// v3: the SQLite conversation trigger narrowed from a blanket
 	// AFTER UPDATE to conversation_type changes only; archives that
 	// installed the blanket trigger need the repair to re-run.

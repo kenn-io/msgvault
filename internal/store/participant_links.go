@@ -268,6 +268,13 @@ func (s *Store) lockIdentityMutationTxContext(
 	ctx context.Context,
 	tx *loggedTx,
 ) error {
+	if tx.attribution != nil {
+		// The attribution entry already took the identity row before the fence.
+		if tx.attribution.exclusive {
+			return nil
+		}
+		return errAttributionLockUpgrade
+	}
 	if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(
 		`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`),
 		identityRevisionKey); err != nil {

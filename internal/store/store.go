@@ -106,6 +106,8 @@ type Store struct {
 	listIDRepairAfterScanHook             func(context.Context, *loggedTx, []listIDRepairUpdate) error
 	listIDRepairAfterFingerprintLockHook  func()
 	imapLabelRepairPerMessageHook         func(messageID int64)
+	attributionAfterLockHook              func(sourceIDs []int64)
+	accountAttributionAfterReadHook       func(messageID int64)
 	cardDAVConflictResolveSnapshotHook    func()
 	cardDAVTombstonePrepareSnapshotHook   func()
 	cardDAVReviewPersonLockHook           func()
@@ -130,7 +132,9 @@ type Store struct {
 	// contentChangedBackfillBatch and rfc822IDBackfillBatch. Per-Store for
 	// the same reason.
 	contentChangedBackfillBatchSizeOverride int64
-	rfc822IDBackfillBatchSizeOverride       int
+	// accountRepairPageSizeOverride shrinks account-attribution repair pages in tests.
+	accountRepairPageSizeOverride     int
+	rfc822IDBackfillBatchSizeOverride int
 }
 
 // synchronous=FULL + fullfsync=true protects WAL writes against OS/power crashes
@@ -884,12 +888,27 @@ func (s *Store) withReadSnapshotContext(
 func (s *Store) withTxOptionsContext(
 	ctx context.Context, opts *sql.TxOptions, fn func(tx *loggedTx) error,
 ) error {
+	return s.withTxLockedContext(ctx, opts, nil, fn)
+}
+
+// withTxLockedContext runs preFence after BEGIN and before the sync-generation
+// fence, so locks that must precede sync_runs are taken first.
+func (s *Store) withTxLockedContext(
+	ctx context.Context, opts *sql.TxOptions,
+	preFence func(*loggedTx) error, fn func(tx *loggedTx) error,
+) error {
 	start := time.Now()
 	slog.Debug("sql tx begin")
 	tx, err := s.db.BeginTx(ctx, opts)
 	if err != nil {
 		slog.Warn("sql tx begin failed", "error", err.Error())
 		return fmt.Errorf("begin tx: %w", err)
+	}
+	if preFence != nil {
+		if err := preFence(tx); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 	}
 	if s.syncGeneration != nil && (opts == nil || !opts.ReadOnly) {
 		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
@@ -1004,6 +1023,8 @@ func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context,
 	return nil
 }
 
+const messagesAccountIndexDefinition = "ON messages(account_address, account_path)"
+
 // buildLargeIndexesConcurrently creates big-table indexes without blocking
 // writers. CREATE INDEX CONCURRENTLY cannot run inside a transaction (unlike
 // the runMaintenance escape hatch, which only disables the pool-wide
@@ -1063,6 +1084,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 	concurrentIndexes := []struct{ name, definition string }{
 		{"idx_messages_source_id", "ON messages(source_id, id)"},
 		{"idx_messages_reply_to_message_id", "ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL"},
+		{"idx_messages_account", messagesAccountIndexDefinition},
 		{rfc822CanonicalIndexName, s.dialect.RFC822CanonicalIDIndexDefinition()},
 		{"idx_participants_email_lower", "ON participants(LOWER(email_address))"},
 		{"idx_participant_identifiers_value_lower", "ON participant_identifiers(LOWER(identifier_value))"},
@@ -1549,6 +1571,18 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
 		}
+	}
+	// account: and received: filter on these; created here because the
+	// columns arrive through the legacy migrations above. PostgreSQL builds
+	// it concurrently in buildLargeIndexesConcurrently.
+	if !s.IsPostgreSQL() {
+		if _, err := s.db.ExecContext(ctx,
+			`CREATE INDEX IF NOT EXISTS idx_messages_account `+messagesAccountIndexDefinition); err != nil {
+			return fmt.Errorf("create message account index: %w", err)
+		}
+	}
+	if err := s.runOnceMigration(ctx, migrationDraftAuthored, 1, false, s.backfillDraftAuthored); err != nil {
+		return fmt.Errorf("backfill draft authorship: %w", err)
 	}
 	if err := s.runOnceMigration(ctx, migrationCardDAVMultipleAccounts, 1, false, s.ensureCardDAVMultiAccountSchema); err != nil {
 		return fmt.Errorf("migrate CardDAV connections: %w", err)

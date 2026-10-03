@@ -195,13 +195,76 @@ func derivedDataRevision(t *testing.T, st *store.Store) int64 {
 	return revision
 }
 
+// withoutCrossTypePasses hides the cross-type passes so a test sees only the
+// typed registry.
+func withoutCrossTypePasses(t *testing.T) {
+	t.Helper()
+	saved := crossTypeRegistry
+	crossTypeRegistry = nil
+	t.Cleanup(func() { crossTypeRegistry = saved })
+}
+
 func TestRunRejectsUnregisteredType(t *testing.T) {
+	withoutCrossTypePasses(t)
 	_, err := Run(context.Background(), testutil.NewTestStore(t), "no-such-type", "acct", 1, nil)
 	require.Error(t, err)
 }
 
 func TestRunIfStaleIsNoOpForUnregisteredType(t *testing.T) {
+	withoutCrossTypePasses(t)
 	_, ran, err := RunIfStale(context.Background(), testutil.NewTestStore(t), "no-such-type", "acct", 1, nil)
 	require.NoError(t, err)
 	assert.False(t, ran)
+}
+
+func TestCrossTypeRegistry(t *testing.T) {
+	assert := assert.New(t)
+	withoutCrossTypePasses(t)
+	assert.False(HasPass("no-such-type"))
+	noop := func(context.Context, *store.Store, int64, func(string)) (*Summary, error) { return &Summary{}, nil }
+	RegisterAllSourceTypes("test-cross", "v1", noop)
+	assert.Panics(func() { RegisterAllSourceTypes("test-cross", "v2", noop) })
+	assert.True(HasPass("no-such-type"), "a cross-type pass applies to every source type")
+	assert.Empty(SourceTypes(), "SourceTypes lists typed passes only")
+	assert.Equal("rederive:beeper:instagramgo:v1", LedgerKey("beeper", "instagramgo", "v1"),
+		"typed ledger keys keep their format")
+	assert.Equal("rederive:test-cross:mbox:a@example.com:v1", passLedgerKey("test-cross", "mbox", "a@example.com", "v1"))
+	assert.NotEqual(passLedgerKey("test-cross", "mbox", "a@example.com", "v1"), passLedgerKey("test-cross", "mbox", "b@example.com", "v1"))
+}
+
+func TestRunIfStaleRunsOnlyStalePasses(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	withoutCrossTypePasses(t)
+
+	st := testutil.NewTestStore(t)
+	typedCalls, crossCalls := 0, 0
+	Register("test-mixed", "v1", func(context.Context, *store.Store, int64, func(string)) (*Summary, error) {
+		typedCalls++
+		return &Summary{MessagesScanned: 2}, nil
+	})
+	t.Cleanup(func() { delete(registry, "test-mixed") })
+	RegisterAllSourceTypes("test-cross", "v1", func(context.Context, *store.Store, int64, func(string)) (*Summary, error) {
+		crossCalls++
+		return &Summary{MessagesScanned: 3}, nil
+	})
+
+	sum, ran, err := RunIfStale(context.Background(), st, "test-mixed", "acct", 1, nil)
+	require.NoError(err)
+	require.True(ran)
+	assert.Equal(int64(5), sum.MessagesScanned, "both passes contribute to the summary")
+	assert.Equal(1, typedCalls)
+	assert.Equal(1, crossCalls)
+
+	// Only the cross-type pass is stale after its version bumps.
+	crossTypeRegistry[0].version = "v2"
+	_, ran, err = RunIfStale(context.Background(), st, "test-mixed", "acct", 1, nil)
+	require.NoError(err)
+	assert.True(ran)
+	assert.Equal(1, typedCalls, "a recorded typed pass must not run again")
+	assert.Equal(2, crossCalls)
+
+	_, ran, err = RunIfStale(context.Background(), st, "test-mixed", "acct", 1, nil)
+	require.NoError(err)
+	assert.False(ran)
 }

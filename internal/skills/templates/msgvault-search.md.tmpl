@@ -31,10 +31,16 @@ whole query is optional.
 | `older_than:` `newer_than:` | relative age | `7d`, `2w`, `1m`, `1y` |
 | `larger:` `smaller:` | whole-message size | `5M`, `100K`, `1G` |
 | `message_type:` | source kind | `email`, `sms`, `mms`, `whatsapp`, `imessage`, `teams`, `fbmessenger`, `calendar_event`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
+| `received:` | confirmed address that received the mail | full email; `--mode=fts` only |
+| `account:` | confirmed address that received or sent it, or owns the calendar event | full email; `--mode=fts` only |
 
 Bare words and `"quoted phrases"` are full-text terms, matched as
 prefixes and combined with AND (no OR/NEAR support). If a search
 returns nothing, retry with fewer terms or fewer filters.
+
+`--account` selects a whole archive source; `account:` matches only messages
+attributed to that address, so mail forwarded from work@ into a personal
+source matches `account:work@...` but not `--account work@...`.
 
 `list:` and `list-id:` are case-insensitive. Their values are literal, so
 `%`, `_`, and `\` are not wildcards. Repeating either alias requires every

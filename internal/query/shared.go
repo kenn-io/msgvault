@@ -64,7 +64,9 @@ func hasExplicitMessageTypeSearch(searchQuery string) bool {
 	if searchQuery == "" {
 		return false
 	}
-	return len(search.Parse(searchQuery).MessageTypes) > 0
+	// account: covers calendar rows too, so it must not default to email.
+	q := search.Parse(searchQuery)
+	return len(q.MessageTypes) > 0 || len(q.AccountAddrs) > 0
 }
 
 // shouldDefaultStatsToEmail reports whether a generic stats query should use

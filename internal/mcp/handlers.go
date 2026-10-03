@@ -524,6 +524,8 @@ func translateDaemonRequestError(err error) *toolResult {
 		message = "vector_init_failed: vector search failed to initialize"
 	case "invalid_query":
 		message = "invalid_query: search query is invalid"
+	case "unsupported_filter_mode":
+		message = "unsupported_filter_mode: a filter is not supported in this search mode; account: and received: need full-text search"
 	case "invalid_account":
 		message = "invalid_account: account filter is invalid"
 	case "account_not_found":
@@ -1069,6 +1071,9 @@ func (h *handlers) searchMessageBodiesHybrid(
 	}
 
 	filter, err := h.hybridEngine.BuildFilter(ctx, parsed)
+	if errors.Is(err, hybrid.ErrAccountFiltersUnsupported) {
+		return toolErrorResult(err.Error()), nil
+	}
 	if err != nil {
 		return nil, newInternalError("build semantic-search filter", err)
 	}

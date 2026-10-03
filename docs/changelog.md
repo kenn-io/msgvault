@@ -6,6 +6,14 @@ description: Release history for msgvault
 
 All notable changes to msgvault, grouped by release.
 
+## Unreleased
+
+- Find mail by the address that received it: `received:work@example.org` finds
+  forwarded and Bcc'd mail delivered to a confirmed alias, and
+  `account:work@example.org` adds sent mail and calendar events. Older mail
+  fills in on each source's next sync or with `msgvault repair-derived`. API
+  schema 3.1.0; older daemons refuse these operators.
+
 ## 0.21.0
 <small>2026-10-02</small>
 

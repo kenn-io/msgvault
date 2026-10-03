@@ -677,6 +677,11 @@ func (s *Store) buildMessageSearchSQL(q *search.Query, ftsAvailable bool) messag
 		}
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
+	// account: and received: match the derived account projection.
+	if accountConditions, accountArgs := search.AccountConditions(q, "m"); len(accountConditions) > 0 {
+		conditions = append(conditions, accountConditions...)
+		args = append(args, accountArgs...)
+	}
 
 	// message_type: / message_type= filter. An "email" value also matches an
 	// empty or NULL message_type. Rows imported before the column existed

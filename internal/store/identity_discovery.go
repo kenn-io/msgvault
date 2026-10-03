@@ -224,7 +224,7 @@ func (s *Store) scanIdentityObservationsContext(
 		           JOIN labels l ON l.id = ml.label_id
 		           WHERE ml.message_id = m.id
 		             AND l.source_id = m.source_id
-		             AND l.system_role = 'sent'
+		             AND `+sentFolderLabelSQL("l")+`
 		       ) AS has_sent_folder,
 		       EXISTS (
 		           SELECT 1
@@ -232,8 +232,7 @@ func (s *Store) scanIdentityObservationsContext(
 		           JOIN labels l ON l.id = ml.label_id
 		           WHERE ml.message_id = m.id
 		             AND l.source_id = m.source_id
-		             AND src.source_type = 'gmail'
-		             AND l.source_label_id = 'SENT'
+		             AND `+sentGmailLabelSQL("l", "src")+`
 		       ) AS has_sent_label
 		FROM messages m
 		JOIN sources src ON src.id = m.source_id
@@ -379,12 +378,9 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 	confirmations []normalizedIdentityConfirmation,
 ) ([]IdentityConfirmationOutcome, error) {
 	outcomes := make([]IdentityConfirmationOutcome, 0, len(confirmations))
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return err
-		}
-
+	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
 		inserted := false
+		var addedAddresses []string
 		for _, confirmation := range confirmations {
 			added, err := s.mergeAccountIdentitySignalsTx(
 				ctx,
@@ -398,6 +394,9 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 				return err
 			}
 			inserted = inserted || added
+			if added {
+				addedAddresses = append(addedAddresses, confirmation.identifier)
+			}
 			outcomes = append(outcomes, IdentityConfirmationOutcome{
 				Identifier: confirmation.identifier,
 				Added:      added,
@@ -417,10 +416,12 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 		if err != nil {
 			return err
 		}
-		if len(participantIDs) == 0 {
-			return nil
+		if len(participantIDs) > 0 {
+			if err := refreshParticipantMessageAttributionContext(ctx, tx, participantIDs...); err != nil {
+				return err
+			}
 		}
-		return refreshParticipantMessageAttributionContext(ctx, tx, participantIDs...)
+		return s.recomputeAccountAttributionForAddressesTx(ctx, tx, sourceID, addedAddresses)
 	})
 	if err != nil {
 		return nil, err

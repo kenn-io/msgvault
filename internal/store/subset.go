@@ -832,6 +832,30 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("copy message_recipients: %w", err)
 	}
 
+	// Derived account attribution copies with its delivery evidence and the
+	// confirmed identities it was derived from, so a copied row stays
+	// consistent with the rows its next refresh reads.
+	hasDeliveryAddresses, err := sourceTableExists(tx, "message_delivery_addresses")
+	if err != nil {
+		return nil, err
+	}
+	if hasDeliveryAddresses {
+		if _, err := copyByName(tx, "message_delivery_addresses",
+			`message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy message_delivery_addresses: %w", err)
+		}
+	}
+	hasAccountIdentities, err := sourceTableExists(tx, "account_identities")
+	if err != nil {
+		return nil, err
+	}
+	if hasAccountIdentities {
+		if _, err := copyByName(tx, "account_identities",
+			`source_id IN (SELECT source_id FROM selected_message_sources)`); err != nil {
+			return nil, fmt.Errorf("copy account_identities: %w", err)
+		}
+	}
+
 	if _, err := tx.Exec(`
 		INSERT INTO reactions SELECT * FROM src.reactions
 		WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {

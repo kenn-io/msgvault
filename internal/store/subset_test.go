@@ -4964,3 +4964,29 @@ func TestCopySubsetReleasesReviewMappingsWhoseAcceptedEdgeWasFiltered(t *testing
 	require.Len(copied.Residue, 2)
 	assert.Equal("RELATED", copied.Residue[1].Property.Name)
 }
+
+func TestCopySubsetKeepsAccountAttributionConsistent(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srcDB := createTestSourceDB(t, t.TempDir(), 3)
+	db, err := sql.Open("sqlite3", srcDB)
+	require.NoError(err)
+	_, err = db.Exec(`INSERT INTO account_identities (source_id, address, address_key, source_signal)
+		VALUES (1, 'work@example.org', 'work@example.org', 'manual')`)
+	require.NoError(err)
+	_, err = db.Exec(`UPDATE messages SET account_address = 'work@example.org', account_path = 'inbound'`)
+	require.NoError(err)
+	require.NoError(db.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(srcDB, dstDir, 3, false)
+	require.NoError(err)
+	dst, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = dst.Close() })
+	require.NoError(dst.InitSchema())
+
+	var identities int
+	require.NoError(dst.DB().QueryRow(`SELECT COUNT(*) FROM account_identities WHERE address_key = 'work@example.org'`).Scan(&identities))
+	assert.Equal(1, identities, "an attributed copy keeps the identity it was attributed to")
+}

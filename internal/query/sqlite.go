@@ -647,13 +647,7 @@ func (e *SQLiteEngine) Aggregate(ctx context.Context, groupBy ViewType, opts Agg
 }
 
 func aggregateHasExplicitMessageType(filter MessageFilter, opts AggregateOptions) bool {
-	if filter.MessageType != "" {
-		return true
-	}
-	if opts.SearchQuery == "" {
-		return false
-	}
-	return len(search.Parse(opts.SearchQuery).MessageTypes) > 0
+	return filter.MessageType != "" || hasExplicitMessageTypeSearch(opts.SearchQuery)
 }
 
 func sqliteMessageTypeCondition(alias string, messageTypes []string) (string, []any) {
@@ -1954,6 +1948,11 @@ func (e *SQLiteEngine) buildSearchQueryPartsWithVisibility(ctx context.Context, 
 		conditions = append(conditions, metadataContainsExpression(e.dialect, "m.list_id"))
 		args = append(args, "%"+escapeSQLiteLike(listID)+"%")
 	}
+	// account: and received: match the derived account projection.
+	if accountConditions, accountArgs := search.AccountConditions(q, "m"); len(accountConditions) > 0 {
+		conditions = append(conditions, accountConditions...)
+		args = append(args, accountArgs...)
+	}
 
 	// message_type: filter (e.g. sms, whatsapp, calendar_event). The store
 	// API path (store/api.go) honors q.MessageTypes; the FTS query path must
@@ -2366,6 +2365,8 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	merged.BccAddrs = append([]string(nil), q.BccAddrs...)
 	merged.SubjectTerms = append([]string(nil), q.SubjectTerms...)
 	merged.Labels = append([]string(nil), q.Labels...)
+	merged.AccountAddrs = append([]string(nil), q.AccountAddrs...)
+	merged.ReceivedAddrs = append([]string(nil), q.ReceivedAddrs...)
 	merged.MessageTypes = append([]string(nil), q.MessageTypes...)
 	if q.ConversationIDs != nil {
 		merged.ConversationIDs = make([]int64, len(q.ConversationIDs))

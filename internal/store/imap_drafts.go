@@ -136,7 +136,9 @@ func (s *Store) PersistIMAPDraftContext(
 		if err != nil {
 			return err
 		}
-		if err := replaceMessageLabelsTx(boundQuerier{ctx: ctx, q: tx}, id, []int64{labelID}); err != nil {
+		if err := s.refreshAccountAttributionIfOutboundChangedTx(ctx, tx, id, func() error {
+			return replaceMessageLabelsTx(boundQuerier{ctx: ctx, q: tx}, id, []int64{labelID})
+		}); err != nil {
 			return fmt.Errorf("persist IMAP draft label: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
@@ -154,7 +156,8 @@ func (s *Store) PersistIMAPDraftContext(
 		}
 		return nil
 	}
-	if _, err := s.persistMessageWithParticipantsTransaction(ctx, before, participants, build, prepare, after); err != nil {
+	lock := attributionLock{Sources: []int64{receipt.SourceID}}
+	if _, err := s.persistMessageWithParticipantsTransaction(ctx, lock, before, participants, build, prepare, after); err != nil {
 		return IMAPDraft{}, err
 	}
 	return draft, nil

@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/mbox"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -143,6 +144,7 @@ func ImportMbox(
 	defer func() {
 		retErr = errors.Join(retErr, execution.Release())
 	}()
+	rederive.Heal(ctx, slog.Default(), st, src)
 
 	// Resume from a recovered checkpoint, then create a new run under the
 	// source ownership held for this import.

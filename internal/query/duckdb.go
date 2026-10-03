@@ -291,6 +291,8 @@ func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string
 		{datasetMessages, "owner_participant_id"},
 		{datasetMessages, messageTypeDimension},
 		{datasetMessages, "list_id"},
+		{datasetMessages, "account_address"},
+		{datasetMessages, "account_path"},
 		{datasetConversations, "title"},
 		{datasetConversations, "conversation_type"},
 		{"sources", "source_type"},
@@ -726,6 +728,13 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	} else {
 		msgExtra = append(msgExtra, "NULL::VARCHAR AS list_id")
 	}
+	for _, col := range []string{"account_address", "account_path"} {
+		if e.hasCol(datasetMessages, col) {
+			msgReplace = append(msgReplace, "CAST("+col+" AS VARCHAR) AS "+col)
+		} else {
+			msgExtra = append(msgExtra, "NULL::VARCHAR AS "+col)
+		}
+	}
 	if e.hasCol(datasetMessages, "deleted_at") {
 		msgReplace = append(msgReplace, "TRY_CAST(deleted_at AS TIMESTAMP) AS deleted_at")
 	} else {
@@ -1017,6 +1026,11 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 		}
 		conditions = append(conditions, `msg.list_id ILIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeILIKE(listID)+"%")
+	}
+	// account: and received: match the derived account projection.
+	if accountConditions, accountArgs := search.AccountConditions(q, "msg"); len(accountConditions) > 0 {
+		conditions = append(conditions, accountConditions...)
+		args = append(args, accountArgs...)
 	}
 
 	// label: filter - case-insensitive substring match.
@@ -2291,6 +2305,11 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		conditions = append(conditions, "m.list_id ILIKE ? ESCAPE '\\'")
 		args = append(args, "%"+escapeSQLiteLike(listID)+"%")
 	}
+	// account: and received: match the derived account projection.
+	if accountConditions, accountArgs := search.AccountConditions(q, "m"); len(accountConditions) > 0 {
+		conditions = append(conditions, accountConditions...)
+		args = append(args, accountArgs...)
+	}
 
 	if len(q.MessageTypes) > 0 {
 		condition, conditionArgs := duckDBMessageTypeCondition("m", q.MessageTypes)
@@ -3180,6 +3199,11 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 		}
 		conditions = append(conditions, `msg.list_id ILIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeILIKE(listID)+"%")
+	}
+	// account: and received: match the derived account projection.
+	if accountConditions, accountArgs := search.AccountConditions(q, "msg"); len(accountConditions) > 0 {
+		conditions = append(conditions, accountConditions...)
+		args = append(args, accountArgs...)
 	}
 
 	// Label filter - case-insensitive substring match

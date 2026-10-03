@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,7 +26,9 @@ func newRepairDerivedCmd() *cobra.Command {
 Message bodies, snippets, the search index, and attachment metadata are computed
 from a provider's payload when a message is imported, so improving how they are
 derived leaves already-archived rows stale. This command recomputes them from
-the verbatim payload stored alongside every message.
+the verbatim payload stored alongside every message. It also fills in account
+attribution (the address searched by account: and received:) for email and
+calendar rows archived before msgvault recorded it.
 
 Syncing already heals an archive on its own — each source re-derives once, on its
 next sync — so this is for repairing on demand instead of waiting, or for
@@ -114,11 +117,31 @@ func formatRepairDerivedSummary(label string, sum *rederive.Summary) string {
 // flags. An unknown source type is an error rather than a silent no-op, so a
 // typo does not look like a clean run.
 func repairDerivedTargets(s *store.Store) ([]*store.Source, error) {
+	all, err := s.ListSources("")
+	if err != nil {
+		return nil, err
+	}
+	// Cross-type passes apply to any source type, so a flag value is known
+	// when it has a typed pass or names a type this archive holds.
+	known := map[string]bool{}
+	for _, t := range rederive.SourceTypes() {
+		known[t] = true
+	}
+	for _, src := range all {
+		if rederive.HasPass(src.SourceType) {
+			known[src.SourceType] = true
+		}
+	}
 	wantType := map[string]bool{}
 	for _, t := range repairDerivedSourceTypes {
-		if _, _, ok := rederive.Lookup(t); !ok {
+		if !known[t] {
+			available := make([]string, 0, len(known))
+			for k := range known {
+				available = append(available, k)
+			}
+			slices.Sort(available)
 			return nil, fmt.Errorf("no re-derivation pass for source type %q (available: %s)",
-				t, strings.Join(rederive.SourceTypes(), ", "))
+				t, strings.Join(available, ", "))
 		}
 		wantType[t] = true
 	}
@@ -127,13 +150,9 @@ func repairDerivedTargets(s *store.Store) ([]*store.Source, error) {
 		wantID[id] = true
 	}
 
-	all, err := s.ListSources("")
-	if err != nil {
-		return nil, err
-	}
 	var out []*store.Source
 	for _, src := range all {
-		if _, _, ok := rederive.Lookup(src.SourceType); !ok {
+		if !rederive.HasPass(src.SourceType) {
 			continue
 		}
 		if len(wantType) > 0 && !wantType[src.SourceType] {

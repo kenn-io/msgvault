@@ -46,8 +46,11 @@ const labelTypeSystem = "system"
 // confirms them. Mailbox display names are deliberately not classification
 // input because they are localized and user-editable.
 func systemRoleForMailbox(attrs []imap.MailboxAttr) string {
-	if slices.Contains(attrs, imap.MailboxAttrSent) {
+	switch {
+	case slices.Contains(attrs, imap.MailboxAttrSent):
 		return store.LabelSystemRoleSent
+	case slices.Contains(attrs, imap.MailboxAttrDrafts):
+		return store.LabelSystemRoleDrafts
 	}
 	return ""
 }

@@ -3717,7 +3717,9 @@ msgvault repair-derived --source-type beeper
 Repeat `--source-type` or `--identifier` to narrow the source set. Only source
 types with a registered re-derivation pass are supported; an unknown requested
 type is an error. Source syncs also run pending re-derivation passes, so use this
-command for on-demand repair or retrying an interrupted pass.
+command for on-demand repair or retrying an interrupted pass. Every source also
+fills in account attribution for email and calendar rows archived before
+msgvault recorded it, so `received:` and `account:` find them.
 
 ## gc
 

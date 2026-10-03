@@ -1052,6 +1052,10 @@ func (s *Server) handleHybridSearch(
 	}
 
 	filter, err := hybridEngine.BuildFilter(ctx, parsed, structuredFilter)
+	if errors.Is(err, hybrid.ErrAccountFiltersUnsupported) {
+		writeError(w, http.StatusBadRequest, "unsupported_filter_mode", err.Error())
+		return
+	}
 	if err != nil {
 		s.logger.Error("build hybrid filter failed", "query", q, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "filter resolution failed")

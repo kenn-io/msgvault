@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -59,6 +60,16 @@ type entry struct {
 
 var registry = map[string]entry{}
 
+type crossTypeEntry struct {
+	name    string
+	version string
+	fn      Func
+}
+
+// crossTypeRegistry holds passes that apply to every source type, in
+// registration order.
+var crossTypeRegistry []crossTypeEntry
+
 // Register associates a source type with its re-derivation pass.
 //
 // version identifies the derivation logic, not the schema: bump it whenever a
@@ -70,6 +81,25 @@ func Register(sourceType, version string, fn Func) {
 		panic(fmt.Sprintf("rederive: source type %q registered twice", sourceType))
 	}
 	registry[sourceType] = entry{fn: fn, version: version}
+}
+
+// RegisterAllSourceTypes adds a pass that runs for every source type, after
+// the type's own pass. Each source records it under its own ledger key, so
+// version follows the same rules as Register. A duplicate name panics.
+func RegisterAllSourceTypes(name, version string, fn Func) {
+	for _, e := range crossTypeRegistry {
+		if e.name == name {
+			panic(fmt.Sprintf("rederive: cross-type pass %q registered twice", name))
+		}
+	}
+	crossTypeRegistry = append(crossTypeRegistry, crossTypeEntry{name: name, version: version, fn: fn})
+}
+
+// HasPass reports whether any pass, typed or cross-type, applies to a source
+// type.
+func HasPass(sourceType string) bool {
+	_, ok := registry[sourceType]
+	return ok || len(crossTypeRegistry) > 0
 }
 
 // Lookup returns the pass registered for a source type.
@@ -95,21 +125,61 @@ func LedgerKey(sourceType, identifier, version string) string {
 	return fmt.Sprintf("rederive:%s:%s:%s", sourceType, identifier, version)
 }
 
-// Run executes a source's pass and records it in the ledger, whether or not the
-// ledger already held it. This is the on-demand path; recording still matters
-// here, or the next sync would repeat a full scan of an archive that is already
-// current.
+// passLedgerKey names the ledger entry of a cross-type pass for one source.
+func passLedgerKey(name, sourceType, identifier, version string) string {
+	return fmt.Sprintf("rederive:%s:%s:%s:%s", name, sourceType, identifier, version)
+}
+
+type pass struct {
+	fn        Func
+	ledgerKey string
+}
+
+// passesFor lists the typed pass, if any, then every cross-type pass.
+func passesFor(sourceType, identifier string) []pass {
+	var out []pass
+	if e, ok := registry[sourceType]; ok {
+		out = append(out, pass{fn: e.fn, ledgerKey: LedgerKey(sourceType, identifier, e.version)})
+	}
+	for _, e := range crossTypeRegistry {
+		out = append(out, pass{fn: e.fn, ledgerKey: passLedgerKey(e.name, sourceType, identifier, e.version)})
+	}
+	return out
+}
+
+// Run executes every pass of a source and records each in the ledger, whether
+// or not the ledger already held it. This is the on-demand path; recording
+// still matters here, or the next sync would repeat a full scan of an archive
+// that is already current.
 //
-// The pass is recorded only on success, so a failed attempt is retried later
+// A pass is recorded only on success, so a failed attempt is retried later
 // rather than being silently marked done.
 func Run(
 	ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string),
 ) (*Summary, error) {
-	fn, version, ok := Lookup(sourceType)
-	if !ok {
+	if !HasPass(sourceType) {
 		return nil, fmt.Errorf("no re-derivation pass registered for source type %q", sourceType)
 	}
-	sum, err := fn(ctx, s, sourceID, progress)
+	total := &Summary{}
+	for _, p := range passesFor(sourceType, identifier) {
+		sum, err := runOne(ctx, s, p, sourceID, progress)
+		addSummary(total, sum)
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
+func addSummary(total, sum *Summary) {
+	if sum != nil {
+		total.Add(sum)
+		total.Duration += sum.Duration
+	}
+}
+
+func runOne(ctx context.Context, s *store.Store, p pass, sourceID int64, progress func(string)) (*Summary, error) {
+	sum, err := p.fn(ctx, s, sourceID, progress)
 	if err != nil {
 		// A pass can fail after earlier message transactions committed. Make
 		// those partial authoritative writes visible to cache maintenance even
@@ -122,7 +192,7 @@ func Run(
 	if sum != nil && sum.Errors > 0 {
 		return sum, s.AdvanceDerivedDataRevision()
 	}
-	ledgerKey := LedgerKey(sourceType, identifier, version)
+	ledgerKey := p.ledgerKey
 	if sum == nil || sum.MessagesScanned == 0 {
 		// New and empty sources have no existing derived rows to invalidate.
 		// Record the pass so sync does not repeat it, but keep a current cache
@@ -135,21 +205,50 @@ func Run(
 	return sum, nil
 }
 
-// RunIfStale runs the registered pass for a source unless the ledger already
-// records it at the current version. ran reports whether the pass actually
-// executed: a source type with no registered pass, or one already recorded, is
-// a no-op. This is the upgrade path, called from a sync.
+// RunIfStale runs each pass of a source that the ledger does not already
+// record at its current version. ran reports whether any pass executed: a
+// source type with no pass, or one whose passes are all recorded, is a no-op.
+// This is the upgrade path, called from a sync.
 func RunIfStale(
 	ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string),
-) (sum *Summary, ran bool, err error) {
-	_, version, ok := Lookup(sourceType)
-	if !ok {
+) (*Summary, bool, error) {
+	total := &Summary{}
+	ran := false
+	for _, p := range passesFor(sourceType, identifier) {
+		applied, err := s.IsMigrationApplied(p.ledgerKey)
+		if err != nil {
+			return nil, ran, err
+		}
+		if applied {
+			continue
+		}
+		ran = true
+		sum, err := runOne(ctx, s, p, sourceID, progress)
+		addSummary(total, sum)
+		if err != nil {
+			return total, true, err
+		}
+	}
+	if !ran {
 		return nil, false, nil
 	}
-	applied, err := s.IsMigrationApplied(LedgerKey(sourceType, identifier, version))
-	if err != nil || applied {
-		return nil, false, err
+	return total, true, nil
+}
+
+// Heal runs RunIfStale before a sync or import adds more mail and logs a
+// failure instead of returning it. A failed pass records no ledger entry, so
+// it retries on the next sync while this one carries on.
+func Heal(ctx context.Context, logger *slog.Logger, s *store.Store, src *store.Source) {
+	sum, ran, err := RunIfStale(ctx, s, src.SourceType, src.Identifier, src.ID, nil)
+	if err != nil {
+		if ctx.Err() == nil {
+			logger.Warn("re-derive archived messages failed; retrying on the next sync",
+				"source_id", src.ID, "error", err)
+		}
+		return
 	}
-	sum, err = Run(ctx, s, sourceType, identifier, sourceID, progress)
-	return sum, true, err
+	if ran && sum != nil && sum.MessagesScanned > 0 {
+		logger.Info("re-derived archived messages",
+			"source_id", src.ID, "messages", sum.MessagesScanned, "undecodable", sum.Undecodable)
+	}
 }
