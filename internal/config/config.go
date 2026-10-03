@@ -1015,6 +1015,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// Preprocess booleans are *bool so pointer-nil still means "default";
 	// an explicit false in the file stays false.
 	cfg.Vector.ApplyDefaults()
+	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(field string) bool {
+		return metadata.IsDefined("attachments", "documents", field)
+	})
 	cfg.Attachments.Documents.ApplyDefaults()
 	if err := cfg.Attachments.Documents.Validate(); err != nil {
 		return nil, err

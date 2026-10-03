@@ -1838,22 +1838,28 @@ analytics stale for the normal rebuild path.
 
 ## documents
 
-Manage hosted extraction and local full-text indexing for standalone document
-attachments. Provider operations require a private authenticated capability
-manifest and exact recorded consent; local search and removal operations do
-not contact the provider.
+Manage document extraction and local full-text indexing. Mistral operations
+require a private authenticated capability manifest and exact recorded consent.
+On `main` after v0.21.0, self-hosted Docling uses `consent-docling` and needs no
+manifest. Local search and removal operations do not contact the extractor.
 
 ```bash
 msgvault documents probe-mistral --fixtures <private-dir> [--validate-only]
 msgvault documents consent-mistral --capabilities <manifest> [--yes]
-msgvault documents build --capabilities <manifest> [--limit N] [--full-rebuild] [--yes]
-msgvault documents resume --capabilities <manifest> [--limit N] [--yes]
+msgvault documents consent-docling [--yes]
+msgvault documents build [--capabilities <manifest>] [--limit N] [--full-rebuild] [--yes]
+msgvault documents resume [--capabilities <manifest>] [--limit N] [--yes]
 msgvault documents search <query> [flags]
-msgvault documents status --capabilities <manifest> [--json]
-msgvault documents retry --capabilities <manifest> --hash <sha256>
+msgvault documents status [--capabilities <manifest>] [--json]
+msgvault documents retry [--capabilities <manifest>] --hash <sha256>
 msgvault documents retire <profile-id> [--yes]
 msgvault documents purge-derived --hash <sha256> [--yes]
 ```
+
+`--capabilities` is required for Mistral build, resume, status, and retry.
+Docling uses the endpoint and policy selected in configuration. Its build and
+resume commands still require `--yes`, and provider policy changes require
+fresh consent.
 
 `probe-mistral --validate-only` checks the complete synthetic fixture set
 without credentials or network access. An authenticated probe writes the

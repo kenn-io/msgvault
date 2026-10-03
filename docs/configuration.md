@@ -360,33 +360,50 @@ attachments loose while this setting is enabled.
 
 ### `[attachments.documents]`
 
-Hosted extraction and local full-text indexing for standalone document
-attachments. It is disabled by default. Enabling it does not grant consent or
-send data: an operator must generate an authenticated capability manifest and
-record consent for the exact effective policy before a build can upload a
-document.
+Document extraction and local full-text indexing are disabled by default.
+Enabling them does not grant consent or send data. Record consent for the exact
+effective policy before a build can upload a document. Mistral also requires an
+authenticated capability manifest. On `main` after v0.21.0, self-hosted Docling
+uses a configured endpoint without a manifest.
 
 | Key | Default | Description |
 |---|---:|---|
 | `enabled` | `false` | Allow explicit document extraction commands |
-| `provider` | `mistral` | Pinned extraction provider |
-| `region` | `eu` | Pinned provider region and EU endpoint |
-| `api_key_env` | `MISTRAL_API_KEY` | Environment variable containing the provider key |
-| `model` | `mistral-ocr-4-0` | Pinned OCR model |
-| `retention_posture` | `unknown` | Confirmed provider posture: `standard` or `zdr` |
-| `training_posture` | `unknown` | Confirmed provider posture: `default-opt-out` or `opted-out` |
+| `provider` | `mistral` | `mistral` or `docling` |
+| `endpoint` | — | Required for Docling: exact HTTP(S) origin with optional port; no trailing slash, path, user information, query, or fragment. Plain HTTP is allowed for `localhost` and loopback, private, or link-local IP addresses; other hosts require HTTPS, and so does `api_key_env` off loopback |
+| `region` | `eu` | Mistral’s pinned EU region; Docling defaults to `operator_network` |
+| `api_key_env` | `MISTRAL_API_KEY` | Environment variable containing the provider key; Docling defaults to empty and sends a configured key as `X-Api-Key` |
+| `model` | `mistral-ocr-4-0` | Pinned model; Docling defaults to `docling.serve-v1` |
+| `retention_posture` | `unknown` | Mistral: `standard` or `zdr`; Docling: `operator-controlled` (default) |
+| `training_posture` | `unknown` | Mistral: `default-opt-out` or `opted-out`; Docling: `operator-controlled` (default) |
 | `max_file_bytes` | `52428800` | Maximum original document size (50 MiB) |
 | `max_pages_per_document` | `500` | Maximum provider units for one document |
 | `max_response_bytes` | `67108864` | Maximum provider response size (64 MiB) |
 | `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters |
-| `max_spool_bytes` | `536870912` | Maximum private staging-directory usage (512 MiB) |
-| `min_free_space_bytes` | `1073741824` | Free space preserved before staging (1 GiB) |
-| `request_timeout` | `5m` | Timeout for each provider request attempt |
-| `max_retries` | `3` | Maximum transient retries |
+| `max_spool_bytes` | `536870912` | Mistral private staging-directory limit (512 MiB) |
+| `min_free_space_bytes` | `1073741824` | Mistral free-space reserve before staging (1 GiB) |
+| `request_timeout` | `5m` | Timeout for each request; Docling defaults to `30s` |
+| `total_timeout` | `10m` | Docling job timeout, positive and at most `24h` |
+| `poll_interval` | `1s` | Docling polling interval, positive and no longer than `total_timeout` |
+| `max_poll_attempts` | `300` | Docling poll limit, between 1 and 10,000 |
+| `max_retries` | `3` | Mistral transient retry limit; Docling uses its polling limits |
 | `max_pages_per_run` | `10000` | Conservative provider-unit budget for one run |
 | `max_estimated_cost_usd_per_run` | `50` | Cost-planning ceiling for one run |
 | `estimated_cost_usd_per_1000_units` | `0` | Operator-supplied current price assumption; zero disables cost calculation |
 | `pricing_assumption_on` | — | Date for the price assumption, in `YYYY-MM-DD` form |
+
+Docling uploads original PDF, DOCX, PPTX, XLSX, UTF-8 text, Markdown, CSV, and
+HTML bytes. It verifies sources in bounded memory and does not use the Mistral
+disk spool. Its `max_pages_per_document` bounds returned evidence units before
+any whole-document Markdown fallback. It cannot enforce a pre-upload page
+count for every native format.
+
+Docling’s operator-controlled postures assign responsibility for deployment,
+credentials, model downloads, egress, resource limits, retention, and training
+behavior to you. They are not privacy guarantees. Public endpoints use HTTPS so
+document bytes and configured API keys have transport encryption. See the
+[Docling workflow](usage/document-indexing.md#use-a-self-hosted-docling-service)
+for a minimal configuration and consent commands.
 
 #### CSV conversion
 
@@ -394,18 +411,21 @@ document.
 |---|---:|---|
 | `enabled` | `false` | Convert standalone `text/csv` attachments locally to PDF before the authorized PDF upload; disabled conversion leaves raw CSV outside the provider-authorized scope |
 
-CSV conversion uses Docbank's default record, cell, cell byte, and PDF limits,
-tightened by the configured original file, response, and page ceilings. The
+CSV conversion is Mistral-only. Docling accepts native CSV and rejects enabled
+CSV conversion. Mistral conversion uses Docbank's default record, cell, cell
+byte, and PDF limits, tightened by the configured original file, response, and
+page ceilings. The
 generated PDF is transient. The archive keeps the original CSV hash and MIME
 type plus the conversion receipt and page, record, and cell provenance. The
 conversion declaration participates in the exact consent fingerprint only when
 enabled.
 
 Provider uploads are manual-only: `msgvault serve` does not schedule document
-extraction. Each `documents build` or `documents resume` receives its capability
-manifest explicitly and displays its upload and cost preflight before requiring
-`--yes`. When document indexing is enabled, the daemon's weekly reconciliation
-and local derivative cleanup remain automatic and make no provider requests.
+extraction. Each `documents build` or `documents resume` displays its upload
+and cost preflight before requiring `--yes`. Mistral receives its capability
+manifest explicitly; Docling uses its configured endpoint and policy. When
+document indexing is enabled, the daemon’s weekly reconciliation and local
+derivative cleanup remain automatic and make no provider requests.
 
 `[attachments.documents.scope]` accepts these fields:
 
@@ -416,10 +436,11 @@ and local derivative cleanup remain automatic and make no provider requests.
 
 Inline scope support is available in v0.21.0. Some mail clients mark
 ordinary document attachments as inline. Set `include_inline = true` to include
-them; other roles remain excluded. This changes the consent fingerprint. Run
-`msgvault documents consent-mistral --capabilities <manifest> --yes` again before
-building. Selecting a standalone-only profile stops inline search results from
-serving, including results extracted under an earlier profile.
+them; other roles remain excluded. This changes the consent fingerprint. Record
+consent again with `consent-mistral --capabilities <manifest> --yes` or
+`consent-docling --yes` for the selected provider before building. Selecting a
+standalone-only profile stops inline search results from serving, including
+results extracted under an earlier profile.
 
 The first release requires
 `[attachments.documents.index].lexical = true` and `store_chunk_text = true`.

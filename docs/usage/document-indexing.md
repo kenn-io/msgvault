@@ -1,12 +1,14 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-03"
 title: Document Attachment Indexing
 description: Find words and topics inside archived documents, with explicit control over provider uploads.
 ---
 
 Document indexing lets you search inside archived attachments and return to
-the message that contained them. Msgvault sends eligible files to Mistral OCR
-to extract their text, stores that text locally, and builds a keyword index.
+the message that contained them. Msgvault sends eligible files to your selected
+extraction provider, stores their text locally, and builds a keyword index.
+Mistral OCR is the hosted option. On `main` after v0.21.0, a self-hosted
+Docling service is also supported.
 Optional document embeddings add search by meaning.
 
 What works today:
@@ -17,21 +19,19 @@ What works today:
 - Filters for a person, source, message, attachment, message type, and date.
 - Optional local CSV-to-PDF conversion so CSV tables can enter the extraction
   pipeline.
-- PowerPoint `.pptx` presentations upload with their original bytes when the
-  capability manifest records a passing local slide count. Each slide becomes
-  a source unit.
+- Native PowerPoint `.pptx` uploads. Mistral requires a capability manifest
+  with a passing local slide count; each slide becomes a source unit.
 
 Limits:
 
-- Only formats authorized by the authenticated capability manifest can be
-  uploaded. A manifest records the formats and processing bounds the probe
-  verified for your provider configuration.
+- Mistral uploads require an authenticated capability manifest. Docling uses
+  the configured native formats and returned-unit limits described below.
 - Extraction uploads require an explicit `documents build` or `documents
   resume` command. Enabling the feature does not upload attachments.
 
 For a combined provider setup, start with
 [Recommended Configuration](/docs/usage/recommended-configuration/). The steps
-below explain the document-specific probe, consent, and build workflow.
+below explain each provider’s consent and build workflow.
 
 ## What leaves your archive
 
@@ -40,14 +40,14 @@ Msgvault keeps the containing-message links, normalized text, text chunks,
 indexes, consent records, and backups locally. It does not retain the full raw
 provider JSON or Markdown response.
 
-Eligible CSV attachments use a local conversion step when enabled. Msgvault
-retains the CSV source hash and `text/csv` occurrence identity, then sends only
+For Mistral, eligible CSV attachments use a local conversion step when enabled.
+Msgvault retains the CSV source hash and `text/csv` occurrence identity, then sends only
 the generated `application/pdf` bytes to Mistral. The conversion receipt stores
 the generated PDF hash, byte count, page count, converter version, policy
 fingerprint, and one based page, record, and cell spans. The generated PDF never
 becomes an attachment.
 
-## Safety gates
+## Mistral safety gates {#safety-gates}
 
 Three independent gates must pass before production extraction:
 
@@ -89,7 +89,7 @@ never starts extraction on its own. Start every upload batch explicitly with
 `documents build` or `documents resume`; when the daemon owns the archive, it
 runs that requested batch so the command does not contend for the writer lock.
 
-## Configure the policy
+## Configure Mistral {#configure-the-policy}
 
 Add an `[attachments.documents]` section and explicitly state the provider
 privacy posture you have verified. The example below uses zero data retention
@@ -129,7 +129,7 @@ enabled = true
 
 Document extraction includes standalone attachments by default. In v0.21.0, set
 `include_inline = true` when your mail client marks ordinary attached documents
-as inline. Only authenticated document formats with authoritative role
+as inline. Only configured, authorized document formats with authoritative role
 provenance become eligible. Avatar, preview, sticker, and unknown roles stay out
 of scope. The setting also applies to local CSV conversion.
 
@@ -160,7 +160,91 @@ effective bound changes the exact profile fingerprint and requires fresh consent
 See the [configuration reference](/docs/configuration/#attachmentsdocuments) for
 the complete policy and run limits.
 
-## Build and validate the synthetic fixtures
+## Use a self-hosted Docling service
+
+Docling support is available on `main` after v0.21.0. Run Docling Serve on
+hardware and a network you control. Msgvault uses its asynchronous conversion
+API; deploy a compatible service with `/v1/convert/file/async`,
+`/v1/status/poll/<id>`, and `/v1/result/<id>`.
+
+```toml
+[attachments.documents]
+enabled = true
+provider = "docling"
+endpoint = "http://127.0.0.1:5001"
+request_timeout = "30s"
+total_timeout = "10m"
+poll_interval = "1s"
+max_poll_attempts = 300
+```
+
+The endpoint must be an exact HTTP(S) origin, including any port, with no
+trailing slash, path, user information, query, or fragment. Plain HTTP works
+for `localhost` and for loopback, private (`10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16`, `fc00::/7`), and link-local IP addresses, so a Docling
+server on another machine in your LAN can use its default port. Other hostnames
+and public addresses require HTTPS, because DNS could send a name to a public
+host. Over plain HTTP, document bytes cross your network unencrypted, and the
+consent disclosure says so. An API key needs HTTPS unless the server is on
+loopback. Msgvault sends private document bytes only to that
+origin, disables ambient HTTP proxies, and does not follow redirects. It never
+switches to a hosted extractor.
+
+The configured formats are PDF, DOCX, PPTX, XLSX, UTF-8 text, Markdown, CSV,
+and HTML. Each uploads its original bytes under a synthetic filename. Docling
+uses native CSV; leave CSV-to-PDF conversion disabled. Source preparation
+checks size, hash, and format in bounded memory. It does not use Mistral’s
+private disk spool. The service’s own memory, disk, and job retention need
+operator controls.
+
+When omitted, the model is `docling.serve-v1`, the region is `operator_network`,
+and retention and training postures are `operator-controlled`. These describe
+who is responsible; they do not guarantee privacy behavior. You control service
+credentials, model downloads, network egress, resource limits, retention, and
+training behavior. No API key is required by default. If your service requires
+one, set `api_key_env` to its environment variable name; Msgvault sends that
+value as `X-Api-Key`. It does not inherit `MISTRAL_API_KEY`.
+If the configured variable is missing or blank, build and resume fail before
+claiming any documents. Set the credential and rerun the command.
+
+Review the disclosure, then record consent and build:
+
+```bash
+msgvault documents consent-docling
+msgvault documents consent-docling --yes
+msgvault documents build --limit 100 --yes
+msgvault documents status
+```
+
+Docling needs no capability manifest. Its commands can run through a
+configured remote daemon, which owns the attachment bytes and extraction.
+Endpoint, credential binding, formats, processing limits, adapter version,
+normalization, and scope form the exact consent identity. Changing them
+requires new consent. Extraction remains manual-only.
+
+Complete PDF evidence retains page locators. When structured evidence omits
+tables or other content, Msgvault uses whole-document Markdown with a
+`document` locator instead of claiming page provenance. This preserves
+searchable text without inventing page numbers. The returned-unit cap applies
+before this fallback; `max_pages_per_run` counts provider units.
+
+Interrupted or ambiguous jobs retry the same way as other providers: the next
+`build` or `resume` uploads the document again once its retry delay or lease
+has passed. That can run a document twice on your server. Partial results and
+other permanent failures need an explicit reset:
+
+```bash
+msgvault documents retry --hash <sha256>
+msgvault documents resume --yes
+```
+
+Use `build --full-rebuild --yes` to replace existing extractions and `resume
+--yes` to continue the same rebuild. Existing searchable text remains available
+until its replacement publishes successfully. Search, retirement, and removal
+use the shared commands below. Document embeddings remain independent and may
+use a separately configured local embedding endpoint.
+
+## Build and validate Mistral fixtures {#build-and-validate-the-synthetic-fixtures}
 
 The repository fixture builder creates 21 formats deterministically. Five
 legacy native containers need private seed files named `doc`, `ppt`, `xls`,
@@ -180,7 +264,7 @@ msgvault documents probe-mistral \
 Fixture creation is all-or-nothing. The output directory and files are private,
 and local validation makes no provider request.
 
-## Produce the capability manifest
+## Produce the Mistral capability manifest {#produce-the-capability-manifest}
 
 Run the authenticated probe and redirect its JSON output to a private file:
 
@@ -196,7 +280,7 @@ unit-bound evidence. It contains no credentials or fixture contents, but it is
 upload authority for the exact policy it supports and should be controlled as
 deployment configuration.
 
-## Record consent and build
+## Record Mistral consent and build {#record-consent-and-build}
 
 First run the consent command without `--yes` to read the exact disclosure,
 then repeat it after review:
@@ -226,7 +310,7 @@ msgvault documents build \
 The command claims a candidate before local inspection, so an oversized or
 invalid attachment reaches a durable terminal state without starving later
 documents. Transient provider and staging-capacity failures remain retryable.
-Every retry reopens and verifies the private staged copy.
+Mistral retries reopen and verify the private staged copy.
 
 Use `--full-rebuild` to begin a replacement generation. If the bounded run does
 not finish it, continue with `documents resume` and the same manifest:
@@ -320,7 +404,8 @@ the broader combined search. See [MCP](/docs/usage/chat/).
 
 ## Recovery and removal
 
-Retry one terminal document by its canonical attachment SHA-256:
+Retry one terminal document by its canonical attachment SHA-256. The examples
+below include Mistral’s manifest flag; omit it for Docling:
 
 ```bash
 msgvault documents retry \
@@ -361,8 +446,8 @@ In v0.21.0, a failed build reports each document hash, reason code,
 and available local cause. For example, `invalid_local_source` can include
 `PDF structure is malformed`. Size mismatches and spool capacity
 failures have separate details. `documents status --capabilities <manifest>`
-shows those diagnostics later; `--json` includes `status.failures` and
-`status.failures_exhausted` (false when more than 20 failures remain).
+shows those diagnostics later (omit `--capabilities` for Docling). `--json`
+includes `status.failures` and `status.failures_exhausted` (false when more than 20 failures remain).
 
 Status lists up to 20 current failed documents in deterministic order. It keeps
 failed replacements visible during an active full rebuild even while an older

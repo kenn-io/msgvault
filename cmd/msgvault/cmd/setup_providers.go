@@ -649,6 +649,17 @@ func planVisualSearch(loaded *config.Config, detection setupDetection) setupLane
 func planDocuments(loaded *config.Config, detection setupDetection, options setupProvidersOptions) setupLanePlan {
 	documents := loaded.Attachments.Documents
 	lane := setupLanePlan{Lane: laneDocuments, Label: "Document attachments", Provider: documents.Provider, Model: documents.Model}
+	if documents.Provider == documentindex.ProviderDocling {
+		lane.Reason = "operator-controlled endpoint " + documents.Endpoint
+		if documents.Enabled {
+			lane.Action = planActionKeep
+			lane.Reason += "; already enabled"
+		} else {
+			lane.Action = planActionSkip
+			lane.Reason += "; set [attachments.documents] enabled = true, then record Docling consent"
+		}
+		return lane
+	}
 	manifest := setupMistralManifestPath(loaded)
 	switch {
 	case documents.Enabled && documents.RetentionPosture != documentindex.RetentionUnknown && documents.TrainingPosture != documentindex.TrainingUnknown:

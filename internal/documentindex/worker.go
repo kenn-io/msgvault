@@ -101,6 +101,7 @@ type DocumentExtractionResult struct {
 	FailureReasonCode string
 	FailureDetail     string
 	Units             int
+	ProviderUnits     int
 	Chunks            int
 	Truncated         bool
 	CleanupError      error
@@ -341,7 +342,8 @@ func (w *MistralWorker) ProcessCandidate(
 	}
 	result = DocumentExtractionResult{
 		ExtractionID: extractionID, CanonicalBlobHash: candidate.CanonicalBlobHash,
-		Units: len(normalized.Units), Chunks: len(normalized.Chunks), Truncated: normalized.Truncated,
+		Units: len(normalized.Units), ProviderUnits: providerResult.UnitsProcessed,
+		Chunks: len(normalized.Chunks), Truncated: normalized.Truncated,
 	}
 	published = true
 	return result, nil
@@ -351,11 +353,17 @@ func (w *MistralWorker) keepClaimAlive(
 	ctx context.Context,
 	claim store.DocumentExtractionClaim,
 ) (context.Context, context.CancelFunc, context.CancelFunc, <-chan struct{}, <-chan error) {
+	return keepDocumentClaimAlive(ctx, w.catalog, claim, w.config.LeaseDuration)
+}
+
+func keepDocumentClaimAlive(
+	ctx context.Context, catalog DocumentExtractionCatalog, claim store.DocumentExtractionClaim, leaseDuration time.Duration,
+) (context.Context, context.CancelFunc, context.CancelFunc, <-chan struct{}, <-chan error) {
 	workCtx, cancelWork := context.WithCancel(ctx)
 	renewalCtx, cancelRenewal := context.WithCancel(workCtx)
 	done := make(chan struct{})
 	errCh := make(chan error, 1)
-	interval := min(max(w.config.LeaseDuration/3, time.Millisecond), time.Minute)
+	interval := min(max(leaseDuration/3, time.Millisecond), time.Minute)
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(interval)
@@ -368,8 +376,8 @@ func (w *MistralWorker) keepClaimAlive(
 				renewCtx, cancelRenew := context.WithTimeout(
 					context.WithoutCancel(workCtx), documentFailureCleanupTimeout,
 				)
-				err := w.catalog.RenewDocumentExtractionClaim(
-					renewCtx, claim, time.Now().UTC().Add(w.config.LeaseDuration),
+				err := catalog.RenewDocumentExtractionClaim(
+					renewCtx, claim, time.Now().UTC().Add(leaseDuration),
 				)
 				cancelRenew()
 				if err != nil {
@@ -458,7 +466,26 @@ func publicationFromNormalized(
 	providerResult mistral.Result,
 	normalized document.NormalizedDocument,
 ) (store.DocumentExtractionPublication, error) {
-	if providerResult.UnitsProcessed <= 0 || len(normalized.Chunks) == 0 {
+	return publicationFromDocument(claim, documentPublicationAccounting{
+		ReturnedModel: providerResult.ReturnedModel, ProviderBytes: providerResult.ProviderBytes,
+		UnitsProcessed: providerResult.UnitsProcessed, Requests: providerResult.Metrics.Requests,
+		Retries: providerResult.Metrics.Retries, Latency: providerResult.Metrics.Latency,
+	}, normalized)
+}
+
+type documentPublicationAccounting struct {
+	ReturnedModel  string
+	ProviderBytes  *int64
+	UnitsProcessed int
+	Requests       int
+	Retries        int
+	Latency        time.Duration
+}
+
+func publicationFromDocument(
+	claim store.DocumentExtractionClaim, accounting documentPublicationAccounting, normalized document.NormalizedDocument,
+) (store.DocumentExtractionPublication, error) {
+	if accounting.UnitsProcessed <= 0 || len(normalized.Chunks) == 0 {
 		return store.DocumentExtractionPublication{}, errors.New("document extraction produced no publishable evidence")
 	}
 	publication := store.DocumentExtractionPublication{
@@ -468,12 +495,12 @@ func publicationFromNormalized(
 		OccurrenceMIMEType:     claim.OccurrenceMIMEType,
 		OccurrenceMessageType:  claim.OccurrenceMessageType,
 		LeaseOwner:             claim.LeaseOwner, LeaseFence: claim.LeaseFence,
-		ReturnedModel: providerResult.ReturnedModel, ProviderBytes: providerResult.ProviderBytes,
-		UnitsProcessed: providerResult.UnitsProcessed, ManifestChecksum: normalized.Checksum,
+		ReturnedModel: accounting.ReturnedModel, ProviderBytes: accounting.ProviderBytes,
+		UnitsProcessed: accounting.UnitsProcessed, ManifestChecksum: normalized.Checksum,
 		NormalizationVersion: normalized.PolicyVersion, DocumentFamily: normalized.Family,
 		UnitKind: normalized.UnitKind, NormalizedTruncated: normalized.Truncated,
-		RequestCount: providerResult.Metrics.Requests, RetryCount: providerResult.Metrics.Retries,
-		ProviderLatencyMS: requestLatencyMillis(providerResult.Metrics.Latency),
+		RequestCount: accounting.Requests, RetryCount: accounting.Retries,
+		ProviderLatencyMS: requestLatencyMillis(accounting.Latency),
 		Units:             make([]store.DocumentPublishedUnit, len(normalized.Units)),
 		Chunks:            make([]store.DocumentPublishedChunk, len(normalized.Chunks)),
 	}
