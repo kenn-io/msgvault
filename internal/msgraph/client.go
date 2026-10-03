@@ -31,6 +31,19 @@ var ErrNotFound = errors.New("graph resource not found")
 // scope a write needs.
 var ErrForbidden = errors.New("graph request forbidden")
 
+// ErrUnauthorized classifies a 401 response, for example a revoked token.
+var ErrUnauthorized = errors.New("graph request unauthorized")
+
+// ThrottledError reports that Graph still answered 429 after every retry.
+// RetryAfter is the delay that Graph asked for last.
+type ThrottledError struct {
+	RetryAfter time.Duration
+}
+
+func (e *ThrottledError) Error() string {
+	return fmt.Sprintf("graph throttled the request; retry after %s", e.RetryAfter)
+}
+
 // ErrPreconditionFailed classifies a write that failed its If-Match check: a
 // 412, or a 400 ErrorInvalidChangeKey for a malformed change key.
 var ErrPreconditionFailed = errors.New("graph precondition failed")
@@ -194,6 +207,8 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrNotFound)
 		case resp.StatusCode == http.StatusPreconditionFailed || graphError.Error.Code == "ErrorInvalidChangeKey":
 			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrPreconditionFailed)
+		case resp.StatusCode == http.StatusUnauthorized:
+			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrUnauthorized)
 		case resp.StatusCode == http.StatusForbidden:
 			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrForbidden)
 		case resp.StatusCode >= 500 && once:
@@ -201,6 +216,11 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			lastErr = fmt.Errorf("graph %s %s: status %d", method, reqURL, resp.StatusCode)
 			retryAfter = resp.Header.Get("Retry-After")
+			if resp.StatusCode == http.StatusTooManyRequests {
+				lastErr = fmt.Errorf("%w: %w", lastErr, &ThrottledError{
+					RetryAfter: httpretry.RetryAfter(retryAfter, attempt, maxRetryAfter),
+				})
+			}
 			continue
 		default:
 			return nil, fmt.Errorf("graph %s %s: status %d: %s", method, reqURL, resp.StatusCode, string(body))

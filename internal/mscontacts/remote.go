@@ -32,6 +32,9 @@ const (
 	operationTimeout = 5 * time.Minute
 	operationBytes   = 256 << 20
 	maxBooks         = 1000
+	// pageBytes caps one Graph response, as the CardDAV client caps one DAV
+	// response.
+	pageBytes = 32 << 20
 )
 
 // Remote is the Graph contacts backend of a CardDAV connection.
@@ -159,7 +162,7 @@ func (r *Remote) Pull(
 func pages(ctx context.Context, r *Remote, start string, budget *carddav.Budget, fn func([]contact)) (string, error) {
 	link := start
 	for {
-		body, err := r.graph.GetRaw(ctx, link)
+		body, err := r.graph.GetRawLimited(ctx, link, pageBytes)
 		if err != nil {
 			return "", err
 		}
@@ -317,12 +320,17 @@ func (r *Remote) CreateHref(collectionURL, uid string) (string, error) {
 	return collectionURL + "/uid/" + url.PathEscape(uid), nil
 }
 
-// statusError adds the CardDAV status that the service branches on.
+// statusError adds the CardDAV status that the service branches on. A 429
+// that outlasted Graph's retries pauses the connection through the retry gate.
 func statusError(err error) error {
+	if throttled, ok := errors.AsType[*msgraph.ThrottledError](err); ok {
+		return errors.Join(err, &carddav.StatusError{StatusCode: http.StatusTooManyRequests, RetryAfter: max(throttled.RetryAfter, time.Second)})
+	}
 	for sentinel, code := range map[error]int{
 		msgraph.ErrNotFound:           http.StatusNotFound,
 		msgraph.ErrPreconditionFailed: http.StatusPreconditionFailed,
 		msgraph.ErrForbidden:          http.StatusForbidden,
+		msgraph.ErrUnauthorized:       http.StatusUnauthorized,
 	} {
 		if errors.Is(err, sentinel) {
 			return errors.Join(err, &carddav.StatusError{StatusCode: code})

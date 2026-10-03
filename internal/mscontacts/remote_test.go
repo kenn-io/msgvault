@@ -35,6 +35,7 @@ type fakeGraph struct {
 	lists    int
 	dropPost bool
 	expire   bool
+	failWith int // status for every request, when set
 }
 
 type fakeChange struct {
@@ -122,6 +123,11 @@ func (f *fakeGraph) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	for i := range segments {
 		segments[i], _ = url.PathUnescape(segments[i])
+	}
+	if f.failWith != 0 {
+		w.Header().Set("Retry-After", "0")
+		fail(f.failWith, "Failure")
+		return
 	}
 	switch {
 	case path == "/me/contactFolders/contacts":
@@ -474,4 +480,23 @@ func TestOutlookEditKeepsPropertiesThatGraphCannotHold(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(string(resource.RemoteBody), "TITLE:Edited in Outlook")
 	assert.Contains(string(resource.RemoteBody), "https://alice.example.test")
+}
+
+func TestGraphFailuresReachTheRetryGateAndRunHistory(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFixture(t)
+
+	f.fake.failWith = http.StatusUnauthorized
+	_, err := f.service.Sync(t.Context(), carddav.SyncOptions{})
+	code, _ := carddav.SyncFailure(err)
+	assert.Equal("authentication_failed", code)
+
+	f.fake.failWith = http.StatusTooManyRequests
+	_, err = f.service.Sync(t.Context(), carddav.SyncOptions{})
+	code, _ = carddav.SyncFailure(err)
+	assert.Equal("retry_after", code)
+	gate, err := f.store.GetCardDAVRetryAfterContext(t.Context(), store.DefaultCardDAVAccountID)
+	require.NoError(err)
+	assert.NotNil(gate, "a 429 that outlasts Graph's retries pauses the connection")
 }

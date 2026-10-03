@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -65,6 +66,9 @@ func TestGetGraphErrorClassification(t *testing.T) {
 		{"expired_400", http.StatusBadRequest, `{"error":{"code":"syncStateNotFound"}}`, ErrGone},
 		{"gone", http.StatusGone, "expired", ErrGone},
 		{"missing", http.StatusNotFound, `{"error":{"code":"ErrorItemNotFound","message":"syncStateNotFound is not the error code"}}`, ErrNotFound},
+		{"unauthorized", http.StatusUnauthorized, `{"error":{"code":"InvalidAuthenticationToken"}}`, ErrUnauthorized},
+		{"stale_etag", http.StatusPreconditionFailed, `{"error":{"code":"ErrorIrresolvableConflict"}}`, ErrPreconditionFailed},
+		{"bad_change_key", http.StatusBadRequest, `{"error":{"code":"ErrorInvalidChangeKey"}}`, ErrPreconditionFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -220,5 +224,52 @@ func TestGetRawWithTimeout(t *testing.T) {
 		_, err = c.GetRaw(t.Context(), "/metadata")
 		require.Error(err)
 		assert.Equal(603*time.Second, time.Since(start))
+	})
+}
+
+// A 429 that outlasts every retry keeps Graph's last Retry-After, so a caller
+// can pause instead of repeating the request at once.
+func TestGetReportsThrottlingAfterLastAttempt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		httpClient := srv.Client()
+		c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000)
+		c.http.Transport = httpClient.Transport
+		_, err := c.GetRaw(t.Context(), "/message")
+		throttled, ok := errors.AsType[*ThrottledError](err)
+		require.True(t, ok, "error: %v", err)
+		assert.Equal(t, 30*time.Second, throttled.RetryAfter)
+	})
+}
+
+// SendOnce does not repeat a write after a 5xx, which can follow an applied
+// write, but it retries a 429, which Graph applied nothing for.
+func TestSendOnceRetriesOnlyThrottling(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		var statuses []int
+		calls := 0
+		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			status := statuses[calls]
+			calls++
+			w.WriteHeader(status)
+		}))
+		httpClient := srv.Client()
+		c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000)
+		c.http.Transport = httpClient.Transport
+
+		statuses, calls = []int{http.StatusServiceUnavailable, http.StatusCreated}, 0
+		_, err := c.SendOnce(t.Context(), http.MethodPost, "/contacts", map[string]string{})
+		require.Error(err)
+		assert.Equal(1, calls)
+
+		statuses, calls = []int{http.StatusTooManyRequests, http.StatusCreated}, 0
+		_, err = c.SendOnce(t.Context(), http.MethodPost, "/contacts", map[string]string{})
+		require.NoError(err)
+		assert.Equal(2, calls)
 	})
 }
