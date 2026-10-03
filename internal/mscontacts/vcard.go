@@ -79,10 +79,16 @@ func (c contact) property(id string) string {
 // uid returns the msgvault UID property, or "" for a contact made in Outlook.
 func (c contact) uid() string { return c.property(uidProperty) }
 
-// fields returns only the mapped fields, with empty lists made nil and the
-// birthday cut to its date, so two contacts compare by content.
+// fields returns only the mapped fields, with empty lists made nil, emails
+// without names and the birthday cut to its date, so two contacts compare by
+// content. Graph names an email after its address when no name is sent.
 func (c contact) fields() contact {
 	c.ID, c.ETag, c.ParentFolderID, c.Properties = "", "", "", nil
+	emails := make([]emailAddress, 0, len(c.EmailAddresses))
+	for _, email := range c.EmailAddresses {
+		emails = append(emails, emailAddress{Address: email.Address})
+	}
+	c.EmailAddresses = emails
 	for _, list := range []*[]string{&c.BusinessPhones, &c.HomePhones} {
 		if len(*list) == 0 {
 			*list = nil
@@ -200,6 +206,19 @@ func (c contact) toVCard(uid string, extra []vcard.Property) ([]byte, error) {
 	}
 	card.Properties = append(card.Properties, extra...)
 	return vcard.Marshal(vcard.Document{Cards: []vcard.Card{card}})
+}
+
+// keepEmailNames copies the Outlook display name of each email address that
+// current already holds, because vCard has no field for it.
+func keepEmailNames(c, current *contact) {
+	for i, email := range c.EmailAddresses {
+		for _, existing := range current.EmailAddresses {
+			if strings.EqualFold(existing.Address, email.Address) {
+				c.EmailAddresses[i].Name = existing.Name
+				break
+			}
+		}
+	}
 }
 
 // placePhones assigns the phones of c that have no TYPE. A number that

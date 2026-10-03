@@ -273,6 +273,7 @@ func (r *Remote) Put(ctx context.Context, href string, body []byte, etag string,
 	}
 	if found {
 		placePhones(&fields, &current)
+		keepEmailNames(&fields, &current)
 	} else {
 		placePhones(&fields, nil)
 	}

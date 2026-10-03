@@ -98,6 +98,16 @@ func (f *fakeGraph) published() []*contact {
 	return found
 }
 
+// stored applies Graph's write defaults: an email without a name gets its
+// address as the name.
+func stored(c *contact) {
+	for i := range c.EmailAddresses {
+		if c.EmailAddresses[i].Name == "" {
+			c.EmailAddresses[i].Name = c.EmailAddresses[i].Address
+		}
+	}
+}
+
 func (f *fakeGraph) view(c contact, expand bool) contact {
 	if !expand {
 		c.Properties = nil
@@ -183,6 +193,7 @@ func (f *fakeGraph) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(http.StatusBadRequest, "BadRequest")
 			return
 		}
+		stored(&c)
 		f.posts++
 		f.next++
 		c.ID, c.ParentFolderID = "c"+strconv.Itoa(f.next), segments[2]
@@ -214,6 +225,7 @@ func (f *fakeGraph) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				fail(http.StatusBadRequest, "BadRequest")
 				return
 			}
+			stored(&next)
 			f.patches++
 			properties := c.Properties
 			for _, update := range next.Properties {
@@ -454,7 +466,7 @@ func TestPublishWithUnmappedPropertySettles(t *testing.T) {
 	require.NoError(f.service.PublishPerson(t.Context(), personID))
 	created := f.fake.published()
 	require.Len(created, 1)
-	assert.Equal([]emailAddress{{Address: "alice@example.test"}}, created[0].EmailAddresses)
+	assert.Equal([]emailAddress{{Name: "alice@example.test", Address: "alice@example.test"}}, created[0].EmailAddresses)
 	f.sync(t)
 	f.sync(t)
 	require.NoError(f.service.PublishPerson(t.Context(), personID))
@@ -514,7 +526,10 @@ func TestUpdatedOutlookContactReadsBackWithoutConflict(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newFixture(t)
-	f.fake.put("test", contact{DisplayName: "Bob Outlook", MobilePhone: "+1 555 0100"})
+	f.fake.put("test", contact{
+		DisplayName: "Bob Outlook", MobilePhone: "+1 555 0100",
+		EmailAddresses: []emailAddress{{Name: "Bob at home", Address: "bob@home.test"}},
+	})
 	f.sync(t)
 	var personID int64
 	require.NoError(f.store.DB().QueryRow(`SELECT id FROM persons WHERE display_name = 'Bob Outlook'`).Scan(&personID))
@@ -531,6 +546,7 @@ func TestUpdatedOutlookContactReadsBackWithoutConflict(t *testing.T) {
 	updated := f.fake.contacts[f.fake.changes[0].contactID]
 	assert.Equal("+15550100", updated.MobilePhone, "the number stays in its Outlook field")
 	assert.Empty(updated.BusinessPhones)
+	assert.Contains(updated.EmailAddresses, emailAddress{Name: "Bob at home", Address: "bob@home.test"}, "the Outlook email name is kept")
 	conflicts, err := f.store.ListCardDAVConflictsContext(t.Context(), true, store.DefaultCardDAVAccountID)
 	require.NoError(err)
 	assert.Empty(conflicts)
