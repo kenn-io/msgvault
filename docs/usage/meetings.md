@@ -340,16 +340,21 @@ a workspace-wide export.
 
 ### Configure and register
 
-Create a Notion integration with AI Meeting Notes and Read Content access.
-Grant User Information access if you want attendee IDs resolved to verified
-emails and relationship participants. Without it, meetings still sync, but
-attendees remain display-only names or IDs.
+Use a personal access token (PAT) or integration with AI Meeting Notes and
+Read Content access for meeting content. PATs cannot list workspace users or
+retrieve other users, and have no User Information capability toggle.
+For attendee emails, create an internal integration in the same workspace
+with **Read user information including email addresses**, then supply its token
+through `users_token_env` or `users_token_file`. Keep the meeting PAT so discovery
+continues to use the meeting owner's attendee visibility.
 
 ```toml
 [[notion_meetings]]
 identifier = "notion-personal"
 account_email = "you@example.com"
 token = "ntn_..."
+users_token_env = "NOTION_USERS_TOKEN" # optional workspace integration
+# users_token_file = "secrets/notion-users-token" # use instead of users_token_env
 schedule = "15 */6 * * *"         # optional daemon schedule
 enabled = true
 ```
@@ -364,7 +369,21 @@ msgvault sync-notion-meetings notion-personal --probe
 
 Both commands print capability and result-count diagnostics without printing
 meeting titles, notes, transcripts, attendee details, block IDs, page URLs, or
-the token.
+the tokens. Probe output reports the optional users token separately, including
+whether it returns email addresses.
+
+### Notion attendee emails
+
+The users token lists workspace members and retrieves any attendee missing from
+that list one at a time, which covers guests. Only Notion users with
+`person.email_verified = true` and a usable email become anchored participants.
+Lookups are cached for each run. A 403 for one guest leaves that attendee
+unresolved without stopping other attendees or meeting content from syncing.
+People without a Notion account can't be resolved this way.
+
+After adding a users token, run `msgvault sync-notion-meetings <identifier> --full`
+to update participants on existing visible meetings. This does not expand the
+50-meeting discovery window.
 
 ### Sync and discovery limit
 

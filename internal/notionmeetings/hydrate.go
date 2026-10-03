@@ -32,6 +32,9 @@ type blockTree struct {
 }
 
 type HydratedMeeting struct {
+	// With a users token, archived emails are recovered only for failed lookups.
+	failedAttendeeIDs map[string]bool
+
 	Discovery                  MeetingNote
 	MeetingBlock               *Block
 	SummaryTree                blockTree
@@ -58,7 +61,20 @@ type resolvedUser struct {
 	EmailVerified bool     `json:"email_verified,omitzero"`
 }
 
+// UserSource is used only for workspace members and guest identities.
+type UserSource interface {
+	ListUsers(ctx context.Context, cursor string) (*UserPage, error)
+	RetrieveUser(ctx context.Context, id string) (*User, error)
+}
+
+type userLookup struct {
+	user *User
+	err  error
+}
+
 type Hydrator struct {
+	userSource       UserSource
+	lookups          map[string]userLookup
 	source           hydrationSource
 	users            map[string]User
 	usersRead        bool
@@ -71,7 +87,13 @@ type Hydrator struct {
 }
 
 func NewHydrator(source hydrationSource) *Hydrator {
-	return &Hydrator{source: source}
+	return &Hydrator{source: source, lookups: map[string]userLookup{}}
+}
+
+// WithUserSource routes user requests to a separate credential.
+func (h *Hydrator) WithUserSource(source UserSource) *Hydrator {
+	h.userSource = source
+	return h
 }
 
 func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedMeeting, error) {
@@ -239,10 +261,15 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 			if err := h.reserveRequest(); err != nil {
 				return err
 			}
-			page, err := h.source.ListUsers(ctx, cursor)
+			list := h.source.ListUsers
+			if h.userSource != nil {
+				list = h.userSource.ListUsers
+			}
+			page, err := list(ctx, cursor)
 			if err != nil {
-				if errors.Is(err, ErrUnauthorized) || errors.Is(err, context.Canceled) ||
-					errors.Is(err, context.DeadlineExceeded) {
+				// Users-token failures, timeouts included, only cost attendee emails.
+				if ctx.Err() != nil || h.userSource == nil && (errors.Is(err, ErrUnauthorized) ||
+					errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 					return err
 				}
 				h.usersUnavailable = true
@@ -292,8 +319,26 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 		}
 	}
 
+	if h.userSource != nil {
+		result.failedAttendeeIDs = map[string]bool{}
+	}
 	for _, id := range result.Discovery.MeetingNotes.CalendarEvent.Attendees {
 		user, ok := h.users[id]
+		if !ok && h.userSource != nil {
+			found, err := h.lookupUser(ctx, id)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err != nil {
+				if len(result.failedAttendeeIDs) == 0 {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("Notion attendee lookup failed: %v; kept display-only identity", err))
+				}
+				result.failedAttendeeIDs[id] = true
+				result.AttendeeResolutionDegraded = true
+			} else {
+				user, ok = *found, true
+			}
+		}
 		label := id
 		if ok && strings.TrimSpace(user.Name) != "" {
 			label = strings.TrimSpace(user.Name)
@@ -314,6 +359,27 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 		})
 	}
 	return nil
+}
+
+// lookupUser retrieves guests, which ListUsers leaves out, once per import.
+func (h *Hydrator) lookupUser(ctx context.Context, id string) (*User, error) {
+	lookup, cached := h.lookups[id]
+	if !cached {
+		if err := h.reserveRequest(); err != nil {
+			return nil, err
+		}
+		lookup.user, lookup.err = h.userSource.RetrieveUser(ctx, id)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		h.lookups[id] = lookup
+		if lookup.err == nil {
+			if err := h.reserveBytes(lookup.user.Raw); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return lookup.user, lookup.err
 }
 
 func (h *Hydrator) reserveRequest() error {

@@ -1215,15 +1215,19 @@ opt-out flag.
 ### Notion AI Meeting Notes Sources
 
 Notion meeting sync uses one top-level `[[notion_meetings]]` entry per Notion
-identity. The token must belong to a read-only integration with AI Meeting
-Notes access and Read Content access. User Information access is optional; it
-is required only to resolve attendee IDs to verified email addresses.
+identity. The meeting token needs AI Meeting Notes and Read Content access.
+A personal access token (PAT) can read its user's meetings but cannot list users
+or retrieve other users. To resolve Notion attendee IDs, configure a separate
+internal integration with **Read user information including email addresses**.
+The integration must belong to the same workspace.
 
 ```toml
 [[notion_meetings]]
 identifier = "notion-personal"      # stable source label; defaults to "default" for one entry
 account_email = "you@example.com"   # required primary account identity
-token = "ntn_..."                   # Notion integration token; keep this file private
+token = "ntn_..."                   # meeting token; keep this file private
+users_token_env = "NOTION_USERS_TOKEN" # optional internal integration token reference
+# users_token_file = "secrets/notion-users-token" # alternative to users_token_env
 schedule = "15 */6 * * *"           # optional 5-field cron, no seconds
 enabled = true
 ```
@@ -1232,9 +1236,18 @@ enabled = true
 |---|---|---|
 | `identifier` | `default` (single entry) | Source name used by commands and scheduler logs |
 | `account_email` | (required) | Normalized primary identity for relationships; it is not assumed to be the meeting organizer |
-| `token` | (required) | Read-only Notion integration token |
+| `token` | (required) | Meeting token; PAT or integration with Meeting Notes and Read Content access |
+| `users_token_env` | — | Name of a daemon-host environment variable containing the workspace user-resolution token |
+| `users_token_file` | — | File containing the user-resolution token, resolved relative to `MSGVAULT_HOME`; mutually exclusive with `users_token_env` |
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |
+
+The daemon reads the optional users token at each invocation. An unset or
+empty environment variable, an unreadable or empty file, or both references set
+fails the command before any Notion request. Token values stay out of
+diagnostics and archived evidence. Without a users token, the meeting token
+lists users and guests stay unresolved. A failed user lookup leaves that
+attendee unresolved; meeting content still syncs.
 
 Run `msgvault add-notion-meetings <identifier>` to validate access and register
 the source before enabling a schedule. Removing the source prevents the
