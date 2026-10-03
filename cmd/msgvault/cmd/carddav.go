@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/mattn/go-isatty"
@@ -47,6 +48,8 @@ func newAddCardDAVCmd() *cobra.Command {
 			return usageErr(cmd, errors.New("--headless requires --microsoft"))
 		}
 		if msContacts {
+			// The daemon looks the token up under the lowercased email.
+			args[0] = strings.ToLower(strings.TrimSpace(args[0]))
 			if err := authorizeMicrosoftContacts(cmd, args[0], headless); err != nil {
 				return err
 			}
@@ -105,7 +108,7 @@ func newAddCardDAVCmd() *cobra.Command {
 }
 
 // authorizeMicrosoftContacts signs in for Microsoft Graph contacts unless a
-// token with the contacts scopes is already saved.
+// saved token has the contacts scopes and still yields an access token.
 func authorizeMicrosoftContacts(cmd *cobra.Command, email string, headless bool) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
@@ -118,7 +121,11 @@ func authorizeMicrosoftContacts(cmd *cobra.Command, email string, headless bool)
 	mgr := microsoft.NewGraphContactsManager(cfg.Microsoft.ClientID, microsoftTenantID("", cfg),
 		cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), state.logger)
 	if ok, err := mgr.HasScopes(email); err == nil && ok {
-		return nil
+		if source, err := mgr.TokenSource(cmd.Context(), email); err == nil {
+			if _, err := source(cmd.Context()); err == nil {
+				return nil
+			}
+		}
 	}
 	if headless {
 		mgr.UseDeviceCode()
