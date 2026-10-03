@@ -14,14 +14,19 @@ import (
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/httpretry"
+	"go.kenn.io/msgvault/internal/mscontacts"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/syncerr"
 	"golang.org/x/oauth2"
 )
 
 func normalizeCardDAVAccountRequest(req CardDAVAccountRequest) CardDAVAccountRequest {
-	if req.Provider == cardDAVProviderGoogle {
+	switch req.Provider {
+	case cardDAVProviderGoogle:
 		req.BaseURL = carddav.GoogleDiscoveryURL
+		req.Username = strings.ToLower(strings.TrimSpace(req.Username))
+	case cardDAVProviderMicrosoft:
+		req.BaseURL = mscontacts.GraphBaseURL
 		req.Username = strings.ToLower(strings.TrimSpace(req.Username))
 	}
 	return req
@@ -29,12 +34,16 @@ func normalizeCardDAVAccountRequest(req CardDAVAccountRequest) CardDAVAccountReq
 
 func cardDAVCredentialMatchesConfig(credential carddav.Credential, cfg config.CardDAVConfig) bool {
 	return credential.OAuthApp == cfg.OAuthApp &&
-		((cfg.Provider == "" && !credential.Google) || (cfg.Provider == cardDAVProviderGoogle && credential.Google))
+		((cfg.Provider == "" && !credential.OAuth()) || (cfg.Provider == cardDAVProviderGoogle && credential.Google) ||
+			(cfg.Provider == cardDAVProviderMicrosoft && credential.Microsoft))
 }
 
 func (c *CardDAVController) credentialForRequest(ctx context.Context, req CardDAVAccountRequest) (carddav.Credential, error) {
-	credential := carddav.Credential{BaseURL: req.BaseURL, Username: req.Username, Google: req.Provider == cardDAVProviderGoogle, OAuthApp: req.OAuthApp}
-	if credential.Google {
+	credential := carddav.Credential{
+		BaseURL: req.BaseURL, Username: req.Username, OAuthApp: req.OAuthApp,
+		Google: req.Provider == cardDAVProviderGoogle, Microsoft: req.Provider == cardDAVProviderMicrosoft,
+	}
+	if credential.OAuth() {
 		return credential, nil
 	}
 	password, err := c.passwordForRequest(ctx, req)
@@ -43,6 +52,9 @@ func (c *CardDAVController) credentialForRequest(ctx context.Context, req CardDA
 }
 
 func (c *CardDAVController) serviceForCredential(credential carddav.Credential, configured config.CardDAVConfig) (cardDAVCandidate, error) {
+	if credential.Microsoft {
+		return c.microsoftService(credential)
+	}
 	if !credential.Google {
 		candidate, err := c.factory(c.store, configured, credential.Password)
 		if err != nil {

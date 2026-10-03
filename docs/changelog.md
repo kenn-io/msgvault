@@ -20,6 +20,10 @@ All notable changes to msgvault, grouped by release.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
 - Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Msgvault never sends.
+- CardDAV sync supports Microsoft 365 and Outlook.com contacts through
+  Microsoft Graph. `msgvault add-carddav --microsoft <email>` signs in and
+  saves the connection, and each Outlook contact folder is an address book.
+  See [Microsoft contacts](usage/people-carddav.md#microsoft-contacts).
 
 ## 0.21.0
 <small>2026-10-02</small>

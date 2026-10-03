@@ -324,3 +324,23 @@ func TestRefreshingAccessTokenPersistsToEachManagerFileAndNamesProduct(t *testin
 		})
 	}
 }
+
+// A mail token never satisfies the contacts manager, and its re-authorization
+// hint names the contacts command.
+func TestGraphContactsManager_SeparateTokenAndScopes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	mailMgr := NewGraphMailManager("test-client", "common", "", dir, slog.Default())
+	contactsMgr := NewGraphContactsManager("test-client", "common", "", dir, slog.Default())
+	assert.Equal(filepath.Join(dir, "mscontacts_user@company.com.json"), contactsMgr.TokenPath("user@company.com"))
+
+	token := &oauth2.Token{AccessToken: "graph-access", RefreshToken: "graph-refresh", TokenType: "Bearer"}
+	require.NoError(mailMgr.saveToken("user@company.com", token, GraphMailScopes(), "org-tid"))
+	assert.False(contactsMgr.HasToken("user@company.com"))
+
+	require.NoError(contactsMgr.saveToken("user@company.com", token, GraphMailScopes(), "org-tid"))
+	_, err := contactsMgr.TokenSource(t.Context(), "user@company.com")
+	require.ErrorContains(err, "https://graph.microsoft.com/Contacts.ReadWrite")
+	require.ErrorContains(err, "msgvault add-carddav --microsoft user@company.com")
+}

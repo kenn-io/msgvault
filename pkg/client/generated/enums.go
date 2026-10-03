@@ -178,14 +178,15 @@ func (c CandidateClassification) Validate() error {
 type CardDAVAccountRequestProvider string
 
 const (
-	Empty  CardDAVAccountRequestProvider = ""
-	Google CardDAVAccountRequestProvider = "google"
+	Empty     CardDAVAccountRequestProvider = ""
+	Google    CardDAVAccountRequestProvider = "google"
+	Microsoft CardDAVAccountRequestProvider = "microsoft"
 )
 
 // Validate checks if the CardDAVAccountRequestProvider value is valid
 func (c CardDAVAccountRequestProvider) Validate() error {
 	switch c {
-	case Empty, Google:
+	case Empty, Google, Microsoft:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CardDAVAccountRequestProvider value, got: %v", c))

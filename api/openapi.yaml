@@ -1545,6 +1545,7 @@ components:
           enum:
             - ""
             - google
+            - microsoft
           type: string
         schedule:
           type: string

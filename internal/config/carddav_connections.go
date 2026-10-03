@@ -13,13 +13,20 @@ var cardDAVConnectionNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
 var ErrDuplicateCardDAVAccount = errors.New("CardDAV account already belongs to connection")
 
-// SameAccount compares configured identities. Google account emails are case
-// insensitive and independent of the OAuth app used to authorize them.
+// ValidCardDAVProvider reports whether provider is "" (a CardDAV server),
+// "google" or "microsoft".
+func ValidCardDAVProvider(provider string) bool {
+	return provider == "" || provider == "google" || provider == "microsoft"
+}
+
+// SameAccount compares configured identities. Google and Microsoft account
+// emails are case insensitive and independent of the OAuth app used to
+// authorize them.
 func (c CardDAVConfig) SameAccount(other CardDAVConfig) bool {
 	if c.Username == "" || other.Username == "" {
 		return false
 	}
-	if c.Provider == "google" && other.Provider == "google" {
+	if c.Provider != "" && c.Provider == other.Provider {
 		return strings.EqualFold(strings.TrimSpace(c.Username), strings.TrimSpace(other.Username))
 	}
 	return c.BaseURL != "" && c.BaseURL == other.BaseURL && c.Username == other.Username
@@ -56,8 +63,8 @@ func (c *Config) validateCardDAVConnections() error {
 		if name == DefaultCardDAVConnection {
 			return errors.New("carddav_connections.default is reserved; configure the default connection in [carddav]")
 		}
-		if connection.Provider != "" && connection.Provider != "google" {
-			return fmt.Errorf("carddav_connections.%s.provider must be empty or \"google\"", name)
+		if !ValidCardDAVProvider(connection.Provider) {
+			return fmt.Errorf("carddav_connections.%s.provider must be empty, \"google\" or \"microsoft\"", name)
 		}
 		if _, _, err := connection.TrustedDestination(); err != nil {
 			return fmt.Errorf("carddav_connections.%s: %w", name, err)

@@ -128,6 +128,11 @@ func (c *CardDAVController) reconcileCurrentSchedule() error {
 			service = nil
 		}
 	}
+	if service != nil && configured.Provider == cardDAVProviderMicrosoft {
+		if _, err := c.microsoftContactsManager(configured.Username); err != nil {
+			service = nil
+		}
+	}
 	if reconcileConnection != nil {
 		return reconcileConnection(c.connection(), configured, service)
 	}
@@ -221,7 +226,7 @@ func (c *CardDAVController) loadStartupService(logger *slog.Logger) error {
 	}
 	service, err := c.serviceForCredential(credential, configured)
 	if err != nil {
-		if !credential.Google {
+		if !credential.OAuth() {
 			return err
 		}
 		logger.Warn("CardDAV authorization configuration is unavailable; repair the account settings", "error", err)
@@ -458,7 +463,7 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 		!slices.Equal(current.TrustedAddresses, previousSnapshot.TrustedAddresses)
 	// An unchanged Google save refreshes discovery; schedule edits stay offline.
 	if req.Password == "" && !identityChanged && !enabling && !policyChanged &&
-		(req.Provider != cardDAVProviderGoogle || !next.Enabled || (c.Current() != nil && current.Schedule != next.Schedule)) {
+		(!cardDAVOAuthProvider(req.Provider) || !next.Enabled || (c.Current() != nil && current.Schedule != next.Schedule)) {
 		return c.saveCardDAVConfigOnly(ctx, current, next)
 	}
 	credential, err := c.credentialForRequest(ctx, req)
@@ -477,7 +482,7 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	hadPreviousCredential := previousCredentialErr == nil
 	var previousCredentialFile carddav.CredentialFileSnapshot
 	hadPreviousCredentialFile := false
-	if (req.Password != "" || req.Provider == cardDAVProviderGoogle) && previousCredentialErr != nil {
+	if (req.Password != "" || cardDAVOAuthProvider(req.Provider)) && previousCredentialErr != nil {
 		previousCredentialFile, err = carddav.CaptureCredentialFile(tokenDir)
 		if err != nil {
 			return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
@@ -486,7 +491,7 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 	} else if previousCredentialErr != nil && !errors.Is(previousCredentialErr, os.ErrNotExist) {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, previousCredentialErr)
 	}
-	credentialsChanged := !hadPreviousCredential || previousCredential.Password != credential.Password || previousCredential.Google != credential.Google || previousCredential.OAuthApp != credential.OAuthApp ||
+	credentialsChanged := !hadPreviousCredential || previousCredential.Password != credential.Password || previousCredential.Google != credential.Google || previousCredential.Microsoft != credential.Microsoft || previousCredential.OAuthApp != credential.OAuthApp ||
 		previousCredential.BaseURL != req.BaseURL || previousCredential.Username != req.Username
 	if err := c.store.ValidateCardDAVConnectionChangeContext(
 		ctx, req.BaseURL, req.Username, credentialsChanged, c.connection(),
@@ -601,6 +606,9 @@ func (c *CardDAVController) passwordForRequest(ctx context.Context, req CardDAVA
 	if credential.Google {
 		return "", fmt.Errorf("%w: select Google Contacts to reuse Google authorization", errCardDAVValidation)
 	}
+	if credential.Microsoft {
+		return "", fmt.Errorf("%w: select Microsoft contacts to reuse Microsoft authorization", errCardDAVValidation)
+	}
 	return credential.Password, nil
 }
 
@@ -644,11 +652,14 @@ func (c *CardDAVController) passwordConfigured(ctx context.Context, baseURL, use
 }
 
 func validateCardDAVAccountRequest(req CardDAVAccountRequest) error {
-	if req.Provider != "" && req.Provider != cardDAVProviderGoogle {
+	if req.Provider != "" && !cardDAVOAuthProvider(req.Provider) {
 		return fmt.Errorf("%w: unknown CardDAV provider", errCardDAVValidation)
 	}
 	if req.Provider == cardDAVProviderGoogle && req.Password != "" {
 		return fmt.Errorf("%w: Google Contacts uses OAuth, not a password", errCardDAVValidation)
+	}
+	if req.Provider == cardDAVProviderMicrosoft && req.Password != "" {
+		return fmt.Errorf("%w: Microsoft contacts use OAuth, not a password", errCardDAVValidation)
 	}
 	if req.Provider != cardDAVProviderGoogle && req.OAuthApp != "" {
 		return fmt.Errorf("%w: OAuth app requires Google Contacts", errCardDAVValidation)
@@ -673,7 +684,7 @@ func validateCardDAVAccountRequest(req CardDAVAccountRequest) error {
 
 type CardDAVAccountRequest struct {
 	Connection string `json:"connection,omitempty"`
-	Provider   string `json:"provider,omitempty" enum:",google"`
+	Provider   string `json:"provider,omitempty" enum:",google,microsoft"`
 	OAuthApp   string `json:"oauth_app,omitempty"`
 	BaseURL    string `json:"base_url"`
 	Username   string `json:"username"`
@@ -935,6 +946,13 @@ func (c *CardDAVController) scopedStatus(ctx context.Context) (CardDAVStatusResp
 			status.CredentialConfigured = false
 			status.RepairReason = "google_authorization_required"
 			return status, nil //nolint:nilerr // Status reports missing Google authorization without contacting Google.
+		}
+	}
+	if credential.Microsoft {
+		if _, err := c.microsoftContactsManager(credential.Username); err != nil {
+			status.CredentialConfigured = false
+			status.RepairReason = "credential_unavailable"
+			return status, nil //nolint:nilerr // Status reports missing Microsoft authorization without contacting Microsoft.
 		}
 	}
 	if !status.Available {

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-30"
+last_edited: "2026-10-02"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -138,6 +138,39 @@ Google's canonical entry point is
 collection from Google's response and uses vCard 3.0 and incremental sync.
 Test and save the account again to rediscover its URLs; Google recommends
 rediscovery every two to four weeks. See [Google's CardDAV reference](https://developers.google.com/people/carddav).
+
+## Microsoft contacts
+
+Microsoft 365 and Outlook.com do not support CardDAV. msgvault reads and
+writes their contacts through Microsoft Graph instead, with the same roles,
+publishing and conflict review as a CardDAV server. Each Outlook contact
+folder is one address book, including the default **Contacts** folder.
+
+1. Set up the Microsoft app registration from the
+   [Microsoft Graph mail setup](../guides/oauth-setup.md#microsoft-graph-mail-sync), and add the delegated
+   Microsoft Graph permission `Contacts.ReadWrite`.
+2. Sign in and save the connection:
+
+   ```bash
+   msgvault add-carddav --microsoft you@example.com --schedule "*/30 * * * *"
+   msgvault carddav books
+   msgvault sync-carddav
+   ```
+
+   `add-carddav --microsoft` opens a browser for Microsoft sign-in. Use
+   `--headless` to sign in with a device code instead. The token is saved as
+   `tokens/mscontacts_<email>.json`, separate from mail and Teams tokens.
+3. Review the roles of each folder before the first sync.
+
+The **Microsoft 365 or Outlook.com** provider in **Settings → CardDAV account**
+saves the connection after the terminal sign-in.
+
+Graph stores fewer fields than vCard. msgvault maps names, nickname, email
+addresses, phone numbers, organization, job title, postal addresses, a
+birthday with a year, and notes. msgvault saves the full vCard of a card it
+writes in a hidden property of the contact. Fields that Graph cannot hold, such
+as URLs, are then kept, also after an edit in Outlook. Contact photos are not
+synced.
 
 ## Choose what each book does
 
