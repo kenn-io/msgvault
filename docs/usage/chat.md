@@ -74,7 +74,7 @@ non-dry-run plan through client elicitation.
 
 These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Msgvault never sends.
 
-Every draft mutation requires client confirmation for the specific tool and arguments. The client must show the proposed action and obtain your approval before responding. Msgvault verifies that the response matches the pending call; the client is responsible for asking you. Clients unable to complete confirmation cannot mutate drafts. `draft_get` and `draft_send_as` run without mutation confirmation.
+`draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
 
 | Tool | Command | Parameters |
 |---|---|---|
@@ -585,7 +585,7 @@ Enable only the writes intended for the assistant's session:
 | Stdio | Available by default | Add `--allow-profile-writes` | Add `--allow-calendar-writes` |
 | HTTP | Add `--http-allow-writes` | Add both `--http-allow-writes` and `--allow-profile-writes` | Add both `--http-allow-writes` and `--allow-calendar-writes` |
 
-Draft mutation tools require confirmation for each call under both transports, even when the write tools are available.
+`draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available.
 
 When profile writes are enabled, two additional tools appear:
 
