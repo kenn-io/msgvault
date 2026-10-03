@@ -274,11 +274,11 @@ func TestRotationStateDoesNotAccumulateInRunHistory(t *testing.T) {
 	assert.Equal([]string{"a", "b", "c", "a", "b", "c"}, f.read)
 
 	var runs, processed, added, failures, cursorBytes int
-	err := st.DB().QueryRow(`
+	err := st.DB().QueryRow(st.Rebind(`
 		SELECT COUNT(*), SUM(messages_processed), SUM(messages_added), SUM(errors_count),
 		       SUM(LENGTH(COALESCE(cursor_before, '')) + LENGTH(COALESCE(cursor_after, '')))
 		FROM sync_runs WHERE source_id = ?
-	`, src.ID).Scan(&runs, &processed, &added, &failures, &cursorBytes)
+	`), src.ID).Scan(&runs, &processed, &added, &failures, &cursorBytes)
 	require.NoError(err)
 	assert.Equal(6, runs)
 	assert.Equal(6, processed)
