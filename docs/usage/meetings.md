@@ -297,7 +297,7 @@ returns up to 200 conversations. The first sync reads all history, so an
 archive over about 5,000 conversations pauses for the hourly limit and can
 take several hours. Later syncs read only conversations created since the last
 complete sync, reaching back 48 hours to catch conversations that finished
-processing late and recent edits. That is usually two requests. The API has no
+processing late and recent edits. That is usually one request. The API has no
 updated-since filter, so edits to older conversations, and conversations that
 finish processing or are unlocked more than 48 hours after they were created,
 appear after `sync-omi --full`, which rescans history and rewrites derived

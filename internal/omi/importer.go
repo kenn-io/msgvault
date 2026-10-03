@@ -97,7 +97,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 	}()
 	archiver := meetingarchive.New(st)
-	params := ListParams{CreatedAfter: createdAfter, CreatedBefore: start}
+	params := ListParams{CreatedBefore: start}
 	maxCreated := watermark
 	seen := make(map[string]bool)
 	var rowErr error
@@ -126,7 +126,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				return sum, err
 			}
 			// The Developer API orders conversation pages by created_at descending.
-			// Recheck the lower bound locally in case a backend ignores start_date.
+			// Apply the lower bound locally so it cannot be confused with the
+			// meeting's started_at, then stop once the page crosses it.
 			if !createdAfter.IsZero() && c.CreatedAt.Before(createdAfter) {
 				reachedCreatedAfter = true
 				break

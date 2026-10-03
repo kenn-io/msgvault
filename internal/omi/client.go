@@ -69,7 +69,6 @@ func NewClient(baseURL, apiKey string) *Client {
 type ListParams struct {
 	Limit         int
 	Offset        int
-	CreatedAfter  time.Time
 	CreatedBefore time.Time
 }
 
@@ -98,9 +97,6 @@ func (c *Client) ListConversations(ctx context.Context, p ListParams) ([]Convers
 		limit = PageSize
 	}
 	q := url.Values{"limit": {strconv.Itoa(min(limit, PageSize))}, "offset": {strconv.Itoa(p.Offset)}, "include_transcript": {"true"}}
-	if !p.CreatedAfter.IsZero() {
-		q.Set("start_date", p.CreatedAfter.UTC().Format(time.RFC3339Nano))
-	}
 	if !p.CreatedBefore.IsZero() {
 		q.Set("end_date", p.CreatedBefore.UTC().Format(time.RFC3339Nano))
 	}

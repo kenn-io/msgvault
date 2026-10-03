@@ -274,7 +274,7 @@ func TestImportAfterFiltersByCreationTime(t *testing.T) {
 	}}
 	var offsets []int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("2026-01-02T00:00:00Z", r.URL.Query().Get("start_date"))
+		assert.Empty(r.URL.Query().Get("start_date"), "creation lower bounds are applied locally")
 		assert.NotEmpty(r.URL.Query().Get("end_date"), "the fixed import boundary stabilizes pagination")
 		offset, parseErr := strconv.Atoi(r.URL.Query().Get("offset"))
 		if parseErr != nil {
@@ -345,7 +345,7 @@ func TestClientHostedAndSelfHostedContract(t *testing.T) {
 				assert.Equal("true", r.URL.Query().Get("include_transcript"))
 				assert.Equal("200", r.URL.Query().Get("limit"))
 				assert.Equal("200", r.URL.Query().Get("offset"))
-				assert.Equal("2026-01-01T00:00:00Z", r.URL.Query().Get("start_date"))
+				assert.Empty(r.URL.Query().Get("start_date"), "creation lower bounds are applied locally")
 				assert.Equal("2026-01-02T00:00:00Z", r.URL.Query().Get("end_date"))
 				_, _ = w.Write([]byte("[" + fixture + "]"))
 			}))
@@ -359,7 +359,6 @@ func TestClientHostedAndSelfHostedContract(t *testing.T) {
 			client.http = server.Client()
 			result, err := client.ListConversations(context.Background(), ListParams{
 				Limit: 1000, Offset: 200,
-				CreatedAfter:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 				CreatedBefore: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 			})
 			require.NoError(err)
@@ -526,27 +525,21 @@ func TestImportIncrementalWatermark(t *testing.T) {
 		).Replace(fixture))
 	}
 	day := func(d int) time.Time { return time.Date(2026, 1, d, 12, 0, 0, 0, time.UTC) }
-	history := []Conversation{conversation("old", day(1))}
-	var startDates []string
+	// Newest first, as the Developer API orders pages by created_at.
+	history := []Conversation{conversation("old", day(1)), conversation("ancient", day(1).AddDate(0, -1, 0))}
+	var offsets []int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		startDate := r.URL.Query().Get("start_date")
-		startDates = append(startDates, startDate)
-		var lower time.Time
-		var parseErr error
-		if startDate != "" {
-			lower, parseErr = time.Parse(time.RFC3339Nano, startDate)
-		}
+		assert.Empty(r.URL.Query().Get("start_date"), "creation lower bounds are applied locally")
 		offset, offsetErr := strconv.Atoi(r.URL.Query().Get("offset"))
 		limit, limitErr := strconv.Atoi(r.URL.Query().Get("limit"))
-		if err := errors.Join(parseErr, offsetErr, limitErr); err != nil {
+		if err := errors.Join(offsetErr, limitErr); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		offsets = append(offsets, offset)
 		items := []jsontext.Value{}
 		for _, c := range history {
-			if !c.CreatedAt.Before(lower) {
-				items = append(items, c.Raw)
-			}
+			items = append(items, c.Raw)
 		}
 		items = items[min(offset, len(items)):]
 		data, marshalErr := json.Marshal(items[:min(limit, len(items))])
@@ -560,35 +553,37 @@ func TestImportIncrementalWatermark(t *testing.T) {
 	client := NewClient(server.URL, "omi_dev_synthetic")
 	client.limiter = rate.NewLimiter(rate.Inf, 1)
 	imp := NewImporter(st, client)
-	run := func(opts ImportOptions) (string, string) {
+	run := func(opts ImportOptions) (int64, string) {
 		t.Helper()
-		startDates = nil
+		offsets = nil
 		opts.Identifier, opts.AccountEmail = "work", "owner@example.com"
-		_, err := imp.Import(context.Background(), opts)
+		sum, err := imp.Import(context.Background(), opts)
 		require.NoError(err)
 		last, err := st.GetLastSuccessfulSync(src.ID)
 		require.NoError(err)
-		return startDates[0], last.CursorAfter.String
+		return sum.MeetingsProcessed, last.CursorAfter.String
 	}
 
-	start, cursor := run(ImportOptions{})
-	assert.Empty(start, "the first sync reads all history")
+	processed, cursor := run(ImportOptions{})
+	assert.Equal(int64(2), processed, "the first sync reads all history")
+	assert.Equal([]int{0, PageSize}, offsets)
 	assert.JSONEq(`{"created_after":"2026-01-01T12:00:00Z"}`, cursor)
 
 	history = append([]Conversation{conversation("new", day(5))}, history...)
-	start, cursor = run(ImportOptions{})
-	assert.Equal("2025-12-30T12:00:00Z", start, "later syncs reach back 48 hours before the watermark")
+	processed, cursor = run(ImportOptions{})
+	assert.Equal(int64(2), processed, "later syncs stop 48 hours before the watermark")
+	assert.Equal([]int{0}, offsets, "crossing the overlap ends the scan without another request")
 	assert.JSONEq(`{"created_after":"2026-01-05T12:00:00Z"}`, cursor)
 
 	history = append([]Conversation{conversation("newest", day(10))}, history...)
-	start, cursor = run(ImportOptions{Limit: 1})
-	assert.Equal("2026-01-03T12:00:00Z", start)
+	processed, cursor = run(ImportOptions{Limit: 1})
+	assert.Equal(int64(1), processed)
 	assert.JSONEq(`{"created_after":"2026-01-05T12:00:00Z"}`, cursor, "a limited run keeps the watermark")
 
-	start, cursor = run(ImportOptions{Full: true})
-	assert.Empty(start, "a full sync rescans all history")
+	processed, cursor = run(ImportOptions{Full: true})
+	assert.Equal(int64(4), processed, "a full sync rescans all history")
 	assert.JSONEq(`{"created_after":"2026-01-10T12:00:00Z"}`, cursor)
-	ids, err := st.MessageExistsBatch(src.ID, []string{"old", "new", "newest"})
+	ids, err := st.MessageExistsBatch(src.ID, []string{"ancient", "old", "new", "newest"})
 	require.NoError(err)
-	assert.Len(ids, 3)
+	assert.Len(ids, 4)
 }
