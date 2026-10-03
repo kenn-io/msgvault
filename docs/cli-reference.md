@@ -3702,6 +3702,33 @@ msgvault repair-message 123 --source-id 42
 | `--json` | Emit newline-delimited audit results; requires `--audit` |
 
 Without `--audit`, supply exactly one internal numeric message ID or Gmail ID.
+Repair fetches a fresh Gmail snapshot and replaces that message's stored MIME,
+headers, bodies, recipients, labels, and MIME attachment rows. It preserves the
+internal message ID and provider-owned attachments.
+
+The audit parses stored raw MIME and compares it with the archived fields on
+every run. It does not contact Gmail, change the archive, or read saved mismatch
+flags. Coherent messages are omitted. After a successful repair, run the same
+audit again to confirm the message is omitted; no re-sync or cache rebuild is
+needed. When stored part keys are available, attachments are compared by
+physical MIME occurrence, so separate parts with identical bytes still count
+separately. Older rows without part keys cannot prove how many times identical
+content occurred.
+
+An `inconclusive` raw MIME result means the stored MIME is missing, cannot be
+decoded or parsed, or exceeds the audit's 64 MiB decompression limit. Repair
+fetches fresh MIME from Gmail and requires it to parse successfully. If fetching,
+parsing, publishing attachment bytes, or replacing the snapshot fails, the stored
+snapshot stays unchanged. A later cache-refresh error can occur after the
+snapshot has been committed; re-audit to check that snapshot. If a message
+remains flagged after a successful repair, retain the new audit result and the
+repair's error output for diagnosis.
+
+Through the daemon, HTTP 200 starts an NDJSON event stream; a terminal `error`
+event means the operation failed. `stderr` events contain the command's error
+output. The `msgvault: cli subprocess exited non-zero` marker reports the failed
+exit, not its cause. API callers should retain the `stderr` events as well as the
+terminal error.
 
 ## repair-derived
 
