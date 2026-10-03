@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-26"
 title: Importing Local Email
 description: Bring local email archives into msgvault, or backfill older Gmail and IMAP messages.
+last_edited: "2026-09-26"
 ---
 
 Bring old mail into the same searchable archive as your live accounts. Local

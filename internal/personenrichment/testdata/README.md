@@ -1,4 +1,6 @@
 ---
+title: "Exa contract fixtures"
+description: "Synthetic Exa response fixtures for person-enrichment contract checks."
 last_edited: 2026-08-23
 ---
 

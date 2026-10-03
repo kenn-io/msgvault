@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-08"
 title: Archive Remote Email Images
 description: Save images hosted by email senders for offline reading, with explicit tracking consent.
+last_edited: "2026-09-08"
 ---
 
 Save externally hosted email images so you can read them later without

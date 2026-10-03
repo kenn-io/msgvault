@@ -1,3 +1,9 @@
+---
+title: "Pack-Native Attachment Restore"
+description: "Design for restoring packed attachments without expanding the entire archive first."
+last_edited: "2026-07-11"
+---
+
 # Pack-Native Attachment Restore
 
 Design for msgvault issue #466. Status: approved for implementation planning.

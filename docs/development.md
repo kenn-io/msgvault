@@ -1,6 +1,7 @@
 ---
 title: Development
 description: Build, test, lint, and code conventions.
+last_edited: "2026-10-01"
 ---
 
 ## Build

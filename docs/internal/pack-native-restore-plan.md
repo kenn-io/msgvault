@@ -1,3 +1,9 @@
+---
+title: "Pack-Native Attachment Restore Implementation Plan"
+description: "Implementation steps for restoring attachments directly from their packed representation."
+last_edited: "2026-07-11"
+---
+
 # Pack-Native Attachment Restore Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use `superpowers:subagent-driven-development` if subagents are available, or `superpowers:executing-plans` otherwise, to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.

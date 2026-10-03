@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-08"
 title: Microsoft Teams
 description: Archive Microsoft Teams chats and channels through delegated Microsoft Graph sync.
+last_edited: "2026-09-08"
 ---
 
 Search Teams chats, channel discussions, and replies alongside your email and

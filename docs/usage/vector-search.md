@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-25"
 title: Vector Search
 description: Find messages by meaning and set up separate people, visual, and document search indexes.
+last_edited: "2026-09-25"
 ---
 
 Semantic search finds messages by meaning:

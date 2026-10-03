@@ -1,3 +1,9 @@
+---
+title: "Security Policy"
+description: "Supported versions and how to report security vulnerabilities in msgvault."
+last_edited: "2026-02-24"
+---
+
 # Security Policy
 
 ## Reporting Vulnerabilities

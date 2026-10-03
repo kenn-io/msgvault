@@ -1,3 +1,9 @@
+---
+title: "How msgvault works"
+description: "How communications move from source capture into an archive you own and can use."
+last_edited: "2026-10-02"
+---
+
 # How msgvault works
 
 Sync or import your messages, link them to people, search your history, and

@@ -1,3 +1,9 @@
+---
+title: "Kit Packed-CAS Extraction Implementation Plan"
+description: "Implementation steps for extracting the packed attachment store into Kit."
+last_edited: "2026-07-11"
+---
+
 # Kit Packed-CAS Extraction Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.

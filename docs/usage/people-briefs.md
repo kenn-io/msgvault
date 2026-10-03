@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-08"
 title: Person Briefs
 description: Remember what someone recently shared before your next conversation, with links to the archived sources.
+last_edited: "2026-09-08"
 ---
 
 A person brief gives you a short summary of what someone recently shared,

@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-27"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
+last_edited: "2026-09-27"
 ---
 
 Use `msgvault search` to find archived email, chats, calendar events, and

@@ -1,3 +1,9 @@
+---
+title: "Daemon CLI request audit"
+description: "Daemon request policies, cancellation inventory, and evidence for CLI routes."
+last_edited: "2026-07-27"
+---
+
 # Daemon CLI request audit
 
 ## Request policy

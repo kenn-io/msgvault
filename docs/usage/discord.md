@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-03
 title: Discord
 description: Archive Discord guild channels, threads, and attachments through a read-only bot.
+last_edited: 2026-09-03
 ---
 
 msgvault can archive Discord guild history into the same local database as

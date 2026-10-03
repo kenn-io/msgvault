@@ -1,6 +1,7 @@
 ---
 title: Backup
 description: Create incremental, verifiable snapshots of your archive in a local backup repository that is safe to sync off-site.
+last_edited: "2026-09-03"
 ---
 
 `msgvault backup` captures your entire archive — the SQLite database, every attachment, and optionally your configuration and deletion audit trail — into a **backup repository**: a self-contained directory of immutable, checksummed files. Snapshots are incremental (only changed database pages and new attachments are stored), deduplicated, and verifiable down to the byte.

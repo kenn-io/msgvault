@@ -1,3 +1,9 @@
+---
+title: "Engineering records"
+description: "Find historical designs, investigations, and plans alongside their current owning guides."
+last_edited: "2026-10-01"
+---
+
 # Engineering records
 
 These documents preserve design rationale, investigations, and implementation

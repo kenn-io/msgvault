@@ -1,3 +1,9 @@
+---
+title: "Web UI overhaul"
+description: "Design for Web UI navigation, shared visual language, and archive workspaces."
+last_edited: "2026-10-01"
+---
+
 # Web UI overhaul
 
 Status: approved 2026-09-28 and revised 2026-09-29 after review. PR 1

@@ -1,3 +1,9 @@
+---
+title: "\"Last Time We Talked\" Person Brief"
+description: "Design for evidence-backed person briefs about recent conversations."
+last_edited: "2026-09-08"
+---
+
 # "Last Time We Talked" Person Brief
 
 Design for the brief described in issue #628, section 5, and left open by

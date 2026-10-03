@@ -1,6 +1,7 @@
 ---
 title: Troubleshooting
 description: Common issues and solutions.
+last_edited: "2026-09-28"
 ---
 
 ## Windows Path Errors in config.toml

@@ -1,4 +1,6 @@
 ---
+title: "Accounts, Identities, Collections, and Deduplication — Specification"
+description: "Specification for source organization, identity discovery, collections, and reversible deduplication."
 last_edited: 2026-08-30
 ---
 

@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-22"
 title: Analytics & Stats
 description: Archive statistics, top senders, domains, and labels.
+last_edited: "2026-09-22"
 ---
 
 Use the built-in aggregate commands for a quick archive summary. They query the

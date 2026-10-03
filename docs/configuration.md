@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-02"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
+last_edited: "2026-10-02"
 ---
 
 ## Config File

@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-02"
 title: Beeper
 description: Archive every chat network connected to Beeper Desktop via its local API.
+last_edited: "2026-10-02"
 ---
 
 Archive the chat networks you have connected to

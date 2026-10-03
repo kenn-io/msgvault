@@ -1,3 +1,9 @@
+---
+title: "Packed Attachment Storage"
+description: "Design for packed attachment storage, integrity, lifecycle, and archive compatibility."
+last_edited: "2026-07-16"
+---
+
 # Packed Attachment Storage
 
 Design for storing attachment content in kit CAS pack files instead of loose

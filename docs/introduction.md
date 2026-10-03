@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-25"
 title: Introduction
 description: Why msgvault was created and what problem it solves.
+last_edited: "2026-09-25"
 ---
 
 msgvault is a local-first archive for communications and relationships. To

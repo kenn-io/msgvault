@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-15"
 title: Google Calendar
 description: Archive Google Calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
+last_edited: "2026-09-15"
 ---
 
 msgvault can archive your Google Calendar events into the same local database as

@@ -1,3 +1,9 @@
+---
+title: "msgvault"
+description: "Archive communications and relationships on your own hardware with msgvault."
+last_edited: "2026-10-02"
+---
+
 # msgvault
 
 **Keep and search your message history.**

@@ -1,3 +1,9 @@
+---
+title: "Web UI overhaul PR 2: Everything, Files, and Saved views — implementation plan"
+description: "Implementation plan for Everything, Files, and Saved views in the Web UI."
+last_edited: "2026-09-30"
+---
+
 # Web UI overhaul PR 2: Everything, Files, and Saved views — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use

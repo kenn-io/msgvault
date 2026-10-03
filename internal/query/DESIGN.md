@@ -1,3 +1,9 @@
+---
+title: "Query Package Design"
+description: "Query package architecture, backend responsibilities, and analytical data flow."
+last_edited: "2026-03-18"
+---
+
 # Query Package Design
 
 ## Overview

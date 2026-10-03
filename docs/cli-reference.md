@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-02"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
+last_edited: "2026-10-02"
 ---
 
 Find a command by task below, or use `msgvault COMMAND --help` for the flags

@@ -1,3 +1,9 @@
+---
+title: "Web UI overhaul PR 1: foundation and shell — implementation plan"
+description: "Implementation plan for the Web UI foundation and application shell."
+last_edited: "2026-09-29"
+---
+
 # Web UI overhaul PR 1: foundation and shell — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use

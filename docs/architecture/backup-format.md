@@ -1,6 +1,7 @@
 ---
 title: Backup Repository Format
 description: How msgvault's backup command coordinates capture with the daemon and materializes restores. The on-disk repository format specification lives with the backup engine, go.kenn.io/kit.
+last_edited: "2026-07-13"
 ---
 
 The repository/pack format specification — layout, object encodings, versioning, page maps, and the manifest schema — is implemented by [`go.kenn.io/kit`](https://go.kenn.io/kit)'s `backup` and `pack` packages, which msgvault uses as a library. The full specification lives with the engine: see `backup/FORMAT.md` in that module.

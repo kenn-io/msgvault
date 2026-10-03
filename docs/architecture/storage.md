@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-25"
 title: Data Storage
 description: Database schema, Parquet analytics cache, content-addressed attachments, and token storage.
+last_edited: "2026-09-25"
 ---
 
 The archive database preserves messages, source evidence, curated people, and

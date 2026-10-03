@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-22"
 title: Remote Deployment
 description: Run msgvault in Docker on a remote host and provision it from a machine with a browser.
+last_edited: "2026-09-22"
 ---
 
 Run your archive on an always-on server and use it from your own computer.

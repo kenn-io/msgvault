@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-08-30
 title: Deduplication
 description: Find and merge duplicate messages across accounts and collections with a reversible, five-rung safety ladder that never deletes anything by default.
+last_edited: 2026-08-30
 ---
 
 A long-running archive accumulates overlapping sources: a current Gmail sync, an old mbox export, IMAP backups, chat history. The same message often appears more than once, and duplicates start to dominate search results. `msgvault deduplicate` collapses each set of copies to a single visible survivor while keeping every source's provenance intact.

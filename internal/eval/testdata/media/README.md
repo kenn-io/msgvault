@@ -1,3 +1,9 @@
+---
+title: "Synthetic Media Retrieval Fixtures"
+description: "Synthetic media retrieval fixtures, source-version provenance, topics, and relevance judgments."
+last_edited: "2026-09-10"
+---
+
 This bundle converts the E1 starter corpus to the formats used by msgvault PR #649. See https://github.com/kenn-io/msgvault/pull/649.
 
 `mailbox.json` uses the synthetic mailbox fixture format introduced by PR 649 at `internal/eval/testdata/threaded/mailbox.json`. The message body carries the synthetic transcript text. The two `media-a-v1` messages represent independent occurrences of the same source version. The source version and provenance mapping is:

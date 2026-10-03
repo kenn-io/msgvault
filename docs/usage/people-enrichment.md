@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-08"
 title: External Person Enrichment
 description: Look up public profile information with explicit provider policies, request limits, and opt-outs.
+last_edited: "2026-09-08"
 ---
 
 External enrichment looks up public information about tracked people and adds

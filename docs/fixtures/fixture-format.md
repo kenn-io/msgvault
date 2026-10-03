@@ -1,3 +1,9 @@
+---
+title: "Documentation fixture format"
+description: "Manifest fields, artifact layout, and review requirements for documentation fixtures."
+last_edited: "2026-08-07"
+---
+
 # Documentation fixture format
 
 The controlled web UI fixture is derived from the May 7, 2015 CMU CALO Enron

@@ -1,6 +1,7 @@
 ---
 title: PostgreSQL Backend
 description: Run msgvault on PostgreSQL with native full-text search and optional pgvector semantic search.
+last_edited: "2026-09-03"
 ---
 
 SQLite remains the default msgvault database. PostgreSQL is an opt-in backend for

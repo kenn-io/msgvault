@@ -1,3 +1,9 @@
+---
+title: "Kit Packed-CAS Extraction"
+description: "Design for extracting packed attachment storage into the shared Kit library."
+last_edited: "2026-07-11"
+---
+
 # Kit Packed-CAS Extraction
 
 Design for extracting msgvault's production packed-attachment storage into a

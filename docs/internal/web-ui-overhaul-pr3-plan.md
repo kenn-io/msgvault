@@ -1,3 +1,9 @@
+---
+title: "Web UI overhaul PR 3: People — implementation plan"
+description: "Implementation plan for the People workspace in the Web UI."
+last_edited: "2026-09-30"
+---
+
 # Web UI overhaul PR 3: People — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use

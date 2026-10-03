@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-27"
 title: SQL Queries
 description: Run read-only DuckDB queries against the analytics cache.
+last_edited: "2026-09-27"
 ---
 
 Use `msgvault query` for ad-hoc analysis across email, chat, calendar, and

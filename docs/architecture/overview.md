@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-08"
 title: Architecture Overview
 description: How msgvault captures communications, preserves the archive, and serves people, search, and automation.
+last_edited: "2026-09-08"
 ---
 
 msgvault keeps communications and curated relationships in an archive you

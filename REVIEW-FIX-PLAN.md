@@ -1,3 +1,9 @@
+---
+title: "Microsoft IMAP PR — Remaining Fix Plan"
+description: "Remaining fixes and verification steps recorded for the Microsoft IMAP pull request."
+last_edited: "2026-04-02"
+---
+
 # Microsoft IMAP PR — Remaining Fix Plan
 
 **Branch:** `microsoft-imap`

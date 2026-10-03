@@ -1,3 +1,9 @@
+---
+title: "Web UI overhaul PR 4: Manage — implementation plan"
+description: "Implementation plan for the Manage workspace in the Web UI."
+last_edited: "2026-10-01"
+---
+
 # Web UI overhaul PR 4: Manage — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use

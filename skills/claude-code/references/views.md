@@ -1,3 +1,9 @@
+---
+title: "msgvault SQL View Reference"
+description: "SQL view schemas and column reference for querying msgvault archive analytics."
+last_edited: "2026-04-08"
+---
+
 # msgvault SQL View Reference
 
 Full column schemas for all views available via `msgvault query`.

@@ -1,3 +1,9 @@
+---
+title: "Slack Ingestion — Design"
+description: "Design for ingesting Slack messages, threads, files, and conversation metadata."
+last_edited: "2026-07-30"
+---
+
 # Slack Ingestion — Design
 
 > **Partially superseded (2026-07-20):** the thread-lookback polling design

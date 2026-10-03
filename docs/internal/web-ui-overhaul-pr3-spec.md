@@ -1,3 +1,9 @@
+---
+title: "Web UI overhaul, PR 3: People"
+description: "Specification for the People workspace, profile details, and relationship views."
+last_edited: "2026-10-01"
+---
+
 # Web UI overhaul, PR 3: People
 
 Status: approved 2026-09-30 after review; implemented and merged in #1019. This spec

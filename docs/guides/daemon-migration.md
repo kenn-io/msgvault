@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-08-30
 title: Daemon Migration Guide
 description: What changes when CLI commands route through the msgvault daemon, and how to adapt scripts, environment variables, and workflows.
+last_edited: 2026-08-30
 ---
 
 Starting with the 0.17.0 release, msgvault CLI commands that touch the archive no

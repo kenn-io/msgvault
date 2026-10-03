@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-28"
 title: Meeting Transcripts
 description: Archive AI meeting notes and transcripts from Granola, Circleback, Notion, and Muesli into your searchable local archive.
+last_edited: "2026-09-28"
 ---
 
 Find meeting decisions and transcripts in the same archive as your email and

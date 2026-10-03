@@ -1,3 +1,9 @@
+---
+title: "Message Vault"
+description: "Product purpose, interface principles, and accessibility requirements for Message Vault."
+last_edited: "2026-08-26"
+---
+
 # Message Vault
 
 ## Register

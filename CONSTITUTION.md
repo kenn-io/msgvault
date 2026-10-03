@@ -1,3 +1,9 @@
+---
+title: "Clanker Constitution"
+description: "Default operating principles for coding agents, including authorization, verification, and communication."
+last_edited: "2026-08-29"
+---
+
 <!-- Clanker Constitution v2026.08.11 | https://github.com/kenn-io/constitution -->
 # Clanker Constitution
 

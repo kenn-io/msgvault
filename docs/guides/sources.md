@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-02"
 title: Choose a Source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
+last_edited: "2026-10-02"
 ---
 
 Bring a live account or a local export into the same archive. **Sync** contacts

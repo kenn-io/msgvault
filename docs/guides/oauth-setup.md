@@ -1,6 +1,7 @@
 ---
 title: OAuth Setup
 description: Create OAuth credentials for Gmail (Google Cloud) or Microsoft 365 (Azure AD) and authorize msgvault.
+last_edited: "2026-10-02"
 ---
 
 ## Google (Gmail and Calendar)

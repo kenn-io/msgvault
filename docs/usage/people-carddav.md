@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-30"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
+last_edited: "2026-09-30"
 ---
 
 CardDAV connects msgvault profiles to an external address book. Import contacts,

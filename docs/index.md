@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-02"
 title: Documentation
 description: Set up your archive, find messages and files, maintain people, and operate msgvault.
+last_edited: "2026-10-02"
 ---
 
 # Use your communications archive

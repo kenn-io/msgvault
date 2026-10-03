@@ -1,6 +1,7 @@
 ---
 title: Setup Guide
 description: Install msgvault, choose a source, and explore your first archived messages.
+last_edited: "2026-10-02"
 ---
 
 

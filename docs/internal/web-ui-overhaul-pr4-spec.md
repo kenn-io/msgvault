@@ -1,3 +1,9 @@
+---
+title: "Web UI overhaul, PR 4: Manage"
+description: "Specification for managing archive sources, background work, and settings in the Web UI."
+last_edited: "2026-10-01"
+---
+
 # Web UI overhaul, PR 4: Manage
 
 Status: approved 2026-09-30 after review; implemented on the ui-ux-manage

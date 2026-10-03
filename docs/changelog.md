@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-02"
 title: Changelog
 description: Release history for msgvault
+last_edited: "2026-10-02"
 ---
 
 All notable changes to msgvault, grouped by release.

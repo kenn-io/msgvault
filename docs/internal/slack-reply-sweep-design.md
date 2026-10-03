@@ -1,3 +1,9 @@
+---
+title: "Slack Reply Sweep — Design"
+description: "Design for discovering Slack thread replies with bounded incremental sweeps."
+last_edited: "2026-08-07"
+---
+
 # Slack Reply Sweep — Design
 
 Date: 2026-07-20

@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-15"
 title: Profile Automation
 description: Maintain tracked people's profile facts from archive evidence and inspect why a value changed.
+last_edited: "2026-09-15"
 ---
 
 A people sweep reads a limited amount of archived text, asks your chosen model

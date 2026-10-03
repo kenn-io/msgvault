@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-25"
 title: Accounts, Identities, and Collections
 description: How msgvault organizes every source into accounts, tracks which identifiers are "you," and groups accounts into collections for scoped search, stats, and deduplication.
+last_edited: "2026-09-25"
 ---
 
 Keep live accounts, old imports, and chat histories in one archive while

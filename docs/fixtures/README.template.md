@@ -1,3 +1,9 @@
+---
+title: "Controlled web UI fixture"
+description: "Provenance, review requirements, and refresh instructions for the controlled Enron documentation fixture."
+last_edited: "2026-08-07"
+---
+
 # Controlled web UI fixture
 
 This orphan-branch artifact contains a compact MBOX selected from the May 7,

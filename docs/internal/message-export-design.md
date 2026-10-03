@@ -1,3 +1,9 @@
+---
+title: "Generic Message Export"
+description: "Design for exporting messages across providers with bounded windows and preserved source data."
+last_edited: "2026-07-27"
+---
+
 # Generic Message Export
 
 Design for a provider-neutral, machine-readable archive export. Status:

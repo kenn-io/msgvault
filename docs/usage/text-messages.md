@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-23"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
+last_edited: "2026-09-23"
 ---
 
 Search old texts and chats alongside your email. Import a local export below,

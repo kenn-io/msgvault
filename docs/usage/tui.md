@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-25"
 title: Interactive TUI
 description: Browse messages and people, search your archive, save attachments, and stage email deletion from the terminal.
+last_edited: "2026-09-25"
 ---
 
 The TUI lets you explore your archive from the terminal. Group messages by

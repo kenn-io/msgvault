@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-25"
 title: Recommended Configuration
 description: Set up optional search and people features from your available provider keys, then check what still needs attention.
+last_edited: "2026-09-25"
 ---
 
 Use `msgvault setup providers` to configure optional search and people features

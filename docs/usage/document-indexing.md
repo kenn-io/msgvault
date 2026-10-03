@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-02"
 title: Document Attachment Indexing
 description: Find words and topics inside archived documents, with explicit control over provider uploads.
+last_edited: "2026-10-02"
 ---
 
 Document indexing lets you search inside archived attachments and return to

@@ -1,3 +1,9 @@
+---
+title: "Generic Message Export Implementation Plan"
+description: "Implementation steps for generic message exports and their provider-specific representations."
+last_edited: "2026-07-27"
+---
+
 # Generic Message Export Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use

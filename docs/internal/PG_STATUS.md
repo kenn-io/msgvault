@@ -1,3 +1,9 @@
+---
+title: "PostgreSQL backend: historical implementation tracker"
+description: "Historical PostgreSQL implementation scope, delivery notes, and follow-up ideas."
+last_edited: "2026-09-08"
+---
+
 # PostgreSQL backend: historical implementation tracker
 
 This record preserves the original PostgreSQL implementation scope and follow-up

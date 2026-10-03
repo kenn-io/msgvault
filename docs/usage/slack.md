@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-23"
 title: Slack
 description: Archive Slack workspaces through the Web API or a Slackdump export.
+last_edited: "2026-09-23"
 ---
 
 msgvault archives your own view of a Slack workspace: every public and

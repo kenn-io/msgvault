@@ -1,3 +1,9 @@
+---
+title: "Concept diagrams"
+description: "Sources, rendering commands, and maintenance rules for documentation concept diagrams."
+last_edited: "2026-10-02"
+---
+
 # Concept diagrams
 
 The PNGs under `docs/assets/generated/concepts/` are rendered from the HTML

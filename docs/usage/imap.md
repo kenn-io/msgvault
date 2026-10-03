@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-15"
 title: IMAP Sync and Repair
 description: Archive IMAP mail efficiently, choose folders, and repair stored labels.
+last_edited: "2026-09-15"
 ---
 
 Archive mail from an IMAP account, then keep it current without downloading

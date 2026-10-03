@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-01"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
+last_edited: "2026-10-01"
 ---
 
 Connect an AI assistant to your msgvault archive so it can find messages,

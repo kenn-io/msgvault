@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-30"
 title: Deleting Email
 description: Staging messages for deletion, reviewing manifests, and executing deletes from Gmail, IMAP, or Microsoft Graph mail.
+last_edited: "2026-09-30"
 ---
 
 

@@ -1,3 +1,9 @@
+---
+title: "Reversible person merges"
+description: "Design for atomic person merges, reversals, and participant-scoped profile splits."
+last_edited: "2026-08-23"
+---
+
 # Reversible person merges
 
 Person merges combine two curated profiles without treating either side as

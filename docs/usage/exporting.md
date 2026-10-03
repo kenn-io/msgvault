@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-08"
 title: Exporting Data
 description: Export bounded message windows, .eml files, and attachments.
+last_edited: "2026-09-08"
 ---
 
 Take message content and attachment files out of msgvault without contacting

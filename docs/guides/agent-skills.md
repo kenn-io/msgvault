@@ -1,6 +1,7 @@
 ---
 title: Agent Skills
 description: Teach coding agents the msgvault CLI with installable skills
+last_edited: "2026-07-11"
 ---
 
 msgvault ships a pack of agent skills — `SKILL.md` files following the

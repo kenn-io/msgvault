@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-22"
 title: Verify Integrity
 description: Check a Gmail archive's database, raw-message coverage, and sampled MIME data.
+last_edited: "2026-09-22"
 ---
 
 Check whether a Gmail archive is structurally readable and whether sampled raw

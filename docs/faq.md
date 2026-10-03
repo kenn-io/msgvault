@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-22
 title: Frequently Asked Questions
 description: Common questions about msgvault, Gmail API safety, and what the tool can and cannot do.
+last_edited: 2026-09-22
 ---
 
 <p class="faq-question">Can msgvault send email or prepare a reply?</p>

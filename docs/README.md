@@ -1,3 +1,9 @@
+---
+title: "Documentation contributor guide"
+description: "Content ownership, writing guidance, and build checks for msgvault documentation."
+last_edited: "2026-10-02"
+---
+
 # Documentation contributor guide
 
 Help readers choose a workflow, complete it, and understand its limits. The

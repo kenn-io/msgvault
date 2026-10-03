@@ -1,3 +1,9 @@
+---
+title: "Relationship list index"
+description: "Design for a narrow Parquet index that bounds relationship list queries and preserves filters."
+last_edited: "2026-08-19"
+---
+
 # Relationship list index
 
 ## Problem

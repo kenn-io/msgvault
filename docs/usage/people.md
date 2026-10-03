@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-02"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
+last_edited: "2026-10-02"
 ---
 
 Find someone across email, chats, and meetings, then keep their contact details

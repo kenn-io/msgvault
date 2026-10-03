@@ -1,3 +1,9 @@
+---
+title: "Database Recovery"
+description: "Investigation notes and procedures for recovering a damaged archive database."
+last_edited: "2026-07-03"
+---
+
 # Database Recovery
 
 `msgvault verify you@gmail.com` runs `PRAGMA integrity_check` against the

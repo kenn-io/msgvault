@@ -1,4 +1,6 @@
 ---
+title: "Accounts, Identities, Collections, and Deduplication"
+description: "Design records for accounts, identities, collections, and reversible message deduplication."
 last_edited: 2026-08-30
 ---
 

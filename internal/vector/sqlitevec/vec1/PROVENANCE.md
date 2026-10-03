@@ -1,4 +1,6 @@
 ---
+title: "SQLite Vec1 provenance"
+description: "Provenance, upstream revision, and update instructions for the SQLite Vec1 extension."
 last_edited: 2026-09-15
 ---
 

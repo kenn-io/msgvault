@@ -1,3 +1,9 @@
+---
+title: "msgvault Agent Quickstart"
+description: "Commands for agents to set up, sync, search, and maintain a msgvault archive."
+last_edited: "2026-09-02"
+---
+
 # msgvault Agent Quickstart
 
 You have access to `msgvault`, an offline email, chat, and meeting archive

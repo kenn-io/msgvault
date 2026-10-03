@@ -1,6 +1,8 @@
 ---
-name: msgvault-query
+title: "msgvault-query"
 description: "Query msgvault archive analytics via SQL views. Use when: querying email, chat, or meeting history, analyzing senders/domains/labels, thread analysis, attachment stats, messages per month, sender graphs, domain breakdowns, message analytics. Triggers on: msgvault, message archive, email archive, chat archive, message search, email search, message analytics, sender analysis, domain analysis."
+last_edited: "2026-08-05"
+name: msgvault-query
 triggers:
   - msgvault
   - message archive
