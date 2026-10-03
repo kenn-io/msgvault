@@ -51,7 +51,7 @@ func TestConfiguredOmiSyncAndCacheRefresh(t *testing.T) {
 			}
 			defer func() { rebuildOmiCacheAfterScheduledSync = original }()
 
-			err = runConfiguredOmiSync(context.Background(), st, config.OmiSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: server.URL})
+			err = runConfiguredOmiSync(context.Background(), st, t.TempDir(), config.OmiSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: server.URL})
 			if failing {
 				require.Error(err)
 			} else {
@@ -63,7 +63,7 @@ func TestConfiguredOmiSyncAndCacheRefresh(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	err := runConfiguredOmiSync(context.Background(), st, config.OmiSource{Identifier: "missing", AccountEmail: "owner@example.com", APIKey: "test"})
+	err := runConfiguredOmiSync(context.Background(), st, t.TempDir(), config.OmiSource{Identifier: "missing", AccountEmail: "owner@example.com", APIKey: "test"})
 	require.ErrorContains(err, "add-omi missing")
 	sources, err := st.ListSources(sourceTypeOmi)
 	require.NoError(err)
@@ -267,30 +267,17 @@ func unpacedOmiClients(t *testing.T) {
 	previous := omi.RequestInterval
 	omi.RequestInterval = 0
 	t.Cleanup(func() { omi.RequestInterval = previous })
-	resetOmiClientsForTest(t)
 }
 
-func resetOmiClientsForTest(t *testing.T) {
-	t.Helper()
-	reset := func() {
-		omiClients.Lock()
-		defer omiClients.Unlock()
-		clear(omiClients.byKey)
-	}
-	reset()
-	t.Cleanup(reset)
-}
-
-// Scheduled runs and aliases sharing one key must share its pacing, or a
-// frequent schedule spends a fresh request token on every run.
-func TestScheduledOmiRunsSharePacingAcrossRunsAndAliases(t *testing.T) {
+// Scheduled runs, aliases, and manual subprocess commands sharing one key must
+// share its pacing, or a frequent schedule spends a fresh token on every run.
+func TestOmiPacingSpansScheduledRunsAliasesAndManualCommands(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	const interval = 300 * time.Millisecond
 	previous := omi.RequestInterval
 	omi.RequestInterval = interval
 	t.Cleanup(func() { omi.RequestInterval = previous })
-	resetOmiClientsForTest(t)
 	originalRefresh := rebuildOmiCacheAfterScheduledSync
 	rebuildOmiCacheAfterScheduledSync = func(context.Context, string) error { return nil }
 	t.Cleanup(func() { rebuildOmiCacheAfterScheduledSync = originalRefresh })
@@ -306,7 +293,8 @@ func TestScheduledOmiRunsSharePacingAcrossRunsAndAliases(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	st := testutil.NewTestStore(t)
-	state := testInvocationWithConfig(lifecycleTestConfig(t.TempDir()))
+	cfg := lifecycleTestConfig(t.TempDir())
+	state := testInvocationWithConfig(cfg)
 	sched := scheduler.New(nil).WithLogger(testDiscardLogger())
 	t.Cleanup(func() { <-sched.Stop().Done() })
 	for _, id := range []string{"work", "alias"} {
@@ -325,10 +313,13 @@ func TestScheduledOmiRunsSharePacingAcrossRunsAndAliases(t *testing.T) {
 	for _, status := range sched.JobStatus() {
 		assert.Empty(status.LastError, status.Name)
 	}
+	// A manual command runs in a daemon subprocess with its own client.
+	_, err := newOmiClient(server.URL, "omi_dev_synthetic", omiPaceDir(cfg)).ListConversations(t.Context(), omi.ListParams{Limit: 1})
+	require.NoError(err)
 
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(requests, 3)
+	require.Len(requests, 4)
 	for i := 1; i < len(requests); i++ {
 		// Allow for request latency between the limiter and the server.
 		assert.GreaterOrEqual(requests[i].Sub(requests[i-1]), interval-50*time.Millisecond, "request %d", i)

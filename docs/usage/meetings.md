@@ -294,7 +294,8 @@ organized the meeting or mean that Omi verified the address.
 
 Omi allows 25 transcript list requests per hour per API key, and each request
 returns up to 200 conversations. msgvault spaces requests evenly across that
-budget, about one every two and a half minutes. If Omi still answers that the
+budget, about one every two and a half minutes, across scheduled syncs,
+manual commands, and sources that share a key. If Omi still answers that the
 budget is spent, msgvault waits as long as Omi says, or a full hour when Omi
 doesn't say. The first sync reads all history, so an archive over about 5,000
 conversations takes hours. Later syncs read only conversations created since

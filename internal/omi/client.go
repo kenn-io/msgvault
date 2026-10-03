@@ -3,6 +3,8 @@ package omi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -11,10 +13,13 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
 	"go.kenn.io/msgvault/internal/httpretry"
 	"golang.org/x/time/rate"
 )
@@ -73,6 +78,7 @@ type Client struct {
 	apiKey  string
 	http    *http.Client
 	limiter *rate.Limiter
+	paceDir string
 }
 
 func NewClient(baseURL, apiKey string) *Client {
@@ -80,6 +86,76 @@ func NewClient(baseURL, apiKey string) *Client {
 		http:    &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
 		limiter: rate.NewLimiter(rate.Every(RequestInterval), 1),
 	}
+}
+
+// NewPacedClient spaces requests through a file in paceDir shared by every
+// client, process, and restart using the same backend and key, since the daemon
+// runs scheduled syncs in process and manual commands in subprocesses.
+func NewPacedClient(baseURL, apiKey, paceDir string) *Client {
+	c := NewClient(baseURL, apiKey)
+	c.paceDir = paceDir
+	return c
+}
+
+func (c *Client) waitTurn(ctx context.Context, baseURL string) error {
+	if c.paceDir == "" {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return fmt.Errorf("in-process limiter: %w", err)
+		}
+		return nil
+	}
+	sum := sha256.Sum256([]byte(baseURL + "\n" + c.apiKey))
+	path := filepath.Join(c.paceDir, "pace-"+hex.EncodeToString(sum[:8]))
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		wait, err := claimPaceSlot(ctx, path, time.Now)
+		if err != nil || wait <= 0 {
+			return err
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// claimPaceSlot records now as the last request time when RequestInterval has
+// passed since the recorded one, and otherwise returns how long to wait. Only a
+// request about to be sent claims the slot, so canceled waits cost nothing.
+func claimPaceSlot(ctx context.Context, path string, clock func() time.Time) (wait time.Duration, err error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return 0, fmt.Errorf("create Omi pacing directory: %w", err)
+	}
+	lock := flock.New(path+".lock", flock.SetPermissions(0o600))
+	locked, err := lock.TryLockContext(ctx, 50*time.Millisecond)
+	if err != nil || !locked {
+		return 0, errors.Join(errors.New("lock Omi pacing file"), err, ctx.Err())
+	}
+	defer func() { err = errors.Join(err, lock.Unlock()) }()
+	// Read the clock under the lock so claims land in timestamp order.
+	now := clock()
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return 0, fmt.Errorf("read Omi pacing file: %w", err)
+	}
+	// A last request in the future means the clock moved backward; claim now.
+	if last, parseErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data))); parseErr == nil && !last.After(now) {
+		if wait := last.Add(RequestInterval).Sub(now); wait > 0 {
+			return wait, nil
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := os.WriteFile(path, []byte(now.UTC().Format(time.RFC3339Nano)), 0o600); err != nil {
+		return 0, fmt.Errorf("write Omi pacing file: %w", err)
+	}
+	return 0, nil
 }
 
 type ListParams struct {
@@ -118,7 +194,7 @@ func (c *Client) ListConversations(ctx context.Context, p ListParams) ([]Convers
 	}
 	endpoint := baseURL + "/v1/dev/user/conversations?" + q.Encode()
 	for attempt := range 8 {
-		if err := c.limiter.Wait(ctx); err != nil {
+		if err := c.waitTurn(ctx, baseURL); err != nil {
 			return nil, fmt.Errorf("wait for Omi API rate limit: %w", err)
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)

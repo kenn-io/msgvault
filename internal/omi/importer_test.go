@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -611,4 +612,39 @@ func TestRetryDelayWaitsOutHourlyWindow(t *testing.T) {
 	assert.Equal(time.Hour, retryDelay(limited, 3))
 	unavailable := &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{"Retry-After": {"3000"}}}
 	assert.Equal(httpretry.ProviderMaxRetryAfter, retryDelay(unavailable, 0))
+}
+
+func TestClaimPaceSlotSpacesRequestsAcrossClients(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "pace")
+	now := time.Now()
+	at := func(ts time.Time) func() time.Time { return func() time.Time { return ts } }
+	// Each claim stands in for a separate client or process.
+	wait, err := claimPaceSlot(t.Context(), path, at(now))
+	require.NoError(err)
+	assert.Zero(wait, "an idle key is not delayed")
+	for range 2 {
+		// Waiting without sending does not push the next slot further out.
+		wait, err = claimPaceSlot(t.Context(), path, at(now.Add(time.Second)))
+		require.NoError(err)
+		assert.Equal(RequestInterval-time.Second, wait)
+	}
+	wait, err = claimPaceSlot(t.Context(), path, at(now.Add(RequestInterval)))
+	require.NoError(err)
+	assert.Zero(wait)
+	wait, err = claimPaceSlot(t.Context(), path, at(now.Add(-time.Hour)))
+	require.NoError(err)
+	assert.Zero(wait, "a clock set backward does not strand requests")
+	wait, err = claimPaceSlot(t.Context(), path, at(now.Add(-time.Hour)))
+	require.NoError(err)
+	assert.Equal(RequestInterval, wait, "pacing resumes from the new clock")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = claimPaceSlot(ctx, path, at(now.Add(time.Hour)))
+	require.ErrorIs(err, context.Canceled)
+	wait, err = claimPaceSlot(t.Context(), path, at(now.Add(-time.Hour+time.Second)))
+	require.NoError(err)
+	assert.Equal(RequestInterval-time.Second, wait, "a canceled claim records nothing")
 }

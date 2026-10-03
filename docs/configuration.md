@@ -1490,6 +1490,7 @@ All data lives under the msgvault home directory (`~/.msgvault` on macOS/Linux, 
 | `tokens/` | OAuth tokens per account |
 | `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
+| `omi/` | Omi request pacing per backend and API key, shared by scheduled and manual syncs |
 
 ## Example configuration
 

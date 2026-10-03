@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -26,34 +26,17 @@ var (
 )
 
 var (
-	newOmiClient                      = omi.NewClient
+	newOmiClient                      = omi.NewPacedClient
 	rebuildOmiCacheAfterWrite         = rebuildCacheAfterManualSync
 	rebuildOmiCacheAfterScheduledSync = rebuildCacheAfterScheduledSync
 )
 
-type omiClientKey struct{ baseURL, apiKey string }
-
-var omiClients = struct {
-	sync.Mutex
-
-	byKey map[omiClientKey]*omi.Client
-}{byKey: map[omiClientKey]*omi.Client{}}
-
-// sharedOmiClient keeps one client per backend and key for the process
-// lifetime, so the hourly request pacing spans scheduled runs and aliases.
-func sharedOmiClient(baseURL, apiKey string) *omi.Client {
-	key := omiClientKey{baseURL: baseURL, apiKey: apiKey}
-	if normalized, err := omi.NormalizeBaseURL(baseURL); err == nil {
-		key.baseURL = normalized
+// omiPaceDir holds request pacing shared by the daemon and its subprocesses.
+func omiPaceDir(cfg *config.Config) string {
+	if cfg.Data.DataDir == "" {
+		return ""
 	}
-	omiClients.Lock()
-	defer omiClients.Unlock()
-	client, ok := omiClients.byKey[key]
-	if !ok {
-		client = newOmiClient(baseURL, apiKey)
-		omiClients.byKey[key] = client
-	}
-	return client
+	return filepath.Join(cfg.Data.DataDir, "omi")
 }
 
 const omiConfigHint = `Add to your config.toml:
@@ -131,7 +114,7 @@ Examples:
 		}
 
 		// Probe conversation access with transcript inclusion.
-		client := sharedOmiClient(src.BaseURL, src.APIKey)
+		client := newOmiClient(src.BaseURL, src.APIKey, omiPaceDir(cfg))
 		if _, err := client.ListConversations(cmd.Context(), omi.ListParams{Limit: 1}); err != nil {
 			return fmt.Errorf("validate Omi API key: %w", err)
 		}
@@ -258,7 +241,7 @@ Examples:
 			src := validated.source
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Omi for %s\n\n", src.Identifier)
 
-			imp := omi.NewImporter(s, sharedOmiClient(src.BaseURL, src.APIKey))
+			imp := omi.NewImporter(s, newOmiClient(src.BaseURL, src.APIKey, omiPaceDir(cfg)))
 			sum, err := imp.Import(ctx, omi.ImportOptions{
 				Identifier:   src.Identifier,
 				AccountEmail: validated.accountEmail,
@@ -315,7 +298,7 @@ func finishOmiImport(
 
 // runConfiguredOmiSync is the daemon-scheduler entry point for one
 // [[omi]] source.
-func runConfiguredOmiSync(ctx context.Context, st *store.Store, src config.OmiSource) error {
+func runConfiguredOmiSync(ctx context.Context, st *store.Store, paceDir string, src config.OmiSource) error {
 	refreshCtx := context.WithoutCancel(ctx)
 	// Generic scheduler jobs and mutating daemon requests share the operation
 	// gate, so a registered source cannot be removed between this precheck and
@@ -342,7 +325,7 @@ func runConfiguredOmiSync(ctx context.Context, st *store.Store, src config.OmiSo
 	if err != nil {
 		return err
 	}
-	imp := omi.NewImporter(st, sharedOmiClient(src.BaseURL, src.APIKey))
+	imp := omi.NewImporter(st, newOmiClient(src.BaseURL, src.APIKey, paceDir))
 	sum, err := imp.Import(ctx, omi.ImportOptions{
 		Identifier:   src.Identifier,
 		AccountEmail: accountEmail,
@@ -369,11 +352,15 @@ func registerScheduledOmiJob(sched *scheduler.Scheduler, state *invocation, st *
 	if !ok {
 		return fmt.Errorf("no scheduler job mapping for omi source %q", source.Identifier)
 	}
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	paceDir := omiPaceDir(state.cfg)
 	return sched.AddJob(scheduler.Job{
 		Name:     jobName,
 		Schedule: source.Schedule,
 		Run: invocationBoundJobRun(state, func(ctx context.Context) error {
-			return runConfiguredOmiSync(ctx, st, source)
+			return runConfiguredOmiSync(ctx, st, paceDir, source)
 		}),
 	})
 }
