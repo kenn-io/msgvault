@@ -1019,7 +1019,7 @@ func requireFTS5ForModes(modes []string, fts5Available bool) error {
 	}
 	return errors.New("--modes fts needs FTS5, but this archive's FTS5 index is unavailable " +
 		"(binary built without the fts5 tag, or the shadow tables failed to initialize); " +
-		"rebuild with -tags \"fts5 sqlite_vec\" or drop fts from --modes")
+		"rebuild with `make build` or drop fts from --modes")
 }
 
 // attachVector wires the sqlite-vec backend and hybrid engine onto the

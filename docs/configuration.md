@@ -979,6 +979,27 @@ enabled = true
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |
 
+### `[matrix]`
+
+Archive joined rooms from native [Matrix](/docs/usage/matrix/) accounts. One
+block controls every account registered with `msgvault add-matrix`; credentials
+and encryption keys never belong in `config.toml`.
+
+```toml
+[matrix]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
+rooms = []                        # exact room-ID include filter (empty = all)
+exclude_rooms = []                # exact room IDs to skip; wins over rooms
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules Matrix sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `rooms` | all joined rooms | Exact Matrix room IDs to sync |
+| `exclude_rooms` | — | Exact Matrix room IDs to skip; exclusions win over inclusions |
+
 ### `[beeper]`
 
 Archive chats from a locally running [Beeper Desktop](/docs/usage/beeper/). A single

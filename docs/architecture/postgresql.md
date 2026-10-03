@@ -48,9 +48,9 @@ make build
 To include the pgvector backend, add the `pgvector` build tag:
 
 ```bash
-go build -tags "fts5 sqlite_vec pgvector" ./cmd/msgvault
+go build -tags "fts5 sqlite_vec goolm pgvector" ./cmd/msgvault
 # or
-make build BUILD_TAGS="fts5 sqlite_vec pgvector"
+make build BUILD_TAGS="fts5 sqlite_vec goolm pgvector"
 ```
 
 The `sqlite_vec` tag is still useful in PostgreSQL builds because some parity

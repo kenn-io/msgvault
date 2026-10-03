@@ -63,7 +63,7 @@ jobs:
           CGO_ENABLED=0 go build -trimpath -buildvcs=false -o dist/msgvault-codex-bridge ./cmd/msgvault-codex-bridge
           BRIDGE_SHA256=$(sha256sum dist/msgvault-codex-bridge | cut -d' ' -f1)
           LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=${COMMIT} -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X go.kenn.io/msgvault/internal/peoplesweep.codexBridgeSHA256=${BRIDGE_SHA256} -extldflags '-lstdc++ -lm'"
-          go build -tags "fts5 sqlite_vec" -trimpath -buildvcs=false -ldflags="$LDFLAGS" -o dist/msgvault ./cmd/msgvault
+          go build -tags "fts5 sqlite_vec goolm" -trimpath -buildvcs=false -ldflags="$LDFLAGS" -o dist/msgvault ./cmd/msgvault
 
           echo "--- Binary info ---"
           file dist/msgvault dist/msgvault-codex-bridge
@@ -113,7 +113,7 @@ jobs:
         run: make test-unsharded
 
       - name: Test build without vector backends
-        run: go test -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
+        run: go test -tags "fts5 goolm" -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
 
       - name: Check OpenAPI artifacts
         run: make openapi-check
@@ -159,7 +159,7 @@ jobs:
           cache: go
 
       - name: Test package in isolated shards
-        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m
+        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec goolm" 60m
 
   test-macos-15:
     if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
@@ -368,7 +368,7 @@ jobs:
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
-        run: go build -tags "fts5 sqlite_vec" -o msgvault.exe ./cmd/msgvault
+        run: go build -tags "fts5 sqlite_vec goolm" -o msgvault.exe ./cmd/msgvault
 
       # Run the same custom linter as `make custom-gcl` from PowerShell.
       - name: Lint
@@ -401,10 +401,10 @@ jobs:
             "go.kenn.io/msgvault/internal/vector/sqlitevec"
             "go.kenn.io/msgvault/scripts"
           )
-          $packages = go list -tags "fts5 sqlite_vec" ./... |
+          $packages = go list -tags "fts5 sqlite_vec goolm" ./... |
             Where-Object { $_ -notin $separatePackages }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -timeout 20m -tags "fts5 sqlite_vec" $packages
+          go test -timeout 20m -tags "fts5 sqlite_vec goolm" $packages
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -439,7 +439,7 @@ jobs:
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: |
-          go test -timeout 60m -tags "fts5 sqlite_vec" `
+          go test -timeout 60m -tags "fts5 sqlite_vec goolm" `
             ./internal/api `
             ./internal/importer `
             ./scripts
@@ -498,7 +498,7 @@ jobs:
             ./scripts/test-package-shards.ps1 `
               -Package $package `
               -ShardCount 4 `
-              -Tags "fts5 sqlite_vec" `
+              -Tags "fts5 sqlite_vec goolm" `
               -Timeout ${{ matrix.timeout }} `
               -PartIndex ${{ matrix.part || 1 }} `
               -PartCount ${{ matrix.parts || 1 }}
@@ -596,7 +596,7 @@ jobs:
       # binaries open connections to the one service container at once. See
       # the Makefile comment for the arithmetic.
       - name: Test (pgvector-tagged)
-        run: go test -timeout 60m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
+        run: go test -timeout 60m -p 4 -tags "fts5 sqlite_vec goolm pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
 
   # PostgreSQL backend lane: runs the full Go test suite against a live
   # PostgreSQL service. Tests that use testutil.NewTestStore read
@@ -709,4 +709,4 @@ jobs:
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
-        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" 60m
+        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec goolm" 60m

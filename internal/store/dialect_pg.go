@@ -2319,6 +2319,8 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 //     included so a future checkpoint writer cannot race the cascade.
 //   - imap_folder_state and imap_message_memberships: written after IMAP syncs
 //     and cascade-reachable from sources.
+//   - matrix_encrypted_events and matrix_undecryptable_events: written during
+//     Matrix syncs and cascade-reachable from sources.
 //
 // collections is included (despite not being a direct sources cascade target)
 // so a concurrent collection rename cannot race the collection_sources cascade.
@@ -2326,7 +2328,7 @@ var exclusiveLockTables = []string{
 	"sync_runs", "sources", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"meeting_details", "meeting_action_items",
-	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions",
+	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,
 	identityMatchEvidenceTableName, identityMatchEvidenceSourcesTableName,
 	// persons and person_participants: MergeParticipants (reached from the
@@ -2343,6 +2345,7 @@ var exclusiveLockTables = []string{
 	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
+	"matrix_encrypted_events", "matrix_undecryptable_events",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the

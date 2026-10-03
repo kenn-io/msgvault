@@ -49,7 +49,7 @@ RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
         -o /msgvault-codex-bridge ./cmd/msgvault-codex-bridge \
     && bridge_digest=$(sha256sum /msgvault-codex-bridge | cut -d' ' -f1) \
     && CGO_ENABLED=1 go build \
-    -tags "fts5 sqlite_vec" \
+    -tags "fts5 sqlite_vec goolm" \
     -trimpath \
     -ldflags="-s -w \
         -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${VERSION} \

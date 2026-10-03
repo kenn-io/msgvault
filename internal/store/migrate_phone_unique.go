@@ -309,6 +309,9 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 	}
 
 	// (3) reactions UNIQUE(message_id, participant_id, reaction_type, reaction_value)
+	if err := repointReactionSourceEvents(ctx, tx, loser, winner); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM reactions
 		 WHERE participant_id = ?

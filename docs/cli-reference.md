@@ -1064,6 +1064,67 @@ After adding, sync with `msgvault sync-beeper`.
 
 ---
 
+## add-matrix
+
+Register a Matrix account as a native `matrix` source. The command logs in a
+dedicated device named `msgvault (read-only)`, initializes its persistent
+encryption store, and optionally restores the account's server-side room-key
+backup. See [Matrix](/docs/usage/matrix/).
+
+```bash
+msgvault add-matrix \
+  --homeserver https://matrix.example.org \
+  --user-id @archive:example.org \
+  --password-file /path/to/password \
+  --recovery-file /path/to/recovery-key
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--homeserver` | required | Base URL of the Matrix homeserver |
+| `--user-id` | required | Full Matrix user ID |
+| `--password-file` | prompt or stdin | Read the account password from a file |
+| `--login-token-file` | — | Read a single-use `m.login.token` obtained from an SSO/login flow; mutually exclusive with `--password-file` |
+| `--recovery-file` | prompt | Read the key-backup recovery key or passphrase from a file |
+| `--recovery-passphrase` | `false` | Interpret the recovery secret as a passphrase |
+| `--skip-key-backup` | `false` | Do not restore server-side room keys |
+| `--no-default-identity` | `false` | Do not auto-confirm the Matrix user ID as this source's "me" identity |
+
+The access token and local crypto-store key are written to an owner-only file
+under `tokens/`. Running it again for a registered user renews the login in
+place and keeps its history; the new device gets its own crypto store. The
+recovery secret is not retained; the backup decryption key
+it unlocks is kept in the encrypted crypto store so later syncs can fetch room
+keys that other devices add to the backup. Without `--skip-key-backup`, a
+missing recovery secret is an error. The dedicated device
+remains unverified because msgvault cannot complete Element's interactive SAS
+or QR verification. Encrypted history comes from the configured server-side
+key backup; senders that block unverified devices may leave placeholders.
+
+---
+
+## sync-matrix
+
+Sync joined rooms for every registered Matrix account. The first run backfills
+history per room through `/messages`; later runs use a persisted `/sync`
+`next_batch` token. Per-account failures do not stop other accounts.
+
+```bash
+msgvault sync-matrix
+msgvault sync-matrix --account @archive:example.org
+msgvault sync-matrix --full
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--account` | all registered | Sync only this exact Matrix user ID |
+| `--full` | `false` | Ignore stored cursors and re-fetch complete joined-room history |
+
+Room selection and scheduled sync are controlled by `[matrix]`. A message is
+kept when decryption fails, and later syncs retry encrypted placeholders.
+
+---
+
 ## sync-beeper
 
 Sync chats from Beeper Desktop for every registered Beeper account (all

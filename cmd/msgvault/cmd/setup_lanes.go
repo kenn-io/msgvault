@@ -167,7 +167,7 @@ func defaultFileExists(path string) bool {
 func setupVectorBackend(cfg *config.Config) (backend, unavailable string) {
 	if store.IsPostgresURL(cfg.DatabaseDSN()) {
 		if !pgvector.Available() {
-			return "pgvector", "pgvector support is not compiled in; rebuild with `go build -tags \"fts5 sqlite_vec pgvector\" ./cmd/msgvault`, then re-run setup"
+			return "pgvector", "pgvector support is not compiled in; rebuild with `go build -tags \"fts5 sqlite_vec goolm pgvector\" ./cmd/msgvault`, then re-run setup"
 		}
 		return "pgvector", ""
 	}

@@ -15,7 +15,8 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 # Default build tags applied to every go build/test/bench invocation.
 # - fts5: enable the SQLite FTS5 full-text search extension
 # - sqlite_vec: enable the sqlite-vec extension for vector search
-BUILD_TAGS := fts5 sqlite_vec
+# - goolm: use mautrix's pure-Go Matrix encryption implementation
+BUILD_TAGS := fts5 sqlite_vec goolm
 TEST_TIMEOUT := 60m
 
 # Cap on test binaries the PostgreSQL lanes run at once. go test defaults -p
@@ -60,7 +61,7 @@ GOVULNCHECK_BIN := $(CI_TOOLS_BIN)/govulncheck
 # (internal/vector/pgvector/parity_test.go) and the PG command-wiring tests
 # (cmd/msgvault/cmd/{serve_vector_pg,embed_pg,search_vector_pg,embed_vector_pg}_test.go).
 # Omitting sqlite_vec compiles those out and the target gives false confidence.
-PG_TEST_TAGS := fts5 sqlite_vec pgvector
+PG_TEST_TAGS := fts5 sqlite_vec goolm pgvector
 
 # The only packages that build a different test binary under BUILD_TAGS than
 # under PG_TEST_TAGS. That is not just the packages carrying pgvector-gated
@@ -411,7 +412,7 @@ vulncheck: vuln-tools
 
 # Enforce testify helper usage and named sub-second polling budgets in tests
 testify-helper-check:
-	go run ./cmd/testify-helper-check -tags="$(BUILD_TAGS)" ./...
+	GOFLAGS="-tags=goolm" go run ./cmd/testify-helper-check -tags="$(BUILD_TAGS)" ./...
 
 # Install pre-commit hook via prek
 install-hooks:

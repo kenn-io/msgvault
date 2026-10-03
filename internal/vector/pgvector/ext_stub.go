@@ -16,7 +16,7 @@ import (
 // ErrNotBuilt is returned when pgvector features are used in a build
 // that did not set the `pgvector` build tag.
 var ErrNotBuilt = errors.New(
-	"pgvector support not compiled in; rebuild with `go build -tags \"fts5 sqlite_vec pgvector\"`")
+	"pgvector support not compiled in; rebuild with `go build -tags \"fts5 sqlite_vec goolm pgvector\"`")
 
 // Options mirrors the shape of the real pgvector.Options so non-pgvector
 // builds can compile call sites that reference it. None of the fields

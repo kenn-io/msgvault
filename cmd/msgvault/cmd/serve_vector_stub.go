@@ -36,11 +36,11 @@ func errVectorBuildUnsupported(mainPath string) error {
 	// SQLite backend, plus pgvector for the PostgreSQL backend.
 	if store.IsPostgresURL(mainPath) {
 		return errors.New("vector search is enabled in config but this binary was built without vector support; " +
-			"to use vector search on PostgreSQL, rebuild with `go build -tags \"fts5 sqlite_vec pgvector\"` " +
+			"to use vector search on PostgreSQL, rebuild with `go build -tags \"fts5 sqlite_vec goolm pgvector\"` " +
 			"or set [vector] enabled = false")
 	}
 	return errors.New("vector search is enabled in config but this binary was built without -tags sqlite_vec; " +
-		"rebuild with `make build` (or `go build -tags \"fts5 sqlite_vec\"`) " +
+		"rebuild with `make build` (or `go build -tags \"fts5 sqlite_vec goolm\"`) " +
 		"or set [vector] enabled = false")
 }
 

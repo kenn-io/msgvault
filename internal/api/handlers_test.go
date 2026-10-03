@@ -4309,6 +4309,7 @@ func TestSchedulerJobNameForSource(t *testing.T) {
 		{"notion meetings", notionmeetings.SourceType, "acct-3", "notion-meetings:acct-3", true},
 		{"muesli", muesli.SourceType, "mac", "muesli:mac", true},
 		{"beeper", "beeper", "beeper-account-1", "beeper", true},
+		{"matrix", "matrix", "@archive:example.org", "matrix", true},
 		{"slack", "slack", "T01:U01", "slack", true},
 		{"account scheduler type", "gmail", "alice@example.com", "", false},
 	}

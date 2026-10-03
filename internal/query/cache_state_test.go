@@ -174,7 +174,7 @@ func TestInspectCacheMarkerReadinessSkipsDatasetFingerprint(t *testing.T) {
 }
 
 func TestCacheSchemaVersionIncludesRelationshipContributions(t *testing.T) {
-	assert.Equal(t, 30, CacheSchemaVersion)
+	assert.Equal(t, 31, CacheSchemaVersion)
 }
 
 func TestInspectCacheReadinessNamesStaleSchemaAndDrift(t *testing.T) {
