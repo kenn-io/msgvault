@@ -75,8 +75,8 @@ func TestEligibility(t *testing.T) {
 		{name: "recording", meeting: Meeting{Status: "recording", RawTranscript: "x"}, want: SkipInProgress},
 		{name: "processing", meeting: Meeting{Status: "processing", RawTranscript: "x"}, want: SkipInProgress},
 		{name: "empty", meeting: Meeting{Status: "completed", FormattedNotes: " "}, want: SkipEmpty},
-		{name: "failed with transcript", meeting: Meeting{Status: "failed", RawTranscript: "x"}, want: ""},
-		{name: "unknown future status", meeting: Meeting{Status: "archived", ManualNotes: "x"}, want: ""},
+		{name: "failed with transcript", meeting: Meeting{Status: "failed", RawTranscript: "x"}, want: SkipInProgress},
+		{name: "unknown future status", meeting: Meeting{Status: "archived", ManualNotes: "x"}, want: SkipInProgress},
 	} {
 		assert.Equal(t, tt.want, tt.meeting.Eligibility(), tt.name)
 	}

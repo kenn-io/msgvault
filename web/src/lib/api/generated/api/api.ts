@@ -360,6 +360,8 @@ import type {
   RelationshipType,
   RelationshipTypesResponse,
   RemoteImageRequest,
+  RemoteRequest,
+  RemoteResult,
   ResolveCardDAVConflictPathParameters,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
@@ -1903,6 +1905,23 @@ export const importMeeting = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: meetingImportRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Import one recorder-local Muesli meeting
+ */
+export const importMuesli = (
+  remoteRequest: RemoteRequest,
+  options?: SecondParameter<typeof orvalFetch<RemoteResult>>,
+) => {
+  return orvalFetch<RemoteResult>(
+    {
+      url: `/api/v1/import/muesli`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: remoteRequest,
     },
     options,
   );

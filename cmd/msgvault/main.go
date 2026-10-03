@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"go.kenn.io/msgvault/cmd/msgvault/cmd"
@@ -20,6 +21,9 @@ func main() {
 }
 
 func run() int {
+	if len(os.Args) == 1 && filepath.Base(os.Args[0]) == "msgvault-muesli-hook" {
+		os.Args = append([]string{os.Args[0], "muesli-hook"}, os.Args[1:]...)
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 

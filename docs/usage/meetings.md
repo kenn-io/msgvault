@@ -512,13 +512,16 @@ and it does not call `muesli-cli`, which updates the database whenever it runs.
 
 ### Prerequisites
 
-The msgvault daemon reads the database on its own host, so run msgvault on the
-Mac where Muesli records. If your archive lives on another machine, send each
-meeting to that daemon with the [import API](#import-from-any-meeting-source)
-from a Muesli post-meeting hook instead.
+Run the normal msgvault client on the Mac where Muesli records. The archive
+can stay on another host: configure the existing [remote connection](../configuration.md#remote)
+on the Mac. The client reads Muesli and Contacts locally; the daemon owns the
+archive and accepts authenticated, bounded meeting transfers. It never receives
+a Muesli or Contacts database. This native remote workflow is available on
+`main` and is not yet released.
 
-If macOS blocks the read, grant the process that runs `msgvault serve` Full
-Disk Access in System Settings.
+Without remote mode, same-host sync continues through the local daemon. If
+macOS blocks the read, grant Full Disk Access to the process reading the files:
+the client in remote mode, or `msgvault serve` in same-host mode.
 
 ### Configure and register
 
@@ -527,7 +530,7 @@ Disk Access in System Settings.
 identifier = "mac"
 account_email = "you@example.com"   # you, the person who records
 # db_path = "~/Library/Application Support/Muesli/muesli.db"  # default
-schedule = "*/30 * * * *"           # optional daemon schedule
+schedule = "*/30 * * * *"           # daemon schedule, or remote recorder --watch
 enabled = true
 ```
 
@@ -545,7 +548,8 @@ with only a phone number therefore reaches the person you already chat with at
 that number.
 
 - Reading Contacts needs Full Disk Access for the process that runs
-  `msgvault serve`. Without it, meetings still sync, and `sync-muesli` reports
+  the client in remote mode or `msgvault serve` in same-host mode. Without it,
+  meetings still sync, and `sync-muesli` reports
   `Contacts: unavailable`.
 - Phone numbers typed with `+` or `00` always work. Set `phone_country_code`
   (for example `"1"` or `"44"`) to also use numbers typed without a country
@@ -580,12 +584,50 @@ Every run reads the whole database and updates meetings that changed in place,
 including title, notes, transcript, participant, and folder edits. Unchanged
 meetings are skipped.
 
-- Meetings still recording or processing wait for a later run.
+- Only completed meetings import. Recording, processing, failed, empty, and
+  unknown-status meetings wait for a later scan. Historical databases without
+  a status column retain their compatibility behavior.
 - Meetings deleted in Muesli stay in the archive unchanged.
 - `--after` keeps meetings that start on or after the date, read as UTC.
 - `--limit` caps the meetings processed in one run.
 - `--full` rewrites every archived meeting, which refreshes attribution after
   you add an identity.
+
+### Automatic sync on a remote recorder
+
+After registration, keep the native watcher running on the Mac:
+
+```bash
+msgvault sync-muesli --watch
+```
+
+It immediately scans enabled sources with a `schedule`, then rescans on their
+5-field cron schedules. The process must remain running; msgvault does not
+install a service. Full rescans import late transcript, notes, and participant
+edits. Source locks serialize overlapping native watcher, hook, and manual
+processes before they read a snapshot. A lost acknowledgement is safe to retry:
+the source label, meeting row ID, and creation time preserve archive identity.
+
+For prompt import after recording, install the native executable launcher:
+
+```bash
+msgvault muesli-hook --install /path/to/launchers
+```
+
+Select the resulting `msgvault-muesli-hook` executable in Muesli. Its event
+contains a meeting ID, not an archive export or webhook URL. The launcher reads
+that row using msgvault's default configuration and requires exactly one Muesli
+source. Keep scheduled rescanning enabled to recover missed hooks and later
+edits. See the [CLI contract](../cli-reference.md#muesli-hook) for event fields,
+limits, and failure behavior.
+
+Duplicate Contacts cards stay ambiguous. Syncing again does not guess a phone
+identity from a shared email or merge people across the account. Correcting
+that identity is a separate reviewed action.
+
+Routine imports follow the existing automatic analytics-refresh policy. An
+unchanged remote or scheduled scan does not request a build. Use
+`--build-cache` for an explicit refresh or `--no-build-cache` to skip it.
 
 ### What gets stored (Muesli)
 

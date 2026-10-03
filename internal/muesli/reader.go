@@ -213,6 +213,11 @@ func (r *Reader) meetings(ctx context.Context, tx *sql.Tx, folders map[int64]str
 		}
 		m.Title, m.StartTime, m.EndTime, m.CreatedAt = title.String, start.String, end.String, created.String
 		m.DurationSeconds, m.Status, m.Source = duration.Float64, status.String, source.String
+		if !r.has("meetings", "meeting_status") {
+			m.Status = "completed" // Historical schemas contain only finished meetings.
+		} else if !status.Valid || status.String == "" {
+			m.Status = "unknown"
+		}
 		m.RawTranscript, m.FormattedNotes, m.ManualNotes = transcript.String, notes.String, manual.String
 		m.WordCount, m.TemplateName, m.TemplateKind = wordCount.Int64, templateName.String, templateKind.String
 		m.CalendarEventID, m.CalendarSource, m.CalendarSeriesID = eventID.String, calendarSource.String, seriesID.String

@@ -1759,6 +1759,39 @@ exclusive with direct `scope`. The server resolves the full matching population,
 with a 10000-ID transfer ceiling. A stale authority requires reloading; an
 oversized scope must be narrowed. Neither case widens the request.
 
+### Import a recorder-local Muesli meeting
+
+**Endpoint:** `POST /api/v1/import/muesli`
+
+The native client uses this owner-authenticated endpoint for remote Muesli sync.
+Agent-delegated credentials are denied. It is available on `main` and is not yet
+released. Prefer the native [Muesli commands](cli-reference.md#sync-muesli);
+applications do not need an export script.
+
+The strict JSON contract accepts `action` (`register`, `upsert`, or `refresh`),
+`source` (`identifier`, optional `display_name`, and `account_email`), an optional
+normalized `meeting`, and optional `full`, `build_cache`, and `no_build_cache`
+flags. The client probes its local database before sending `register` to create the stable source.
+`upsert` requires a registered source and a completed, nonempty meeting.
+`build_cache` requires the `refresh` action, which permits an explicit cache
+request even when a scan contains no eligible meetings. The recorder email must match the source's existing primary identity.
+Database paths and raw Contacts identifiers are not accepted.
+
+Requests are limited to 16 MiB, 200 participants, and 50 distinct identities per
+participant. Unknown/duplicate JSON members, trailing input, and invalid UTF-8
+are rejected. Invalid JSON returns `400`, validation failures `422`, oversized
+requests `413`, and a missing source `404`. Validation errors omit field values.
+The body is bounded and validated before acquiring the operation gate. A busy
+gate returns `503` / `operation_in_progress`; native clients retry the same body
+until cancelled.
+
+Responses contain `status`, `source_id`, optional `message_id`, and `changed`.
+Statuses are `registered`, `created`, `updated`, `unchanged`, and `refreshed`.
+Creation returns `201`; other successful actions return `200`. Meetings preserve
+the existing Muesli key derived from row ID and creation time, so lost responses
+can be retried safely and later edits update the same archive message. Routine
+changed writes request an automatic background refresh; unchanged writes do not.
+
 ### Import a meeting {#post-apiv1importmeeting}
 
 **Endpoint:** `POST /api/v1/import/meeting`

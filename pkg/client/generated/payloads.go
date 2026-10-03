@@ -116,6 +116,8 @@ type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
 type ImportMeetingBody = MeetingImportRequest
 
+type ImportMuesliBody = RemoteRequest
+
 type CreateImportJobBody = ImportJobRequest
 
 type ListMeetingActionItemsBody = MeetingActionsRequest

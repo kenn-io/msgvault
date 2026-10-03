@@ -1990,6 +1990,81 @@ func (r RelationshipCalendarDayLevel) Validate() error {
 	}
 }
 
+type RemoteMeetingContactsState string
+
+const (
+	Complete                              RemoteMeetingContactsState = "complete"
+	Off                                   RemoteMeetingContactsState = "off"
+	RemoteMeetingContactsStatePartial     RemoteMeetingContactsState = "partial"
+	RemoteMeetingContactsStateUnavailable RemoteMeetingContactsState = "unavailable"
+)
+
+// Validate checks if the RemoteMeetingContactsState value is valid
+func (r RemoteMeetingContactsState) Validate() error {
+	switch r {
+	case Complete, Off, RemoteMeetingContactsStatePartial, RemoteMeetingContactsStateUnavailable:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid RemoteMeetingContactsState value, got: %v", r))
+	}
+}
+
+type RemoteParticipantResolution string
+
+const (
+	CarriedForward                   RemoteParticipantResolution = "carried_forward"
+	RemoteParticipantResolutionEmpty RemoteParticipantResolution = ""
+	Resolved                         RemoteParticipantResolution = "resolved"
+)
+
+// Validate checks if the RemoteParticipantResolution value is valid
+func (r RemoteParticipantResolution) Validate() error {
+	switch r {
+	case CarriedForward, RemoteParticipantResolutionEmpty, Resolved:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid RemoteParticipantResolution value, got: %v", r))
+	}
+}
+
+type RemoteRequestAction string
+
+const (
+	Refresh  RemoteRequestAction = "refresh"
+	Register RemoteRequestAction = "register"
+	Upsert   RemoteRequestAction = "upsert"
+)
+
+// Validate checks if the RemoteRequestAction value is valid
+func (r RemoteRequestAction) Validate() error {
+	switch r {
+	case Refresh, Register, Upsert:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid RemoteRequestAction value, got: %v", r))
+	}
+}
+
+type RemoteResultStatus string
+
+const (
+	Refreshed                 RemoteResultStatus = "refreshed"
+	Registered                RemoteResultStatus = "registered"
+	RemoteResultStatusCreated RemoteResultStatus = "created"
+	RemoteResultStatusUpdated RemoteResultStatus = "updated"
+	Unchanged                 RemoteResultStatus = "unchanged"
+)
+
+// Validate checks if the RemoteResultStatus value is valid
+func (r RemoteResultStatus) Validate() error {
+	switch r {
+	case Refreshed, Registered, RemoteResultStatusCreated, RemoteResultStatusUpdated, Unchanged:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid RemoteResultStatus value, got: %v", r))
+	}
+}
+
 type RemoveResultCacheState string
 
 const (

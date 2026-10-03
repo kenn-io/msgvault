@@ -929,7 +929,10 @@ msgvault add-muesli [identifier]
 The matching `[[muesli]]` entry requires `account_email`; `db_path` defaults
 to `~/Library/Application Support/Muesli/muesli.db`. With one entry, the
 identifier may be omitted. The command fails unless the file opens read-only
-as a Muesli database on the daemon's host.
+as a Muesli database on the recorder in remote mode, or on the daemon's host
+in same-host mode. Remote mode registers the stable source with the daemon
+without transferring database paths. It rejects changes to a source's recorder
+identity.
 
 ---
 
@@ -956,9 +959,50 @@ identifier, every configured `[[muesli]]` source is synced.
 | `--limit` | `0` | Maximum meetings processed per run (`0` = unlimited) |
 | `--after` | — | Only meetings that start on or after this UTC date (`YYYY-MM-DD`) |
 | `--full` | `false` | Rewrite every archived meeting, even unchanged ones, to refresh attribution |
+| `--watch` | `false` | In remote mode, run an initial scan and serial rescans using enabled sources' 5-field cron schedules |
+| `--build-cache` | `false` | Explicitly request an analytics cache refresh after the run, including an empty run |
+| `--no-build-cache` | `false` | Skip the cache refresh request |
 
-See [Meeting Transcripts](/docs/usage/meetings/#muesli) for setup and what gets
-stored.
+`--watch` requires an enabled source with a schedule and a configured remote
+archive. Keep the process running. It cannot combine with `--limit`, `--after`,
+`--full`, or `--build-cache`. Transport failures retry on the next scheduled
+scan. Watch reports a failure category and a suggested next step without logging
+meeting or Contacts values. Run a manual sync for detailed diagnostics. Same-host
+automatic sync continues to use the daemon scheduler.
+
+Routine imports respect the existing automatic cache-refresh policy. Unchanged
+remote and scheduled scans do not request a refresh. Cache flags are mutually
+exclusive. Remote transfers are limited to 16 MiB per request, 200 participants,
+and 50 distinct identities per participant. Invalid or oversized records do not
+prevent later valid meetings from importing; the run still reports failure.
+
+Remote sync, watch, and the native hook are available on `main` and are not yet
+released. See [Meeting Transcripts](/docs/usage/meetings/#muesli) for setup and
+what gets stored.
+
+---
+
+## muesli-hook
+
+Archive the completed meeting named by Muesli's executable-launcher event.
+
+```bash
+msgvault muesli-hook < completion-event.json
+msgvault muesli-hook --install /path/to/launchers
+```
+
+The command accepts up to 4 KiB on stdin. It requires `schemaVersion: 1`,
+`event: "meeting.completed"`, `kind: "meeting"`, a positive integer `id`, and an
+RFC 3339 `completedAt`. Unknown or duplicate fields are rejected. Exactly one
+`[[muesli]]` source must be configured because the event has no database identity.
+
+`--install DIR` creates a `msgvault-muesli-hook` symlink to the current binary.
+It refuses to replace an existing file. Select that executable in Muesli's
+completion-hook setting. The launcher uses msgvault's default configuration;
+manual invocation can use the normal `--config` flag. It reads the meeting and
+Contacts locally in remote mode and uses the existing authenticated transport.
+Same-host hooks delegate the selected row to the local daemon. Scheduled full
+rescans recover missed hooks and import later edits.
 
 ---
 
