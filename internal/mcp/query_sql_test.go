@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
@@ -64,6 +65,46 @@ func TestQuerySQLToolReturnsRowsOrAcceptedBuild(t *testing.T) {
 
 	result = rawCallTool(t, options, ToolQuerySQL, map[string]any{"sql": "DELETE FROM messages"})
 	assert.Equal(true, result["isError"])
+}
+
+// The enclosing object type is required by MCP clients even when every oneOf
+// alternative describes an object. Check the advertised wire schema, not just
+// whether a result happens to validate against its alternatives.
+func TestQuerySQLToolOutputSchema(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	engine := &sqlToolEngine{MockEngine: &querytest.MockEngine{}}
+	options := ServeOptions{Engine: engine, ArchiveSQLQuerier: engine}
+	listed := toolsByName(t, rawListTools(t, options, false))
+	must.Contains(listed, ToolQuerySQL)
+	schema, ok := listed[ToolQuerySQL]["outputSchema"].(map[string]any)
+	must.True(ok)
+	checks.Equal("object", schema["type"])
+	checks.Equal("https://json-schema.org/draft/2020-12/schema", schema["$schema"])
+
+	encoded, err := json.Marshal(schema)
+	must.NoError(err)
+	var outputSchema jsonschema.Schema
+	must.NoError(json.Unmarshal(encoded, &outputSchema))
+	must.Len(outputSchema.OneOf, 2)
+	resolved, err := outputSchema.Resolve(nil)
+	must.NoError(err)
+
+	for _, fresh := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fresh=%t", fresh), func(t *testing.T) {
+			checks := assert.New(t)
+			must := require.New(t)
+			result := rawCallTool(t, options, ToolQuerySQL, map[string]any{"sql": "SELECT 1", "fresh": fresh})
+			must.NotEqual(true, result["isError"])
+			structured, ok := result["structuredContent"].(map[string]any)
+			must.True(ok)
+			checks.NoError(resolved.Validate(structured))
+		})
+	}
+
+	for _, invalid := range []any{nil, []any{}, "rows", float64(1), true, map[string]any{"unrelated": "value"}} {
+		checks.Error(resolved.Validate(invalid), "invalid output: %#v", invalid)
+	}
 }
 
 func TestQuerySQLToolRequiresArchiveCapability(t *testing.T) {
