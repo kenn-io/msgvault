@@ -38,32 +38,39 @@ func (e *DraftCommandError) Error() string { return e.Message }
 
 var stableDraftOutputSchema = &jsonschema.Schema{Schema: schema202012, Type: "object"}
 
-var stableDraftDefinitions = map[string]toolDefinition{
-	"draft-reply": writeDefinition(ToolDraftReply, "Run msgvault draft-reply through the daemon to create a reply draft. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
-		"message_id": safeIDSchema("Archived parent message ID"), "body": stringSchema("Reply body"), "from": stringSchema("Confirmed source identity"), "all": booleanSchema("Reply to all visible recipients"), "account": stringSchema("Destination account"), "source_id": safeIDSchema("Destination source ID"),
-	}, "message_id", "body"), stableDraftOutputSchema, draftToolHandler("draft-reply", "message_id")),
-	"draft-compose": writeDefinition(ToolDraftCompose, "Run msgvault draft-compose through the daemon to create a draft. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
-		"account": stringSchema("Source account"), "source_id": safeIDSchema("Source ID"), "from": stringSchema("Confirmed source identity"), "to": arraySchema(stringSchema("Recipient address or Beeper chat ID")), "cc": arraySchema(stringSchema("Cc recipient")), "bcc": arraySchema(stringSchema("Bcc recipient")), "subject": stringSchema("Draft subject"), "body": stringSchema("Draft body"), "conversation": safeIDSchema("Local chat conversation ID"), "reply_to": safeIDSchema("Archived chat message ID"),
-	}), stableDraftOutputSchema, draftToolHandler("draft-compose", "")),
-	"draft-forward": writeDefinition(ToolDraftForward, "Run msgvault draft-forward through the daemon to create a forwarding draft. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
-		"message_id": safeIDSchema("Archived message ID"), "from": stringSchema("Confirmed destination source identity"), "to": arraySchema(stringSchema("Recipient address")), "cc": arraySchema(stringSchema("Cc recipient")), "bcc": arraySchema(stringSchema("Bcc recipient")), "account": stringSchema("Destination account"), "source_id": safeIDSchema("Destination source ID"), "body": stringSchema("Forwarding note"),
-	}, "message_id"), stableDraftOutputSchema, draftToolHandler("draft-forward", "message_id")),
-	"draft-get": readDefinition(ToolDraftGet, "Run msgvault draft-get through the daemon to read a draft or list local conversation drafts. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
-		"draft_id": stringSchema("Managed draft ID"), "conversation": safeIDSchema("Local chat conversation ID"),
-	}), stableDraftOutputSchema, draftToolHandler("draft-get", "draft_id")),
-	"draft-edit": writeDefinition(ToolDraftEdit, "Run msgvault draft-edit through the daemon to replace a draft body. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
-		"draft_id": stringSchema("Managed draft ID"), "revision": safeIDSchema("Current draft revision"), "body": stringSchema("Replacement body"),
-	}, "draft_id", "revision", "body"), stableDraftOutputSchema, draftToolHandler("draft-edit", "draft_id")),
-	"draft-delete": destructiveWriteDefinition(ToolDraftDelete, "Run msgvault draft-delete through the daemon to delete a managed draft. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
-		"draft_id": stringSchema("Managed draft ID"), "revision": safeIDSchema("Current draft revision"),
-	}, "draft_id", "revision"), stableDraftOutputSchema, draftToolHandler("draft-delete", "draft_id")),
-	"draft-recover": destructiveWriteDefinition(ToolDraftRecover, "Run msgvault draft-recover through the daemon to recover an interrupted edit or deletion. Recovery can finish a deletion. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
-		"draft_id": stringSchema("Managed draft ID"), "revision": safeIDSchema("Current draft revision"),
-	}, "draft_id", "revision"), stableDraftOutputSchema, draftToolHandler("draft-recover", "draft_id")),
-	"draft-send-as": readDefinition(ToolDraftSendAs, "Run msgvault draft-send-as through the daemon to list Gmail sender identities. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
-		"account": stringSchema("Gmail source account"),
-	}, "account"), stableDraftOutputSchema, draftToolHandler("draft-send-as", "account")),
-}
+var stableDraftDefinitions = func() map[string]toolDefinition {
+	definitions := map[string]toolDefinition{
+		"draft-reply": writeDefinition(ToolDraftReply, "Run msgvault draft-reply through the daemon to create a reply draft. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
+			"message_id": safeIDSchema("Archived parent message ID"), "body": stringSchema("Reply body"), "from": stringSchema("Confirmed source identity"), "all": booleanSchema("Reply to all visible recipients"), "account": stringSchema("Destination account"), "source_id": safeIDSchema("Destination source ID"),
+		}, "message_id", "body"), stableDraftOutputSchema, draftToolHandler("draft-reply", "message_id")),
+		"draft-compose": writeDefinition(ToolDraftCompose, "Run msgvault draft-compose through the daemon to create a draft. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
+			"account": stringSchema("Source account"), "source_id": safeIDSchema("Source ID"), "from": stringSchema("Confirmed source identity"), "to": arraySchema(stringSchema("Recipient address or Beeper chat ID")), "cc": arraySchema(stringSchema("Cc recipient")), "bcc": arraySchema(stringSchema("Bcc recipient")), "subject": stringSchema("Draft subject"), "body": stringSchema("Draft body"), "conversation": safeIDSchema("Local chat conversation ID"), "reply_to": safeIDSchema("Archived chat message ID"),
+		}), stableDraftOutputSchema, draftToolHandler("draft-compose", "")),
+		"draft-forward": writeDefinition(ToolDraftForward, "Run msgvault draft-forward through the daemon to create a forwarding draft. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
+			"message_id": safeIDSchema("Archived message ID"), "from": stringSchema("Confirmed destination source identity"), "to": arraySchema(stringSchema("Recipient address")), "cc": arraySchema(stringSchema("Cc recipient")), "bcc": arraySchema(stringSchema("Bcc recipient")), "account": stringSchema("Destination account"), "source_id": safeIDSchema("Destination source ID"), "body": stringSchema("Forwarding note"),
+		}, "message_id"), stableDraftOutputSchema, draftToolHandler("draft-forward", "message_id")),
+		"draft-get": readDefinition(ToolDraftGet, "Run msgvault draft-get through the daemon to read a draft or list local conversation drafts. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
+			"draft_id": stringSchema("Managed draft ID"), "conversation": safeIDSchema("Local chat conversation ID"),
+		}), stableDraftOutputSchema, draftToolHandler("draft-get", "draft_id")),
+		"draft-edit": writeDefinition(ToolDraftEdit, "Run msgvault draft-edit through the daemon to replace a draft body. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
+			"draft_id": stringSchema("Managed draft ID"), "revision": safeIDSchema("Current draft revision"), "body": stringSchema("Replacement body"),
+		}, "draft_id", "revision", "body"), stableDraftOutputSchema, draftToolHandler("draft-edit", "draft_id")),
+		"draft-delete": destructiveWriteDefinition(ToolDraftDelete, "Run msgvault draft-delete through the daemon to delete a managed draft. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
+			"draft_id": stringSchema("Managed draft ID"), "revision": safeIDSchema("Current draft revision"),
+		}, "draft_id", "revision"), stableDraftOutputSchema, draftToolHandler("draft-delete", "draft_id")),
+		"draft-recover": destructiveWriteDefinition(ToolDraftRecover, "Run msgvault draft-recover through the daemon to recover an interrupted edit or deletion. Recovery can finish a deletion. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
+			"draft_id": stringSchema("Managed draft ID"), "revision": safeIDSchema("Current draft revision"),
+		}, "draft_id", "revision"), stableDraftOutputSchema, draftToolHandler("draft-recover", "draft_id")),
+		"draft-send-as": readDefinition(ToolDraftSendAs, "Run msgvault draft-send-as through the daemon to list Gmail sender identities. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
+			"account": stringSchema("Gmail source account"),
+		}, "account"), stableDraftOutputSchema, draftToolHandler("draft-send-as", "account")),
+	}
+	openWorld := true
+	for _, definition := range definitions {
+		definition.annotations.OpenWorldHint = &openWorld
+	}
+	return definitions
+}()
 
 func draftToolHandler(command, positional string) catalogToolHandler {
 	return func(h *handlers, ctx context.Context, req toolRequest) (*toolResult, error) {

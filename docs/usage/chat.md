@@ -85,7 +85,7 @@ These tools run the matching CLI commands through your selected daemon. They req
 | `draft_recover` | `draft-recover` | Required `draft_id`, `revision`; recovery can finish an interrupted deletion |
 | `draft_send_as` | `draft-send-as` | Required `account`; lists Gmail sender identities |
 
-Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists and sender identity lists return a `data` array.
+Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
 Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
 

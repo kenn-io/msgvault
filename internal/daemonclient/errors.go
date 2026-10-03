@@ -95,12 +95,6 @@ func HandleErrorResponse(resp *http.Response) error {
 	return handleRawErrorResponse(resp, handleErrorBody)
 }
 
-// HandleCLIErrorResponse reads a CLI error response body and returns the
-// daemon's user-facing message when one is available.
-func HandleCLIErrorResponse(resp *http.Response) error {
-	return handleRawErrorResponse(resp, handleCLIErrorBody)
-}
-
 func handleRawErrorResponse(
 	resp *http.Response,
 	decodeErrorBody func(status int, body []byte) error,

@@ -108,7 +108,7 @@ Commands that access archive state keep their usual stdout/stderr output while u
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
 4. With both `--agent-url` and `--agent-token-file`, the CLI connects to a
    remote daemon as a restricted caller. `draft-reply`, `draft-compose`,
-   `draft-get`, `draft-edit`, `draft-delete`, and `draft-recover` are
+   `draft-get`, `draft-edit`, `draft-delete`, `draft-recover`, and `mcp` are
    available in this mode. The CLI rejects owner
    configuration (`--config`, `--home`, `--local`) and never writes the token
    to logs or argv. It sends the token in the `X-Msgvault-Agent-Token` header;

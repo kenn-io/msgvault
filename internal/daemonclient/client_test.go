@@ -674,7 +674,6 @@ func TestRunCLICommandTypesDaemonReportedFailures(t *testing.T) {
 		_, typed := errors.AsType[*CLIRunError](err)
 		assert.False(typed)
 	})
-	t.Run("busy retry", TestRunCLICommandRetriesWhileOperationInProgress)
 	for _, consumer := range []struct {
 		name string
 		run  func(context.Context, *Client) error

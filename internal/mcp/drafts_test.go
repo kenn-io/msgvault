@@ -41,6 +41,11 @@ func TestDraftToolCatalogFollowsCommandsAndWriteClass(t *testing.T) {
 	owner := rawListTools(t, opts, true)
 	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_forward", "draft_get", "draft_recover", "draft_reply", "draft_send_as"}, names(owner))
 	assert.Equal([]string{"draft_get", "draft_send_as"}, names(rawListTools(t, opts, false)))
+	for _, name := range names(owner) {
+		annotations, ok := toolsByName(t, owner)[name]["annotations"].(map[string]any)
+		require.True(ok)
+		assert.Equal(true, annotations["openWorldHint"])
+	}
 	for _, name := range []string{ToolDraftDelete, ToolDraftRecover} {
 		annotations, ok := toolsByName(t, owner)[name]["annotations"].(map[string]any)
 		require.True(ok)
@@ -104,21 +109,19 @@ func TestDraftToolResultShapes(t *testing.T) {
 			}
 		})
 	}
-	for _, name := range []string{"dial fault private-host", "truncated response private-body", "malformed HTML private-body", "context canceled"} {
-		t.Run(name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-			serverSession, err := newMCPServer(ServeOptions{Drafts: &draftTestRunner{err: errors.New(name)}, DraftCommands: []string{"draft-get"}, DelegatedOnly: true}, true).Connect(t.Context(), serverTransport, nil)
-			require.NoError(err)
-			t.Cleanup(func() { _ = serverSession.Close() })
-			client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "draft-error-test", Version: "1"}, nil)
-			session, err := client.Connect(t.Context(), clientTransport, nil)
-			require.NoError(err)
-			t.Cleanup(func() { _ = session.Close() })
-			_, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftGet, Arguments: map[string]any{"draft_id": "d1"}})
-			require.ErrorContains(err, "internal server error")
-			assert.NotContains(err.Error(), name)
-		})
-	}
+	t.Run("internal error stays private", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+		serverSession, err := newMCPServer(ServeOptions{Drafts: &draftTestRunner{err: errors.New("private transport detail")}, DraftCommands: []string{"draft-get"}, DelegatedOnly: true}, true).Connect(t.Context(), serverTransport, nil)
+		require.NoError(err)
+		t.Cleanup(func() { _ = serverSession.Close() })
+		client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "draft-error-test", Version: "1"}, nil)
+		session, err := client.Connect(t.Context(), clientTransport, nil)
+		require.NoError(err)
+		t.Cleanup(func() { _ = session.Close() })
+		_, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftGet, Arguments: map[string]any{"draft_id": "d1"}})
+		require.ErrorContains(err, "internal server error")
+		assert.NotContains(err.Error(), "private transport detail")
+	})
 }
