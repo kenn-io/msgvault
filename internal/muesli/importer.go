@@ -45,6 +45,10 @@ type ImportOptions struct {
 	ContactsPath     string
 	PhoneCountryCode string
 	Progress         func(string)
+	// MeetingID restricts a completion-hook pass to one local row.
+	MeetingID int64
+	// LockDir overrides the user cache directory for isolated callers/tests.
+	LockDir string
 }
 
 type ImportSummary struct {
@@ -146,6 +150,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if err := ctx.Err(); err != nil {
 			return sum, err
 		}
+		if opts.MeetingID > 0 && meeting.ID != opts.MeetingID {
+			continue
+		}
 		switch meeting.Eligibility() {
 		case SkipDeleted:
 			sum.SkippedDeleted++
@@ -184,7 +191,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		case result.Created:
 			sum.MeetingsAdded++
 			progress(fmt.Sprintf("added Muesli meeting %d", meeting.ID))
-		case result.Changed:
+		case result.Changed || result.Links.Linked > 0:
 			sum.MeetingsUpdated++
 			progress(fmt.Sprintf("updated Muesli meeting %d", meeting.ID))
 		}

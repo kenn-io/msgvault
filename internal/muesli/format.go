@@ -39,7 +39,7 @@ func (m Meeting) Eligibility() SkipReason {
 	switch {
 	case m.Deleted:
 		return SkipDeleted
-	case m.Status == "recording" || m.Status == "processing":
+	case m.Status != "" && m.Status != "completed":
 		return SkipInProgress
 	case strings.TrimSpace(m.RawTranscript) == "" &&
 		NotesState(m.FormattedNotes) != NotesStructured &&

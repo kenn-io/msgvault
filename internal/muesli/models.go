@@ -29,6 +29,8 @@ type Participant struct {
 	Resolution            string
 	// SkippedPhones counts Contacts phones that could not become E.164.
 	SkippedPhones int
+	// ref is the already-hashed participant identifier received from a client.
+	ref string
 }
 
 // Meeting is one row of Muesli's meetings table. Text columns hold Muesli's

@@ -117,7 +117,7 @@ func TestReaderReadsLegacySchema(t *testing.T) {
 	require.Len(meetings, 1)
 	got := meetings[0]
 	assert.Equal("Old meeting", got.Title)
-	assert.Empty(got.Status)
+	assert.Equal("completed", got.Status)
 	assert.Empty(got.ManualNotes)
 	assert.Empty(got.Folder)
 	assert.False(got.Deleted)

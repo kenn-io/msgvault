@@ -52,7 +52,7 @@ func (p Participant) archivePerson() meetingarchive.Person {
 
 func (p Participant) raw(person meetingarchive.Person) rawParticipant {
 	raw := rawParticipant{
-		Ref: participantRef(p.Identifier), Name: p.Name, Email: p.Email, Source: p.Source,
+		Ref: p.stableRef(), Name: p.Name, Email: p.Email, Source: p.Source,
 	}
 	if p.Resolution == "" {
 		return raw
@@ -63,6 +63,13 @@ func (p Participant) raw(person meetingarchive.Person) rawParticipant {
 	raw.Emails = slices.Clone(p.ContactEmails)
 	raw.Phones = slices.Clone(p.ContactPhones)
 	return raw
+}
+
+func (p Participant) stableRef() string {
+	if p.ref != "" {
+		return p.ref
+	}
+	return participantRef(p.Identifier)
 }
 
 // resolveParticipants fills each participant's Contacts identities. A still
@@ -105,6 +112,9 @@ func (imp *Importer) resolveParticipants(
 		}
 		if !loaded {
 			loaded = true
+			if imp == nil || imp.store == nil {
+				continue // The remote daemon, which owns prior evidence, carries it forward.
+			}
 			// An unkeyable meeting is reported when its snapshot is built.
 			if key, keyErr := meeting.SourceMessageID(); keyErr == nil {
 				var err error
@@ -114,7 +124,7 @@ func (imp *Importer) resolveParticipants(
 				}
 			}
 		}
-		earlier, ok := previous[participantRef(participant.Identifier)]
+		earlier, ok := previous[participant.stableRef()]
 		if !ok || (len(earlier.Emails) == 0 && len(earlier.Phones) == 0) {
 			continue
 		}
