@@ -82,6 +82,7 @@ func (v *runtimeSaveStrings) restore(target *[]string) {
 // runtimeConfigState records runtime-only values so unrelated saves do not
 // make them permanent. A field changed after loading remains saveable.
 type runtimeConfigState struct {
+	flags               RuntimeOverrides
 	bindAddr            runtimeSaveValue[string]
 	apiPort             runtimeSaveValue[int]
 	backupRepo          runtimeSaveValue[string]
@@ -138,6 +139,7 @@ func (s *secretSources) resolve() (string, error) {
 func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 	bindSupplied := o.BindAddr != nil
 	if o.BindAddr != nil {
+		c.runtimeConfigState.flags.BindAddr = new(*o.BindAddr)
 		c.runtimeConfigState.bindAddr.capture(c.Server.BindAddr, *o.BindAddr)
 		c.Server.BindAddr = *o.BindAddr
 		c.bindSource = "--bind"
@@ -151,6 +153,7 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 		return errors.New("server bind address is empty")
 	}
 	if o.APIPort != nil {
+		c.runtimeConfigState.flags.APIPort = new(*o.APIPort)
 		c.runtimeConfigState.apiPort.capture(c.Server.APIPort, *o.APIPort)
 		c.Server.APIPort = *o.APIPort
 	} else if v, ok := os.LookupEnv("MSGVAULT_API_PORT"); ok {

@@ -198,6 +198,10 @@ func (e *tokenExporter) addAccount(baseURL, apiKey, email string) {
 }
 
 func runExportToken(cmd *cobra.Command, args []string) error {
+	return runExportTokenWithClient(cmd, args, &http.Client{Timeout: 30 * time.Second})
+}
+
+func runExportTokenWithClient(cmd *cobra.Command, args []string, client *http.Client) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -227,13 +231,16 @@ func runExportToken(cmd *cobra.Command, args []string) error {
 	}
 
 	exporter := &tokenExporter{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: client,
 		tokensDir:  cfg.TokensDir(),
 		stdout:     os.Stdout,
 		stderr:     os.Stderr,
 	}
 
-	allowInsecure := exportAllowInsecure || cfg.Remote.AllowInsecure
+	allowInsecure := cfg.Remote.AllowInsecure
+	if cmd.Flags().Changed("allow-insecure") {
+		allowInsecure = exportAllowInsecure
+	}
 	result, err := exporter.export(email, remoteURL, apiKey, allowInsecure)
 	if err != nil {
 		return err
@@ -249,8 +256,8 @@ func runExportToken(cmd *cobra.Command, args []string) error {
 	if persistInlineKey {
 		edits = append(edits, config.Edit{Key: "remote.api_key", Value: result.apiKey})
 	}
-	if exportAllowInsecure {
-		edits = append(edits, config.Edit{Key: "remote.allow_insecure", Value: true})
+	if cmd.Flags().Changed("allow-insecure") {
+		edits = append(edits, config.Edit{Key: "remote.allow_insecure", Value: result.allowInsecure})
 	}
 	if len(edits) > 0 {
 		snapshot, err := config.ReadConfigFile(cfg.ConfigFilePath())

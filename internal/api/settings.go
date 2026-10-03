@@ -617,7 +617,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	if restartRequired {
 		s.settingsPendingRestart.Store(true)
 	}
-	loaded, err := config.LoadConfigFileWithOverrides(snapshot, s.cfg.HomeDir, config.RuntimeOverrides{})
+	loaded, err := s.cfg.ReloadConfigFile(snapshot)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "settings_read_failed", "Could not read settings")
 		return
@@ -702,7 +702,7 @@ func (s *Server) readPersistedSettings() (config.ConfigFile, *config.Config, err
 	if err != nil {
 		return config.ConfigFile{}, nil, err
 	}
-	loaded, err := config.LoadConfigFileWithOverrides(snapshot, s.cfg.HomeDir, config.RuntimeOverrides{})
+	loaded, err := s.cfg.ReloadConfigFile(snapshot)
 	if err != nil {
 		return config.ConfigFile{}, nil, err
 	}
