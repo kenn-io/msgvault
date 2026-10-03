@@ -179,9 +179,13 @@ max_poll_attempts = 300
 ```
 
 The endpoint must be an exact HTTP(S) origin, including any port, with no
-trailing slash, path, user information, query, or fragment. HTTP is allowed for
-`localhost`, IPv4 loopback addresses, and IPv6 `::1`; every other hostname or
-IP address requires HTTPS. Msgvault sends private document bytes only to that
+trailing slash, path, user information, query, or fragment. Plain HTTP works
+for `localhost` and for loopback, private (`10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16`, `fc00::/7`), and link-local IP addresses, so a Docling
+server on another machine in your LAN can use its default port. Other hostnames
+and public addresses require HTTPS, because DNS could send a name to a public
+host. Over plain HTTP, document bytes and any API key cross your network
+unencrypted, and the consent disclosure says so. Msgvault sends private document bytes only to that
 origin, disables ambient HTTP proxies, and does not follow redirects. It never
 switches to a hosted extractor.
 
@@ -223,10 +227,10 @@ tables or other content, Msgvault uses whole-document Markdown with a
 searchable text without inventing page numbers. The returned-unit cap applies
 before this fallback; `max_pages_per_run` counts provider units.
 
-Partial results, ambiguous job responses, interrupted requests, and lost
-claims during extraction require manual retry. `resume` does not automatically
-upload these documents again. After checking the service’s job state, reset a
-failed attachment explicitly:
+Interrupted or ambiguous jobs retry the same way as other providers: the next
+`build` or `resume` uploads the document again once its retry delay or lease
+has passed. That can run a document twice on your server. Partial results and
+other permanent failures need an explicit reset:
 
 ```bash
 msgvault documents retry --hash <sha256>

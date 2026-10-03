@@ -370,7 +370,7 @@ uses a configured endpoint without a manifest.
 |---|---:|---|
 | `enabled` | `false` | Allow explicit document extraction commands |
 | `provider` | `mistral` | `mistral` or `docling` |
-| `endpoint` | — | Required for Docling: exact HTTP(S) origin with optional port; no trailing slash, path, user information, query, or fragment. HTTP is allowed only for `localhost` or a loopback IP; every other host requires HTTPS |
+| `endpoint` | — | Required for Docling: exact HTTP(S) origin with optional port; no trailing slash, path, user information, query, or fragment. Plain HTTP is allowed for `localhost` and loopback, private, or link-local IP addresses; other hosts require HTTPS |
 | `region` | `eu` | Mistral’s pinned EU region; Docling defaults to `operator_network` |
 | `api_key_env` | `MISTRAL_API_KEY` | Environment variable containing the provider key; Docling defaults to empty and sends a configured key as `X-Api-Key` |
 | `model` | `mistral-ocr-4-0` | Pinned model; Docling defaults to `docling.serve-v1` |
@@ -400,8 +400,8 @@ count for every native format.
 
 Docling’s operator-controlled postures assign responsibility for deployment,
 credentials, model downloads, egress, resource limits, retention, and training
-behavior to you. They are not privacy guarantees. Non-loopback endpoints use
-HTTPS so document bytes and configured API keys have transport encryption. See the
+behavior to you. They are not privacy guarantees. Public endpoints use HTTPS so
+document bytes and configured API keys have transport encryption. See the
 [Docling workflow](usage/document-indexing.md#use-a-self-hosted-docling-service)
 for a minimal configuration and consent commands.
 

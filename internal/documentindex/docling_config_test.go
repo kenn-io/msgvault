@@ -43,14 +43,24 @@ func TestDoclingEndpointRejectsAlternateDestinations(t *testing.T) {
 	}
 }
 
-func TestDoclingEndpointRequiresHTTPSOutsideLoopback(t *testing.T) {
+func TestDoclingEndpointRequiresHTTPSOutsidePrivateNetworks(t *testing.T) {
 	for _, test := range []struct {
 		endpoint string
 		valid    bool
 	}{
 		{endpoint: "http://docling.example.com"},
 		{endpoint: "http://192.0.2.10"},
+		{endpoint: "http://8.8.8.8:5001"},
+		{endpoint: "http://100.64.0.1:5001"},
+		{endpoint: "http://[2001:db8::1]:5001"},
 		{endpoint: "http://localhost.example"},
+		{endpoint: "http://docling.local:5001"},
+		{endpoint: "http://192.168.1.20:5001", valid: true},
+		{endpoint: "http://10.0.0.5:5001", valid: true},
+		{endpoint: "http://172.16.4.2:5001", valid: true},
+		{endpoint: "http://169.254.10.1:5001", valid: true},
+		{endpoint: "http://[fd00::5]:5001", valid: true},
+		{endpoint: "http://[fe80::1]:5001", valid: true},
 		{endpoint: "https://docling.example.com", valid: true},
 		{endpoint: "http://localhost:5001", valid: true},
 		{endpoint: "http://127.0.0.2:5001", valid: true},

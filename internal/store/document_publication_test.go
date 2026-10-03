@@ -14,8 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestDoclingExpiredClaimRequiresManualRetry(t *testing.T) {
-	assert := assert.New(t)
+func TestDoclingExpiredClaimIsReclaimedAutomatically(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
@@ -39,90 +38,19 @@ func TestDoclingExpiredClaimRequiresManualRetry(t *testing.T) {
 		LeaseOwner: "worker-interrupted", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
 		LocalBytes: 128, SourceSequence: 1,
 	})
-	_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
+	first, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
 	require.NoError(err)
+	// Simulate a crashed worker whose lease ran out mid-job.
 	past := time.Now().UTC().Add(-time.Minute)
 	for _, table := range []string{"document_extractions", "document_extraction_claims"} {
 		_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE "+table+" SET lease_until = ? WHERE profile_id = ?"), past, profile.ID)
 		require.NoError(err)
 	}
-	gc, err := f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(time.Minute), 10)
-	require.NoError(err)
-	assert.Equal(0, gc.ExtractionsRemoved, "an interrupted live Docling owner must retain its retry barrier")
 	input.ExtractionID = "docling-resumed"
 	input.LeaseOwner = "worker-resumed"
-	_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
-	require.ErrorContains(err, "manual retry")
-	var state, reason string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT state, failure_reason FROM document_extractions WHERE id = ?"), "docling-interrupted").Scan(&state, &reason))
-	assert.Equal("terminal", state)
-	assert.Equal("provider_manual_retry_required", reason)
-	// A stale candidate must also remain suppressed after recovery releases the claim.
-	input.ExtractionID = "docling-stale-candidate"
-	_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
-	require.ErrorContains(err, "manual retry")
-	retried, err := f.Store.RetryDocumentExtraction(t.Context(), profile.ID, hash)
+	resumed, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
 	require.NoError(err)
-	assert.True(retried)
-	input.ExtractionID = "docling-explicit-retry"
-	_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
-	require.NoError(err)
-}
-
-func TestDoclingExpiredInactiveClaimCanBeGarbageCollected(t *testing.T) {
-	for _, mode := range []string{"retired", "disabled", "consent_mismatch"} {
-		t.Run(mode, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := storetest.New(t)
-			profile, hash := seedDocumentPublicationAuthority(t, f)
-			profile.ID = "profile-docling-inactive"
-			profile.Fingerprint = strings.Repeat("c", 64)
-			profile.Provider = "docling"
-			profile.Endpoint = "http://127.0.0.1:5001"
-			profile.Model = "docling.serve-v1"
-			profile.Region = "operator_network"
-			profile.RetentionPosture = "operator-controlled"
-			profile.TrainingPosture = "operator-controlled"
-			_, err := f.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
-			require.NoError(err)
-			require.NoError(f.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
-				ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
-				RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
-			}))
-			input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
-				ExtractionID: "docling-inactive-interrupted", ProfileID: profile.ID,
-				CanonicalBlobHash: hash, ExtractionInputKey: "original",
-				LeaseOwner: "worker-interrupted", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
-				LocalBytes: 128, SourceSequence: 1,
-			})
-			_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
-			require.NoError(err)
-			past := time.Now().UTC().Add(-time.Minute)
-			for _, table := range []string{"document_extractions", "document_extraction_claims"} {
-				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE "+table+" SET lease_until = ? WHERE profile_id = ?"), past, profile.ID)
-				require.NoError(err)
-			}
-			switch mode {
-			case "retired":
-				changed, err := f.Store.RetireDocumentExtractionProfile(t.Context(), profile.ID)
-				require.NoError(err)
-				assert.True(changed)
-			case "disabled":
-				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extraction_profiles SET enabled = FALSE WHERE id = ?"), profile.ID)
-				require.NoError(err)
-			case "consent_mismatch":
-				_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_provider_consents SET profile_fingerprint = ? WHERE profile_id = ?"), strings.Repeat("d", 64), profile.ID)
-				require.NoError(err)
-			}
-			gc, err := f.Store.GarbageCollectDocumentDerivatives(t.Context(), time.Now().UTC().Add(time.Minute), 10)
-			require.NoError(err)
-			assert.Equal(1, gc.ExtractionsRemoved)
-			var claims int
-			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM document_extraction_claims WHERE profile_id = ?"), profile.ID).Scan(&claims))
-			assert.Zero(claims)
-		})
-	}
+	assert.Greater(t, resumed.LeaseFence, first.LeaseFence)
 }
 
 func TestDocumentExtractionClaimNormalizesNonUTCTimeZone(t *testing.T) {

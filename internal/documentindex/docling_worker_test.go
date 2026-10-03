@@ -41,29 +41,6 @@ func TestDoclingClientRejectsUnexpectedDefaultTransport(t *testing.T) {
 	assert.Nil(t, provider)
 }
 
-func TestDoclingWorkerReportsRecoveredClaimWithoutOpeningSource(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	c := doclingTestConfig()
-	provider, err := NewDoclingClient(&c)
-	requirements.NoError(err)
-	catalog := &workerCatalog{claimErr: store.ErrDocumentExtractionManualRetryRequired}
-	opener := &workerOpener{content: []byte("unused")}
-	worker, err := NewDoclingWorker(catalog, opener, provider, DoclingWorkerConfig{
-		Documents: c, ProfileID: "synthetic-profile", LeaseOwner: "synthetic-worker",
-		LeaseDuration: time.Minute, RetryDelay: time.Minute,
-	})
-	requirements.NoError(err)
-	result, err := worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
-		AttachmentID: 1, CanonicalBlobHash: strings.Repeat("a", 64),
-		MIMEType: "application/pdf", Size: 128, MessageType: "email", SourceSequence: 1,
-	})
-	requirements.ErrorIs(err, store.ErrDocumentExtractionManualRetryRequired)
-	assertions.Equal("provider_manual_retry_required", result.FailureReasonCode)
-	assertions.Zero(opener.opened)
-	assertions.Nil(catalog.publication)
-}
-
 func TestDoclingWorkerPublishesRealAsyncResult(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -386,15 +363,15 @@ func TestDoclingWorkerRefusesPartialSuccess(t *testing.T) {
 	catalog := &workerCatalog{}
 	worker, candidate, _ := doclingWorkerFixture(t, response, nil, catalog)
 	_, err := worker.ProcessCandidate(t.Context(), candidate)
-	requirements.ErrorIs(err, errDoclingManualRetry)
+	requirements.ErrorContains(err, "partial result")
 	assertions.Nil(catalog.publication)
 	requirements.NotNil(catalog.failure)
 	assertions.True(catalog.failure.Terminal)
-	assertions.Equal("provider_manual_retry_required", catalog.failure.ReasonCode)
+	assertions.Equal("invalid_provider_output", catalog.failure.ReasonCode)
 	assertions.True(catalog.failure.RetryAt.IsZero())
 }
 
-func TestDoclingWorkerCancellationDuringUploadRequiresManualRetry(t *testing.T) {
+func TestDoclingWorkerCancellationDuringUploadSchedulesRetry(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -424,10 +401,10 @@ func TestDoclingWorkerCancellationDuringUploadRequiresManualRetry(t *testing.T) 
 	requirements.ErrorIs(err, context.Canceled)
 	assertions.Nil(catalog.publication)
 	requirements.NotNil(catalog.failure)
-	assertions.True(catalog.failure.Terminal)
-	assertions.Equal("provider_manual_retry_required", catalog.failure.ReasonCode)
+	assertions.False(catalog.failure.Terminal)
+	assertions.Equal("provider_interrupted", catalog.failure.ReasonCode)
 	requirements.NoError(catalog.failureContextErr)
-	assertions.True(catalog.failure.RetryAt.IsZero())
+	assertions.False(catalog.failure.RetryAt.IsZero())
 }
 
 func TestDoclingClientBypassesAmbientProxy(t *testing.T) {
@@ -543,7 +520,7 @@ func TestDoclingWorkerAcceptsNativeDocumentBytes(t *testing.T) {
 	}
 }
 
-func TestDoclingWorkerLeaseLossAfterUploadRequiresManualRetry(t *testing.T) {
+func TestDoclingWorkerLeaseLossAfterUploadSchedulesRetry(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -554,12 +531,12 @@ func TestDoclingWorkerLeaseLossAfterUploadRequiresManualRetry(t *testing.T) {
 	assertions.Equal(int32(2), calls.Load())
 	assertions.Nil(catalog.publication)
 	requirements.NotNil(catalog.failure)
-	assertions.True(catalog.failure.Terminal)
-	assertions.Equal("provider_manual_retry_required", catalog.failure.ReasonCode)
-	assertions.True(catalog.failure.RetryAt.IsZero())
+	assertions.False(catalog.failure.Terminal)
+	assertions.Equal("lease_renewal_failed", catalog.failure.ReasonCode)
+	assertions.False(catalog.failure.RetryAt.IsZero())
 }
 
-func TestDoclingWorkerAmbiguousJobsRequireManualRetry(t *testing.T) {
+func TestDoclingWorkerClassifiesJobFailures(t *testing.T) {
 	for _, mode := range []string{"ambiguous_submission", "poll_limit", "authentication", "missing_credential"} {
 		t.Run(mode, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -610,16 +587,46 @@ func TestDoclingWorkerAmbiguousJobsRequireManualRetry(t *testing.T) {
 			}
 			assertions.Nil(catalog.publication)
 			requirements.NotNil(catalog.failure)
-			assertions.True(catalog.failure.Terminal)
 			assertions.Equal(int(requests.Load()), catalog.failure.RequestCount)
-			if mode == "authentication" || mode == "missing_credential" {
+			rejected := mode == "authentication" || mode == "missing_credential"
+			assertions.Equal(rejected, catalog.failure.Terminal)
+			assertions.Equal(rejected, catalog.failure.RetryAt.IsZero())
+			if rejected {
 				assertions.Equal("provider_rejected", catalog.failure.ReasonCode)
 			} else {
-				assertions.Equal("provider_manual_retry_required", catalog.failure.ReasonCode)
+				assertions.Equal("provider_interrupted", catalog.failure.ReasonCode)
 			}
-			assertions.True(catalog.failure.RetryAt.IsZero())
 		})
 	}
+}
+
+func TestDoclingWorkerSchedulesRetryWhenJobOutlastsTotalTimeout(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assertions.NoError(json.NewEncoder(w).Encode(map[string]any{"task_id": "synthetic-job", "task_type": "convert", "task_status": "pending"}))
+	}))
+	t.Cleanup(server.Close)
+	c := doclingTestConfig()
+	c.Endpoint, c.TotalTimeout, c.PollInterval, c.MaxPollAttempts = server.URL, 200*time.Millisecond, 10*time.Millisecond, 10_000
+	provider, err := NewDoclingClient(&c)
+	requirements.NoError(err)
+	content := mistraltest.MinimalPDF("synthetic source")
+	digest := sha256.Sum256(content)
+	catalog := &workerCatalog{}
+	worker, err := NewDoclingWorker(catalog, &workerOpener{content: content}, provider, DoclingWorkerConfig{
+		Documents: c, ProfileID: "synthetic-profile", LeaseOwner: "synthetic-worker", LeaseDuration: time.Minute, RetryDelay: time.Minute,
+	})
+	requirements.NoError(err)
+	_, err = worker.ProcessCandidate(t.Context(), store.DocumentExtractionCandidate{
+		AttachmentID: 7, CanonicalBlobHash: hex.EncodeToString(digest[:]), MIMEType: "application/pdf", Size: int64(len(content)), MessageType: "email", SourceSequence: 11,
+	})
+	requirements.Error(err)
+	requirements.NotNil(catalog.failure)
+	assertions.False(catalog.failure.Terminal, "a job that outlasts total_timeout must retry, not need a manual reset")
+	assertions.False(catalog.failure.RetryAt.IsZero())
 }
 
 func TestDoclingAuthorizationUsesCanonicalProviderTimestamps(t *testing.T) {

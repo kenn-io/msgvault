@@ -23,10 +23,7 @@ import (
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/msgvault/internal/store"
-	"golang.org/x/net/html"
 )
-
-var errDoclingManualRetry = errors.New("docling extraction requires manual retry")
 
 // Docbank's canonical UTC timestamps retain all nine fractional digits.
 // time.RFC3339Nano trims trailing zeros and can fail its boundary validator.
@@ -225,7 +222,6 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 	var requests doclingRequestAccounting
 	workCtx = context.WithValue(workCtx, doclingRequestAccountingKey{}, &requests)
 	var accounting documentPublicationAccounting
-	invoked := false
 	fail := func(cause error) error {
 		// Failed renders have no receipt. Count transport attempts rather
 		// than inventing a request when validation or credentials fail.
@@ -233,9 +229,6 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 		accounting.Retries = max(accounting.Retries, int(requests.retries.Load()))
 		if renewErr := readRenewalError(renewalErr); renewErr != nil {
 			cause = errors.Join(cause, renewErr)
-		}
-		if invoked && (workCtx.Err() != nil || errors.Is(cause, errDocumentLeaseRenewal) || errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded)) {
-			cause = errors.Join(errDoclingManualRetry, cause)
 		}
 		terminal, reason := classifyDoclingFailure(cause)
 		failure := store.DocumentExtractionFailure{Claim: claim, ReasonCode: reason, Detail: documentFailureDetail(cause), Terminal: terminal,
@@ -258,7 +251,6 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 	if err := workCtx.Err(); err != nil {
 		return result, fail(err)
 	}
-	invoked = true
 	started := time.Now()
 	rendered, err := document.RenderRendition(workCtx, w.provider, upload, authorization)
 	accounting.Latency = time.Since(started)
@@ -274,7 +266,7 @@ func (w *DoclingWorker) ProcessCandidate(ctx context.Context, candidate store.Do
 		return result, fail(errors.New("docling output exceeds the configured unit bound"))
 	}
 	if slices.Contains(rendered.Receipt.Warnings, "partial_success") {
-		return result, fail(errDoclingManualRetry)
+		return result, fail(errors.New("docling returned a partial result"))
 	}
 	source, err := doclingSourceDocument(rendered)
 	if err != nil {
@@ -336,30 +328,11 @@ func (w *DoclingWorker) readSource(ctx context.Context, candidate store.Document
 		return nil, errors.New("document digest no longer matches reconciled metadata")
 	}
 	if format.ID == "html" {
+		// Format detection has no HTML route; Docling parses the markup itself.
 		if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
 			return nil, errors.New("invalid UTF-8 HTML source")
 		}
-		tokens := html.NewTokenizer(bytes.NewReader(content))
-		markup := false
-		for {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			switch tokens.Next() {
-			case html.StartTagToken, html.SelfClosingTagToken, html.DoctypeToken:
-				markup = true
-			case html.TextToken, html.EndTagToken, html.CommentToken:
-				// Text and closing markup do not establish an HTML document.
-			case html.ErrorToken:
-				if !errors.Is(tokens.Err(), io.EOF) {
-					return nil, errors.New("invalid HTML source")
-				}
-				if !markup {
-					return nil, errors.New("HTML source contains no markup")
-				}
-				return content, nil
-			}
-		}
+		return content, nil
 	}
 	detected, err := mistral.DetectFormat(bytes.NewReader(content), size, candidate.MIMEType)
 	if err != nil {
@@ -428,7 +401,9 @@ func (w *DoclingWorker) authorizeUploadAt(content []byte, candidate store.Docume
 		AllowedArtifactRoles: slices.Clone(w.descriptor.ArtifactRoles), MaxProviderMarkdownBytes: min(bound, 64<<20),
 		MaxArtifactBytes: min(bound, 256<<20), MaxArtifacts: 1, MaxTotalResultBytes: bound,
 		AuthorizedAt: now.UTC().Format(doclingRenditionTimestampForm),
-		ExpiresAt:    now.UTC().Add(w.config.Documents.TotalTimeout).Format(doclingRenditionTimestampForm),
+		// Outlast the adapter's own total timeout, which starts after upload
+		// preparation, so a slow job ends as a retryable timeout, not an expiry.
+		ExpiresAt: now.UTC().Add(w.config.Documents.TotalTimeout + w.config.Documents.RequestTimeout).Format(doclingRenditionTimestampForm),
 	}
 	return &doclingMemoryUpload{Reader: bytes.NewReader(content), metadata: metadata}, authorization, nil
 }
@@ -450,13 +425,11 @@ func doclingSourceDocument(result document.RenditionResult) (document.SourceDocu
 }
 
 func classifyDoclingFailure(err error) (bool, string) {
-	if errors.Is(err, errDoclingManualRetry) || errors.Is(err, store.ErrDocumentExtractionManualRetryRequired) {
-		return true, "provider_manual_retry_required"
-	}
 	if providerError, ok := errors.AsType[*document.RenditionProviderError](err); ok {
 		switch providerError.Code() {
+		// Resubmitting an interrupted job costs only time on the operator's server.
 		case document.RenditionErrorUnknownJob, document.RenditionErrorCanceled, document.RenditionErrorAmbiguousSubmission:
-			return true, "provider_manual_retry_required"
+			return false, "provider_interrupted"
 		case document.RenditionErrorCapacity, document.RenditionErrorRateLimited, document.RenditionErrorTransient:
 			return false, "provider_transient"
 		case document.RenditionErrorAuthentication:

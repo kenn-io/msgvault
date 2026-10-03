@@ -49,8 +49,8 @@ func (c *DocumentsConfig) validateDocling() error {
 		strings.Contains(c.Endpoint, "#") || strings.TrimSpace(c.Endpoint) != c.Endpoint {
 		return errors.New("attachments.documents.endpoint: must be an HTTP(S) origin without credentials, path, query, or fragment")
 	}
-	if u.Scheme == "http" && !isDoclingLoopbackHost(u.Hostname()) {
-		return errors.New("attachments.documents.endpoint: non-loopback endpoints must use HTTPS")
+	if u.Scheme == "http" && !isDoclingPrivateHost(u.Hostname()) {
+		return errors.New("attachments.documents.endpoint: public endpoints must use HTTPS; plain HTTP is allowed only for localhost or a private or link-local IP address")
 	}
 	if port := u.Port(); port != "" {
 		value, err := strconv.Atoi(port)
@@ -88,12 +88,15 @@ func (c *DocumentsConfig) validateDocling() error {
 	return nil
 }
 
-func isDoclingLoopbackHost(host string) bool {
+// isDoclingPrivateHost reports whether host names this machine or a literal
+// address that is only routable inside a private network. Hostnames other than
+// localhost are excluded because DNS could resolve them to a public address.
+func isDoclingPrivateHost(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
 	}
 	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast())
 }
 
 // doclingFormats limits original-file uploads to supported document formats.

@@ -921,18 +921,7 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 			LEFT JOIN document_extraction_heads h ON h.extraction_id = e.id
 			WHERE e.updated_at < ?
 			  AND (e.state != 'staging' OR e.lease_until IS NULL OR e.lease_until < `+s.dialect.Now()+`)
-			  AND ((h.extraction_id IS NULL AND e.state != 'terminal'
-		        AND NOT (e.state = 'staging' AND EXISTS (
-		            SELECT 1 FROM document_extraction_profiles p
-		            WHERE p.id = e.profile_id AND p.provider = 'docling'
-		              AND p.enabled = TRUE AND p.retired_at IS NULL
-		              AND EXISTS (
-		                  SELECT 1 FROM document_provider_consents c
-		                  WHERE c.profile_id = p.id AND c.profile_fingerprint = p.fingerprint
-		                    AND c.retention_posture = p.retention_posture
-		                    AND c.training_posture = p.training_posture
-		              )
-		        ))) OR NOT EXISTS (
+			  AND ((h.extraction_id IS NULL AND e.state != 'terminal') OR NOT EXISTS (
 			      SELECT 1 FROM document_occurrences o
 			      JOIN messages m ON m.id = o.message_id
 			      WHERE o.canonical_blob_hash = e.canonical_blob_hash
