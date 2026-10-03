@@ -2068,6 +2068,8 @@ components:
           type: string
         stale:
           type: boolean
+        virtual_accounts_unavailable:
+          type: boolean
       required:
         - accounts
       type: object

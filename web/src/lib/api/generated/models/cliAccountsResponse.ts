@@ -7,5 +7,6 @@ export interface CliAccountsResponse {
   accounts: CliAccountResponse[];
   as_of?: string;
   stale?: boolean;
+  virtual_accounts_unavailable?: boolean;
   [key: string]: unknown;
 }

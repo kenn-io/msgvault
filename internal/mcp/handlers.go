@@ -2099,9 +2099,10 @@ func (h *handlers) getStats(ctx context.Context, _ toolRequest) (*toolResult, er
 		return nil, newInternalError("list archive accounts", err)
 	}
 	if lister, ok := h.engine.(query.VirtualAccountLister); ok {
+		// The catalog is extra detail; get_stats answers without it.
 		virtual, err := lister.ListVirtualAccounts(ctx)
 		if err != nil {
-			return nil, newInternalError("list virtual accounts", err)
+			slog.Warn("MCP statistics omit virtual accounts", "error", err)
 		}
 		for i := range accounts {
 			accounts[i].VirtualAccounts = virtual[accounts[i].ID]

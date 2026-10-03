@@ -128,8 +128,10 @@ func TestHandleCLIAccountsSurvivesCatalogFailure(t *testing.T) {
 			Email           string                 `json:"email"`
 			VirtualAccounts []store.VirtualAccount `json:"virtual_accounts"`
 		} `json:"accounts"`
+		VirtualAccountsUnavailable bool `json:"virtual_accounts_unavailable"`
 	}
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assert.True(t, resp.VirtualAccountsUnavailable)
 	require.Len(resp.Accounts, 1)
 	assert.Equal(t, "archive-1", resp.Accounts[0].Email)
 	assert.Empty(t, resp.Accounts[0].VirtualAccounts)

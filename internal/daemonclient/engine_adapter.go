@@ -1653,15 +1653,5 @@ func encodedAccountScopes(scopes []search.AccountScope) *string {
 
 // ListVirtualAccounts reads the virtual account catalog from /cli/accounts.
 func (e *Engine) ListVirtualAccounts(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
-	accounts, err := e.store.GetCLIAccounts(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[int64][]store.VirtualAccount, len(accounts))
-	for _, account := range accounts {
-		if len(account.VirtualAccounts) > 0 {
-			out[account.ID] = append([]store.VirtualAccount(nil), account.VirtualAccounts...)
-		}
-	}
-	return out, nil
+	return e.store.GetCLIVirtualAccounts(ctx)
 }

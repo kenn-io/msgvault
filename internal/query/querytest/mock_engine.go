@@ -14,18 +14,19 @@ import (
 // MockEngine implements query.Engine for testing. Each method delegates to an
 // optional function field; when the field is nil, a safe zero value is returned.
 type MockEngine struct {
-	SearchFastResults []query.MessageSummary
-	SearchResults     []query.MessageSummary
-	ListResults       []query.MessageSummary
-	Messages          map[int64]*query.MessageDetail
-	Attachments       map[int64]*query.AttachmentInfo
-	AttachmentsByHash map[string][]query.AttachmentInfo
-	Stats             *query.TotalStats
-	Accounts          []query.AccountInfo
-	VirtualAccounts   map[int64][]store.VirtualAccount
-	AggregateRows     []query.AggregateRow
-	GmailIDs          []string
-	DeletionTargets   []query.DeletionTarget
+	SearchFastResults  []query.MessageSummary
+	SearchResults      []query.MessageSummary
+	ListResults        []query.MessageSummary
+	Messages           map[int64]*query.MessageDetail
+	Attachments        map[int64]*query.AttachmentInfo
+	AttachmentsByHash  map[string][]query.AttachmentInfo
+	Stats              *query.TotalStats
+	Accounts           []query.AccountInfo
+	VirtualAccounts    map[int64][]store.VirtualAccount
+	VirtualAccountsErr error
+	AggregateRows      []query.AggregateRow
+	GmailIDs           []string
+	DeletionTargets    []query.DeletionTarget
 
 	// MessagesBySourceID maps source IDs to message details for GetMessageBySourceID.
 	// When nil, GetMessageBySourceID falls back to scanning Messages for a matching SourceMessageID.
@@ -301,7 +302,7 @@ func (m *MockEngine) ListAccounts(_ context.Context) ([]query.AccountInfo, error
 }
 
 func (m *MockEngine) ListVirtualAccounts(_ context.Context) (map[int64][]store.VirtualAccount, error) {
-	return m.VirtualAccounts, nil
+	return m.VirtualAccounts, m.VirtualAccountsErr
 }
 
 func (m *MockEngine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*query.TotalStats, error) {

@@ -705,6 +705,9 @@ type cliAccountsResponse struct {
 	// fresh counts did not finish in time; AsOf says when it was taken.
 	Stale bool      `json:"stale,omitempty"`
 	AsOf  time.Time `json:"as_of,omitzero"`
+	// VirtualAccountsUnavailable reports that the catalog read failed or
+	// timed out, so no account carries virtual_accounts this time.
+	VirtualAccountsUnavailable bool `json:"virtual_accounts_unavailable,omitempty"`
 }
 
 // sourceMessageCounter is implemented by stores that count every source's
@@ -2634,6 +2637,7 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			s.logger.Warn("listing accounts without virtual accounts", "error", err)
+			response.VirtualAccountsUnavailable = true
 		}
 		for i := range accounts {
 			accounts[i].VirtualAccounts = virtual[accounts[i].ID]

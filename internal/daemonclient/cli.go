@@ -1090,6 +1090,31 @@ func (c *Client) GetCLIAccounts(ctx context.Context) ([]CLIAccount, error) {
 	return cliAccountsFromGenerated(resp.JSON200), nil
 }
 
+// errVirtualAccountsUnavailable means the daemon could not read the virtual
+// account catalog, which is different from a catalog with no entries.
+var errVirtualAccountsUnavailable = errors.New("virtual account catalog unavailable")
+
+// GetCLIVirtualAccounts reads each source's virtual accounts from
+// /cli/accounts, failing when the daemon could not read the catalog.
+func (c *Client) GetCLIVirtualAccounts(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ListCLIAccountsResp, error) {
+		return client.ListCLIAccountsWithResponse(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON200 != nil && resp.JSON200.VirtualAccountsUnavailable != nil && *resp.JSON200.VirtualAccountsUnavailable {
+		return nil, errVirtualAccountsUnavailable
+	}
+	out := make(map[int64][]store.VirtualAccount)
+	for _, account := range cliAccountsFromGenerated(resp.JSON200) {
+		if len(account.VirtualAccounts) > 0 {
+			out[account.ID] = account.VirtualAccounts
+		}
+	}
+	return out, nil
+}
+
 func (c *Client) UpdateCLIAccount(
 	ctx context.Context,
 	req CLIAccountUpdateRequest,
