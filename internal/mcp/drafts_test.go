@@ -40,6 +40,17 @@ func draftConfirmationSession(t *testing.T, runner *draftTestRunner, commands ..
 }
 
 func TestDraftMutationsRequireConfirmation(t *testing.T) {
+	t.Run("invalid draft ID", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		runner := &draftTestRunner{}
+		session := draftConfirmationSession(t, runner, "draft-delete")
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftDelete, Arguments: map[string]any{"draft_id": "-x", "revision": 1}})
+		require.NoError(err)
+		assert.True(result.IsError)
+		assert.False(result.NeedsInput())
+		assert.Zero(runner.calls)
+	})
 	for _, tc := range []struct {
 		command string
 		args    map[string]any
@@ -135,7 +146,7 @@ func TestDraftReadsDoNotRequireConfirmation(t *testing.T) {
 		want    any
 	}{
 		{"draft-get", map[string]any{"conversation": 3}, `[{"draft_id":"d1"}]`, map[string]any{"data": []any{map[string]any{"draft_id": "d1"}}}},
-		{"draft-send-as", map[string]any{"account": "account"}, `{"identities":[]}`, map[string]any{"identities": []any{}}},
+		{"draft-send-as", map[string]any{"account": "a@example.com"}, `{"source_id":1,"account":"a@example.com","send_as":[]}`, map[string]any{"source_id": float64(1), "account": "a@example.com", "send_as": []any{}}},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			assert := assert.New(t)

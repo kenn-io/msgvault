@@ -100,6 +100,9 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 				values = []string{stringArgument(args, key)}
 			}
 			if key == positional {
+				if strings.HasPrefix(values[0], "-") {
+					return toolErrorResult("invalid_args: positional value must not begin with \"-\""), nil
+				}
 				request.Positional = values[0]
 			} else if len(values) > 0 {
 				request.Flags[strings.ReplaceAll(key, "_", "-")] = values
