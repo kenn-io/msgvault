@@ -173,7 +173,7 @@ func (a *storeAPIAdapter) runCLIComposeDraft(
 		return a.runBeeperDraftCreate(ctx, req.Grant, intent, source, emit)
 	}
 	target, from, _, err := a.resolveDraftTarget(
-		ctx, nil, intent.Account, intent.SourceID, intent.SourceIDSet, intent.From, req.Grant,
+		ctx, nil, intent.Account, intent.SourceID, intent.SourceIDSet, intent.From, req.Grant, false,
 	)
 	if err != nil {
 		return err

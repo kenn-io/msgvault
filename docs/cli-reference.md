@@ -211,8 +211,15 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 Create one reply draft from an archived message to an authorized IMAP
 destination, or reply within its original Gmail account. The daemon requires
-the matching operator grant. `--from` is optional when exactly one confirmed
-identity is eligible.
+the matching operator grant. An explicit `--from` takes precedence. Otherwise,
+Msgvault uses the unique confirmed destination identity found in the parent's
+archived To, Cc, or Bcc recipients combined with every original To and Cc
+header, including when legacy recipient snapshots are missing. Multiple
+matching identities require `--from` unless the agent's grant allows exactly
+one of them. A matching identity outside the agent's sender grant returns an
+authorization error. With no match, `--from` is optional when exactly one
+confirmed identity is eligible. Compose and forward retain that eligibility
+rule without recipient inference.
 
 ```bash
 msgvault draft-reply <message-id> --body <text>
