@@ -16,6 +16,8 @@ type UploadTokenBody = TokenUploadRequest
 
 type EndBackupFreezeBody = BackupFreezeEndRequest
 
+type ControlCalendarBody = CalendarRequest
+
 type SaveCardDAVAccountBody = CardDAVAccountRequest
 
 type TestCardDAVAccountBody = CardDAVAccountRequest

@@ -121,6 +121,9 @@ type ServeOptions struct {
 	AllowIdentityScoring bool
 	AllowPersonMerges    bool
 	AllowCardDAVWrites   bool
+	// AllowCalendarWrites exposes calendar mutation tools when the transport's
+	// general write policy also permits writes.
+	AllowCalendarWrites bool
 
 	// HybridEngine is optional. When nil, semantic_search_messages rejects
 	// vector/hybrid searches with a vector_not_enabled error.
@@ -140,7 +143,9 @@ type ServeOptions struct {
 	SavedViews savedview.Service
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
-	Meetings MeetingBackend
+	Meetings     MeetingBackend
+	Calendar     CalendarBackend
+	CalendarOnly bool // restricted delegated bridge exposes only calendar tools
 	// ArchiveSQLQuerier exposes query_sql when the daemon supports restricted SQL.
 	ArchiveSQLQuerier ArchiveSQLQuerier
 	// IdentityReview is present only when the daemon serves token-guarded
@@ -216,6 +221,11 @@ func officialToolHandler(
 		}
 
 		wireResult := &sdkmcp.CallToolResult{IsError: result.isError}
+		if result.inputRequests != nil {
+			wireResult.InputRequests = result.inputRequests
+			wireResult.RequestState = result.requestState
+			return wireResult, nil, nil
+		}
 		if result.isError {
 			wireResult.Content = []sdkmcp.Content{&sdkmcp.TextContent{Text: result.text}}
 			if len(result.structuredContent) > 0 {
@@ -337,6 +347,7 @@ func newMCPServerWithPolicy(
 		visualSearcher:      opts.VisualSearcher,
 		savedViews:          opts.SavedViews,
 		meetings:            opts.Meetings,
+		calendar:            opts.Calendar,
 		personAgendaBackend: opts.PersonAgendaBackend,
 		identityReview:      opts.IdentityReview,
 		personCardDAV:       opts.PersonCardDAV,
@@ -367,9 +378,15 @@ func newMCPServerWithPolicy(
 			(!allowWrites || !opts.AllowCardDAVWrites) {
 			continue
 		}
+		if definition.security == toolSecurityCalendarWrite &&
+			(!allowWrites || !opts.AllowCalendarWrites) {
+			continue
+		}
 		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h), confirmation))
 	}
-	registerAttachmentResources(s, h)
+	if !opts.CalendarOnly {
+		registerAttachmentResources(s, h)
+	}
 
 	return s
 }

@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
+	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/granola"
 	imaplib "go.kenn.io/msgvault/internal/imap"
@@ -1588,6 +1589,7 @@ type storeAPIAdapter struct {
 	gmailDraftPolicy        []config.GmailDraftSource
 	beeperDraftPolicy       []config.GmailDraftSource
 	gmailDraftClientFactory func(context.Context, *store.Source) (gmail.DraftAPI, error)
+	calendarClientFactory   func(context.Context, config.GCalSource, bool) (gcal.ControlAPI, error)
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
 	// the same best-effort hook the meeting importer uses.
 	draftCacheRefresh     func(context.Context, string) error

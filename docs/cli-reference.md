@@ -1259,6 +1259,7 @@ msgvault add-calendar <email> [flags]
 
 | Flag | Description |
 |---|---|
+| `--write` | Also request `calendar.events`, preserving existing Google scopes; source write permissions remain required |
 | `--oauth-app` | Named OAuth app to use |
 | `--headless` | Print token-copy instructions for a headless host instead of opening a browser |
 | `--all-calendars` | Include reader/freeBusyReader (subscribed, holiday) calendars |
@@ -1285,6 +1286,49 @@ msgvault sync-calendar <name|email> [flags]
 | `--min-access-role` | Minimum access role: `owner`, `writer`, or `reader` |
 | `--oauth-app` | Named OAuth app to use |
 | `--noresume` | Do not resume an interrupted full sync |
+
+---
+
+## calendar
+
+Control live Google Calendar events through the daemon. This is unreleased
+functionality. Follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
+for consent and source permissions.
+
+```bash
+msgvault calendar create <calendar-id> --account <name|email> --summary <title> --from <start> --to <end>
+msgvault calendar update <calendar-id> <event-id> --account <name|email> [field flags]
+msgvault calendar delete <calendar-id> <event-id> --account <name|email>
+msgvault calendar move <calendar-id> <event-id> <destination-calendar-id> --account <name|email>
+msgvault calendar respond <calendar-id> <event-id> --account <name|email> --status accepted
+msgvault calendar freebusy <calendar-id> --account <name|email> --from <start> --to <end>
+msgvault calendar conflicts <calendar-id> --account <name|email> --from <start> --to <end> --calendars <ids>
+```
+
+| Flag | Applies to | Contract |
+|---|---|---|
+| `--account` | All | Required OAuth account or configured source name, separate from the target calendar |
+| `--dry-run` | All | Verify live access and return the proposed writes without applying them; availability still reads Google |
+| `--read-only` | All | Reject all mutations |
+| `--json` | All | Print complete results and archive receipts; dry runs and availability always print JSON |
+| `--send-updates` | Writes | `none` (default), `all`, or `externalOnly` |
+| `--summary`, `--description`, `--location` | Create/update | Omitted update fields are preserved; explicit empty clears |
+| `--from`, `--to` | Create/update/availability | RFC3339 with offset, or local `YYYY-MM-DDTHH:MM` with `--tz` |
+| `--tz` | Create/update/availability | IANA time zone; event edits require a time bound |
+| `--all-day` | Create/update | Date-only `YYYY-MM-DD`; end is exclusive |
+| `--attendees` | Create/update | Replace comma-separated guest list; explicit empty clears |
+| `--add-attendee` | Update | Add guest emails while preserving existing guests and RSVP state; cannot combine with `--attendees` |
+| `--rrule` | Create/update | Repeatable RRULE; explicit empty clears recurrence |
+| `--reminder` | Create/update | Repeatable `popup:minutes` or `email:minutes` (0–40320, at most five); `default` or `none` cannot combine with overrides |
+| `--scope` | Update/delete/respond | `single` (default), `all`, or `future`; future supports update/delete only |
+| `--original-start` | Update/delete/respond | Original occurrence start, RFC3339 or all-day date; required for single on a series ID and future edits |
+| `--destination` | Move | Required calendar ID or configured alias; standalone events only |
+| `--status` | Respond | Required self RSVP: `accepted`, `declined`, or `tentative` |
+| `--calendars` | Availability | Selected IDs or aliases; default is the positional calendar; at most 50 |
+
+Commands return completed Google writes with archive message IDs. A partial
+remote failure or an archive failure exits with an error after printing the
+receipts. Reconcile the reported event; do not repeat a completed mutation.
 
 ---
 
@@ -3297,7 +3341,8 @@ msgvault mcp [flags]
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve MCP over StreamableHTTP on this address instead of stdio. Bare ports bind to loopback, e.g. `8080` becomes `127.0.0.1:8080`. Non-loopback addresses require `[server].api_key` or `--http-allow-insecure`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without `[server].api_key`. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
-| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, and deletion staging tools over StreamableHTTP. Enable only for trusted, authenticated clients. |
+| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, and deletion staging tools over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`. Enable only for trusted, authenticated clients. |
+| `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
 
 See [MCP Server](/docs/usage/chat/) for configuration and tool reference.
 
@@ -4011,7 +4056,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
 
@@ -4021,7 +4066,10 @@ When `--sender` is omitted for a selected source, issuance snapshots every
 currently confirmed valid mailbox identity. Sender selections are stored as
 canonical mailbox keys and remain fixed until the token is revoked. Adding an
 alias later does not expand an existing grant. A source with no selected sender
-has no delegated draft sender authority.
+has no delegated draft sender authority. Calendar grants use exact calendar source
+identities and do not require a draft sender selection. Delegated callers can run
+`calendar` commands and `mcp` over stdio; the delegated MCP bridge exposes only
+calendar tools.
 
 The response includes the daemon address, the secret, and the granted source references.
 Pass `--agent-url <address>` and the file path to `--agent-token-file` when invoking delegated commands.

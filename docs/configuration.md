@@ -968,6 +968,9 @@ oauth_app = ""                   # optional named OAuth app
 calendars = []                   # optional calendarId filter; empty = owner+writer
 schedule = "0 */6 * * *"         # 5-field cron, no seconds
 enabled = true
+write_calendars = []             # explicit IDs; empty denies every event write
+invite_calendars = []            # subset allowed to change guests or notify them
+# calendar_aliases = { team = "team@example.com" }
 ```
 
 | Key | Default | Description |
@@ -977,7 +980,18 @@ enabled = true
 | `oauth_app` | — | Named Google OAuth app to use |
 | `calendars` | — | Specific calendar IDs to sync; empty syncs owned/writable calendars |
 | `schedule` | — | Cron expression used by `msgvault serve` |
-| `enabled` | `false` | Whether the source is daemon-scheduled |
+| `enabled` | `false` | Enable the source for scheduled sync and live control; scheduling also requires `schedule` |
+| `write_calendars` | `[]` | Exact live calendar IDs allowed for event writes; empty denies all writes |
+| `invite_calendars` | `[]` | Exact IDs allowed to change guests, respond, or notify them; writes still require `write_calendars` |
+| `calendar_aliases` | `{}` | Names mapped to exact calendar IDs for live control; aliases do not expand permissions |
+
+Event control also requires [write consent](usage/calendar.md#control-events-unreleased).
+`calendars` selects sync targets; it does not grant write authority. `email` selects
+the OAuth token, while `write_calendars` selects the calendar that owns the event.
+For example, `person@example.com` can create on `team@example.com` when Google
+currently reports `owner` or `writer` for that calendar. `primary` resolves to the
+live primary calendar ID before the daemon checks policy. List the actual ID in
+both permission lists; neither list supports wildcards or alias names.
 
 ### `[beeper]`
 

@@ -123,6 +123,28 @@ type GetCacheBuildStatusResponse = CacheBuildStatus
 
 type GetCacheBuildStatusErrorResponse = ErrorResponse
 
+type ControlCalendarResponse = CalendarResult
+
+type ControlCalendarErrorResponse = ErrorResponse
+
+type ControlCalendarErrorResponseJSON = ErrorResponse
+
+type ControlCalendarErrorResponseJSON403 = ErrorResponse
+
+type ControlCalendarErrorResponseJSON404 = ErrorResponse
+
+type ControlCalendarErrorResponseJSON409 = ErrorResponse
+
+type ControlCalendarErrorResponseJSON413 = ErrorResponse
+
+type ControlCalendarErrorResponseJSON415 = ErrorResponse
+
+type ControlCalendarErrorResponseJSON500 = ErrorResponse
+
+type ControlCalendarErrorResponseJSON502 = ErrorResponse
+
+type ControlCalendarErrorResponseJSON503 = ErrorResponse
+
 type SaveCardDAVAccountResponse = CardDAVAccountResponse
 
 type SaveCardDAVAccountErrorResponse = ErrorResponse
@@ -3519,6 +3541,23 @@ type GetCacheBuildStatusResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetCacheBuildStatusResponse
+}
+
+type ControlCalendarResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ControlCalendarResponse
+	JSON400      *ControlCalendarErrorResponse
+	JSON401      *ControlCalendarErrorResponseJSON
+	JSON403      *ControlCalendarErrorResponseJSON403
+	JSON404      *ControlCalendarErrorResponseJSON404
+	JSON409      *ControlCalendarErrorResponseJSON409
+	JSON413      *ControlCalendarErrorResponseJSON413
+	JSON415      *ControlCalendarErrorResponseJSON415
+	JSON500      *ControlCalendarErrorResponseJSON500
+	JSON502      *ControlCalendarErrorResponseJSON502
+	JSON503      *ControlCalendarErrorResponseJSON503
 }
 
 type SaveCardDAVAccountResp503Headers struct {

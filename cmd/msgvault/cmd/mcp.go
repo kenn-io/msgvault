@@ -30,6 +30,8 @@ var mcpAllowIdentityDecisions bool
 var mcpAllowIdentityScoring bool
 var mcpAllowPersonMerges bool
 var mcpAllowCardDAVWrites bool
+var mcpAllowCalendarWrites bool
+var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -52,8 +54,11 @@ Add to Claude Desktop config:
 	  }`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
-		if state == nil || state.cfg == nil {
+		if state == nil || (state.cfg == nil && !isAgentMode(state)) {
 			return errors.New("configuration is unavailable")
+		}
+		if isAgentMode(state) && mcpHTTPAddr != "" {
+			return usageErr(cmd, errors.New("delegated MCP supports stdio only"))
 		}
 		cfg := state.cfg
 		st, info, err := OpenHTTPStore(cmd.Context())
@@ -70,11 +75,15 @@ Add to Claude Desktop config:
 		defer cancel()
 
 		opts := daemonMCPServeOptions(ctx, st, state)
+		if isAgentMode(state) && opts.Calendar == nil {
+			return fmt.Errorf("calendar delegation requires a daemon with API schema %s or later", calendarControlMinAPISchemaVersion)
+		}
 		opts.AllowProfileWrites = mcpAllowProfileWrites
 		opts.AllowIdentityDecisions = mcpAllowIdentityDecisions
 		opts.AllowIdentityScoring = mcpAllowIdentityScoring
 		opts.AllowPersonMerges = mcpAllowPersonMerges
 		opts.AllowCardDAVWrites = mcpAllowCardDAVWrites
+		opts.AllowCalendarWrites = mcpAllowCalendarWrites
 
 		if mcpHTTPAddr != "" {
 			normalized, err := normalizeMCPHTTPAddr(
@@ -93,7 +102,7 @@ Add to Claude Desktop config:
 				AllowWrites:        mcpHTTPAllowWrites,
 			})
 		}
-		return mcpserver.ServeWithOptions(ctx, opts)
+		return serveMCPStdioWithOptions(ctx, opts)
 	},
 }
 
@@ -109,6 +118,9 @@ const personAgendaMinAPISchemaVersion = "2.30.0"
 
 // archiveSQLMinAPISchemaVersion adds SQL confined to archive analytics files.
 const archiveSQLMinAPISchemaVersion = "2.31.0"
+
+// calendarControlMinAPISchemaVersion adds delegated Calendar tools.
+const calendarControlMinAPISchemaVersion = "3.1.0"
 
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.
@@ -177,6 +189,12 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		log.Warn("meeting tools disabled because the daemon capability probe failed", "error", capabilityErr)
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
 		opts.Meetings = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
+		opts.Calendar = st
+	}
+	if isAgentMode(state) {
+		return mcpserver.ServeOptions{Calendar: opts.Calendar, CalendarOnly: true}
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st
@@ -353,7 +371,7 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
 		"Expose write-class MCP tools over HTTP. This permits attachment exports, "+
 			"deletion manifests, Saved View management, and profile writes separately enabled with "+
-			"--allow-profile-writes, identity decisions, identity scoring, person merges, and CardDAV writes enabled "+
+			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, and calendar writes enabled "+
 			"with their separate opt-ins; enable it only for trusted, authenticated clients.")
 	mcpCmd.Flags().BoolVar(&mcpAllowProfileWrites, "allow-profile-writes", false,
 		"Expose person promotion and private Notes writes. Model tool calls "+
@@ -367,6 +385,8 @@ func init() {
 		"Expose local person merge tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowCardDAVWrites, "allow-carddav-writes", false,
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowCalendarWrites, "allow-calendar-writes", false,
+		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
 	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
 	_ = mcpCmd.Flags().MarkHidden("force-sql")

@@ -1,4 +1,4 @@
-// Package gcal is a read-only Google Calendar API v3 client, structured as a
+// Package gcal implements Google Calendar API v3 reads and event control, with a
 // close mirror of internal/gmail: a hand-rolled net/http client with a dedicated
 // rate limiter, an API interface plus in-memory mock, and unexported wire types
 // mapped to exported domain types. It deliberately reuses internal/gmail's
@@ -52,13 +52,15 @@ type Person struct {
 
 // Attendee is one invitee on an event.
 type Attendee struct {
-	Email          string `json:"email,omitempty"`
-	DisplayName    string `json:"displayName,omitempty"`
-	ResponseStatus string `json:"responseStatus,omitempty"` // needsAction | declined | tentative | accepted
-	Organizer      bool   `json:"organizer,omitzero"`
-	Self           bool   `json:"self,omitzero"`
-	Resource       bool   `json:"resource,omitzero"`
-	Optional       bool   `json:"optional,omitzero"`
+	Email            string `json:"email,omitempty"`
+	DisplayName      string `json:"displayName,omitempty"`
+	ResponseStatus   string `json:"responseStatus,omitempty"` // needsAction | declined | tentative | accepted
+	Organizer        bool   `json:"organizer,omitzero"`
+	Self             bool   `json:"self,omitzero"`
+	Resource         bool   `json:"resource,omitzero"`
+	Optional         bool   `json:"optional,omitzero"`
+	AdditionalGuests int    `json:"additionalGuests,omitzero"`
+	Comment          string `json:"comment,omitempty"`
 }
 
 // EventDateTime is an event start/end. Exactly one of DateTime (timed) or Date
@@ -95,6 +97,7 @@ func (e EventDateTime) Instant() (time.Time, bool) {
 // Event is a single calendar event (a master, a recurring instance, or an
 // exception). The full original JSON is preserved separately in message_raw.
 type Event struct {
+	ETag              string        `json:"etag,omitempty"`
 	ID                string        `json:"id,omitempty"`
 	Status            string        `json:"status,omitempty"`
 	HTMLLink          string        `json:"htmlLink,omitempty"`
@@ -117,6 +120,7 @@ type Event struct {
 	Transparency      string        `json:"transparency,omitempty"`
 	Visibility        string        `json:"visibility,omitempty"`
 	EventType         string        `json:"eventType,omitempty"`
+	Reminders         *Reminders    `json:"reminders,omitzero"`
 
 	// Raw is the original API JSON for this event, preserved verbatim for
 	// archival fidelity (stored in message_raw). It is not re-serialized from

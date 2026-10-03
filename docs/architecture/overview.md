@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-10-01"
 title: Architecture Overview
 description: How msgvault captures communications, preserves the archive, and serves people, search, and automation.
 ---
@@ -67,6 +67,13 @@ files for grouping and drill-down without scanning message bodies. FTS5 indexes
 message text for keyword search. Semantic search stores vectors in a separate
 SQLite index; PostgreSQL uses its own full-text search and optional pgvector.
 See [storage](storage.md) and [search ranking](search-ranking.md).
+
+Opt-in [calendar control](../usage/calendar.md#control-events-unreleased) runs
+through the daemon's serialized mutation gate. The daemon verifies source policy,
+delegated grants, OAuth scope, and live calendar access before sending a provider
+write. Successful changes use calendar sync's Store persistence path immediately,
+without advancing sync cursors. Remote completion and archive completion are
+reported separately so clients can reconcile a partial failure.
 
 ## Responsibilities
 
