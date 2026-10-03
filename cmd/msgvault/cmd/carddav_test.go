@@ -382,15 +382,18 @@ func TestCardDAVCLIRejectsInvalidConnectionBeforeRequest(t *testing.T) {
 }
 
 func TestAddCardDAVMicrosoftFlagsAreCheckedBeforeSignIn(t *testing.T) {
-	for _, args := range [][]string{
-		{"--google", "--microsoft", "person@example.com"},
-		{"--headless", "https://contacts.example/dav", "person"},
-		{"--microsoft", "--oauth-app", "contacts", "person@example.com"},
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--google", "--microsoft", "person@example.com"}, "--google and --microsoft cannot be combined"},
+		{[]string{"--headless", "https://contacts.example/dav", "person"}, "--headless requires --microsoft"},
+		{[]string{"--microsoft", "--oauth-app", "contacts", "person@example.com"}, "--oauth-app requires --google"},
 	} {
 		command := newAddCardDAVCmd()
 		command.SetOut(&bytes.Buffer{})
 		command.SetErr(&bytes.Buffer{})
-		command.SetArgs(args)
-		require.Error(t, command.Execute(), args)
+		command.SetArgs(tc.args)
+		require.ErrorContains(t, command.Execute(), tc.want)
 	}
 }
