@@ -713,6 +713,10 @@ type sourceMessageCounter interface {
 	CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error)
 }
 
+type virtualAccountLister interface {
+	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
+}
+
 type cliCollectionsResponse struct {
 	Collections []cliCollectionResponse `json:"collections"`
 }
@@ -835,6 +839,9 @@ type cliAccountResponse struct {
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
 	LastSync           *time.Time `json:"last_sync"`
+	// VirtualAccounts lists the source's confirmed identities and its
+	// unattributed rows, each with live counts, for account pickers.
+	VirtualAccounts []store.VirtualAccount `json:"virtual_accounts,omitempty"`
 }
 
 type cliMessageResponse struct {
@@ -2614,6 +2621,23 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		accounts = append(accounts, newCLIAccountResponse(src, count, sourceDeleted))
+	}
+
+	if lister, ok := s.store.(virtualAccountLister); ok {
+		virtual, _, _, err := s.virtualAccountSnapshots.get(
+			r.Context(), s.importContext, "", s.statsSnapshotWait, lister.ListVirtualAccountsContext,
+		)
+		if err != nil {
+			if s.writeIfContextError(w, err) {
+				return
+			}
+			s.logger.Error("failed to list virtual accounts", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list accounts")
+			return
+		}
+		for i := range accounts {
+			accounts[i].VirtualAccounts = virtual[accounts[i].ID]
+		}
 	}
 
 	response.Accounts = accounts

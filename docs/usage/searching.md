@@ -88,7 +88,14 @@ address and calendar events of that calendar.
 - Repeating one operator matches any of the values; using both requires both.
 - Mail archived by an older version fills in on the source's next sync, or
   right away with [`msgvault repair-derived`](../cli-reference.md#repair-derived).
-- `--mode=vector` and `--mode=hybrid` reject both operators; use `--mode=fts`.
+- Both operators work in full-text, vector, and hybrid search.
+
+In the TUI account picker and the Web UI's Explore account filter, a source
+whose confirmed addresses split its mail lists each address under it, plus an
+Unattributed entry for mail no confirmed address claims. The Unattributed
+entry also appears while older mail still waits for repair. MCP tools take the
+same entries as their `account` argument: the keys that `get_stats` lists
+(`identity:...` or `unattributed:...`), or an exact address.
 
 Delivery headers are routing hints, not proof that you own an address, and
 attribution never lets msgvault send from it. The

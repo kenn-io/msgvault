@@ -1835,18 +1835,44 @@ func (c ChoiceDescriptor) Validate() error {
 }
 
 type CliAccountResponse struct {
-	DisplayName        string     `json:"display_name" validate:"required"`
-	Email              string     `json:"email" validate:"required"`
-	ID                 int64      `json:"id"`
-	LastSync           *time.Time `json:"last_sync,omitempty" validate:"required"`
-	MessageCount       int64      `json:"message_count"`
-	OauthApp           *string    `json:"oauth_app,omitzero"`
-	SourceDeletedCount int64      `json:"source_deleted_count"`
-	Type               string     `json:"type" validate:"required"`
+	DisplayName        string           `json:"display_name" validate:"required"`
+	Email              string           `json:"email" validate:"required"`
+	ID                 int64            `json:"id"`
+	LastSync           *time.Time       `json:"last_sync,omitempty" validate:"required"`
+	MessageCount       int64            `json:"message_count"`
+	OauthApp           *string          `json:"oauth_app,omitzero"`
+	SourceDeletedCount int64            `json:"source_deleted_count"`
+	Type               string           `json:"type" validate:"required"`
+	VirtualAccounts    []VirtualAccount `json:"virtual_accounts,omitempty"`
 }
 
 func (c CliAccountResponse) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.DisplayName, "required"); err != nil {
+		errors = errors.Append("DisplayName", err)
+	}
+	if err := typesValidator.Var(c.Email, "required"); err != nil {
+		errors = errors.Append("Email", err)
+	}
+	if c.LastSync != nil {
+		if err := typesValidator.Var(c.LastSync, "required"); err != nil {
+			errors = errors.Append("LastSync", err)
+		}
+	}
+	if err := typesValidator.Var(c.Type, "required"); err != nil {
+		errors = errors.Append("Type", err)
+	}
+	for i, item := range c.VirtualAccounts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("VirtualAccounts[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type CliAccountsResponse struct {
@@ -13061,6 +13087,20 @@ type VectorHealth struct {
 }
 
 func (v VectorHealth) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type VirtualAccount struct {
+	AccountAddress     *string `json:"account_address,omitzero"`
+	Key                string  `json:"key" validate:"required"`
+	MessageCount       int64   `json:"message_count"`
+	PendingCount       *int64  `json:"pending_count,omitempty"`
+	SourceDeletedCount int64   `json:"source_deleted_count"`
+	SourceID           int64   `json:"source_id"`
+	Unattributed       *bool   `json:"unattributed,omitempty"`
+}
+
+func (v VirtualAccount) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 

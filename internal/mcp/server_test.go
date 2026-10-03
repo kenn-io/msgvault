@@ -1374,6 +1374,7 @@ func TestSearchMessageBodies_HybridUsesDaemonSearcher(t *testing.T) {
 	var gotReq HybridSearchRequest
 	rrf := 0.42
 	engine := &querytest.MockEngine{
+		Accounts: []query.AccountInfo{{ID: 1, Identifier: "alice@example.com"}},
 		GetMessageSummariesByIDsFunc: func(_ context.Context, ids []int64) ([]query.MessageSummary, error) {
 			assert.Equal([]int64{102}, ids, "hydrated ids")
 			return []query.MessageSummary{
@@ -2956,7 +2957,7 @@ func TestAccountFilter(t *testing.T) {
 	t.Run("search with invalid account", func(t *testing.T) {
 		r := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 			"query":   "test",
-			"account": "unknown@gmail.com",
+			"account": "unknown-account",
 		})
 		txt := resultText(t, r)
 		assert.Contains(t, txt, "account not found", "expected 'account not found' error, got: %s")
@@ -2971,7 +2972,7 @@ func TestAccountFilter(t *testing.T) {
 
 	t.Run("list with invalid account", func(t *testing.T) {
 		r := runToolExpectError(t, "list_messages", h.listMessages, map[string]any{
-			"account": "unknown@gmail.com",
+			"account": "unknown-account",
 		})
 		txt := resultText(t, r)
 		assert.Contains(t, txt, "account not found", "expected 'account not found' error, got: %s")
@@ -2988,7 +2989,7 @@ func TestAccountFilter(t *testing.T) {
 	t.Run("aggregate with invalid account", func(t *testing.T) {
 		r := runToolExpectError(t, "aggregate", h.aggregate, map[string]any{
 			"group_by": "sender",
-			"account":  "unknown@gmail.com",
+			"account":  "unknown-account",
 		})
 		txt := resultText(t, r)
 		assert.Contains(t, txt, "account not found", "expected 'account not found' error, got: %s")
@@ -3359,7 +3360,7 @@ func TestStageDeletion(t *testing.T) {
 		r := runToolExpectError(
 			t, "stage_deletion", h.stageDeletion,
 			map[string]any{
-				"account": "unknown@gmail.com",
+				"account": "unknown-account",
 				"from":    "news@example.com",
 			},
 		)
@@ -3609,7 +3610,7 @@ func TestFindSimilarMessages_UsesDaemonSearcher(t *testing.T) {
 	hasAttachment := true
 	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	h := &handlers{
-		engine: &querytest.MockEngine{},
+		engine: &querytest.MockEngine{Accounts: []query.AccountInfo{{ID: 1, Identifier: "alice@example.com"}}},
 		similarSearcher: similarSearcherFunc(func(_ context.Context, req SimilarSearchRequest) (*SimilarSearchResult, error) {
 			gotReq = req
 			return &SimilarSearchResult{

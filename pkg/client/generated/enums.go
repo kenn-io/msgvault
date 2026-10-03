@@ -595,6 +595,7 @@ func (e ExploreCacheUnavailableResponseReadiness) Validate() error {
 type ExploreFilterDimension string
 
 const (
+	ExploreFilterDimensionAccount     ExploreFilterDimension = "account"
 	ExploreFilterDimensionAfter       ExploreFilterDimension = "after"
 	ExploreFilterDimensionBefore      ExploreFilterDimension = "before"
 	ExploreFilterDimensionDeletion    ExploreFilterDimension = "deletion"
@@ -609,7 +610,7 @@ const (
 // Validate checks if the ExploreFilterDimension value is valid
 func (e ExploreFilterDimension) Validate() error {
 	switch e {
-	case ExploreFilterDimensionAfter, ExploreFilterDimensionBefore, ExploreFilterDimensionDeletion, ExploreFilterDimensionDomain, ExploreFilterDimensionIdentity, ExploreFilterDimensionMailingList, ExploreFilterDimensionMessageType, ExploreFilterDimensionParticipant, ExploreFilterDimensionSource:
+	case ExploreFilterDimensionAccount, ExploreFilterDimensionAfter, ExploreFilterDimensionBefore, ExploreFilterDimensionDeletion, ExploreFilterDimensionDomain, ExploreFilterDimensionIdentity, ExploreFilterDimensionMailingList, ExploreFilterDimensionMessageType, ExploreFilterDimensionParticipant, ExploreFilterDimensionSource:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreFilterDimension value, got: %v", e))
@@ -2028,6 +2029,7 @@ func (r RunSavedViewResponseResultKind) Validate() error {
 type SavedViewFilterField string
 
 const (
+	SavedViewFilterFieldAccount       SavedViewFilterField = "account"
 	SavedViewFilterFieldAfter         SavedViewFilterField = "after"
 	SavedViewFilterFieldBefore        SavedViewFilterField = "before"
 	SavedViewFilterFieldDeletion      SavedViewFilterField = "deletion"
@@ -2044,7 +2046,7 @@ const (
 // Validate checks if the SavedViewFilterField value is valid
 func (s SavedViewFilterField) Validate() error {
 	switch s {
-	case SavedViewFilterFieldAfter, SavedViewFilterFieldBefore, SavedViewFilterFieldDeletion, SavedViewFilterFieldDomain, SavedViewFilterFieldIdentity, SavedViewFilterFieldMailingList, SavedViewFilterFieldMessageType, SavedViewFilterFieldParticipant, SavedViewFilterFieldParticipantID, SavedViewFilterFieldSource, SavedViewFilterFieldSourceID:
+	case SavedViewFilterFieldAccount, SavedViewFilterFieldAfter, SavedViewFilterFieldBefore, SavedViewFilterFieldDeletion, SavedViewFilterFieldDomain, SavedViewFilterFieldIdentity, SavedViewFilterFieldMailingList, SavedViewFilterFieldMessageType, SavedViewFilterFieldParticipant, SavedViewFilterFieldParticipantID, SavedViewFilterFieldSource, SavedViewFilterFieldSourceID:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewFilterField value, got: %v", s))

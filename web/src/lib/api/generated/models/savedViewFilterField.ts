@@ -11,6 +11,7 @@ export const SavedViewFilterField = {
   participant: "participant",
   domain: "domain",
   mailing_list: "mailing_list",
+  account: "account",
   message_type: "message_type",
   after: "after",
   before: "before",

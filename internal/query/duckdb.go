@@ -1032,6 +1032,7 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 		conditions = append(conditions, accountConditions...)
 		args = append(args, accountArgs...)
 	}
+	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "msg")
 
 	// label: filter - case-insensitive substring match.
 	// In the Labels aggregate view (keyColumns includes the label column),
@@ -1203,11 +1204,12 @@ func (e *DuckDBEngine) buildWhereClause(opts AggregateOptions, keyColumns ...str
 	var conditions []string
 	var args []any
 
-	if !hasExplicitMessageTypeSearch(opts.SearchQuery) {
+	if !aggregateHasExplicitMessageType(MessageFilter{}, opts) {
 		conditions = append(conditions, emailOnlyFilterMsg)
 	}
 	conditions = append(conditions, store.LiveMessagesWhere("msg", opts.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", opts.SourceID, opts.SourceIDs)
+	conditions, args = appendAccountScopeConditions(conditions, args, opts.AccountScopes, "msg")
 
 	if opts.After != nil {
 		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
@@ -1436,6 +1438,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 
 	conditions = append(conditions, store.LiveMessagesWhere("msg", filter.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", filter.SourceID, filter.SourceIDs)
+	conditions, args = appendAccountScopeConditions(conditions, args, filter.AccountScopes, "msg")
 
 	if filter.ConversationID != nil {
 		conditions = append(conditions, "msg.conversation_id = ?")
@@ -1690,12 +1693,13 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 		filter.HideDeletedFromSource = true
 	}
 	where, args := e.buildFilterConditions(filter)
-	if strings.TrimSpace(filter.MessageType) == "" && !hasExplicitMessageTypeSearch(opts.SearchQuery) {
+	if strings.TrimSpace(filter.MessageType) == "" && !aggregateHasExplicitMessageType(filter, opts) {
 		where += " AND " + emailOnlyFilterMsg
 	}
 
 	// Add opts-based conditions (source IDs, date range, attachment filter).
 	whereParts, args := appendSourceFilter(nil, args, "msg.", opts.SourceID, opts.SourceIDs)
+	whereParts, args = appendAccountScopeConditions(whereParts, args, opts.AccountScopes, "msg")
 	if len(whereParts) > 0 {
 		where += " AND " + strings.Join(whereParts, " AND ")
 	}
@@ -1866,6 +1870,15 @@ func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 	}
 
 	return stats, nil
+}
+
+// ListVirtualAccounts reads the virtual account catalog through the live
+// SQLite engine, or returns none when only the Parquet cache is available.
+func (e *DuckDBEngine) ListVirtualAccounts(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
+	if e.sqliteEngine != nil {
+		return e.sqliteEngine.ListVirtualAccounts(ctx)
+	}
+	return map[int64][]store.VirtualAccount{}, nil
 }
 
 // ListAccounts returns accounts from SQLite via DuckDB's sqlite_scan,
@@ -2310,6 +2323,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		conditions = append(conditions, accountConditions...)
 		args = append(args, accountArgs...)
 	}
+	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "m")
 
 	if len(q.MessageTypes) > 0 {
 		condition, conditionArgs := duckDBMessageTypeCondition("m", q.MessageTypes)
@@ -3205,6 +3219,7 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 		conditions = append(conditions, accountConditions...)
 		args = append(args, accountArgs...)
 	}
+	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "msg")
 
 	// Label filter - case-insensitive substring match
 	if len(q.Labels) > 0 {

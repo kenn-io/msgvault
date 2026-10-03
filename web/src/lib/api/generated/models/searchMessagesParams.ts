@@ -72,6 +72,18 @@ export type SearchMessagesParams = {
    */
   list_id?: string;
   /**
+   * Exact attributed account addresses (vector or hybrid mode only)
+   */
+  account_addresses?: string[];
+  /**
+   * Include messages no confirmed account claims (vector or hybrid mode only)
+   */
+  account_unattributed?: boolean;
+  /**
+   * JSON list of account scopes that intersect (vector or hybrid mode only)
+   */
+  account_scopes?: string;
+  /**
    * Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)
    */
   time_period?: string;

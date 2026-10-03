@@ -13,6 +13,10 @@ All notable changes to msgvault, grouped by release.
   `account:work@example.org` adds sent mail and calendar events. Older mail
   fills in on each source's next sync or with `msgvault repair-derived`. API
   schema 3.1.0; older daemons refuse these operators.
+- Pick a receiving address or the unattributed mail of a source in the TUI
+  account picker, the Web UI's Explore account filter, and the MCP `account`
+  argument; vector and hybrid search accept `received:` and `account:`. API
+  schema 3.2.0.
 
 ## 0.21.0
 <small>2026-10-02</small>

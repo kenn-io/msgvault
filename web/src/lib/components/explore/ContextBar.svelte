@@ -7,6 +7,7 @@
   import type { ExploreFilter, ExploreGroupDimension, ExploreSearchMode, ExploreURLState } from '../../explore/models';
   import { filterDimensionLabel, groupedByLabel, searchModeLabel } from '../../explore/labels';
   import { groupingOptions, isGroupingDimension } from '../../grouping/catalog';
+  import AccountFilter from './AccountFilter.svelte';
   import IdentityFilter from './IdentityFilter.svelte';
 
   interface ExtraChip {
@@ -177,6 +178,7 @@
           <Button size="sm" surface="outline" label="Clear filters" onclick={onClearFilters} />
         {/if}
       </div>
+      <AccountFilter {client} {filters} onChange={onFiltersChange} />
       <IdentityFilter {client} {filters} onChange={onFiltersChange} />
     </div>
   {/if}

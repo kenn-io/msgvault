@@ -214,6 +214,8 @@ func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCo
 					"COALESCE(TRY_CAST(has_attachments AS BOOLEAN), false) AS has_attachments",
 				},
 				optionalCols: []optionalCol{
+					{name: "account_address", replaceExpr: "CAST(account_address AS VARCHAR) AS account_address", defaultExpr: "NULL::VARCHAR AS account_address"},
+					{name: "account_path", replaceExpr: "CAST(account_path AS VARCHAR) AS account_path", defaultExpr: "NULL::VARCHAR AS account_path"},
 					{
 						name:        "attachment_count",
 						replaceExpr: "COALESCE(TRY_CAST(attachment_count AS INTEGER), 0) AS attachment_count",

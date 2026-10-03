@@ -989,6 +989,9 @@ func parseSearchQueryRequest(r *http.Request, query string) *search.Query {
 }
 
 var semanticSearchStructuredFilterParamNames = []string{
+	"account_scopes",
+	"account_addresses",
+	"account_unattributed",
 	"sender",
 	recipientParam,
 	"domain",
@@ -1052,10 +1055,6 @@ func (s *Server) handleHybridSearch(
 	}
 
 	filter, err := hybridEngine.BuildFilter(ctx, parsed, structuredFilter)
-	if errors.Is(err, hybrid.ErrAccountFiltersUnsupported) {
-		writeError(w, http.StatusBadRequest, "unsupported_filter_mode", err.Error())
-		return
-	}
 	if err != nil {
 		s.logger.Error("build hybrid filter failed", "query", q, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "filter resolution failed")
@@ -1358,6 +1357,11 @@ func parseRequiredInt64Query(r *http.Request, name string) (int64, error) {
 
 func (s *Server) similarSearchFilter(r *http.Request) (vector.Filter, *apiHTTPError) {
 	var filter vector.Filter
+	scopes, err := parseAccountScopes(r)
+	if err != nil {
+		return filter, apiHTTPErrorFromParam(err)
+	}
+	filter.AccountScopes = scopes
 	if account := r.URL.Query().Get("account"); account != "" {
 		cliStore, apiErr := s.cliStore()
 		if apiErr != nil {
@@ -2374,6 +2378,11 @@ func parseTextSortField(s string) (query.TextSortField, bool) {
 // handler can reject them with a 400; out-of-range limits are clamped.
 func parseAggregateOptions(r *http.Request) (query.AggregateOptions, error) {
 	opts := query.DefaultAggregateOptions()
+	scopes, err := parseAccountScopes(r)
+	if err != nil {
+		return opts, err
+	}
+	opts.AccountScopes = scopes
 
 	if v := r.URL.Query().Get("sort"); v != "" {
 		field, ok := parseSortField(v)
@@ -2457,6 +2466,11 @@ func requestWithoutParams(r *http.Request, keys ...string) *http.Request {
 
 func parseMessageFilter(r *http.Request) (query.MessageFilter, error) {
 	var filter query.MessageFilter
+	scopes, err := parseAccountScopes(r)
+	if err != nil {
+		return filter, err
+	}
+	filter.AccountScopes = scopes
 	filter.Pagination.Limit = -1 // sentinel: "not provided"
 
 	filter.Sender = r.URL.Query().Get("sender")
@@ -3674,6 +3688,7 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 	for _, name := range []string{
 		"sender", "sender_name", recipientParam, "recipient_name", "domain", "label", "list_id",
 		"message_type", "time_period", "time_granularity", "conversation_id", "after", "before", "empty_targets",
+		"account_scopes", "account_addresses", "account_unattributed",
 	} {
 		if _, present := r.URL.Query()[name]; present {
 			opts.Filter = &filter

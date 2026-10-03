@@ -439,6 +439,7 @@ type HybridSearchRequest struct {
 	Query          string
 	Mode           string
 	Account        string
+	AccountScopes  []search.AccountScope
 	Limit          int
 	Offset         int
 	IncludeMatches bool
@@ -483,6 +484,7 @@ type SimilarSearcher interface {
 }
 
 type SimilarSearchRequest struct {
+	AccountScopes []search.AccountScope
 	MessageID     int64
 	Limit         int
 	Account       string
@@ -525,7 +527,7 @@ func translateDaemonRequestError(err error) *toolResult {
 	case "invalid_query":
 		message = "invalid_query: search query is invalid"
 	case "unsupported_filter_mode":
-		message = "unsupported_filter_mode: a filter is not supported in this search mode; account: and received: need full-text search"
+		message = "unsupported_filter_mode: a filter is not supported in this search mode"
 	case "invalid_account":
 		message = "invalid_account: account filter is invalid"
 	case "account_not_found":
@@ -721,16 +723,17 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	offset := limitArg(args, toolArgOffset, 0)
 
 	account, _ := args[toolArgAccount].(string)
-	sourceID, err := h.getAccountID(ctx, account)
+	selection, err := h.resolveAccount(ctx, account)
 	if err != nil {
 		return dependencyError("resolve metadata-search account", err)
 	}
 
-	if sourceID != nil {
-		q.AccountIDs = []int64{*sourceID}
+	if selection.sourceID != nil {
+		q.AccountIDs = []int64{*selection.sourceID}
 	}
 
-	filter := query.MessageFilter{SourceID: sourceID}
+	var filter query.MessageFilter
+	selection.applyToFilter(&filter)
 
 	results, err := h.engine.SearchFast(ctx, q, filter, limit, offset)
 	if err != nil {
@@ -898,13 +901,12 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	offset := limitArg(args, toolArgOffset, 0)
 
 	account, _ := args[toolArgAccount].(string)
-	sourceID, err := h.getAccountID(ctx, account)
+	selection, err := h.resolveAccount(ctx, account)
 	if err != nil {
 		return dependencyError("resolve body-search account", err)
 	}
-
-	if sourceID != nil {
-		q.AccountIDs = []int64{*sourceID}
+	if err := selection.applyToQuery(q); err != nil {
+		return toolErrorResult(err.Error()), nil
 	}
 
 	if len(q.TextTerms) == 0 {
@@ -1045,10 +1047,11 @@ func (h *handlers) searchMessageBodiesHybrid(
 
 	// Resolve account filter to a source ID for the structured Filter.
 	account, _ := args[toolArgAccount].(string)
-	sourceID, err := h.getAccountID(ctx, account)
+	selection, err := h.resolveAccount(ctx, account)
 	if err != nil {
 		return dependencyError("resolve semantic-search account", err)
 	}
+	sourceID := selection.sourceID
 
 	limit := searchLimitArg(args)
 	offset := limitArg(args, toolArgOffset, 0)
@@ -1071,15 +1074,13 @@ func (h *handlers) searchMessageBodiesHybrid(
 	}
 
 	filter, err := h.hybridEngine.BuildFilter(ctx, parsed)
-	if errors.Is(err, hybrid.ErrAccountFiltersUnsupported) {
-		return toolErrorResult(err.Error()), nil
-	}
 	if err != nil {
 		return nil, newInternalError("build semantic-search filter", err)
 	}
 	if sourceID != nil {
 		filter.SourceIDs = []int64{*sourceID}
 	}
+	filter.AccountScopes = append(filter.AccountScopes, selection.scopes()...)
 
 	maxPage := h.vectorCfg.Search.MaxPageSizeHybridClamp()
 	requestedEnd := offset + limit
@@ -1215,11 +1216,15 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 		), nil
 	}
 
-	account, _ := args[toolArgAccount].(string)
+	account, accountScopes, err := h.resolveForwardedAccount(ctx, stringArgument(args, toolArgAccount))
+	if err != nil {
+		return dependencyError("resolve semantic-search account", err)
+	}
 	result, err := h.hybridSearcher.SearchHybrid(ctx, HybridSearchRequest{
 		Query:          queryStr,
 		Mode:           mode,
 		Account:        account,
+		AccountScopes:  accountScopes,
 		Limit:          limit,
 		Offset:         offset,
 		IncludeMatches: true,
@@ -1403,7 +1408,10 @@ func (h *handlers) findSimilarMessagesViaSearcher(ctx context.Context, req toolR
 	if maxPage := h.vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && limit > maxPage {
 		limit = maxPage
 	}
-	account, _ := args[toolArgAccount].(string)
+	account, accountScopes, err := h.resolveForwardedAccount(ctx, stringArgument(args, toolArgAccount))
+	if err != nil {
+		return dependencyError("resolve similar-search account", err)
+	}
 	messageType, _ := args["message_type"].(string)
 	after, err := getDateArg(args, toolArgAfter)
 	if err != nil {
@@ -1419,6 +1427,7 @@ func (h *handlers) findSimilarMessagesViaSearcher(ctx context.Context, req toolR
 	}
 
 	result, err := h.similarSearcher.FindSimilar(ctx, SimilarSearchRequest{
+		AccountScopes: accountScopes,
 		MessageID:     seedID,
 		Limit:         limit,
 		Account:       account,
@@ -1455,13 +1464,14 @@ func (h *handlers) filterFromFindSimilarArgs(ctx context.Context, args map[strin
 	var f vector.Filter
 
 	account, _ := args[toolArgAccount].(string)
-	srcID, err := h.getAccountID(ctx, account)
+	selection, err := h.resolveAccount(ctx, account)
 	if err != nil {
 		return f, err
 	}
-	if srcID != nil {
-		f.SourceIDs = []int64{*srcID}
+	if selection.sourceID != nil {
+		f.SourceIDs = []int64{*selection.sourceID}
 	}
+	f.AccountScopes = selection.scopes()
 	if messageType, _ := args["message_type"].(string); messageType != "" {
 		f.MessageTypes = vector.NewBuildScope([]string{messageType}, nil).MessageTypes
 	}
@@ -2013,18 +2023,18 @@ func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResu
 
 	// Look up account filter
 	account, _ := args[toolArgAccount].(string)
-	sourceID, err := h.getAccountID(ctx, account)
+	selection, err := h.resolveAccount(ctx, account)
 	if err != nil {
 		return dependencyError("resolve message-list account", err)
 	}
 
 	filter := query.MessageFilter{
-		SourceID: sourceID,
 		Pagination: query.Pagination{
 			Limit:  listLimitArg(args) + 1,
 			Offset: limitArg(args, toolArgOffset, 0),
 		},
 	}
+	selection.applyToFilter(&filter)
 
 	if v, ok := args[toolArgFrom].(string); ok && v != "" {
 		// If it looks like an email address, filter by email; otherwise by display name.
@@ -2088,6 +2098,15 @@ func (h *handlers) getStats(ctx context.Context, _ toolRequest) (*toolResult, er
 	if err != nil {
 		return nil, newInternalError("list archive accounts", err)
 	}
+	if lister, ok := h.engine.(query.VirtualAccountLister); ok {
+		virtual, err := lister.ListVirtualAccounts(ctx)
+		if err != nil {
+			return nil, newInternalError("list virtual accounts", err)
+		}
+		for i := range accounts {
+			accounts[i].VirtualAccounts = virtual[accounts[i].ID]
+		}
+	}
 
 	vs, vsErr := vector.CollectStats(ctx, h.backend)
 	if vsErr != nil {
@@ -2111,14 +2130,15 @@ func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult,
 
 	// Look up account filter
 	account, _ := args[toolArgAccount].(string)
-	sourceID, err := h.getAccountID(ctx, account)
+	selection, err := h.resolveAccount(ctx, account)
 	if err != nil {
 		return dependencyError("resolve aggregate account", err)
 	}
 
 	opts := query.AggregateOptions{
-		SourceID: sourceID,
-		Limit:    limitArg(args, toolArgLimit, 50),
+		SourceID:      selection.sourceID,
+		AccountScopes: selection.scopes(),
+		Limit:         limitArg(args, toolArgLimit, 50),
 	}
 
 	if opts.After, err = getDateArg(args, toolArgAfter); err != nil {
@@ -2262,10 +2282,11 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 
 	// Look up account filter
 	account, _ := args[toolArgAccount].(string)
-	sourceID, err := h.getAccountID(ctx, account)
+	selection, err := h.resolveAccount(ctx, account)
 	if err != nil {
 		return dependencyError("resolve deletion account", err)
 	}
+	sourceID := selection.sourceID
 
 	// Check for query vs structured filters
 	queryStr, _ := args[toolArgQuery].(string)
@@ -2318,8 +2339,9 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		if q.IsEmpty() {
 			return toolErrorResult("query must contain at least one search term or filter"), nil
 		}
-		if sourceID != nil {
-			q.AccountIDs = []int64{*sourceID}
+		// The selection travels in the query so the FTS fallback keeps it.
+		if err := selection.applyToQuery(q); err != nil {
+			return toolErrorResult(err.Error()), nil
 		}
 
 		// Try fast search first
@@ -2371,6 +2393,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 				Limit: maxStageDeletionResults,
 			},
 		}
+		selection.applyToFilter(&filter)
 
 		var err error
 		targets, err = h.engine.GetDeletionTargetsByFilter(ctx, filter)
