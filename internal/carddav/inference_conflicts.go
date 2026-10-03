@@ -41,7 +41,7 @@ func (s *Service) conflictPersonOperation(ctx context.Context, conflictID int64)
 }
 
 func (s *Service) PreviewConflictPublication(ctx context.Context, conflictID int64) (*PublicationPreview, error) {
-	if s == nil || s.store == nil || s.client == nil {
+	if s == nil || s.store == nil || s.remote == nil {
 		return nil, errors.New("CardDAV service is not configured")
 	}
 	ctx, release, err := s.conflictPersonOperation(ctx, conflictID)
@@ -93,7 +93,7 @@ func (s *Service) previewConflictPublicationUnlocked(ctx context.Context, confli
 }
 
 func (s *Service) ApproveConflictPublication(ctx context.Context, conflictID int64, token string) error {
-	if s == nil || s.store == nil || s.client == nil {
+	if s == nil || s.store == nil || s.remote == nil {
 		return errors.New("CardDAV service is not configured")
 	}
 	ctx, release, err := s.conflictPersonOperation(ctx, conflictID)

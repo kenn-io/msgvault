@@ -88,7 +88,7 @@ func TestPendingPreviewApprovesImmutableBytesLeavingNewInference(t *testing.T) {
 				require.NoError(err)
 				t.Cleanup(func() { _ = reopened.Close() })
 				require.NoError(reopened.InitSchema())
-				service = NewService(reopened, service.client)
+				service = NewService(reopened, service.dav().client)
 			}
 			require.NoError(service.PublishPerson(t.Context(), personID))
 			assert.Equal(string(pending.OutgoingBody), string(fixture.body))
@@ -226,8 +226,8 @@ func TestPendingRecoveryAndCancellationShareHTTPBarrierAcrossServices(t *testing
 		t.Cleanup(server.Close)
 		transport, ok := server.Client().Transport.(*http.Transport)
 		require.True(ok)
-		service.client.dialContext = transport.DialContext
-		second := NewService(st, service.client)
+		service.dav().client.dialContext = transport.DialContext
+		second := NewService(st, service.dav().client)
 		require.Error(service.PublishPerson(t.Context(), personID))
 		block.Store(true)
 		recoveryDone := make(chan error, 1)

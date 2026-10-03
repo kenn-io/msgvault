@@ -30,7 +30,7 @@ type PublicationPreview struct {
 }
 
 func (s *Service) PreviewPublication(ctx context.Context, personID int64) (*PublicationPreview, error) {
-	if s == nil || s.store == nil || s.client == nil {
+	if s == nil || s.store == nil || s.remote == nil {
 		return nil, errors.New("CardDAV service is not configured")
 	}
 	release, err := s.store.AcquireCardDAVPersonOperation(ctx, personID)
@@ -73,7 +73,7 @@ func (s *Service) PublishReviewedPerson(ctx context.Context, personID int64, tok
 	if token == "" {
 		return s.PublishPerson(ctx, personID)
 	}
-	if s == nil || s.store == nil || s.client == nil {
+	if s == nil || s.store == nil || s.remote == nil {
 		return errors.New("CardDAV service is not configured")
 	}
 	release, err := s.store.AcquireCardDAVPersonOperation(ctx, personID)
@@ -81,7 +81,7 @@ func (s *Service) PublishReviewedPerson(ctx context.Context, personID int64, tok
 		return err
 	}
 	defer release()
-	operationCtx, cancel := context.WithTimeout(ctx, s.client.operationTimeout)
+	operationCtx, cancel := context.WithTimeout(ctx, s.operationTimeout())
 	defer cancel()
 	existing, err := s.store.GetCardDAVPublicationContext(operationCtx, personID)
 	if err == nil && existing.AddressBookID > 0 {

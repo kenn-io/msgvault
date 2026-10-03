@@ -81,20 +81,27 @@ type Response struct {
 	EffectiveURL *url.URL
 }
 
-type operationBudget struct {
+// Budget is the byte limit that one sync shares across all its requests.
+type Budget struct {
 	remaining int64
 }
 
-func (b *operationBudget) consume(response *Response) error {
-	consumed := response.transferredBytes
-	if consumed == 0 {
-		consumed = int64(len(response.Body))
-	}
-	b.remaining -= consumed
+// Consume charges bytes to the budget, and returns ErrOperationLimit when the
+// budget is spent.
+func (b *Budget) Consume(bytes int64) error {
+	b.remaining -= bytes
 	if b.remaining < 0 {
 		return ErrOperationLimit
 	}
 	return nil
+}
+
+func (b *Budget) consume(response *Response) error {
+	consumed := response.transferredBytes
+	if consumed == 0 {
+		consumed = int64(len(response.Body))
+	}
+	return b.Consume(consumed)
 }
 
 // StatusError represents an HTTP error response that callers can branch on

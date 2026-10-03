@@ -106,7 +106,7 @@ func (s *Service) ResolveConflict(ctx context.Context, id int64, choice Resoluti
 	if choice != ResolutionKeepLocal && choice != ResolutionKeepRemote {
 		return ErrInvalidResolutionChoice
 	}
-	if s == nil || s.store == nil || s.client == nil || id <= 0 {
+	if s == nil || s.store == nil || s.remote == nil || id <= 0 {
 		return errors.New("CardDAV service is not configured")
 	}
 	ctx, release, err := s.conflictPersonOperation(ctx, id)
@@ -122,7 +122,7 @@ func (s *Service) ResolveConflict(ctx context.Context, id int64, choice Resoluti
 		return store.ErrCardDAVConflictStale
 	}
 	if choice == ResolutionKeepRemote {
-		operationCtx, cancel := context.WithTimeout(ctx, s.client.operationTimeout)
+		operationCtx, cancel := context.WithTimeout(ctx, s.operationTimeout())
 		defer cancel()
 		remote, tombstone, fetchErr := s.fetchCanonical(operationCtx, conflict.Href)
 		if fetchErr != nil {
@@ -357,7 +357,7 @@ func (s *Service) prepareMappingConflict(
 func (s *Service) resolveConflictKeepLocal(
 	ctx context.Context, conflict *store.CardDAVConflict,
 ) error {
-	operationCtx, cancel := context.WithTimeout(ctx, s.client.operationTimeout)
+	operationCtx, cancel := context.WithTimeout(ctx, s.operationTimeout())
 	defer cancel()
 	if len(conflict.LocalMutationIntent) > 0 {
 		pending, err := conflict.LocalMutationPublication()

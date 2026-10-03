@@ -6,11 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
-	"net/url"
-	"path"
-	"slices"
 	"strings"
 	"time"
 
@@ -35,12 +31,14 @@ type Service struct {
 	connectionGeneration             int64
 	conflictOperationMappingReadHook func()
 	store                            *store.Store
-	client                           *Client
-	google                           bool
+	remote                           Remote
 }
 
 func NewService(st *store.Store, client *Client) *Service {
-	return &Service{store: st, client: client}
+	if client == nil {
+		return &Service{store: st}
+	}
+	return NewRemoteService(st, &davRemote{client: client})
 }
 
 type SyncOptions struct {
@@ -81,7 +79,7 @@ type ConnectionSyncOutcome struct {
 // pull still records a terminal state. Otherwise the row would stay running
 // and every later sync would be refused as active until the daemon restarts.
 func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncResult, err error) {
-	if s == nil || s.store == nil || s.client == nil {
+	if s == nil || s.store == nil || s.remote == nil {
 		return SyncResult{}, errors.New("CardDAV service is not configured")
 	}
 	trigger := options.Trigger
@@ -121,7 +119,7 @@ func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncRes
 }
 
 func (s *Service) sync(ctx context.Context, options SyncOptions) (SyncResult, error) {
-	operationCtx, cancel := context.WithTimeout(ctx, s.client.operationTimeout)
+	operationCtx, cancel := context.WithTimeout(ctx, s.operationTimeout())
 	defer cancel()
 	if err := s.checkRetry(operationCtx); err != nil {
 		return SyncResult{}, err
@@ -134,7 +132,8 @@ func (s *Service) sync(ctx context.Context, options SyncOptions) (SyncResult, er
 		return SyncResult{}, err
 	}
 	var failures []error
-	budget := &operationBudget{remaining: s.client.operationBytes}
+	_, budgetBytes := s.remote.Limits()
+	budget := &Budget{remaining: budgetBytes}
 	var total SyncResult
 	books, err := s.scopedBooks(operationCtx)
 	if err != nil {
@@ -254,7 +253,7 @@ func isGlobalSyncFailure(ctx context.Context, err error) bool {
 }
 
 func (s *Service) syncBook(
-	ctx context.Context, bookID int64, options SyncOptions, budget *operationBudget,
+	ctx context.Context, bookID int64, options SyncOptions, budget *Budget,
 ) (*store.CardDAVApplyResult, error) {
 	state := &bookSyncState{}
 	for attempt := range 2 {
@@ -309,7 +308,7 @@ func findCardDAVBook(books []store.CardDAVAddressBook, id int64) (store.CardDAVA
 
 func (s *Service) fetchBookPlan(
 	ctx context.Context, account store.CardDAVAccount, book store.CardDAVAddressBook,
-	options SyncOptions, budget *operationBudget, state *bookSyncState,
+	options SyncOptions, budget *Budget, state *bookSyncState,
 ) (store.CardDAVSyncPlan, error) {
 	base := store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -332,640 +331,23 @@ func (s *Service) fetchBookPlan(
 
 func (s *Service) fetchPlan(
 	ctx context.Context, book store.CardDAVAddressBook, token string,
-	budget *operationBudget, state *bookSyncState,
+	budget *Budget, state *bookSyncState,
 ) (store.CardDAVSyncPlan, error) {
-	if !book.SupportsSyncCollection {
-		return s.fetchSnapshot(ctx, book, budget)
+	pull := func(token string) (store.CardDAVSyncPlan, error) {
+		var plan store.CardDAVSyncPlan
+		err := s.gate(ctx, func(ctx context.Context) error {
+			var err error
+			plan, err = s.remote.Pull(ctx, book, token, budget)
+			return err
+		})
+		return plan, err
 	}
-	plan, err := s.fetchSyncCollectionPlan(ctx, book, token, budget)
-	if err == nil {
-		return plan, nil
-	}
-	var status *StatusError
-	switch {
-	case errors.As(err, &status) && status.Precondition == "valid-sync-token" &&
-		token != "" && !state.invalidTokenReconciled:
+	plan, err := pull(token)
+	if errors.Is(err, ErrInvalidSyncToken) && token != "" && !state.invalidTokenReconciled {
 		state.invalidTokenReconciled = true
-		return s.fetchSyncCollectionPlan(ctx, book, "", budget)
-	case errors.As(err, &status) && (status.StatusCode == http.StatusMethodNotAllowed || status.StatusCode == http.StatusNotImplemented):
-		// Capability advertisements are hints. A standards-compliant snapshot
-		// is the bounded downgrade when sync-collection is unavailable.
-		return s.fetchSnapshot(ctx, book, budget)
-	default:
-		return store.CardDAVSyncPlan{}, err
-	}
-}
-
-// fetchSyncCollectionPlan runs sync-collection, substituting an enumerated
-// snapshot for the initial empty-token request when the server rejects it
-// with 400, as Google does. See fetchSnapshot for why Google never queries.
-func (s *Service) fetchSyncCollectionPlan(
-	ctx context.Context, book store.CardDAVAddressBook, token string, budget *operationBudget,
-) (store.CardDAVSyncPlan, error) {
-	if token == "" && s.google {
-		return s.fetchEnumeratedSnapshot(ctx, book, budget)
-	}
-	plan, err := s.fetchSyncCollection(ctx, book, token, budget)
-	if token == "" && isStatus(err, http.StatusBadRequest) {
-		return s.fetchEnumeratedSnapshot(ctx, book, budget)
+		return pull("")
 	}
 	return plan, err
-}
-
-func (s *Service) do(ctx context.Context, request Request, budget *operationBudget) (*Response, error) {
-	response, err := s.doRequest(ctx, request)
-	if response != nil {
-		if budgetErr := budget.consume(response); budgetErr != nil {
-			return nil, budgetErr
-		}
-	}
-	return response, err
-}
-
-func (s *Service) fetchSyncCollection(
-	ctx context.Context, book store.CardDAVAddressBook, token string, budget *operationBudget,
-) (store.CardDAVSyncPlan, error) {
-	collection, err := url.Parse(book.CanonicalURL)
-	if err != nil {
-		return store.CardDAVSyncPlan{}, ErrUnsafeTarget
-	}
-	events := map[string]bool{} // true = changed, false = removed
-	seenTokens := map[string]bool{}
-	pageToken := token
-	var nextToken string
-	for page := range maxSyncPages {
-		seenTokens[pageToken] = true
-		body, err := SyncCollectionBody(pageToken)
-		if err != nil {
-			return store.CardDAVSyncPlan{}, err
-		}
-		depth := 1
-		response, err := s.do(ctx, Request{Method: "REPORT", URL: book.CanonicalURL, Depth: &depth, Body: body}, budget)
-		if err != nil {
-			return store.CardDAVSyncPlan{}, err
-		}
-		multiStatus, err := ParseMultiStatus(response.Body, DefaultXMLLimits())
-		if err != nil {
-			return store.CardDAVSyncPlan{}, err
-		}
-		if response.EffectiveURL != nil {
-			collection = response.EffectiveURL
-		}
-		changed, removed, continuation, truncated, err := s.parseSyncPage(ctx, collection, multiStatus)
-		if err != nil {
-			return store.CardDAVSyncPlan{}, err
-		}
-		for _, href := range changed {
-			events[href] = true
-		}
-		for _, href := range removed {
-			events[href] = false
-		}
-		if len(events) > maxSyncMembers {
-			return store.CardDAVSyncPlan{}, fmt.Errorf("CardDAV sync exceeds %d members", maxSyncMembers)
-		}
-		nextToken = continuation
-		if !truncated {
-			break
-		}
-		if seenTokens[continuation] {
-			return store.CardDAVSyncPlan{}, ErrSyncTokenCycle
-		}
-		pageToken = continuation
-		if page == maxSyncPages-1 {
-			return store.CardDAVSyncPlan{}, fmt.Errorf("CardDAV sync exceeds %d pages", maxSyncPages)
-		}
-	}
-
-	changed := make([]string, 0, len(events))
-	removed := make([]string, 0, len(events))
-	for href, isChanged := range events {
-		if isChanged {
-			changed = append(changed, href)
-		} else {
-			removed = append(removed, href)
-		}
-	}
-	slices.Sort(changed)
-	slices.Sort(removed)
-	resources, missing, err := s.fetchMembers(ctx, book, collection, changed, budget)
-	if err != nil {
-		return store.CardDAVSyncPlan{}, err
-	}
-	removed = append(removed, missing...)
-	return store.CardDAVSyncPlan{
-		ReplaceAll: token == "", NextSyncToken: nextToken,
-		Upserts: resources, RemovedHrefs: removed,
-	}, nil
-}
-
-// fetchMembers retrieves the vCards for hrefs in multiget batches when the book
-// advertises multiget, downgrading to individual GETs when the advertisement
-// proves wrong. Members that vanished between listing and fetch are returned
-// separately as missing.
-func (s *Service) fetchMembers(
-	ctx context.Context, book store.CardDAVAddressBook, collection *url.URL, hrefs []string, budget *operationBudget,
-) ([]store.CardDAVRemoteResource, []string, error) {
-	if !book.SupportsMultiget {
-		return s.fetchMembersIndividually(ctx, collection, hrefs, budget)
-	}
-	resources := make([]store.CardDAVRemoteResource, 0, len(hrefs))
-	missing := make([]string, 0)
-	for offset := 0; offset < len(hrefs); offset += multigetBatch {
-		end := min(offset+multigetBatch, len(hrefs))
-		cards, absent, err := s.fetchMultiget(ctx, collection, hrefs[offset:end], budget)
-		if isStatus(err, http.StatusMethodNotAllowed) || isStatus(err, http.StatusNotImplemented) {
-			cards, absent, err = s.fetchMembersIndividually(ctx, collection, hrefs[offset:], budget)
-			if err != nil {
-				return nil, nil, err
-			}
-			return append(resources, cards...), append(missing, absent...), nil
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-		resources = append(resources, cards...)
-		missing = append(missing, absent...)
-	}
-	return resources, missing, nil
-}
-
-// fetchEnumeratedSnapshot replaces the book's contents by listing its members
-// with PROPFIND and fetching them with the usual member path. The sync token
-// is read before the listing so anything that changes while the snapshot runs
-// is reported by the next incremental sync rather than lost.
-func (s *Service) fetchEnumeratedSnapshot(
-	ctx context.Context, book store.CardDAVAddressBook, budget *operationBudget,
-) (store.CardDAVSyncPlan, error) {
-	collection, err := url.Parse(book.CanonicalURL)
-	if err != nil {
-		return store.CardDAVSyncPlan{}, ErrUnsafeTarget
-	}
-	token, err := s.fetchCollectionSyncToken(ctx, book.ID, collection, budget)
-	if err != nil {
-		return store.CardDAVSyncPlan{}, err
-	}
-	hrefs, collection, err := s.fetchMemberListing(ctx, collection, budget)
-	if err != nil {
-		return store.CardDAVSyncPlan{}, err
-	}
-	resources, _, err := s.fetchMembers(ctx, book, collection, hrefs, budget)
-	if err != nil {
-		return store.CardDAVSyncPlan{}, err
-	}
-	return store.CardDAVSyncPlan{ReplaceAll: true, NextSyncToken: token, Upserts: resources}, nil
-}
-
-// fetchCollectionSyncToken reads the collection's current DAV:sync-token. A
-// server that omits the property yields an empty token, which repeats the
-// enumerated snapshot on every sync; that is logged so the degradation is not
-// silent.
-func (s *Service) fetchCollectionSyncToken(
-	ctx context.Context, bookID int64, collection *url.URL, budget *operationBudget,
-) (string, error) {
-	body, err := PropfindBody([]PropertyName{SyncTokenProperty})
-	if err != nil {
-		return "", err
-	}
-	depth := 0
-	response, err := s.do(ctx, Request{Method: "PROPFIND", URL: collection.String(), Depth: &depth, Body: body}, budget)
-	if err != nil {
-		return "", err
-	}
-	multiStatus, err := ParseMultiStatus(response.Body, DefaultXMLLimits())
-	if err != nil {
-		return "", err
-	}
-	if response.EffectiveURL != nil {
-		collection = response.EffectiveURL
-	}
-	for _, davResponse := range multiStatus.Responses {
-		if davResponse.StatusCode != 0 && (davResponse.StatusCode < 200 || davResponse.StatusCode >= 300) {
-			continue
-		}
-		resolved, err := s.resolveMemberHref(ctx, collection, davResponse.Href, true)
-		if err != nil {
-			return "", err
-		}
-		if sameCollectionURL(resolved, collection) {
-			token := mergeSuccessfulProperties(davResponse.PropStats).SyncToken
-			if token == "" {
-				slog.WarnContext(ctx, "CardDAV collection reported no sync token; every sync will enumerate the address book",
-					"address_book_id", bookID)
-			}
-			return token, nil
-		}
-	}
-	slog.WarnContext(ctx, "CardDAV collection omitted its own response; every sync will enumerate the address book",
-		"address_book_id", bookID)
-	return "", nil
-}
-
-// fetchMemberListing enumerates the collection's members with a Depth 1
-// PROPFIND. The result feeds a ReplaceAll plan, so anything the listing drops
-// is removed locally; the listing therefore fails rather than guesses. RFC
-// 4918 requires the collection's own response, so a listing without it is
-// treated as incomplete. Nested collections are identified by resourcetype
-// and skipped; any other member must carry an ETag.
-func (s *Service) fetchMemberListing(
-	ctx context.Context, collection *url.URL, budget *operationBudget,
-) ([]string, *url.URL, error) {
-	body, err := PropfindBody([]PropertyName{GetETagProperty, ResourceTypeProperty})
-	if err != nil {
-		return nil, nil, err
-	}
-	depth := 1
-	response, err := s.do(ctx, Request{Method: "PROPFIND", URL: collection.String(), Depth: &depth, Body: body}, budget)
-	if err != nil {
-		if isStatus(err, http.StatusInsufficientStorage) {
-			return nil, nil, ErrTruncatedSnapshot
-		}
-		return nil, nil, err
-	}
-	multiStatus, err := ParseMultiStatus(response.Body, DefaultXMLLimits())
-	if err != nil {
-		return nil, nil, err
-	}
-	if response.EffectiveURL != nil {
-		collection = response.EffectiveURL
-	}
-	hrefs := make([]string, 0, len(multiStatus.Responses))
-	seen := map[string]bool{}
-	sawCollection := false
-	for _, davResponse := range multiStatus.Responses {
-		resolved, err := s.resolveMemberHref(ctx, collection, davResponse.Href, true)
-		if err != nil {
-			return nil, nil, err
-		}
-		isCollection := sameCollectionURL(resolved, collection)
-		if davResponse.StatusCode == http.StatusInsufficientStorage {
-			return nil, nil, ErrTruncatedSnapshot
-		}
-		if isAbsentStatusCode(davResponse.StatusCode) && !isCollection {
-			continue
-		}
-		if davResponse.StatusCode != 0 && (davResponse.StatusCode < 200 || davResponse.StatusCode >= 300) {
-			return nil, nil, &StatusError{StatusCode: davResponse.StatusCode}
-		}
-		tagged, nested := false, false
-		for _, propStat := range davResponse.PropStats {
-			switch {
-			case propStat.StatusCode == http.StatusInsufficientStorage:
-				return nil, nil, ErrTruncatedSnapshot
-			case isAbsentStatusCode(propStat.StatusCode):
-				continue
-			case propStat.StatusCode < 200 || propStat.StatusCode >= 300:
-				return nil, nil, &StatusError{StatusCode: propStat.StatusCode}
-			}
-			tagged = tagged || propStat.Properties.GetETag != ""
-			nested = nested || propStat.Properties.IsCollection
-		}
-		if isCollection {
-			sawCollection = true
-			continue
-		}
-		if nested {
-			continue
-		}
-		if !tagged {
-			return nil, nil, errors.New("CardDAV listed member lacks ETag")
-		}
-		identity := canonicalDAVURLIdentity(resolved)
-		if seen[identity] {
-			return nil, nil, ErrIncompleteMultiget
-		}
-		seen[identity] = true
-		hrefs = append(hrefs, identity)
-		if len(hrefs) > maxSyncMembers {
-			return nil, nil, fmt.Errorf("CardDAV member listing exceeds %d members", maxSyncMembers)
-		}
-	}
-	if !sawCollection {
-		return nil, nil, errors.New("CardDAV member listing omitted the collection")
-	}
-	slices.Sort(hrefs)
-	return hrefs, collection, nil
-}
-
-func (s *Service) fetchMembersIndividually(
-	ctx context.Context, collection *url.URL, hrefs []string, budget *operationBudget,
-) ([]store.CardDAVRemoteResource, []string, error) {
-	resources := make([]store.CardDAVRemoteResource, 0, len(hrefs))
-	missing := make([]string, 0)
-	for _, href := range hrefs {
-		response, err := s.do(ctx, Request{Method: http.MethodGet, URL: href}, budget)
-		if isAbsentStatus(err) {
-			missing = append(missing, href)
-			continue
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-		effective := response.EffectiveURL
-		if effective == nil {
-			effective, err = url.Parse(href)
-			if err != nil {
-				return nil, nil, ErrUnsafeHref
-			}
-		}
-		if _, err := s.resolveMemberHref(ctx, collection, effective.String(), false); err != nil {
-			return nil, nil, err
-		}
-		etag := strings.TrimSpace(response.Header.Get("ETag"))
-		if etag == "" || len(response.Body) == 0 {
-			return nil, nil, ErrIncompleteMultiget
-		}
-		resource, err := parseRemoteResource(href, etag, response.Body)
-		if err != nil {
-			return nil, nil, err
-		}
-		resources = append(resources, resource)
-	}
-	return resources, missing, nil
-}
-
-func (s *Service) parseSyncPage(
-	ctx context.Context, collection *url.URL, multiStatus MultiStatus,
-) ([]string, []string, string, bool, error) {
-	if multiStatus.SyncToken == "" {
-		return nil, nil, "", false, errors.New("CardDAV sync response lacks a usable sync token")
-	}
-	changed, removed := []string{}, []string{}
-	seen := map[string]bool{}
-	truncated := false
-	for _, davResponse := range multiStatus.Responses {
-		resolved, err := s.resolveMemberHref(ctx, collection, davResponse.Href, true)
-		if err != nil {
-			return nil, nil, "", false, err
-		}
-		isCollection := sameCollectionURL(resolved, collection)
-		if davResponse.StatusCode != 0 {
-			identity := canonicalDAVURLIdentity(resolved)
-			switch {
-			case davResponse.StatusCode == http.StatusInsufficientStorage && isCollection:
-				truncated = true
-				continue
-			case isAbsentStatusCode(davResponse.StatusCode) && !isCollection:
-				if seen[identity] {
-					return nil, nil, "", false, ErrIncompleteMultiget
-				}
-				seen[identity] = true
-				removed = append(removed, identity)
-				continue
-			default:
-				return nil, nil, "", false, &StatusError{StatusCode: davResponse.StatusCode}
-			}
-		}
-		if isCollection {
-			for _, propStat := range davResponse.PropStats {
-				if propStat.StatusCode < 200 || propStat.StatusCode >= 300 {
-					return nil, nil, "", false, &StatusError{StatusCode: propStat.StatusCode}
-				}
-			}
-			continue
-		}
-		identity := canonicalDAVURLIdentity(resolved)
-		if seen[identity] {
-			return nil, nil, "", false, ErrIncompleteMultiget
-		}
-		seen[identity] = true
-		etag := ""
-		for _, propStat := range davResponse.PropStats {
-			if propStat.StatusCode < 200 || propStat.StatusCode >= 300 {
-				return nil, nil, "", false, &StatusError{StatusCode: propStat.StatusCode}
-			}
-			if propStat.Properties.GetETag != "" {
-				etag = propStat.Properties.GetETag
-			}
-		}
-		if etag == "" {
-			return nil, nil, "", false, errors.New("CardDAV sync member lacks ETag")
-		}
-		changed = append(changed, identity)
-	}
-	return changed, removed, multiStatus.SyncToken, truncated, nil
-}
-
-func (s *Service) fetchMultiget(
-	ctx context.Context, collection *url.URL, hrefs []string, budget *operationBudget,
-) ([]store.CardDAVRemoteResource, []string, error) {
-	requestHrefs, err := multigetHrefs(collection, hrefs)
-	if err != nil {
-		return nil, nil, err
-	}
-	body, err := AddressbookMultigetBody([]PropertyName{GetETagProperty, AddressDataProperty}, requestHrefs)
-	if err != nil {
-		return nil, nil, err
-	}
-	depth := 0
-	response, err := s.do(ctx, Request{Method: "REPORT", URL: collection.String(), Depth: &depth, Body: body}, budget)
-	if err != nil {
-		return nil, nil, err
-	}
-	multiStatus, err := ParseMultiStatus(response.Body, DefaultXMLLimits())
-	if err != nil {
-		return nil, nil, err
-	}
-	if response.EffectiveURL != nil {
-		collection = response.EffectiveURL
-	}
-	wanted := make(map[string]bool, len(hrefs))
-	for _, href := range hrefs {
-		resolved, err := collection.Parse(href)
-		if err != nil {
-			return nil, nil, ErrIncompleteMultiget
-		}
-		identity := canonicalDAVURLIdentity(resolved)
-		if wanted[identity] {
-			return nil, nil, ErrIncompleteMultiget
-		}
-		wanted[identity] = true
-	}
-	seen := map[string]bool{}
-	resources := make([]store.CardDAVRemoteResource, 0, len(hrefs))
-	missing := []string{}
-	for _, davResponse := range multiStatus.Responses {
-		resolved, err := s.resolveMemberHref(ctx, collection, davResponse.Href, false)
-		if err != nil {
-			return nil, nil, err
-		}
-		identity := canonicalDAVURLIdentity(resolved)
-		href := identity
-		if !wanted[identity] || seen[identity] {
-			return nil, nil, ErrIncompleteMultiget
-		}
-		seen[identity] = true
-		if isAbsentStatusCode(davResponse.StatusCode) {
-			missing = append(missing, href)
-			continue
-		}
-		if davResponse.StatusCode != 0 {
-			return nil, nil, &StatusError{StatusCode: davResponse.StatusCode}
-		}
-		etag, data := "", ""
-		for _, propStat := range davResponse.PropStats {
-			if propStat.StatusCode < 200 || propStat.StatusCode >= 300 {
-				return nil, nil, &StatusError{StatusCode: propStat.StatusCode}
-			}
-			if propStat.Properties.GetETag != "" {
-				etag = propStat.Properties.GetETag
-			}
-			if propStat.Properties.AddressData != "" {
-				data = propStat.Properties.AddressData
-			}
-		}
-		if etag == "" || strings.TrimSpace(data) == "" {
-			return nil, nil, ErrIncompleteMultiget
-		}
-		resource, err := parseRemoteResource(href, etag, []byte(data))
-		if err != nil {
-			return nil, nil, err
-		}
-		resources = append(resources, resource)
-	}
-	if len(seen) != len(wanted) {
-		return nil, nil, ErrIncompleteMultiget
-	}
-	return resources, missing, nil
-}
-
-// multigetHrefs renders member identities as absolute-path references. RFC 4918
-// accepts either an absolute URI or an absolute path, but Apple's CardDAV rejects
-// an absolute URI in addressbook-multiget with HTTP 400.
-func multigetHrefs(collection *url.URL, hrefs []string) ([]string, error) {
-	rendered := make([]string, 0, len(hrefs))
-	for _, href := range hrefs {
-		resolved, err := collection.Parse(href)
-		if err != nil {
-			return nil, ErrUnsafeHref
-		}
-		target := resolved.EscapedPath()
-		if target == "" {
-			target = "/"
-		}
-		if resolved.RawQuery != "" {
-			target += "?" + resolved.RawQuery
-		}
-		rendered = append(rendered, target)
-	}
-	return rendered, nil
-}
-
-// fetchSnapshot replaces the book's contents without a sync token. Google's
-// addressbook-query answers a populated book with an empty multistatus, which
-// a ReplaceAll plan would apply as the removal of every contact, so Google
-// always enumerates with PROPFIND instead.
-func (s *Service) fetchSnapshot(
-	ctx context.Context, book store.CardDAVAddressBook, budget *operationBudget,
-) (store.CardDAVSyncPlan, error) {
-	if s.google {
-		return s.fetchEnumeratedSnapshot(ctx, book, budget)
-	}
-	return s.fetchQuerySnapshot(ctx, book, budget)
-}
-
-func (s *Service) fetchQuerySnapshot(
-	ctx context.Context, book store.CardDAVAddressBook, budget *operationBudget,
-) (store.CardDAVSyncPlan, error) {
-	collection, err := url.Parse(book.CanonicalURL)
-	if err != nil {
-		return store.CardDAVSyncPlan{}, ErrUnsafeTarget
-	}
-	body, err := AddressbookQueryBody([]PropertyName{GetETagProperty, AddressDataProperty})
-	if err != nil {
-		return store.CardDAVSyncPlan{}, err
-	}
-	depth := 1
-	response, err := s.do(ctx, Request{Method: "REPORT", URL: book.CanonicalURL, Depth: &depth, Body: body}, budget)
-	if err != nil {
-		var status *StatusError
-		if errors.As(err, &status) && status.StatusCode == http.StatusInsufficientStorage {
-			return store.CardDAVSyncPlan{}, ErrTruncatedSnapshot
-		}
-		return store.CardDAVSyncPlan{}, err
-	}
-	multiStatus, err := ParseMultiStatus(response.Body, DefaultXMLLimits())
-	if err != nil {
-		return store.CardDAVSyncPlan{}, err
-	}
-	if response.EffectiveURL != nil {
-		collection = response.EffectiveURL
-	}
-	resources := make([]store.CardDAVRemoteResource, 0, len(multiStatus.Responses))
-	seen := map[string]bool{}
-	for _, davResponse := range multiStatus.Responses {
-		resolved, err := s.resolveMemberHref(ctx, collection, davResponse.Href, true)
-		if err != nil {
-			return store.CardDAVSyncPlan{}, err
-		}
-		if davResponse.StatusCode == http.StatusInsufficientStorage {
-			return store.CardDAVSyncPlan{}, ErrTruncatedSnapshot
-		}
-		if isAbsentStatusCode(davResponse.StatusCode) && !sameCollectionURL(resolved, collection) {
-			continue
-		}
-		if davResponse.StatusCode != 0 && (davResponse.StatusCode < 200 || davResponse.StatusCode >= 300) {
-			return store.CardDAVSyncPlan{}, &StatusError{StatusCode: davResponse.StatusCode}
-		}
-		if sameCollectionURL(resolved, collection) {
-			for _, propStat := range davResponse.PropStats {
-				if propStat.StatusCode == http.StatusInsufficientStorage {
-					return store.CardDAVSyncPlan{}, ErrTruncatedSnapshot
-				}
-				if !isAbsentStatusCode(propStat.StatusCode) &&
-					(propStat.StatusCode < 200 || propStat.StatusCode >= 300) {
-					return store.CardDAVSyncPlan{}, &StatusError{StatusCode: propStat.StatusCode}
-				}
-			}
-			continue
-		}
-		href := canonicalDAVURLIdentity(resolved)
-		if seen[href] {
-			return store.CardDAVSyncPlan{}, ErrIncompleteMultiget
-		}
-		seen[href] = true
-		etag, data := "", ""
-		for _, propStat := range davResponse.PropStats {
-			if propStat.StatusCode < 200 || propStat.StatusCode >= 300 {
-				return store.CardDAVSyncPlan{}, &StatusError{StatusCode: propStat.StatusCode}
-			}
-			if propStat.Properties.GetETag != "" {
-				etag = propStat.Properties.GetETag
-			}
-			if propStat.Properties.AddressData != "" {
-				data = propStat.Properties.AddressData
-			}
-		}
-		if etag == "" || strings.TrimSpace(data) == "" {
-			return store.CardDAVSyncPlan{}, ErrIncompleteMultiget
-		}
-		resource, err := parseRemoteResource(href, etag, []byte(data))
-		if err != nil {
-			return store.CardDAVSyncPlan{}, err
-		}
-		resources = append(resources, resource)
-	}
-	return store.CardDAVSyncPlan{ReplaceAll: true, Upserts: resources}, nil
-}
-
-func (s *Service) resolveMemberHref(
-	ctx context.Context, collection *url.URL, href string, allowCollection bool,
-) (*url.URL, error) {
-	resolved, err := s.client.ValidateChildHref(ctx, collection, href)
-	if err != nil {
-		return nil, err
-	}
-	if sameCollectionURL(resolved, collection) {
-		if allowCollection {
-			return resolved, nil
-		}
-		return nil, ErrUnsafeHref
-	}
-	collectionPath := strings.TrimSuffix(path.Clean(collection.EscapedPath()), "/")
-	if path.Dir(path.Clean(resolved.EscapedPath())) != collectionPath {
-		return nil, ErrUnsafeHref
-	}
-	return resolved, nil
 }
 
 func parseRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteResource, error) {

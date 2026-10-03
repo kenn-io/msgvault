@@ -20,7 +20,7 @@ func TestPublicationHrefBuildsEscapedDirectCollectionChild(t *testing.T) {
 
 	origin, err := url.Parse("https://contacts.example")
 	require.NoError(t, err)
-	service := &Service{client: &Client{origin: originURL(origin)}}
+	service := &Service{remote: &davRemote{client: &Client{origin: originURL(origin)}}}
 
 	href, err := service.publicationHref(
 		"https://contacts.example/books/personal?ignored=yes#fragment", "a/b?c#d",
@@ -35,7 +35,7 @@ func TestPublicationHrefBuildsEscapedDirectCollectionChild(t *testing.T) {
 func TestPublicationHrefUsesCanonicalDefaultHTTPSPort(t *testing.T) {
 	origin, err := url.Parse("https://contacts.example")
 	require.NoError(t, err)
-	service := &Service{client: &Client{origin: originURL(origin)}}
+	service := &Service{remote: &davRemote{client: &Client{origin: originURL(origin)}}}
 
 	href, err := service.publicationHref("https://CONTACTS.example/books/personal/", "alice")
 

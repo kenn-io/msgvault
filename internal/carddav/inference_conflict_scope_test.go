@@ -128,7 +128,7 @@ func TestNonWriteConflictPreservesOrdinaryPublicationAcrossRecovery(t *testing.T
 			require.NoError(service.ApproveConflictPublication(t.Context(), conflict.ID, preview.ApprovalToken))
 			if restart {
 				sf.timeout = true
-				service.client.requestTimeout = 250 * time.Millisecond
+				service.dav().client.requestTimeout = 250 * time.Millisecond
 				require.Error(service.ResolveConflict(t.Context(), conflict.ID, ResolutionKeepLocal))
 				during, err := st.GetCardDAVPublicationContext(t.Context(), personID)
 				require.NoError(err)
@@ -150,7 +150,7 @@ func TestNonWriteConflictPreservesOrdinaryPublicationAcrossRecovery(t *testing.T
 				t.Cleanup(func() { _ = reopened.Close() })
 				require.NoError(reopened.InitSchema())
 				st = reopened
-				service = NewService(reopened, service.client)
+				service = NewService(reopened, service.dav().client)
 				_, err = service.Sync(t.Context(), SyncOptions{Full: true})
 				require.NoError(err)
 			} else {
