@@ -1404,6 +1404,9 @@ func (e *Engine) ListAccounts(ctx context.Context) ([]query.AccountInfo, error) 
 			Identifier:  acc.Email,
 			DisplayName: acc.DisplayName,
 			LastSyncAt:  copyTime(acc.LastSync),
+			// Children ride along even when the catalog is stale, so pickers
+			// keep them when ListVirtualAccounts reports it unavailable.
+			VirtualAccounts: acc.VirtualAccounts,
 		}
 	}
 	return result, nil

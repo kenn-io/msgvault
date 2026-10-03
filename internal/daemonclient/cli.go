@@ -1090,8 +1090,8 @@ func (c *Client) GetCLIAccounts(ctx context.Context) ([]CLIAccount, error) {
 	return cliAccountsFromGenerated(resp.JSON200), nil
 }
 
-// errVirtualAccountsUnavailable means the daemon could not read the virtual
-// account catalog, which is different from a catalog with no entries.
+// errVirtualAccountsUnavailable means the daemon could not read a current
+// virtual account catalog, which is different from a catalog with no entries.
 var errVirtualAccountsUnavailable = errors.New("virtual account catalog unavailable")
 
 // GetCLIVirtualAccounts reads each source's virtual accounts from

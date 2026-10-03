@@ -705,8 +705,10 @@ type cliAccountsResponse struct {
 	// fresh counts did not finish in time; AsOf says when it was taken.
 	Stale bool      `json:"stale,omitempty"`
 	AsOf  time.Time `json:"as_of,omitzero"`
-	// VirtualAccountsUnavailable reports that the catalog read failed or
-	// timed out, so no account carries virtual_accounts this time.
+	// VirtualAccountsUnavailable reports that the catalog read failed, timed
+	// out, or was served from an earlier snapshot. Accounts then carry the
+	// last known virtual_accounts, if any, which can miss identities confirmed
+	// since, so absence from them does not prove an address is unknown.
 	VirtualAccountsUnavailable bool `json:"virtual_accounts_unavailable,omitempty"`
 }
 
@@ -2627,18 +2629,18 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if lister, ok := s.store.(virtualAccountLister); ok {
-		virtual, _, _, err := s.virtualAccountSnapshots.get(
+		virtual, _, stale, err := s.virtualAccountSnapshots.get(
 			r.Context(), s.importContext, "", s.statsSnapshotWait, lister.ListVirtualAccountsContext,
 		)
 		// The catalog is extra detail; a slow or failed read still returns
-		// the accounts, without their virtual children.
+		// the accounts with whatever children the last snapshot held.
 		if err != nil && s.writeIfContextError(w, r.Context().Err()) {
 			return
 		}
 		if err != nil {
 			s.logger.Warn("listing accounts without virtual accounts", "error", err)
-			response.VirtualAccountsUnavailable = true
 		}
+		response.VirtualAccountsUnavailable = stale || err != nil
 		for i := range accounts {
 			accounts[i].VirtualAccounts = virtual[accounts[i].ID]
 		}
