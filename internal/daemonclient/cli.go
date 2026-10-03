@@ -861,7 +861,7 @@ func (c *Client) openCLIStream(
 		if resp.StatusCode == http.StatusOK {
 			return resp, nil
 		}
-		err = HandleCLIErrorResponse(resp)
+		err = handleRawErrorResponse(resp, handleCLIRunErrorBody)
 		_ = resp.Body.Close()
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, backoff.Permanent(ctxErr)
@@ -907,9 +907,9 @@ func (c *Client) runCLIStream(
 			return true, nil
 		case "error":
 			if event.Error != "" {
-				return false, errors.New(event.Error)
+				return false, &CLIRunError{err: errors.New(event.Error)}
 			}
-			return false, fmt.Errorf("%s failed", operation)
+			return false, &CLIRunError{err: fmt.Errorf("%s failed", operation)}
 		default:
 			return false, nil
 		}

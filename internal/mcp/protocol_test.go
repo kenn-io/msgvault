@@ -442,7 +442,7 @@ func TestMCPStdioLegacyCanConfirmCalendarMutation(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	backend := &calendarMCPFake{}
-	peer := newTask5RawStdioPeer(t, ServeOptions{Calendar: backend, CalendarOnly: true, AllowCalendarWrites: true})
+	peer := newTask5RawStdioPeer(t, ServeOptions{Calendar: backend, DelegatedOnly: true, AllowCalendarWrites: true})
 	initialized := peer.call(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{"elicitation":{"form":{}}},"clientInfo":{"name":"calendar-confirmation-test","version":"1"}}}`)
 	requirements.Nil(initialized.Error)
 	peer.writeLiteralLine(t, `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`)

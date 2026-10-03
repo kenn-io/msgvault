@@ -3353,6 +3353,10 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
+Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
+
+With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes only the six delegated draft tools over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
+
 ```bash
 msgvault mcp [flags]
 ```
@@ -3365,7 +3369,7 @@ msgvault mcp [flags]
 | `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
 | `--http-token-env` | — | On unreleased `main`, name the environment variable holding an independent inbound bearer key. Requires `--http`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
-| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, and deletion staging tools over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`. Enable only for trusted, authenticated clients. |
+| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`. Enable only for trusted, authenticated clients. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
 
 See [MCP Server](/docs/usage/chat/) for configuration and tool reference.
@@ -4107,6 +4111,7 @@ calendar tools.
 
 The response includes the daemon address, the secret, and the granted source references.
 Pass `--agent-url <address>` and the file path to `--agent-token-file` when invoking delegated commands.
+Delegated commands include `msgvault mcp`, which offers the admitted draft tools over stdio using that grant.
 The address comes from the issuing request. On a default local install it is an
 HTTP loopback URL, which works only on that machine and requires
 `--agent-allow-insecure`. For an agent on another machine, use a reachable HTTPS

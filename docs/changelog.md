@@ -19,6 +19,7 @@ All notable changes to msgvault, grouped by release.
   and archives successful changes immediately.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
+- Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Msgvault never sends.
 
 ## 0.21.0
 <small>2026-10-02</small>

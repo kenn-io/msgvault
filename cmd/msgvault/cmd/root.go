@@ -239,7 +239,12 @@ func agentDelegatedCapable(cmd *cobra.Command) bool {
 			return true
 		}
 	}
-	switch cmd.Name() {
+	return agentDelegatedCommand(cmd.Name())
+}
+
+// agentDelegatedCommand owns the command set offered to an agent grant.
+func agentDelegatedCommand(name string) bool {
+	switch name {
 	case "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover", "mcp":
 		return true
 	}

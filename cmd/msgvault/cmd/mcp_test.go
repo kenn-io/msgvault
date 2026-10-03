@@ -192,7 +192,7 @@ func TestMCPDelegatedModeRejectsDaemonWithoutCalendarAPI(t *testing.T) {
 	var serveCalled bool
 	serveMCPStdioWithOptions = func(_ context.Context, options mcpserver.ServeOptions) error {
 		serveCalled = true
-		assertions.True(options.CalendarOnly)
+		assertions.True(options.DelegatedOnly)
 		assertions.Nil(options.Calendar)
 		return errors.New("stdio serving started without calendar tools")
 	}
