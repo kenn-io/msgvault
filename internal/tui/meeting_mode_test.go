@@ -1397,3 +1397,15 @@ func TestModeKeyReachesMeetings(t *testing.T) {
 		assert.Equal(t, modeMeetings, updated.mode)
 	})
 }
+
+func TestOmiMeetingAccounts(t *testing.T) {
+	assert := assert.New(t)
+	model := NewBuilder().WithAccounts(query.AccountInfo{ID: 11, SourceType: "omi", Identifier: "omi-work"}).WithSize(100, 24).Build()
+	accounts := model.meetingAccounts()
+	require.Len(t, accounts, 1)
+	assert.Equal("omi-work", accounts[0].Identifier)
+	assert.Equal("Omi", model.meetingSourceLabel(11))
+	sourceID := int64(11)
+	model.meetingState.sourceID = &sourceID
+	assert.Contains(stripANSI(model.meetingHeaderView()), "[Meetings] - Omi")
+}

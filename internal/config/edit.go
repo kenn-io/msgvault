@@ -907,6 +907,9 @@ func validateEditableCandidate(cfg *Config) error {
 	for index, source := range cfg.GCal {
 		schedules[fmt.Sprintf("gcal[%d].schedule", index)] = source.Schedule
 	}
+	for index, source := range cfg.Omi {
+		schedules[fmt.Sprintf("omi[%d].schedule", index)] = source.Schedule
+	}
 	for index, source := range cfg.Granola {
 		schedules[fmt.Sprintf("granola[%d].schedule", index)] = source.Schedule
 	}
