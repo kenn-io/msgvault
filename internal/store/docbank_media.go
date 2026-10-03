@@ -55,6 +55,7 @@ const (
 
 // beeperMediaEligible is the shared provider, capture and role predicate. It
 // assumes a (attachments), m (messages), c (conversations) and src (sources).
+// Archives older than attachment_state leave it NULL on stored Beeper audio.
 const beeperMediaEligible = `length(COALESCE(a.content_hash, '')) = 64
 	  AND COALESCE(a.size, 0) > 0
 	  AND COALESCE(a.storage_path, '') <> ''
@@ -63,7 +64,7 @@ const beeperMediaEligible = `length(COALESCE(a.content_hash, '')) = 64
 	  AND COALESCE(m.source_message_id, '') <> ''
 	  AND (
 		(src.source_type = 'beeper'
-		  AND COALESCE(a.attachment_state, '') = 'stored'
+		  AND COALESCE(a.attachment_state, '') IN ('', 'stored')
 		  AND COALESCE(a.media_type, '') IN ('audio', 'voice_note')
 		  AND COALESCE(a.attachment_role, 'unknown') = 'standalone')
 		OR (src.source_type <> 'beeper'
