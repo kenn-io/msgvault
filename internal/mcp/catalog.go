@@ -159,11 +159,21 @@ func (c *operationCatalogCache) get(capabilities catalogCapabilities) []toolDefi
 }
 
 func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
-	definitions := slices.Clone(stableOperationCatalogs.get(capabilitiesFor(opts)))
-	if opts.IdentityScoring != nil {
-		definitions = append(definitions, stableIdentityScoringDefinitions...)
-		sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
+	var definitions []toolDefinition
+	if !opts.DraftToolsOnly {
+		definitions = slices.Clone(stableOperationCatalogs.get(capabilitiesFor(opts)))
+		if opts.IdentityScoring != nil {
+			definitions = append(definitions, stableIdentityScoringDefinitions...)
+		}
 	}
+	if opts.Drafts != nil {
+		for _, command := range opts.DraftCommands {
+			if definition, ok := stableDraftDefinitions[command]; ok {
+				definitions = append(definitions, definition)
+			}
+		}
+	}
+	sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
 	return definitions
 }
 

@@ -9,7 +9,7 @@ retrieve attachments, and help you remember people and conversations. The
 server uses your selected daemon: without `[remote].url`, it starts or reuses
 the local daemon; with `[remote].url`, it uses that remote server.
 
-MCP searches the archive. It cannot send email, change live mailbox labels, or
+MCP searches the archive and prepares and manages drafts. It cannot send email, change live mailbox labels, or
 read Google credentials. Semantic searches call your configured embedding
 endpoint, so use a local or self-hosted endpoint when search text must stay on
 your machine or network. See [vector search](/docs/usage/vector-search/).
@@ -22,6 +22,42 @@ need `--allow-profile-writes`. HTTP clients get read tools by default and need
 
 Saved View management changes only reusable definitions; deleting a Saved
 View never deletes archive messages.
+
+## Draft tools
+
+These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Msgvault never sends.
+
+`draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
+
+| Tool | Command | Parameters |
+|---|---|---|
+| `draft_reply` | `draft-reply` | Required `message_id`, `body`; optional `from`, `all`, `account`, `source_id` |
+| `draft_compose` | `draft-compose` | `account`, `source_id`, `from`, `to`, `cc`, `bcc`, `subject`, `body`, `conversation`, `reply_to` |
+| `draft_forward` | `draft-forward` | Required `message_id`; optional `from`, `to`, `cc`, `bcc`, `account`, `source_id`, `body` |
+| `draft_get` | `draft-get` | `draft_id` or `conversation` |
+| `draft_edit` | `draft-edit` | Required `draft_id`, `revision`, `body` |
+| `draft_delete` | `draft-delete` | Required `draft_id`, `revision` |
+| `draft_recover` | `draft-recover` | Required `draft_id`, `revision`; recovery can finish an interrupted deletion |
+| `draft_send_as` | `draft-send-as` | Required `account`; lists Gmail sender identities |
+
+Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
+
+Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover`. Each call uses the agent token, and the daemon checks its permissions and source scope.
+
+For a delegated Claude Desktop session, use these arguments with the daemon URL and token file you received from the owner:
+
+```json
+{
+  "mcpServers": {
+    "msgvault": {
+      "command": "msgvault",
+      "args": ["--agent-url", "https://daemon.example.com", "--agent-token-file", "/path/to/agent.token", "mcp"]
+    }
+  }
+}
+```
+
+For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Delegated MCP serves over stdio; `--http` returns a usage error. Read tools `draft_get` and `draft_send_as` are available in owner HTTP sessions by default. Draft writes require `--http-allow-writes`.
 
 ## Meeting evidence
 
@@ -474,10 +510,12 @@ instruction or as your consent to a write.
 
 Enable only the writes intended for the assistant's session:
 
-| Transport | Saved View management, attachment export, and deletion staging | Person promotion and Notes writes |
+| Transport | Saved View management, attachment export, deletion staging, and draft writes | Person promotion and Notes writes |
 |---|---|---|
 | Stdio | Available by default | Add `--allow-profile-writes` |
 | HTTP | Add `--http-allow-writes` | Add both `--http-allow-writes` and `--allow-profile-writes` |
+
+`draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available.
 
 When profile writes are enabled, two additional tools appear:
 

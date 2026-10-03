@@ -234,8 +234,13 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // work without local configuration or a local daemon are permitted; all others
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
-	switch cmd.Name() {
-	case "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover":
+	return agentDelegatedCommand(cmd.Name())
+}
+
+// agentDelegatedCommand owns the command set offered to an agent grant.
+func agentDelegatedCommand(name string) bool {
+	switch name {
+	case "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover", "mcp":
 		return true
 	}
 	return false

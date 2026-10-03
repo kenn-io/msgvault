@@ -31,6 +31,7 @@ var mcpAllowIdentityScoring bool
 var mcpAllowPersonMerges bool
 var mcpAllowCardDAVWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
+var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
 
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
@@ -39,7 +40,12 @@ var mcpCmd = &cobra.Command{
 
 This allows Claude Desktop (or any MCP client) to query your archive
 using tools like search_metadata, search_message_bodies, search_document_attachments, semantic_search_messages, get_message, list_messages, list_thread, export_eml, get_stats,
-aggregate, get_person_agenda, list_saved_views, run_saved_view, and stage_deletion.
+aggregate, get_person_agenda, list_saved_views, run_saved_view, stage_deletion,
+draft_reply, draft_compose, draft_forward, draft_get, draft_edit, draft_delete,
+draft_recover, and draft_send_as.
+Draft tools create, read, edit, delete, and recover managed drafts through the
+daemon. Msgvault never sends. With --agent-url and --agent-token-file, stdio
+exposes only delegated draft tools and the daemon enforces the agent grant.
 
 Add to Claude Desktop config:
   {
@@ -52,6 +58,9 @@ Add to Claude Desktop config:
 	  }`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
+		if isAgentMode(state) {
+			return runDelegatedMCP(cmd)
+		}
 		if state == nil || state.cfg == nil {
 			return errors.New("configuration is unavailable")
 		}
@@ -93,7 +102,7 @@ Add to Claude Desktop config:
 				AllowWrites:        mcpHTTPAllowWrites,
 			})
 		}
-		return mcpserver.ServeWithOptions(ctx, opts)
+		return serveMCPStdioWithOptions(ctx, opts)
 	},
 }
 
@@ -103,6 +112,35 @@ const savedViewsMinAPISchemaVersion = "2.21.0"
 const personCardDAVMinAPISchemaVersion = "2.32.0"
 const identityReviewMinAPISchemaVersion = "3.0.0"
 const identityScoringMinAPISchemaVersion = "3.0.0"
+const draftsMinAPISchemaVersion = "3.0.0"
+
+func runDelegatedMCP(cmd *cobra.Command) error {
+	if mcpHTTPAddr != "" {
+		return usageErr(cmd, errors.New("--http is not available in agent-delegated mode; run the stdio MCP server"))
+	}
+	st, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("open daemon: %w", err)
+	}
+	defer func() { _ = st.Close() }()
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+	// Draft tools are the only delegated tools, so serving without them would look like an empty msgvault.
+	health, err := st.Health(ctx)
+	if err != nil {
+		return fmt.Errorf("check daemon compatibility: %w", err)
+	}
+	var schemaVersion string
+	if health != nil && health.APISchemaVersion != nil {
+		schemaVersion = *health.APISchemaVersion
+	}
+	if !daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
+		return fmt.Errorf("MCP draft tools require daemon API schema %s or newer (daemon reports %q); upgrade the daemon", draftsMinAPISchemaVersion, schemaVersion)
+	}
+	return serveMCPStdioWithOptions(ctx, mcpserver.ServeOptions{
+		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DraftToolsOnly: true,
+	})
+}
 
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
@@ -136,6 +174,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		ManifestSaver:      daemonMCPManifestSaver{client: st},
 		DocumentSearcher:   st,
 		PersonFileSearcher: daemonMCPPersonFileSearcher{client: st},
+		Drafts:             daemonMCPDraftRunner{client: st},
 	}
 	if cfg != nil {
 		opts.AttachmentsDir = cfg.AttachmentsDir()
@@ -193,6 +232,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityScoringMinAPISchemaVersion) {
 		opts.IdentityScoring = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
+		opts.DraftCommands = mcpDraftCommands(false)
 	}
 
 	return opts
@@ -352,7 +394,7 @@ func init() {
 			"a trusted network boundary or authenticating reverse proxy.")
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
 		"Expose write-class MCP tools over HTTP. This permits attachment exports, "+
-			"deletion manifests, Saved View management, and profile writes separately enabled with "+
+			"deletion manifests, Saved View management, managed draft writes, and profile writes separately enabled with "+
 			"--allow-profile-writes, identity decisions, identity scoring, person merges, and CardDAV writes enabled "+
 			"with their separate opt-ins; enable it only for trusted, authenticated clients.")
 	mcpCmd.Flags().BoolVar(&mcpAllowProfileWrites, "allow-profile-writes", false,

@@ -108,7 +108,7 @@ Commands that access archive state keep their usual stdout/stderr output while u
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
 4. With both `--agent-url` and `--agent-token-file`, the CLI connects to a
    remote daemon as a restricted caller. `draft-reply`, `draft-compose`,
-   `draft-get`, `draft-edit`, `draft-delete`, and `draft-recover` are
+   `draft-get`, `draft-edit`, `draft-delete`, `draft-recover`, and `mcp` are
    available in this mode. The CLI rejects owner
    configuration (`--config`, `--home`, `--local`) and never writes the token
    to logs or argv. It sends the token in the `X-Msgvault-Agent-Token` header;
@@ -3237,6 +3237,10 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
+Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
+
+With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes only the six delegated draft tools over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
+
 ```bash
 msgvault mcp [flags]
 ```
@@ -3247,7 +3251,7 @@ msgvault mcp [flags]
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve MCP over StreamableHTTP on this address instead of stdio. Bare ports bind to loopback, e.g. `8080` becomes `127.0.0.1:8080`. Non-loopback addresses require `[server].api_key` or `--http-allow-insecure`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without `[server].api_key`. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
-| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, and deletion staging tools over StreamableHTTP. Enable only for trusted, authenticated clients. |
+| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Enable only for trusted, authenticated clients. |
 
 See [MCP Server](/docs/usage/chat/) for configuration and tool reference.
 
@@ -3975,6 +3979,7 @@ has no delegated draft sender authority.
 
 The response includes the daemon address, the secret, and the granted source references.
 Pass `--agent-url <address>` and the file path to `--agent-token-file` when invoking delegated commands.
+Delegated commands include `msgvault mcp`, which offers the admitted draft tools over stdio using that grant.
 The address comes from the issuing request. On a default local install it is an
 HTTP loopback URL, which works only on that machine and requires
 `--agent-allow-insecure`. For an agent on another machine, use a reachable HTTPS

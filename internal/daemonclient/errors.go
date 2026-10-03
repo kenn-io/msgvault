@@ -57,6 +57,15 @@ func (e *APIError) Unwrap() error {
 	}
 }
 
+// CLIRunError marks a decoded daemon CLI refusal or stream error event.
+type CLIRunError struct {
+	err error
+}
+
+func (e *CLIRunError) Error() string { return e.err.Error() }
+
+func (e *CLIRunError) Unwrap() error { return e.err }
+
 // operationInProgressCode is the daemon's error code for "the operation gate
 // is held by other work"; clients wait and retry instead of failing.
 const operationInProgressCode = "operation_in_progress"
@@ -84,12 +93,6 @@ func operationInProgressFromBody(body []byte) error {
 // error that includes the HTTP status.
 func HandleErrorResponse(resp *http.Response) error {
 	return handleRawErrorResponse(resp, handleErrorBody)
-}
-
-// HandleCLIErrorResponse reads a CLI error response body and returns the
-// daemon's user-facing message when one is available.
-func HandleCLIErrorResponse(resp *http.Response) error {
-	return handleRawErrorResponse(resp, handleCLIErrorBody)
 }
 
 func handleRawErrorResponse(
@@ -130,6 +133,17 @@ func apiErrorMessage(body []byte) (message, code string, decoded bool) {
 	}
 
 	return string(body), "", false
+}
+
+func handleCLIRunErrorBody(status int, body []byte) error {
+	err := handleCLIErrorBody(status, body)
+	if _, busy := errors.AsType[*OperationInProgressError](err); busy {
+		return err
+	}
+	if _, _, decoded := apiErrorMessage(body); decoded {
+		return &CLIRunError{err: err}
+	}
+	return err
 }
 
 // APIResponseError maps generated non-CLI responses to daemonclient errors.
