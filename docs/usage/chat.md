@@ -306,7 +306,7 @@ whose surviving message belongs to another account's conversation. See
 
 ### `search_metadata` and `search_message_bodies` / `semantic_search_messages` query syntax
 
-Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:`), `list:` (or `list-id:`), `has:attachment`, `before:`/`after:` (YYYY-MM-DD), `older_than:`/`newer_than:` (e.g. `7d`, `2w`, `1m`, `1y`), `larger:`/`smaller:` (e.g. `5M`), `received:`/`account:` (an exact confirmed address; not in `semantic_search_messages`). Bare domains on `from:`/`to:` match any address at that domain. Multiple terms are ANDed; repeated List-Id operators require every literal substring.
+Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:`), `list:` (or `list-id:`), `has:attachment`, `before:`/`after:` (YYYY-MM-DD), `older_than:`/`newer_than:` (e.g. `7d`, `2w`, `1m`, `1y`), `larger:`/`smaller:` (e.g. `5M`), `received:`/`account:` (an exact confirmed address). Bare domains on `from:`/`to:` match any address at that domain. Multiple terms are ANDed; repeated List-Id operators require every literal substring.
 
 Not supported: negation (`-has:attachment`), `OR`, or parentheses grouping.
 
