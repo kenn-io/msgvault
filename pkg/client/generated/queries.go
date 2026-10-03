@@ -12,6 +12,9 @@ type GetAggregatesQuery struct {
 	// ViewType Aggregate view type
 	ViewType *string `json:"view_type,omitempty"`
 
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
+
 	// Sort Sort field: count, size, attachment_size, or name
 	Sort *string `json:"sort,omitempty"`
 
@@ -49,6 +52,9 @@ type GetAggregatesQuery struct {
 type GetSubAggregatesQuery struct {
 	// ViewType Aggregate view type
 	ViewType string `json:"view_type" validate:"required"`
+
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
 
 	// Sort Sort field: count, size, attachment_size, or name
 	Sort *string `json:"sort,omitempty"`
@@ -542,6 +548,9 @@ type ListChangedMessagesQuery struct {
 }
 
 type FilterMessagesQuery struct {
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
+
 	// Sender Sender email/address filter
 	Sender *string `json:"sender,omitempty"`
 
@@ -610,6 +619,9 @@ type FilterMessagesQuery struct {
 }
 
 type GetGmailIDsByFilterQuery struct {
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
+
 	// Sender Sender email/address filter
 	Sender *string `json:"sender,omitempty"`
 
@@ -1088,6 +1100,9 @@ type SearchMessagesQuery struct {
 	// ListID Exact case-insensitive RFC 2919 List-Id filter (vector or hybrid mode only)
 	ListID *string `json:"list_id,omitempty"`
 
+	// AccountScopes JSON list of account scopes that intersect (vector or hybrid mode only)
+	AccountScopes *string `json:"account_scopes,omitempty"`
+
 	// TimePeriod Calendar period in YYYY, YYYY-MM, or YYYY-MM-DD format (vector or hybrid mode only)
 	TimePeriod *string `json:"time_period,omitempty"`
 
@@ -1117,6 +1132,9 @@ type DeepSearchQuery struct {
 
 	// Scope Exact search scope: body; omit for composite full-text search
 	Scope *string `json:"scope,omitempty"`
+
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
 
 	// Sender Sender email/address filter; not supported when scope=body
 	Sender *string `json:"sender,omitempty"`
@@ -1217,6 +1235,9 @@ type FastSearchQuery struct {
 	// ViewType Stats grouping view type
 	ViewType *string `json:"view_type,omitempty"`
 
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
+
 	// Sender Sender email/address filter
 	Sender *string `json:"sender,omitempty"`
 
@@ -1298,6 +1319,9 @@ type FindSimilarMessagesQuery struct {
 	// Account Account email or configured source identifier
 	Account *string `json:"account,omitempty"`
 
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
+
 	// MessageType Message type filter
 	MessageType *string `json:"message_type,omitempty"`
 
@@ -1328,6 +1352,9 @@ type GetTotalStatsQuery struct {
 
 	// GroupBy Aggregate view type for grouping
 	GroupBy *string `json:"group_by,omitempty"`
+
+	// AccountScopes JSON list of account scopes that intersect, for structured clients
+	AccountScopes *string `json:"account_scopes,omitempty"`
 
 	// Sender Sender email/address filter
 	Sender *string `json:"sender,omitempty"`

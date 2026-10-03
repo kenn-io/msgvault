@@ -871,6 +871,7 @@ export * from "./valueEnvelopeInput";
 export * from "./vCardIdentity";
 export * from "./vectorHealth";
 export * from "./verifyCLIParams";
+export * from "./virtualAccount";
 export * from "./visualBuildRequest";
 export * from "./visualGeneration";
 export * from "./visualRetireRequest";

@@ -705,12 +705,21 @@ type cliAccountsResponse struct {
 	// fresh counts did not finish in time; AsOf says when it was taken.
 	Stale bool      `json:"stale,omitempty"`
 	AsOf  time.Time `json:"as_of,omitzero"`
+	// VirtualAccountsUnavailable reports that the catalog read failed, timed
+	// out, or was served from an earlier snapshot. Accounts then carry the
+	// last known virtual_accounts, if any, which can miss identities confirmed
+	// since, so absence from them does not prove an address is unknown.
+	VirtualAccountsUnavailable bool `json:"virtual_accounts_unavailable,omitempty"`
 }
 
 // sourceMessageCounter is implemented by stores that count every source's
 // messages in one pass.
 type sourceMessageCounter interface {
 	CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error)
+}
+
+type virtualAccountLister interface {
+	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
 }
 
 type cliCollectionsResponse struct {
@@ -835,6 +844,9 @@ type cliAccountResponse struct {
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
 	LastSync           *time.Time `json:"last_sync"`
+	// VirtualAccounts lists the source's confirmed identities and its
+	// unattributed rows, each with live counts, for account pickers.
+	VirtualAccounts []store.VirtualAccount `json:"virtual_accounts,omitempty"`
 }
 
 type cliMessageResponse struct {
@@ -2614,6 +2626,24 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		accounts = append(accounts, newCLIAccountResponse(src, count, sourceDeleted))
+	}
+
+	if lister, ok := s.store.(virtualAccountLister); ok {
+		virtual, _, stale, err := s.virtualAccountSnapshots.get(
+			r.Context(), s.importContext, "", s.statsSnapshotWait, lister.ListVirtualAccountsContext,
+		)
+		// The catalog is extra detail; a slow or failed read still returns
+		// the accounts with whatever children the last snapshot held.
+		if err != nil && s.writeIfContextError(w, r.Context().Err()) {
+			return
+		}
+		if err != nil {
+			s.logger.Warn("listing accounts without virtual accounts", "error", err)
+		}
+		response.VirtualAccountsUnavailable = stale || err != nil
+		for i := range accounts {
+			accounts[i].VirtualAccounts = virtual[accounts[i].ID]
+		}
 	}
 
 	response.Accounts = accounts

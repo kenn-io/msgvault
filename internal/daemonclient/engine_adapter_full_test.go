@@ -2683,3 +2683,14 @@ func TestEngineTextSearchRejectsUnconfirmedAccount(t *testing.T) {
 		})
 	}
 }
+
+func TestEngineListVirtualAccountsFailsWhenCatalogUnavailable(t *testing.T) {
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSONResponse(t, w, map[string]any{
+			"accounts":                     []map[string]any{{"id": 42, "email": "a@example.com", "type": "gmail", "message_count": 1}},
+			"virtual_accounts_unavailable": true,
+		})
+	})
+	_, err := NewEngineAdapter(store).ListVirtualAccounts(context.Background())
+	require.ErrorIs(t, err, errVirtualAccountsUnavailable, "an unread catalog is not an empty one")
+}

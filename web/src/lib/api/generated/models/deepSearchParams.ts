@@ -12,6 +12,10 @@ export type DeepSearchParams = {
    */
   scope?: string;
   /**
+   * JSON list of account scopes that intersect, for structured clients
+   */
+  account_scopes?: string;
+  /**
    * Sender email/address filter; not supported when scope=body
    */
   sender?: string;

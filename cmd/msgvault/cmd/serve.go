@@ -2676,6 +2676,10 @@ func (a *storeAPIAdapter) ListAccountIdentitiesContext(
 	return a.store.ListAccountIdentitiesContext(ctx, sourceID)
 }
 
+func (a *storeAPIAdapter) ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
+	return a.store.ListVirtualAccountsContext(ctx)
+}
+
 func (a *storeAPIAdapter) ResolveAccountIdentityContext(
 	ctx context.Context,
 	sourceID int64,

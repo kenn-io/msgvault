@@ -682,6 +682,11 @@ func (s *Store) buildMessageSearchSQL(q *search.Query, ftsAvailable bool) messag
 		conditions = append(conditions, accountConditions...)
 		args = append(args, accountArgs...)
 	}
+	// Structured scopes narrow candidates before any limit applies.
+	if scopeConditions, scopeArgs := search.AccountScopeConditions(q.AccountScopes, "m"); len(scopeConditions) > 0 {
+		conditions = append(conditions, scopeConditions...)
+		args = append(args, scopeArgs...)
+	}
 
 	// message_type: / message_type= filter. An "email" value also matches an
 	// empty or NULL message_type. Rows imported before the column existed
