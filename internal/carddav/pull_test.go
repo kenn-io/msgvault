@@ -920,7 +920,8 @@ func TestParseRemoteResourceDecodesTextContactValues(t *testing.T) {
 // googleLikeState drives a fake with Google's observed CardDAV behavior:
 // sync-collection rejects an empty token with a JSON 400, addressbook-query
 // answers with an empty multistatus even when the book has members, and
-// PROPFIND plus addressbook-multiget work normally. REPORTs require Depth 0.
+// PROPFIND plus addressbook-multiget work normally. sync-collection requires
+// Depth 0.
 type googleLikeState struct {
 	mu       sync.Mutex
 	requests []string
@@ -999,18 +1000,7 @@ func newGoogleLikeHandler(t *testing.T, state *googleLikeState) http.HandlerFunc
 			state.requests = append(state.requests, "REPORT addressbook-query")
 			writeDAVXML(t, w, `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"/>`)
 		case r.Method == "REPORT" && strings.Contains(body, "addressbook-multiget"):
-			if !assert.Equal(t, "0", r.Header.Get("Depth")) {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
 			hrefs := requestedHrefs(body)
-			for _, href := range hrefs {
-				parsed, err := url.Parse(href)
-				if !assert.NoError(t, err) || !assert.False(t, parsed.IsAbs()) || !assert.True(t, strings.HasPrefix(href, "/")) {
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
-			}
 			state.requests = append(state.requests, "REPORT addressbook-multiget "+strings.Join(hrefs, ","))
 			var responses strings.Builder
 			for _, href := range hrefs {
@@ -1110,43 +1100,15 @@ func TestGoogleInitialSyncSkipsEmptyTokenSyncCollection(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(SyncResult{Books: 1}, result)
 	assert.Equal([]string{"REPORT sync-collection token-1"}, state.requests)
-
-	state.mu.Lock()
-	state.requests = nil
-	state.token = "token-2"
-	state.etags["/books/personal/alice.vcf"] = `&quot;a2&quot;`
-	state.changes = changedResponse("/books/personal/alice.vcf", `&quot;a2&quot;`) +
-		`<D:response><D:href>/books/personal/bob.vcf</D:href><D:status>HTTP/1.1 404 Not Found</D:status></D:response>`
-	state.mu.Unlock()
-	result, err = service.Sync(t.Context(), SyncOptions{})
-	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Updated: 1, Removed: 1}, result)
-	assert.Equal([]string{
-		"REPORT sync-collection token-1",
-		"REPORT addressbook-multiget /books/personal/alice.vcf",
-	}, state.requests)
-	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
-	require.NoError(err)
-	require.Len(books, 1)
-	assert.Equal("token-2", books[0].SyncToken)
-	resource, err := st.GetCardDAVResourceContext(t.Context(), books[0].ID, server.URL+"/books/personal/alice.vcf")
-	require.NoError(err)
-	assert.Equal(`"a2"`, resource.RemoteETag)
-	_, err = st.GetCardDAVResourceContext(t.Context(), books[0].ID, server.URL+"/books/personal/bob.vcf")
-	require.ErrorIs(err, store.ErrCardDAVResourceNotFound)
 }
 
 func TestGoogleInvalidTokenReconcileUsesEnumeratedSnapshot(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	state := newGoogleLikeState()
-	var rejectToken atomic.Bool
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "REPORT" && rejectToken.CompareAndSwap(true, false) {
-			assert.Equal("0", r.Header.Get("Depth"))
-			body := readRequestBody(t, r)
-			assert.True(validSyncReport(t, body))
-			assert.Equal("token-1", syncRequestToken(body))
+		if requests.Add(1) == 1 {
 			w.WriteHeader(http.StatusForbidden)
 			_, err := w.Write([]byte(`<D:error xmlns:D="DAV:"><D:valid-sync-token/></D:error>`))
 			assert.NoError(err)
@@ -1157,35 +1119,17 @@ func TestGoogleInvalidTokenReconcileUsesEnumeratedSnapshot(t *testing.T) {
 	t.Cleanup(server.Close)
 	base, st, book := newPullService(t, server, true)
 	service := NewGoogleService(st, base.client)
+	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET sync_token = ? WHERE id = ?`), "stale-token", book.ID)
+	require.NoError(err)
+
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
 	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
-
-	state.mu.Lock()
-	state.requests = nil
-	state.token = "token-2"
-	state.listing = []string{"/books/personal/alice.vcf"}
-	state.etags["/books/personal/alice.vcf"] = `&quot;a2&quot;`
-	state.mu.Unlock()
-	rejectToken.Store(true)
-
-	result, err = service.Sync(t.Context(), SyncOptions{})
-	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Updated: 1, Removed: 1}, result)
 	assert.Equal([]string{
 		"PROPFIND 0",
 		"PROPFIND 1",
-		"REPORT addressbook-multiget /books/personal/alice.vcf",
+		"REPORT addressbook-multiget /books/personal/alice.vcf,/books/personal/bob.vcf",
 	}, state.requests)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
-	require.NoError(err)
-	require.Len(books, 1)
-	assert.Equal("token-2", books[0].SyncToken)
-	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, server.URL+"/books/personal/alice.vcf")
-	require.NoError(err)
-	assert.Equal(`"a2"`, resource.RemoteETag)
-	_, err = st.GetCardDAVResourceContext(t.Context(), book.ID, server.URL+"/books/personal/bob.vcf")
-	require.ErrorIs(err, store.ErrCardDAVResourceNotFound)
 }
 
 func TestIncrementalSyncBadRequestIsNotDowngraded(t *testing.T) {

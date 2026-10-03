@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-03"
+last_edited: "2026-09-30"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -135,19 +135,7 @@ tokens. After revoking access, connect Google again to reauthorize.
 
 Google's canonical entry point is
 `https://www.googleapis.com/.well-known/carddav`. Msgvault discovers the contact
-collection from Google's response and uses vCard 3.0. For the first sync and
-`--full`, the daemon reads a sync token, lists the contacts, and retrieves their
-vCards. Later syncs use that token to request changes. An expired token triggers
-a new full reconciliation.
-
-If Google discovery works but syncs fail on msgvault 0.20.0, upgrade both the
-CLI and daemon. Version 0.21.0 includes fixes for Google initial sync and
-multiget requests, plus upstream error logging, but it still sends `Depth: 1`
-on incremental `sync-collection` reports. No published release includes the
-RFC 6578 `Depth: 0` correction yet. Upgrade both the CLI and daemon to a release
-that includes the correction once it is available. See the
-[changelog](../changelog.md#0210).
-
+collection from Google's response and uses vCard 3.0 and incremental sync.
 Test and save the account again to rediscover its URLs; Google recommends
 rediscovery every two to four weeks. See [Google's CardDAV reference](https://developers.google.com/people/carddav).
 
@@ -311,39 +299,6 @@ not create a run.
 Publication and conflict routes use global IDs and route network operations to
 the persisted owner's connection. Store-only views stay available even when a
 connection's credential needs repair.
-
-## Diagnose a failed sync
-
-The daemon makes CardDAV requests. Adding `-v` to `sync-carddav` changes the
-CLI's logging level; it does not enable debug logging in an already running
-daemon.
-
-1. Stop the running daemon through the service manager you use to run it.
-2. Start it in the foreground with debug logging:
-
-    ```bash
-    msgvault serve --log-level debug
-    ```
-
-3. In another terminal, retry the connection:
-
-    ```bash
-    msgvault sync-carddav --connection default --full
-    ```
-
-For an upstream HTTP failure, look for `CardDAV request failed`. The warning
-records the request method and HTTP status, such as `REPORT` and `400`. At debug
-level, another entry includes up to 512 bytes of the server's error body, plus
-`...` when clipped. This can expose Google's error code, such as
-`INVALID_ARGUMENT` or `SERVICE_DISABLED`. Expected 404, 410, and 412 responses
-appear only at debug level because they can be part of normal synchronization.
-Responses that exceed the request limits or cannot be read fail under the
-existing safety and transport checks.
-
-The API, CLI, and stored sync history keep their generic error messages. The
-logger adds no request URL or credentials, but the server's raw error excerpt
-may contain private data. Review and redact it before sharing logs. Restart the
-daemon with its usual logging level after troubleshooting.
 
 ## Resolve competing edits
 

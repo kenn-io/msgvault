@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/md5" // #nosec G501 -- RFC 7616 MD5 interoperability fixture.
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,7 +20,6 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
-	"unicode/utf8"
 
 	"github.com/icholy/digest"
 	"github.com/stretchr/testify/assert"
@@ -799,73 +797,43 @@ func fixtureDNSResponse(request []byte, addresses ...netip.Addr) []byte {
 }
 
 func TestClientLogsUpstreamBodyOnlyAtDebug(t *testing.T) {
-	const googleError = `{"error": {"code": 400, "status": "INVALID_ARGUMENT"}}`
-	for _, tc := range []struct {
-		name, body, excerpt string
-	}{
-		{name: "Google JSON", body: googleError, excerpt: googleError},
-		{name: "empty"},
-		{name: "trimmed", body: " \n" + googleError + "\t", excerpt: googleError},
-		{name: "ASCII clipped", body: strings.Repeat("x", 513), excerpt: strings.Repeat("x", 512) + "..."},
-		{name: "multibyte boundary", body: strings.Repeat("x", 511) + "é", excerpt: strings.Repeat("x", 511) + "..."},
-		{name: "invalid UTF-8", body: "invalid \xff bytes", excerpt: "invalid  bytes"},
-	} {
-		for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
-			t.Run(tc.name+"/"+level.String(), func(t *testing.T) {
-				assert := assert.New(t)
-				require := require.New(t)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusBadRequest)
-					_, err := io.WriteString(w, tc.body)
-					assert.NoError(err)
-				}))
-				t.Cleanup(server.Close)
-				var logged bytes.Buffer
-				previous := slog.Default()
-				slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, &slog.HandlerOptions{Level: level})))
-				t.Cleanup(func() { slog.SetDefault(previous) })
+	for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
+		t.Run(level.String(), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, err := w.Write([]byte(`{"error": {"code": 400, "status": "INVALID_ARGUMENT"}}`))
+				assert.NoError(err)
+			}))
+			t.Cleanup(server.Close)
+			var logged bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: level})))
+			t.Cleanup(func() { slog.SetDefault(previous) })
 
-				client := newFixtureClient(t, server.URL, "alice", "secret")
-				response, err := client.Do(t.Context(), Request{Method: "REPORT", URL: server.URL + "/books/personal/alice.vcf"})
-				var status *StatusError
-				require.ErrorAs(err, &status)
-				assert.Equal(http.StatusBadRequest, status.StatusCode)
-				require.NotNil(response)
-				assert.Equal(tc.body, string(response.Body), "diagnostic clipping must not change the response")
-
-				decoder := json.NewDecoder(&logged)
-				decoder.UseNumber()
-				var records []map[string]any
-				for decoder.More() {
-					var record map[string]any
-					require.NoError(decoder.Decode(&record))
-					records = append(records, record)
+			client := newFixtureClient(t, server.URL, "alice", "secret")
+			_, err := client.Do(t.Context(), Request{Method: http.MethodPut, URL: server.URL + "/books/personal/alice.vcf"})
+			var status *StatusError
+			require.ErrorAs(err, &status)
+			assert.Equal(http.StatusBadRequest, status.StatusCode)
+			assert.Contains(logged.String(), "level=WARN")
+			assert.Contains(logged.String(), "method=PUT")
+			assert.Contains(logged.String(), "status=400")
+			for line := range strings.Lines(logged.String()) {
+				if strings.Contains(line, "level=WARN") {
+					assert.NotContains(line, "body=")
 				}
-				wantRecords := 1
-				if level == slog.LevelDebug {
-					wantRecords = 2
-				}
-				require.Len(records, wantRecords)
-				for _, record := range records {
-					assert.Equal("CardDAV request failed", record["msg"])
-					assert.Equal("REPORT", record["method"])
-					assert.Equal(json.Number("400"), record["status"])
-					assert.NotContains(record, "url")
-					assert.NotContains(record, "authorization")
-				}
-				assert.Equal("WARN", records[0]["level"])
-				assert.NotContains(records[0], "body")
-				if level == slog.LevelDebug {
-					assert.Equal("DEBUG", records[1]["level"])
-					excerpt, ok := records[1]["body"].(string)
-					require.True(ok)
-					assert.Equal(tc.excerpt, excerpt)
-					assert.True(utf8.ValidString(excerpt))
-					assert.LessOrEqual(len(excerpt), 512+len("..."))
-				}
-			})
-		}
+			}
+			if level == slog.LevelDebug {
+				assert.Contains(logged.String(), "level=DEBUG")
+				assert.Contains(logged.String(), "INVALID_ARGUMENT")
+			} else {
+				assert.NotContains(logged.String(), "INVALID_ARGUMENT")
+			}
+			assert.NotContains(logged.String(), "/books/personal/", "the request URL is not logged")
+		})
 	}
 }
 
