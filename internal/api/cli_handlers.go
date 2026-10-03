@@ -2627,13 +2627,13 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		virtual, _, _, err := s.virtualAccountSnapshots.get(
 			r.Context(), s.importContext, "", s.statsSnapshotWait, lister.ListVirtualAccountsContext,
 		)
-		if err != nil {
-			if s.writeIfContextError(w, err) {
-				return
-			}
-			s.logger.Error("failed to list virtual accounts", "error", err)
-			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list accounts")
+		// The catalog is extra detail; a slow or failed read still returns
+		// the accounts, without their virtual children.
+		if err != nil && s.writeIfContextError(w, r.Context().Err()) {
 			return
+		}
+		if err != nil {
+			s.logger.Warn("listing accounts without virtual accounts", "error", err)
 		}
 		for i := range accounts {
 			accounts[i].VirtualAccounts = virtual[accounts[i].ID]

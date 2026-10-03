@@ -104,3 +104,33 @@ func TestHandleCLIAccountsListsVirtualAccounts(t *testing.T) {
 		{Key: store.VirtualIdentityKey(src.ID, "work@example.org"), SourceID: src.ID, AccountAddress: "work@example.org", MessageCount: 1},
 	}, resp.Accounts[0].VirtualAccounts)
 }
+
+func TestHandleCLIAccountsSurvivesCatalogFailure(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Logger: testLogger(),
+	})
+	_, err := st.GetOrCreateSource("mbox", "archive-1")
+	require.NoError(err)
+	// Hiding a table the catalog reads makes only the catalog fail.
+	_, err = st.DB().Exec(`ALTER TABLE account_identities RENAME TO account_identities_off`)
+	require.NoError(err)
+	t.Cleanup(func() { _, _ = st.DB().Exec(`ALTER TABLE account_identities_off RENAME TO account_identities`) })
+
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil))
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		Accounts []struct {
+			Email           string                 `json:"email"`
+			VirtualAccounts []store.VirtualAccount `json:"virtual_accounts"`
+		} `json:"accounts"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(resp.Accounts, 1)
+	assert.Equal(t, "archive-1", resp.Accounts[0].Email)
+	assert.Empty(t, resp.Accounts[0].VirtualAccounts)
+}
