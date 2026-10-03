@@ -292,19 +292,26 @@ email identities. AI notetakers are excluded from attendee attribution. The
 configured account email records archive ownership; it does not establish who
 organized the meeting or mean that Omi verified the address.
 
-Each sync scans accessible history because the API has no updated-since filter.
-Unchanged snapshots avoid archive writes, and older edits are picked up on the
-next scan. `--full` rewrites derived projections in place. `--after YYYY-MM-DD`
-bounds creation dates and implies `--full`; `--limit` caps conversations
-processed, including unchanged ones. A later unbounded sync rescans history.
-An enabled entry with a schedule supports daemon sync and **Sync Now**.
+Omi allows 25 transcript list requests per hour per API key, and each request
+returns up to 200 conversations. The first sync reads all history, so an
+archive over about 5,000 conversations pauses for the hourly limit and can
+take several hours. Later syncs read only conversations created since the last
+complete sync, reaching back 48 hours to catch conversations that finished
+processing late and recent edits. That is usually two requests. The API has no
+updated-since filter, so edits to older conversations, and conversations that
+finish processing or are unlocked more than 48 hours after they were created,
+appear after `sync-omi --full`, which rescans history and rewrites derived
+projections in place. `--after YYYY-MM-DD` bounds creation dates and implies `--full`;
+`--limit` caps conversations processed, including unchanged ones. Runs with
+either flag leave the sync watermark where it was. An enabled entry with a
+schedule supports daemon sync and **Sync Now**.
 
 Conversations with useful summaries or actions and no transcript are archived
 with unavailable transcript coverage. If a later response omits an already
-archived transcript, msgvault keeps the prior record and reports the skipped
-replacement. Malformed transcripts are also skipped. Sync continues through
-other conversations, then reports a partial failure with committed records
-retained. A later run can retry. An explicit empty transcript is valid evidence;
+archived transcript, msgvault keeps the prior record and notes it in the sync
+output. Malformed transcripts are skipped; sync continues through other
+conversations, then reports a partial failure with committed records retained.
+A later run can retry. An explicit empty transcript is valid evidence;
 missing timestamps remain untimed, while reversed or negative intervals are
 malformed.
 
@@ -314,9 +321,8 @@ archived records when they disappear upstream. Omi currently removes locked
 and malformed records after applying pagination. msgvault continues through
 short pages, but an entirely filtered page is indistinguishable from the end
 of history and can hide older conversations. The API has no total or next-page
-cursor to resolve that ambiguity. Large history scans also consume Omi's API
-and transcript-read budgets; rate-limit failures leave committed meetings in
-place and the next run can retry.
+cursor to resolve that ambiguity. Rate-limit failures leave committed meetings
+in place and the next run can retry.
 
 ## Granola
 

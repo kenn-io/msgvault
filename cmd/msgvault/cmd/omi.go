@@ -138,12 +138,15 @@ var syncOmiCmd = &cobra.Command{
 	Short: "Sync Omi meeting conversations and transcripts",
 	Long: `Sync meeting conversations and transcripts from Omi.
 
-Each run rescans accessible completed conversations and skips unchanged archive
-writes so edits to older conversations remain discoverable. With no identifier, every configured [[omi]] source is synced.
+The first run reads all accessible completed conversations. Later runs read
+conversations created since the last complete sync, reaching back 48 hours to
+pick up late processing and recent edits, and skip unchanged archive writes.
+With no identifier, every configured [[omi]] source is synced.
 
-Use --full to rewrite derived projections for every conversation; --after
-bounds a full sync to conversations created after the given date. Re-fetched conversations
-are upserted in place, so --full repairs existing rows without duplicates.
+Use --full to rescan history, picking up edits to older conversations and
+rewriting derived projections; --after bounds a full sync to conversations
+created after the given date. Re-fetched conversations are upserted in place,
+so --full repairs existing rows without duplicates.
 
 Examples:
   msgvault sync-omi

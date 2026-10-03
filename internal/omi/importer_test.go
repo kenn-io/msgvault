@@ -142,8 +142,13 @@ func TestImportUnavailableReplacementContinuesHistory(t *testing.T) {
 					pages[0] = []Conversation{decodeFixture(t, string(replaced)), decodeFixture(t, strings.ReplaceAll(fixture, "meeting-1", "same-page"))}
 					pages[PageSize] = []Conversation{decodeFixture(t, strings.ReplaceAll(fixture, "meeting-1", "older-page"))}
 					sum, err := imp.Import(context.Background(), opts)
-					require.ErrorContains(err, "unavailable transcript evidence")
-					assert.Equal(int64(1), sum.Errors)
+					if replacement == "reversed" {
+						require.ErrorContains(err, "unavailable transcript evidence")
+						assert.Equal(int64(1), sum.Errors)
+					} else {
+						require.NoError(err, "keeping an archived transcript is not a failure")
+						assert.Zero(sum.Errors)
+					}
 					assert.Equal(int64(2), sum.MeetingsAdded)
 					assert.Zero(sum.MeetingsUpdated)
 					ids, err := st.MessageExistsBatch(src.ID, []string{"meeting-1", "same-page", "older-page"})
@@ -168,8 +173,12 @@ func TestImportUnavailableReplacementContinuesHistory(t *testing.T) {
 					}
 					latest, err := st.GetLatestSync(src.ID)
 					require.NoError(err)
-					assert.Equal("failed", latest.Status)
-					assert.Equal(int64(1), latest.ErrorsCount)
+					if replacement == "reversed" {
+						assert.Equal("failed", latest.Status)
+						assert.Equal(int64(1), latest.ErrorsCount)
+					} else {
+						assert.Equal("completed", latest.Status)
+					}
 				})
 			}
 		}
@@ -265,7 +274,7 @@ func TestImportAfterFiltersByCreationTime(t *testing.T) {
 	}}
 	var offsets []int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Empty(r.URL.Query().Get("start_date"), "creation lower bounds are applied locally")
+		assert.Equal("2026-01-02T00:00:00Z", r.URL.Query().Get("start_date"))
 		assert.NotEmpty(r.URL.Query().Get("end_date"), "the fixed import boundary stabilizes pagination")
 		offset, parseErr := strconv.Atoi(r.URL.Query().Get("offset"))
 		if parseErr != nil {
@@ -336,7 +345,7 @@ func TestClientHostedAndSelfHostedContract(t *testing.T) {
 				assert.Equal("true", r.URL.Query().Get("include_transcript"))
 				assert.Equal("200", r.URL.Query().Get("limit"))
 				assert.Equal("200", r.URL.Query().Get("offset"))
-				assert.Empty(r.URL.Query().Get("start_date"), "creation lower bounds are applied locally")
+				assert.Equal("2026-01-01T00:00:00Z", r.URL.Query().Get("start_date"))
 				assert.Equal("2026-01-02T00:00:00Z", r.URL.Query().Get("end_date"))
 				_, _ = w.Write([]byte("[" + fixture + "]"))
 			}))
@@ -350,6 +359,7 @@ func TestClientHostedAndSelfHostedContract(t *testing.T) {
 			client.http = server.Client()
 			result, err := client.ListConversations(context.Background(), ListParams{
 				Limit: 1000, Offset: 200,
+				CreatedAfter:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 				CreatedBefore: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 			})
 			require.NoError(err)
@@ -433,20 +443,15 @@ func TestNormalizeBaseURL(t *testing.T) {
 	}
 }
 
-func TestImportLimitsLifecycleAndInvalidTranscript(t *testing.T) {
+func TestImportLimitAndInvalidTranscript(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrCreateSource(SourceType, "work")
 	require.NoError(err)
 	completed := decodeFixture(t, fixture)
-	locked := decodeFixture(t, strings.ReplaceAll(fixture, "meeting-1", "locked-1"))
-	locked.Locked = true
-	discarded := decodeFixture(t, strings.ReplaceAll(fixture, "meeting-1", "discarded-1"))
-	discarded.Discarded = true
-	processing := decodeFixture(t, strings.ReplaceAll(fixture, "meeting-1", "processing-1"))
-	processing.Status = "processing"
-	source := &pageSource{pages: map[int][]Conversation{0: {locked, discarded, processing, completed}}}
+	next := decodeFixture(t, strings.ReplaceAll(fixture, "meeting-1", "meeting-2"))
+	source := &pageSource{pages: map[int][]Conversation{0: {completed, next}}}
 	imp := NewImporter(st, source)
 	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "work", AccountEmail: "owner@example.com", Limit: 1})
 	require.NoError(err)
@@ -506,4 +511,84 @@ func TestImportLimitBoundsPageAndAdvancesByRequestedSize(t *testing.T) {
 	assert.Equal(int64(2), sum.MeetingsProcessed)
 	assert.Equal([]int{2, 1}, limits, "requests shrink to the remaining processing limit")
 	assert.Equal([]int{0, 2}, offsets, "offsets advance by each requested page size")
+}
+
+func TestImportIncrementalWatermark(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource(SourceType, "work")
+	require.NoError(err)
+	conversation := func(id string, createdAt time.Time) Conversation {
+		return decodeFixture(t, strings.NewReplacer(
+			`"meeting-1"`, `"`+id+`"`,
+			`"created_at":"2026-01-01T12:00:00Z"`, `"created_at":"`+createdAt.Format(time.RFC3339Nano)+`"`,
+		).Replace(fixture))
+	}
+	day := func(d int) time.Time { return time.Date(2026, 1, d, 12, 0, 0, 0, time.UTC) }
+	history := []Conversation{conversation("old", day(1))}
+	var startDates []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startDate := r.URL.Query().Get("start_date")
+		startDates = append(startDates, startDate)
+		var lower time.Time
+		var parseErr error
+		if startDate != "" {
+			lower, parseErr = time.Parse(time.RFC3339Nano, startDate)
+		}
+		offset, offsetErr := strconv.Atoi(r.URL.Query().Get("offset"))
+		limit, limitErr := strconv.Atoi(r.URL.Query().Get("limit"))
+		if err := errors.Join(parseErr, offsetErr, limitErr); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		items := []jsontext.Value{}
+		for _, c := range history {
+			if !c.CreatedAt.Before(lower) {
+				items = append(items, c.Raw)
+			}
+		}
+		items = items[min(offset, len(items)):]
+		data, marshalErr := json.Marshal(items[:min(limit, len(items))])
+		if marshalErr != nil {
+			http.Error(w, "invalid fixture page", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "omi_dev_synthetic")
+	client.limiter = rate.NewLimiter(rate.Inf, 1)
+	imp := NewImporter(st, client)
+	run := func(opts ImportOptions) (string, string) {
+		t.Helper()
+		startDates = nil
+		opts.Identifier, opts.AccountEmail = "work", "owner@example.com"
+		_, err := imp.Import(context.Background(), opts)
+		require.NoError(err)
+		last, err := st.GetLastSuccessfulSync(src.ID)
+		require.NoError(err)
+		return startDates[0], last.CursorAfter.String
+	}
+
+	start, cursor := run(ImportOptions{})
+	assert.Empty(start, "the first sync reads all history")
+	assert.JSONEq(`{"created_after":"2026-01-01T12:00:00Z"}`, cursor)
+
+	history = append([]Conversation{conversation("new", day(5))}, history...)
+	start, cursor = run(ImportOptions{})
+	assert.Equal("2025-12-30T12:00:00Z", start, "later syncs reach back 48 hours before the watermark")
+	assert.JSONEq(`{"created_after":"2026-01-05T12:00:00Z"}`, cursor)
+
+	history = append([]Conversation{conversation("newest", day(10))}, history...)
+	start, cursor = run(ImportOptions{Limit: 1})
+	assert.Equal("2026-01-03T12:00:00Z", start)
+	assert.JSONEq(`{"created_after":"2026-01-05T12:00:00Z"}`, cursor, "a limited run keeps the watermark")
+
+	start, cursor = run(ImportOptions{Full: true})
+	assert.Empty(start, "a full sync rescans all history")
+	assert.JSONEq(`{"created_after":"2026-01-10T12:00:00Z"}`, cursor)
+	ids, err := st.MessageExistsBatch(src.ID, []string{"old", "new", "newest"})
+	require.NoError(err)
+	assert.Len(ids, 3)
 }

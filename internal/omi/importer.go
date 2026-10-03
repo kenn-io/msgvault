@@ -42,9 +42,22 @@ type ImportSummary struct {
 	Duration          time.Duration
 }
 
-// Import rescans the accessible history because Omi has no updated-since
-// filter. Raw-snapshot equality suppresses unchanged writes; Full repairs all
-// derived projections. A fixed end_date bounds shifts from newly created data.
+// rescanOverlap reaches back before the creation watermark so conversations
+// that finish processing late, and recent edits, are re-read. Omi has no
+// updated-since filter, so edits to older conversations need Full.
+const rescanOverlap = 48 * time.Hour
+
+// syncState is the JSON cursor persisted in sync_runs.cursor_after.
+type syncState struct {
+	// CreatedAfter is the RFC3339Nano max created_at seen by the last
+	// complete, unbounded run.
+	CreatedAfter string `json:"created_after,omitempty"`
+}
+
+// Import fetches conversations created since the stored watermark, because
+// Omi allows only 25 transcript list requests per hour. Raw-snapshot equality
+// suppresses unchanged writes; Full rescans history and repairs all derived
+// projections. A fixed end_date bounds shifts from newly created data.
 func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *ImportSummary, retErr error) {
 	if opts.Limit < 0 {
 		return nil, errors.New("omi limit cannot be negative")
@@ -58,6 +71,20 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err := imp.store.AddAccountIdentityContext(ctx, src.ID, opts.AccountEmail, "account-email"); err != nil {
 		return sum, err
 	}
+	var state syncState
+	prev, err := imp.store.GetLastSuccessfulSync(src.ID)
+	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
+		return sum, fmt.Errorf("load previous Omi sync cursor: %w", err)
+	}
+	if prev != nil && prev.CursorAfter.Valid {
+		// An unreadable cursor falls back to a history scan that rewrites it.
+		_ = json.Unmarshal([]byte(prev.CursorAfter.String), &state)
+	}
+	watermark, _ := time.Parse(time.RFC3339Nano, state.CreatedAfter)
+	createdAfter := opts.CreatedAfter
+	if !opts.Full && !watermark.IsZero() && watermark.Add(-rescanOverlap).After(createdAfter) {
+		createdAfter = watermark.Add(-rescanOverlap)
+	}
 	syncID, err := imp.store.StartSync(src.ID, SourceType)
 	if err != nil {
 		return sum, err
@@ -70,7 +97,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 	}()
 	archiver := meetingarchive.New(st)
-	params := ListParams{CreatedBefore: start}
+	params := ListParams{CreatedAfter: createdAfter, CreatedBefore: start}
+	maxCreated := watermark
 	seen := make(map[string]bool)
 	var rowErr error
 	for {
@@ -98,9 +126,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				return sum, err
 			}
 			// The Developer API orders conversation pages by created_at descending.
-			// Apply the lower bound locally so it cannot be confused with the
-			// meeting's started_at, then stop once the page crosses it.
-			if !opts.CreatedAfter.IsZero() && c.CreatedAt.Before(opts.CreatedAfter) {
+			// Recheck the lower bound locally in case a backend ignores start_date.
+			if !createdAfter.IsZero() && c.CreatedAt.Before(createdAfter) {
 				reachedCreatedAfter = true
 				break
 			}
@@ -109,13 +136,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			}
 			seen[c.ID] = true
 			newIDs++
-			if c.Locked || c.Discarded || (c.Status != "" && c.Status != "completed") {
-				continue
-			}
 			if opts.Limit > 0 && sum.MeetingsProcessed >= int64(opts.Limit) {
 				break
 			}
 			sum.MeetingsProcessed++
+			if c.CreatedAt.After(maxCreated) {
+				maxCreated = c.CreatedAt
+			}
 			content := meetingcontent.Decode(RawFormat, c.Raw, nil)
 			snapshot, err := snapshot(src.ID, c, content)
 			if err != nil {
@@ -139,9 +166,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 					}
 					prior := meetingcontent.Decode(RawFormat, raw, nil).Transcript
 					if prior.State == meetingcontent.StateAvailable || prior.State == meetingcontent.StateEmpty {
-						sum.Errors++
-						if rowErr == nil {
-							rowErr = fmt.Errorf("omi conversation %s has unavailable transcript evidence; preserved archived transcript", c.ID)
+						if opts.Progress != nil {
+							opts.Progress(fmt.Sprintf("kept archived transcript for Omi conversation %s; the response omitted it", c.ID))
 						}
 						continue
 					}
@@ -186,8 +212,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if rowErr != nil {
 		return sum, fmt.Errorf("omi skipped %d conversations: %w", sum.Errors, rowErr)
 	}
-	// No timestamp watermark: late completions and old edits stay discoverable.
-	if err := st.CompleteSync(syncID, "{}"); err != nil {
+	// A limited or creation-bounded run leaves older conversations unread, so
+	// only a complete run may advance the watermark.
+	if opts.Limit == 0 && opts.CreatedAfter.IsZero() && !maxCreated.IsZero() {
+		state.CreatedAfter = maxCreated.UTC().Format(time.RFC3339Nano)
+	}
+	cursor, err := json.Marshal(state, json.Deterministic(true))
+	if err != nil {
+		return sum, err
+	}
+	if err := st.CompleteSync(syncID, string(cursor)); err != nil {
 		return sum, err
 	}
 	return sum, nil

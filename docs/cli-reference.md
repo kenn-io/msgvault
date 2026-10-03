@@ -780,14 +780,15 @@ msgvault sync-omi --limit 5
 msgvault sync-omi --full --after 2026-01-01
 ```
 
-With no identifier, syncs all configured entries. Each run rescans history to
-catch older edits; unchanged snapshots skip archive writes. Scheduled runs
-require a registered source and never recreate a removed source.
+With no identifier, syncs all configured entries. After the first sync, each
+run reads conversations created since the last complete sync plus a 48-hour
+overlap; unchanged snapshots skip archive writes. Scheduled runs require a
+registered source and never recreate a removed source.
 
 | Flag | Default | Description |
 |---|---|---|
 | `--limit` | `0` | Maximum conversations processed, including unchanged records; zero is unlimited; negative values are rejected |
-| `--full` | `false` | Rewrite derived projections in place, including unchanged records |
+| `--full` | `false` | Rescan all history, picking up edits to older conversations, and rewrite derived projections in place |
 | `--after` | empty | Inclusive creation-date bound in UTC (`YYYY-MM-DD`); implies `--full` |
 | `--build-cache` | `false` | Queue a cache refresh after the sync, even when automatic builds are disabled or the minimum rebuild interval has not elapsed |
 | `--no-build-cache` | `false` | Skip the post-sync cache refresh |

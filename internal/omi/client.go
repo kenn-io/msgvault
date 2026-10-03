@@ -69,6 +69,7 @@ func NewClient(baseURL, apiKey string) *Client {
 type ListParams struct {
 	Limit         int
 	Offset        int
+	CreatedAfter  time.Time
 	CreatedBefore time.Time
 }
 
@@ -77,9 +78,6 @@ type Conversation struct {
 	CreatedAt  time.Time `json:"created_at"`
 	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at"`
-	Status     string    `json:"status"`
-	Discarded  bool      `json:"discarded"`
-	Locked     bool      `json:"is_locked"`
 	Structured struct {
 		Title string `json:"title"`
 	} `json:"structured"`
@@ -100,6 +98,9 @@ func (c *Client) ListConversations(ctx context.Context, p ListParams) ([]Convers
 		limit = PageSize
 	}
 	q := url.Values{"limit": {strconv.Itoa(min(limit, PageSize))}, "offset": {strconv.Itoa(p.Offset)}, "include_transcript": {"true"}}
+	if !p.CreatedAfter.IsZero() {
+		q.Set("start_date", p.CreatedAfter.UTC().Format(time.RFC3339Nano))
+	}
 	if !p.CreatedBefore.IsZero() {
 		q.Set("end_date", p.CreatedBefore.UTC().Format(time.RFC3339Nano))
 	}
