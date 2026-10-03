@@ -43,8 +43,8 @@
   let baseURL = $state(initialValues.baseURL);
   let username = $state(initialValues.username);
   const authorizationCommand = $derived(`msgvault carddav authorize-google ${shellQuote(username || 'you@example.com')}${oauthApp ? ` --oauth-app ${shellQuote(oauthApp)}` : ''}`);
-  // add-carddav saves the account, so the command names the connection being edited.
-  const microsoftCommand = $derived(`msgvault add-carddav --microsoft ${shellQuote(username || 'you@example.com')}${connection && connection !== 'default' ? ` --connection ${shellQuote(connection)}` : ''}`);
+  // Sign-in only: saving stays with this form, so a connection keeps its schedule.
+  const microsoftCommand = $derived(`msgvault carddav authorize-microsoft ${shellQuote(username || 'you@example.com')}`);
   let password = $state('');
   let persistedBaseURL = $state(initialValues.baseURL);
   let persistedUsername = $state(initialValues.username);

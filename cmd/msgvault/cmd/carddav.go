@@ -50,7 +50,7 @@ func newAddCardDAVCmd() *cobra.Command {
 		if msContacts {
 			// The daemon looks the token up under the lowercased email.
 			args[0] = strings.ToLower(strings.TrimSpace(args[0]))
-			if err := authorizeMicrosoftContacts(cmd, args[0], headless); err != nil {
+			if err := authorizeMicrosoftContacts(cmd, args[0], headless, false); err != nil {
 				return err
 			}
 		}
@@ -107,9 +107,27 @@ func newAddCardDAVCmd() *cobra.Command {
 	return cmd
 }
 
-// authorizeMicrosoftContacts signs in for Microsoft Graph contacts unless a
-// saved token has the contacts scopes and still yields an access token.
-func authorizeMicrosoftContacts(cmd *cobra.Command, email string, headless bool) error {
+// newAuthorizeMicrosoftCardDAVCmd signs in without saving a connection, so
+// an existing connection keeps its schedule and enabled state.
+func newAuthorizeMicrosoftCardDAVCmd() *cobra.Command {
+	var headless bool
+	cmd := &cobra.Command{
+		Use:   "authorize-microsoft <email>",
+		Short: "Authorize Microsoft contacts for CardDAV",
+		Long:  "Sign in to Microsoft for contacts on this machine, without saving a connection. Then save the connection in CardDAV settings, or run add-carddav --microsoft with this email. For a remote daemon, copy the token to that host.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return authorizeMicrosoftContacts(cmd, strings.ToLower(strings.TrimSpace(args[0])), headless, true)
+		},
+	}
+	cmd.Flags().BoolVar(&headless, "headless", false, "Sign in with a device code instead of a browser")
+	return cmd
+}
+
+// authorizeMicrosoftContacts signs in for Microsoft Graph contacts. Without
+// force, it skips sign-in when a saved token has the contacts scopes and
+// still yields an access token.
+func authorizeMicrosoftContacts(cmd *cobra.Command, email string, headless, force bool) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -120,7 +138,7 @@ func authorizeMicrosoftContacts(cmd *cobra.Command, email string, headless bool)
 	}
 	mgr := microsoft.NewGraphContactsManager(cfg.Microsoft.ClientID, microsoftTenantID("", cfg),
 		cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), state.logger)
-	if ok, err := mgr.HasScopes(email); err == nil && ok {
+	if ok, err := mgr.HasScopes(email); !force && err == nil && ok {
 		if source, err := mgr.TokenSource(cmd.Context(), email); err == nil {
 			if _, err := source(cmd.Context()); err == nil {
 				return nil
@@ -133,6 +151,9 @@ func authorizeMicrosoftContacts(cmd *cobra.Command, email string, headless bool)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Authorizing %s for Microsoft contacts...\n", textutil.SanitizeTerminal(email))
 	if err := mgr.Authorize(cmd.Context(), email); err != nil {
 		return fmt.Errorf("authorization failed: %w", err)
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Microsoft contacts authorized. Token saved to %s.\n", textutil.SanitizeTerminal(mgr.TokenPath(email))); err != nil {
+		return fmt.Errorf("write Microsoft authorization result: %w", err)
 	}
 	return nil
 }
@@ -233,7 +254,7 @@ func newCardDAVCmd() *cobra.Command {
 	conflicts.AddCommand(&cobra.Command{Use: "show <conflict-id>", Short: "Show safe base, local, and remote summaries for a CardDAV conflict", Args: cobra.ExactArgs(1), RunE: runCardDAVConflictShow})
 	resolve := &cobra.Command{Use: "resolve <conflict-id> <keep_local|keep_remote>", Short: "Resolve one CardDAV conflict", Args: cobra.ExactArgs(2), RunE: runCardDAVResolve}
 	conflicts.AddCommand(resolve)
-	root.AddCommand(books, conflicts, newAuthorizeGoogleCardDAVCmd(), &cobra.Command{Use: "connections", Short: "List saved CardDAV connections", Args: cobra.NoArgs, RunE: runCardDAVConnections})
+	root.AddCommand(books, conflicts, newAuthorizeGoogleCardDAVCmd(), newAuthorizeMicrosoftCardDAVCmd(), &cobra.Command{Use: "connections", Short: "List saved CardDAV connections", Args: cobra.NoArgs, RunE: runCardDAVConnections})
 	return root
 }
 

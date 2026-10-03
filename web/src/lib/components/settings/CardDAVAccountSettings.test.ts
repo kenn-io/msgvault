@@ -44,15 +44,12 @@ describe('CardDAVAccountSettings', () => {
     expect((screen.getByLabelText('Password') as HTMLInputElement).required).toBe(baseURL !== 'https://old.example.test/');
   });
 
-  it.each([
-    { connection: undefined, command: "msgvault add-carddav --microsoft 'alice'" },
-    { connection: 'work', command: "msgvault add-carddav --microsoft 'alice' --connection 'work'" }
-  ])('shows the Microsoft sign-in command for connection $connection', async ({ connection, command }) => {
+  it.each([undefined, 'work'])('shows a sign-in command that does not save connection %s', async (connection) => {
     render(CardDAVAccountSettings, { client: createAPIClient(async () => Response.json({})), values, connection });
 
     await chooseSelectOption(screen.getByRole('combobox', { name: /^CardDAV provider/ }), 'Microsoft 365 or Outlook.com');
 
-    expect(screen.getByText(command)).toBeTruthy();
+    expect(screen.getByText("msgvault carddav authorize-microsoft 'alice'")).toBeTruthy();
     expect(screen.queryByLabelText('Base URL')).toBeNull();
     expect(screen.queryByLabelText('Password')).toBeNull();
   });

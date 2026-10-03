@@ -163,8 +163,10 @@ not list contact folders outside **Contacts**.
    `tokens/mscontacts_<email>.json`, separate from mail and Teams tokens.
 3. Review the roles of each folder before the first sync.
 
-The **Microsoft 365 or Outlook.com** provider in **Settings → CardDAV account**
-saves the connection after the terminal sign-in.
+To sign in without saving a connection, run
+`msgvault carddav authorize-microsoft you@example.com`. Then save the
+connection with the **Microsoft 365 or Outlook.com** provider in
+**Settings → CardDAV account**. An existing connection keeps its schedule.
 
 Graph stores fewer fields than vCard. msgvault maps names, nickname, email
 addresses, phone numbers, organization, job title, postal addresses, a

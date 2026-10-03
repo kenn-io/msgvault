@@ -397,3 +397,12 @@ func TestAddCardDAVMicrosoftFlagsAreCheckedBeforeSignIn(t *testing.T) {
 		require.ErrorContains(t, command.Execute(), tc.want)
 	}
 }
+
+func TestAuthorizeMicrosoftIsASignInOnlyCardDAVCommand(t *testing.T) {
+	assert := assert.New(t)
+	cmd, _, err := newCardDAVCmd().Find([]string{"authorize-microsoft"})
+	require.NoError(t, err)
+	assert.Equal("authorize-microsoft", cmd.Name())
+	assert.NotNil(cmd.Flags().Lookup("headless"))
+	assert.Nil(cmd.Flags().Lookup("schedule"), "sign-in must not change a saved connection")
+}
