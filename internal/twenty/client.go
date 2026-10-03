@@ -366,7 +366,12 @@ func (c *Client) nextRecordingAlone(ctx context.Context, variables map[string]an
 		case err != nil:
 			return nil, err
 		default:
-			page.Records = append(page.Records, alone.Records...)
+			// Keep the listed updatedAt: a newer one from the reread would move
+			// the watermark past recordings the scan hasn't reached.
+			for _, recording := range alone.Records {
+				recording.UpdatedAt = candidate.UpdatedAt
+				page.Records = append(page.Records, recording)
+			}
 		}
 	}
 	return page, nil

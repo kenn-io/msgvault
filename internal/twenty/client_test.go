@@ -3,6 +3,7 @@ package twenty
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -445,7 +446,7 @@ func TestClientKeepsNextRecordingThatFitsAfterOverflow(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[{"node":{"id":"healthy","updatedAt":"2026-09-01T10:00:00Z"}}],"pageInfo":{"hasNextPage":false,"endCursor":"after-healthy"}}}}`)
 		case request.Variables["after"] == nil:
 			assert.Equal(map[string]any{"id": map[string]any{"eq": "healthy"}}, request.Variables["filter"])
-			_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[{"node":{"id":"healthy","updatedAt":"2026-09-01T10:00:00Z","summary":{"markdown":"Fits"}}}],"pageInfo":{"hasNextPage":false}}}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[{"node":{"id":"healthy","updatedAt":"2026-09-01T12:00:00Z","summary":{"markdown":"Fits"}}}],"pageInfo":{"hasNextPage":false}}}}`)
 		default:
 			chunk := strings.Repeat(" ", 1<<20)
 			for range 65 {
@@ -464,5 +465,34 @@ func TestClientKeepsNextRecordingThatFitsAfterOverflow(t *testing.T) {
 	require.Len(page.Records, 1)
 	assert.False(page.Records[0].TooLarge)
 	assert.Contains(string(page.Records[0].Raw), "Fits")
+	assert.Equal("2026-09-01T10:00:00Z", page.Records[0].UpdatedAt, "the watermark follows the listed position, not a later edit")
 	assert.Equal("after-healthy", page.NextCursor)
+}
+
+func TestClientRetriesNetworkFailuresAndStopsOnCancel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		client, err := NewClient("https://network.twenty.example", "network-retry-example-key")
+		require.NoError(err)
+		requests := 0
+		client.http.Transport = twentyTransport(func(*http.Request) (*http.Response, error) {
+			requests++
+			if requests < 3 {
+				return nil, errors.New("connection reset")
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":{"callRecordings":{"edges":[],"pageInfo":{"hasNextPage":false}}}}`)), Header: make(http.Header)}, nil
+		})
+		_, err = client.ListRecordings(t.Context(), epoch, "", 1)
+		require.NoError(err)
+		assert.Equal(3, requests)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		client.http.Transport = twentyTransport(func(*http.Request) (*http.Response, error) {
+			cancel()
+			return nil, errors.New("connection reset")
+		})
+		_, err = client.ListRecordings(ctx, epoch, "", 1)
+		require.ErrorIs(err, context.Canceled)
+	})
 }
