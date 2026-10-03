@@ -12676,6 +12676,36 @@ func (t TaskSummary) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
 }
 
+type TelemetryEventRequest struct {
+	// Event Allowlisted event name, such as app_opened
+	Event string `json:"event" validate:"required"`
+
+	// Properties Event properties; the daemon drops any its allowlist omits
+	Properties map[string]struct{} `json:"properties,omitempty"`
+}
+
+func (t TelemetryEventRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TelemetryEventResponse struct {
+	// Status queued when the event was sent; disabled when telemetry is off
+	Status TelemetryEventResponseStatus `json:"status" validate:"required"`
+}
+
+func (t TelemetryEventResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(t.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type TemperatureSignals struct {
 	MeetingSignal  float64 `json:"meeting_signal"`
 	Modalities     int64   `json:"modalities"`

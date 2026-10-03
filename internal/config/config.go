@@ -244,6 +244,16 @@ func (s *ServerConfig) DaemonAutoStartEnabled() bool {
 	return s.DaemonAutoStart == nil || *s.DaemonAutoStart
 }
 
+// TelemetryConfig controls the daemon's anonymous usage telemetry.
+type TelemetryConfig struct {
+	Enabled *bool `toml:"enabled"` // unset means true; MSGVAULT_TELEMETRY_ENABLED overrides it
+}
+
+// EnabledOrDefault reports the configured telemetry setting, true when unset.
+func (t TelemetryConfig) EnabledOrDefault() bool {
+	return t.Enabled == nil || *t.Enabled
+}
+
 func (s *ServerConfig) Validate() error {
 	if s.APIPort < 0 || s.APIPort > 65535 {
 		return fmt.Errorf("invalid [server] api_port %d: must be between 0 and 65535 (0 auto-selects an open port)", s.APIPort)
@@ -520,6 +530,7 @@ type Config struct {
 	Deletion           DeletionConfig                  `toml:"deletion"`
 	IMAP               IMAPConfig                      `toml:"imap"`
 	Gmail              GmailConfig                     `toml:"gmail"`
+	Telemetry          TelemetryConfig                 `toml:"telemetry"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`

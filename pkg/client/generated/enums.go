@@ -2423,6 +2423,24 @@ func (t TaskIntegrationStatusResponseState) Validate() error {
 	}
 }
 
+// TelemetryEventResponseStatus queued when the event was sent; disabled when telemetry is off
+type TelemetryEventResponseStatus string
+
+const (
+	TelemetryEventResponseStatusDisabled TelemetryEventResponseStatus = "disabled"
+	TelemetryEventResponseStatusQueued   TelemetryEventResponseStatus = "queued"
+)
+
+// Validate checks if the TelemetryEventResponseStatus value is valid
+func (t TelemetryEventResponseStatus) Validate() error {
+	switch t {
+	case TelemetryEventResponseStatusDisabled, TelemetryEventResponseStatusQueued:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid TelemetryEventResponseStatus value, got: %v", t))
+	}
+}
+
 type ListOperationRunsQueryKind string
 
 const (

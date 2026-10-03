@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getSettings as generatedGetSettings } from './lib/api/generated/api/api';
   import { Button } from '@kenn-io/kit-ui';
+  import { startAppOpenedReporting } from '@kenn-io/kit-ui/utils/app-opened';
   import { onMount } from 'svelte';
   import { receiveGoogleContactsCallback } from './lib/settings/google-authorization';
   import { createSessionController, type SessionController } from './lib/api/session.svelte';
@@ -56,6 +57,21 @@
     const generation = ++browserDefaultsRequestGeneration;
     savedSinceDefaultsLoad = {};
     void loadBrowserDefaults(generation);
+  });
+  // Reporting needs the session, so it runs only while authenticated; kit-ui dedupes by UTC day.
+  $effect(() => {
+    if (session.authMode === undefined || session.authMode === 'required') return;
+    const client = session.client;
+    return startAppOpenedReporting({
+      route: '/api/v1/telemetry/events',
+      surface: 'web',
+      post: (route, event) =>
+        client.fetch(route, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(event),
+        }),
+    });
   });
   async function loadBrowserDefaults(generation: number): Promise<void> {
     try {

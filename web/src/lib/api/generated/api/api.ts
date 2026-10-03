@@ -412,6 +412,8 @@ import type {
   TaskLinkMutationRequest,
   TaskLinkMutationResponse,
   TaskSearchResponse,
+  TelemetryEventRequest,
+  TelemetryEventResponse,
   TextConversationsResponse,
   TextMessagesResponse,
   TextSearchResponse,
@@ -3990,6 +3992,23 @@ export const triggerSync = (
       url: `/api/v1/sync/${encodeURIComponent(String(account))}`,
       method: "POST",
       params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Report a web UI usage event
+ */
+export const captureTelemetryEvent = (
+  telemetryEventRequest: TelemetryEventRequest,
+  options?: SecondParameter<typeof orvalFetch<TelemetryEventResponse>>,
+) => {
+  return orvalFetch<TelemetryEventResponse>(
+    {
+      url: `/api/v1/telemetry/events`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: telemetryEventRequest,
     },
     options,
   );

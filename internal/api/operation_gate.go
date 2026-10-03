@@ -381,6 +381,8 @@ var operationGateExemptPaths = map[string]bool{
 	"/api/v1/cli/deduplicate/plan":     true,
 	backupFreezeBeginPath:              true,
 	backupFreezeEndPath:                true,
+	// Telemetry changes no archive state; gating it would make opening the app yield a running sync.
+	telemetryEventsPath: true,
 }
 
 // readOnlyPostRoutePatterns lists the analytical POST routes whose handlers

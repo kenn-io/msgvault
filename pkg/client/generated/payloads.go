@@ -227,3 +227,5 @@ type SelectSettingsPeopleInferenceBody = PeopleInferenceSelectionRequest
 type PutSettingsPersonEnrichmentProviderBody = PersonEnrichmentProviderUpdate
 
 type PutSettingsProviderCredentialBody = ProviderCredentialWriteRequest
+
+type CaptureTelemetryEventBody = TelemetryEventRequest

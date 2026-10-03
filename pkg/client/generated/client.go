@@ -1135,6 +1135,10 @@ type ClientInterface interface {
 	TriggerSync(ctx context.Context, options *TriggerSyncRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TriggerSyncResponse, error)
 	TriggerSyncWithResponse(ctx context.Context, options *TriggerSyncRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TriggerSyncResp, error)
 
+	// CaptureTelemetryEvent Report a web UI usage event
+	CaptureTelemetryEvent(ctx context.Context, options *CaptureTelemetryEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CaptureTelemetryEventResponse, error)
+	CaptureTelemetryEventWithResponse(ctx context.Context, options *CaptureTelemetryEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CaptureTelemetryEventResp, error)
+
 	// GetTextAggregates Get text aggregate rows
 	GetTextAggregates(ctx context.Context, options *GetTextAggregatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTextAggregatesResponse, error)
 	GetTextAggregatesWithResponse(ctx context.Context, options *GetTextAggregatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTextAggregatesResp, error)
@@ -18173,6 +18177,52 @@ func (c *Client) TriggerSync(ctx context.Context, options *TriggerSyncRequestOpt
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/sync/{account}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CaptureTelemetryEvent Report a web UI usage event
+func (c *Client) CaptureTelemetryEvent(ctx context.Context, options *CaptureTelemetryEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CaptureTelemetryEventResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/telemetry/events",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CaptureTelemetryEventResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 202 {
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(CaptureTelemetryEventResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "CaptureTelemetryEventResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/telemetry/events")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

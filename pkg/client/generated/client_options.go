@@ -11759,6 +11759,50 @@ func (o *TriggerSyncRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// CaptureTelemetryEventRequestOptions is the options needed to make a request to CaptureTelemetryEvent.
+type CaptureTelemetryEventRequestOptions struct {
+	Body *CaptureTelemetryEventBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *CaptureTelemetryEventRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CaptureTelemetryEventRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CaptureTelemetryEventRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CaptureTelemetryEventRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CaptureTelemetryEventRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetTextAggregatesRequestOptions is the options needed to make a request to GetTextAggregates.
 type GetTextAggregatesRequestOptions struct {
 	Query *GetTextAggregatesQuery
