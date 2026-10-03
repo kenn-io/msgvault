@@ -10,7 +10,7 @@ COPY . /src
 WORKDIR /src
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go build -buildvcs=false -tags "fts5 sqlite_vec" \
+    CGO_ENABLED=1 go build -buildvcs=false -tags "fts5 sqlite_vec goolm" \
       -ldflags="-X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${MSGVAULT_VERSION}" \
       -o msgvault ./cmd/msgvault
 

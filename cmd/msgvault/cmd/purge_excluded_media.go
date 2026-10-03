@@ -186,7 +186,8 @@ func buildExcludedMediaPlan(candidates []store.AttachmentPolicyCandidate, cfg *c
 			continue
 		}
 		plan.Exclusions = append(plan.Exclusions, store.AttachmentExclusion{
-			AttachmentID: candidate.AttachmentID, Reason: reason,
+			AttachmentID: candidate.AttachmentID, MessageID: candidate.MessageID,
+			MatrixCache: candidate.MatrixCache, Reason: reason,
 			SourceAttachmentID: candidate.SourceAttachmentID,
 		})
 		plan.LogicalBytes += candidate.Size
@@ -213,6 +214,8 @@ func mediaPolicyForSource(cfg *config.Config, sourceType, identifier string) (at
 	switch sourceType {
 	case sourceTypeBeeper:
 		return cfg.Beeper.MediaPolicy(identifier), true
+	case sourceTypeMatrix:
+		return cfg.Matrix.MediaPolicy(identifier), true
 	case sourceTypeSlack, sourceTypeSlackdump:
 		teamID, _, ok := splitSlackIdentifier(identifier)
 		if !ok {

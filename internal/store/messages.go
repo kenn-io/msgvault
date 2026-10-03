@@ -449,6 +449,27 @@ type MessageWithRawMetadata struct {
 	RFC822MessageID sql.NullString
 }
 
+// MessageRelationTarget is the identity needed to authorize a provider-side
+// relation such as an edit without loading the target body.
+type MessageRelationTarget struct {
+	ConversationID int64
+	SenderID       sql.NullInt64
+}
+
+// GetMessageRelationTarget reads relation authorization fields by primary key.
+func (s *Store) GetMessageRelationTarget(messageID int64) (MessageRelationTarget, error) {
+	var target MessageRelationTarget
+	err := s.db.QueryRow(`
+		SELECT conversation_id, sender_id
+		FROM messages
+		WHERE id = ?
+	`, messageID).Scan(&target.ConversationID, &target.SenderID)
+	if err != nil {
+		return MessageRelationTarget{}, fmt.Errorf("get message relation target %d: %w", messageID, err)
+	}
+	return target, nil
+}
+
 // UnresolvedMessageReply is a message whose provider metadata may contain a
 // durable source reply reference but whose generic reply link is still NULL.
 // Importers decode their own metadata shape and call SetReplyTo once the
@@ -2985,8 +3006,23 @@ func (s *Store) SetReplyTo(sourceID int64, childSourceMessageID, parentSourceMes
 // does not write is_edited, so importers that observe an edit flag call this
 // after upserting.
 func (s *Store) SetMessageEdited(messageID int64) error {
+	return s.SetMessageEditedState(messageID, true)
+}
+
+// SetMessageSizeEstimate replaces a message's size estimate after an importer
+// changes its displayed text, such as when applying a provider edit.
+func (s *Store) SetMessageSizeEstimate(messageID, sizeEstimate int64) error {
 	return s.withSyncMessageWriteContext(context.Background(), messageID, func(q querier) error {
-		_, err := q.Exec(`UPDATE messages SET is_edited = TRUE WHERE id = ?`, messageID)
+		_, err := q.Exec(`UPDATE messages SET size_estimate = ? WHERE id = ?`, sizeEstimate, messageID)
+		return err
+	})
+}
+
+// SetMessageEditedState records whether the source's currently selected
+// message version is an edit.
+func (s *Store) SetMessageEditedState(messageID int64, edited bool) error {
+	return s.withSyncMessageWriteContext(context.Background(), messageID, func(q querier) error {
+		_, err := q.Exec(`UPDATE messages SET is_edited = ? WHERE id = ?`, edited, messageID)
 		return err
 	})
 }
@@ -3019,21 +3055,39 @@ func (s *Store) ClearMessageRepliesContext(ctx context.Context, sourceID int64, 
 
 // MarkMessageDeleted marks a message as deleted from the source.
 func (s *Store) MarkMessageDeleted(sourceID int64, sourceMessageID string) error {
+	_, err := s.MarkMessageDeletedIfActive(sourceID, sourceMessageID)
+	return err
+}
+
+// MarkMessageDeletedIfActive marks a message as deleted from the source and
+// reports whether this call changed an active message.
+func (s *Store) MarkMessageDeletedIfActive(sourceID int64, sourceMessageID string) (bool, error) {
 	if err := s.requireSyncSource(sourceID); err != nil {
-		return err
+		return false, err
 	}
+	changed := false
 	write := func(q chunkQuerier) error {
-		_, err := q.Exec(fmt.Sprintf(`
+		result, err := q.Exec(fmt.Sprintf(`
 			UPDATE messages
 			SET deleted_from_source_at = %s
 			WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NULL
 		`, s.dialect.Now()), sourceID, sourceMessageID)
-		return err
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		changed = rows > 0
+		return nil
 	}
 	if s.syncGeneration == nil {
-		return write(s.db)
+		err := write(s.db)
+		return changed, err
 	}
-	return s.withTx(func(tx *loggedTx) error { return write(tx) })
+	err := s.withTx(func(tx *loggedTx) error { return write(tx) })
+	return changed, err
 }
 
 // ClearMessageDeletedFromSource clears the upstream tombstone when a message
@@ -3991,6 +4045,23 @@ func (s *Store) EnsureConversationWithType(sourceID int64, sourceConversationID,
 	return ensureConversationWithType(s.db, s.dialect, sourceID, sourceConversationID, conversationType, title)
 }
 
+// SetConversationTitle applies an explicit provider title, including removal.
+func (s *Store) SetConversationTitle(sourceID, conversationID int64, title string) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	write := func(q querier) error {
+		_, err := q.Exec(fmt.Sprintf(`UPDATE conversations SET title = ?, updated_at = %s
+			WHERE id = ? AND source_id = ? AND COALESCE(title, '') <> ?`, s.dialect.Now()),
+			title, conversationID, sourceID, title)
+		return err
+	}
+	if s.syncGeneration != nil {
+		return s.withTx(func(tx *loggedTx) error { return write(tx) })
+	}
+	return write(s.db)
+}
+
 func ensureConversationWithType(q querier, dialect Dialect, sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
 	return ensureConversationWithTypePolicy(q, dialect, sourceID, sourceConversationID, conversationType, title, false)
 }
@@ -4355,6 +4426,9 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		}
 		// Drop old rows that would collide with an existing row of the new
 		// participant, then repoint the remainder.
+		if err := repointReactionSourceEvents(context.Background(), tx, oldID, newID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(`
 			DELETE FROM reactions WHERE participant_id = ? AND EXISTS (
 				SELECT 1 FROM reactions r2 WHERE r2.message_id = reactions.message_id
@@ -5487,6 +5561,102 @@ func (s *Store) UpsertReaction(messageID, participantID int64, reactionType, rea
 	return write(s.db)
 }
 
+// UpsertReactionWithSourceID inserts a reaction and records the provider event
+// that produced it, so a later provider redaction can remove it by event ID.
+func (s *Store) UpsertReactionWithSourceID(messageID, participantID int64, reactionType, reactionValue, sourceReactionID string, createdAt time.Time) error {
+	write := func(q querier) error {
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		if _, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions
+			(message_id, participant_id, reaction_type, reaction_value, created_at)
+			VALUES (?, ?, ?, ?, ?)`), messageID, participantID, reactionType, reactionValue, createdAt); err != nil {
+			return err
+		}
+		_, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reaction_source_events
+			(source_id, source_reaction_id, reaction_id)
+			SELECT m.source_id, ?, r.id
+			FROM reactions r
+			JOIN messages m ON m.id = r.message_id
+			WHERE r.message_id = ? AND r.participant_id = ?
+			  AND r.reaction_type = ? AND r.reaction_value = ?`),
+			sourceReactionID, messageID, participantID, reactionType, reactionValue)
+		return err
+	}
+	return s.withTx(func(tx *loggedTx) error { return write(tx) })
+}
+
+// DeleteReactionBySourceID forgets one provider reaction event in a
+// conversation and removes the visible reaction once no event backs it.
+func (s *Store) DeleteReactionBySourceID(sourceID, conversationID int64, sourceReactionID string) (bool, error) {
+	deleted := false
+	err := s.withSyncSourceWriteContext(context.Background(), sourceID, func(q querier) error {
+		var reactionID int64
+		err := q.QueryRow(`SELECT rse.reaction_id FROM reaction_source_events rse
+			JOIN reactions r ON r.id = rse.reaction_id
+			JOIN messages m ON m.id = r.message_id
+			WHERE rse.source_id = ? AND rse.source_reaction_id = ? AND m.conversation_id = ?`,
+			sourceID, sourceReactionID, conversationID).Scan(&reactionID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := q.Exec(`DELETE FROM reaction_source_events
+			WHERE source_id = ? AND source_reaction_id = ?`, sourceID, sourceReactionID); err != nil {
+			return err
+		}
+		deleted = true
+		_, err = q.Exec(`DELETE FROM reactions
+			WHERE id = ? AND NOT EXISTS (
+				SELECT 1 FROM reaction_source_events WHERE reaction_id = ?
+			)`, reactionID, reactionID)
+		return err
+	})
+	return deleted, err
+}
+
+// repointReactionSourceEvents moves provider reaction event IDs from the
+// absorbed participant's duplicate reactions to the surviving ones, before a
+// participant merge deletes the duplicates.
+func repointReactionSourceEvents(ctx context.Context, tx *loggedTx, loser, winner int64) error {
+	_, err := tx.ExecContext(ctx, `UPDATE reaction_source_events SET reaction_id = (
+			SELECT r2.id FROM reactions r1 JOIN reactions r2
+			  ON r2.message_id = r1.message_id AND r2.participant_id = ?
+			 AND r2.reaction_type = r1.reaction_type AND r2.reaction_value = r1.reaction_value
+			WHERE r1.id = reaction_source_events.reaction_id)
+		WHERE reaction_id IN (
+			SELECT r1.id FROM reactions r1 JOIN reactions r2
+			  ON r2.message_id = r1.message_id AND r2.participant_id = ?
+			 AND r2.reaction_type = r1.reaction_type AND r2.reaction_value = r1.reaction_value
+			WHERE r1.participant_id = ?)`, winner, winner, loser)
+	if err != nil {
+		return fmt.Errorf("repoint reaction source events (loser=%d, winner=%d): %w", loser, winner, err)
+	}
+	return nil
+}
+
+// MessageIDByMetadataValue finds a message in a conversation whose top-level
+// metadata key holds value, or returns 0.
+func (s *Store) MessageIDByMetadataValue(conversationID int64, key, value string) (int64, error) {
+	field := "json_extract(metadata, '$.' || ?)"
+	if s.IsPostgreSQL() {
+		field = "metadata ->> CAST(? AS TEXT)"
+	}
+	var messageID int64
+	err := s.db.QueryRow(`SELECT id FROM messages
+		WHERE conversation_id = ? AND `+field+` = ?
+		ORDER BY id LIMIT 1`, conversationID, key, value).Scan(&messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find message by metadata %s: %w", key, err)
+	}
+	return messageID, nil
+}
+
 type ReactionRef struct {
 	ParticipantID int64
 	Type          string
@@ -5538,32 +5708,35 @@ func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, form
 // has not run yet.
 func (s *Store) AttachmentPathsUniqueToSource(sourceID int64) ([]string, error) {
 	rows, err := s.db.Query(`
-		WITH source_blob_paths(blob_hash, blob_path) AS (
-		    SELECT a.content_hash, a.storage_path
+		WITH all_blob_paths(source_id, blob_hash, blob_path) AS (
+		    SELECT m.source_id, a.content_hash, a.storage_path
 		    FROM attachments a
 		    JOIN messages m ON m.id = a.message_id
-		    WHERE m.source_id = ?
-		      AND a.content_hash IS NOT NULL AND a.content_hash != ''
+		    WHERE a.content_hash IS NOT NULL AND a.content_hash != ''
 		    UNION
-		    SELECT a.thumbnail_hash, a.thumbnail_path
+		    SELECT m.source_id, a.thumbnail_hash, a.thumbnail_path
 		    FROM attachments a
 		    JOIN messages m ON m.id = a.message_id
-		    WHERE m.source_id = ?
-		      AND a.thumbnail_hash IS NOT NULL AND a.thumbnail_hash != ''
+		    WHERE a.thumbnail_hash IS NOT NULL AND a.thumbnail_hash != ''
+		    UNION
+		    SELECT m.source_id, c.content_hash, c.storage_path
+		    FROM matrix_media_cache c
+		    JOIN messages m ON m.id = c.message_id
+		    WHERE c.content_hash != ''
 		)
 		SELECT DISTINCT sb.blob_path
-		FROM source_blob_paths sb
-		WHERE sb.blob_path IS NOT NULL
+		FROM all_blob_paths sb
+		WHERE sb.source_id = ?
+		  AND sb.blob_path IS NOT NULL
 		  AND sb.blob_path != ''
 		  AND sb.blob_path NOT LIKE 'http://%'
 		  AND sb.blob_path NOT LIKE 'https://%'
 		  AND NOT EXISTS (
-		      SELECT 1 FROM attachments a2
-		      JOIN messages m2 ON m2.id = a2.message_id
-		      WHERE m2.source_id != ?
-		        AND (a2.content_hash = sb.blob_hash OR a2.thumbnail_hash = sb.blob_hash)
+		      SELECT 1 FROM all_blob_paths other
+		      WHERE other.source_id != sb.source_id
+		        AND other.blob_hash = sb.blob_hash
 		  )
-	`, sourceID, sourceID, sourceID)
+	`, sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -5580,20 +5753,24 @@ func (s *Store) AttachmentPathsUniqueToSource(sourceID int64) ([]string, error) 
 	return paths, rows.Err()
 }
 
-// IsAttachmentPathReferenced returns true if any attachment record still
-// points to the given content or thumbnail path. Use this immediately before
+// IsAttachmentPathReferenced returns true if any current attachment or cached
+// Matrix media still points to the given content or thumbnail path. Use this immediately before
 // deleting a file to guard against a concurrent sync that added a new
 // reference after the candidate list was collected.
 func (s *Store) IsAttachmentPathReferenced(storagePath string) (bool, error) {
-	var count int
+	var referenced bool
 	err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM attachments WHERE storage_path = ? OR thumbnail_path = ?`,
-		storagePath, storagePath,
-	).Scan(&count)
+		`SELECT EXISTS(
+			SELECT 1 FROM attachments WHERE storage_path = ? OR thumbnail_path = ?
+			UNION ALL
+			SELECT 1 FROM matrix_media_cache WHERE storage_path = ?
+		)`,
+		storagePath, storagePath, storagePath,
+	).Scan(&referenced)
 	if err != nil {
 		return true, err // fail safe: treat error as referenced
 	}
-	return count > 0, nil
+	return referenced, nil
 }
 
 // UpsertAttachment is the compatibility write path for callers without stable
@@ -5628,6 +5805,30 @@ func (s *Store) RecomputeMessageAttachmentStats(messageID int64) error {
 			return err
 		}
 		return recomputeMessageAttachmentStatsWith(q, messageID)
+	}
+	if s.syncGeneration == nil {
+		return write(s.db)
+	}
+	return s.withTx(func(tx *loggedTx) error { return write(tx) })
+}
+
+// RecomputeMessageSizeEstimate refreshes one message's body-plus-stored-media
+// byte estimate after attachment reconciliation.
+func (s *Store) RecomputeMessageSizeEstimate(messageID int64) error {
+	write := func(q querier) error {
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		var body sql.NullString
+		err := q.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read message body for size estimate: %w", err)
+		}
+		_, err = q.Exec(`UPDATE messages SET size_estimate = ? + (
+			SELECT COALESCE(SUM(size), 0) FROM attachments
+			WHERE message_id = ? AND content_hash IS NOT NULL AND content_hash != ''
+		) WHERE id = ?`, len(body.String), messageID, messageID)
+		return err
 	}
 	if s.syncGeneration == nil {
 		return write(s.db)
@@ -5898,12 +6099,23 @@ func (s *Store) MessageBeeperAttachments(messageID int64) (map[string]Attachment
 	return s.messageProviderAttachments(messageID, "beeper:")
 }
 
+// ReplaceMessageMatrixAttachments replaces Matrix-managed media occurrences.
+func (s *Store) ReplaceMessageMatrixAttachments(messageID int64, refs []AttachmentRef) error {
+	return s.replaceMessageProviderAttachments(messageID, "matrix:", refs)
+}
+
+// MessageMatrixAttachments returns Matrix-managed media keyed by MXC identity.
+func (s *Store) MessageMatrixAttachments(messageID int64) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachments(messageID, "matrix:")
+}
+
 // ArchivedRawMessage is one archived message paired with the verbatim provider
 // payload stored for it, decompressed.
 type ArchivedRawMessage struct {
 	MessageID      int64
 	ConversationID int64
 	RawData        []byte
+	Deleted        bool
 	// BodyText is the currently stored plain-text body, so a caller
 	// re-deriving it can skip rows that would not change.
 	BodyText string
@@ -5915,7 +6127,8 @@ type ArchivedRawMessage struct {
 // callers loop until an empty batch comes back.
 func (s *Store) ScanArchivedRawMessages(sourceID int64, format string, afterID int64, limit int) ([]ArchivedRawMessage, error) {
 	rows, err := s.db.Query(s.Rebind(`
-		SELECT m.id, m.conversation_id, r.raw_data, r.compression, COALESCE(b.body_text, '')
+		SELECT m.id, m.conversation_id, r.raw_data, r.compression, COALESCE(b.body_text, ''),
+		       CASE WHEN m.deleted_from_source_at IS NULL THEN 0 ELSE 1 END
 		FROM messages m
 		JOIN message_raw r ON r.message_id = m.id
 		LEFT JOIN message_bodies b ON b.message_id = m.id
@@ -5932,7 +6145,7 @@ func (s *Store) ScanArchivedRawMessages(sourceID int64, format string, afterID i
 		var item ArchivedRawMessage
 		var raw []byte
 		var compression sql.NullString
-		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText); err != nil {
+		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText, &item.Deleted); err != nil {
 			return nil, err
 		}
 		if compression.Valid && compression.String == "zlib" {

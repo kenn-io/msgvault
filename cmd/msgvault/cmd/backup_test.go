@@ -104,6 +104,29 @@ func TestBackupRestoreTargetCoordinatorRejectsPrimaryDatabaseAsVectorBackend(t *
 	require.False(coordinated)
 }
 
+func TestBackupExtrasIncludeMatrixCryptoWithTokens(t *testing.T) {
+	oldIncludeConfig := backupCreateIncludeConfig
+	oldIncludeTokens := backupCreateIncludeTokens
+	oldAllowPlaintext := backupCreateAllowPlaintextSecrets
+	t.Cleanup(func() {
+		backupCreateIncludeConfig = oldIncludeConfig
+		backupCreateIncludeTokens = oldIncludeTokens
+		backupCreateAllowPlaintextSecrets = oldAllowPlaintext
+	})
+	backupCreateIncludeConfig = false
+	backupCreateIncludeTokens = true
+	backupCreateAllowPlaintextSecrets = true
+
+	spec, err := backupExtrasSpec(&config.Config{})
+	require.NoError(t, err)
+	dirs := make(map[string]bool, len(spec.Dirs))
+	for _, dir := range spec.Dirs {
+		dirs[dir.Name] = dir.Sensitive
+	}
+	assert.True(t, dirs["tokens"])
+	assert.True(t, dirs["matrix"], "credential-inclusive backups must preserve local Olm/Megolm state")
+}
+
 func TestBackupRestoreTargetCoordinatorDefersMissingCaseVariantMatch(t *testing.T) {
 	cfg := testConfigValue()
 

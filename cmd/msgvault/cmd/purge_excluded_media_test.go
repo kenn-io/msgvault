@@ -152,6 +152,84 @@ func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
 	assert.Equal(t, int64(11)<<20, policy.MaxBytes)
 }
 
+func TestMediaPolicyForMatrixUsesAccountConfig(t *testing.T) {
+	current := &config.Config{Matrix: config.MatrixConfig{
+		MaxMediaMB: 7,
+		AccountsConfig: map[string]config.MediaAccountConfig{
+			"@archive:example.org": {MaxMediaMB: 11},
+		},
+	}}
+
+	policy, ok := mediaPolicyForSource(current, sourceTypeMatrix, "@archive:example.org")
+	require.True(t, ok)
+	assert.Equal(t, int64(11)<<20, policy.MaxBytes)
+}
+
+func TestPurgeExcludedMediaEvaluatesCachedMatrixMedia(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	dataDir := t.TempDir()
+	cfg := &config.Config{
+		Data: config.DataConfig{DataDir: dataDir},
+		Matrix: config.MatrixConfig{
+			MediaScope: string(attachmentpolicy.ScopeAll),
+		},
+	}
+	source, err := st.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "!room:example.org", "group_chat", "Room")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID,
+		SourceMessageID: "$media", MessageType: sourceTypeMatrix,
+	})
+	require.NoError(err)
+	currentHash := strings.Repeat("bc", 32)
+	currentPath := currentHash[:2] + "/" + currentHash
+	cachedHash := strings.Repeat("cd", 32)
+	cachedPath := cachedHash[:2] + "/" + cachedHash
+	require.NoError(st.ReplaceMessageMatrixAttachments(messageID, []store.AttachmentRef{{
+		SourceAttachmentID: "matrix:mxc://example.org/current", StoragePath: currentPath,
+		ContentHash: currentHash, Size: 10, State: attachmentpolicy.StateStored,
+	}}))
+	require.NoError(st.CacheMatrixAttachment(messageID, store.AttachmentRef{
+		SourceAttachmentID: "matrix:mxc://example.org/older", StoragePath: cachedPath,
+		ContentHash: cachedHash, Size: 2 << 20,
+	}))
+	for path := range map[string]struct{}{currentPath: {}, cachedPath: {}} {
+		fullPath := filepath.Join(cfg.AttachmentsDir(), filepath.FromSlash(path))
+		require.NoError(os.MkdirAll(filepath.Dir(fullPath), 0o755))
+		require.NoError(os.WriteFile(fullPath, []byte("synthetic Matrix media"), 0o600))
+	}
+	deps := purgeExcludedMediaDeps{
+		openStore: func() (*store.Store, func(), error) { return st, func() {}, nil },
+		config:    func() *config.Config { return cfg }, removeFile: os.Remove,
+	}
+
+	retain := newPurgeExcludedMediaLocalCmd(deps)
+	retain.SetOut(&bytes.Buffer{})
+	retain.SetErr(&bytes.Buffer{})
+	retain.SetArgs([]string{"--yes"})
+	require.NoError(retain.Execute())
+	assert.FileExists(filepath.Join(cfg.AttachmentsDir(), filepath.FromSlash(cachedPath)),
+		"an eligible cache-only version remains a live blob reference")
+
+	cfg.Matrix.MaxMediaMB = 1
+	purge := newPurgeExcludedMediaLocalCmd(deps)
+	purge.SetOut(&bytes.Buffer{})
+	purge.SetErr(&bytes.Buffer{})
+	purge.SetArgs([]string{"--yes"})
+	require.NoError(purge.Execute())
+	var cachedRows int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM matrix_media_cache
+		WHERE message_id = ? AND source_attachment_id = ?`), messageID,
+		"matrix:mxc://example.org/older").Scan(&cachedRows))
+	assert.Zero(cachedRows, "an excluded unselected version must not be restorable from cache")
+	assert.NoFileExists(filepath.Join(cfg.AttachmentsDir(), filepath.FromSlash(cachedPath)))
+	assert.FileExists(filepath.Join(cfg.AttachmentsDir(), filepath.FromSlash(currentPath)))
+}
+
 func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

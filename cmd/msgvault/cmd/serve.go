@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
@@ -542,6 +543,23 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule beeper sync", "error", err)
 		} else {
 			logger.Info("scheduled beeper sync", "schedule", cfg.Beeper.Schedule)
+		}
+	}
+
+	if cfg.Matrix.Enabled && cfg.Matrix.Schedule == "" {
+		logger.Warn("matrix is enabled but has no schedule — the daemon will not sync it",
+			"hint", `set a cron schedule (e.g. "*/30 * * * *") on the [matrix] entry`)
+	}
+	if cfg.Matrix.Enabled && cfg.Matrix.Schedule != "" {
+		if err := sched.AddJob(scheduler.Job{
+			Name: api.MatrixJobName, Schedule: cfg.Matrix.Schedule, Preemptible: true,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredMatrixSync(ctx, s, matrixMediaMutation(attachmentMaint))
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule matrix sync", "error", err)
+		} else {
+			logger.Info("scheduled matrix sync", "schedule", cfg.Matrix.Schedule)
 		}
 	}
 
@@ -2269,6 +2287,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	if api.IsCLIRunDraftLifecycle(req.Args) {
 		return a.runCLIDraftLifecycle(ctx, req, emit)
 	}
+	if len(req.Args) > 0 && req.Args[0] == "sync-matrix" {
+		return a.runMatrixCLICommand(ctx, req.Args, emit)
+	}
 	runSubprocess := func(ctx context.Context) error {
 		args := req.Args
 		if req.GrantDecided {
@@ -2322,6 +2343,82 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		runSubprocess,
 		emitWarning,
 	)
+}
+
+// matrixMediaMutation wraps each Matrix media write in an attachment mutation
+// lease and records that new loose blobs await the attachment-pack job. The
+// lease covers one write, not the whole sync, so packing is never blocked for
+// the length of a run.
+func matrixMediaMutation(maintenance *attachmentMaintenance) func(context.Context, func() error) error {
+	if maintenance == nil {
+		return nil
+	}
+	return func(ctx context.Context, write func() error) error {
+		before := maintenance.looseBlobWrites()
+		err := runWithAttachmentMutation(ctx, maintenance, func(context.Context) error { return write() })
+		if maintenance.looseBlobWrites() != before {
+			maintenance.markPackPending()
+		}
+		return err
+	}
+}
+
+func (a *storeAPIAdapter) runMatrixCLICommand(
+	ctx context.Context,
+	args []string,
+	emit func(api.CLIRunEvent) error,
+) error {
+	if a == nil || a.store == nil || a.config == nil {
+		return errors.New("matrix sync is unavailable")
+	}
+	account, full, noMedia, err := parseMatrixSyncCLIArgs(args)
+	if err != nil {
+		return err
+	}
+	var output bytes.Buffer
+	progress := func(line string) { _, _ = fmt.Fprintln(&output, "  "+line) }
+	err = runMatrixSync(ctx, a.store, a.config, account, full, noMedia,
+		matrixMediaMutation(a.attachmentMaintenance), progress, &output)
+	if output.Len() > 0 && emit != nil {
+		err = errors.Join(err, emit(api.CLIRunEvent{Type: cliStreamStdout, Data: output.String()}))
+	}
+	if err == nil && a.attachmentMaintenance != nil {
+		emitWarning := func(message string) error {
+			if emit == nil {
+				return nil
+			}
+			return emit(api.CLIRunEvent{Type: cliStreamStderr, Data: message})
+		}
+		_ = a.attachmentMaintenance.runAutomaticPack(ctx, emitWarning)
+	}
+	return err
+}
+
+func parseMatrixSyncCLIArgs(args []string) (account string, full, noMedia bool, err error) {
+	if len(args) == 0 || args[0] != "sync-matrix" {
+		return "", false, false, errors.New("expected sync-matrix command")
+	}
+	flags := pflag.NewFlagSet("sync-matrix", pflag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.StringVar(&account, "account", "", "")
+	flags.BoolVar(&full, "full", false, "")
+	flags.BoolVar(&noMedia, "no-media", false, "")
+	buildCache := flags.Bool("build-cache", false, "")
+	noBuildCache := flags.Bool("no-build-cache", false, "")
+	flags.String("log-level", "", "")
+	flags.Bool("log-sql", false, "")
+	flags.Int64("log-sql-slow-ms", 0, "")
+	flags.BoolP("verbose", "v", false, "")
+	if err := flags.Parse(args[1:]); err != nil {
+		return "", false, false, fmt.Errorf("parse sync-matrix arguments: %w", err)
+	}
+	if flags.NArg() != 0 {
+		return "", false, false, fmt.Errorf("sync-matrix accepts no positional arguments: %q", flags.Args())
+	}
+	if *buildCache && *noBuildCache {
+		return "", false, false, errors.New("--build-cache and --no-build-cache are mutually exclusive")
+	}
+	return account, full, noMedia, nil
 }
 
 func attachmentRemovalCommand(args []string) bool {

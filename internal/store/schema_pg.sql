@@ -1455,6 +1455,46 @@ CREATE TABLE IF NOT EXISTS reactions (
     UNIQUE(message_id, participant_id, reaction_type, reaction_value)
 );
 
+CREATE TABLE IF NOT EXISTS reaction_source_events (
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    source_reaction_id TEXT NOT NULL,
+    reaction_id BIGINT NOT NULL REFERENCES reactions(id) ON DELETE CASCADE,
+    PRIMARY KEY(source_id, source_reaction_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reaction_source_events_reaction
+    ON reaction_source_events(reaction_id);
+
+CREATE TABLE IF NOT EXISTS matrix_encrypted_events (
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    event_id TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    raw_event BYTEA NOT NULL,
+    PRIMARY KEY(source_id, event_id)
+);
+
+-- Encrypted Matrix events still waiting for a decryption key. Keeping them
+-- here instead of in the sync checkpoint keeps checkpoints small. An empty
+-- raw_event marks a pending entry whose ciphertext is not yet recorded.
+CREATE TABLE IF NOT EXISTS matrix_undecryptable_events (
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    event_id TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    raw_event BYTEA NOT NULL,
+    PRIMARY KEY(source_id, event_id)
+);
+
+CREATE TABLE IF NOT EXISTS matrix_media_cache (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    source_attachment_id TEXT NOT NULL,
+    filename TEXT,
+    mime_type TEXT,
+    storage_path TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    size BIGINT NOT NULL DEFAULT 0,
+    media_type TEXT,
+    PRIMARY KEY(message_id, source_attachment_id)
+);
+
 -- ============================================================================
 -- ATTACHMENTS
 -- ============================================================================

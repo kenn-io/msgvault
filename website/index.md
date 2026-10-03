@@ -48,7 +48,7 @@ attachments alongside the records you browse.
 
 - **Mail** — Gmail, IMAP, and Microsoft 365 sync; MBOX, Maildir, Apple Mail, PST, and
   EML imports.
-- **Chat** — Slack, Teams, Discord, and chats available through Beeper Desktop;
+- **Chat** — Matrix, Slack, Teams, Discord, and chats available through Beeper Desktop;
   WhatsApp, iMessage, Google Voice, Messenger, and SMS imports.
 - **Meetings** — Granola, Circleback, Notion AI Meeting Notes, and Muesli in the same
   searchable record.

@@ -76,7 +76,7 @@ Use these as reasoning checkpoints, not a requirement to create a design doc.
 
 - Use `make build` for a worktree binary. `make install` changes the user's
   installed binary and needs intentional authorization.
-- All `go test` invocations need `-tags "fts5 sqlite_vec"`; prefer `make test`.
+- All `go test` invocations need `-tags "fts5 sqlite_vec goolm"`; prefer `make test`.
   PostgreSQL tests use the targets documented in [Development](docs/development.md).
 - After Go changes, run `go fmt ./...` and `go vet ./...` before committing.
   Include resulting formatting changes. Use `make lint-ci` for lint checks.

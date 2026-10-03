@@ -34,12 +34,17 @@ func seedDB(t *testing.T) string {
 		`CREATE TABLE attachments (id INTEGER PRIMARY KEY,
 			content_hash TEXT, storage_path TEXT,
 			thumbnail_hash TEXT, thumbnail_path TEXT, size INTEGER)`,
+		`CREATE TABLE matrix_media_cache (message_id INTEGER, source_attachment_id TEXT,
+			content_hash TEXT NOT NULL, storage_path TEXT NOT NULL, size INTEGER NOT NULL)`,
 		`INSERT INTO messages (sent_at) VALUES
 			('2024-01-01T00:00:00Z'), ('2024-06-01T00:00:00Z')`,
 		`INSERT INTO attachments
 			(content_hash, storage_path, thumbnail_hash, thumbnail_path, size) VALUES
 			('aabb01', 'aa/aabb01', 'ccdd02', 'cc/ccdd02', 10),
 			('eeff03', 'imports/eeff03', NULL, NULL, 20)`,
+		`INSERT INTO matrix_media_cache
+			(message_id, source_attachment_id, content_hash, storage_path, size) VALUES
+			(1, 'matrix:mxc://example.org/archived', '112233', '11/112233', 30)`,
 	} {
 		_, err := db.Exec(stmt)
 		require.NoError(t, err, "seed: %s", stmt)
@@ -60,7 +65,7 @@ func TestFrozenViewContentInfoAndStats(t *testing.T) {
 
 	info, err := view.ContentInfo(context.Background())
 	require.NoError(err)
-	assert.Len(info.Refs, 3) // 2 content hashes + 1 thumbnail
+	assert.Len(info.Refs, 4) // 2 current content hashes + 1 cached version + 1 thumbnail
 	assert.Equal(int64(2), info.Rows)
 	assert.True(info.NonCanonicalPaths) // 'imports/eeff03'
 
@@ -70,7 +75,7 @@ func TestFrozenViewContentInfoAndStats(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(2), stats.Messages)
 	assert.Equal(int64(2), stats.AttachmentRows)
-	assert.Equal(int64(3), stats.AttachmentBlobs)
+	assert.Equal(int64(4), stats.AttachmentBlobs)
 	assert.Equal("2024-01-01T00:00:00Z", stats.DateRange[0])
 
 	// Stats marshaling must be stable: ParseStats→Marshal reproduces raw.

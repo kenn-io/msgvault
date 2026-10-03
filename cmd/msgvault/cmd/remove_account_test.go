@@ -26,12 +26,98 @@ import (
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/discord"
+	matrixsource "go.kenn.io/msgvault/internal/matrix"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestRevokeMatrixCredentialsPreservesCredentialsUntilLogoutSucceeds(t *testing.T) {
+	const userID = "@archive:example.org"
+	credentials := func(homeserver string) matrixsource.Credentials {
+		return matrixsource.Credentials{
+			Homeserver: homeserver, UserID: userID,
+			DeviceID: "ARCHIVEDEVICE", AccessToken: "synthetic-token",
+		}
+	}
+
+	t.Run("logout failure", func(t *testing.T) {
+		require := require.New(t)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+		}))
+		defer server.Close()
+		tokensDir := t.TempDir()
+		require.NoError(matrixsource.SaveCredentials(tokensDir, credentials(server.URL)))
+
+		err := revokeMatrixCredentials(t.Context(), tokensDir, userID)
+
+		require.Error(err)
+		_, loadErr := matrixsource.LoadCredentials(tokensDir, userID)
+		require.NoError(loadErr, "failed logout must remain retryable")
+	})
+
+	t.Run("credential load failure", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		tokensDir := t.TempDir()
+		require.NoError(matrixsource.SaveCredentials(tokensDir, credentials("https://example.invalid")))
+		matches, err := filepath.Glob(filepath.Join(tokensDir, "matrix_*.json"))
+		require.NoError(err)
+		require.Len(matches, 1)
+		require.NoError(os.WriteFile(matches[0], []byte("not json"), 0o600))
+
+		err = revokeMatrixCredentials(t.Context(), tokensDir, userID)
+
+		require.Error(err)
+		contents, readErr := os.ReadFile(matches[0])
+		require.NoError(readErr)
+		assert.Equal("not json", string(contents))
+	})
+
+	t.Run("successful logout", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal("POST", r.Method)
+			assert.Equal("/_matrix/client/v3/logout", r.URL.Path)
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		defer server.Close()
+		tokensDir := t.TempDir()
+		require.NoError(matrixsource.SaveCredentials(tokensDir, credentials(server.URL)))
+
+		require.NoError(revokeMatrixCredentials(t.Context(), tokensDir, userID))
+		exists, err := matrixsource.CredentialsExist(tokensDir, userID)
+		require.NoError(err)
+		assert.False(exists)
+	})
+
+	t.Run("already invalid token", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"errcode":"M_UNKNOWN_TOKEN","error":"expired"}`))
+		}))
+		defer server.Close()
+		tokensDir := t.TempDir()
+		require.NoError(matrixsource.SaveCredentials(tokensDir, credentials(server.URL)))
+
+		require.NoError(revokeMatrixCredentials(t.Context(), tokensDir, userID))
+		exists, err := matrixsource.CredentialsExist(tokensDir, userID)
+		require.NoError(err)
+		assert.False(exists)
+	})
+
+	t.Run("already revoked", func(t *testing.T) {
+		require := require.New(t)
+		require.NoError(revokeMatrixCredentials(t.Context(), t.TempDir(), userID))
+	})
+}
 
 func newRemoveAccountLocalTestCmd() *cobra.Command {
 	cmd := newRemoveAccountCmd()
@@ -290,6 +376,45 @@ func TestRemoveAccountTypeRejectsSameTypeDisplayCollision(t *testing.T) {
 	sources, err := s.ListSources("gmail")
 	require.NoError(err)
 	assert.Len(sources, 2)
+}
+
+func TestRemoveAccountMatrixLogoutFailureLeavesSourceAndCredentials(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	s, err := store.Open(dbPath)
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	source, err := s.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
+	require.NoError(err)
+	require.NoError(s.Close())
+
+	testCfg := &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	require.NoError(matrixsource.SaveCredentials(testCfg.TokensDir(), matrixsource.Credentials{
+		Homeserver: server.URL, UserID: source.Identifier,
+		DeviceID: "ARCHIVEDEVICE", AccessToken: "synthetic-token",
+	}))
+	testCtx := testInvocationContext(t.Context(), testCfg, invocationOptions{})
+
+	root := newTestRootCmd()
+	root.SetContext(testCtx)
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", source.Identifier, "--type", sourceTypeMatrix, "--yes"})
+	err = root.Execute()
+	require.ErrorContains(err, "account was not removed")
+
+	s, err = store.Open(dbPath)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(s.Close()) })
+	_, err = s.GetSourceByID(source.ID)
+	require.NoError(err, "source must remain available for retry")
+	_, err = matrixsource.LoadCredentials(testCfg.TokensDir(), source.Identifier)
+	require.NoError(err, "credentials must remain available for retry")
 }
 
 func TestRemoveAccountSourceIDDeletesOnlyExactSource(t *testing.T) {
@@ -810,6 +935,46 @@ func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
 	src, err := s.GetSourceByIdentifier("test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(t, src, "account should be removed after --yes")
+}
+
+func TestRemoveNonMatrixAccountDoesNotWaitForMatrixLifecycleLock(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	_, err = s.GetOrCreateSource(sourceTypeGmail, "test@example.com")
+	require.NoError(err)
+	require.NoError(s.Close())
+	testCfg := &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	ctx := testInvocationContext(t.Context(), testCfg, invocationOptions{})
+
+	lockHeld := make(chan struct{})
+	releaseLock := make(chan struct{})
+	lockDone := make(chan error, 1)
+	go func() {
+		lockDone <- matrixsource.WithCredentialLifecycleLock(testCfg.TokensDir(), func() error {
+			close(lockHeld)
+			<-releaseLock
+			return nil
+		})
+	}()
+	select {
+	case <-lockHeld:
+	case <-time.After(5 * time.Second):
+		require.FailNow("Matrix lifecycle lock was not acquired")
+	}
+	removeDone := make(chan error, 1)
+	go func() { removeDone <- executeRemoveAccount(t, ctx) }()
+	select {
+	case err := <-removeDone:
+		require.NoError(err)
+	case <-time.After(5 * time.Second):
+		close(releaseLock)
+		require.FailNow("unrelated account removal waited for Matrix lifecycle lock")
+	}
+	close(releaseLock)
+	require.NoError(<-lockDone)
 }
 
 func TestRemoveAccountCmd_HoldsCacheLockThroughRebuild(t *testing.T) {

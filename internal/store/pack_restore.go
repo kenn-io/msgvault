@@ -203,7 +203,29 @@ func validateRestoredPackAuthority(
 }
 
 func restoredAttachmentMembership(ctx context.Context, tx *sql.Tx) (map[packstore.Hash]struct{}, error) {
-	rows, err := tx.QueryContext(ctx, attachmentReferencedHashesSQL)
+	referencesSQL := `
+		SELECT LOWER(content_hash) FROM attachments
+		WHERE content_hash IS NOT NULL AND content_hash != ''
+		UNION
+		SELECT LOWER(thumbnail_hash) FROM attachments
+		WHERE thumbnail_hash IS NOT NULL AND thumbnail_hash != ''`
+	var hasMatrixMediaCache bool
+	var postgresVersion string
+	postgres := tx.QueryRowContext(ctx, `SELECT current_setting('server_version_num')`).Scan(&postgresVersion) == nil
+	tableQuery := `SELECT EXISTS (
+		SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'matrix_media_cache'
+	)`
+	if postgres {
+		tableQuery = `SELECT EXISTS (SELECT 1 FROM information_schema.tables
+			WHERE table_schema = current_schema() AND table_name = 'matrix_media_cache')`
+	}
+	if err := tx.QueryRowContext(ctx, tableQuery).Scan(&hasMatrixMediaCache); err != nil {
+		return nil, fmt.Errorf("inspect restored Matrix media cache schema: %w", err)
+	}
+	if hasMatrixMediaCache {
+		referencesSQL = attachmentReferencedHashesSQL
+	}
+	rows, err := tx.QueryContext(ctx, referencesSQL)
 	if err != nil {
 		return nil, fmt.Errorf("list restored attachment membership: %w", err)
 	}

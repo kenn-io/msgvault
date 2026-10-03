@@ -1938,9 +1938,21 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			`); err != nil {
 				return err
 			}
-			_, err := tx.ExecContext(ctx, `
+			if _, err := tx.ExecContext(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_attachments_thumbnail_hash_lower
 				    ON attachments(LOWER(thumbnail_hash))
+			`); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_matrix_media_cache_content_hash_lower
+				    ON matrix_media_cache(LOWER(content_hash))
+			`); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_matrix_media_cache_storage_path
+				    ON matrix_media_cache(storage_path)
 			`)
 			return err
 		}); err != nil {

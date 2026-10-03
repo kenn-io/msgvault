@@ -800,6 +800,50 @@ func TestPruneUnreferencedPackIndex(t *testing.T) {
 	assert.Zero(pruned, "repair is idempotent")
 }
 
+func TestMatrixMediaCacheRetainsBlobLifecycle(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+	hash := packTestHash("a124")
+	legacyPath := "matrix-cache/" + hash
+	_, err := st.DB().Exec(st.Rebind(`INSERT INTO matrix_media_cache
+		(message_id, source_attachment_id, filename, mime_type, storage_path, content_hash, size, media_type)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`), fx.msgID, "matrix:mxc://example.org/cached",
+		"cached.bin", "application/octet-stream", legacyPath, hash, 128, "file")
+	require.NoError(err)
+
+	hashes, err := st.ListReferencedBlobHashesContext(t.Context())
+	require.NoError(err)
+	assert.Contains(hashes, hash)
+	blobs, err := st.ListUnpackedBlobsContext(t.Context())
+	require.NoError(err)
+	require.Len(blobs, 1)
+	assert.Equal(hash, blobs[0].Hash)
+	assert.Equal([]string{legacyPath}, blobs[0].Paths)
+
+	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5v4", hash)
+	require.NoError(st.RecordPackedBlobs(rec, entries))
+	var canonicalPath string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT storage_path FROM matrix_media_cache
+		WHERE message_id = ? AND source_attachment_id = ?`), fx.msgID,
+		"matrix:mxc://example.org/cached").Scan(&canonicalPath))
+	assert.Equal(hash[:2]+"/"+hash, canonicalPath)
+	location, err := st.ResolveAttachmentBlobContext(t.Context(), hash)
+	require.NoError(err)
+	assert.True(location.Referenced)
+	require.NotNil(location.Pack)
+
+	pruned, err := st.PruneUnreferencedPackIndex(context.Background())
+	require.NoError(err)
+	assert.Zero(pruned)
+	_, err = st.DB().Exec(`DELETE FROM matrix_media_cache`)
+	require.NoError(err)
+	pruned, err = st.PruneUnreferencedPackIndex(context.Background())
+	require.NoError(err)
+	assert.Equal(int64(1), pruned)
+}
+
 func TestPruneUnreferencedPackIndexPreservesCaseAliasReference(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

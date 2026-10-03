@@ -111,7 +111,7 @@ make test-v
 
 ### Build tags and assertions
 
-All Go test runs need `-tags "fts5 sqlite_vec"`; the Make targets supply these
+All Go test runs need `-tags "fts5 sqlite_vec goolm"`; the Make targets supply these
 automatically. Use `assert` and `require` from testify, with expected values
 first. See [AGENTS.md](https://github.com/kenn-io/msgvault/blob/main/AGENTS.md)
 for repository testing rules.
@@ -211,7 +211,7 @@ make fmt
 make lint
 
 # Check for issues
-go vet ./...
+go vet -tags "fts5 sqlite_vec goolm" ./...
 ```
 
 ## Profile Web UI search

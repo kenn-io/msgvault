@@ -583,7 +583,7 @@ included parent. `exclude` wins when the same ID is in both lists. See
 
 ### Media policy
 
-`[beeper]`, `[slack]`, `[discord]`, and `[teams]` share one attachment policy
+`[beeper]`, `[matrix]`, `[slack]`, `[discord]`, and `[teams]` share one attachment policy
 vocabulary. It decides which chat media is downloaded during sync and backfill;
 message text is always archived.
 
@@ -593,7 +593,7 @@ message text is always archived.
 | `media_scope` | `all` | `all` collects from every conversation; `direct` collects only from direct and group chats (not channels, rooms, or guild channels); `none` collects nothing |
 | `media_max_participants` | `20` | Skip media from conversations with more participants than this. Omitting the key applies the default; an explicit `0` removes the cap |
 | `max_media_mb` | `250` (Discord `50`) | Per-attachment size cap in MiB. Sized for long voice notes, screen recordings, and phone video from direct chats now that the participant cap keeps large-room volume out |
-| `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by Beeper accountID, Slack team ID, or Teams account email. Discord uses `[discord.guilds."<id>"]` instead |
+| `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by Beeper accountID, Matrix user ID, Slack team ID, or Teams account email. Discord uses `[discord.guilds."<id>"]` instead |
 
 The participant cap exists because most attachment bytes in a real chat
 archive come from large rooms whose forwarded videos nobody wants kept. Direct
@@ -978,6 +978,40 @@ enabled = true
 | `calendars` | — | Specific calendar IDs to sync; empty syncs owned/writable calendars |
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |
+
+### `[matrix]`
+
+Archive joined rooms from native [Matrix](/docs/usage/matrix/) accounts. One
+block controls every account registered with `msgvault add-matrix`; credentials
+and encryption keys never belong in `config.toml`.
+
+```toml
+[matrix]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
+rooms = []                        # exact room-ID include filter (empty = all)
+exclude_rooms = []                # exact room IDs to skip; wins over rooms
+media = true                      # download attachment bytes
+media_scope = "all"               # all, direct, or none
+media_max_participants = 20       # skip media from larger rooms; 0 = no cap
+max_media_mb = 250                # per-file download cap (MiB)
+
+# [matrix.accounts_config."@archive:example.org"]
+# media = false
+# max_media_mb = 100
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules Matrix sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `rooms` | all joined rooms | Exact Matrix room IDs to sync |
+| `exclude_rooms` | — | Exact Matrix room IDs to skip; exclusions win over inclusions |
+| `media` | `true` | Download attachment bytes during sync |
+| `media_scope` | `all` | `all`, `direct`, or `none`; see [Media policy](#media-policy) |
+| `media_max_participants` | `20` | Skip media from rooms above this many joined members; `0` = no cap |
+| `max_media_mb` | `250` | Per-file download cap in MiB |
+| `accounts_config` | — | Per-user-ID `media` and `max_media_mb` overrides |
 
 ### `[beeper]`
 

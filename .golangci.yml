@@ -3,7 +3,7 @@ version: "2"
 run:
   go: "1.27"
   # Lint the build-tagged code, not just the untagged subset. The primary
-  # build uses `fts5 sqlite_vec` (Makefile BUILD_TAGS) and the pgvector
+  # build uses `fts5 sqlite_vec goolm` (Makefile BUILD_TAGS) and the pgvector
   # backend is gated behind `pgvector`; without these tags golangci-lint
   # never compiles those files, so lint debt silently accumulates behind
   # //go:build constraints (it did — see reviews/codex-pr4-iter3.md).
@@ -13,6 +13,7 @@ run:
   build-tags:
     - fts5
     - sqlite_vec
+    - goolm
     - pgvector
 
 linters:

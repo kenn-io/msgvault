@@ -29,15 +29,28 @@ const thumbBearing = `thumbnail_hash IS NOT NULL AND thumbnail_hash != ''
 	AND thumbnail_path NOT LIKE 'http://%'
 	AND thumbnail_path NOT LIKE 'https://%'`
 
+const matrixCacheContentBearing = `content_hash != ''
+	AND storage_path != ''
+	AND storage_path NOT LIKE 'http://%'
+	AND storage_path NOT LIKE 'https://%'`
+
 // attachmentBlobsQuery counts the distinct content-bearing hashes reachable
 // from the archive with thumbnails included: exactly the population
 // ContentInfo enumerates and CaptureAttachments stores. UNION deduplicates
 // a thumbnail hash that also appears as a content hash, so this count always
 // equals len(ContentInfo.Refs) and the manifest's attachments.blobs.
+const attachmentBlobsQueryLegacy = `SELECT COUNT(*) FROM (
+	SELECT content_hash AS h FROM attachments WHERE ` + contentBearing + `
+	UNION
+	SELECT thumbnail_hash AS h FROM attachments WHERE ` + thumbBearing + `
+)`
+
 const attachmentBlobsQuery = `SELECT COUNT(*) FROM (
 	SELECT content_hash AS h FROM attachments WHERE ` + contentBearing + `
 	UNION
 	SELECT thumbnail_hash AS h FROM attachments WHERE ` + thumbBearing + `
+	UNION
+	SELECT content_hash AS h FROM matrix_media_cache WHERE ` + matrixCacheContentBearing + `
 )`
 
 // Stats is msgvault's manifest stats payload (moved from backup.ManifestStats;
@@ -64,6 +77,14 @@ type rowQuerier interface {
 // numbers derived by exactly the same queries the manifest recorded.
 func computeManifestStats(ctx context.Context, q rowQuerier) (Stats, error) {
 	var st Stats
+	blobsQuery := attachmentBlobsQueryLegacy
+	hasMatrixMediaCache, err := matrixMediaCacheExists(ctx, q)
+	if err != nil {
+		return st, err
+	}
+	if hasMatrixMediaCache {
+		blobsQuery = attachmentBlobsQuery
+	}
 	counts := []struct {
 		dst   *int64
 		query string
@@ -74,20 +95,35 @@ func computeManifestStats(ctx context.Context, q rowQuerier) (Stats, error) {
 		{&st.Accounts, "SELECT COUNT(*) FROM account_identities"},
 		{&st.Labels, "SELECT COUNT(*) FROM labels"},
 		{&st.AttachmentRows, "SELECT COUNT(*) FROM attachments"},
-		{&st.AttachmentBlobs, attachmentBlobsQuery},
+		{&st.AttachmentBlobs, blobsQuery},
 	}
 	for _, c := range counts {
 		if err := q.QueryRowContext(ctx, c.query).Scan(c.dst); err != nil {
 			return st, fmt.Errorf("backupapp: stats query %q: %w", c.query, err)
 		}
 	}
-	err := q.QueryRowContext(ctx,
+	err = q.QueryRowContext(ctx,
 		"SELECT COALESCE(MIN(sent_at),''), COALESCE(MAX(sent_at),'') FROM messages",
 	).Scan(&st.DateRange[0], &st.DateRange[1])
 	if err != nil {
 		return st, fmt.Errorf("backupapp: date range query: %w", err)
 	}
 	return st, nil
+}
+
+func matrixMediaCacheExists(ctx context.Context, q rowQuerier) (bool, error) {
+	var version string
+	postgres := q.QueryRowContext(ctx, `SELECT current_setting('server_version_num')`).Scan(&version) == nil
+	query := `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)`
+	if postgres {
+		query = `SELECT EXISTS (SELECT 1 FROM information_schema.tables
+			WHERE table_schema = current_schema() AND table_name = $1)`
+	}
+	var exists bool
+	if err := q.QueryRowContext(ctx, query, "matrix_media_cache").Scan(&exists); err != nil {
+		return false, fmt.Errorf("backupapp: inspect matrix_media_cache schema: %w", err)
+	}
+	return exists, nil
 }
 
 // manifestExcluded names the live-archive paths a snapshot never captures.
@@ -134,9 +170,27 @@ type frozenView struct{ tx *sql.Tx }
 // capture re-derives the hash from the bytes), because importers may
 // namespace paths rather than use the plain "<aa>/<hash>" layout.
 func (v *frozenView) ContentInfo(ctx context.Context) (*backup.ContentInfo, error) {
-	rows, err := v.tx.QueryContext(ctx,
-		"SELECT content_hash, COALESCE(MAX(size), -1), MIN(storage_path) FROM attachments WHERE "+contentBearing+
-			" GROUP BY content_hash ORDER BY MIN(id)")
+	hasMatrixMediaCache, err := matrixMediaCacheExists(ctx, v.tx)
+	if err != nil {
+		return nil, err
+	}
+	contentQuery := "SELECT content_hash, COALESCE(MAX(size), -1), MIN(storage_path) FROM attachments WHERE " +
+		contentBearing + " GROUP BY content_hash ORDER BY MIN(id)"
+	if hasMatrixMediaCache {
+		contentQuery = `
+		WITH content_refs(content_hash, size, storage_path, source_order, row_order) AS (
+			SELECT content_hash, size, storage_path, 0, id
+			FROM attachments WHERE ` + contentBearing + `
+			UNION ALL
+			SELECT content_hash, size, storage_path, 1, message_id
+			FROM matrix_media_cache WHERE ` + matrixCacheContentBearing + `
+		)
+		SELECT content_hash, COALESCE(MAX(size), -1), MIN(storage_path)
+		FROM content_refs
+		GROUP BY content_hash
+		ORDER BY MIN(source_order), MIN(row_order), content_hash`
+	}
+	rows, err := v.tx.QueryContext(ctx, contentQuery)
 	if err != nil {
 		return nil, fmt.Errorf("backupapp: attachment locator query: %w", err)
 	}
@@ -198,14 +252,31 @@ func (v *frozenView) ContentInfo(ctx context.Context) (*backup.ContentInfo, erro
 // containing such paths require a path-aware restore and are marked with a
 // higher manifest reader version at create time.
 func (v *frozenView) hasNonCanonicalAttachmentPaths(ctx context.Context) (bool, error) {
-	var found bool
-	err := v.tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM attachments WHERE `+contentBearing+`
+	hasMatrixMediaCache, err := matrixMediaCacheExists(ctx, v.tx)
+	if err != nil {
+		return false, err
+	}
+	query := `SELECT EXISTS(
+		SELECT 1 FROM attachments WHERE ` + contentBearing + `
 		  AND storage_path != substr(content_hash, 1, 2) || '/' || content_hash
 		UNION ALL
-		SELECT 1 FROM attachments WHERE `+thumbBearing+`
+		SELECT 1 FROM attachments WHERE ` + thumbBearing + `
 		  AND thumbnail_path != substr(thumbnail_hash, 1, 2) || '/' || thumbnail_hash
-	)`).Scan(&found)
+	)`
+	if hasMatrixMediaCache {
+		query = `SELECT EXISTS(
+		SELECT 1 FROM attachments WHERE ` + contentBearing + `
+		  AND storage_path != substr(content_hash, 1, 2) || '/' || content_hash
+		UNION ALL
+		SELECT 1 FROM attachments WHERE ` + thumbBearing + `
+		  AND thumbnail_path != substr(thumbnail_hash, 1, 2) || '/' || thumbnail_hash
+		UNION ALL
+		SELECT 1 FROM matrix_media_cache WHERE ` + matrixCacheContentBearing + `
+		  AND storage_path != substr(content_hash, 1, 2) || '/' || content_hash
+	)`
+	}
+	var found bool
+	err = v.tx.QueryRowContext(ctx, query).Scan(&found)
 	if err != nil {
 		return false, fmt.Errorf("backupapp: attachment path canonicality query: %w", err)
 	}
@@ -235,9 +306,16 @@ func (a *App) RestoredStats(ctx context.Context, db *sql.DB) (jsontext.Value, er
 // DB rows, so each is validated as local before restore writes it.
 func (a *App) RestoredContentPaths(ctx context.Context, db *sql.DB) (map[string][]string, error) {
 	// UNION deduplicates repeated (hash, path) rows across attachments.
-	rows, err := db.QueryContext(ctx,
-		"SELECT content_hash, storage_path FROM attachments WHERE "+contentBearing+
-			" UNION SELECT thumbnail_hash, thumbnail_path FROM attachments WHERE "+thumbBearing)
+	hasMatrixMediaCache, err := matrixMediaCacheExists(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	query := "SELECT content_hash, storage_path FROM attachments WHERE " + contentBearing +
+		" UNION SELECT thumbnail_hash, thumbnail_path FROM attachments WHERE " + thumbBearing
+	if hasMatrixMediaCache {
+		query += " UNION SELECT content_hash, storage_path FROM matrix_media_cache WHERE " + matrixCacheContentBearing
+	}
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("backupapp: attachment path query: %w", err)
 	}

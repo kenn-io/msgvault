@@ -267,7 +267,7 @@ func (s *Store) RemoveSourceSerialized(
 	uniquePackedHashes, err := func() ([]string, error) {
 		rows, err := conn.QueryContext(ctx,
 			s.dialect.Rebind(packedBlobHashesUniqueToSourceSQL),
-			sourceID, sourceID, sourceID,
+			sourceID, sourceID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("list unique packed blobs: %w", err)
@@ -352,26 +352,31 @@ func (s *Store) RemoveSourceSerialized(
 }
 
 const packedBlobHashesUniqueToSourceSQL = `
-	WITH source_blobs(blob_hash) AS (
-	    SELECT LOWER(a.content_hash) FROM attachments a
+	WITH blob_references(source_id, blob_hash) AS (
+	    SELECT m.source_id, LOWER(a.content_hash)
+	    FROM attachments a
+	    JOIN messages m ON m.id = a.message_id
 	    WHERE a.content_hash IS NOT NULL AND a.content_hash != ''
-	      AND EXISTS (SELECT 1 FROM messages m
-	                  WHERE m.id = a.message_id AND m.source_id = ?)
 	    UNION
-	    SELECT LOWER(a.thumbnail_hash) FROM attachments a
+	    SELECT m.source_id, LOWER(a.thumbnail_hash)
+	    FROM attachments a
+	    JOIN messages m ON m.id = a.message_id
 	    WHERE a.thumbnail_hash IS NOT NULL AND a.thumbnail_hash != ''
-	      AND EXISTS (SELECT 1 FROM messages m
-	                  WHERE m.id = a.message_id AND m.source_id = ?)
+	    UNION
+	    SELECT m.source_id, LOWER(c.content_hash)
+	    FROM matrix_media_cache c
+	    JOIN messages m ON m.id = c.message_id
+	    WHERE c.content_hash != ''
+	), source_blobs(blob_hash) AS (
+	    SELECT blob_hash FROM blob_references WHERE source_id = ?
 	)
 	SELECT sb.blob_hash
 	FROM source_blobs sb
 	WHERE EXISTS (SELECT 1 FROM attachment_pack_index p
 	              WHERE p.blob_hash = sb.blob_hash)
 	  AND NOT EXISTS (
-	      SELECT 1 FROM attachments a2
-	      WHERE (LOWER(a2.content_hash) = sb.blob_hash OR LOWER(a2.thumbnail_hash) = sb.blob_hash)
-	        AND EXISTS (SELECT 1 FROM messages m2
-	                    WHERE m2.id = a2.message_id AND m2.source_id != ?)
+	      SELECT 1 FROM blob_references other
+	      WHERE other.blob_hash = sb.blob_hash AND other.source_id != ?
 	  )
 	ORDER BY sb.blob_hash`
 

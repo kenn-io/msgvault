@@ -506,6 +506,7 @@ type Config struct {
 	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
+	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Granola            []GranolaSource                 `toml:"granola"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
@@ -825,6 +826,7 @@ func NewDefaultConfig() *Config {
 		GCal:        []GCalSource{},
 		// Group-room media is capped by default; see DefaultMediaMaxParticipants.
 		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Matrix:  MatrixConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
@@ -1507,6 +1509,20 @@ type BeeperConfig struct {
 	Drafts []GmailDraftSource `toml:"drafts"`
 }
 
+// MatrixConfig configures native Matrix archive sources ([matrix] table).
+// Credentials and encryption keys live under the data directory, never here.
+type MatrixConfig struct {
+	Enabled              bool                          `toml:"enabled"`
+	Schedule             string                        `toml:"schedule"`
+	Rooms                []string                      `toml:"rooms"`
+	ExcludeRooms         []string                      `toml:"exclude_rooms"`
+	Media                *bool                         `toml:"media"`
+	MaxMediaMB           int                           `toml:"max_media_mb"`
+	MediaScope           string                        `toml:"media_scope"`
+	MediaMaxParticipants int                           `toml:"media_max_participants"`
+	AccountsConfig       map[string]MediaAccountConfig `toml:"accounts_config"`
+}
+
 // SlackConfig configures Slack workspace archive sources ([slack] table).
 // One block covers every registered workspace: tokens are per-workspace
 // files, so no per-workspace config entries are needed.
@@ -1592,6 +1608,13 @@ func (b BeeperConfig) MediaPolicy(accountID string) attachmentpolicy.Policy {
 		b.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
 }
 
+// MediaPolicy resolves Matrix provider settings and a user-account override.
+func (m MatrixConfig) MediaPolicy(userID string) attachmentpolicy.Policy {
+	account, ok := m.AccountsConfig[userID]
+	return resolveMediaPolicy(m.Media, m.MediaScope, m.MediaMaxParticipants,
+		m.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
+}
+
 // MediaPolicy resolves Slack provider settings and a workspace override.
 func (s SlackConfig) MediaPolicy(teamID string) attachmentpolicy.Policy {
 	account, ok := s.AccountsConfig[teamID]
@@ -1665,6 +1688,8 @@ func (c *Config) validateMediaPolicies() error {
 	}{
 		{name: "beeper", policy: c.Beeper.MediaPolicy(""), providerMaxMB: c.Beeper.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Beeper.AccountsConfig)},
+		{name: "matrix", policy: c.Matrix.MediaPolicy(""), providerMaxMB: c.Matrix.MaxMediaMB,
+			accountMaxMedia: mediaAccountMaximums(c.Matrix.AccountsConfig)},
 		{name: "slack", policy: c.Slack.MediaPolicy(""), providerMaxMB: c.Slack.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Slack.AccountsConfig)},
 		{name: "discord", policy: c.Discord.MediaPolicy(""), providerMaxMB: c.Discord.MaxMediaMB,

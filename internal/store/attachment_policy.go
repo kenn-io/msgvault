@@ -14,6 +14,7 @@ import (
 type AttachmentPolicyCandidate struct {
 	AttachmentID     int64
 	MessageID        int64
+	MatrixCache      bool
 	SourceType       string
 	SourceIdentifier string
 	ConversationType string
@@ -36,6 +37,8 @@ type AttachmentPolicyCandidate struct {
 // AttachmentExclusion selects one occurrence and records its policy reason.
 type AttachmentExclusion struct {
 	AttachmentID       int64
+	MessageID          int64
+	MatrixCache        bool
 	Reason             attachmentpolicy.SkipReason
 	SourceAttachmentID string
 }
@@ -54,7 +57,7 @@ func (s *Store) ListAttachmentPolicyCandidates(ctx context.Context) ([]Attachmen
 		JOIN messages m ON m.id = a.message_id
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE src.source_type IN ('beeper', 'slack', 'slackdump', 'discord', 'teams')
+		WHERE src.source_type IN ('beeper', 'matrix', 'slack', 'slackdump', 'discord', 'teams')
 		  AND COALESCE(a.attachment_state, '') IN (?, '')
 		  AND (
 		    COALESCE(a.source_attachment_id, '') <> ''
@@ -70,8 +73,8 @@ func (s *Store) ListAttachmentPolicyCandidates(ctx context.Context) ([]Attachmen
 	if err != nil {
 		return nil, fmt.Errorf("list attachment policy candidates: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 	var candidates []AttachmentPolicyCandidate
+	currentMatrixMedia := make(map[string]struct{})
 	for rows.Next() {
 		var candidate AttachmentPolicyCandidate
 		var state attachmentpolicy.DownloadState
@@ -100,10 +103,57 @@ func (s *Store) ListAttachmentPolicyCandidates(ctx context.Context) ([]Attachmen
 		if candidate.SourceAttachmentID == "" {
 			candidate.SourceAttachmentID = fmt.Sprintf("teams:inline:legacy:%d", candidate.AttachmentID)
 		}
+		if candidate.SourceType == "matrix" {
+			currentMatrixMedia[fmt.Sprintf("%d\x00%s", candidate.MessageID, candidate.SourceAttachmentID)] = struct{}{}
+		}
 		candidates = append(candidates, candidate)
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
 		return nil, fmt.Errorf("list attachment policy candidates: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close attachment policy candidates: %w", err)
+	}
+	cacheRows, err := s.db.QueryContext(ctx, s.Rebind(`
+		SELECT c.message_id, src.source_type, src.identifier,
+		       conv.conversation_type, COALESCE(conv.participant_count, 0),
+		       COALESCE(CAST(conv.metadata AS TEXT), ''), COALESCE(c.size, 0),
+		       c.content_hash, c.storage_path, c.source_attachment_id
+		FROM matrix_media_cache c
+		JOIN messages m ON m.id = c.message_id
+		JOIN conversations conv ON conv.id = m.conversation_id
+		JOIN sources src ON src.id = m.source_id
+		ORDER BY c.message_id, c.source_attachment_id
+	`))
+	if err != nil {
+		return nil, fmt.Errorf("list Matrix media cache policy candidates: %w", err)
+	}
+	defer func() { _ = cacheRows.Close() }()
+	for cacheRows.Next() {
+		candidate := AttachmentPolicyCandidate{MatrixCache: true}
+		var conversationMetadata string
+		if err := cacheRows.Scan(
+			&candidate.MessageID, &candidate.SourceType, &candidate.SourceIdentifier,
+			&candidate.ConversationType, &candidate.ParticipantCount, &conversationMetadata,
+			&candidate.Size, &candidate.ContentHash, &candidate.StoragePath,
+			&candidate.SourceAttachmentID,
+		); err != nil {
+			return nil, fmt.Errorf("scan Matrix media cache policy candidate: %w", err)
+		}
+		key := fmt.Sprintf("%d\x00%s", candidate.MessageID, candidate.SourceAttachmentID)
+		if _, current := currentMatrixMedia[key]; current {
+			continue
+		}
+		candidate.ParticipantCount = attachmentPolicyParticipantCount(
+			candidate.SourceType, candidate.ParticipantCount, conversationMetadata,
+		)
+		record := decodeMembershipRecord(conversationMetadata)
+		candidate.RosterUnresolved = !record.counted || record.unknown
+		candidates = append(candidates, candidate)
+	}
+	if err := cacheRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate Matrix media cache policy candidates: %w", err)
 	}
 	return candidates, nil
 }
@@ -117,6 +167,19 @@ func (s *Store) ExcludeAttachmentOccurrences(ctx context.Context, exclusions []A
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		messageIDs := make(map[int64]struct{})
 		for _, exclusion := range exclusions {
+			if exclusion.MatrixCache {
+				if exclusion.MessageID <= 0 || exclusion.SourceAttachmentID == "" || exclusion.Reason == "" || exclusion.Reason == attachmentpolicy.SkipFetchFailure {
+					return fmt.Errorf("invalid Matrix cache exclusion: message=%d source_attachment_id=%q reason=%q",
+						exclusion.MessageID, exclusion.SourceAttachmentID, exclusion.Reason)
+				}
+				if _, err := tx.Exec(`DELETE FROM matrix_media_cache
+					WHERE message_id = ? AND source_attachment_id = ?`,
+					exclusion.MessageID, exclusion.SourceAttachmentID); err != nil {
+					return fmt.Errorf("exclude Matrix cache occurrence %d/%s: %w",
+						exclusion.MessageID, exclusion.SourceAttachmentID, err)
+				}
+				continue
+			}
 			if exclusion.AttachmentID <= 0 || exclusion.Reason == "" || exclusion.Reason == attachmentpolicy.SkipFetchFailure {
 				return fmt.Errorf("invalid attachment exclusion: id=%d reason=%q", exclusion.AttachmentID, exclusion.Reason)
 			}
@@ -156,6 +219,11 @@ func (s *Store) ExcludeAttachmentOccurrences(ctx context.Context, exclusions []A
 			if changed != 1 {
 				return fmt.Errorf("exclude attachment occurrence %d: changed %d rows", exclusion.AttachmentID, changed)
 			}
+			if _, err := tx.Exec(`DELETE FROM matrix_media_cache
+				WHERE message_id = ? AND source_attachment_id = ?`, messageID, sourceAttachmentID); err != nil {
+				return fmt.Errorf("exclude selected Matrix cache occurrence %d/%s: %w",
+					messageID, sourceAttachmentID, err)
+			}
 			messageIDs[messageID] = struct{}{}
 		}
 		for messageID := range messageIDs {
@@ -184,9 +252,14 @@ func (s *Store) AttachmentBlobReferenced(ctx context.Context, contentHash, stora
 			SELECT 1 FROM attachments
 			WHERE (? <> '' AND (content_hash = ? OR thumbnail_hash = ?))
 			   OR (? <> '' AND (storage_path = ? OR thumbnail_path = ?))
+			UNION ALL
+			SELECT 1 FROM matrix_media_cache
+			WHERE (? <> '' AND LOWER(content_hash) = LOWER(?))
+			   OR (? <> '' AND storage_path = ?)
 		)
 	`), contentHash, contentHash, contentHash,
-		storagePath, storagePath, storagePath).Scan(&exists)
+		storagePath, storagePath, storagePath,
+		contentHash, contentHash, storagePath, storagePath).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check attachment blob reference: %w", err)
 	}

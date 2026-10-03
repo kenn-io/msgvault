@@ -1999,6 +1999,23 @@ func TestEditConfigRejectsInvalidSlackSchedule(t *testing.T) {
 	assert.Equal(before, string(got))
 }
 
+func TestEditConfigRejectsInvalidMatrixSchedule(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before := "[matrix]\nenabled = true\nschedule = \"0 * * * *\"\n"
+	require.NoError(os.WriteFile(path, []byte(before), 0o600))
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+
+	_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "matrix.schedule", Value: "not a cron"}})
+	require.ErrorIs(err, ErrInvalidConfigCandidate)
+	assert.Contains(err.Error(), "invalid matrix.schedule")
+	got, readErr := os.ReadFile(path)
+	require.NoError(readErr)
+	assert.Equal(before, string(got))
+}
+
 func TestEditConfigRejectsInvalidNotionMeetingsSchedule(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

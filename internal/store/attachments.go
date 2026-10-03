@@ -349,6 +349,7 @@ const (
 	sourceTypeSlack     = "slack"
 	sourceTypeSlackdump = "slackdump"
 	sourceTypeBeeper    = "beeper"
+	sourceTypeMatrix    = "matrix"
 )
 
 // membershipRecord is the provider-maintained membership a conversation's
@@ -399,7 +400,7 @@ func attachmentPolicyParticipantCount(sourceType string, observed int, metadata 
 	switch strings.TrimSuffix(sourceType, ":") {
 	case sourceTypeDiscord:
 		return max(record.memberCount, observed)
-	case sourceTypeTeams, sourceTypeSlack, sourceTypeSlackdump, sourceTypeBeeper:
+	case sourceTypeTeams, sourceTypeSlack, sourceTypeSlackdump, sourceTypeBeeper, sourceTypeMatrix:
 		return record.memberCount
 	default:
 		return observed

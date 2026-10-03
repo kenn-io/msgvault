@@ -202,6 +202,24 @@ func TestExcludeAttachmentOccurrencesRemovesOnlySelectedBlobReference(t *testing
 	assert.True(referenced)
 }
 
+func TestAttachmentPolicyCandidatesIncludeMatrixMedia(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	_, messageID := newPolicyMessage(t, st, "matrix", "@archive:example.org", "group_chat", "matrix-media", 4)
+	hash := strings.Repeat("ef", 32)
+	require.NoError(st.ReplaceMessageMatrixAttachments(messageID, []store.AttachmentRef{{
+		SourceAttachmentID: "matrix:mxc://example.org/file", StoragePath: hash[:2] + "/" + hash,
+		ContentHash: hash, Size: 42, State: attachmentpolicy.StateStored,
+	}}))
+
+	candidates, err := st.ListAttachmentPolicyCandidates(t.Context())
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.Equal("matrix", candidates[0].SourceType)
+	assert.Equal("matrix:mxc://example.org/file", candidates[0].SourceAttachmentID)
+}
+
 func TestAttachmentPolicyCandidatesIncludeLegacyAliasesSlackdumpAndTeamsInlineRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -91,7 +91,7 @@ export function loadMixedArchive(): Promise<MixedArchiveFixture> {
       [
         'test',
         '-tags',
-        'fts5 sqlite_vec',
+        'fts5 sqlite_vec goolm',
         './internal/query',
         '-run',
         '^TestWriteMixedArchiveBrowserFixture$',
