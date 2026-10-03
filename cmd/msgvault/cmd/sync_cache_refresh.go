@@ -41,8 +41,8 @@ func manualSyncCLICommand(args []string) bool {
 	}
 	switch args[0] {
 	case "sync-slack", "sync-teams", "sync-beeper", "sync-discord", "sync-circleback",
-		"sync-notion-meetings", "sync-granola", "sync-calendar", "sync-synctech-sms":
-		if args[0] == "sync-circleback" || args[0] == "sync-notion-meetings" {
+		"sync-notion-meetings", "sync-twenty", "sync-granola", "sync-calendar", "sync-synctech-sms":
+		if args[0] == "sync-circleback" || args[0] == "sync-notion-meetings" || args[0] == "sync-twenty" {
 			for _, arg := range args[1:] {
 				if arg == "--probe" || arg == "--probe=true" {
 					return false

@@ -18,6 +18,7 @@ const (
 	sourceTypeCircleback     = "circleback"
 	sourceTypeNotionMeetings = "notion_meetings"
 	sourceTypeMuesli         = "muesli"
+	sourceTypeTwenty         = "twenty"
 )
 
 // Analytics dataset / SQLite table names: the Parquet subdirectory under

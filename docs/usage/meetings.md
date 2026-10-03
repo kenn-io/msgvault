@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-28"
+last_edited: "2026-10-03"
 title: Meeting Transcripts
-description: Archive AI meeting notes and transcripts from Granola, Circleback, Notion, and Muesli into your searchable local archive.
+description: Archive AI meeting notes and transcripts from Granola, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
 
 Find meeting decisions and transcripts in the same archive as your email and
@@ -17,10 +17,11 @@ emails connect meetings to the people you already know in msgvault.
 | [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Notion integration token | At most 50 attendee-visible meetings per discovery query |
 | [Circleback](#circleback) | Browser authorization to its MCP server | Older note edits require a full refresh |
 | [Muesli](#muesli) | Local database on the same Mac | msgvault must run on the Mac where Muesli records |
+| [Twenty Call Recorder](#twenty-call-recorder) | Read-only workspace API key | Requires Call Recorder and readable recording/calendar objects |
 | [Another meeting source](#import-from-any-meeting-source) | Authenticated JSON import | Your integration supplies each meeting and its updates |
 
 Provider sync reads meeting data without changing the source service. Recording
-media is not downloaded by the Notion, Circleback, or Muesli integrations.
+media is not downloaded by the Notion, Circleback, Muesli, or Twenty integrations.
 
 ## Browse and search
 
@@ -64,7 +65,7 @@ source evidence. Back returns to the same workspace and scope.
 Action status is the last archived source status, not a local task list.
 msgvault does not infer assignees, create follow-ups, or mark source tasks done.
 Supported empty action lists, unsupported sources, unavailable evidence, and
-partial evidence remain distinct. Granola has no structured action support;
+partial evidence remain distinct. Granola and Twenty have no structured action support;
 Circleback and generic imports preserve explicit actions; Notion exposes
 checkboxes from archived summary and notes blocks. A Notion checkbox does not
 supply an assignee merely because a name appears in its text.
@@ -93,7 +94,7 @@ is unavailable (`null` in JSON), not zero.
 
 | Duration basis | Evidence |
 |---|---|
-| Provider | Explicit provider duration, Notion recording start/end, or generic meeting start/end |
+| Provider | Explicit provider duration, Notion or Twenty recording start/end, or generic meeting start/end |
 | Scheduled | Calendar start and end |
 | Transcript span | Earliest through latest usable transcript timing |
 | Unknown duration | No usable duration evidence; no duration basis is assigned |
@@ -117,6 +118,74 @@ Existing archives gain meeting projections from their stored raw evidence on
 upgrade, without a provider resync. Evidence absent from an older raw snapshot
 still appears as unavailable or partial. Upgrade the daemon as well as clients;
 meeting operations need daemon API schema 2.27.0 or newer.
+
+## Twenty Call Recorder
+
+Archive summaries and diarized transcripts from a Twenty workspace with Call
+Recorder installed and enabled. msgvault reads existing recordings through
+Twenty's GraphQL API; it does not install the app, operate recording bots, or
+download recording media. See [Twenty releases](https://twenty.com/releases)
+and the [official API guide](https://docs.twenty.com/developers/extend/capabilities/apis).
+
+Create an API key in Twenty's **Settings → APIs & Webhooks**. Assign a role
+with read access to Call Recordings, Calendar Events, and Calendar Event
+Participants. Store the configuration on the host running `msgvault serve`:
+
+```toml
+[[twenty]]
+identifier = "work"
+account_email = "you@example.com"
+base_url = "https://api.twenty.com"
+api_key = "YOUR_READ_ONLY_API_KEY"
+enabled = true
+schedule = "15 */6 * * *"
+```
+
+For self-hosted Twenty, set `base_url` to the instance's API origin, such as
+`https://crm.example.com`. Use a root URL without a path, query, or embedded
+credentials. HTTPS is required except for loopback HTTP. Requests reject
+redirects so the key remains at the configured origin.
+
+```bash
+msgvault add-twenty work
+msgvault sync-twenty work
+msgvault sync-twenty work --probe
+msgvault sync-twenty work --after 2026-01-01 --limit 10
+msgvault sync-twenty work --full
+```
+
+Registration checks all three object types and the required fields before
+creating the archive source. `--probe` performs the same read-only check
+without writing the archive or printing meeting content. With several
+configured sources, specify one for registration or probing; ordinary sync
+without an identifier syncs them all.
+
+Every unlimited run scans the whole catalog and refreshes linked calendar
+participants. Requests are paced for Twenty's documented API rate limit.
+Recording pages above the 64 MiB response cap are retried from the same cursor
+with fewer recordings. If a one-recording response still exceeds the cap, sync
+reports an error and preserves the existing archive.
+Unchanged evidence skips the archive write; late summaries, transcripts, and
+attendee edits update the same meeting. Pending, failed, or empty transcript
+markers are never archived as text. A usable summary can be archived while
+the transcript is pending. Empty recordings are reconsidered on the next run.
+
+`--after` is an inclusive local UTC meeting-date filter. Occurrence time uses
+the recording start, then calendar start, then recording creation time.
+`--limit` caps eligible meetings, including unchanged ones, and reports partial
+coverage when discovery stops early. `--full` refreshes projections and
+attribution even when evidence matches. Run it after changing account identities.
+
+Raw evidence retains the returned recording, calendar, and participant fields.
+Calendar email handles supply identities; speaker names and display-only
+handles remain display evidence. Duration uses valid recording start/end,
+then scheduled calendar time, then transcript timing. Structured actions are
+unsupported; summary prose does not create action items.
+
+Recordings deleted in Twenty remain archived. API, permission, hydration, and
+cancellation failures fail the sync and preserve previously committed evidence.
+Removing the local source prevents scheduled sync from recreating it; use
+`add-twenty` to register it again.
 
 ## Source labels and account identity
 

@@ -1153,6 +1153,38 @@ the primary identity even if aliases already exist. Manage aliases with
 existing meeting attribution. A scheduled source must still be registered in
 the archive; removing it prevents the scheduler from silently recreating it.
 
+### Twenty Sources
+
+Top-level `[[twenty]]` entries connect Twenty Call Recorder workspaces through
+read-only API keys. Keep these entries on the daemon host. Register each source
+with `msgvault add-twenty` before syncing or scheduling it. See
+[Meeting Transcripts](/docs/usage/meetings/#twenty-call-recorder) for API permissions.
+
+```toml
+[[twenty]]
+identifier = "work"
+account_email = "you@example.com"
+base_url = "https://api.twenty.com"
+api_key = "YOUR_READ_ONLY_API_KEY"
+schedule = "15 */6 * * *"
+enabled = true
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | `default` (single entry) | Stable label for commands and the `twenty:<identifier>` scheduler job |
+| `account_email` | (required) | Actual primary email for account identity and organizer attribution |
+| `base_url` | (required) | API root: `https://api.twenty.com` for Cloud, or the self-hosted instance origin |
+| `api_key` | (required at registration/sync) | API key with read access to recordings, calendar events, and participants |
+| `schedule` | — | Five-field cron expression used by `msgvault serve` |
+| `enabled` | `false` | Opt into daemon scheduling; manual sync remains available |
+
+Origins require HTTPS except loopback HTTP and cannot include credentials,
+queries, fragments, or path prefixes. Redirects are rejected. Identifiers must
+be unique ignoring case; each entry requires `account_email`. Enabled sources
+without a schedule are not scheduled. Removing a registered source prevents
+scheduled sync from silently recreating it.
+
 ### Circleback Sources
 
 Circleback meeting sync is configured with top-level `[[circleback]]`

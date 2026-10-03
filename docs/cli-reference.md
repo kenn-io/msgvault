@@ -918,6 +918,50 @@ See [Meeting Transcripts](/docs/usage/meetings/) for setup and what gets stored.
 
 ---
 
+## add-twenty
+
+Validate read access and register a configured Twenty Call Recorder source.
+
+```bash
+msgvault add-twenty [identifier]
+```
+
+The daemon-host `[[twenty]]` entry requires `account_email`, `base_url`, and
+`api_key`. One entry permits omitting the identifier. Registration checks
+recording, calendar, and participant access before creating the source.
+
+---
+
+## sync-twenty
+
+Archive Twenty Call Recorder summaries and diarized transcripts.
+
+```bash
+msgvault sync-twenty [identifier]
+msgvault sync-twenty work --after 2026-01-01 --limit 10
+msgvault sync-twenty work --full
+msgvault sync-twenty work --probe
+```
+
+Every unlimited run rescans recording IDs and linked calendar participants.
+Unchanged evidence skips writes; late transcripts and attendee edits converge
+on the existing meeting. With no identifier, sync visits all configured sources.
+API failures fail the run while retaining previously committed meetings.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--limit` | `0` | Maximum eligible meetings processed, including unchanged ones (`0` = unlimited); stopped scans report partial coverage |
+| `--after` | — | Inclusive local UTC occurrence-date lower bound (`YYYY-MM-DD`) |
+| `--full` | `false` | Force archive projections and attribution refresh even for matching evidence |
+| `--probe` | `false` | Check read access without printing content or writing the archive; requires one source |
+| `--build-cache` | `false` | Request a cache build after manual sync |
+| `--no-build-cache` | `false` | Skip the cache build after manual sync |
+
+See [Meeting Transcripts](/docs/usage/meetings/#twenty-call-recorder) for setup,
+stored evidence, duration fallbacks, and retained source deletions.
+
+---
+
 ## add-muesli
 
 Check a configured local Muesli database and register it as a meeting source.

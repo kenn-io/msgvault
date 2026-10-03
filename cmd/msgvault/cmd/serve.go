@@ -679,6 +679,31 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, src := range cfg.Twenty {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("Twenty source is enabled but has no schedule; the daemon will not sync it",
+				"source", src.Identifier, "hint", `set schedule on the [[twenty]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledTwentySources() {
+		source := src
+		jobName, ok := api.SchedulerJobNameForSource(sourceTypeTwenty, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for Twenty source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name: jobName, Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredTwentySync(ctx, s, source)
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule Twenty source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled Twenty source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
