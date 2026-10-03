@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-03"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -811,6 +811,40 @@ See [Meeting Transcripts](/docs/usage/meetings/) for setup and what gets stored.
 
 ---
 
+## add-bland
+
+Unreleased: validate read access and register a configured Bland call source.
+
+```bash
+msgvault add-bland [identifier]
+```
+
+An identifier is required with several `[[bland]]` entries. The daemon owns
+credentials and archive writes. See [configuration](configuration.md#bland-call-recordings).
+
+## sync-bland
+
+Unreleased: import existing Bland recordings, transcripts and retained postcall
+payloads as meetings.
+
+```bash
+msgvault sync-bland [identifier]
+msgvault sync-bland --limit 5
+msgvault sync-bland --full --after 2026-01-01
+msgvault sync-bland bland-work --probe
+```
+
+| Flag | Behavior |
+|---|---|
+| `--limit N` | Caps discovery work; repeated runs progress; `0` is unlimited |
+| `--full` | Enumerates history and rechecks terminal artifact availability |
+| `--after YYYY-MM-DD` | Lower call creation bound; implies `--full` |
+| `--probe` | Prints content-free capability results; requires one source |
+
+Without an identifier, sync all configured sources. Due artifact retries are
+additional to `--limit`. Cache-refresh flags follow the other manual sync
+commands. See [coverage and retention](usage/meetings.md#bland-recorded-calls).
+
 ## add-notion-meetings
 
 Validate a configured read-only Notion integration and register its meeting
@@ -904,6 +938,52 @@ Missing pending transcripts and notes preserve previous evidence. Deleted
 recordings remain archived. Failed and canceled runs save rotation progress and
 refresh committed changes before returning the error. See the
 [meeting guide](usage/meetings.md#plaud) for pagination and consistency limits.
+## add-twilio
+
+This integration is unreleased. Validate a configured Twilio account and
+register its meeting source without printing call content or identifiers.
+
+```bash
+msgvault add-twilio [identifier]
+```
+
+The matching `[[twilio]]` entry requires `account_email`, `account_sid`, and
+either API key SID/secret or an auth token. With one entry, omit the identifier.
+The probe checks recording discovery and, when `relay_discovery` is enabled,
+call discovery. Transcript products and recording downloads are checked by
+sync. See [Twilio configuration](/docs/configuration/#twilio-sources).
+
+---
+
+## sync-twilio
+
+This integration is unreleased. Archive existing Twilio calls, recordings,
+and retained transcripts as meetings. With no identifier, sync every
+configured source. Register sources with `add-twilio` first.
+
+```bash
+msgvault sync-twilio [identifier]
+msgvault sync-twilio twilio-work --limit 10
+msgvault sync-twilio twilio-work --full --after 2026-01-01
+msgvault sync-twilio twilio-work --probe
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--limit` | `0` | Maximum new calls processed per run; due artifact retries are additional; `0` is unlimited |
+| `--after` | — | UTC creation lower bound, `YYYY-MM-DD`; implies `--full` |
+| `--full` | `false` | Recheck known calls and unavailable artifacts |
+| `--probe` | `false` | Check discovery access and print counts; multiple sources require an identifier |
+| `--build-cache` | `false` | Refresh the analytics cache after sync |
+| `--no-build-cache` | `false` | Skip the analytics cache refresh |
+
+Sync reads existing evidence. It does not place calls, enable recording or
+paid features, or submit transcription jobs. Missing transcripts and regional
+coverage gaps are reported without inventing call text. Stored call evidence
+and audio remain archived when upstream records disappear. See
+[Meeting Transcripts](/docs/usage/meetings/#twilio) for availability and retries.
+
+---
 
 ## add-circleback
 

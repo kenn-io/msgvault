@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-04"
 title: Meeting Transcripts
-description: Archive AI meeting notes and transcripts from Granola, Plaud, Circleback, Notion, and Muesli into your searchable local archive.
+description: Archive call recordings, AI meeting notes, and transcripts from Twilio, Bland, Granola, Plaud, Circleback, Notion, and Muesli into your searchable local archive.
 ---
 
 Find meeting decisions and transcripts in the same archive as your email and
@@ -13,20 +13,29 @@ emails connect meetings to the people you already know in msgvault.
 
 | Source | Connection | Main coverage limit |
 |---|---|---|
+| [Twilio](#twilio) | Account token or API key | Existing retained call recordings and transcripts; account and region scoped (unreleased) |
 | [Granola](#granola) | API key | Requires access to Granola's public API |
 | [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Notion integration token | At most 50 attendee-visible meetings per discovery query |
 | [Plaud](#plaud) | Browser authorization to its hosted MCP server | Requires Cloud Sync and existing Plaud transcription |
 | [Circleback](#circleback) | Browser authorization to its MCP server | Older note edits require a full refresh |
+| [Bland calls](#bland-recorded-calls) (unreleased) | Org API key | Existing recordings and retained postcall payloads only |
 | [Muesli](#muesli) | Local database on the same Mac | msgvault must run on the Mac where Muesli records |
 | [Another meeting source](#import-from-any-meeting-source) | Authenticated JSON import | Your integration supplies each meeting and its updates |
 
-Provider sync reads meeting data without changing the source service. Recording
-media is not downloaded by the Notion, Plaud, Circleback, or Muesli integrations.
+Provider sync retrieves existing meeting data by default. Bland's optional
+[direct correction request](#bland-recorded-calls) has separate upstream
+processing considerations. Recording media is not downloaded by the Notion,
+Plaud, Circleback, or Muesli integrations.
 
 ## Browse and search
 
 Start `msgvault serve` and open the [Web UI](/docs/web-ui/) to find meetings in
 Everything. Filter to meeting notes or search across notes, email, and chats.
+For meetings with archived audio, open the message to play or download its
+recording. Playback uses the local archive and starts when you press play.
+An unavailable attachment means the audio has not been saved locally; a
+transcript can still be available independently.
+
 To search only meetings from the CLI:
 
 ```bash
@@ -243,6 +252,110 @@ use RFC 3339 with an explicit offset, request bodies are limited to 16 MiB, and
 provider-specific fields belong under `meeting.metadata`. These sources are
 on-demand: import through the API again to add or update meetings rather than
 using **Sync now** or a scheduler.
+
+## Twilio
+
+This integration is unreleased. Twilio calls become meetings in the local
+archive. One call has one transcript message and can have several recording
+attachments. Call legs remain separate meetings with the parent call ID in
+archived metadata. Sync reads existing data and never places calls, enables
+recording, creates transcription jobs, or enables paid account features.
+
+Configure one `[[twilio]]` entry per account or subaccount. See the
+[configuration fields](../configuration.md#twilio-sources) for credentials, regions,
+recording keys, and media policy. Then register and sync:
+
+```bash
+msgvault add-twilio work
+msgvault sync-twilio work --probe
+msgvault sync-twilio work
+msgvault sync-twilio                    # all configured accounts
+msgvault sync-twilio work --limit 20
+msgvault sync-twilio work --after 2026-01-01
+msgvault sync-twilio work --full
+```
+
+The daemon owns archive writes and scheduled runs. Removing a registered
+source prevents its configured schedule from recreating it; register it again
+with `add-twilio` to resume. `--probe` checks account access without displaying
+call content. See [command flags](../cli-reference.md#sync-twilio).
+
+### Recordings and retained speech
+
+Sync discovers [Voice recordings](https://www.twilio.com/docs/voice/api/recording)
+and collects every recording attached to a call. It stores actual audio in the
+archive's content-addressed attachment storage. Dual-channel WAV preserves
+available channels; recordings that reject two channels fall back to mono.
+The default per-recording limit is 250 MiB. Media policy exclusions and size
+limits remain explicit attachment outcomes.
+
+Speech retrieval covers existing legacy recording transcriptions, completed
+Conversation Intelligence classic transcripts and sentences, and
+[Batch transcriptions](https://www.twilio.com/docs/voice/api/batch-transcription-resource)
+whose upstream configuration retained text in Conversation Orchestrator.
+[Orchestrator communications](https://www.twilio.com/docs/api/conversations/v2/communication/list-communication-by-conversation)
+are filtered and validated by call channel. Batch job metadata links to the
+conversation that led discovery. Communications are archived once at call
+level: a call channel does not prove which recording or Batch job produced
+an utterance. A reused conversation is never imported wholesale.
+
+Set `relay_discovery = true` to also inspect calls without recordings, look up
+persisted Orchestrator conversations by call channel, and discover classic
+Relay sessions through `carrier_edge` Voice Insights events. The classic
+bridge needs already-enabled Voice Insights Advanced Features and persisted
+Intelligence transcripts. Session IDs come from actual call events. Separate
+sessions keep separate timing scopes; sync never guesses correlations from
+phone numbers or timestamps. Voice Insights events can arrive late.
+
+Phone endpoints, direction, call status, duration, channels, speaker labels,
+and source IDs remain provider evidence. A business number or provider role
+such as Agent is not proof of a person's identity. The configured account
+email is not invented as the call organizer. Summaries and action items are
+unsupported through these reads; recording-only calls have unavailable
+transcript evidence, while a completed empty transcript stays empty.
+
+### Updates, retries, and coverage
+
+`--limit` bounds newly hydrated calls. Repeated limited runs make progress
+through unseen calls, including equal timestamps. Due artifact maintenance
+runs independently of that limit and the discovery watermark. Successful
+complete discovery uses a seven-day overlap to find late changes. Truncated
+or failed traversal does not advance the watermark. `--full` revisits known
+calls and terminal unavailable artifacts, preserving progress when limited.
+
+Missing artifacts are polled every six hours, for seven days after a known
+call end or 48 hours after discovery when timing is absent. Historical calls
+receive an initial attempt. Transport, authentication, and acquisition
+failures remain failed and retryable; an expired absence is unavailable.
+Previously archived text and audio survive omissions, pending regressions,
+incomplete transcript pages, and upstream disappearance. Deletions do not
+propagate to the archive.
+
+Twilio can remove Call metadata while retaining its recordings and transcripts.
+When Call lookup returns `404`, msgvault reports `call_metadata_unavailable`
+and still imports authenticated recording evidence, audio, and retained text.
+It preserves prior Call metadata when available; otherwise participants and
+whole-call duration remain unknown. Missing call recording lists report
+`call_recordings_unavailable`; account-wide recording discovery still works.
+Metadata absence uses the same bounded refresh window and `--full` recheck.
+See Twilio's [Call retention and deletion contract](https://www.twilio.com/docs/voice/api/call-resource#call-resource-retention).
+
+US1, IE1 (Dublin), and AU1 (Sydney) route Voice reads to their regional origins
+using regional credentials. Classic Intelligence is unavailable in IE1/AU1.
+Batch, Orchestrator, and Insights reads currently report a regional coverage
+gap there because regional availability has no verified read contract; sync
+never silently sends regional credentials to US1. Coverage also depends on
+account/subaccount access, enabled products, upstream retention, and whether
+transcript text was retained. A Batch job with no retained conversation text
+cannot be recovered by a read-only sync.
+
+Encrypted WAV can be decrypted with an explicitly configured local RSA key
+matched to the recording's public-key SID. Sync authenticates AES-GCM before
+publishing plaintext; missing keys or invalid authentication remain failed.
+External S3 recordings need an explicit recording-to-HTTPS URL mapping and
+host allowlist, such as a presigned object URL. Twilio credentials never go to
+external hosts. Arbitrary provider metadata URLs are not fetched. Neither keys
+nor configured credentials are stored in meeting evidence.
 
 ## Granola
 
@@ -492,6 +605,93 @@ diagnose provider contract changes without modifying the archive.
 source stops sync from recreating it; run `add-plaud` to register it again.
 See the [configuration reference](../configuration.md#plaud-sources) and
 [CLI reference](../cli-reference.md#sync-plaud) for exact fields and flags.
+## Bland recorded calls
+
+This integration is unreleased. msgvault archives each ended Bland call as one
+meeting, with existing audio and text. Call legs use separate IDs. It retrieves
+call details and [previously sent postcall webhook payloads](https://docs.bland.ai/api-v1/get/postcall-webhooks-get).
+The default path reads retained artifacts without setting up a webhook receiver.
+
+### Connect and sync
+
+Add a [Bland configuration entry](../configuration.md#bland-call-recordings), then:
+
+```bash
+msgvault add-bland bland-work
+msgvault sync-bland bland-work --probe
+msgvault sync-bland bland-work
+```
+
+With several entries, `sync-bland` without an identifier syncs all configured
+accounts. `--probe` requires an identifier when several entries exist. Use
+`--limit 5` for a bounded discovery run and repeat it to reach later calls.
+`--full` revisits history and unavailable artifacts; `--after YYYY-MM-DD`
+restricts call creation dates and implies `--full`.
+
+Incremental discovery sorts by update time, overlaps at least the previous UTC
+day, and fixes an upper date for each traversal. The API has no documented
+snapshot guarantee. Discovery is best effort within the API key's account and
+deployment access. Pending call IDs are reconciled independently of the
+watermark and discovery limit every six hours, for seven days after a known
+call end or 48 hours after discovery when timing is unknown. The `--after`
+cutoff applies to archived-ID full replay; pending retries remain independent
+of that cutoff. A full sync can recover older late artifacts without relying on
+`updated_at` changes. Expired retry entries leave the cursor; full sync also
+revisits archived call IDs that the provider list no longer returns. Checkpoints
+are saved in bounded batches.
+
+### What gets stored
+
+The `bland_call_json` archive retains call details, webhook delivery evidence,
+original and enhanced transcript renditions, optional direct correction responses,
+translation evidence, transfer relationships, status, direction, endpoints
+and recording expiry metadata.
+Corrected pre-transfer speech replaces duplicate raw speech in the searchable
+transcript. Post-transfer speech extends it. Documented transfer offsets are
+added to segment offsets; absent offsets stay unknown. Translation remains an
+alternate rendition rather than duplicate conversation text. `agent-action`
+entries remain raw evidence and are excluded from spoken text.
+
+Recordings stream from the authenticated recording endpoint into the shared
+content-addressed attachment store. Policy and actual streamed bytes enforce
+[media limits](../configuration.md#bland-call-recordings). Attachment states
+separate pending, stored, skipped, failed and unavailable recordings. Existing
+stored text and audio survive later upstream omissions. Recording-only calls
+have an unavailable transcript rather than invented speech. Calls with neither
+artifact keep bounded retry records and appear in the skipped count. Malformed
+transcript renditions retain raw evidence and any previously validated speech;
+valid ordinary text and audio still import. Validation retries expire on the
+same schedule and appear as unavailable provider evidence in sync output.
+
+Duration uses `corrected_duration` seconds, then `call_length` minutes.
+`end_at` is a scheduled cutoff and never supplies actual duration. The external
+telephone endpoint is an unanchored participant. The AI endpoint stays provider
+evidence; the configured account email is not assigned as organizer.
+
+### Coverage and unresolved provider contracts
+
+Retained enrichment depends on what the account already requested and retained
+upstream. Post-transfer text is in limited rollout; calls can lack it even when
+ordinary text exists. Warm-transfer proxy calls are imported separately when
+accessible. Recording may stop at transfer, and retention can remove audio
+before import. Sync never recreates missing upstream artifacts or propagates
+deletions.
+
+The [direct corrected-transcript GET](https://docs.bland.ai/api-v1/get/calls-corrected-transcript)
+does not document whether it starts processing or how billing works. msgvault
+retrieves retained corrected text by default. Set `fetch_corrected_transcript = true`
+to opt into the direct GET endpoint. Sync preserves its full response, uses
+`corrected[]` rather than deprecated `aligned[]`, and reconciles it without
+duplicating meetings. Missing direct results preserve previously stored text.
+The endpoint is not known to be either free or paid from the reference alone.
+Sync never calls POST, create, or resend endpoints. API authentication
+examples disagree on raw versus Bearer keys; msgvault follows the endpoint
+references' raw `Authorization` key. Live-account authentication, read quotas,
+retention and deployment coverage still require account verification.
+
+Remove a registered source with `msgvault remove-account bland-work --type
+bland --yes`, and remove or disable its configuration. Scheduled runs refuse
+to recreate a removed source.
 
 ## Circleback
 

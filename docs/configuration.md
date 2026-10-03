@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-03"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1241,6 +1241,94 @@ the source before enabling a schedule. Removing the source prevents the
 scheduler from recreating it. See [Meeting Transcripts](/docs/usage/meetings/) for
 the 50-result discovery limit, attendee visibility, transcript retries, and
 stored data.
+
+### Bland call recordings
+
+Unreleased: configure one `[[bland]]` entry per org API key. See the
+[Bland meeting guide](usage/meetings.md#bland-recorded-calls) for capture and
+coverage behavior. Store credentials in the protected config file, following
+[the existing configuration contract](#config-file).
+
+```toml
+[[bland]]
+identifier = "bland-work"
+account_email = "you@example.com"
+api_key = "your-org-api-key"
+enabled = true
+schedule = "0 */6 * * *"
+media_scope = "all"
+max_media_mb = 250
+# encrypted_key = "existing-byot-encrypted-key"
+fetch_corrected_transcript = false
+```
+
+| Field | Default | Purpose |
+|---|---|---|
+| `identifier` | `default` for a single entry | Stable source label; distinct entries need distinct labels |
+| `account_email` | Required | Primary account identity; not a call organizer assertion |
+| `api_key` | Required by add/sync | Org API key, sent as raw `Authorization` to Bland |
+| `encrypted_key` | Empty | Existing BYOT credential on documented list and detail endpoints; never creates a key |
+| `fetch_corrected_transcript` | `false` | Opts into GET `/calls/{id}/correct`; provider processing and billing semantics are not established |
+| `enabled` | `false` | Allows scheduled sync when a schedule exists |
+| `schedule` | Empty | Five-field cron; manual commands remain available |
+| `media_scope` | `all` | `all` downloads call audio; `none` skips; `direct` excludes meeting conversations |
+| `max_media_mb` | `250` | Positive per-recording MiB cap; `0` uses the default |
+
+Download policy is recorded per occurrence. Reconfigure it and run `--full`
+to reconsider skipped artifacts. Previously stored audio is retained.
+
+### Twilio Sources
+
+This integration is unreleased. Twilio sync archives existing calls,
+recordings, and retained transcripts as meetings. Configure one `[[twilio]]`
+entry per account or subaccount and region. The daemon uses these credentials
+and reads local decryption keys on its own host.
+
+```toml
+[[twilio]]
+identifier = "twilio-work"
+account_email = "you@example.com"
+account_sid = "AC00000000000000000000000000000001"
+api_key_sid = "SK00000000000000000000000000000001"
+api_key_secret = "your-regional-key-secret"
+region = "us1"
+enabled = true
+schedule = "15 */6 * * *"
+media = true
+max_media_mb = 250
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | `default` (single entry) | Stable source label; required when configuring multiple entries |
+| `account_email` | Required | Primary account identity; does not identify the call organizer or speakers |
+| `account_sid` | Required | Explicit account or subaccount SID |
+| `api_key_sid`, `api_key_secret` | — | Regional API key credentials; both are required together |
+| `auth_token` | — | Alternative account credential; mutually exclusive with API key credentials |
+| `region` | `us1` | Voice region: `us1`, `ie1`, or `au1`; credentials must belong to that region |
+| `intelligence_service_sid` | — | Optional existing classic Conversation Intelligence service |
+| `relay_discovery` | `false` | Also discover calls without recordings and look for existing Relay session evidence |
+| `enabled` | `false` | Enable daemon scheduling |
+| `schedule` | — | Five-field cron expression; omit to sync manually |
+| `media` | `true` | Download recording bytes; `false` still archives call and transcript evidence |
+| `max_media_mb` | `250` | Recording size cap in MiB; `0` uses the default |
+| `recording_keys` | `{}` | Map `CR` public key SIDs to local RSA private-key PEM paths |
+| `external_media` | `{}` | Map `RE` recording SIDs to explicit HTTPS download URLs |
+| `external_media_hosts` | `[]` | Public DNS hostnames allowed for external recording downloads and redirects |
+
+Keep the configuration and PEM files private. Credentials are literal config
+values, following the other native meeting providers. Relative key paths
+resolve against msgvault's home directory; `~` expands to the daemon user's
+home directory. External media requires an explicit matching host entry.
+Twilio credentials are never sent to external media hosts.
+
+Run `msgvault add-twilio <identifier>` before syncing or enabling a schedule.
+A removed source must be registered again explicitly. Regional Voice uses
+`api.dublin.ie1.twilio.com` for Ireland and `api.sydney.au1.twilio.com` for
+Australia. Unsupported transcript products in those regions produce coverage
+diagnostics; msgvault does not fall back to US credentials. See
+[Meeting Transcripts](/docs/usage/meetings/#twilio) for retained evidence and
+upstream availability requirements.
 
 ### Muesli Sources
 

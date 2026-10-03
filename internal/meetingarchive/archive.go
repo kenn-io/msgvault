@@ -198,6 +198,7 @@ func (a *Archiver) Upsert(
 			return &store.MessagePersistData{
 				Message: &store.Message{
 					SourceID:                snapshot.SourceID,
+					PreserveAttachmentStats: true,
 					SourceMessageID:         snapshot.SourceMessageID,
 					MessageType:             MessageType,
 					SentAt:                  sql.NullTime{Time: snapshot.StartedAt, Valid: !snapshot.StartedAt.IsZero()},

@@ -28,6 +28,23 @@ function omittedMessage(id: number) {
 }
 
 describe('ConversationView', () => {
+  it('exposes a meeting recording from the archived attachment metadata', async () => {
+    const hash = 'b'.repeat(64);
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      id: 7, anchor_id: 2,
+      messages: [{ ...message(2, 'meeting_transcript'), has_attachments: true,
+        attachments: [{ id: 9, filename: 'call.mp3', mime_type: 'audio/mpeg',
+          size_bytes: 4096, content_hash: hash }] }],
+      has_before: false, has_after: false, total: 1,
+    }));
+    render(ConversationView, {
+      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 },
+    });
+    const download = await screen.findByRole('link', { name: 'Download call.mp3' });
+    expect(download.getAttribute('href')).toBe(`/api/v1/attachments/${hash}/content`);
+    expect(screen.getByLabelText('Play call.mp3').getAttribute('src')).toBe(download.getAttribute('href'));
+  });
+
   it('loads the thread with the anchor expanded and the rest as one-line collapsed cards', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

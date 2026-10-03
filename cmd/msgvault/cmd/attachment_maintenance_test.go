@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
@@ -622,6 +623,8 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams",
+		"sync-twilio",
+		"sync-bland",
 	}
 	for _, command := range allowlisted {
 		t.Run("allows "+command, func(t *testing.T) {
@@ -642,6 +645,39 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 		})
 	}
 	assert.False(t, attachmentProducingCommand(nil))
+}
+
+func TestCallSyncProbeClassificationMatchesCobra(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"normal", []string{"calls"}},
+		{"bare", []string{"calls", "--probe"}},
+		{"true", []string{"calls", "--probe=true"}},
+		{"uppercase", []string{"calls", "--probe=TRUE"}},
+		{"numeric", []string{"calls", "--probe=1"}},
+		{"false", []string{"calls", "--probe=false"}},
+		{"last_false", []string{"--probe", "calls", "--probe=false"}},
+		{"last_true", []string{"--probe=false", "calls", "--probe"}},
+		{"positional", []string{"--", "--probe"}},
+	}
+	for _, command := range []string{"sync-twilio", "sync-bland"} {
+		for _, tc := range cases {
+			t.Run(command+"/"+tc.name, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				cmd := &cobra.Command{Use: command}
+				cmd.Flags().Bool("probe", false, "inspect account access")
+				require.NoError(cmd.ParseFlags(tc.args))
+				probe, err := cmd.Flags().GetBool("probe")
+				require.NoError(err)
+				args := append([]string{command}, tc.args...)
+				assert.Equal(!probe, attachmentProducingCommand(args))
+				assert.Equal(!probe, manualSyncCLICommand(args))
+			})
+		}
+	}
 }
 
 func TestAttachmentIngestMutationLeaseWaitsForMaintenance(t *testing.T) {

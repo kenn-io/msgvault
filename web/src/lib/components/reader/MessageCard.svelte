@@ -5,6 +5,7 @@
   import type { ArchiveMessageDetail, MessageViewMode } from '../../archive/types';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import ContentFrame from './ContentFrame.svelte';
+  import MessageAttachments from './MessageAttachments.svelte';
 
   interface Props {
     message: ArchiveMessageDetail;
@@ -117,6 +118,7 @@
           <pre>{message.body}</pre>
         {/if}
       </section>
+      <MessageAttachments attachments={message.attachments} />
     </div>
   </article>
 {:else}

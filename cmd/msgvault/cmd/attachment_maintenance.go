@@ -441,6 +441,9 @@ func attachmentProducingCommand(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
+	if args[0] == "sync-twilio" || args[0] == "sync-bland" {
+		return !cliProbeRequested(args[1:])
+	}
 	switch args[0] {
 	case "archive-remote-images",
 		"backfill-beeper-media",

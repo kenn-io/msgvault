@@ -1692,6 +1692,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-calendar",
 		"add-circleback",
 		"add-plaud",
+		"add-bland",
 		"add-discord",
 		"add-granola",
 		"add-imap",
@@ -1701,6 +1702,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-slack",
 		"add-synctech-sms-drive",
 		"add-teams",
+		"add-twilio",
 		"backfill-beeper-media",
 		"backfill-discord-media",
 		"backfill-slack-media",
@@ -1745,13 +1747,15 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-calendar",
 		"sync-circleback",
 		"sync-plaud",
+		"sync-bland",
 		"sync-discord",
 		"sync-granola",
 		"sync-muesli",
 		"sync-notion-meetings",
 		"sync-slack",
 		"sync-synctech-sms",
-		"sync-teams":
+		"sync-teams",
+		"sync-twilio":
 		return true
 	default:
 		return false
