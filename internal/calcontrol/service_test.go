@@ -20,6 +20,8 @@ type controlFake struct {
 	calendar      string
 	input         gcal.EventInput
 	options       gcal.MutationOptions
+	patchOptions  []gcal.MutationOptions
+	patchInputs   []gcal.EventInput
 	result        gcal.Event
 	instances     []gcal.Event
 	instanceCalls []gcal.EventsListParams
@@ -35,6 +37,8 @@ func (f *controlFake) InsertEvent(_ context.Context, cal string, in gcal.EventIn
 }
 func (f *controlFake) PatchEvent(_ context.Context, cal, id string, in gcal.EventInput, opt gcal.MutationOptions) (*gcal.Event, error) {
 	f.calls = append(f.calls, "patch:"+id)
+	f.patchOptions = append(f.patchOptions, opt)
+	f.patchInputs = append(f.patchInputs, in)
 	f.calendar, f.input, f.options = cal, in, opt
 	return &f.result, nil
 }
@@ -202,7 +206,7 @@ func TestMoveRejectsUnauthorizedDestinationBeforeListing(t *testing.T) {
 		wantError   string
 	}{
 		{name: "missing delegated grant", destination: "other@example.com", wantError: "grant lacks calendar.write"},
-		{name: "not in write policy", destination: "private@example.com", wantError: "not in write_calendars"},
+		{name: "ungranted and not in write policy", destination: "private@example.com", wantError: "grant lacks calendar.write"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -243,7 +247,7 @@ func TestPrimaryMoveDestinationAuthorizesCanonicalIDBeforeRoleDisclosure(t *test
 	_, err := s.Execute(context.Background(), r, grant)
 
 	requirements.ErrorIs(err, ErrDenied)
-	assertions.Contains(err.Error(), "grant lacks calendar.write")
+	assertions.Contains(err.Error(), "calendar access denied")
 	assertions.NotContains(err.Error(), "accessRole")
 	assertions.Equal(1, f.ListCalendarsCalls(), "primary must be resolved before its canonical ID can be authorized")
 }
@@ -442,4 +446,133 @@ func TestFreeBusyDoesNotHideProviderErrors(t *testing.T) {
 	_, err := s.Execute(context.Background(), r, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "notFound")
+}
+
+func TestGrantChecksPrecedeConfiguredAllowlists(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		invite, move bool
+	}{
+		{name: "source write"}, {name: "source invite", invite: true}, {name: "destination before source policy", move: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			s, f, r := fixture(t)
+			grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionCalendarWrite}, Sources: []agentgrant.SourceRef{{Type: gcal.SourceType, Identifier: "person@example.com/team@example.com"}}}
+			s.Source.WriteCalendars = nil
+			s.Source.InviteCalendars = nil
+			if tc.invite {
+				r.Event.Attendees = &[]gcal.Attendee{{Email: "guest@example.com"}}
+			} else if tc.move {
+				r.Action, r.EventID, r.Destination = "move", "event", "other@example.com"
+				r.Event = gcal.EventInput{}
+			} else {
+				grant.Sources = nil
+			}
+			_, err := s.Execute(t.Context(), r, grant)
+			requirements.ErrorIs(err, ErrDenied)
+			assertions.Contains(err.Error(), "grant lacks")
+			assertions.NotContains(err.Error(), "_calendars")
+			assertions.Zero(f.ListCalendarsCalls())
+		})
+	}
+}
+
+func TestDelegatedPrimaryLookupHidesSetupUntilExactAuthorization(t *testing.T) {
+	for _, target := range []string{"primary", "alias", "destination", "availability"} {
+		for _, state := range []string{"provider failure", "missing primary", "ungranted primary", "valid primary"} {
+			t.Run(target+"/"+state, func(t *testing.T) {
+				requirements := require.New(t)
+				assertions := assert.New(t)
+				s, f, r := fixture(t)
+				s.Source.WriteCalendars = append(s.Source.WriteCalendars, "person@example.com")
+				s.Source.CalendarAliases["self"] = "primary"
+				r.CalendarID = "primary"
+				grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionCalendarWrite, agentgrant.PermissionCalendarRead}, Sources: []agentgrant.SourceRef{{Type: gcal.SourceType, Identifier: "person@example.com/team@example.com"}}}
+				switch target {
+				case "alias":
+					r.CalendarID = "self"
+				case "destination":
+					r.Action, r.CalendarID, r.EventID, r.Destination = "move", "team", "event", "primary"
+					r.Event = gcal.EventInput{}
+					f.EventsByID["team@example.com"] = map[string]gcal.Event{"event": {ID: "event"}}
+				case "availability":
+					r.Action = "freebusy"
+					r.CalendarID = ""
+					r.CalendarIDs = []string{"self"}
+					r.Event = gcal.EventInput{}
+					r.TimeMin = time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
+					r.TimeMax = r.TimeMin.Add(time.Hour)
+					f.busy = gcal.FreeBusyResponse{Calendars: map[string]gcal.CalendarBusy{"person@example.com": {}}}
+				}
+				switch state {
+				case "provider failure":
+					f.ListCalendarsErr = errors.New("OAuth setup detail")
+				case "missing primary":
+					f.Calendars = f.Calendars[:1]
+				case "valid primary":
+					grant.Sources = append(grant.Sources, agentgrant.SourceRef{Type: gcal.SourceType, Identifier: "person@example.com/person@example.com"})
+				}
+				_, err := s.Execute(t.Context(), r, grant)
+				if state == "valid primary" {
+					requirements.NoError(err)
+					return
+				}
+				requirements.ErrorIs(err, ErrDenied)
+				assertions.Equal("calendar operation denied: calendar access denied", err.Error())
+				assertions.Zero(f.GetEventCalls())
+				assertions.Empty(f.calls)
+			})
+		}
+	}
+}
+
+func TestWriteGateRunsAfterPlanningAndReleasesAfterPersistence(t *testing.T) {
+	for _, stage := range []string{"dry run", "invalid plan", "changed plan", "gate denied", "successful write"} {
+		t.Run(stage, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			s, f, r := fixture(t)
+			acquired, released := false, false
+			gateErr := errors.New("write gate busy")
+			s.AcquireWrite = func(context.Context) (func(), error) {
+				acquired = true
+				assertions.Empty(f.calls)
+				if stage == "gate denied" {
+					return nil, gateErr
+				}
+				return func() { released = true }, nil
+			}
+			s.Persist = func(context.Context, gcal.Calendar, gcal.Event) (int64, error) {
+				assertions.True(acquired)
+				assertions.False(released)
+				return 42, nil
+			}
+			switch stage {
+			case "dry run":
+				r.DryRun = true
+			case "invalid plan":
+				r.Event.End = r.Event.Start
+			case "changed plan":
+				r.ExpectedPlanFingerprint = "stale"
+			}
+			_, err := s.Execute(t.Context(), r, nil)
+			switch stage {
+			case "invalid plan":
+				requirements.ErrorIs(err, ErrInvalid)
+			case "changed plan":
+				requirements.ErrorIs(err, ErrPlanChanged)
+			case "gate denied":
+				requirements.ErrorIs(err, gateErr)
+			default:
+				requirements.NoError(err)
+			}
+			assertions.Equal(stage == "gate denied" || stage == "successful write", acquired)
+			assertions.Equal(stage == "successful write", released)
+			if stage != "successful write" {
+				assertions.Empty(f.calls)
+			}
+		})
+	}
 }

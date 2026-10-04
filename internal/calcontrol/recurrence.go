@@ -24,8 +24,11 @@ func (s *Service) selectScope(ctx context.Context, cal gcal.Calendar, event gcal
 		}
 		return &event, nil
 	}
-	if scope == "all" || scope == "future" {
+	if scope == "all" || scope == scopeFuture {
 		if event.RecurringEventID != "" {
+			if scope == scopeFuture && r.OriginalStart != "" && !sameOriginal(event.OriginalStartTime, r.OriginalStart) {
+				return nil, invalid("original_start does not match the selected instance")
+			}
 			return s.Client.GetEvent(ctx, cal.ID, event.RecurringEventID)
 		}
 		return &event, nil
@@ -183,6 +186,31 @@ func (s *Service) futurePlan(ctx context.Context, cal gcal.Calendar, master gcal
 		if err != nil {
 			return nil, err
 		}
+		mergedStart, mergedEnd := master.Start, master.End
+		if patch.Start != nil {
+			mergedStart = *patch.Start
+		}
+		if patch.End != nil {
+			mergedEnd = *patch.End
+		}
+		if patch.Start != nil || patch.End != nil {
+			if err := validateRange(&mergedStart, &mergedEnd); err != nil {
+				return nil, err
+			}
+		}
+		if patch.Start != nil || patch.Recurrence != nil {
+			recurrence := master.Recurrence
+			if patch.Recurrence != nil {
+				recurrence = *patch.Recurrence
+			}
+			normalizedStart, err := recurrenceTimeZone(&mergedStart, master.Start.TimeZone, cal.TimeZone)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateFutureRecurrence(*normalizedStart, recurrence); err != nil {
+				return nil, err
+			}
+		}
 		return []PlannedWrite{{Action: actionUpdate, CalendarID: cal.ID, EventID: master.ID, Event: patch}}, nil
 	}
 	oldOpt := *opt
@@ -253,63 +281,115 @@ func (s *Service) futurePlan(ctx context.Context, cal gcal.Calendar, master gcal
 	if err := validateRange(input.Start, input.End); err != nil {
 		return nil, err
 	}
+	if err := validateFutureRecurrence(*input.Start, *input.Recurrence); err != nil {
+		return nil, err
+	}
 	newStart, _ := input.Start.Instant()
 	instanceStart, _ := instance.Start.Instant()
-	if patch.Start != nil && newStart.Before(instanceStart) {
-		if err := rejectFutureOverlap(ctx, master, retained, exceptions, input); err != nil {
+	newEnd, _ := input.End.Instant()
+	instanceEnd, _ := instance.End.Instant()
+	instanceTimeZone := instance.Start.TimeZone
+	if instanceTimeZone == "" {
+		instanceTimeZone = master.Start.TimeZone
+	}
+	if instanceTimeZone == "" {
+		instanceTimeZone = cal.TimeZone
+	}
+	changedZone := !input.Start.IsAllDay() && input.Start.TimeZone != instanceTimeZone
+	changedSchedule := changedZone || !newStart.Equal(instanceStart) || !newEnd.Equal(instanceEnd) || input.Start.IsAllDay() != instance.Start.IsAllDay() || (patch.Recurrence != nil && !slices.Equal(*patch.Recurrence, recurrence))
+	if changedSchedule {
+		if err := rejectFutureOverlap(ctx, master, retained, exceptions, input, cal.TimeZone); err != nil {
 			return nil, err
 		}
 	}
-	steps = append(steps, PlannedWrite{Action: "create", CalendarID: cal.ID, Event: input})
+	steps = append(steps, PlannedWrite{Action: actionCreate, CalendarID: cal.ID, Event: input})
 	if err := validateFuturePlan(steps); err != nil {
 		return nil, err
 	}
 	// Truncation and insertion are separate Google requests. Completed writes
-	// are archived and returned if the second request fails; never replay them.
+	// are archived and returned. A definite insertion failure triggers guarded
+	// restoration of the original recurrence; never replay completed writes.
 	return steps, nil
 }
 
-// rejectFutureOverlap checks backward moves against the events that remain in
+// rejectFutureOverlap checks changed schedules against the events that remain in
 // the original series. Exceptions replace their nominal instances, and end
 // times are exclusive, so a replacement may fit between retained events.
-func rejectFutureOverlap(ctx context.Context, master gcal.Event, retained []time.Time, exceptions map[time.Time]gcal.Event, input gcal.EventInput) error {
-	start, _ := master.Start.Instant()
-	end, ok := master.End.Instant()
-	if !ok {
-		return invalid("cannot determine the retained series end")
+func rejectFutureOverlap(ctx context.Context, master gcal.Event, retained []time.Time, exceptions map[time.Time]gcal.Event, input gcal.EventInput, calendarTimeZone string) error {
+	start, err := overlapInstant(master.Start, calendarTimeZone)
+	if err != nil {
+		return err
 	}
+	end, err := overlapInstant(master.End, calendarTimeZone)
+	if err != nil {
+		return err
+	}
+	nominalStart, _ := master.Start.Instant()
+	nominalEnd, _ := master.End.Instant()
 	intervals := make([]gcal.BusyPeriod, 0, len(retained)+len(exceptions))
 	for _, occurrence := range retained {
 		if _, replaced := exceptions[occurrence.UTC()]; !replaced {
-			intervals = append(intervals, gcal.BusyPeriod{Start: occurrence, End: occurrence.Add(end.Sub(start))})
+			occurrenceStart, occurrenceEnd := occurrence, occurrence.Add(end.Sub(start))
+			if master.Start.IsAllDay() {
+				occurrenceStart, err = overlapInstant(gcal.EventDateTime{Date: occurrence.Format("2006-01-02")}, calendarTimeZone)
+				if err != nil {
+					return err
+				}
+				occurrenceEnd, err = overlapInstant(gcal.EventDateTime{Date: occurrence.AddDate(0, 0, int(nominalEnd.Sub(nominalStart)/(24*time.Hour))).Format("2006-01-02")}, calendarTimeZone)
+				if err != nil {
+					return err
+				}
+			}
+			intervals = append(intervals, gcal.BusyPeriod{Start: occurrenceStart, End: occurrenceEnd})
 		}
 	}
 	for _, event := range exceptions {
 		if event.Status == gcal.StatusCancelled {
 			continue
 		}
-		start, startOK := event.Start.Instant()
-		end, endOK := event.End.Instant()
-		if !startOK || !endOK || !end.After(start) {
+		start, startErr := overlapInstant(event.Start, calendarTimeZone)
+		end, endErr := overlapInstant(event.End, calendarTimeZone)
+		if startErr != nil || endErr != nil || !end.After(start) {
 			return invalid("cannot determine retained exception bounds")
 		}
 		intervals = append(intervals, gcal.BusyPeriod{Start: start, End: end})
 	}
 	slices.SortFunc(intervals, func(a, b gcal.BusyPeriod) int { return a.Start.Compare(b.Start) })
-	newStart, _ := input.Start.Instant()
-	newEnd, _ := input.End.Instant()
+	newStart, err := overlapInstant(*input.Start, calendarTimeZone)
+	if err != nil {
+		return err
+	}
+	newEnd, err := overlapInstant(*input.End, calendarTimeZone)
+	if err != nil {
+		return err
+	}
 	duration := newEnd.Sub(newStart)
 	index := 0
 	check := func(occurrence time.Time) error {
+		occurrenceEnd := occurrence.Add(duration)
+		if input.Start.IsAllDay() {
+			startDate, _ := input.Start.Instant()
+			endDate, _ := input.End.Instant()
+			localStart, err := overlapInstant(gcal.EventDateTime{Date: occurrence.Format("2006-01-02")}, calendarTimeZone)
+			if err != nil {
+				return err
+			}
+			localEnd, err := overlapInstant(gcal.EventDateTime{Date: occurrence.AddDate(0, 0, int(endDate.Sub(startDate)/(24*time.Hour))).Format("2006-01-02")}, calendarTimeZone)
+			if err != nil {
+				return err
+			}
+			occurrence, occurrenceEnd = localStart, localEnd
+		}
 		for index < len(intervals) && !intervals[index].End.After(occurrence) {
 			index++
 		}
-		if index < len(intervals) && occurrence.Add(duration).After(intervals[index].Start) {
+		if index < len(intervals) && occurrenceEnd.After(intervals[index].Start) {
 			return invalid("future scope replacement overlaps a retained occurrence")
 		}
 		return nil
 	}
-	if err := check(newStart); err != nil || index == len(intervals) {
+	initialStart, _ := input.Start.Instant()
+	if err := check(initialStart); err != nil || index == len(intervals) {
 		return err
 	}
 	loc := time.UTC
@@ -325,7 +405,7 @@ func rejectFutureOverlap(ctx context.Context, master gcal.Event, retained []time
 		if err != nil {
 			return invalid("invalid replacement recurrence: %v", err)
 		}
-		option.Dtstart = newStart.In(loc)
+		option.Dtstart = initialStart.In(loc)
 		rule, err := rrule.NewRRule(*option)
 		if err != nil {
 			return invalid("invalid replacement recurrence: %v", err)
@@ -349,6 +429,58 @@ func rejectFutureOverlap(ctx context.Context, master gcal.Event, retained []time
 			if index == len(intervals) {
 				break
 			}
+		}
+	}
+	return nil
+}
+
+// All-day dates occupy calendar-local days, including 23/25-hour DST days.
+func overlapInstant(bound gcal.EventDateTime, calendarTimeZone string) (time.Time, error) {
+	if !bound.IsAllDay() {
+		if instant, ok := bound.Instant(); ok {
+			return instant, nil
+		}
+		return time.Time{}, invalid("cannot determine overlap bounds")
+	}
+	loc, err := time.LoadLocation(calendarTimeZone)
+	if err != nil || calendarTimeZone == "" {
+		return time.Time{}, invalid("all-day overlap checks require the calendar time zone")
+	}
+	instant, err := time.ParseInLocation("2006-01-02", bound.Date, loc)
+	if err != nil {
+		return time.Time{}, invalid("cannot determine all-day overlap bounds")
+	}
+	return instant, nil
+}
+
+func validateFutureRecurrence(start gcal.EventDateTime, recurrence []string) error {
+	instant, _ := start.Instant()
+	loc := time.UTC
+	if !start.IsAllDay() {
+		var err error
+		loc, err = time.LoadLocation(start.TimeZone)
+		if err != nil {
+			return invalid("invalid replacement time zone")
+		}
+	}
+	for _, line := range recurrence {
+		for part := range strings.SplitSeq(strings.TrimPrefix(line, "RRULE:"), ";") {
+			if until, ok := strings.CutPrefix(part, "UNTIL="); ok && (len(until) == 8) != start.IsAllDay() {
+				return invalid("future recurrence UNTIL must match the replacement start type; supply a compatible recurrence rule")
+			}
+		}
+		option, err := rrule.StrToROption(strings.TrimPrefix(line, "RRULE:"))
+		if err != nil {
+			return invalid("invalid replacement recurrence: %v", err)
+		}
+		option.Dtstart = instant.In(loc)
+		rule, err := rrule.NewRRule(*option)
+		if err != nil {
+			return invalid("invalid replacement recurrence: %v", err)
+		}
+		first, ok := rule.Iterator()()
+		if !ok || !first.Equal(instant) {
+			return invalid("future recurrence does not include the replacement start; supply a compatible recurrence rule")
 		}
 	}
 	return nil

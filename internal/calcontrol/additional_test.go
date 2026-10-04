@@ -109,6 +109,7 @@ func TestFuturePartialUnknownOutcomeIsExplicitAndKeepsCompletedReceipt(t *testin
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	s, f, r := fixture(t)
+	f.result.ETag = `"v2"`
 	start, end := *r.Event.Start, *r.Event.End
 	r.Action = "update"
 	r.EventID = "series"
@@ -146,6 +147,7 @@ func TestFuturePartialMissingEventMarksOutcomeUnknownAndKeepsCompletedReceipt(t 
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	s, f, r := fixture(t)
+	f.result.ETag = `"v2"`
 	start, end := *r.Event.Start, *r.Event.End
 	r.Action = "update"
 	r.EventID = "series"

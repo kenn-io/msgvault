@@ -35,6 +35,8 @@ func TestFutureSeriesSplitAndDelete(t *testing.T) {
 			requirements.NoError(err)
 			requirements.NotEmpty(result.Plan)
 			assertions.Equal("update", result.Plan[0].Action)
+			requirements.Len(f.patchOptions, 1)
+			assertions.Equal(`"v1"`, f.patchOptions[0].IfMatch)
 			requirements.NotNil(result.Plan[0].Event.Recurrence)
 			assertions.Contains((*result.Plan[0].Event.Recurrence)[0], "UNTIL=20261003T085959Z")
 			if action == "update" {
@@ -133,6 +135,7 @@ func TestFutureSplitChecksRetainedExceptions(t *testing.T) {
 		cancelled    bool
 		wantError    bool
 	}{
+		{name: "forward move overlaps rescheduled earlier occurrence", day: 4, hour: 8, exceptionDay: 4, wantError: true},
 		{name: "overlaps rescheduled earlier occurrence", day: 3, hour: 8, exceptionDay: 3, wantError: true},
 		{name: "starts when earlier occurrence ends", day: 3, hour: 8, minute: 30, exceptionDay: 3},
 		{name: "cancelled exception has no occupied time", day: 3, hour: 8, exceptionDay: 3, cancelled: true},
@@ -668,4 +671,68 @@ func TestConflictIntersectionsExcludeTouchingBounds(t *testing.T) {
 	assertions.Equal([]string{"a@example.com", "b@example.com"}, result[0].CalendarIDs)
 	assertions.Equal(start.Add(30*time.Minute), result[0].Start)
 	assertions.Equal(start.Add(time.Hour), result[0].End)
+}
+
+func TestFutureTimedReplacementUsesLocalRetainedAllDayBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name, changedStart, changedEnd string
+		wantError                      bool
+	}{
+		{"inside retained local day", "2026-10-03T01:00:00Z", "2026-10-03T02:00:00Z", true},
+		{"at retained local midnight", "2026-10-03T04:00:00Z", "2026-10-03T05:00:00Z", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			s, f, r := fixture(t)
+			f.Calendars[0].TimeZone = "America/New_York"
+			start, err := time.Parse(time.RFC3339, tc.changedStart)
+			requirements.NoError(err)
+			end, err := time.Parse(time.RFC3339, tc.changedEnd)
+			requirements.NoError(err)
+			r.Action, r.EventID, r.Scope, r.OriginalStart = "update", "series", "future", "2026-10-03"
+			r.Event = gcal.EventInput{Start: &gcal.EventDateTime{DateTime: start}, End: &gcal.EventDateTime{DateTime: end}}
+			f.EventsByID["team@example.com"] = map[string]gcal.Event{"series": {ID: "series", Start: gcal.EventDateTime{Date: "2026-10-02"}, End: gcal.EventDateTime{Date: "2026-10-03"}, Recurrence: []string{"RRULE:FREQ=DAILY;COUNT=4"}}}
+			f.instances = []gcal.Event{{ID: "instance", RecurringEventID: "series", OriginalStartTime: gcal.EventDateTime{Date: "2026-10-03"}, Start: gcal.EventDateTime{Date: "2026-10-03"}, End: gcal.EventDateTime{Date: "2026-10-04"}}}
+			_, err = s.Execute(t.Context(), r, nil)
+			if tc.wantError {
+				requirements.ErrorIs(err, ErrInvalid)
+				assertions.Empty(f.calls)
+			} else {
+				requirements.NoError(err)
+				assertions.Equal([]string{"patch:series", "insert"}, f.calls)
+			}
+		})
+	}
+}
+
+func TestFutureSplitChecksChangedRecurrenceTimeZone(t *testing.T) {
+	for _, changedZone := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unchanged schedule", true: "zone changes later occurrences"}[changedZone], func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			s, f, r := fixture(t)
+			masterStart := gcal.EventDateTime{DateTime: time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC), TimeZone: "UTC"}
+			masterEnd := gcal.EventDateTime{DateTime: masterStart.DateTime.Add(time.Hour), TimeZone: "UTC"}
+			selected := gcal.EventDateTime{DateTime: time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC), TimeZone: "UTC"}
+			selectedEnd := gcal.EventDateTime{DateTime: selected.DateTime.Add(time.Hour), TimeZone: "UTC"}
+			start := selected
+			if changedZone {
+				start.TimeZone = "America/New_York"
+			}
+			r.Action, r.EventID, r.Scope, r.OriginalStart = "update", "series", "future", "2026-10-03T09:00:00Z"
+			r.Event = gcal.EventInput{Start: &start}
+			f.EventsByID["team@example.com"] = map[string]gcal.Event{"series": {ID: "series", Start: masterStart, End: masterEnd, Recurrence: []string{"RRULE:FREQ=DAILY;COUNT=40"}}}
+			f.instances = []gcal.Event{{ID: "instance", RecurringEventID: "series", OriginalStartTime: selected, Start: selected, End: selectedEnd}}
+			f.FullEvents["team@example.com"] = [][]gcal.Event{{{ID: "earlier", RecurringEventID: "series", OriginalStartTime: masterStart, Start: gcal.EventDateTime{DateTime: time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)}, End: gcal.EventDateTime{DateTime: time.Date(2026, 11, 3, 11, 0, 0, 0, time.UTC)}}}}
+			result, err := s.Execute(t.Context(), r, nil)
+			if changedZone {
+				requirements.ErrorIs(err, ErrInvalid)
+				assertions.Empty(f.calls)
+			} else {
+				requirements.NoError(err)
+				requirements.Len(result.Writes, 2)
+			}
+		})
+	}
 }

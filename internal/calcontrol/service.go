@@ -24,7 +24,12 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 )
 
-const actionUpdate = "update"
+const (
+	actionCreate = "create"
+	actionUpdate = "update"
+	actionMove   = "move"
+	scopeFuture  = "future"
+)
 
 var ErrDenied = errors.New("calendar operation denied")
 var ErrInvalid = errors.New("invalid calendar request")
@@ -63,12 +68,19 @@ type Request struct {
 	ExpectedPlanFingerprint string          `json:"expected_plan_fingerprint,omitempty" doc:"Execute only if the OAuth account, planned writes, and normalized send_updates still match a previous dry run"`
 }
 
+// EventTarget identifies existing event content without adding it to a mutation.
+type EventTarget struct {
+	Summary string             `json:"summary,omitempty"`
+	Start   gcal.EventDateTime `json:"start"`
+}
+
 type PlannedWrite struct {
 	Action      string          `json:"action"`
 	CalendarID  string          `json:"calendar_id"`
 	EventID     string          `json:"event_id,omitempty"`
 	Destination string          `json:"destination,omitempty"`
 	Event       gcal.EventInput `json:"event,omitzero"`
+	Target      *EventTarget    `json:"target,omitzero"`
 }
 
 // WriteReceipt is returned even if a remote success cannot be archived. It
@@ -105,6 +117,8 @@ type Service struct {
 	Source  config.GCalSource
 	Client  gcal.ControlAPI
 	Persist func(context.Context, gcal.Calendar, gcal.Event) (int64, error)
+	// AcquireWrite serializes mutations after planning and confirmation checks.
+	AcquireWrite func(context.Context) (func(), error)
 }
 
 func invalid(format string, args ...any) error {
@@ -115,39 +129,85 @@ func denied(format string, args ...any) error {
 }
 func IsRead(action string) bool { return action == "freebusy" || action == "conflicts" }
 
+// RequestPermissions returns capabilities evident before reading provider state.
+// Existing guests can additionally require calendar.invite after the event is read.
+func RequestPermissions(r Request) []agentgrant.Permission {
+	if IsRead(r.Action) {
+		return []agentgrant.Permission{agentgrant.PermissionCalendarRead}
+	}
+	permissions := []agentgrant.Permission{agentgrant.PermissionCalendarWrite}
+	if (r.SendUpdates != "" && r.SendUpdates != "none") || r.Event.Attendees != nil || len(r.AddAttendees) > 0 || r.Action == "respond" {
+		permissions = append(permissions, agentgrant.PermissionCalendarInvite)
+	}
+	return permissions
+}
+
+func requestCalendarIDs(r Request) []string {
+	if IsRead(r.Action) && len(r.CalendarIDs) > 0 {
+		return r.CalendarIDs
+	}
+	ids := []string{r.CalendarID}
+	if r.Action == actionMove {
+		ids = append(ids, r.Destination)
+	}
+	return ids
+}
+
+// AuthorizeSourceRequest checks exact grants before configuration policy or OAuth
+// setup. The primary alias still needs a live lookup and canonical-ID check.
+func AuthorizeSourceRequest(source config.GCalSource, r Request, grant *agentgrant.Grant) error {
+	s := Service{Source: source}
+	account := strings.ToLower(strings.TrimSpace(source.Email))
+	ids := requestCalendarIDs(r)
+	permissions := RequestPermissions(r)
+	for _, id := range ids {
+		id = s.resolveAlias(id)
+		if id == "primary" {
+			continue
+		}
+		for _, permission := range permissions {
+			if err := authorizeGrant(id, account, permission, grant); err != nil {
+				return err
+			}
+		}
+	}
+	if !source.Enabled {
+		return denied("calendar source is disabled")
+	}
+	requestedAccount := strings.TrimSpace(r.Account)
+	if !strings.EqualFold(requestedAccount, strings.TrimSpace(source.Email)) && !strings.EqualFold(requestedAccount, strings.TrimSpace(source.Name)) {
+		return denied("account does not match configured source")
+	}
+	write := !IsRead(r.Action)
+	if write && r.ReadOnly {
+		return denied("read-only mode forbids event changes")
+	}
+	invite := slices.Contains(permissions, agentgrant.PermissionCalendarInvite)
+	for _, id := range ids {
+		id = s.resolveAlias(id)
+		if id != "primary" {
+			if err := s.authorize(id, account, write, invite, grant); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Grant) (*Result, error) {
 	if err := r.Validate(); err != nil {
 		return nil, err
 	}
-	if !s.Source.Enabled {
-		return nil, denied("calendar source is disabled")
+	if err := AuthorizeSourceRequest(s.Source, r, grant); err != nil {
+		return nil, err
 	}
 	account := strings.ToLower(strings.TrimSpace(s.Source.Email))
-	if !strings.EqualFold(r.Account, s.Source.Email) && !strings.EqualFold(r.Account, s.Source.Name) {
-		return nil, denied("account does not match configured source")
-	}
 	write := !IsRead(r.Action)
-	if write && r.ReadOnly {
-		return nil, denied("read-only mode forbids event changes")
-	}
 	if write && s.Persist == nil {
 		return nil, denied("archive write-through is unavailable")
 	}
 	if !write && len(r.CalendarIDs) > 0 {
-		// Check delegated grants for exact, non-primary identifiers before the
-		// provider lookup. Otherwise the live calendar list reveals whether an
-		// ungranted identifier exists. Primary must be resolved to its actual ID
-		// first, then checked by availability as usual.
-		for _, id := range r.CalendarIDs {
-			targetID := s.resolveAlias(id)
-			if targetID == "primary" {
-				continue
-			}
-			if err := s.authorize(targetID, account, false, false, grant); err != nil {
-				return nil, err
-			}
-		}
-		calendars, err := s.calendars(ctx)
+		calendars, err := s.calendarsForRequest(ctx, r, grant)
 		if err != nil {
 			return nil, err
 		}
@@ -156,25 +216,11 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 		return s.availability(ctx, r, grant, calendars, result)
 	}
 	calID := s.resolveAlias(r.CalendarID)
-	// Deny exact non-primary targets before touching the provider. Primary must
-	// first be resolved to its live ID; policies and grants never imply wildcards.
-	if calID != "primary" {
-		if err := s.authorize(calID, account, write, false, grant); err != nil {
-			return nil, err
-		}
-	}
 	destinationID := ""
-	if r.Action == "move" {
+	if r.Action == actionMove {
 		destinationID = s.resolveAlias(r.Destination)
-		// Resolve primary only after the live calendar list reveals its canonical
-		// ID. Every exact destination can be checked before that provider lookup.
-		if destinationID != "primary" {
-			if err := s.authorize(destinationID, account, true, false, grant); err != nil {
-				return nil, err
-			}
-		}
 	}
-	calendars, err := s.calendars(ctx)
+	calendars, err := s.calendarsForRequest(ctx, r, grant)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +228,7 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorize(cal.ID, account, write, false, grant); err != nil {
+	if err := s.authorize(cal.ID, account, write, slices.Contains(RequestPermissions(r), agentgrant.PermissionCalendarInvite), grant); err != nil {
 		return nil, err
 	}
 	if err := requireCalendarRole(cal, write); err != nil {
@@ -195,7 +241,7 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 	}
 	input := r.Event
 	var existing *gcal.Event
-	if r.Action != "create" {
+	if r.Action != actionCreate {
 		existing, err = s.Client.GetEvent(ctx, cal.ID, r.EventID)
 		if err != nil {
 			return nil, fmt.Errorf("read event: %w", err)
@@ -205,14 +251,14 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 			return nil, err
 		}
 	}
-	if r.Action == "create" || r.Action == actionUpdate {
+	if r.Action == actionCreate || r.Action == actionUpdate {
 		var recurrence []string
 		if input.Recurrence != nil {
 			recurrence = *input.Recurrence
 		} else if existing != nil {
 			recurrence = existing.Recurrence
 		}
-		if len(recurrence) > 0 && r.Scope != "future" {
+		if len(recurrence) > 0 && r.Scope != scopeFuture {
 			// Google requires an explicit expansion time zone for timed series.
 			// Use the target calendar's zone when no event zone was supplied.
 			for _, bounds := range []struct {
@@ -281,7 +327,7 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 		input = gcal.EventInput{Attendees: &attendees, AttendeesOmitted: &omitted}
 	}
 	destination := gcal.Calendar{}
-	if r.Action == "move" {
+	if r.Action == actionMove {
 		destination, err = lookupCalendar(calendars, destinationID)
 		if err != nil {
 			return nil, err
@@ -304,10 +350,10 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 		targetID = existing.ID
 	}
 	plan := []PlannedWrite{{Action: r.Action, CalendarID: cal.ID, EventID: targetID, Event: input}}
-	if r.Action == "move" {
+	if r.Action == actionMove {
 		plan[0].Destination = destination.ID
 	}
-	if r.Scope == "future" {
+	if r.Scope == scopeFuture {
 		plan, err = s.futurePlan(ctx, cal, *existing, r, input)
 		if err != nil {
 			return nil, err
@@ -315,7 +361,7 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 	}
 	// Validate the merged range for patches without converting omitted fields
 	// into explicit writes. A standalone patch can change just one bound.
-	if r.Action == actionUpdate && r.Scope != "future" && (input.Start != nil || input.End != nil) {
+	if r.Action == actionUpdate && r.Scope != scopeFuture && (input.Start != nil || input.End != nil) {
 		merged := input
 		if merged.Start == nil {
 			merged.Start = &existing.Start
@@ -325,6 +371,13 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 		}
 		if err := validateRange(merged.Start, merged.End); err != nil {
 			return nil, err
+		}
+	}
+	if existing != nil {
+		for i := range plan {
+			if plan[i].EventID != "" {
+				plan[i].Target = &EventTarget{Summary: existing.Summary, Start: existing.Start}
+			}
 		}
 	}
 	planJSON, err := json.Marshal(plan, json.Deterministic(true))
@@ -345,14 +398,22 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 	if r.DryRun {
 		return result, nil
 	}
+	if s.AcquireWrite != nil {
+		release, err := s.AcquireWrite(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
 	opts := gcal.MutationOptions{SendUpdates: updates}
 	if existing != nil {
 		opts.IfMatch = existing.ETag
 	}
-	for _, step := range plan {
+	truncatedETag := ""
+	for index, step := range plan {
 		var ev *gcal.Event
 		switch step.Action {
-		case "create":
+		case actionCreate:
 			ev, err = s.Client.InsertEvent(ctx, step.CalendarID, step.Event, gcal.MutationOptions{SendUpdates: updates})
 		case actionUpdate, "respond":
 			ev, err = s.Client.PatchEvent(ctx, step.CalendarID, step.EventID, step.Event, opts)
@@ -363,7 +424,7 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 				cancelled.Status = gcal.StatusCancelled
 				ev = &cancelled
 			}
-		case "move":
+		case actionMove:
 			ev, err = s.Client.MoveEvent(ctx, step.CalendarID, step.EventID, step.Destination, opts)
 		}
 		if err != nil {
@@ -375,6 +436,9 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 				} else {
 					result.OutcomeCode = "calendar_partial"
 					result.Error = step.Action + " failed after completed writes; reconcile the calendar and receipts before taking further action"
+					if r.Scope == scopeFuture && index == 1 && step.Action == actionCreate {
+						s.restoreRecurrence(ctx, result, cal, *existing, truncatedETag, updates, grant)
+					}
 				}
 				return result, nil
 			}
@@ -386,10 +450,13 @@ func (s *Service) Execute(ctx context.Context, r Request, grant *agentgrant.Gran
 			result.Error = "provider returned no event after write; outcome unknown; reconcile the calendar and receipts before taking further action"
 			return result, nil
 		}
+		if r.Scope == scopeFuture && index == 0 && len(plan) == 2 {
+			truncatedETag = ev.ETag
+		}
 		// Use a short independent context after a successful remote change so a
 		// disconnected caller cannot cancel the local archive write-through.
 		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		if step.Action == "move" {
+		if step.Action == actionMove {
 			old := *existing
 			old.Status = gcal.StatusCancelled
 			s.archive(persistCtx, result, cal, old, "move-source", grant)
@@ -417,11 +484,12 @@ func redactPlannedWrites(plan []PlannedWrite, request Request, account string, g
 	}
 	redacted := slices.Clone(plan)
 	for i := range redacted {
-		if canReadEventContent(grant, account, redacted[i].CalendarID) || request.Action == "create" {
+		if canReadEventContent(grant, account, redacted[i].CalendarID) || request.Action == actionCreate {
 			continue
 		}
+		redacted[i].Target = nil
 		switch {
-		case request.Scope == "future":
+		case request.Scope == scopeFuture:
 			// A future split plan is synthesized from the existing event. Keep its
 			// operation metadata, but do not reveal the provider-derived payload.
 			redacted[i].Event = gcal.EventInput{}
@@ -462,28 +530,83 @@ func (s *Service) resolveAlias(id string) string {
 	}
 	return id
 }
-func (s *Service) authorize(id, account string, write, invite bool, grant *agentgrant.Grant) error {
+func authorizeGrant(id, account string, permission agentgrant.Permission, grant *agentgrant.Grant) error {
 	ref := agentgrant.SourceRef{Type: gcal.SourceType, Identifier: account + "/" + id}
-	permission := agentgrant.PermissionCalendarRead
-	if write {
-		permission = agentgrant.PermissionCalendarWrite
-		if !slices.Contains(s.Source.WriteCalendars, id) {
-			return denied("calendar %q is not in write_calendars", id)
-		}
-	}
 	if grant != nil && !grant.Allows(permission, ref) {
 		return denied("grant lacks %s for calendar %q", permission, id)
 	}
+	return nil
+}
+func (s *Service) authorize(id, account string, write, invite bool, grant *agentgrant.Grant) error {
+	permission := agentgrant.PermissionCalendarRead
+	if write {
+		permission = agentgrant.PermissionCalendarWrite
+	}
+	if err := authorizeGrant(id, account, permission, grant); err != nil {
+		return err
+	}
 	if invite {
-		if !slices.Contains(s.Source.InviteCalendars, id) {
-			return denied("calendar %q is not in invite_calendars", id)
+		if err := authorizeGrant(id, account, agentgrant.PermissionCalendarInvite, grant); err != nil {
+			return err
 		}
-		if grant != nil && !grant.Allows(agentgrant.PermissionCalendarInvite, ref) {
-			return denied("grant lacks calendar.invite for calendar %q", id)
-		}
+	}
+	if write && !slices.Contains(s.Source.WriteCalendars, id) {
+		return denied("calendar %q is not in write_calendars", id)
+	}
+	if invite && !slices.Contains(s.Source.InviteCalendars, id) {
+		return denied("calendar %q is not in invite_calendars", id)
 	}
 	return nil
 }
+
+// Restore only a definitely failed replacement, guarded by the ETag returned by
+// truncation. An unknown insert may have created a replacement and must reconcile.
+func (s *Service) restoreRecurrence(ctx context.Context, result *Result, cal gcal.Calendar, original gcal.Event, etag, updates string, grant *agentgrant.Grant) {
+	if etag == "" {
+		result.Error += "; original recurrence was not restored because the truncation response omitted its ETag"
+		return
+	}
+	restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	restored, err := s.Client.PatchEvent(restoreCtx, cal.ID, original.ID, gcal.EventInput{Recurrence: &original.Recurrence}, gcal.MutationOptions{SendUpdates: updates, IfMatch: etag})
+	if errors.Is(err, gcal.ErrOutcomeUnknown) || (err == nil && (restored == nil || restored.ID == "")) {
+		result.OutcomeUnknown = true
+		result.OutcomeCode = "calendar_outcome_unknown"
+		result.Error = "replacement failed; original recurrence restoration outcome unknown; reconcile the calendar and receipts before taking further action"
+		return
+	}
+	if err != nil {
+		result.Error = "replacement failed; original recurrence restoration failed; reconcile the calendar and receipts before taking further action"
+		return
+	}
+	s.archive(restoreCtx, result, cal, *restored, "restore", grant)
+	result.Error = "replacement failed after completed writes; original recurrence restored; inspect receipts before taking further action"
+}
+
+// Resolve primary grants before exposing policy details or reading events. Until
+// this succeeds, provider lookup failures must not disclose source setup state.
+func (s *Service) calendarsForRequest(ctx context.Context, r Request, grant *agentgrant.Grant) ([]gcal.Calendar, error) {
+	unresolvedPrimary := grant != nil && slices.ContainsFunc(requestCalendarIDs(r), func(id string) bool { return s.resolveAlias(id) == "primary" })
+	calendars, err := s.calendars(ctx)
+	if !unresolvedPrimary {
+		return calendars, err
+	}
+	if err != nil {
+		return nil, denied("calendar access denied")
+	}
+	cal, err := lookupCalendar(calendars, "primary")
+	if err != nil {
+		return nil, denied("calendar access denied")
+	}
+	account := strings.ToLower(strings.TrimSpace(s.Source.Email))
+	for _, permission := range RequestPermissions(r) {
+		if err := authorizeGrant(cal.ID, account, permission, grant); err != nil {
+			return nil, denied("calendar access denied")
+		}
+	}
+	return calendars, nil
+}
+
 func (s *Service) calendars(ctx context.Context) ([]gcal.Calendar, error) {
 	var result []gcal.Calendar
 	token := ""
@@ -635,7 +758,7 @@ func conflicts(busy *gcal.FreeBusyResponse) []Conflict {
 	return result
 }
 func (r Request) Validate() error {
-	if !slices.Contains([]string{"create", actionUpdate, "delete", "move", "respond", "freebusy", "conflicts"}, r.Action) {
+	if !slices.Contains([]string{actionCreate, actionUpdate, "delete", actionMove, "respond", "freebusy", "conflicts"}, r.Action) {
 		return invalid("unknown action %q", r.Action)
 	}
 	if r.ExpectedPlanFingerprint != "" && (IsRead(r.Action) || r.DryRun) {
@@ -654,7 +777,7 @@ func (r Request) Validate() error {
 	if _, err := gcal.SendUpdates(r.SendUpdates); err != nil {
 		return invalid("%v", err)
 	}
-	if r.Scope != "" && !slices.Contains([]string{"single", "all", "future"}, r.Scope) {
+	if r.Scope != "" && !slices.Contains([]string{"single", "all", scopeFuture}, r.Scope) {
 		return invalid("scope must be single, future, or all")
 	}
 	if r.Event.AttendeesOmitted != nil {
@@ -671,10 +794,10 @@ func (r Request) Validate() error {
 		if !r.TimeMin.IsZero() || !r.TimeMax.IsZero() || len(r.CalendarIDs) > 0 || r.TimeZone != "" {
 			return invalid("availability fields are only valid for freebusy or conflicts")
 		}
-		if r.Action != "create" && r.EventID == "" {
+		if r.Action != actionCreate && r.EventID == "" {
 			return invalid("event_id is required")
 		}
-		if r.Action == "create" {
+		if r.Action == actionCreate {
 			if r.EventID != "" || r.Scope != "" || r.OriginalStart != "" {
 				return invalid("create cannot select an existing event or recurrence scope")
 			}
@@ -685,10 +808,10 @@ func (r Request) Validate() error {
 				return err
 			}
 		}
-		if r.Action != "move" && r.Destination != "" {
+		if r.Action != actionMove && r.Destination != "" {
 			return invalid("destination is only valid for move")
 		}
-		if r.Action == "move" && r.Destination == "" {
+		if r.Action == actionMove && r.Destination == "" {
 			return invalid("move requires destination")
 		}
 		if r.Action != "respond" && r.Response != "" {
@@ -700,7 +823,7 @@ func (r Request) Validate() error {
 		if r.Action != actionUpdate && len(r.AddAttendees) > 0 {
 			return invalid("add_attendees is only valid for update")
 		}
-		if r.Action != "create" && r.Action != actionUpdate && hasEventFields(r.Event) {
+		if r.Action != actionCreate && r.Action != actionUpdate && hasEventFields(r.Event) {
 			return invalid("event fields are only valid for create or update")
 		}
 		if r.Action == actionUpdate && !hasEventFields(r.Event) && len(r.AddAttendees) == 0 {
@@ -709,7 +832,7 @@ func (r Request) Validate() error {
 		if r.Event.Attendees != nil && len(r.AddAttendees) > 0 {
 			return invalid("attendees replacement and add_attendees are mutually exclusive")
 		}
-		if (r.Action == "move" || r.Action == "respond") && r.Scope == "future" {
+		if (r.Action == actionMove || r.Action == "respond") && r.Scope == scopeFuture {
 			return invalid("future scope only supports update and delete")
 		}
 	}
