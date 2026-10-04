@@ -336,7 +336,7 @@ func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 // operation gate. Owner, session, and loopback requests register as waiters or
 // holders on any gated route. Delegated callers reach this predicate on
 // /api/v1/cli/run and /api/v1/calendar/control. CLI requests use
-// cliRunGateDecision; calendar control requests enter the gate directly. Other
+// cliRunGateDecision; calendar control acquires the gate only for actual writes. Other
 // delegated routes skip the gate and their handlers reject them.
 // Unauthenticated requests (AuthModeRequired) pass straight through so they
 // reach the API auth layer without touching gate state.

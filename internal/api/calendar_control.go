@@ -38,8 +38,10 @@ func calendarSchemaName(t reflect.Type, hint string) string {
 // CalendarController is implemented by the daemon adapter. It must apply both
 // configured source policy and the authenticated delegated grant before writes.
 type CalendarController interface {
-	ControlCalendar(ctx context.Context, request calcontrol.Request, grant *agentgrant.Grant) (*calcontrol.Result, error)
+	ControlCalendar(ctx context.Context, request calcontrol.Request, grant *agentgrant.Grant, acquireWrite func(context.Context) (func(), error)) (*calcontrol.Result, error)
 }
+
+var errCalendarGateBusy = errors.New("archive is busy or shutting down")
 
 func (s *Server) registerCalendarControlRoute(api huma.API) {
 	op := rawAPIV1Operation("controlCalendar", http.MethodPost, "/calendar/control", "Control a live calendar event or query availability")
@@ -64,8 +66,12 @@ func (s *Server) handleCalendarControl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "calendar_unavailable", "Calendar control is unavailable")
 		return
 	}
-	result, err := controller.ControlCalendar(r.Context(), request, s.requestAuthentication(r).Grant)
+	result, err := controller.ControlCalendar(r.Context(), request, s.requestAuthentication(r).Grant, s.beginCalendarMutation)
 	if err != nil {
+		if errors.Is(err, errCalendarGateBusy) {
+			writeOperationGateBusy(w, r, s.operationGate)
+			return
+		}
 		// A provider write can complete before its deadline or connection
 		// fails. Preserve this outcome ahead of generic query retry advice.
 		if errors.Is(err, gcal.ErrOutcomeUnknown) {
@@ -101,6 +107,18 @@ func (s *Server) handleCalendarControl(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, result)
 }
+
+func (s *Server) beginCalendarMutation(ctx context.Context) (func(), error) {
+	if s.operationGate == nil {
+		return func() {}, nil
+	}
+	done, ok := beginGateWorkBounded(ctx, s.operationGate, "calendar event change")
+	if !ok {
+		return nil, errCalendarGateBusy
+	}
+	return done, nil
+}
+
 func decodeCalendarControlRequest(w http.ResponseWriter, r *http.Request, destination *calcontrol.Request) bool {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != applicationJSONMediaType {

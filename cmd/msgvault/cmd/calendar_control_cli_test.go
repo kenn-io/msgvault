@@ -45,13 +45,13 @@ func TestCalendarControlCLIAllDayAndPartialPatch(t *testing.T) {
 	requirements.NoError(cmd.Execute())
 	assertions.Equal("2026-10-02", got.Event.Start.Date)
 	cmd = newCalendarControlCmd(run)
-	cmd.SetArgs([]string{"update", "team", "event", "--account", "person@example.com", "--summary", "", "--add-attendee", "new@example.com"})
+	cmd.SetArgs([]string{"update", "team", "event", "--account", "person@example.com", "--summary", "", "--add-attendee", "new@example.com, other@example.com"})
 	requirements.NoError(cmd.Execute())
 	requirements.NotNil(got.Event.Summary)
 	assertions.Empty(*got.Event.Summary)
 	assertions.Nil(got.Event.Start)
 	assertions.Nil(got.Event.End)
-	assertions.Equal([]string{"new@example.com"}, got.AddAttendees)
+	assertions.Equal([]string{"new@example.com", "other@example.com"}, got.AddAttendees)
 }
 func TestCalendarControlCLIRejectsInvalidInputBeforeBackend(t *testing.T) {
 	for _, flags := range [][]string{{"--from", "invalid", "--to", "2026-10-02T10:00:00Z"}, {"--from", "2026-10-02T09:00:00Z", "--to", "2026-10-02T08:00:00Z"}, {"--from", "2026-10-02T09:00:00Z", "--to", "2026-10-02T10:00:00Z", "--send-updates", "invalid"}} {

@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,7 +31,7 @@ type controlTestStore struct {
 	err     error
 }
 
-func (s *controlTestStore) ControlCalendar(_ context.Context, r calcontrol.Request, g *agentgrant.Grant) (*calcontrol.Result, error) {
+func (s *controlTestStore) ControlCalendar(_ context.Context, r calcontrol.Request, g *agentgrant.Grant, _ func(context.Context) (func(), error)) (*calcontrol.Result, error) {
 	s.calls++
 	s.grant = g
 	s.request = r
@@ -166,4 +169,45 @@ func TestCalendarControlPreconditionConflictUses409(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), "calendar_event_conflict")
 	assert.Contains(t, response.Body.String(), "calendar event changed")
+}
+
+func TestCalendarControlReadsBodyBeforeTakingGate(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		gate := NewSerialOperationGate()
+		backend := &controlTestStore{mockStore: &mockStore{stats: &StoreStats{}}}
+		srv := NewServerWithOptions(ServerOptions{
+			Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}},
+			Store:  backend, Logger: testLogger(), OperationGate: gate,
+		})
+		defer func() { assertions.NoError(srv.Shutdown(context.Background())) }()
+		reader, writer := io.Pipe()
+		defer func() { assertions.NoError(reader.Close()) }()
+		defer func() { assertions.NoError(writer.Close()) }()
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/calendar/control", reader)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Api-Key", "synthetic-owner-key")
+		response := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			srv.Router().ServeHTTP(response, request)
+		}()
+		synctest.Wait()
+		_, _, held := gate.Holder()
+		assertions.False(held, "incomplete calendar upload must not hold the archive gate")
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		release, acquired := gate.BeginWorkContext(ctx)
+		cancel()
+		assertions.True(acquired, "unrelated archive work remains available during the upload")
+		if acquired {
+			release()
+		}
+		_, err := io.WriteString(writer, controlTestBody)
+		requirements.NoError(err)
+		requirements.NoError(writer.Close())
+		<-done
+		assertions.Equal(http.StatusOK, response.Code, response.Body.String())
+	})
 }

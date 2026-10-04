@@ -113,7 +113,9 @@ func newCalendarControlCmd(run calendarRunner) *cobra.Command {
 				}
 				request.Event.Attendees = &values
 			}
-			request.AddAttendees = addAttendees
+			for _, email := range addAttendees {
+				request.AddAttendees = append(request.AddAttendees, strings.TrimSpace(email))
+			}
 			if cmd.Flags().Changed("rrule") {
 				values := []string{}
 				for _, line := range rules {
@@ -273,25 +275,44 @@ func parseCalendarReminders(values []string) (*gcal.Reminders, error) {
 
 var _ api.CalendarController = (*storeAPIAdapter)(nil)
 
-func (a *storeAPIAdapter) ControlCalendar(ctx context.Context, request calcontrol.Request, grant *agentgrant.Grant) (*calcontrol.Result, error) {
+func (a *storeAPIAdapter) ControlCalendar(ctx context.Context, request calcontrol.Request, grant *agentgrant.Grant, acquireWrite func(context.Context) (func(), error)) (*calcontrol.Result, error) {
 	if err := request.Validate(); err != nil {
 		return nil, err
 	}
+	if grant != nil {
+		for _, permission := range calcontrol.RequestPermissions(request) {
+			if !grant.HasPermission(permission) {
+				return nil, calcontrol.ErrDenied
+			}
+		}
+	}
+	setupError := func(err error) error {
+		if grant == nil {
+			return err
+		}
+		if a.logger != nil {
+			a.logger.Warn("calendar setup failed", "error", err)
+		}
+		return calcontrol.ErrDenied
+	}
 	if a.config == nil {
-		return nil, fmt.Errorf("%w: calendar configuration is unavailable", calcontrol.ErrDenied)
+		return nil, setupError(fmt.Errorf("%w: calendar configuration is unavailable", calcontrol.ErrDenied))
 	}
 	source := a.config.GetGCalSource(request.Account)
 	if source == nil || !source.Enabled {
-		return nil, fmt.Errorf("%w: enabled calendar source is required", calcontrol.ErrDenied)
+		return nil, setupError(fmt.Errorf("%w: enabled calendar source is required", calcontrol.ErrDenied))
 	}
 	source.Email = normalizeCalendarAccountEmail(source.Email)
+	if err := calcontrol.AuthorizeSourceRequest(*source, request, grant); err != nil {
+		return nil, setupError(err)
+	}
 	existing, err := a.store.GetSourcesByTypeAndAccount(sourceTypeCalendar, source.Email)
 	if err != nil {
-		return nil, fmt.Errorf("%w: load calendar OAuth binding: %w", calcontrol.ErrInternal, err)
+		return nil, setupError(fmt.Errorf("%w: load calendar OAuth binding: %w", calcontrol.ErrInternal, err))
 	}
 	appDecision, err := calendarSyncOAuthAppDecision(a.store, source.Email, existing, source.OAuthApp, source.OAuthApp != "")
 	if err != nil {
-		return nil, fmt.Errorf("%w: resolve calendar OAuth binding: %w", calcontrol.ErrInternal, err)
+		return nil, setupError(fmt.Errorf("%w: resolve calendar OAuth binding: %w", calcontrol.ErrInternal, err))
 	}
 	source.OAuthApp = appDecision.OAuthApp
 	ctx = a.invocationContext(ctx)
@@ -306,23 +327,26 @@ func (a *storeAPIAdapter) ControlCalendar(ctx context.Context, request calcontro
 			client, ok = reader.(gcal.ControlAPI)
 			if !ok {
 				_ = reader.Close()
-				return nil, fmt.Errorf("%w: calendar client does not support event control", calcontrol.ErrInternal)
+				return nil, setupError(fmt.Errorf("%w: calendar client does not support event control", calcontrol.ErrInternal))
 			}
 		}
 	}
 	if err != nil {
 		if errors.Is(err, calcontrol.ErrDenied) {
-			return nil, err
+			return nil, setupError(err)
 		}
-		return nil, fmt.Errorf("%w: create calendar client: %w", calcontrol.ErrInternal, err)
+		return nil, setupError(fmt.Errorf("%w: create calendar client: %w", calcontrol.ErrInternal, err))
 	}
 	defer func() { _ = client.Close() }()
 	syncer := calsync.New(client, a.store, calsync.Options{AccountEmail: source.Email, OAuthApp: source.OAuthApp, OAuthAppSet: appDecision.OAuthAppSet})
 	if a.logger != nil {
 		syncer.WithLogger(a.logger)
 	}
-	service := calcontrol.Service{Source: *source, Client: client, Persist: syncer.PersistEvent}
+	service := calcontrol.Service{Source: *source, Client: client, Persist: syncer.PersistEvent, AcquireWrite: acquireWrite}
 	result, err := service.Execute(ctx, request, grant)
+	if grant != nil && errors.Is(err, calcontrol.ErrDenied) {
+		return nil, calcontrol.ErrDenied
+	}
 	if err == nil && result != nil && len(result.Writes) > 0 && a.draftCacheRefresh != nil {
 		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		refreshErr := a.draftCacheRefresh(refreshCtx, "calendar event changed")
