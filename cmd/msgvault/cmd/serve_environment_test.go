@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -20,6 +21,58 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
+
+func TestRunServeFailedRestartKeepsRunningDaemonKey(t *testing.T) { //nolint:paralleltest // process environment and daemon lifecycle
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires Unix file permissions enforced for the current user")
+	}
+	require := require.New(t)
+	clearServerKeyEnvironment(t)
+	t.Setenv("MSGVAULT_REMOTE_URL", "")
+	t.Setenv("MSGVAULT_ALLOW_INSECURE", "false")
+	home := t.TempDir()
+	port := freeTCPPort(t)
+	path := filepath.Join(home, "config.toml")
+	require.NoError(os.WriteFile(path, []byte(fmt.Sprintf("[server]\nbind_addr = '127.0.0.1'\napi_port = %d\ndaemon_auto_start = false\ndaemon_auto_restart = 'never'\n[analytics]\nengine = 'sql'\n", port)), 0o600))
+	running, err := config.Load(path, home)
+	require.NoError(err)
+	ctx, cancel := context.WithCancel(t.Context())
+	command := &cobra.Command{Use: "serve"}
+	command.SetContext(testInvocationContext(ctx, running, invocationOptions{}))
+	done := make(chan error, 1)
+	go func() { done <- runServe(command, nil) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			require.NoError(err)
+		case <-time.After(serveLifecycleTestTimeout):
+			require.Fail("daemon did not stop")
+		}
+	})
+	waitForServeHealthBounded(t, port, done)
+	initial, _, err := OpenHTTPStore(withStoreResolverConfig(t, running))
+	require.NoError(err)
+	require.NoError(initial.Close())
+
+	replacement, err := config.LoadWithOverrides(path, home, config.RuntimeOverrides{BindAddr: new("0.0.0.0")})
+	require.NoError(err)
+	lockPath := daemonOwnerLockPath(home)
+	require.NoError(os.Chmod(lockPath, 0o400))
+	t.Cleanup(func() { require.NoError(os.Chmod(lockPath, 0o600)) })
+	restartCommand, _, _ := lifecycleTestCommand()
+	err = runServeRestart(restartCommand, replacement)
+	require.ErrorIs(err, os.ErrPermission)
+	require.NoError(os.Chmod(lockPath, 0o600))
+	_, err = os.Stat(replacement.ServerKeyFilePath())
+	require.ErrorIs(err, os.ErrNotExist, "a failed restart must not change the running daemon's credential")
+
+	fresh, err := config.Load(path, home)
+	require.NoError(err)
+	client, _, err := OpenHTTPStore(withStoreResolverConfig(t, fresh))
+	require.NoError(err, "fresh clients must still connect after the failed restart")
+	require.NoError(client.Close())
+}
 
 func TestRunServeRejectedContenderKeepsRunningDaemonKey(t *testing.T) { //nolint:paralleltest // process environment and daemon lifecycle
 	require := require.New(t)

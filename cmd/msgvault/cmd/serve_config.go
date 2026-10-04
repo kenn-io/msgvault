@@ -41,7 +41,7 @@ func prepareServeConfig(cfg *config.Config) error {
 	if _, err := cfg.ResolveServerBindAddress(); err != nil {
 		return err
 	}
-	return cfg.PrepareServerKey()
+	return cfg.ValidateServerKey()
 }
 
 // daemonRuntimeChildEnv keeps serve flags effective when children reload config.

@@ -296,10 +296,25 @@ func (c *Config) ResolveServerKey() error {
 	return nil
 }
 
+// ValidateServerKey checks the selected credential without creating one. A
+// secure non-loopback server may mint its key after acquiring daemon ownership.
+func (c *Config) ValidateServerKey() error {
+	if err := c.ResolveServerKey(); err != nil {
+		return err
+	}
+	if c.Server.shouldAutoMintKey() {
+		return nil
+	}
+	if c.Server.AgentAccess && c.Server.AuthenticationKey() == "" {
+		return errors.New("server agent_access requires an effective API key")
+	}
+	return c.Server.ValidateSecure()
+}
+
 // PrepareServerKey resolves explicit sources and mints a persistent key only
 // when secure non-loopback serving otherwise has no credential.
 func (c *Config) PrepareServerKey() error {
-	if err := c.ResolveServerKey(); err != nil {
+	if err := c.ValidateServerKey(); err != nil {
 		return err
 	}
 	if c.Server.shouldAutoMintKey() {
@@ -309,10 +324,7 @@ func (c *Config) PrepareServerKey() error {
 		}
 		c.Server.credential.value = key
 	}
-	if c.Server.AgentAccess && c.Server.AuthenticationKey() == "" {
-		return errors.New("server agent_access requires an effective API key")
-	}
-	return c.Server.ValidateSecure()
+	return nil
 }
 
 // ResolveRemoteKey reads only the selected remote daemon credential.
