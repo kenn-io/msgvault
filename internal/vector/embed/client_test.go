@@ -612,43 +612,6 @@ func TestClient_Embed_RetriesTruncatedBody(t *testing.T) {
 	assert.Len(t, vecs, 1)
 }
 
-// TestClient_parseRetryAfter covers the Retry-After formats (seconds,
-// HTTP-date, unparseable) and the cap that protects against absurd
-// server-supplied values. The (Duration, bool) return distinguishes
-// "Retry-After: 0" (parsed = true, immediate retry) from "missing or
-// unparseable" (parsed = false, use default backoff).
-func TestClient_parseRetryAfter(t *testing.T) {
-	assert := assert.New(t)
-	cases := []struct {
-		in      string
-		wantDur time.Duration
-		wantOk  bool
-	}{
-		{"", 0, false},
-		{"   ", 0, false},
-		{"abc", 0, false},
-		{"-5", 0, false},
-		{"0", 0, true}, // explicit immediate retry
-		{"2", 2 * time.Second, true},
-	}
-	for _, c := range cases {
-		gotDur, gotOk := parseRetryAfter(c.in)
-		assert.Equalf(c.wantDur, gotDur, "parseRetryAfter(%q) duration", c.in)
-		assert.Equalf(c.wantOk, gotOk, "parseRetryAfter(%q) ok", c.in)
-	}
-	// Cap: 7200 seconds is capped to 1 hour.
-	got, ok := parseRetryAfter("7200")
-	assert.Equal(time.Hour, got, "parseRetryAfter(7200) duration")
-	assert.True(ok, "parseRetryAfter(7200) ok")
-	// HTTP-date: one second in the future is a non-zero positive
-	// duration well under the cap.
-	future := time.Now().Add(5 * time.Second).UTC().Format(http.TimeFormat)
-	got, ok = parseRetryAfter(future)
-	assert.True(ok, "parseRetryAfter(%q) ok", future)
-	assert.Greater(got, time.Duration(0), "parseRetryAfter(%q) duration > 0", future)
-	assert.LessOrEqual(got, time.Hour, "parseRetryAfter(%q) duration <= 1h", future)
-}
-
 // The shared retry policy applies backoff even when Retry-After is zero.
 func TestClient_Embed_RetriesRateLimitAndTimeout(t *testing.T) {
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusRequestTimeout} {

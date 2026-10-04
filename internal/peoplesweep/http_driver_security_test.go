@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -120,4 +121,34 @@ func TestHTTPDriverAllowsOnlyCanonicalAnthropicVersionFixedHeader(t *testing.T) 
 	)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), calls.Load())
+}
+
+func TestHTTPDriverProviderErrorRetryAfterIsUncapped(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		want   time.Duration
+	}{
+		{name: "two hours", header: "7200", want: 2 * time.Hour},
+		{name: "absent", want: 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if test.header != "" {
+					w.Header().Set("Retry-After", test.header)
+				}
+				w.WriteHeader(http.StatusTooManyRequests)
+			}))
+			defer server.Close()
+
+			_, err := newHTTPDriver(server.Client()).post(
+				t.Context(), server.URL, ProviderProfile{Auth: AuthXAPIKey},
+				NewCredential(AuthXAPIKey, "credential-secret-canary"), []byte(`{"ok":true}`),
+			)
+			var providerErr *ProviderError
+			require.ErrorAs(t, err, &providerErr)
+			assert.Equal(t, test.want, providerErr.RetryAfter)
+		})
+	}
 }

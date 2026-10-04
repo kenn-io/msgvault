@@ -249,7 +249,7 @@ func (m *Manager) deviceFlow(ctx context.Context, scopes []string) (*oauth2.Toke
 // tokenRefreshTimeout bounds how long a single token refresh HTTP request
 // may take. Prevents indefinite hangs when Microsoft's token endpoint is
 // unreachable, while still being generous enough for slow networks.
-const tokenRefreshTimeout = 30 * time.Second
+var tokenRefreshTimeout = 30 * time.Second
 
 // TokenSource returns a function that provides fresh access tokens.
 // Suitable for passing to imap.WithTokenSource. The returned function
@@ -310,14 +310,24 @@ func (m *Manager) TokenSource(ctx context.Context, email string) (func(context.C
 	// operations; tying it to a cancellable context would cause silent
 	// failures on the next call after cancellation.
 	ts := oauthCfg.TokenSource(context.Background(), &tf.Token)
+	return refreshingAccessToken(ts, tf, email, "Microsoft", func(tok *oauth2.Token) error {
+		return m.saveToken(email, tok, scopes, tf.TenantID)
+	}), nil
+}
 
+// refreshingAccessToken wraps ts so each call is bounded by
+// tokenRefreshTimeout and the caller's context, and persists every token that
+// differs from the last one seen. product names the token in errors.
+func refreshingAccessToken(
+	ts oauth2.TokenSource, tf *tokenFile, email, product string, save func(*oauth2.Token) error,
+) func(context.Context) (string, error) {
+	lowerProduct := strings.ToLower(product)
 	var (
 		mu               sync.Mutex
 		lastAccessToken  = tf.AccessToken
 		lastRefreshToken = tf.RefreshToken
 		lastExpiry       = tf.Expiry
 	)
-
 	return func(callCtx context.Context) (string, error) {
 		// Run ts.Token() in a goroutine bounded by a timeout and the
 		// caller's context. The oauth2 TokenSource is internally
@@ -341,13 +351,13 @@ func (m *Manager) TokenSource(ctx context.Context, email string) (func(context.C
 		select {
 		case res := <-ch:
 			if res.err != nil {
-				return "", fmt.Errorf("refresh Microsoft token: %w", res.err)
+				return "", fmt.Errorf("refresh %s token: %w", product, res.err)
 			}
 			tok = res.tok
 		case <-timer.C:
-			return "", fmt.Errorf("microsoft token refresh timed out after %s — check network connectivity", tokenRefreshTimeout)
+			return "", fmt.Errorf("%s token refresh timed out after %s — check network connectivity", lowerProduct, tokenRefreshTimeout)
 		case <-callCtx.Done():
-			return "", fmt.Errorf("microsoft token refresh cancelled: %w", callCtx.Err())
+			return "", fmt.Errorf("%s token refresh cancelled: %w", lowerProduct, callCtx.Err())
 		}
 
 		mu.Lock()
@@ -362,13 +372,13 @@ func (m *Manager) TokenSource(ctx context.Context, email string) (func(context.C
 		mu.Unlock()
 
 		if changed {
-			if saveErr := m.saveToken(email, tok, scopes, tf.TenantID); saveErr != nil {
-				return "", fmt.Errorf("save refreshed microsoft token for %s: %w (token refreshed but not persisted — re-run may require re-authorization)", email, saveErr)
+			if saveErr := save(tok); saveErr != nil {
+				return "", fmt.Errorf("save refreshed %s token for %s: %w (token refreshed but not persisted — re-run may require re-authorization)", lowerProduct, email, saveErr)
 			}
 		}
 
 		return tok.AccessToken, nil
-	}, nil
+	}
 }
 
 // IMAPHost returns the correct IMAP hostname for the given email based on the
@@ -747,7 +757,16 @@ func (m *Manager) TokenPath(email string) string {
 }
 
 func (m *Manager) saveToken(email string, token *oauth2.Token, scopes []string, tenantID string) error {
-	if err := fileutil.SecureMkdirAll(m.tokensDir, 0700); err != nil {
+	return saveTokenFile(m.tokensDir, m.TokenPath(email), token, scopes, tenantID)
+}
+
+func (m *Manager) loadTokenFile(email string) (*tokenFile, error) {
+	return readTokenFile(m.TokenPath(email))
+}
+
+// saveTokenFile atomically persists token in the shared tokenFile format.
+func saveTokenFile(tokensDir, path string, token *oauth2.Token, scopes []string, tenantID string) error {
+	if err := fileutil.SecureMkdirAll(tokensDir, 0700); err != nil {
 		return err
 	}
 
@@ -757,15 +776,13 @@ func (m *Manager) saveToken(email string, token *oauth2.Token, scopes []string, 
 		return err
 	}
 
-	path := m.TokenPath(email)
 	if err := fileutil.SecureReplaceFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write token file: %w", err)
 	}
 	return nil
 }
 
-func (m *Manager) loadTokenFile(email string) (*tokenFile, error) {
-	path := m.TokenPath(email)
+func readTokenFile(path string) (*tokenFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

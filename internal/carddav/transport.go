@@ -19,6 +19,7 @@ import (
 
 	"github.com/icholy/digest"
 
+	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/netguard"
 )
 
@@ -162,9 +163,10 @@ func (c *Client) Do(ctx context.Context, request Request) (*Response, error) {
 		}
 		if status >= http.StatusBadRequest {
 			logRequestFailure(operationCtx, request.Method, status, response.Body)
+			retryDelay, _ := httpretry.ParseRetryAfter(response.Header.Get("Retry-After"), time.Hour, time.Now())
 			return response, &StatusError{
 				StatusCode:   status,
-				RetryAfter:   retryAfter(response.Header.Get("Retry-After"), time.Now()),
+				RetryAfter:   retryDelay,
 				Precondition: davErrorPrecondition(response.Body),
 			}
 		}
@@ -456,15 +458,4 @@ func isRedirect(status int) bool {
 
 func isDAVMutation(method string) bool {
 	return method == http.MethodPut || method == http.MethodDelete
-}
-
-func retryAfter(value string, now time.Time) time.Duration {
-	const maximum = time.Hour
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
-		return min(time.Duration(seconds)*time.Second, maximum)
-	}
-	if deadline, err := http.ParseTime(value); err == nil && deadline.After(now) {
-		return min(time.Until(deadline), maximum)
-	}
-	return 0
 }

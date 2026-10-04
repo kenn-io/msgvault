@@ -277,23 +277,24 @@ func refreshDerivedDatasetsOnly(
 		return &buildResult{OutputDir: analyticsDir, IdentityOnly: true}, nil
 	}
 
-	if err := exportDerivedOwnerParticipants(ctx, exportDB, staging.root,
-		sourceSnapshot.identityPresenceSQL("email_address", "primary_email_present")); err != nil {
+	derivedCopy := func(table, selectSQL string) error {
+		return copyParquet(ctx, exportDB, filepath.Join(staging.root, table), table+".parquet", selectSQL)
+	}
+	if err := derivedCopy(tableOwnerParticipants, ownerParticipantsSelectSQL(
+		sourceSnapshot.identityPresenceSQL("email_address", "primary_email_present"))); err != nil {
+		return nil, fmt.Errorf("export derived owner participants: %w", err)
+	}
+	if err := stageParticipantClusters(ctx, exportDB, clusters); err != nil {
 		return nil, err
 	}
-	if err := exportDerivedParticipantClusters(ctx, exportDB, clusters, staging.root); err != nil {
-		return nil, err
+	if err := derivedCopy(tableParticipantClusters, participantClustersSelectSQL); err != nil {
+		return nil, fmt.Errorf("export derived participant clusters: %w", err)
 	}
 	conversationChanged :=
 		conversationFingerprint != state.ConversationParticipantsFingerprint
 	if conversationChanged {
-		if err := exportDerivedConversationParticipants(
-			ctx,
-			exportDB,
-			state.LastMessageID,
-			staging.root,
-		); err != nil {
-			return nil, err
+		if err := derivedCopy(tableConversationParticipants, conversationParticipantsSelectSQL(state.LastMessageID)); err != nil {
+			return nil, fmt.Errorf("export derived conversation participants: %w", err)
 		}
 	}
 	identifiersChanged :=
@@ -303,8 +304,8 @@ func refreshDerivedDatasetsOnly(
 		// participant_identifiers base dataset (relationship_people search
 		// values and label fallbacks), so a changed mapping must be re-staged
 		// and republished alongside the derived index.
-		if err := exportDerivedParticipantIdentifiers(ctx, sourceSnapshot, staging.root); err != nil {
-			return nil, err
+		if err := derivedCopy(tableParticipantIdentifiers, sourceSnapshot.participantIdentifiersExportSelectSQL()); err != nil {
+			return nil, fmt.Errorf("export derived participant identifiers: %w", err)
 		}
 	}
 	displayNamesChanged :=
@@ -313,15 +314,15 @@ func refreshDerivedDatasetsOnly(
 		// Participant identifiers can create participant rows, and display-name
 		// mutations change the row already present in participants.parquet. Both
 		// changes must replace that base dataset before rebuilding the directory.
-		if err := exportDerivedParticipants(ctx, sourceSnapshot, staging.root); err != nil {
-			return nil, err
+		if err := derivedCopy(tableParticipants, sourceSnapshot.participantsExportSelectSQL()); err != nil {
+			return nil, fmt.Errorf("export derived participants: %w", err)
 		}
 	}
 	personDisplayNamesChanged := personDisplayNameRevision != state.PersonDisplayNameRevision
 	identityChanged := identityRevision != state.IdentityRevision
 	if personDisplayNamesChanged || identityChanged {
-		if err := exportDerivedPersonDisplayNames(ctx, sourceSnapshot, staging.root); err != nil {
-			return nil, err
+		if err := derivedCopy(tablePersonDisplayNames, sourceSnapshot.personDisplayNamesExportSelectSQL()); err != nil {
+			return nil, fmt.Errorf("export derived person_display_names: %w", err)
 		}
 	}
 	typesChanged := typesFingerprint != state.ConversationTypesFingerprint
@@ -330,13 +331,8 @@ func refreshDerivedDatasetsOnly(
 		// base dataset, and the analytical view joins it live — both must
 		// see the current types, so the dataset is re-staged and republished
 		// alongside the derived index.
-		if err := exportDerivedConversations(
-			ctx,
-			sourceSnapshot,
-			state.LastMessageID,
-			staging.root,
-		); err != nil {
-			return nil, err
+		if err := derivedCopy(tableConversations, sourceSnapshot.conversationsExportSelectSQL(state.LastMessageID)); err != nil {
+			return nil, fmt.Errorf("export derived conversations: %w", err)
 		}
 	}
 	if repairRelated {
@@ -467,191 +463,48 @@ func fingerprintConversationTypesFromSnapshot(
 	return fingerprint, err
 }
 
-// exportDerivedConversations re-stages the conversations base dataset with
-// the full export query so an index-only refresh triggered by type drift
-// rebuilds relationship_activity from current types and republishes the
-// dataset the analytical view joins.
-func exportDerivedConversations(
-	ctx context.Context,
-	source *cacheSourceSnapshot,
-	lastMessageID int64,
-	stagingRoot string,
-) error {
-	dir := filepath.Join(stagingRoot, tableConversations)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create derived conversations directory: %w", err)
+// stageParticipantClusters loads the Go-computed clusters into a DuckDB temp
+// table that participantClustersSelectSQL reads.
+func stageParticipantClusters(ctx context.Context, db sqlRunner, clusters map[int64]int64) error {
+	if _, err := db.ExecContext(ctx,
+		`CREATE TEMP TABLE tmp_participant_clusters (participant_id BIGINT, canonical_id BIGINT)`); err != nil {
+		return fmt.Errorf("create participant clusters temp table: %w", err)
 	}
-	path := filepath.Join(dir, "conversations.parquet")
-	_, err := source.DuckDB().ExecContext(ctx, fmt.Sprintf(`
-		COPY (
-			%s
-		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, source.conversationsExportSelectSQL(lastMessageID), quoteCacheSQL(path)))
-	if err != nil {
-		return fmt.Errorf("export derived conversations: %w", err)
+	if len(clusters) == 0 {
+		return nil
+	}
+	values := make([]string, 0, len(clusters))
+	for participantID, canonicalID := range clusters {
+		values = append(values, fmt.Sprintf("(%d,%d)", participantID, canonicalID))
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO tmp_participant_clusters VALUES `+strings.Join(values, ",")); err != nil {
+		return fmt.Errorf("populate participant clusters temp table: %w", err)
 	}
 	return nil
 }
 
-func exportDerivedOwnerParticipants(
-	ctx context.Context,
-	db sqlRunner,
-	stagingRoot, primaryEmailPresence string,
-) error {
-	dir := filepath.Join(stagingRoot, tableOwnerParticipants)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create derived owner participants directory: %w", err)
-	}
-	path := filepath.Join(dir, "owner_participants.parquet")
-	_, err := db.ExecContext(ctx, fmt.Sprintf(`
-		COPY (%s
-		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, ownerParticipantsSelectSQL(primaryEmailPresence), quoteCacheSQL(path)))
-	if err != nil {
-		return fmt.Errorf("export derived owner participants: %w", err)
-	}
-	return nil
+const participantClustersSelectSQL = `SELECT participant_id, canonical_id FROM tmp_participant_clusters`
+
+func conversationParticipantsSelectSQL(maxMessageID int64) string {
+	return fmt.Sprintf(`SELECT cp.conversation_id, cp.participant_id
+		FROM sqlite_db.conversation_participants cp
+		WHERE EXISTS (
+			SELECT 1
+			FROM sqlite_db.messages m
+			WHERE m.conversation_id = cp.conversation_id
+			  AND %s
+			  AND TRY_CAST(m.id AS BIGINT) <= %d
+		)`, exportableMessageWhere("m"), maxMessageID)
 }
 
-// exportDerivedParticipants re-stages the participants base dataset when an
-// identifier creates a participant or a display-name mutation changes an
-// existing row. The relationship directory reads this dataset directly.
-func exportDerivedParticipants(
-	ctx context.Context,
-	source *cacheSourceSnapshot,
-	stagingRoot string,
-) error {
-	dir := filepath.Join(stagingRoot, tableParticipants)
+// copyParquet writes selectSQL to dir/file as zstd Parquet, creating dir.
+func copyParquet(ctx context.Context, db sqlRunner, dir, file, selectSQL string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create derived participants directory: %w", err)
+		return err
 	}
-	path := filepath.Join(dir, "participants.parquet")
-	_, err := source.DuckDB().ExecContext(ctx, fmt.Sprintf(`
-		COPY (
-			%s
-		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, source.participantsExportSelectSQL(), quoteCacheSQL(path)))
-	if err != nil {
-		return fmt.Errorf("export derived participants: %w", err)
-	}
-	return nil
-}
-
-func exportDerivedPersonDisplayNames(
-	ctx context.Context,
-	source *cacheSourceSnapshot,
-	stagingRoot string,
-) error {
-	dir := filepath.Join(stagingRoot, tablePersonDisplayNames)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create derived person_display_names directory: %w", err)
-	}
-	path := filepath.Join(dir, "person_display_names.parquet")
-	_, err := source.DuckDB().ExecContext(ctx, fmt.Sprintf(`
-		COPY (
-			%s
-		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, source.personDisplayNamesExportSelectSQL(), quoteCacheSQL(path)))
-	if err != nil {
-		return fmt.Errorf("export derived person_display_names: %w", err)
-	}
-	return nil
-}
-
-// exportDerivedParticipantIdentifiers re-stages the participant_identifiers
-// base dataset with the full export query so an index-only refresh triggered
-// by identifier drift rebuilds the identity directory from current mappings
-// and republishes the dataset participant-label fallbacks join.
-func exportDerivedParticipantIdentifiers(
-	ctx context.Context,
-	source *cacheSourceSnapshot,
-	stagingRoot string,
-) error {
-	dir := filepath.Join(stagingRoot, tableParticipantIdentifiers)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create derived participant identifiers directory: %w", err)
-	}
-	path := filepath.Join(dir, "participant_identifiers.parquet")
-	_, err := source.DuckDB().ExecContext(ctx, fmt.Sprintf(`
-		COPY (
-			%s
-		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, source.participantIdentifiersExportSelectSQL(), quoteCacheSQL(path)))
-	if err != nil {
-		return fmt.Errorf("export derived participant identifiers: %w", err)
-	}
-	return nil
-}
-
-func exportDerivedParticipantClusters(
-	ctx context.Context,
-	db sqlRunner,
-	clusters map[int64]int64,
-	stagingRoot string,
-) error {
-	if _, err := db.ExecContext(ctx, `
-		CREATE TEMP TABLE tmp_derived_participant_clusters (
-			participant_id BIGINT,
-			canonical_id BIGINT
-		)
-	`); err != nil {
-		return fmt.Errorf("create derived participant clusters table: %w", err)
-	}
-	if len(clusters) > 0 {
-		values := make([]string, 0, len(clusters))
-		for participantID, canonicalID := range clusters {
-			values = append(values, fmt.Sprintf("(%d,%d)", participantID, canonicalID))
-		}
-		if _, err := db.ExecContext(ctx, `
-			INSERT INTO tmp_derived_participant_clusters
-			VALUES `+strings.Join(values, ",")); err != nil {
-			return fmt.Errorf("populate derived participant clusters: %w", err)
-		}
-	}
-	dir := filepath.Join(stagingRoot, tableParticipantClusters)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create derived participant clusters directory: %w", err)
-	}
-	path := filepath.Join(dir, "participant_clusters.parquet")
-	if _, err := db.ExecContext(ctx, fmt.Sprintf(`
-		COPY (
-			SELECT participant_id, canonical_id
-			FROM tmp_derived_participant_clusters
-		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, quoteCacheSQL(path))); err != nil {
-		return fmt.Errorf("export derived participant clusters: %w", err)
-	}
-	return nil
-}
-
-func exportDerivedConversationParticipants(
-	ctx context.Context,
-	db sqlRunner,
-	lastMessageID int64,
-	stagingRoot string,
-) error {
-	dir := filepath.Join(stagingRoot, tableConversationParticipants)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create derived conversation participants directory: %w", err)
-	}
-	path := filepath.Join(dir, "conversation_participants.parquet")
-	_, err := db.ExecContext(ctx, fmt.Sprintf(`
-		COPY (
-			SELECT cp.conversation_id, cp.participant_id
-			FROM sqlite_db.conversation_participants cp
-			WHERE EXISTS (
-				SELECT 1
-				FROM sqlite_db.messages m
-				WHERE m.conversation_id = cp.conversation_id
-				  AND %s
-				  AND TRY_CAST(m.id AS BIGINT) <= %d
-			)
-		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-	`, exportableMessageWhere("m"), lastMessageID, quoteCacheSQL(path)))
-	if err != nil {
-		return fmt.Errorf("export derived conversation participants: %w", err)
-	}
-	return nil
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`COPY (%s) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')`,
+		selectSQL, quoteCacheSQL(filepath.Join(dir, file))))
+	return err
 }
 
 func quoteCacheSQL(value string) string {

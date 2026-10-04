@@ -30,7 +30,6 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/meetingimport"
-	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -4258,16 +4257,10 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
-	mgr := microsoft.NewGraphManager(cfg.Microsoft.ClientID, cfg.Microsoft.EffectiveTenantID(), cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), logger)
-	tokenFn, err := mgr.TokenSource(ctx, email)
+	client, err := newTeamsClient(ctx, cfg, logger, email)
 	if err != nil {
 		return err
 	}
-	qps := float64(cfg.Sync.RateLimitQPS)
-	if qps <= 0 {
-		qps = 5
-	}
-	client := teams.NewClient("https://graph.microsoft.com/v1.0", tokenFn, qps)
 	opts := scheduledTeamsImportOptions(email, cfg)
 	_, err = teams.NewImporter(s, client).Import(ctx, opts)
 	return err

@@ -1,17 +1,12 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/teams"
 )
 
@@ -54,46 +49,17 @@ Examples:
 		defer cleanup()
 		dbPath := cfg.DatabaseDSN()
 
-		if cfg.Microsoft.ClientID == "" {
-			return errors.New("microsoft OAuth not configured\n\n" +
-				"Add to your config.toml:\n\n" +
-				"  [microsoft]\n" +
-				"  client_id = \"your-azure-app-client-id\"\n\n" +
-				"See docs for Azure AD app registration setup")
+		if err := requireMicrosoftOAuthConfig(cfg); err != nil {
+			return err
 		}
-
-		mgr := microsoft.NewGraphManager(
-			cfg.Microsoft.ClientID,
-			cfg.Microsoft.EffectiveTenantID(),
-			cfg.Microsoft.EffectiveRedirectURI(),
-			cfg.TokensDir(),
-			logger,
-		)
-		tokenFn, err := mgr.TokenSource(cmd.Context(), email)
+		client, err := newTeamsClient(cmd.Context(), cfg, logger, email)
 		if err != nil {
 			return fmt.Errorf("load Teams token: %w (run 'add-teams' first)", err)
 		}
 
-		ctx, cancel := context.WithCancel(cmd.Context())
-		defer cancel()
+		ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Stopping...")
+		defer stop()
 
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		defer signal.Stop(sigChan)
-		go func() {
-			select {
-			case <-sigChan:
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "\nInterrupted. Stopping...")
-				cancel()
-			case <-ctx.Done():
-			}
-		}()
-
-		qps := float64(cfg.Sync.RateLimitQPS)
-		if qps <= 0 {
-			qps = 5
-		}
-		client := teams.NewClient("https://graph.microsoft.com/v1.0", tokenFn, qps)
 		imp := teams.NewImporter(s, client)
 
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Backfilling Teams inline media for %s\n\n", email)

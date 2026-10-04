@@ -527,29 +527,18 @@ func (s *Store) attachActivityCounterpartChunkContext(
 					FROM account_identities ai
 					WHERE ai.source_id = raw.source_id
 					  AND (
-						(
-							raw.envelope_address IS NOT NULL
-							AND TRIM(raw.envelope_address) <> ''
-							AND LOWER(raw.envelope_address) = LOWER(ai.address)
-						)
+						(` + ownerEmailMatch("raw.envelope_address", "ai.address") + `)
 						OR (
 							(raw.envelope_address IS NULL OR TRIM(raw.envelope_address) = '')
 							AND (raw.recipient_type <> 'from' OR raw.from_envelope_present = 0)
 							AND (
-								(raw.participant_email IS NOT NULL
-								 AND TRIM(raw.participant_email) <> ''
-								 AND LOWER(raw.participant_email) = LOWER(ai.address))
+								(` + ownerEmailMatch("raw.participant_email", "ai.address") + `)
 								OR EXISTS (
 									SELECT 1
 									FROM participant_identifiers pi
 									WHERE pi.participant_id = raw.participant_id
-									  AND (
-										(pi.identifier_type = 'email'
-										 AND (raw.participant_email IS NULL OR TRIM(raw.participant_email) = '')
-										 AND LOWER(pi.identifier_value) = LOWER(ai.address))
-										OR (pi.identifier_type <> 'email'
-										 AND pi.identifier_value = ai.address)
-									  )
+									  AND ` + ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address",
+		" AND (raw.participant_email IS NULL OR TRIM(raw.participant_email) = '')") + `
 								)
 							)
 						)

@@ -1,13 +1,11 @@
 package peoplesweep
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -398,7 +396,7 @@ func validateCapabilityResponse(driverResponse DriverResponse) (StructuredRespon
 	if err := validateExtractionOutput(response.Output); err != nil {
 		return StructuredResponse{}, errors.New("provider capability response is invalid")
 	}
-	output, valid := decodeUniqueCapabilityObject(response.Output)
+	output, valid := decodeUniqueJSONObject(response.Output)
 	if !valid || len(output) != 1 {
 		return StructuredResponse{}, errors.New("provider capability response is invalid")
 	}
@@ -409,36 +407,6 @@ func validateCapabilityResponse(driverResponse DriverResponse) (StructuredRespon
 	}
 	response.Output = append(jsontext.Value(nil), response.Output...)
 	return response, nil
-}
-
-func decodeUniqueCapabilityObject(raw []byte) (map[string]jsontext.Value, bool) {
-	decoder := jsontext.NewDecoder(bytes.NewReader(raw))
-	start, err := decoder.ReadToken()
-	if err != nil || start.Kind() != '{' {
-		return nil, false
-	}
-	result := make(map[string]jsontext.Value)
-	for decoder.PeekKind() != '}' && decoder.PeekKind() != ']' && decoder.PeekKind() != 0 {
-		token, tokenErr := decoder.ReadToken()
-		key, valid := token.String(), token.Kind() == '"'
-		if tokenErr != nil || !valid {
-			return nil, false
-		}
-		if _, duplicate := result[key]; duplicate {
-			return nil, false
-		}
-		var value jsontext.Value
-		if json.UnmarshalDecode(decoder, &value) != nil {
-			return nil, false
-		}
-		result[key] = value
-	}
-	end, err := decoder.ReadToken()
-	if err != nil || end.Kind() != '}' {
-		return nil, false
-	}
-	var trailing any
-	return result, errors.Is(json.UnmarshalDecode(decoder, &trailing), io.EOF)
 }
 
 func capabilityMiss(err error) bool {

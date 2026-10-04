@@ -1243,9 +1243,9 @@ func ensureConversation(
 
 // upsertMessageSQL returns the message upsert SQL with dialect-specific timestamp.
 // The attribution CTE runs before this transaction writes any 'from' envelope
-// snapshot, so it must mirror the no-envelope fallback of
-// messageIdentityAttributionMatch exactly; refreshMessageAttributionWith later
-// settles rows whose envelope disagrees.
+// snapshot, so it uses the no-envelope fallback of
+// messageIdentityAttributionMatch; refreshMessageAttributionWith later settles
+// rows whose envelope disagrees.
 func upsertMessageSQL(now string) string {
 	return fmt.Sprintf(`
 	WITH attribution AS (
@@ -1253,34 +1253,7 @@ func upsertMessageSQL(now string) string {
 			CAST(? AS BOOLEAN) AS source_is_from_me,
 			(
 				CAST(? AS BOOLEAN)
-				OR EXISTS (
-					SELECT 1
-					FROM account_identities ai
-					JOIN participants p ON p.id = ?
-					WHERE ai.source_id = ?
-					  AND p.email_address IS NOT NULL
-					  AND TRIM(p.email_address) <> ''
-					  AND LOWER(p.email_address) = LOWER(ai.address)
-				)
-				OR EXISTS (
-					SELECT 1
-					FROM account_identities ai
-					JOIN participant_identifiers pi ON pi.participant_id = ?
-					WHERE ai.source_id = ?
-					  AND (
-						(pi.identifier_type = 'email'
-						 AND NOT EXISTS (
-							SELECT 1
-							FROM participants p
-							WHERE p.id = pi.participant_id
-							  AND p.email_address IS NOT NULL
-							  AND TRIM(p.email_address) <> ''
-						 )
-						 AND LOWER(pi.identifier_value) = LOWER(ai.address))
-						OR (pi.identifier_type <> 'email'
-							AND pi.identifier_value = ai.address)
-					  )
-				)
+				OR `+senderOwnerFallback("?", "?")+`
 			) AS identity_is_from_me
 	)
 	INSERT INTO messages (
@@ -1750,6 +1723,45 @@ func (s *Store) GetMessageIsFromMe(messageID int64) (bool, error) {
 	return isFromMe, err
 }
 
+// ownerEmailMatch matches a nonblank email column to address case-insensitively.
+func ownerEmailMatch(column, address string) string {
+	return column + " IS NOT NULL AND TRIM(" + column + ") <> '' AND LOWER(" + column + ") = LOWER(" + address + ")"
+}
+
+// ownerIdentifierMatch matches an identifier to address: email identifiers
+// case-insensitively when emailGuard (empty or " AND ...") holds, others
+// byte-exact. Placeholder expressions bind in order of appearance.
+func ownerIdentifierMatch(typeExpr, valueExpr, address, emailGuard string) string {
+	return "((" + typeExpr + " = 'email'" + emailGuard + " AND LOWER(" + valueExpr + ") = LOWER(" + address + ")) OR (" +
+		typeExpr + " <> 'email' AND " + valueExpr + " = " + address + "))"
+}
+
+// identifierWithoutPrimaryEmail is the emailGuard that consults an email
+// identifier only when its participant (pi) has no primary email.
+const identifierWithoutPrimaryEmail = ` AND NOT EXISTS (
+	      SELECT 1 FROM participants p
+	      WHERE p.id = pi.participant_id AND p.email_address IS NOT NULL AND TRIM(p.email_address) <> '')`
+
+// senderOwnerFallback matches a sender through its primary email, or through
+// email identifiers only when it has no primary email. Placeholder
+// expressions bind sender, source, sender, source.
+func senderOwnerFallback(senderExpr, sourceExpr string) string {
+	return `EXISTS (
+	  SELECT 1
+	  FROM account_identities ai
+	  JOIN participants p ON p.id = ` + senderExpr + `
+	  WHERE ai.source_id = ` + sourceExpr + `
+	    AND ` + ownerEmailMatch("p.email_address", "ai.address") + `
+	)
+	OR EXISTS (
+	  SELECT 1
+	  FROM account_identities ai
+	  JOIN participant_identifiers pi ON pi.participant_id = ` + senderExpr + `
+	  WHERE ai.source_id = ` + sourceExpr + `
+	    AND ` + ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address", identifierWithoutPrimaryEmail) + `
+	)`
+}
+
 // messageIdentityAttributionMatch derives identity_is_from_me for one
 // messages row. A non-empty 'from' envelope snapshot is authoritative: the
 // sender's current participant aliases cannot reclassify that message after a
@@ -1757,16 +1769,14 @@ func (s *Store) GetMessageIsFromMe(messageID int64) (bool, error) {
 // email and identifier rows with the same per-type case rules as identity
 // matching. Envelope snapshots only contain email addresses, so non-email
 // identities use the legacy fallback.
-const messageIdentityAttributionMatch = `(
+var messageIdentityAttributionMatch = fmt.Sprintf(`(
 	EXISTS (
 	  SELECT 1
 	  FROM account_identities ai
 	  JOIN message_recipients mr ON mr.message_id = messages.id
 	  WHERE ai.source_id = messages.source_id
 	    AND mr.recipient_type = 'from'
-	    AND mr.email_address IS NOT NULL
-	    AND TRIM(mr.email_address) <> ''
-	    AND LOWER(mr.email_address) = LOWER(ai.address)
+	    AND %s
 	)
 	OR (
 	  NOT EXISTS (
@@ -1777,37 +1787,9 @@ const messageIdentityAttributionMatch = `(
 	      AND mr.email_address IS NOT NULL
 	      AND TRIM(mr.email_address) <> ''
 	  )
-	  AND (
-	    EXISTS (
-	      SELECT 1
-	      FROM account_identities ai
-	      JOIN participants p ON p.id = messages.sender_id
-	      WHERE ai.source_id = messages.source_id
-	        AND p.email_address IS NOT NULL
-	        AND TRIM(p.email_address) <> ''
-	        AND LOWER(p.email_address) = LOWER(ai.address)
-	    )
-	    OR EXISTS (
-	      SELECT 1
-	      FROM account_identities ai
-	      JOIN participant_identifiers pi ON pi.participant_id = messages.sender_id
-	      WHERE ai.source_id = messages.source_id
-	        AND (
-	          (pi.identifier_type = 'email'
-	           AND NOT EXISTS (
-	             SELECT 1
-	             FROM participants p
-	             WHERE p.id = messages.sender_id
-	               AND p.email_address IS NOT NULL
-	               AND TRIM(p.email_address) <> ''
-	           )
-	           AND LOWER(pi.identifier_value) = LOWER(ai.address))
-	          OR (pi.identifier_type <> 'email' AND pi.identifier_value = ai.address)
-	        )
-	    )
-	  )
+	  AND (%s)
 	)
-)`
+)`, ownerEmailMatch("mr.email_address", "ai.address"), senderOwnerFallback("messages.sender_id", "messages.source_id"))
 
 const messageSourceAttribution = `COALESCE(source_is_from_me, FALSE)`
 
@@ -4786,11 +4768,7 @@ func (s *Store) SetParticipantIdentifier(participantID int64, identifierType, id
 		}
 		var ownerEvidence bool
 		if err := tx.QueryRow(`
-			SELECT EXISTS (
-				SELECT 1 FROM account_identities ai
-				WHERE (? = 'email' AND lower(?) = lower(ai.address))
-				   OR (? != 'email' AND ? = ai.address)
-			)
+			SELECT EXISTS (SELECT 1 FROM account_identities ai WHERE `+ownerIdentifierMatch("?", "?", "ai.address", "")+`)
 		`, identifierType, identifierValue, identifierType, identifierValue).Scan(&ownerEvidence); err != nil {
 			return fmt.Errorf("check identifier owner evidence: %w", err)
 		}

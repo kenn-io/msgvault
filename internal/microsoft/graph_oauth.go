@@ -2,17 +2,12 @@ package microsoft
 
 import (
 	"context"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 
-	"go.kenn.io/msgvault/internal/fileutil"
 	"golang.org/x/oauth2"
 )
 
@@ -210,60 +205,9 @@ func (m *GraphManager) TokenSource(ctx context.Context, email string) (func(cont
 	oauthCfg := m.delegate().oauthConfigWithTenant(refreshTenant, scopes)
 	// context.Background so refreshes outlive the caller's (sync-scoped) ctx.
 	ts := oauthCfg.TokenSource(context.Background(), &tf.Token)
-
-	var (
-		mu               sync.Mutex
-		lastAccessToken  = tf.AccessToken
-		lastRefreshToken = tf.RefreshToken
-		lastExpiry       = tf.Expiry
-	)
-
-	return func(callCtx context.Context) (string, error) {
-		type tokenResult struct {
-			tok *oauth2.Token
-			err error
-		}
-		ch := make(chan tokenResult, 1)
-		go func() {
-			tok, err := ts.Token()
-			ch <- tokenResult{tok, err}
-		}()
-
-		timer := time.NewTimer(tokenRefreshTimeout)
-		defer timer.Stop()
-
-		var tok *oauth2.Token
-		select {
-		case res := <-ch:
-			if res.err != nil {
-				return "", fmt.Errorf("refresh Microsoft Graph token: %w", res.err)
-			}
-			tok = res.tok
-		case <-timer.C:
-			return "", fmt.Errorf("microsoft graph token refresh timed out after %s — check network connectivity", tokenRefreshTimeout)
-		case <-callCtx.Done():
-			return "", fmt.Errorf("microsoft graph token refresh cancelled: %w", callCtx.Err())
-		}
-
-		mu.Lock()
-		changed := tok.AccessToken != lastAccessToken ||
-			tok.RefreshToken != lastRefreshToken ||
-			!tok.Expiry.Equal(lastExpiry)
-		if changed {
-			lastAccessToken = tok.AccessToken
-			lastRefreshToken = tok.RefreshToken
-			lastExpiry = tok.Expiry
-		}
-		mu.Unlock()
-
-		if changed {
-			if saveErr := m.saveToken(email, tok, scopes, tf.TenantID); saveErr != nil {
-				return "", fmt.Errorf("save refreshed microsoft graph token for %s: %w (token refreshed but not persisted — re-run may require re-authorization)", email, saveErr)
-			}
-		}
-
-		return tok.AccessToken, nil
-	}, nil
+	return refreshingAccessToken(ts, tf, email, "Microsoft Graph", func(tok *oauth2.Token) error {
+		return m.saveToken(email, tok, scopes, tf.TenantID)
+	}), nil
 }
 
 // HasScopes reports whether the saved token was granted every scope this
@@ -295,34 +239,11 @@ func (m *GraphManager) DeleteToken(email string) error {
 // saveToken atomically persists the token in the same on-disk JSON format as
 // the IMAP Manager (tokenFile), under the capability's filename prefix.
 func (m *GraphManager) saveToken(email string, token *oauth2.Token, scopes []string, tenantID string) error {
-	if err := fileutil.SecureMkdirAll(m.tokensDir, 0700); err != nil {
-		return err
-	}
-
-	tf := tokenFile{Token: *token, Scopes: scopes, TenantID: tenantID}
-	data, err := json.Marshal(tf, jsontext.WithIndent("  "), json.Deterministic(true))
-	if err != nil {
-		return err
-	}
-
-	path := m.TokenPath(email)
-	if err := fileutil.SecureReplaceFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write token file: %w", err)
-	}
-	return nil
+	return saveTokenFile(m.tokensDir, m.TokenPath(email), token, scopes, tenantID)
 }
 
 func (m *GraphManager) loadTokenFile(email string) (*tokenFile, error) {
-	path := m.TokenPath(email)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var tf tokenFile
-	if err := json.Unmarshal(data, &tf); err != nil {
-		return nil, err
-	}
-	return &tf, nil
+	return readTokenFile(m.TokenPath(email))
 }
 
 func missingScopes(scopes, want []string) []string {

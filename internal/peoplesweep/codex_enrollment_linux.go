@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"go.kenn.io/kit/atomicfile"
 )
 
 func (l codexBoundLauncher) StartLogin(ctx context.Context, attestation CodexAttestation, authHome string) (RPCProcess, error) {
@@ -96,52 +98,37 @@ func (p *codexOwnedProcess) CommitLoginAuth(authHome string) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return errors.New("codex dedicated auth.json cannot be inspected")
 	}
-	temp, err := os.CreateTemp(authHome, ".auth-draft-")
-	if err != nil {
-		return errors.New("create private codex login draft")
-	}
-	defer func() { _ = os.Remove(temp.Name()) }()
-	if err := temp.Chmod(0o600); err != nil {
-		_ = temp.Close()
-		return errors.New("secure codex login draft")
-	}
-	_, writeErr := temp.Write(contents)
-	syncErr := temp.Sync()
-	closeErr := temp.Close()
-	if writeErr != nil || syncErr != nil || closeErr != nil {
-		return errors.New("write codex login draft")
-	}
-	if previousInfo == nil {
-		if err := os.Link(temp.Name(), destination); err != nil {
-			return errors.New("commit codex login auth.json")
-		}
-	} else {
-		current, currentInfo, err := readPrivateCodexAuth(authHome)
-		if err != nil || !os.SameFile(previousInfo, currentInfo) || sha256.Sum256(previous) != sha256.Sum256(current) {
-			return ErrCodexAuthSourceChanged
-		}
-		if err := os.Rename(temp.Name(), destination); err != nil {
-			return errors.New("replace codex login auth.json")
-		}
-	}
 	rollback := func(cause error) error {
 		return errors.Join(cause, restorePreviousCodexAuth(authHome, previous, previousInfo))
 	}
-	if err := os.Remove(temp.Name()); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
+	// committed maps a publication error: after publication the prior state is restored.
+	committed := func(err error, unpublished string) error {
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, atomicfile.ErrNotDurable):
+			return rollback(errors.New("sync codex dedicated auth home"))
+		case errors.Is(err, atomicfile.ErrPublished):
 			return rollback(errors.New("remove codex login draft after commit"))
 		}
+		return errors.New(unpublished)
 	}
-	directory, err := os.Open(authHome)
+	if previousInfo == nil {
+		return committed(atomicfile.WriteNew(destination, contents, atomicfile.WithPerm(0o600)), "commit codex login auth.json")
+	}
+	draft, err := atomicfile.Create(destination, atomicfile.WithPerm(0o600))
 	if err != nil {
-		return rollback(errors.New("open codex dedicated auth home after commit"))
+		return errors.New("create private codex login draft")
 	}
-	syncErr = directory.Sync()
-	closeErr = directory.Close()
-	if syncErr != nil || closeErr != nil {
-		return rollback(errors.New("sync codex dedicated auth home"))
+	defer func() { _ = draft.Abort() }()
+	if _, err := draft.Write(contents); err != nil {
+		return errors.New("write codex login draft")
 	}
-	return nil
+	current, currentInfo, err := readPrivateCodexAuth(authHome)
+	if err != nil || !os.SameFile(previousInfo, currentInfo) || sha256.Sum256(previous) != sha256.Sum256(current) {
+		return ErrCodexAuthSourceChanged
+	}
+	return committed(draft.Commit(), "replace codex login auth.json")
 }
 
 func restorePreviousCodexAuth(authHome string, previous []byte, previousInfo os.FileInfo) error {
@@ -149,29 +136,12 @@ func restorePreviousCodexAuth(authHome string, previous []byte, previousInfo os.
 	if previousInfo == nil {
 		return os.Remove(destination)
 	}
-	temp, err := os.CreateTemp(authHome, ".auth-rollback-")
-	if err != nil {
-		return errors.New("restore previous codex auth.json")
-	}
-	defer func() { _ = os.Remove(temp.Name()) }()
-	_, writeErr := temp.Write(previous)
-	modeErr := temp.Chmod(previousInfo.Mode().Perm())
-	syncErr := temp.Sync()
-	closeErr := temp.Close()
-	if writeErr != nil || modeErr != nil || syncErr != nil || closeErr != nil {
-		return errors.New("restore previous codex auth.json")
-	}
-	if err := os.Rename(temp.Name(), destination); err != nil {
-		return errors.New("restore previous codex auth.json")
-	}
-	directory, err := os.Open(authHome)
-	if err != nil {
+	err := atomicfile.WriteFile(destination, previous, atomicfile.WithPerm(previousInfo.Mode().Perm()))
+	if errors.Is(err, atomicfile.ErrPublished) {
 		return errors.New("sync restored codex auth.json")
 	}
-	syncErr = directory.Sync()
-	closeErr = directory.Close()
-	if syncErr != nil || closeErr != nil {
-		return errors.New("sync restored codex auth.json")
+	if err != nil {
+		return errors.New("restore previous codex auth.json")
 	}
 	return nil
 }

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"go.kenn.io/kit/atomicfile"
 )
 
 var (
@@ -172,38 +174,22 @@ func (s *codexRefreshState) commit() (retErr error) {
 	if identity != s.identity {
 		return ErrCodexAuthAccountChanged
 	}
-	temp, err := os.CreateTemp(s.authHome, ".auth-refresh-")
+	file, err := atomicfile.Create(filepath.Join(s.authHome, "auth.json"), atomicfile.WithPerm(0o600))
 	if err != nil {
 		return ErrCodexAuthRefreshUnsafe
 	}
 	defer func() {
-		if err := os.Remove(temp.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := file.Abort(); err != nil {
 			retErr = errors.Join(retErr, ErrCodexAuthRefreshUnsafe)
 		}
 	}()
-	if err := temp.Chmod(0o600); err != nil {
-		_ = temp.Close()
-		return ErrCodexAuthRefreshUnsafe
-	}
-	_, writeErr := temp.Write(candidate)
-	syncErr := temp.Sync()
-	closeErr := temp.Close()
-	if writeErr != nil || syncErr != nil || closeErr != nil {
+	if _, err := file.Write(candidate); err != nil {
 		return ErrCodexAuthRefreshUnsafe
 	}
 	if err := s.checkSourceUnchanged(); err != nil {
 		return err
 	}
-	if err := os.Rename(temp.Name(), filepath.Join(s.authHome, "auth.json")); err != nil {
-		return ErrCodexAuthRefreshUnsafe
-	}
-	directory, err := os.Open(s.authHome)
-	if err != nil {
-		return ErrCodexAuthRefreshUnsafe
-	}
-	syncErr = directory.Sync()
-	closeErr = directory.Close()
-	if syncErr != nil || closeErr != nil {
+	if err := file.Commit(); err != nil {
 		return ErrCodexAuthRefreshUnsafe
 	}
 	return nil

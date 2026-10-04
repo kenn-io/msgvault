@@ -136,6 +136,18 @@ func TruncateRunes(s string, maxRunes int) string {
 	return string(runes[:maxRunes-3]) + "..."
 }
 
+// PrefixRunes returns the first n runes of s, or s when it is shorter, with no suffix.
+func PrefixRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n])
+}
+
 // FirstLine returns the first line of a string, capped at 200 runes.
 // Useful for extracting clean error messages from multi-line outputs
 // where the first line itself may be excessively long (e.g. enmime

@@ -480,6 +480,21 @@ func TestClientSetsDAVPreconditionsAndTypedStatusErrors(t *testing.T) {
 	assert.Equal(t, 90, int(statusErr.RetryAfter.Seconds()))
 }
 
+func TestClientReadsPastRetryAfterDateAsNoDelay(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", time.Now().Add(-time.Second).UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newFixtureClient(t, server.URL, "alice", "app-password")
+	_, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: server.URL})
+	var statusErr *StatusError
+	require.ErrorAs(t, err, &statusErr)
+	assert.Equal(t, http.StatusServiceUnavailable, statusErr.StatusCode)
+	assert.Equal(t, time.Duration(0), statusErr.RetryAfter)
+}
+
 func TestClientValidateChildHrefRejectsOriginAndCollectionEscapes(t *testing.T) {
 	require := require.New(t)
 

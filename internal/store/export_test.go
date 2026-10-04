@@ -339,3 +339,10 @@ func (s *Store) SetPersonNetworkSourceReadHookForTest(fn func(limit, count int))
 func (s *Store) SetCardDAVPublicationReviewBeforePersonLockHookForTest(fn func()) {
 	s.cardDAVReviewPersonLockHook = fn
 }
+
+// Owner-address SQL builders, exported for their isolation test.
+var (
+	OwnerEmailMatch      = ownerEmailMatch
+	OwnerIdentifierMatch = ownerIdentifierMatch
+	SenderOwnerFallback  = senderOwnerFallback
+)

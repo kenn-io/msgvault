@@ -516,3 +516,23 @@ func TestSanitizeTerminalMultiline(t *testing.T) {
 		})
 	}
 }
+
+func TestPrefixRunes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		n     int
+		want  string
+	}{
+		{name: "ascii", input: "hello world", n: 5, want: "hello"},
+		{name: "multi-byte", input: "héllo wörld", n: 7, want: "héllo w"},
+		{name: "exact length", input: "héllo", n: 5, want: "héllo"},
+		{name: "shorter", input: "hi", n: 5, want: "hi"},
+		{name: "zero", input: "hello", n: 0, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, textutil.PrefixRunes(tt.input, tt.n))
+		})
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/textimport"
+	"go.kenn.io/msgvault/internal/textutil"
 	"howett.net/plist"
 )
 
@@ -225,11 +226,5 @@ func extractKeyedArchiverText(data []byte) string {
 
 // snippet returns the first n characters of s, suitable for message preview.
 func snippet(s string, maxLen int) string {
-	// Normalize whitespace
-	s = strings.Join(strings.Fields(s), " ")
-	runes := []rune(s)
-	if len(runes) > maxLen {
-		return string(runes[:maxLen])
-	}
-	return s
+	return textutil.PrefixRunes(strings.Join(strings.Fields(s), " "), maxLen)
 }

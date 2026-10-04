@@ -633,6 +633,30 @@ func ownerParticipantsSelectSQL(primaryEmailPresence string) string {
 		accountIdentities, participants, accountIdentities, identifiers, participants)
 }
 
+// messageExportColumns is the messages Parquet column list through is_from_me.
+func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribution string) string {
+	return fmt.Sprintf(`
+			m.id,
+			m.source_id,
+			COALESCE(%s, '') AS source_message_id,
+			%s AS rfc822_message_id,
+			m.conversation_id,
+			CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(%s, '') END as subject,
+			CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(%s, '') END as snippet,
+			m.sent_at,
+			m.size_estimate,
+			m.has_attachments,
+			COALESCE(TRY_CAST(m.attachment_count AS INTEGER), 0) as attachment_count,
+			m.deleted_from_source_at,
+			m.sender_id,
+			%s AS owner_participant_id,
+			COALESCE(%s, '') as message_type,
+			%s AS list_id,
+			%s AS is_from_me`, source.identityExportSQL("m.source_message_id"), source.identityExportSQL("m.rfc822_message_id"),
+		source.textSQL("m.subject"), source.textSQL("m.snippet"), ownerParticipant,
+		source.textSQL("m.message_type"), source.identityExportSQL("m.list_id"), attribution)
+}
+
 // messageCacheAttributionSQL is the cache-facing form of
 // store.messageIdentityAttributionMatch. Source-native provenance is always
 // authoritative. A non-empty From envelope is then the only identity surface
@@ -862,7 +886,7 @@ func acquireCacheBuildLock(ctx context.Context, analyticsDir string) (*flock.Flo
 // conversationsExportSelectSQL renders the conversations dataset export
 // query: every conversation with an exportable message inside the watermark,
 // with NULL-normalized string columns. Shared by the full/incremental export
-// and the derived-refresh re-staging (exportDerivedConversations) so the two
+// and the derived-refresh re-staging in refreshDerivedDatasetsOnly so the two
 // can never bake different rows for the same watermark.
 func (s *cacheSourceSnapshot) conversationsExportSelectSQL(lastMessageID int64) string {
 	return fmt.Sprintf(`SELECT
@@ -881,7 +905,7 @@ func (s *cacheSourceSnapshot) conversationsExportSelectSQL(lastMessageID int64) 
 
 // participantIdentifiersExportSelectSQL renders the participant_identifiers
 // dataset export query. Shared by the full/incremental export and the
-// derived-refresh re-staging (exportDerivedParticipantIdentifiers) so the two
+// derived-refresh re-staging in refreshDerivedDatasetsOnly so the two
 // can never bake different rows. Identifier keys with invalid UTF-8 export as
 // the empty string (unknown) because repairing them could collide two
 // distinct keys.
@@ -1358,11 +1382,11 @@ func buildCacheLockedAttempt(
 		idFilter += fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) > %d", lastMessageID)
 	}
 
-	// runExport executes a COPY query and prints timing info.
-	runExport := func(label, copyQuery string) error {
+	// runExport runs one dataset export and prints timing info.
+	runExport := func(label string, export func() error) error {
 		start := time.Now()
 		fmt.Printf("  %-25s", label+"...")
-		if _, err := exportDB.Exec(copyQuery); err != nil {
+		if err := export(); err != nil {
 			fmt.Println()
 			return query.HintRepairEncoding(err)
 		}
@@ -1394,36 +1418,19 @@ func buildCacheLockedAttempt(
 	}
 
 	// 4. Export participants
-	participantsDir := filepath.Join(staging.root, tableParticipants)
-	escapedParticipantsDir := strings.ReplaceAll(participantsDir, "'", "''")
-	if err := runExport(tableParticipants, fmt.Sprintf(`
-	COPY (
-		%s
-	) TO '%s/participants.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, sourceSnapshot.participantsExportSelectSQL(), escapedParticipantsDir)); err != nil {
+	ctx := context.Background()
+	copyDataset := func(table, selectSQL string) func() error {
+		return func() error {
+			return copyParquet(ctx, exportDB, filepath.Join(staging.root, table), table+".parquet", selectSQL)
+		}
+	}
+	if err := runExport(tableParticipants, copyDataset(tableParticipants, sourceSnapshot.participantsExportSelectSQL())); err != nil {
 		return nil, fmt.Errorf("export participants: %w", err)
 	}
-
-	participantIdentifiersDir := filepath.Join(staging.root, tableParticipantIdentifiers)
-	escapedParticipantIdentifiersDir := strings.ReplaceAll(participantIdentifiersDir, "'", "''")
-	if err := runExport(tableParticipantIdentifiers, fmt.Sprintf(`
-	COPY (
-		%s
-	) TO '%s/participant_identifiers.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, sourceSnapshot.participantIdentifiersExportSelectSQL(), escapedParticipantIdentifiersDir)); err != nil {
+	if err := runExport(tableParticipantIdentifiers, copyDataset(tableParticipantIdentifiers, sourceSnapshot.participantIdentifiersExportSelectSQL())); err != nil {
 		return nil, fmt.Errorf("export participant identifiers: %w", err)
 	}
-
-	personDisplayNamesDir := filepath.Join(staging.root, tablePersonDisplayNames)
-	if err := runExport(tablePersonDisplayNames, fmt.Sprintf(
-		`COPY (%s) TO '%s/person_display_names.parquet' (FORMAT PARQUET, COMPRESSION 'zstd')`,
-		sourceSnapshot.personDisplayNamesExportSelectSQL(), quoteCacheSQL(personDisplayNamesDir))); err != nil {
+	if err := runExport(tablePersonDisplayNames, copyDataset(tablePersonDisplayNames, sourceSnapshot.personDisplayNamesExportSelectSQL())); err != nil {
 		return nil, fmt.Errorf("export person names: %w", err)
 	}
 
@@ -1432,16 +1439,8 @@ func buildCacheLockedAttempt(
 	// ownerParticipantsSelectSQL for the resolution rules). Always fully
 	// replaced (not filtered by lastMessageID) since identities are cheap to
 	// recompute and independent of the message ID watermark.
-	ownerParticipantsDir := filepath.Join(staging.root, tableOwnerParticipants)
-	escapedOwnerParticipantsDir := strings.ReplaceAll(ownerParticipantsDir, "'", "''")
 	primaryEmailPresence := sourceSnapshot.identityPresenceSQL("email_address", "primary_email_present")
-	if err := runExport(tableOwnerParticipants, fmt.Sprintf(`
-	COPY (%s
-	) TO '%s/owner_participants.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, ownerParticipantsSelectSQL(primaryEmailPresence), escapedOwnerParticipantsDir)); err != nil {
+	if err := runExport(tableOwnerParticipants, copyDataset(tableOwnerParticipants, ownerParticipantsSelectSQL(primaryEmailPresence))); err != nil {
 		return nil, fmt.Errorf("export owner participants: %w", err)
 	}
 
@@ -1451,89 +1450,31 @@ func buildCacheLockedAttempt(
 	// table so it can be COPYed to Parquet like every other dataset. Always
 	// written, even when there are no linked participants, so the dataset
 	// directory required by RequiredParquetDirs always exists.
-	participantClustersDir := filepath.Join(staging.root, tableParticipantClusters)
-	escapedParticipantClustersDir := strings.ReplaceAll(participantClustersDir, "'", "''")
-	if _, err := exportDB.Exec(
-		`CREATE TEMP TABLE tmp_participant_clusters (participant_id BIGINT, canonical_id BIGINT)`,
-	); err != nil {
-		return nil, fmt.Errorf("create participant clusters temp table: %w", err)
+	if err := stageParticipantClusters(ctx, exportDB, participantClusters); err != nil {
+		return nil, err
 	}
-	if len(participantClusters) > 0 {
-		values := make([]string, 0, len(participantClusters))
-		for participantID, canonicalID := range participantClusters {
-			values = append(values, fmt.Sprintf("(%d, %d)", participantID, canonicalID))
-		}
-		insertSQL := "INSERT INTO tmp_participant_clusters (participant_id, canonical_id) VALUES " +
-			strings.Join(values, ", ")
-		if _, err := exportDB.Exec(insertSQL); err != nil {
-			return nil, fmt.Errorf("populate participant clusters temp table: %w", err)
-		}
-	}
-	if err := runExport(tableParticipantClusters, fmt.Sprintf(`
-	COPY (
-		SELECT participant_id, canonical_id FROM tmp_participant_clusters
-	) TO '%s/participant_clusters.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, escapedParticipantClustersDir)); err != nil {
+	if err := runExport(tableParticipantClusters, copyDataset(tableParticipantClusters, participantClustersSelectSQL)); err != nil {
 		return nil, fmt.Errorf("export participant clusters: %w", err)
 	}
 	if _, err := exportDB.Exec(`DROP TABLE tmp_participant_clusters`); err != nil {
 		return nil, fmt.Errorf("drop participant clusters temp table: %w", err)
 	}
 
-	conversationParticipantsDir := filepath.Join(staging.root, tableConversationParticipants)
-	escapedConversationParticipantsDir := strings.ReplaceAll(conversationParticipantsDir, "'", "''")
-	if err := runExport(tableConversationParticipants, fmt.Sprintf(`
-	COPY (
-		SELECT
-			cp.conversation_id,
-			cp.participant_id
-		FROM sqlite_db.conversation_participants cp
-		WHERE EXISTS (
-			SELECT 1 FROM sqlite_db.messages m
-			WHERE m.conversation_id = cp.conversation_id
-			  AND `+exportableMessageWhere("m")+`
-			  AND TRY_CAST(m.id AS BIGINT) <= %d
-		)
-	) TO '%s/conversation_participants.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, maxID, escapedConversationParticipantsDir)); err != nil {
+	if err := runExport(tableConversationParticipants, copyDataset(tableConversationParticipants, conversationParticipantsSelectSQL(maxID))); err != nil {
 		return nil, fmt.Errorf("export conversation participants: %w", err)
 	}
 
 	// 6. Export sources
-	sourcesDir := filepath.Join(staging.root, "sources")
-	escapedSourcesDir := strings.ReplaceAll(sourcesDir, "'", "''")
-	if err := runExport("sources", fmt.Sprintf(`
-	COPY (
-		SELECT
+	if err := runExport("sources", copyDataset("sources", fmt.Sprintf(`SELECT
 			id,
 			COALESCE(%s, '') as account_email,
 			COALESCE(%s, 'gmail') as source_type
-		FROM sqlite_db.sources
-	) TO '%s/sources.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, sourceSnapshot.identityExportSQL("identifier"), sourceSnapshot.textSQL("source_type"), escapedSourcesDir)); err != nil {
+		FROM sqlite_db.sources`, sourceSnapshot.identityExportSQL("identifier"), sourceSnapshot.textSQL("source_type")))); err != nil {
 		return nil, fmt.Errorf("export sources: %w", err)
 	}
 
 	// 7. Export conversations (for Gmail thread IDs)
-	conversationsDir := filepath.Join(staging.root, tableConversations)
-	escapedConversationsDir := strings.ReplaceAll(conversationsDir, "'", "''")
-	if err := runExport(tableConversations, fmt.Sprintf(`
-	COPY (
-		%s
-	) TO '%s/conversations.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, sourceSnapshot.conversationsExportSelectSQL(maxID), escapedConversationsDir)); err != nil {
+	if err := runExport(tableConversations, copyDataset(tableConversations, sourceSnapshot.conversationsExportSelectSQL(maxID))); err != nil {
 		return nil, fmt.Errorf("export conversations: %w", err)
 	}
 
@@ -1555,26 +1496,11 @@ func buildCacheLockedAttempt(
 		primaryEmailPresence,
 	)
 
-	if err := runExport(tableMessages, fmt.Sprintf(`
+	columns := messageExportColumns(sourceSnapshot, messageOwnerParticipant, messageAttribution)
+	if err := runExport(tableMessages, func() error {
+		_, err := exportDB.Exec(fmt.Sprintf(`
 	COPY (
-		SELECT
-			m.id,
-			m.source_id,
-			COALESCE(%s, '') AS source_message_id,
-			%s AS rfc822_message_id,
-			m.conversation_id,
-			CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(%s, '') END as subject,
-			CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(%s, '') END as snippet,
-			m.sent_at,
-			m.size_estimate,
-			m.has_attachments,
-			COALESCE(TRY_CAST(m.attachment_count AS INTEGER), 0) as attachment_count,
-			m.deleted_from_source_at,
-			m.sender_id,
-			%s AS owner_participant_id,
-			COALESCE(%s, '') as message_type,
-			%s AS list_id,
-			%s AS is_from_me,
+		SELECT %s,
 			CAST(EXTRACT(YEAR FROM m.sent_at) AS INTEGER) as year,
 			CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 		FROM sqlite_db.messages m
@@ -1585,10 +1511,9 @@ func buildCacheLockedAttempt(
 		OVERWRITE_OR_IGNORE,
 		COMPRESSION 'zstd'
 	)
-	`, sourceSnapshot.identityExportSQL("m.source_message_id"), sourceSnapshot.identityExportSQL("m.rfc822_message_id"),
-		sourceSnapshot.textSQL("m.subject"), sourceSnapshot.textSQL("m.snippet"), messageOwnerParticipant,
-		sourceSnapshot.textSQL("m.message_type"), sourceSnapshot.identityExportSQL("m.list_id"), messageAttribution,
-		idFilter, escapedMessagesDir)); err != nil {
+	`, columns, idFilter, escapedMessagesDir))
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
 	}
 
@@ -1600,42 +1525,12 @@ func buildCacheLockedAttempt(
 	// Only the cleared-directory builds need this; an incremental no-op
 	// leaves the previous shards in place.
 	if expectedTotalCount == 0 && replaceAll {
-		emptyShardDir := filepath.Join(messagesDir, "year=0")
-		if err := os.MkdirAll(emptyShardDir, 0755); err != nil {
-			return nil, fmt.Errorf("create empty messages shard dir: %w", err)
-		}
-		escapedEmptyShard := strings.ReplaceAll(
-			filepath.Join(emptyShardDir, "empty.parquet"), "'", "''")
 		// Same column list as the partitioned export minus the year
 		// partition column, which hive_partitioning derives from the path.
-		if _, err := exportDB.Exec(fmt.Sprintf(`
-		COPY (
-			SELECT
-				m.id,
-				m.source_id,
-				COALESCE(%s, '') AS source_message_id,
-				%s AS rfc822_message_id,
-				m.conversation_id,
-				CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(%s, '') END as subject,
-				CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(%s, '') END as snippet,
-				m.sent_at,
-				m.size_estimate,
-				m.has_attachments,
-				COALESCE(TRY_CAST(m.attachment_count AS INTEGER), 0) as attachment_count,
-				m.deleted_from_source_at,
-				m.sender_id,
-				%s AS owner_participant_id,
-				COALESCE(%s, '') as message_type,
-				%s AS list_id,
-				%s AS is_from_me,
+		if err := copyParquet(ctx, exportDB, filepath.Join(messagesDir, "year=0"), "empty.parquet", `SELECT `+columns+`,
 				CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 			FROM sqlite_db.messages m
-			WHERE 1 = 0
-		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-		`, sourceSnapshot.identityExportSQL("m.source_message_id"), sourceSnapshot.identityExportSQL("m.rfc822_message_id"),
-			sourceSnapshot.textSQL("m.subject"), sourceSnapshot.textSQL("m.snippet"), messageOwnerParticipant,
-			sourceSnapshot.textSQL("m.message_type"), sourceSnapshot.identityExportSQL("m.list_id"), messageAttribution,
-			escapedEmptyShard)); err != nil {
+			WHERE 1 = 0`); err != nil {
 			return nil, fmt.Errorf("export empty messages shard: %w", err)
 		}
 	}
