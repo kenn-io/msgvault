@@ -348,18 +348,20 @@ func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
 
 func runEmbeddingsRetireCommand(cmd *cobra.Command, args []string) error {
 	if !isDaemonCLISubprocess() {
-		return runEmbeddingsRetireHTTP(cmd, args)
+		return runEmbeddingsConfirmedHTTP(cmd, args, cliEmbeddingsOperationRetire, embeddingsRetireYes, embeddingsRetireForceActive)
 	}
 	return runEmbeddingsRetire(cmd, args)
 }
 
-func runEmbeddingsRetireHTTP(cmd *cobra.Command, args []string) error {
+// runEmbeddingsConfirmedHTTP confirms a generation change against the daemon's
+// plan, then forwards the command with --yes.
+func runEmbeddingsConfirmedHTTP(cmd *cobra.Command, args []string, operation string, yes, force bool) error {
 	gen, err := parseGenerationID(args[0])
 	if err != nil {
 		return err
 	}
-	if !embeddingsRetireYes {
-		if err := confirmEmbeddingsPlanHTTP(cmd, cliEmbeddingsOperationRetire, gen, embeddingsRetireForceActive); err != nil {
+	if !yes {
+		if err := confirmEmbeddingsPlanHTTP(cmd, operation, gen, force); err != nil {
 			return err
 		}
 		if err := cmd.Flags().Set("yes", "true"); err != nil {
@@ -474,25 +476,9 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 
 func runEmbeddingsActivateCommand(cmd *cobra.Command, args []string) error {
 	if !isDaemonCLISubprocess() {
-		return runEmbeddingsActivateHTTP(cmd, args)
+		return runEmbeddingsConfirmedHTTP(cmd, args, cliEmbeddingsOperationActivate, embeddingsActivateYes, embeddingsActivateForce)
 	}
 	return runEmbeddingsActivate(cmd, args)
-}
-
-func runEmbeddingsActivateHTTP(cmd *cobra.Command, args []string) error {
-	gen, err := parseGenerationID(args[0])
-	if err != nil {
-		return err
-	}
-	if !embeddingsActivateYes {
-		if err := confirmEmbeddingsPlanHTTP(cmd, cliEmbeddingsOperationActivate, gen, embeddingsActivateForce); err != nil {
-			return err
-		}
-		if err := cmd.Flags().Set("yes", "true"); err != nil {
-			return fmt.Errorf("set --yes after confirmation: %w", err)
-		}
-	}
-	return runDaemonCLICommandHTTPFromCobra(cmd, args)
 }
 
 func confirmEmbeddingsPlanHTTP(

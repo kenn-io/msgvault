@@ -1938,10 +1938,10 @@ func TestSchedulerSetDocumentVectorJobUsesEmbeddingSchedulePolicy(t *testing.T) 
 		called++
 		return nil
 	}, "*/5 * * * *", true))
-	assertions.True(s.documentVectorEntrySet)
-	assertions.True(s.runDocumentVectorAfterSync)
+	assertions.True(s.documentVector.entrySet)
+	assertions.True(s.documentVector.runAfterSync)
 	requirements.ErrorContains(s.SetDocumentVectorJob(func(context.Context) error { return nil }, "invalid", false), "invalid")
-	assertions.True(s.documentVectorEntrySet, "invalid replacement preserves the prior job")
+	assertions.True(s.documentVector.entrySet, "invalid replacement preserves the prior job")
 	assertions.Zero(called)
 }
 
@@ -2003,18 +2003,18 @@ func TestScheduler_SetEmbedJob_AddsCronEntry(t *testing.T) {
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
 	require.NoError(s.SetEmbedJob(job, "*/5 * * * *", false), "SetEmbedJob first")
-	assert.True(s.embedEntrySet, "embedEntrySet should be true after first SetEmbedJob")
+	assert.True(s.embed.entrySet, "embedEntrySet should be true after first SetEmbedJob")
 
 	// Replacing with a new schedule should not error.
 	require.NoError(s.SetEmbedJob(job, "0 * * * *", true), "SetEmbedJob replace")
-	assert.True(s.embedEntrySet, "embedEntrySet should remain true after replacement")
-	assert.True(s.runEmbedAfterSync, "runEmbedAfterSync should be true after replacement with runAfterSync=true")
+	assert.True(s.embed.entrySet, "embedEntrySet should remain true after replacement")
+	assert.True(s.embed.runAfterSync, "runEmbedAfterSync should be true after replacement with runAfterSync=true")
 
 	// Clearing.
 	require.NoError(s.SetEmbedJob(nil, "", false), "SetEmbedJob clear")
-	assert.False(s.embedEntrySet, "embedEntrySet should be false after clear")
-	assert.Nil(s.embedJob, "embedJob should be nil after clear")
-	assert.False(s.runEmbedAfterSync, "runEmbedAfterSync should be false after clear")
+	assert.False(s.embed.entrySet, "embedEntrySet should be false after clear")
+	assert.Nil(s.embed.job, "embedJob should be nil after clear")
+	assert.False(s.embed.runAfterSync, "runEmbedAfterSync should be false after clear")
 }
 
 func TestScheduler_SetEmbedJob_InvalidCron(t *testing.T) {
@@ -2025,28 +2025,40 @@ func TestScheduler_SetEmbedJob_InvalidCron(t *testing.T) {
 
 	err := s.SetEmbedJob(job, "not a cron", false)
 	require.Error(t, err, "SetEmbedJob with invalid cron")
-	assert.False(t, s.embedEntrySet, "embedEntrySet should remain false after invalid cron")
+	assert.False(t, s.embed.entrySet, "embedEntrySet should remain false after invalid cron")
 }
 
 func TestScheduler_SetEmbedJob_InvalidReplacePreservesPrevious(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
 	// After a successful SetEmbedJob, a later call with an invalid cron
 	// must leave the previous job, schedule, and post-sync flag intact.
-	s := New(func(ctx context.Context, email string) error { return nil })
-	backend := &fakeBackend{}
-	job1 := &EmbedJob{Worker: &fakeRunner{}, Backend: backend}
-	job2 := &EmbedJob{Worker: &fakeRunner{}, Backend: backend}
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		s := New(func(ctx context.Context, email string) error { return nil })
+		backend := &fakeBackend{active: vector.Generation{ID: 1}}
+		runner1, runner2 := &fakeRunner{}, &fakeRunner{}
+		job1 := &EmbedJob{Worker: runner1, Backend: backend}
+		job2 := &EmbedJob{Worker: runner2, Backend: backend}
 
-	require.NoError(s.SetEmbedJob(job1, "*/5 * * * *", true), "SetEmbedJob(job1)")
-	prevEntry := s.embedEntry
+		require.NoError(s.SetEmbedJob(job1, "*/5 * * * *", true), "SetEmbedJob(job1)")
+		prevEntry := s.embed.entry
 
-	require.Error(s.SetEmbedJob(job2, "bogus cron", true), "SetEmbedJob(job2, invalid)")
+		require.Error(s.SetEmbedJob(job2, "bogus cron", true), "SetEmbedJob(job2, invalid)")
 
-	assert.Same(job1, s.embedJob, "embedJob was replaced on invalid cron; want job1")
-	assert.True(s.runEmbedAfterSync, "runEmbedAfterSync should remain true")
-	assert.True(s.embedEntrySet, "cron entry should still be job1's (entrySet)")
-	assert.Equal(prevEntry, s.embedEntry, "cron entry should still be job1's")
+		assert.True(s.embed.runAfterSync, "runAfterSync should remain true")
+		assert.True(s.embed.entrySet, "cron entry should still be job1's (entrySet)")
+		assert.Equal(prevEntry, s.embed.entry, "cron entry should still be job1's")
+
+		require.NoError(s.AddAccount("test@example.test", "0 0 1 1 *"))
+		s.Start()
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.TriggerSync("test@example.test"))
+		synctest.Wait()
+		_, run1, _ := runner1.calls()
+		_, run2, _ := runner2.calls()
+		assert.Equal(1, run1, "job1 should still run after sync")
+		assert.Equal(0, run2, "rejected job2 should never run")
+	})
 }
 
 func TestScheduler_SetEmbedJob_EmptyScheduleNoCronEntry(t *testing.T) {
@@ -2057,9 +2069,9 @@ func TestScheduler_SetEmbedJob_EmptyScheduleNoCronEntry(t *testing.T) {
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
 	require.NoError(t, s.SetEmbedJob(job, "", true), "SetEmbedJob")
-	assert.False(s.embedEntrySet, "empty schedule should not create a cron entry")
-	assert.NotNil(s.embedJob, "embedJob should be set even with empty schedule")
-	assert.True(s.runEmbedAfterSync, "runEmbedAfterSync should be true")
+	assert.False(s.embed.entrySet, "empty schedule should not create a cron entry")
+	assert.NotNil(s.embed.job, "embedJob should be set even with empty schedule")
+	assert.True(s.embed.runAfterSync, "runEmbedAfterSync should be true")
 }
 
 func TestScheduler_RunAfterSync_Fires(t *testing.T) {
@@ -3294,4 +3306,76 @@ func TestBudgetFiltersCancellationCause(t *testing.T) {
 	defer cancel()
 	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 	assert.NoError(t, callbackErrorAfterYield(ctx, context.Cause(ctx)))
+}
+
+func TestSchedulerRunsEmbedThenDocumentVectorAfterSync(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		s := New(func(context.Context, string) error { return nil })
+		order := make(chan string, 8)
+		runner := &fakeRunner{onRunOnce: func(vector.GenerationID) { order <- "embed" }}
+		job := &EmbedJob{Worker: runner, Backend: &fakeBackend{active: vector.Generation{ID: 1}}}
+		require.NoError(s.SetEmbedJob(job, "", true))
+		require.NoError(s.SetDocumentVectorJob(func(context.Context) error {
+			order <- "document vector"
+			return nil
+		}, "", true))
+		require.NoError(s.AddAccount("test@example.test", "0 0 1 1 *"))
+		s.Start()
+		defer func() { <-s.Stop().Done() }()
+
+		syncAndCollect := func() []string {
+			require.NoError(s.TriggerSync("test@example.test"))
+			synctest.Wait()
+			got := make([]string, 0, 2)
+			for len(order) > 0 {
+				got = append(got, <-order)
+			}
+			return got
+		}
+		assert.Equal([]string{"embed", "document vector"}, syncAndCollect())
+
+		err := s.SetDocumentVectorJob(func(context.Context) error {
+			order <- "replacement"
+			return nil
+		}, "invalid", true)
+		require.Error(err)
+		assert.Contains(err.Error(), `invalid document vector cron expression "invalid": `)
+		assert.Equal([]string{"embed", "document vector"}, syncAndCollect())
+	})
+}
+
+type labelRecordingTracker struct {
+	mu     sync.Mutex
+	labels []string
+}
+
+func (t *labelRecordingTracker) BeginWork() (func(), bool) { return func() {}, true }
+
+func (t *labelRecordingTracker) BeginWorkContext(context.Context) (func(), bool) {
+	return func() {}, true
+}
+
+func (t *labelRecordingTracker) BeginLabeledWorkContext(_ context.Context, label string) (func(), bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.labels = append(t.labels, label)
+	return func() {}, true
+}
+
+func TestScheduledVectorJobsHoldGateUnderOwnLabel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		tracker := &labelRecordingTracker{}
+		s := New(nil).WithWorkTracker(tracker)
+		defer func() { <-s.Stop().Done() }()
+		job := &EmbedJob{Worker: &fakeRunner{}, Backend: &fakeBackend{active: vector.Generation{ID: 1}}}
+		require.NoError(s.SetEmbedJob(job, "0 0 1 1 *", false))
+		require.NoError(s.SetDocumentVectorJob(func(context.Context) error { return nil }, "0 0 1 1 *", false))
+		s.cron.Entry(s.embed.entry).Job.Run()
+		s.cron.Entry(s.documentVector.entry).Job.Run()
+		synctest.Wait()
+		assert.Equal(t, []string{"scheduled embedding", "scheduled document indexing"}, tracker.labels)
+	})
 }

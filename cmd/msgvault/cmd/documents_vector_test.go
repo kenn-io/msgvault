@@ -54,7 +54,7 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 	assert.Contains(unconfirmedOutput.String(), "Docbank-prepared normalized attachment document inputs will be sent")
 	assert.NotContains(unconfirmedOutput.String(), "Explicit semantic or hybrid document searches")
 	assert.NotContains(unconfirmedOutput.String(), "secret-that-must-not-print")
-	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx))
+	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	unconfirmedConsent, err := fixture.Store.GetDocumentVectorConsent(testCtx, consentSpec.EgressFingerprint)
 	require.NoError(err)
@@ -74,7 +74,7 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 	assert.Equal(spec, recorded.DocumentVectorGenerationSpec)
 	assert.Equal("document_embedding", recorded.Purpose)
 
-	queryConsentSpec, err := configuredDocumentVectorQueryConsentSpec(spec, invocationFromContext(testCtx))
+	queryConsentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "query_embedding")
 	require.NoError(err)
 	assert.NotEqual(consentSpec.EgressFingerprint, queryConsentSpec.EgressFingerprint)
 	queryConsent := newDocumentsCmd(deps)
@@ -90,7 +90,7 @@ func TestDocumentVectorLedgerCommandsNeverOpenRuntime(t *testing.T) {
 
 	consentedEndpoint := cfg.Vector.Embeddings.Endpoint
 	cfg.Vector.Embeddings.Endpoint = "https://hosted.example.test/v1"
-	changedConsentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx))
+	changedConsentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	assert.NotEqual(consentSpec.EgressFingerprint, changedConsentSpec.EgressFingerprint)
 	require.ErrorContains(requireDocumentVectorConsent(testCtx, fixture.Store, spec), "not consented")
@@ -267,7 +267,7 @@ func TestDocumentVectorProviderCommandsUseRuntimeAndValidateBounds(t *testing.T)
 	assert := assert.New(t)
 	require := require.New(t)
 	fixture, spec, testCtx := documentVectorCommandFixture(t)
-	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx))
+	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	_, _, err = fixture.Store.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())
 	require.NoError(err)
@@ -459,7 +459,7 @@ func TestScheduledDocumentVectorRotationRetiresObsoleteBuildingBeforeDesiredBuil
 	require := require.New(t)
 	fixture, desired, testCtx := documentVectorCommandFixture(t)
 	cfg := invocationFromContext(testCtx).cfg
-	consentSpec, err := configuredDocumentVectorConsentSpec(desired, invocationFromContext(testCtx))
+	consentSpec, err := configuredDocumentVectorConsentSpec(desired, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	_, _, err = fixture.Store.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())
 	require.NoError(err)
@@ -583,7 +583,7 @@ func TestScheduledDocumentVectorObservesConsentRecordedAfterRuntimeInitializatio
 	require.NoError(err)
 	assert.Nil(active)
 
-	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx))
+	consentSpec, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	_, _, err = fixture.Store.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())
 	require.NoError(err)
@@ -600,7 +600,7 @@ func TestScheduledDocumentVectorCleansObsoleteActiveTokensAfterCoverageIsComplet
 	require := require.New(t)
 	fixture, desired, testCtx := documentVectorCommandFixture(t)
 	cfg := invocationFromContext(testCtx).cfg
-	consentSpec, err := configuredDocumentVectorConsentSpec(desired, invocationFromContext(testCtx))
+	consentSpec, err := configuredDocumentVectorConsentSpec(desired, invocationFromContext(testCtx), "document_embedding")
 	require.NoError(err)
 	_, _, err = fixture.Store.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())
 	require.NoError(err)
@@ -702,3 +702,42 @@ func documentVectorCommandFixture(t *testing.T) (*storetest.Fixture, store.Docum
 }
 
 func fmtInt64(value int64) string { return strconv.FormatInt(value, 10) }
+
+func TestDocumentVectorConfirmationPrecedesStore(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	fixture, spec, testCtx := documentVectorCommandFixture(t)
+	openCalls := 0
+	deps := documentsCommandDeps{
+		openStore: func(context.Context) (*store.Store, func(), error) {
+			openCalls++
+			return fixture.Store, func() {}, nil
+		},
+	}
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"rebuild", "--generation-id", "1"}, want: "document vector rebuild requires --yes"},
+		{args: []string{cliEmbeddingsOperationRetire, "--generation-id", "1"}, want: "document vector retirement requires --yes"},
+	} {
+		command := newDocumentsCmd(deps)
+		command.SetOut(&bytes.Buffer{})
+		command.SetErr(&bytes.Buffer{})
+		command.SetArgs(append([]string{documentVectorsSubcommand}, test.args...))
+		err := command.ExecuteContext(testCtx)
+		require.Error(err)
+		assert.Equal(test.want, err.Error())
+	}
+	assert.Zero(openCalls)
+
+	generation, _, err := fixture.Store.EnsureDocumentVectorGeneration(testCtx, spec)
+	require.NoError(err)
+	retire := newDocumentsCmd(deps)
+	var output bytes.Buffer
+	retire.SetOut(&output)
+	retire.SetArgs([]string{documentVectorsSubcommand, cliEmbeddingsOperationRetire, "--generation-id", fmtInt64(generation.ID), "--yes"})
+	require.NoError(retire.ExecuteContext(testCtx))
+	assert.Equal(fmt.Sprintf("retired=true generation_id=%d; backend cleanup will resume when vector operations next run\n", generation.ID), output.String())
+	assert.Equal(1, openCalls)
+}
