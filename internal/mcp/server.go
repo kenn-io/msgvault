@@ -487,6 +487,7 @@ func newMCPHTTPServerWithPolicy(
 				requestOpts.AllowIdentityScoring = false
 				requestOpts.AllowPersonMerges = false
 				requestOpts.AllowCardDAVWrites = false
+				requestOpts.AllowCalendarWrites = false
 			}
 			return newMCPServerWithPolicy(requestOpts, httpOpts.AllowWrites, policy, confirmationConfig{
 				manager: confirmations, sessionKey: confirmationKey, requireSessionKey: true,

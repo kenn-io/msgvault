@@ -29,6 +29,132 @@ func (f calendarServiceBackend) ControlCalendar(ctx context.Context, request cal
 	return f(ctx, request)
 }
 
+func TestCalendarConfirmationIdentifiesExistingEvent(t *testing.T) {
+	for _, tc := range []struct {
+		name, action, access string
+		changeTarget         bool
+	}{
+		{name: "owner delete", action: "delete", access: "owner"},
+		{name: "owner move", action: "move", access: "owner"},
+		{name: "owner RSVP", action: "respond", access: "owner"},
+		{name: "event reader", action: "delete", access: "event read"},
+		{name: "write only", action: "delete", access: "write only"},
+		{name: "target changed after approval", action: "delete", access: "owner", changeTarget: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			var changed atomic.Bool
+			var writes, archived atomic.Int64
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method + " " + r.URL.Path {
+				case "GET /users/me/calendarList":
+					_, err := io.WriteString(w, `{"items":[{"id":"team@example.com","accessRole":"owner","timeZone":"UTC"},{"id":"other@example.com","accessRole":"writer"}]}`)
+					assertions.NoError(err)
+				case "GET /calendars/team@example.com/events/event":
+					title := "Provider meeting"
+					if changed.Load() {
+						title = "Changed meeting"
+					}
+					_, err := fmt.Fprintf(w, `{"id":"event","summary":%q,"start":{"dateTime":"2026-10-02T09:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2026-10-02T10:00:00Z","timeZone":"UTC"},"attendees":[{"email":"person@example.com","self":true,"responseStatus":"needsAction"}]}`, title)
+					assertions.NoError(err)
+				case "DELETE /calendars/team@example.com/events/event":
+					assertions.Equal("delete", tc.action)
+					writes.Add(1)
+					w.WriteHeader(http.StatusNoContent)
+				case "PATCH /calendars/team@example.com/events/event":
+					assertions.Equal("respond", tc.action)
+					var input map[string]any
+					if !assertions.NoError(json.UnmarshalRead(r.Body, &input)) {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					assertions.Equal(map[string]any{
+						"attendees":        []any{map[string]any{"email": "person@example.com", "responseStatus": "declined"}},
+						"attendeesOmitted": true,
+					}, input)
+					writes.Add(1)
+					_, err := io.WriteString(w, `{"id":"event","status":"confirmed"}`)
+					assertions.NoError(err)
+				case "POST /calendars/team@example.com/events/event/move":
+					assertions.Equal("move", tc.action)
+					assertions.Equal("other@example.com", r.URL.Query().Get("destination"))
+					writes.Add(1)
+					_, err := io.WriteString(w, `{"id":"event","status":"confirmed"}`)
+					assertions.NoError(err)
+				default:
+					assertions.Fail("unexpected provider request", "%s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(provider.Close)
+			providerClient := gcal.NewClient(nil, gcal.WithBaseURL(provider.URL), gcal.WithHTTPClient(provider.Client()), gcal.WithRateLimiter(gmail.NewRateLimiterWithCapacity(100, 100)))
+			t.Cleanup(func() { assertions.NoError(providerClient.Close()) })
+			var grant *agentgrant.Grant
+			if tc.access != "owner" {
+				grant = &agentgrant.Grant{
+					Permissions: []agentgrant.Permission{agentgrant.PermissionCalendarWrite, agentgrant.PermissionCalendarInvite},
+					Sources:     []agentgrant.SourceRef{{Type: "gcal", Identifier: "person@example.com/team@example.com"}},
+				}
+				if tc.access == "event read" {
+					grant.Permissions = append(grant.Permissions, agentgrant.PermissionCalendarEventRead)
+				}
+			}
+			backend := calendarServiceBackend(func(ctx context.Context, request calcontrol.Request) (*calcontrol.Result, error) {
+				service := calcontrol.Service{
+					Source:  config.GCalSource{Email: "person@example.com", Enabled: true, WriteCalendars: []string{"team@example.com", "other@example.com"}, InviteCalendars: []string{"team@example.com", "other@example.com"}},
+					Client:  providerClient,
+					Persist: func(context.Context, gcal.Calendar, gcal.Event) (int64, error) { return archived.Add(1), nil },
+				}
+				return service.Execute(ctx, request, grant)
+			})
+			clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+			server, err := newMCPServer(ServeOptions{Calendar: backend, CalendarOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
+			requirements.NoError(err)
+			t.Cleanup(func() { assertions.NoError(server.Close()) })
+			var message string
+			client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "calendar-target-test", Version: "1"}, &sdkmcp.ClientOptions{
+				ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+					message = request.Params.Message
+					assertions.Zero(writes.Load())
+					changed.Store(tc.changeTarget)
+					return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"approved": true}}, nil
+				},
+			})
+			session, err := client.Connect(t.Context(), clientTransport, nil)
+			requirements.NoError(err)
+			t.Cleanup(func() { assertions.NoError(session.Close()) })
+			args := map[string]any{"account": "person@example.com", "calendar_id": "team@example.com", "event_id": "event"}
+			if tc.action == "move" {
+				args["destination"] = "other@example.com"
+			}
+			if tc.action == "respond" {
+				args["response"] = "declined"
+			}
+			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "calendar_" + tc.action, Arguments: args})
+			requirements.NoError(err)
+			requirements.NotNil(result)
+			assertions.Contains(message, `"event_id":"event"`)
+			if tc.access == "write only" {
+				assertions.NotContains(message, "Provider meeting")
+				assertions.NotContains(message, "2026-10-02T09:00:00Z")
+			} else {
+				assertions.Contains(message, "Provider meeting")
+				assertions.Contains(message, "2026-10-02T09:00:00Z")
+			}
+			assertions.Equal(tc.changeTarget, result.IsError)
+			if tc.changeTarget {
+				assertions.Zero(writes.Load())
+				assertions.Zero(archived.Load())
+			} else {
+				assertions.Equal(int64(1), writes.Load())
+				assertions.Positive(archived.Load())
+			}
+		})
+	}
+}
+
 func TestWriteOnlyCalendarConfirmation(t *testing.T) {
 	for _, tc := range []struct {
 		name, action, intent string
