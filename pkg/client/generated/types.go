@@ -1078,12 +1078,31 @@ func (c CalendarConflict) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type CalendarEventTarget struct {
+	Start   GCalEventDateTime `json:"start"`
+	Summary *string           `json:"summary,omitzero"`
+}
+
+func (c CalendarEventTarget) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.Start).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Start", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CalendarPlannedWrite struct {
-	Action      string          `json:"action" validate:"required"`
-	CalendarID  string          `json:"calendar_id" validate:"required"`
-	Destination *string         `json:"destination,omitzero"`
-	Event       *GCalEventInput `json:"event,omitempty"`
-	EventID     *string         `json:"event_id,omitzero"`
+	Action      string               `json:"action" validate:"required"`
+	CalendarID  string               `json:"calendar_id" validate:"required"`
+	Destination *string              `json:"destination,omitzero"`
+	Event       *GCalEventInput      `json:"event,omitempty"`
+	EventID     *string              `json:"event_id,omitzero"`
+	Target      *CalendarEventTarget `json:"target,omitempty"`
 }
 
 func (c CalendarPlannedWrite) Validate() error {
@@ -1098,6 +1117,13 @@ func (c CalendarPlannedWrite) Validate() error {
 		if v, ok := any(c.Event).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("Event", err)
+			}
+		}
+	}
+	if c.Target != nil {
+		if v, ok := any(c.Target).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Target", err)
 			}
 		}
 	}

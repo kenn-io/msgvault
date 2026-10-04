@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-03"
+last_edited: "2026-10-04"
 title: Google Calendar
 description: Archive Google Calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
 ---
@@ -159,6 +159,12 @@ guest permissions that a new series would lose. They also reject future splits w
 guest RSVP responses would be lost; edit those series manually.
 An `UNTIL`-limited series rejects a replacement start after its existing
 cutoff unless the update supplies a new recurrence rule.
+Changing between all-day and timed events also requires an explicit compatible
+rule when the inherited rule uses `UNTIL`. A changed start must match its
+recurrence rule; moving a Monday series to Tuesday requires a Tuesday rule.
+Future edits reject an `original_start` that differs from the selected instance
+and scheduling changes that overlap retained occurrences, including rescheduled
+exceptions. Earlier moves that fit between retained events remain allowed.
 It checks at most 10,000 recurrence instances and 100 event-list pages.
 Recurring moves are rejected; move supports standalone events.
 
@@ -168,9 +174,13 @@ cancelled; moving archives the destination and cancellation on the old calendar.
 Sync cursors do not advance, so the next sync can safely re-deliver the change.
 The response includes completed writes and archive message IDs. If a remote
 change succeeds but archiving fails, run `sync-calendar` to reconcile it; do not
-repeat the mutation. Future-series updates use two Google requests. A failure
-on the second returns the completed first write and an error for reconciliation.
-If the second write's outcome is unknown, the result sets `outcome_unknown`;
+repeat the mutation. Future-series updates use two Google requests. If the replacement definitely
+fails, the daemon attempts to restore the original
+recurrence using the version returned by the shortening request. A concurrent
+edit prevents that restoration. The response reports completed writes and whether
+restoration succeeded; inspect it before taking further action.
+If the second write's outcome is unknown, the daemon does not attempt restoration
+and the result sets `outcome_unknown`;
 the `outcome_code` is `calendar_outcome_unknown`. Reconcile the current calendar
 state and completed receipts before taking further action. Do not replay the
 uncertain write based only on its response. A known partial provider failure
@@ -196,6 +206,8 @@ Delegated grants apply to the exact calendar source identity
 `calendar.event.read` permits provider-derived event details in delegated plans
 and write receipts, `calendar.write` permits event changes, and `calendar.invite`
 additionally permits guest changes. None of these permissions implies the others.
+Write-only grants still receive live validation results, which can reveal timing
+constraints even when event details are hidden.
 
 ## What gets archived
 

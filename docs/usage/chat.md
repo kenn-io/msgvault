@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-04"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -35,7 +35,7 @@ Unreleased daemon API schema 3.1.0 adds `calendar_create`, `calendar_update`,
 `calendar_id`. Availability requires `time_min` and `time_max`, and accepts
 `calendar_ids`; `calendar_id` is used only when that list is empty. Mutation
 tools appear only with `--allow-calendar-writes`; HTTP also requires
-`--http-allow-writes`.
+`--http-allow-writes` and protocol `2026-07-28` or newer.
 
 For a non-dry-run mutation, the MCP server first asks the daemon to build and
 authorize a plan. It then presents that plan through client elicitation and
@@ -44,6 +44,9 @@ execution. A declined or cancelled request, a changed request or plan, or a
 client without elicitation support fails closed. `dry_run=true` returns the
 plan without asking for approval. Approval is supplied out of band from the
 tool arguments.
+For existing events, the plan identifies the target by title and start time for
+owners and grants with `calendar.event.read`. Write-only grants keep event details
+hidden while showing the requested change.
 
 Use `event` for writable fields on create/update, matching the
 [HTTP contract](../api-server.md#calendar-control). `send_updates` defaults to

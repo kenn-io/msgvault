@@ -50,6 +50,7 @@ export * from "./cacheBuildStatus";
 export * from "./cacheFreshness";
 export * from "./cacheStats";
 export * from "./calendarConflict";
+export * from "./calendarEventTarget";
 export * from "./calendarPlannedWrite";
 export * from "./calendarRequest";
 export * from "./calendarRequestAction";

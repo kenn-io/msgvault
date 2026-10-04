@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-01"
+last_edited: "2026-10-04"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -65,7 +65,10 @@ non-primary calendar. Availability with `calendar_ids` authorizes each listed
 calendar and ignores `calendar_id`.
 
 The response contains `plan`, `writes`, resolved calendar/account IDs, and the
-notification mode. Partial provider writes include `outcome_code`
+notification mode. Existing-event plan entries include `target.summary` and
+`target.start` for owners and grants with `calendar.event.read`.
+This preview metadata is covered by the plan fingerprint and is never sent as
+part of a provider mutation. Partial provider writes include `outcome_code`
 (`calendar_partial` or `calendar_outcome_unknown`); uncertain results also set
 `outcome_unknown: true`. For availability with `calendar_ids`, `calendar_id` names
 the first resolved selection and `freebusy.calendars` contains every selection.
@@ -77,13 +80,15 @@ receipts for completed writes. An archive failure retains the receipt of the
 successful Google change. Reconcile these results before deciding whether
 another mutation is safe; do not replay an uncertain mutation based only on its
 response. Provider mutations are sent once. Invalid requests return 400;
-source/consent/grant/role denials return 403; missing events return 404; local
-daemon setup failures return 500; provider failures without a partial result
+source/consent/grant/role denials return 403; missing events return 404. Local
+daemon setup failures return 500 to owners and a generic 403 to delegated callers.
+Provider failures without a partial result
 return 502. An unknown outcome with no completed writes returns
 `calendar_outcome_unknown`. Reconcile the current calendar state before taking
 further action; do not replay the uncertain operation based only on this response.
-The serialized operation gate protects this route, including requests from
-delegated callers.
+The serialized operation gate protects provider mutations and their archive
+writes, including delegated calls. Body decoding, authorization, availability,
+and dry runs do not hold the gate or wait for a sync to release it.
 
 [Calendar usage](usage/calendar.md#control-events-unreleased) owns setup,
 recurrence limits, notification behavior, and reconciliation instructions.

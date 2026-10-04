@@ -1248,6 +1248,15 @@ components:
         - start
         - end
       type: object
+    CalendarEventTarget:
+      properties:
+        start:
+          $ref: "#/components/schemas/GCalEventDateTime"
+        summary:
+          type: string
+      required:
+        - start
+      type: object
     CalendarPlannedWrite:
       properties:
         action:
@@ -1260,6 +1269,8 @@ components:
           $ref: "#/components/schemas/GCalEventInput"
         event_id:
           type: string
+        target:
+          $ref: "#/components/schemas/CalendarEventTarget"
       required:
         - action
         - calendar_id
