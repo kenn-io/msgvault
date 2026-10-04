@@ -441,6 +441,7 @@ probe, consent, build, and recovery flow.
 | Key | Default | Description |
 |---|---|---|
 | `client_secrets` | — | Path to Google OAuth `client_secret.json` for browser OAuth flows |
+| `client_secrets_command` | — | Command argv that prints the client JSON; mutually exclusive with `client_secrets` |
 | `service_account_key` | — | Path to a Google service account key JSON for Workspace domain-wide delegation |
 
 #### `[oauth.apps.<name>]`
@@ -450,6 +451,7 @@ Named OAuth apps for Google Workspace organizations that require their own OAuth
 | Key | Default | Description |
 |---|---|---|
 | `client_secrets` | — | Path to the org's `client_secret.json` |
+| `client_secrets_command` | — | Command argv that prints this app's client JSON; mutually exclusive with `client_secrets` |
 | `service_account_key` | — | Path to the org's Google service account key JSON |
 
 See [OAuth Setup: Google Workspace Accounts](/docs/guides/oauth-setup/#google-workspace-accounts) for when and why you need named apps.
@@ -462,6 +464,87 @@ calls. The older `export-discord` compatibility command has the same read-only
 provider behavior.
 
 When `service_account_key` is configured, `msgvault add-account <email>` validates the delegated Gmail profile and registers the account without storing a per-user refresh token. The service account key file must be owner-only on Unix-like systems, for example `chmod 600 /path/to/service-account.json`.
+
+#### Command-backed Google credentials and tokens
+
+Use commands to keep Google client credentials and tokens in your secret store.
+Gmail, Calendar, Drive, and Google Contacts use the same configuration.
+
+```toml
+[oauth]
+client_secrets_command = ["pass", "show", "msgvault/google-client"]
+
+[oauth.tokens]
+read_command = ["/path/to/token-store", "read"]
+write_command = ["/path/to/token-store", "write"]
+delete_command = ["/path/to/token-store", "delete"]
+list_command = ["/path/to/token-store", "list"]
+```
+
+`client_secrets_command` prints the complete Google `client_secret.json` on
+stdout. You can also set it under `[oauth.apps.<name>]`. Each application must
+choose either `client_secrets` or `client_secrets_command`. Named applications
+do not inherit the default application's client credentials. Service account
+keys remain files.
+
+Token commands replace Google token files for every application, including
+separate Google Contacts authorizations. Configure all four commands together,
+or omit all four to keep file storage. Other providers keep their existing
+storage. msgvault validates configuration without executing commands.
+
+| Command | Input | Successful output or effect |
+|---|---|---|
+| `read_command` | Account and namespace environment variables | Complete msgvault token JSON on stdout |
+| `write_command` | Token JSON on stdin; account and namespace environment variables | Save the exact bytes received |
+| `delete_command` | Account and namespace environment variables | Remove the token; succeed if already absent |
+| `list_command` | Namespace environment variable | JSON array of every stored account spelling in this namespace, such as `["reader@example.com"]`; use `[]` when empty |
+
+Token commands receive these environment variables:
+
+| Variable | Meaning |
+|---|---|
+| `MSGVAULT_ACCOUNT` | Account spelling used for this token; empty for listing |
+| `MSGVAULT_TOKEN_PATH` | Logical token path, usable as the secret-store key; empty for listing |
+| `MSGVAULT_TOKEN_DIR` | Logical token directory identifying the namespace |
+
+These paths identify records. msgvault does not write token JSON there in command
+mode. Preserve namespaces: a Google Contacts token can have the same account as
+its Gmail token but a different path and directory. Changing the configured data
+directory also changes these identifiers. Do not collapse distinct account
+spellings or namespaces in a wrapper.
+
+Only token reads may exit with status **3** to report a missing record. Other
+nonzero exits fail the operation. Successful empty or malformed JSON is an error.
+If `write_command` fails after a token refresh, the sync or request that needed
+the token fails instead of continuing with a token msgvault couldn't save.
+Listing must include credentials without registered source rows so Gmail alias
+checks can detect them. Read or listing failures stop those decisions.
+
+Commands are executable-and-argument arrays. msgvault does not invoke a shell or
+expand tildes, environment variables, redirects, or pipes. Executables use `PATH`;
+relative executables use the process working directory. Use absolute paths for
+scripts that must run from the daemon. Commands inherit the user's environment
+and run with the user's privileges. They must work unattended for scheduled sync.
+
+Each invocation has a 30-second deadline and a 1 MiB stdout limit. Calls with a
+context also honor cancellation. msgvault discards stderr and never includes
+command output or arguments in its errors. Write and delete stdout is ignored.
+Pass secrets through stdin rather than placing them in command arguments.
+
+Keep token JSON unchanged, including `scopes` and `client_id`. A write followed by
+a read must return the same bytes. msgvault uses private local lock files to
+coordinate its processes and compares snapshots before replacing a token. It
+never writes secret temporary files in command mode. Other programs that change
+the store need their own coordination with these operations.
+
+Configure the command backend separately on each machine. To migrate a file
+credential, move its JSON into your store under the corresponding logical key
+and verify a sync before removing the old file. Changing configuration leaves
+existing plaintext files in place; msgvault does not migrate them automatically.
+`export-token` reads the selected backend, and the receiving server's token-upload
+endpoint writes its configured backend. Configure the receiving backend before
+uploading. Client credentials remain separately configured; setup does not put
+command output into a NAS bundle.
 
 ### `[carddav]` and `[carddav_connections.<name>]` {#carddav}
 

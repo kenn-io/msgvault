@@ -680,11 +680,11 @@ func oauthManagerCache(state *invocation) func(appName string) (*oauth.Manager, 
 		}
 		currentCfg := state.cfg
 		currentLogger := state.logger
-		secretsPath, err := currentCfg.OAuth.ClientSecretsFor(appName)
+		secretsPath, err := currentCfg.OAuth.CredentialsFor(appName)
 		if err != nil {
 			return nil, err
 		}
-		mgr, err := oauth.NewManager(secretsPath, currentCfg.TokensDir(), currentLogger)
+		mgr, err := oauth.NewManagerWithCredentials(context.Background(), secretsPath, currentCfg.TokensDir(), currentCfg.OAuth.Tokens, currentLogger, oauth.Scopes)
 		if err != nil {
 			return nil, wrapOAuthError(fmt.Errorf("create oauth manager: %w", err), currentCfg)
 		}

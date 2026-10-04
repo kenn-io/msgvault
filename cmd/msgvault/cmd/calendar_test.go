@@ -344,7 +344,7 @@ func TestCalendarAddTokenReusableRejectsMismatchedInheritedClient(t *testing.T) 
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	mgr, err := newCalendarOAuthManager(
-		secretsPath,
+		config.OAuthApp{ClientSecrets: secretsPath},
 		"user-a@example.com",
 		invocationFromContext(testCtx),
 	)

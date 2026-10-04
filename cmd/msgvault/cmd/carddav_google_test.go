@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestAuthorizeGoogleCardDAVValidatesEmailAndExplainsMissingSecrets(t *testing.T) {
@@ -64,4 +65,24 @@ func TestAuthorizeGoogleCardDAVAllowsClientRotation(t *testing.T) {
 			assert.Equal(t, oldToken, unchanged)
 		})
 	}
+}
+
+func TestAuthorizeGoogleCardDAVReportsTokenStoreReadFailure(t *testing.T) {
+	required := require.New(t)
+	dir := t.TempDir()
+	secrets := filepath.Join(dir, "client.json")
+	required.NoError(os.WriteFile(secrets, []byte(`{"web":{"client_id":"synthetic-client","client_secret":"synthetic-secret","auth_uri":"https://accounts.example/authorize","token_uri":"https://accounts.example/token","redirect_uris":["http://localhost"]}}`), 0600))
+	commands := config.OAuthTokenCommands(testutil.SecretStoreFixture(t))
+	commands.ReadCommand = testutil.SecretCommand(t, "fail")
+	cfg := &config.Config{
+		HomeDir: dir,
+		Data:    config.DataConfig{DataDir: dir},
+		OAuth:   config.OAuthConfig{ClientSecrets: secrets, Tokens: commands},
+	}
+	cmd := newAuthorizeGoogleCardDAVCmd()
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+
+	err := cmd.RunE(cmd, []string{"person@example.com"})
+	required.ErrorContains(err, "inspect dedicated Google Contacts token")
+	required.NotContains(err.Error(), "OAuth client secrets file not accessible")
 }

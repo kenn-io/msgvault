@@ -7,6 +7,11 @@ description: Create OAuth credentials for Gmail (Google Cloud) or Microsoft 365 
 
 msgvault requires OAuth credentials to access the Gmail API. This section walks through the complete setup.
 
+The examples below use file storage. You can also use
+[command-backed Google credentials and tokens](/docs/configuration/#command-backed-google-credentials-and-tokens)
+with your secret store. That reference covers configuration, migration, and
+headless export. Apply the file inspection and removal steps below to file storage.
+
 ### Step 1: Create a Google Cloud Project
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)

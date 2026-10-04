@@ -13,50 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 )
-
-func TestSanitizeExportTokenPath(t *testing.T) {
-	tokensDir := "/data/tokens"
-
-	tests := []struct {
-		name  string
-		email string
-		want  string
-	}{
-		{
-			"normal email",
-			"user@gmail.com",
-			filepath.Join(tokensDir, "user@gmail.com.json"),
-		},
-		{
-			"email with dots",
-			"first.last@example.co.uk",
-			filepath.Join(tokensDir, "first.last@example.co.uk.json"),
-		},
-		{
-			"email with plus",
-			"user+tag@gmail.com",
-			filepath.Join(tokensDir, "user+tag@gmail.com.json"),
-		},
-		{
-			"strips slashes",
-			"user/evil@gmail.com",
-			filepath.Join(tokensDir, "userevil@gmail.com.json"),
-		},
-		{
-			"strips backslashes",
-			"user\\evil@gmail.com",
-			filepath.Join(tokensDir, "userevil@gmail.com.json"),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeExportTokenPath(tokensDir, tt.email)
-			assert.Equal(t, tt.want, got, "sanitizeExportTokenPath(%q)", tt.email)
-		})
-	}
-}
 
 func TestEmailValidation(t *testing.T) {
 	tests := []struct {
@@ -64,14 +22,14 @@ func TestEmailValidation(t *testing.T) {
 		email   string
 		wantErr bool
 	}{
-		{"normal email", "user@gmail.com", false},
+		{"normal email", "user@example.com", false},
 		{"dotted local", "first.last@example.com", false},
 		{"dotted domain", "user@mail.example.co.uk", false},
-		{"plus tag", "user+tag@gmail.com", false},
+		{"plus tag", "user+tag@example.com", false},
 		{"missing @", "usergmail.com", true},
 		{"missing dot", "user@localhost", true},
-		{"path traversal slash", "user/@gmail.com", true},
-		{"path traversal backslash", "user\\@gmail.com", true},
+		{"path traversal slash", "user/@example.com", true},
+		{"path traversal backslash", "user\\@example.com", true},
 		{"double dot traversal", "user@../evil.com", true},
 	}
 
@@ -128,7 +86,7 @@ func newTestExporter(srv *httptest.Server, tokensDir string) *tokenExporter {
 func writeTestToken(t *testing.T, tokensDir, content string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(tokensDir, 0700), "mkdir tokens")
-	path := filepath.Join(tokensDir, "user@gmail.com.json")
+	path := filepath.Join(tokensDir, "user@example.com.json")
 	require.NoError(t, os.WriteFile(path, []byte(content), 0600), "write token")
 }
 
@@ -157,12 +115,12 @@ func TestExport_UploadSuccess(t *testing.T) {
 	writeTestToken(t, tokensDir, `{"token":"secret"}`)
 
 	e := newTestExporter(srv, tokensDir)
-	result, err := e.export("user@gmail.com", srv.URL, "my-key", false)
+	result, err := e.export("user@example.com", srv.URL, "my-key", false)
 	require.NoError(t, err, "export")
 
 	// httptest decodes percent-encoding in r.URL.Path, so we see the
 	// decoded form even though url.PathEscape encodes @ on the wire.
-	assert.Equal("/api/v1/auth/token/user@gmail.com", gotPath, "path")
+	assert.Equal("/api/v1/auth/token/user@example.com", gotPath, "path")
 
 	// Verify API key header
 	assert.Equal("my-key", gotAPIKey, "X-API-Key")
@@ -186,7 +144,7 @@ func TestExport_UploadFailure(t *testing.T) {
 	writeTestToken(t, tokensDir, `{"token":"secret"}`)
 
 	e := newTestExporter(srv, tokensDir)
-	_, err := e.export("user@gmail.com", srv.URL, "key", false)
+	_, err := e.export("user@example.com", srv.URL, "key", false)
 	require.Error(t, err, "export should fail on 500")
 	require.ErrorContains(t, err, "500")
 	assert.ErrorContains(t, err, "server error")
@@ -200,7 +158,7 @@ func TestExport_MissingToken(t *testing.T) {
 	defer srv.Close()
 
 	e := newTestExporter(srv, t.TempDir())
-	_, err := e.export("nobody@gmail.com", srv.URL, "key", false)
+	_, err := e.export("nobody@example.com", srv.URL, "key", false)
 	require.Error(t, err, "export should fail with missing token")
 	assert.ErrorContains(t, err, "no token found")
 }
@@ -213,7 +171,7 @@ func TestExport_HTTPSRequired(t *testing.T) {
 		stderr:     io.Discard,
 	}
 
-	_, err := e.export("user@gmail.com", "http://nas:8080", "key", false)
+	_, err := e.export("user@example.com", "http://nas:8080", "key", false)
 	require.Error(t, err, "export should reject http:// without allowInsecure")
 	assert.ErrorContains(t, err, "HTTPS required")
 }
@@ -238,7 +196,7 @@ func TestExport_HTTPAllowedWithInsecure(t *testing.T) {
 		stderr:     io.Discard,
 	}
 
-	result, err := e.export("user@gmail.com", srv.URL, "key", true)
+	result, err := e.export("user@example.com", srv.URL, "key", true)
 	require.NoError(t, err, "export")
 	assert.True(t, result.allowInsecure, "result.allowInsecure should be true")
 }
@@ -264,7 +222,7 @@ func TestExport_HTTPWarning(t *testing.T) {
 		stderr:     &stderr,
 	}
 
-	_, err := e.export("user@gmail.com", srv.URL, "key", true)
+	_, err := e.export("user@example.com", srv.URL, "key", true)
 	require.NoError(t, err, "export")
 	assert.Contains(t, stderr.String(), "WARNING", "stderr should contain HTTP warning")
 }
@@ -303,10 +261,57 @@ func TestExport_AccountPostSuccess(t *testing.T) {
 	writeTestToken(t, tokensDir, `{}`)
 
 	e := newTestExporter(srv, tokensDir)
-	_, err := e.export("user@gmail.com", srv.URL, "key", false)
+	_, err := e.export("user@example.com", srv.URL, "key", false)
 	require.NoError(t, err, "export")
 
-	assert.Equal(t, "user@gmail.com", accountEmail, "account email")
+	assert.Equal(t, "user@example.com", accountEmail, "account email")
+}
+
+func TestExportTokenUploadOnlySkipsGmailAccountRegistration(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	tokenUploads := 0
+	accountRegistrations := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/v1/auth/token/"):
+			tokenUploads++
+			w.WriteHeader(http.StatusCreated)
+		case r.URL.Path == "/api/v1/accounts":
+			accountRegistrations++
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.Remote.URL = srv.URL
+	cfg.Remote.APIKey = "example-api-key"
+	cfg.Remote.AllowInsecure = true
+	writeTestToken(t, cfg.TokensDir(), `{"access_token":"example-token"}`)
+
+	uploadOnlyFlag := exportTokenCmd.Flags().Lookup("upload-only")
+	if uploadOnlyFlag != nil {
+		oldValue, oldChanged := uploadOnlyFlag.Value.String(), uploadOnlyFlag.Changed
+		t.Cleanup(func() {
+			_ = uploadOnlyFlag.Value.Set(oldValue)
+			uploadOnlyFlag.Changed = oldChanged
+		})
+	}
+	oldContext := exportTokenCmd.Context()
+	t.Cleanup(func() { exportTokenCmd.SetContext(oldContext) })
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	exportTokenCmd.SetContext(testCtx)
+
+	require.NoError(exportTokenCmd.Flags().Parse([]string{"--upload-only"}))
+	require.NoError(runExportToken(exportTokenCmd, []string{"user@example.com"}))
+
+	assert.Equal(1, tokenUploads)
+	assert.Zero(accountRegistrations)
 }
 
 func TestExport_AccountPostFailureIsNonFatal(t *testing.T) {
@@ -333,7 +338,7 @@ func TestExport_AccountPostFailureIsNonFatal(t *testing.T) {
 	}
 
 	// Should succeed — account POST is best-effort
-	result, err := e.export("user@gmail.com", srv.URL, "key", false)
+	result, err := e.export("user@example.com", srv.URL, "key", false)
 	require.NoError(t, err, "export should succeed even when account POST fails")
 	require.NotNil(t, result, "result should not be nil")
 	assert.Contains(t, stderr.String(), "Warning", "stderr should warn about account POST failure")
@@ -368,7 +373,7 @@ func TestExport_AllowInsecureFromConfig(t *testing.T) {
 	configAllowInsecure := true
 	allowInsecure := cliFlag || configAllowInsecure
 
-	result, err := e.export("user@gmail.com", srv.URL, "key", allowInsecure)
+	result, err := e.export("user@example.com", srv.URL, "key", allowInsecure)
 	require.NoError(t, err, "export should succeed with config allow_insecure=true")
 	assert.True(t, result.allowInsecure, "result.allowInsecure should be true")
 }
@@ -381,7 +386,7 @@ func TestExport_InvalidScheme(t *testing.T) {
 		stderr:     io.Discard,
 	}
 
-	_, err := e.export("user@gmail.com", "ftp://nas:8080", "key", false)
+	_, err := e.export("user@example.com", "ftp://nas:8080", "key", false)
 	require.Error(t, err, "export should reject ftp:// scheme")
 	assert.ErrorContains(t, err, "http or https")
 }

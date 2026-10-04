@@ -354,7 +354,7 @@ func newSynctechSMSDriveClient(ctx context.Context, src config.SynctechSMSSource
 		return nil, errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	clientSecrets, err := cfg.OAuth.ClientSecretsFor(src.OAuthApp)
+	clientSecrets, err := cfg.OAuth.CredentialsFor(src.OAuthApp)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +382,7 @@ func ensureSynctechSMSDriveToken(ctx context.Context, googleAccount, oauthApp st
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	clientSecrets, err := cfg.OAuth.ClientSecretsFor(oauthApp)
+	clientSecrets, err := cfg.OAuth.CredentialsFor(oauthApp)
 	if err != nil {
 		return err
 	}
@@ -396,10 +396,10 @@ func ensureSynctechSMSDriveToken(ctx context.Context, googleAccount, oauthApp st
 	return mgr.Authorize(ctx, googleAccount)
 }
 
-func newSynctechSMSDriveOAuthManager(cfg *config.Config, logger *slog.Logger, clientSecrets string) (*oauth.Manager, error) {
+func newSynctechSMSDriveOAuthManager(cfg *config.Config, logger *slog.Logger, clientSecrets config.OAuthApp) (*oauth.Manager, error) {
 	// The current OAuth manager validates account identity through Gmail's
 	// profile endpoint, so request a read-only Gmail scope alongside Drive.
-	return oauth.NewManagerWithScopes(clientSecrets, cfg.TokensDir(), logger, []string{
+	return oauth.NewManagerWithCredentials(context.Background(), clientSecrets, cfg.TokensDir(), cfg.OAuth.Tokens, logger, []string{
 		drive.DriveReadonlyScope,
 		"https://www.googleapis.com/auth/gmail.readonly",
 	})

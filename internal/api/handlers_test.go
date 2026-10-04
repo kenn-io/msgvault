@@ -5136,43 +5136,6 @@ func TestHandleAddAccountSaveFailure(t *testing.T) {
 	assert.Empty(t, cfg.Accounts, "cfg.Accounts has %d entries, want 0 (rollback failed)", len(cfg.Accounts))
 }
 
-func TestSanitizeTokenPath(t *testing.T) {
-	t.Parallel()
-	tokensDir := "/data/tokens"
-
-	tests := []struct {
-		name  string
-		email string
-	}{
-		{"normal email", "user@gmail.com"},
-		{"email with plus", "user+tag@gmail.com"},
-		{"email with dots", "first.last@gmail.com"},
-		{"path traversal attempt", "../../../etc/passwd"},
-		{"slash in email", "user/evil@gmail.com"},
-		{"backslash in email", "user\\evil@gmail.com"},
-		{"null byte", "user\x00evil@gmail.com"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := sanitizeTokenPath(tokensDir, tc.email)
-
-			// Result must be within tokensDir (path traversal prevention)
-			cleanResult := filepath.Clean(result)
-			cleanTokensDir := filepath.Clean(tokensDir)
-			assert.True(t, strings.HasPrefix(cleanResult, cleanTokensDir+string(os.PathSeparator)),
-				"path %q escapes tokensDir %q", result, tokensDir)
-
-			// Result must end with .json
-			assert.True(t, strings.HasSuffix(result, ".json"), "path %q doesn't end with .json", result)
-
-			// Result must not contain path separators in the filename
-			base := filepath.Base(result)
-			assert.False(t, strings.ContainsAny(base, "/\\"), "filename %q contains path separators", base)
-		})
-	}
-}
-
 // newTestServerWithEngine creates a test server with both mock store and mock engine.
 func newTestServerWithEngine(t *testing.T, engine query.Engine) *Server {
 	t.Helper()

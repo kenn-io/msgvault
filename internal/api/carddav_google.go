@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -15,7 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/oauth"
-	"go.kenn.io/msgvault/internal/syncerr"
 	"golang.org/x/oauth2"
 )
 
@@ -72,7 +71,7 @@ func (c *CardDAVController) serviceForCredential(credential carddav.Credential, 
 func (c *CardDAVController) googleBearerToken(ctx context.Context, credential carddav.Credential) (string, error) {
 	// Resolve the token directory on each request: CLI authorization can
 	// switch between a shared mail token and a dedicated Contacts token.
-	mgr, err := c.googleOAuthManager(credential)
+	mgr, err := c.googleOAuthManager(ctx, credential)
 	if err != nil {
 		return "", err
 	}
@@ -87,42 +86,45 @@ func (c *CardDAVController) googleBearerToken(ctx context.Context, credential ca
 	return token.AccessToken, nil
 }
 
+// googleCardDAVTokenError asks for sign-in only when a new grant fixes the
+// failure. Every other failure is temporary, so schedules keep retrying.
 func googleCardDAVTokenError(err error) error {
+	if errors.Is(err, carddav.ErrGoogleAuthorizationRequired) {
+		return err
+	}
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, oauth.ErrInvalidTokenJSON) || errors.Is(err, oauth.ErrTokenUnrefreshable) {
+		return fmt.Errorf("%w: %w", carddav.ErrGoogleAuthorizationRequired, err)
+	}
+	status := &carddav.StatusError{StatusCode: http.StatusBadGateway}
 	if retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok && retrieveErr.Response != nil {
 		if retrieveErr.ErrorCode == "invalid_grant" {
 			return fmt.Errorf("%w: %w", carddav.ErrGoogleAuthorizationRequired, err)
 		}
-		code := retrieveErr.Response.StatusCode
-		var retryAfter time.Duration
+		status.StatusCode = retrieveErr.Response.StatusCode
 		if value := strings.TrimSpace(retrieveErr.Response.Header.Get("Retry-After")); value != "" {
-			retryAfter = httpretry.RetryAfter(value, 0, time.Hour)
+			status.RetryAfter = httpretry.RetryAfter(value, 0, time.Hour)
 		}
-		return fmt.Errorf("obtain Google access token: %w", errors.Join(
-			err,
-			carddav.ErrGoogleTokenUnavailable,
-			&carddav.StatusError{StatusCode: code, RetryAfter: retryAfter},
-		))
 	}
-	// oauth2 formats response-body read failures with %v, losing the cause.
-	bodyReadFailure := strings.Contains(err.Error(), "oauth2: cannot fetch token: ")
-	if _, ok := errors.AsType[net.Error](err); ok || syncerr.IsTransientNetwork(err) || errors.Is(err, context.Canceled) || bodyReadFailure {
-		return fmt.Errorf("obtain Google access token: %w", errors.Join(
-			err, carddav.ErrGoogleTokenUnavailable, &carddav.StatusError{StatusCode: http.StatusBadGateway},
-		))
-	}
-	return fmt.Errorf("%w: %w", carddav.ErrGoogleAuthorizationRequired, err)
+	return fmt.Errorf("obtain Google access token: %w", errors.Join(err, carddav.ErrGoogleTokenUnavailable, status))
 }
 
-func (c *CardDAVController) googleOAuthManager(credential carddav.Credential) (*oauth.Manager, error) {
-	secrets, err := c.cfg.OAuth.ClientSecretsFor(credential.OAuthApp)
+func (c *CardDAVController) googleOAuthManager(ctx context.Context, credential carddav.Credential) (*oauth.Manager, error) {
+	secrets, err := c.cfg.OAuth.CredentialsFor(credential.OAuthApp)
 	if err != nil {
 		return nil, errors.Join(carddav.ErrGoogleAuthorizationRequired, err)
 	}
-	mgr, err := carddav.NewGoogleOAuthManager(secrets, c.cfg.TokensDir(), credential.OAuthApp, credential.Username, slog.Default())
-	if err != nil {
+	mgr, err := carddav.NewGoogleOAuthManagerWithCredentials(ctx, secrets, c.cfg.TokensDir(), c.cfg.OAuth.Tokens, credential.OAuthApp, credential.Username, slog.Default())
+	if errors.Is(err, oauth.ErrClientConfig) {
 		return nil, errors.Join(carddav.ErrGoogleAuthorizationRequired, err)
 	}
-	if !mgr.TokenMatchesClient(credential.Username) || !mgr.HasScope(credential.Username, oauth.ScopeCardDAV) {
+	if err != nil {
+		return nil, googleCardDAVTokenError(err)
+	}
+	info, err := mgr.SelectedTokenInfo(ctx, credential.Username)
+	if err != nil {
+		return nil, googleCardDAVTokenError(err)
+	}
+	if !info.ClientMatches || !info.HasScope(oauth.ScopeCardDAV) {
 		return nil, carddav.ErrGoogleAuthorizationRequired
 	}
 	return mgr, nil

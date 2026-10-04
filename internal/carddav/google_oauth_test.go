@@ -17,6 +17,7 @@ func TestGoogleAuthorizationReusesOnlyMatchingCredentials(t *testing.T) {
 	for _, tc := range []struct {
 		name, mailClient, mailEmail string
 		dedicatedClient             string
+		malformedDedicated          bool
 		wantScope                   string
 	}{
 		{name: "matching mail authorization", mailClient: "contacts-client", mailEmail: "person@example.com", wantScope: oauth.ScopeGmailReadonly},
@@ -24,6 +25,7 @@ func TestGoogleAuthorizationReusesOnlyMatchingCredentials(t *testing.T) {
 		{name: "unknown mail client", mailEmail: "person@example.com"},
 		{name: "different account", mailClient: "contacts-client", mailEmail: "other@example.com"},
 		{name: "existing separate authorization takes precedence", mailClient: "contacts-client", mailEmail: "person@example.com", dedicatedClient: "contacts-client", wantScope: oauth.ScopeCalendarReadonly},
+		{name: "malformed separate authorization falls back to matching mail", mailClient: "contacts-client", mailEmail: "person@example.com", malformedDedicated: true, wantScope: oauth.ScopeGmailReadonly},
 		{name: "rotated separate client can reauthorize", mailClient: "contacts-client", mailEmail: "person@example.com", dedicatedClient: "previous-client", wantScope: oauth.ScopeCalendarReadonly},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -36,6 +38,11 @@ func TestGoogleAuthorizationReusesOnlyMatchingCredentials(t *testing.T) {
 			required.NoError(err)
 			mailPath := filepath.Join(dir, tc.mailEmail+".json")
 			required.NoError(os.WriteFile(mailPath, mail, 0600))
+			if tc.malformedDedicated {
+				isolated := googleTokensDir(dir, "contacts")
+				required.NoError(os.MkdirAll(isolated, 0700))
+				required.NoError(os.WriteFile(filepath.Join(isolated, "person@example.com.json"), []byte("{"), 0600))
+			}
 			if tc.dedicatedClient != "" {
 				isolated := googleTokensDir(dir, "contacts")
 				required.NoError(os.MkdirAll(isolated, 0700))
