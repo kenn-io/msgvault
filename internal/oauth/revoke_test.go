@@ -204,4 +204,11 @@ func TestEquivalentStoredGrantInUse(t *testing.T) {
 		mgr.tokensDir, "username@gmail.com", []string{"username+different@gmail.com"}))
 	assert.True(EquivalentStoredGrantInUse(
 		mgr.tokensDir, "username@gmail.com", []string{"username+legacy@gmail.com"}))
+
+	broken := setupTestManager(t, Scopes)
+	brokenEmail := "reader@example.com"
+	require.NoError(os.WriteFile(broken.TokenPath(brokenEmail), []byte("{"), 0600))
+	assert.True(EquivalentStoredGrantInUse(
+		broken.tokensDir, brokenEmail, []string{brokenEmail}),
+		"an unreadable stored token must conservatively keep a possible shared grant")
 }

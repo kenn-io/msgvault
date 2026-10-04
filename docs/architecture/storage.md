@@ -310,7 +310,7 @@ not convert existing packs automatically. Stop the daemon and run
 
 ## Token Storage
 
-OAuth tokens are stored as JSON files per account:
+By default, OAuth tokens are stored as JSON files per account:
 
 ```
 tokens/
@@ -323,6 +323,11 @@ Token files are owner-only. Protect this directory: its credentials grant the
 configured provider access. Discord bot records may be shared by several guild
 sources through an optional binding label and are removed only after the last
 referencing source is deleted.
+
+Google credentials and tokens can use
+[configured commands](/docs/configuration/#command-backed-google-credentials-and-tokens).
+The external store owns the token JSON; the token directory holds coordination
+locks. Other providers retain their file storage.
 
 ## Compression
 

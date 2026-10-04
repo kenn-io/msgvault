@@ -162,7 +162,7 @@ func TestPromptScopeEscalation_PreservesTokenOnFailedReauth(t *testing.T) {
 	getOutput := captureStdout(t)
 	escErr := promptScopeEscalation(ctx, scopeEscalationAccount, oauth.ScopesGmailCalendar,
 		"PERMISSION UPGRADE REQUIRED", []string{"upgrade needed"},
-		"Cancelled.", cfg.OAuth.ClientSecrets)
+		"Cancelled.", config.OAuthApp{ClientSecrets: cfg.OAuth.ClientSecrets})
 	out := getOutput()
 
 	require.Error(escErr, "a re-auth that cannot complete must surface as an error")
@@ -185,7 +185,7 @@ func TestDeletionEscalationScopesForAccountPreservesCalendarGrant(t *testing.T) 
 	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	scopes, err := deletionEscalationScopesForAccount(scopeEscalationAccount, true, cfg.OAuth.ClientSecrets, invocationFromContext(testCtx))
+	scopes, err := deletionEscalationScopesForAccount(scopeEscalationAccount, true, config.OAuthApp{ClientSecrets: cfg.OAuth.ClientSecrets}, invocationFromContext(testCtx))
 
 	require.NoError(err)
 	assert.ElementsMatch([]string{
@@ -208,7 +208,7 @@ func TestCalendarEscalationScopesForAccountPreservesDriveGrant(t *testing.T) {
 	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	scopes, err := calendarEscalationScopesForAccount(scopeEscalationAccount, cfg.OAuth.ClientSecrets, invocationFromContext(testCtx))
+	scopes, err := calendarEscalationScopesForAccount(scopeEscalationAccount, config.OAuthApp{ClientSecrets: cfg.OAuth.ClientSecrets}, invocationFromContext(testCtx))
 
 	require.NoError(err)
 	assert.ElementsMatch([]string{
@@ -231,7 +231,7 @@ func TestCalendarEscalationScopesForAccountDoesNotAddGmailToDriveOnlyToken(t *te
 	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	scopes, err := calendarEscalationScopesForAccount(scopeEscalationAccount, cfg.OAuth.ClientSecrets, invocationFromContext(testCtx))
+	scopes, err := calendarEscalationScopesForAccount(scopeEscalationAccount, config.OAuthApp{ClientSecrets: cfg.OAuth.ClientSecrets}, invocationFromContext(testCtx))
 
 	require.NoError(err)
 	assert.ElementsMatch([]string{
@@ -252,7 +252,7 @@ func TestCalendarEscalationScopesForAccountPreservesLegacyTokenAsGmail(t *testin
 	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	scopes, err := calendarEscalationScopesForAccount(scopeEscalationAccount, cfg.OAuth.ClientSecrets, invocationFromContext(testCtx))
+	scopes, err := calendarEscalationScopesForAccount(scopeEscalationAccount, config.OAuthApp{ClientSecrets: cfg.OAuth.ClientSecrets}, invocationFromContext(testCtx))
 
 	require.NoError(err)
 	assert.ElementsMatch([]string{
@@ -304,7 +304,7 @@ func TestDeletionEscalationScopesForAccountPreservesDriveGrant(t *testing.T) {
 	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	scopes, err := deletionEscalationScopesForAccount(scopeEscalationAccount, true, cfg.OAuth.ClientSecrets, invocationFromContext(testCtx))
+	scopes, err := deletionEscalationScopesForAccount(scopeEscalationAccount, true, config.OAuthApp{ClientSecrets: cfg.OAuth.ClientSecrets}, invocationFromContext(testCtx))
 
 	require.NoError(err)
 	assert.ElementsMatch([]string{
@@ -328,7 +328,7 @@ func TestDeletionEscalationScopesForAccountPreservesGmailScopesWithoutCalendar(t
 	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "client_secret.json")
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	scopes, err := deletionEscalationScopesForAccount(scopeEscalationAccount, true, cfg.OAuth.ClientSecrets, invocationFromContext(testCtx))
+	scopes, err := deletionEscalationScopesForAccount(scopeEscalationAccount, true, config.OAuthApp{ClientSecrets: cfg.OAuth.ClientSecrets}, invocationFromContext(testCtx))
 
 	require.NoError(err)
 	assert.ElementsMatch([]string{

@@ -124,7 +124,8 @@ func (c *CardDAVController) reconcileCurrentSchedule() error {
 	configured := c.cardDAVConfigSnapshot()
 	if service != nil && configured.Provider == cardDAVProviderGoogle {
 		credential := carddav.Credential{Username: configured.Username, OAuthApp: configured.OAuthApp}
-		if _, err := c.googleOAuthManager(credential); err != nil {
+		// Only a missing or rejected grant stops the schedule; other failures retry on the next run.
+		if _, err := c.googleOAuthManager(context.Background(), credential); errors.Is(err, carddav.ErrGoogleAuthorizationRequired) {
 			service = nil
 		}
 	}
@@ -931,10 +932,13 @@ func (c *CardDAVController) scopedStatus(ctx context.Context) (CardDAVStatusResp
 		return status, nil
 	}
 	if credential.Google {
-		if _, err := c.googleOAuthManager(credential); err != nil {
+		if _, err := c.googleOAuthManager(ctx, credential); err != nil {
 			status.CredentialConfigured = false
-			status.RepairReason = "google_authorization_required"
-			return status, nil //nolint:nilerr // Status reports missing Google authorization without contacting Google.
+			status.RepairReason = "credential_unavailable"
+			if errors.Is(err, carddav.ErrGoogleAuthorizationRequired) {
+				status.RepairReason = "google_authorization_required"
+			}
+			return status, nil
 		}
 	}
 	if !status.Available {

@@ -301,9 +301,10 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		for _, remainingSource := range remaining {
 			remainingEmails = append(remainingEmails, remainingSource.Identifier)
 		}
-		grantInUse := listErr != nil || oauth.EquivalentStoredGrantInUse(
-			cfg.TokensDir(), source.Identifier, remainingEmails,
-		)
+		tokenManager := oauth.NewStoredTokenManager(cfg.TokensDir(), cfg.OAuth.Tokens)
+		grantInUse, grantErr := tokenManager.EquivalentGrantInUse(cmd.Context(), source.Identifier, remainingEmails)
+		listErr = errors.Join(listErr, grantErr)
+		grantInUse = grantInUse || listErr != nil
 		if listErr != nil {
 			fmt.Fprintf(os.Stderr,
 				"Warning: could not check remaining Gmail accounts; Google grant was not revoked: %v\n",
@@ -317,9 +318,7 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		// credential may already be dead, and removal must still complete.
 		// Keep a shared grant while an equivalent Gmail source still uses it.
 		if !grantInUse {
-			if err := oauth.RevokeStoredCredential(
-				cmd.Context(), cfg.TokensDir(), source.Identifier,
-			); err != nil &&
+			if err := tokenManager.RevokeToken(cmd.Context(), source.Identifier); err != nil &&
 				!errors.Is(err, os.ErrNotExist) &&
 				!errors.Is(err, oauth.ErrRevokeCredentialInvalid) {
 				fmt.Fprintf(os.Stderr,
@@ -329,14 +328,8 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 				)
 			}
 		}
-		tokenPath := oauth.TokenFilePath(
-			cfg.TokensDir(), source.Identifier,
-		)
-		if err := os.Remove(tokenPath); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr,
-				"Warning: could not remove token file %s: %v\n",
-				tokenPath, err,
-			)
+		if err := tokenManager.DeleteToken(source.Identifier); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove Google token: %v\n", err)
 		}
 	case sourceTypeTeams:
 		graphMgr := microsoft.NewGraphManager(

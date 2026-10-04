@@ -24,8 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofrs/flock"
-	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/config"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -270,11 +269,13 @@ func (e *TokenMismatchError) Error() string {
 
 // Manager handles OAuth2 token acquisition and storage.
 type Manager struct {
-	config     *oauth2.Config
-	tokensDir  string
-	logger     *slog.Logger
-	profileURL string // profile endpoint override for tests
-	revokeURL  string // revocation endpoint override for tests
+	authorizationExpected *tokenExpectation
+	tokenStore            *TokenStore
+	config                *oauth2.Config
+	tokensDir             string
+	logger                *slog.Logger
+	profileURL            string // profile endpoint override for tests
+	revokeURL             string // revocation endpoint override for tests
 	// Nil for Desktop clients, whose loopback redirects need no registration.
 	webRedirectURIs []string
 
@@ -292,38 +293,21 @@ func NewManager(clientSecretsPath, tokensDir string, logger *slog.Logger) (*Mana
 // TokenSource returns a token source for the given email.
 // If a valid token exists, it will be reused and auto-refreshed.
 func (m *Manager) TokenSource(ctx context.Context, email string) (oauth2.TokenSource, error) {
-	tf, err := m.loadTokenFile(email)
+	tf, err := m.loadTokenFileContext(ctx, email)
 	if err != nil {
 		return nil, fmt.Errorf("no valid token for %s: %w", email, err)
 	}
-
-	// Create a token source that auto-refreshes. The creation context
-	// bounds the token-endpoint client used by every later refresh.
-	ts := m.config.TokenSource(withRefreshHTTPClient(ctx), &tf.Token)
-
-	// Save refreshed token if it changed
-	newToken, err := ts.Token()
-	if err != nil {
-		return nil, fmt.Errorf("refresh token: %w", err)
+	token := tf.Token // saves rewrite tf in place; the source keeps its own copy
+	source := &persistingTokenSource{manager: m, source: m.config.TokenSource(withRefreshHTTPClient(ctx), &token), email: email, expected: tf, ctx: ctx}
+	if _, err := source.Token(); err != nil {
+		return nil, err
 	}
-
-	if newToken.AccessToken != tf.AccessToken {
-		// Preserve the original scopes when saving refreshed token
-		scopes := tf.Scopes
-		if len(scopes) == 0 {
-			scopes = m.config.Scopes // fallback for legacy tokens
-		}
-		if err := m.saveTokenCompared(email, newToken, scopes, tf); err != nil && !errors.Is(err, ErrTokenChanged) {
-			m.logger.Warn("failed to save refreshed token", "email", email, "error", err)
-		}
-	}
-
-	return ts, nil
+	return source, nil
 }
 
 // HasToken checks if a token exists for the given email.
 func (m *Manager) HasToken(email string) bool {
-	_, err := m.loadToken(email)
+	_, err := m.metadataTokenFile(email)
 	return err == nil
 }
 
@@ -335,32 +319,17 @@ func (m *Manager) HasToken(email string) bool {
 // reauthorization) use this probe instead. The refreshed token is saved on
 // success.
 func (m *Manager) ForceRefresh(ctx context.Context, email string) error {
-	tf, err := m.loadTokenFile(email)
+	tf, err := m.loadTokenFileContext(ctx, email)
 	if err != nil {
 		return fmt.Errorf("no valid token for %s: %w", email, err)
 	}
 	if tf.RefreshToken == "" {
 		return fmt.Errorf("token for %s has no refresh token", email)
 	}
-
-	// A token without an access token is never Valid, so the token source
-	// must hit the token endpoint with the refresh grant.
 	stale := &oauth2.Token{RefreshToken: tf.RefreshToken}
-	newToken, err := m.config.TokenSource(withRefreshHTTPClient(ctx), stale).Token()
-	if err != nil {
-		return fmt.Errorf("refresh token: %w", err)
-	}
-
-	if newToken.AccessToken != tf.AccessToken {
-		scopes := tf.Scopes
-		if len(scopes) == 0 {
-			scopes = m.config.Scopes // fallback for legacy tokens
-		}
-		if err := m.saveTokenCompared(email, newToken, scopes, tf); err != nil && !errors.Is(err, ErrTokenChanged) {
-			m.logger.Warn("failed to save refreshed token", "email", email, "error", err)
-		}
-	}
-	return nil
+	source := &persistingTokenSource{manager: m, source: m.config.TokenSource(withRefreshHTTPClient(ctx), stale), email: email, expected: tf, ctx: ctx}
+	_, err = source.Token()
+	return err
 }
 
 // PrintHeadlessInstructions prints setup instructions for headless servers.
@@ -537,18 +506,32 @@ func (m *Manager) AuthorizePreservingGrantedScopes(ctx context.Context, email st
 }
 
 func (m *Manager) prepareAuthorization(email string, preserveGrants bool) (*Manager, *tokenFile, error) {
-	data, err := os.ReadFile(m.tokenPath(email))
+	return m.prepareAuthorizationContext(context.Background(), email, preserveGrants)
+}
+
+func (m *Manager) prepareAuthorizationContext(ctx context.Context, email string, preserveGrants bool) (*Manager, *tokenFile, error) {
+	data, err := m.store().Read(ctx, email)
+	exists := err == nil
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, nil, fmt.Errorf("read token before authorization: %w", err)
 	}
+	if expectation := m.authorizationExpected; expectation != nil && expectation.email == email {
+		if exists != expectation.snapshot.exists || !bytes.Equal(data, expectation.snapshot.data) {
+			return nil, nil, ErrTokenChanged
+		}
+	}
 	var existing tokenFile
-	if err := json.Unmarshal(data, &existing); err != nil {
-		// Fresh authorization can replace a missing or malformed token.
-		existing = tokenFile{}
+	if exists {
+		parsed, parseErr := m.parseTokenFile(data)
+		if parseErr != nil && m.CommandTokens() {
+			return nil, nil, fmt.Errorf("read token before authorization: %w", parseErr)
+		}
+		// File-backed authorization can replace a malformed token.
+		existing = parsed
 	}
 	existing.snapshot = data
+	existing.snapshotExists = exists
 	if preserveGrants {
-		// Derive permissions from the same snapshot used by the final write.
 		m = m.withScopes(scopesWithPreservedGrants(m.config.Scopes, existing.Scopes))
 	}
 	return m, &existing, nil
@@ -590,7 +573,7 @@ func scopesWithPreservedGrants(required, granted []string) []string {
 func (m *Manager) authorize(
 	ctx context.Context, email string, launchBrowser, preserveGrants bool,
 ) error {
-	m, expected, err := m.prepareAuthorization(email, preserveGrants)
+	m, expected, err := m.prepareAuthorizationContext(ctx, email, preserveGrants)
 	if err != nil {
 		return err
 	}
@@ -607,21 +590,29 @@ func (m *Manager) authorize(
 }
 
 func (m *Manager) verifyAndSaveToken(ctx context.Context, email string, token *oauth2.Token, expected *tokenFile) error {
+	scopes, err := m.verifyToken(ctx, email, token)
+	if err != nil {
+		return err
+	}
+	return m.saveTokenComparedContext(ctx, email, token, scopes, expected)
+}
+
+// verifyToken checks the account and scopes and returns the scopes to record.
+func (m *Manager) verifyToken(ctx context.Context, email string, token *oauth2.Token) ([]string, error) {
 	// Validate the token belongs to the expected account before
 	// persisting it. This prevents token pollution where selecting
 	// the wrong Google account would overwrite a valid token file.
 	// The token is always saved under the original identifier (email)
 	// since that's the key used for all lookups elsewhere in the app.
 	if _, err := m.resolveTokenEmail(ctx, email, token); err != nil {
-		return err
+		return nil, err
 	}
 
 	grantedScopes := grantedScopesFromToken(token, m.config.Scopes)
 	if missing := missingScopes(m.config.Scopes, grantedScopes); len(missing) > 0 {
-		return fmt.Errorf("authorized token missing required OAuth scopes: %s", strings.Join(missing, ", "))
+		return nil, fmt.Errorf("authorized token missing required OAuth scopes: %s", strings.Join(missing, ", "))
 	}
-
-	return m.saveTokenCompared(email, token, grantedScopes, expected)
+	return grantedScopes, nil
 }
 
 const (
@@ -926,7 +917,8 @@ type tokenFile struct {
 	oauth2.Token
 
 	// snapshot is the exact file read before a refresh starts.
-	snapshot []byte
+	snapshot       []byte
+	snapshotExists bool
 
 	Scopes   []string `json:"scopes,omitempty"`
 	ClientID string   `json:"client_id,omitempty"`
@@ -934,34 +926,59 @@ type tokenFile struct {
 
 // loadToken loads a saved token for the given email.
 func (m *Manager) loadToken(email string) (*oauth2.Token, error) {
-	path := m.tokenPath(email)
-	data, err := os.ReadFile(path)
+	tf, err := m.loadTokenFile(email)
 	if err != nil {
 		return nil, err
 	}
-
-	var tf tokenFile
-	if err := json.Unmarshal(data, &tf); err != nil {
-		return nil, err
-	}
-
 	return &tf.Token, nil
 }
 
-// loadTokenFile loads the full token file including scope metadata.
 func (m *Manager) loadTokenFile(email string) (*tokenFile, error) {
-	path := m.tokenPath(email)
-	data, err := os.ReadFile(path)
+	return m.loadTokenFileContext(context.Background(), email)
+}
+func (m *Manager) loadTokenFileContext(ctx context.Context, email string) (*tokenFile, error) {
+	data, err := m.store().Read(ctx, email)
 	if err != nil {
 		return nil, err
 	}
-
-	var tf tokenFile
-	if err := json.Unmarshal(data, &tf); err != nil {
+	tf, err := m.parseTokenFile(data)
+	if err != nil {
 		return nil, err
 	}
-
 	tf.snapshot = data
+	tf.snapshotExists = true
+	return &tf, nil
+}
+
+// parseTokenFile reserves ErrInvalidTokenJSON for token files, which a new
+// sign-in may replace. Unusable command output is the wrapper's failure.
+func (m *Manager) parseTokenFile(data []byte) (tokenFile, error) {
+	var tf tokenFile
+	err := json.Unmarshal(data, &tf)
+	if m.CommandTokens() && (err != nil || (tf.AccessToken == "" && tf.RefreshToken == "")) {
+		return tokenFile{}, errors.New("invalid token JSON from command")
+	}
+	if err != nil {
+		return tokenFile{}, fmt.Errorf("%w: %w", ErrInvalidTokenJSON, err)
+	}
+	return tf, nil
+}
+
+// metadataTokenFile reuses a checked authorization selection. The backend is
+// reread by prepareAuthorizationContext and every compare-before-save operation.
+func (m *Manager) metadataTokenFile(email string) (*tokenFile, error) {
+	selection := m.authorizationExpected
+	if selection == nil || selection.email != email {
+		return m.loadTokenFile(email)
+	}
+	if !selection.snapshot.exists {
+		return nil, os.ErrNotExist
+	}
+	var tf tokenFile
+	if err := json.Unmarshal(selection.snapshot.data, &tf); err != nil {
+		return nil, errors.New("invalid selected token JSON")
+	}
+	tf.snapshot, tf.snapshotExists = selection.snapshot.data, true
 	return &tf, nil
 }
 
@@ -970,7 +987,7 @@ func (m *Manager) loadTokenFile(email string) (*tokenFile, error) {
 // doesn't exist, has no client_id metadata (legacy token), or was minted
 // by a different client.
 func (m *Manager) TokenMatchesClient(email string) bool {
-	tf, err := m.loadTokenFile(email)
+	tf, err := m.metadataTokenFile(email)
 	if err != nil {
 		return false
 	}
@@ -989,7 +1006,7 @@ func (m *Manager) TokenMatchesClient(email string) bool {
 // question — "is this definitely a different client" — must not read those same
 // cases as a yes, or an unknown provenance becomes a positive claim about it.
 func (m *Manager) TokenIssuedByDifferentClient(email string) bool {
-	tf, err := m.loadTokenFile(email)
+	tf, err := m.metadataTokenFile(email)
 	if err != nil || tf.ClientID == "" {
 		return false // provenance unknown; do not claim it differs
 	}
@@ -999,7 +1016,7 @@ func (m *Manager) TokenIssuedByDifferentClient(email string) bool {
 // HasScopeMetadata returns true if the token file for this account has any
 // scope metadata stored. Legacy tokens (saved before scope tracking) return false.
 func (m *Manager) HasScopeMetadata(email string) bool {
-	tf, err := m.loadTokenFile(email)
+	tf, err := m.metadataTokenFile(email)
 	if err != nil {
 		return false
 	}
@@ -1010,7 +1027,7 @@ func (m *Manager) HasScopeMetadata(email string) bool {
 // with the specified scope. Returns false if the token doesn't exist or
 // doesn't have scope metadata (legacy tokens saved before scope tracking).
 func (m *Manager) HasScope(email string, scope string) bool {
-	tf, err := m.loadTokenFile(email)
+	tf, err := m.metadataTokenFile(email)
 	if err != nil {
 		return false
 	}
@@ -1020,7 +1037,7 @@ func (m *Manager) HasScope(email string, scope string) bool {
 // GrantedScopes returns a copy of the stored scope metadata for the account.
 // Legacy tokens or missing token files return nil.
 func (m *Manager) GrantedScopes(email string) []string {
-	tf, err := m.loadTokenFile(email)
+	tf, err := m.metadataTokenFile(email)
 	if err != nil || len(tf.Scopes) == 0 {
 		return nil
 	}
@@ -1030,41 +1047,29 @@ func (m *Manager) GrantedScopes(email string) []string {
 // saveTokenCompared writes a token only if its original snapshot is still current.
 // The lock covers comparison and replacement, never the network exchange, and
 // coordinates separate managers and CLI/daemon processes sharing this account.
-func (m *Manager) saveTokenCompared(email string, token *oauth2.Token, scopes []string, expected *tokenFile) (err error) {
-	if err := fileutil.SecureMkdirAll(m.tokensDir, 0700); err != nil {
-		return err
-	}
-
-	lock := flock.New(m.tokenPath(email)+".lock", flock.SetPermissions(0600))
-	if err := lock.Lock(); err != nil {
-		return fmt.Errorf("lock token file: %w", err)
-	}
-	defer func() { err = errors.Join(err, lock.Unlock()) }()
-	if expected != nil {
-		current, err := os.ReadFile(m.tokenPath(email))
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("read token before save: %w", err)
-		}
-		if !bytes.Equal(current, expected.snapshot) {
-			return ErrTokenChanged
-		}
-	}
-
-	tf := tokenFile{
-		Token:    *token,
-		Scopes:   scopes,
-		ClientID: m.config.ClientID,
-	}
-
+func (m *Manager) saveTokenCompared(email string, token *oauth2.Token, scopes []string, expected *tokenFile) error {
+	return m.saveTokenComparedContext(context.Background(), email, token, scopes, expected)
+}
+func (m *Manager) saveTokenComparedContext(ctx context.Context, email string, token *oauth2.Token, scopes []string, expected *tokenFile) error {
+	tf := tokenFile{Token: *token, Scopes: scopes, ClientID: m.config.ClientID}
 	data, err := json.Marshal(tf, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		return err
 	}
-
-	path := m.tokenPath(email)
-
-	if err := fileutil.SecureReplaceFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write token file: %w", err)
+	var snapshot *tokenSnapshot
+	if expected != nil {
+		snapshot = &tokenSnapshot{data: expected.snapshot, exists: expected.snapshotExists}
+	}
+	if err := m.store().replace(ctx, email, data, snapshot); err != nil {
+		return err
+	}
+	tf.snapshot = data
+	tf.snapshotExists = true
+	if expected != nil {
+		*expected = tf
+	}
+	if m.authorizationExpected != nil && m.authorizationExpected.email == email {
+		m.authorizationExpected = &tokenExpectation{email: email, snapshot: tokenSnapshot{data: data, exists: true}}
 	}
 	return nil
 }
@@ -1183,26 +1188,7 @@ func openBrowser(ctx context.Context, rawURL string) error {
 
 // NewManagerWithScopes creates an OAuth manager with custom scopes.
 func NewManagerWithScopes(clientSecretsPath, tokensDir string, logger *slog.Logger, scopes []string) (*Manager, error) {
-	data, err := os.ReadFile(clientSecretsPath)
-	if err != nil {
-		return nil, fmt.Errorf("read client secrets: %w", err)
-	}
-
-	config, webRedirectURIs, err := parseClientSecrets(data, scopes)
-	if err != nil {
-		return nil, fmt.Errorf("parse client secrets: %w", err)
-	}
-
-	if logger == nil {
-		logger = slog.Default()
-	}
-
-	return &Manager{
-		config:          config,
-		tokensDir:       tokensDir,
-		logger:          logger,
-		webRedirectURIs: webRedirectURIs,
-	}, nil
+	return NewManagerWithCredentials(context.Background(), config.OAuthApp{ClientSecrets: clientSecretsPath}, tokensDir, config.OAuthTokenCommands{}, logger, scopes)
 }
 
 // parseClientSecrets parses Google OAuth client secrets JSON.
@@ -1310,6 +1296,7 @@ func fetchTokenProfileEmailFromEndpoint(
 		ID           string `json:"id"`
 	}
 	if err := json.UnmarshalRead(resp.Body, &profile); err != nil {
+		err = authorizationProviderError(err, nil, "")
 		if mode == tokenProfileErrorOAuth {
 			return "", fmt.Errorf(
 				"could not verify token belongs to %s: "+
@@ -1327,13 +1314,13 @@ func fetchTokenProfileEmailFromEndpoint(
 		profileEmail = profile.ID
 	}
 	if profileEmail == "" {
+		missing := authorizationProviderError(errors.New("profile response did not include an email address"), nil, "")
 		if mode == tokenProfileErrorOAuth {
 			return "", fmt.Errorf(
-				"could not verify token belongs to %s: "+
-					"profile response did not include an email address "+
-					"(re-run the command to try again)", email)
+				"could not verify token belongs to %s: %w "+
+					"(re-run the command to try again)", email, missing)
 		}
-		return "", fmt.Errorf("parse profile for %s: response did not include an email address", email)
+		return "", fmt.Errorf("parse profile for %s: %w", email, missing)
 	}
 
 	if !SameGoogleAccount(email, profileEmail) {
@@ -1367,7 +1354,7 @@ var ErrRevokeCredentialInvalid = errors.New("stored credential is already expire
 // the token file (backups, other hosts, previously exposed credentials) lose
 // access too — deleting the local file alone would not achieve that.
 func (m *Manager) RevokeToken(ctx context.Context, email string) error {
-	tf, err := m.loadTokenFile(email)
+	tf, err := m.loadTokenFileContext(ctx, email)
 	if err != nil {
 		return fmt.Errorf("load token for %s: %w", email, err)
 	}
@@ -1457,26 +1444,11 @@ func StoredTokenOrEquivalentExists(tokensDir, email string) bool {
 
 // EquivalentStoredGrantInUse reports whether a remaining Gmail source has an
 // equivalent token issued by the same OAuth client. Unknown legacy client
-// provenance is treated conservatively as shared.
+// provenance and token-store errors are treated conservatively as shared.
 func EquivalentStoredGrantInUse(tokensDir, email string, remainingEmails []string) bool {
-	m := &Manager{tokensDir: tokensDir}
-	removed, err := m.loadTokenFile(email)
-	if err != nil {
-		return false
-	}
-	for _, remainingEmail := range remainingEmails {
-		if !SameGoogleAccount(email, remainingEmail) {
-			continue
-		}
-		remaining, err := m.loadTokenFile(remainingEmail)
-		if err != nil {
-			continue
-		}
-		if removed.ClientID == "" || remaining.ClientID == "" || removed.ClientID == remaining.ClientID {
-			return true
-		}
-	}
-	return false
+	m := NewStoredTokenManager(tokensDir, config.OAuthTokenCommands{})
+	inUse, err := m.EquivalentGrantInUse(context.Background(), email, remainingEmails)
+	return inUse || err != nil
 }
 
 func findEquivalentTokenEmails(tokensDir, email string) []string {
@@ -1507,15 +1479,14 @@ func findEquivalentTokenEmails(tokensDir, email string) []string {
 
 // DeleteToken removes the token file for the given email.
 func (m *Manager) DeleteToken(email string) error {
-	path := m.tokenPath(email)
-	err := os.Remove(path)
-	if os.IsNotExist(err) {
-		return nil // Already gone
+	err := m.store().Delete(context.Background(), email)
+	if err == nil && m.authorizationExpected != nil && m.authorizationExpected.email == email {
+		m.authorizationExpected = nil
 	}
 	return err
 }
 
 // TokenPath returns the path to the token file for an email (for external use).
 func (m *Manager) TokenPath(email string) string {
-	return m.tokenPath(email)
+	return m.store().path(email)
 }
