@@ -341,7 +341,8 @@ import (
 // 2.35.0 adds scope_escalation_source_type to staged-deletion plans so local
 // CLI clients can authorize Microsoft Graph mail before starting the worker.
 // 3.0.0 replaces unguarded identity decisions with review-token routes and adds consented identity scoring.
-const APISchemaVersion = "3.0.0"
+// 3.1.0 adds opt-in calendar event control and availability queries.
+const APISchemaVersion = "3.1.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -406,7 +407,80 @@ func baseOpenAPIDocument(includeHidden bool) *huma.OpenAPI {
 	hardenPersonSearchSchemas(doc)
 	hardenActivitySchemas(doc)
 	hardenMeetingSchemas(doc)
+	hardenCalendarControlSchemas(doc)
 	return doc
+}
+
+func hardenCalendarControlSchemas(doc *huma.OpenAPI) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	schemas := doc.Components.Schemas.Map()
+	request := schemas["CalendarRequest"]
+	if request != nil {
+		// Availability can use calendar_ids without a positional calendar_id.
+		// The daemon validator still enforces the action-specific target rules.
+		required := make([]string, 0, len(request.Required))
+		for _, name := range request.Required {
+			if name != "calendar_id" {
+				required = append(required, name)
+			}
+		}
+		request.Required = required
+		if field := request.Properties["calendar_id"]; field != nil {
+			field.Description = "Required for event mutations. For freebusy or conflicts, use this as the target or omit it and provide calendar_ids."
+		}
+		if field := request.Properties["calendar_ids"]; field != nil {
+			field.Description = "Availability target IDs. When nonempty, only these calendars are checked; calendar_id may be omitted."
+		}
+		if field := request.Properties["expected_plan_fingerprint"]; field != nil {
+			field.Description = "Optional precondition from a prior dry run; rejects the mutation if the OAuth account, planned writes, or normalized notification mode differs."
+		}
+		request.Not = &huma.Schema{
+			Type: "object",
+			Properties: map[string]*huma.Schema{
+				"action": {Type: "string", Enum: []any{"move", "respond"}},
+				"scope":  {Type: "string", Enum: []any{"future"}},
+			},
+			Required: []string{"action", "scope"},
+		}
+	}
+	if attendee := schemas["GCalAttendee"]; attendee != nil {
+		for name, description := range map[string]string{
+			"organizer":      "Provider-controlled attendee role; do not send in event input.",
+			"responseStatus": "Provider-controlled RSVP state; use the self RSVP operation to change your response.",
+			"self":           "Provider-controlled marker for the authenticated attendee; do not send in event input.",
+		} {
+			if field := attendee.Properties[name]; field != nil {
+				field.ReadOnly = true
+				field.Description = description
+			}
+		}
+	}
+	input := schemas["GCalEventInput"]
+	if input == nil {
+		return
+	}
+	// The strict control decoder rejects nulls. Omission preserves a field;
+	// explicit empty strings and slices clear values without a null sentinel.
+	for _, field := range input.Properties {
+		field.Nullable = false
+	}
+	for _, name := range []string{"summary", "description", "location"} {
+		if field := input.Properties[name]; field != nil {
+			field.Description = "Omit to preserve the existing value; use an empty string to clear it on update. JSON null is not accepted."
+		}
+	}
+	// Plans share this event shape, but the daemon supplies these two fields.
+	for name, description := range map[string]string{
+		"id":               "Server-assigned event ID returned in plans. Do not send this field in a control request.",
+		"attendeesOmitted": "Internal self-RSVP marker returned in plans. Do not send this field in a control request.",
+	} {
+		if field := input.Properties[name]; field != nil {
+			field.ReadOnly = true
+			field.Description = description
+		}
+	}
 }
 
 func hardenMeetingSchemas(doc *huma.OpenAPI) {
@@ -831,6 +905,14 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	schemas := doc.Components.Schemas.Map()
 	const emailProperty = "email"
+	if input := schemas["GCalEventInput"]; input != nil {
+		for name, goType := range map[string]string{"attendees": "*[]GCalAttendee", "recurrence": "*[]string"} {
+			if field := input.Properties[name]; field != nil {
+				setCodegenGoType(field, goType)
+			}
+		}
+	}
+
 	if contextRequest := schemas["MeetingContextRequest"]; contextRequest != nil {
 		// Keep the public one-of validation, but avoid an unusable generated
 		// union overlay. The concrete fields already describe both request forms.
@@ -1024,6 +1106,41 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schema.Extensions = map[string]any{}
 		}
 		schema.Extensions["x-enum-names"] = enumNames
+	}
+	if request := schemas["CalendarRequest"]; request != nil {
+		for property, names := range map[string][]any{
+			"response":     qualifiedEnumNames("CalendarRequestResponse", []string{"accepted", "declined", "tentative"}),
+			"scope":        qualifiedEnumNames("CalendarRequestScope", []string{"single", "future", "all"}),
+			"send_updates": qualifiedEnumNames("CalendarRequestSendUpdates", []string{"none", "all", "externalOnly"}),
+		} {
+			setEnumNames(request.Properties[property], names)
+		}
+	}
+	for schemaName, properties := range map[string]map[string][]any{
+		"CreateAttributeDefinitionRequest": {
+			"cardinality": {"Single", "Multi"},
+		},
+		"SecretSettingState": {
+			"source": {"Stored", "Environment", "None"},
+		},
+	} {
+		schema := schemas[schemaName]
+		if schema == nil {
+			continue
+		}
+		for property, names := range properties {
+			setEnumNames(schema.Properties[property], names)
+		}
+	}
+	for _, operation := range documentOperations(doc) {
+		if operation.OperationID != "listPersonRelationshipReviews" {
+			continue
+		}
+		for _, parameter := range operation.Parameters {
+			if parameter.Name == statusFieldName {
+				setEnumNames(parameter.Schema, []any{"Pending", "Accepted", "Rejected"})
+			}
+		}
 	}
 	if state := schemas["SavedViewStateEnvelope"]; state != nil {
 		setEnumNames(state.Properties["grouping"].Items,

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-03"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -11,6 +11,14 @@ All notable changes to msgvault, grouped by release.
 - Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` writes only new
   and changed messages instead of rewriting the whole archive, and picks up
   edits and senders that `LID.sqlite` resolves later.
+
+- [Calendar event control](usage/calendar.md#control-events-unreleased) adds
+  create, update, delete, move, self RSVP, and availability commands, plus HTTP
+  and MCP interfaces. Write consent and exact source permissions are opt-in;
+  guest notifications default to `none`. The daemon verifies calendar access
+  and archives successful changes immediately.
+- Adding Calendar to a Gmail token recognizes Google's short and expanded
+  `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
 
 ## 0.21.0
 <small>2026-10-02</small>

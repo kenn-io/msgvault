@@ -1721,12 +1721,15 @@ func (b BeeperConfig) AccountIncluded(accountID string) bool {
 // GCalSource is one configured Google Calendar sync target. Each entry is a
 // top-level [[gcal]] table.
 type GCalSource struct {
-	Name      string   `toml:"name"`      // identifier for sync-calendar <name>; defaults to Email
-	Email     string   `toml:"email"`     // the OAuth account = token key
-	OAuthApp  string   `toml:"oauth_app"` // optional named OAuth app
-	Calendars []string `toml:"calendars"` // optional calendarId filter; empty = owner+writer
-	Schedule  string   `toml:"schedule"`  // 5-field cron; empty = not daemon-scheduled
-	Enabled   bool     `toml:"enabled"`
+	Name            string            `toml:"name"`      // identifier for sync-calendar <name>; defaults to Email
+	Email           string            `toml:"email"`     // the OAuth account = token key
+	OAuthApp        string            `toml:"oauth_app"` // optional named OAuth app
+	Calendars       []string          `toml:"calendars"` // optional calendarId filter; empty = owner+writer
+	Schedule        string            `toml:"schedule"`  // 5-field cron; empty = not daemon-scheduled
+	Enabled         bool              `toml:"enabled"`
+	WriteCalendars  []string          `toml:"write_calendars"`  // explicit calendar IDs; empty denies writes
+	InviteCalendars []string          `toml:"invite_calendars"` // IDs allowed to change guests or notify them
+	CalendarAliases map[string]string `toml:"calendar_aliases"`
 }
 
 // applyGCalDefaults normalizes [[gcal]] entries: a source with no name takes its

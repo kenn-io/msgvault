@@ -43,6 +43,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
+	github.com/teambition/rrule-go v1.8.2
 	go.kenn.io/docbank v0.14.1-0.20261001015536-a212ec3d2e4a
 	go.kenn.io/kata v0.18.1-0.20261001005735-0bf1e54c63d3
 	go.kenn.io/kit v0.29.2
@@ -147,7 +148,6 @@ require (
 	github.com/spf13/pathologize v1.1.0 // indirect
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
 	github.com/tdewolff/parse/v2 v2.8.16 // indirect
-	github.com/teambition/rrule-go v1.8.2 // indirect
 	github.com/tidwall/btree v1.6.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect

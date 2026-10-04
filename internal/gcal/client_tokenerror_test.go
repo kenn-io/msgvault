@@ -64,6 +64,28 @@ func TestRequest_TokenSourceErrorFailsFast(t *testing.T) {
 	assert.Less(time.Since(start), 2*time.Second, "must not back off")
 }
 
+func TestMutation_TokenSourceFailureIsNotUnknownOutcome(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	providerCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		providerCalls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	ts := &unauthorizedTokenSource{}
+	c := NewClient(ts, WithBaseURL(srv.URL))
+	_, err := c.InsertEvent(t.Context(), "team@example.com", EventInput{}, MutationOptions{})
+	requirements.Error(err)
+	requirements.NotErrorIs(err, ErrOutcomeUnknown)
+
+	var retrieveErr *oauth2.RetrieveError
+	requirements.ErrorAs(err, &retrieveErr)
+	assertions.Equal(1, ts.calls)
+	assertions.Zero(providerCalls)
+}
+
 // A 5xx from the token endpoint is not a credential problem and must go
 // through the normal retry policy instead of failing fast.
 func TestRequest_TransientTokenErrorIsRetried(t *testing.T) {

@@ -15,15 +15,23 @@ import (
 type Permission string
 
 const (
-	PermissionDraftCreate Permission = "draft.create"
-	PermissionDraftEdit   Permission = "draft.edit"
-	PermissionDraftDelete Permission = "draft.delete"
+	PermissionDraftCreate       Permission = "draft.create"
+	PermissionDraftEdit         Permission = "draft.edit"
+	PermissionDraftDelete       Permission = "draft.delete"
+	PermissionCalendarRead      Permission = "calendar.read"
+	PermissionCalendarEventRead Permission = "calendar.event.read"
+	PermissionCalendarWrite     Permission = "calendar.write"
+	PermissionCalendarInvite    Permission = "calendar.invite"
 )
 
 var knownPermissions = map[string]Permission{
-	string(PermissionDraftCreate): PermissionDraftCreate,
-	string(PermissionDraftEdit):   PermissionDraftEdit,
-	string(PermissionDraftDelete): PermissionDraftDelete,
+	string(PermissionDraftCreate):       PermissionDraftCreate,
+	string(PermissionDraftEdit):         PermissionDraftEdit,
+	string(PermissionDraftDelete):       PermissionDraftDelete,
+	string(PermissionCalendarRead):      PermissionCalendarRead,
+	string(PermissionCalendarEventRead): PermissionCalendarEventRead,
+	string(PermissionCalendarWrite):     PermissionCalendarWrite,
+	string(PermissionCalendarInvite):    PermissionCalendarInvite,
 }
 
 func KnownPermission(s string) (Permission, bool) {

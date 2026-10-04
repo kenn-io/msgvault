@@ -7,4 +7,5 @@ export interface CLIAddCalendarPlanRequest {
   headless?: boolean;
   oauth_app?: string;
   oauth_app_explicit?: boolean;
+  write?: boolean;
 }

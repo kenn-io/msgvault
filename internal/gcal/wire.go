@@ -58,13 +58,15 @@ func (w *wirePerson) toPerson() Person {
 }
 
 type wireAttendee struct {
-	Email          string `json:"email"`
-	DisplayName    string `json:"displayName"`
-	ResponseStatus string `json:"responseStatus"`
-	Organizer      bool   `json:"organizer"`
-	Self           bool   `json:"self"`
-	Resource       bool   `json:"resource"`
-	Optional       bool   `json:"optional"`
+	Email            string `json:"email"`
+	DisplayName      string `json:"displayName"`
+	ResponseStatus   string `json:"responseStatus"`
+	Organizer        bool   `json:"organizer"`
+	Self             bool   `json:"self"`
+	Resource         bool   `json:"resource"`
+	Optional         bool   `json:"optional"`
+	AdditionalGuests int    `json:"additionalGuests"`
+	Comment          string `json:"comment"`
 }
 
 type wireEventDateTime struct {
@@ -87,6 +89,7 @@ func (w *wireEventDateTime) toEventDateTime() EventDateTime {
 }
 
 type wireEvent struct {
+	ETag              string             `json:"etag,omitempty"`
 	ID                string             `json:"id"`
 	Status            string             `json:"status"`
 	HTMLLink          string             `json:"htmlLink"`
@@ -109,6 +112,7 @@ type wireEvent struct {
 	Transparency      string             `json:"transparency"`
 	Visibility        string             `json:"visibility"`
 	EventType         string             `json:"eventType"`
+	Reminders         *Reminders         `json:"reminders"`
 }
 
 func parseRFC3339(s string) time.Time {
@@ -123,6 +127,7 @@ func parseRFC3339(s string) time.Time {
 
 func (w wireEvent) toEvent() Event {
 	ev := Event{
+		ETag:              w.ETag,
 		ID:                w.ID,
 		Status:            w.Status,
 		HTMLLink:          w.HTMLLink,
@@ -144,6 +149,7 @@ func (w wireEvent) toEvent() Event {
 		Transparency:      w.Transparency,
 		Visibility:        w.Visibility,
 		EventType:         w.EventType,
+		Reminders:         w.Reminders,
 	}
 	for _, a := range w.Attendees {
 		ev.Attendees = append(ev.Attendees, Attendee(a))

@@ -146,6 +146,7 @@ type handlers struct {
 	directoryBackend    peoplebrowser.DirectoryLister
 	savedViews          savedview.Service
 	meetings            MeetingBackend
+	calendar            CalendarBackend
 	personAgendaBackend PersonAgendaBackend
 	identityReview      IdentityReviewBackend
 	personCardDAV       PersonCardDAVBackend

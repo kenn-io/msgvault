@@ -1,4 +1,5 @@
 export * as ApiService from './api/api';
+export * as CalendarService from './calendar/calendar';
 export * as CliService from './cli/cli';
 export * as DaemonService from './daemon/daemon';
 export * as ExplorationService from './exploration/exploration';

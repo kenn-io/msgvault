@@ -746,6 +746,50 @@ func (o *GetCacheBuildStatusRequestOptions) GetHeader() (map[string]string, erro
 	return nil, nil
 }
 
+// ControlCalendarRequestOptions is the options needed to make a request to ControlCalendar.
+type ControlCalendarRequestOptions struct {
+	Body *ControlCalendarBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ControlCalendarRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ControlCalendarRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ControlCalendarRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ControlCalendarRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ControlCalendarRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // SaveCardDAVAccountRequestOptions is the options needed to make a request to SaveCardDAVAccount.
 type SaveCardDAVAccountRequestOptions struct {
 	Body *SaveCardDAVAccountBody

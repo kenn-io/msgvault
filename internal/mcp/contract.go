@@ -174,6 +174,8 @@ type toolResult struct {
 	text              string
 	structuredContent jsontext.Value
 	embeddedResource  *embeddedResource
+	inputRequests     sdkmcp.InputRequestMap
+	requestState      string
 	isError           bool
 }
 

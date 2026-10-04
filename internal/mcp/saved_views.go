@@ -383,5 +383,5 @@ func savedViewStateInputSchema() *jsonschema.Schema {
 }
 
 func arraySchema(items *jsonschema.Schema) *jsonschema.Schema {
-	return &jsonschema.Schema{Type: "array", Items: items}
+	return &jsonschema.Schema{Type: schemaTypeArray, Items: items}
 }

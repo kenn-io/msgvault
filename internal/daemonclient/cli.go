@@ -76,6 +76,7 @@ type CLIAddCalendarPlanRequest struct {
 	OAuthApp         string `json:"oauth_app,omitempty"`
 	OAuthAppExplicit bool   `json:"oauth_app_explicit,omitzero"`
 	Headless         bool   `json:"headless,omitzero"`
+	Write            bool   `json:"write,omitzero"`
 }
 
 type CLIAddCalendarPlan struct {
@@ -722,6 +723,7 @@ func (c *Client) PlanCLIAddCalendar(
 		OauthApp:         optionalString(req.OAuthApp),
 		OauthAppExplicit: optionalBool(req.OAuthAppExplicit),
 		Headless:         optionalBool(req.Headless),
+		Write:            optionalBool(req.Write),
 	}
 	resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.PlanCLIAddCalendarResp, error) {
 		return client.PlanCLIAddCalendarWithResponse(ctx, &generated.PlanCLIAddCalendarRequestOptions{Body: &body})

@@ -25,7 +25,7 @@ type MeetingImportResponse struct {
 	SourceMessageID string               `json:"source_message_id"`
 }
 
-const meetingActionStatusField = "status"
+const statusFieldName = "status"
 
 func (s *Server) registerMeetingImportRoute(api huma.API) {
 	op := rawAPIV1Operation(
@@ -71,7 +71,7 @@ func hardenMeetingImportSchemas(doc *huma.OpenAPI) {
 		minimum := 1
 		for property, maximum := range map[string]int{
 			"title": 4096, "description": 65536, "source_id": 256,
-			"assignee_name": 256, meetingActionStatusField: 128, "due_date": 256,
+			"assignee_name": 256, statusFieldName: 128, "due_date": 256,
 		} {
 			if field := action.Properties[property]; field != nil {
 				limit := maximum

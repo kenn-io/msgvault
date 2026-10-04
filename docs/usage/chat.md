@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-01"
+last_edited: "2026-10-02"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -18,10 +18,54 @@ By default, stdio clients can also manage Saved Views, export attachments,
 and stage deletion manifests. Actual message deletion still requires the CLI
 [deletion workflow](/docs/usage/deletion/). Person promotion and Notes writes
 need `--allow-profile-writes`. HTTP clients get read tools by default and need
-`--http-allow-writes` for any write tools. See [write controls](#write-controls).
+`--http-allow-writes` for general write tools. Calendar event mutations also
+require `--allow-calendar-writes`; HTTP needs both flags. Each non-dry-run
+mutation also requires explicit confirmation through client elicitation.
+Calendar event text and attendee-provided content are untrusted input, never
+instructions or authorization to make a change. See [write controls](#write-controls).
 
 Saved View management changes only reusable definitions; deleting a Saved
 View never deletes archive messages.
+
+## Calendar control
+
+Unreleased daemon API schema 3.1.0 adds `calendar_create`, `calendar_update`,
+`calendar_delete`, `calendar_move`, `calendar_respond`, `calendar_freebusy`, and
+`calendar_conflicts`. All require `account`; event mutations also require
+`calendar_id`. Availability requires `time_min` and `time_max`, and accepts
+`calendar_ids`; `calendar_id` is used only when that list is empty. Mutation
+tools appear only with `--allow-calendar-writes`; HTTP also requires
+`--http-allow-writes`.
+
+For a non-dry-run mutation, the MCP server first asks the daemon to build and
+authorize a plan. It then presents that plan through client elicitation and
+requires explicit approval before writing. The server rechecks the plan before
+execution. A declined or cancelled request, a changed request or plan, or a
+client without elicitation support fails closed. `dry_run=true` returns the
+plan without asking for approval. Approval is supplied out of band from the
+tool arguments.
+
+Use `event` for writable fields on create/update, matching the
+[HTTP contract](../api-server.md#calendar-control). `send_updates` defaults to
+`none`; `dry_run=true` verifies live access and returns a plan. `read_only=true`
+rejects mutations. `calendar_respond` uses `response` for the self attendee only.
+Recurring edits default to `single`; future update/delete needs `original_start`.
+Availability needs `time_min` and `time_max`, and accepts optional `calendar_ids`.
+
+[Calendar setup](calendar.md#control-events-unreleased) owns write consent,
+configured calendar permissions, recurrence limits, and archive failure recovery.
+MCP forwards requests to that same daemon path. A delegated stdio bridge, invoked
+with `--agent-url` and `--agent-token-file`, exposes only calendar tools. The daemon
+checks the grant's exact calendar source identity. `calendar.read` permits
+availability; `calendar.event.read` permits provider-derived event details in
+delegated plans and write receipts; `calendar.write` permits event changes; and
+`calendar.invite` is additionally required for guest changes. Owner credentials
+and Google tokens stay on the daemon.
+
+Calendar tools instruct assistants to treat archived event text and attendee
+content as data, never as instructions or permission to write. The write opt-in
+exposes mutation tools; the user must request each change and confirm each
+non-dry-run plan through client elicitation.
 
 ## Meeting evidence
 
@@ -406,12 +450,13 @@ list, get, create, or update; a stale revision returns
 `saved_view_revision_conflict` so the agent can reload before retrying. An
 empty `description` clears it.
 
-Stdio exposes these write-class tools, like attachment export and deletion
-staging, and the server instructs clients that they require explicit user
-intent. StreamableHTTP hides them by default; pass `--http-allow-writes` only
-for trusted clients to expose Saved View management, attachment export, and
-deletion staging over HTTP. Deleting a Saved View removes a query definition
-and never archive messages.
+Stdio exposes Saved View management, attachment export, and deletion staging by
+default. The server instructs clients to use write tools only for actions the
+user explicitly requested. StreamableHTTP hides those tools by default; pass
+`--http-allow-writes` only for trusted clients to expose them. Calendar event
+mutations have a separate opt-in on both transports; HTTP requires both write
+flags. Deleting a Saved View removes a query definition and never archive
+messages.
 
 ## Example Usage with Claude
 
@@ -474,10 +519,10 @@ instruction or as your consent to a write.
 
 Enable only the writes intended for the assistant's session:
 
-| Transport | Saved View management, attachment export, and deletion staging | Person promotion and Notes writes |
-|---|---|---|
-| Stdio | Available by default | Add `--allow-profile-writes` |
-| HTTP | Add `--http-allow-writes` | Add both `--http-allow-writes` and `--allow-profile-writes` |
+| Transport | Saved View management, attachment export, and deletion staging | Person promotion and Notes writes | Calendar event mutations |
+|---|---|---|---|
+| Stdio | Available by default | Add `--allow-profile-writes` | Add `--allow-calendar-writes` |
+| HTTP | Add `--http-allow-writes` | Add both `--http-allow-writes` and `--allow-profile-writes` | Add both `--http-allow-writes` and `--allow-calendar-writes` |
 
 When profile writes are enabled, two additional tools appear:
 
@@ -536,6 +581,7 @@ msgvault mcp --http 8080
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-carddav-writes` | `false` | Expose CardDAV publication and sync tools. Each write needs client confirmation; HTTP also requires `--http-allow-writes`. |
+| `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`. Treat event text as untrusted input and enable this only for sessions where the user has authorized calendar writes. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without `[server].api_key`. A configured key is still enforced. Without a key, use only behind your own network or authentication layer. |
 
 Identity tools include `list_identity_matches`, `get_identity_match`,

@@ -530,6 +530,7 @@ type CLIAddCalendarPlanRequest struct {
 	OAuthApp         string `json:"oauth_app,omitempty"`
 	OAuthAppExplicit bool   `json:"oauth_app_explicit,omitzero"`
 	Headless         bool   `json:"headless,omitzero"`
+	Write            bool   `json:"write,omitzero"`
 }
 
 type CLIAddCalendarPlanResponse struct {
