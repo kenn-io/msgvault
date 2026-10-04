@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -432,24 +433,24 @@ type countingCredentialStore struct {
 	calls *int
 }
 
-func (s countingCredentialStore) Save(string, peoplesweep.Credential) error {
+func (s countingCredentialStore) Revision(string, string) (string, bool, error) {
 	*s.calls++
-	return nil
+	return "", false, assert.AnError
 }
 
-func (s countingCredentialStore) Load(string) (peoplesweep.Credential, error) {
+func (s countingCredentialStore) Load(string, string) (string, error) {
 	*s.calls++
-	return peoplesweep.Credential{}, nil
+	return "", nil
 }
 
-func (s countingCredentialStore) PreflightDelete(string) (peoplesweep.CredentialDeleteGuard, error) {
+func (s countingCredentialStore) SaveIfRevision(string, string, string, string) (string, error) {
 	*s.calls++
-	return nil, assert.AnError
+	return "", nil
 }
 
-func (s countingCredentialStore) Delete(string, peoplesweep.CredentialDeleteGuard) error {
+func (s countingCredentialStore) DeleteIfRevision(string, string, string) (string, error) {
 	*s.calls++
-	return nil
+	return "", nil
 }
 
 func TestPersonProviderAddCatalogResolvesUnambiguousTransportBeforeCredentialOrState(t *testing.T) {
@@ -1268,7 +1269,7 @@ func providerSetupCommandDeps(
 				DriverVersion: peoplesweep.OpenAIChatProviderVersion,
 			}, nil
 		},
-		credentials: peoplesweep.NewFileCredentialStore(loaded.TokensDir()),
+		credentials: peoplesweep.NewStoredCredentials(loaded.TokensDir()),
 		lookupEnv:   os.LookupEnv,
 	}
 	return deps
@@ -1364,7 +1365,6 @@ func TestPersonProviderDefaultDependenciesResolveCredentialsAfterConfigLoad(t *t
 }
 
 func TestPersonProviderDefaultDependenciesResolveStoredCredentialsAfterConfigLoad(t *testing.T) {
-	requireStoredCredentialStorePlatform(t)
 	assert := assert.New(t)
 	require := require.New(t)
 	path, loaded := providerSetupConfigFile(t)
@@ -1413,16 +1413,17 @@ func TestPersonProviderDefaultDependenciesResolveStoredCredentialsAfterConfigLoa
 	require.NoError(root.ExecuteContext(t.Context()))
 	assert.NotContains(output.String(), providerSetupSecretCanary)
 
-	credentialPath := filepath.Join(loaded.TokensDir(), "people-providers", "live-stored.json")
+	credentialPath := filepath.Join(loaded.TokensDir(), "provider-credentials.json")
 	credentialData, err := os.ReadFile(credentialPath)
 	require.NoError(err)
 	assert.Contains(string(credentialData), providerSetupSecretCanary)
-	credentialInfo, err := os.Stat(credentialPath)
-	require.NoError(err)
-	assert.Equal(os.FileMode(0o600), credentialInfo.Mode().Perm())
-	for _, directory := range []string{loaded.TokensDir(), filepath.Dir(credentialPath)} {
-		info, statErr := os.Stat(directory)
-		require.NoError(statErr)
+	assert.Contains(string(credentialData), `"people.provider/live-stored"`)
+	if runtime.GOOS != "windows" {
+		credentialInfo, err := os.Stat(credentialPath)
+		require.NoError(err)
+		assert.Equal(os.FileMode(0o600), credentialInfo.Mode().Perm())
+		info, err := os.Stat(loaded.TokensDir())
+		require.NoError(err)
 		assert.Equal(os.FileMode(0o700), info.Mode().Perm())
 	}
 	configData, err := os.ReadFile(path)
@@ -1441,12 +1442,11 @@ func TestPersonProviderDefaultDependenciesResolveStoredCredentialsAfterConfigLoa
 	removeRoot.SetArgs([]string{"--config", path, "person", "provider", "remove", "live-stored"})
 	require.NoError(removeRoot.ExecuteContext(t.Context()))
 	assert.Contains(output.String(), `Removed people provider profile "live-stored"`)
-	_, err = peoplesweep.NewFileCredentialStore(loaded.TokensDir()).Load("live-stored")
+	_, err = peoplesweep.NewStoredCredentials(loaded.TokensDir()).Load("live-stored", "https://live.example.test/v1")
 	require.ErrorIs(err, peoplesweep.ErrCredentialNotFound)
-	tombstoneInfo, err := os.Stat(credentialPath)
+	credentialData, err = os.ReadFile(credentialPath)
 	require.NoError(err)
-	assert.Zero(tombstoneInfo.Size())
-	assert.Equal(os.FileMode(0o600), tombstoneInfo.Mode().Perm())
+	assert.NotContains(string(credentialData), providerSetupSecretCanary)
 }
 
 func TestPersonProviderBoundCheckerUsesBoundSetup(t *testing.T) {
@@ -1463,7 +1463,7 @@ func TestPersonProviderBoundCheckerUsesBoundSetup(t *testing.T) {
 	ctx := withTestConfig(t, cfg)
 
 	deps := defaultPersonProviderCommandDeps()
-	deps.setup.credentials = peoplesweep.NewFileCredentialStore(t.TempDir())
+	deps.setup.credentials = peoplesweep.NewStoredCredentials(t.TempDir())
 	deps = personProviderDepsForContext(ctx, deps)
 	checker, err := deps.newChecker(peopleConfig, testutil.NewSQLiteTestStore(t), deps.setup)
 	require.NoError(err)
@@ -1476,7 +1476,6 @@ func TestPersonProviderBoundCheckerUsesBoundSetup(t *testing.T) {
 func TestPersonProviderAddCustomStdinKeepsSecretLocal(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
 		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
@@ -1502,9 +1501,9 @@ func TestPersonProviderAddCustomStdinKeepsSecretLocal(t *testing.T) {
 	// selector and its formatting survive untouched, and `person provider
 	// use` owns selection and enablement.
 	assert.Contains(string(content), `provider = "default" # selector formatting must survive rollback`)
-	credential, err := peoplesweep.NewFileCredentialStore(loaded.TokensDir()).Load("new-provider")
+	credential, err := peoplesweep.NewStoredCredentials(loaded.TokensDir()).Load("new-provider", "https://new.example.test/v1")
 	require.NoError(err)
-	assert.Equal(providerSetupSecretCanary, credential.Value())
+	assert.Equal(providerSetupSecretCanary, credential)
 	recoveries, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".msgvault-config-recovery-*"))
 	require.NoError(err)
 	for _, recovery := range recoveries {
@@ -1726,7 +1725,6 @@ func executePersonProviderCommandWithInput(
 // TestPersonProviderAddReadsOnlyExactEnvironmentOrMaskedTerminal catches setup
 // falling back to a broader environment variable or echoing masked input.
 func TestPersonProviderAddReadsOnlyExactEnvironmentOrMaskedTerminal(t *testing.T) {
-	requireStoredCredentialStorePlatform(t)
 	t.Run("exact environment", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -1757,7 +1755,7 @@ func TestPersonProviderAddReadsOnlyExactEnvironmentOrMaskedTerminal(t *testing.T
 		require.NoError(err)
 		assert.Contains(string(content), `credential_env = "EXACT_PROVIDER_KEY"`)
 		assert.NotContains(string(content), providerSetupSecretCanary)
-		_, err = deps.setup.credentials.Load("env-provider")
+		_, err = deps.setup.credentials.Load("env-provider", "https://env.example.test/v1")
 		require.ErrorIs(err, peoplesweep.ErrCredentialNotFound)
 	})
 
@@ -1790,10 +1788,9 @@ func TestPersonProviderAddReadsOnlyExactEnvironmentOrMaskedTerminal(t *testing.T
 			"--source-since", "2025-01-01", "--yes")
 		require.NoError(err)
 		assert.NotContains(output, providerSetupSecretCanary)
-		credential, err := deps.setup.credentials.Load("masked-provider")
+		credential, err := deps.setup.credentials.Load("masked-provider", "https://masked.example.test/v1")
 		require.NoError(err)
-		assert.Equal(peoplesweep.AuthXAPIKey, credential.Scheme)
-		assert.Equal(providerSetupSecretCanary, credential.Value())
+		assert.Equal(providerSetupSecretCanary, credential)
 	})
 }
 
@@ -1865,7 +1862,6 @@ func TestPersonProviderRemoveRevokesAndDeletesOnlyExactCredential(t *testing.T) 
 	newRequire := require.New
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	snapshot, err := config.ReadConfigFile(path)
 	require.NoError(err)
@@ -1881,11 +1877,9 @@ func TestPersonProviderRemoveRevokesAndDeletesOnlyExactCredential(t *testing.T) 
 	require.NoError(err)
 	loaded, err = config.LoadConfigFile(after, "")
 	require.NoError(err)
-	credentialStore := peoplesweep.NewFileCredentialStore(loaded.TokensDir())
-	require.NoError(credentialStore.Save("old", peoplesweep.NewCredential(
-		peoplesweep.AuthBearer, providerSetupSecretCanary)))
-	require.NoError(credentialStore.Save("sibling", peoplesweep.NewCredential(
-		peoplesweep.AuthBearer, "sibling-secret")))
+	credentialStore := peoplesweep.NewStoredCredentials(loaded.TokensDir())
+	savePeopleCredentialForTest(t, credentialStore, "old", oldProvider.Endpoint, providerSetupSecretCanary)
+	savePeopleCredentialForTest(t, credentialStore, "sibling", "https://sibling.example.test/v1", "sibling-secret")
 	st := testutil.NewSQLiteTestStore(t)
 	selected := loaded.People.Sweep
 	selected.Enabled = true
@@ -1924,11 +1918,11 @@ func TestPersonProviderRemoveRevokesAndDeletesOnlyExactCredential(t *testing.T) 
 	content, err := os.ReadFile(path)
 	require.NoError(err)
 	assert.NotContains(string(content), "[people.sweep.providers.old]")
-	_, err = credentialStore.Load("old")
+	_, err = credentialStore.Load("old", oldProvider.Endpoint)
 	require.ErrorIs(err, peoplesweep.ErrCredentialNotFound)
-	sibling, err := credentialStore.Load("sibling")
+	sibling, err := credentialStore.Load("sibling", "https://sibling.example.test/v1")
 	require.NoError(err)
-	assert.Equal("sibling-secret", sibling.Value())
+	assert.Equal("sibling-secret", sibling)
 	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
 	require.NoError(err)
 	assert.False(active)
@@ -1963,7 +1957,6 @@ func TestPersonProviderRemoveRevokesAndDeletesOnlyExactCredential(t *testing.T) 
 func TestPersonProviderRemoveUsesOneFreshConfigSnapshotForAllSideEffects(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	initial, err := config.ReadConfigFile(path)
 	require.NoError(err)
@@ -1980,9 +1973,8 @@ func TestPersonProviderRemoveUsesOneFreshConfigSnapshotForAllSideEffects(t *test
 	startupLoaded, err := config.LoadConfigFile(withOld, "")
 	require.NoError(err)
 	startup := startupLoaded.People.Sweep
-	credentialStore := peoplesweep.NewFileCredentialStore(startupLoaded.TokensDir())
-	require.NoError(credentialStore.Save("old", peoplesweep.NewCredential(
-		peoplesweep.AuthBearer, providerSetupSecretCanary)))
+	credentialStore := peoplesweep.NewStoredCredentials(startupLoaded.TokensDir())
+	savePeopleCredentialForTest(t, credentialStore, "old", old.Endpoint, providerSetupSecretCanary)
 	staleSelection := startup
 	staleSelection.Enabled = true
 	staleSelection.Provider = peoplesweep.ProviderSelection{Name: "old"}
@@ -2024,9 +2016,9 @@ func TestPersonProviderRemoveUsesOneFreshConfigSnapshotForAllSideEffects(t *test
 	stillActive, err := st.HasActivePersonInferenceConsent(t.Context(), staleProfile.Fingerprint)
 	require.NoError(err)
 	assert.True(stillActive, "stale startup fingerprint must not be revoked")
-	credential, err := credentialStore.Load("old")
+	credential, err := credentialStore.Load("old", old.Endpoint)
 	require.NoError(err)
-	assert.Equal(providerSetupSecretCanary, credential.Value())
+	assert.Equal(providerSetupSecretCanary, credential)
 	finalConfig, err := config.Load(path, "")
 	require.NoError(err)
 	_, exists := finalConfig.People.Sweep.Providers["old"]
@@ -2036,7 +2028,6 @@ func TestPersonProviderRemoveUsesOneFreshConfigSnapshotForAllSideEffects(t *test
 func TestPersonProviderRemoveConfigConflictHasNoConsentOrCredentialSideEffects(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	initial, err := config.ReadConfigFile(path)
 	require.NoError(err)
@@ -2051,9 +2042,8 @@ func TestPersonProviderRemoveConfigConflictHasNoConsentOrCredentialSideEffects(t
 	require.NoError(err)
 	current, err := config.LoadConfigFile(withOld, "")
 	require.NoError(err)
-	credentialStore := peoplesweep.NewFileCredentialStore(current.TokensDir())
-	require.NoError(credentialStore.Save("old", peoplesweep.NewCredential(
-		peoplesweep.AuthBearer, providerSetupSecretCanary)))
+	credentialStore := peoplesweep.NewStoredCredentials(current.TokensDir())
+	savePeopleCredentialForTest(t, credentialStore, "old", old.Endpoint, providerSetupSecretCanary)
 	selected := current.People.Sweep
 	selected.Enabled = true
 	selected.Provider = peoplesweep.ProviderSelection{Name: "old"}
@@ -2091,9 +2081,9 @@ func TestPersonProviderRemoveConfigConflictHasNoConsentOrCredentialSideEffects(t
 	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
 	require.NoError(err)
 	assert.True(active)
-	credential, err := credentialStore.Load("old")
+	credential, err := credentialStore.Load("old", old.Endpoint)
 	require.NoError(err)
-	assert.Equal(providerSetupSecretCanary, credential.Value())
+	assert.Equal(providerSetupSecretCanary, credential)
 	finalConfig, err := config.Load(path, "")
 	require.NoError(err)
 	assert.Equal("conflict-old-model", finalConfig.People.Sweep.Providers["old"].Model)
@@ -2106,13 +2096,11 @@ func TestPersonProviderRemoveConfigConflictHasNoConsentOrCredentialSideEffects(t
 func TestPersonProviderAddRollsBackExactConfigAndNewCredential(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	before, err := os.ReadFile(path)
 	require.NoError(err)
-	credentialStore := peoplesweep.NewFileCredentialStore(loaded.TokensDir())
-	require.NoError(credentialStore.Save("sibling", peoplesweep.NewCredential(
-		peoplesweep.AuthBearer, "sibling-secret")))
+	credentialStore := peoplesweep.NewStoredCredentials(loaded.TokensDir())
+	savePeopleCredentialForTest(t, credentialStore, "sibling", "https://sibling.example.test/v1", "sibling-secret")
 	checker := &fixedPersonProviderChecker{err: errors.New("synthetic check failed")}
 	deps := providerSetupCommandDeps(t, path, loaded, checker)
 
@@ -2127,31 +2115,32 @@ func TestPersonProviderAddRollsBackExactConfigAndNewCredential(t *testing.T) {
 	after, err := os.ReadFile(path)
 	require.NoError(err)
 	assert.Equal(before, after)
-	_, err = credentialStore.Load("will-rollback")
+	_, err = credentialStore.Load("will-rollback", "https://rollback.example.test/v1")
 	require.ErrorIs(err, peoplesweep.ErrCredentialNotFound)
-	sibling, err := credentialStore.Load("sibling")
+	sibling, err := credentialStore.Load("sibling", "https://sibling.example.test/v1")
 	require.NoError(err)
-	assert.Equal("sibling-secret", sibling.Value())
-	info, err := os.Stat(path)
-	require.NoError(err)
-	assert.Equal(fs.FileMode(0o640), info.Mode().Perm())
-}
-
-type replacingSaveNewCredentialStore struct {
-	*peoplesweep.FileCredentialStore
-
-	afterSaveNew func()
-}
-
-func (s *replacingSaveNewCredentialStore) SaveNew(
-	profileName string,
-	credential peoplesweep.Credential,
-) (peoplesweep.CredentialCleanupGuard, bool, error) {
-	guard, created, err := s.FileCredentialStore.SaveNew(profileName, credential)
-	if err == nil && created && s.afterSaveNew != nil {
-		s.afterSaveNew()
+	assert.Equal("sibling-secret", sibling)
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		require.NoError(err)
+		assert.Equal(fs.FileMode(0o640), info.Mode().Perm())
 	}
-	return guard, created, err
+}
+
+type replacingSaveCredentialStore struct {
+	peoplesweep.StoredCredentials
+
+	afterSave func()
+}
+
+func (s *replacingSaveCredentialStore) SaveIfRevision(
+	profileName, endpoint, value, expected string,
+) (string, error) {
+	revision, err := s.StoredCredentials.SaveIfRevision(profileName, endpoint, value, expected)
+	if err == nil && s.afterSave != nil {
+		s.afterSave()
+	}
+	return revision, err
 }
 
 type callbackPersonProviderChecker func(context.Context) (peoplesweep.StructuredResponse, error)
@@ -2162,55 +2151,26 @@ func (check callbackPersonProviderChecker) Check(
 	return check(ctx)
 }
 
+// replaceNewPersonProviderCredential simulates another writer replacing the
+// key the add command just created.
 func replaceNewPersonProviderCredential(
-	t *testing.T,
-	store *peoplesweep.FileCredentialStore,
-	tokensDir, profileName string,
-) (string, string, []byte, []byte) {
-	t.Helper()
-	credentialPath := filepath.Join(tokensDir, "people-providers", profileName+".json")
-	retainedPath := credentialPath + ".retained"
-	require.NoError(t, os.Rename(credentialPath, retainedPath))
-	require.NoError(t, store.Save(profileName, peoplesweep.NewCredential(
-		peoplesweep.AuthBearer, providerSetupSecretCanary+"-replacement",
-	)))
-	original, err := os.ReadFile(retainedPath)
-	require.NoError(t, err)
-	replacement, err := os.ReadFile(credentialPath)
-	require.NoError(t, err)
-	return retainedPath, credentialPath, original, replacement
-}
-
-func assertNewPersonProviderCredentialReplacementUntouched(
-	t *testing.T,
-	retainedPath, credentialPath string,
-	wantOriginal, wantReplacement []byte,
+	t *testing.T, store peoplesweep.StoredCredentials, profileName, endpoint string,
 ) {
 	t.Helper()
-	gotOriginal, err := os.ReadFile(retainedPath)
-	require.NoError(t, err)
-	gotReplacement, err := os.ReadFile(credentialPath)
-	require.NoError(t, err)
-	assert.Equal(t, wantOriginal, gotOriginal)
-	assert.Equal(t, wantReplacement, gotReplacement)
+	savePeopleCredentialForTest(t, store, profileName, endpoint, providerSetupSecretCanary+"-replacement")
 }
 
 func TestPersonProviderAddConfigFailureRejectsReplacementCredentialCleanup(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	before, err := os.ReadFile(path)
 	require.NoError(err)
 	st := testutil.NewSQLiteTestStore(t)
-	baseStore := peoplesweep.NewFileCredentialStore(loaded.TokensDir())
-	var retainedPath, credentialPath string
-	var original, replacement []byte
-	credentialStore := &replacingSaveNewCredentialStore{FileCredentialStore: baseStore}
-	credentialStore.afterSaveNew = func() {
-		retainedPath, credentialPath, original, replacement = replaceNewPersonProviderCredential(
-			t, baseStore, loaded.TokensDir(), "config-race",
-		)
+	baseStore := peoplesweep.NewStoredCredentials(loaded.TokensDir())
+	credentialStore := &replacingSaveCredentialStore{StoredCredentials: baseStore}
+	credentialStore.afterSave = func() {
+		replaceNewPersonProviderCredential(t, baseStore, "config-race", "https://config-race.example.test/v1")
 	}
 	deps := providerSetupCommandDeps(t, path, loaded, &fixedPersonProviderChecker{})
 	deps.setup.credentials = credentialStore
@@ -2231,33 +2191,25 @@ func TestPersonProviderAddConfigFailureRejectsReplacementCredentialCleanup(t *te
 	after, readErr := os.ReadFile(path)
 	require.NoError(readErr)
 	assert.Equal(before, after)
-	assertNewPersonProviderCredentialReplacementUntouched(
-		t, retainedPath, credentialPath, original, replacement,
-	)
-	credential, loadErr := baseStore.Load("config-race")
+	credential, loadErr := baseStore.Load("config-race", "https://config-race.example.test/v1")
 	require.NoError(loadErr)
-	assert.Equal(providerSetupSecretCanary+"-replacement", credential.Value())
+	assert.Equal(providerSetupSecretCanary+"-replacement", credential)
 	var consentCount int
 	require.NoError(st.DB().QueryRowContext(t.Context(),
-		`SELECT COUNT(*) FROM person_inference_consents`).Scan(&consentCount))
+		`SELECT COUNT(*) FROM provider_consents WHERE purpose = 'people_inference'`).Scan(&consentCount))
 	assert.Zero(consentCount)
 }
 
 func TestPersonProviderAddFinalCheckFailureRejectsReplacementCredentialCleanup(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	before, err := os.ReadFile(path)
 	require.NoError(err)
 	st := testutil.NewSQLiteTestStore(t)
-	credentialStore := peoplesweep.NewFileCredentialStore(loaded.TokensDir())
-	var retainedPath, credentialPath string
-	var original, replacement []byte
+	credentialStore := peoplesweep.NewStoredCredentials(loaded.TokensDir())
 	checker := callbackPersonProviderChecker(func(context.Context) (peoplesweep.StructuredResponse, error) {
-		retainedPath, credentialPath, original, replacement = replaceNewPersonProviderCredential(
-			t, credentialStore, loaded.TokensDir(), "check-race",
-		)
+		replaceNewPersonProviderCredential(t, credentialStore, "check-race", "https://check-race.example.test/v1")
 		return peoplesweep.StructuredResponse{}, errors.New("synthetic final check failed")
 	})
 	deps := providerSetupCommandDeps(t, path, loaded, checker)
@@ -2276,22 +2228,18 @@ func TestPersonProviderAddFinalCheckFailureRejectsReplacementCredentialCleanup(t
 	after, readErr := os.ReadFile(path)
 	require.NoError(readErr)
 	assert.Equal(before, after)
-	assertNewPersonProviderCredentialReplacementUntouched(
-		t, retainedPath, credentialPath, original, replacement,
-	)
-	credential, loadErr := credentialStore.Load("check-race")
+	credential, loadErr := credentialStore.Load("check-race", "https://check-race.example.test/v1")
 	require.NoError(loadErr)
-	assert.Equal(providerSetupSecretCanary+"-replacement", credential.Value())
+	assert.Equal(providerSetupSecretCanary+"-replacement", credential)
 	var consentCount int
 	require.NoError(st.DB().QueryRowContext(t.Context(),
-		`SELECT COUNT(*) FROM person_inference_consents`).Scan(&consentCount))
+		`SELECT COUNT(*) FROM provider_consents WHERE purpose = 'people_inference'`).Scan(&consentCount))
 	assert.Zero(consentCount)
 }
 
 func TestPersonProviderAddConfigConflictKeepsConcurrentEditAndDeletesOnlyNewCredential(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
 		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
@@ -2327,14 +2275,13 @@ func TestPersonProviderAddConfigConflictKeepsConcurrentEditAndDeletesOnlyNewCred
 	assert.NotContains(string(content), "providers.conflicted")
 	assert.NotContains(string(content), providerSetupSecretCanary)
 	assert.NotContains(output, providerSetupSecretCanary)
-	_, err = deps.setup.credentials.Load("conflicted")
+	_, err = deps.setup.credentials.Load("conflicted", "https://conflict.example.test/v1")
 	require.ErrorIs(err, peoplesweep.ErrCredentialNotFound)
 }
 
 func TestPersonProviderAddRollsBackExactUncertainPublication(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	beforeBytes, err := os.ReadFile(path)
 	require.NoError(err)
@@ -2362,14 +2309,13 @@ func TestPersonProviderAddRollsBackExactUncertainPublication(t *testing.T) {
 	afterBytes, err := os.ReadFile(path)
 	require.NoError(err)
 	assert.Equal(beforeBytes, afterBytes)
-	_, err = deps.setup.credentials.Load("uncertain")
+	_, err = deps.setup.credentials.Load("uncertain", "https://uncertain.example.test/v1")
 	require.ErrorIs(err, peoplesweep.ErrCredentialNotFound)
 }
 
 func TestPersonProviderAddFailedCheckRestoresOriginallyMissingConfig(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	startup := config.NewDefaultConfig()
@@ -2393,7 +2339,7 @@ func TestPersonProviderAddFailedCheckRestoresOriginallyMissingConfig(t *testing.
 				DriverVersion: peoplesweep.OpenAIChatProviderVersion,
 			}, nil
 		},
-		credentials: peoplesweep.NewFileCredentialStore(filepath.Join(dir, "tokens")),
+		credentials: peoplesweep.NewStoredCredentials(filepath.Join(dir, "tokens")),
 	}
 
 	_, err := executePersonProviderCommandWithInput(t, deps,
@@ -2406,7 +2352,7 @@ func TestPersonProviderAddFailedCheckRestoresOriginallyMissingConfig(t *testing.
 	require.ErrorContains(err, "synthetic final check failed")
 	_, statErr := os.Stat(path)
 	require.ErrorIs(statErr, fs.ErrNotExist)
-	_, credentialErr := deps.setup.credentials.Load("first")
+	_, credentialErr := deps.setup.credentials.Load("first", "https://first.example.test/v1")
 	require.ErrorIs(credentialErr, peoplesweep.ErrCredentialNotFound)
 	recoveries, globErr := filepath.Glob(filepath.Join(dir, ".config-retired-*"))
 	require.NoError(globErr)
@@ -2417,7 +2363,6 @@ func TestPersonProviderAddFailedCheckRestoresOriginallyMissingConfig(t *testing.
 }
 
 func TestPersonProviderConcurrentExactAddNeverReadsSecretOrOverwrites(t *testing.T) {
-	requireStoredCredentialStorePlatform(t)
 	tests := []struct {
 		name       string
 		auth       string
@@ -2491,7 +2436,7 @@ func TestPersonProviderConcurrentExactAddNeverReadsSecretOrOverwrites(t *testing
 			current, loadErr := config.Load(path, "")
 			require.NoError(loadErr)
 			assert.Equal("operator-raced-model", current.People.Sweep.Providers["raced"].Model)
-			_, credentialErr := deps.setup.credentials.Load("raced")
+			_, credentialErr := deps.setup.credentials.Load("raced", test.endpoint)
 			require.ErrorIs(credentialErr, peoplesweep.ErrCredentialNotFound)
 		})
 	}
@@ -2500,15 +2445,13 @@ func TestPersonProviderConcurrentExactAddNeverReadsSecretOrOverwrites(t *testing
 func TestPersonProviderAddRefusesToOverwriteExactCredential(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	requireStoredCredentialStorePlatform(t)
 	path, loaded := providerSetupConfigFile(t)
 	checker := &fixedPersonProviderChecker{response: peoplesweep.StructuredResponse{
 		Output: []byte(`{"ok":true}`), ProviderVersion: peoplesweep.OpenAIChatProviderVersion,
 		ModelVersion: "occupied-model-v1",
 	}}
 	deps := providerSetupCommandDeps(t, path, loaded, checker)
-	require.NoError(deps.setup.credentials.Save("occupied", peoplesweep.NewCredential(
-		peoplesweep.AuthBearer, "preexisting-credential")))
+	savePeopleCredentialForTest(t, deps.setup.credentials, "occupied", "https://occupied.example.test/v1", "preexisting-credential")
 
 	output, err := executePersonProviderCommandWithInput(t, deps,
 		bytes.NewBufferString(providerSetupSecretCanary+"\n"),
@@ -2519,8 +2462,8 @@ func TestPersonProviderAddRefusesToOverwriteExactCredential(t *testing.T) {
 		"--source-since", "2025-01-01", "--yes")
 	require.ErrorContains(err, "already exists")
 	assert.NotContains(err.Error(), providerSetupSecretCanary)
-	credential, err := deps.setup.credentials.Load("occupied")
+	credential, err := deps.setup.credentials.Load("occupied", "https://occupied.example.test/v1")
 	require.NoError(err)
-	assert.Equal("preexisting-credential", credential.Value())
+	assert.Equal("preexisting-credential", credential)
 	assert.NotContains(output, providerSetupSecretCanary)
 }

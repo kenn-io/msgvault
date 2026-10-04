@@ -553,20 +553,21 @@ CREATE TABLE IF NOT EXISTS person_inference_checks (
     model_version        TEXT NOT NULL
 );
 
--- Revocation stamps the active grant instead of deleting it. Regranting the
--- same exact profile creates a new audit row.
-CREATE TABLE IF NOT EXISTS person_inference_consents (
-    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-    profile_fingerprint  TEXT NOT NULL REFERENCES person_inference_profiles(fingerprint),
-    granted_by           TEXT NOT NULL,
-    granted_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    revoked_by           TEXT,
-    revoked_at           DATETIME,
+-- One audit row per grant. Revocation stamps the row; regranting adds a row.
+-- IDs count up within each purpose and are shown to users.
+CREATE TABLE IF NOT EXISTS provider_consents (
+    purpose      TEXT NOT NULL,
+    id           INTEGER NOT NULL,
+    fingerprint  TEXT NOT NULL,
+    granted_by   TEXT NOT NULL,
+    granted_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revoked_by   TEXT,
+    revoked_at   DATETIME,
+    PRIMARY KEY (purpose, id),
     CHECK ((revoked_by IS NULL) = (revoked_at IS NULL))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_person_inference_consents_active
-    ON person_inference_consents(profile_fingerprint)
-    WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_consents_active
+    ON provider_consents(purpose, fingerprint) WHERE revoked_at IS NULL;
 
 -- External person enrichment is a distinct egress purpose. Each immutable
 -- runtime policy requires its own exact grant; inference consent cannot
@@ -581,19 +582,6 @@ CREATE TABLE IF NOT EXISTS person_enrichment_profiles (
     policy_json       JSON NOT NULL,
     created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE TABLE IF NOT EXISTS person_enrichment_consents (
-    id                  INTEGER PRIMARY KEY,
-    profile_fingerprint TEXT NOT NULL REFERENCES person_enrichment_profiles(fingerprint),
-    granted_by          TEXT NOT NULL,
-    granted_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    revoked_by          TEXT,
-    revoked_at          DATETIME,
-    CHECK ((revoked_by IS NULL) = (revoked_at IS NULL))
-);
-CREATE UNIQUE INDEX IF NOT EXISTS person_enrichment_consents_active
-    ON person_enrichment_consents(profile_fingerprint)
-    WHERE revoked_at IS NULL;
 
 -- Jev identity evidence requires a separate exact disclosure grant. Revoked
 -- rows remain for audit; another grant for the same disclosure is allowed.
@@ -833,19 +821,6 @@ CREATE TABLE IF NOT EXISTS person_semantic_embedding_profiles (
     policy_json             JSON NOT NULL,
     created_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE TABLE IF NOT EXISTS person_semantic_embedding_consents (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    profile_fingerprint TEXT NOT NULL REFERENCES person_semantic_embedding_profiles(fingerprint),
-    granted_by          TEXT NOT NULL,
-    granted_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    revoked_by          TEXT,
-    revoked_at          DATETIME,
-    CHECK ((revoked_by IS NULL) = (revoked_at IS NULL))
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_person_semantic_embedding_consents_active
-    ON person_semantic_embedding_consents(profile_fingerprint)
-    WHERE revoked_at IS NULL;
 
 -- Immutable evidence and generation envelopes for automatic person facts.
 -- Rows remain append-only for the lifetime of their owning person.

@@ -225,7 +225,7 @@ func defaultPersonProviderCommandDeps(contexts ...context.Context) personProvide
 				if currentCfg == nil {
 					return nil, errors.New("configuration is unavailable")
 				}
-				return peoplesweep.NewFileCredentialStore(currentCfg.TokensDir()), nil
+				return peoplesweep.NewStoredCredentials(currentCfg.TokensDir()), nil
 			}
 			deps.remoteConfigured = func() bool { return IsRemoteMode(state) }
 			deps.readConfigFile = func() (config.ConfigFile, error) {
@@ -904,7 +904,7 @@ func runPersonProviderRemove(
 	deps personProviderCommandDeps,
 	name string,
 	jsonOutput bool,
-) (retErr error) {
+) error {
 	if err := rejectRemotePersonProviderMutation(deps, "remove"); err != nil {
 		return err
 	}
@@ -979,22 +979,20 @@ func runPersonProviderRemove(
 		return err
 	}
 	var credentials peoplesweep.CredentialStore
-	var deletionGuard peoplesweep.CredentialDeleteGuard
+	var credentialRevision string
 	if provider.Credential == peoplesweep.CredentialStored {
 		credentials, err = deps.setup.resolveCredentialStore()
 		if err != nil {
 			return err
 		}
-		deletionGuard, err = credentials.PreflightDelete(name)
+		var present bool
+		credentialRevision, present, err = credentials.Revision(name, provider.Endpoint)
+		if err == nil && !present {
+			err = fmt.Errorf("%w for profile %q", peoplesweep.ErrCredentialNotFound, name)
+		}
 		if err != nil {
 			return fmt.Errorf("preflight stored people provider credential deletion: %w", err)
 		}
-		defer func() {
-			if closeErr := deletionGuard.Close(); closeErr != nil {
-				retErr = errors.Join(retErr,
-					fmt.Errorf("close stored people provider credential deletion guard: %w", closeErr))
-			}
-		}()
 	}
 	after, err := deps.editConfigTables(before.ETag, edits)
 	if err != nil {
@@ -1021,7 +1019,7 @@ func runPersonProviderRemove(
 		return rollback(err)
 	}
 	if provider.Credential == peoplesweep.CredentialStored {
-		if err := credentials.Delete(name, deletionGuard); err != nil {
+		if _, err := credentials.DeleteIfRevision(name, provider.Endpoint, credentialRevision); err != nil {
 			restoreErr := restoreRemovedPersonProviderConfig(deps, after, before)
 			return errors.Join(err, restoreErr,
 				errors.New("exact people provider consent remains revoked"))

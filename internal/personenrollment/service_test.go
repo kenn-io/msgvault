@@ -15,11 +15,16 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func saveTestCredential(t *testing.T, credentials peoplesweep.StoredCredentials, endpoint, value string) {
+	t.Helper()
+	revision, _, err := credentials.Revision("remote", endpoint)
+	require.NoError(t, err)
+	_, err = credentials.SaveIfRevision("remote", endpoint, value, revision)
+	require.NoError(t, err)
+}
+
 func TestServiceRemoveStoredProfileCredentials(t *testing.T) {
-	if !peoplesweep.StoredCredentialsSupported() {
-		t.Skip("stored credentials require Unix permissions")
-	}
-	for _, state := range []string{"never saved", "already cleared", "missing lock marker"} {
+	for _, state := range []string{"never saved", "saved", "already cleared", "unreadable store"} {
 		t.Run(state, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -38,21 +43,22 @@ func TestServiceRemoveStoredProfileCredentials(t *testing.T) {
 			provider.SourceSince = "2025-01-01"
 			created, err := service.CreateProfile(before.ETag, "remote", provider)
 			require.NoError(err)
-			credentials := peoplesweep.NewFileCredentialStore(configured.TokensDir())
-			if state != "never saved" {
-				require.NoError(os.MkdirAll(configured.TokensDir(), 0o700))
-				require.NoError(credentials.Save("remote", peoplesweep.NewCredential(peoplesweep.AuthBearer, "synthetic-key")))
+			credentials := peoplesweep.NewStoredCredentials(configured.TokensDir())
+			switch state {
+			case "saved", "already cleared":
+				saveTestCredential(t, credentials, provider.Endpoint, "synthetic-key")
 				if state == "already cleared" {
-					guard, err := credentials.PreflightDelete("remote")
+					revision, _, err := credentials.Revision("remote", provider.Endpoint)
 					require.NoError(err)
-					require.NoError(credentials.Delete("remote", guard))
-					require.NoError(guard.Close())
-				} else {
-					require.NoError(os.Remove(filepath.Join(configured.TokensDir(), "people-providers", ".credentials.lock")))
+					_, err = credentials.DeleteIfRevision("remote", provider.Endpoint, revision)
+					require.NoError(err)
 				}
+			case "unreadable store":
+				require.NoError(os.MkdirAll(configured.TokensDir(), 0o700))
+				require.NoError(os.WriteFile(filepath.Join(configured.TokensDir(), "provider-credentials.json"), []byte("{"), 0o600))
 			}
 			_, err = service.RemoveProfile(t.Context(), created.ETag, "remote", "", "test", credentials)
-			if state == "missing lock marker" {
+			if state == "unreadable store" {
 				require.Error(err)
 				after, err := config.ReadConfigFile(configured.ConfigFilePath())
 				require.NoError(err)
@@ -63,6 +69,9 @@ func TestServiceRemoveStoredProfileCredentials(t *testing.T) {
 			after, err := config.Load(configured.ConfigFilePath(), "")
 			require.NoError(err)
 			assert.NotContains(after.People.Sweep.Providers, "remote")
+			_, present, err := credentials.Revision("remote", provider.Endpoint)
+			require.NoError(err)
+			assert.False(present)
 		})
 	}
 }
@@ -70,9 +79,6 @@ func TestServiceRemoveStoredProfileCredentials(t *testing.T) {
 func TestServiceRemoveAndRecreateRequiresFreshCheck(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	if !peoplesweep.StoredCredentialsSupported() {
-		t.Skip("stored credentials require Unix permissions")
-	}
 	configured := config.NewDefaultConfig()
 	configured.HomeDir = t.TempDir()
 	configured.Data.DataDir = configured.HomeDir
@@ -88,9 +94,8 @@ func TestServiceRemoveAndRecreateRequiresFreshCheck(t *testing.T) {
 	provider.SourceSince = "2025-01-01"
 	created, err := service.CreateProfile(before.ETag, "remote", provider)
 	require.NoError(err)
-	credentials := peoplesweep.NewFileCredentialStore(configured.TokensDir())
-	require.NoError(os.MkdirAll(configured.TokensDir(), 0o700))
-	require.NoError(credentials.Save("remote", peoplesweep.NewCredential(peoplesweep.AuthBearer, "synthetic-old-key")))
+	credentials := peoplesweep.NewStoredCredentials(configured.TokensDir())
+	saveTestCredential(t, credentials, provider.Endpoint, "synthetic-old-key")
 	loaded, err := config.Load(configured.ConfigFilePath(), "")
 	require.NoError(err)
 	selected := loaded.People.Sweep
@@ -111,7 +116,7 @@ func TestServiceRemoveAndRecreateRequiresFreshCheck(t *testing.T) {
 	recreated, err := service.CreateProfile(removed.ETag, "remote", provider)
 	require.NoError(err)
 	assert.Equal(created.Fingerprint, recreated.Fingerprint)
-	require.NoError(credentials.Save("remote", peoplesweep.NewCredential(peoplesweep.AuthBearer, "synthetic-new-key")))
+	saveTestCredential(t, credentials, provider.Endpoint, "synthetic-new-key")
 	checked, err := st.HasSuccessfulPersonInferenceCheck(t.Context(), recreated.Fingerprint)
 	require.NoError(err)
 	assert.False(checked, "recreation must not reuse the removed credential's check")

@@ -175,11 +175,11 @@ func (s *Service) Disable(
 }
 
 // RemoveProfile revokes saved and running authority and discards their checks
-// before removing the saved policy. Stored credentials are pinned and
-// preflighted before changing the config, then deleted after the edit succeeds.
+// before removing the saved policy. The stored key observed before the config
+// edit is deleted after the edit succeeds, and only if it is unchanged.
 func (s *Service) RemoveProfile(
 	ctx context.Context, ifMatch, name, runningFingerprint, actor string, credentials peoplesweep.CredentialStore,
-) (removed Selection, retErr error) {
+) (Selection, error) {
 	if err := peoplesweep.ValidateProviderProfileName(name); err != nil {
 		return Selection{}, err
 	}
@@ -222,17 +222,15 @@ func (s *Service) RemoveProfile(
 	if err := config.ValidateConfigTableEdits(snapshot, edits); err != nil {
 		return Selection{}, err
 	}
-	var guard peoplesweep.CredentialDeleteGuard
+	var revision string
+	present := false
 	if provider.Credential == peoplesweep.CredentialStored {
 		if credentials == nil {
 			return Selection{}, errors.New("people provider credential store is unavailable")
 		}
-		guard, err = credentials.PreflightDelete(name)
-		if err != nil && !errors.Is(err, peoplesweep.ErrCredentialNotFound) {
+		revision, present, err = credentials.Revision(name, provider.Endpoint)
+		if err != nil {
 			return Selection{}, err
-		}
-		if guard != nil {
-			defer func() { retErr = errors.Join(retErr, guard.Close()) }()
 		}
 	}
 	revocations, ok := s.store.(RevocationStore)
@@ -255,8 +253,8 @@ func (s *Service) RemoveProfile(
 	if err != nil {
 		return Selection{}, err
 	}
-	if guard != nil {
-		if err := credentials.Delete(name, guard); err != nil {
+	if present {
+		if _, err := credentials.DeleteIfRevision(name, provider.Endpoint, revision); err != nil {
 			_, restoreErr := config.RestoreConfigFile(s.configPath, written, snapshot)
 			return Selection{}, errors.Join(err, restoreErr)
 		}

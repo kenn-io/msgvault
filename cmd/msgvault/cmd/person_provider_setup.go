@@ -33,14 +33,6 @@ type personProviderSetupDeps struct {
 	readMasked          func(*os.File, int) ([]byte, error)
 }
 
-type personProviderCreateCredentialStore interface {
-	SaveNew(
-		profileName string,
-		credential peoplesweep.Credential,
-	) (peoplesweep.CredentialCleanupGuard, bool, error)
-	CleanupNew(profileName string, guard peoplesweep.CredentialCleanupGuard) error
-}
-
 type personProviderAddOptions struct {
 	custom              bool
 	presetID            string
@@ -253,10 +245,6 @@ func runPersonProviderAdd(
 	if err != nil {
 		return err
 	}
-	if candidate.Credential == peoplesweep.CredentialStored && !peoplesweep.StoredCredentialsSupported() {
-		return errors.New(
-			"stored people provider credentials are unsupported on this platform; pass --credential-env NAME to reference an environment variable instead")
-	}
 	configured := deps.config()
 	if _, exists := configured.Providers[name]; exists {
 		return fmt.Errorf("people provider profile %q already exists", name)
@@ -328,28 +316,29 @@ func runPersonProviderAdd(
 		return err
 	}
 
-	var credentialCleanup peoplesweep.CredentialCleanupGuard
+	var createdRevision string
 	if stored {
-		createStore, ok := credentialStore.(personProviderCreateCredentialStore)
-		if !ok {
-			return errors.New("people provider credential store does not support create-only publication")
-		}
-		var createdCredential bool
-		credentialCleanup, createdCredential, err = createStore.SaveNew(name, credential)
+		revision, present, err := credentialStore.Revision(name, candidate.Endpoint)
 		if err != nil {
 			return err
 		}
-		if !createdCredential {
+		if !present {
+			createdRevision, err = credentialStore.SaveIfRevision(name, candidate.Endpoint, credential.Value(), revision)
+		}
+		if present || errors.Is(err, peoplesweep.ErrCredentialRevisionConflict) {
 			return fmt.Errorf("people provider credential %q already exists", name)
+		}
+		if err != nil {
+			return err
 		}
 	}
 
 	after, err := deps.editConfigTables(before.ETag, plannedEdits)
 	if err != nil {
 		if errors.Is(err, config.ErrConfigChanged) {
-			return rollbackUncertainPersonProviderAdd(err, deps, before, after, credentialStore, name, credentialCleanup)
+			return rollbackUncertainPersonProviderAdd(err, deps, before, after, credentialStore, name, candidate.Endpoint, createdRevision)
 		}
-		return rollbackNewPersonProviderCredential(err, credentialStore, name, credentialCleanup)
+		return rollbackNewPersonProviderCredential(err, credentialStore, name, candidate.Endpoint, createdRevision)
 	}
 	checkOutput := command.OutOrStdout()
 	if options.jsonOutput {
@@ -362,13 +351,8 @@ func runPersonProviderAdd(
 		err = executeSavedPersonProviderCheck(command, checkedDeps, name, "", checkOutput)
 	}
 	if err != nil {
-		rollbackErr := rollbackPersonProviderAdd(deps, before, after, credentialStore, name, credentialCleanup)
+		rollbackErr := rollbackPersonProviderAdd(deps, before, after, credentialStore, name, candidate.Endpoint, createdRevision)
 		return errors.Join(err, rollbackErr)
-	}
-	if credentialCleanup != nil {
-		if err := credentialCleanup.Close(); err != nil {
-			return fmt.Errorf("close newly created people provider credential cleanup guard: %w", err)
-		}
 	}
 	if options.jsonOutput {
 		selected, err := selectPersonProviderConfig(checkedConfig, name)
@@ -1119,13 +1103,12 @@ func proxySavedPersonProviderOperationWithFlag(
 func rollbackNewPersonProviderCredential(
 	cause error,
 	credentials peoplesweep.CredentialStore,
-	name string,
-	cleanup peoplesweep.CredentialCleanupGuard,
+	name, endpoint, createdRevision string,
 ) error {
-	if cleanup == nil || credentials == nil {
+	if createdRevision == "" || credentials == nil {
 		return cause
 	}
-	if err := cleanupNewPersonProviderCredential(credentials, name, cleanup); err != nil {
+	if err := cleanupNewPersonProviderCredential(credentials, name, endpoint, createdRevision); err != nil {
 		return errors.Join(cause, err)
 	}
 	return cause
@@ -1136,48 +1119,36 @@ func rollbackUncertainPersonProviderAdd(
 	deps personProviderCommandDeps,
 	before, expected config.ConfigFile,
 	credentials peoplesweep.CredentialStore,
-	name string,
-	cleanup peoplesweep.CredentialCleanupGuard,
+	name, endpoint, createdRevision string,
 ) error {
 	return errors.Join(cause,
-		rollbackPersonProviderAdd(deps, before, expected, credentials, name, cleanup))
+		rollbackPersonProviderAdd(deps, before, expected, credentials, name, endpoint, createdRevision))
 }
 
 func rollbackPersonProviderAdd(
 	deps personProviderCommandDeps,
 	before, after config.ConfigFile,
 	credentials peoplesweep.CredentialStore,
-	name string,
-	cleanup peoplesweep.CredentialCleanupGuard,
+	name, endpoint, createdRevision string,
 ) error {
 	var rollbackErr error
 	if _, err := deps.restoreConfigFile(after, before); err != nil {
 		rollbackErr = fmt.Errorf("restore people provider config: %w", err)
 	}
-	if cleanup != nil && credentials != nil {
-		if err := cleanupNewPersonProviderCredential(credentials, name, cleanup); err != nil {
+	if createdRevision != "" && credentials != nil {
+		if err := cleanupNewPersonProviderCredential(credentials, name, endpoint, createdRevision); err != nil {
 			rollbackErr = errors.Join(rollbackErr, err)
 		}
 	}
 	return rollbackErr
 }
 
+// cleanupNewPersonProviderCredential deletes only the key this command
+// created, never one another writer replaced it with.
 func cleanupNewPersonProviderCredential(
-	credentials peoplesweep.CredentialStore,
-	name string,
-	guard peoplesweep.CredentialCleanupGuard,
-) (retErr error) {
-	defer func() {
-		if closeErr := guard.Close(); closeErr != nil {
-			retErr = errors.Join(retErr,
-				fmt.Errorf("close new people provider credential cleanup guard: %w", closeErr))
-		}
-	}()
-	createStore, ok := credentials.(personProviderCreateCredentialStore)
-	if !ok {
-		return errors.New("new people provider credential cleanup conflict: store does not support bound cleanup")
-	}
-	if err := createStore.CleanupNew(name, guard); err != nil {
+	credentials peoplesweep.CredentialStore, name, endpoint, createdRevision string,
+) error {
+	if _, err := credentials.DeleteIfRevision(name, endpoint, createdRevision); err != nil {
 		return fmt.Errorf("new people provider credential cleanup conflict: %w", err)
 	}
 	return nil

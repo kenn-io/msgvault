@@ -946,6 +946,12 @@ func TestPersonEnrichmentTriggerConsentGrantAndRevocationCancelPendingWork(t *te
 	stored, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), attempt.ID)
 	require.NoError(err)
 	assert.Equal("terminal", stored.State)
+
+	regrant := f.grant(t, 0)
+	assert.Greater(regrant.ID, consent.ID)
+	rows = f.work(t, 0)
+	require.Len(rows, 1)
+	assert.Equal("consent:"+formatEnrichmentTriggerID(regrant.ID), rows[0].TriggerGeneration)
 }
 
 func TestPersonEnrichmentMergeAndSplitInvalidateProviderIdentities(t *testing.T) {

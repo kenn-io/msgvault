@@ -600,7 +600,7 @@ func peopleInferenceLane(cfg *config.Config, env setupEnvironment) laneStatus {
 		if err == nil && provider.Credential == peoplesweep.CredentialStored {
 			profile, credentialErr := sweep.Profile()
 			if credentialErr == nil {
-				resolver := peoplesweep.NewCredentialResolver(peoplesweep.NewFileCredentialStore(cfg.TokensDir()), env.lookupEnv)
+				resolver := peoplesweep.NewCredentialResolver(peoplesweep.NewStoredCredentials(cfg.TokensDir()), env.lookupEnv)
 				_, credentialErr = resolver.Resolve(name, profile)
 			}
 			if credentialErr != nil {

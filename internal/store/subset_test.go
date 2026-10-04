@@ -1346,9 +1346,9 @@ func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 		VALUES (?, 'openai_compatible', 'https://api.example.test/v1',
 		        'gpt-test', 'TEST_KEY', 'zero_retention', 'no_training',
 		        '["conversation_text"]', '2025-01-01', '{}');
-		INSERT INTO person_inference_consents
-			(profile_fingerprint, granted_by)
-		VALUES (?, 'cli');
+		INSERT INTO provider_consents
+			(purpose, id, fingerprint, granted_by)
+		VALUES ('people_inference', 1, ?, 'cli');
 		INSERT INTO person_semantic_embedding_profiles
 			(fingerprint, purpose, destination, api_format, model, api_key_env,
 			 retention_posture, training_posture, renderer_policy,
@@ -1357,9 +1357,9 @@ func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 		        'openai', 'synthetic-model', 'TEST_KEY', 'zero_data_retention',
 		        'no_training', 'person-semantic-v1', '["person_display_name"]',
 		        'all_durable_people', '{}');
-		INSERT INTO person_semantic_embedding_consents
-			(profile_fingerprint, granted_by)
-		VALUES (?, 'cli')`,
+		INSERT INTO provider_consents
+			(purpose, id, fingerprint, granted_by)
+		VALUES ('person_semantic_embedding', 1, ?, 'cli')`,
 		fingerprint, fingerprint, strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64),
 		strings.Repeat("e", 64), strings.Repeat("e", 64),
 		strings.Repeat("f", 64), strings.Repeat("f", 64),
@@ -1377,8 +1377,7 @@ func TestCopySubsetExcludesDocumentDerivativesAndHostedConsent(t *testing.T) {
 		"document_extraction_rebuilds", "document_extraction_rebuild_targets",
 		"document_extraction_heads", "document_units", "document_chunks", "document_chunk_spans",
 		"document_occurrences", "document_extraction_claims",
-		"person_inference_profiles", "person_inference_consents",
-		"person_semantic_embedding_profiles", "person_semantic_embedding_consents",
+		"person_inference_profiles", "person_semantic_embedding_profiles", "provider_consents",
 	} {
 		var count int
 		require.NoError(destination.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&count), table)
@@ -1410,8 +1409,8 @@ func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T
 			 endpoint, api_key_env, policy_json)
 		 VALUES (?, 'subset-provider', 'exa', 'https://provider.example.test',
 			 'https://provider.example.test/search', 'SUBSET_PROVIDER_KEY', '{}')`, []any{fingerprint}},
-		{`INSERT INTO person_enrichment_consents
-			(profile_fingerprint, granted_by) VALUES (?, 'subset-test')`, []any{fingerprint}},
+		{`INSERT INTO provider_consents
+			(purpose, id, fingerprint, granted_by) VALUES ('person_enrichment', 1, ?, 'subset-test')`, []any{fingerprint}},
 		{`INSERT INTO person_enrichment_suppressions
 			(provider_namespace, identifier_class, normalization_version, key_id,
 			 digest, reason, actor)
@@ -1485,7 +1484,7 @@ func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T
 
 	tables := []string{
 		"person_enrichment_profiles",
-		"person_enrichment_consents",
+		"provider_consents",
 		"person_enrichment_suppressions",
 		"person_enrichment_runs",
 		"person_enrichment_manual_run_targets",
