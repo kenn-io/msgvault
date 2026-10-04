@@ -11,6 +11,10 @@ All notable changes to msgvault, grouped by release.
 - Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` writes only new
   and changed messages instead of rewriting the whole archive, and picks up
   edits and senders that `LID.sqlite` resolves later.
+- `draft-compose --person-id` lists the email addresses the archive holds for
+  a person, so you can pick one for an ordinary `draft-compose --to`. Phone
+  numbers and chat IDs show as unsupported. See
+  [Draft to a person](cli-reference.md#draft-to-a-person).
 
 ## 0.21.0
 <small>2026-10-02</small>

@@ -36,6 +36,10 @@ func TestDraftForwardArgsRequireExplicitDestinationAndRecipient(t *testing.T) {
 		{"draft-forward", "42", "--to", "to@example.test"},
 		{"draft-forward", "42", "--source-id", "7"},
 		{"draft-forward", "42", "--source-id", "7", "--account", "account@example.test", "--to", "to@example.test"},
+		{"draft-forward", "42", "--source-id", "7", "--to", "to@example.test", "--person-id", "3"},
+		{"draft-forward", "42", "--source-id", "7", "--to", "to@example.test", "--person-id=3"},
+		{"draft-forward", "42", "--person-id=3"},
+		{"draft-forward", "42", "--person-id", "3"},
 	} {
 		_, err := parseDraftForwardArgs(args)
 		assertions.Error(err, args)

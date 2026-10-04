@@ -37,7 +37,8 @@ type draftForwardPreflightOutput struct {
 }
 
 // parseDraftForwardArgs takes one message ID plus draft-compose's flags,
-// except --subject, which the forward derives from the parent.
+// except --subject, which the forward derives from the parent, and --person-id,
+// which only lists addresses.
 func parseDraftForwardArgs(args []string) (draftForwardIntent, error) {
 	invalid := func(format string, args ...any) (draftForwardIntent, error) {
 		return draftForwardIntent{}, draftReplyError("invalid_args", fmt.Errorf(format, args...))
@@ -53,8 +54,8 @@ func parseDraftForwardArgs(args []string) (draftForwardIntent, error) {
 		switch {
 		case !isFlag:
 			positional = append(positional, args[i])
-		case name == "subject":
-			return invalid("unknown flag --subject")
+		case name == "subject", name == "person-id":
+			return invalid("unknown flag --%s", name)
 		default:
 			composeArgs = append(composeArgs, args[i])
 			switch name {

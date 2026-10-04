@@ -302,6 +302,26 @@ structured provider outcomes as `draft-reply`. It stores the Bcc envelope in
 the draft so the mail application can use it. It never sends the message or
 validates provider send-as rights.
 
+### Draft to a person
+
+`draft-compose --person-id <id>` lists the archived identities of a person's
+participants, optionally with `--json`, and creates no draft. Person IDs come
+from `msgvault person list`, `person directory`, or `person search`. Email
+addresses are `supported`; phone numbers and chat identifiers are
+`unsupported`. Curated contact points and postal addresses are not listed.
+Pick a supported address and pass it to an ordinary `draft-compose --to`.
+
+```bash
+msgvault draft-compose --person-id 7
+msgvault draft-compose --account you@example.com \
+  --to alice@example.com --subject 'Hi' --body 'Draft text'
+```
+
+`--person-id` accepts only `--json`. An unknown or merged-away person fails
+with `invalid_args`, and the list follows current person merges and splits.
+`--person-id` is owner-only: a delegated agent token gets `not_permitted`.
+Listing waits for a running operation like any other `draft-compose` call.
+
 ### Beeper chat drafts
 
 For a Beeper source, `draft-compose` leaves a text draft in the composer of an
