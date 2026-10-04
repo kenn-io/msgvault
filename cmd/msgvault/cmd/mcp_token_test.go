@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/fileutil"
@@ -68,6 +70,56 @@ func TestMCPTokenFailuresBeforeBackendConnection(t *testing.T) {
 			assert.Zero(t, calls.Load(), "invalid inbound credentials must fail before opening the backend")
 		})
 	}
+}
+
+func TestMCPLoopbackInterfaceReusesKeylessDaemon(t *testing.T) { //nolint:paralleltest // process environment and MCP flags
+	assert := assert.New(t)
+	require := require.New(t)
+	clearServerKeyEnvironment(t)
+	interfaces, err := net.Interfaces()
+	require.NoError(err)
+	var loopback string
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagLoopback != 0 && iface.Flags&net.FlagUp != 0 {
+			loopback = iface.Name
+			break
+		}
+	}
+	if loopback == "" {
+		t.Skip("no active loopback interface")
+	}
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[server]\nbind_addr = 'iface:"+loopback+"'\ndaemon_auto_start = false\ndaemon_auto_restart = 'never'\n"), 0o600))
+	cfg, err := config.Load(path, home)
+	require.NoError(err)
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	backend := httptest.NewServer(mux)
+	t.Cleanup(backend.Close)
+	rt := daemonRuntimeForHTTPServer(t, backend, daemonAPIKeyFingerprint(""))
+	_, err = daemonRuntimeStore(home).Write(rt.Record)
+	require.NoError(err)
+
+	setMCPTokenTestFlags(t, nil)
+	mcpHTTPAddr = "127.0.0.1:0"
+	mcpCmd.SetContext(withStoreResolverConfig(t, cfg))
+	_, key, err := prepareMCPHTTP(mcpCmd, cfg)
+	require.NoError(err)
+	assert.Empty(key, "a loopback interface must keep the existing keyless daemon usable")
+	_, err = os.Stat(cfg.ServerKeyFilePath())
+	require.ErrorIs(err, os.ErrNotExist)
+
+	// A new client must still discover and authenticate the same daemon.
+	fresh, err := config.Load(path, home)
+	require.NoError(err)
+	client, _, err := OpenHTTPStore(withStoreResolverConfig(t, fresh))
+	require.NoError(err)
+	require.NoError(client.Close())
 }
 
 func TestMCPIndependentInboundTokenWithEnvironmentOnlyBackend(t *testing.T) {

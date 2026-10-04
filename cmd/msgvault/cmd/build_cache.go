@@ -2569,7 +2569,7 @@ func newBuildCacheSubprocessCommand(ctx context.Context, mode buildCacheMode) (*
 	// exe is this binary (os.Executable) and args are our own fixed subcommand
 	// plus operator-controlled config flags, not untrusted input.
 	cmd := exec.CommandContext(ctx, exe, args...) //nolint:gosec // exe is os.Executable; args are internally constructed
-	cmd.Env = buildCacheDaemonChildEnv(os.Environ(), os.Getpid())
+	cmd.Env = daemonRuntimeChildEnv(ctx, buildCacheDaemonChildEnv(os.Environ(), os.Getpid()))
 	return cmd, nil
 }
 

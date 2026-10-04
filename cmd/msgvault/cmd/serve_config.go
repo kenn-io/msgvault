@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"errors"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
@@ -40,4 +42,21 @@ func prepareServeConfig(cfg *config.Config) error {
 		return err
 	}
 	return cfg.PrepareServerKey()
+}
+
+// daemonRuntimeChildEnv keeps serve flags effective when children reload config.
+func daemonRuntimeChildEnv(ctx context.Context, env []string) []string {
+	state := invocationFromContext(ctx)
+	if state == nil || state.cfg == nil {
+		return env
+	}
+	bind := state.cfg.Server.BindAddr
+	if bind == "" {
+		bind = defaultDaemonBindAddr
+	}
+	// exec.Cmd uses the last value for a duplicate environment key.
+	return append(env,
+		"MSGVAULT_BIND_ADDR="+bind,
+		"MSGVAULT_API_PORT="+strconv.Itoa(state.cfg.Server.APIPort),
+	)
 }

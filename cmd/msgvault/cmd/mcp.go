@@ -133,7 +133,7 @@ func prepareMCPHTTP(cmd *cobra.Command, cfg *config.Config) (string, string, err
 		if isRemoteModeFor(invocationFromCommand(cmd)) {
 			err = cfg.ResolveServerKey()
 		} else {
-			err = cfg.PrepareServerKey()
+			err = prepareServeConfig(cfg)
 		}
 		key = cfg.Server.AuthenticationKey()
 	}

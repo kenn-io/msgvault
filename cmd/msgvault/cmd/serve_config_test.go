@@ -3,7 +3,9 @@ package cmd
 import (
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -33,6 +35,63 @@ func TestServeFlagsOverrideMalformedEnvironment(t *testing.T) { //nolint:paralle
 	assert.Equal("--bind", got.BindAddressSource())
 	if inv := invocationFromCommand(root); inv != nil && inv.logResult != nil {
 		inv.logResult.Close()
+	}
+}
+
+func TestDaemonSubprocessesPreserveEffectiveServeConfig(t *testing.T) { //nolint:paralleltest // process environment and executable resolver
+	requirements := require.New(t)
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	requirements.NoError(err)
+	binaryName := "msgvault"
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	binary := filepath.Join(t.TempDir(), binaryName)
+	build := exec.Command("go", "build", "-tags", "fts5 sqlite_vec", "-o", binary, "./cmd/msgvault")
+	build.Dir = repoRoot
+	output, err := build.CombinedOutput()
+	requirements.NoError(err, "build real msgvault binary: %s", output)
+	savedResolver := daemonCLIExecutableResolver
+	daemonCLIExecutableResolver = func() (string, error) { return binary, nil }
+	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })
+
+	home := t.TempDir()
+	requirements.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte("[server]\ndaemon_auto_start = false\n[analytics]\nengine = 'sql'\n"), 0o600))
+	t.Setenv("MSGVAULT_API_PORT", "invalid")
+	t.Setenv("MSGVAULT_BIND_ADDR", "")
+	t.Setenv("MSGVAULT_REMOTE_URL", "")
+	cfg, err := config.LoadWithOverrides("", home, config.RuntimeOverrides{BindAddr: new("127.0.0.1"), APIPort: new(8181)})
+	requirements.NoError(err)
+	requirements.NoError(prepareServeConfig(cfg))
+	for _, tc := range []struct {
+		name, bind string
+		cache      bool
+	}{
+		{"cli flags", "127.0.0.1", false},
+		{"cache flags", "127.0.0.1", true},
+		{"cli default bind", "", false},
+		{"cache default bind", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			childConfig := *cfg
+			childConfig.Server.BindAddr = tc.bind
+			ctx := testInvocationContext(t.Context(), &childConfig, invocationOptions{homeDir: home})
+			var command *exec.Cmd
+			var err error
+			if !tc.cache {
+				command, err = newDaemonCLISubprocessCommand(ctx, []string{"repair-encoding"}, nil, "")
+			} else {
+				command, err = newBuildCacheSubprocessCommand(ctx, buildCacheModeDefault)
+				require.NoError(err)
+				// os.Executable returns the test runner here; keep the production
+				// command's arguments and environment but run the branch binary.
+				command.Path, command.Args[0] = binary, binary
+			}
+			require.NoError(err)
+			output, err := command.CombinedOutput()
+			require.NoError(err, "%s", output)
+		})
 	}
 }
 
