@@ -2064,6 +2064,23 @@ func (p ProvenanceRoles) Validate() error {
 	}
 }
 
+type ReferenceKind string
+
+const (
+	DocumentChunk ReferenceKind = "document_chunk"
+	Message       ReferenceKind = "message"
+)
+
+// Validate checks if the ReferenceKind value is valid
+func (r ReferenceKind) Validate() error {
+	switch r {
+	case DocumentChunk, Message:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ReferenceKind value, got: %v", r))
+	}
+}
+
 type RelationshipCalendarDayLevel string
 
 const (
@@ -2345,6 +2362,23 @@ func (s SecretSettingUpdateAction) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SecretSettingUpdateAction value, got: %v", s))
+	}
+}
+
+type SelectorKind string
+
+const (
+	SelectorKindDocumentChunk SelectorKind = "document_chunk"
+	SelectorKindMessage       SelectorKind = "message"
+)
+
+// Validate checks if the SelectorKind value is valid
+func (s SelectorKind) Validate() error {
+	switch s {
+	case SelectorKindDocumentChunk, SelectorKindMessage:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SelectorKind value, got: %v", s))
 	}
 }
 

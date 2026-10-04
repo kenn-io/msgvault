@@ -69,6 +69,15 @@ func (s SetPrimaryEmploymentHeaders) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type CreateKataIssueHeaders struct {
+	// IdempotencyKey Opaque 1..128-byte retry key
+	IdempotencyKey string `json:"Idempotency-Key" validate:"required,max=128,min=1"`
+}
+
+func (c CreateKataIssueHeaders) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type CreateOrLinkMessageTaskHeaders struct {
 	// XRequestID Browser-generated retry-stable request ID
 	XRequestID string `json:"X-Request-Id" validate:"required"`

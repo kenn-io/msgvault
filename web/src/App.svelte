@@ -4,6 +4,7 @@
   import { onMount } from 'svelte';
   import { receiveGoogleContactsCallback } from './lib/settings/google-authorization';
   import { createSessionController, type SessionController } from './lib/api/session.svelte';
+  import { provideKataReadiness } from './lib/kata/kata-ready.svelte';
   import Login from './lib/components/auth/Login.svelte';
   import SettingsWorkspace from './lib/components/settings/SettingsWorkspace.svelte';
   import AppShell from './lib/components/shell/AppShell.svelte';
@@ -21,6 +22,9 @@
   }: {
     session?: SessionController;
   } = $props();
+  // The session, and so its client, lives as long as the page.
+  // svelte-ignore state_referenced_locally
+  provideKataReadiness(session.client);
   let oauthCallback = $state(false);
   let pathname = $state(window.location.pathname);
   const messageID = $derived(Number(/^\/messages\/([1-9]\d*)\/?$/.exec(pathname)?.[1]) || undefined);

@@ -6,7 +6,7 @@ import {
 import type { SessionStatus as GeneratedSessionStatus } from './generated/models';
 import { createSessionAwareAPIClient, type APIClient } from './client';
 type SessionStatus = GeneratedSessionStatus;
-function errorMessage(error: unknown, fallback: string): string {
+export function errorMessage(error: unknown, fallback: string): string {
   if (typeof error === 'object' && error !== null && 'message' in error) {
     const message = (
       error as {

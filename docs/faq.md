@@ -26,8 +26,9 @@ is not a promise that the assistant cannot access private archive content.
 MCP can stage a deletion manifest but cannot execute remote deletion, send mail,
 or sync new messages. Optional profile writes require `--allow-profile-writes`;
 calendar event mutations require `--allow-calendar-writes` and explicit
-per-operation approval through an MCP client that supports elicitation. HTTP
-writes also need `--http-allow-writes`. Execution of a staged mail deletion
+per-operation approval through an MCP client that supports elicitation; Kata
+issues that quote archive text require `--allow-kata-writes`. HTTP writes also
+need `--http-allow-writes`. Execution of a staged mail deletion
 remains a separate CLI step. See the [MCP tool and access reference](usage/chat.md).
 
 Treat imported messages, attachments, and generated briefs as untrusted input to

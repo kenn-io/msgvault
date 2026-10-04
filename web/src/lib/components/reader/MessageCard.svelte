@@ -5,6 +5,8 @@
   import type { ArchiveMessageDetail, MessageViewMode } from '../../archive/types';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import ContentFrame from './ContentFrame.svelte';
+  import KataIssueAction from '../kata/KataIssueAction.svelte';
+  import { EVIDENCE_WINDOW } from '../../kata/evidence';
 
   interface Props {
     message: ArchiveMessageDetail;
@@ -95,6 +97,8 @@
         </details>
       {/if}
     </div>
+
+    {#if client}<KataIssueAction {client} selector={{ kind: 'message', message_id: message.id, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={message.subject || 'Follow up on this message'} />{/if}
 
     {#if sanitizationFailed}
       <p class="sanitize-notice" role="alert">Could not render HTML formatting. Showing plain text.</p>

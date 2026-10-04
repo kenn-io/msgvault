@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
@@ -64,7 +65,7 @@ func Build(
 		default:
 			continue
 		}
-		chunkText, ok := runeSliceExact(source, hit.ChunkCharStart, hit.ChunkCharEnd)
+		chunkText, ok := textutil.RuneSlice(source, hit.ChunkCharStart, hit.ChunkCharEnd)
 		if !ok {
 			continue
 		}
@@ -117,35 +118,6 @@ func subjectPrefixRuneCount(subject string) int {
 	return utf8.RuneCountInString("Subject: " + subject + "\n\n")
 }
 
-func runeSliceExact(s string, startRune, endRune int) (string, bool) {
-	startByte, endByte, ok := runeByteRange(s, startRune, endRune)
-	if !ok {
-		return "", false
-	}
-	return s[startByte:endByte], true
-}
-
-func runeByteRange(s string, startRune, endRune int) (int, int, bool) {
-	if s == "" || startRune < 0 || endRune <= startRune {
-		return 0, 0, false
-	}
-	startByte := -1
-	runeIndex := 0
-	for byteOffset := range s {
-		if runeIndex == startRune {
-			startByte = byteOffset
-		}
-		if runeIndex == endRune {
-			return startByte, byteOffset, startByte >= 0
-		}
-		runeIndex++
-	}
-	if runeIndex == endRune && startByte >= 0 {
-		return startByte, len(s), true
-	}
-	return 0, 0, false
-}
-
 func bytePrefix(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
@@ -159,7 +131,7 @@ func bytePrefix(s string, maxBytes int) string {
 
 func positionalBodyOffset(body string, startRune int, chunk string) (int, bool) {
 	endRune := startRune + utf8.RuneCountInString(chunk)
-	startByte, endByte, ok := runeByteRange(body, startRune, endRune)
+	startByte, endByte, ok := textutil.RuneByteRange(body, startRune, endRune)
 	if ok && body[startByte:endByte] == chunk {
 		return startByte, true
 	}

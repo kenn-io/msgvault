@@ -72,6 +72,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Configuration](https://msgvault.io/docs/configuration.md): config.toml reference
 - [HTTP API](https://msgvault.io/docs/api-server.md)
 - [MCP Server](https://msgvault.io/docs/usage/chat.md): AI assistant integration
+- [Kata Issues](https://msgvault.io/docs/usage/kata-issues.md): file issues that quote archived messages and files
 - [Agent Skills](https://msgvault.io/docs/guides/agent-skills.md)
 - [FAQ](https://msgvault.io/docs/faq.md)
 - [Changelog](https://msgvault.io/docs/changelog.md): released and unreleased changes, with upgrade notes

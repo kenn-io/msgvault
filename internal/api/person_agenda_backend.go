@@ -22,15 +22,16 @@ func newPersonAgendaBackend(cfg *config.Config, messageStore MessageStore) Perso
 	return &personAgendaBackend{config: cfg.Integrations.Kata, people: people}
 }
 
-func (b *personAgendaBackend) integrationConfig() taskclient.IntegrationConfig {
-	return taskclient.IntegrationConfig{Enabled: b.config.Enabled, Endpoint: b.config.Endpoint, APIKey: b.config.APIKey, DefaultProject: b.config.DefaultProject}
+// connectKata opens the configured Kata integration for agenda and issue writes.
+func connectKata(ctx context.Context, cfg config.TaskIntegrationConfig) (*taskclient.KataClient, error) {
+	if !cfg.Enabled {
+		return nil, taskclient.ErrUnreachable
+	}
+	return taskclient.ConnectKata(ctx, taskclient.IntegrationConfig{Enabled: true, Endpoint: cfg.Endpoint, APIKey: cfg.APIKey, DefaultProject: cfg.DefaultProject})
 }
 
 func (b *personAgendaBackend) service(ctx context.Context) (personagenda.Service, error) {
-	if !b.config.Enabled {
-		return personagenda.Service{}, taskclient.ErrUnreachable
-	}
-	client, err := taskclient.ConnectKata(ctx, b.integrationConfig())
+	client, err := connectKata(ctx, b.config)
 	if err != nil {
 		return personagenda.Service{}, err
 	}

@@ -48,6 +48,7 @@ nav = [
     {"Profile Automation" = "usage/people-automation.md"},
     {"External Enrichment" = "usage/people-enrichment.md"},
     {"CardDAV Contacts" = "usage/people-carddav.md"},
+    {"Kata Issues" = "usage/kata-issues.md"},
     {"Accounts and Collections" = "usage/multi-account.md"},
   ]},
   {"Maintain and Operate" = [

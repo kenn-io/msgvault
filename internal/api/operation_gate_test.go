@@ -894,7 +894,7 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require.NotNil(completion, "participant completion route must exist")
 	require.NotNil(completion.Post, "participant completion must be registered as POST")
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, "/api/v1/saved-views/{id}/run"}
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run"}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)

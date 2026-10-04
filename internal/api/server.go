@@ -435,6 +435,7 @@ type Server struct {
 	taskIntegrationProbe     TaskIntegrationProbe
 	taskLinkOperations       TaskLinkOperations
 	personAgendaOperations   PersonAgendaOperations
+	kataIssueOperations      KataIssueOperations
 	taskIdentityResolver     TaskIdentityResolver
 	fastmailInventoryFactory provideridentity.Factory
 	gmailProfileAddress      func(context.Context, *store.Source) (string, error)
@@ -576,6 +577,7 @@ type ServerOptions struct {
 	TaskLinkOperations     TaskLinkOperations
 	TaskIdentityResolver   TaskIdentityResolver
 	PersonAgendaOperations PersonAgendaOperations
+	KataIssueOperations    KataIssueOperations
 	// FastmailInventoryFactory is the provider-read seam used by identity
 	// discovery. Nil constructs the production JMAP client.
 	FastmailInventoryFactory provideridentity.Factory
@@ -658,6 +660,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		taskIntegrationProbe:     taskProbe,
 		taskLinkOperations:       opts.TaskLinkOperations,
 		personAgendaOperations:   opts.PersonAgendaOperations,
+		kataIssueOperations:      opts.KataIssueOperations,
 		taskIdentityResolver:     opts.TaskIdentityResolver,
 		fastmailInventoryFactory: fastmailInventoryFactory,
 		gmailProfileAddress:      opts.GmailProfileAddress,
@@ -675,6 +678,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	}
 	if s.personAgendaOperations == nil {
 		s.personAgendaOperations = newPersonAgendaBackend(opts.Config, opts.Store)
+	}
+	if s.kataIssueOperations == nil {
+		s.kataIssueOperations = newKataIssueBackend(opts.Config, opts.Store)
 	}
 	s.vectorStatus = opts.VectorStatus
 	if s.vectorStatus == "" {

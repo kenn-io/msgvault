@@ -136,7 +136,7 @@ func (s Service) Create(ctx context.Context, personID int64, idempotencyKey stri
 	if err != nil {
 		return Item{}, err
 	}
-	list, err := normalizeList(input.List)
+	list, err := NormalizeList(input.List)
 	if err != nil {
 		return Item{}, err
 	}
@@ -155,7 +155,7 @@ func (s Service) Link(ctx context.Context, personID int64, taskID, listName stri
 	if err != nil {
 		return Item{}, err
 	}
-	list, err := normalizeList(listName)
+	list, err := NormalizeList(listName)
 	if err != nil {
 		return Item{}, err
 	}
@@ -197,7 +197,7 @@ func (s Service) Update(ctx context.Context, personID int64, taskID string, inpu
 	if input.List == nil {
 		return Item{}, fmt.Errorf("%w: list is required", taskclient.ErrRequestRejected)
 	}
-	list, err := normalizeList(*input.List)
+	list, err := NormalizeList(*input.List)
 	if err != nil {
 		return Item{}, err
 	}
@@ -258,7 +258,13 @@ func (s Service) personUIDs(ctx context.Context, personID int64) ([]string, erro
 	if s.Tasks == nil || s.People == nil || strings.TrimSpace(s.Project) == "" {
 		return nil, taskclient.ErrWrongProject
 	}
-	uids, err := s.People.ListPersonUIDsContext(ctx, personID)
+	return PersonUIDs(ctx, s.People, personID)
+}
+
+// PersonUIDs returns a person's archive UIDs, canonical first, mapping lookup
+// failures to ErrIdentityLookup and a missing identity to ErrPersonIdentity.
+func PersonUIDs(ctx context.Context, people IdentityStore, personID int64) ([]string, error) {
+	uids, err := people.ListPersonUIDsContext(ctx, personID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: person %d: %w", ErrIdentityLookup, personID, err)
 	}
@@ -280,7 +286,8 @@ func personUID(metadata map[string]any) (string, error) {
 	return uid, nil
 }
 
-func normalizeList(value string) (string, error) {
+// NormalizeList folds whitespace and case; an empty name is the default list.
+func NormalizeList(value string) (string, error) {
 	value = strings.ToLower(strings.Join(strings.Fields(value), " "))
 	if value == "" {
 		return DefaultList, nil
@@ -299,7 +306,7 @@ func itemFromTask(task taskclient.KataTask) (Item, error) {
 			return Item{}, ErrUnsafeListMetadata
 		}
 		var err error
-		list, err = normalizeList(text)
+		list, err = NormalizeList(text)
 		if err != nil {
 			return Item{}, ErrUnsafeListMetadata
 		}
@@ -308,10 +315,11 @@ func itemFromTask(task taskclient.KataTask) (Item, error) {
 	if task.Status == "closed" {
 		state = StateCompleted
 	}
-	return Item{UID: task.UID, Ref: task.Ref, QualifiedRef: task.QualifiedRef, Project: task.Project, Title: task.Title, Body: task.Body, Revision: task.Revision, List: list, Status: task.Status, State: state, PriorityValue: task.PriorityValue, Labels: append([]string{}, task.Labels...), Owner: task.Owner, WebURL: safeWebURL(task.WebURL)}, nil
+	return Item{UID: task.UID, Ref: task.Ref, QualifiedRef: task.QualifiedRef, Project: task.Project, Title: task.Title, Body: task.Body, Revision: task.Revision, List: list, Status: task.Status, State: state, PriorityValue: task.PriorityValue, Labels: append([]string{}, task.Labels...), Owner: task.Owner, WebURL: SafeWebURL(task.WebURL)}, nil
 }
 
-func safeWebURL(raw string) string {
+// SafeWebURL keeps a Kata link only when it is an absolute http(s) URL.
+func SafeWebURL(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return ""
