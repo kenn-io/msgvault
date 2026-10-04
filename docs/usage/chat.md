@@ -214,6 +214,12 @@ port, including when the listener was started with `--http 0`. `token_path`
 points to a private local file containing the configured bearer token; status
 never prints the token itself.
 
+Each authenticated HTTP listener copies its effective bearer token into
+`<home>/mcp/mcp-token-*` for local client discovery. This also happens when
+`--http-token-file` reads a mounted secret; the discovery token is a separate
+copy. Normal listener shutdown removes the discovery record and token file.
+An abrupt process exit can leave those files behind.
+
 Run status on the machine and with the same msgvault home as the MCP process. It
 reads existing listener records without starting a daemon or checking the
 backend's health. Stdio sessions are not listed, and stopped processes are

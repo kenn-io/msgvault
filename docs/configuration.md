@@ -732,6 +732,8 @@ rejected. Windows files require an owner-only ACL. File reads trim surrounding
 whitespace and leave mounted permissions unchanged. Relative secret paths in
 TOML or environment variables resolve beside `config.toml`, including before
 the default file exists. With `--config`, they resolve beside the selected file.
+Saving configuration preserves the original credential path strings, so relative
+paths continue to work when the configuration directory moves.
 
 Container secret mounts must meet these same rules. Docker Swarm can set the
 secret's `uid` to the process user and its `mode` to `0400`; see
@@ -754,6 +756,13 @@ persisted key, including when they start the daemon themselves.
 `allow_insecure = true` skips this default key and retains the explicit
 unauthenticated mode; explicitly configured keys are still enforced. Startup
 logs name the credential file without printing its contents.
+
+Run local CLI commands as the daemon's operating-system user and provide the
+same selected credential sources. A different user, including root through
+`sudo` or `docker exec`, fails the key file's ownership check. For a container,
+use `docker exec --user <daemon-uid> ...`. If `api_key_env` names a variable
+provided only to the supervised daemon, also provide it to the CLI process;
+the CLI does not inherit the daemon's environment.
 
 `daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
 

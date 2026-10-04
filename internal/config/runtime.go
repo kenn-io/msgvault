@@ -87,6 +87,9 @@ type runtimeConfigState struct {
 	apiPort             runtimeSaveValue[int]
 	backupRepo          runtimeSaveValue[string]
 	remoteURL           runtimeSaveValue[string]
+	serverKeyFile       runtimeSaveValue[string]
+	remoteKeyFile       runtimeSaveValue[string]
+	docbankKeyFile      runtimeSaveValue[string]
 	allowInsecure       runtimeSaveValue[bool]
 	corsCredentials     runtimeSaveValue[bool]
 	remoteAllowInsecure runtimeSaveValue[bool]
@@ -99,6 +102,9 @@ func (s runtimeConfigState) restore(c *Config) {
 	s.apiPort.restore(&c.Server.APIPort)
 	s.backupRepo.restore(&c.Backup.Repo)
 	s.remoteURL.restore(&c.Remote.URL)
+	s.serverKeyFile.restore(&c.Server.APIKeyFile)
+	s.remoteKeyFile.restore(&c.Remote.APIKeyFile)
+	s.docbankKeyFile.restore(&c.Integrations.Docbank.APIKeyFile)
 	s.allowInsecure.restore(&c.Server.AllowInsecure)
 	s.corsCredentials.restore(&c.Server.CORSCredentials)
 	s.remoteAllowInsecure.restore(&c.Remote.AllowInsecure)
@@ -234,9 +240,19 @@ func (c *Config) credentialPath(path string) string {
 }
 
 func (c *Config) resolveCredentialPaths() {
-	c.Server.APIKeyFile = c.credentialPath(c.Server.APIKeyFile)
-	c.Remote.APIKeyFile = c.credentialPath(c.Remote.APIKeyFile)
-	c.Integrations.Docbank.APIKeyFile = c.credentialPath(c.Integrations.Docbank.APIKeyFile)
+	for _, entry := range []struct {
+		path   *string
+		record *runtimeSaveValue[string]
+	}{
+		{&c.Server.APIKeyFile, &c.runtimeConfigState.serverKeyFile},
+		{&c.Remote.APIKeyFile, &c.runtimeConfigState.remoteKeyFile},
+		{&c.Integrations.Docbank.APIKeyFile, &c.runtimeConfigState.docbankKeyFile},
+	} {
+		if resolved := c.credentialPath(*entry.path); resolved != *entry.path {
+			entry.record.capture(*entry.path, resolved)
+			*entry.path = resolved
+		}
+	}
 }
 
 // ServerKeyFilePath is the default persisted daemon credential, under data_dir.

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/fileutil"
@@ -273,6 +274,70 @@ api_key_env = "MISSING_DOCBANK_KEY"
 	key, err = cfg.Integrations.Docbank.ResolveAPIKey()
 	require.NoError(err)
 	assert.Equal("replacement-key", key, "request-time consumers reread mounted keys")
+}
+
+func TestSavePreservesRelativeCredentialPaths(t *testing.T) { //nolint:paralleltest // changes the working directory
+	for _, relativeConfig := range []bool{false, true} {
+		name := "default home"
+		if relativeConfig {
+			name = "relative config flag"
+		}
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			root := t.TempDir()
+			t.Chdir(root)
+			home := filepath.Join(root, "configs")
+			require.NoError(os.Mkdir(home, 0o700))
+			path := filepath.Join(home, "config.toml")
+			require.NoError(fileutil.SecureWriteFile(path, []byte(`[server]
+api_key_file = "server.key"
+[remote]
+api_key_file = "remote.key"
+[integrations.docbank]
+api_key_file = "docbank.key"
+`), 0o600))
+			for _, source := range []string{"server", "remote", "docbank"} {
+				require.NoError(fileutil.SecureWriteFile(filepath.Join(home, source+".key"), []byte(source+"-key"), 0o600))
+			}
+			loadPath, loadHome := "", home
+			if relativeConfig {
+				loadPath, loadHome = filepath.Join("configs", "config.toml"), ""
+			}
+			cfg, err := Load(loadPath, loadHome)
+			require.NoError(err)
+			for range 2 {
+				require.NoError(cfg.ResolveServerKey())
+				require.NoError(cfg.ResolveRemoteKey())
+				assert.Equal("server-key", cfg.Server.AuthenticationKey())
+				assert.Equal("remote-key", cfg.Remote.AuthenticationKey())
+				key, err := cfg.Integrations.Docbank.ResolveAPIKey()
+				require.NoError(err)
+				assert.Equal("docbank-key", key)
+				require.NoError(cfg.Save())
+				var saved Config
+				_, err = toml.DecodeFile(path, &saved)
+				require.NoError(err)
+				assert.Equal("server.key", saved.Server.APIKeyFile)
+				assert.Equal("remote.key", saved.Remote.APIKeyFile)
+				assert.Equal("docbank.key", saved.Integrations.Docbank.APIKeyFile)
+				cfg, err = Load(loadPath, loadHome)
+				require.NoError(err)
+			}
+			// Moving the home must move the credential sources with it.
+			moved := filepath.Join(root, "moved")
+			require.NoError(os.Rename(home, moved))
+			cfg, err = Load("", moved)
+			require.NoError(err)
+			require.NoError(cfg.ResolveServerKey())
+			require.NoError(cfg.ResolveRemoteKey())
+			assert.Equal("server-key", cfg.Server.AuthenticationKey())
+			assert.Equal("remote-key", cfg.Remote.AuthenticationKey())
+			key, err := cfg.Integrations.Docbank.ResolveAPIKey()
+			require.NoError(err)
+			assert.Equal("docbank-key", key)
+		})
+	}
 }
 
 func TestRuntimeWinningFlagsIgnoreMalformedEnvironment(t *testing.T) { //nolint:paralleltest // environment overrides are process-wide
