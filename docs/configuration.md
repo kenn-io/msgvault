@@ -911,6 +911,49 @@ When set, archive-access CLI commands use the remote server by default. Without 
 
 Affected CLI commands include `search` (FTS mode), `query`, `show-message`, `stats`, `list-accounts`, `list-senders`, `list-domains`, `list-labels`, `identity` subcommands, `collection` subcommands, `export-eml`, `export-attachment`, `export-attachments`, and `tui`.
 
+Optional native signing adds these fields to `[remote]`:
+
+| Field | Default | Contract |
+| --- | --- | --- |
+| `api_key_file` | unset | Private regular native API credential file; exclusive with `api_key` |
+| `signing_key_id` | unset | Accepted server key ID; requires `signing_secret_file` |
+| `signing_secret_file` | unset | Private base64 file containing exactly 64 decoded bytes |
+| `max_request_bytes` | `16777216` when signed | Signed request body limit, at most `67108864` bytes |
+
+Signing requires HTTPS and pins the configured origin and prefix. Credential
+paths resolve relative to an explicitly selected configuration file, or the
+msgvault home directory. Signed clients refuse redirects and unsigned fallback.
+Unsigned private configurations retain their existing defaults.
+
+### `[server.remote_ingress]`
+
+This optional native listener requires signing for every accepted request.
+It is disabled by default and serves a narrow read surface. The main API retains
+its existing authentication and rejects signing claims and dedicated credentials. See [signed remote CLI setup](guides/remote-deployment.md#signed-remote-cli-access)
+for credential provisioning, proxy setup, grants, replay recovery, and limits.
+
+| Field | Default | Contract |
+| --- | --- | --- |
+| `enabled` | `false` | Start a separate restricted listener |
+| `listen` | `127.0.0.1:8081` | Literal loopback or private IP and port |
+| `external_url` | required when enabled | Fixed public HTTPS origin and optional prefix, without query, fragment or credentials |
+| `trusted_proxies` | loopback | Peer IPs/CIDRs allowed to connect; forwarded headers never select the signed target |
+| `replay_state_file` | required when enabled | Existing private state initialized with `msgvault signing init-state` |
+| `max_request_bytes` | `16777216` | Body byte limit, maximum `67108864` |
+| `max_concurrent` | `4` | In-flight request limit, maximum `32` |
+| `clients` | required when enabled | One to 32 dedicated client identities |
+
+Each `[[server.remote_ingress.clients]]` requires a unique `client_id`, a private
+`api_key_file`, and one or two `keys`. `grants = []` allows reads; the only
+mutation grant is `collections-write`. Credentials must differ from the main
+API key and other clients' credentials. No account-level isolation is provided.
+
+Each `[[server.remote_ingress.clients.keys]]` requires a globally unique `key_id`
+and private `secret_file`. Optional `not_before` and `not_after` are Unix seconds.
+Two-key rotation requires an outgoing expiry and incoming activation, ordered
+old key first, with at most 24 hours overlap. Every signing secret is independent.
+Changes take effect after daemon restart; removing a key or client revokes it.
+
 ### `[[accounts]]`
 
 Scheduled sync sources for the web server. Each `[[accounts]]` entry defines a

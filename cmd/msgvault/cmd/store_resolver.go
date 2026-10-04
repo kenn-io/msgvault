@@ -300,11 +300,11 @@ func openRemoteStore(ctx context.Context, state *invocation) (*daemonclient.Clie
 		return nil, errors.New("invocation state is required")
 	}
 	currentCfg := state.cfg
-	st, err := newDaemonCLIClient(ctx, daemonclient.Config{
-		URL:           currentCfg.Remote.URL,
-		APIKey:        currentCfg.Remote.APIKey,
-		AllowInsecure: currentCfg.Remote.AllowInsecure,
-	})
+	remoteCfg, err := configuredRemoteClientConfig(currentCfg)
+	if err != nil {
+		return nil, err
+	}
+	st, err := newDaemonCLIClient(ctx, remoteCfg)
 	if err != nil {
 		return nil, err
 	}

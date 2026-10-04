@@ -2102,7 +2102,24 @@ the command's warning before sharing its output.
 
 ---
 
+## signing init-state
+
+Create a new private replay state file for the restricted signed listener:
+
+```sh
+msgvault signing init-state --file /srv/msgvault/signing-replay.json
+```
+
+The command refuses an existing file and does not load configuration or open an
+archive. It does not create credentials or enable a listener. See
+[signed remote CLI access](guides/remote-deployment.md#signed-remote-cli-access)
+for native client/server setup, allowed operations, and key rotation. Replacing
+missing or corrupt state requires revoking all previously accepted signing keys.
+
 ## export-token
+
+Signed remote mode rejects this provider-credential command before reading tokens.
+Configure providers privately on the server.
 
 Export a browser-created OAuth refresh token to a remote msgvault instance.
 

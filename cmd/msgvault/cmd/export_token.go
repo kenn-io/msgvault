@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/requestsign"
 )
 
 var (
@@ -202,17 +204,25 @@ func runExportToken(cmd *cobra.Command, args []string) error {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
+	if cfg.Remote.SigningEnabled() {
+		return errors.New("export-token is unavailable with signed remote ingress; configure providers locally on the server")
+	}
 	email := args[0]
 
 	// Resolution order: flag > env var > config file
 	remoteURL := resolveParam(exportTokenTo, "MSGVAULT_REMOTE_URL", cfg.Remote.URL)
-	apiKey := resolveParam(exportTokenAPIKey, "MSGVAULT_REMOTE_API_KEY", cfg.Remote.APIKey)
-
 	if remoteURL == "" {
 		return errors.New("remote URL required: use --to flag, MSGVAULT_REMOTE_URL env var, or [remote] url in config.toml")
 	}
+	apiKey, usesAPIKeyFile, err := resolveExportTokenAPIKey(
+		exportTokenAPIKey, os.Getenv("MSGVAULT_REMOTE_API_KEY"), cfg.Remote,
+	)
+	if err != nil {
+		return fmt.Errorf("read configured remote API key: %w", err)
+	}
+
 	if apiKey == "" {
-		return errors.New("API key required: use --api-key flag, MSGVAULT_REMOTE_API_KEY env var, or [remote] api_key in config.toml")
+		return errors.New("API key required: use --api-key flag, MSGVAULT_REMOTE_API_KEY env var, [remote] api_key, or api_key_file in config.toml")
 	}
 
 	exporter := &tokenExporter{
@@ -230,10 +240,15 @@ func runExportToken(cmd *cobra.Command, args []string) error {
 
 	// Save remote config for future use
 	if cfg.Remote.URL != result.remoteURL ||
-		cfg.Remote.APIKey != result.apiKey ||
+		(!usesAPIKeyFile && cfg.Remote.APIKey != result.apiKey) ||
 		(result.allowInsecure && !cfg.Remote.AllowInsecure) {
 		cfg.Remote.URL = result.remoteURL
-		cfg.Remote.APIKey = result.apiKey
+		if usesAPIKeyFile {
+			cfg.Remote.APIKey = ""
+		} else {
+			cfg.Remote.APIKey = result.apiKey
+			cfg.Remote.APIKeyFile = ""
+		}
 		if result.allowInsecure {
 			cfg.Remote.AllowInsecure = true
 		}
@@ -251,6 +266,20 @@ func runExportToken(cmd *cobra.Command, args []string) error {
 		result.remoteURL, email)
 
 	return nil
+}
+
+func resolveExportTokenAPIKey(flagValue, envValue string, remote config.RemoteConfig) (string, bool, error) {
+	if flagValue != "" {
+		return flagValue, false, nil
+	}
+	if envValue != "" {
+		return envValue, false, nil
+	}
+	if remote.APIKeyFile != "" {
+		key, err := requestsign.ReadAPIKey(remote.APIKeyFile)
+		return key, true, err
+	}
+	return remote.APIKey, false, nil
 }
 
 // resolveParam returns the first non-empty value from: flag, env var, config.

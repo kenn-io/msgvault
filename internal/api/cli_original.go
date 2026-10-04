@@ -61,6 +61,9 @@ func (s *Server) handleCLIMessageOriginal(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_request", "query parameter max_bytes must be positive and less than 9223372036854775807")
 		return
 	}
+	if restrictedRequest(r) && (maxBytes == 0 || maxBytes > remoteMessageBytes) {
+		maxBytes = remoteMessageBytes
+	}
 	original, err := reader.ReadOriginalMessage(r.Context(), ref, maxBytes)
 	if err != nil {
 		s.writeOriginalExportError(w, "read original message", err)
@@ -117,6 +120,8 @@ func (s *Server) writeOriginalExportError(w http.ResponseWriter, operation strin
 			"Provide exactly one of id, source_message_id, or thread_id")
 	case errors.Is(err, store.ErrMessageNotFound):
 		writeError(w, http.StatusNotFound, cliErrorMessageNotFound, "Message not found")
+	case errors.Is(err, query.ErrThreadTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "remote_thread_too_large", "Thread exceeds remote membership limit of 500 messages")
 	case errors.Is(err, query.ErrThreadNotFound):
 		writeError(w, http.StatusNotFound, "thread_not_found", "Thread not found")
 	case errors.Is(err, query.ErrOriginalMessageTooLarge):

@@ -11,8 +11,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 func TestSanitizeExportTokenPath(t *testing.T) {
@@ -110,6 +112,86 @@ func TestResolveParam(t *testing.T) {
 			got := resolveParam(tt.flag, tt.envKey, tt.configVal)
 			assert.Equal(t, tt.want, got, "resolveParam(%q, %q, %q)",
 				tt.flag, tt.envKey, tt.configVal)
+		})
+	}
+}
+
+func TestRunExportTokenUsesAndPreservesOrReplacesAPIKeyFile(t *testing.T) {
+	keyFromFile := strings.Repeat("f", 64)
+	for _, tc := range []struct {
+		name           string
+		flagAPIKey     string
+		envAPIKey      string
+		wantAPIKey     string
+		wantAPIKeyFile bool
+	}{
+		{name: "file-backed fallback", wantAPIKeyFile: true},
+		{name: "explicit key replaces file-backed key", flagAPIKey: "explicit-fixture-key", wantAPIKey: "explicit-fixture-key"},
+		{name: "environment key replaces file-backed key", envAPIKey: "environment-fixture-key", wantAPIKey: "environment-fixture-key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			oldTo, oldAPIKey, oldAllowInsecure := exportTokenTo, exportTokenAPIKey, exportAllowInsecure
+			exportTokenTo, exportTokenAPIKey, exportAllowInsecure = "", tc.flagAPIKey, false
+			t.Cleanup(func() {
+				exportTokenTo, exportTokenAPIKey, exportAllowInsecure = oldTo, oldAPIKey, oldAllowInsecure
+			})
+			t.Setenv("MSGVAULT_REMOTE_URL", "")
+			t.Setenv("MSGVAULT_REMOTE_API_KEY", tc.envAPIKey)
+
+			home := t.TempDir()
+			cfg := config.NewDefaultConfig()
+			cfg.HomeDir = home
+			cfg.Data.DataDir = filepath.Join(home, "data")
+			keyFile := filepath.Join(home, "remote-api-key")
+			requirements.NoError(os.WriteFile(keyFile, []byte(keyFromFile), 0o600))
+			cfg.Remote = config.RemoteConfig{URL: "", APIKeyFile: keyFile, AllowInsecure: true}
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				wantKey := keyFromFile
+				if tc.flagAPIKey != "" {
+					wantKey = tc.flagAPIKey
+				} else if tc.envAPIKey != "" {
+					wantKey = tc.envAPIKey
+				}
+				if r.Header.Get("X-Api-Key") != wantKey {
+					http.Error(w, "unexpected API key", http.StatusUnauthorized)
+					return
+				}
+				switch r.URL.Path {
+				case "/api/v1/auth/token/user@example.test":
+					w.WriteHeader(http.StatusCreated)
+				case "/api/v1/accounts":
+					w.WriteHeader(http.StatusCreated)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			cfg.Remote.URL = server.URL
+			requirements.NoError(cfg.Save())
+
+			tokensDir := cfg.TokensDir()
+			requirements.NoError(os.MkdirAll(tokensDir, 0o700))
+			requirements.NoError(os.WriteFile(filepath.Join(tokensDir, "user@example.test.json"), []byte("{}"), 0o600))
+
+			cmd := &cobra.Command{}
+			cmd.SetContext(withTestConfig(t, cfg))
+			requirements.NoError(runExportToken(cmd, []string{"user@example.test"}))
+
+			if tc.wantAPIKeyFile {
+				assertions.Empty(cfg.Remote.APIKey)
+				assertions.Equal(keyFile, cfg.Remote.APIKeyFile)
+			} else {
+				assertions.Equal(tc.wantAPIKey, cfg.Remote.APIKey)
+				assertions.Empty(cfg.Remote.APIKeyFile)
+			}
+
+			loaded, err := config.Load(cfg.ConfigFilePath(), "")
+			requirements.NoError(err)
+			assertions.Equal(cfg.Remote.APIKey, loaded.Remote.APIKey)
+			assertions.Equal(cfg.Remote.APIKeyFile, loaded.Remote.APIKeyFile)
 		})
 	}
 }

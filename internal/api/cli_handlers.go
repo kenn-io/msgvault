@@ -2320,6 +2320,10 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 {
 		limit = 50
 	}
+	if restrictedRequest(r) && limit > 500 {
+		writeError(w, http.StatusBadRequest, "remote_search_limit", "Remote search limit must not exceed 500")
+		return
+	}
 	offset := max(parseCLISearchInt(r.URL.Query().Get("offset"), 0), 0)
 
 	queryStr := r.URL.Query().Get("q")
@@ -2372,9 +2376,20 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		// waits on it: the probe and any backfill run in the background
 		// and the response only reports their state so the CLI can warn
 		// that results may be incomplete while a backfill runs.
-		IndexState: s.ensureCLISearchIndexAsync(cliStore),
+		IndexState: "",
 	}
 
+	if !restrictedRequest(r) {
+		resp.IndexState = s.ensureCLISearchIndexAsync(cliStore)
+	} else if !s.ftsIndexComplete.Load() {
+		resp.IndexState, _ = s.ftsIndexState.Load().(string)
+		if resp.IndexState == "" {
+			resp.IndexState = cliSearchIndexStateChecking
+			if cliStore.NeedsFTSBackfillQuick() {
+				resp.IndexState = cliSearchIndexStateBuilding
+			}
+		}
+	}
 	results, err := s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit, offset)
 	if err != nil {
 		s.logger.Error("CLI search failed", "error", err)
@@ -3254,6 +3269,10 @@ func (s *Server) handleCLIMessage(w http.ResponseWriter, r *http.Request) {
 
 	msg, err := s.resolveCLIMessage(r, idStr)
 	if err != nil {
+		if errors.Is(err, query.ErrOriginalMessageTooLarge) {
+			writeError(w, 413, "remote_message_too_large", "Message content exceeds remote byte limit")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve message")
 		return
 	}
@@ -3278,6 +3297,10 @@ func (s *Server) handleCLIMessageRaw(w http.ResponseWriter, r *http.Request) {
 
 	msg, err := s.resolveCLIMessage(r, idStr)
 	if err != nil {
+		if errors.Is(err, query.ErrOriginalMessageTooLarge) {
+			writeError(w, 413, "remote_message_too_large", "Message content exceeds remote byte limit")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve message")
 		return
 	}
@@ -3288,6 +3311,10 @@ func (s *Server) handleCLIMessageRaw(w http.ResponseWriter, r *http.Request) {
 
 	raw, err := s.queryEngineForContext(r.Context()).GetMessageRaw(r.Context(), msg.ID)
 	if err != nil {
+		if errors.Is(err, query.ErrOriginalMessageTooLarge) {
+			writeError(w, 413, "remote_message_too_large", "Message content exceeds remote byte limit")
+			return
+		}
 		s.logger.Error("failed to get CLI raw message", "id", msg.ID, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve raw message")
 		return
@@ -3333,6 +3360,11 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
+		if restrictedRequest(r) && (size < 0 || size > remoteAttachmentBytes) {
+			_ = rc.Close()
+			writeError(w, 413, "remote_attachment_too_large", "Attachment exceeds remote byte limit")
+			return
+		}
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		w.Header().Set("X-Msgvault-Content-Hash", contentHash)
 		w.WriteHeader(http.StatusOK)
@@ -3364,6 +3396,13 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = f.Close() }()
+	if restrictedRequest(r) {
+		info, err := f.Stat()
+		if err != nil || info.Size() > remoteAttachmentBytes {
+			writeError(w, 413, "remote_attachment_too_large", "Attachment exceeds remote byte limit")
+			return
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Msgvault-Content-Hash", contentHash)

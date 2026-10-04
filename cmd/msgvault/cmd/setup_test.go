@@ -140,6 +140,43 @@ func TestSetupWithGoogleCredentialsPrintsGmailSteps(t *testing.T) {
 	assert.Contains(string(data), "client_secret.json")
 }
 
+func TestApplySetupRemoteConfigPreservesExistingCredentials(t *testing.T) {
+	assertions := assert.New(t)
+	apiKeyFile := filepath.Join(t.TempDir(), "remote-api-key")
+	secretFile := filepath.Join(t.TempDir(), "signing-secret")
+	cfg := &config.Config{Remote: config.RemoteConfig{
+		URL: "https://old.example.test/msgvault", APIKeyFile: apiKeyFile,
+		SigningKeyID: "reader-1", SigningSecretFile: secretFile,
+	}}
+
+	applySetupRemoteConfig(cfg, cfg.Remote.URL, "", false)
+
+	assertions.Equal("https://old.example.test/msgvault", cfg.Remote.URL)
+	assertions.Empty(cfg.Remote.APIKey)
+	assertions.Equal(apiKeyFile, cfg.Remote.APIKeyFile)
+	assertions.Equal("reader-1", cfg.Remote.SigningKeyID)
+	assertions.Equal(secretFile, cfg.Remote.SigningSecretFile)
+}
+
+func TestApplySetupRemoteConfigClearsCredentialsWhenReplacing(t *testing.T) {
+	assertions := assert.New(t)
+	apiKeyFile := filepath.Join(t.TempDir(), "remote-api-key")
+	secretFile := filepath.Join(t.TempDir(), "signing-secret")
+	cfg := &config.Config{Remote: config.RemoteConfig{
+		URL: "https://old.example.test/msgvault", APIKeyFile: apiKeyFile,
+		SigningKeyID: "reader-1", SigningSecretFile: secretFile,
+	}}
+
+	applySetupRemoteConfig(cfg, "http://new.example.test:8080", "replacement-fixture-key", true)
+
+	assertions.Equal("http://new.example.test:8080", cfg.Remote.URL)
+	assertions.Equal("replacement-fixture-key", cfg.Remote.APIKey)
+	assertions.Empty(cfg.Remote.APIKeyFile)
+	assertions.Empty(cfg.Remote.SigningKeyID)
+	assertions.Empty(cfg.Remote.SigningSecretFile)
+	assertions.True(cfg.Remote.AllowInsecure)
+}
+
 func TestCreateNASBundle_CopiesSecrets(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

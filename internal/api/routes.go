@@ -203,6 +203,14 @@ func withAPIKeySecurity(op huma.Operation) huma.Operation {
 
 func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	req, _ := humago.Unwrap(ctx)
+	if principal, ok := req.Context().Value(remotePrincipalKey{}).(remotePrincipal); ok {
+		if op := ctx.Operation(); op != nil && op.OperationID == principal.operation {
+			next(ctx)
+			return
+		}
+		writeHumaError(ctx, http.StatusForbidden, "remote_operation_denied", "Operation is not granted on remote ingress")
+		return
+	}
 	auth := s.requestAuthentication(req)
 	if auth.Mode == AuthModeDelegated {
 		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {

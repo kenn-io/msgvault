@@ -352,6 +352,9 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 		statement += " LIMIT ? OFFSET ?"
 		args = append(args, limit, offset)
 	}
+	if q.All && messageByteLimit(ctx) > 0 {
+		statement += " LIMIT 501"
+	}
 	rows, err := e.queryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list thread messages: %w", err)
@@ -373,6 +376,9 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list thread messages: %w", err)
+	}
+	if q.All && messageByteLimit(ctx) > 0 && len(page.Messages) > 500 {
+		return nil, ErrThreadTooLarge
 	}
 	if q.All {
 		page.Total = int64(len(page.Messages))

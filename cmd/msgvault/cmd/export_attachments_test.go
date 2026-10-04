@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -15,6 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 func TestExportAttachmentsCmd_Registration(t *testing.T) {
@@ -165,6 +168,46 @@ func TestExportAttachmentsUsesLocalDaemonHTTPAndPreservesDirectoryOutput(t *test
 	assert.Contains(stderr, "  photo.jpg (", "photo stderr")
 	assert.Contains(stderr, "Exported 2 attachment(s)", "summary")
 	assert.Contains(stderr, "to "+outputDir, "summary dir")
+}
+
+func TestExportAttachmentsStreamsSignedRemoteAttachmentsBeyondBufferedLimit(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	content := bytes.Repeat([]byte{0x5a}, (32<<20)+1)
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(content))
+	const apiKey = "fixture-client-key"
+	secret := bytes.Repeat([]byte{0x31}, 64)
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/cli/attachment" || r.URL.Query().Get("content_hash") != contentHash ||
+			r.Header.Get("X-Api-Key") != apiKey || r.Header.Get("Signature-Input") == "" || r.Header.Get("Signature") == "" {
+			http.Error(w, "invalid signed attachment request", http.StatusUnauthorized)
+			return
+		}
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(content)
+	}))
+	defer server.Close()
+
+	client, err := daemonclient.New(daemonclient.Config{
+		URL: server.URL, APIKey: apiKey, SigningKeyID: "reader-1", SigningSecret: secret,
+		HTTPClient: server.Client(),
+	})
+	requirements.NoError(err)
+	outputDir := t.TempDir()
+	result := exportAttachmentsFromHTTP(t.Context(), client, outputDir, []query.AttachmentInfo{{
+		Filename: "large.bin", ContentHash: contentHash, Size: int64(len(content)),
+	}})
+
+	requirements.Empty(result.Errors)
+	requirements.Len(result.Files, 1)
+	assertions.Equal(int64(len(content)), result.Files[0].Size)
+	got, err := os.ReadFile(result.Files[0].Path)
+	requirements.NoError(err)
+	assertions.Equal(content, got)
+	assertions.Equal(int32(1), requests.Load())
 }
 
 func TestExportAttachments_GmailIDFallback(t *testing.T) {
