@@ -84,6 +84,12 @@ func TestWindowsProviderCredentialACLValidation(t *testing.T) {
 	assertions.NotEqual(empty.ETag, written.ETag)
 
 	storePath := filepath.Join(dir, Filename)
+	setProviderCredentialTestACL(t, storePath, []windows.EXPLICIT_ACCESS{
+		providerCredentialTestAccess(user, windows.GENERIC_READ, windows.TRUSTEE_IS_USER),
+	}, true)
+	_, err = Read(dir)
+	requirements.ErrorIs(err, ErrUnavailable, "the writable store still requires full control")
+
 	everyone := windowsProviderCredentialSID(t, "S-1-1-0")
 	setProviderCredentialTestACL(t, storePath, []windows.EXPLICIT_ACCESS{
 		providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER),
@@ -191,10 +197,63 @@ func TestWindowsProviderCredentialACLValidation(t *testing.T) {
 			dacl, control := readProviderCredentialTestACL(t, handle)
 			tt.check(t, dacl, control)
 			if tt.wantErr {
-				require.Error(t, verifyOwnerOnlyHandleForUser(handle, user))
+				require.Error(t, verifyOwnerOnlyHandleForUser(handle, user, false))
 			} else {
-				require.NoError(t, verifyOwnerOnlyHandleForUser(handle, user))
+				require.NoError(t, verifyOwnerOnlyHandleForUser(handle, user, false))
 			}
+		})
+	}
+}
+
+func TestWindowsReadSecretFileACL(t *testing.T) {
+	t.Parallel()
+	user := currentWindowsProviderCredentialSID(t)
+	everyone := windowsProviderCredentialSID(t, "S-1-1-0")
+	for _, tc := range []struct {
+		name      string
+		entries   []windows.EXPLICIT_ACCESS
+		protected bool
+		wantError bool
+	}{
+		{
+			name:      "owner read only",
+			entries:   []windows.EXPLICIT_ACCESS{providerCredentialTestAccess(user, windows.GENERIC_READ, windows.TRUSTEE_IS_USER)},
+			protected: true,
+		},
+		{
+			name: "additional principal",
+			entries: []windows.EXPLICIT_ACCESS{
+				providerCredentialTestAccess(user, windows.GENERIC_READ, windows.TRUSTEE_IS_USER),
+				providerCredentialTestAccess(everyone, windows.GENERIC_READ, windows.TRUSTEE_IS_WELL_KNOWN_GROUP),
+			},
+			protected: true,
+			wantError: true,
+		},
+		{
+			name:      "unprotected",
+			entries:   []windows.EXPLICIT_ACCESS{providerCredentialTestAccess(user, windows.GENERIC_READ, windows.TRUSTEE_IS_USER)},
+			wantError: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert := assert.New(t)
+			require := require.New(t)
+			path := writeProviderCredentialTestFile(t)
+			handle := setProviderCredentialTestACL(t, path, tc.entries, tc.protected)
+			value, err := ReadSecretFile(path)
+			if tc.wantError {
+				require.Error(err)
+				assert.Empty(value)
+				return
+			}
+			require.NoError(err)
+			assert.Equal("synthetic-secret", value)
+			// Reading a mounted secret must not change its read-only ACL.
+			dacl, _ := readProviderCredentialTestACL(t, handle)
+			var ace *windows.ACCESS_ALLOWED_ACE
+			require.NoError(windows.GetAce(dacl, 0, &ace))
+			assert.Equal(uint32(windows.FILE_GENERIC_READ), uint32(ace.Mask))
 		})
 	}
 }
