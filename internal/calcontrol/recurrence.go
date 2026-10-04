@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -105,7 +106,8 @@ func (s *Service) futurePlan(ctx context.Context, cal gcal.Calendar, master gcal
 	if master.EventType != "" && master.EventType != "default" {
 		return nil, invalid("future scope supports default event types only")
 	}
-	if err := s.rejectFutureExceptions(ctx, cal.ID, master.ID, r.OriginalStart); err != nil {
+	exceptions, err := s.checkFutureExceptions(ctx, cal.ID, master.ID, r.OriginalStart)
+	if err != nil {
 		return nil, err
 	}
 	original, err := parseOriginal(r.OriginalStart, master.Start)
@@ -148,6 +150,7 @@ func (s *Service) futurePlan(ctx context.Context, cal gcal.Calendar, master gcal
 	}
 	iterator := rule.Iterator()
 	before := 0
+	var retained []time.Time
 	found := false
 	for range 10000 {
 		if err := ctx.Err(); err != nil {
@@ -162,6 +165,7 @@ func (s *Service) futurePlan(ctx context.Context, cal gcal.Calendar, master gcal
 			break
 		}
 		before++
+		retained = append(retained, occurrence)
 	}
 	if !found {
 		return nil, invalid("original_start is not an occurrence within the first 10000 series instances")
@@ -249,6 +253,13 @@ func (s *Service) futurePlan(ctx context.Context, cal gcal.Calendar, master gcal
 	if err := validateRange(input.Start, input.End); err != nil {
 		return nil, err
 	}
+	newStart, _ := input.Start.Instant()
+	instanceStart, _ := instance.Start.Instant()
+	if patch.Start != nil && newStart.Before(instanceStart) {
+		if err := rejectFutureOverlap(ctx, master, retained, exceptions, input); err != nil {
+			return nil, err
+		}
+	}
 	steps = append(steps, PlannedWrite{Action: "create", CalendarID: cal.ID, Event: input})
 	if err := validateFuturePlan(steps); err != nil {
 		return nil, err
@@ -256,6 +267,91 @@ func (s *Service) futurePlan(ctx context.Context, cal gcal.Calendar, master gcal
 	// Truncation and insertion are separate Google requests. Completed writes
 	// are archived and returned if the second request fails; never replay them.
 	return steps, nil
+}
+
+// rejectFutureOverlap checks backward moves against the events that remain in
+// the original series. Exceptions replace their nominal instances, and end
+// times are exclusive, so a replacement may fit between retained events.
+func rejectFutureOverlap(ctx context.Context, master gcal.Event, retained []time.Time, exceptions map[time.Time]gcal.Event, input gcal.EventInput) error {
+	start, _ := master.Start.Instant()
+	end, ok := master.End.Instant()
+	if !ok {
+		return invalid("cannot determine the retained series end")
+	}
+	intervals := make([]gcal.BusyPeriod, 0, len(retained)+len(exceptions))
+	for _, occurrence := range retained {
+		if _, replaced := exceptions[occurrence.UTC()]; !replaced {
+			intervals = append(intervals, gcal.BusyPeriod{Start: occurrence, End: occurrence.Add(end.Sub(start))})
+		}
+	}
+	for _, event := range exceptions {
+		if event.Status == gcal.StatusCancelled {
+			continue
+		}
+		start, startOK := event.Start.Instant()
+		end, endOK := event.End.Instant()
+		if !startOK || !endOK || !end.After(start) {
+			return invalid("cannot determine retained exception bounds")
+		}
+		intervals = append(intervals, gcal.BusyPeriod{Start: start, End: end})
+	}
+	slices.SortFunc(intervals, func(a, b gcal.BusyPeriod) int { return a.Start.Compare(b.Start) })
+	newStart, _ := input.Start.Instant()
+	newEnd, _ := input.End.Instant()
+	duration := newEnd.Sub(newStart)
+	index := 0
+	check := func(occurrence time.Time) error {
+		for index < len(intervals) && !intervals[index].End.After(occurrence) {
+			index++
+		}
+		if index < len(intervals) && occurrence.Add(duration).After(intervals[index].Start) {
+			return invalid("future scope replacement overlaps a retained occurrence")
+		}
+		return nil
+	}
+	if err := check(newStart); err != nil || index == len(intervals) {
+		return err
+	}
+	loc := time.UTC
+	if !input.Start.IsAllDay() {
+		var err error
+		loc, err = time.LoadLocation(input.Start.TimeZone)
+		if err != nil {
+			return invalid("invalid replacement time zone")
+		}
+	}
+	for _, line := range *input.Recurrence {
+		option, err := rrule.StrToROption(strings.TrimPrefix(line, "RRULE:"))
+		if err != nil {
+			return invalid("invalid replacement recurrence: %v", err)
+		}
+		option.Dtstart = newStart.In(loc)
+		rule, err := rrule.NewRRule(*option)
+		if err != nil {
+			return invalid("invalid replacement recurrence: %v", err)
+		}
+		iterator := rule.Iterator()
+		index = 0
+		for count := 0; ; count++ {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			occurrence, ok := iterator()
+			if !ok {
+				break
+			}
+			if count == 10000 {
+				return invalid("future overlap check exceeds 10000 replacement instances")
+			}
+			if err := check(occurrence); err != nil {
+				return err
+			}
+			if index == len(intervals) {
+				break
+			}
+		}
+	}
+	return nil
 }
 
 func recurrenceTimeZone(bound *gcal.EventDateTime, eventTimeZone, calendarTimeZone string) (*gcal.EventDateTime, error) {
@@ -362,16 +458,17 @@ func validateSeriesClone(event gcal.Event) error {
 	return nil
 }
 
-func (s *Service) rejectFutureExceptions(ctx context.Context, calendarID, seriesID, original string) error {
+func (s *Service) checkFutureExceptions(ctx context.Context, calendarID, seriesID, original string) (map[time.Time]gcal.Event, error) {
 	token := ""
 	seen := map[string]bool{}
+	retained := map[time.Time]gcal.Event{}
 	for range 100 {
 		page, err := s.Client.ListEvents(ctx, calendarID, gcal.EventsListParams{PageToken: token, SingleEvents: false, ShowDeleted: true, MaxResults: 2500})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if page == nil {
-			return invalid("empty events response while checking series exceptions")
+			return nil, invalid("empty events response while checking series exceptions")
 		}
 		for _, event := range page.Items {
 			if event.RecurringEventID != seriesID {
@@ -379,25 +476,26 @@ func (s *Service) rejectFutureExceptions(ctx context.Context, calendarID, series
 			}
 			occurrence, ok := event.OriginalStartTime.Instant()
 			if !ok {
-				return invalid("cannot migrate a recurring exception without originalStartTime")
+				return nil, invalid("cannot migrate a recurring exception without originalStartTime")
 			}
 			cutoff, err := parseOriginal(original, event.OriginalStartTime)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			instant, _ := cutoff.Instant()
 			if !occurrence.Before(instant) {
-				return invalid("future scope cannot migrate detached exceptions; edit the series manually")
+				return nil, invalid("future scope cannot migrate detached exceptions; edit the series manually")
 			}
+			retained[occurrence.UTC()] = event
 		}
 		token = page.NextPageToken
 		if token == "" {
-			return nil
+			return retained, nil
 		}
 		if seen[token] {
-			return invalid("repeated events page token")
+			return nil, invalid("repeated events page token")
 		}
 		seen[token] = true
 	}
-	return invalid("series exception check exceeds 100 pages; edit the series manually")
+	return nil, invalid("series exception check exceeds 100 pages; edit the series manually")
 }

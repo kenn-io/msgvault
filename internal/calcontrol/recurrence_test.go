@@ -52,6 +52,140 @@ func TestFutureSeriesSplitAndDelete(t *testing.T) {
 	}
 }
 
+func TestFutureSplitRejectsOverlappingRetainedOccurrences(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		original  string
+		start     string
+		end       string
+		allDay    bool
+		wantError bool
+	}{
+		{"duplicate occurrence", "2026-10-03T09:00:00-04:00", "2026-10-02T09:00:00-04:00", "2026-10-02T10:00:00-04:00", false, true},
+		{"later replacement overlaps retained occurrence", "2026-10-03T09:00:00-04:00", "2026-10-01T09:00:00-04:00", "2026-10-01T10:00:00-04:00", false, true},
+		{"inside final retained occurrence", "2026-10-04T09:00:00-04:00", "2026-10-03T09:30:00-04:00", "2026-10-03T10:30:00-04:00", false, true},
+		{"at final retained end", "2026-10-04T09:00:00-04:00", "2026-10-03T14:00:00Z", "2026-10-03T15:00:00Z", false, false},
+		{"earlier without overlap", "2026-10-03T09:00:00-04:00", "2026-10-03T08:00:00-04:00", "2026-10-03T09:00:00-04:00", false, false},
+		{"earlier between retained occurrences", "2026-10-04T09:00:00-04:00", "2026-10-03T08:00:00-04:00", "2026-10-03T09:00:00-04:00", false, false},
+		{"first occurrence has no retained series", "2026-10-02T09:00:00-04:00", "2026-10-01T09:00:00-04:00", "2026-10-01T10:00:00-04:00", false, false},
+		{"inside retained all-day occurrence", "2026-10-05", "2026-10-03", "2026-10-04", true, true},
+		{"at retained all-day end", "2026-10-05", "2026-10-04", "2026-10-05", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			s, f, r := fixture(t)
+			f.Calendars[0].TimeZone = "America/New_York"
+			start, end := gcal.EventDateTime{TimeZone: "America/New_York"}, gcal.EventDateTime{TimeZone: "America/New_York"}
+			selected, selectedEnd, changedStart, changedEnd := start, end, start, end
+			rule := "RRULE:FREQ=DAILY;COUNT=4"
+			if tc.allDay {
+				start.Date, end.Date = "2026-10-02", "2026-10-04"
+				selected.Date, changedStart.Date, changedEnd.Date = tc.original, tc.start, tc.end
+				selectedEnd.Date = "2026-10-07"
+				rule = "RRULE:FREQ=DAILY;INTERVAL=3;COUNT=4"
+			} else {
+				var err error
+				start.DateTime, err = time.Parse(time.RFC3339, "2026-10-02T09:00:00-04:00")
+				requirements.NoError(err)
+				end.DateTime = start.DateTime.Add(time.Hour)
+				selected.DateTime, err = time.Parse(time.RFC3339, tc.original)
+				requirements.NoError(err)
+				selectedEnd.DateTime = selected.DateTime.Add(time.Hour)
+				changedStart.DateTime, err = time.Parse(time.RFC3339, tc.start)
+				requirements.NoError(err)
+				changedEnd.DateTime, err = time.Parse(time.RFC3339, tc.end)
+				requirements.NoError(err)
+			}
+			r.Action, r.EventID, r.Scope, r.OriginalStart = "update", "series", "future", tc.original
+			r.Event = gcal.EventInput{Start: &changedStart, End: &changedEnd}
+			f.EventsByID["team@example.com"] = map[string]gcal.Event{"series": {
+				ID: "series", ETag: `"v1"`, Start: start, End: end, Recurrence: []string{rule},
+			}}
+			f.instances = []gcal.Event{{ID: "instance", RecurringEventID: "series", OriginalStartTime: selected, Start: selected, End: selectedEnd}}
+
+			result, err := s.Execute(t.Context(), r, nil)
+			if tc.wantError {
+				requirements.ErrorIs(err, ErrInvalid)
+				assertions.Empty(f.calls, "reject before shortening the original or inserting a replacement")
+				return
+			}
+			requirements.NoError(err)
+			wantCalls := []string{"patch:series", "insert"}
+			if tc.original == "2026-10-02T09:00:00-04:00" {
+				wantCalls = []string{"patch:series"}
+			}
+			assertions.Equal(wantCalls, f.calls)
+			requirements.NotEmpty(result.Plan)
+			assertions.Equal(&changedStart, result.Plan[len(result.Plan)-1].Event.Start)
+		})
+	}
+}
+
+func TestFutureSplitChecksRetainedExceptions(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		day          int
+		hour         int
+		minute       int
+		exceptionDay int
+		summaryOnly  bool
+		cancelled    bool
+		wantError    bool
+	}{
+		{name: "overlaps rescheduled earlier occurrence", day: 3, hour: 8, exceptionDay: 3, wantError: true},
+		{name: "starts when earlier occurrence ends", day: 3, hour: 8, minute: 30, exceptionDay: 3},
+		{name: "cancelled exception has no occupied time", day: 3, hour: 8, exceptionDay: 3, cancelled: true},
+		{name: "replacement ends before rescheduled occurrence", day: 3, hour: 8, exceptionDay: 10},
+		{name: "cancelled original has no occupied time", day: 2, hour: 9, exceptionDay: 3, cancelled: true},
+		{name: "rescheduled original has no occupied time", day: 2, hour: 9, exceptionDay: 10},
+		{name: "summary edit preserves existing overlap", day: 3, hour: 8, exceptionDay: 3, summaryOnly: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			s, f, r := fixture(t)
+			start, end := *r.Event.Start, *r.Event.End
+			selected := gcal.EventDateTime{DateTime: time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC), TimeZone: "UTC"}
+			selectedEnd := gcal.EventDateTime{DateTime: selected.DateTime.Add(time.Hour), TimeZone: "UTC"}
+			changedStart := gcal.EventDateTime{DateTime: time.Date(2026, 10, tc.day, tc.hour, tc.minute, 0, 0, time.UTC), TimeZone: "UTC"}
+			changedEnd := gcal.EventDateTime{DateTime: changedStart.DateTime.Add(time.Hour), TimeZone: "UTC"}
+			r.Action, r.EventID, r.Scope, r.OriginalStart = "update", "series", "future", "2026-10-03T09:00:00Z"
+			if tc.summaryOnly {
+				r.Event = gcal.EventInput{Summary: r.Event.Summary}
+			} else {
+				r.Event = gcal.EventInput{Start: &changedStart, End: &changedEnd}
+			}
+			f.EventsByID["team@example.com"] = map[string]gcal.Event{"series": {
+				ID: "series", ETag: `"v1"`, Start: start, End: end, Recurrence: []string{"RRULE:FREQ=DAILY;COUNT=4"},
+			}}
+			f.instances = []gcal.Event{{ID: "instance", RecurringEventID: "series", OriginalStartTime: selected, Start: selected, End: selectedEnd}}
+			exception := gcal.Event{
+				ID: "earlier", RecurringEventID: "series", OriginalStartTime: start,
+				Start: gcal.EventDateTime{DateTime: time.Date(2026, 10, tc.exceptionDay, 7, 30, 0, 0, time.UTC)},
+				End:   gcal.EventDateTime{DateTime: time.Date(2026, 10, tc.exceptionDay, 8, 30, 0, 0, time.UTC)},
+			}
+			if tc.summaryOnly {
+				exception.Start.DateTime = selected.DateTime.Add(30 * time.Minute)
+				exception.End.DateTime = selected.DateTime.Add(90 * time.Minute)
+			}
+			if tc.cancelled {
+				exception.Status, exception.Start, exception.End = gcal.StatusCancelled, gcal.EventDateTime{}, gcal.EventDateTime{}
+			}
+			f.FullEvents["team@example.com"] = [][]gcal.Event{{exception}}
+
+			_, err := s.Execute(t.Context(), r, nil)
+			if tc.wantError {
+				requirements.ErrorIs(err, ErrInvalid)
+				assertions.Empty(f.calls)
+				return
+			}
+			requirements.NoError(err)
+			assertions.Equal([]string{"patch:series", "insert"}, f.calls)
+		})
+	}
+}
+
 func TestFutureSeriesUsesCalendarTimezoneWhenEventTimezoneIsMissing(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
