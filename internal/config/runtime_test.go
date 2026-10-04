@@ -64,6 +64,39 @@ func TestRuntimeEnvironmentWithoutConfig(t *testing.T) { //nolint:paralleltest /
 	assert.ErrorIs(err, os.ErrNotExist, "environment-only loading must not seed config")
 }
 
+func TestRuntimeSecretPathsSurviveConfigCreation(t *testing.T) { //nolint:paralleltest // process environment and working directory
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Chdir(t.TempDir())
+	home := t.TempDir()
+	for _, name := range []string{"MSGVAULT_API_KEY", "MSGVAULT_API_KEY_ENV", "MSGVAULT_REMOTE_API_KEY", "MSGVAULT_REMOTE_API_KEY_ENV"} {
+		t.Setenv(name, "")
+		require.NoError(os.Unsetenv(name))
+	}
+	t.Setenv("MSGVAULT_API_KEY_FILE", "mounted-key")
+	t.Setenv("MSGVAULT_REMOTE_API_KEY_FILE", "mounted-key")
+	require.NoError(fileutil.SecureWriteFile(filepath.Join(home, "mounted-key"), []byte("synthetic-mounted-key"), 0o600))
+
+	before, err := Load("", home)
+	require.NoError(err)
+	require.NoError(before.ResolveServerKey())
+	require.NoError(before.ResolveRemoteKey())
+	assert.Equal("synthetic-mounted-key", before.Server.AuthenticationKey())
+	assert.Equal("synthetic-mounted-key", before.Remote.AuthenticationKey())
+
+	path := filepath.Join(home, "config.toml")
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+	_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "web.theme", Value: "dark"}})
+	require.NoError(err)
+	after, err := Load("", home)
+	require.NoError(err)
+	require.NoError(after.ResolveServerKey())
+	require.NoError(after.ResolveRemoteKey())
+	assert.Equal("synthetic-mounted-key", after.Server.AuthenticationKey())
+	assert.Equal("synthetic-mounted-key", after.Remote.AuthenticationKey())
+}
+
 func TestRuntimeEnvironmentBeatsConfig(t *testing.T) { //nolint:paralleltest // environment overrides are process-wide
 	assert := assert.New(t)
 	require := require.New(t)

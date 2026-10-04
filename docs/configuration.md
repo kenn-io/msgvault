@@ -730,7 +730,8 @@ another source. Files must be regular, owned by the process user, at most
 64 KiB, and readable only by that user (`0400` or `0600` on Unix). Symlinks are
 rejected. Windows files require an owner-only ACL. File reads trim surrounding
 whitespace and leave mounted permissions unchanged. Relative secret paths in
-an explicit `--config` resolve beside that file.
+TOML or environment variables resolve beside `config.toml`, including before
+the default file exists. With `--config`, they resolve beside the selected file.
 
 Container secret mounts must meet these same rules. Docker Swarm can set the
 secret's `uid` to the process user and its `mode` to `0400`; see
@@ -1413,7 +1414,9 @@ msgvault credentials import-env
 
 The CLI lists IDs and bound origins without values. File input follows the
 [server secret-file rules](#server). Standard input is trimmed and limited to
-64 KiB. `--endpoint` defaults to the configured provider endpoint; suppression
+64 KiB. Suppression keys must contain at least 32 bytes after trimming;
+`set` and `import-env` reject shorter values before saving them.
+`--endpoint` defaults to the configured provider endpoint; suppression
 keys have no endpoint. `import-env` copies present configured vector,
 multimodal, named enrichment, and suppression variables once, preserving
 existing stored keys. These host commands do not start the daemon or change

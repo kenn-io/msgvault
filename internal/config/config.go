@@ -885,6 +885,7 @@ func loadWithOverrides(path, homeDir string, overrides RuntimeOverrides) (*Confi
 			return nil, fmt.Errorf("config file not found: %s", path)
 		}
 		// Default config file is optional; runtime controls still apply.
+		cfg.configPath = path
 		cfg.resolveCredentialPaths()
 		if err := cfg.applyRuntimeOverrides(overrides); err != nil {
 			return nil, err

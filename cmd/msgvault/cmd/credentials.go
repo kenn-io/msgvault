@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
 
@@ -159,6 +160,9 @@ func configuredCredentialEndpoint(cfg *config.Config, id string) (string, error)
 
 func putHeadlessCredential(cfg *config.Config, snapshot providercredentials.Snapshot, id, endpoint, key string) (providercredentials.Snapshot, error) {
 	if id == providercredentials.PersonEnrichmentSuppressionID {
+		if _, err := personenrichment.NewSuppressionHasher([]byte(key)); err != nil {
+			return providercredentials.Snapshot{}, fmt.Errorf("validate suppression key: %w", err)
+		}
 		return providercredentials.PutSuppression(cfg.TokensDir(), snapshot.ETag, key)
 	}
 	return providercredentials.Put(cfg.TokensDir(), snapshot.ETag, id, endpoint, key)

@@ -22,8 +22,12 @@ func prepareFirstEnrichmentEnable(
 	if cfg.People.Enrichment.Enabled || !requestsEnrichmentEnable(updates) {
 		return nil, credentials, "", nil
 	}
+	stored, ok, err := credentials.ResolveSuppression()
+	if err != nil {
+		return nil, credentials, "", err
+	}
 	environmentName := cfg.People.Enrichment.SuppressionKeyEnv
-	if environmentName != "" && environmentName != providercredentials.StoredSuppressionEnvironment {
+	if !ok && environmentName != "" && environmentName != providercredentials.StoredSuppressionEnvironment {
 		value, ok := os.LookupEnv(environmentName)
 		if !ok {
 			return nil, credentials, "", errSuppressionUnavailable
@@ -32,10 +36,6 @@ func prepareFirstEnrichmentEnable(
 			return nil, credentials, "", errSuppressionUnavailable
 		}
 		return nil, credentials, "", nil
-	}
-	stored, ok, err := credentials.ResolveSuppression()
-	if err != nil {
-		return nil, credentials, "", err
 	}
 	generated := ""
 	if !ok {

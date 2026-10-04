@@ -182,12 +182,44 @@ func TestCredentialsStdinSuppressionUsesStoredRuntimeValue(t *testing.T) { //nol
 	cfg := credentialsTestConfig(t)
 	cfg.People.Enrichment.SuppressionKeyEnv = "MSGVAULT_TEST_SUPPRESSION_KEY"
 	t.Setenv(cfg.People.Enrichment.SuppressionKeyEnv, "old-environment-value")
-	output, err := runCredentialsTestCommand(t, cfg, "stored-suppression-key\n", "set", providercredentials.PersonEnrichmentSuppressionID, "--stdin")
+	output, err := runCredentialsTestCommand(t, cfg, "stored-suppression-key-32bytes-123\n", "set", providercredentials.PersonEnrichmentSuppressionID, "--stdin")
 	require.NoError(err)
 	assert.NotContains(output, "stored-suppression-key")
 	key, ok := personEnrichmentEnvironmentLookup(cfg)(cfg.People.Enrichment.SuppressionKeyEnv)
 	require.True(ok)
-	assert.Equal("stored-suppression-key", key)
+	assert.Equal("stored-suppression-key-32bytes-123", key)
+}
+
+func TestCredentialsValidateSuppressionBeforeSaving(t *testing.T) { //nolint:paralleltest // process environment
+	for _, args := range [][]string{
+		{"set", providercredentials.PersonEnrichmentSuppressionID, "--stdin"},
+		{"import-env"},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			cfg := credentialsTestConfig(t)
+			cfg.People.Enrichment.SuppressionKeyEnv = "MSGVAULT_TEST_SUPPRESSION_KEY"
+			shortKey := strings.Repeat("s", 31)
+			t.Setenv(cfg.People.Enrichment.SuppressionKeyEnv, shortKey)
+			_, err := runCredentialsTestCommand(t, cfg, shortKey, args...)
+			require.ErrorContains(err, "suppression key must contain at least 32 bytes")
+			snapshot, err := providercredentials.Read(cfg.TokensDir())
+			require.NoError(err)
+			assert.False(snapshot.Stored(providercredentials.PersonEnrichmentSuppressionID))
+
+			validKey := strings.Repeat("s", 32)
+			t.Setenv(cfg.People.Enrichment.SuppressionKeyEnv, validKey)
+			_, err = runCredentialsTestCommand(t, cfg, validKey, args...)
+			require.NoError(err)
+			snapshot, err = providercredentials.Read(cfg.TokensDir())
+			require.NoError(err)
+			key, configured, err := snapshot.ResolveSuppression()
+			require.NoError(err)
+			assert.True(configured)
+			assert.Equal(validKey, key)
+		})
+	}
 }
 
 func TestCredentialsImportEnvironmentPreservesStoredEntries(t *testing.T) { //nolint:paralleltest // process environment
@@ -197,7 +229,7 @@ func TestCredentialsImportEnvironmentPreservesStoredEntries(t *testing.T) { //no
 	cfg.Vector.Embeddings.APIKeyEnv = "MSGVAULT_TEST_EMBED_KEY"
 	cfg.People.Enrichment.SuppressionKeyEnv = "MSGVAULT_TEST_IMPORT_SUPPRESSION"
 	t.Setenv(cfg.Vector.Embeddings.APIKeyEnv, "initial-environment-key")
-	t.Setenv(cfg.People.Enrichment.SuppressionKeyEnv, "stable-suppression-key")
+	t.Setenv(cfg.People.Enrichment.SuppressionKeyEnv, "stable-suppression-key-32bytes-123")
 	output, err := runCredentialsTestCommand(t, cfg, "", "import-env")
 	require.NoError(err)
 	assert.NotContains(output, "initial-environment-key")
