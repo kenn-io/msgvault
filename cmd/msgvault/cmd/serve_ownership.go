@@ -50,6 +50,11 @@ func claimServeOwnership(
 			return nil, err
 		}
 	}
+	// A rejected contender must not mint a key that changes how clients
+	// authenticate to the daemon that already owns this archive.
+	if err := cfg.PrepareServerKey(); err != nil {
+		return nil, errors.Join(err, lock.Close(), daemonLock.Close())
+	}
 	record, shutdownToken, err := writeDaemonRuntime(cfg.Data.DataDir, host, port, version, cfg.Server.AuthenticationKey())
 	if err != nil {
 		_ = lock.Close()

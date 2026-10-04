@@ -190,15 +190,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	cfg := state.cfg
 	logger := state.logger
-	// Resolve interface and credentials before reserving a listener.
-	if err := prepareServeConfig(cfg); err != nil {
+	// Resolve the interface before reserving a listener. Credential creation
+	// waits until this process owns the daemon lock.
+	if _, err := cfg.ResolveServerBindAddress(); err != nil {
 		return err
-	}
-	if !cfg.Server.HasCredentialSource() && !cfg.Server.AllowInsecure && cfg.Server.AuthenticationKey() != "" {
-		logger.Info("Server API credential is persisted", "path", cfg.ServerKeyFilePath())
-	}
-	if cfg.Server.AuthenticationKey() != "" && len(cfg.Server.AuthenticationKey()) < 16 {
-		logger.Warn("api_key is very short — use a randomly generated key of at least 32 characters")
 	}
 
 	// Missing provider credentials should not prevent the daemon from serving
@@ -241,6 +236,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	ownership, err := claimServeOwnership(cmd.Context(), cfg, bindAddr, boundPort, Version)
 	if err != nil {
 		return fmt.Errorf("claim daemon ownership: %w", err)
+	}
+	if !cfg.Server.HasCredentialSource() && !cfg.Server.AllowInsecure && cfg.Server.AuthenticationKey() != "" {
+		logger.Info("Server API credential is persisted", "path", cfg.ServerKeyFilePath())
+	}
+	if cfg.Server.AuthenticationKey() != "" && len(cfg.Server.AuthenticationKey()) < 16 {
+		logger.Warn("api_key is very short — use a randomly generated key of at least 32 characters")
 	}
 	heartbeatCtx, stopHeartbeat := context.WithCancel(cmd.Context())
 	heartbeatDone := make(chan struct{})
