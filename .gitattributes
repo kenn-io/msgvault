@@ -20,3 +20,7 @@ internal/slack/testdata/slackdump/standard/__uploads/** -text
 
 # Keep the pinned upstream Vec1 source byte-for-byte reproducible.
 internal/vector/sqlitevec/vec1/vec1.c -text whitespace=-blank-at-eol,-blank-at-eof
+
+# The main-branch version of this component contains raw NUL bytes. Keep this
+# cleanup and any concurrent source changes visible as a text diff.
+web/src/lib/components/reader/ConversationView.svelte diff

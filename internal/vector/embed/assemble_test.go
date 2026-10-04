@@ -6,7 +6,9 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -354,16 +356,19 @@ func TestSourceSnapshot_UndatedScopeExcludesDatedConversationRows(t *testing.T) 
 	assert.Len(deduplicated, 2, "undated and unbounded selectors have different identities")
 }
 
+var assemblyFixtureSequence atomic.Uint64
+
 func seedAssemblyMessage(t *testing.T, st *store.Store, messageType, subject, body string) int64 {
 	t.Helper()
-	source, err := st.GetOrCreateSource("test", fmt.Sprintf("source-%d", time.Now().UnixNano()))
+	fixtureID := strconv.FormatUint(assemblyFixtureSequence.Add(1), 10)
+	source, err := st.GetOrCreateSource("test", "source-"+fixtureID)
 	require.NoError(t, err)
-	conversationID, err := st.EnsureConversation(source.ID, fmt.Sprintf("conversation-%d", time.Now().UnixNano()), "Synthetic conversation")
+	conversationID, err := st.EnsureConversation(source.ID, "conversation-"+fixtureID, "Synthetic conversation")
 	require.NoError(t, err)
 	id, err := st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
 		SourceID:        source.ID,
-		SourceMessageID: fmt.Sprintf("message-%d", time.Now().UnixNano()),
+		SourceMessageID: "message-" + fixtureID,
 		MessageType:     messageType,
 		SentAt:          sql.NullTime{Time: time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC), Valid: true},
 		Subject:         sql.NullString{String: subject, Valid: subject != ""},

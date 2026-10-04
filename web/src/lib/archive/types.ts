@@ -50,6 +50,7 @@ export interface ArchiveAttachment {
   filename: string;
   mimeType: string;
   sizeBytes: number;
+  contentHash?: string;
 }
 
 export interface ArchiveMessageDetail extends ArchiveMessageSummary {

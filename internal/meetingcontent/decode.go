@@ -27,6 +27,8 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 		return unavailableContent("invalid_raw")
 	}
 	switch rawFormat {
+	case "bland_call_json":
+		return decodeBland(fields)
 	case "granola_json":
 		return decodeGranola(fields)
 	case "circleback_json":
@@ -37,6 +39,8 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 		return decodeNotion(fields)
 	case "muesli_json":
 		return decodeMuesli(fields)
+	case "twilio_call_json":
+		return decodeTwilio(fields)
 	case "meeting_json":
 		return decodeGeneric(fields)
 	default:

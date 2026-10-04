@@ -3,6 +3,8 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
@@ -41,18 +43,40 @@ func manualSyncCLICommand(args []string) bool {
 	}
 	switch args[0] {
 	case "sync-slack", "sync-teams", "sync-beeper", "sync-discord", "sync-circleback", "sync-plaud",
-		"sync-notion-meetings", "sync-granola", "sync-calendar", "sync-synctech-sms":
-		if args[0] == "sync-circleback" || args[0] == "sync-plaud" || args[0] == "sync-notion-meetings" {
+		"sync-bland", "sync-notion-meetings", "sync-granola", "sync-calendar", "sync-synctech-sms", "sync-twilio":
+		if args[0] == "sync-plaud" {
 			for _, arg := range args[1:] {
 				if arg == "--probe" || arg == "--probe=true" {
 					return false
 				}
 			}
 		}
+		if args[0] == "sync-circleback" || args[0] == "sync-notion-meetings" || args[0] == "sync-bland" || args[0] == "sync-twilio" {
+			return !cliProbeRequested(args[1:])
+		}
 		return true
 	default:
 		return false
 	}
+}
+
+// cliProbeRequested follows Cobra's boolean values, last-value precedence,
+// and end-of-flags delimiter when classifying a daemon CLI invocation.
+func cliProbeRequested(args []string) bool {
+	probe := false
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "--probe" {
+			probe = true
+		} else if value, ok := strings.CutPrefix(arg, "--probe="); ok {
+			if enabled, err := strconv.ParseBool(value); err == nil {
+				probe = enabled
+			}
+		}
+	}
+	return probe
 }
 
 func manualSyncCacheFlagValues(args []string) (force, skip bool) {
