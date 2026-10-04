@@ -41,12 +41,13 @@ const (
 	OpDraftsUpdate     // 15 units
 	OpDraftsDelete     // 10 units
 	OpSendAsList       // 1 unit
+	OpMessagesModify   // 5 units
 )
 
 // Cost returns the quota cost for an operation.
 func (o Operation) Cost() int {
 	switch o {
-	case OpMessagesGet, OpMessagesGetRaw, OpMessagesList, OpMessagesTrash:
+	case OpMessagesGet, OpMessagesGetRaw, OpMessagesList, OpMessagesTrash, OpMessagesModify:
 		return 5
 	case OpMessagesDelete:
 		return 10
@@ -67,7 +68,7 @@ func (o Operation) Cost() int {
 
 func (o Operation) remoteMutation() bool {
 	switch o {
-	case OpDraftsCreate, OpDraftsUpdate, OpDraftsDelete:
+	case OpDraftsCreate, OpDraftsUpdate, OpDraftsDelete, OpMessagesModify:
 		return true
 	default:
 		return false

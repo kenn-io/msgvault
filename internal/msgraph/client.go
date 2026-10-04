@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -30,6 +31,12 @@ var ErrNotFound = errors.New("graph resource not found")
 // ErrForbidden classifies a 403 response, for example a token that lacks the
 // scope a write needs.
 var ErrForbidden = errors.New("graph request forbidden")
+
+// ErrBadRequest classifies invalid property values in a 400 response.
+var ErrBadRequest = errors.New("graph request rejected")
+
+// ErrPreconditionFailed classifies a stale resource version in a 412 response.
+var ErrPreconditionFailed = errors.New("graph resource version changed")
 
 // ErrGone classifies an expired delta token: 410 Gone, or a syncStateNotFound
 // error. The caller must restart the delta walk without a token.
@@ -96,7 +103,12 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 	}
 	var lastErr error
 	var retryAfter string
-	for attempt := range maxRetries {
+	attempts := maxRetries
+	if method == http.MethodPatch {
+		// A lost PATCH response can hide an accepted write. Never replay it.
+		attempts = 1
+	}
+	for attempt := range attempts {
 		if attempt > 0 {
 			if err := sleepCtx(ctx, httpretry.RetryAfter(retryAfter, attempt-1, maxRetryAfter)); err != nil {
 				return nil, err
@@ -179,6 +191,10 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrNotFound)
 		case resp.StatusCode == http.StatusForbidden:
 			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrForbidden)
+		case resp.StatusCode == http.StatusBadRequest:
+			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrBadRequest)
+		case resp.StatusCode == http.StatusPreconditionFailed:
+			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), ErrPreconditionFailed)
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			lastErr = fmt.Errorf("graph %s %s: status %d", method, reqURL, resp.StatusCode)
 			retryAfter = resp.Header.Get("Retry-After")
@@ -187,7 +203,10 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 			return nil, fmt.Errorf("graph %s %s: status %d: %s", method, reqURL, resp.StatusCode, string(body))
 		}
 	}
-	return nil, fmt.Errorf("graph %s %s: exhausted %d retries: %w", method, reqURL, maxRetries, lastErr)
+	if method == http.MethodPatch {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("graph %s %s: exhausted %d retries: %w", method, reqURL, attempts, lastErr)
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
@@ -259,6 +278,26 @@ func (c *Client) Post(ctx context.Context, url string, body any) error {
 		}
 	}
 	_, err := c.do(ctx, http.MethodPost, url, reqBody, 0)
+	return err
+}
+
+// PatchIfMatch updates a resource only at the observed version. It sends one
+// request, even when the response is lost or Graph returns a transient error.
+func (c *Client) PatchIfMatch(ctx context.Context, path string, body any, etag string) error {
+	if strings.TrimSpace(etag) == "" {
+		return errors.New("graph PATCH requires a resource version")
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("graph PATCH %s: encode body: %w", path, err)
+	}
+	client := *c
+	client.Headers = maps.Clone(c.Headers)
+	if client.Headers == nil {
+		client.Headers = make(map[string]string)
+	}
+	client.Headers["If-Match"] = etag
+	_, err = client.do(ctx, http.MethodPatch, path, data, 0)
 	return err
 }
 
