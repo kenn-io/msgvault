@@ -1,9 +1,10 @@
 package granola
 
 import (
-	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/meetingarchive"
 )
 
 // buildBody renders the single body_text shared by FTS and embeddings:
@@ -44,7 +45,7 @@ func buildBody(n *Note) string {
 		b.WriteString("\nTranscript:\n")
 		base := transcriptStartTime(n)
 		for _, seg := range n.Transcript {
-			writeLine(formatTranscriptLine(seg.StartTime.Sub(base), speakerLabel(seg.Speaker), seg.Text))
+			writeLine(meetingarchive.FormatTranscriptLine(seg.StartTime.Sub(base), speakerLabel(seg.Speaker), seg.Text))
 		}
 	}
 	return strings.TrimSpace(b.String())
@@ -111,31 +112,4 @@ func speakerLabel(sp Speaker) string {
 		return "Me"
 	}
 	return "Them"
-}
-
-// formatTranscriptLine renders "[mm:ss] Speaker: text" (or "[h:mm:ss]" past
-// the first hour). This line format is the rendering contract shared with the
-// circleback importer.
-func formatTranscriptLine(offset time.Duration, speaker, text string) string {
-	if offset < 0 {
-		offset = 0
-	}
-	total := int(offset.Seconds())
-	h, m, s := total/3600, (total%3600)/60, total%60
-	stamp := fmt.Sprintf("[%02d:%02d]", m, s)
-	if h > 0 {
-		stamp = fmt.Sprintf("[%d:%02d:%02d]", h, m, s)
-	}
-	return stamp + " " + speaker + ": " + text
-}
-
-// snippet is a short preview derived from the body.
-func snippet(body string) string {
-	const maxSnippetLength = 200
-	body = strings.TrimSpace(body)
-	runes := []rune(body)
-	if len(runes) <= maxSnippetLength {
-		return body
-	}
-	return string(runes[:maxSnippetLength])
 }

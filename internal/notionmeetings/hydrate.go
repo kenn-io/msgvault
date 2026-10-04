@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
+	"go.kenn.io/msgvault/internal/meetingidentity"
 )
 
 const (
@@ -305,12 +306,12 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 		}
 		result.Attendees = append(result.Attendees, meetingarchive.Person{
 			Name:   strings.TrimSpace(user.Name),
-			Email:  strings.ToLower(strings.TrimSpace(user.Person.Email)),
+			Email:  meetingidentity.Normalize(user.Person.Email),
 			Anchor: userAnchor(id),
 		})
 		result.ResolvedUsers = append(result.ResolvedUsers, resolvedUser{
 			ID: id, Name: strings.TrimSpace(user.Name),
-			Email: strings.ToLower(strings.TrimSpace(user.Person.Email)), EmailVerified: true,
+			Email: meetingidentity.Normalize(user.Person.Email), EmailVerified: true,
 		})
 	}
 	return nil

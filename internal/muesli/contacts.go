@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/meetingidentity"
 )
 
 // ContactsState reports how much of the macOS Contacts directory a sync could
@@ -216,7 +218,7 @@ func (c *Contacts) Resolve(contactID, email string) (ContactCard, bool) {
 			}
 		}
 	}
-	email = strings.ToLower(strings.TrimSpace(email))
+	email = meetingidentity.Normalize(email)
 	if email == "" || c.state != ContactsComplete {
 		return ContactCard{}, false
 	}
@@ -343,7 +345,7 @@ func (c *Contacts) readAddresses(ctx context.Context, tx *sql.Tx, owners map[int
 		}
 		card := c.cards[key]
 		if email {
-			address = strings.ToLower(address)
+			address = meetingidentity.Normalize(address)
 			if !slices.Contains(card.Emails, address) {
 				card.Emails = append(card.Emails, address)
 				slices.Sort(card.Emails)

@@ -51,11 +51,11 @@ func TestResolveNotionMeetingsSource(t *testing.T) {
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
 
-	_, err := resolveNotionMeetingsSource(nil, cfg)
+	_, err := notionMeetingsSources(cfg).one(nil)
 	require.Error(err)
 	assert.Contains(err.Error(), "multiple [[notion_meetings]]")
 
-	source, err := resolveNotionMeetingsSource([]string{"work"}, cfg)
+	source, err := notionMeetingsSources(cfg).one([]string{"work"})
 	require.NoError(err)
 	assert.Equal("work", source.Identifier)
 }
@@ -180,8 +180,8 @@ func TestRunNotionMeetingsProbeSurfacesSystemicUserListingFailures(t *testing.T)
 
 func TestFinishNotionMeetingsImportRefreshesCommittedWritesOnFailure(t *testing.T) {
 	refreshed := 0
-	err := finishNotionMeetingsImport("work", &notionmeetings.ImportSummary{MeetingsAdded: 1},
-		errors.New("hydrate failed"), func() error { refreshed++; return nil })
+	err := finishMeetingImport("notion meetings", "work", 1,
+		errors.New("hydrate failed"), nil, func() error { refreshed++; return nil })
 	require.Error(t, err)
 	assert.Equal(t, 1, refreshed)
 	assert.Contains(t, err.Error(), "notion meetings sync work failed")

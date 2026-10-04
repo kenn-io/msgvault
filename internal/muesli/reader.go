@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	_ "github.com/mattn/go-sqlite3" // registers the "sqlite3" database/sql driver
+
+	"go.kenn.io/msgvault/internal/meetingidentity"
 )
 
 // maxFolderDepth bounds folder-path resolution so a corrupt parent cycle
@@ -266,10 +268,10 @@ func (r *Reader) participants(ctx context.Context, tx *sql.Tx) (map[int64][]Part
 		if err := rows.Scan(&meetingID, &identifier, &name, &emailAddress, &participantOf); err != nil {
 			return nil, fmt.Errorf("read Muesli participant row: %w", err)
 		}
-		email := strings.ToLower(strings.TrimSpace(emailAddress.String))
+		email := meetingidentity.Normalize(emailAddress.String)
 		if email == "" {
 			if rest, ok := strings.CutPrefix(identifier.String, "email:"); ok {
-				email = strings.ToLower(strings.TrimSpace(rest))
+				email = meetingidentity.Normalize(rest)
 			}
 		}
 		out[meetingID] = append(out[meetingID], Participant{

@@ -38,47 +38,25 @@ const notionMeetingsConfigHint = `Add to your config.toml:
   enabled = true
   # schedule = "15 */6 * * *"         # optional daemon schedule`
 
-func resolveNotionMeetingsSource(args []string, cfg *config.Config) (*config.NotionMeetingsSource, error) {
-	if cfg == nil {
-		return nil, errors.New("configuration is unavailable")
+func notionMeetingsSources(cfg *config.Config) meetingSources[config.NotionMeetingsSource] {
+	sources := meetingSources[config.NotionMeetingsSource]{table: "notion_meetings", hint: notionMeetingsConfigHint}
+	if cfg != nil {
+		sources.configured, sources.lookup = cfg.NotionMeetings, cfg.GetNotionMeetingsSource
+		sources.identifier = func(s config.NotionMeetingsSource) string { return s.Identifier }
 	}
-	if len(cfg.NotionMeetings) == 0 {
-		return nil, errors.New("no [[notion_meetings]] sources configured\n\n" + notionMeetingsConfigHint)
-	}
-	if len(args) > 0 {
-		source := cfg.GetNotionMeetingsSource(args[0])
-		if source == nil {
-			identifiers := make([]string, 0, len(cfg.NotionMeetings))
-			for _, candidate := range cfg.NotionMeetings {
-				identifiers = append(identifiers, candidate.Identifier)
-			}
-			return nil, fmt.Errorf("no [[notion_meetings]] entry with identifier %q (configured: %s)",
-				args[0], strings.Join(identifiers, ", "))
-		}
-		return source, nil
-	}
-	if len(cfg.NotionMeetings) > 1 {
-		return nil, errors.New("multiple [[notion_meetings]] sources configured; pass an identifier")
-	}
-	source := cfg.NotionMeetings[0]
-	return &source, nil
+	return sources
 }
 
 func resolveNotionMeetingsSources(args []string, probe bool, cfg *config.Config) ([]config.NotionMeetingsSource, error) {
-	if cfg == nil {
-		return nil, errors.New("configuration is unavailable")
+	sources := notionMeetingsSources(cfg)
+	if !probe {
+		return sources.selected(args)
 	}
-	if probe || len(args) > 0 || len(cfg.NotionMeetings) == 1 {
-		source, err := resolveNotionMeetingsSource(args, cfg)
-		if err != nil {
-			return nil, err
-		}
-		return []config.NotionMeetingsSource{*source}, nil
+	source, err := sources.one(args)
+	if err != nil {
+		return nil, err
 	}
-	if len(cfg.NotionMeetings) == 0 {
-		return nil, errors.New("no [[notion_meetings]] sources configured\n\n" + notionMeetingsConfigHint)
-	}
-	return cfg.NotionMeetings, nil
+	return []config.NotionMeetingsSource{*source}, nil
 }
 
 type notionMeetingsQuerySource interface {
@@ -147,7 +125,7 @@ var addNotionMeetingsCmd = &cobra.Command{
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		source, err := resolveNotionMeetingsSource(args, cfg)
+		source, err := notionMeetingsSources(cfg).one(args)
 		if err != nil {
 			return err
 		}
@@ -232,7 +210,7 @@ maintenance. --probe validates access without printing meeting content.`,
 		}
 		defer cleanup()
 		dbPath := cfg.DatabaseDSN()
-		pendingWrites := &notionmeetings.ImportSummary{}
+		var pendingWrites int64
 		for _, source := range sources {
 			accountEmail, _ := source.EffectiveAccountEmail()
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Notion meetings for %s\n\n", source.Identifier)
@@ -244,8 +222,10 @@ maintenance. --probe validates access without printing meeting content.`,
 				CreatedAfter: after,
 				Progress:     func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) },
 			})
-			accumulateNotionMeetingsWrites(pendingWrites, summary)
-			if err := finishNotionMeetingsImport(source.Identifier, pendingWrites, importErr,
+			if summary != nil {
+				pendingWrites += summary.MeetingsAdded + summary.MeetingsUpdated
+			}
+			if err := finishMeetingImport("notion meetings", source.Identifier, pendingWrites, importErr, nil,
 				func() error { return rebuildNotionMeetingsCacheAfterWrite(dbPath, state) }); err != nil {
 				return err
 			}
@@ -253,25 +233,6 @@ maintenance. --probe validates access without printing meeting content.`,
 		}
 		return rebuildNotionMeetingsCacheAfterWrite(dbPath, state)
 	},
-}
-
-func accumulateNotionMeetingsWrites(total, current *notionmeetings.ImportSummary) {
-	if total == nil || current == nil {
-		return
-	}
-	total.MeetingsAdded += current.MeetingsAdded
-	total.MeetingsUpdated += current.MeetingsUpdated
-}
-
-func finishNotionMeetingsImport(identifier string, summary *notionmeetings.ImportSummary, importErr error, refresh func() error) error {
-	if importErr == nil {
-		return nil
-	}
-	var refreshErr error
-	if summary != nil && summary.MeetingsAdded+summary.MeetingsUpdated > 0 && refresh != nil {
-		refreshErr = refresh()
-	}
-	return errors.Join(fmt.Errorf("notion meetings sync %s failed: %w", identifier, importErr), refreshErr)
 }
 
 func writeNotionMeetingsSummary(out io.Writer, summary *notionmeetings.ImportSummary) {
@@ -288,11 +249,9 @@ func writeNotionMeetingsSummary(out io.Writer, summary *notionmeetings.ImportSum
 }
 
 func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, source config.NotionMeetingsSource) error {
-	if _, err := st.GetSourceByTypeAndIdentifier(notionmeetings.SourceType, source.Identifier); err != nil {
-		if errors.Is(err, store.ErrSourceNotFound) {
-			return fmt.Errorf("notion meeting source %q is not registered; run msgvault add-notion-meetings %s first",
-				source.Identifier, source.Identifier)
-		}
+	if err := requireRegisteredMeetingSource(st, notionmeetings.SourceType, source.Identifier, fmt.Errorf(
+		"notion meeting source %q is not registered; run msgvault add-notion-meetings %s first",
+		source.Identifier, source.Identifier)); err != nil {
 		return err
 	}
 	if strings.TrimSpace(source.Token) == "" {
@@ -307,14 +266,12 @@ func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, sourc
 	summary, importErr := importer.Import(ctx, notionmeetings.ImportOptions{
 		Identifier: source.Identifier, AccountEmail: accountEmail,
 	})
-	refreshCtx := context.WithoutCancel(ctx)
-	refresh := func() error {
-		return rebuildNotionMeetingsCacheAfterScheduledSync(refreshCtx, "notion-meetings:"+source.Identifier)
+	var writes int64
+	if summary != nil {
+		writes = summary.MeetingsAdded + summary.MeetingsUpdated
 	}
-	if err := finishNotionMeetingsImport(source.Identifier, summary, importErr, refresh); err != nil {
-		return err
-	}
-	return refresh()
+	return finishScheduledMeetingImport(ctx, "notion meetings", source.Identifier, "notion-meetings:"+source.Identifier,
+		writes, importErr, nil, rebuildNotionMeetingsCacheAfterScheduledSync)
 }
 
 func init() {

@@ -28,7 +28,7 @@ func TestResolveMuesliSources(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	cfg := &config.Config{}
-	_, err := resolveMuesliSources(nil, cfg)
+	_, err := muesliSources(cfg).selected(nil)
 	require.Error(err)
 	assert.Contains(err.Error(), "[[muesli]]")
 
@@ -36,16 +36,16 @@ func TestResolveMuesliSources(t *testing.T) {
 		{Identifier: "mac", AccountEmail: "you@example.com"},
 		{Identifier: "studio", AccountEmail: "you@example.com"},
 	}}
-	all, err := resolveMuesliSources(nil, cfg)
+	all, err := muesliSources(cfg).selected(nil)
 	require.NoError(err)
 	assert.Len(all, 2)
 
-	one, err := resolveMuesliSources([]string{"STUDIO"}, cfg)
+	one, err := muesliSources(cfg).selected([]string{"STUDIO"})
 	require.NoError(err)
 	require.Len(one, 1)
 	assert.Equal("studio", one[0].Identifier)
 
-	_, err = resolveMuesliSources([]string{"laptop"}, cfg)
+	_, err = muesliSources(cfg).selected([]string{"laptop"})
 	require.Error(err)
 	assert.Contains(err.Error(), "configured: mac, studio")
 }
@@ -136,8 +136,8 @@ func TestServeScheduledMuesliSyncCompletes(t *testing.T) {
 
 func TestFinishMuesliImportRefreshesCacheAfterPartialWrites(t *testing.T) {
 	refreshed := 0
-	err := finishMuesliImport("mac", &muesli.ImportSummary{MeetingsAdded: 1},
-		errors.New("meeting 3 failed"), func() error { refreshed++; return nil })
+	err := finishMeetingImport("muesli", "mac", 1,
+		errors.New("meeting 3 failed"), nil, func() error { refreshed++; return nil })
 
 	require.Error(t, err)
 	assert.Equal(t, 1, refreshed)

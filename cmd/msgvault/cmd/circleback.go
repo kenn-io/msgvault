@@ -7,10 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -36,32 +33,13 @@ const circlebackConfigHint = `Add to your config.toml:
 
 Then run 'msgvault add-circleback <identifier>' to authorize via browser`
 
-// resolveCirclebackSource picks the [[circleback]] entry for an optional CLI
-// argument: an explicit identifier must match a configured entry; with no
-// argument there must be exactly one entry.
-func resolveCirclebackSource(args []string, cfg *config.Config) (*config.CirclebackSource, error) {
-	if cfg == nil {
-		return nil, errors.New("configuration is unavailable")
+func circlebackSources(cfg *config.Config) meetingSources[config.CirclebackSource] {
+	sources := meetingSources[config.CirclebackSource]{table: "circleback", hint: circlebackConfigHint}
+	if cfg != nil {
+		sources.configured, sources.lookup = cfg.Circleback, cfg.GetCirclebackSource
+		sources.identifier = func(s config.CirclebackSource) string { return s.Identifier }
 	}
-	if len(cfg.Circleback) == 0 {
-		return nil, errors.New("no [[circleback]] sources configured\n\n" + circlebackConfigHint)
-	}
-	if len(args) > 0 {
-		src := cfg.GetCirclebackSource(args[0])
-		if src == nil {
-			var ids []string
-			for _, s := range cfg.Circleback {
-				ids = append(ids, s.Identifier)
-			}
-			return nil, fmt.Errorf("no [[circleback]] entry with identifier %q (configured: %s)", args[0], strings.Join(ids, ", "))
-		}
-		return src, nil
-	}
-	if len(cfg.Circleback) > 1 {
-		return nil, errors.New("multiple [[circleback]] sources configured; pass an identifier")
-	}
-	src := cfg.Circleback[0]
-	return &src, nil
+	return sources
 }
 
 func circlebackManager(src *config.CirclebackSource, state *invocation) *circleback.Manager {
@@ -98,7 +76,7 @@ func preflightAddCirclebackAuthorize(cmd *cobra.Command, args []string) error {
 	if err := validateAddCirclebackOAuthRouting(state); err != nil {
 		return err
 	}
-	src, err := resolveCirclebackSource(args, state.cfg)
+	src, err := circlebackSources(state.cfg).one(args)
 	if err != nil {
 		return err
 	}
@@ -148,7 +126,7 @@ func runAddCirclebackLocal(cmd *cobra.Command, args []string) error {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	src, err := resolveCirclebackSource(args, cfg)
+	src, err := circlebackSources(cfg).one(args)
 	if err != nil {
 		return err
 	}
@@ -223,18 +201,9 @@ Examples:
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 
-		var sources []config.CirclebackSource
-		if len(args) > 0 || len(cfg.Circleback) == 1 {
-			src, err := resolveCirclebackSource(args, cfg)
-			if err != nil {
-				return err
-			}
-			sources = []config.CirclebackSource{*src}
-		} else {
-			sources = cfg.Circleback
-		}
-		if len(sources) == 0 {
-			return errors.New("no [[circleback]] sources configured\n\n" + circlebackConfigHint)
+		sources, err := circlebackSources(cfg).selected(args)
+		if err != nil {
+			return err
 		}
 
 		var after time.Time
@@ -258,42 +227,26 @@ Examples:
 		defer cleanup()
 		dbPath := cfg.DatabaseDSN()
 
-		ctx, cancel := context.WithCancel(cmd.Context())
-		defer cancel()
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		defer signal.Stop(sigChan)
-		go func() {
-			select {
-			case <-sigChan:
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "\nInterrupted. Stopping Circleback sync...")
-				cancel()
-			case <-ctx.Done():
-			}
-		}()
+		ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Stopping Circleback sync...")
+		defer stop()
 
-		pendingCacheWrites := &circleback.ImportSummary{}
+		var pendingWrites int64
+		refresh := func() error { return rebuildCacheAfterManualSync(dbPath, state) }
 		for i := range sources {
 			src := sources[i]
 			accountEmail, err := src.EffectiveAccountEmail()
 			if err != nil {
-				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() error {
-					return rebuildCacheAfterManualSync(dbPath, state)
-				})
+				return finishMeetingImport("circleback", src.Identifier, pendingWrites, err, circlebackCanceled(ctx, err), refresh)
 			}
 			if ctx.Err() != nil {
-				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, nil, func() error {
-					return rebuildCacheAfterManualSync(dbPath, state)
-				})
+				return finishMeetingImport("circleback", src.Identifier, pendingWrites, nil, circlebackCanceled(ctx, nil), refresh)
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Circleback for %s\n\n", src.Identifier)
 
 			mgr := circlebackManager(&src, state)
 			session, err := circleback.Connect(ctx, mgr.Endpoint(), mgr.Handler(src.Identifier))
 			if err != nil {
-				return finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() error {
-					return rebuildCacheAfterManualSync(dbPath, state)
-				})
+				return finishMeetingImport("circleback", src.Identifier, pendingWrites, err, circlebackCanceled(ctx, err), refresh)
 			}
 			imp := circleback.NewImporter(s, session)
 			sum, err := imp.Import(ctx, circleback.ImportOptions{
@@ -304,14 +257,14 @@ Examples:
 				CreatedAfter: after,
 				Progress:     func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) },
 			})
-			accumulateCirclebackWrites(pendingCacheWrites, sum)
+			if sum != nil {
+				pendingWrites += sum.MeetingsAdded + sum.MeetingsUpdated
+			}
 			_ = session.Close()
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-circleback to resume.")
 			}
-			if finishErr := finishCirclebackImport(ctx, src.Identifier, pendingCacheWrites, err, func() error {
-				return rebuildCacheAfterManualSync(dbPath, state)
-			}); finishErr != nil {
+			if finishErr := finishMeetingImport("circleback", src.Identifier, pendingWrites, err, circlebackCanceled(ctx, err), refresh); finishErr != nil {
 				return finishErr
 			}
 
@@ -319,47 +272,22 @@ Examples:
 		}
 
 		if ctx.Err() != nil {
-			return finishCirclebackImport(ctx, sources[len(sources)-1].Identifier, pendingCacheWrites, nil, func() error {
-				return rebuildCacheAfterManualSync(dbPath, state)
-			})
+			return finishMeetingImport("circleback", sources[len(sources)-1].Identifier, pendingWrites, nil, circlebackCanceled(ctx, nil), refresh)
 		}
 		return rebuildCacheAfterManualSync(dbPath, state)
 	},
 }
 
-func finishCirclebackImport(
-	ctx context.Context,
-	identifier string,
-	sum *circleback.ImportSummary,
-	importErr error,
-	refreshCache func() error,
-) error {
-	cancelErr := ctx.Err()
-	if cancelErr == nil && errors.Is(importErr, context.Canceled) {
-		cancelErr = context.Canceled
+// circlebackCanceled reports cancellation from the run's context or from an
+// import error that wraps context.Canceled.
+func circlebackCanceled(ctx context.Context, importErr error) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	var operationErr error
-	switch {
-	case cancelErr != nil:
-		operationErr = fmt.Errorf("circleback sync %s canceled: %w", identifier, cancelErr)
-	case importErr != nil:
-		operationErr = fmt.Errorf("circleback sync %s failed: %w", identifier, importErr)
-	default:
-		return nil
+	if errors.Is(importErr, context.Canceled) {
+		return context.Canceled
 	}
-	var refreshErr error
-	if sum != nil && sum.MeetingsAdded+sum.MeetingsUpdated > 0 && refreshCache != nil {
-		refreshErr = refreshCache()
-	}
-	return errors.Join(operationErr, refreshErr)
-}
-
-func accumulateCirclebackWrites(total, current *circleback.ImportSummary) {
-	if total == nil || current == nil {
-		return
-	}
-	total.MeetingsAdded += current.MeetingsAdded
-	total.MeetingsUpdated += current.MeetingsUpdated
+	return nil
 }
 
 func writeCirclebackSummary(out io.Writer, sum *circleback.ImportSummary) {
@@ -431,20 +359,9 @@ func runConfiguredCirclebackSync(ctx context.Context, st *store.Store, src confi
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
-	registered, err := st.ListSources(circleback.SourceType)
-	if err != nil {
-		return fmt.Errorf("list registered Circleback sources: %w", err)
-	}
-	found := false
-	for _, candidate := range registered {
-		if candidate.Identifier == src.Identifier {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("circleback source %q is not registered; run msgvault add-circleback %s first",
-			src.Identifier, src.Identifier)
+	if err := requireRegisteredMeetingSource(st, circleback.SourceType, src.Identifier, fmt.Errorf(
+		"circleback source %q is not registered; run msgvault add-circleback %s first", src.Identifier, src.Identifier)); err != nil {
+		return err
 	}
 	accountEmail, err := src.EffectiveAccountEmail()
 	if err != nil {
@@ -461,27 +378,12 @@ func runConfiguredCirclebackSync(ctx context.Context, st *store.Store, src confi
 		Identifier:   src.Identifier,
 		AccountEmail: accountEmail,
 	})
-	return finishScheduledCirclebackImport(ctx, src.Identifier, sum, err, rebuildCacheAfterScheduledSync)
-}
-
-func finishScheduledCirclebackImport(
-	ctx context.Context,
-	identifier string,
-	sum *circleback.ImportSummary,
-	importErr error,
-	refreshCache func(context.Context, string) error,
-) error {
-	refreshCtx := context.WithoutCancel(ctx)
-	refresh := func() error {
-		if refreshCache != nil {
-			return refreshCache(refreshCtx, "circleback:"+identifier)
-		}
-		return nil
+	var writes int64
+	if sum != nil {
+		writes = sum.MeetingsAdded + sum.MeetingsUpdated
 	}
-	if err := finishCirclebackImport(ctx, identifier, sum, importErr, refresh); err != nil {
-		return err
-	}
-	return refresh()
+	return finishScheduledMeetingImport(ctx, "circleback", src.Identifier, "circleback:"+src.Identifier, writes, err,
+		circlebackCanceled(ctx, err), rebuildCacheAfterScheduledSync)
 }
 
 func init() {
