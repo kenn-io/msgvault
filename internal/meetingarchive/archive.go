@@ -10,7 +10,6 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -60,7 +59,8 @@ type Snapshot struct {
 	RawFormat            string
 	Organizer            *Person
 	Attendees            []Person
-	// OwnerAttribution records explicit personal ownership from provider actor IDs.
+	// OwnerAttribution is the caller's identity match for an organizer resolved
+	// by provider ID. Store recomputes it from identities, so it stays reversible.
 	// Nil preserves canonical email/phone-derived ownership.
 	OwnerAttribution *bool
 }
@@ -139,8 +139,7 @@ func (a *Archiver) Upsert(
 	if existed && !opts.Force {
 		storedRaw, rawErr := a.store.GetMessageRaw(existingMessageID)
 		storedIsFromMe, attributionErr := a.store.GetMessageIsFromMe(existingMessageID)
-		participantsMatch, participantErr := a.resolvedParticipantsMatch(ctx, existingMessageID, snapshot)
-		if rawErr == nil && attributionErr == nil && participantErr == nil && participantsMatch && bytes.Equal(storedRaw, snapshot.Raw) &&
+		if rawErr == nil && attributionErr == nil && bytes.Equal(storedRaw, snapshot.Raw) &&
 			storedIsFromMe == expectedIsFromMe && equalMetadata([]byte(existingMessage.Metadata.String), snapshot.Metadata) {
 			if err := a.store.RecomputeConversationStatsForMessageContext(ctx, existingMessageID); err != nil {
 				return Result{}, fmt.Errorf("recompute meeting conversation stats: %w", err)
@@ -239,7 +238,7 @@ func (a *Archiver) Upsert(
 					SentAt:                  sql.NullTime{Time: snapshot.StartedAt, Valid: !snapshot.StartedAt.IsZero()},
 					SenderID:                sql.NullInt64{Int64: senderID, Valid: senderID != 0},
 					IsFromMe:                expectedIsFromMe,
-					IdentityDerivedIsFromMe: expectedIsFromMe && snapshot.OwnerAttribution == nil,
+					IdentityDerivedIsFromMe: expectedIsFromMe,
 					Subject:                 sql.NullString{String: snapshot.Title, Valid: snapshot.Title != ""},
 					Snippet:                 sql.NullString{String: snapshot.Snippet, Valid: snapshot.Snippet != ""},
 					SizeEstimate:            int64(len(snapshot.Body)),
@@ -335,46 +334,4 @@ func archiveParticipantKey(person Person) string {
 		return fmt.Sprintf("participant:%d", person.ParticipantID)
 	}
 	return person.PrimaryKey()
-}
-
-// Independently resolved IDs are part of the archived projection even when
-// their provider raw evidence and derived text have not changed.
-func (a *Archiver) resolvedParticipantsMatch(ctx context.Context, messageID int64, snapshot Snapshot) (bool, error) {
-	var senderID int64
-	mixed := false
-	if snapshot.Organizer != nil {
-		organizer := snapshot.Organizer.Normalized()
-		senderID = organizer.ParticipantID
-		mixed = senderID == 0 && organizer.PrimaryKey() != ""
-	}
-	hasResolved := senderID > 0
-	var attendeeIDs []int64
-	seen := make(map[string]bool, len(snapshot.Attendees))
-	for _, raw := range snapshot.Attendees {
-		attendee := raw.Normalized()
-		key := archiveParticipantKey(attendee)
-		if key == "" || seen[key] {
-			continue
-		}
-		seen[key] = true
-		if attendee.ParticipantID > 0 {
-			hasResolved = true
-			attendeeIDs = append(attendeeIDs, attendee.ParticipantID)
-		} else {
-			mixed = true
-		}
-	}
-	if !hasResolved {
-		return true, nil
-	}
-	if mixed {
-		return false, nil
-	}
-	storedSender, storedAttendees, err := a.store.MeetingArchivedParticipantIDsContext(ctx, messageID)
-	if err != nil {
-		return false, err
-	}
-	slices.Sort(attendeeIDs)
-	slices.Sort(storedAttendees)
-	return senderID == storedSender && slices.Equal(attendeeIDs, storedAttendees), nil
 }

@@ -42,6 +42,9 @@ type Client struct {
 	lookupMediaIP        func(context.Context, string) ([]netip.Addr, error)
 	dialMedia            func(context.Context, string, string) (net.Conn, error)
 	mediaTransferTimeout func(int64) time.Duration
+	// messageRangeCap is the most messages Chatwoot returns for one bounded
+	// range (MessageFinder#messages_between).
+	messageRangeCap int
 }
 
 // mediaTimeout scales one attachment's deadline with its configured size cap.
@@ -145,7 +148,7 @@ func NewClient(baseURL string, accountID int64, token string) (*Client, error) {
 		lookupMediaIP: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		},
-		dialMedia: dialer.DialContext, mediaTransferTimeout: mediaTimeout,
+		dialMedia: dialer.DialContext, mediaTransferTimeout: mediaTimeout, messageRangeCap: 1000,
 	}, nil
 }
 
@@ -232,8 +235,13 @@ func (c *Client) ListAgents(ctx context.Context) ([]Actor, error) {
 	return *result, nil
 }
 
-func (c *Client) ListConversations(ctx context.Context, page int, inboxID int64) ([]Conversation, error) {
-	if page <= 0 || inboxID <= 0 {
+const (
+	sortByCreated  = "created_at_asc"
+	sortByActivity = "last_activity_at_desc"
+)
+
+func (c *Client) ListConversations(ctx context.Context, page int, inboxID int64, sortBy string) ([]Conversation, error) {
+	if page <= 0 || inboxID <= 0 || (sortBy != sortByCreated && sortBy != sortByActivity) {
 		return nil, errors.New("chatwoot conversation page and inbox must be positive")
 	}
 	var result struct {
@@ -241,7 +249,7 @@ func (c *Client) ListConversations(ctx context.Context, page int, inboxID int64)
 			Payload *[]Conversation `json:"payload"`
 		} `json:"data"`
 	}
-	query := url.Values{"status": {"all"}, "assignee_type": {"all"}, "sort_by": {"created_at_asc"}, "page": {strconv.Itoa(page)}}
+	query := url.Values{"status": {"all"}, "assignee_type": {"all"}, "sort_by": {sortBy}, "page": {strconv.Itoa(page)}}
 	query.Set("inbox_id", strconv.FormatInt(inboxID, 10))
 	if err := c.get(ctx, "/conversations", query, &result); err != nil {
 		return nil, err

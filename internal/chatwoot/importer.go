@@ -3,7 +3,6 @@ package chatwoot
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"slices"
 	"strconv"
@@ -21,7 +20,6 @@ type ImportOptions struct {
 	ReconcileInterval time.Duration
 	Media             bool
 	MaxMediaBytes     int64
-	NoMedia           bool
 	AttachmentsDir    string
 }
 
@@ -42,50 +40,48 @@ type Importer struct {
 	identities     []store.AccountIdentity
 	resolvedActors map[string]int64
 	requestBudget  int
+	boundsProbed   bool
 }
+
+// now is replaceable so tests can hold fixtures inside the refresh window.
+var now = time.Now
+
+const (
+	maxSyncRequests = 10000
+	// activityOverlap rereads conversations near the watermark, because
+	// Chatwoot orders equal activity times arbitrarily between pages.
+	activityOverlap = 10 * time.Minute
+	// openBound ends an open message range. Chatwoot message IDs are 32-bit, and
+	// releases before 4.17 reject larger bounds.
+	openBound = math.MaxInt32
+	// artifactWindow bounds how long a recording, transcript or failed
+	// download is rechecked. Chatwoot updates them without new activity.
+	artifactWindow = 7 * 24 * time.Hour
+	// walkQueueLimit is how many conversations a listing queues before they are
+	// processed, which keeps the checkpoint small.
+	walkQueueLimit  = 100
+	selfAgentSignal = "chatwoot_self_agent"
+)
 
 func NewImporter(s *store.Store, c *Client) *Importer { return &Importer{store: s, client: c} }
 
-// Register adds only visible selected inboxes. Sync never silently registers a
+// Register adds the given visible inboxes. Sync never silently registers a
 // newly created inbox; the daemon operator chooses its archive boundary here.
-func (imp *Importer) Register(ctx context.Context, selected []int64) ([]*store.Source, error) {
+func (imp *Importer) Register(ctx context.Context, inboxes []Inbox) ([]*store.Source, error) {
 	if imp == nil || imp.store == nil || imp.client == nil {
 		return nil, errors.New("chatwoot importer unavailable")
 	}
-	inboxes, err := imp.client.ListInboxes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	wanted := map[int64]bool{}
-	for _, id := range selected {
-		if id <= 0 {
-			return nil, errors.New("chatwoot inbox IDs must be positive")
-		}
-		wanted[id] = true
-	}
-	visible := map[int64]bool{}
-	for _, inbox := range inboxes {
-		if inbox.ID <= 0 {
-			return nil, errors.New("chatwoot returned invalid inbox ID")
-		}
-		visible[inbox.ID] = true
-	}
-	for id := range wanted {
-		if !visible[id] {
-			return nil, fmt.Errorf("chatwoot inbox %d is not visible to this account token", id)
-		}
-	}
 	var sources []*store.Source
 	for _, inbox := range inboxes {
-		if len(wanted) > 0 && !wanted[inbox.ID] {
-			continue
+		if inbox.ID <= 0 {
+			return sources, errors.New("chatwoot returned invalid inbox ID")
 		}
-		if err = ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return sources, err
 		}
-		source, sourceErr := imp.store.GetOrCreateSource(SourceType, SourceIdentifier(imp.client.baseURL, imp.client.accountID, inbox.ID))
-		if sourceErr != nil {
-			return sources, sourceErr
+		source, err := imp.store.GetOrCreateSource(SourceType, SourceIdentifier(imp.client.baseURL, imp.client.accountID, inbox.ID))
+		if err != nil {
+			return sources, err
 		}
 		if err = imp.store.UpdateSourceDisplayNameContext(ctx, source.ID, inbox.Name); err != nil {
 			return sources, err
@@ -158,9 +154,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return nil, err
 	}
-	if opts.Full && !state.FullReconciliation {
-		state = newSyncState(scope)
-		state.FullReconciliation = true
+	interval := opts.ReconcileInterval
+	if interval <= 0 {
+		interval = 24 * time.Hour
+	}
+	switch {
+	case opts.Full && state.Walk != walkFull:
+		state.Walk, state.NextPage, state.WalkStartedAt = walkFull, 1, now().UTC()
+	case state.Walk == "" && now().Sub(state.ReconciledAt) >= interval:
+		state.Walk, state.NextPage, state.WalkStartedAt = walkReconcile, 1, now().UTC()
 	}
 	syncID, err := imp.store.StartSyncContext(ctx, source.ID, SourceType)
 	if err != nil {
@@ -170,6 +172,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
 	scoped.agents = map[int64]Actor{}
 	scoped.resolvedActors = map[string]int64{}
+	scoped.boundsProbed = false
 	imp = &scoped
 	sum = &ImportSummary{SourceID: source.ID, Sources: 1}
 	defer func() {
@@ -192,17 +195,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			imp.agents[a.ID] = a
 		}
 	}
-	for _, id := range opts.SelfAgentIDs {
-		a := Actor{ID: id, Type: actorUser}
-		if enriched, ok := imp.agents[id]; ok {
-			a = enriched
-		}
-		if _, err = imp.resolveActor(ctx, source.ID, a); err != nil {
-			return sum, err
-		}
-		if err = imp.store.AddAccountIdentityContext(ctx, source.ID, imp.actorIdentifier(a), "chatwoot_self_agent"); err != nil {
-			return sum, err
-		}
+	if err = imp.syncSelfAgents(ctx, source.ID, opts.SelfAgentIDs); err != nil {
+		return sum, err
 	}
 	imp.identities, err = imp.store.ListAccountIdentities(source.ID)
 	if err != nil {
@@ -212,134 +206,46 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if budget <= 0 {
 		budget = maxSyncRequests
 	}
-	conversations, pages, nextPage, err := imp.enumerateConversations(ctx, opts.InboxID, max(state.NextPage, 1), budget)
+	requests := 0
+	listed := map[int64]Conversation{}
+	reached, err := imp.scanActivity(ctx, source.ID, opts.InboxID, state, listed, &requests, budget/2)
 	if err != nil {
 		return sum, err
 	}
-	interval := opts.ReconcileInterval
-	if interval <= 0 {
-		interval = 24 * time.Hour
-	}
-	requests := 0
-	// Reserve half the message-work budget for saved conversations. This frontier
-	// rotates independently of discovery, so new pages cannot starve old history
-	// or late media. Four requests allow the context fetch plus a range probe.
-	processed := map[int64]bool{}
-	savedBudget := budget / 2
-	if savedBudget >= 4 {
-		keys := make([]string, 0, len(state.Conversations))
-		for key, cs := range state.Conversations {
-			if len(cs.Pending) > 0 || len(cs.Artifacts) > 0 {
-				keys = append(keys, key)
-			}
-		}
-		slices.Sort(keys)
-		for index, key := range keys {
-			if key >= state.NextSavedConversation {
-				keys = append(slices.Clone(keys[index:]), keys[:index]...)
-				break
-			}
-		}
-		for index, key := range keys {
-			if requests >= savedBudget {
-				sum.Partial = true
-				break
-			}
-			id, parseErr := strconv.ParseInt(key, 10, 64)
-			if parseErr != nil || id <= 0 {
-				return sum, errors.New("invalid Chatwoot saved conversation")
-			}
-			requests++
-			c, fetchErr := imp.client.GetConversation(ctx, id)
-			if errors.Is(fetchErr, ErrNotFound) {
-				// Deleted or no longer visible conversations cannot supply new history.
-				// Keep their archived records, and retire the unavailable work item.
-				delete(state.Conversations, key)
-			} else {
-				if fetchErr != nil {
-					return sum, fetchErr
-				}
-				if c.InboxID <= 0 || (c.AccountID != 0 && c.AccountID != imp.client.accountID) {
-					return sum, errors.New("chatwoot saved conversation scope mismatch")
-				}
-				if c.InboxID != opts.InboxID {
-					// A moved conversation is discoverable under its new inbox. Retire
-					// this source's saved work while keeping its archived records.
-					delete(state.Conversations, key)
-				} else {
-					if _, processErr := imp.processConversation(ctx, source.ID, syncID, c, state, opts, sum, &requests, savedBudget, interval); processErr != nil {
-						return sum, processErr
-					}
-					processed[c.ID] = true
-				}
-			}
-			state.NextSavedConversation = ""
-			for offset := 1; offset <= len(keys); offset++ {
-				nextKey := keys[(index+offset)%len(keys)]
-				nextState := state.Conversations[nextKey]
-				if nextState == nil || (len(nextState.Pending) == 0 && len(nextState.Artifacts) == 0) {
-					continue
-				}
-				state.NextSavedConversation = nextKey
-				break
-			}
-			if err = imp.checkpoint(ctx, syncID, state, sum); err != nil {
-				return sum, err
-			}
-		}
-	}
-	for index, c := range conversations {
-		if c.ID == state.NextConversation {
-			conversations = conversations[index:]
-			break
-		}
-	}
-	// Discovery and message work each have a finite budget. Save the page of
-	// the first unvisited conversation, so a bounded run cannot skip a prefix.
-	sum.Partial = sum.Partial || nextPage > 1
-	if len(conversations) == 0 {
-		state.NextPage = nextPage
-		state.NextConversation = 0
-	}
-	for index, c := range conversations {
-		cs := state.Conversations[strconv.FormatInt(c.ID, 10)]
-		if !processed[c.ID] {
-			cs, err = imp.processConversation(ctx, source.ID, syncID, c, state, opts, sum, &requests, budget, interval)
-			if err != nil {
-				return sum, err
-			}
-		}
-		if index+1 < len(conversations) {
-			state.NextConversation = conversations[index+1].ID
-			state.NextPage = pages[state.NextConversation]
-		} else {
-			state.NextConversation = 0
-			state.NextPage = nextPage
-		}
-		if len(cs.Pending) > 0 {
-			sum.Partial = true
+	// A listing queues a bounded batch, which is processed before the next
+	// batch is listed, so one run backfills as far as its budget allows.
+	visited := map[string]bool{}
+	for {
+		before := requests
+		if err = imp.listNextPages(ctx, source.ID, opts.InboxID, state, listed, &requests, budget); err != nil {
+			return sum, err
 		}
 		if err = imp.checkpoint(ctx, syncID, state, sum); err != nil {
 			return sum, err
 		}
-		if requests >= budget {
-			if index+1 < len(conversations) {
-				sum.Partial = true
-			}
+		if err = imp.processSavedWork(ctx, source.ID, syncID, state, listed, visited, opts, sum, &requests, budget); err != nil {
+			return sum, err
+		}
+		if state.Walk == "" || state.NextPage == 0 || requests >= budget || requests == before {
 			break
 		}
 	}
-	// Discovery EOF can be reached before an earlier conversation finishes
-	// its bounded history walk. Saved gaps keep the whole sync partial.
+	if state.Walk != "" && state.NextPage > 0 {
+		sum.Partial = true
+	}
 	for _, cs := range state.Conversations {
 		if len(cs.Pending) > 0 {
 			sum.Partial = true
 			break
 		}
 	}
-	if state.FullReconciliation && !sum.Partial {
-		state.FullReconciliation = false
+	if state.Walk != "" && state.NextPage == 0 && !sum.Partial {
+		// The next reconcile rereads what was written since this one started.
+		state.Walk, state.ReconciledAt = "", state.WalkStartedAt
 	}
+	// A scan that ran out of budget leaves changed conversations for the next
+	// sync, but the listing's own completion doesn't depend on it.
+	sum.Partial = sum.Partial || !reached
 	blob, err := state.marshal()
 	if err != nil {
 		return sum, err
@@ -350,95 +256,354 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	return sum, nil
 }
 
-func (imp *Importer) processConversation(ctx context.Context, sourceID, syncID int64, c Conversation, state *syncState, opts ImportOptions, sum *ImportSummary, requests *int, budget int, interval time.Duration) (*conversationState, error) {
-	var err error
-	key := strconv.FormatInt(c.ID, 10)
-	cs := state.Conversations[key]
-	if cs == nil {
-		cs = &conversationState{Pending: []idRange{{1, math.MaxInt64}}, Artifacts: map[string]bool{}, WalkingFull: true}
-		state.Conversations[key] = cs
-	}
-	if cs.Artifacts == nil {
-		cs.Artifacts = map[string]bool{}
-	}
-	if len(cs.Pending) == 0 {
-		if cs.ReconciledAt.IsZero() || time.Since(cs.ReconciledAt) >= interval {
-			cs.Pending = []idRange{{1, math.MaxInt64}}
-			cs.WalkingFull = true
-		} else {
-			cs.Pending = []idRange{{cs.HighWater + 1, math.MaxInt64}}
+// syncSelfAgents keeps the importer's own identities equal to self_agent_ids.
+// Store derives ownership from identities, so removal un-marks earlier records.
+func (imp *Importer) syncSelfAgents(ctx context.Context, sourceID int64, selfAgentIDs []int64) error {
+	wanted := map[string]bool{}
+	for _, id := range selfAgentIDs {
+		a := Actor{ID: id, Type: actorUser}
+		if enriched, ok := imp.agents[id]; ok {
+			a = enriched
+		}
+		if _, err := imp.resolveActor(ctx, sourceID, a); err != nil {
+			return err
+		}
+		address := imp.actorIdentifier(a)
+		wanted[address] = true
+		if err := imp.store.AddAccountIdentityContext(ctx, sourceID, address, selfAgentSignal); err != nil {
+			return err
 		}
 	}
-	artifactIDs := make([]string, 0, len(cs.Artifacts))
-	for id := range cs.Artifacts {
-		artifactIDs = append(artifactIDs, id)
+	identities, err := imp.store.ListAccountIdentities(sourceID)
+	if err != nil {
+		return err
 	}
-	beforeWalk := sum.MessagesProcessed
-	if err = imp.walkConversation(ctx, sourceID, syncID, c, cs, state, opts, sum, requests, budget); err != nil {
-		return cs, err
+	for _, identity := range identities {
+		if identity.SourceSignal == selfAgentSignal && !wanted[identity.Address] {
+			if _, err = imp.store.RemoveAccountIdentityContext(ctx, sourceID, identity.Address); err != nil {
+				return err
+			}
+		}
 	}
-	// Completed recordings and transcripts can change without message or
-	// conversation activity. Their refresh is independent of history cursors.
-	slices.Sort(artifactIDs)
-	for artifactIndex, id := range artifactIDs {
-		if id >= cs.NextArtifact {
-			artifactIDs = append(slices.Clone(artifactIDs[artifactIndex:]), artifactIDs[:artifactIndex]...)
+	return nil
+}
+
+func (imp *Importer) listConversations(ctx context.Context, page int, inboxID int64, sortBy string) ([]Conversation, error) {
+	if page <= 0 || page == math.MaxInt {
+		return nil, errors.New("chatwoot conversation page overflow")
+	}
+	batch, err := imp.client.ListConversations(ctx, page, inboxID, sortBy)
+	if err != nil {
+		return nil, err
+	}
+	for index, c := range batch {
+		if c.ID <= 0 || c.InboxID <= 0 || (c.AccountID != 0 && c.AccountID != imp.client.accountID) || c.LastActivityAt <= 0 {
+			return nil, errors.New("chatwoot returned invalid conversation scope")
+		}
+		if sortBy == sortByActivity && index > 0 && c.LastActivityAt > batch[index-1].LastActivityAt {
+			return nil, errors.New("chatwoot did not honor conversation activity order")
+		}
+	}
+	return batch, nil
+}
+
+// scanActivity queues conversations whose activity is newer than the archive.
+// It runs every sync, stops at the saved watermark, and reports whether it
+// reached it within budget.
+func (imp *Importer) scanActivity(ctx context.Context, sourceID, inboxID int64, state *syncState, listed map[int64]Conversation, requests *int, budget int) (bool, error) {
+	cutoff := state.ActivityWatermark - int64(activityOverlap/time.Second)
+	newest := state.ActivityWatermark
+	for page, done := 1, false; !done; page++ {
+		if *requests >= budget {
+			return false, nil
+		}
+		*requests++
+		batch, err := imp.listConversations(ctx, page, inboxID, sortByActivity)
+		if err != nil {
+			return false, err
+		}
+		// The first sync only records the watermark; its listing covers the rest.
+		done = len(batch) == 0 || state.ActivityWatermark == 0
+		for _, c := range batch {
+			newest = max(newest, c.LastActivityAt)
+			if c.LastActivityAt < cutoff {
+				done = true
+			} else if state.ActivityWatermark > 0 && c.InboxID == inboxID {
+				if err = imp.enqueue(ctx, sourceID, state, c, "", listed); err != nil {
+					return false, err
+				}
+			}
+		}
+	}
+	state.ActivityWatermark = newest
+	return true, nil
+}
+
+// listNextPages continues the listing of every conversation, which runs only
+// for --full and the periodic reconcile, until a batch is queued.
+func (imp *Importer) listNextPages(ctx context.Context, sourceID, inboxID int64, state *syncState, listed map[int64]Conversation, requests *int, budget int) error {
+	for state.Walk != "" && state.NextPage > 0 {
+		queued := 0
+		for _, cs := range state.Conversations {
+			if len(cs.Pending) > 0 {
+				queued++
+			}
+		}
+		if *requests >= budget || queued >= walkQueueLimit {
+			return nil
+		}
+		*requests++
+		batch, err := imp.listConversations(ctx, state.NextPage, inboxID, sortByCreated)
+		if err != nil {
+			return err
+		}
+		if len(batch) == 0 {
+			// The walk ends when the queued conversations finish, so a bounded
+			// --full run resumes its saved ranges instead of restarting.
+			state.NextPage = 0
+			break
+		}
+		for _, c := range batch {
+			if c.InboxID == inboxID {
+				if err = imp.enqueue(ctx, sourceID, state, c, state.Walk, listed); err != nil {
+					return err
+				}
+			}
+		}
+		state.NextPage++
+	}
+	return nil
+}
+
+// enqueue saves history work for one listed conversation. A full walk rereads
+// all of it. Otherwise only messages above the archived ones are read, and
+// nothing when the archive already holds the conversation's newest message.
+func (imp *Importer) enqueue(ctx context.Context, sourceID int64, state *syncState, c Conversation, walk string, listed map[int64]Conversation) error {
+	key := strconv.FormatInt(c.ID, 10)
+	listed[c.ID] = c
+	cs := state.Conversations[key]
+	if cs == nil {
+		cs = &conversationState{}
+	}
+	// Messages written concurrently can commit out of ID order, so a read can
+	// miss one on either side of the archived head. Reconcile rereads the whole
+	// history of each conversation active since the last one.
+	switch {
+	case walk == walkFull || (walk == walkReconcile && c.LastActivityAt >= state.ReconciledAt.Add(-activityOverlap).Unix()):
+		cs.Pending = []idRange{{1, openBound}}
+	case len(cs.Pending) > 0:
+	default:
+		head, err := imp.store.ChatwootConversationHead(ctx, sourceID, key)
+		if err != nil {
+			return err
+		}
+		// The listing names the newest message, so an archive holding it is
+		// current. A newest private note excluded by policy is reread when listed.
+		if c.LastMessageID <= head {
+			return nil
+		}
+		cs.Pending = []idRange{{head + 1, openBound}}
+	}
+	state.Conversations[key] = cs
+	return nil
+}
+
+// processSavedWork rotates through conversations with pending history or live
+// artifacts, so a bounded run cannot starve any of them.
+func (imp *Importer) processSavedWork(ctx context.Context, sourceID, syncID int64, state *syncState, listed map[int64]Conversation, visited map[string]bool, opts ImportOptions, sum *ImportSummary, requests *int, budget int) error {
+	expired := now().Add(-artifactWindow).Unix()
+	keys := make([]string, 0, len(state.Conversations))
+	for key, cs := range state.Conversations {
+		for id, createdAt := range cs.Artifacts {
+			if createdAt < expired {
+				delete(cs.Artifacts, id)
+			}
+		}
+		if cs.idle() {
+			delete(state.Conversations, key)
+			continue
+		}
+		// Each conversation gets one turn per run, so --limit stays per run.
+		if !visited[key] {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	for index, key := range keys {
+		if key > state.LastSavedConversation {
+			keys = append(slices.Clone(keys[index:]), keys[:index]...)
 			break
 		}
 	}
-	for artifactIndex, idText := range artifactIDs {
-		if *requests >= budget || (opts.Limit > 0 && sum.MessagesProcessed-beforeWalk >= opts.Limit) {
+	for _, key := range keys {
+		if *requests >= budget {
 			sum.Partial = true
 			break
 		}
-		id, parseErr := strconv.ParseInt(idText, 10, 64)
-		if parseErr != nil || id <= 0 || id > math.MaxInt32 {
-			return cs, errors.New("invalid Chatwoot artifact checkpoint")
+		id, err := strconv.ParseInt(key, 10, 64)
+		if err != nil || id <= 0 {
+			return errors.New("invalid Chatwoot saved conversation")
 		}
-		nextArtifact := artifactIDs[(artifactIndex+1)%len(artifactIDs)]
-		*requests++
-		messages, fetchErr := imp.client.ListMessages(ctx, c.ID, id, id+1)
-		if errors.Is(fetchErr, ErrNotFound) {
-			delete(cs.Artifacts, idText)
-			cs.NextArtifact = nextArtifact
-			continue
-		}
-		if fetchErr != nil {
-			return cs, fetchErr
-		}
-		if _, err = subtractHandled(idRange{id, id + 1}, messageIDs(messages)); err != nil {
-			return cs, err
-		}
-		if len(messages) == 0 {
-			delete(cs.Artifacts, idText)
-			cs.NextArtifact = nextArtifact
-			continue
-		}
-		for _, m := range messages {
-			if err = imp.validateMessage(c, m, opts); err != nil {
-				return cs, err
+		cs := state.Conversations[key]
+		c, ok := listed[id]
+		if !ok {
+			*requests++
+			c, err = imp.client.GetConversation(ctx, id)
+			switch {
+			case errors.Is(err, ErrNotFound):
+				// Deleted or no longer visible conversations cannot supply new history.
+				// Keep their archived records, and retire the unavailable work item.
+				cs = &conversationState{}
+			case err != nil:
+				return err
+			case c.InboxID <= 0 || (c.AccountID != 0 && c.AccountID != imp.client.accountID):
+				return errors.New("chatwoot saved conversation scope mismatch")
+			case c.InboxID != opts.InboxID:
+				// A moved conversation is discoverable under its new inbox. Retire
+				// this source's saved work while keeping its archived records.
+				cs = &conversationState{}
 			}
-			if m.Private && !opts.IncludePrivate {
-				delete(cs.Artifacts, idText)
-				continue
-			}
-			if err = imp.persistMessage(ctx, sourceID, c, m, opts, sum); err != nil {
-				return cs, err
-			}
-			sum.MessagesProcessed++
 		}
-		cs.NextArtifact = nextArtifact
+		if !cs.idle() {
+			if err = imp.processConversation(ctx, sourceID, syncID, c, cs, state, opts, sum, requests, budget); err != nil {
+				return err
+			}
+		}
+		if cs.idle() {
+			delete(state.Conversations, key)
+		}
+		state.LastSavedConversation = key
+		visited[key] = true
+		if err = imp.checkpoint(ctx, syncID, state, sum); err != nil {
+			return err
+		}
 	}
-	if _, exists := cs.Artifacts[cs.NextArtifact]; !exists {
-		cs.NextArtifact = ""
+	return nil
+}
+
+func (imp *Importer) processConversation(ctx context.Context, sourceID, syncID int64, c Conversation, cs *conversationState, state *syncState, opts ImportOptions, sum *ImportSummary, requests *int, budget int) error {
+	if cs.Artifacts == nil {
+		cs.Artifacts = map[string]int64{}
+	}
+	artifactIDs := make([]int64, 0, len(cs.Artifacts))
+	for idText := range cs.Artifacts {
+		id, err := strconv.ParseInt(idText, 10, 64)
+		if err != nil || id <= 0 || id >= openBound {
+			return errors.New("invalid Chatwoot artifact checkpoint")
+		}
+		artifactIDs = append(artifactIDs, id)
+	}
+	slices.Sort(artifactIDs)
+	if err := imp.walkConversation(ctx, sourceID, syncID, c, cs, state, opts, sum, requests, budget); err != nil {
+		return err
 	}
 	if len(cs.Pending) > 0 {
 		sum.Partial = true
 	}
-	return cs, nil
+	// Recordings and transcripts change without conversation activity. One range
+	// read covers a conversation's artifacts. A capped read resumes past its last
+	// ID; one it skipped below that is read on its own, since creation order can
+	// put it past the cap on every read.
+	for len(artifactIDs) > 0 {
+		if *requests >= budget {
+			sum.Partial = true
+			return nil
+		}
+		r := idRange{artifactIDs[0], artifactIDs[len(artifactIDs)-1] + 1}
+		single := len(artifactIDs) == 1
+		*requests++
+		messages, err := imp.client.ListMessages(ctx, c.ID, r.After, r.Before)
+		if errors.Is(err, ErrNotFound) {
+			clear(cs.Artifacts)
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if _, err = subtractHandled(r, messageIDs(messages)); err != nil {
+			return err
+		}
+		returned := make(map[int64]Message, len(messages))
+		var last int64
+		for _, m := range messages {
+			returned[m.ID] = m
+			last = max(last, m.ID)
+		}
+		capped := len(messages) >= imp.client.messageRangeCap && !single
+		var below, above []int64
+		for _, id := range artifactIDs {
+			idText := strconv.FormatInt(id, 10)
+			m, ok := returned[id]
+			switch {
+			case !ok && capped && id > last:
+				above = append(above, id)
+			case !ok && capped:
+				below = append(below, id)
+			case !ok:
+				delete(cs.Artifacts, idText)
+			case m.Private && !opts.IncludePrivate:
+				delete(cs.Artifacts, idText)
+			default:
+				if err = imp.validateMessage(c, m, opts); err != nil {
+					return err
+				}
+				refreshFrom, persistErr := imp.persistMessage(ctx, sourceID, c, m, opts, sum)
+				if persistErr != nil {
+					return persistErr
+				}
+				// The window counts from first sighting, so rechecks never extend it.
+				if refreshFrom == 0 {
+					delete(cs.Artifacts, idText)
+				}
+				sum.MessagesProcessed++
+			}
+		}
+		for _, id := range below {
+			if *requests >= budget {
+				sum.Partial = true
+				return nil
+			}
+			if err = imp.refreshArtifact(ctx, sourceID, c, cs, id, opts, sum, requests); err != nil {
+				return err
+			}
+		}
+		artifactIDs = above
+	}
+	return nil
 }
 
-const maxSyncRequests = 10000
+// refreshArtifact rereads one pending artifact by its exact ID.
+func (imp *Importer) refreshArtifact(ctx context.Context, sourceID int64, c Conversation, cs *conversationState, id int64, opts ImportOptions, sum *ImportSummary, requests *int) error {
+	idText := strconv.FormatInt(id, 10)
+	*requests++
+	messages, err := imp.client.ListMessages(ctx, c.ID, id, id+1)
+	if errors.Is(err, ErrNotFound) {
+		delete(cs.Artifacts, idText)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err = subtractHandled(idRange{id, id + 1}, messageIDs(messages)); err != nil {
+		return err
+	}
+	if len(messages) == 0 || (messages[0].Private && !opts.IncludePrivate) {
+		delete(cs.Artifacts, idText)
+		return nil
+	}
+	if err = imp.validateMessage(c, messages[0], opts); err != nil {
+		return err
+	}
+	refreshFrom, err := imp.persistMessage(ctx, sourceID, c, messages[0], opts, sum)
+	if err != nil {
+		return err
+	}
+	if refreshFrom == 0 {
+		delete(cs.Artifacts, idText)
+	}
+	sum.MessagesProcessed++
+	return nil
+}
 
 func messageIDs(messages []Message) []int64 {
 	ids := make([]int64, 0, len(messages))
@@ -460,47 +625,8 @@ func (imp *Importer) validateMessage(c Conversation, m Message, opts ImportOptio
 	return nil
 }
 
-func (imp *Importer) enumerateConversations(ctx context.Context, inboxID int64, startPage, budget int) ([]Conversation, map[int64]int, int, error) {
-	var conversations []Conversation
-	pages := map[int64]int{}
-	seen := map[int64]bool{}
-	for offset := range budget {
-		page := startPage + offset
-		if page <= 0 || page == math.MaxInt {
-			return nil, nil, 0, errors.New("chatwoot conversation page overflow")
-		}
-		batch, err := imp.client.ListConversations(ctx, page, inboxID)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		if len(batch) == 0 {
-			return conversations, pages, 1, nil
-		}
-		newCount := 0
-		for _, c := range batch {
-			if c.ID <= 0 || c.InboxID <= 0 || (c.AccountID != 0 && c.AccountID != imp.client.accountID) {
-				return nil, nil, 0, errors.New("chatwoot returned invalid conversation scope")
-			}
-			if seen[c.ID] {
-				continue
-			}
-			seen[c.ID] = true
-			newCount++
-			if c.InboxID == inboxID {
-				conversations = append(conversations, c)
-				pages[c.ID] = page
-			}
-		}
-		if newCount == 0 {
-			return nil, nil, 0, errors.New("chatwoot conversation pagination did not advance")
-		}
-	}
-	return conversations, pages, startPage + budget, nil
-}
-
 func (imp *Importer) walkConversation(ctx context.Context, sourceID, syncID int64, c Conversation, cs *conversationState, state *syncState, opts ImportOptions, sum *ImportSummary, requests *int, budget int) error {
 	used := 0
-	probed := false
 	for len(cs.Pending) > 0 && *requests < budget && (opts.Limit == 0 || used < opts.Limit) {
 		r := cs.Pending[0]
 		*requests++
@@ -518,7 +644,7 @@ func (imp *Importer) walkConversation(ctx context.Context, sourceID, syncID int6
 			}
 			continue
 		}
-		if !probed {
+		if !imp.boundsProbed {
 			id := messages[0].ID
 			exact, probeErr := imp.client.ListMessages(ctx, c.ID, id, id+1)
 			*requests++
@@ -536,7 +662,7 @@ func (imp *Importer) walkConversation(ctx context.Context, sourceID, syncID int6
 			if len(empty) != 0 {
 				return errors.New("chatwoot API does not support empty combined message bounds")
 			}
-			probed = true
+			imp.boundsProbed = true
 		}
 		slices.SortFunc(messages, func(a, b Message) int {
 			if a.ID < b.ID {
@@ -548,42 +674,54 @@ func (imp *Importer) walkConversation(ctx context.Context, sourceID, syncID int6
 			return 0
 		})
 		var handled []int64
+		cut := false
 		for index, m := range messages {
 			if index > 0 && messages[index-1].ID == m.ID {
 				continue
 			}
 			if opts.Limit > 0 && used >= opts.Limit {
+				cut = true
 				break
 			}
 			if err = imp.validateMessage(c, m, opts); err != nil {
 				return err
 			}
 			if !m.Private || opts.IncludePrivate {
-				if err = imp.persistMessage(ctx, sourceID, c, m, opts, sum); err != nil {
-					return err
+				refreshFrom, persistErr := imp.persistMessage(ctx, sourceID, c, m, opts, sum)
+				if persistErr != nil {
+					return persistErr
 				}
-				if m.ContentType == "voice_call" || len(m.Attachments) > 0 {
-					cs.Artifacts[strconv.FormatInt(m.ID, 10)] = true
+				if refreshFrom > 0 && now().Sub(time.Unix(refreshFrom, 0)) < artifactWindow {
+					cs.Artifacts[strconv.FormatInt(m.ID, 10)] = refreshFrom
 				}
 			}
 			used++
 			sum.MessagesProcessed++
 			handled = append(handled, m.ID)
-			cs.HighWater = max(cs.HighWater, m.ID)
 		}
 		gaps, err := subtractHandled(r, handled)
 		if err != nil {
 			return err
 		}
+		// Chatwoot caps a bounded range response, so a shorter one holds the
+		// whole range once every message in it is handled.
+		switch {
+		case cut && len(handled) > 0 && len(messages) < imp.client.messageRangeCap:
+			// The whole range came back, so only the unhandled tail is unproven.
+			gaps = []idRange{{handled[len(handled)-1] + 1, r.Before}}
+		case cut:
+		case len(messages) < imp.client.messageRangeCap:
+			gaps = nil
+		case len(handled) >= 2:
+			// A capped response proves nothing about its holes, since a later-created
+			// message can have a lower ID. Splitting at the middle ID rereads each
+			// half, so cost grows with pages, not holes.
+			middle := handled[len(handled)/2]
+			gaps = []idRange{{r.After, middle}, {middle, r.Before}}
+		}
 		cs.Pending = append(gaps, cs.Pending[1:]...)
 		if err = imp.checkpoint(ctx, syncID, state, sum); err != nil {
 			return err
-		}
-	}
-	if len(cs.Pending) == 0 {
-		if cs.WalkingFull {
-			cs.ReconciledAt = time.Now().UTC()
-			cs.WalkingFull = false
 		}
 	}
 	return nil

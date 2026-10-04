@@ -24,7 +24,7 @@ func TestStateRejectsForeignScopeAndCorruptRanges(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	state := newSyncState("example/account/inbox")
-	state.Conversations["42"] = &conversationState{Pending: []idRange{{1, 10}}, HighWater: 9, Artifacts: map[string]bool{}}
+	state.Conversations["42"] = &conversationState{Pending: []idRange{{1, 10}}}
 	blob, err := state.marshal()
 	require.NoError(err)
 	loaded, err := parseSyncState(blob, "example/account/inbox")

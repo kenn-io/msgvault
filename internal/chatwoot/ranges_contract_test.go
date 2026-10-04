@@ -63,7 +63,7 @@ func newContractAPI(t *testing.T, pageCap int, messages []map[string]any) *contr
 			result = []any{map[string]any{"id": 7, "name": "Example Agent"}, map[string]any{"id": 8, "name": "Example Owner"}, api.assignee}
 		case "/api/v1/accounts/3/conversations":
 			assert.Equal(t, "all", r.URL.Query().Get("status"), "resolved conversations must remain discoverable")
-			assert.Equal(t, "created_at_asc", r.URL.Query().Get("sort_by"))
+			assert.Contains(t, []string{sortByCreated, sortByActivity}, r.URL.Query().Get("sort_by"))
 			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 			payload := []any{}
 			if page == 1 {
@@ -150,15 +150,26 @@ func (api *contractAPI) messageCallCount() int {
 }
 
 func (api *contractAPI) conversation() map[string]any {
-	// Conversation seeds are intentionally private, independently of the public
-	// message list, to catch leakage through raw conversation context.
-	private := map[string]any{"id": int64(9000), "private": true, "content": "excluded-private-seed"}
 	inboxID := api.conversationInboxID
 	if inboxID == 0 {
 		inboxID = 7
 	}
+	// Chatwoot sets activity to the newest message's creation time and seeds the
+	// listing with that message.
+	activity, newest := int64(1767225500), int64(0)
+	for _, message := range api.messages {
+		if at, ok := message["created_at"].(int64); ok {
+			activity = max(activity, at)
+		}
+		if id, ok := message["id"].(int64); ok {
+			newest = max(newest, id)
+		}
+	}
+	// The seed's content is intentionally private and differs from the message
+	// list, to catch leakage through raw conversation context.
+	private := map[string]any{"id": newest, "private": true, "content": "excluded-private-seed"}
 	return map[string]any{
-		"id": int64(42), "account_id": 3, "inbox_id": inboxID, "status": "resolved", "created_at": int64(1801526300), "updated_at": float64(1801526400),
+		"id": int64(42), "account_id": 3, "inbox_id": inboxID, "status": "resolved", "created_at": int64(1767225500), "updated_at": float64(1767225600), "last_activity_at": activity,
 		"meta":     map[string]any{"sender": api.contact, "assignee": api.assignee},
 		"messages": []any{private}, "last_non_activity_message": private,
 	}
@@ -169,6 +180,7 @@ func (api *contractAPI) client(t *testing.T) *Client {
 	client, err := NewClient(api.server.URL, 3, "synthetic-token")
 	require.NoError(t, err)
 	client.limiter = rate.NewLimiter(rate.Inf, 1)
+	client.messageRangeCap = api.cap
 	if api.mediaRouter != nil {
 		api.mediaRouter.attach(client)
 	}
@@ -189,7 +201,7 @@ func contractMessage(id, at int64, sender map[string]any) map[string]any {
 func contractRegister(t *testing.T, st *store.Store, api *contractAPI) (*Importer, *store.Source) {
 	t.Helper()
 	importer := NewImporter(st, api.client(t))
-	sources, err := importer.Register(t.Context(), []int64{7})
+	sources, err := importer.Register(t.Context(), []Inbox{{ID: 7, Name: "Example Inbox"}})
 	require.NoError(t, err)
 	require.Len(t, sources, 1)
 	assert.Equal(t, "chatwoot", sources[0].SourceType)
@@ -224,7 +236,7 @@ func TestImportContractRangesPreserveDisorderedIDs(t *testing.T) {
 			want := []int64{1, 2, 7, 9, 15, 33, 41, 70, 111, 901, 904, 1301, 2100}
 			messages := make([]map[string]any, 0, len(want))
 			for i, id := range want {
-				messages = append(messages, contractMessage(id, 1801526400+int64((i*7)%5), nil))
+				messages = append(messages, contractMessage(id, 1767225600+int64((i*7)%5), nil))
 			}
 			api := newContractAPI(t, pageCap, messages)
 			st := testutil.NewTestStore(t)
@@ -243,7 +255,7 @@ func TestImportContractLimitsResumeAcrossImporterRestarts(t *testing.T) {
 	want := []int64{1, 2, 7, 9, 15, 33, 41}
 	messages := make([]map[string]any, 0, len(want))
 	for i, id := range want {
-		messages = append(messages, contractMessage(id, 1801526400+int64(len(want)-i), nil))
+		messages = append(messages, contractMessage(id, 1767225600+int64(len(want)-i), nil))
 	}
 	api := newContractAPI(t, 3, messages)
 	st := testutil.NewTestStore(t)
@@ -266,7 +278,7 @@ func TestImportContractFullReconciliationResumesAcrossFullRuns(t *testing.T) {
 	want := []int64{1, 2, 7, 9, 15, 33, 41}
 	messages := make([]map[string]any, 0, len(want))
 	for i, id := range want {
-		messages = append(messages, contractMessage(id, 1801526400+int64(len(want)-i), nil))
+		messages = append(messages, contractMessage(id, 1767225600+int64(len(want)-i), nil))
 	}
 	api := newContractAPI(t, 20, messages)
 	st := testutil.NewTestStore(t)
@@ -287,7 +299,7 @@ func TestImportContractFullReconciliationResumesAcrossFullRuns(t *testing.T) {
 func TestImportContractRejectsIgnoredRangeBoundsWithoutPoisoningResume(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	api := newContractAPI(t, 20, []map[string]any{contractMessage(101, 1801526400, nil), contractMessage(102, 1801526401, nil)})
+	api := newContractAPI(t, 20, []map[string]any{contractMessage(101, 1767225600, nil), contractMessage(102, 1767225601, nil)})
 	st := testutil.NewTestStore(t)
 	importer, _ := contractRegister(t, st, api)
 	api.mu.Lock()
@@ -312,7 +324,7 @@ func TestImportContractRangeAbovePinnedThousandRecordCap(t *testing.T) {
 	messages := make([]map[string]any, 0, count)
 	want := make([]int64, 0, count)
 	for id := int64(1); id <= count; id++ {
-		messages = append(messages, contractMessage(id, 1801526400+count-id, nil))
+		messages = append(messages, contractMessage(id, 1767225600+count-id, nil))
 		want = append(want, id)
 	}
 	api := newContractAPI(t, 1000, messages)

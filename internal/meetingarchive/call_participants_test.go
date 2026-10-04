@@ -24,6 +24,8 @@ func TestProviderResolvedCallParticipantsAndRecordingRefresh(t *testing.T) {
 	require.NoError(err)
 	contact, err := st.EnsureParticipantByPhone("+12025550101", "Example Contact", "chatwoot")
 	require.NoError(err)
+	// Ownership comes from the agent's provider identifier matching an identity.
+	require.NoError(st.AddAccountIdentity(source.ID, "example/account/agent/201", "test"))
 	snapshot := Snapshot{
 		SourceID: source.ID, SourceMessageID: "call:1003", SourceConversationID: "call:42:1003",
 		Title: "Example call", StartedAt: time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC),
@@ -89,9 +91,11 @@ func TestProviderResolvedCallParticipantsAndRecordingRefresh(t *testing.T) {
 	require.NoError(err)
 	snapshot.Organizer.ParticipantID = otherAgent
 	snapshot.OwnerAttribution = new(false)
+	// Providers carry resolved IDs in the raw snapshot, so a new organizer changes it.
+	snapshot.Raw = []byte(`{"transcript":"Corrected call transcript","duration_seconds":45,"organizer":{"participant_id":2}}`)
 	fourth, err := a.Upsert(t.Context(), snapshot, UpsertOptions{})
 	require.NoError(err)
-	assert.True(fourth.Changed, "resolved participant-only refresh is persisted")
+	assert.True(fourth.Changed, "a new organizer is persisted")
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT sender_id, is_from_me FROM messages WHERE id = ?`), first.MessageID).Scan(&sender, &fromMe))
 	assert.Equal(otherAgent, sender)
 	assert.False(fromMe, "changed employee attribution clears earlier explicit ownership")
@@ -144,9 +148,9 @@ func TestResolvedParticipantsRetainAnchoredLinkingOnUnchangedSnapshots(t *testin
 	require.NoError(err)
 	assert.Equal(1, first.Links.Linked)
 	assert.True(f.linked(t, email, phone))
-	_, attendeeIDs, err := f.st.MeetingArchivedParticipantIDsContext(t.Context(), first.MessageID)
-	require.NoError(err)
-	assert.Equal([]int64{email}, attendeeIDs, "resolved duplicate attendees retain canonical deduping")
+	var attendees int
+	require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), first.MessageID).Scan(&attendees))
+	assert.Equal(1, attendees, "resolved duplicate attendees retain canonical deduping")
 
 	// New linking evidence must be repaired even when raw content and the
 	// provider-resolved archive roster already match.

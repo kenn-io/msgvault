@@ -121,6 +121,11 @@ func normalizeEntry(entry Entry) Entry {
 			}
 			continue
 		}
+		// Archived recipients hold every provider-resolved person. An unmatched
+		// ID is stale, such as one absorbed by a participant merge.
+		if positiveParticipantID(source.ParticipantID) != nil {
+			continue
+		}
 		for _, key := range participantIdentityKeys(source) {
 			byIdentity[key] = append(byIdentity[key], len(participants))
 		}

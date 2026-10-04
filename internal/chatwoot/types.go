@@ -31,19 +31,43 @@ type Actor struct {
 // attributes are excluded, so private-policy exclusions also apply to context.
 // ID is the account-local display ID accepted by the nested message routes.
 type Conversation struct {
-	ID        int64    `json:"id"`
-	AccountID int64    `json:"account_id"`
-	InboxID   int64    `json:"inbox_id"`
-	Status    string   `json:"status"`
-	CreatedAt int64    `json:"created_at"`
-	UpdatedAt float64  `json:"updated_at"`
-	Labels    []string `json:"labels"`
-	Meta      struct {
+	ID        int64   `json:"id"`
+	AccountID int64   `json:"account_id"`
+	InboxID   int64   `json:"inbox_id"`
+	Status    string  `json:"status"`
+	CreatedAt int64   `json:"created_at"`
+	UpdatedAt float64 `json:"updated_at"`
+	// LastActivityAt is the creation time of the newest message, in epoch seconds.
+	LastActivityAt int64    `json:"last_activity_at"`
+	Labels         []string `json:"labels"`
+	// LastMessageID is the newest message's ID from the listing's message seed.
+	// Only the ID is read, so excluded private content never reaches the archive.
+	LastMessageID int64 `json:"-"`
+	Meta          struct {
 		Sender       Actor  `json:"sender"`
 		Assignee     Actor  `json:"assignee"`
 		AssigneeType string `json:"assignee_type"`
 		Channel      string `json:"channel"`
 	} `json:"meta"`
+}
+
+func (c *Conversation) UnmarshalJSON(b []byte) error {
+	type wire Conversation
+	var value struct {
+		wire `json:",inline"`
+
+		Messages []struct {
+			ID int64 `json:"id"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(b, &value); err != nil {
+		return err
+	}
+	*c = Conversation(value.wire)
+	for _, m := range value.Messages {
+		c.LastMessageID = max(c.LastMessageID, m.ID)
+	}
+	return nil
 }
 
 type Message struct {

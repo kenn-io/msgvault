@@ -1172,7 +1172,7 @@ reconcile_interval_hours = 24
 | `include_private` | `true` | Include private notes; disabling does not remove already archived notes |
 | `media` | `true` | Download attachment and call-recording bytes; retain metadata and source transcripts when disabled |
 | `max_media_mb` | `250` | Per-attachment cap in MiB; zero selects the default; negative/overflowing values are rejected |
-| `reconcile_interval_hours` | `24` | Complete old-history reconciliation interval; zero selects the default; negative/overflowing values are rejected |
+| `reconcile_interval_hours` | `24` | Interval for listing every conversation to catch activity missed by incremental syncs; zero selects the default; negative/overflowing values are rejected |
 
 Duplicate profile labels (case-insensitive) and duplicate canonical instance/account
 pairs are rejected. Scheme, host, default port, and trailing slash normalization

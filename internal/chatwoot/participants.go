@@ -17,6 +17,8 @@ func actorKind(a Actor) string {
 		return "contact"
 	case "agent_bot", "agentbot":
 		return "agent_bot"
+	case "captain_assistant", "captain::assistant":
+		return "captain_assistant"
 	default:
 		return "unknown"
 	}
@@ -24,6 +26,15 @@ func actorKind(a Actor) string {
 
 func (imp *Importer) actorIdentifier(a Actor) string {
 	return fmt.Sprintf("%s/accounts/%d/%s/%d", imp.client.baseURL, imp.client.accountID, actorKind(a), a.ID)
+}
+
+// envelopeEmail keeps staff and bot addresses out of message envelopes. Store
+// then attributes their ownership through provider identifiers alone.
+func envelopeEmail(a Actor) string {
+	if actorKind(a) != "contact" {
+		return ""
+	}
+	return a.Email
 }
 
 func actorName(a Actor) string {
@@ -74,6 +85,11 @@ func (imp *Importer) resolveActor(ctx context.Context, sourceID int64, a Actor) 
 		if err = imp.store.SetParticipantIdentifier(pid, SourceType, identifier); err != nil {
 			return 0, err
 		}
+	} else if actorName(a) != "" {
+		// An actor first seen without a name gets one from a later sighting.
+		if _, err = imp.store.EnsureParticipantByIdentifier(SourceType, identifier, actorName(a)); err != nil {
+			return 0, err
+		}
 	}
 	for _, address := range []struct {
 		kind  store.ContactAddressKind
@@ -96,18 +112,14 @@ func (imp *Importer) resolveActor(ctx context.Context, sourceID int64, a Actor) 
 	return pid, nil
 }
 
-func (imp *Importer) personalActor(a Actor, opts ImportOptions) bool {
+// personalActor mirrors Store's identity attribution, which matches the
+// actor's provider identifier against the inbox's account identities.
+func (imp *Importer) personalActor(a Actor) bool {
 	if actorKind(a) != actorUser || a.ID <= 0 {
 		return false
 	}
-	if slices.Contains(opts.SelfAgentIDs, a.ID) {
-		return true
-	}
-	for _, identity := range imp.identities {
-		if store.EqualIdentifier(identity.Address, imp.actorIdentifier(a)) ||
-			(a.Email != "" && store.EqualIdentifier(identity.Address, a.Email)) {
-			return true
-		}
-	}
-	return false
+	identifier := imp.actorIdentifier(a)
+	return slices.ContainsFunc(imp.identities, func(identity store.AccountIdentity) bool {
+		return store.EqualIdentifier(identity.Address, identifier)
+	})
 }

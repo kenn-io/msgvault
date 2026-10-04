@@ -102,7 +102,10 @@ func callEvidence(m Message) Call {
 	return call
 }
 
-func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversation, m Message, chatMessageID int64, contact Actor, contactID int64, sender Actor, senderID int64, chatMedia map[string]store.AttachmentRef, opts ImportOptions, sum *ImportSummary) (int64, error) {
+// persistCall returns the meeting and when its refresh window starts. Chatwoot
+// can replace a recording or transcript after the call without new activity,
+// so a call is rechecked through the whole window.
+func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversation, m Message, chatMessageID int64, contact Actor, contactID int64, sender Actor, senderID int64, chatMedia map[string]store.AttachmentRef, opts ImportOptions, sum *ImportSummary) (int64, int64, error) {
 	call := callEvidence(m)
 	transcript := call.Transcript
 	for _, a := range m.Attachments {
@@ -115,7 +118,7 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 	handler := Actor{ID: call.AcceptedByAgentID, Type: actorUser, Name: call.AcceptedByAgentName}
 	handlerID, err := imp.resolveActor(ctx, sourceID, handler)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	organizer, organizerID := sender, senderID
 	if call.Direction == "incoming" {
@@ -125,7 +128,7 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 		organizer, organizerID = Actor{}, 0
 	}
 	person := func(a Actor, pid int64) meetingarchive.Person {
-		return meetingarchive.Person{ParticipantID: pid, Name: actorName(a), Email: a.Email, Phone: a.PhoneNumber}
+		return meetingarchive.Person{ParticipantID: pid, Name: actorName(a), Email: envelopeEmail(a), Phone: a.PhoneNumber}
 	}
 	var attendees []meetingarchive.Person
 	if contactID > 0 && contactID != organizerID {
@@ -174,27 +177,27 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 	}
 	metadata, err := json.Marshal(map[string]any{"provider": SourceType, "chat_message_id": chatMessageID, "conversation_id": c.ID, "inbox_id": opts.InboxID, "call": call, "handling_agent": handler, "handling_agent_participant_id": handlerID}, json.Deterministic(true))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	raw, err := json.Marshal(normalized, json.Deterministic(true))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	occurred := started
 	if occurred.IsZero() && m.CreatedAt > 0 {
 		occurred = time.Unix(m.CreatedAt, 0).UTC()
 	}
-	fromMe := imp.personalActor(organizer, opts)
+	fromMe := imp.personalActor(organizer)
 	result, err := meetingarchive.New(imp.store).Upsert(ctx, meetingarchive.Snapshot{
 		SourceID: sourceID, SourceMessageID: "call:" + strconv.FormatInt(m.ID, 10), SourceConversationID: "call:" + strconv.FormatInt(c.ID, 10) + ":" + strconv.FormatInt(m.ID, 10),
 		Title: title, StartedAt: occurred, Body: strings.TrimSpace(transcript), Snippet: snippet(transcript), Raw: raw, RawFormat: "meeting_json", Metadata: metadata, Organizer: owner, Attendees: attendees, OwnerAttribution: &fromMe,
 	}, meetingarchive.UpsertOptions{})
 	if err != nil {
-		return result.MessageID, err
+		return result.MessageID, 0, err
 	}
 	audio := make([]Attachment, 0, len(m.Attachments)+1)
 	for _, a := range m.Attachments {
-		if a.FileType == "audio" || strings.HasPrefix(a.ContentType, "audio/") {
+		if isAudio(a) {
 			audio = append(audio, a)
 		}
 	}
@@ -211,9 +214,16 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 	if !sameRecording && call.RecordingURL != "" {
 		audio = append(audio, Attachment{ID: -m.ID, FileType: "audio", DataURL: call.RecordingURL, TranscribedText: call.Transcript})
 	}
-	if err = imp.persistMedia(ctx, result.MessageID, audio, opts, sum, chatMedia); err != nil {
-		return result.MessageID, err
+	failed, _, err := imp.persistMedia(ctx, result.MessageID, audio, opts, sum, chatMedia)
+	if err != nil {
+		return result.MessageID, 0, err
 	}
-	sum.Meetings++
-	return result.MessageID, nil
+	if result.Changed {
+		sum.Meetings++
+	}
+	refreshFrom := m.CreatedAt
+	if failed {
+		refreshFrom = now().Unix()
+	}
+	return result.MessageID, refreshFrom, nil
 }

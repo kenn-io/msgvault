@@ -61,12 +61,12 @@ func TestImportContractActualSendersAndPrivateRecipients(t *testing.T) {
 	bot := map[string]any{"id": int64(7), "type": "agent_bot", "name": "Example Bot"}
 	owner := map[string]any{"id": int64(8), "type": "user", "name": "Example Owner"}
 	messages := []map[string]any{
-		contractMessage(101, 1801526401, contact),
-		contractMessage(102, 1801526402, agent),
-		contractMessage(103, 1801526403, bot),
-		contractMessage(104, 1801526404, nil),
-		contractMessage(105, 1801526405, agent),
-		contractMessage(106, 1801526406, owner),
+		contractMessage(101, 1767225601, contact),
+		contractMessage(102, 1767225602, agent),
+		contractMessage(103, 1767225603, bot),
+		contractMessage(104, 1767225604, nil),
+		contractMessage(105, 1767225605, agent),
+		contractMessage(106, 1767225606, owner),
 	}
 	for _, index := range []int{1, 2, 4, 5} {
 		messages[index]["message_type"] = 1
@@ -122,10 +122,84 @@ func TestImportContractActualSendersAndPrivateRecipients(t *testing.T) {
 	assert.NotContains(storedSource.SyncConfig.String, "excluded-channel-secret")
 }
 
+func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	owner := map[string]any{"id": int64(8), "type": "user", "name": "Example Owner", "email": "owner@example.com"}
+	call := contractMessage(201, 1767225600, owner)
+	call["message_type"] = 1
+	call["content_type"] = "voice_call"
+	call["call"] = map[string]any{"id": 601, "direction": "outgoing", "status": "completed"}
+	reply := contractMessage(202, 1767225601, owner)
+	reply["message_type"] = 1
+	api := newContractAPI(t, 3, []map[string]any{call, reply})
+	st := testutil.NewTestStore(t)
+	importer, source := contractRegister(t, st, api)
+	owned := func(selfAgents []int64) []bool {
+		_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, SelfAgentIDs: selfAgents})
+		require.NoError(err)
+		var flags []bool
+		for _, providerID := range []string{"202", "call:201"} {
+			fromMe, err := st.GetMessageIsFromMe(contractArchivedMessageID(t, st, providerID))
+			require.NoError(err)
+			flags = append(flags, fromMe)
+		}
+		return flags
+	}
+	assert.Equal([]bool{true, true}, owned([]int64{8}))
+	assert.Equal([]bool{false, false}, owned(nil), "dropping a self agent un-marks its messages and calls")
+	identities, err := st.ListAccountIdentities(source.ID)
+	require.NoError(err)
+	assert.Empty(identities)
+
+	assert.Equal([]bool{true, true}, owned([]int64{8}))
+	identities, err = st.ListAccountIdentities(source.ID)
+	require.NoError(err)
+	require.Len(identities, 1)
+	_, err = st.RemoveAccountIdentity(source.ID, identities[0].Address)
+	require.NoError(err)
+	for _, providerID := range []string{"202", "call:201"} {
+		fromMe, err := st.GetMessageIsFromMe(contractArchivedMessageID(t, st, providerID))
+		require.NoError(err)
+		assert.False(fromMe, "removing the identity un-marks %s", providerID)
+	}
+}
+
+func TestImportContractActorNamespacesAndLateNames(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	assistant := contractMessage(101, 1767225601, map[string]any{"id": int64(5), "type": "captain_assistant", "name": "Example Assistant"})
+	bot := contractMessage(102, 1767225602, map[string]any{"id": int64(5), "type": "agent_bot", "name": "Example Bot"})
+	detached := contractMessage(103, 1767225603, nil)
+	detached["sender_type"], detached["sender_id"] = "Captain::Assistant", int64(5)
+	unnamed := contractMessage(104, 1767225604, map[string]any{"id": int64(50), "type": "user"})
+	named := contractMessage(105, 1767225605, map[string]any{"id": int64(50), "type": "user", "name": "Late Agent"})
+	api := newContractAPI(t, 10, []map[string]any{assistant, bot, detached, unnamed})
+	st := testutil.NewTestStore(t)
+	importer, _ := contractRegister(t, st, api)
+	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7})
+	require.NoError(err)
+	assistantID := contractSender(t, st, contractArchivedMessageID(t, st, "101"))
+	require.True(assistantID.Valid, "assistant replies keep a sender")
+	assert.NotEqual(assistantID, contractSender(t, st, contractArchivedMessageID(t, st, "102")), "assistant and bot ID namespaces differ")
+	assert.Equal(assistantID, contractSender(t, st, contractArchivedMessageID(t, st, "103")))
+
+	api.mu.Lock()
+	api.messages = append(api.messages, named)
+	api.mu.Unlock()
+	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7})
+	require.NoError(err)
+	agentID := contractSender(t, st, contractArchivedMessageID(t, st, "104"))
+	require.True(agentID.Valid)
+	var name string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COALESCE(display_name, '') FROM participants WHERE id = ?`), agentID.Int64).Scan(&name))
+	assert.Equal("Late Agent", name, "a later sighting fills a blank name")
+}
+
 func TestImportContractPrivateExclusionKeepsActivityAndResumes(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	messages := []map[string]any{contractMessage(101, 1801526400, nil), contractMessage(102, 1801526401, nil), contractMessage(103, 1801526402, nil)}
+	messages := []map[string]any{contractMessage(101, 1767225600, nil), contractMessage(102, 1767225601, nil), contractMessage(103, 1767225602, nil)}
 	messages[1]["private"] = true
 	messages[1]["content"] = "excluded-private-message"
 	messages[2]["message_type"] = 2
@@ -150,7 +224,7 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	assert := assert.New(t)
 	require := require.New(t)
 	contact := map[string]any{"id": int64(7), "type": "contact", "name": "Example Contact", "phone_number": "+12025550101"}
-	message := contractMessage(201, 1801526400, contact)
+	message := contractMessage(201, 1767225600, contact)
 	message["content_type"] = "voice_call"
 	message["content"] = "Voice call"
 	message["content_attributes"] = map[string]any{"data": map[string]any{
@@ -173,7 +247,7 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	assert.Equal(source.ID, meeting.SourceID)
 	assert.NotEqual(chat.ConversationID, meeting.ConversationID)
 	assert.Equal("call:42:201", meeting.SourceConversationID)
-	assert.Equal(time.Unix(1801526400, 0).UTC(), meeting.SentAt.UTC(), "unanswered call is dated from the timeline occurrence")
+	assert.Equal(time.Unix(1767225600, 0).UTC(), meeting.SentAt.UTC(), "unanswered call is dated from the timeline occurrence")
 	for _, link := range []struct {
 		messageID int64
 		key       string
@@ -204,7 +278,7 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 		require.NoError(err)
 		assert.Equal(int64(1), metrics.Totals.MeetingCount)
 	}
-	after := time.Unix(1801526300, 0)
+	after := time.Unix(1767225500, 0)
 	metrics, err := st.GetMeetingMetricsContext(t.Context(), store.MeetingQueryScope{SourceIDs: []int64{source.ID}, After: &after})
 	require.NoError(err)
 	assert.Equal(int64(1), metrics.Totals.MeetingCount)
@@ -246,7 +320,7 @@ func TestImportContractLateAudioTranscriptAndCredentialFreeCAS(t *testing.T) {
 	}))
 	t.Cleanup(redirect.Close)
 	router = newChatwootMediaRouter(t, redirect, media)
-	message := contractMessage(301, 1801526400, nil)
+	message := contractMessage(301, 1767225600, nil)
 	message["content"] = ""
 	attachment := map[string]any{"id": 401, "message_id": 301, "file_type": "audio", "content_type": "audio/ogg", "extension": "ogg", "file_size": len(payload), "data_url": router.url(t, redirect, "/signed-audio"), "transcribed_text": ""}
 	message["attachments"] = []any{attachment}
@@ -267,13 +341,16 @@ func TestImportContractLateAudioTranscriptAndCredentialFreeCAS(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(payload, stored)
 
-	// The provider does not advance conversation.updated_at when transcription
-	// arrives or changes. A normal run must independently revisit old audio.
-	for _, transcript := range []string{"firstquartz source transcript", "revisedquartz source transcript"} {
+	// The provider does not advance conversation activity when transcription
+	// arrives or changes. A normal run revisits audio still waiting for one; a
+	// transcript settles it, so a later correction needs a full sync.
+	for index, transcript := range []string{"firstquartz source transcript", "revisedquartz source transcript"} {
 		api.mu.Lock()
 		attachment["transcribed_text"] = transcript
 		api.mu.Unlock()
-		_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+		runOpts := opts
+		runOpts.Full = index > 0
+		_, err = NewImporter(st, api.client(t)).Import(t.Context(), runOpts)
 		require.NoError(err)
 		body, err := st.GetMessageBodyText(id)
 		require.NoError(err)
@@ -298,15 +375,15 @@ func TestImportContractSourceAndActorIsolationAcrossInstances(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	var sourceIDs, senderIDs []int64
 	for range 2 {
-		message := contractMessage(101, 1801526400, map[string]any{"id": int64(7), "type": "user", "name": "Example Agent"})
+		message := contractMessage(101, 1767225600, map[string]any{"id": int64(7), "type": "user", "name": "Example Agent"})
 		message["message_type"] = 1
 		api := newContractAPI(t, 2, []map[string]any{message})
 		importer := NewImporter(st, api.client(t))
-		sources, err := importer.Register(t.Context(), []int64{7, 8})
+		sources, err := importer.Register(t.Context(), []Inbox{{ID: 7}, {ID: 8}})
 		require.NoError(err)
 		require.Len(sources, 2)
 		assert.NotEqual(sources[0].ID, sources[1].ID, "each inbox is a separate source")
-		again, err := importer.Register(t.Context(), []int64{7, 8})
+		again, err := importer.Register(t.Context(), []Inbox{{ID: 7}, {ID: 8}})
 		require.NoError(err)
 		require.Len(again, 2)
 		assert.ElementsMatch([]int64{sources[0].ID, sources[1].ID}, []int64{again[0].ID, again[1].ID}, "registration is stable")
@@ -327,14 +404,14 @@ func TestImportContractSourceAndActorIsolationAcrossInstances(t *testing.T) {
 func TestImportContractDetachedSenderEvidenceAndUnknownSender(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	unknown := contractMessage(501, 1801526400, nil)
+	unknown := contractMessage(501, 1767225600, nil)
 	unknown["message_type"] = 1
-	detached := contractMessage(502, 1801526401, nil)
+	detached := contractMessage(502, 1767225601, nil)
 	detached["message_type"] = 1
 	detached["sender_type"] = "User"
 	detached["sender_id"] = int64(7)
 	detached["future_evidence"] = map[string]any{"retained": "synthetic detached sender evidence"}
-	known := contractMessage(503, 1801526402, map[string]any{"id": int64(7), "type": "user", "name": "Example Agent"})
+	known := contractMessage(503, 1767225602, map[string]any{"id": int64(7), "type": "user", "name": "Example Agent"})
 	known["message_type"] = 1
 	api := newContractAPI(t, 2, []map[string]any{unknown, detached, known})
 	st := testutil.NewTestStore(t)
@@ -357,7 +434,7 @@ func TestImportContractDetachedSenderEvidenceAndUnknownSender(t *testing.T) {
 func TestImportContractMetadataOnlyAndUnknownAttachmentTypes(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	message := contractMessage(601, 1801526400, nil)
+	message := contractMessage(601, 1767225600, nil)
 	message["attachments"] = []any{
 		map[string]any{"id": 701, "message_id": 601, "file_type": "future_type", "content_type": "application/vnd.example.future", "future_evidence": "synthetic retained metadata"},
 		map[string]any{"id": 702, "message_id": 601, "file_type": "location", "coordinates_lat": 0.0, "coordinates_long": 0.0, "fallback_title": "Synthetic origin"},
@@ -396,7 +473,7 @@ func TestImportContractMetadataOnlyAndUnknownAttachmentTypes(t *testing.T) {
 func TestImportContractOrdinaryKeywordAndEmbeddingEligibility(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	message := contractMessage(801, 1801526400, nil)
+	message := contractMessage(801, 1767225600, nil)
 	message["content"] = "ordinaryquartz archived conversation text"
 	api := newContractAPI(t, 2, []map[string]any{message})
 	st := testutil.NewTestStore(t)

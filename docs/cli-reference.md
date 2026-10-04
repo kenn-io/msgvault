@@ -1116,10 +1116,10 @@ msgvault sync-chatwoot [identifier] [--inbox 7] [--limit 100] [--full] [--no-med
 |---|---|---|
 | `--inbox` | all included registered inboxes | Numeric inbox ID to sync; repeat for multiple inboxes; excluded or unregistered IDs are rejected |
 | `--limit` | `0` | Messages per conversation this run; zero means no message limit; unfinished history resumes |
-| `--full` | `false` | Reconcile all available history and update existing rows in place |
+| `--full` | `false` | Reread all available history and update existing rows in place |
 | `--no-media` | `false` | Skip attachment downloads for this run, retaining metadata and available transcripts |
 
-Sync polls all conversation statuses and refreshes old audio/call artifacts.
+Sync reads only conversations with new activity, plus calls and audio still waiting for a recording or transcript.
 See [Chatwoot](guides/chatwoot.md) for attribution, privacy, and API compatibility.
 
 ---

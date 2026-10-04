@@ -163,7 +163,7 @@ func TestChatwootProfileSyncContinuesAfterInboxFailure(t *testing.T) {
 	assert.NotContains(err.Error(), "inbox 8")
 	require.NotNil(sum)
 	assert.Equal(2, sum.Sources)
-	assert.Equal(int32(2), enumerations.Load(), "healthy inbox is enumerated after the failure")
+	assert.Equal(int32(3), enumerations.Load(), "healthy inbox is listed by activity and enumerated after the failure")
 }
 
 func TestChatwootLimitedProfileSyncReportsResumableWork(t *testing.T) {
@@ -184,7 +184,7 @@ func TestChatwootLimitedProfileSyncReportsResumableWork(t *testing.T) {
 			_, _ = w.Write([]byte(`[]`))
 		case "/api/v1/accounts/9/conversations":
 			if r.URL.Query().Get("page") == "1" {
-				_, _ = w.Write([]byte(`{"data":{"payload":[{"id":42,"inbox_id":7,"status":"resolved","created_at":1700000000}]}}`))
+				_, _ = w.Write([]byte(`{"data":{"payload":[{"id":42,"inbox_id":7,"status":"resolved","created_at":1700000000,"last_activity_at":1700000001,"messages":[{"id":102}]}]}}`))
 			} else {
 				_, _ = w.Write([]byte(`{"data":{"payload":[]}}`))
 			}

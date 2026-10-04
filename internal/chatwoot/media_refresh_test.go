@@ -60,7 +60,7 @@ func (media *mediaRefreshServer) requestCount(path string) int {
 }
 
 func mediaRefreshCall(recordingURL, audioURL string) map[string]any {
-	message := contractMessage(901, 1801526400, map[string]any{"id": int64(7), "type": "contact", "name": "Example Contact", "phone_number": "+12025550101"})
+	message := contractMessage(901, 1767225600, map[string]any{"id": int64(7), "type": "contact", "name": "Example Contact", "phone_number": "+12025550101"})
 	message["content_type"] = "voice_call"
 	message["content"] = "Synthetic voice call"
 	message["call"] = map[string]any{
@@ -296,7 +296,7 @@ func TestMediaRefreshRecordingRepresentationMigration(t *testing.T) {
 			media.mu.Lock()
 			media.failures["/recording-a.ogg"] = true
 			media.mu.Unlock()
-			opts.NoMedia = tc.noMedia
+			opts.Media = opts.Media && !tc.noMedia
 			summary, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
 			require.NoError(err)
 			// The chat message gains its first attachment and may need one fetch.

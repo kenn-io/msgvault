@@ -34,11 +34,11 @@ func TestClientAccountContracts(t *testing.T) {
 			assert.Equal("created_at_asc", r.URL.Query().Get("sort_by"))
 			assert.Equal("2", r.URL.Query().Get("page"))
 			assert.Equal("7", r.URL.Query().Get("inbox_id"))
-			_, _ = io.WriteString(w, `{"data":{"meta":{"all_count":1},"payload":[{"id":42,"account_id":9,"inbox_id":7,"status":"resolved","updated_at":1801526448.123,"meta":{"sender":{"id":101,"name":"Example Contact","phone_number":"+12025550101","type":"contact"},"assignee":{"id":202,"name":"Another Agent"}},"messages":[{"private":true,"content":"excluded note"}],"last_non_activity_message":{"private":true,"content":"excluded note"}}]}}`)
+			_, _ = io.WriteString(w, `{"data":{"meta":{"all_count":1},"payload":[{"id":42,"account_id":9,"inbox_id":7,"status":"resolved","updated_at":1767225648.123,"meta":{"sender":{"id":101,"name":"Example Contact","phone_number":"+12025550101","type":"contact"},"assignee":{"id":202,"name":"Another Agent"}},"messages":[{"private":true,"content":"excluded note"}],"last_non_activity_message":{"private":true,"content":"excluded note"}}]}}`)
 		case "/support/api/v1/accounts/9/conversations/42/messages":
 			assert.Equal("1003", r.URL.Query().Get("after"))
 			assert.Equal("1004", r.URL.Query().Get("before"))
-			_, _ = io.WriteString(w, `{"meta":{},"payload":[{"id":1003,"content":"Voice call","inbox_id":7,"conversation_id":42,"message_type":0,"content_type":"voice_call","created_at":1801526402,"private":false,"sender":{"id":101,"type":"contact","name":"Example Contact"},"attachments":[{"id":301,"file_type":"audio","data_url":"https://chatwoot.example.com/note.ogg","transcribed_text":"Note transcript","file_size":1024,"width":null}],"content_attributes":{"data":{"call_id":501,"call_direction":"inbound","accepted_by":{"id":201,"name":"Example Agent"}},"unknown":{"original":true}},"call":{"id":501,"provider":"twilio","direction":"incoming","status":"completed","duration_seconds":0,"accepted_by_agent_id":201,"accepted_by_agent_name":"Example Agent","started_at":null,"ended_at":null,"recording_url":null,"transcript":"Call transcript"},"future_field":"retained"}]}`)
+			_, _ = io.WriteString(w, `{"meta":{},"payload":[{"id":1003,"content":"Voice call","inbox_id":7,"conversation_id":42,"message_type":0,"content_type":"voice_call","created_at":1767225602,"private":false,"sender":{"id":101,"type":"contact","name":"Example Contact"},"attachments":[{"id":301,"file_type":"audio","data_url":"https://chatwoot.example.com/note.ogg","transcribed_text":"Note transcript","file_size":1024,"width":null}],"content_attributes":{"data":{"call_id":501,"call_direction":"inbound","accepted_by":{"id":201,"name":"Example Agent"}},"unknown":{"original":true}},"call":{"id":501,"provider":"twilio","direction":"incoming","status":"completed","duration_seconds":0,"accepted_by_agent_id":201,"accepted_by_agent_name":"Example Agent","started_at":null,"ended_at":null,"recording_url":null,"transcript":"Call transcript"},"future_field":"retained"}]}`)
 		default:
 			assert.Fail("unexpected route", r.URL.String())
 			w.WriteHeader(http.StatusNotFound)
@@ -61,7 +61,7 @@ func TestClientAccountContracts(t *testing.T) {
 	require.Len(agents, 1)
 	assert.Equal("agent@example.com", agents[0].Email)
 	assert.Equal("user", agents[0].Type)
-	conversations, err := c.ListConversations(t.Context(), 2, 7)
+	conversations, err := c.ListConversations(t.Context(), 2, 7, sortByCreated)
 	require.NoError(err)
 	require.Len(conversations, 1)
 	assert.Equal(int64(42), conversations[0].ID)
@@ -74,7 +74,7 @@ func TestClientAccountContracts(t *testing.T) {
 	require.Len(msgs, 1)
 	m := msgs[0]
 	assert.Equal(int64(1003), m.ID)
-	assert.Equal(int64(1801526402), m.CreatedAt)
+	assert.Equal(int64(1767225602), m.CreatedAt)
 	require.NotNil(m.Call)
 	assert.Equal(int64(201), m.Call.AcceptedByAgentID)
 	require.NotNil(m.Call.DurationSeconds)

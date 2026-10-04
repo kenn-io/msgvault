@@ -57,20 +57,24 @@ ID, and inbox ID determine its identity.
 Sync includes resolved, pending, snoozed, and open conversations. It preserves
 private notes and system activity by default. Set `include_private = false`
 before your first sync to exclude private notes. This controls ingestion; it
-does not remove notes already archived.
+does not remove notes already archived. Notes skipped while it was off are
+fetched only by `sync-chatwoot --full` after turning it back on.
 
 Employees remain distinct from contacts and bots. The current conversation
 assignee describes routing and does not replace historical sender attribution.
 An outgoing customer reply is not automatically attributed to the archive
 owner. Set `self_agent_ids` only for Chatwoot users who represent that owner.
+Removing an agent from the list, or removing its account identity, un-marks
+its earlier messages and calls. Captain assistant replies keep their own sender.
 Contacts without an email address retain their phone or provider identity.
 
 Media downloads are enabled by default, with a 250 MiB cap per attachment.
 Set `media = false` for metadata and existing transcripts only, or use
-`sync-chatwoot --no-media` for one run. Location and fallback attachments can
+`sync-chatwoot --no-media` for one run; files it skipped are fetched by a later
+`--full`. Location and fallback attachments can
 contain metadata without downloadable files. Source access, unavailable files,
 size limits, and download failures can leave metadata without stored bytes.
-Eligible missing downloads retry during later syncs.
+Failed downloads retry during later syncs for seven days.
 Media destinations are checked against the shared network safety policy and
 each redirect is checked and pinned before connecting. Private media addresses
 are allowed only when the URL origin exactly matches the configured Chatwoot
@@ -83,8 +87,9 @@ msgvault sync-chatwoot support --full
 
 `--limit` bounds messages handled per conversation in this run. Unfinished
 history resumes on the next run, including a full reconciliation interrupted
-by the limit. `--full` reconciles old messages in place; later full runs resume
-that saved work until it completes. With no profile argument, commands select
+by the limit. `--full` rereads every conversation's history in place, which
+also picks up edits to messages that are already archived; later full runs
+resume that saved work until it completes. With no profile argument, commands select
 all configured profiles. A failing profile or inbox does not prevent healthy
 ones from being processed.
 
@@ -105,12 +110,22 @@ and consent; see [document indexing](../usage/document-indexing.md).
 
 ## Understand sync limits
 
-The daemon polls the account API, preserves unfinished history, refreshes audio
-and calls independently, and periodically reconciles old records. Saved work
-rotates separately from discovery, so unfinished history progresses as new
-conversations arrive. Each run also leaves request budget for newer conversations.
-A recording or transcript can arrive after a call ends without updating the
-conversation's timestamp. The default complete reconciliation interval is 24 hours.
+Each sync lists conversations by latest activity and stops at the ones it has
+already archived, so an unchanged inbox costs a couple of requests no matter
+how large it is, plus one for each conversation still on the recheck list
+below. Only conversations with new messages are read. Unfinished history and
+new conversations take turns, so a long history can't hold up newer ones.
+
+A recording or transcript can arrive after a call or voice note without
+updating the conversation's activity. msgvault rechecks every call, and audio
+still waiting for a transcript, for seven days after the message, then stops.
+Files that are stored or skipped are not rechecked.
+
+Every 24 hours by default, a reconcile lists every conversation. It rereads the
+whole history of each conversation active since the previous reconcile, which
+catches messages that were saved out of order, and reads any other
+conversation whose newest message is missing from the archive. History of
+quiet conversations that is already archived is reread only by `--full`.
 
 Chatwoot's combined message-ID range API is required to enumerate history
 reliably when message timestamps and IDs have different order. The importer

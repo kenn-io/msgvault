@@ -17,23 +17,34 @@ type idRange struct {
 	Before int64 `json:"before"`
 }
 
+// A conversation keeps state only while it has unfinished history or recent
+// media and calls whose recordings or transcripts may still change.
 type conversationState struct {
-	Pending      []idRange       `json:"pending"`
-	HighWater    int64           `json:"high_water"`
-	ReconciledAt time.Time       `json:"reconciled_at"`
-	WalkingFull  bool            `json:"walking_full"`
-	Artifacts    map[string]bool `json:"artifacts"`
-	NextArtifact string          `json:"next_artifact"`
+	Pending   []idRange        `json:"pending,omitempty"`
+	Artifacts map[string]int64 `json:"artifacts,omitempty"`
 }
 
+func (cs *conversationState) idle() bool { return len(cs.Pending) == 0 && len(cs.Artifacts) == 0 }
+
+const (
+	walkReconcile = "reconcile"
+	walkFull      = "full"
+)
+
 type syncState struct {
-	Version               int                           `json:"version"`
-	Scope                 string                        `json:"scope"`
-	Conversations         map[string]*conversationState `json:"conversations"`
-	FullReconciliation    bool                          `json:"full_reconciliation,omitempty"`
-	NextConversation      int64                         `json:"next_conversation"`
-	NextPage              int                           `json:"next_page"`
-	NextSavedConversation string                        `json:"next_saved_conversation,omitempty"`
+	Version       int                           `json:"version"`
+	Scope         string                        `json:"scope"`
+	Conversations map[string]*conversationState `json:"conversations"`
+	// ActivityWatermark is the newest conversation last_activity_at seen by a
+	// completed activity pass, in Chatwoot's epoch seconds.
+	ActivityWatermark int64     `json:"activity_watermark,omitempty"`
+	Walk              string    `json:"walk,omitempty"`
+	NextPage          int       `json:"next_page,omitempty"`
+	ReconciledAt      time.Time `json:"reconciled_at,omitzero"`
+	WalkStartedAt     time.Time `json:"walk_started_at,omitzero"`
+	// LastSavedConversation is the last conversation given a turn, so the next
+	// run starts after it and one long history cannot starve the others.
+	LastSavedConversation string `json:"last_saved_conversation,omitempty"`
 }
 
 func newSyncState(scope string) *syncState {
@@ -48,11 +59,12 @@ func parseSyncState(blob, scope string) (*syncState, error) {
 	if err := json.Unmarshal([]byte(blob), s); err != nil {
 		return nil, errors.New("invalid Chatwoot sync checkpoint")
 	}
-	if s.Version != stateVersion || s.Scope != scope || s.Conversations == nil || s.NextPage < 0 {
+	if s.Version != stateVersion || s.Scope != scope || s.Conversations == nil || s.NextPage < 0 || s.ActivityWatermark < 0 ||
+		(s.Walk != "" && s.Walk != walkReconcile && s.Walk != walkFull) {
 		return nil, errors.New("chatwoot checkpoint scope or version mismatch")
 	}
 	for _, cs := range s.Conversations {
-		if cs == nil || cs.HighWater < 0 || cs.HighWater > math.MaxInt32 {
+		if cs == nil {
 			return nil, errors.New("invalid Chatwoot conversation checkpoint")
 		}
 		ordered := slices.Clone(cs.Pending)

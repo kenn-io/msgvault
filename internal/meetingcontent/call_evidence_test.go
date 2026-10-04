@@ -65,12 +65,25 @@ func TestProviderParticipantIDsDoNotMergeDifferentPeopleOnSharedPhone(t *testing
 	entry := normalizeEntry(Entry{
 		Participants: archived,
 		Content: Content{SourceParticipants: []Participant{
-			{ParticipantID: new(int64(103)), Name: "Third Example", Phone: sharedPhone, Role: "to"},
+			{ParticipantID: new(int64(103)), Name: "Stale Example", Phone: sharedPhone, Role: "to"},
 			{Name: "Unresolved Example", Phone: sharedPhone, Role: "to"},
 		}},
 	})
-	assert.Len(entry.Participants, 4, "shared phone cannot select one of several durable people")
+	assert.Len(entry.Participants, 3, "shared phone cannot select one of several durable people")
 	assert.Contains(entry.Participants, Participant{Name: "Unresolved Example", Phone: sharedPhone, Role: "to"})
+}
+
+func TestProviderParticipantMergedAwayAppearsOnce(t *testing.T) {
+	assert := assert.New(t)
+
+	// The snapshot keeps the absorbed participant's ID; recipients hold the survivor.
+	entry := normalizeEntry(Entry{
+		Participants: []Participant{{ParticipantID: new(int64(202)), Name: "Example Agent", Role: "from"}},
+		Content: Content{SourceParticipants: []Participant{
+			{ParticipantID: new(int64(201)), Name: "Example Agent", Role: "from"},
+		}},
+	})
+	assert.Equal([]Participant{{ParticipantID: new(int64(202)), Name: "Example Agent", Role: "from"}}, entry.Participants)
 }
 
 func TestProviderInvalidParticipantIDsAreNotPresentedAsArchiveIdentities(t *testing.T) {
