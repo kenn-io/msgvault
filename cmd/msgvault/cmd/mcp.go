@@ -71,6 +71,17 @@ Add to Claude Desktop config:
 			return fmt.Errorf("open daemon: %w", err)
 		}
 		defer func() { _ = st.Close() }()
+		if httpAddr != "" {
+			if !cmd.Flags().Changed("http-token-file") && !cmd.Flags().Changed("http-token-env") {
+				// Local startup may have created the key. OpenHTTPStore refreshes
+				// it after discovering or starting the daemon that owns the archive.
+				inboundKey = cfg.Server.AuthenticationKey()
+			}
+			httpAddr, err = normalizeMCPHTTPAddr(httpAddr, mcpHTTPAllowInsecure, inboundKey != "")
+			if err != nil {
+				return usageErr(cmd, err)
+			}
+		}
 
 		// Derive from cmd.Context() so signal handling installed by
 		// the cobra root command (SIGINT/SIGTERM → ctx.Done()) reaches
@@ -103,7 +114,7 @@ Add to Claude Desktop config:
 	},
 }
 
-// prepareMCPHTTP validates inbound authentication before opening the backend.
+// prepareMCPHTTP validates inbound sources and the address without creating keys.
 // Explicit inbound sources leave the daemon's unused server credential alone.
 func prepareMCPHTTP(cmd *cobra.Command, cfg *config.Config) (string, string, error) {
 	fileSet := cmd.Flags().Changed("http-token-file")
@@ -116,6 +127,7 @@ func prepareMCPHTTP(cmd *cobra.Command, cfg *config.Config) (string, string, err
 	}
 	var key string
 	var err error
+	var deferKeyCheck bool
 	switch {
 	case fileSet:
 		path, _ := cmd.Flags().GetString("http-token-file")
@@ -130,17 +142,16 @@ func prepareMCPHTTP(cmd *cobra.Command, cfg *config.Config) (string, string, err
 		}
 		key, err = providercredentials.ResolveSecret("", "", name)
 	default:
-		if isRemoteModeFor(invocationFromCommand(cmd)) {
-			err = cfg.ResolveServerKey()
-		} else {
-			err = prepareServeConfig(cfg)
-		}
+		err = cfg.ResolveServerKey()
 		key = cfg.Server.AuthenticationKey()
+		// A local daemon may create the default key during startup. Enforce
+		// the inbound key requirement after OpenHTTPStore has resolved it.
+		deferKeyCheck = !isRemoteModeFor(invocationFromCommand(cmd))
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("MCP inbound credential: %w", err)
 	}
-	address, err := normalizeMCPHTTPAddr(mcpHTTPAddr, mcpHTTPAllowInsecure, key != "")
+	address, err := normalizeMCPHTTPAddr(mcpHTTPAddr, mcpHTTPAllowInsecure, key != "" || deferKeyCheck)
 	return address, key, err
 }
 
