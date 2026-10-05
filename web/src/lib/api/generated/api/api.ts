@@ -126,6 +126,7 @@ import type {
   FileMetadataResponse,
   FilterMessagesParams,
   FilteredMessagesResponse,
+  FindKataIssuesParams,
   FindSimilarMessagesParams,
   GeneratePersonBriefPathParameters,
   GetActivityDayParams,
@@ -203,6 +204,7 @@ import type {
   KataEvidencePrepareRequest,
   KataEvidencePrepareResponse,
   KataIssueCreateRequest,
+  KataIssueListResponse,
   KataIssueResponse,
   LinkKataEvidencePathParameters,
   LinkPersonAgendaItemPathParameters,
@@ -1959,6 +1961,18 @@ export const prepareKataEvidence = (
       headers: { "Content-Type": "application/json" },
       data: kataEvidencePrepareRequest,
     },
+    options,
+  );
+};
+/**
+ * @summary Find Kata issues, open or closed, that cite a message or one of its files
+ */
+export const findKataIssues = (
+  params: FindKataIssuesParams,
+  options?: SecondParameter<typeof orvalFetch<KataIssueListResponse>>,
+) => {
+  return orvalFetch<KataIssueListResponse>(
+    { url: `/api/v1/integrations/kata/issues`, method: "GET", params },
     options,
   );
 };

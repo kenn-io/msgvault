@@ -1744,6 +1744,10 @@ func (a *storeAPIAdapter) ReadKataEvidenceSource(ctx context.Context, ref kataev
 	return a.store.ReadKataEvidenceSource(ctx, ref)
 }
 
+func (a *storeAPIAdapter) KataCitationSource(ctx context.Context, messageID, attachmentID int64) (kataevidence.Reference, error) {
+	return a.store.KataCitationSource(ctx, messageID, attachmentID)
+}
+
 // ListPersonUIDsContext forwards to the store so the daemon's adapter, not a
 // bare *store.Store, satisfies the agenda identity lookup.
 func (a *storeAPIAdapter) ListPersonUIDsContext(ctx context.Context, personID int64) ([]string, error) {

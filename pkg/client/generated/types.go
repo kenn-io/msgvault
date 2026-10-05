@@ -6003,6 +6003,28 @@ func (k KataIssueCreateRequest) Validate() error {
 	return errors
 }
 
+type KataIssueListResponse struct {
+	Issues []KataIssueReceipt `json:"issues" validate:"required"`
+
+	// Truncated More issues cite this source than were returned
+	Truncated bool `json:"truncated"`
+}
+
+func (k KataIssueListResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range k.Issues {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Issues[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type KataIssueReceipt struct {
 	Project      string  `json:"project" validate:"required"`
 	QualifiedRef string  `json:"qualified_ref" validate:"required"`

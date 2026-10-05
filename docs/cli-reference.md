@@ -2631,15 +2631,18 @@ Create Kata issues that quote exact message or file text. Configure
 msgvault kata evidence prepare [--input FILE]
 msgvault kata create --idempotency-key KEY [--input FILE] [--json]
 msgvault kata link <ref> [--input FILE] [--json]
+msgvault kata issues --message ID [--attachment ID] [--json]
 ```
 
-Each command reads one JSON request from `--input`, or stdin by default.
-`prepare` prints exact excerpts and the references that `create` and `link`
+`prepare`, `create`, and `link` each read one JSON request from `--input`, or
+stdin by default. `prepare` prints exact excerpts and the references that `create` and `link`
 accept. `create` requires `--idempotency-key`, a key you choose to name the
 issue; running it again with the same key and input returns the issue it filed
 instead of a duplicate.
 `link` adds evidence to an existing issue, given as `project#ref` or a bare
-ref. See [Kata issues](usage/kata-issues.md) for request shapes and limits.
+ref. `issues` lists the issues, open or closed, that already cite a message
+or one of its files, one `ref<TAB>status<TAB>title` line each. See
+[Kata issues](usage/kata-issues.md) for request shapes and limits.
 
 ---
 
@@ -3388,7 +3391,7 @@ msgvault mcp [flags]
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
 | `--http-allow-writes` | `false` | Expose Saved View management, attachment export, and deletion staging tools over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`, and Kata issue writes `--allow-kata-writes`. Enable only for trusted, authenticated clients. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
-| `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
+| `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` needs no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
 
 See [MCP Server](/docs/usage/chat/) for configuration and tool reference.
 

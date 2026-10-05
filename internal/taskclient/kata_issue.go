@@ -33,38 +33,57 @@ func (c *KataClient) AddComment(ctx context.Context, project, taskID, idempotenc
 
 // FindActionTask returns the earliest open or closed issue carrying an exact
 // action marker in any project, since an issue moved after filing still
-// answers a retry, and false when none does. A grant scoped to project cannot
-// list the others, so a refusal there narrows the search to project.
+// answers a retry, and false when none does.
 func (c *KataClient) FindActionTask(ctx context.Context, project, action string) (KataTask, bool, error) {
 	if action == "" {
 		return KataTask{}, false, ErrRequestRejected
 	}
-	query := url.Values{"meta": {ActionMetadataKey + "=" + action}, "sort": {"oldest"}, "limit": {"1"}}
-	task, found, err := c.oldestIssue(ctx, query.Encode())
+	tasks, err := c.listIssues(ctx, project, url.Values{"meta": {ActionMetadataKey + "=" + action}}, 1)
+	if err != nil || len(tasks) == 0 {
+		return KataTask{}, false, err
+	}
+	return tasks[0], true, nil
+}
+
+// FindMetadataTasks returns up to limit open or closed issues carrying the
+// metadata key in any project, oldest first.
+func (c *KataClient) FindMetadataTasks(ctx context.Context, project, key string, limit int) ([]KataTask, error) {
+	return c.listIssues(ctx, project, url.Values{"meta": {key}}, limit)
+}
+
+// listIssues lists matching issues across projects, oldest first. A grant
+// scoped to project cannot list the others, so a refusal there narrows the
+// search to project.
+func (c *KataClient) listIssues(ctx context.Context, project string, query url.Values, limit int) ([]KataTask, error) {
+	query.Set("sort", "oldest")
+	query.Set("limit", strconv.Itoa(limit))
+	tasks, err := c.listAllIssues(ctx, query.Encode())
 	if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrAuthenticationRequired) {
-		return task, found, err
+		return tasks, err
 	}
 	id, err := c.resolveProject(ctx, project)
 	if err != nil {
-		return KataTask{}, false, err
+		return nil, err
 	}
 	query.Set("project_id", strconv.FormatInt(id, 10))
-	return c.oldestIssue(ctx, query.Encode())
+	return c.listAllIssues(ctx, query.Encode())
 }
 
-func (c *KataClient) oldestIssue(ctx context.Context, query string) (KataTask, bool, error) {
+func (c *KataClient) listAllIssues(ctx context.Context, query string) ([]KataTask, error) {
+	transport := *c.transport
+	transport.maxResponseBytes = max(transport.maxResponseBytes, issueListMaxResponseBytes)
 	var response kata.ListAllIssuesResponseBody
-	if err := c.transport.doJSON(ctx, http.MethodGet, "/api/v1/issues?"+query, nil, nil, &response, http.StatusOK); err != nil {
-		return KataTask{}, false, err
+	if err := transport.doJSON(ctx, http.MethodGet, "/api/v1/issues?"+query, nil, nil, &response, http.StatusOK); err != nil {
+		return nil, err
 	}
-	if len(response.Issues) == 0 {
-		return KataTask{}, false, nil
+	tasks := make([]KataTask, 0, len(response.Issues))
+	for _, issue := range response.Issues {
+		if issue.UID == "" || issue.ProjectName == "" {
+			return nil, ErrInvalidResponse
+		}
+		task := taskFromKataIssue(issue.ProjectName, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, issue.Labels, issue.WebURL)
+		task.QualifiedRef = issue.QualifiedID
+		tasks = append(tasks, task)
 	}
-	issue := response.Issues[0]
-	if issue.UID == "" || issue.ProjectName == "" {
-		return KataTask{}, false, ErrInvalidResponse
-	}
-	task := taskFromKataIssue(issue.ProjectName, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, issue.Labels, issue.WebURL)
-	task.QualifiedRef = issue.QualifiedID
-	return task, true, nil
+	return tasks, nil
 }

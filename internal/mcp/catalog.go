@@ -51,6 +51,7 @@ type catalogCapabilities struct {
 	meetings        bool
 	personAgenda    bool
 	kata            bool
+	kataLookup      bool
 	identityReview  bool
 	personCardDAV   bool
 }
@@ -134,6 +135,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		meetings:        opts.Meetings != nil,
 		personAgenda:    opts.PersonAgendaBackend != nil,
 		kata:            opts.Kata != nil,
+		kataLookup:      opts.Kata != nil && opts.KataLookup,
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
 	}

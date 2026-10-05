@@ -104,3 +104,20 @@ func PassageLocation(ref Reference) string {
 	p.Start, p.End = ref.Range()
 	return Digest(p)
 }
+
+// sourceKeyPrefix starts every Kata metadata key that marks an issue as
+// citing a source.
+const sourceKeyPrefix = "msgvault.source."
+
+// SourceKeys names the sources ref cites, without range or content hashes: its
+// message, and for a file chunk also the file, so a file citation is found by
+// its message too. The file key comes last.
+func SourceKeys(ref Reference) []string {
+	tuple := []string{ref.ArchiveUID, "message", ref.SourceType, ref.SourceIdentifier, ref.SourceMessageID}
+	keys := []string{sourceKeyPrefix + Digest(tuple)}
+	if ref.OccurrenceKey != "" {
+		tuple[1] = "file"
+		keys = append(keys, sourceKeyPrefix+Digest(append(tuple, ref.OccurrenceKey)))
+	}
+	return keys
+}

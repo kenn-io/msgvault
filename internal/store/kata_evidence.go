@@ -27,36 +27,16 @@ func (s *Store) loadKataEvidenceSource(ctx context.Context, uid string, selector
 	var result kataevidence.SourceRecord
 	result.Reference = kataevidence.Reference{Version: kataevidence.Version, Kind: selector.Kind, ArchiveUID: uid, MessageID: selector.MessageID}
 	ref := &result.Reference
-	var occurred nullableTimestamp
-	var sourceMessageID sql.NullString
 	// A file cites only what document search can find, which leaves out
 	// messages deleted at their source. A message cites its stored body text,
 	// or the raw MIME text the reader falls back to without one.
-	live := LiveMessagesWhere("m", selector.Kind == "document_chunk")
-	err := s.db.QueryRowContext(ctx, s.Rebind(`
-		SELECT src.source_type, src.identifier, m.source_message_id,
-		       COALESCE(m.subject,''), COALESCE(m.sent_at,m.received_at,m.internal_date)
-		FROM messages m JOIN sources src ON src.id=m.source_id
-		WHERE m.id=? AND `+live), selector.MessageID).Scan(
-		&ref.SourceType, &ref.SourceIdentifier, &sourceMessageID, &result.Display.ContainingTitle, &occurred)
-	if errors.Is(err, sql.ErrNoRows) {
-		return result, kataevidence.ErrUnavailable
-	}
-	if err != nil {
-		return result, fmt.Errorf("read Kata evidence occurrence: %w", err)
-	}
-	// A citation names its source by this ID, so a message without one cannot be cited.
-	if !sourceMessageID.Valid || strings.TrimSpace(sourceMessageID.String) == "" {
-		return result, kataevidence.ErrUnsupported
-	}
-	ref.SourceMessageID = sourceMessageID.String
-	if occurred.Valid {
-		result.Display.Timestamp = occurred.Time
+	if err := s.kataMessageSource(ctx, ref, &result.Display, selector.Kind == "document_chunk"); err != nil {
+		return result, err
 	}
 	switch selector.Kind {
 	case "message":
 		var plain, html sql.NullString
-		err = s.db.QueryRowContext(ctx, s.Rebind("SELECT body_text,body_html FROM message_bodies WHERE message_id=?"), selector.MessageID).Scan(&plain, &html)
+		err := s.db.QueryRowContext(ctx, s.Rebind("SELECT body_text,body_html FROM message_bodies WHERE message_id=?"), selector.MessageID).Scan(&plain, &html)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return result, fmt.Errorf("read Kata evidence body: %w", err)
 		}
@@ -72,20 +52,9 @@ func (s *Store) loadKataEvidenceSource(ctx context.Context, uid string, selector
 		ref.Message = &kataevidence.MessageReference{BodySHA256: hex.EncodeToString(digest[:])}
 	case "document_chunk":
 		ref.AttachmentID = selector.AttachmentID
-		var hash string
-		err = s.db.QueryRowContext(ctx, s.Rebind(`
-			SELECT o.occurrence_key,o.canonical_blob_hash,COALESCE(a.filename,'')
-			FROM document_occurrences o JOIN attachments a ON a.id=o.attachment_id
-			WHERE o.attachment_id=? AND o.message_id=? AND a.message_id=o.message_id
-			  AND (a.content_hash=o.canonical_blob_hash OR
-			       (COALESCE(a.content_hash,'')='' AND a.storage_path=SUBSTR(o.canonical_blob_hash,1,2)||'/'||o.canonical_blob_hash))
-			  AND a.attachment_role=o.attachment_role
-		`), selector.AttachmentID, selector.MessageID).Scan(&ref.OccurrenceKey, &hash, &result.Display.Filename)
-		if errors.Is(err, sql.ErrNoRows) {
-			return result, kataevidence.ErrUnavailable
-		}
+		hash, err := s.kataOccurrence(ctx, ref, &result.Display)
 		if err != nil {
-			return result, fmt.Errorf("read Kata document occurrence: %w", err)
+			return result, err
 		}
 		// Read only the cited chunk, from its own extraction, so a citation keeps
 		// working after the attachment is reprocessed.
@@ -119,6 +88,76 @@ func (s *Store) loadKataEvidenceSource(ctx context.Context, uid string, selector
 		return result, kataevidence.ErrUnsupported
 	}
 	return result, nil
+}
+
+// KataCitationSource names the source a message, or one of its attachments,
+// would be cited by, without reading bodies or extracted text. Messages
+// deleted at their source stay findable.
+func (s *Store) KataCitationSource(ctx context.Context, messageID, attachmentID int64) (kataevidence.Reference, error) {
+	uid, err := s.ArchiveUIDContext(ctx)
+	if err != nil {
+		return kataevidence.Reference{}, err
+	}
+	ref := kataevidence.Reference{Version: kataevidence.Version, Kind: "message", ArchiveUID: uid, MessageID: messageID}
+	var display kataevidence.Display
+	if err := s.kataMessageSource(ctx, &ref, &display, false); err != nil {
+		return kataevidence.Reference{}, err
+	}
+	if attachmentID != 0 {
+		ref.Kind, ref.AttachmentID = "document_chunk", attachmentID
+		if _, err := s.kataOccurrence(ctx, &ref, &display); err != nil {
+			return kataevidence.Reference{}, err
+		}
+	}
+	return ref, nil
+}
+
+// kataMessageSource fills ref's source tuple and display from its message.
+func (s *Store) kataMessageSource(ctx context.Context, ref *kataevidence.Reference, display *kataevidence.Display, hideDeletedFromSource bool) error {
+	var occurred nullableTimestamp
+	var sourceMessageID sql.NullString
+	err := s.db.QueryRowContext(ctx, s.Rebind(`
+		SELECT src.source_type, src.identifier, m.source_message_id,
+		       COALESCE(m.subject,''), COALESCE(m.sent_at,m.received_at,m.internal_date)
+		FROM messages m JOIN sources src ON src.id=m.source_id
+		WHERE m.id=? AND `+LiveMessagesWhere("m", hideDeletedFromSource)), ref.MessageID).Scan(
+		&ref.SourceType, &ref.SourceIdentifier, &sourceMessageID, &display.ContainingTitle, &occurred)
+	if errors.Is(err, sql.ErrNoRows) {
+		return kataevidence.ErrUnavailable
+	}
+	if err != nil {
+		return fmt.Errorf("read Kata evidence occurrence: %w", err)
+	}
+	// A citation names its source by this ID, so a message without one cannot be cited.
+	if !sourceMessageID.Valid || strings.TrimSpace(sourceMessageID.String) == "" {
+		return kataevidence.ErrUnsupported
+	}
+	ref.SourceMessageID = sourceMessageID.String
+	if occurred.Valid {
+		display.Timestamp = occurred.Time
+	}
+	return nil
+}
+
+// kataOccurrence fills ref's occurrence key and display filename for its
+// attachment on its message, and returns the file's canonical blob hash.
+func (s *Store) kataOccurrence(ctx context.Context, ref *kataevidence.Reference, display *kataevidence.Display) (string, error) {
+	var hash string
+	err := s.db.QueryRowContext(ctx, s.Rebind(`
+		SELECT o.occurrence_key,o.canonical_blob_hash,COALESCE(a.filename,'')
+		FROM document_occurrences o JOIN attachments a ON a.id=o.attachment_id
+		WHERE o.attachment_id=? AND o.message_id=? AND a.message_id=o.message_id
+		  AND (a.content_hash=o.canonical_blob_hash OR
+		       (COALESCE(a.content_hash,'')='' AND a.storage_path=SUBSTR(o.canonical_blob_hash,1,2)||'/'||o.canonical_blob_hash))
+		  AND a.attachment_role=o.attachment_role
+	`), ref.AttachmentID, ref.MessageID).Scan(&ref.OccurrenceKey, &hash, &display.Filename)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", kataevidence.ErrUnavailable
+	}
+	if err != nil {
+		return "", fmt.Errorf("read Kata document occurrence: %w", err)
+	}
+	return hash, nil
 }
 
 // ReadKataEvidenceSource requires both the original occurrence and exact

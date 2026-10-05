@@ -75,3 +75,13 @@ func (c *Client) LinkKataEvidence(ctx context.Context, ref string, request gener
 	}
 	return *resp.JSON200, nil
 }
+
+func (c *Client) FindKataIssues(ctx context.Context, query generated.FindKataIssuesQuery) (generated.KataIssueListResponse, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.FindKataIssuesResp, error) {
+		return client.FindKataIssuesWithResponse(ctx, &generated.FindKataIssuesRequestOptions{Query: &query})
+	})
+	if err != nil {
+		return generated.KataIssueListResponse{}, err
+	}
+	return *resp.JSON200, nil
+}

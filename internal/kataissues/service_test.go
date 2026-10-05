@@ -727,3 +727,29 @@ func pendingOf(t *testing.T, issue taskclient.KataTask) int {
 	}
 	return pending
 }
+
+// An issue is found by every message and file it cites.
+func TestCitingFindsEveryCitedSource(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFixture(t)
+	service := f.connect(t)
+	service.Evidence = fixedText("Please send the revised budget by Friday.")
+	archive, err := f.store.Store.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	message := f.evidence(t, 0).Reference
+	chunk := chunkReference(archive, f.message+1, "extraction-old", "b")
+	created, err := service.Create(t.Context(), "key-citing", kataissues.CreateInput{Title: "Send the revised budget", Evidence: []kataevidence.Reference{message}})
+	require.NoError(err)
+	_, err = service.Link(t.Context(), created.Issue.QualifiedRef, []kataevidence.Reference{chunk})
+	require.NoError(err)
+
+	chunkKeys := kataevidence.SourceKeys(chunk)
+	for _, key := range []string{kataevidence.SourceKeys(message)[0], chunkKeys[0], chunkKeys[1]} {
+		issues, truncated, err := service.Citing(t.Context(), key, 10)
+		require.NoError(err)
+		require.Len(issues, 1)
+		assert.Equal(created.Issue.UID, issues[0].UID)
+		assert.False(truncated)
+	}
+}

@@ -6410,6 +6410,20 @@ components:
         - title
         - evidence
       type: object
+    KataIssueListResponse:
+      additionalProperties: true
+      properties:
+        issues:
+          items:
+            $ref: "#/components/schemas/KataIssueReceipt"
+          type: array
+        truncated:
+          description: More issues cite this source than were returned
+          type: boolean
+      required:
+        - issues
+        - truncated
+      type: object
     KataIssueReceipt:
       additionalProperties: true
       properties:
@@ -14763,7 +14777,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.2.0
+  version: 3.3.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -21172,6 +21186,70 @@ paths:
       tags:
         - API
   /api/v1/integrations/kata/issues:
+    get:
+      operationId: findKataIssues
+      parameters:
+        - description: Message the issues cite
+          in: query
+          name: message_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Only issues citing this attachment of the message
+          in: query
+          name: attachment_id
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssueListResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Find Kata issues, open or closed, that cite a message or one of its files
+      tags:
+        - API
     post:
       description: Returns 201 both when it files the issue and when an earlier request under the same Idempotency-Key already did; `replayed` tells them apart.
       operationId: createKataIssue

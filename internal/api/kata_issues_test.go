@@ -25,7 +25,13 @@ type fakeKataIssueOperations struct {
 	key       string
 	created   kataissues.CreateInput
 	linkedRef string
+	found     [2]int64
 	err       error
+}
+
+func (f *fakeKataIssueOperations) Find(_ context.Context, messageID, attachmentID int64) ([]taskclient.KataTask, bool, error) {
+	f.found = [2]int64{messageID, attachmentID}
+	return []taskclient.KataTask{{UID: "01ISSUE", Ref: "abcd", QualifiedRef: "example#abcd", Project: "example", Title: "Send the budget", Status: "closed", Revision: "3"}}, true, f.err
 }
 
 func (f *fakeKataIssueOperations) Prepare(_ context.Context, selectors []kataevidence.Selector) ([]kataevidence.Evidence, error) {
@@ -99,6 +105,19 @@ func TestKataIssueHTTP(t *testing.T) {
 	linked := serveKataIssue(server, "/api/v1/integrations/kata/issues/example%23abcd/evidence", `{"evidence":[]}`, nil)
 	require.Equal(http.StatusOK, linked.Code, linked.Body.String())
 	assert.Equal("example#abcd", operations.linkedRef)
+
+	lookup := httptest.NewRecorder()
+	server.router.ServeHTTP(lookup, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/kata/issues?message_id=7&attachment_id=3", nil))
+	require.Equal(http.StatusOK, lookup.Code, lookup.Body.String())
+	var found KataIssueListResponse
+	require.NoError(json.Unmarshal(lookup.Body.Bytes(), &found))
+	assert.Equal([2]int64{7, 3}, operations.found)
+	require.Len(found.Issues, 1)
+	assert.Equal("closed", found.Issues[0].Status)
+	assert.True(found.Truncated)
+	missing := httptest.NewRecorder()
+	server.router.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/kata/issues?attachment_id=3", nil))
+	assert.Equal(http.StatusBadRequest, missing.Code)
 
 	for _, tc := range []struct {
 		err    error

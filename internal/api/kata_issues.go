@@ -22,7 +22,13 @@ type KataIssueOperations interface {
 	Prepare(ctx context.Context, selectors []kataevidence.Selector) ([]kataevidence.Evidence, error)
 	Create(ctx context.Context, key string, input kataissues.CreateInput) (kataissues.Result, error)
 	Link(ctx context.Context, ref string, evidence []kataevidence.Reference) (taskclient.KataTask, error)
+	// Find lists issues citing a message, or one of its attachments when
+	// attachmentID is set, and whether more do.
+	Find(ctx context.Context, messageID, attachmentID int64) ([]taskclient.KataTask, bool, error)
 }
+
+// kataIssueFindLimit bounds the issues one lookup returns.
+const kataIssueFindLimit = 10
 
 type KataEvidencePrepareRequest struct {
 	Selectors []kataevidence.Selector `json:"selectors" minItems:"1" maxItems:"32"`
@@ -63,6 +69,11 @@ type KataIssueConflictResponse struct {
 	Issue   *KataIssueReceipt `json:"issue,omitempty"`
 }
 
+type KataIssueListResponse struct {
+	Issues    []KataIssueReceipt `json:"issues"`
+	Truncated bool               `json:"truncated" doc:"More issues cite this source than were returned"`
+}
+
 type KataIssueResponse struct {
 	Issue    KataIssueReceipt `json:"issue"`
 	Replayed bool             `json:"replayed" doc:"An earlier request with this Idempotency-Key already created the issue"`
@@ -83,6 +94,14 @@ func (s *Server) registerKataIssueRoutes(api huma.API) {
 	addErrorResponses(api, create.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusPreconditionRequired, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
 	create.Responses[httpStatusKey(http.StatusConflict)] = jsonResponsesFor[KataIssueConflictResponse](api, http.StatusConflict)[httpStatusKey(http.StatusConflict)]
 	registerRawHumaRoute(api, create, s.handleCreateKataIssue)
+
+	find := rawAPIV1Operation("findKataIssues", http.MethodGet, "/integrations/kata/issues", "Find Kata issues, open or closed, that cite a message or one of its files")
+	messageID := queryIntegerParam("message_id", "Message the issues cite")
+	messageID.Required = true
+	find.Parameters = append(find.Parameters, messageID, queryIntegerParam("attachment_id", "Only issues citing this attachment of the message"))
+	find.Responses = jsonResponsesFor[KataIssueListResponse](api)
+	addErrorResponses(api, find.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, find, s.handleFindKataIssues)
 
 	link := rawAPIV1Operation("linkKataEvidence", http.MethodPost, "/integrations/kata/issues/{ref}/evidence", "Add exact archive evidence to an existing Kata issue")
 	link.Parameters = append(link.Parameters, &huma.Param{Name: "ref", In: pathKey, Required: true, Description: "Kata issue ref, qualified ref or UID", Schema: &huma.Schema{Type: huma.TypeString}})
@@ -149,6 +168,31 @@ func (s *Server) handleLinkKataEvidence(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, KataIssueResponse{Issue: kataIssueReceipt(issue)})
 }
 
+func (s *Server) handleFindKataIssues(w http.ResponseWriter, r *http.Request) {
+	if !s.requireKataIssues(w) {
+		return
+	}
+	messageID, err := parseRequiredInt64Query(r, "message_id")
+	var attachmentID int64
+	if err == nil && r.URL.Query().Has("attachment_id") {
+		attachmentID, err = parseRequiredInt64Query(r, "attachment_id")
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_id", err.Error())
+		return
+	}
+	issues, truncated, err := s.kataIssueOperations.Find(r.Context(), messageID, attachmentID)
+	if err != nil {
+		s.writeKataIssueError(w, err)
+		return
+	}
+	response := KataIssueListResponse{Issues: make([]KataIssueReceipt, len(issues)), Truncated: truncated}
+	for i, issue := range issues {
+		response.Issues[i] = kataIssueReceipt(issue)
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (s *Server) requireKataIssues(w http.ResponseWriter) bool {
 	if s.kataIssueOperations != nil {
 		return true
@@ -205,6 +249,7 @@ func (s *Server) writeKataIssueError(w http.ResponseWriter, err error) {
 
 type kataIssueStore interface {
 	kataevidence.SourceReader
+	KataCitationSource(ctx context.Context, messageID, attachmentID int64) (kataevidence.Reference, error)
 	kataissues.Archive
 	personagenda.IdentityStore
 }
@@ -249,4 +294,18 @@ func (b *kataIssueBackend) Link(ctx context.Context, ref string, evidence []kata
 		return taskclient.KataTask{}, err
 	}
 	return service.Link(ctx, ref, evidence)
+}
+
+func (b *kataIssueBackend) Find(ctx context.Context, messageID, attachmentID int64) ([]taskclient.KataTask, bool, error) {
+	ref, err := b.store.KataCitationSource(ctx, messageID, attachmentID)
+	if err != nil {
+		return nil, false, err
+	}
+	service, err := b.service(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	// The last key names the attachment when there is one, else the message.
+	keys := kataevidence.SourceKeys(ref)
+	return service.Citing(ctx, keys[len(keys)-1], kataIssueFindLimit)
 }

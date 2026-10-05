@@ -50,7 +50,7 @@ func TestFindActionTask(t *testing.T) {
 			t.Cleanup(server.Close)
 			client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project})
 			require.NoError(err)
-			created, err := client.CreateTask(t.Context(), "example", "marker-key", KataCreate{Title: "Send the revised budget", Metadata: map[string]any{ActionMetadataKey: "action-a"}})
+			created, err := client.CreateTask(t.Context(), "example", "marker-key", KataCreate{Title: "Send the revised budget", Metadata: map[string]any{ActionMetadataKey: "action-a", "msgvault.source.a": true}})
 			require.NoError(err)
 			native.Endpoint(server).CloseIssue(t, created.UID)
 
@@ -62,6 +62,15 @@ func TestFindActionTask(t *testing.T) {
 			_, ok, err = client.FindActionTask(t.Context(), "example", "action-b")
 			require.NoError(err)
 			assert.False(ok)
+
+			citing, err := client.FindMetadataTasks(t.Context(), "example", "msgvault.source.a", 2)
+			require.NoError(err)
+			require.Len(citing, 1)
+			assert.Equal(created.UID, citing[0].UID)
+			assert.Equal("closed", citing[0].Status)
+			citing, err = client.FindMetadataTasks(t.Context(), "example", "msgvault.source.b", 2)
+			require.NoError(err)
+			assert.Empty(citing)
 		})
 	}
 }

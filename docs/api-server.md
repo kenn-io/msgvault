@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-04"
+last_edited: "2026-10-05"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -111,6 +111,9 @@ review token. Upgrade the CLI and daemon together; clients with an incompatible
 schema fail before issuing archive requests. The HTTP prefix remains `/api/v1`.
 This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
+
+Schema 3.3.0 adds `GET /api/v1/integrations/kata/issues`, which
+[finds the Kata issues that cite a source](usage/kata-issues.md#find-issues-that-already-cite-a-source).
 
 Schema 3.2.0 adds [Kata issues from archive evidence](usage/kata-issues.md).
 

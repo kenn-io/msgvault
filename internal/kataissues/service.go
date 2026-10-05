@@ -36,7 +36,9 @@ type Kata interface {
 	CreateTaskReused(ctx context.Context, project, idempotencyKey string, create taskclient.KataCreate) (taskclient.KataTask, bool, error)
 	GetTask(ctx context.Context, project, taskID string) (taskclient.KataTask, error)
 	FindActionTask(ctx context.Context, project, action string) (taskclient.KataTask, bool, error)
+	FindMetadataTasks(ctx context.Context, project, key string, limit int) ([]taskclient.KataTask, error)
 	MutateMetadataKey(ctx context.Context, project, taskID, key string, previous, value any) (taskclient.KataTask, error)
+	MutateMetadataKeys(ctx context.Context, project, taskID, guardKey string, previous any, patch map[string]any) (taskclient.KataTask, error)
 	AddComment(ctx context.Context, project, taskID, idempotencyKey, body string) error
 }
 
@@ -114,6 +116,9 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 		return Result{}, err
 	}
 	metadata[EvidenceMetadataKey] = Envelope{Version: 1, Entries: entriesOf(quotes)}
+	for _, key := range sourceKeys(entriesOf(quotes)) {
+		metadata[key] = true
+	}
 	issue, reused, err := s.Kata.CreateTaskReused(ctx, s.Project, marker, taskclient.KataCreate{Title: input.Title, Body: renderBody(input.Brief, firstOfEachPassage(quotes)), Metadata: metadata})
 	if errors.Is(err, taskclient.ErrConflict) {
 		return s.createConflict(ctx, marker, hash, taskclient.ErrorCode(err))
@@ -224,8 +229,12 @@ func (s *Service) Link(ctx context.Context, issueRef string, evidence []kataevid
 				return taskclient.KataTask{}, ErrIssueFull
 			}
 			merged := Envelope{Version: 1, Entries: append(slices.Clone(envelope.Entries), entries...)}
+			patch := map[string]any{EvidenceMetadataKey: merged}
+			for _, key := range sourceKeys(entries) {
+				patch[key] = true
+			}
 			// Guarding only the evidence key lets unrelated edits land between attempts.
-			updated, err := s.Kata.MutateMetadataKey(ctx, project, current.UID, EvidenceMetadataKey, current.Metadata[EvidenceMetadataKey], merged)
+			updated, err := s.Kata.MutateMetadataKeys(ctx, project, current.UID, EvidenceMetadataKey, current.Metadata[EvidenceMetadataKey], patch)
 			if guardFailed(err) {
 				continue
 			}
@@ -237,6 +246,19 @@ func (s *Service) Link(ctx context.Context, issueRef string, evidence []kataevid
 		return s.postPending(ctx, project, current)
 	}
 	return taskclient.KataTask{}, ErrIssueChanged
+}
+
+// Citing returns up to limit issues, open or closed and oldest first, that
+// carry a source key, and whether more do.
+func (s *Service) Citing(ctx context.Context, key string, limit int) ([]taskclient.KataTask, bool, error) {
+	issues, err := s.Kata.FindMetadataTasks(ctx, s.Project, key, limit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(issues) > limit {
+		return issues[:limit], true, nil
+	}
+	return issues, false, nil
 }
 
 // issueEvidence reads an issue and the evidence it records.
@@ -327,6 +349,16 @@ func firstOfEachPassage(quotes []quotation) []quotation {
 		seen[quote.Passage] = true
 		return duplicate
 	})
+}
+
+// sourceKeys lists, once each, the source markers for what entries cite.
+func sourceKeys(entries []Entry) []string {
+	var keys []string
+	for _, entry := range entries {
+		keys = append(keys, kataevidence.SourceKeys(entry.Reference)...)
+	}
+	slices.Sort(keys)
+	return slices.Compact(keys)
 }
 
 // distinctPassages counts the passages entries quote; several evidence IDs

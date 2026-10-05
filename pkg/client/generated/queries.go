@@ -516,6 +516,14 @@ type ListPersonMatchJudgmentsQuery struct {
 	BeforeID *int64 `json:"before_id,omitempty"`
 }
 
+type FindKataIssuesQuery struct {
+	// MessageID Message the issues cite
+	MessageID int64 `json:"message_id"`
+
+	// AttachmentID Only issues citing this attachment of the message
+	AttachmentID *int64 `json:"attachment_id,omitempty"`
+}
+
 type SearchIntegrationTasksQuery struct {
 	// Q Task title search within the configured project
 	Q string `json:"q" validate:"required"`

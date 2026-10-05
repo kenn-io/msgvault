@@ -1547,6 +1547,18 @@ type PrepareKataEvidenceErrorResponseJSON422 = ErrorResponse
 
 type PrepareKataEvidenceErrorResponseJSON503 = ErrorResponse
 
+type FindKataIssuesResponse = KataIssueListResponse
+
+type FindKataIssuesErrorResponse = ErrorResponse
+
+type FindKataIssuesErrorResponseJSON = ErrorResponse
+
+type FindKataIssuesErrorResponseJSON404 = ErrorResponse
+
+type FindKataIssuesErrorResponseJSON422 = ErrorResponse
+
+type FindKataIssuesErrorResponseJSON503 = ErrorResponse
+
 type CreateKataIssueResponse = KataIssueResponse
 
 type CreateKataIssueErrorResponse = ErrorResponse
@@ -4757,6 +4769,18 @@ type PrepareKataEvidenceResp struct {
 	JSON409      *PrepareKataEvidenceErrorResponseJSON409
 	JSON422      *PrepareKataEvidenceErrorResponseJSON422
 	JSON503      *PrepareKataEvidenceErrorResponseJSON503
+}
+
+type FindKataIssuesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *FindKataIssuesResponse
+	JSON400      *FindKataIssuesErrorResponse
+	JSON401      *FindKataIssuesErrorResponseJSON
+	JSON404      *FindKataIssuesErrorResponseJSON404
+	JSON422      *FindKataIssuesErrorResponseJSON422
+	JSON503      *FindKataIssuesErrorResponseJSON503
 }
 
 type CreateKataIssueResp struct {

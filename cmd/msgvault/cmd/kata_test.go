@@ -10,7 +10,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,6 +90,10 @@ func TestKataCreateThroughDaemonAdapter(t *testing.T) {
 	assert.True(retried.Replayed)
 	assert.Equal(created.Issue.UID, retried.Issue.UID)
 	assert.Equal(created.Issue.QualifiedRef+"\tSend the revised budget (already filed, "+created.Issue.Status+")\n", string(runKataCommand(ctx, t, string(request), "create", "--idempotency-key", "cli-key")))
+	var citing generated.KataIssueListResponse
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "issues", "--message", strconv.FormatInt(id, 10), "--json"), &citing))
+	require.Len(citing.Issues, 1)
+	assert.Equal(created.Issue.UID, citing.Issues[0].UID)
 
 	// The exported generated client decodes a replay like a create, and the
 	// daemon client names the filed issue when a retry changes the request.
@@ -119,6 +125,7 @@ func runKataCommand(ctx context.Context, t *testing.T, input string, args ...str
 }
 
 func TestKataCommandsRefuseAnOlderDaemon(t *testing.T) {
+	var version atomic.Pointer[string]
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/health" {
 			assert.Fail(t, "unexpected request", r.URL.Path)
@@ -126,11 +133,16 @@ func TestKataCommandsRefuseAnOlderDaemon(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.1.0"}`))
+		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"` + *version.Load() + `"}`))
 	}))
 	t.Cleanup(daemon.Close)
 	ctx := configureRemoteDaemonForTest(t, daemon.URL)
-	for _, args := range [][]string{{"evidence", "prepare"}, {"create", "--idempotency-key", "key-1"}, {"link", "example#abcd"}} {
+	for _, args := range [][]string{{"evidence", "prepare"}, {"create", "--idempotency-key", "key-1"}, {"link", "example#abcd"}, {"issues", "--message", "1"}} {
+		// The lookup needs a newer daemon than the other commands.
+		version.Store(new("3.1.0"))
+		if args[0] == "issues" {
+			version.Store(new("3.2.0"))
+		}
 		command := newKataCmd()
 		command.SetArgs(args)
 		command.SetIn(strings.NewReader(kataInputFor(args[0])))
