@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-05"
 title: Inline
 description: Archive all accessible Inline chats through OAuth MCP or the authenticated Inline CLI, with optional chat filters.
 ---
@@ -173,7 +173,8 @@ those participants distinguishable.
 
 Media follows the shared [media policy](../configuration.md#media-policy).
 A policy skip or failed download keeps the message and attachment metadata.
-The default per-file cap is 250 MiB and the participant cap is 20.
+Inline uses Slack's shared defaults: a 250 MiB per-file cap and a participant
+cap of 20. Discord uses the same participant cap with a smaller per-file cap.
 
 Inline's conversation response may not provide the complete effective group
 roster. When the participant count is unknown, a positive participant cap

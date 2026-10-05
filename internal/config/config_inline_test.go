@@ -15,6 +15,7 @@ func TestInlineConfigDefaultsAndExplicitMediaOverride(t *testing.T) {
 	requires := require.New(t)
 
 	cfg := NewDefaultConfig()
+	assertions.Equal(cfg.Slack.MediaPolicy(""), cfg.Inline.MediaPolicy(""), "Inline uses Slack's shared chat-media defaults")
 	assertions.Equal(attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll,
 		MaxParticipants: DefaultMediaMaxParticipants, MaxBytes: DefaultChatMaxMediaBytes}, cfg.Inline.MediaPolicy(""))
 	path := filepath.Join(t.TempDir(), "config.toml")

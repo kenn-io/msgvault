@@ -207,6 +207,7 @@ func cliDecodeConversation(raw json.RawMessage, chatID, accountUserID int64) (Co
 	var chat struct {
 		ID              *int64 `json:"id"`
 		Title           string `json:"title"`
+		SpaceID         *int64 `json:"space_id"`
 		ParentChatID    *int64 `json:"parent_chat_id"`
 		ParentMessageID *int64 `json:"parent_message_id"`
 		Peer            struct {
@@ -217,6 +218,9 @@ func cliDecodeConversation(raw json.RawMessage, chatID, accountUserID int64) (Co
 		return Conversation{}, errors.New("unsupported Inline CLI chat response: canonical chat and native peer required")
 	}
 	conv := Conversation{ID: chatID, Title: chat.Title, Raw: bytes.Clone(raw)}
+	if chat.SpaceID != nil && !cliValidID(*chat.SpaceID) {
+		return Conversation{}, errors.New("invalid Inline space ID")
+	}
 	if chat.ParentChatID != nil {
 		if !cliValidID(*chat.ParentChatID) {
 			return Conversation{}, errors.New("invalid Inline parent chat ID")
@@ -251,6 +255,9 @@ func cliDecodeConversation(raw json.RawMessage, chatID, accountUserID int64) (Co
 			return Conversation{}, errors.New("unsupported Inline CLI thread peer")
 		}
 		conv.Type = "group_chat"
+		if chat.SpaceID != nil {
+			conv.Type = "channel"
+		}
 	} else {
 		return Conversation{}, errors.New("unsupported Inline CLI peer variant")
 	}

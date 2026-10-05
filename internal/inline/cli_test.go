@@ -13,7 +13,34 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
+
+func TestCLIConversationPreservesSharedMediaScope(t *testing.T) {
+	policy := attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeDirect}
+	for _, test := range []struct {
+		name, body, kind string
+		allowed          bool
+	}{
+		{"home group", `{"id":7,"peer_id":{"type":{"Chat":{"chat_id":7}}}}`, "group_chat", true},
+		{"space channel", `{"id":7,"space_id":9,"peer_id":{"type":{"Chat":{"chat_id":7}}}}`, "channel", false},
+		{"space child", `{"id":7,"space_id":9,"parent_chat_id":6,"parent_message_id":3,"peer_id":{"type":{"Chat":{"chat_id":7}}}}`, "channel", false},
+		{"direct chat", `{"id":7,"peer_id":{"type":{"User":{"user_id":2}}}}`, "direct_chat", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conversation, err := cliDecodeConversation(json.RawMessage(test.body), 7, 1)
+			require.NoError(t, err)
+			assert.Equal(t, test.kind, conversation.Type)
+			assert.Equal(t, test.allowed, policy.Allows(attachmentpolicy.Conversation{
+				Type: conversationType(conversation.Type), ParticipantCount: conversation.MemberCount,
+			}, 1))
+		})
+	}
+	for _, spaceID := range []string{"0", "-1", "9007199254740992", "1.5", `"9"`} {
+		_, err := cliDecodeConversation(json.RawMessage(`{"id":7,"space_id":`+spaceID+`,"peer_id":{"type":{"Chat":{"chat_id":7}}}}`), 7, 1)
+		require.Error(t, err)
+	}
+}
 
 func cliMessageFixture(id int64) string {
 	return fmt.Sprintf(`{"id":%d,"chat_id":123,"from_id":9007199254740991,"date":1700000000,"message":" hello 🚀 ","out":true,"edit_date":1700000010,"reply_to_msg_id":1,"reactions":{"reactions":[{"user_id":77,"emoji":"👍"}]},"media":{"media":{"Document":{"document":{"id":55,"file_name":"report.txt","mime_type":"text/plain","size":7,"cdn_url":"https://cdn.example.test/report?signature=private"}}}},"entities":{"entities":[]}}`, id)
