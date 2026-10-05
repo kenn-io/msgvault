@@ -3355,7 +3355,7 @@ Start the Model Context Protocol server for AI assistant integration.
 
 Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
 
-With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes only the six delegated draft tools over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
+With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes only the six delegated draft tools and, on daemons with API schema 3.1.0 or newer, the calendar tools over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
 
 ```bash
 msgvault mcp [flags]

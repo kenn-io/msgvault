@@ -164,7 +164,6 @@ func TestMCPDelegatedDraftToolsUseAgentGrant(t *testing.T) {
 		text, ok := result.Content[0].(*sdkmcp.TextContent)
 		require.True(ok)
 		assert.Equal("not_permitted", text.Text)
-		t.Log(text.Text)
 		assert.Equal(before, providerCalls.Load())
 	})
 	t.Run("command is not allowed through the daemon CLI runner", func(t *testing.T) {
@@ -177,7 +176,6 @@ func TestMCPDelegatedDraftToolsUseAgentGrant(t *testing.T) {
 		assert.True(result.IsError)
 		text := mcpDraftResultText(t, result)
 		assert.Equal("command is not allowed through the daemon CLI runner", text)
-		t.Log(text)
 		assert.Equal(before, providerCalls.Load())
 	})
 }
@@ -236,7 +234,6 @@ func TestMCPDelegatedRejectsHTTPTransport(t *testing.T) {
 	require.ErrorContains(err, "delegated MCP supports stdio only")
 	assert.False(called)
 	assert.Equal(before, requests.Load())
-	t.Log("delegated MCP supports stdio only; zero daemon requests")
 }
 
 func TestMCPOwnerDraftGetMatchesCLI(t *testing.T) {
