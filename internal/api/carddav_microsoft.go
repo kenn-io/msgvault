@@ -22,18 +22,14 @@ func cardDAVOAuthProvider(provider string) bool {
 	return provider == cardDAVProviderGoogle || provider == cardDAVProviderMicrosoft
 }
 
-// errMicrosoftContactsAuthorization reports a missing or insufficient
-// contacts token. It carries a 401 so sync reports authentication_failed.
-var errMicrosoftContactsAuthorization = errors.New("microsoft contacts authorization is required: run msgvault add-carddav --microsoft with your account email")
-
 func (c *CardDAVController) microsoftContactsManager(username string) (*microsoft.GraphManager, error) {
 	if c.cfg == nil || c.cfg.Microsoft.ClientID == "" {
-		return nil, errors.Join(errMicrosoftContactsAuthorization, errors.New("[microsoft] client_id is not configured"))
+		return nil, errors.Join(carddav.ErrMicrosoftAuthorizationRequired, errors.New("[microsoft] client_id is not configured"))
 	}
 	mgr := microsoft.NewGraphContactsManager(c.cfg.Microsoft.ClientID, c.cfg.Microsoft.EffectiveTenantID(),
 		c.cfg.Microsoft.EffectiveRedirectURI(), c.cfg.TokensDir(), slog.Default())
 	if ok, err := mgr.HasScopes(username); err != nil || !ok {
-		return nil, errMicrosoftContactsAuthorization
+		return nil, carddav.ErrMicrosoftAuthorizationRequired
 	}
 	return mgr, nil
 }
@@ -68,7 +64,7 @@ func (c *CardDAVController) microsoftService(credential carddav.Credential) (car
 func microsoftContactsTokenError(err error) error {
 	err = fmt.Errorf("obtain Microsoft contacts token: %w", err)
 	if retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok && retrieveErr.ErrorCode == "invalid_grant" {
-		return errors.Join(err, errMicrosoftContactsAuthorization, &carddav.StatusError{StatusCode: http.StatusUnauthorized})
+		return errors.Join(err, carddav.ErrMicrosoftAuthorizationRequired, &carddav.StatusError{StatusCode: http.StatusUnauthorized})
 	}
 	return err
 }

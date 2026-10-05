@@ -3,6 +3,7 @@ package mscontacts
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -274,6 +275,8 @@ type fixture struct {
 	service *carddav.Service
 	store   *store.Store
 	book    store.CardDAVAddressBook
+	// tokenErr, when set, is returned in place of an access token.
+	tokenErr error
 }
 
 // newFixture discovers the fake account and makes the "test" folder the
@@ -284,7 +287,13 @@ func newFixture(t *testing.T) *fixture {
 	server := httptest.NewServer(fake)
 	t.Cleanup(server.Close)
 	st := testutil.NewTestStore(t)
-	remote := NewRemote(server.URL+"/v1.0", func(context.Context) (string, error) { return "token", nil })
+	f := &fixture{}
+	remote := NewRemote(server.URL+"/v1.0", func(context.Context) (string, error) {
+		if f.tokenErr != nil {
+			return "", f.tokenErr
+		}
+		return "token", nil
+	})
 	service := carddav.NewRemoteService(st, remote)
 	discovery, err := service.DiscoverConnection(t.Context(), "")
 	require.NoError(t, err)
@@ -301,7 +310,8 @@ func newFixture(t *testing.T) *fixture {
 	}
 	require.NotZero(t, book.ID)
 	require.NoError(t, service.SetBookRoles(t.Context(), book.ID, carddav.BookRoles{WriteTarget: true, Subscribed: true}))
-	return &fixture{fake: fake, service: service, store: st, book: book}
+	f.fake, f.service, f.store, f.book = fake, service, st, book
+	return f
 }
 
 func (f *fixture) sync(t *testing.T) carddav.SyncResult {
@@ -530,6 +540,14 @@ func TestGraphFailuresReachTheRetryGateAndRunHistory(t *testing.T) {
 	_, err := f.service.Sync(t.Context(), carddav.SyncOptions{})
 	code, _ := carddav.SyncFailure(err)
 	assert.Equal("authentication_failed", code)
+
+	f.fake.failWith = 0
+	f.tokenErr = errors.Join(carddav.ErrMicrosoftAuthorizationRequired, &carddav.StatusError{StatusCode: http.StatusUnauthorized})
+	_, err = f.service.Sync(t.Context(), carddav.SyncOptions{})
+	code, message := carddav.SyncFailure(err)
+	assert.Equal("microsoft_authorization_required", code)
+	assert.Contains(message, "msgvault carddav authorize-microsoft")
+	f.tokenErr = nil
 
 	f.fake.failWith = http.StatusTooManyRequests
 	_, err = f.service.Sync(t.Context(), carddav.SyncOptions{})

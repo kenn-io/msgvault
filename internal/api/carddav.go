@@ -805,7 +805,7 @@ type CardDAVRunResponse struct {
 	Created      int64      `json:"created"`
 	Updated      int64      `json:"updated"`
 	Removed      int64      `json:"removed"`
-	ErrorCode    string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,google_authorization_required,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
+	ErrorCode    string     `json:"error_code,omitempty" enum:"cancelled,retry_after,authentication_failed,google_authorization_required,microsoft_authorization_required,upstream_failed,safety_limit,sync_failed,unsafe_error_redacted,daemon_restarted"`
 	ErrorMessage string     `json:"error_message,omitempty"`
 }
 
@@ -822,7 +822,7 @@ type CardDAVStatusResponse struct {
 	Scheduled            bool                  `json:"scheduled"`
 	Schedule             string                `json:"schedule"`
 	NextScheduledAt      *time.Time            `json:"next_scheduled_at,omitempty"`
-	RepairReason         string                `json:"repair_reason,omitempty" enum:"account_missing,credential_missing,credential_mismatch,credential_unavailable,google_authorization_required,runtime_unavailable"`
+	RepairReason         string                `json:"repair_reason,omitempty" enum:"account_missing,credential_missing,credential_mismatch,credential_unavailable,google_authorization_required,microsoft_authorization_required,runtime_unavailable"`
 	Account              *CardDAVStatusAccount `json:"account,omitzero" nullable:"false"`
 	Active               *CardDAVRunResponse   `json:"active,omitzero" nullable:"false"`
 	Latest               *CardDAVRunResponse   `json:"latest,omitzero" nullable:"false"`
@@ -859,6 +859,8 @@ func cardDAVRunPublicFailure(code string) (string, string) {
 		return code, "CardDAV authentication failed."
 	case "google_authorization_required":
 		return code, "Google Contacts authorization is required. Connect Google in CardDAV account settings."
+	case "microsoft_authorization_required":
+		return code, "Microsoft contacts authorization is required. Run msgvault carddav authorize-microsoft with your account email."
 	case "upstream_failed":
 		return code, "CardDAV server request failed."
 	case "safety_limit":
@@ -951,7 +953,7 @@ func (c *CardDAVController) scopedStatus(ctx context.Context) (CardDAVStatusResp
 	if credential.Microsoft {
 		if _, err := c.microsoftContactsManager(credential.Username); err != nil {
 			status.CredentialConfigured = false
-			status.RepairReason = "credential_unavailable"
+			status.RepairReason = "microsoft_authorization_required"
 			return status, nil //nolint:nilerr // Status reports missing Microsoft authorization without contacting Microsoft.
 		}
 	}
@@ -1273,6 +1275,8 @@ func (s *Server) writeCardDAVAccountError(
 		writeError(w, http.StatusBadRequest, "bad_request", "This CardDAV account already belongs to another connection. Use carddav connections or CardDAV settings to find and restore it.")
 	case errors.Is(err, carddav.ErrGoogleAuthorizationRequired):
 		writeError(w, http.StatusBadGateway, "google_authorization_required", "Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
+	case errors.Is(err, carddav.ErrMicrosoftAuthorizationRequired):
+		writeError(w, http.StatusBadGateway, "microsoft_authorization_required", "Run msgvault carddav authorize-microsoft with your account email, then try again")
 	case errors.Is(err, errCardDAVValidation):
 		writeError(w, http.StatusBadRequest, "bad_request", message)
 	case errors.Is(err, store.ErrCardDAVCredentialChangePending),
@@ -1298,6 +1302,8 @@ func (s *Server) writeCardDAVOperationError(
 	switch {
 	case errors.Is(err, carddav.ErrGoogleAuthorizationRequired):
 		writeError(w, http.StatusBadGateway, "google_authorization_required", "Connect Google in CardDAV settings, or run msgvault carddav authorize-google with your account email and OAuth app, then try again")
+	case errors.Is(err, carddav.ErrMicrosoftAuthorizationRequired):
+		writeError(w, http.StatusBadGateway, "microsoft_authorization_required", "Run msgvault carddav authorize-microsoft with your account email, then try again")
 	case errors.Is(err, carddav.ErrConnectionUnavailable):
 		writeError(w, http.StatusServiceUnavailable, "carddav_unavailable", "CardDAV connection is unavailable")
 	case errors.Is(err, errCardDAVValidation):

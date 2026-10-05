@@ -47,20 +47,20 @@ func TestCardDAVMicrosoftServiceNeedsContactsToken(t *testing.T) {
 	controller := &CardDAVController{cfg: &config.Config{Microsoft: config.MicrosoftConfig{ClientID: "synthetic-client"}}}
 	controller.cfg.Data.DataDir = t.TempDir()
 	_, err := controller.microsoftContactsManager("person@example.com")
-	require.ErrorIs(t, err, errMicrosoftContactsAuthorization)
+	require.ErrorIs(t, err, carddav.ErrMicrosoftAuthorizationRequired)
 }
 
 func TestMicrosoftContactsTokenErrorMarksRevokedTokenUnauthorized(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	revoked := microsoftContactsTokenError(&oauth2.RetrieveError{ErrorCode: "invalid_grant"})
-	require.ErrorIs(revoked, errMicrosoftContactsAuthorization)
+	require.ErrorIs(revoked, carddav.ErrMicrosoftAuthorizationRequired)
 	status, ok := errors.AsType[*carddav.StatusError](revoked)
 	require.True(ok)
 	require.Equal(http.StatusUnauthorized, status.StatusCode)
 
 	unavailable := microsoftContactsTokenError(&oauth2.RetrieveError{ErrorCode: "temporarily_unavailable"})
-	require.NotErrorIs(unavailable, errMicrosoftContactsAuthorization)
+	require.NotErrorIs(unavailable, carddav.ErrMicrosoftAuthorizationRequired)
 	_, ok = errors.AsType[*carddav.StatusError](unavailable)
 	require.False(ok)
 }

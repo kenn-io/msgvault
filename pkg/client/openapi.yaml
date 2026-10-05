@@ -1981,6 +1981,7 @@ components:
             - retry_after
             - authentication_failed
             - google_authorization_required
+            - microsoft_authorization_required
             - upstream_failed
             - safety_limit
             - sync_failed
@@ -2081,6 +2082,7 @@ components:
             - credential_mismatch
             - credential_unavailable
             - google_authorization_required
+            - microsoft_authorization_required
             - runtime_unavailable
           type: string
         schedule:
@@ -7118,6 +7120,7 @@ components:
             - invocation_unsafe_error_redacted
             - invocation_upstream_failed
             - lease_lost
+            - microsoft_authorization_required
             - person_sweep_failed
             - policy
             - provider_http

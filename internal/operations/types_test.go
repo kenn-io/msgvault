@@ -118,7 +118,7 @@ func TestOperationPublicEnumDomainsEnumerateEveryRuntimeValue(t *testing.T) {
 		PublicErrorInvocationInvalidOutput, PublicErrorInvocationRateLimited,
 		PublicErrorInvocationSafetyLimit, PublicErrorInvocationTimeout,
 		PublicErrorInvocationUnsafeErrorRedacted, PublicErrorInvocationUpstreamFailed,
-		PublicErrorLeaseLost, PublicErrorPersonSweepFailed, PublicErrorPolicy,
+		PublicErrorLeaseLost, PublicErrorMicrosoftAuthorizationRequired, PublicErrorPersonSweepFailed, PublicErrorPolicy,
 		PublicErrorProviderHTTP, PublicErrorRateLimited, PublicErrorRetryAfter,
 		PublicErrorSafetyLimit, PublicErrorSourceSyncFailed, PublicErrorSyncFailed,
 		PublicErrorTimeout, PublicErrorUnsafeErrorRedacted, PublicErrorUpstreamFailed,

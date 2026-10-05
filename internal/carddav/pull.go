@@ -216,6 +216,9 @@ func cardDAVSyncPublicFailure(err error) (string, string) {
 	if errors.Is(err, ErrGoogleAuthorizationRequired) {
 		return "google_authorization_required", "Google Contacts authorization is required. Connect Google in CardDAV account settings."
 	}
+	if errors.Is(err, ErrMicrosoftAuthorizationRequired) {
+		return "microsoft_authorization_required", "Microsoft contacts authorization is required. Run msgvault carddav authorize-microsoft with your account email."
+	}
 	if errors.Is(err, store.ErrCardDAVRetryAfter) {
 		return "retry_after", "CardDAV sync is temporarily paused."
 	}

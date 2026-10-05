@@ -478,6 +478,7 @@ const (
 	PublicErrorRetryAfter                     PublicErrorCode = "retry_after"
 	PublicErrorAuthenticationFailed           PublicErrorCode = "authentication_failed"
 	PublicErrorGoogleAuthorizationRequired    PublicErrorCode = "google_authorization_required"
+	PublicErrorMicrosoftAuthorizationRequired PublicErrorCode = "microsoft_authorization_required"
 	PublicErrorUpstreamFailed                 PublicErrorCode = "upstream_failed"
 	PublicErrorSafetyLimit                    PublicErrorCode = "safety_limit"
 	PublicErrorSyncFailed                     PublicErrorCode = "sync_failed"
@@ -525,6 +526,7 @@ var fixedPublicErrorMessages = map[PublicErrorCode]string{
 	PublicErrorRetryAfter:                     "CardDAV sync is temporarily paused.",
 	PublicErrorAuthenticationFailed:           "CardDAV authentication failed.",
 	PublicErrorGoogleAuthorizationRequired:    "Google Contacts authorization is required. Connect Google in CardDAV account settings.",
+	PublicErrorMicrosoftAuthorizationRequired: "Microsoft contacts authorization is required. Run msgvault carddav authorize-microsoft with your account email.",
 	PublicErrorUpstreamFailed:                 "CardDAV server request failed.",
 	PublicErrorSafetyLimit:                    "CardDAV sync exceeded its safety limits.",
 	PublicErrorSyncFailed:                     "CardDAV sync failed.",
@@ -674,6 +676,8 @@ func ProjectCardDAVFailure(durableCode string) *PublicError {
 		code = PublicErrorAuthenticationFailed
 	case "google_authorization_required":
 		code = PublicErrorGoogleAuthorizationRequired
+	case "microsoft_authorization_required":
+		code = PublicErrorMicrosoftAuthorizationRequired
 	case "upstream_failed":
 		code = PublicErrorUpstreamFailed
 	case "safety_limit":
@@ -967,7 +971,7 @@ func isPersonSweepError(code PublicErrorCode) bool {
 func isCardDAVError(code PublicErrorCode) bool {
 	switch code {
 	case PublicErrorCancelled, PublicErrorRetryAfter, PublicErrorAuthenticationFailed,
-		PublicErrorGoogleAuthorizationRequired,
+		PublicErrorGoogleAuthorizationRequired, PublicErrorMicrosoftAuthorizationRequired,
 		PublicErrorUpstreamFailed, PublicErrorSafetyLimit, PublicErrorSyncFailed,
 		PublicErrorUnsafeErrorRedacted, PublicErrorDaemonRestarted,
 		PublicErrorCardDAVSyncFailed:
