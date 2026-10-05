@@ -1,12 +1,45 @@
 package chatwoot
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+// --limit bounds history only. Capping refreshes would recheck the lowest
+// artifact IDs every run and let later recordings leave their window unread.
+func TestLimitBoundsHistoryNotArtifactRefresh(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	messages := []map[string]any{}
+	for id := int64(901); id <= 902; id++ {
+		message := contractMessage(id, 1767225600+id, nil)
+		message["attachments"] = []any{map[string]any{
+			"id": id + 1000, "file_type": "audio", "content_type": "audio/ogg",
+			"data_url": fmt.Sprintf("https://chatwoot.example.com/audio-%d.ogg", id),
+		}}
+		messages = append(messages, message)
+	}
+	api := newContractAPI(t, 2, messages)
+	st := testutil.NewTestStore(t)
+	importer, source := contractRegister(t, st, api)
+	opts := ImportOptions{InboxID: 7}
+	initial, err := importer.Import(t.Context(), opts)
+	require.NoError(err)
+	require.False(initial.Partial)
+	opts.Limit = 1
+	limited, err := importer.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(2, limited.MessagesProcessed, "--limit bounds history, so every pending artifact is rechecked")
+	assert.False(limited.Partial)
+	conversation := savedState(t, st, source).Conversations["42"]
+	require.NotNil(conversation)
+	assert.Empty(conversation.Pending)
+	assert.Len(conversation.Artifacts, 2)
+}
 
 func TestSavedArtifactCheckpointRetiresPrivateMessageWhenExcluded(t *testing.T) {
 	assert := assert.New(t)
