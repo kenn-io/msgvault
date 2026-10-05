@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -311,7 +312,7 @@ var settingsCatalog = []settingDefinition{
 	boolSetting("inline.enabled", settingsGroupSources, func(c *config.Config) bool { return c.Inline.Enabled }),
 	stringSetting("inline.schedule", settingsGroupSources, nil, func(c *config.Config) string { return c.Inline.Schedule }),
 	configuredBoolSetting("inline.media", settingsGroupAttachments, func(c *config.Config) bool { return c.Inline.Media == nil || *c.Inline.Media }, func(c *config.Config) bool { return c.Inline.Media == nil }),
-	stringSetting("inline.media_scope", settingsGroupAttachments, []string{"all", "direct", "none"}, func(c *config.Config) string { return effectiveMediaScope(c.Inline.MediaScope) }),
+	stringSetting("inline.media_scope", settingsGroupAttachments, []string{string(attachmentpolicy.ScopeAll), string(attachmentpolicy.ScopeDirect), string(attachmentpolicy.ScopeNone)}, func(c *config.Config) string { return effectiveMediaScope(c.Inline.MediaScope) }),
 	intSetting("inline.media_max_participants", settingsGroupAttachments, func(c *config.Config) int { return c.Inline.MediaMaxParticipants }),
 	intSetting("inline.max_media_mb", settingsGroupAttachments, func(c *config.Config) int { return c.Inline.MaxMediaMB }),
 	boolSetting("slack.enabled", settingsGroupSources, func(c *config.Config) bool { return c.Slack.Enabled }),

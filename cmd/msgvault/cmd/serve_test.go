@@ -1308,10 +1308,16 @@ func TestManualSyncRefreshQueuesVerificationInsideInterval(t *testing.T) {
 		args       []string
 		interval   time.Duration
 		shutdown   bool
+		childError error
 		wantQueued bool
 		wantMode   buildCacheMode
 	}{
 		{name: "default inside interval", args: []string{"sync-slack"}, interval: 6 * time.Hour, wantQueued: true, wantMode: buildCacheModeScheduledAuto},
+		{name: "inline default inside interval", args: []string{"sync-inline"}, interval: 6 * time.Hour, wantQueued: true, wantMode: buildCacheModeScheduledAuto},
+		{name: "inline partial failure", args: []string{"sync-inline"}, childError: errors.New("partial sync"), wantQueued: true, wantMode: buildCacheModeScheduledAuto},
+		{name: "inline probe", args: []string{"sync-inline", "--probe"}},
+		{name: "inline explicit probe", args: []string{"sync-inline", "--probe=true"}},
+		{name: "inline false probe", args: []string{"sync-inline", "--probe=false"}, wantQueued: true, wantMode: buildCacheModeScheduledAuto},
 		{name: "forced inside interval", args: []string{"sync-teams", "--build-cache"}, interval: 6 * time.Hour, wantQueued: true, wantMode: buildCacheModeAuto},
 		{name: "default when due", args: []string{"sync-calendar"}, wantQueued: true, wantMode: buildCacheModeScheduledAuto},
 		{name: "skip when due", args: []string{"sync-slack", "--no-build-cache"}},
@@ -1344,9 +1350,9 @@ func TestManualSyncRefreshQueuesVerificationInsideInterval(t *testing.T) {
 					if test.shutdown {
 						cancel()
 					}
-					return nil
+					return test.childError
 				})
-			require.NoError(err)
+			require.ErrorIs(err, test.childError)
 			assert.True(runnerCalled)
 			assert.Equal(test.wantQueued, jobs.active())
 			if test.wantQueued {
