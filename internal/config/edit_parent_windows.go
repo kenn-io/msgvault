@@ -45,7 +45,7 @@ func ensureConfigParentDirectories(path string, expectedAncestorIdentity ...stri
 		ancestor = parent
 	}
 
-	authority, err := pinWindowsConfigParent(filepath.Join(ancestor, ".config-parent-anchor"))
+	authority, err := pinWindowsDirectoryChain(ancestor, ancestor == dir)
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func ensureConfigParentDirectories(path string, expectedAncestorIdentity ...stri
 		if err := fileutil.SecureMkdirAll(current, 0o700); err != nil {
 			return fmt.Errorf("create Windows config directory %s: %w", current, err)
 		}
-		handle, err := openWindowsAuthorityDirectory(current, true)
+		handle, err := openWindowsAuthorityDirectory(current, current == dir)
 		if err != nil {
 			return err
 		}

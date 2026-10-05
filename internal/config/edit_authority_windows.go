@@ -43,7 +43,12 @@ func pinWindowsConfigParent(path string) (*windowsPathAuthority, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve Windows config path: %w", err)
 	}
-	parent := filepath.Dir(filepath.Clean(absolute))
+	return pinWindowsDirectoryChain(filepath.Dir(filepath.Clean(absolute)), true)
+}
+
+// pinWindowsDirectoryChain pins every component through parent, probing only
+// parent for writers, and only when parent is the config directory itself.
+func pinWindowsDirectoryChain(parent string, configDirectory bool) (*windowsPathAuthority, error) {
 	volume := filepath.VolumeName(parent)
 	root := volume + string(filepath.Separator)
 	relative := strings.TrimPrefix(parent, root)
@@ -58,7 +63,7 @@ func pinWindowsConfigParent(path string) (*windowsPathAuthority, error) {
 			return nil, errors.Join(ErrUnsafeConfigTarget, errors.New("windows config path escapes its volume root"))
 		}
 		prefix = filepath.Join(prefix, part)
-		handle, openErr := openWindowsAuthorityDirectory(prefix, prefix == parent)
+		handle, openErr := openWindowsAuthorityDirectory(prefix, configDirectory && prefix == parent)
 		if openErr != nil {
 			_ = authority.Release()
 			return nil, openErr
@@ -95,7 +100,7 @@ func pinWindowsNearestExistingConfigAncestor(path string) (*windowsPathAuthority
 		}
 		ancestor = parent
 	}
-	authority, err := pinWindowsConfigParent(filepath.Join(ancestor, ".config-ancestor-anchor"))
+	authority, err := pinWindowsDirectoryChain(ancestor, false)
 	if err != nil {
 		return nil, "", "", err
 	}

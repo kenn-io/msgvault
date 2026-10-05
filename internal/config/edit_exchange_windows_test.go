@@ -194,14 +194,22 @@ func TestWindowsAuthorityRejectsPreexistingDirectoryWriter(t *testing.T) {
 		t.Cleanup(func() { require.NoError(t, windows.CloseHandle(writer)) })
 	}
 
-	// A writer in a shared ancestor, such as the temp root, must not block.
+	// A writer in a shared ancestor, such as the temp root, must not block
+	// an edit, whether the config directory exists or still has to be made.
 	openWriter(ancestor)
-	authority, err := pinWindowsConfigParent(filepath.Join(parent, "config.toml"))
-	require.NoError(t, err)
-	require.NoError(t, authority.Release())
+	for _, path := range []string{
+		filepath.Join(parent, "config.toml"),
+		filepath.Join(ancestor, "missing", "config.toml"),
+	} {
+		snapshot, err := ReadConfigFile(path)
+		require.NoError(t, err)
+		_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "web.theme", Value: "dark"}})
+		require.NoError(t, err)
+		assert.Contains(t, string(mustReadFile(t, path)), "dark")
+	}
 
 	openWriter(parent)
-	_, err = pinWindowsConfigParent(filepath.Join(parent, "config.toml"))
+	_, err := pinWindowsConfigParent(filepath.Join(parent, "config.toml"))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, windows.ERROR_SHARING_VIOLATION)
 }
