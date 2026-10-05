@@ -267,6 +267,32 @@ func TestParseFile_PreservesCRLF(t *testing.T) {
 	assert.Contains(raw, base64.StdEncoding.EncodeToString(pdf)+"\r\n")
 }
 
+func TestParseFile_RestoresWithMixedLineEndings(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	// iCloud has delivered LF messages carrying a single header folded with
+	// CRLF; the rest of the message must not be read as one long line.
+	pdf := []byte("%PDF-mixed")
+	raw := placeholderMIME("\n", "=-b", "report.pdf", 10)
+	stamp := "X-JNJ: AAAA\r\n BBBB\r\n"
+	raw = strings.Replace(raw, "MIME-Version: 1.0\n", "MIME-Version: 1.0\n"+stamp, 1)
+	path := writePartial(t, t.TempDir(), 14, raw, map[string][]byte{
+		"2/report.pdf": pdf,
+	})
+
+	msg, err := ParseFile(path, 1<<20)
+	require.NoError(err)
+	assert.Equal(1, msg.RestoredAttachments)
+	got := string(msg.Raw)
+	assert.Contains(got, stamp, "the CRLF-folded header must be kept byte for byte")
+	assert.Contains(got, base64.StdEncoding.EncodeToString(pdf)+"\n--=-b--")
+	assert.NotContains(strings.ReplaceAll(got, stamp, ""), "\r", "LF parts must not gain CRs")
+	parsed, err := mime.Parse(msg.Raw)
+	require.NoError(err)
+	require.Len(parsed.Attachments, 1)
+	assert.Equal(pdf, parsed.Attachments[0].Content)
+}
+
 func TestParseFile_PicksSingleFileWhenNameDiffers(t *testing.T) {
 	// Apple may decode the filename differently than the raw header spells
 	// it. The encoded spelling can be invalid on Windows or exceed the
@@ -334,6 +360,27 @@ func TestParseFile_SkipsAttachmentThatExceedsBudget(t *testing.T) {
 	assert.NotContains(unwrapped(msg.Raw), base64.StdEncoding.EncodeToString(big), "over-budget bytes must not be read")
 	assert.Contains(string(msg.Raw), "X-Apple-Content-Length", "over-budget part must stay a placeholder")
 	assert.Equal(mime, string(msg.Raw))
+}
+
+func TestParseFile_BudgetCountsCRLFEndings(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	big := bytes.Repeat([]byte("x"), 4000)
+	raw := placeholderMIME("\r\n", "=-b", "big.bin", 5334)
+	path := writePartial(t, t.TempDir(), 20, raw, map[string][]byte{
+		"2/big.bin": big,
+	})
+
+	full, err := ParseFile(path, 1<<20)
+	require.NoError(err)
+	require.Equal(1, full.RestoredAttachments)
+
+	// One byte less than the restored message needs, counting the CR that
+	// ends each base64 line, must leave the placeholder in place.
+	msg, err := ParseFile(path, int64(len(full.Raw))-1)
+	require.NoError(err)
+	assert.Equal(0, msg.RestoredAttachments)
+	assert.Equal(raw, string(msg.Raw))
 }
 
 func TestReadAttachment_FileChangesAfterSizeCheck(t *testing.T) {

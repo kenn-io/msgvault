@@ -45,7 +45,7 @@ func attachmentsDir(path string) string {
 // X-Apple-Content-Length placeholder with cached bodies beside messagePath.
 // Parts whose file cannot be found are left as they are, and so are parts
 // whose base64-encoded size would push the message past maxBytes. All other
-// bytes, including the message's line-ending style, are preserved.
+// bytes, including each line's ending, are preserved.
 func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte, int, error) {
 	if !bytes.Contains(raw, []byte(applePlaceholderHeader)) {
 		return raw, 0, nil
@@ -54,15 +54,13 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 	if attDir == "" {
 		return raw, 0, nil
 	}
-	nl := "\n"
-	if bytes.Contains(raw, []byte("\r\n")) {
-		nl = "\r\n"
-	}
 	remaining := maxBytes - int64(len(raw))
 	if remaining <= 0 {
 		return raw, 0, nil
 	}
-	lines := strings.Split(string(raw), nl)
+	// Split on LF and keep any CR on its line: one message can mix both
+	// endings, as when a relay folds a header it added with CRLF.
+	lines := strings.Split(string(raw), "\n")
 
 	// Locate the top-level boundary in the message header.
 	hdrEnd := indexBlank(lines, 0)
@@ -82,13 +80,18 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 	i := 0
 	for i < len(lines) {
 		line := lines[i]
-		if line != open {
+		if strings.TrimSuffix(line, "\r") != open {
 			out = append(out, line)
 			i++
 			continue
 		}
 		// Start of a part: copy the boundary line, then read its header.
 		partIndex++
+		// Lines added to this part take the ending of its boundary line.
+		cr := ""
+		if strings.HasSuffix(line, "\r") {
+			cr = "\r"
+		}
 		out = append(out, line)
 		i++
 		phEnd := indexBlank(lines, i)
@@ -116,16 +119,16 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 				restoredHeader = append(restoredHeader, h)
 			}
 		}
-		restoredHeader = append(restoredHeader, "Content-Transfer-Encoding: base64")
+		restoredHeader = append(restoredHeader, "Content-Transfer-Encoding: base64"+cr)
 		// Skip files already known to exceed the budget, then bound the read
 		// and charge its actual size in case the cache changed after Stat.
 		file, size, err := resolveAttachment(attDir, strconv.Itoa(partIndex), findFilename(header))
-		headerGrowth := len(strings.Join(restoredHeader, nl)) - len(strings.Join(header, nl))
-		cost := encodedSize(size, len(nl)) + int64(headerGrowth)
+		headerGrowth := len(strings.Join(restoredHeader, "\n")) - len(strings.Join(header, "\n"))
+		cost := encodedSize(size, len(cr)+1) + int64(headerGrowth)
 		var content []byte
 		if err == nil && file != "" && cost <= remaining {
 			content, err = readAttachment(file, remaining-int64(headerGrowth))
-			cost = encodedSize(int64(len(content)), len(nl)) + int64(headerGrowth)
+			cost = encodedSize(int64(len(content)), len(cr)+1) + int64(headerGrowth)
 		}
 		if err != nil || file == "" || cost > remaining {
 			restoreErr = errors.Join(restoreErr, err)
@@ -137,15 +140,20 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 		// Emit the header without the placeholder, then the base64 body,
 		// and skip the original (empty) body up to the next boundary line.
 		out = append(out, restoredHeader...)
-		out = append(out, "")
-		out = append(out, base64Lines(content)...)
+		out = append(out, cr)
+		for _, l := range base64Lines(content) {
+			out = append(out, l+cr)
+		}
 		i = phEnd + 1
-		for i < len(lines) && lines[i] != open && lines[i] != closeB {
+		for i < len(lines) {
+			if l := strings.TrimSuffix(lines[i], "\r"); l == open || l == closeB {
+				break
+			}
 			i++
 		}
 		restored++
 	}
-	return []byte(strings.Join(out, nl)), restored, restoreErr
+	return []byte(strings.Join(out, "\n")), restored, restoreErr
 }
 
 // readAttachment reads at most maxBytes+1 bytes. The extra byte ensures that
@@ -160,9 +168,10 @@ func readAttachment(path string, maxBytes int64) ([]byte, error) {
 }
 
 // indexBlank returns the index of the first empty line at or after from.
+// A line holding only the CR of a CRLF ending counts as empty.
 func indexBlank(lines []string, from int) int {
 	for i := from; i < len(lines); i++ {
-		if lines[i] == "" {
+		if lines[i] == "" || lines[i] == "\r" {
 			return i
 		}
 	}
