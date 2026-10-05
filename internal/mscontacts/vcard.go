@@ -63,9 +63,6 @@ type singleValueExtendedProperty struct {
 
 func (a physicalAddress) empty() bool { return a == physicalAddress{} }
 
-// mappedProperties are the vCard properties that Graph holds as fields.
-var mappedProperties = []string{"VERSION", "UID", "FN", "N", "NICKNAME", "EMAIL", "TEL", "ORG", "TITLE", "ADR", "BDAY", "NOTE"}
-
 // property returns an extended property value, or "".
 func (c contact) property(id string) string {
 	for _, property := range c.Properties {
@@ -107,59 +104,75 @@ func (c contact) fields() contact {
 // body returns the vCard for a contact. A contact that msgvault wrote keeps
 // the full vCard it was sent. While Outlook's fields still match that vCard,
 // the vCard is returned as it was sent, so a publication reads back
-// unchanged. After an edit in Outlook, the fields come from Outlook and the
-// properties that Graph cannot hold come from the saved vCard.
+// unchanged. After an edit in Outlook, the lines that Outlook held follow
+// Outlook, and the lines that Outlook never held come from the saved vCard.
 func (c contact) body(uid string) ([]byte, error) {
 	saved := c.property(vcardProperty)
 	if saved == "" {
-		return c.toVCard(uid, nil)
+		return c.toVCard(uid)
 	}
 	sent, err := contactFromVCard([]byte(saved))
 	placePhones(&sent, &c)
 	if err == nil && reflect.DeepEqual(sent.fields(), c.fields()) {
 		return []byte(saved), nil
 	}
-	document, err := vcard.Decode(strings.NewReader(saved))
-	if err != nil || len(document.Cards) != 1 {
-		return c.toVCard(uid, nil)
+	document, decodeErr := vcard.Decode(strings.NewReader(saved))
+	if err != nil || decodeErr != nil || len(document.Cards) != 1 {
+		return c.toVCard(uid)
 	}
-	var extra []vcard.Property
-	for _, property := range document.Cards[0].Properties {
-		if !slices.Contains(mappedProperties, strings.ToUpper(property.Name)) || (strings.EqualFold(property.Name, "BDAY") && c.Birthday == nil && !fullDate(property)) {
-			extra = append(extra, property)
-		}
+	sentCard, err := sent.card(uid)
+	if err != nil {
+		return c.toVCard(uid)
 	}
-	card, err := c.card(uid, extra)
+	card, err := c.card(uid)
 	if err != nil {
 		return nil, err
 	}
-	// Only the properties rendered from Graph fields; extra is kept as saved.
-	keepParameters(card.Properties[:len(card.Properties)-len(extra)], document.Cards[0].Properties)
+	// A saved line that the mapping of the saved vCard renders again was held
+	// by Outlook. Any other saved line never reached Outlook.
+	held := map[string]int{}
+	for _, property := range sentCard.Properties {
+		held[lineKey(property)]++
+	}
+	var restore, extra []vcard.Property
+	for _, property := range document.Cards[0].Properties {
+		name := strings.ToUpper(property.Name)
+		switch key := lineKey(property); {
+		case name == "VERSION" || name == "UID":
+		case held[key] > 0:
+			held[key]--
+			restore = append(restore, property)
+		case (name == "BDAY" || name == "N") && len(card.PropertiesNamed(name)) > 0:
+			// A card holds at most one, and Outlook now has its own.
+		default:
+			extra = append(extra, property)
+		}
+	}
+	restoreSaved(card.Properties, restore)
+	card.Properties = append(card.Properties, extra...)
 	return vcard.Marshal(vcard.Document{Cards: []vcard.Card{card}})
 }
 
-// keepParameters copies the parameters of each saved property to the
-// rendered property that still holds the same value, for example
-// EMAIL;TYPE=work. PREF is dropped, because Outlook has no preferred mark and
-// its order may have changed. VALUE is dropped, because the rendered value is
-// text. For TEL and ADR, the home, work or cell TYPE comes from Outlook.
-func keepParameters(rendered, saved []vcard.Property) {
+// restoreSaved replaces each rendered property that still holds the value of
+// a saved property with the saved property, so its form and parameters
+// survive, for example a PO box or EMAIL;TYPE=work. PREF is dropped, because
+// Outlook has no preferred mark and its order may have changed. For TEL and
+// ADR, the home, work or cell TYPE comes from Outlook.
+func restoreSaved(rendered, saved []vcard.Property) {
 	used := make([]bool, len(saved))
 	for i, property := range rendered {
-		name := strings.ToUpper(property.Name)
-		if name == "VERSION" || name == "UID" {
-			continue
-		}
-		key := parameterKey(name, property.RawValue)
+		key := lineKey(property)
 		for j, old := range saved {
-			if used[j] || !strings.EqualFold(old.Name, name) || parameterKey(name, old.RawValue) != key {
+			if used[j] || lineKey(old) != key {
 				continue
 			}
 			used[j] = true
+			name := strings.ToUpper(property.Name)
 			types := typeValues(property)
+			var parameters []vcard.Parameter
 			for _, parameter := range old.Parameters {
 				switch strings.ToUpper(parameter.Name) {
-				case "PREF", "VALUE":
+				case "PREF":
 				case "TYPE":
 					for _, value := range typeValues(vcard.Property{Parameters: []vcard.Parameter{parameter}}) {
 						outlookDecides := (name == "TEL" || name == "ADR") && slices.Contains([]string{"home", "work", "cell"}, value)
@@ -168,24 +181,38 @@ func keepParameters(rendered, saved []vcard.Property) {
 						}
 					}
 				default:
-					rendered[i].Parameters = append(rendered[i].Parameters, parameter)
+					parameters = append(parameters, parameter)
 				}
 			}
-			parameters := slices.DeleteFunc(rendered[i].Parameters, func(p vcard.Parameter) bool { return strings.EqualFold(p.Name, "TYPE") })
 			if len(types) > 0 {
 				if parameter, err := vcard.NewParameter("TYPE", types...); err == nil {
 					parameters = append(parameters, parameter)
 				}
 			}
-			rendered[i].Parameters = parameters
+			old.Parameters = parameters
+			rendered[i] = old
 			break
 		}
 	}
 }
 
-// parameterKey returns the value that keepParameters compares: the address
-// of an EMAIL, the digits of a TEL, and the text of other properties.
-func parameterKey(name, raw string) string {
+// lineKey returns the property name and the part of its value that Graph
+// holds: the address of an EMAIL, the digits of a TEL, the street to country
+// of an ADR, the components of N and ORG, the date of a BDAY, and the text of
+// other properties.
+func lineKey(property vcard.Property) string {
+	name := strings.ToUpper(property.Name)
+	raw := property.RawValue
+	components := func(from, to int) string {
+		values, err := vcard.SplitStructuredText(raw)
+		if err != nil {
+			return raw
+		}
+		for len(values) < to {
+			values = append(values, "")
+		}
+		return strings.Join(values[from:to], "\x1f")
+	}
 	value, err := vcard.UnescapeText(raw)
 	if err != nil {
 		value = raw
@@ -193,18 +220,32 @@ func parameterKey(name, raw string) string {
 	value = strings.TrimSpace(value)
 	switch name {
 	case "EMAIL":
-		return strings.ToLower(strings.TrimPrefix(value, "mailto:"))
+		value = strings.ToLower(strings.TrimPrefix(value, "mailto:"))
 	case "TEL":
-		return strings.Map(func(r rune) rune {
-			if r >= '0' && r <= '9' {
-				return r
-			}
-			return -1
-		}, value)
-	case "N", "ORG", "ADR":
-		return raw
+		value = digits(value)
+	case "ADR":
+		value = components(2, 7)
+	case "N":
+		value = components(0, 5)
+	case "ORG":
+		value = components(0, 2)
+	case "BDAY":
+		if fullDate(property) {
+			date, _ := vcard.ParsePartialDate(strings.TrimSpace(raw))
+			value = fmt.Sprintf("%04d%02d%02d", *date.Year, *date.Month, *date.Day)
+		}
 	}
-	return value
+	return name + "\x00" + value
+}
+
+// digits returns only the digits of a phone number.
+func digits(number string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, number)
 }
 
 // typeValues returns the lower-case TYPE values of a property.
@@ -222,10 +263,9 @@ func typeValues(property vcard.Property) []string {
 	return values
 }
 
-// toVCard renders the contact as a vCard 4.0 card with uid as its UID, and
-// appends extra properties.
-func (c contact) toVCard(uid string, extra []vcard.Property) ([]byte, error) {
-	card, err := c.card(uid, extra)
+// toVCard renders the contact as a vCard 4.0 card with uid as its UID.
+func (c contact) toVCard(uid string) ([]byte, error) {
+	card, err := c.card(uid)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +273,7 @@ func (c contact) toVCard(uid string, extra []vcard.Property) ([]byte, error) {
 }
 
 // card builds the vCard 4.0 card for toVCard.
-func (c contact) card(uid string, extra []vcard.Property) (vcard.Card, error) {
+func (c contact) card(uid string) (vcard.Card, error) {
 	card := vcard.Card{}
 	add := func(name, raw string, types ...string) error {
 		property, err := vcard.NewProperty("", name, raw)
@@ -303,7 +343,6 @@ func (c contact) card(uid string, extra []vcard.Property) (vcard.Card, error) {
 	if err := errors.Join(errs...); err != nil {
 		return vcard.Card{}, fmt.Errorf("render Graph contact as vCard: %w", err)
 	}
-	card.Properties = append(card.Properties, extra...)
 	return card, nil
 }
 
@@ -322,16 +361,9 @@ func keepEmailNames(c, current *contact) {
 
 // placePhones assigns the phones of c that have no TYPE. A number that
 // current already holds keeps its Outlook field; any other number becomes a
-// business phone.
+// business phone. It then cuts the lists to Graph's limits, because Graph
+// refuses a write that exceeds them. The saved vCard keeps the rest.
 func placePhones(c, current *contact) {
-	digits := func(number string) string {
-		return strings.Map(func(r rune) rune {
-			if r >= '0' && r <= '9' {
-				return r
-			}
-			return -1
-		}, number)
-	}
 	for _, number := range c.untypedPhones {
 		key := digits(number)
 		switch {
@@ -344,6 +376,9 @@ func placePhones(c, current *contact) {
 		}
 	}
 	c.untypedPhones = nil
+	c.EmailAddresses = c.EmailAddresses[:min(len(c.EmailAddresses), 3)]
+	c.BusinessPhones = c.BusinessPhones[:min(len(c.BusinessPhones), 2)]
+	c.HomePhones = c.HomePhones[:min(len(c.HomePhones), 2)]
 }
 
 // contactFromVCard maps a vCard to the Graph contact fields. Properties that

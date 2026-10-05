@@ -205,6 +205,10 @@ func (f *fakeGraph) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(http.StatusBadRequest, "BadRequest")
 			return
 		}
+		if overLimit(c) {
+			fail(http.StatusBadRequest, "ErrorInvalidProperty")
+			return
+		}
 		stored(&c)
 		f.posts++
 		f.next++
@@ -240,6 +244,10 @@ func (f *fakeGraph) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			var next contact
 			if err := json.UnmarshalRead(r.Body, &next); err != nil {
 				fail(http.StatusBadRequest, "BadRequest")
+				return
+			}
+			if overLimit(next) {
+				fail(http.StatusBadRequest, "ErrorInvalidProperty")
 				return
 			}
 			stored(&next)
@@ -451,7 +459,7 @@ func TestContactMapsToVCardAndBack(t *testing.T) {
 		BusinessAddress: physicalAddress{Street: "2 Work Rd", City: "London"},
 		OtherAddress:    physicalAddress{City: "Paris"},
 	}
-	body, err := original.toVCard("uid-1", nil)
+	body, err := original.toVCard("uid-1")
 	require.NoError(err)
 	assert.Contains(string(body), "UID:uid-1")
 
@@ -663,22 +671,27 @@ func TestRetryGateSetDuringLookupStopsTheWrite(t *testing.T) {
 	require.Equal(0, f.fake.patches, "the write after the lookup waits for the gate")
 }
 
-// After an Outlook edit, a line that still holds its saved value keeps its
-// saved parameters, except PREF and the home, work or cell type that Outlook
-// decides.
-func TestOutlookEditKeepsParametersOfUnchangedValues(t *testing.T) {
+// After an Outlook edit, a saved line that Outlook still holds comes back as
+// saved, except PREF and the home, work or cell type that Outlook decides. A
+// saved line that Outlook never held comes back unchanged.
+func TestOutlookEditKeepsSavedLines(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	saved := "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:alice\r\nFN:Alice\r\n" +
 		"EMAIL;TYPE=work;PREF=1:alice@work.test\r\nEMAIL;TYPE=home:alice@old.test\r\n" +
-		"TEL;VALUE=uri;TYPE=voice,home:tel:+15550100\r\nTITLE:Engineer\r\n" +
+		"EMAIL:alice@third.test\r\nEMAIL:alice@fourth.test\r\n" +
+		"TEL;VALUE=uri;TYPE=voice,home:tel:+15550100\r\nTEL;TYPE=home:+15550200\r\nTEL;TYPE=home:+15550300\r\n" +
+		"ADR;TYPE=home:PO 7;;1 Main;Springfield;;;\r\nTITLE:Engineer\r\n" +
 		"RELATED;VALUE=text;X-LABEL=friend:Bob\r\nBDAY:--0315\r\nEND:VCARD\r\n"
 	c, err := contactFromVCard([]byte(saved))
 	require.NoError(err)
+	placePhones(&c, nil)
+	require.Len(c.EmailAddresses, 3, "Graph holds three emails")
+	require.Len(c.HomePhones, 2, "Graph holds two home phones")
 	c.Properties = []singleValueExtendedProperty{{ID: vcardProperty, Value: saved}}
 	c.JobTitle = "Edited in Outlook"
 	c.EmailAddresses[1].Address = "alice@new.test"
-	c.BusinessPhones, c.HomePhones = c.HomePhones, nil
+	c.BusinessPhones, c.HomePhones = c.HomePhones[:1], c.HomePhones[1:]
 
 	body, err := c.body("alice")
 	require.NoError(err)
@@ -686,14 +699,60 @@ func TestOutlookEditKeepsParametersOfUnchangedValues(t *testing.T) {
 	require.NoError(err)
 	card := document.Cards[0]
 	emails := card.PropertiesNamed("EMAIL")
-	require.Len(emails, 2)
+	require.Len(emails, 4)
 	assert.Equal([]string{"work"}, typeValues(emails[0]))
 	assert.Empty(emails[0].ParametersNamed("PREF"))
+	assert.Equal("alice@new.test", emails[1].RawValue)
 	assert.Empty(emails[1].Parameters, "a changed address drops its saved type")
+	assert.Equal("alice@fourth.test", emails[3].RawValue, "Graph never held the fourth email")
 	phones := card.PropertiesNamed("TEL")
-	require.Len(phones, 1)
+	require.Len(phones, 3)
+	assert.Equal("tel:+15550100", phones[0].RawValue)
 	assert.Equal([]string{"work", "voice"}, typeValues(phones[0]))
-	assert.Empty(phones[0].ParametersNamed("VALUE"))
+	assert.Len(phones[0].ParametersNamed("VALUE"), 1)
+	assert.Equal("+15550300", phones[2].RawValue, "Graph never held the third home phone")
+	addresses := card.PropertiesNamed("ADR")
+	require.Len(addresses, 1)
+	assert.Equal("PO 7;;1 Main;Springfield;;;", addresses[0].RawValue, "the PO box survives")
+	assert.Contains(string(body), "TITLE:Edited in Outlook\r\n")
+	assert.NotContains(string(body), "Engineer", "a held line that Outlook changed follows Outlook")
 	assert.Contains(string(body), "RELATED;VALUE=text;X-LABEL=friend:Bob\r\n", "an unmapped property stays as saved")
 	assert.Contains(string(body), "BDAY:--0315\r\n", "a birthday without a year has no Graph field and stays as saved")
+}
+
+// Graph refuses a write with more than three emails. A person with four
+// publishes the first three, and the saved vCard keeps the fourth.
+func TestPublishBeyondGraphLimitsKeepsTheRest(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFixture(t)
+	personID := f.alice(t)
+	for _, address := range []string{"a1@example.test", "a2@example.test", "a3@example.test", "a4@example.test"} {
+		_, err := f.store.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+			AddressKind: store.ContactAddressEmail, OriginalValue: address,
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+		})
+		require.NoError(err)
+	}
+	require.NoError(f.service.PublishPerson(t.Context(), personID))
+	f.sync(t)
+
+	published := f.fake.published()
+	require.Len(published, 1)
+	assert.Len(published[0].EmailAddresses, 3)
+	conflicts, err := f.store.ListCardDAVConflictsContext(t.Context(), true, store.DefaultCardDAVAccountID)
+	require.NoError(err)
+	assert.Empty(conflicts)
+
+	f.fake.edit(published[0].ID, func(c *contact) { c.JobTitle = "Edited in Outlook" })
+	f.sync(t)
+	resource, err := f.store.GetCardDAVResourceContext(t.Context(), f.book.ID, f.book.CanonicalURL+"/uid/alice")
+	require.NoError(err)
+	assert.Equal(4, strings.Count(string(resource.RemoteBody), "EMAIL"), string(resource.RemoteBody))
+}
+
+// overLimit applies Graph's list limits, measured on 2026-10-05: Graph
+// refuses the whole write.
+func overLimit(c contact) bool {
+	return len(c.EmailAddresses) > 3 || len(c.BusinessPhones) > 2 || len(c.HomePhones) > 2
 }
