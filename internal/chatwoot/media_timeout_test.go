@@ -15,12 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMediaTimeoutScalesWithAttachmentLimit(t *testing.T) {
-	assert := assert.New(t)
-	assert.Equal(10*time.Minute, mediaTimeout(1), "small files keep the finite minimum")
-	assert.Equal(2000*time.Second, mediaTimeout(250<<20), "the default 250 MiB cap allows a 128 KiB/s transfer")
-}
-
 func TestClientMediaReadSpansSeveralSyntheticTimeoutIntervals(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)

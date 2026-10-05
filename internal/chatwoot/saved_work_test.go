@@ -62,11 +62,13 @@ func TestSavedArtifactCheckpointRetiresPrivateMessageWhenExcluded(t *testing.T) 
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err)
 	assert.NotContains(savedState(t, st, source).Conversations, "42", "excluded private media must be retired from saved refresh work")
-	secondRunCalls := api.messageCallCount()
+	api.takeRequests()
 
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err)
-	assert.Equal(0, api.messageCallCount()-secondRunCalls, "later syncs must not refetch excluded private artifacts")
+	for _, request := range api.takeRequests() {
+		assert.NotContains(request, "messages ", "later syncs must not refetch excluded private artifacts")
+	}
 }
 
 func TestSavedConversationMovedToAnotherInboxRetiresOldWork(t *testing.T) {
@@ -87,7 +89,7 @@ func TestSavedConversationMovedToAnotherInboxRetiresOldWork(t *testing.T) {
 
 	api.mu.Lock()
 	api.conversationInboxID = 8
-	for _, message := range api.messages {
+	for _, message := range api.conversations[42] {
 		message["inbox_id"] = int64(8)
 	}
 	api.mu.Unlock()

@@ -35,34 +35,43 @@ func TestGenericAuthoritativeCallDuration(t *testing.T) {
 	}
 }
 
-func TestProviderParticipantIDsDoNotMergeDifferentPeopleOnSharedPhone(t *testing.T) {
-	assert := assert.New(t)
-
+// A durable ID outranks an address: a phone shared by several archived people
+// selects none of them, and an ID absorbed by a participant merge is dropped.
+func TestProviderParticipantIDsMatchOnlyTheirOwnPerson(t *testing.T) {
 	const sharedPhone = "+12025550101"
-	archived := []Participant{
-		{ParticipantID: new(int64(101)), Name: "First Example", Phone: sharedPhone, Role: "to"},
-		{ParticipantID: new(int64(102)), Name: "Second Example", Phone: sharedPhone, Role: "to"},
+	for _, tc := range []struct {
+		name     string
+		archived []Participant
+		source   []Participant
+		want     []Participant
+	}{
+		{
+			"shared_phone",
+			[]Participant{
+				{ParticipantID: new(int64(101)), Name: "First Example", Phone: sharedPhone, Role: "to"},
+				{ParticipantID: new(int64(102)), Name: "Second Example", Phone: sharedPhone, Role: "to"},
+			},
+			[]Participant{
+				{ParticipantID: new(int64(103)), Name: "Stale Example", Phone: sharedPhone, Role: "to"},
+				{Name: "Unresolved Example", Phone: sharedPhone, Role: "to"},
+			},
+			[]Participant{
+				{ParticipantID: new(int64(101)), Name: "First Example", Phone: sharedPhone, Role: "to"},
+				{ParticipantID: new(int64(102)), Name: "Second Example", Phone: sharedPhone, Role: "to"},
+				{Name: "Unresolved Example", Phone: sharedPhone, Role: "to"},
+			},
+		},
+		{
+			// The snapshot keeps the absorbed participant's ID; recipients hold the survivor.
+			"merged_away",
+			[]Participant{{ParticipantID: new(int64(202)), Name: "Example Agent", Role: "from"}},
+			[]Participant{{ParticipantID: new(int64(201)), Name: "Example Agent", Role: "from"}},
+			[]Participant{{ParticipantID: new(int64(202)), Name: "Example Agent", Role: "from"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := normalizeEntry(Entry{Participants: tc.archived, Content: Content{SourceParticipants: tc.source}})
+			assert.Equal(t, tc.want, entry.Participants)
+		})
 	}
-	entry := normalizeEntry(Entry{
-		Participants: archived,
-		Content: Content{SourceParticipants: []Participant{
-			{ParticipantID: new(int64(103)), Name: "Stale Example", Phone: sharedPhone, Role: "to"},
-			{Name: "Unresolved Example", Phone: sharedPhone, Role: "to"},
-		}},
-	})
-	assert.Len(entry.Participants, 3, "shared phone cannot select one of several durable people")
-	assert.Contains(entry.Participants, Participant{Name: "Unresolved Example", Phone: sharedPhone, Role: "to"})
-}
-
-func TestProviderParticipantMergedAwayAppearsOnce(t *testing.T) {
-	assert := assert.New(t)
-
-	// The snapshot keeps the absorbed participant's ID; recipients hold the survivor.
-	entry := normalizeEntry(Entry{
-		Participants: []Participant{{ParticipantID: new(int64(202)), Name: "Example Agent", Role: "from"}},
-		Content: Content{SourceParticipants: []Participant{
-			{ParticipantID: new(int64(201)), Name: "Example Agent", Role: "from"},
-		}},
-	})
-	assert.Equal([]Participant{{ParticipantID: new(int64(202)), Name: "Example Agent", Role: "from"}}, entry.Participants)
 }

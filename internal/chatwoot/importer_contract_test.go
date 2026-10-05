@@ -53,13 +53,16 @@ func contractRecipients(t *testing.T, st *store.Store, messageID int64, role str
 	return recipients
 }
 
-func TestImportContractActualSendersAndPrivateRecipients(t *testing.T) {
+func TestImportContractActorsSendersAndRecipients(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	contact := map[string]any{"id": int64(7), "type": "contact", "name": "Example Contact", "phone_number": "+12025550101"}
 	agent := map[string]any{"id": int64(7), "type": "user", "name": "Example Agent"}
 	bot := map[string]any{"id": int64(7), "type": "agent_bot", "name": "Example Bot"}
 	owner := map[string]any{"id": int64(8), "type": "user", "name": "Example Owner"}
+	assistant := map[string]any{"id": int64(7), "type": "captain_assistant", "name": "Example Assistant"}
+	detached := contractMessage(108, 1767225608, nil)
+	detached["sender_type"], detached["sender_id"] = "Captain::Assistant", int64(7)
 	messages := []map[string]any{
 		contractMessage(101, 1767225601, contact),
 		contractMessage(102, 1767225602, agent),
@@ -67,8 +70,11 @@ func TestImportContractActualSendersAndPrivateRecipients(t *testing.T) {
 		contractMessage(104, 1767225604, nil),
 		contractMessage(105, 1767225605, agent),
 		contractMessage(106, 1767225606, owner),
+		contractMessage(107, 1767225607, assistant),
+		detached,
+		contractMessage(109, 1767225609, map[string]any{"id": int64(50), "type": "user"}),
 	}
-	for _, index := range []int{1, 2, 4, 5} {
+	for _, index := range []int{1, 2, 4, 5, 6, 7, 8} {
 		messages[index]["message_type"] = 1
 	}
 	messages[3]["message_type"] = 2
@@ -79,9 +85,9 @@ func TestImportContractActualSendersAndPrivateRecipients(t *testing.T) {
 	importer, _ := contractRegister(t, st, api)
 	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true, SelfAgentIDs: []int64{8}})
 	require.NoError(err)
-	assert.Equal([]int64{101, 102, 103, 104, 105, 106}, contractMessageIDs(t, st))
+	assert.Equal([]int64{101, 102, 103, 104, 105, 106, 107, 108, 109}, contractMessageIDs(t, st))
 	ids := map[int64]int64{}
-	for _, providerID := range []int64{101, 102, 103, 104, 105, 106} {
+	for _, providerID := range []int64{101, 102, 103, 104, 105, 106, 107, 108, 109} {
 		ids[providerID] = contractArchivedMessageID(t, st, strconv.FormatInt(providerID, 10))
 		fromMe, err := st.GetMessageIsFromMe(ids[providerID])
 		require.NoError(err)
@@ -97,6 +103,10 @@ func TestImportContractActualSendersAndPrivateRecipients(t *testing.T) {
 	assert.NotEqual(contactID.Int64, agentID.Int64, "contact and user ID namespaces must differ")
 	assert.NotEqual(contactID.Int64, botID.Int64)
 	assert.NotEqual(agentID.Int64, botID.Int64)
+	assistantID := contractSender(t, st, ids[107])
+	require.True(assistantID.Valid, "assistant replies keep a sender")
+	assert.NotContains([]int64{contactID.Int64, agentID.Int64, botID.Int64}, assistantID.Int64, "assistant IDs have their own namespace")
+	assert.Equal(assistantID, contractSender(t, st, ids[108]), "a detached sender resolves by type and ID")
 	assert.False(contractSender(t, st, ids[104]).Valid, "activity without an actor must not acquire the current assignee")
 	assert.Equal(agentID, contractSender(t, st, ids[105]))
 	for _, providerID := range []int64{101, 102, 103, 105, 106} {
@@ -116,6 +126,15 @@ func TestImportContractActualSendersAndPrivateRecipients(t *testing.T) {
 	note := contractRecipients(t, st, ids[105], "to")
 	require.Len(note, 1)
 	assert.Equal(incoming[0].ParticipantID, note[0].ParticipantID, "private notes address the shared inbox")
+
+	api.mu.Lock()
+	api.conversations[42] = append(api.conversations[42], contractMessage(110, 1767225610, map[string]any{"id": int64(50), "type": "user", "name": "Late Agent"}))
+	api.mu.Unlock()
+	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true, SelfAgentIDs: []int64{8}})
+	require.NoError(err)
+	var name string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COALESCE(display_name, '') FROM participants WHERE id = ?`), contractSender(t, st, ids[109]).Int64).Scan(&name))
+	assert.Equal("Late Agent", name, "a later sighting fills a blank name")
 }
 
 func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
@@ -159,37 +178,6 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 		require.NoError(err)
 		assert.False(fromMe, "removing the identity un-marks %s", providerID)
 	}
-}
-
-func TestImportContractActorNamespacesAndLateNames(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	assistant := contractMessage(101, 1767225601, map[string]any{"id": int64(5), "type": "captain_assistant", "name": "Example Assistant"})
-	bot := contractMessage(102, 1767225602, map[string]any{"id": int64(5), "type": "agent_bot", "name": "Example Bot"})
-	detached := contractMessage(103, 1767225603, nil)
-	detached["sender_type"], detached["sender_id"] = "Captain::Assistant", int64(5)
-	unnamed := contractMessage(104, 1767225604, map[string]any{"id": int64(50), "type": "user"})
-	named := contractMessage(105, 1767225605, map[string]any{"id": int64(50), "type": "user", "name": "Late Agent"})
-	api := newContractAPI(t, 10, []map[string]any{assistant, bot, detached, unnamed})
-	st := testutil.NewTestStore(t)
-	importer, _ := contractRegister(t, st, api)
-	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7})
-	require.NoError(err)
-	assistantID := contractSender(t, st, contractArchivedMessageID(t, st, "101"))
-	require.True(assistantID.Valid, "assistant replies keep a sender")
-	assert.NotEqual(assistantID, contractSender(t, st, contractArchivedMessageID(t, st, "102")), "assistant and bot ID namespaces differ")
-	assert.Equal(assistantID, contractSender(t, st, contractArchivedMessageID(t, st, "103")))
-
-	api.mu.Lock()
-	api.messages = append(api.messages, named)
-	api.mu.Unlock()
-	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7})
-	require.NoError(err)
-	agentID := contractSender(t, st, contractArchivedMessageID(t, st, "104"))
-	require.True(agentID.Valid)
-	var name string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COALESCE(display_name, '') FROM participants WHERE id = ?`), agentID.Int64).Scan(&name))
-	assert.Equal("Late Agent", name, "a later sighting fills a blank name")
 }
 
 func TestImportContractPrivateExclusionKeepsActivityAndResumes(t *testing.T) {

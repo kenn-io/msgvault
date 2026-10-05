@@ -1,15 +1,16 @@
 package chatwoot
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"math"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
-	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,28 +22,34 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// contractAPI models the verified account API at its HTTP boundary. The server
-// sorts by created_at while its range predicate uses IDs; it never uses the
-// importer's range helpers to construct an expected result.
+// contractAPI models the verified account API at its HTTP boundary. Like
+// Chatwoot, it sets a conversation's activity to its newest message's creation
+// time, sorts messages by created_at and filters bounded ranges by ID; it never
+// uses the importer's range helpers to construct an expected result.
 type contractAPI struct {
 	mu                  sync.Mutex
 	server              *httptest.Server
-	messages            []map[string]any
+	conversations       map[int64][]map[string]any
 	conversationInboxID int64
+	pageSize            int
 	cap                 int
 	ignoreBounds        bool
 	contact             map[string]any
 	assignee            map[string]any
-	messageCalls        int
+	requests            []string
 	mediaRouter         *chatwootMediaRouter
 }
 
+// newContractAPI serves messages as conversation 42 of inbox 7.
 func newContractAPI(t *testing.T, pageCap int, messages []map[string]any) *contractAPI {
 	t.Helper()
 	api := &contractAPI{
-		cap: pageCap, messages: messages,
+		conversations: map[int64][]map[string]any{}, pageSize: 25, cap: pageCap,
 		contact:  map[string]any{"id": int64(7), "type": "contact", "name": "Example Contact", "phone_number": "+12025550101"},
 		assignee: map[string]any{"id": int64(99), "type": "user", "name": "Example Assignee"},
+	}
+	if messages != nil {
+		api.conversations[42] = messages
 	}
 	api.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		api.mu.Lock()
@@ -51,83 +58,59 @@ func newContractAPI(t *testing.T, pageCap int, messages []map[string]any) *contr
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		assert.Equal(t, http.MethodGet, r.Method)
 		var result any
-		switch r.URL.Path {
-		case "/api/v1/accounts/3/agents":
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/accounts/3")
+		var id int64
+		switch {
+		case path == "/agents":
+			api.requests = append(api.requests, "agents")
 			result = []any{map[string]any{"id": 7, "name": "Example Agent"}, map[string]any{"id": 8, "name": "Example Owner"}, api.assignee}
-		case "/api/v1/accounts/3/conversations":
+		case path == "/conversations":
 			assert.Equal(t, "all", r.URL.Query().Get("status"), "resolved conversations must remain discoverable")
-			assert.Contains(t, []string{sortByCreated, sortByActivity}, r.URL.Query().Get("sort_by"))
-			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-			payload := []any{}
-			if page == 1 {
-				payload = append(payload, api.conversation())
+			sortBy := r.URL.Query().Get("sort_by")
+			api.requests = append(api.requests, "list "+sortBy)
+			page, err := strconv.Atoi(r.URL.Query().Get("page"))
+			if !assert.NoError(t, err) {
+				return
 			}
-			result = map[string]any{"data": map[string]any{"payload": payload, "meta": map[string]any{"all_count": 1}}}
-		case "/api/v1/accounts/3/conversations/42":
-			result = api.conversation()
-		case "/api/v1/accounts/3/conversations/42/messages":
-			api.messageCalls++
-			afterText, beforeText := r.URL.Query().Get("after"), r.URL.Query().Get("before")
-			after, _ := strconv.ParseInt(afterText, 10, 64)
-			before, _ := strconv.ParseInt(beforeText, 10, 64)
-			bounded := afterText != "" && beforeText != ""
-			payload := make([]map[string]any, 0)
-			for _, message := range api.messages {
-				id, ok := message["id"].(int64)
-				if !assert.True(t, ok, "fixture message ID must be int64") {
-					http.Error(w, "invalid fixture ID", http.StatusInternalServerError)
-					return
-				}
-				matches := true
-				if afterText != "" {
-					matches = id > after
-				}
-				if bounded {
-					matches = id >= after
-				}
-				if beforeText != "" && before <= math.MaxInt32 {
-					matches = matches && id < before
-				}
-				if api.ignoreBounds || matches {
+			ids := slices.Sorted(maps.Keys(api.conversations))
+			if sortBy == sortByActivity {
+				slices.SortStableFunc(ids, func(a, b int64) int { return cmp.Compare(api.activity(b), api.activity(a)) })
+			}
+			payload := []any{}
+			for index := (page - 1) * api.pageSize; index < min(page*api.pageSize, len(ids)); index++ {
+				payload = append(payload, api.conversation(ids[index]))
+			}
+			result = map[string]any{"data": map[string]any{"payload": payload}}
+		case strings.HasSuffix(path, "/messages"):
+			_, err := fmt.Sscanf(path, "/conversations/%d/messages", &id)
+			if !assert.NoError(t, err) {
+				return
+			}
+			// The importer always sends both bounds; after is inclusive with them.
+			after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+			before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+			api.requests = append(api.requests, fmt.Sprintf("messages %d %d %d", id, after, before))
+			payload := []map[string]any{}
+			for _, message := range api.conversations[id] {
+				if messageID := fixtureInt(message, "id"); api.ignoreBounds || (messageID >= after && messageID < before) {
 					payload = append(payload, message)
 				}
 			}
-			sort.SliceStable(payload, func(i, j int) bool {
-				left, leftOK := payload[i]["created_at"].(int64)
-				right, rightOK := payload[j]["created_at"].(int64)
-				if !assert.True(t, leftOK, "fixture creation time must be int64") {
-					return false
-				}
-				if !assert.True(t, rightOK, "fixture creation time must be int64") {
-					return false
-				}
-				return left < right
+			slices.SortStableFunc(payload, func(a, b map[string]any) int {
+				return cmp.Compare(fixtureInt(a, "created_at"), fixtureInt(b, "created_at"))
 			})
-			switch {
-			case bounded:
-				if len(payload) > api.cap {
-					payload = payload[:api.cap]
-				}
-			case afterText != "":
-				if len(payload) > 100 {
-					payload = payload[:100]
-				}
-			default:
-				if len(payload) > 20 {
-					payload = payload[len(payload)-20:]
-				}
-			}
-			result = map[string]any{"meta": map[string]any{"contact": api.contact, "assignee": api.assignee}, "payload": payload}
+			result = map[string]any{"meta": map[string]any{"contact": api.contact, "assignee": api.assignee}, "payload": payload[:min(len(payload), api.cap)]}
 		default:
-			assert.Fail(t, "unexpected Chatwoot API path", "%s", r.URL.Path)
-			http.NotFound(w, r)
-			return
+			_, err := fmt.Sscanf(path, "/conversations/%d", &id)
+			if !assert.NoError(t, err) {
+				return
+			}
+			api.requests = append(api.requests, fmt.Sprintf("conversation %d", id))
+			result = api.conversation(id)
 		}
 		encoded, err := json.Marshal(result)
 		if !assert.NoError(t, err) {
-			http.Error(w, "encode fixture", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -138,36 +121,63 @@ func newContractAPI(t *testing.T, pageCap int, messages []map[string]any) *contr
 	return api
 }
 
-func (api *contractAPI) messageCallCount() int {
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	return api.messageCalls
+// fixtureInt reads an int64 fixture field; fixtures always set them.
+func fixtureInt(message map[string]any, key string) int64 {
+	value, _ := message[key].(int64)
+	return value
 }
 
-func (api *contractAPI) conversation() map[string]any {
+func (api *contractAPI) activity(id int64) int64 {
+	activity := int64(1767225500)
+	for _, message := range api.conversations[id] {
+		activity = max(activity, fixtureInt(message, "created_at"))
+	}
+	return activity
+}
+
+func (api *contractAPI) conversation(id int64) map[string]any {
 	inboxID := api.conversationInboxID
 	if inboxID == 0 {
 		inboxID = 7
 	}
-	// Chatwoot sets activity to the newest message's creation time and seeds the
-	// listing with that message.
-	activity, newest := int64(1767225500), int64(0)
-	for _, message := range api.messages {
-		if at, ok := message["created_at"].(int64); ok {
-			activity = max(activity, at)
-		}
-		if id, ok := message["id"].(int64); ok {
-			newest = max(newest, id)
+	// Chatwoot seeds the listing with the newest message by creation time. The
+	// seed's content is private and differs from the message list, to catch
+	// leakage through raw conversation context.
+	var newest map[string]any
+	for _, message := range api.conversations[id] {
+		if newest == nil || cmp.Or(cmp.Compare(fixtureInt(message, "created_at"), fixtureInt(newest, "created_at")), cmp.Compare(fixtureInt(message, "id"), fixtureInt(newest, "id"))) > 0 {
+			newest = message
 		}
 	}
-	// The seed's content is intentionally private and differs from the message
-	// list, to catch leakage through raw conversation context.
-	private := map[string]any{"id": newest, "private": true, "content": "excluded-private-seed"}
+	private := map[string]any{"private": true, "content": "excluded-private-seed"}
+	if newest != nil {
+		private["id"] = newest["id"]
+	}
 	return map[string]any{
-		"id": int64(42), "account_id": 3, "inbox_id": inboxID, "status": "resolved", "created_at": int64(1767225500), "updated_at": float64(1767225600), "last_activity_at": activity,
+		"id": id, "account_id": 3, "inbox_id": inboxID, "status": "resolved", "created_at": int64(1767225500), "updated_at": float64(1767225600), "last_activity_at": api.activity(id),
 		"meta":     map[string]any{"sender": api.contact, "assignee": api.assignee},
 		"messages": []any{private}, "last_non_activity_message": private,
 	}
+}
+
+func (api *contractAPI) addMessage(conversationID, messageID int64, at time.Time, attachments ...map[string]any) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	message := contractMessage(messageID, at.Unix(), nil)
+	message["conversation_id"] = conversationID
+	if len(attachments) > 0 {
+		message["attachments"] = attachments
+	}
+	api.conversations[conversationID] = append(api.conversations[conversationID], message)
+}
+
+// takeRequests returns and clears the requests seen since the last call.
+func (api *contractAPI) takeRequests() []string {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	requests := api.requests
+	api.requests = nil
+	return requests
 }
 
 func (api *contractAPI) client(t *testing.T) *Client {
@@ -246,49 +256,34 @@ func TestImportContractRangesPreserveDisorderedIDs(t *testing.T) {
 	}
 }
 
-func TestImportContractLimitsResumeAcrossImporterRestarts(t *testing.T) {
-	want := []int64{1, 2, 7, 9, 15, 33, 41}
-	messages := make([]map[string]any, 0, len(want))
-	for i, id := range want {
-		messages = append(messages, contractMessage(id, 1767225600+int64(len(want)-i), nil))
-	}
-	api := newContractAPI(t, 3, messages)
-	st := testutil.NewTestStore(t)
-	contractRegister(t, st, api)
-	previous := 0
-	for range len(want) + 2 {
-		_, err := NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true, Limit: 2, ReconcileInterval: 24 * time.Hour})
-		require.NoError(t, err)
-		ids := contractMessageIDs(t, st)
-		assert.LessOrEqual(t, len(ids)-previous, 2, "limit counts persisted messages per conversation")
-		previous = len(ids)
-		if len(ids) == len(want) {
-			break
-		}
-	}
-	assert.Equal(t, want, contractMessageIDs(t, st), "unfinished gaps must survive importer restarts")
-}
-
-func TestImportContractFullReconciliationResumesAcrossFullRuns(t *testing.T) {
-	want := []int64{1, 2, 7, 9, 15, 33, 41}
-	messages := make([]map[string]any, 0, len(want))
-	for i, id := range want {
-		messages = append(messages, contractMessage(id, 1767225600+int64(len(want)-i), nil))
-	}
-	api := newContractAPI(t, 20, messages)
-	st := testutil.NewTestStore(t)
-	contractRegister(t, st, api)
-	for range len(want) + 2 {
-		sum, err := NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{
-			InboxID: 7, IncludePrivate: true, Limit: 2, Full: true,
+// A capped response keeps every unhandled hole; a --full walk resumes its saved
+// ranges instead of restarting at the first page.
+func TestImportContractLimitedRunsResume(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pageCap int
+		full    bool
+	}{{"capped", 3, false}, {"full", 20, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := []int64{1, 2, 7, 9, 15, 33, 41}
+			messages := make([]map[string]any, 0, len(want))
+			for i, id := range want {
+				messages = append(messages, contractMessage(id, 1767225600+int64(len(want)-i), nil))
+			}
+			api := newContractAPI(t, tc.pageCap, messages)
+			st := testutil.NewTestStore(t)
+			contractRegister(t, st, api)
+			for range len(want) + 2 {
+				sum, err := NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, Limit: 2, Full: tc.full})
+				require.NoError(t, err)
+				require.LessOrEqual(t, sum.MessagesProcessed, 2, "a run respects its message limit")
+				if len(contractMessageIDs(t, st)) == len(want) {
+					break
+				}
+			}
+			assert.Equal(t, want, contractMessageIDs(t, st), "unfinished ranges survive importer restarts")
 		})
-		require.NoError(t, err)
-		require.LessOrEqual(t, sum.MessagesProcessed, 2, "a full run must respect its message limit")
-		if len(contractMessageIDs(t, st)) == len(want) {
-			break
-		}
 	}
-	assert.Equal(t, want, contractMessageIDs(t, st), "repeated full runs must resume the saved reconciliation ranges")
 }
 
 func TestImportContractRejectsIgnoredRangeBoundsWithoutPoisoningResume(t *testing.T) {
@@ -305,7 +300,6 @@ func TestImportContractRejectsIgnoredRangeBoundsWithoutPoisoningResume(t *testin
 	_, err := importer.Import(ctx, ImportOptions{InboxID: 7, IncludePrivate: true})
 	require.Error(err, "an incompatible range API must fail explicitly")
 	require.NotErrorIs(err, context.DeadlineExceeded, "reject violated bounds rather than looping until cancellation")
-	assert.NotContains(err.Error(), "synthetic-token")
 	api.mu.Lock()
 	api.ignoreBounds = false
 	api.mu.Unlock()

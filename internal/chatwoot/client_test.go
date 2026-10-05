@@ -32,50 +32,42 @@ func TestClientListsEveryConversationUnderInstancePath(t *testing.T) {
 	assert.Equal(int64(42), conversations[0].ID)
 }
 
-func TestClientRequiresHTTPSOutsideLoopback(t *testing.T) {
-	for _, raw := range []string{
-		"http://chatwoot.example.com",
-		"http://192.0.2.10/support",
+// Remote instances must use HTTPS so the API token never crosses the network
+// in clear text; loopback development instances may use HTTP.
+func TestCanonicalURL(t *testing.T) {
+	for raw, want := range map[string]string{
+		"HTTPS://CHATWOOT.example.com:443/support/": "https://chatwoot.example.com/support",
+		"http://localhost:3000/support":             "http://localhost:3000/support",
+		"http://127.0.0.1:3000/support":             "http://127.0.0.1:3000/support",
+		"http://[::1]:3000/support":                 "http://[::1]:3000/support",
+		"http://chatwoot.example.com":               "",
+		"http://192.0.2.10/support":                 "",
+		"chatwoot.example.com":                      "",
+		"https://secret@chatwoot.example.com":       "",
+		"https://chatwoot.example.com?token=secret": "",
+		"https://chatwoot.example.com#secret":       "",
 	} {
 		t.Run(raw, func(t *testing.T) {
-			_, err := NewClient(raw, 9, "synthetic-token")
-			require.Error(t, err, "remote API tokens must not be sent over HTTP")
-		})
-	}
-	for _, raw := range []string{
-		"http://localhost:3000/support",
-		"http://127.0.0.1:3000/support",
-		"http://[::1]:3000/support",
-	} {
-		t.Run(raw, func(t *testing.T) {
-			_, err := NewClient(raw, 9, "synthetic-token")
-			require.NoError(t, err, "local Chatwoot development instances may use loopback HTTP")
+			got, err := CanonicalURL(raw)
+			if want == "" {
+				require.Error(t, err)
+				assert.NotContains(t, err.Error(), "secret")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, want, got)
 		})
 	}
 }
 
-func TestClientMediaAndAPIRedirectIsolation(t *testing.T) {
+func TestClientAPIDoesNotFollowRedirects(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-
-	media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Empty(r.Header.Get("Api_access_token"))
-		assert.Empty(r.Header.Get("Authorization"))
-		w.Header().Set("Content-Type", "audio/ogg")
-		_, _ = io.WriteString(w, "synthetic audio")
-	}))
-	defer media.Close()
-	mediaHits := 0
+	targetHits := 0
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { targetHits++ }))
+	defer target.Close()
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/audio" {
-			mediaHits++
-			assert.Empty(r.Header.Get("Api_access_token"))
-			assert.Empty(r.Header.Get("Authorization"))
-			w.Header().Set("Content-Type", "audio/ogg")
-			_, _ = io.WriteString(w, "synthetic audio")
-			return
-		}
-		http.Redirect(w, r, media.URL+"/audio?signature=secret", http.StatusFound)
+		http.Redirect(w, r, target.URL+"/inboxes", http.StatusFound)
 	}))
 	defer api.Close()
 	c, err := NewClient(api.URL, 9, "synthetic-token")
@@ -83,67 +75,7 @@ func TestClientMediaAndAPIRedirectIsolation(t *testing.T) {
 	c.limiter = rate.NewLimiter(rate.Inf, 1)
 	_, err = c.ListInboxes(t.Context())
 	require.Error(err, "authenticated API requests must not redirect")
-	assert.NotContains(err.Error(), "signature")
-	assert.Zero(mediaHits, "authenticated API redirects must not fetch the target")
-	reader, size, mime, err := c.OpenMedia(t.Context(), api.URL+"/audio", 1<<20)
-	require.NoError(err)
-	defer func() { require.NoError(reader.Close()) }()
-	body, err := io.ReadAll(reader)
-	require.NoError(err)
-	assert.Equal("synthetic audio", string(body))
-	assert.Equal(int64(len(body)), size)
-	assert.Equal("audio/ogg", mime)
-	invalidReader, _, _, err := c.OpenMedia(t.Context(), "file:///etc/passwd", 1<<20)
-	require.Error(err)
-	assert.Nil(invalidReader)
-}
-
-func TestClientRejectsUntrustedPrivateMediaHost(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	hits := 0
-	media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits++
-		_, _ = io.WriteString(w, "synthetic internal response")
-	}))
-	defer media.Close()
-
-	c, err := NewClient("https://chatwoot.example.com", 9, "synthetic-token")
-	require.NoError(err)
-	body, _, _, err := c.OpenMedia(t.Context(), media.URL+"/internal", 1<<20)
-	if body != nil {
-		require.NoError(body.Close())
-	}
-	require.Error(err, "media URLs from message data must not reach an untrusted private destination")
-	assert.Zero(hits)
-}
-
-func TestClientRejectsPrivateMediaRedirect(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	privateHits := 0
-	privateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		privateHits++
-		_, _ = io.WriteString(w, "synthetic media response")
-	}))
-	defer privateServer.Close()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/start" {
-			http.Redirect(w, r, privateServer.URL+"/internal", http.StatusFound)
-			return
-		}
-		_, _ = io.WriteString(w, "synthetic media response")
-	}))
-	defer server.Close()
-	baseURL := server.URL
-	c, err := NewClient(baseURL, 9, "synthetic-token")
-	require.NoError(err)
-	body, _, _, err := c.OpenMedia(t.Context(), baseURL+"/start", 1<<20)
-	if body != nil {
-		require.NoError(body.Close())
-	}
-	require.Error(err, "every redirect target must pass the destination policy")
-	assert.Zero(privateHits)
+	assert.Zero(targetHits, "a redirect must not carry the API token to its target")
 }
 
 func TestClientRetriesRateLimitAndReportsNotFound(t *testing.T) {

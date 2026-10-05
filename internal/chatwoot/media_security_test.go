@@ -100,46 +100,37 @@ func (router *chatwootMediaRouter) observations() ([]string, []string) {
 	return append([]string(nil), router.lookups...), append([]string(nil), router.dials...)
 }
 
-func TestClientMediaRejectsDNSResolutionToPrivateAddress(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	c, err := NewClient("https://chatwoot.example.com", 9, "synthetic-token")
-	require.NoError(err)
-	c.lookupMediaIP = func(_ context.Context, host string) ([]netip.Addr, error) {
-		assert.Equal("cdn.chatwoot.example", host)
-		return []netip.Addr{netip.MustParseAddr("10.4.5.6")}, nil
+// Public media hosts follow netguard policy; a private or loopback destination
+// is allowed only on the exact configured Chatwoot origin.
+func TestMediaDestinationPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, base, target, resolved, want string
+	}{
+		{"untrusted_literal_loopback", "https://chatwoot.example.com", "http://127.0.0.1:8080/internal", "", ""},
+		{"dns_to_private", "https://chatwoot.example.com", "https://cdn.chatwoot.example/audio.ogg", "10.4.5.6", ""},
+		{"configured_private_origin", "https://chatwoot.internal", "https://chatwoot.internal/storage/audio.ogg", "10.4.5.6", "10.4.5.6:443"},
+		{"other_origin_beside_private_config", "https://chatwoot.internal", "https://cdn.chatwoot.example/storage/audio.ogg", "10.4.5.6", ""},
+		{"configured_loopback_origin", "http://127.0.0.1:3000", "http://127.0.0.1:3000/audio", "", "127.0.0.1:3000"},
+		{"loopback_on_another_port", "http://127.0.0.1:3000", "http://127.0.0.1:4000/internal", "", ""},
+		{"non_http_scheme", "https://chatwoot.example.com", "file:///etc/passwd", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := NewClient(tc.base, 9, "synthetic-token")
+			require.NoError(t, err)
+			c.lookupMediaIP = func(context.Context, string) ([]netip.Addr, error) {
+				return []netip.Addr{netip.MustParseAddr(tc.resolved)}, nil
+			}
+			target, err := url.Parse(tc.target)
+			require.NoError(t, err)
+			pinned, err := c.validateMediaTarget(t.Context(), target)
+			if tc.want == "" {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, []netip.AddrPort{netip.MustParseAddrPort(tc.want)}, pinned)
+		})
 	}
-	dialed := false
-	c.dialMedia = func(context.Context, string, string) (net.Conn, error) {
-		dialed = true
-		return nil, errors.New("unexpected dial")
-	}
-	target, err := url.Parse("https://cdn.chatwoot.example/audio.ogg")
-	require.NoError(err)
-	_, err = c.validateMediaTarget(t.Context(), target)
-	require.Error(err)
-	assert.False(dialed)
-}
-
-func TestClientMediaAllowsOnlyPinnedPrivateConfiguredOrigin(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	c, err := NewClient("https://chatwoot.internal", 9, "synthetic-token")
-	require.NoError(err)
-	c.lookupMediaIP = func(_ context.Context, host string) ([]netip.Addr, error) {
-		assert.Contains([]string{"chatwoot.internal", "cdn.chatwoot.example"}, host)
-		return []netip.Addr{netip.MustParseAddr("10.4.5.6")}, nil
-	}
-	target, err := url.Parse("https://chatwoot.internal/storage/audio.ogg")
-	require.NoError(err)
-	pinned, err := c.validateMediaTarget(t.Context(), target)
-	require.NoError(err, "a private self-hosted media URL may use the exact configured Chatwoot origin")
-	assert.Equal([]netip.AddrPort{netip.MustParseAddrPort("10.4.5.6:443")}, pinned)
-
-	external, err := url.Parse("https://cdn.chatwoot.example/storage/audio.ogg")
-	require.NoError(err)
-	_, err = c.validateMediaTarget(t.Context(), external)
-	require.Error(err, "a different origin cannot inherit the configured private-origin allowance")
 }
 
 func TestClientMediaRevalidatesAndPinsEveryRedirect(t *testing.T) {

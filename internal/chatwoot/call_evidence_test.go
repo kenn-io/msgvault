@@ -50,9 +50,7 @@ func TestCallEvidenceMergesLiveCallOverTimeline(t *testing.T) {
 			assert.Equal(t, tc.want, callEvidence(message))
 		})
 	}
-}
-
-func TestCallEvidenceAgentNameMatchesSelectedAgent(t *testing.T) {
+	// A historical agent name applies only to the agent the live call names.
 	for _, tc := range []struct {
 		name     string
 		live     *Call
