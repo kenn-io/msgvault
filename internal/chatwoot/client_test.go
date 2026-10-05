@@ -48,14 +48,16 @@ func TestCanonicalURL(t *testing.T) {
 		"https://chatwoot.example.com#secret":       "",
 	} {
 		t.Run(raw, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			got, err := CanonicalURL(raw)
 			if want == "" {
-				require.Error(t, err)
-				assert.NotContains(t, err.Error(), "secret")
+				require.Error(err)
+				assert.NotContains(err.Error(), "secret")
 				return
 			}
-			require.NoError(t, err)
-			assert.Equal(t, want, got)
+			require.NoError(err)
+			assert.Equal(want, got)
 		})
 	}
 }

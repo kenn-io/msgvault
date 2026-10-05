@@ -115,19 +115,20 @@ func TestMediaDestinationPolicy(t *testing.T) {
 		{"non_http_scheme", "https://chatwoot.example.com", "file:///etc/passwd", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
 			c, err := NewClient(tc.base, 9, "synthetic-token")
-			require.NoError(t, err)
+			require.NoError(err)
 			c.lookupMediaIP = func(context.Context, string) ([]netip.Addr, error) {
 				return []netip.Addr{netip.MustParseAddr(tc.resolved)}, nil
 			}
 			target, err := url.Parse(tc.target)
-			require.NoError(t, err)
+			require.NoError(err)
 			pinned, err := c.validateMediaTarget(t.Context(), target)
 			if tc.want == "" {
-				require.Error(t, err)
+				require.Error(err)
 				return
 			}
-			require.NoError(t, err)
+			require.NoError(err)
 			assert.Equal(t, []netip.AddrPort{netip.MustParseAddrPort(tc.want)}, pinned)
 		})
 	}
