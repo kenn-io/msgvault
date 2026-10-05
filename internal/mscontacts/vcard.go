@@ -144,6 +144,7 @@ func (c contact) body(uid string) ([]byte, error) {
 		case name == "VERSION" || name == "UID":
 		case held[key] > 0:
 			held[key]--
+			outlook[key] = max(outlook[key]-1, 0)
 			restore = append(restore, property)
 		case outlook[key] > 0:
 			// Outlook now holds this value, so it is not added twice.

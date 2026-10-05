@@ -783,3 +783,22 @@ func TestOutlookEditDoesNotDuplicateSavedLines(t *testing.T) {
 	require.Len(orgs, 1, string(body))
 	assert.Equal("Acme;R/D;East", orgs[0].RawValue)
 }
+
+// A saved email that repeats a held one is not taken for a value that
+// Outlook holds twice.
+func TestOutlookEditKeepsRepeatedSavedLine(t *testing.T) {
+	require := require.New(t)
+	saved := "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:alice\r\nFN:Alice\r\n" +
+		"EMAIL:a1@example.test\r\nEMAIL:a2@example.test\r\nEMAIL:a3@example.test\r\nEMAIL;TYPE=home:a3@example.test\r\n" +
+		"END:VCARD\r\n"
+	c, err := contactFromVCard([]byte(saved))
+	require.NoError(err)
+	placePhones(&c, nil)
+	c.Properties = []singleValueExtendedProperty{{ID: vcardProperty, Value: saved}}
+	c.JobTitle = "Edited in Outlook"
+
+	body, err := c.body("alice")
+	require.NoError(err)
+	require.Contains(string(body), "EMAIL;TYPE=home:a3@example.test\r\n")
+	require.Equal(4, strings.Count(string(body), "EMAIL"))
+}
