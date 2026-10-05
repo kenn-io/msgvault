@@ -93,11 +93,6 @@ While it says **Testing**:
 The project owner's address is not automatically a test user. A Google account
 can own the project but still fail to authorize until you add it here.
 
-<figure data-lightbox style="margin: 1.5rem 0;">
-  <img src="/docs/assets/static/google-oauth/audience.png" alt="Google Auth Platform Audience page: Publishing status Testing, User type External, and Add users in the Test users section." loading="lazy" style="width: 100%; display: block;" />
-  <figcaption>Audience is where you add test users and later publish the app. Screenshot by <a href="https://stackoverflow.com/questions/75454425/access-blocked-project-has-not-completed-the-google-verification-process/75466700#comment140305976_75466700">Raleigh L. on Stack Overflow</a>, <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>, unchanged.</figcaption>
-</figure>
-
 #### Choose Testing or In production
 
 Start in **Testing** to check the setup. Google's
@@ -315,8 +310,19 @@ ssh -L 8089:localhost:8089 user@server
 In that SSH session, run `msgvault add-account you@gmail.com`. Open the printed
 Google authorization URL in your local browser and complete Step 6. Keep the
 SSH connection open until the terminal confirms success. The browser's callback
-then reaches msgvault on the server. An alternative is to authorize locally and
-copy the token as described in [Headless Server Setup](#headless-server-setup).
+then reaches msgvault on the server.
+
+If you cannot forward the port, open the printed URL in any browser and complete
+Step 6. The browser then fails to load a `http://localhost:8089/callback?...`
+page. Copy that full URL from the address bar and, while `add-account` is still
+waiting, request it on the server:
+
+```bash
+curl -s 'http://localhost:8089/callback?PASTE_THE_REST_HERE'
+```
+
+An alternative is to authorize locally and copy the token as described in
+[Headless Server Setup](#headless-server-setup).
 
 ### Google setup troubleshooting
 
@@ -327,9 +333,9 @@ copy the token as described in [Headless Server Setup](#headless-server-setup).
 | Gmail API disabled or never used in this project | Enable **Gmail API** in the project that owns the OAuth client. Wait for Google's change to take effect, then retry. |
 | `invalid_grant` after about a week | Check **Audience > Publishing status**. Testing expires Gmail refresh tokens after seven days. Reauthorize; for ongoing personal use, consider In production under the rules in Step 3. |
 | `redirect_uri_mismatch` | For a new setup, download a **Desktop app** client. For a Web application client, register exactly `http://localhost:8089/callback`. |
-| `file not found`, or msgvault cannot load the OAuth client | Check `[oauth] client_secrets` points to the actual downloaded JSON, not a client ID or another credential type. Use the Windows path spelling in Step 5. |
-| Authorized account does not match the requested account | Run the command for the intended address and select that same Google account in the browser. |
-| Token missing required OAuth scopes | Retry and grant every permission msgvault requested. Console scope declarations alone do not grant access. |
+| `OAuth client secrets not configured`, `OAuth client secrets file not accessible`, `read client secrets`, `parse client secrets`, or `file not found` from `msgvault setup` | Check `[oauth] client_secrets` points to the actual downloaded JSON, not a client ID or another credential type. Use the Windows path spelling in Step 5. |
+| `token mismatch: expected ... but authorized as ...` | Run the command for the intended address and select that same Google account in the browser. |
+| `authorized token missing required OAuth scopes` | Retry and grant every permission msgvault requested. Console scope declarations alone do not grant access. |
 | An administrator blocks the app, or Google says the app is blocked | Ask your Workspace administrator about OAuth restrictions. Adding test users does not bypass organization policy; see [Google Workspace Accounts](#google-workspace-accounts). |
 
 To replace an expired token or obtain a fresh grant after leaving Testing:
@@ -362,7 +368,7 @@ msgvault sync   # syncs all accounts
 ```
 
 !!! tip
-    Make sure all Gmail addresses you want to sync are listed as **Test users** in your Google Cloud OAuth consent screen (Step 3 above). This is the most common reason a second account fails to authorize.
+    While the app is in Testing, list every Gmail address you want to sync under **Google Auth Platform > Audience > Test users** ([Add test users](#add-test-users)). This is the most common reason a second account fails to authorize.
 
 #### Google Workspace Accounts
 

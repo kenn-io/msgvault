@@ -8,20 +8,17 @@ an authenticated Google Cloud session. Retrieved and visually reviewed on
 
 | Published file | Attribution and source | License | Changes |
 | --- | --- | --- | --- |
-| `audience.png` | [Raleigh L.](https://stackoverflow.com/users/1576548/raleigh-l), [Stack Overflow comment](https://stackoverflow.com/questions/75454425/access-blocked-project-has-not-completed-the-google-verification-process/75466700#comment140305976_75466700), posted 2025-04-07; [original image](https://i.imgur.com/oAY3qQ0.png) | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), per [Stack Overflow licensing](https://stackoverflow.com/help/licensing) | None |
 | `client-created.png` | Google, [Vertex AI / Workspace codelab](https://codelabs.developers.google.com/vertexai-gws-agents?hl=en); [original image](https://codelabs.developers.google.com/static/vertexai-gws-agents/img/c1c9bc2f8c14dd6c.png) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), per the source page's content notice | Opaque redactions over project name, client ID, and client secret; PNG re-rendered without metadata |
 | `unverified-app.png` | Google, [OAuth codelab](https://developers.google.com/health/codelabs/make-your-first-api-call); [original image](https://developers.google.com/static/health/codelabs/make-your-first-api-call/images/unverified.png) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), per the source page's content notice | None |
 
 Google's pages link to its [site policies](https://developers.google.com/terms/site-policies).
 No separate copyright exclusion was identified for these two instructional
 screenshots. Attribution and modification notices also appear beneath each
-image in the guide. The Audience image retains its CC BY-SA 4.0 license;
-collecting it alongside other assets does not relicense it.
+image in the guide.
 
 ## Privacy review and reproducibility
 
-The Audience image has an empty user table and a generic project label. The
-warning image contains no account, app, or credential identifiers. The client
+The warning image contains no account, app, or credential identifiers. The client
 creation image originally displayed credentials from the public codelab. The
 published derivative hides the project name, entire client ID, and secret using
 opaque masks; it retains the Desktop app selection, Download JSON button, and
@@ -32,12 +29,11 @@ The client image is 705 × 768 pixels. Redaction rectangles use `(x, y, width,
 height)` in source pixels: project `(196, 0, 187, 44)`, client ID
 `(376, 302, 275, 99)`, and secret `(376, 525, 272, 48)`. Values were covered before
 rasterizing the published PNG. No hidden layers or source values remain in it.
-The three final images were inspected visually and contain no personal addresses,
+The two final images were inspected visually and contain no personal addresses,
 tokens, or unmasked credential values. Originals stay outside the repository.
 
 | File | Original SHA-256 | Published SHA-256 |
 | --- | --- | --- |
-| `audience.png` | `85bdbae5675a218bda4a3d6f1756c74133ce2fab4bc84913aaaa15a02d0c6b7c` | `85bdbae5675a218bda4a3d6f1756c74133ce2fab4bc84913aaaa15a02d0c6b7c` |
 | `client-created.png` | `c2a18cf569ec3793b0452aec4f9919deb1804e0d2d6c6fad529859ee56dcbc83` | `75e7dc522f9a5ac64ca70f4b12fa63a025fc5816ad7188c55b0fddf815c7253c` |
 | `unverified-app.png` | `aea3b2ba86de0eafd49f988e619fe40a9bc93c34fa83172f0b78736826961a7c` | `aea3b2ba86de0eafd49f988e619fe40a9bc93c34fa83172f0b78736826961a7c` |
 

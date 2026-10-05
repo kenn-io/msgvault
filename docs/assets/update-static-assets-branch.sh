@@ -32,7 +32,6 @@ expected_assets=(
 # Curated additions may be published without making older asset snapshots
 # unusable. Keep exact names so unrelated local files cannot be published.
 optional_assets=(
-  "google-oauth/audience.png"
   "google-oauth/client-created.png"
   "google-oauth/unverified-app.png"
 )
