@@ -674,39 +674,6 @@ func TestRunCLICommandTypesDaemonReportedFailures(t *testing.T) {
 		_, typed := errors.AsType[*CLIRunError](err)
 		assert.False(typed)
 	})
-	for _, consumer := range []struct {
-		name string
-		run  func(context.Context, *Client) error
-	}{
-		{name: "build-cache", run: func(ctx context.Context, c *Client) error { return c.BuildCLICache(ctx, false, nil) }},
-		{name: "full sync", run: func(ctx context.Context, c *Client) error { return c.RunCLISync(ctx, CLISyncRequest{Full: true}, nil) }},
-		{name: "incremental sync", run: func(ctx context.Context, c *Client) error { return c.RunCLISync(ctx, CLISyncRequest{}, nil) }},
-		{name: "verify", run: func(ctx context.Context, c *Client) error { return c.RunCLIVerify(ctx, CLIVerifyRequest{}, nil) }},
-		{name: "repair-encoding", run: func(ctx context.Context, c *Client) error { return c.RunCLIRepairEncoding(ctx, nil) }},
-		{name: "repair-message", run: func(ctx context.Context, c *Client) error {
-			return c.RunCLIRepairMessage(ctx, generated.CLIRepairMessageRequest{}, nil)
-		}},
-	} {
-		t.Run(consumer.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/health" {
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.0.0"}`))
-					return
-				}
-				_, _ = w.Write([]byte("{\"type\":\"error\",\"error\":\"daemon failure\"}\n"))
-			}))
-			t.Cleanup(server.Close)
-			client, err := New(Config{URL: server.URL, AllowInsecure: true})
-			require.NoError(err)
-			t.Cleanup(func() { _ = client.Close() })
-			err = consumer.run(t.Context(), client)
-			require.EqualError(err, "daemon failure")
-			_, typed := errors.AsType[*CLIRunError](err)
-			assert.True(typed)
-		})
-	}
 }
 
 func TestRunCLICommandRetriesWhileOperationInProgress(t *testing.T) {

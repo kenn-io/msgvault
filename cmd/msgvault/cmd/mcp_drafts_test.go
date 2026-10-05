@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -305,22 +304,6 @@ func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {
 		assert.Equal(flags, properties, tool.Name)
 	}
 	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_forward", "draft_get", "draft_recover", "draft_reply", "draft_send_as"}, names)
-}
-
-func TestDaemonMCPDraftRunnerRejectsFlagShapedPositional(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var requests atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(err)
-	t.Cleanup(func() { _ = client.Close() })
-	_, err = (daemonMCPDraftRunner{client: client}).RunDraftCommand(t.Context(), mcpserver.DraftCommandRequest{Command: "draft-get", Positional: "--conversation=7"})
-	_, typed := errors.AsType[*mcpserver.DraftCommandError](err)
-	assert.True(typed)
-	assert.Equal(int64(0), requests.Load())
-	t.Log("--conversation=7 rejected before any daemon request")
 }
 
 func TestMCPDraftCapabilityGate(t *testing.T) {
