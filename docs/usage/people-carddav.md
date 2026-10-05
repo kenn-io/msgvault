@@ -172,8 +172,10 @@ Graph stores fewer fields than vCard. msgvault maps names, nickname, email
 addresses, phone numbers, organization, job title, postal addresses, a
 birthday with a year, and notes. msgvault saves the full vCard of a card it
 writes in a hidden property of the contact. Fields that Graph cannot hold, such
-as URLs, are then kept, also after an edit in Outlook. Contact photos are not
-synced.
+as URLs, are then kept, also after an edit in Outlook. After an Outlook edit,
+an unchanged email, phone or address also keeps its labels, such as `work`.
+The preferred mark is dropped, because Outlook has none. Contact photos are
+not synced.
 
 ## Choose what each book does
 

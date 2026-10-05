@@ -129,12 +129,110 @@ func (c contact) body(uid string) ([]byte, error) {
 			extra = append(extra, property)
 		}
 	}
-	return c.toVCard(uid, extra)
+	card, err := c.card(uid, extra)
+	if err != nil {
+		return nil, err
+	}
+	keepParameters(card.Properties, document.Cards[0].Properties)
+	return vcard.Marshal(vcard.Document{Cards: []vcard.Card{card}})
+}
+
+// keepParameters copies the parameters of each saved property to the
+// rendered property that still holds the same value, for example
+// EMAIL;TYPE=work. PREF is dropped, because Outlook has no preferred mark and
+// its order may have changed. VALUE is dropped, because the rendered value is
+// text. For TEL and ADR, the home, work or cell TYPE comes from Outlook.
+func keepParameters(rendered, saved []vcard.Property) {
+	used := make([]bool, len(saved))
+	for i, property := range rendered {
+		name := strings.ToUpper(property.Name)
+		if name == "VERSION" || name == "UID" {
+			continue
+		}
+		key := parameterKey(name, property.RawValue)
+		for j, old := range saved {
+			if used[j] || !strings.EqualFold(old.Name, name) || parameterKey(name, old.RawValue) != key {
+				continue
+			}
+			used[j] = true
+			types := typeValues(property)
+			for _, parameter := range old.Parameters {
+				switch strings.ToUpper(parameter.Name) {
+				case "PREF", "VALUE":
+				case "TYPE":
+					for _, value := range typeValues(vcard.Property{Parameters: []vcard.Parameter{parameter}}) {
+						outlookDecides := (name == "TEL" || name == "ADR") && slices.Contains([]string{"home", "work", "cell"}, value)
+						if value != "pref" && !outlookDecides && !slices.Contains(types, value) {
+							types = append(types, value)
+						}
+					}
+				default:
+					rendered[i].Parameters = append(rendered[i].Parameters, parameter)
+				}
+			}
+			parameters := slices.DeleteFunc(rendered[i].Parameters, func(p vcard.Parameter) bool { return strings.EqualFold(p.Name, "TYPE") })
+			if len(types) > 0 {
+				if parameter, err := vcard.NewParameter("TYPE", types...); err == nil {
+					parameters = append(parameters, parameter)
+				}
+			}
+			rendered[i].Parameters = parameters
+			break
+		}
+	}
+}
+
+// parameterKey returns the value that keepParameters compares: the address
+// of an EMAIL, the digits of a TEL, and the text of other properties.
+func parameterKey(name, raw string) string {
+	value, err := vcard.UnescapeText(raw)
+	if err != nil {
+		value = raw
+	}
+	value = strings.TrimSpace(value)
+	switch name {
+	case "EMAIL":
+		return strings.ToLower(strings.TrimPrefix(value, "mailto:"))
+	case "TEL":
+		return strings.Map(func(r rune) rune {
+			if r >= '0' && r <= '9' {
+				return r
+			}
+			return -1
+		}, value)
+	case "N", "ORG", "ADR":
+		return raw
+	}
+	return value
+}
+
+// typeValues returns the lower-case TYPE values of a property.
+func typeValues(property vcard.Property) []string {
+	var values []string
+	for _, parameter := range property.ParametersNamed("TYPE") {
+		for _, value := range parameter.Values {
+			for part := range strings.SplitSeq(value.Decoded, ",") {
+				if part = strings.ToLower(strings.TrimSpace(part)); part != "" {
+					values = append(values, part)
+				}
+			}
+		}
+	}
+	return values
 }
 
 // toVCard renders the contact as a vCard 4.0 card with uid as its UID, and
 // appends extra properties.
 func (c contact) toVCard(uid string, extra []vcard.Property) ([]byte, error) {
+	card, err := c.card(uid, extra)
+	if err != nil {
+		return nil, err
+	}
+	return vcard.Marshal(vcard.Document{Cards: []vcard.Card{card}})
+}
+
+// card builds the vCard 4.0 card for toVCard.
+func (c contact) card(uid string, extra []vcard.Property) (vcard.Card, error) {
 	card := vcard.Card{}
 	add := func(name, raw string, types ...string) error {
 		property, err := vcard.NewProperty("", name, raw)
@@ -202,10 +300,10 @@ func (c contact) toVCard(uid string, extra []vcard.Property) ([]byte, error) {
 		errs = append(errs, add("NOTE", vcard.EscapeText(c.PersonalNotes)))
 	}
 	if err := errors.Join(errs...); err != nil {
-		return nil, fmt.Errorf("render Graph contact as vCard: %w", err)
+		return vcard.Card{}, fmt.Errorf("render Graph contact as vCard: %w", err)
 	}
 	card.Properties = append(card.Properties, extra...)
-	return vcard.Marshal(vcard.Document{Cards: []vcard.Card{card}})
+	return card, nil
 }
 
 // keepEmailNames copies the Outlook display name of each email address that
@@ -276,17 +374,6 @@ func contactFromVCard(body []byte) (contact, error) {
 		}
 		return values
 	}
-	types := func(property vcard.Property) []string {
-		var values []string
-		for _, parameter := range property.ParametersNamed("TYPE") {
-			for _, value := range parameter.Values {
-				for part := range strings.SplitSeq(value.Decoded, ",") {
-					values = append(values, strings.ToLower(strings.TrimSpace(part)))
-				}
-			}
-		}
-		return values
-	}
 	for _, property := range card.Properties {
 		switch strings.ToUpper(property.Name) {
 		case "FN":
@@ -309,7 +396,7 @@ func contactFromVCard(body []byte) (contact, error) {
 			if number == "" {
 				continue
 			}
-			switch kinds := types(property); {
+			switch kinds := typeValues(property); {
 			case slices.Contains(kinds, "cell") && c.MobilePhone == "":
 				c.MobilePhone = number
 			case slices.Contains(kinds, "home"):
@@ -335,7 +422,7 @@ func contactFromVCard(body []byte) (contact, error) {
 		case "ADR":
 			adr := parts(property, 7)
 			address := physicalAddress{Street: adr[2], City: adr[3], State: adr[4], PostalCode: adr[5], CountryOrRegion: adr[6]}
-			kinds := types(property)
+			kinds := typeValues(property)
 			switch {
 			case slices.Contains(kinds, "home") && c.HomeAddress.empty():
 				c.HomeAddress = address
