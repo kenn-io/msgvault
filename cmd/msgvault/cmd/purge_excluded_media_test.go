@@ -156,6 +156,11 @@ func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
 	policy, ok = mediaPolicyForSource(current, "twilio", "work")
 	require.True(ok)
 	assert.Equal(int64(1)<<20, policy.MaxBytes)
+
+	current.Bland = []config.BlandSource{{Identifier: "work", MaxMediaMB: 2}}
+	policy, ok = mediaPolicyForSource(current, "bland", "work")
+	require.True(ok)
+	assert.Equal(int64(2)<<20, policy.MaxBytes)
 }
 
 func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {

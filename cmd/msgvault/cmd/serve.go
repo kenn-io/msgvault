@@ -20,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/bland"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/config"
@@ -713,6 +714,34 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule twilio source", "source", source.Identifier, "error", err)
 		} else {
 			logger.Info("scheduled twilio source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+	for _, src := range cfg.Bland {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("bland source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "15 */6 * * *") on the [[bland]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledBlandSources() {
+		source := src
+		jobName, ok := api.SchedulerJobNameForSource(bland.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for bland source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+					return runConfiguredBlandSync(ctx, s, source)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule bland source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled bland source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
 	for _, src := range cfg.Muesli {

@@ -518,6 +518,7 @@ type Config struct {
 	Plaud              []PlaudSource                   `toml:"plaud"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
 	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
+	Bland              []BlandSource                   `toml:"bland"`
 	Twilio             []TwilioSource                  `toml:"twilio"`
 	Muesli             []MuesliSource                  `toml:"muesli"`
 	Backup             BackupConfig                    `toml:"backup"`
@@ -2001,6 +2002,9 @@ func (c *Config) applyMeetingSourceDefaults() {
 	if len(c.Twilio) == 1 && c.Twilio[0].Identifier == "" {
 		c.Twilio[0].Identifier = "default"
 	}
+	if len(c.Bland) == 1 && c.Bland[0].Identifier == "" {
+		c.Bland[0].Identifier = "default"
+	}
 }
 
 // validateMeetingSources rejects native meeting-source lists with empty
@@ -2133,6 +2137,25 @@ func (c *Config) validateMeetingSources() error {
 		}
 		if src.MaxMediaMB < 0 || int64(src.MaxMediaMB) > math.MaxInt64>>20 {
 			return fmt.Errorf("[[twilio]] identifier %q: max_media_mb must be zero or a positive representable MiB limit", src.Identifier)
+		}
+	}
+	blandIDs := make([]string, len(c.Bland))
+	for i, s := range c.Bland {
+		blandIDs[i] = s.Identifier
+	}
+	if err := check("bland", blandIDs); err != nil {
+		return err
+	}
+	// Bland API keys are checked when the source is used.
+	for i := range c.Bland {
+		src := &c.Bland[i]
+		email, err := src.EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		src.AccountEmail = email
+		if src.MaxMediaMB < 0 || int64(src.MaxMediaMB) > math.MaxInt64>>20 {
+			return fmt.Errorf("[[bland]] identifier %q: max_media_mb must be zero or a positive representable MiB limit", src.Identifier)
 		}
 	}
 	return nil

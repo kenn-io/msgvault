@@ -19,6 +19,8 @@ All notable changes to msgvault, grouped by release.
   and archives successful changes immediately.
 - [Twilio calls](usage/meetings.md#twilio) archive as searchable meetings with
   their recordings saved locally.
+- [Bland calls](usage/meetings.md#bland) archive as meetings with their
+  summaries, retained transcripts and recordings saved locally.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
 

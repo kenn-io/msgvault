@@ -1360,6 +1360,31 @@ schedule = "15 */6 * * *"
 | `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-twilio --full` to fetch the skipped recordings |
 | `max_media_mb` | `250` | Per-recording size cap in MiB; `0` uses the default |
 
+### Bland Sources
+
+Unreleased: configure one `[[bland]]` entry per Bland org API key. See the
+[Bland meeting guide](usage/meetings.md#bland) for what sync stores.
+
+```toml
+[[bland]]
+identifier = "work"
+account_email = "you@example.com"
+api_key = "your-org-api-key"
+enabled = true
+schedule = "15 */6 * * *"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | `default` (single entry) | Stable source label; required with several entries |
+| `account_email` | Required | Your primary identity; not treated as a caller |
+| `api_key` | Required | Org API key |
+| `encrypted_key` | — | Key for your own Twilio account. With it, Bland returns only inbound numbers associated with that account SID |
+| `enabled` | `false` | Allow daemon scheduling |
+| `schedule` | — | Five-field cron expression |
+| `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-bland --full` to fetch the skipped recordings |
+| `max_media_mb` | `250` | Per-recording size cap in MiB; `0` uses the default |
+
 ### Muesli Sources
 
 Muesli meeting sync uses one top-level `[[muesli]]` entry per Muesli database.

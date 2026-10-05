@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/bland"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/twilio"
@@ -226,6 +227,12 @@ func mediaPolicyForSource(cfg *config.Config, sourceType, identifier string) (at
 		return cfg.Teams.MediaPolicy(identifier), true
 	case twilio.SourceType:
 		source := cfg.GetTwilioSource(identifier)
+		if source == nil {
+			return attachmentpolicy.Policy{}, false
+		}
+		return source.MediaPolicy(), true
+	case bland.SourceType:
+		source := cfg.GetBlandSource(identifier)
 		if source == nil {
 			return attachmentpolicy.Policy{}, false
 		}

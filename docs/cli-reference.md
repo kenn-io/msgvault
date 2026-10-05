@@ -893,6 +893,44 @@ When `--limit` stops before the end of the call list, the summary says the sync
 paused and prints the command that continues it. See the
 [meeting guide](usage/meetings.md#twilio) for retries and coverage.
 
+## add-bland
+
+Unreleased: check a configured Bland account's access and register it as a
+meeting source. Nothing about individual calls is printed.
+
+```bash
+msgvault add-bland [identifier]
+```
+
+With one `[[bland]]` entry, omit the identifier. See
+[Bland configuration](configuration.md#bland-sources).
+
+## sync-bland
+
+Unreleased: archive every listed Bland call, ended or not, with its summary,
+retained transcript and recording as a meeting. Without an identifier, sync every configured
+source. Run `add-bland` first.
+
+```bash
+msgvault sync-bland [identifier]
+msgvault sync-bland work --limit 20
+msgvault sync-bland work --full --after 2026-01-01
+msgvault sync-bland work --probe
+```
+
+| Flag | Description |
+|---|---|
+| `--limit n` | Fetch at most n listed calls, including recent calls still missing artifacts. 0 is unlimited |
+| `--full` | Revisit every call, including recordings that were skipped or unavailable |
+| `--after YYYY-MM-DD` | Only calls created on or after this UTC date; implies `--full` |
+| `--probe` | Read one call and its postcall data and print what is available; requires an identifier when several accounts are configured |
+| `--build-cache` | Refresh analytics cache after sync |
+| `--no-build-cache` | Skip analytics cache refresh; mutually exclusive with `--build-cache` |
+
+When `--limit` stops before the end of the call list, the summary says the sync
+paused and prints the command that continues it. See the
+[meeting guide](usage/meetings.md#bland) for retries and coverage.
+
 ## add-plaud
 
 Authorize and register a configured Plaud cloud account using browser OAuth.

@@ -37,7 +37,7 @@ This means:
 I started with Gmail but I want all my life's messages in this system,
 including Google Calendar, Microsoft Teams, Discord guilds, Slack workspaces,
 Beeper Desktop chats, Granola, Plaud, Circleback, Notion, and Muesli meeting notes,
-Twilio call recordings,
+Twilio and Bland call recordings,
 WhatsApp, iMessage, Google Voice, Facebook Messenger,
 SMS Backup & Restore archives, and old local email
 archives.

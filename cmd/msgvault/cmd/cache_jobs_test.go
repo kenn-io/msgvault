@@ -174,6 +174,8 @@ func TestManualSyncProbeDoesNotQueueCacheRefresh(t *testing.T) {
 	assert.True(manualSyncCLICommand([]string{"sync-twilio", "work"}))
 	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe"}))
 	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe=true"}))
+	assert.True(manualSyncCLICommand([]string{"sync-bland", "work"}))
+	assert.False(manualSyncCLICommand([]string{"sync-bland", "--probe"}))
 }
 
 func TestCacheBuildJobsScheduledCooldownCoversAllAccepts(t *testing.T) {

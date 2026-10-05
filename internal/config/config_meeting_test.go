@@ -218,6 +218,7 @@ identifier = "SAME"
 api_key = "grn_b"
 `,
 		"twilio": "[[twilio]]\nidentifier='work'\n" + twilio + "[[twilio]]\nidentifier='WORK'\n" + twilio,
+		"bland":  "[[bland]]\nidentifier='work'\naccount_email='owner@example.com'\n[[bland]]\nidentifier='WORK'\naccount_email='owner@example.com'\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Load(writeMeetingConfig(t, body), "")
