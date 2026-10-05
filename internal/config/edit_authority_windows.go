@@ -35,8 +35,9 @@ type windowsFileAttributeTagInfo struct {
 // FILE_WRITE_DATA | SYNCHRONIZE (see the FILE_RENAME_INFORMATION contract),
 // so a share-read-only pin would make the transaction's own MoveFileExW and
 // ReplaceFileW calls fail with a sharing violation. A transient share-read
-// probe still rejects directories that already have a write- or
-// delete-capable handle open when the pin is taken.
+// probe also rejects a config directory that already has a write-capable
+// handle open. Ancestors skip that probe: a writer there can only add
+// siblings, and shared ancestors such as the temp root often have one.
 func pinWindowsConfigParent(path string) (*windowsPathAuthority, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -57,7 +58,7 @@ func pinWindowsConfigParent(path string) (*windowsPathAuthority, error) {
 			return nil, errors.Join(ErrUnsafeConfigTarget, errors.New("windows config path escapes its volume root"))
 		}
 		prefix = filepath.Join(prefix, part)
-		handle, openErr := openWindowsAuthorityDirectory(prefix)
+		handle, openErr := openWindowsAuthorityDirectory(prefix, prefix == parent)
 		if openErr != nil {
 			_ = authority.Release()
 			return nil, openErr
@@ -119,25 +120,31 @@ func pinWindowsNearestExistingConfigAncestor(path string) (*windowsPathAuthority
 	return authority, filepath.Clean(absolute), identity, nil
 }
 
-func openWindowsAuthorityDirectory(path string) (windows.Handle, error) {
+func openWindowsAuthorityDirectory(path string, rejectWriters bool) (windows.Handle, error) {
 	encoded, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return 0, fmt.Errorf("encode Windows config directory: %w", err)
 	}
 	// The share-read probe fails while any existing handle holds write or
 	// delete access, so a transaction never starts under a concurrent
-	// directory writer.
-	probe, err := openWindowsDirectoryHandle(encoded, windows.FILE_SHARE_READ)
-	if err != nil {
-		return 0, fmt.Errorf("pin Windows config directory %s: %w", path, err)
+	// config directory writer.
+	probe := windows.InvalidHandle
+	if rejectWriters {
+		probe, err = openWindowsDirectoryHandle(encoded, windows.FILE_SHARE_READ)
+		if err != nil {
+			return 0, fmt.Errorf("pin Windows config directory %s: %w", path, err)
+		}
 	}
 	// The durable pin adds FILE_SHARE_WRITE because publishing renames open
 	// the target directory with FILE_WRITE_DATA. Excluding FILE_SHARE_DELETE
-	// still blocks rename, deletion, and replacement of the component. The
-	// probe closes only after the durable pin exists, so the directory is
-	// never unpinned in between.
+	// still blocks rename, deletion, and replacement of the component, and
+	// fails while another handle already holds delete access. The probe
+	// closes only after the durable pin exists, so the directory is never
+	// unpinned in between.
 	handle, err := openWindowsDirectoryHandle(encoded, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE)
-	_ = windows.CloseHandle(probe)
+	if probe != windows.InvalidHandle {
+		_ = windows.CloseHandle(probe)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("pin Windows config directory %s: %w", path, err)
 	}
