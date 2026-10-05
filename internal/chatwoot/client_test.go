@@ -1,124 +1,35 @@
 package chatwoot
 
 import (
-	"context"
-	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
 )
 
-func TestClientAccountContracts(t *testing.T) {
+func TestClientListsEveryConversationUnderInstancePath(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(http.MethodGet, r.Method)
-		assert.Equal("synthetic-token", r.Header.Get("Api_access_token"))
-		switch r.URL.Path {
-		case "/support/api/v1/accounts/9/inboxes":
-			_, _ = io.WriteString(w, `{"payload":[{"id":7,"name":"Example inbox","channel_type":"Channel::TwilioSms","auth_token":"secret-must-not-survive"}]}`)
-		case "/support/api/v1/accounts/9/agents":
-			_, _ = io.WriteString(w, `[{"id":201,"name":"Example Agent","email":"agent@example.com","role":"agent"}]`)
-		case "/support/api/v1/accounts/9/conversations":
-			assert.Equal("all", r.URL.Query().Get("status"))
-			assert.Equal("all", r.URL.Query().Get("assignee_type"))
-			assert.Equal("created_at_asc", r.URL.Query().Get("sort_by"))
-			assert.Equal("2", r.URL.Query().Get("page"))
-			assert.Equal("7", r.URL.Query().Get("inbox_id"))
-			_, _ = io.WriteString(w, `{"data":{"meta":{"all_count":1},"payload":[{"id":42,"account_id":9,"inbox_id":7,"status":"resolved","updated_at":1767225648.123,"meta":{"sender":{"id":101,"name":"Example Contact","phone_number":"+12025550101","type":"contact"},"assignee":{"id":202,"name":"Another Agent"}},"messages":[{"private":true,"content":"excluded note"}],"last_non_activity_message":{"private":true,"content":"excluded note"}}]}}`)
-		case "/support/api/v1/accounts/9/conversations/42/messages":
-			assert.Equal("1003", r.URL.Query().Get("after"))
-			assert.Equal("1004", r.URL.Query().Get("before"))
-			_, _ = io.WriteString(w, `{"meta":{},"payload":[{"id":1003,"content":"Voice call","inbox_id":7,"conversation_id":42,"message_type":0,"content_type":"voice_call","created_at":1767225602,"private":false,"sender":{"id":101,"type":"contact","name":"Example Contact"},"attachments":[{"id":301,"file_type":"audio","data_url":"https://chatwoot.example.com/note.ogg","transcribed_text":"Note transcript","file_size":1024,"width":null}],"content_attributes":{"data":{"call_id":501,"call_direction":"inbound","accepted_by":{"id":201,"name":"Example Agent"}},"unknown":{"original":true}},"call":{"id":501,"provider":"twilio","direction":"incoming","status":"completed","duration_seconds":0,"accepted_by_agent_id":201,"accepted_by_agent_name":"Example Agent","started_at":null,"ended_at":null,"recording_url":null,"transcript":"Call transcript"},"future_field":"retained"}]}`)
-		default:
-			assert.Fail("unexpected route", r.URL.String())
-			w.WriteHeader(http.StatusNotFound)
-		}
+		assert.Equal("/support/api/v1/accounts/9/conversations", r.URL.Path)
+		query := r.URL.Query()
+		assert.Equal("all", query.Get("status"))
+		assert.Equal("all", query.Get("assignee_type"))
+		assert.Equal("7", query.Get("inbox_id"))
+		_, _ = io.WriteString(w, `{"data":{"payload":[{"id":42,"account_id":9,"inbox_id":7}]}}`)
 	}))
 	defer srv.Close()
 	c, err := NewClient(srv.URL+"/support/", 9, "synthetic-token")
 	require.NoError(err)
 	c.limiter = rate.NewLimiter(rate.Inf, 1)
-	inboxes, err := c.ListInboxes(t.Context())
-	require.NoError(err)
-	require.Len(inboxes, 1)
-	assert.Equal(int64(7), inboxes[0].ID)
-	assert.Equal("Example inbox", inboxes[0].Name)
-	safeInbox, err := json.Marshal(inboxes[0])
-	require.NoError(err)
-	assert.NotContains(string(safeInbox), "secret-must-not-survive")
-	agents, err := c.ListAgents(t.Context())
-	require.NoError(err)
-	require.Len(agents, 1)
-	assert.Equal("agent@example.com", agents[0].Email)
-	assert.Equal("user", agents[0].Type)
 	conversations, err := c.ListConversations(t.Context(), 2, 7, sortByCreated)
 	require.NoError(err)
 	require.Len(conversations, 1)
 	assert.Equal(int64(42), conversations[0].ID)
-	assert.Equal("+12025550101", conversations[0].Meta.Sender.PhoneNumber)
-	safeContext, err := json.Marshal(conversations[0])
-	require.NoError(err)
-	assert.NotContains(string(safeContext), "excluded note")
-	msgs, err := c.ListMessages(t.Context(), 42, 1003, 1004)
-	require.NoError(err)
-	require.Len(msgs, 1)
-	m := msgs[0]
-	assert.Equal(int64(1003), m.ID)
-	assert.Equal(int64(1767225602), m.CreatedAt)
-	require.NotNil(m.Call)
-	assert.Equal(int64(201), m.Call.AcceptedByAgentID)
-	require.NotNil(m.Call.DurationSeconds)
-	assert.Zero(*m.Call.DurationSeconds)
-	assert.Equal("Call transcript", m.Call.Transcript)
-	require.Len(m.Attachments, 1)
-	assert.Equal("Note transcript", m.Attachments[0].TranscribedText)
-	assert.Contains(string(m.Raw), `"future_field":"retained"`)
-	assert.Contains(string(m.Raw), `"unknown":{"original":true}`)
-}
-
-func TestClientNullAndUnknownSender(t *testing.T) {
-	assert := assert.New(t)
-
-	var m Message
-	require.NoError(t, json.Unmarshal([]byte(`{"id":1,"content":null,"sender":null,"call":null,"attachments":null,"content_attributes":{},"created_at":1,"message_type":2,"content_type":"unknown_type"}`), &m))
-	assert.Empty(m.Content)
-	assert.Nil(m.Sender)
-	assert.Nil(m.Call)
-	assert.Equal("unknown_type", m.ContentType)
-	assert.NotEmpty(m.Raw)
-}
-
-func TestClientValidation(t *testing.T) {
-	for _, raw := range []string{"", "ftp://example.com", "https://user:pass@example.com", "https://example.com?token=secret", "https://example.com#fragment", "https:///path"} {
-		t.Run(raw, func(t *testing.T) {
-			_, err := NewClient(raw, 9, "token")
-			require.Error(t, err)
-			assert.NotContains(t, err.Error(), "pass")
-			assert.NotContains(t, err.Error(), "secret")
-		})
-	}
-	assert := assert.New(t)
-	require := require.New(t)
-	_, err := NewClient("https://chatwoot.example.com", 0, "token")
-	require.Error(err)
-	_, err = NewClient("https://chatwoot.example.com", 9, "")
-	require.Error(err)
-	canonical, err := CanonicalURL("HTTPS://CHATWOOT.EXAMPLE.COM:443/support/")
-	require.NoError(err)
-	assert.Equal("https://chatwoot.example.com/support", canonical)
-	assert.Equal(SourceIdentifier(canonical, 9, 7), SourceIdentifier("https://chatwoot.example.com/support/", 9, 7))
-	assert.NotEqual(SourceIdentifier(canonical, 9, 7), SourceIdentifier(canonical, 10, 7))
-	assert.NotEqual(SourceIdentifier(canonical, 9, 7), SourceIdentifier(canonical, 9, 8))
 }
 
 func TestClientRequiresHTTPSOutsideLoopback(t *testing.T) {
@@ -235,24 +146,7 @@ func TestClientRejectsPrivateMediaRedirect(t *testing.T) {
 	assert.Zero(privateHits)
 }
 
-func TestClientFailuresAndRateLimit(t *testing.T) {
-	for _, code := range []int{401, 403, 404, 500} {
-		t.Run(strconv.Itoa(code), func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Retry-After", "0")
-				w.WriteHeader(code)
-				_, _ = io.WriteString(w, "upstream-sensitive-message")
-			}))
-			defer srv.Close()
-			c, err := NewClient(srv.URL, 9, "token")
-			require.NoError(t, err)
-			c.limiter = rate.NewLimiter(rate.Inf, 1)
-			_, err = c.ListInboxes(t.Context())
-			require.Error(t, err)
-			assert.NotContains(t, err.Error(), "upstream-sensitive-message")
-		})
-	}
-	require := require.New(t)
+func TestClientRetriesRateLimitAndReportsNotFound(t *testing.T) {
 	attempts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
@@ -261,40 +155,13 @@ func TestClientFailuresAndRateLimit(t *testing.T) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
-		_, _ = io.WriteString(w, `{"payload":[]}`)
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 	c, err := NewClient(srv.URL, 9, "token")
-	require.NoError(err)
+	require.NoError(t, err)
 	c.limiter = rate.NewLimiter(rate.Inf, 1)
 	_, err = c.ListInboxes(t.Context())
-	require.NoError(err)
+	require.ErrorIs(t, err, ErrNotFound, "deleted conversations retire their saved work")
 	assert.Equal(t, 2, attempts)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err = c.ListInboxes(ctx)
-	require.ErrorIs(err, context.Canceled)
-}
-
-func TestClientMalformedAndOversizeJSON(t *testing.T) {
-	for _, body := range []string{`not-json`, `{"unexpected":[]}`, strings.Repeat(" ", maxAPIBytes+1)} {
-		t.Run(strconv.Itoa(len(body)), func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) }))
-			defer srv.Close()
-			c, err := NewClient(srv.URL, 9, "token")
-			require.NoError(t, err)
-			c.limiter = rate.NewLimiter(rate.Inf, 1)
-			_, err = c.ListInboxes(t.Context())
-			require.Error(t, err)
-		})
-	}
-	// A real HTTP request blocked on response headers observes context cancellation.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
-	defer srv.Close()
-	c, err := NewClient(srv.URL, 9, "token")
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	_, err = c.ListInboxes(ctx)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
 }

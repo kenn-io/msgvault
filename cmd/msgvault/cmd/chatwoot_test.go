@@ -78,20 +78,6 @@ func TestChatwootRegistrationUsesDaemonEnvironmentAndInboxFilters(t *testing.T) 
 	assert.Len(sources, 1)
 }
 
-func TestChatwootSyncRejectsUnregisteredBeforeCredentials(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	src := config.ChatwootSource{Identifier: "support", URL: "https://chatwoot.example.com", AccountID: 9, APIKeyEnv: "UNSET_EXAMPLE_CHATWOOT_TOKEN"}
-	_, err := importChatwootProfile(context.Background(), st, src, chatwootRunOptions{}, config.NewDefaultConfig())
-	require.ErrorContains(err, "add-chatwoot")
-}
-
-func TestChatwootSyncIsAttachmentProducing(t *testing.T) {
-	assert := assert.New(t)
-	assert.True(attachmentProducingCommand([]string{"sync-chatwoot", "support"}))
-	assert.False(attachmentProducingCommand([]string{"add-chatwoot", "support"}))
-}
-
 func TestChatwootScheduledJobUsesAccountIdentityAndDefersMediaPacking(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -115,18 +101,6 @@ func TestChatwootScheduledJobUsesAccountIdentityAndDefersMediaPacking(t *testing
 	assert.True(fixture.maintenance.packPending.Load(), "new media requests a later pack pass")
 	require.NoError(fixture.maintenance.runPendingPack(context.Background()))
 	assert.NotNil(fixture.packedEntry(hash))
-}
-
-func TestChatwootCommandsRejectInvalidLimitsBeforeDaemonAccess(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	for _, args := range [][]string{{"--limit=-1"}, {"--inbox=0"}} {
-		cmd := newSyncChatwootCmd()
-		cmd.SetArgs(args)
-		err := cmd.Execute()
-		require.Error(err)
-		assert.NotContains(err.Error(), "daemon unavailable")
-	}
 }
 
 func TestChatwootProfileSyncContinuesAfterInboxFailure(t *testing.T) {

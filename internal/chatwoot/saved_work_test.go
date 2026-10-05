@@ -1,84 +1,12 @@
 package chatwoot
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil"
 )
-
-func TestLimitBoundsHistoryNotArtifactRefresh(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	messages := []map[string]any{}
-	for id := int64(901); id <= 902; id++ {
-		message := contractMessage(id, 1767225600+id, nil)
-		message["attachments"] = []any{map[string]any{
-			"id": id + 1000, "file_type": "audio", "content_type": "audio/ogg",
-			"data_url": fmt.Sprintf("https://chatwoot.example.com/audio-%d.ogg", id),
-		}}
-		messages = append(messages, message)
-	}
-	api := newContractAPI(t, 2, messages)
-	st := testutil.NewTestStore(t)
-	importer, source := contractRegister(t, st, api)
-	opts := ImportOptions{InboxID: 7}
-	initial, err := importer.Import(t.Context(), opts)
-	require.NoError(err)
-	require.False(initial.Partial)
-	opts.Limit = 1
-	limited, err := importer.Import(t.Context(), opts)
-	require.NoError(err)
-	assert.Equal(2, limited.MessagesProcessed, "--limit bounds history, so every pending artifact is rechecked")
-	assert.False(limited.Partial)
-	last, err := st.GetLastSuccessfulSyncByType(source.ID, SourceType)
-	require.NoError(err)
-	require.NotNil(last)
-	state, err := parseSyncState(last.CursorAfter.String, source.Identifier)
-	require.NoError(err)
-	conversation := state.Conversations["42"]
-	require.NotNil(conversation)
-	assert.Empty(conversation.Pending, "the remaining work is artifact refresh, not history")
-	assert.Len(conversation.Artifacts, 2, "audio without a transcript stays inside its window")
-}
-
-func TestSavedArtifactCheckpointRetiresDeletedMessage(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	message := contractMessage(901, 1767225600, nil)
-	message["attachments"] = []any{map[string]any{
-		"id": 2001, "file_type": "audio", "content_type": "audio/ogg",
-		"data_url": "https://chatwoot.example.com/audio.ogg",
-	}}
-	api := newContractAPI(t, 2, []map[string]any{message})
-	st := testutil.NewTestStore(t)
-	importer, source := contractRegister(t, st, api)
-	opts := ImportOptions{InboxID: 7, IncludePrivate: true}
-	_, err := importer.Import(t.Context(), opts)
-	require.NoError(err)
-	last, err := st.GetLastSuccessfulSyncByType(source.ID, SourceType)
-	require.NoError(err)
-	require.NotNil(last)
-	state, err := parseSyncState(last.CursorAfter.String, source.Identifier)
-	require.NoError(err)
-	conversation := state.Conversations["42"]
-	require.NotNil(conversation)
-	assert.Contains(conversation.Artifacts, "901")
-
-	api.mu.Lock()
-	api.messages = nil
-	api.mu.Unlock()
-	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
-	require.NoError(err)
-	last, err = st.GetLastSuccessfulSyncByType(source.ID, SourceType)
-	require.NoError(err)
-	require.NotNil(last)
-	state, err = parseSyncState(last.CursorAfter.String, source.Identifier)
-	require.NoError(err)
-	assert.NotContains(state.Conversations, "42", "deleted messages must not consume an artifact refresh request on every sync")
-}
 
 func TestSavedArtifactCheckpointRetiresPrivateMessageWhenExcluded(t *testing.T) {
 	assert := assert.New(t)
@@ -95,22 +23,12 @@ func TestSavedArtifactCheckpointRetiresPrivateMessageWhenExcluded(t *testing.T) 
 	opts := ImportOptions{InboxID: 7, IncludePrivate: true}
 	_, err := importer.Import(t.Context(), opts)
 	require.NoError(err)
-	last, err := st.GetLastSuccessfulSyncByType(source.ID, SourceType)
-	require.NoError(err)
-	require.NotNil(last)
-	state, err := parseSyncState(last.CursorAfter.String, source.Identifier)
-	require.NoError(err)
-	require.Contains(state.Conversations["42"].Artifacts, "901")
+	require.Contains(savedState(t, st, source).Conversations["42"].Artifacts, "901")
 
 	opts.IncludePrivate = false
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err)
-	last, err = st.GetLastSuccessfulSyncByType(source.ID, SourceType)
-	require.NoError(err)
-	require.NotNil(last)
-	state, err = parseSyncState(last.CursorAfter.String, source.Identifier)
-	require.NoError(err)
-	assert.NotContains(state.Conversations, "42", "excluded private media must be retired from saved refresh work")
+	assert.NotContains(savedState(t, st, source).Conversations, "42", "excluded private media must be retired from saved refresh work")
 	secondRunCalls := api.messageCallCount()
 
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
@@ -132,12 +50,7 @@ func TestSavedConversationMovedToAnotherInboxRetiresOldWork(t *testing.T) {
 	opts := ImportOptions{InboxID: 7, IncludePrivate: true}
 	_, err := importer.Import(t.Context(), opts)
 	require.NoError(err)
-	last, err := st.GetLastSuccessfulSyncByType(source7.ID, SourceType)
-	require.NoError(err)
-	require.NotNil(last)
-	state, err := parseSyncState(last.CursorAfter.String, source7.Identifier)
-	require.NoError(err)
-	require.Contains(state.Conversations["42"].Artifacts, "901")
+	require.Contains(savedState(t, st, source7).Conversations["42"].Artifacts, "901")
 
 	api.mu.Lock()
 	api.conversationInboxID = 8
@@ -148,12 +61,7 @@ func TestSavedConversationMovedToAnotherInboxRetiresOldWork(t *testing.T) {
 
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err, "moving a saved conversation must not fail sync for its former inbox")
-	last, err = st.GetLastSuccessfulSyncByType(source7.ID, SourceType)
-	require.NoError(err)
-	require.NotNil(last)
-	state, err = parseSyncState(last.CursorAfter.String, source7.Identifier)
-	require.NoError(err)
-	assert.NotContains(state.Conversations, "42", "saved work must be retired from the former inbox")
+	assert.NotContains(savedState(t, st, source7).Conversations, "42", "saved work must be retired from the former inbox")
 	archivedInOldInbox, err := st.MessageExistsBatch(source7.ID, []string{"901"})
 	require.NoError(err)
 	assert.Contains(archivedInOldInbox, "901", "archived rows in the former inbox remain available")

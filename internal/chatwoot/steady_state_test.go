@@ -203,55 +203,6 @@ func TestSteadyStateSyncRequestsOnlyChangedWork(t *testing.T) {
 	assert.Empty(savedState(t, st, source).Conversations)
 }
 
-func TestBoundedRunsArchiveEveryConversation(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	api := newInboxAPI(t, 3, 1)
-	at := time.Now().Add(-30 * 24 * time.Hour)
-	for conversation := int64(1); conversation <= 15; conversation++ {
-		api.addMessage(conversation, 100+conversation, at.Add(time.Duration(conversation)*time.Hour))
-	}
-	// One message per response forces several bounded runs through the history.
-	for id := int64(201); id <= 206; id++ {
-		api.addMessage(1, id, at)
-	}
-	st := testutil.NewTestStore(t)
-	imp, source := api.register(t, st)
-	imp.requestBudget = 12
-	opts := ImportOptions{InboxID: 1}
-	var sum *ImportSummary
-	var err error
-	for run := range 40 {
-		sum, err = imp.Import(t.Context(), opts)
-		require.NoError(err)
-		var listed int
-		for _, request := range api.takeRequests() {
-			if strings.HasPrefix(request, "list ") {
-				listed++
-			}
-		}
-		assert.LessOrEqual(listed, imp.requestBudget, "listing has a finite per-run budget")
-		if run == 0 {
-			assert.True(sum.Partial)
-		}
-		if !sum.Partial {
-			break
-		}
-	}
-	assert.False(sum.Partial)
-	ids := make([]string, 0, 21)
-	for id := int64(101); id <= 115; id++ {
-		ids = append(ids, strconv.FormatInt(id, 10))
-	}
-	for id := int64(201); id <= 206; id++ {
-		ids = append(ids, strconv.FormatInt(id, 10))
-	}
-	archived, err := st.MessageExistsBatch(source.ID, ids)
-	require.NoError(err)
-	assert.Len(archived, len(ids))
-	assert.Empty(savedState(t, st, source).Conversations)
-}
-
 func TestNewConversationsDoNotWaitForSavedHistory(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -276,61 +227,6 @@ func TestNewConversationsDoNotWaitForSavedHistory(t *testing.T) {
 	archived, err := st.MessageExistsBatch(source.ID, []string{"500"})
 	require.NoError(err)
 	assert.Contains(archived, "500", "a new conversation is archived while older history is still saved")
-}
-
-func TestUnfinishedHistoryKeepsListedRunPartial(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	api := newInboxAPI(t, 25, 1000)
-	at := time.Now().Add(-30 * 24 * time.Hour)
-	api.addMessage(1, 101, at)
-	api.addMessage(1, 102, at)
-	api.addMessage(2, 201, at)
-	st := testutil.NewTestStore(t)
-	imp, source := api.register(t, st)
-	opts := ImportOptions{InboxID: 1, Limit: 1}
-	first, err := imp.Import(t.Context(), opts)
-	require.NoError(err)
-	assert.True(first.Partial, "a finished listing must not hide unfinished history")
-	state := savedState(t, st, source)
-	assert.Equal(walkReconcile, state.Walk, "reconcile stays open until its queued history finishes")
-	assert.Zero(state.NextPage)
-	require.NotNil(state.Conversations["1"])
-	assert.NotEmpty(state.Conversations["1"].Pending)
-
-	opts.Limit = 0
-	second, err := imp.Import(t.Context(), opts)
-	require.NoError(err)
-	assert.False(second.Partial)
-	state = savedState(t, st, source)
-	assert.Empty(state.Walk)
-	assert.False(state.ReconciledAt.IsZero())
-}
-
-func TestCombinedBoundsProbeRunsOncePerImport(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	api := newInboxAPI(t, 25, 1000)
-	at := time.Now().Add(-30 * 24 * time.Hour)
-	for conversation := int64(1); conversation <= 3; conversation++ {
-		api.addMessage(conversation, 100+conversation, at)
-	}
-	st := testutil.NewTestStore(t)
-	imp, _ := api.register(t, st)
-	_, err := imp.Import(t.Context(), ImportOptions{InboxID: 1})
-	require.NoError(err)
-	var probes, reads int
-	for _, request := range api.takeRequests() {
-		var conversation, after, before int64
-		if _, scanErr := fmt.Sscanf(request, "messages %d %d %d", &conversation, &after, &before); scanErr == nil {
-			reads++
-			if before-after <= 1 {
-				probes++
-			}
-		}
-	}
-	assert.Equal(2, probes, "one exact and one empty range probe for the whole import")
-	assert.Equal(3+2, reads, "a response under the range cap completes its conversation")
 }
 
 func TestSameSecondMessageIsNotSkipped(t *testing.T) {

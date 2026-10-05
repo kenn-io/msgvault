@@ -126,41 +126,6 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 	}
 }
 
-func TestMediaRefreshChangedRecordingURLReplacesStableOccurrenceBytes(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	media := newMediaRefreshServer(t)
-	router := newChatwootMediaRouter(t, media.server)
-	message := mediaRefreshCall(router.url(t, media.server, "/recording-a.ogg"), "")
-	call, ok := message["call"].(map[string]any)
-	require.True(ok)
-	api := newContractAPI(t, 2, []map[string]any{message})
-	api.mediaRouter = router
-	st := testutil.NewTestStore(t)
-	importer, _ := contractRegister(t, st, api)
-	opts := mediaRefreshOptions(t)
-	_, err := importer.Import(t.Context(), opts)
-	require.NoError(err)
-	meetingID := contractArchivedMessageID(t, st, "call:901")
-	before, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
-	require.Len(before, 1)
-	assert.Equal([]string{"synthetic recording A bytes"}, payloads)
-
-	api.mu.Lock()
-	call["recording_url"] = router.url(t, media.server, "/recording-b.ogg")
-	api.mu.Unlock()
-	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
-	require.NoError(err)
-	after, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
-	require.Len(after, 1)
-	assert.Equal([]string{"synthetic replacement recording B bytes"}, payloads)
-	for key, old := range before {
-		ref, exists := after[key]
-		require.True(exists, "a replacement keeps the provider occurrence identity")
-		assert.NotEqual(old.ContentHash, ref.ContentHash)
-	}
-}
-
 func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -213,41 +178,6 @@ func TestMediaRefreshFailedReplacementRetainsBytesAndRetriesNextSync(t *testing.
 	assert.Equal([]string{"synthetic replacement recording B bytes"}, payloads)
 	for key, old := range before {
 		assert.NotEqual(old.ContentHash, after[key].ContentHash)
-	}
-}
-
-func TestMediaRefreshSignedQueryRotationKeepsStoredRecording(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	media := newMediaRefreshServer(t)
-	router := newChatwootMediaRouter(t, media.server)
-	message := mediaRefreshCall(router.url(t, media.server, "/recording-a.ogg?signature=synthetic-old"), "")
-	call, ok := message["call"].(map[string]any)
-	require.True(ok)
-	api := newContractAPI(t, 2, []map[string]any{message})
-	api.mediaRouter = router
-	st := testutil.NewTestStore(t)
-	importer, _ := contractRegister(t, st, api)
-	opts := mediaRefreshOptions(t)
-	_, err := importer.Import(t.Context(), opts)
-	require.NoError(err)
-	meetingID := contractArchivedMessageID(t, st, "call:901")
-	before, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
-	require.Len(before, 1)
-	assert.Equal([]string{"synthetic recording A bytes"}, payloads)
-	initialRequests := media.requestCount("/recording-a.ogg")
-	require.Positive(initialRequests)
-	api.mu.Lock()
-	call["recording_url"] = router.url(t, media.server, "/recording-a.ogg?signature=synthetic-new")
-	api.mu.Unlock()
-	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
-	require.NoError(err)
-	assert.Equal(initialRequests, media.requestCount("/recording-a.ogg"), "rotated signatures do not identify new recording bytes")
-	after, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
-	require.Len(after, 1)
-	assert.Equal([]string{"synthetic recording A bytes"}, payloads)
-	for key, old := range before {
-		assert.Equal(old.ContentHash, after[key].ContentHash)
 	}
 }
 

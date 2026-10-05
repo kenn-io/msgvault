@@ -89,7 +89,7 @@ func TestChatwootConfigRejectsInvalidProfiles(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fields := map[string]string{"identifier": `identifier="support"`, "url": `url="https://chatwoot.example.com"`, "account_id": `account_id=9`}
-			key := tc.field[:indexEquals(tc.field)]
+			key, _, _ := strings.Cut(tc.field, "=")
 			fields[key] = tc.field
 			var content strings.Builder
 			content.WriteString("[[chatwoot]]\n")
@@ -104,15 +104,6 @@ func TestChatwootConfigRejectsInvalidProfiles(t *testing.T) {
 			}
 		})
 	}
-}
-
-func indexEquals(s string) int {
-	for i, r := range s {
-		if r == '=' {
-			return i
-		}
-	}
-	return len(s)
 }
 
 func TestChatwootConfigRejectsDuplicateIdentity(t *testing.T) {

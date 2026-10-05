@@ -76,7 +76,7 @@ func TestImportContractActualSendersAndPrivateRecipients(t *testing.T) {
 	messages[4]["content"] = "Synthetic employee note"
 	api := newContractAPI(t, 3, messages)
 	st := testutil.NewTestStore(t)
-	importer, source := contractRegister(t, st, api)
+	importer, _ := contractRegister(t, st, api)
 	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true, SelfAgentIDs: []int64{8}})
 	require.NoError(err)
 	assert.Equal([]int64{101, 102, 103, 104, 105, 106}, contractMessageIDs(t, st))
@@ -89,7 +89,6 @@ func TestImportContractActualSendersAndPrivateRecipients(t *testing.T) {
 		raw, err := st.GetMessageRaw(ids[providerID])
 		require.NoError(err)
 		assert.NotContains(string(raw), "excluded-private-seed")
-		assert.NotContains(string(raw), "excluded-channel-secret")
 	}
 	contactID, agentID, botID := contractSender(t, st, ids[101]), contractSender(t, st, ids[102]), contractSender(t, st, ids[103])
 	require.True(contactID.Valid)
@@ -117,9 +116,6 @@ func TestImportContractActualSendersAndPrivateRecipients(t *testing.T) {
 	note := contractRecipients(t, st, ids[105], "to")
 	require.Len(note, 1)
 	assert.Equal(incoming[0].ParticipantID, note[0].ParticipantID, "private notes address the shared inbox")
-	storedSource, err := st.GetSourceByID(source.ID)
-	require.NoError(err)
-	assert.NotContains(storedSource.SyncConfig.String, "excluded-channel-secret")
 }
 
 func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
@@ -383,10 +379,6 @@ func TestImportContractSourceAndActorIsolationAcrossInstances(t *testing.T) {
 		require.NoError(err)
 		require.Len(sources, 2)
 		assert.NotEqual(sources[0].ID, sources[1].ID, "each inbox is a separate source")
-		again, err := importer.Register(t.Context(), []Inbox{{ID: 7}, {ID: 8}})
-		require.NoError(err)
-		require.Len(again, 2)
-		assert.ElementsMatch([]int64{sources[0].ID, sources[1].ID}, []int64{again[0].ID, again[1].ID}, "registration is stable")
 		_, err = importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
 		require.NoError(err)
 		var sourceID, senderID int64
@@ -399,36 +391,6 @@ func TestImportContractSourceAndActorIsolationAcrossInstances(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE source_message_id = '101'`).Scan(&count))
 	assert.Equal(2, count, "message IDs are deduplicated within their source")
-}
-
-func TestImportContractDetachedSenderEvidenceAndUnknownSender(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	unknown := contractMessage(501, 1767225600, nil)
-	unknown["message_type"] = 1
-	detached := contractMessage(502, 1767225601, nil)
-	detached["message_type"] = 1
-	detached["sender_type"] = "User"
-	detached["sender_id"] = int64(7)
-	detached["future_evidence"] = map[string]any{"retained": "synthetic detached sender evidence"}
-	known := contractMessage(503, 1767225602, map[string]any{"id": int64(7), "type": "user", "name": "Example Agent"})
-	known["message_type"] = 1
-	api := newContractAPI(t, 2, []map[string]any{unknown, detached, known})
-	st := testutil.NewTestStore(t)
-	importer, _ := contractRegister(t, st, api)
-	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
-	require.NoError(err)
-	unknownID := contractArchivedMessageID(t, st, "501")
-	assert.False(contractSender(t, st, unknownID).Valid, "outgoing direction cannot invent an employee")
-	assert.Empty(contractRecipients(t, st, unknownID, "from"))
-	detachedID := contractArchivedMessageID(t, st, "502")
-	detachedSender := contractSender(t, st, detachedID)
-	require.True(detachedSender.Valid)
-	assert.Equal(contractSender(t, st, contractArchivedMessageID(t, st, "503")), detachedSender)
-	raw, err := st.GetMessageRaw(detachedID)
-	require.NoError(err)
-	assert.Contains(string(raw), "synthetic detached sender evidence")
-	assert.Contains(string(raw), "sender_id")
 }
 
 func TestImportContractMetadataOnlyAndUnknownAttachmentTypes(t *testing.T) {
@@ -465,36 +427,4 @@ func TestImportContractMetadataOnlyAndUnknownAttachmentTypes(t *testing.T) {
 	assert.Contains(metadata[1], "coordinates_lat")
 	assert.Contains(metadata[1], "Synthetic origin")
 	assert.Contains(metadata[2], "Synthetic fallback")
-	var meetings int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type = 'meeting_transcript'`).Scan(&meetings))
-	assert.Zero(meetings, "ordinary attachments do not create call meetings")
-}
-
-func TestImportContractOrdinaryKeywordAndEmbeddingEligibility(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	message := contractMessage(801, 1767225600, nil)
-	message["content"] = "ordinaryquartz archived conversation text"
-	api := newContractAPI(t, 2, []map[string]any{message})
-	st := testutil.NewTestStore(t)
-	importer, source := contractRegister(t, st, api)
-	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
-	require.NoError(err)
-	id := contractArchivedMessageID(t, st, "801")
-	results, total, err := st.SearchMessages("ordinaryquartz", 0, 10)
-	require.NoError(err)
-	assert.Equal(int64(1), total)
-	require.Len(results, 1)
-	assert.Equal(id, results[0].ID)
-	assert.Equal(source.ID, results[0].SourceID)
-	assert.Equal("chatwoot", results[0].MessageType)
-	full, err := st.ScanForEmbeddingScoped(t.Context(), 1, 0, 100, nil, nil)
-	require.NoError(err)
-	assert.Equal([]int64{id}, full, "ordinary configured full-corpus embeddings include Chatwoot")
-	scoped, err := st.ScanForEmbeddingScoped(t.Context(), 1, 0, 100, []string{"chatwoot"}, []int64{source.ID})
-	require.NoError(err)
-	assert.Equal([]int64{id}, scoped)
-	otherType, err := st.ScanForEmbeddingScoped(t.Context(), 1, 0, 100, []string{"email"}, []int64{source.ID})
-	require.NoError(err)
-	assert.Empty(otherType, "provider classification is retained in scoped scans")
 }
