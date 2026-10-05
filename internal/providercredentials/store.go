@@ -443,7 +443,7 @@ func publish(tokenDir string, permissions permissionBackend, encoded []byte) ([]
 	if err := temporary.Close(); err != nil {
 		return nil, fmt.Errorf("close credential candidate: %w", err)
 	}
-	if err := replaceStoreFile(temporaryPath, filepath.Join(tokenDir, Filename)); err != nil {
+	if err := atomicfile.Replace(temporaryPath, filepath.Join(tokenDir, Filename)); err != nil {
 		return nil, fmt.Errorf("publish credential store: %w", err)
 	}
 	published = true

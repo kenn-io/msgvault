@@ -363,7 +363,7 @@ func publishCacheWithBeforeMarker(
 		} else if err := os.MkdirAll(filepath.Dir(move.destination), 0o755); err != nil {
 			return fmt.Errorf("create cache append directory for %s: %w", move.dataset, err)
 		}
-		if err := os.Rename(move.source, move.destination); err != nil {
+		if err := atomicfile.Replace(move.source, move.destination); err != nil {
 			return fmt.Errorf("publish cache dataset %s: %w", move.dataset, err)
 		}
 		if err := syncDestinationParents(move.destination, analyticsDir); err != nil {

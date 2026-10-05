@@ -124,7 +124,3 @@ func withStoreLock(tokenDir string, fn func() error) error {
 	defer unix.Flock(fd, unix.LOCK_UN) //nolint:errcheck // closing also releases the lock
 	return fn()
 }
-
-func replaceStoreFile(source, target string) error {
-	return os.Rename(source, target)
-}

@@ -26,22 +26,6 @@ func TestWindowsProviderCredentialErrorContext(t *testing.T) {
 	requirements.ErrorIs(err, expectedErr)
 	assertions.Contains(err.Error(), "encode provider credential path:")
 
-	source := "source\x00credential"
-	_, expectedErr = windows.UTF16PtrFromString(source)
-	requirements.Error(expectedErr)
-	err = replaceStoreFile(source, filepath.Join(t.TempDir(), "target"))
-	requirements.Error(err)
-	requirements.ErrorIs(err, expectedErr)
-	assertions.Contains(err.Error(), "encode provider credential source:")
-
-	target := "target\x00credential"
-	_, expectedErr = windows.UTF16PtrFromString(target)
-	requirements.Error(expectedErr)
-	err = replaceStoreFile(filepath.Join(t.TempDir(), "source"), target)
-	requirements.Error(err)
-	requirements.ErrorIs(err, expectedErr)
-	assertions.Contains(err.Error(), "encode provider credential target:")
-
 	missing := filepath.Join(t.TempDir(), "missing.json")
 	missing16, encodeErr := windows.UTF16PtrFromString(missing)
 	requirements.NoError(encodeErr)

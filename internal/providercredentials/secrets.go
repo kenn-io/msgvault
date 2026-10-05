@@ -119,7 +119,7 @@ func EnsureServerKey(tokenDir string) (string, error) {
 		if err := candidate.Close(); err != nil {
 			return fmt.Errorf("close server credential: %w", err)
 		}
-		if err := replaceStoreFile(candidate.Name(), path); err != nil {
+		if err := atomicfile.Replace(candidate.Name(), path); err != nil {
 			return fmt.Errorf("publish server credential: %w", err)
 		}
 		return atomicfile.SyncDir(tokenDir)
