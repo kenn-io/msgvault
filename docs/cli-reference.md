@@ -3045,6 +3045,10 @@ msgvault embeddings resume [flags]
 
 Continue embedding work and finish the current generation. If a generation matching the configured embedding settings is building, this embeds its remaining rows and activates it once coverage reaches zero; otherwise it tops up the active generation. Equivalent to `msgvault embeddings build` with no flags, but never starts a full rebuild. Accepts the same `--account`/`--collection` scope flags as `embeddings build`.
 
+On newer `main` builds, a failed daemon CLI response stream stops the embedding
+child and releases its job slot. Committed batches remain in the selected
+generation. Run `embeddings resume` again to continue them.
+
 Pass `--backstop` to scan for missing coverage below the per-generation watermark
 as well. This fills gaps in the selected generation without starting a full
 rebuild; it only activates a generation if that generation is building.

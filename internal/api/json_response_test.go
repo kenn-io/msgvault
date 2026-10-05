@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -80,4 +81,21 @@ func TestCLINDJSONEventWriterReplacesInvalidUTF8(t *testing.T) {
 	require.NoError(jsonv2.Unmarshal([]byte(lines[0]), &first))
 	assert.Equal("Calendar: lunch ��", first.Line)
 	assert.Contains(lines[1], `"next"`)
+}
+
+// The HTTP transport reports flush failures through FlushError; middleware must preserve them.
+type failingFlushResponse struct {
+	*httptest.ResponseRecorder
+
+	err error
+}
+
+func (w *failingFlushResponse) FlushError() error { return w.err }
+func TestCLINDJSONEventWriterPropagatesFlushFailureThroughMiddleware(t *testing.T) {
+	transportErr := errors.New("synthetic connection closed")
+	raw := &failingFlushResponse{httptest.NewRecorder(), transportErr}
+	wrapped := newTrackingResponseWriter(newTrackingResponseWriter(raw))
+	write := newCLINDJSONEventWriter[ndjsonTestEvent](wrapped)
+	require.ErrorIs(t, write(ndjsonTestEvent{Line: "progress"}), transportErr)
+	assert.Equal(t, http.StatusOK, wrapped.Status())
 }

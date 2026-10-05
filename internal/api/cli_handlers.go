@@ -2001,13 +2001,13 @@ func newCLINDJSONEventWriter[T any](w http.ResponseWriter) func(T) error {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-store")
 	enc := jsontext.NewEncoder(w, jsontext.AllowInvalidUTF8(true))
-	flusher, _ := w.(http.Flusher)
+	controller := http.NewResponseController(w)
 	return func(event T) error {
 		if err := json.MarshalEncode(enc, event, json.Deterministic(true)); err != nil {
 			return err
 		}
-		if flusher != nil {
-			flusher.Flush()
+		if err := controller.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return err
 		}
 		return nil
 	}

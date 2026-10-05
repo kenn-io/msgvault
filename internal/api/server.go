@@ -1403,13 +1403,13 @@ func (w *trackingResponseWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (w *trackingResponseWriter) Flush() {
+func (w *trackingResponseWriter) Flush() { _ = w.FlushError() }
+
+func (w *trackingResponseWriter) FlushError() error {
 	if w.status == 0 {
 		w.WriteHeader(http.StatusOK)
 	}
-	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
-	}
+	return http.NewResponseController(w.ResponseWriter).Flush()
 }
 
 func (w *trackingResponseWriter) Unwrap() http.ResponseWriter {

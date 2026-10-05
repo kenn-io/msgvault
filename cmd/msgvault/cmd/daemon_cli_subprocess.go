@@ -41,50 +41,59 @@ func runDaemonCLISubprocessStreamWithEnv(
 	cwd string,
 	emit func(stream, data string) error,
 ) error {
-	cmd, err := newDaemonCLISubprocessCommand(ctx, args, env, cwd)
+	childCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd, err := newDaemonCLISubprocessCommand(childCtx, args, env, cwd)
 	if err != nil {
 		return err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("open CLI subprocess stdout: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("open CLI subprocess stderr: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start CLI subprocess: %w", err)
-	}
-
 	var emitMu sync.Mutex
+	var streamErr error
 	emitLocked := func(stream, data string) error {
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		if streamErr != nil {
+			return streamErr
+		}
 		if emit == nil {
 			return nil
 		}
-		emitMu.Lock()
-		defer emitMu.Unlock()
-		return emit(stream, data)
+		if err := emit(stream, data); err != nil {
+			streamErr = fmt.Errorf("stream CLI subprocess %s: %w", stream, err)
+			cancel()
+			return streamErr
+		}
+		return nil
 	}
-
-	streamErrCh := make(chan error, 2)
-	go func() {
-		streamErrCh <- streamDaemonCLIPipe(stdout, cliStreamStdout, emitLocked)
-	}()
-	go func() {
-		streamErrCh <- streamDaemonCLIPipe(stderr, cliStreamStderr, emitLocked)
-	}()
-
-	firstStreamErr := <-streamErrCh
-	secondStreamErr := <-streamErrCh
+	// Let exec own its pipe-copy goroutines. Wait can then close inherited
+	// pipes after WaitDelay; manual pre-Wait drains cannot use that bound.
+	cmd.Stdout = daemonCLIStreamWriter{stream: cliStreamStdout, emit: emitLocked}
+	cmd.Stderr = daemonCLIStreamWriter{stream: cliStreamStderr, emit: emitLocked}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start CLI subprocess: %w", err)
+	}
 	waitErr := cmd.Wait()
-	if firstStreamErr != nil {
-		return firstStreamErr
-	}
-	if secondStreamErr != nil {
-		return secondStreamErr
+	emitMu.Lock()
+	firstErr := streamErr
+	emitMu.Unlock()
+	if firstErr != nil {
+		return firstErr
 	}
 	return classifyDaemonCLIWaitErr(waitErr, args)
+}
+
+type daemonCLIStreamWriter struct {
+	stream string
+	emit   func(stream, data string) error
+}
+
+var _ io.Writer = daemonCLIStreamWriter{}
+
+func (w daemonCLIStreamWriter) Write(data []byte) (int, error) {
+	if err := w.emit(w.stream, string(data)); err != nil {
+		return 0, err
+	}
+	return len(data), nil
 }
 
 // cliSubprocessExitSentinel marks a daemon CLI subprocess that ran and exited
@@ -195,30 +204,4 @@ func sortedEnvKeys(env map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func streamDaemonCLIPipe(
-	r io.Reader,
-	stream string,
-	emit func(stream, data string) error,
-) error {
-	buf := make([]byte, 32*1024)
-	var firstErr error
-	for {
-		n, err := r.Read(buf)
-		if n > 0 && firstErr == nil {
-			if emitErr := emit(stream, string(buf[:n])); emitErr != nil {
-				firstErr = emitErr
-			}
-		}
-		if errors.Is(err, io.EOF) {
-			return firstErr
-		}
-		if err != nil {
-			if firstErr != nil {
-				return firstErr
-			}
-			return fmt.Errorf("read CLI subprocess %s: %w", stream, err)
-		}
-	}
 }
