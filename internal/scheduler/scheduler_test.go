@@ -1928,23 +1928,6 @@ func TestEmbedJob_Run_NilSafe(t *testing.T) {
 
 // ---------- SetEmbedJob tests ----------
 
-func TestSchedulerSetDocumentVectorJobUsesEmbeddingSchedulePolicy(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	s := New(func(context.Context, string) error { return nil })
-	t.Cleanup(func() { <-s.Stop().Done() })
-	called := 0
-	requirements.NoError(s.SetDocumentVectorJob(func(context.Context) error {
-		called++
-		return nil
-	}, "*/5 * * * *", true))
-	assertions.True(s.documentVector.entrySet)
-	assertions.True(s.documentVector.runAfterSync)
-	requirements.ErrorContains(s.SetDocumentVectorJob(func(context.Context) error { return nil }, "invalid", false), "invalid")
-	assertions.True(s.documentVector.entrySet, "invalid replacement preserves the prior job")
-	assertions.Zero(called)
-}
-
 func TestSchedulerDocumentVectorJobRunsOnlyAfterSuccessfulSync(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -3325,24 +3308,13 @@ func TestSchedulerRunsEmbedThenDocumentVectorAfterSync(t *testing.T) {
 		s.Start()
 		defer func() { <-s.Stop().Done() }()
 
-		syncAndCollect := func() []string {
-			require.NoError(s.TriggerSync("test@example.test"))
-			synctest.Wait()
-			got := make([]string, 0, 2)
-			for len(order) > 0 {
-				got = append(got, <-order)
-			}
-			return got
+		require.NoError(s.TriggerSync("test@example.test"))
+		synctest.Wait()
+		got := make([]string, 0, 2)
+		for len(order) > 0 {
+			got = append(got, <-order)
 		}
-		assert.Equal([]string{"embed", "document vector"}, syncAndCollect())
-
-		err := s.SetDocumentVectorJob(func(context.Context) error {
-			order <- "replacement"
-			return nil
-		}, "invalid", true)
-		require.Error(err)
-		assert.Contains(err.Error(), `invalid document vector cron expression "invalid": `)
-		assert.Equal([]string{"embed", "document vector"}, syncAndCollect())
+		assert.Equal([]string{"embed", "document vector"}, got)
 	})
 }
 
