@@ -25,6 +25,8 @@ provide different ways to use the same archive.
   ending the turn; do not ask for permission to commit. Preserve unrelated work.
 - Before committing, inspect `git diff` and `git status`. Include all changes
   from the task, including formatting and generated output.
+- Pull requests must have a user-facing benefit or improve the developer
+  experience, and the body must say which one.
 - Keep PR descriptions focused on the problem, resulting behavior, and review
   boundaries. Do not add `Validation`, `Test plan`, or equivalent command-run
   sections; CI carries routine check results.
