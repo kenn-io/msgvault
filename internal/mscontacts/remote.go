@@ -324,6 +324,9 @@ func (r *Remote) Put(ctx context.Context, href string, body []byte, etag string,
 
 // Delete moves the contact to Deleted Items. Graph ignores If-Match on
 // DELETE, so the ETag is compared first.
+// ponytail: an Outlook edit between the comparison and the DELETE is lost
+// instead of becoming a conflict; Deleted Items still holds the contact.
+// Graph has no conditional delete to close the gap.
 func (r *Remote) Delete(ctx context.Context, href, etag string) error {
 	current, _, found, err := r.lookup(ctx, href)
 	if err != nil {
