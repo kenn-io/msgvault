@@ -299,6 +299,8 @@ func TestMediaImportPersistsAttachmentStatsForListingsAndSearch(t *testing.T) {
 		attachmentpolicy.StateFailed, attachmentpolicy.StateStored,
 	} {
 		t.Run(string(state), func(t *testing.T) {
+			assertions := assert.New(t)
+			requires := require.New(t)
 			imp, client, opts := importerFixture(t)
 			message := syntheticMessage(1, 1, "media")
 			message.Media = []Media{{ID: "document:1", ChatID: 1, MessageID: 1, Role: "document", Size: 6, URL: "https://api.inline.chat/file"}}
@@ -318,24 +320,24 @@ func TestMediaImportPersistsAttachmentStatsForListingsAndSearch(t *testing.T) {
 				})
 			}
 			summary, err := imp.Import(t.Context(), opts)
-			require.NoError(t, err)
+			requires.NoError(err)
 			id := archivedMessage(t, imp.store, summary.SourceID, 1, 1)
 			hasAttachments, attachmentCount := storedMediaMessageStats(t, imp, id)
-			assert.True(t, hasAttachments)
-			assert.Equal(t, 1, attachmentCount)
+			assertions.True(hasAttachments)
+			assertions.Equal(1, attachmentCount)
 			hasAttachments, attachmentCount = storedMediaMessageStats(t, imp, archivedMessage(t, imp.store, summary.SourceID, 1, 2))
-			assert.False(t, hasAttachments)
-			assert.Zero(t, attachmentCount)
+			assertions.False(hasAttachments)
+			assertions.Zero(attachmentCount)
 			refs, err := imp.store.MessageInlineProviderAttachments(id)
-			require.NoError(t, err)
-			assert.Equal(t, state, refs["inline:document:1"].State)
+			requires.NoError(err)
+			assertions.Equal(state, refs["inline:document:1"].State)
 			engine := query.NewSQLiteEngine(imp.store.DB())
 			results, err := engine.Search(t.Context(), search.Parse("has:attachment"), 10, 0)
-			require.NoError(t, err)
-			require.Len(t, results, 1)
-			assert.Equal(t, id, results[0].ID)
-			assert.True(t, results[0].HasAttachments)
-			assert.Equal(t, 1, results[0].AttachmentCount)
+			requires.NoError(err)
+			requires.Len(results, 1)
+			assertions.Equal(id, results[0].ID)
+			assertions.True(results[0].HasAttachments)
+			assertions.Equal(1, results[0].AttachmentCount)
 		})
 	}
 }

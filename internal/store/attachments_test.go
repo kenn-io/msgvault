@@ -622,26 +622,28 @@ func TestInlineRetryableMediaFailsClosedOnUnknownRoster(t *testing.T) {
 }
 
 func TestInlineAttachmentReplacementRecomputesStatsAndPreservesOtherOccurrences(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("inline", "api.inline.chat:user:42")
-	require.NoError(t, err)
+	requires.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "chat:1", "direct_chat", "Synthetic chat")
-	require.NoError(t, err)
+	requires.NoError(err)
 	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "chat:1:message:1")
-	require.NoError(t, st.UpsertAttachment(messageID, "legacy.txt", "text/plain", "legacy:1", "", 1))
+	requires.NoError(st.UpsertAttachment(messageID, "legacy.txt", "text/plain", "legacy:1", "", 1))
 	var has bool
 	var count int
-	require.NoError(t, st.ReplaceMessageInlineProviderAttachments(messageID, []store.AttachmentRef{{
+	requires.NoError(st.ReplaceMessageInlineProviderAttachments(messageID, []store.AttachmentRef{{
 		SourceAttachmentID: "inline:document:1", StoragePath: "inline:pending:document:1", State: attachmentpolicy.StatePending,
 	}}))
-	require.NoError(t, st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`, messageID).Scan(&has, &count))
-	assert.True(t, has)
-	assert.Equal(t, 2, count)
-	require.NoError(t, st.ReplaceMessageInlineProviderAttachments(messageID, nil))
-	require.NoError(t, st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`, messageID).Scan(&has, &count))
-	assert.True(t, has)
-	assert.Equal(t, 1, count)
+	requires.NoError(st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`, messageID).Scan(&has, &count))
+	assertions.True(has)
+	assertions.Equal(2, count)
+	requires.NoError(st.ReplaceMessageInlineProviderAttachments(messageID, nil))
+	requires.NoError(st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`, messageID).Scan(&has, &count))
+	assertions.True(has)
+	assertions.Equal(1, count)
 	refs, err := st.MessageInlineProviderAttachments(messageID)
-	require.NoError(t, err)
-	assert.Empty(t, refs)
+	requires.NoError(err)
+	assertions.Empty(refs)
 }
