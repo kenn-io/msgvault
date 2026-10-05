@@ -1,6 +1,8 @@
 package api
 
 import (
+	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,6 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/mscontacts"
+	"golang.org/x/oauth2"
 )
 
 func TestCardDAVMicrosoftAccountSelection(t *testing.T) {
@@ -45,4 +48,19 @@ func TestCardDAVMicrosoftServiceNeedsContactsToken(t *testing.T) {
 	controller.cfg.Data.DataDir = t.TempDir()
 	_, err := controller.microsoftContactsManager("person@example.com")
 	require.ErrorIs(t, err, errMicrosoftContactsAuthorization)
+}
+
+func TestMicrosoftContactsTokenErrorMarksRevokedTokenUnauthorized(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	revoked := microsoftContactsTokenError(&oauth2.RetrieveError{ErrorCode: "invalid_grant"})
+	require.ErrorIs(revoked, errMicrosoftContactsAuthorization)
+	status, ok := errors.AsType[*carddav.StatusError](revoked)
+	require.True(ok)
+	require.Equal(http.StatusUnauthorized, status.StatusCode)
+
+	unavailable := microsoftContactsTokenError(&oauth2.RetrieveError{ErrorCode: "temporarily_unavailable"})
+	require.NotErrorIs(unavailable, errMicrosoftContactsAuthorization)
+	_, ok = errors.AsType[*carddav.StatusError](unavailable)
+	require.False(ok)
 }

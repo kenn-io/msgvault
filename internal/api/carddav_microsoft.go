@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"golang.org/x/oauth2"
+
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/mscontacts"
@@ -53,10 +55,20 @@ func (c *CardDAVController) microsoftService(credential carddav.Credential) (car
 		}
 		accessToken, err := source(ctx)
 		if err != nil {
-			return "", fmt.Errorf("obtain Microsoft contacts token: %w", err)
+			return "", microsoftContactsTokenError(err)
 		}
 		return accessToken, nil
 	}
 	remote := mscontacts.NewRemote(mscontacts.GraphBaseURL, token)
 	return carddav.NewRemoteService(c.store, remote).ForConnection(c.connection(), credential.ConnectionGeneration), nil
+}
+
+// microsoftContactsTokenError marks a revoked or expired refresh token as a
+// 401, so sync asks the user to sign in again.
+func microsoftContactsTokenError(err error) error {
+	err = fmt.Errorf("obtain Microsoft contacts token: %w", err)
+	if retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok && retrieveErr.ErrorCode == "invalid_grant" {
+		return errors.Join(err, errMicrosoftContactsAuthorization, &carddav.StatusError{StatusCode: http.StatusUnauthorized})
+	}
+	return err
 }
