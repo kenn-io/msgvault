@@ -7,6 +7,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // htmlToText converts an HTML string to plain text by delegating to
@@ -14,14 +15,6 @@ import (
 // whitespace. It is a thin wrapper so tests can target it directly.
 func htmlToText(html string) string {
 	return mime.StripHTML(html)
-}
-
-func snippet(text string) string {
-	r := []rune(text)
-	if len(r) > 100 {
-		return string(r[:100])
-	}
-	return text
 }
 
 // recordingLine renders a call-recording pointer for inclusion in the message
@@ -63,7 +56,7 @@ func mapMessage(gm *ChatMessage, conversationID, sourceID int64, sourceMessageID
 		MessageType:     "teams",
 		SentAt:          sql.NullTime{Time: gm.CreatedDateTime, Valid: !gm.CreatedDateTime.IsZero()},
 		ReceivedAt:      sql.NullTime{Time: gm.CreatedDateTime, Valid: !gm.CreatedDateTime.IsZero()},
-		Snippet:         sql.NullString{String: snippet(text), Valid: text != ""},
+		Snippet:         sql.NullString{String: textutil.PrefixRunes(text, 100), Valid: text != ""},
 		SizeEstimate:    int64(len(text)),
 		HasAttachments:  attCount > 0,
 		AttachmentCount: attCount,

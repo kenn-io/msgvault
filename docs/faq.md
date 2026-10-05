@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-22
+last_edited: 2026-10-02
 title: Frequently Asked Questions
 description: Common questions about msgvault, Gmail API safety, and what the tool can and cannot do.
 ---
@@ -25,8 +25,10 @@ is not a promise that the assistant cannot access private archive content.
 
 MCP can stage a deletion manifest but cannot execute remote deletion, send mail,
 or sync new messages. Optional profile writes require `--allow-profile-writes`;
-HTTP write tools also need `--http-allow-writes`. Execution of a staged mail
-deletion remains a separate CLI step. See the [MCP tool and access reference](usage/chat.md).
+calendar event mutations require `--allow-calendar-writes` and explicit
+per-operation approval through an MCP client that supports elicitation. HTTP
+writes also need `--http-allow-writes`. Execution of a staged mail deletion
+remains a separate CLI step. See the [MCP tool and access reference](usage/chat.md).
 
 Treat imported messages, attachments, and generated briefs as untrusted input to
 an assistant. Choose an assistant and model provider you are willing to give

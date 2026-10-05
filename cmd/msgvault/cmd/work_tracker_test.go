@@ -4,9 +4,12 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/scheduler"
 )
 
 type fakeDaemonWorkTracker struct {
@@ -105,4 +108,27 @@ func TestCombineWorkTrackersUnwindsWhenLaterTrackerRejects(t *testing.T) {
 	assert.Equal(1, firstDone, "first done")
 	assert.Equal(1, secondBegin, "second begin")
 	assert.Equal(0, secondDone, "second done")
+}
+
+func TestServeSchedulerReportsActualGateHolder(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		gate := api.NewSerialOperationGate()
+		sched, media := newServeSchedulers(nil, testDiscardLogger(), &fakeDaemonWorkTracker{allow: true}, gate)
+		defer func() { <-sched.Stop().Done(); <-media.Stop().Done() }()
+		release := make(chan struct{})
+		require.NoError(sched.AddJob(scheduler.Job{Name: "activity-projection", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
+			<-release
+			return nil
+		}}))
+		require.NoError(sched.StartJob("activity-projection"))
+		synctest.Wait()
+		label, since, busy := gate.Holder()
+		assert.True(busy)
+		assert.False(since.IsZero())
+		assert.Equal("activity-projection", label)
+		close(release)
+		synctest.Wait()
+	})
 }

@@ -1571,7 +1571,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	switch {
 	case scheduling.kind == sourceScheduleNonSchedulable:
 		status.SyncUnavailableReason = "source_not_schedulable"
-	case status.ActiveSync != nil || schedulerRunning:
+	case status.ActiveSync != nil || schedulerRunning || status.SchedulerQueued || status.SchedulerPending:
 		status.SyncUnavailableReason = "sync_already_running"
 	case s.scheduler == nil:
 		status.SyncUnavailableReason = "scheduler_unavailable"

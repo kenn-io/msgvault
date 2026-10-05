@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/vector/visual"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -26,6 +27,12 @@ var mcpHTTPAddr string
 var mcpHTTPAllowInsecure bool
 var mcpHTTPAllowWrites bool
 var mcpAllowProfileWrites bool
+var mcpAllowIdentityDecisions bool
+var mcpAllowIdentityScoring bool
+var mcpAllowPersonMerges bool
+var mcpAllowCardDAVWrites bool
+var mcpAllowCalendarWrites bool
+var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -48,15 +55,33 @@ Add to Claude Desktop config:
 	  }`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
-		if state == nil || state.cfg == nil {
+		if state == nil || (state.cfg == nil && !isAgentMode(state)) {
 			return errors.New("configuration is unavailable")
 		}
+		if isAgentMode(state) && mcpHTTPAddr != "" {
+			return usageErr(cmd, errors.New("delegated MCP supports stdio only"))
+		}
 		cfg := state.cfg
+		httpAddr, inboundKey, err := prepareMCPHTTP(cmd, cfg)
+		if err != nil {
+			return usageErr(cmd, err)
+		}
 		st, info, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("open daemon: %w", err)
 		}
 		defer func() { _ = st.Close() }()
+		if httpAddr != "" {
+			if !cmd.Flags().Changed("http-token-file") && !cmd.Flags().Changed("http-token-env") {
+				// Local startup may have created the key. OpenHTTPStore refreshes
+				// it after discovering or starting the daemon that owns the archive.
+				inboundKey = cfg.Server.AuthenticationKey()
+			}
+			httpAddr, err = normalizeMCPHTTPAddr(httpAddr, mcpHTTPAllowInsecure, inboundKey != "")
+			if err != nil {
+				return usageErr(cmd, err)
+			}
+		}
 
 		// Derive from cmd.Context() so signal handling installed by
 		// the cobra root command (SIGINT/SIGTERM → ctx.Done()) reaches
@@ -66,38 +91,85 @@ Add to Claude Desktop config:
 		defer cancel()
 
 		opts := daemonMCPServeOptions(ctx, st, state)
+		if isAgentMode(state) && opts.Calendar == nil {
+			return fmt.Errorf("calendar delegation requires a daemon with API schema %s or later", calendarControlMinAPISchemaVersion)
+		}
 		opts.AllowProfileWrites = mcpAllowProfileWrites
+		opts.AllowIdentityDecisions = mcpAllowIdentityDecisions
+		opts.AllowIdentityScoring = mcpAllowIdentityScoring
+		opts.AllowPersonMerges = mcpAllowPersonMerges
+		opts.AllowCardDAVWrites = mcpAllowCardDAVWrites
+		opts.AllowCalendarWrites = mcpAllowCalendarWrites
 
-		if mcpHTTPAddr != "" {
-			normalized, err := normalizeMCPHTTPAddr(
-				mcpHTTPAddr,
-				mcpHTTPAllowInsecure,
-				cfg.Server.APIKey != "",
-			)
-			if err != nil {
-				return usageErr(cmd, err)
-			}
+		if httpAddr != "" {
 			return serveMCPHTTPWithOptions(ctx, opts, mcpserver.HTTPOptions{
-				Addr:               normalized,
+				Addr:               httpAddr,
 				DiscoveryDirectory: filepath.Join(cfg.HomeDir, "mcp"),
 				BackendURL:         info.URL,
-				APIKey:             cfg.Server.APIKey,
+				APIKey:             inboundKey,
 				AllowWrites:        mcpHTTPAllowWrites,
 			})
 		}
-		return mcpserver.ServeWithOptions(ctx, opts)
+		return serveMCPStdioWithOptions(ctx, opts)
 	},
+}
+
+// prepareMCPHTTP validates inbound sources and the address without creating keys.
+// Explicit inbound sources leave the daemon's unused server credential alone.
+func prepareMCPHTTP(cmd *cobra.Command, cfg *config.Config) (string, string, error) {
+	fileSet := cmd.Flags().Changed("http-token-file")
+	envSet := cmd.Flags().Changed("http-token-env")
+	if mcpHTTPAddr == "" {
+		if fileSet || envSet || cmd.Flags().Changed("http") {
+			return "", "", errors.New("HTTP token flags require --http with an address")
+		}
+		return "", "", nil
+	}
+	var key string
+	var err error
+	var deferKeyCheck bool
+	switch {
+	case fileSet:
+		path, _ := cmd.Flags().GetString("http-token-file")
+		if path == "" {
+			return "", "", errors.New("--http-token-file must not be empty")
+		}
+		key, err = providercredentials.ReadSecretFile(path)
+	case envSet:
+		name, _ := cmd.Flags().GetString("http-token-env")
+		if name == "" {
+			return "", "", errors.New("--http-token-env must not be empty")
+		}
+		key, err = providercredentials.ResolveSecret("", "", name)
+	default:
+		err = cfg.ResolveServerKey()
+		key = cfg.Server.AuthenticationKey()
+		// A local daemon may create the default key during startup. Enforce
+		// the inbound key requirement after OpenHTTPStore has resolved it.
+		deferKeyCheck = !isRemoteModeFor(invocationFromCommand(cmd))
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("MCP inbound credential: %w", err)
+	}
+	address, err := normalizeMCPHTTPAddr(mcpHTTPAddr, mcpHTTPAllowInsecure, key != "" || deferKeyCheck)
+	return address, key, err
 }
 
 // savedViewsMinAPISchemaVersion is the first daemon API schema that runs Saved
 // Views through POST /api/v1/saved-views/{id}/run.
 const savedViewsMinAPISchemaVersion = "2.21.0"
+const personCardDAVMinAPISchemaVersion = "2.32.0"
+const identityReviewMinAPISchemaVersion = "3.0.0"
+const identityScoringMinAPISchemaVersion = "3.0.0"
 
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
 
 // archiveSQLMinAPISchemaVersion adds SQL confined to archive analytics files.
 const archiveSQLMinAPISchemaVersion = "2.31.0"
+
+// calendarControlMinAPISchemaVersion adds delegated Calendar tools.
+const calendarControlMinAPISchemaVersion = "3.1.0"
 
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.
@@ -167,12 +239,27 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
 		opts.Meetings = st
 	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
+		opts.Calendar = st
+	}
+	if isAgentMode(state) {
+		return mcpserver.ServeOptions{Calendar: opts.Calendar, CalendarOnly: true}
+	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, archiveSQLMinAPISchemaVersion) &&
 		(health.AnalyticsEngine == nil || *health.AnalyticsEngine != api.AnalyticsModePostgres) {
 		opts.ArchiveSQLQuerier = engine
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityReviewMinAPISchemaVersion) {
+		opts.IdentityReview = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personCardDAVMinAPISchemaVersion) {
+		opts.PersonCardDAV = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityScoringMinAPISchemaVersion) {
+		opts.IdentityScoring = st
 	}
 
 	return opts
@@ -323,21 +410,34 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpHTTPAddr, "http", "",
 		"Serve over StreamableHTTP on this address (e.g. 127.0.0.1:8080) "+
 			"instead of stdio. Bare port forms (':8080', '8080') bind to "+
-			"loopback only; non-loopback hosts require [server].api_key or "+
+			"loopback only; non-loopback hosts require an inbound key or "+
 			"--http-allow-insecure.")
+	mcpCmd.Flags().String("http-token-file", "", "Read an independent inbound bearer key from an owner-only file (requires --http)")
+	mcpCmd.Flags().String("http-token-env", "", "Name the environment variable holding an inbound bearer key (requires --http; file takes priority)")
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowInsecure, "http-allow-insecure", false,
-		"Allow --http to bind a non-loopback address without [server].api_key. "+
+		"Allow --http to bind a non-loopback address without an inbound key. "+
 			"Any configured key still requires bearer authentication. Without a "+
 			"key, any reachable client can read your archive; only set this behind "+
 			"a trusted network boundary or authenticating reverse proxy.")
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
 		"Expose write-class MCP tools over HTTP. This permits attachment exports, "+
 			"deletion manifests, Saved View management, and profile writes separately enabled with "+
-			"--allow-profile-writes; enable it only for trusted, authenticated clients.")
+			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, and calendar writes enabled "+
+			"with their separate opt-ins; enable it only for trusted, authenticated clients.")
 	mcpCmd.Flags().BoolVar(&mcpAllowProfileWrites, "allow-profile-writes", false,
 		"Expose person promotion and private Notes writes. Model tool calls "+
 			"can persist profile data, so enable this only for sessions where the user "+
 			"has explicitly authorized profile writes.")
+	mcpCmd.Flags().BoolVar(&mcpAllowIdentityDecisions, "allow-identity-decisions", false,
+		"Expose identity match accept/reject tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowIdentityScoring, "allow-identity-scoring", false,
+		"Expose manual identity scoring that sends evidence to the fixed Jev provider. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowPersonMerges, "allow-person-merges", false,
+		"Expose local person merge tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowCardDAVWrites, "allow-carddav-writes", false,
+		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowCalendarWrites, "allow-calendar-writes", false,
+		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
 	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
 	_ = mcpCmd.Flags().MarkHidden("force-sql")
@@ -385,7 +485,7 @@ func normalizeMCPHTTPAddr(addr string, allowInsecure, authenticated bool) (strin
 	if !authenticated && !allowInsecure {
 		return "", fmt.Errorf(
 			"--http %q: refusing to bind a non-loopback address without "+
-				"[server].api_key or --http-allow-insecure (configure an API key "+
+				"an inbound key or --http-allow-insecure (configure an API key "+
 				"for bearer authentication, or only opt into unauthenticated "+
 				"access behind a trusted network boundary)", trimmed)
 	}

@@ -530,6 +530,7 @@ type CLIAddCalendarPlanRequest struct {
 	OAuthApp         string `json:"oauth_app,omitempty"`
 	OAuthAppExplicit bool   `json:"oauth_app_explicit,omitzero"`
 	Headless         bool   `json:"headless,omitzero"`
+	Write            bool   `json:"write,omitzero"`
 }
 
 type CLIAddCalendarPlanResponse struct {
@@ -1694,6 +1695,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-beeper",
 		"add-calendar",
 		"add-circleback",
+		"add-plaud",
 		"add-discord",
 		"add-granola",
 		"add-imap",
@@ -1748,6 +1750,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-beeper",
 		"sync-calendar",
 		"sync-circleback",
+		"sync-plaud",
 		"sync-discord",
 		"sync-granola",
 		"sync-inline",
@@ -3026,47 +3029,16 @@ func (s *Server) handleCLIIdentityDiscover(w http.ResponseWriter, r *http.Reques
 			))
 			return
 		}
-		configured, configErr := s.cfg.FastmailSourceFor(cliStore, source.ID)
-		if configErr != nil {
-			wrappedConfigErr := fmt.Errorf("resolve [[fastmail]] configuration for source %d: %w", source.ID, configErr)
-			classifiedConfigErr := opserr.Invalid(wrappedConfigErr)
-			if errors.Is(configErr, config.ErrFastmailSourceLookup) {
-				classifiedConfigErr = opserr.Internal(wrappedConfigErr)
+		externalEvidence, resolveErr = s.discoverProviderIdentityEvidence(r.Context(), cliStore, source)
+		if resolveErr != nil {
+			if s.writeIfContextError(w, resolveErr) {
+				return
 			}
 			writeAPIHTTPError(w, s.operationError(
-				classifiedConfigErr,
-				identityOperationErrorPolicy,
-				"Failed to discover identities",
+				resolveErr, identityOperationErrorPolicy, "Failed to discover identities",
 			))
 			return
 		}
-		if configured == nil {
-			account := source.Identifier
-			if source.DisplayName.Valid && strings.TrimSpace(source.DisplayName.String) != "" {
-				account = strings.TrimSpace(source.DisplayName.String)
-			}
-			writeAPIHTTPError(w, s.operationError(
-				opserr.Invalid(fmt.Errorf(
-					"source %d (%s) has no matching [[fastmail]] configuration",
-					source.ID,
-					account,
-				)),
-				identityOperationErrorPolicy,
-				"Failed to discover identities",
-			))
-			return
-		}
-		inventory := s.fastmailInventoryFactory(configured.APIToken)
-		records, inventoryErr := inventory.ListIdentityRecords(r.Context())
-		if inventoryErr != nil {
-			writeAPIHTTPError(w, s.operationError(
-				opserr.Internal(fmt.Errorf("fastmail identity inventory request failed: %w", inventoryErr)),
-				identityOperationErrorPolicy,
-				"Failed to discover identities",
-			))
-			return
-		}
-		externalEvidence = provideridentity.Evidence(records)
 		req.SourceSelector = identityops.SourceSelector{SourceID: source.ID}
 	}
 
@@ -3108,6 +3080,57 @@ func (s *Server) handleCLIIdentityDiscover(w http.ResponseWriter, r *http.Reques
 	if err := writeEvent(identityops.DiscoverEvent{Type: "result", Result: &result}); err != nil {
 		s.logger.Error("failed to stream CLI identity discovery result", "error", err)
 	}
+}
+
+// discoverProviderIdentityEvidence reads evidence from the selected source's provider.
+func (s *Server) discoverProviderIdentityEvidence(
+	ctx context.Context, cliStore CLIStore, source *store.Source,
+) ([]identityops.ExternalEvidence, error) {
+	if source.SourceType == "gmail" {
+		if s.gmailProfileAddress == nil {
+			return nil, opserr.Invalid(errors.New(
+				"authenticated Gmail profile discovery is unavailable on this daemon",
+			))
+		}
+		address, err := s.gmailProfileAddress(ctx, source)
+		if err != nil {
+			if credentialErr, ok := errors.AsType[*provideridentity.GmailCredentialError](err); ok {
+				if remediation := credentialErr.Remediation(); remediation != "" {
+					return nil, opserr.Invalid(errors.New(remediation))
+				}
+			}
+			return nil, opserr.Internal(fmt.Errorf("authenticated Gmail profile discovery failed: %w", err))
+		}
+		evidence, err := provideridentity.GmailProfileEvidence(source, address)
+		if err != nil {
+			return nil, opserr.Invalid(err)
+		}
+		return evidence, nil
+	}
+
+	configured, err := s.cfg.FastmailSourceFor(cliStore, source.ID)
+	if err != nil {
+		wrapped := fmt.Errorf("resolve [[fastmail]] configuration for source %d: %w", source.ID, err)
+		if errors.Is(err, config.ErrFastmailSourceLookup) {
+			return nil, opserr.Internal(wrapped)
+		}
+		return nil, opserr.Invalid(wrapped)
+	}
+	if configured == nil {
+		account := source.Identifier
+		if source.DisplayName.Valid && strings.TrimSpace(source.DisplayName.String) != "" {
+			account = strings.TrimSpace(source.DisplayName.String)
+		}
+		return nil, opserr.Invalid(fmt.Errorf(
+			"source %d (%s) has no matching [[fastmail]] configuration", source.ID, account,
+		))
+	}
+	inventory := s.fastmailInventoryFactory(configured.APIToken)
+	records, err := inventory.ListIdentityRecords(ctx)
+	if err != nil {
+		return nil, opserr.Internal(fmt.Errorf("fastmail identity inventory request failed: %w", err))
+	}
+	return provideridentity.Evidence(records), nil
 }
 
 func identityDiscoveryTerminalError(err error) identityops.DiscoverError {

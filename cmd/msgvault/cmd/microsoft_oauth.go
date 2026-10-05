@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/teams"
 )
 
 // oauthPreflightedFlag marks that the frontend CLI already completed the
@@ -38,6 +42,21 @@ func requireMicrosoftOAuthConfig(cfg *config.Config) error {
 			"See docs for Azure AD app registration setup")
 	}
 	return nil
+}
+
+// newTeamsClient builds a Graph client for email's persisted Teams token.
+func newTeamsClient(ctx context.Context, cfg *config.Config, logger *slog.Logger, email string) (*teams.Client, error) {
+	mgr := microsoft.NewGraphManager(cfg.Microsoft.ClientID, cfg.Microsoft.EffectiveTenantID(),
+		cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), logger)
+	tokenFn, err := mgr.TokenSource(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	qps := float64(cfg.Sync.RateLimitQPS)
+	if qps <= 0 {
+		qps = 5
+	}
+	return teams.NewClient("https://graph.microsoft.com/v1.0", tokenFn, qps), nil
 }
 
 // microsoftTenantID resolves the tenant, letting a per-command flag

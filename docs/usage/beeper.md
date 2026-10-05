@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-26"
+last_edited: "2026-10-02"
 title: Beeper
 description: Archive every chat network connected to Beeper Desktop via its local API.
 ---
@@ -11,6 +11,11 @@ or filter to one account.
 
 All messages imported this way use `message_type = beeper`. Sync only reads
 Beeper; it does not send or edit messages or mark conversations read.
+
+Separately, enable [Beeper chat drafts](../cli-reference.md#beeper-chat-drafts)
+per source to place text in Beeper's message box for review. msgvault never
+sends it. Writes stop if the box already contains unrelated text, but text
+typed between the check and write can still be lost.
 
 ## Prerequisites
 

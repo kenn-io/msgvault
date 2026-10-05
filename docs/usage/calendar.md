@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-10-04"
 title: Google Calendar
 description: Archive Google Calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
 ---
@@ -10,8 +10,9 @@ search is enabled), and their organizers and attendees join the same contact
 graph as the people you email — so a meeting with `alice@example.com` dedupes
 against the messages you exchanged with her.
 
-Calendar sync is **read-only**: msgvault never creates, edits, or deletes
-anything on your Google Calendar.
+Calendar sync is **read-only**. The separate event-control commands can change
+live events when you opt in to write consent and source permissions. Event
+control described below is unreleased functionality.
 
 ## Prerequisites
 
@@ -49,6 +50,7 @@ only read).
 | `--calendars` | Comma-separated calendar IDs to register |
 | `--oauth-app` | Named OAuth app to use |
 | `--headless` | Print headless-server setup instructions instead of opening a browser |
+| `--write` | Also request `calendar.events` for event control; source write permissions are still required |
 
 ## Sync events
 
@@ -84,6 +86,128 @@ only what changed. Interrupted full syncs resume from a checkpoint; pass
 
 The first argument can be an account email or the `name` of a `[[gcal]]` entry in
 `config.toml` (see [Scheduled sync](#scheduled-sync-daemon) below).
+
+## Control events (unreleased)
+
+Authorize writes separately from sync:
+
+```bash
+msgvault add-calendar person@example.com --write
+```
+
+Re-consent preserves the existing Gmail grant, including a Gmail grant narrowed
+to read-only, and other already granted Google scopes. Keep them checked on the
+consent screen. Headless setup uses the same steps below with `--write` on both
+machines. Workspace service accounts also need the `calendar.events` scope in
+their domain-wide delegation grant.
+
+Enable the source and select exact writable calendar IDs in `config.toml`:
+
+```toml
+[[gcal]]
+email = "person@example.com"
+enabled = true
+write_calendars = ["team@example.com"]
+invite_calendars = ["team@example.com"]
+calendar_aliases = { team = "team@example.com" }
+```
+
+Restart the daemon after changing its configuration. `--account` chooses the
+OAuth account; the positional calendar chooses the event's calendar and
+organizer. They may differ. The daemon checks the target's current `accessRole`
+from Google before every write. A non-primary calendar must be present with
+`owner` or `writer` access; `reader` access cannot create events.
+
+```bash
+msgvault calendar create team --account person@example.com \
+  --summary "Planning" --from 2026-10-02T09:00:00Z --to 2026-10-02T10:00:00Z \
+  --attendees guest@example.com --dry-run --json
+
+# After inspecting the plan, repeat without --dry-run to create the event.
+msgvault calendar update team EVENT_ID --account person@example.com \
+  --add-attendee another@example.com
+
+msgvault calendar respond team EVENT_ID --account person@example.com --status accepted
+msgvault calendar delete team EVENT_ID --account person@example.com
+```
+
+Guest notifications default to `sendUpdates=none`. Pass `--send-updates all` or
+`externalOnly` to request them. `none` suppresses notifications; it does not
+prevent guest or invitation state from changing. Guest changes, RSVP, and edits,
+deletes, or moves of events with guests require `invite_calendars` as well as
+`write_calendars`. Moving also checks both calendars' roles and permissions.
+`respond` changes only the attendee marked as self by Google. Organizers cannot
+respond to their own event.
+
+`--dry-run` performs the live reads and permission checks, then returns a plan
+without changing Google or the archive. `--read-only` rejects every event write,
+including a dry run. Use `--all-day` with date-only bounds; `--to` is exclusive.
+For timed events, use RFC3339 with an offset, or local `YYYY-MM-DDTHH:MM` with an
+IANA `--tz`. Timed recurrence uses the target calendar's time zone when the
+event has no explicit zone. See the [CLI contract](../cli-reference.md#calendar) for field and
+reminder flags.
+
+Recurring edits default to `--scope single`. A series ID requires
+`--original-start`; an instance ID selects that occurrence directly.
+`--scope all` selects the series master. `--scope future --original-start ...`
+truncates the original series and creates a replacement for an update, or only
+truncates it for a delete. Future scope supports one RRULE and rejects RDATE,
+EXDATE, multiple rules, non-default event types, and detached future exceptions,
+including cancellations. Future updates also reject private-copy propagation,
+meeting details, attachments, custom metadata, labels, colors, visibility, and
+guest permissions that a new series would lose. They also reject future splits when
+guest RSVP responses would be lost; edit those series manually.
+An `UNTIL`-limited series rejects a replacement start after its existing
+cutoff unless the update supplies a new recurrence rule.
+Changing between all-day and timed events also requires an explicit compatible
+rule when the inherited rule uses `UNTIL`. A changed start must match its
+recurrence rule; moving a Monday series to Tuesday requires a Tuesday rule.
+Future edits reject an `original_start` that differs from the selected instance
+and scheduling changes that overlap retained occurrences, including rescheduled
+exceptions. Earlier moves that fit between retained events remain allowed.
+It checks at most 10,000 recurrence instances and 100 event-list pages.
+Recurring moves are rejected; move supports standalone events.
+
+Successful writes enter the archive immediately, through the normal calendar
+sync persistence path. Cancelling retains the archived event and marks it
+cancelled; moving archives the destination and cancellation on the old calendar.
+Sync cursors do not advance, so the next sync can safely re-deliver the change.
+The response includes completed writes and archive message IDs. If a remote
+change succeeds but archiving fails, run `sync-calendar` to reconcile it; do not
+repeat the mutation. Future-series updates use two Google requests. If the replacement definitely
+fails, the daemon attempts to restore the original
+recurrence using the version returned by the shortening request. A concurrent
+edit prevents that restoration. The response reports completed writes and whether
+restoration succeeded; inspect it before taking further action.
+If the second write's outcome is unknown, the daemon does not attempt restoration
+and the result sets `outcome_unknown`;
+the `outcome_code` is `calendar_outcome_unknown`. Reconcile the current calendar
+state and completed receipts before taking further action. Do not replay the
+uncertain write based only on its response. A known partial provider failure
+uses `outcome_code: calendar_partial`.
+
+Query availability without event-write consent:
+
+```bash
+msgvault calendar freebusy team --account person@example.com \
+  --from 2026-10-02T00:00:00Z --to 2026-10-03T00:00:00Z --json
+msgvault calendar conflicts team --account person@example.com \
+  --calendars team,other@example.com \
+  --from 2026-10-02T00:00:00Z --to 2026-10-03T00:00:00Z --json
+```
+
+Conflicts are overlapping busy periods between selected calendars. Provider
+errors are reported instead of treating unavailable calendars as free time.
+
+The [HTTP API](../api-server.md#calendar-control) and
+[MCP tools](chat.md#calendar-control) use the same daemon checks and archive path.
+Delegated grants apply to the exact calendar source identity
+`gcal` plus `account-email/calendar-id`: `calendar.read` permits availability,
+`calendar.event.read` permits provider-derived event details in delegated plans
+and write receipts, `calendar.write` permits event changes, and `calendar.invite`
+additionally permits guest changes. None of these permissions implies the others.
+Write-only grants still receive live validation results, which can reveal timing
+constraints even when event details are hidden.
 
 ## What gets archived
 

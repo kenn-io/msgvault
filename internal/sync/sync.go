@@ -1345,6 +1345,10 @@ func (s *Syncer) full(
 		s.failStoppedSync(state.syncID, err)
 		return nil, fmt.Errorf("get profile: %w", err)
 	}
+	if err := s.refreshProfileIdentity(ctx, source, profile); err != nil {
+		s.failStoppedSync(state.syncID, err)
+		return nil, err
+	}
 	handoffHistoryID := profile.HistoryID
 	if reconcilePresence {
 		if state.handoffCursor == "" {

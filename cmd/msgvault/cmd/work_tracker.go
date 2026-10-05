@@ -31,6 +31,10 @@ func (t labeledWorkTracker) BeginWorkContext(ctx context.Context) (func(), bool)
 	return t.gate.BeginLabeledWorkContext(ctx, t.label)
 }
 
+func (t labeledWorkTracker) BeginLabeledWorkContext(ctx context.Context, label string) (func(), bool) {
+	return t.gate.BeginLabeledWorkContext(ctx, label)
+}
+
 // ShouldYield reports whether an API request is queued behind this holder,
 // so resumable scheduled work steps aside instead of blocking it.
 func (t labeledWorkTracker) ShouldYield() bool {
@@ -83,6 +87,10 @@ func (t combinedWorkTracker) ShouldYield() bool {
 }
 
 func (t combinedWorkTracker) BeginWorkContext(ctx context.Context) (func(), bool) {
+	return t.BeginLabeledWorkContext(ctx, "")
+}
+
+func (t combinedWorkTracker) BeginLabeledWorkContext(ctx context.Context, label string) (func(), bool) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -94,7 +102,13 @@ func (t combinedWorkTracker) BeginWorkContext(ctx context.Context) (func(), bool
 			}
 			return func() {}, false
 		}
-		done, ok := tracker.BeginWorkContext(ctx)
+		var done func()
+		var ok bool
+		if labeled, supportsLabels := tracker.(scheduler.LabeledWorkTracker); supportsLabels && label != "" {
+			done, ok = labeled.BeginLabeledWorkContext(ctx, label)
+		} else {
+			done, ok = tracker.BeginWorkContext(ctx)
+		}
 		if !ok {
 			for _, v := range slices.Backward(dones) {
 				v()

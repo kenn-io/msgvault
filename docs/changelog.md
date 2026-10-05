@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-01"
+last_edited: "2026-10-03"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,178 +8,261 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- **CardDAV sync API breaking change:** omitting `connection` from
-  `POST /api/v1/carddav/sync` now syncs all enabled connections. With at least one
-  enabled connection, it returns HTTP 200 even if every sync fails; API and
-  `pkg/client` callers must inspect `status` and each connection's outcome.
-  Send `{"connection":"default"}` for the previous single-account HTTP error
-  behavior or to sync a disabled default account manually. See
+- Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` writes only new
+  and changed messages instead of rewriting the whole archive, and picks up
+  edits and senders that `LID.sqlite` resolves later.
+
+- [Calendar event control](usage/calendar.md#control-events-unreleased) adds
+  create, update, delete, move, self RSVP, and availability commands, plus HTTP
+  and MCP interfaces. Write consent and exact source permissions are opt-in;
+  guest notifications default to `none`. The daemon verifies calendar access
+  and archives successful changes immediately.
+- Adding Calendar to a Gmail token recognizes Google's short and expanded
+  `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
+
+## 0.21.0
+<small>2026-10-02</small>
+
+Find your way around the new Web UI, prepare mail and chat drafts, and bring
+Microsoft Graph mail and Muesli meetings into your archive. This release also
+adds reviewed identity tools for agents and reduces repeated sync and search work.
+
+[GitHub release](https://github.com/kenn-io/msgvault/releases/tag/v0.21.0) ·
+[All changes since 0.20.0](https://github.com/kenn-io/msgvault/compare/v0.20.0...v0.21.0)
+
+### Before upgrading
+
+- **Back up your archive.** The first startup updates the database. Affected
+  SQLite archives also need a one-time messages-table scan to fill missing
+  activity timestamps. See [backup and restore](usage/backup.md).
+- **Upgrade clients and daemon together.** API schema **3.0.0** replaces
+  token-free identity decisions with reviewed decisions. Integrations must
+  fetch a fresh review token and use the `/review/accept` or `/review/reject`
+  route. HTTP MCP writes also need `--http-allow-writes`; confirmation-dependent
+  writes need MCP protocol **2026-07-28** or newer. See
+  [API compatibility](api-server.md#api-compatibility).
+- **Check CardDAV API callers.** Omitting `connection` from
+  `POST /api/v1/carddav/sync` now syncs all enabled connections. If any are
+  enabled, HTTP 200 can include failures; inspect `status` and each result.
+  Send `{"connection":"default"}` for the former single-account behavior,
+  including manual sync of a disabled default account. See
   [connection selection](usage/people-carddav.md#select-connections-through-the-api).
+- **Renew audio upload consent.** Docbank audio processing now covers captured
+  sources beyond Beeper. Set `all_sources_upload_consent = true` after reviewing
+  that scope; the former `upload_consent` no longer permits uploads. Document
+  extraction with `include_inline = true` also needs fresh consent. See
+  [audio processing](usage/beeper.md#send-audio-to-docbank) and
+  [document indexing](usage/document-indexing.md).
+- **Allow one full analytics rebuild.** Existing caches need a full rebuild
+  before later refreshes can reuse retained data. Existing message embeddings
+  remain compatible. Build the optional SQLite search accelerator with
+  `msgvault embeddings optimize`; it makes no provider calls. See
+  [analytics settings](configuration.md#analytics) and
+  [vector search](usage/vector-search.md).
 
-- `draft-compose --conversation` keeps a local draft for a Slack, Teams, or
-  Discord conversation. The existing `draft-get`, `draft-edit`, and
-  `draft-delete` commands manage it, and `draft-get --conversation` lists a
-  conversation's drafts. These drafts stay in msgvault and never reach the
-  provider.
-- Exa and Sixtyfour person enrichment collapse repeated values before committing
-  claims, so duplicate provider output no longer aborts the claim generation.
-- Person enrichment retains queued lookups and refresh schedules when a provider
-  profile is disabled or removed. Work deleted by an earlier version is not
-  restored when that profile is re-enabled after upgrading. Request a
-  [manual lookup](cli-reference.md#person-enrichment) with a new idempotency key
-  to resume enrichment for an affected person; a later identity change or claim
-  expiry can also enqueue work.
+### New features
 
-- `draft-compose` can leave a text draft in an existing Beeper chat for review in Beeper, enabled per source with `[[beeper.drafts]]`. `draft-get`, `draft-edit`, and `draft-delete` manage it, and edits never replace text someone else typed in the chat.
-- Agents with a restricted token can read, edit, and delete managed Gmail and IMAP drafts on their granted sources. Retrieval with `draft.create` also checks the draft's archived From sender against the grant. Editing needs `draft.edit`; deletion needs `draft.delete`.
-- `draft-forward` creates an IMAP draft from an archived email and its stored attachments. It refuses the draft before upload when any archived file is unavailable, and keeps the files through local retrieval and note edits.
-- Beeper media sync stops retrying files the network has deleted, such as expired WhatsApp media. Each is requested once, recorded as unavailable, and reported in the sync summary. Other failed downloads get at most three attempts per run instead of eight, so one bad file no longer stalls a sync.
-- `msgvault search` keeps complete sender and subject/snippet text when piped or redirected. Terminal tables fit the available display width, with aligned Unicode and emoji and complete fixed fields.
-- `msgvault search` shows snippets for subjectless chat hits, keeps Unicode characters whole when truncating, and shows `-` when a message has no recorded size.
-- Analytics cache rebuilds on macOS and Windows no longer fail when a quoted
-  CSV field, such as a display name with a comma, first appears deep in a large
-  archive. The CSV snapshot now tells DuckDB the quote character instead of
-  letting it guess from a sample.
-- Check default SQLite full-text indices for completeness through row IDs without
-  reading stored search content. Search warns about incomplete results only
-  for a known index gap or rebuild, including rebuilds awaiting other daemon
-  work; an unfinished completeness check alone stays silent.
+- Navigate the Web UI through a grouped sidebar and search from any page. Press `/` to
+  focus global search. Everything and Files also let you save the current view directly
+  from their headers.
+- Sync Microsoft 365 and Outlook.com mail through Microsoft Graph with
+  `add-o365 --graph` when IMAP is unavailable. Staged deletion supports these accounts,
+  including moving messages to Deleted Items and permanent deletion. Deletion requires
+  `Mail.ReadWrite` consent and that permission in the app registration.
+- Sign in to Microsoft 365 and Teams without a local browser using
+  `msgvault add-o365 you@example.com --headless` or
+  `msgvault add-teams you@example.com --headless`. msgvault prints a Microsoft URL
+  and a code to use on another device.
+- Create and manage plain-text Gmail reply drafts, compose fresh IMAP drafts, and
+  reply-all to archived mail. Enable drafts for each source. Delegated agents can read,
+  edit, and delete managed drafts within their granted account access.
+- Forward archived email with its stored attachments using `msgvault draft-forward`.
+  msgvault creates an IMAP draft with your note and the original message quoted as text.
+  Missing attachments or an exceeded server upload limit prevent draft creation.
+- Save draft replies to archived Slack, Teams, and Discord conversations with
+  `draft-compose --conversation`. Review, edit, or delete them in msgvault. msgvault
+  never sends these replies.
+- Place draft replies directly in Beeper Desktop's message box through the draft
+  commands after enabling `[[beeper.drafts]]`. msgvault rejects writes when it finds
+  unrelated text already there. Text typed between its check and write can still be
+  lost.
+- Export a conversation's visible emails as numbered `.eml` files with
+  `msgvault export-eml <id> --thread -o DIR`. MCP clients can list threads and download
+  stored emails and attachments without shell access. PST email exports contain
+  reconstructed MIME.
+- Import iMazing Messages CSV exports with `import-imazing-csv`, including available
+  attachments. Supply `--me` and use `--timezone` when the export's timezone differs
+  from your local zone.
+- Archive completed Muesli meetings, notes, transcripts, and later edits with
+  `add-muesli` and `sync-muesli`. msgvault must run on the Mac containing Muesli. Grant
+  the daemon Full Disk Access to read Contacts; meetings still sync without Contacts
+  access.
+- Link meeting attendees to existing people through email or phone evidence. Names alone
+  never establish a match, and conflicting ownership goes to review.
+- Export selected meetings as JSON or Markdown context with archive citations and
+  optional transcripts. Query recorded action items and meeting activity through the Web
+  UI, CLI, HTTP, or read-only MCP tools. Existing archives gain this data without a
+  provider resync.
+- Show live Kata todos on a person's page through the opt-in `[integrations.kata]`
+  connection. Create and unlink tasks in the Web UI, or link existing tasks through the
+  CLI and API. Edit and complete tasks in Kata. This requires Kata API schema 0.21.0 or
+  later.
+- Connect multiple named CardDAV accounts, each with its own credentials, schedule, and
+  sync history. Select one with `--connection` or in Settings. `sync-carddav` without a
+  connection syncs all enabled connections and exits nonzero on partial failure. Contact
+  publication still uses one target.
+- Connect CardDAV servers that require Digest authentication or an approved private
+  HTTPS destination. Configure `trusted_origin` and `trusted_addresses` locally before
+  adding a private destination.
+- Accelerate SQLite semantic, hybrid, and similar-message searches with an approximate
+  index and exact reranking. Run `msgvault embeddings optimize` to build or resume it
+  from stored embeddings without provider calls. Set
+  `[vector.search].sqlite_accelerator = "exact"` for exhaustive search.
+- Review identity suggestions, which propose linking archived identities to people,
+  through the CLI or MCP. MCP also supports person merges and CardDAV writes. Enable
+  each capability with its corresponding `--allow-identity-decisions`,
+  `--allow-person-merges`, or `--allow-carddav-writes` flag. Each confirmation requires
+  user approval.
+- Score identity suggestions with the optional Jev service. Scoring is disabled by
+  default and requires configuration and consent. `msgvault person scoring status` lists
+  the names, email addresses, phone numbers, identifiers, scopes, and matching evidence
+  sent to `api.typesafe.ai`. Scores remain advisory and never accept matches or merge
+  people.
+- Configure people inference with OpenAI, OpenRouter, or Venice presets and explicit
+  model, privacy, and consent choices. Setup no longer enables inference just because an
+  OpenAI key exists. Codex sign-in and inference remain unavailable in this release.
+- Process stored WAV and MP3 recordings from captured sources through Docbank,
+  preserving supplied transcripts or using a configured speech-recognition profile.
+  Enable `all_sources_upload_consent = true`. Existing Beeper audio users must consent
+  again; the former `upload_consent` setting no longer permits uploads.
+- Select Slack direct conversations independently with `[slack].dms` and `group_dms`,
+  or override either setting for one sync using `--dms` and `--group-dms`. Skipped
+  conversations retain their incremental progress.
+- Query archive analytics through the advanced MCP `query_sql` tool on supported SQLite
+  daemons.
+- Compare search rankings with Jev reranking using `msgvault eval --rerank-jev`. This
+  sends queries and bounded message text to TypeSafe using `TYPESAFE_API_KEY`. Results
+  include quality, latency, usage, and cost measurements, with incomplete usage marked.
 
-- **Export original emails over MCP.** `export_eml` returns an email's
-  original `.eml` bytes in chunks with a whole-message `sha256`, `list_thread`
-  lists visible archived conversation members oldest first, and
-  `get_attachment` accepts `offset` and `length` for chunked downloads.
-  Later chunks pass the first response's `sha256` to reuse the same snapshot.
-  Responses report the account's
-  `last_sync_at`, and `get_stats` lists it per account.
-  `msgvault export-eml <id> --thread -o DIR` writes visible conversation members as
-  numbered `.eml` files. Works for Gmail, IMAP (including Outlook), and file
-  imports; PST exports are rebuilt from Outlook data. The daemon serves
-  these through two new CLI routes; upgrade it for API schema 2.33.0. See
-  [Export original emails](usage/chat.md#export-original-emails).
+Start with the [Web UI](web-ui.md), [source guide](guides/sources.md),
+[draft commands](cli-reference.md#draft-reply), or [MCP tools](usage/chat.md).
 
-- Query published analytics while the daemon refreshes the cache in the
-  background. `query --fresh` waits for current results; HTTP and MCP callers
-  can track refresh jobs. The new `query_sql` MCP tool restricts SQL to archive
-  analytics data. These API additions require schema 2.31.0. See
-  [SQL queries](usage/querying.md) and [cache freshness](configuration.md#analytics).
-- Repeated `import-emlx` runs no longer rewrite Apple Mail partial messages whose archived copy already holds every cached attachment, and the summary counts only attachments the run added to the archive.
-- **Frequent schedules keep their cadence on large archives.**
-  - Scheduled syncs no longer run attachment packing, cache rebuilds or SQLite
-    maintenance inline. Packing follows new blobs through a 6-hourly
-    `attachment-pack` job. Cache rebuilds run in the background. SQLite
-    statistics and WAL truncation move to a daily `sqlite-maintenance` job.
-  - A long job is asked to yield after a minute when other syncs are waiting,
-    and overlapping ticks are kept as one follow-up run.
-  - Scheduled Beeper runs are bounded to 3 minutes, sync new messages before
-    history, retry page fetches, and skip an account whose message IDs were
-    reassigned instead of failing every run.
-  - Restarts within `min_rebuild_interval` serve the existing analytics cache.
-    A cache build that overlaps a sync publishes instead of discarding its
-    work.
-  - `/api/v1/stats` and `/api/v1/cli/accounts` answer from their previous
-    counts when fresh ones are slow.
-  - `/api/v1/scheduler/status` reports queued and pending runs.
-  See [Beeper scheduled sync](usage/beeper.md#scheduled-sync) and
-  [analytics configuration](configuration.md#analytics).
+### Improvements
 
-- **Google Contacts syncs on the first run.** Initial and full syncs of a
-  Google address book no longer fail as `upstream_failed`. Failed CardDAV
-  requests now log the upstream status, with body excerpts available at DEBUG. See
-  [CardDAV contacts](usage/people-carddav.md#google-contacts) for the
-  Google Contacts CardDAV API that your Google Cloud project must enable.
-- `add-o365 --graph` syncs a Microsoft 365 or Outlook.com mailbox through the
-  Microsoft Graph mail API, for a mailbox that has IMAP turned off. Each folder
-  becomes a label, and later syncs fetch only the changes, including moves and
-  deletes. See [Microsoft Graph mail sync](guides/oauth-setup.md#microsoft-graph-mail-sync).
-- **Muesli meetings.** Archive meetings recorded by Muesli on the same Mac:
-  AI notes, typed notes, transcripts, and participant emails. msgvault reads
-  Muesli's local database read-only with `add-muesli` and `sync-muesli`, or on
-  a daemon schedule. See [Muesli](usage/meetings.md#muesli).
-- **Meetings reach the right people.** Meeting attendees can be identified by
-  phone as well as email, and sources that know a stable identity link an
-  attendee's emails and phones: Notion user IDs, Apple Contacts cards for
-  Muesli, and a new attendee `id` (with `phone`) in `POST /api/v1/import/meeting`.
-  A meeting then appears on the person you already know from mail or chat.
-  Links follow the existing rules: no name matching, and conflicts between two
-  people go to review. See [how meetings connect to people](usage/meetings.md#how-meetings-connect-to-people).
-- Saved View MCP tools publish canonical_state as a schema object, so MCP clients that validate tools/list strictly, such as those built on the official TypeScript SDK, load msgvault's tools.
-- `add-o365 --headless` and `add-teams --headless` sign in with a Microsoft
-  device code, so no local browser is needed.
-- Log canceled SQLite planner-statistics maintenance at debug level.
+- Keep querying published analytics while a cache refresh runs in the background.
+  `--fresh` requests include writes committed before the request. CLI queries wait when
+  a build is required; HTTP and MCP callers receive a build job to poll.
+- Refresh analytics with less repeated work. New messages, label changes, and
+  identity-link changes reuse retained cache data where possible, including when sync
+  overlaps a build. Existing caches require one full rebuild after upgrade.
+- Keep scheduled syncs moving under load. Background maintenance yields to queued work
+  and resumes saved progress across restarts. Scheduled activity and attachment
+  maintenance use one-minute budgets; scheduled Beeper imports use three-minute budgets.
+  Status distinguishes queued jobs from running jobs.
+- Reduce query work for full-text, semantic, hybrid, and address-filter searches. Large
+  People and Domain groupings also avoid the memory exhaustion reproduced with a 512 MB
+  limit.
+- Reduce CPU time spent preparing messages for embedding builds. Existing vectors remain
+  compatible, and no rebuild is required.
+- Show readable chat snippets in CLI search tables and fit columns to the terminal
+  width. Redirected output preserves full sender and subject or snippet text. Slow
+  searches show elapsed time without implying that search waits for concurrent daemon
+  work.
+- Check full-text index coverage without reading stored message content. Searches show
+  an incomplete-results warning when the index needs rebuilding or is rebuilding.
+- Read person records through separate scroll areas and organized sections. Populated
+  attributes appear near the top, empty fields stay hidden until requested, and linked
+  identities explain their service and match origin.
+- Show readable statuses and errors across Sources, Operations, Deletions, and Settings.
+  Settings remembers its category and applies saved theme or density changes to the open
+  tab unless a Display override is active.
+- Finish `msgvault setup` without Google credentials by pressing Enter at the credential
+  prompt. The wizard then shows IMAP, Microsoft 365, and file-import examples.
+- Control implicit daemon startup with `[server].daemon_auto_start = false` when a
+  supervisor manages the daemon. CLI commands use a running daemon or return an
+  actionable error.
+- Discover MCP tools without waiting for archive statistics. Upgrade clients and daemon
+  together to API schema 3.0.0, which replaces token-free identity decisions with
+  reviewed decisions. HTTP MCP writes also require `--http-allow-writes`, and
+  confirmation-dependent writes require MCP protocol 2026-07-28 or newer.
+- Diagnose document extraction failures through specific build errors and status
+  details. Inline attachments remain excluded by default; enabling
+  `attachments.documents.scope.include_inline` requires fresh consent.
 
-- **Clearer slow-search notice.** On a terminal, a slow search shows elapsed
-  time and any concurrent daemon work. Piped output reports labeled daemon
-  work once, without implying the search is waiting on it.
+- Show better size estimates for Beeper, Slack, and Teams messages. New imports
+  count body bytes and supported attachment bytes; older rows keep their recorded
+  size until reimported or backfilled.
 
-- **Responses survive damaged text.** A stored subject, snippet, or name with
-  invalid UTF-8 no longer produces an empty or cut-off API response; the bad
-  bytes are returned as the replacement character (U+FFFD).
-- **Faster sender and recipient filters.** `from:`, `to:`, `cc:`, and `bcc:`
-  searches look up matching people first instead of scanning every message.
-  `%` and `_` in a `from:` domain now match literally, as they already did
-  for `to:`.
-- **Damaged text no longer breaks fast search or cache builds.** The analytics
-  cache replaces invalid UTF-8 with U+FFFD in display and search text on every
-  platform; identity fields with invalid bytes are excluded from attribution
-  and export as unknown. The cache warning points to
-  `msgvault repair-encoding`, which reports invalid RFC 822 Message-ID values
-  and preserves their original bytes to avoid identifier collisions. These IDs
-  export as NULL. Building the cache itself does not modify the archive.
-  Older caches containing invalid UTF-8 report `cache_encoding_error`. Run
-  `msgvault build-cache --full-rebuild` to replace them.
-  Some identity fields need separate recovery; see the
-  [encoding repair limits](cli-reference.md#repair-encoding).
-- **Supervised daemons can own startup.** Set `[server].daemon_auto_start = false`
-  when launchd, systemd, or Docker runs `msgvault serve`. CLI, TUI, and MCP
-  commands then use the running daemon and fail instead of starting their own.
-  See [configuration](configuration.md).
-- Beeper, Slack, and Teams imports record body bytes as a size estimate.
-  Beeper and Slack also count reported attachment bytes. Teams counts downloaded
-  inline-image bytes on import and media backfill. Explore counts these
-  attachment bytes once in group and selection totals. Earlier rows retain
-  their recorded size until reimported or backfilled.
-- Gmail sources can create, retrieve, edit, and delete reviewable reply drafts
-  through `draft-reply`, `draft-get`, `draft-edit`, and `draft-delete`. Gmail
-  `draft-edit` supports plain-text drafts and refuses HTML, multipart, or
-  attached drafts before changing the provider. Drafting is disabled until the
-  source has `enabled = true` in `[[gmail.drafts]]`; `draft-send-as` lists
-  owner-only Gmail aliases without sending mail.
+### Bug fixes
 
-- Send stored WAV and MP3 audio from any captured source, including email and
-  messaging imports, to a separately running Docbank media service with the
-  media HTTP routes. The daemon
-  backfills in small scheduled batches after `all_sources_upload_consent` is set and can
-  use an optional `asr_profile` when no usable source transcript exists.
-  Docbank's own consent still controls processing. msgvault keeps each live
-  message mapped to its Docbank occurrence; search over processed audio is not
-  included yet. Existing users must enable the new consent setting; the former
-  Beeper-only `upload_consent` setting no longer permits uploads.
+- Preserve PST message identifiers and repair reply chains after importing all folders.
+  To repair an earlier import, rerun the same PST with the same account identifier and
+  `--no-resume`. Existing messages remain counted as skipped.
+- Complete IMAP syncs for supported legacy and damaged Message-IDs without replacing
+  archived messages or repeatedly enumerating folders. DavMail messages with empty
+  header responses receive a full-header retry to recover identities and labels.
+- Skip unchanged partial Apple Mail messages during repeated `import-emlx` runs. Only
+  newly restored attachments trigger re-ingestion, and the restored count reports
+  attachments added during that run.
+- Keep invalid Apple Messages dates from blocking analytics builds. Rerun
+  `msgvault import-imessage` without date filters or a message limit to correct an
+  earlier import, retaining any original `--db-path` and `--me` options. Undated
+  messages remain archived.
+- Build analytics caches despite invalid UTF-8, late-occurring quoted fields, or
+  pre-1970 messages. Damaged display text uses replacement characters, while damaged
+  identities export as unknown. Repair an older damaged cache with
+  `msgvault build-cache --full-rebuild`.
+- Return complete API JSON when archived subjects, snippets, or names contain invalid
+  UTF-8.
+- Complete activity updates for affected upgraded SQLite archives with missing message
+  timestamps. The first startup after upgrade scans the messages table once to fill
+  those timestamps.
+- Recover Gmail syncs when quota pauses exceed an individual request timeout. Quota
+  retries honor `Retry-After`, cancellation, and the caller's deadline.
+- Stop repeatedly downloading Beeper media that the source reports as permanently
+  unavailable. Sync and backfill summaries report those files, while temporary failures
+  remain eligible for retry.
+- Complete repeated person enrichment lookups without failing on reused citations or
+  duplicate values. Scheduled lookups stop repeating terminal failures, and disabling a
+  profile retains queued work for re-enablement.
+- Preserve `--no-default-identity` choices during scheduled sync and re-authorization.
+- Give newly promoted people an observed display name when one is available. Contacts
+  without names also receive generated full names so vCard publication succeeds.
+- Filter Directory by Email, Chat, Meeting, or Other through the Primary channel menu.
+  Directory media and file filters also apply.
+- Keep cached Files listings usable when a provider resync retains the same attachments.
+  Old attachment links no longer trigger endless page requests.
+- Preserve files created at a SQLite backup target while the backup is running. msgvault
+  returns `backup target already exists` instead of overwriting the competing file.
+- Avoid a panic when updating msgvault and restarting a running daemon.
+- Load the full MCP tool catalog in strict clients through the corrected Saved View
+  schema.
+- Complete initial and full Google Contacts syncs. Failed CardDAV requests report
+  the upstream status; response excerpts are available at DEBUG level.
 
-See [Beeper audio](usage/beeper.md#send-audio-to-docbank).
+If an older version removed queued enrichment work while a profile was disabled,
+re-enabling it does not restore that work. Request a
+[manual lookup](cli-reference.md#person-enrichment) with a new idempotency key,
+or wait for an identity change or claim expiry to queue another lookup.
 
-### Meeting context and follow-ups
+### Acknowledgements
 
-- Export selected archived meetings as JSON or Markdown from the Web UI, CLI,
-  HTTP API, or MCP. Transcripts are opt-in; packets report truncation and missing
-  evidence.
-- Read source action status and explicit assignees, and inspect meeting counts,
-  duration bases, unknown coverage, and monthly activity in people and domain
-  views. Generic meeting imports now accept structured `action_items`.
-- Existing raw archives gain these projections on upgrade without a provider
-  resync. Meeting reads retain source-deleted evidence by default and exclude
-  locally deleted records. Upgrade the daemon for API schema 2.28.0 support.
-  See the [meeting guide](usage/meetings.md).
+Thanks to everyone who contributed to this release:
 
-- MCP startup no longer waits for archive statistics or vector lane probes.
-  Authenticated health reports text and visual vector lanes separately, so
-  daemon-backed MCP advertises configured search tools only when their health
-  facts and routes are supported. Search still checks readiness per request.
+- [@aaronwolen](https://github.com/aaronwolen) for fixing quoted fields in analytics caches and initial Google Contacts sync.
+- [@eliemada](https://github.com/eliemada) for preserving legacy IMAP Message-IDs.
+- [@exactmike](https://github.com/exactmike) for Microsoft mail sync, deletion, and headless sign-in.
+- [@franklintra](https://github.com/franklintra) for recovering empty IMAP header responses.
+- [@fucx](https://github.com/fucx) for fixing daemon restart during updates.
+- [@mariusvniekerk](https://github.com/mariusvniekerk) for Web pane dividers, vector requests, retries, and backup protection.
+- [@metcalfc](https://github.com/metcalfc) for recovering Gmail syncs after quota throttling.
+- [@rodboev](https://github.com/rodboev) for mail and chat drafts, audio processing, and archive maintenance.
+- [@salmonumbrella](https://github.com/salmonumbrella) for people and meeting workflows, reviewed agent tools, analytics, and scheduling.
+- [@shntnu](https://github.com/shntnu) for Slack DM selection and narrower people-fact migration checks.
+- [@spf13](https://github.com/spf13) for generating full names for nameless contacts.
+- [@wesm](https://github.com/wesm) for Web navigation, search, sync, activity, and documentation.
 
-- Added fresh IMAP draft composition, reply-all recipient selection, explicit
-  destination and sender selection, and frozen sender restrictions for
-  delegated draft creation. Drafts keep their To, Cc, and Bcc roles and are
-  never sent by msgvault.
+---
 
 ## 0.20.0
 <small>2026-09-22</small>

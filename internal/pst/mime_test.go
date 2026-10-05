@@ -2,10 +2,14 @@ package pst
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	msgmime "go.kenn.io/msgvault/internal/mime"
+	"net/mail"
 	"strings"
 	"testing"
+	"testing/quick"
 	"time"
 
 	pstlib "github.com/mooijtech/go-pst/v6/pkg"
@@ -313,4 +317,77 @@ func TestBuildRFC5322_TransportHeadersStripMIME(t *testing.T) {
 	// We expect exactly one Content-Type occurrence (ours, for text/plain).
 	count := strings.Count(s, "Content-Type:")
 	assert.Equal(1, count, "expected 1 Content-Type header")
+}
+
+func TestBuildRFC5322_MAPIThreadingFallback(t *testing.T) {
+	for _, tc := range []struct{ name, headers, wantID, wantParent, wantRefs string }{
+		{"partial", "From: sender@example.test\r\nSubject: Thread\r\n", "<mapi@example.test>", "<parent@example.test>", "<root@example.test> <parent@example.test>"},
+		{"conflicts", "mEsSaGe-iD: <original@example.test>\r\nIN-REPLY-TO: <original-parent@example.test>\r\nReferences: <original-root@example.test>\r\n", "<original@example.test>", "<original-parent@example.test>", "<original-root@example.test>"},
+		{"empty", "Message-ID: \t\r\nIn-Reply-To:\r\nReferences: \r\n", "<mapi@example.test>", "<parent@example.test>", "<root@example.test> <parent@example.test>"},
+		{"folded", "Message-ID:\r\n\t<folded@example.test>\r\nReferences: <original-root@example.test>\r\n <original-parent@example.test>\r\n", "<folded@example.test>", "<parent@example.test>", "<original-root@example.test> <original-parent@example.test>"},
+		{"separator", "From: sender@example.test\r\n\r\nMessage-ID: <body@example.test>\r\n", "<mapi@example.test>", "<parent@example.test>", "<root@example.test> <parent@example.test>"},
+		{"no transport", "", "<mapi@example.test>", "<parent@example.test>", "<root@example.test> <parent@example.test>"},
+	} {
+		for _, layout := range []string{"plain", "html", "alternative", "attachment"} {
+			t.Run(tc.name+"/"+layout, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				entry := &MessageEntry{TransportHeaders: tc.headers, SenderEmail: "sender@example.test", MessageID: " mapi@example.test ", InReplyTo: " parent@example.test ", References: "<root@example.test> <parent@example.test>", BodyText: "Body"}
+				var attachments []AttachmentEntry
+				if layout == "html" {
+					entry.BodyText = ""
+					entry.BodyHTML = "<p>Body</p>"
+				}
+				if layout == "alternative" {
+					entry.BodyHTML = "<p>Body</p>"
+				}
+				if layout == "attachment" {
+					attachments = []AttachmentEntry{{Filename: "example.txt", Content: []byte("Attachment")}}
+				}
+				raw, err := BuildRFC5322(entry, attachments)
+				require.NoError(err)
+				parsed, err := mail.ReadMessage(bytes.NewReader(raw))
+				require.NoError(err)
+				assert.Equal(tc.wantID, strings.TrimSpace(parsed.Header.Get("Message-ID")))
+				assert.Equal(tc.wantParent, strings.TrimSpace(parsed.Header.Get("In-Reply-To")))
+				assert.Equal(tc.wantRefs, strings.TrimSpace(parsed.Header.Get("References")))
+				for _, field := range []string{"Message-Id", "In-Reply-To", "References"} {
+					assert.Len(parsed.Header[field], 1, field)
+				}
+				full, err := msgmime.Parse(raw)
+				require.NoError(err)
+				assert.Equal("Body", strings.TrimSpace(full.GetBodyText()))
+			})
+		}
+	}
+}
+
+func TestBuildRFC5322_ThreadingHeaderPrecedenceProperty(t *testing.T) {
+	err := quick.Check(func(mapiBytes, originalBytes []byte, useOriginal bool) bool {
+		mapiID := "mapi-" + hex.EncodeToString(mapiBytes) + "@example.test"
+		originalID := "original-" + hex.EncodeToString(originalBytes) + "@example.test"
+		headers := "From: sender@example.test\r\n"
+		want := "<" + mapiID + ">"
+		if useOriginal {
+			headers += "mEsSaGe-ID:\r\n\t<" + originalID + ">\r\n"
+			want = "<" + originalID + ">"
+		}
+		raw, err := BuildRFC5322(&MessageEntry{TransportHeaders: headers, MessageID: mapiID, BodyText: "Body"}, nil)
+		if err != nil {
+			return false
+		}
+		parsed, err := mail.ReadMessage(bytes.NewReader(raw))
+		return err == nil && strings.TrimSpace(parsed.Header.Get("Message-ID")) == want && len(parsed.Header["Message-Id"]) == 1
+	}, nil)
+	require.NoError(t, err)
+}
+
+func TestBuildRFC5322_ThreadingFallbackRejectsHeaderInjection(t *testing.T) {
+	for _, headers := range []string{"", "From: sender@example.test\r\n"} {
+		raw, err := BuildRFC5322(&MessageEntry{TransportHeaders: headers, MessageID: "id@example.test\r\nBcc: injected@example.test", InReplyTo: "parent@example.test\nBcc: injected@example.test", References: "<root@example.test>\r\nBcc: injected@example.test", BodyText: "Body"}, nil)
+		require.NoError(t, err)
+		parsed, err := mail.ReadMessage(bytes.NewReader(raw))
+		require.NoError(t, err)
+		assert.Empty(t, parsed.Header.Get("Bcc"))
+	}
 }

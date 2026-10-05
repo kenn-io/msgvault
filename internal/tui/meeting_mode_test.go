@@ -126,6 +126,20 @@ func TestMeetingImportedSourceLabelUsesDisplayNameAndFallbacks(t *testing.T) {
 	assert.Equal(t, "Imported", model.meetingSourceLabel(7))
 }
 
+func TestPlaudMeetingSourceIsSelectableAndLabeled(t *testing.T) {
+	assert := assert.New(t)
+	account := query.AccountInfo{ID: 8, SourceType: "plaud", Identifier: "personal"}
+	model := NewBuilder().WithAccounts(account).WithSize(100, 24).Build()
+	model.mode = modeMeetings
+	model.loading = false
+
+	assert.Equal([]query.AccountInfo{account}, model.selectableAccounts())
+	assert.Equal("Plaud", model.meetingSourceLabel(account.ID))
+	assert.NotContains(stripANSI(model.renderView()), "No meeting sources configured")
+	model.openAccountSelector()
+	assert.Contains(stripANSI(model.renderAccountSelectorModal()), "personal")
+}
+
 func TestMeetingAccountSelectorUsesMeetingSources(t *testing.T) {
 	assert := assert.New(t)
 	selectedID := int64(3)

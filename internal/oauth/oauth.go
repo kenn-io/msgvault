@@ -123,7 +123,8 @@ var ScopesGmailSendAsList = []string{
 // GrantCoversAnyScope reports whether a stored grant contains one accepted
 // scope. Operation sets stay separate because Gmail assigns them separately.
 func GrantCoversAnyScope(granted, accepted []string) bool {
-	for _, scope := range accepted {
+	granted = normalizedScopeList(granted)
+	for _, scope := range normalizedScopeList(accepted) {
 		if slices.Contains(granted, scope) {
 			return true
 		}
@@ -233,6 +234,9 @@ const ScopeUserinfoEmail = "https://www.googleapis.com/auth/userinfo.email"
 // calendarList enumeration and event reads, so an archival tool needs nothing
 // finer-grained.
 const ScopeCalendarReadonly = "https://www.googleapis.com/auth/calendar.readonly"
+
+// ScopeCalendarEvents is opt-in permission to create and change calendar events.
+const ScopeCalendarEvents = "https://www.googleapis.com/auth/calendar.events"
 
 // ScopesCalendar is the opt-in scope set for calendar sync.
 var ScopesCalendar = []string{
@@ -432,11 +436,14 @@ func PrintHeadlessInstructions(email, tokensDir, oauthApp string, readonly bool)
 // REPLACES the granted scopes, so the browser machine must keep existing
 // permissions plus Calendar checked or access is dropped.
 // tokensDir should be the configured tokens directory (e.g., cfg.TokensDir()).
-func PrintCalendarHeadlessInstructions(email, tokensDir, oauthApp string) {
+func PrintCalendarHeadlessInstructions(email, tokensDir, oauthApp string, write ...bool) {
 	tokenFile := sanitizeEmail(email) + ".json"
 	tokenPath := filepath.Join(tokensDir, tokenFile)
 
 	addCmd := "    msgvault add-calendar " + email
+	if len(write) > 0 && write[0] {
+		addCmd += " --write"
+	}
 	syncCmd := "    msgvault sync-calendar " + email
 	if oauthApp != "" {
 		addCmd += " --oauth-app " + oauthApp
@@ -794,6 +801,7 @@ type tokenProfileEndpoint struct {
 }
 
 func tokenProfileEndpointForScopes(scopes []string) tokenProfileEndpoint {
+	scopes = normalizedScopeList(scopes)
 	if slices.Contains(scopes, ScopeUserinfoEmail) {
 		return tokenProfileEndpoint{url: "https://www.googleapis.com/oauth2/v2/userinfo", serviceName: "Google account API"}
 	}
@@ -841,11 +849,24 @@ func grantedScopesFromToken(token *oauth2.Token, requested []string) []string {
 	return normalizedScopeList(scopes)
 }
 
+// canonicalScope maps Google's OpenID Connect aliases to their OAuth names.
+// Other scopes, including openid, retain their identity and permissions.
+func canonicalScope(scope string) string {
+	switch scope = strings.TrimSpace(scope); scope {
+	case "email":
+		return ScopeUserinfoEmail
+	case "profile":
+		return "https://www.googleapis.com/auth/userinfo.profile"
+	default:
+		return scope
+	}
+}
+
 func normalizedScopeList(scopes []string) []string {
 	out := make([]string, 0, len(scopes))
 	seen := map[string]struct{}{}
 	for _, scope := range scopes {
-		scope = strings.TrimSpace(scope)
+		scope = canonicalScope(scope)
 		if scope == "" {
 			continue
 		}
@@ -860,7 +881,7 @@ func normalizedScopeList(scopes []string) []string {
 
 func missingScopes(required, granted []string) []string {
 	grantedSet := map[string]struct{}{}
-	for _, scope := range granted {
+	for _, scope := range normalizedScopeList(granted) {
 		grantedSet[scope] = struct{}{}
 	}
 	var missing []string
@@ -872,7 +893,7 @@ func missingScopes(required, granted []string) []string {
 	return missing
 }
 
-// sameGoogleAccount returns true if two email addresses belong to the
+// SameGoogleAccount returns true if two email addresses belong to the
 // same Google account. This covers the common alias cases:
 //   - exact match (case-insensitive)
 //   - gmail.com dot-insensitive (first.last@gmail.com == firstlast@gmail.com)
@@ -881,7 +902,7 @@ func missingScopes(required, granted []string) []string {
 //
 // For Google Workspace domains we cannot verify aliases without an
 // admin API call, so we fall back to exact-match only.
-func sameGoogleAccount(expected, canonical string) bool {
+func SameGoogleAccount(expected, canonical string) bool {
 	if strings.EqualFold(expected, canonical) {
 		return true
 	}
@@ -961,6 +982,7 @@ func (m *Manager) loadTokenFile(email string) (*tokenFile, error) {
 		return nil, err
 	}
 
+	tf.Scopes = normalizedScopeList(tf.Scopes)
 	tf.snapshot = data
 	return &tf, nil
 }
@@ -1014,7 +1036,7 @@ func (m *Manager) HasScope(email string, scope string) bool {
 	if err != nil {
 		return false
 	}
-	return slices.Contains(tf.Scopes, scope)
+	return slices.Contains(tf.Scopes, canonicalScope(scope))
 }
 
 // GrantedScopes returns a copy of the stored scope metadata for the account.
@@ -1052,7 +1074,7 @@ func (m *Manager) saveTokenCompared(email string, token *oauth2.Token, scopes []
 
 	tf := tokenFile{
 		Token:    *token,
-		Scopes:   scopes,
+		Scopes:   normalizedScopeList(scopes),
 		ClientID: m.config.ClientID,
 	}
 
@@ -1220,7 +1242,7 @@ func parseClientSecrets(data []byte, scopes []string) (*oauth2.Config, []string,
 	if err := json.Unmarshal(data, &secrets); err != nil {
 		return nil, nil, fmt.Errorf("parse OAuth client secrets: %w", err)
 	}
-	config, err := google.ConfigFromJSON(data, scopes...)
+	config, err := google.ConfigFromJSON(data, normalizedScopeList(scopes)...)
 	if err != nil {
 		// Check if it's a client missing redirect_uris (TV/device or misconfigured)
 		missingRedirects := (secrets.Installed != nil && len(secrets.Installed.RedirectURIs) == 0) ||
@@ -1336,7 +1358,7 @@ func fetchTokenProfileEmailFromEndpoint(
 		return "", fmt.Errorf("parse profile for %s: response did not include an email address", email)
 	}
 
-	if !sameGoogleAccount(email, profileEmail) {
+	if !SameGoogleAccount(email, profileEmail) {
 		return "", &TokenMismatchError{Expected: email, Actual: profileEmail}
 	}
 
@@ -1432,7 +1454,7 @@ func RevokeStoredCredential(ctx context.Context, tokensDir, email string) error 
 // case, dots, plus-addresses, googlemail.com.
 //
 // Read-only decisions use this to fail closed: authorization accepts alias
-// variants (sameGoogleAccount), so without this check a --readonly run
+// variants (SameGoogleAccount), so without this check a --readonly run
 // through an alias spelling would read as a fresh account while an
 // equivalent stored spelling kept an unnarrowed, possibly write-capable
 // credential.
@@ -1465,7 +1487,7 @@ func EquivalentStoredGrantInUse(tokensDir, email string, remainingEmails []strin
 		return false
 	}
 	for _, remainingEmail := range remainingEmails {
-		if !sameGoogleAccount(email, remainingEmail) {
+		if !SameGoogleAccount(email, remainingEmail) {
 			continue
 		}
 		remaining, err := m.loadTokenFile(remainingEmail)
@@ -1498,7 +1520,7 @@ func findEquivalentTokenEmails(tokensDir, email string) []string {
 			}
 		}
 		stored := strings.TrimSuffix(name, ".json")
-		if sameGoogleAccount(email, stored) {
+		if SameGoogleAccount(email, stored) {
 			equivalents = append(equivalents, stored)
 		}
 	}

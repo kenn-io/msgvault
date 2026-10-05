@@ -494,23 +494,8 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	searchRequest := ExploreHTTPRequest{Filters: request.Filters, Query: request.Query, SearchMode: request.SearchMode}
 	canonicalizeExploreRequest(&searchRequest)
-	var cursor exploreCursor
-	if request.Cursor != "" {
-		cursor, _ = s.decodeExploreCursor(request.Cursor)
-		if request.SearchMode == exploreSearchModeSemantic || request.SearchMode == exploreSearchModeHybrid {
-			if cursor.Snapshot == "" {
-				writeError(w, http.StatusBadRequest, "invalid_cursor", "semantic cursor is missing its candidate snapshot")
-				return
-			}
-			searchRequest.CandidateSnapshotID = cursor.Snapshot
-		}
-	}
-	searchSpec, snapshotID, ok := s.resolveExploreSearch(r.Context(), w, searchRequest)
-	if !ok || !requireCompleteCandidatePool(w, searchSpec) {
-		return
-	}
-	if request.Cursor != "" && cursor.SearchRevision != exploreResolvedSearchRevision(searchSpec) {
-		writeError(w, http.StatusConflict, "search_revision_changed", "The resolved search index revision changed; restart pagination")
+	_, searchSpec, snapshotID, ok := s.resolvePagedExploreSearch(r.Context(), w, request.Cursor, searchRequest)
+	if !ok {
 		return
 	}
 	analyzer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
@@ -1338,6 +1323,33 @@ func (s *Server) prepareResolvedExplorePredicate(
 		return explorePrepared{}, err
 	}
 	return prepared, nil
+}
+
+// resolvePagedExploreSearch resolves a paginated request's search, pinning a
+// semantic cursor's candidate snapshot and rejecting a changed search revision.
+func (s *Server) resolvePagedExploreSearch(
+	ctx context.Context, w http.ResponseWriter, rawCursor string, request ExploreHTTPRequest,
+) (exploreCursor, query.SearchSpec, string, bool) {
+	var cursor exploreCursor
+	if rawCursor != "" {
+		cursor, _ = s.decodeExploreCursor(rawCursor)
+		if request.SearchMode == exploreSearchModeSemantic || request.SearchMode == exploreSearchModeHybrid {
+			if cursor.Snapshot == "" {
+				writeError(w, http.StatusBadRequest, "invalid_cursor", "semantic cursor is missing its candidate snapshot")
+				return exploreCursor{}, query.SearchSpec{}, "", false
+			}
+			request.CandidateSnapshotID = cursor.Snapshot
+		}
+	}
+	searchSpec, snapshotID, ok := s.resolveExploreSearch(ctx, w, request)
+	if !ok || !requireCompleteCandidatePool(w, searchSpec) {
+		return exploreCursor{}, query.SearchSpec{}, "", false
+	}
+	if rawCursor != "" && cursor.SearchRevision != exploreResolvedSearchRevision(searchSpec) {
+		writeError(w, http.StatusConflict, "search_revision_changed", "The resolved search index revision changed; restart pagination")
+		return exploreCursor{}, query.SearchSpec{}, "", false
+	}
+	return cursor, searchSpec, snapshotID, true
 }
 
 func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter, request ExploreHTTPRequest) (query.SearchSpec, string, bool) {

@@ -196,7 +196,11 @@ more of:
   sent-mail folder or had a Gmail `SENT` label.
 - `account-identifier` — the address matches the account's primary
   identifier (e.g. the Gmail address itself).
-- `oauth` — OAuth or provider account metadata named the address.
+- `oauth` — an authenticated Gmail profile matched the source account.
+  `identity discover --provider` previews this strong evidence; `--apply`
+  confirms it. Ordinary sync only refreshes already-confirmed identities,
+  preserving removals and `--no-default-identity`.
+- `phone-e164` — a normalized phone number from an SMS or chat source.
 - `manual` — the user added the identifier interactively via
   `identity add`.
 - `config_migration` — the identifier was inserted by the one-time
@@ -312,12 +316,17 @@ copy win on payload richness silently changes how the archive reads.
 preference runs in this order:
 
 1. Source preference (when `--prefer` is configured, or the default
-   order: `gmail,imap,mbox,emlx,hey`).
+   order: `gmail,imap,msmail,mbox,emlx,hey`).
 2. Complete original payload — has raw MIME, then, only when every
    eligible copy has the same normalized raw MIME hash, more attachments,
    an attachment-presence signal, and a larger original payload.
-3. Source metadata quality — provider IDs, threading info, presence
-   of Message-ID.
+3. Source metadata quality — one point each for a native Gmail, IMAP, or Microsoft Mail
+   message ID, threading evidence, and RFC822 Message-ID presence.
+   Threading evidence is a stored Gmail provider thread ID, preserved Google
+   Groups grouping derived from a valid exported X-GM-THRID, an archived
+   In-Reply-To header, or a resolved reply parent. Generic fallback conversation
+   keys do not count. Gmail uses stored conversation IDs for historical and
+   current rows; an ID equal to the message ID is ambiguous and earns no point.
 4. Richer label or folder metadata.
 5. Earlier `archived_at` timestamp (when meaningful).
 6. Stable row ID, as the final tie-breaker.
@@ -673,7 +682,7 @@ Find duplicate messages and (with `--undo`) reverse a previous run.
 | ----------------------------------- | --------- | ----------------------------- | ------------------------------------------------------------------ |
 | `--dry-run`                         | bool      | `false`                       | Scan and report only.                                              |
 | `--no-backup`                       | bool      | `false`                       | Skip the pre-execute database backup.                              |
-| `--prefer <list>`                   | string    | (none)                        | Source-type preference order for survivor selection. When the flag is empty, implementations fall back to the documented default order: `gmail,imap,mbox,emlx,hey`. The fall-through gives a single source of truth for the default — implementations should not register the literal default string as the cobra-layer default. |
+| `--prefer <list>`                   | string    | (none)                        | Source-type preference order for survivor selection. When the flag is empty, implementations fall back to the documented default order: `gmail,imap,msmail,mbox,emlx,hey`. The fall-through gives a single source of truth for the default — implementations should not register the literal default string as the cobra-layer default. |
 | `--content-hash`                    | bool      | `false`                       | Run the second-pass content-hash detection.                        |
 | `--undo <batch-id>` (repeatable)    | string... | (none)                        | Reverse one or more named batches.                                 |
 | `--account <name>`                  | string    | (none)                        | Per-source scope.                                                  |

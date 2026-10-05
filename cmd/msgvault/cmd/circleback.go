@@ -7,10 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -258,19 +255,8 @@ Examples:
 		defer cleanup()
 		dbPath := cfg.DatabaseDSN()
 
-		ctx, cancel := context.WithCancel(cmd.Context())
-		defer cancel()
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		defer signal.Stop(sigChan)
-		go func() {
-			select {
-			case <-sigChan:
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "\nInterrupted. Stopping Circleback sync...")
-				cancel()
-			case <-ctx.Done():
-			}
-		}()
+		ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Stopping Circleback sync...")
+		defer stop()
 
 		pendingCacheWrites := &circleback.ImportSummary{}
 		for i := range sources {

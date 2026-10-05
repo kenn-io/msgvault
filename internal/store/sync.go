@@ -69,6 +69,7 @@ func (s *Store) ScopedToSync(sourceID, syncRunID int64) *Store {
 		cardDAVConflictResolveSnapshotHook:    base.cardDAVConflictResolveSnapshotHook,
 		cardDAVTombstonePrepareSnapshotHook:   base.cardDAVTombstonePrepareSnapshotHook,
 		identityMatchAcceptBeforeDecisionHook: base.identityMatchAcceptBeforeDecisionHook,
+		identityMatchReviewAfterDecisionHook:  base.identityMatchReviewAfterDecisionHook,
 		personOperationBeforeIdentityLockHook: base.personOperationBeforeIdentityLockHook,
 		personMergeAfterSnapshotHook:          base.personMergeAfterSnapshotHook,
 
@@ -1603,6 +1604,19 @@ func (s *Store) UpdateSourceSyncCursor(sourceID int64, cursor string) error {
 		WHERE id = ?
 	`, now, now), cursor, sourceID)
 	return err
+}
+
+// UpdateSourceSyncState replaces adapter progress without marking a successful
+// sync. Unlike a run checkpoint, this retains only the source's current state.
+func (s *Store) UpdateSourceSyncState(sourceID int64, state string) error {
+	return s.withSyncSourceWriteContext(context.Background(), sourceID, func(q querier) error {
+		_, err := q.Exec(fmt.Sprintf(`
+			UPDATE sources
+			SET sync_cursor = ?, updated_at = %s
+			WHERE id = ?
+		`, s.dialect.Now()), state, sourceID)
+		return err
+	})
 }
 
 // TouchSourceLastSyncAt records that a source-level sync completed even when

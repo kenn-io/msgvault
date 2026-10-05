@@ -2,15 +2,19 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -240,4 +244,68 @@ func TestRegisterActivityProjectionJobHonorsDisabledSchedule(t *testing.T) {
 	require.NoError(t, registerActivityProjectionJob(
 		sched, f.Store, activityConfig, slog.Default()))
 	assert.False(t, sched.IsJobScheduled(activityProjectionJob))
+}
+
+func TestScheduledProjectionYieldsToSyncBetweenPasses(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	for i := range 23 {
+		f.NewMessage().WithSourceMessageID(fmt.Sprintf("scheduled-projection-%d", i)).
+			WithSentAt(time.Date(2026, 10, 1, 12, i, 0, 0, time.UTC)).Create(t, f.Store)
+	}
+	gate := &projectionAdmissionTracker{SerialOperationGate: api.NewSerialOperationGate(), acquired: make(chan struct{}), release: make(chan struct{})}
+	syncObserved := make(chan int, 1)
+	sched := scheduler.New(func(ctx context.Context, _ string) error {
+		var count int
+		err := f.Store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM activity_events`).Scan(&count)
+		syncObserved <- count
+		return err
+	}).WithWorkTracker(gate).WithLogger(testDiscardLogger())
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(gate.release) }) }
+	t.Cleanup(func() { release(); <-sched.Stop().Done() })
+	require.NoError(sched.AddAccount("short@example.com", "0 0 1 1 *"))
+	require.NoError(registerActivityProjectionJob(sched, f.Store, config.ActivityConfig{
+		Timezone: "UTC", BatchSize: 1, MaxDirectCounterparts: 25, Schedule: "0 0 1 1 *",
+	}, testDiscardLogger()))
+	require.NoError(sched.StartJob(activityProjectionJob))
+	select {
+	case <-gate.acquired:
+	case <-time.After(10 * time.Second):
+		require.FailNow("projection did not acquire the gate")
+	}
+	require.NoError(sched.TriggerSync("short@example.com"))
+	require.Eventually(func() bool { return sched.Status()[0].Queued }, 10*time.Second, 10*time.Millisecond)
+	release()
+	select {
+	case count := <-syncObserved:
+		assert.Equal(activityProjectionMaxBatches, count, "sync runs before the next projection pass")
+	case <-time.After(10 * time.Second):
+		require.FailNow("sync was starved behind projection")
+	}
+	require.Eventually(func() bool {
+		status := sched.JobStatus()[0]
+		return !status.Running && !status.Queued && !status.Pending && !status.LastRun.IsZero()
+	}, 10*time.Second, 10*time.Millisecond)
+	var count int
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_events`).Scan(&count))
+	assert.Equal(23, count, "follow-up passes finish without another cron tick")
+	assert.Empty(sched.JobStatus()[0].LastError)
+}
+
+type projectionAdmissionTracker struct {
+	*api.SerialOperationGate
+
+	acquired chan struct{}
+	release  chan struct{}
+	first    sync.Once
+}
+
+func (g *projectionAdmissionTracker) BeginLabeledWorkContext(ctx context.Context, label string) (func(), bool) {
+	done, ok := g.SerialOperationGate.BeginLabeledWorkContext(ctx, label)
+	if ok && label == activityProjectionJob {
+		g.first.Do(func() { close(g.acquired); <-g.release })
+	}
+	return done, ok
 }

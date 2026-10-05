@@ -8,14 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"testing/synctest"
 	"time"
 	"unicode/utf8"
 
@@ -34,7 +31,6 @@ import (
 type evalRerankRecorder struct {
 	requests     map[string][]rerank.Request
 	failAt       map[string]int
-	failUsage    rerank.Usage
 	promoteText  string
 	factoryCalls int
 }
@@ -44,7 +40,7 @@ type recordingReranker struct {
 	recorder *evalRerankRecorder
 }
 
-func (r *evalRerankRecorder) makeReranker(shape, _ string, _ *rerank.Budget) (evalReranker, error) {
+func (r *evalRerankRecorder) makeReranker(shape, _ string) (evalReranker, error) {
 	r.factoryCalls++
 	if r.requests == nil {
 		r.requests = make(map[string][]rerank.Request)
@@ -56,7 +52,7 @@ func (r *recordingReranker) Rerank(ctx context.Context, request rerank.Request) 
 	request.Candidates = append([]string(nil), request.Candidates...)
 	r.recorder.requests[r.shape] = append(r.recorder.requests[r.shape], request)
 	if r.recorder.failAt[r.shape] == len(r.recorder.requests[r.shape]) {
-		return rerank.Result{Usage: r.recorder.failUsage}, errors.New("fake provider failure")
+		return rerank.Result{}, errors.New("fake provider failure")
 	}
 	scores := make([]float64, len(request.Candidates))
 	for i := range scores {
@@ -83,12 +79,12 @@ func preserveEvalRerankGlobals(t *testing.T) {
 	oldQrels, oldTopics, oldModes, oldDocKey := evalQrels, evalTopics, evalModes, evalDocKey
 	oldLimit, oldJSON := evalLimit, evalJSON
 	oldJev, oldTop, oldMaxRequests := evalRerankJev, evalRerankTop, evalRerankMaxRequests
-	oldCost, oldInput, oldOutput := evalRerankCostStopUSD, evalRerankInputUSDPerM, evalRerankOutputUSDPerM
+	oldInput, oldOutput := evalRerankInputUSDPerM, evalRerankOutputUSDPerM
 	t.Cleanup(func() {
 		evalQrels, evalTopics, evalModes, evalDocKey = oldQrels, oldTopics, oldModes, oldDocKey
 		evalLimit, evalJSON = oldLimit, oldJSON
 		evalRerankJev, evalRerankTop, evalRerankMaxRequests = oldJev, oldTop, oldMaxRequests
-		evalRerankCostStopUSD, evalRerankInputUSDPerM, evalRerankOutputUSDPerM = oldCost, oldInput, oldOutput
+		evalRerankInputUSDPerM, evalRerankOutputUSDPerM = oldInput, oldOutput
 	})
 }
 
@@ -118,7 +114,7 @@ func prepareEvalRerankRun(t *testing.T, shapes string, topicCount int) (*cobra.C
 	cfg.Data.DataDir = dir
 	evalModes, evalDocKey, evalLimit, evalJSON = "fts", "message", 10, true
 	evalRerankJev, evalRerankTop, evalRerankMaxRequests = shapes, 2, 1000
-	evalRerankCostStopUSD, evalRerankInputUSDPerM, evalRerankOutputUSDPerM = 5, 1, 1
+	evalRerankInputUSDPerM, evalRerankOutputUSDPerM = 1, 1
 	t.Setenv("TYPESAFE_API_KEY", "test-key")
 	var topics, qrels strings.Builder
 	for i := range topicCount {
@@ -155,7 +151,6 @@ func TestRunEvalReranksFTSCandidates(t *testing.T) {
 		Rerank struct {
 			Complete            bool    `json:"complete"`
 			MaxRequests         int     `json:"max_requests"`
-			CostStopUSD         float64 `json:"cost_stop_usd"`
 			InputUSDPerMillion  float64 `json:"input_usd_per_million"`
 			OutputUSDPerMillion float64 `json:"output_usd_per_million"`
 			Results             map[string]map[string]struct {
@@ -175,7 +170,6 @@ func TestRunEvalReranksFTSCandidates(t *testing.T) {
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	assert.True(report.Rerank.Complete)
 	assert.Equal(1000, report.Rerank.MaxRequests)
-	assert.InDelta(5.0, report.Rerank.CostStopUSD, 1e-9)
 	assert.InDelta(1.0, report.Rerank.InputUSDPerMillion, 1e-9)
 	assert.InDelta(1.0, report.Rerank.OutputUSDPerMillion, 1e-9)
 	for shape, requests := range map[string]int{"batched": 2, "per-candidate": 4} {
@@ -189,57 +183,6 @@ func TestRunEvalReranksFTSCandidates(t *testing.T) {
 		assert.InDelta(0.000007, arm.CostPerQueryUSD, 1e-12)
 		assert.NotNil(arm.Latency.P95MS)
 	}
-}
-
-func TestRunEvalJevSlowRequestWaves(t *testing.T) {
-	cmd, out := prepareEvalRerankRun(t, "per-candidate", 2)
-	state := invocationFromContext(cmd.Context())
-	cfg := state.cfg
-	evalLimit, evalRerankTop = 30, 30
-	s, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(t, err)
-	for i := 4; i <= 31; i++ {
-		_, err := s.DB().Exec(`INSERT INTO messages
-			(id, conversation_id, source_id, source_message_id, message_type, subject, size_estimate)
-			VALUES (?, 1, 1, ?, 'email', 'renewal', 100)`, i, fmt.Sprintf("<m%d@example.com>", i))
-		require.NoError(t, err)
-	}
-	_, err = s.BackfillFTS(nil)
-	require.NoError(t, err)
-	require.NoError(t, s.Close())
-	response := `{"model":"jev-1.13.0","answers":{"matches":{"type":"noul","noul":0.15}},"usage":{"input_tokens":342,"output_tokens":20}}`
-	factory := func(shape, key string, budget *rerank.Budget) (evalReranker, error) {
-		return rerank.NewJev(shape, key, budget, testTransport(func(request *http.Request) (*http.Response, error) {
-			select {
-			case <-time.After(3 * time.Second):
-				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(response))}, nil
-			case <-request.Context().Done():
-				return nil, request.Context().Err()
-			}
-		}))
-	}
-	synctest.Test(t, func(t *testing.T) {
-		cmd.SetContext(withInvocation(t.Context(), state))
-		require.NoError(t, runEvalWithRerankerFactory(cmd, nil, factory))
-	})
-	var report struct {
-		Rerank struct {
-			Complete bool `json:"complete"`
-			Results  map[string]map[string]struct {
-				Topics   int `json:"topics"`
-				Requests int `json:"requests"`
-				Latency  struct {
-					P95MS float64 `json:"p95_ms"`
-				} `json:"latency"`
-			} `json:"results"`
-		} `json:"rerank_results"`
-	}
-	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
-	assert.True(t, report.Rerank.Complete)
-	arm := report.Rerank.Results["fts"]["per-candidate"]
-	assert.Equal(t, 2, arm.Topics)
-	assert.Equal(t, 60, arm.Requests)
-	assert.GreaterOrEqual(t, arm.Latency.P95MS, 12000.0)
 }
 
 type fakeReranker struct{}
@@ -265,11 +208,7 @@ func TestEvalRerankShortlist(t *testing.T) {
 
 func TestRunEvalRerankFailureKeepsCompleteBaseline(t *testing.T) {
 	cmd, out := prepareEvalRerankRun(t, "batched,per-candidate", 3)
-	input, output := int64(5), int64(2)
-	recorder := &evalRerankRecorder{
-		failAt:    map[string]int{"batched": 2},
-		failUsage: rerank.Usage{Requests: 1, InputTokens: &input, OutputTokens: &output},
-	}
+	recorder := &evalRerankRecorder{failAt: map[string]int{"batched": 2}}
 	err := runEvalWithRerankerFactory(cmd, nil, recorder.makeReranker)
 	require.ErrorContains(t, err, "provider request failed")
 	require.Len(t, recorder.requests["batched"], 2, "provider work stops after the failed request")
@@ -296,13 +235,13 @@ func TestRunEvalRerankFailureKeepsCompleteBaseline(t *testing.T) {
 	assert.NotContains(t, arm, "Hit@1")
 	var requests int
 	require.NoError(t, json.Unmarshal(arm["requests"], &requests))
-	assert.Equal(t, 2, requests)
+	assert.Equal(t, 1, requests)
 	var inputTokens int64
 	require.NoError(t, json.Unmarshal(arm["input_tokens"], &inputTokens))
-	assert.Equal(t, int64(10), inputTokens)
+	assert.Equal(t, int64(5), inputTokens)
 	var outputTokens int64
 	require.NoError(t, json.Unmarshal(arm["output_tokens"], &outputTokens))
-	assert.Equal(t, int64(4), outputTokens)
+	assert.Equal(t, int64(2), outputTokens)
 	assert.Contains(t, string(arm["cost_usd"]), "null")
 	var incompleteStatus string
 	var incompleteTopics int
@@ -388,7 +327,7 @@ func TestRunEvalPreflightsJevRequestEstimateBeforeOpeningArchive(t *testing.T) {
 	cfg.Data.DataDir = dir
 	evalModes, evalDocKey, evalLimit, evalJSON = "fts,vector,hybrid", "message", 100, true
 	evalRerankJev, evalRerankTop, evalRerankMaxRequests = "per-candidate,batched", 30, 1000
-	evalRerankCostStopUSD, evalRerankInputUSDPerM, evalRerankOutputUSDPerM = 5, 1, 1
+	evalRerankInputUSDPerM, evalRerankOutputUSDPerM = 1, 1
 	t.Setenv("TYPESAFE_API_KEY", "test-key")
 	var topics, qrels strings.Builder
 	for i := range 11 {
@@ -440,7 +379,6 @@ func TestReadEvalRerankOptionsRejectsInvalidInputs(t *testing.T) {
 		{name: "top cannot rerank", inputPrice: true, outputPrice: true, key: "test-key", wantError: "--rerank-top must be between", mutate: func() { evalRerankTop = 1 }},
 		{name: "top exceeds retrieval depth", inputPrice: true, outputPrice: true, key: "test-key", wantError: "cannot exceed --limit", mutate: func() { evalRerankTop = evalLimit + 1 }},
 		{name: "nonpositive request limit", inputPrice: true, outputPrice: true, key: "test-key", wantError: "--rerank-max-requests must be positive", mutate: func() { evalRerankMaxRequests = 0 }},
-		{name: "invalid cost stop", inputPrice: true, outputPrice: true, key: "test-key", wantError: "must be a positive finite number", mutate: func() { evalRerankCostStopUSD = math.NaN() }},
 		{name: "missing input price", outputPrice: true, key: "test-key", wantError: "--rerank-input-usd-per-million is required"},
 		{name: "missing output price", inputPrice: true, key: "test-key", wantError: "--rerank-output-usd-per-million is required"},
 		{name: "negative input price", inputPrice: true, outputPrice: true, key: "test-key", wantError: "must be a finite nonnegative number", mutate: func() { evalRerankInputUSDPerM = -1 }},
@@ -455,7 +393,7 @@ func TestReadEvalRerankOptionsRejectsInvalidInputs(t *testing.T) {
 			cfg := config.NewDefaultConfig()
 			evalDocKey, evalLimit = "message", 10
 			evalRerankJev, evalRerankTop, evalRerankMaxRequests = "batched", 2, 100
-			evalRerankCostStopUSD, evalRerankInputUSDPerM, evalRerankOutputUSDPerM = 1, 1, 1
+			evalRerankInputUSDPerM, evalRerankOutputUSDPerM = 1, 1
 			t.Setenv("TYPESAFE_API_KEY", tc.key)
 			cmd := newEvalRerankTestCommand(t, &bytes.Buffer{}, tc.inputPrice, tc.outputPrice)
 			cmd.SetContext(testInvocationContext(cmd.Context(), cfg, invocationOptions{}))
@@ -497,8 +435,7 @@ func TestEvalRerankReport(t *testing.T) {
 	assert := assert.New(t)
 	inputPrice, outputPrice := 1.0, 2.0
 	report := newEvalRerankReport(evalRerankOptions{
-		Shapes: []string{"batched"}, Top: 30, MaxRequests: 1000,
-		CostStopUSD: 2, InputUSDPerM: inputPrice, OutputUSDPerM: outputPrice,
+		Shapes: []string{"batched"}, Top: 30, MaxRequests: 1000, InputUSDPerM: inputPrice, OutputUSDPerM: outputPrice,
 	})
 	arm := report.arm("hybrid", "batched")
 	arm.addUsage(rerank.Usage{Requests: 1}, inputPrice, outputPrice)
@@ -521,8 +458,7 @@ func TestEvalRerankReport(t *testing.T) {
 
 func TestEvalRerankFailure(t *testing.T) {
 	report := newEvalRerankReport(evalRerankOptions{
-		Shapes: []string{"batched"}, Top: 30, MaxRequests: 1000,
-		CostStopUSD: 2, InputUSDPerM: 1, OutputUSDPerM: 2,
+		Shapes: []string{"batched"}, Top: 30, InputUSDPerM: 1, OutputUSDPerM: 2,
 	})
 	arm := report.arm("hybrid", "batched")
 	input, outputTokens := int64(5), int64(2)

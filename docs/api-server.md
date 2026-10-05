@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-27"
+last_edited: "2026-10-04"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -24,14 +24,96 @@ browser login, secure remote deployment, search states, and keyboard controls.
 | Follow background work | `/api/v1/operations/runs` and `/api/v1/operations/status` |
 | Integrate an AI assistant | [MCP server](usage/chat.md) |
 
-### API compatibility
+### Calendar control
+
+`POST /api/v1/calendar/control` accepts one strict JSON object with `action` and
+`account`. Event mutations also require `calendar_id`; availability requires
+either `calendar_id` or `calendar_ids`. It uses owner authentication or a
+delegated agent token. Unknown fields, duplicate keys, noncanonical field
+casing, null fields, and multiple objects are rejected. The body limit is 1 MiB.
+
+| Field | Contract |
+|---|---|
+| `action` | `create`, `update`, `delete`, `move`, `respond`, `freebusy`, or `conflicts` |
+| `account` | Configured `[[gcal]]` source name or OAuth account |
+| `calendar_id` | Exact event target calendar ID, `primary`, or configured alias; availability uses it only when `calendar_ids` is empty |
+| `event_id` | Required for update/delete/move/respond |
+| `event` | Partial writable event fields: `summary`, `description`, `location`, `start`, `end`, `recurrence`, `attendees`, `reminders`; omitted update fields are preserved, explicit empty values clear |
+| `add_attendees` | Guest email array for update, preserving existing attendees; excludes `event.attendees` replacement |
+| `send_updates` | `none` by default, `all`, or `externalOnly` |
+| `scope`, `original_start` | Recurring scope `single` (default), `all`, or `future` for update/delete; original occurrence start is RFC3339 or an all-day date |
+| `destination` | Required calendar ID or alias for move |
+| `response` | Required self RSVP: `accepted`, `declined`, or `tentative` |
+| `time_min`, `time_max`, `calendar_ids`, `time_zone` | Availability range, selected calendars (at most 50), and IANA time zone; explicit `calendar_ids` are the only calendars validated and authorized |
+| `dry_run`, `read_only` | Verify and plan without writes; reject all event mutations |
+| `expected_plan_fingerprint` | Optional precondition from a prior dry run; return 409 `calendar_plan_changed` before writing if the current write plan, normalized OAuth account, or normalized notification mode differs |
+
+`start` and `end` use Google's `dateTime` (RFC3339) or `date` (all-day
+`YYYY-MM-DD`), and optional `timeZone`. All-day end is exclusive. Guests use
+`email` and optional `displayName`, `optional`, and `resource`; caller-supplied
+RSVP state, organizer, and self flags are rejected. Reminders use `useDefault`
+and `overrides` containing `method` (`popup`/`email`) and `minutes` (0–40320).
+
+The daemon requires an enabled source, explicit `write_calendars`, event-write
+OAuth consent, and a live `owner` or `writer` accessRole. Guest changes also need
+`invite_calendars`. Delegated grants match the exact `gcal` source identifier
+`account-email/calendar-id`: `calendar.read` for availability,
+`calendar.event.read` for provider-derived event details in delegated plans and
+write receipts, `calendar.write` for changes, and additional `calendar.invite`
+for guest changes. The authenticated account is never substituted for a requested
+non-primary calendar. Availability with `calendar_ids` authorizes each listed
+calendar and ignores `calendar_id`.
+
+The response contains `plan`, `writes`, resolved calendar/account IDs, and the
+notification mode. Existing-event plan entries include `target.summary` and
+`target.start` for owners and grants with `calendar.event.read`.
+This preview metadata is covered by the plan fingerprint and is never sent as
+part of a provider mutation. Partial provider writes include `outcome_code`
+(`calendar_partial` or `calendar_outcome_unknown`); uncertain results also set
+`outcome_unknown: true`. For availability with `calendar_ids`, `calendar_id` names
+the first resolved selection and `freebusy.calendars` contains every selection.
+Each completed write includes its returned event,
+`message_id`, `archived`, and optional `archive_error`. A later remote failure
+returns completed writes plus `error`. If a later provider write has an unknown
+outcome, the HTTP 200 result also sets `outcome_unknown: true` and retains
+receipts for completed writes. An archive failure retains the receipt of the
+successful Google change. Reconcile these results before deciding whether
+another mutation is safe; do not replay an uncertain mutation based only on its
+response. Provider mutations are sent once. Invalid requests return 400;
+source/consent/grant/role denials return 403; missing events return 404. Local
+daemon setup failures return 500 to owners and a generic 403 to delegated callers.
+Provider failures without a partial result
+return 502. An unknown outcome with no completed writes returns
+`calendar_outcome_unknown`. Reconcile the current calendar state before taking
+further action; do not replay the uncertain operation based only on this response.
+The serialized operation gate protects provider mutations and their archive
+writes, including delegated calls. Body decoding, authorization, availability,
+and dry runs do not hold the gate or wait for a sync to release it.
+
+[Calendar usage](usage/calendar.md#control-events-unreleased) owns setup,
+recurrence limits, notification behavior, and reconciliation instructions.
+`POST /api/v1/cli/add-calendar/plan` also accepts `write=true` to plan opt-in
+`calendar.events` consent while preserving existing Google scopes.
+
+## API compatibility
 
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **2.35.0**.
+it is separate from the binary release version. The current schema is **3.1.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 3.0.0 removes the unguarded
+`POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
+Use the corresponding `/review/accept` and `/review/reject` routes with a fresh
+review token. Upgrade the CLI and daemon together; clients with an incompatible
+schema fail before issuing archive requests. The HTTP prefix remains `/api/v1`.
+This schema also adds consented identity scoring. See
+[identity match review and scoring](#identity-match-review-and-scoring).
+
+Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
+availability queries, and opt-in `write` on Calendar consent plans.
 
 Schema 2.35.0 adds `scope_escalation_source_type` (`gmail` or `msmail`) to
 `POST /api/v1/cli/delete-staged/plan` responses that require a permission
@@ -132,6 +214,48 @@ only the explicit publication preview route returns a raw vCard.
 See [release changes](changelog.md#upgrade-and-compatibility) for removed paths
 and the 1.x/2.x transition.
 
+### Identity match review and scoring
+
+Review identity suggestions through `GET /api/v1/identity/match-candidates`
+and `GET /api/v1/identity/match-candidates/{id}`. Responses include the
+evidence, blockers, and a `review_token` for that exact snapshot. Accept or
+reject with `POST /api/v1/identity/match-candidates/{id}/review/accept` or
+`.../review/reject`, passing the token in the request body. If the evidence or
+endpoints changed, the API returns `409 identity_match_review_stale`; fetch the
+candidate again and make a fresh decision. Other conflicts retain their own
+error codes, including `person_merge_required` when separate profiles need a
+merge review. The former `.../{id}/accept` and `.../{id}/reject` routes are
+removed; clients must use the reviewed routes and supply a token.
+
+Identity scoring runs only on request. `GET /api/v1/identity/scoring/status`
+returns `ready`, `blocker`, credential and consent status, the exact provider
+`disclosure`, its `disclosure_fingerprint`, and a `data_fields` description of
+the raw identity fields sent. `POST /api/v1/identity/scoring/consent` accepts
+`{"disclosure_fingerprint":"<fingerprint>"}` for the current disclosure.
+`POST /api/v1/identity/scoring/revoke` accepts the same body to withdraw that
+fingerprint's consent without changing configuration.
+
+`POST /api/v1/identity/scoring/run` accepts `{}` or `{"limit":20}`. The limit
+defaults to the configured batch size and cannot exceed it. The daemon creates
+review suggestions and checks local blockers before sending eligible pairs to
+the provider. It journals the results and never accepts matches.
+
+A completed or partially completed run returns HTTP 200 with `results` and
+`processed`. Each result has a candidate ID, review token, proposed action,
+status, and blockers. If the batch stops early, the response also has an
+`error` object with `code` and `message`; clients must inspect it even after
+HTTP 200. Completed results remain available. Error codes include
+`consent_required`, `scoring_scan_incomplete`, and `scoring_run_failed`.
+Preflight failures use the normal non-200 error response.
+
+`GET /api/v1/identity/scoring/history` returns redacted judgments. It accepts
+`candidate_id` (zero or omitted means all), `limit` (default 100, range 1–100),
+and `before_id` for older entries. Pass a returned `next_before_id` as the next
+request's `before_id`. The complete contracts are in `/openapi.json` from the
+daemon or printed by `msgvault openapi`. See
+[configuration](configuration.md#people-identity-scoring) and the
+[people guide](usage/people.md#optional-identity-scoring) for setup and consent.
+
 ### Archive and processing boundaries
 
 The API uses the same archive database and attachment store as other clients.
@@ -207,7 +331,7 @@ is required. Three API-key authentication methods are supported:
 | API key header | `X-API-Key: <key>` | `X-API-Key: my-secret` |
 | Plain auth header | `Authorization: <key>` | `Authorization: my-secret` |
 
-If no `api_key` is configured, authentication is not required regardless of bind address. The separate `allow_insecure` / security validation prevents starting without an API key on non-loopback addresses.
+If no effective API key is configured, authentication is not required. Secure startup requires a key for non-loopback addresses. On unreleased `main`, `serve` creates and persists one when no credential source is configured. See [server credentials](configuration.md#server) for file and environment sources, persistence, and explicit insecure mode.
 
 ## Historical import jobs {#historical-import-jobs}
 
@@ -1882,19 +2006,27 @@ Scheduler state and per-account schedule details.
 ```
 
 The daemon runs scheduled work one job at a time. While a sync waits for
-another job to finish, its entry reports `"queued": true`. While it runs,
-`started_at` gives when it began. A schedule tick that fires during a run
+another job to finish, its entry reports `"queued": true` and `"running": false`.
+`"running": true` means it acquired the operation gate; `started_at` gives when
+it began. The top-level `running` field reports whether the scheduler is active.
+A schedule tick that fires during a run
 sets `"pending": true`, and the scheduler runs the sync once more when the
-current run ends. Account syncs (Gmail, IMAP, Teams, and Discord), Slack, and
+current run ends. Resumable account syncs (Gmail, Teams, and Discord), Slack, and
 Beeper support preemption: after holding the gate for a minute while others
 are queued, they are asked to stop at their next safe point. If they are
 still running five seconds later, the scheduler cancels their context. An
 interrupted run goes back behind waiting jobs immediately; it does not wait
-for another schedule tick. Maintenance and other jobs without resumable
-checkpoints keep their own runtime budgets. Waiting API requests can still
+for another schedule tick. Activity projection also supports preemption: it
+stops after its current batch, limits each pass to ten batches, and stops at
+two minutes regardless. It saves its reconciliation progress. Attachment
+packing and daily attachment maintenance stop after one minute and resume
+behind waiting work. IMAP full passes do not support scheduled preemption.
+Other jobs keep their own runtime budgets. Waiting API requests can still
 interrupt scheduled work. `GET /api/v1/sources/status` reports the same
 state for every scheduled source as `scheduler_queued`, `scheduler_pending`,
-and `scheduler_started_at`.
+and `scheduler_started_at`. Compare queued state and the last successful sync
+to detect a source that is waiting too long. Health's `operation.label` names
+the job holding the gate, such as `activity-projection` or `attachment-pack`.
 
 ---
 
@@ -2395,11 +2527,11 @@ The same HTTP server backs configured remote CLI access and the local background
 The server is designed for local use:
 
 - **Loopback-only by default.** The default bind address is `127.0.0.1`, restricting access to the local machine.
-- **API key required for non-loopback.** If you bind to a non-loopback address (e.g., `0.0.0.0`), the server requires `api_key` to be set and will refuse to start without it.
+- **API key required for non-loopback.** Binding to a non-loopback address requires an effective key. On unreleased `main`, `serve` creates a persisted key when no credential source is configured; a selected invalid source fails startup. See [server credentials](configuration.md#server).
 - **Opt-in for insecure binding.** To bind to a non-loopback address without an API key (not recommended), set `allow_insecure = true`.
 
 !!! warning
-    Exposing the server on a network without authentication gives anyone on that network access to your entire email archive. Always set an `api_key` when binding to non-loopback addresses.
+    Exposing the server on a network without authentication gives anyone on that network access to your entire email archive. Keep authentication enabled when binding to non-loopback addresses.
 
 ## Configuration Reference
 
@@ -2412,7 +2544,7 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 | `api_port` | `0` (auto-select) | Port the server listens on; `0` picks an open port at startup and clients discover it automatically. Set a fixed port for remote/NAS deployments. |
 | `bind_addr` | `127.0.0.1` | Bind address |
 | `api_key` | — | API key for authentication |
-| `agent_access` | `false` | Enable restricted agent grants; requires a non-empty `api_key` and a daemon restart after changes |
+| `agent_access` | `false` | Enable restricted agent grants; requires an effective API key and a daemon restart after changes |
 | `allow_insecure` | `false` | Allow non-loopback binding without `api_key` |
 | `cors_origins` | `[]` | Allowed CORS origins |
 | `cors_credentials` | `false` | Allow credentials in CORS requests |

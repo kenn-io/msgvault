@@ -68,6 +68,14 @@ func TestGeneratedEmploymentSourceConstantsRemainAssignable(t *testing.T) {
 	assert.Equal(t, generated.EmploymentBodySource("user"), source)
 }
 
+func TestGeneratedCalendarEnumsRetainExistingExportedConstants(t *testing.T) {
+	assertions := assert.New(t)
+	assertions.Equal(generated.Single, generated.CreateAttributeDefinitionRequestCardinality("single"))
+	assertions.Equal(generated.None, generated.SecretSettingStateSource("none"))
+	assertions.Equal(generated.Accepted, generated.ListPersonRelationshipReviewsQueryStatus("accepted"))
+	assertions.Equal(generated.CalendarRequestScopeSingle, generated.CalendarRequestScope("single"))
+}
+
 func generatedSettingGroupForCompatibility(group generated.SettingGroup0) generated.SettingGroup0 {
 	return group
 }

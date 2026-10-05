@@ -176,14 +176,7 @@ func exportRelatedDatasets(
 		if _, ok := afterMessageIDs[item.dataset]; !ok {
 			continue
 		}
-		dir := filepath.Join(stagingRoot, item.dataset)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create related repair dataset %s: %w", item.dataset, err)
-		}
-		path := filepath.Join(dir, "data.parquet")
-		statement := fmt.Sprintf("COPY (%s) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')",
-			item.selectSQL, quoteCacheSQL(path))
-		if _, err := db.ExecContext(ctx, statement); err != nil {
+		if err := copyParquet(ctx, db, filepath.Join(stagingRoot, item.dataset), "data.parquet", item.selectSQL); err != nil {
 			return fmt.Errorf("export related dataset %s: %w", item.dataset, query.HintRepairEncoding(err))
 		}
 	}

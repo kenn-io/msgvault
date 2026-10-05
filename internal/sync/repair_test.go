@@ -72,6 +72,30 @@ func TestRepairMessageLeavesSentAttributionToIdentityDiscovery(t *testing.T) {
 		"identity attribution comes from confirmed identities, not the SENT label")
 }
 
+func TestRepairMessagePreservesMetadata(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, stored string }{
+		{"object", `{"custom":{"keep":true},"email_in_reply_to":"<parent@example.test>"}`},
+		{"malformed", `{"partial":true,`},
+		{"array", `[{"old":"value"}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			env := newTestEnv(t)
+			source := env.CreateSource(t)
+			id := seedRepairRow(t, env.Store, source.ID, "gmail-metadata", "old-thread", "old")
+			require.NoError(env.Store.SetMessageMetadata(id, sql.NullString{Valid: true, String: tc.stored}))
+			env.Mock.Messages["gmail-metadata"] = repairRaw("gmail-metadata", "provider-thread", "repaired", "body", nil)
+			_, err := env.Syncer.RepairMessage(t.Context(), RepairRequest{Reference: "gmail-metadata", SourceID: source.ID})
+			require.NoError(err)
+			var encoded string
+			require.NoError(env.Store.DB().QueryRow(`SELECT metadata FROM messages WHERE id = ?`, id).Scan(&encoded))
+			assert.Equal(t, tc.stored, encoded)
+		})
+	}
+}
+
 func TestRepairMessageRejectsAmbiguousNumericInterpretations(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)

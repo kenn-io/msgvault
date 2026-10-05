@@ -3,6 +3,7 @@ package imazingcsv
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -98,8 +99,9 @@ type plannedMessage struct {
 }
 
 type sourceConfig struct {
-	Timezone            string `json:"timezone"`
-	AmbiguousTimePolicy string `json:"ambiguous_time_policy"`
+	Timezone            string                    `json:"timezone"`
+	AmbiguousTimePolicy string                    `json:"ambiguous_time_policy"`
+	Other               map[string]jsontext.Value `json:",embed"`
 }
 
 // ImportPath imports an export root or CSV directory in one fenced sync run.
@@ -236,6 +238,7 @@ func (importer *Importer) checkAndStoreTimezone(sourceID int64) error {
 		if got.AmbiguousTimePolicy != "" && got.AmbiguousTimePolicy != want.AmbiguousTimePolicy {
 			return fmt.Errorf("iMazing CSV ambiguous-time policy is %q, expected %q", got.AmbiguousTimePolicy, want.AmbiguousTimePolicy)
 		}
+		want.Other = got.Other
 	}
 	encoded, err := json.Marshal(want)
 	if err != nil {

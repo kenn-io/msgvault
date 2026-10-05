@@ -1127,7 +1127,7 @@ func init() {
 		"Skip database backup before merging (backup covers pre-dedup state for all sources, not per-batch)")
 	deduplicateCmd.Flags().StringVar(&dedupPrefer, "prefer", "",
 		"Comma-separated source type preference order "+
-			"(default: gmail,imap,mbox,emlx,hey)")
+			"(default: gmail,imap,msmail,mbox,emlx,hey)")
 	deduplicateCmd.Flags().BoolVar(&dedupContentHash, "content-hash", false,
 		"Also detect duplicates by normalized raw MIME content")
 	deduplicateCmd.Flags().StringArrayVar(&dedupUndo, "undo", nil,

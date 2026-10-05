@@ -633,6 +633,30 @@ func ownerParticipantsSelectSQL(primaryEmailPresence string) string {
 		accountIdentities, participants, accountIdentities, identifiers, participants)
 }
 
+// messageExportColumns is the messages Parquet column list through is_from_me.
+func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribution string) string {
+	return fmt.Sprintf(`
+			m.id,
+			m.source_id,
+			COALESCE(%s, '') AS source_message_id,
+			%s AS rfc822_message_id,
+			m.conversation_id,
+			CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(%s, '') END as subject,
+			CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(%s, '') END as snippet,
+			m.sent_at,
+			m.size_estimate,
+			m.has_attachments,
+			COALESCE(TRY_CAST(m.attachment_count AS INTEGER), 0) as attachment_count,
+			m.deleted_from_source_at,
+			m.sender_id,
+			%s AS owner_participant_id,
+			COALESCE(%s, '') as message_type,
+			%s AS list_id,
+			%s AS is_from_me`, source.identityExportSQL("m.source_message_id"), source.identityExportSQL("m.rfc822_message_id"),
+		source.textSQL("m.subject"), source.textSQL("m.snippet"), ownerParticipant,
+		source.textSQL("m.message_type"), source.identityExportSQL("m.list_id"), attribution)
+}
+
 // messageCacheAttributionSQL is the cache-facing form of
 // store.messageIdentityAttributionMatch. Source-native provenance is always
 // authoritative. A non-empty From envelope is then the only identity surface
@@ -802,26 +826,18 @@ func buildCacheScheduled(
 	if _, throttle := scheduledCacheBuildDelay(staleness, minRebuildInterval, now()); throttle {
 		return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 	}
-	if derivedDriftOnly(staleness) {
-		return refreshIdentityDatasetsOnly(
-			dbPath,
-			analyticsDir,
-			acquirePublishLock,
-			builderOverrides...,
-		)
-	}
-	if relatedDriftOnly(staleness) {
-		return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-			acquirePublishLock, true, builderOverrides...)
-	}
-	return buildCacheLocked(
-		dbPath,
-		analyticsDir,
-		staleness.FullRebuild,
-		false,
-		acquirePublishLock,
-		builderOverrides...,
-	)
+	return withFullBuildFallback(func() (*buildResult, error) {
+		if derivedDriftOnly(staleness) {
+			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, acquirePublishLock,
+				builderOverrides...)
+		}
+		if relatedDriftOnly(staleness) {
+			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
+				acquirePublishLock, true, builderOverrides...)
+		}
+		return buildCacheLockedAttempt(dbPath, analyticsDir, staleness.FullRebuild, false,
+			acquirePublishLock, builderOverrides...)
+	}, dbPath, analyticsDir, acquirePublishLock, builderOverrides...)
 }
 
 func buildCacheImpl(
@@ -870,7 +886,7 @@ func acquireCacheBuildLock(ctx context.Context, analyticsDir string) (*flock.Flo
 // conversationsExportSelectSQL renders the conversations dataset export
 // query: every conversation with an exportable message inside the watermark,
 // with NULL-normalized string columns. Shared by the full/incremental export
-// and the derived-refresh re-staging (exportDerivedConversations) so the two
+// and the derived-refresh re-staging in refreshDerivedDatasetsOnly so the two
 // can never bake different rows for the same watermark.
 func (s *cacheSourceSnapshot) conversationsExportSelectSQL(lastMessageID int64) string {
 	return fmt.Sprintf(`SELECT
@@ -889,7 +905,7 @@ func (s *cacheSourceSnapshot) conversationsExportSelectSQL(lastMessageID int64) 
 
 // participantIdentifiersExportSelectSQL renders the participant_identifiers
 // dataset export query. Shared by the full/incremental export and the
-// derived-refresh re-staging (exportDerivedParticipantIdentifiers) so the two
+// derived-refresh re-staging in refreshDerivedDatasetsOnly so the two
 // can never bake different rows. Identifier keys with invalid UTF-8 export as
 // the empty string (unknown) because repairing them could collide two
 // distinct keys.
@@ -983,6 +999,36 @@ func buildCacheLocked(
 	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
+	return withFullBuildFallback(func() (*buildResult, error) {
+		return buildCacheLockedAttempt(dbPath, analyticsDir, fullRebuild, recheckStaleness,
+			locking, builderOverrides...)
+	}, dbPath, analyticsDir, locking, builderOverrides...)
+}
+
+// withFullBuildFallback runs build and finishes with a full build when a
+// derived refresh inside it finds changes it cannot repair. A sync can commit
+// after the staleness check selects that refresh. The caller holds the builder
+// lock, and build's own resources are released before the full build starts.
+func withFullBuildFallback(
+	build func() (*buildResult, error),
+	dbPath, analyticsDir string,
+	locking cachePublishLocking,
+	builderOverrides ...duckdbutil.BuilderOverrides,
+) (*buildResult, error) {
+	result, err := build()
+	if !errors.Is(err, ErrDerivedRefreshRequiresFullBuild) {
+		return result, err
+	}
+	fmt.Printf("%v. Forcing full rebuild...\n", err)
+	return buildCacheLockedAttempt(dbPath, analyticsDir, true, false, locking, builderOverrides...)
+}
+
+func buildCacheLockedAttempt(
+	dbPath, analyticsDir string,
+	fullRebuild, recheckStaleness bool,
+	locking cachePublishLocking,
+	builderOverrides ...duckdbutil.BuilderOverrides,
+) (*buildResult, error) {
 	// Callers pass the configured DSN, which may be a file: URI; everything
 	// below (sqlite ?mode=ro opens, the DuckDB attach, filepath.Dir for the
 	// staging dir) needs a plain filesystem path.
@@ -1070,6 +1116,13 @@ func buildCacheLocked(
 	if err != nil {
 		_ = identityStore.Close()
 		return nil, fmt.Errorf("read account identity revision: %w", err)
+	}
+	if hasPreviousState && !fullRebuild &&
+		accountIdentityRevision != previousState.AccountIdentityRevision {
+		// Canonical links can reuse message facts; account attribution cannot.
+		fmt.Println("Account identities changed. Forcing full rebuild...")
+		fullRebuild = true
+		lastMessageID = 0
 	}
 	participantIdentifierRevision, err := identityStore.ParticipantIdentifierRevision()
 	if err != nil {
@@ -1179,13 +1232,25 @@ func buildCacheLocked(
 			return nil, fmt.Errorf("read cache related-change sequence: %w", err)
 		}
 	}
+	// Messages at or below the committed boundary, counted once and reused
+	// for the expected total of an incremental build.
+	var coveredCount int64
+	coveredCounted := false
 	if !fullRebuild && hasPreviousState && hasSyncRunsTable > 0 {
 		updatesChanged := syncCounters.updates != previousState.LastCacheUpdateCount
-		coveredAdditionsChanged := syncCounters.additions != previousState.LastCacheAdditionCount &&
-			maxID <= previousState.LastMessageID
+		additionsRegressed := syncCounters.additions < previousState.LastCacheAdditionCount
+		populationChanged := false
+		if syncCounters.additions != previousState.LastCacheAdditionCount {
+			if err := sourceSnapshot.QueryRow(coveredCacheMessageCountSQL(), previousState.LastMessageID).
+				Scan(&coveredCount); err != nil {
+				return nil, fmt.Errorf("check cached message population: %w", err)
+			}
+			coveredCounted = true
+			populationChanged = coveredCount != previousState.Stats.TotalMessages
+		}
 		failedSyncChanged := syncCounters.failedRunCount != previousState.LastFailedSyncRunCount ||
 			syncCounters.failedRunIDSum != previousState.LastFailedSyncRunIDSum
-		if updatesChanged || coveredAdditionsChanged || failedSyncChanged {
+		if updatesChanged || additionsRegressed || failedSyncChanged || populationChanged {
 			fmt.Println("Existing cached messages changed. Forcing full rebuild...")
 			fullRebuild = true
 			lastMessageID = 0
@@ -1205,7 +1270,21 @@ func buildCacheLocked(
 			relatedKinds = relatedChangeKinds{}
 		}
 	}
+	if hasPreviousState && !fullRebuild && maxID > lastMessageID &&
+		identityRevision != previousState.IdentityRevision {
+		// Rebuilding canonical edges reads recipients for old messages too.
+		// Export their complete population alongside the new message shards.
+		relatedKinds.recipients = true
+	}
 	repairRelated := relatedKinds.recipients || relatedKinds.labels || relatedKinds.attachments
+	if hasPreviousState && !fullRebuild && hasSyncRunsTable > 0 &&
+		syncCounters.additions != previousState.LastCacheAdditionCount &&
+		maxID <= previousState.LastMessageID && !repairRelated {
+		// Without journaled child changes there is no bounded repair for an
+		// addition already inside the committed message boundary.
+		fullRebuild = true
+		lastMessageID = 0
+	}
 	if hasPreviousState && maxID <= lastMessageID && !fullRebuild && repairRelated {
 		if err := sourceSnapshot.Close(); err != nil {
 			return nil, fmt.Errorf("close SQLite snapshot before related repair: %w", err)
@@ -1230,10 +1309,14 @@ func buildCacheLocked(
 	if err := sourceSnapshot.QueryRow(expectedCountQuery, maxID, lastMessageID).Scan(&expectedBatchCount); err != nil {
 		return nil, fmt.Errorf("count expected staged messages: %w", err)
 	}
-	expectedTotalQuery := "SELECT COUNT(*) FROM messages WHERE " +
-		exportableMessageWhere("") + " AND id <= ?"
-	if err := sourceSnapshot.QueryRow(expectedTotalQuery, maxID).Scan(&expectedTotalCount); err != nil {
-		return nil, fmt.Errorf("count expected cached messages: %w", err)
+	if coveredCounted && !replaceAll {
+		expectedTotalCount = coveredCount + expectedBatchCount
+	} else {
+		expectedTotalQuery := "SELECT COUNT(*) FROM messages WHERE " +
+			exportableMessageWhere("") + " AND id <= ?"
+		if err := sourceSnapshot.QueryRow(expectedTotalQuery, maxID).Scan(&expectedTotalCount); err != nil {
+			return nil, fmt.Errorf("count expected cached messages: %w", err)
+		}
 	}
 	if buildCacheAfterSnapshotHook != nil {
 		buildCacheAfterSnapshotHook()
@@ -1299,11 +1382,11 @@ func buildCacheLocked(
 		idFilter += fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) > %d", lastMessageID)
 	}
 
-	// runExport executes a COPY query and prints timing info.
-	runExport := func(label, copyQuery string) error {
+	// runExport runs one dataset export and prints timing info.
+	runExport := func(label string, export func() error) error {
 		start := time.Now()
 		fmt.Printf("  %-25s", label+"...")
-		if _, err := exportDB.Exec(copyQuery); err != nil {
+		if err := export(); err != nil {
 			fmt.Println()
 			return query.HintRepairEncoding(err)
 		}
@@ -1335,36 +1418,19 @@ func buildCacheLocked(
 	}
 
 	// 4. Export participants
-	participantsDir := filepath.Join(staging.root, tableParticipants)
-	escapedParticipantsDir := strings.ReplaceAll(participantsDir, "'", "''")
-	if err := runExport(tableParticipants, fmt.Sprintf(`
-	COPY (
-		%s
-	) TO '%s/participants.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, sourceSnapshot.participantsExportSelectSQL(), escapedParticipantsDir)); err != nil {
+	ctx := context.Background()
+	copyDataset := func(table, selectSQL string) func() error {
+		return func() error {
+			return copyParquet(ctx, exportDB, filepath.Join(staging.root, table), table+".parquet", selectSQL)
+		}
+	}
+	if err := runExport(tableParticipants, copyDataset(tableParticipants, sourceSnapshot.participantsExportSelectSQL())); err != nil {
 		return nil, fmt.Errorf("export participants: %w", err)
 	}
-
-	participantIdentifiersDir := filepath.Join(staging.root, tableParticipantIdentifiers)
-	escapedParticipantIdentifiersDir := strings.ReplaceAll(participantIdentifiersDir, "'", "''")
-	if err := runExport(tableParticipantIdentifiers, fmt.Sprintf(`
-	COPY (
-		%s
-	) TO '%s/participant_identifiers.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, sourceSnapshot.participantIdentifiersExportSelectSQL(), escapedParticipantIdentifiersDir)); err != nil {
+	if err := runExport(tableParticipantIdentifiers, copyDataset(tableParticipantIdentifiers, sourceSnapshot.participantIdentifiersExportSelectSQL())); err != nil {
 		return nil, fmt.Errorf("export participant identifiers: %w", err)
 	}
-
-	personDisplayNamesDir := filepath.Join(staging.root, tablePersonDisplayNames)
-	if err := runExport(tablePersonDisplayNames, fmt.Sprintf(
-		`COPY (%s) TO '%s/person_display_names.parquet' (FORMAT PARQUET, COMPRESSION 'zstd')`,
-		sourceSnapshot.personDisplayNamesExportSelectSQL(), quoteCacheSQL(personDisplayNamesDir))); err != nil {
+	if err := runExport(tablePersonDisplayNames, copyDataset(tablePersonDisplayNames, sourceSnapshot.personDisplayNamesExportSelectSQL())); err != nil {
 		return nil, fmt.Errorf("export person names: %w", err)
 	}
 
@@ -1373,16 +1439,8 @@ func buildCacheLocked(
 	// ownerParticipantsSelectSQL for the resolution rules). Always fully
 	// replaced (not filtered by lastMessageID) since identities are cheap to
 	// recompute and independent of the message ID watermark.
-	ownerParticipantsDir := filepath.Join(staging.root, tableOwnerParticipants)
-	escapedOwnerParticipantsDir := strings.ReplaceAll(ownerParticipantsDir, "'", "''")
 	primaryEmailPresence := sourceSnapshot.identityPresenceSQL("email_address", "primary_email_present")
-	if err := runExport(tableOwnerParticipants, fmt.Sprintf(`
-	COPY (%s
-	) TO '%s/owner_participants.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, ownerParticipantsSelectSQL(primaryEmailPresence), escapedOwnerParticipantsDir)); err != nil {
+	if err := runExport(tableOwnerParticipants, copyDataset(tableOwnerParticipants, ownerParticipantsSelectSQL(primaryEmailPresence))); err != nil {
 		return nil, fmt.Errorf("export owner participants: %w", err)
 	}
 
@@ -1392,89 +1450,31 @@ func buildCacheLocked(
 	// table so it can be COPYed to Parquet like every other dataset. Always
 	// written, even when there are no linked participants, so the dataset
 	// directory required by RequiredParquetDirs always exists.
-	participantClustersDir := filepath.Join(staging.root, tableParticipantClusters)
-	escapedParticipantClustersDir := strings.ReplaceAll(participantClustersDir, "'", "''")
-	if _, err := exportDB.Exec(
-		`CREATE TEMP TABLE tmp_participant_clusters (participant_id BIGINT, canonical_id BIGINT)`,
-	); err != nil {
-		return nil, fmt.Errorf("create participant clusters temp table: %w", err)
+	if err := stageParticipantClusters(ctx, exportDB, participantClusters); err != nil {
+		return nil, err
 	}
-	if len(participantClusters) > 0 {
-		values := make([]string, 0, len(participantClusters))
-		for participantID, canonicalID := range participantClusters {
-			values = append(values, fmt.Sprintf("(%d, %d)", participantID, canonicalID))
-		}
-		insertSQL := "INSERT INTO tmp_participant_clusters (participant_id, canonical_id) VALUES " +
-			strings.Join(values, ", ")
-		if _, err := exportDB.Exec(insertSQL); err != nil {
-			return nil, fmt.Errorf("populate participant clusters temp table: %w", err)
-		}
-	}
-	if err := runExport(tableParticipantClusters, fmt.Sprintf(`
-	COPY (
-		SELECT participant_id, canonical_id FROM tmp_participant_clusters
-	) TO '%s/participant_clusters.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, escapedParticipantClustersDir)); err != nil {
+	if err := runExport(tableParticipantClusters, copyDataset(tableParticipantClusters, participantClustersSelectSQL)); err != nil {
 		return nil, fmt.Errorf("export participant clusters: %w", err)
 	}
 	if _, err := exportDB.Exec(`DROP TABLE tmp_participant_clusters`); err != nil {
 		return nil, fmt.Errorf("drop participant clusters temp table: %w", err)
 	}
 
-	conversationParticipantsDir := filepath.Join(staging.root, tableConversationParticipants)
-	escapedConversationParticipantsDir := strings.ReplaceAll(conversationParticipantsDir, "'", "''")
-	if err := runExport(tableConversationParticipants, fmt.Sprintf(`
-	COPY (
-		SELECT
-			cp.conversation_id,
-			cp.participant_id
-		FROM sqlite_db.conversation_participants cp
-		WHERE EXISTS (
-			SELECT 1 FROM sqlite_db.messages m
-			WHERE m.conversation_id = cp.conversation_id
-			  AND `+exportableMessageWhere("m")+`
-			  AND TRY_CAST(m.id AS BIGINT) <= %d
-		)
-	) TO '%s/conversation_participants.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, maxID, escapedConversationParticipantsDir)); err != nil {
+	if err := runExport(tableConversationParticipants, copyDataset(tableConversationParticipants, conversationParticipantsSelectSQL(maxID))); err != nil {
 		return nil, fmt.Errorf("export conversation participants: %w", err)
 	}
 
 	// 6. Export sources
-	sourcesDir := filepath.Join(staging.root, "sources")
-	escapedSourcesDir := strings.ReplaceAll(sourcesDir, "'", "''")
-	if err := runExport("sources", fmt.Sprintf(`
-	COPY (
-		SELECT
+	if err := runExport("sources", copyDataset("sources", fmt.Sprintf(`SELECT
 			id,
 			COALESCE(%s, '') as account_email,
 			COALESCE(%s, 'gmail') as source_type
-		FROM sqlite_db.sources
-	) TO '%s/sources.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, sourceSnapshot.identityExportSQL("identifier"), sourceSnapshot.textSQL("source_type"), escapedSourcesDir)); err != nil {
+		FROM sqlite_db.sources`, sourceSnapshot.identityExportSQL("identifier"), sourceSnapshot.textSQL("source_type")))); err != nil {
 		return nil, fmt.Errorf("export sources: %w", err)
 	}
 
 	// 7. Export conversations (for Gmail thread IDs)
-	conversationsDir := filepath.Join(staging.root, tableConversations)
-	escapedConversationsDir := strings.ReplaceAll(conversationsDir, "'", "''")
-	if err := runExport(tableConversations, fmt.Sprintf(`
-	COPY (
-		%s
-	) TO '%s/conversations.parquet' (
-		FORMAT PARQUET,
-		COMPRESSION 'zstd'
-	)
-	`, sourceSnapshot.conversationsExportSelectSQL(maxID), escapedConversationsDir)); err != nil {
+	if err := runExport(tableConversations, copyDataset(tableConversations, sourceSnapshot.conversationsExportSelectSQL(maxID))); err != nil {
 		return nil, fmt.Errorf("export conversations: %w", err)
 	}
 
@@ -1496,26 +1496,11 @@ func buildCacheLocked(
 		primaryEmailPresence,
 	)
 
-	if err := runExport(tableMessages, fmt.Sprintf(`
+	columns := messageExportColumns(sourceSnapshot, messageOwnerParticipant, messageAttribution)
+	if err := runExport(tableMessages, func() error {
+		_, err := exportDB.Exec(fmt.Sprintf(`
 	COPY (
-		SELECT
-			m.id,
-			m.source_id,
-			COALESCE(%s, '') AS source_message_id,
-			%s AS rfc822_message_id,
-			m.conversation_id,
-			CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(%s, '') END as subject,
-			CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(%s, '') END as snippet,
-			m.sent_at,
-			m.size_estimate,
-			m.has_attachments,
-			COALESCE(TRY_CAST(m.attachment_count AS INTEGER), 0) as attachment_count,
-			m.deleted_from_source_at,
-			m.sender_id,
-			%s AS owner_participant_id,
-			COALESCE(%s, '') as message_type,
-			%s AS list_id,
-			%s AS is_from_me,
+		SELECT %s,
 			CAST(EXTRACT(YEAR FROM m.sent_at) AS INTEGER) as year,
 			CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 		FROM sqlite_db.messages m
@@ -1526,10 +1511,9 @@ func buildCacheLocked(
 		OVERWRITE_OR_IGNORE,
 		COMPRESSION 'zstd'
 	)
-	`, sourceSnapshot.identityExportSQL("m.source_message_id"), sourceSnapshot.identityExportSQL("m.rfc822_message_id"),
-		sourceSnapshot.textSQL("m.subject"), sourceSnapshot.textSQL("m.snippet"), messageOwnerParticipant,
-		sourceSnapshot.textSQL("m.message_type"), sourceSnapshot.identityExportSQL("m.list_id"), messageAttribution,
-		idFilter, escapedMessagesDir)); err != nil {
+	`, columns, idFilter, escapedMessagesDir))
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
 	}
 
@@ -1541,42 +1525,12 @@ func buildCacheLocked(
 	// Only the cleared-directory builds need this; an incremental no-op
 	// leaves the previous shards in place.
 	if expectedTotalCount == 0 && replaceAll {
-		emptyShardDir := filepath.Join(messagesDir, "year=0")
-		if err := os.MkdirAll(emptyShardDir, 0755); err != nil {
-			return nil, fmt.Errorf("create empty messages shard dir: %w", err)
-		}
-		escapedEmptyShard := strings.ReplaceAll(
-			filepath.Join(emptyShardDir, "empty.parquet"), "'", "''")
 		// Same column list as the partitioned export minus the year
 		// partition column, which hive_partitioning derives from the path.
-		if _, err := exportDB.Exec(fmt.Sprintf(`
-		COPY (
-			SELECT
-				m.id,
-				m.source_id,
-				COALESCE(%s, '') AS source_message_id,
-				%s AS rfc822_message_id,
-				m.conversation_id,
-				CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(%s, '') END as subject,
-				CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(%s, '') END as snippet,
-				m.sent_at,
-				m.size_estimate,
-				m.has_attachments,
-				COALESCE(TRY_CAST(m.attachment_count AS INTEGER), 0) as attachment_count,
-				m.deleted_from_source_at,
-				m.sender_id,
-				%s AS owner_participant_id,
-				COALESCE(%s, '') as message_type,
-				%s AS list_id,
-				%s AS is_from_me,
+		if err := copyParquet(ctx, exportDB, filepath.Join(messagesDir, "year=0"), "empty.parquet", `SELECT `+columns+`,
 				CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 			FROM sqlite_db.messages m
-			WHERE 1 = 0
-		) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')
-		`, sourceSnapshot.identityExportSQL("m.source_message_id"), sourceSnapshot.identityExportSQL("m.rfc822_message_id"),
-			sourceSnapshot.textSQL("m.subject"), sourceSnapshot.textSQL("m.snippet"), messageOwnerParticipant,
-			sourceSnapshot.textSQL("m.message_type"), sourceSnapshot.identityExportSQL("m.list_id"), messageAttribution,
-			escapedEmptyShard)); err != nil {
+			WHERE 1 = 0`); err != nil {
 			return nil, fmt.Errorf("export empty messages shard: %w", err)
 		}
 	}
@@ -1649,12 +1603,18 @@ func buildCacheLocked(
 			return nil, fmt.Errorf("close sqlite after cache consistency check: %w", closeErr)
 		}
 		if currentCounters != syncCounters {
-			// The snapshot is internally consistent but may hold a parent row
-			// whose related rows committed after it. Publishing it beats
-			// discarding the whole export; the flag makes the next build full,
-			// so no later incremental build can skip those rows.
-			partialSnapshot = true
-			slog.Warn("sync counters changed during cache export; published snapshot, next build will be full",
+			// The journal tracks children committed after their parent was
+			// exported. Keep the snapshot watermarks so the next build can
+			// append new messages or repair those children. Legacy archives
+			// without a journal still need a conservative full repair.
+			partialSnapshot = hasRelatedChangeJournal == 0
+			level := slog.LevelInfo
+			if partialSnapshot {
+				level = slog.LevelWarn
+			}
+			slog.Log(context.Background(), level,
+				"sync counters changed during cache export; published read snapshot",
+				"full_rebuild_required", partialSnapshot,
 				"additions", fmt.Sprintf("%d→%d", syncCounters.additions, currentCounters.additions),
 				"updates", fmt.Sprintf("%d→%d", syncCounters.updates, currentCounters.updates),
 				"failed_runs", fmt.Sprintf("%d→%d", syncCounters.failedRunCount, currentCounters.failedRunCount),
@@ -2504,7 +2464,7 @@ func newBuildCacheSubprocessCommand(ctx context.Context, mode buildCacheMode) (*
 	// exe is this binary (os.Executable) and args are our own fixed subcommand
 	// plus operator-controlled config flags, not untrusted input.
 	cmd := exec.CommandContext(ctx, exe, args...) //nolint:gosec // exe is os.Executable; args are internally constructed
-	cmd.Env = buildCacheDaemonChildEnv(os.Environ(), os.Getpid())
+	cmd.Env = daemonRuntimeChildEnv(ctx, buildCacheDaemonChildEnv(os.Environ(), os.Getpid()))
 	return cmd, nil
 }
 

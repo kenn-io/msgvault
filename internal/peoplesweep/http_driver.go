@@ -7,13 +7,13 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
-	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/net/http/httpguts"
+
+	"go.kenn.io/msgvault/internal/httpretry"
 )
 
 const maxProviderResponseBytes = 1 << 20
@@ -103,7 +103,7 @@ func (d *httpDriver) postWithHeaders(
 		}
 		retryAfter := time.Duration(0)
 		if retryableProviderStatus(response.StatusCode) {
-			retryAfter = parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
+			retryAfter, _ = httpretry.ParseRetryAfter(response.Header.Get("Retry-After"), 0, time.Now())
 		}
 		return httpDriverResponse{}, &ProviderError{
 			StatusCode: response.StatusCode, RequestID: requestID, RetryAfter: retryAfter,
@@ -135,13 +135,13 @@ func (d *httpDriver) postWithHeaders(
 }
 
 func classifyProviderError(profile ProviderProfile, body []byte) (ProviderCapabilityError, ProviderDiagnostics) {
-	root, ok := decodeUniqueErrorObject(body)
+	root, ok := decodeUniqueJSONObject(body)
 	if !ok {
 		return "", unreadableProviderDiagnostics()
 	}
 	switch profile.Protocol {
 	case ProtocolOpenAIChat, ProtocolOpenAIResponses:
-		errorObject, valid := decodeUniqueErrorObject(root["error"])
+		errorObject, valid := decodeUniqueJSONObject(root["error"])
 		if !valid {
 			return "", unreadableProviderDiagnostics()
 		}
@@ -154,7 +154,7 @@ func classifyProviderError(profile ProviderProfile, body []byte) (ProviderCapabi
 		}
 		return "", diagnostics
 	case ProtocolAnthropicMessages:
-		errorObject, valid := decodeUniqueErrorObject(root["error"])
+		errorObject, valid := decodeUniqueJSONObject(root["error"])
 		if !valid {
 			return "", unreadableProviderDiagnostics()
 		}
@@ -167,7 +167,7 @@ func classifyProviderError(profile ProviderProfile, body []byte) (ProviderCapabi
 		}
 		return "", diagnostics
 	case ProtocolGoogleGenerateContent:
-		errorObject, valid := decodeUniqueErrorObject(root["error"])
+		errorObject, valid := decodeUniqueJSONObject(root["error"])
 		if !valid {
 			return "", unreadableProviderDiagnostics()
 		}
@@ -183,7 +183,7 @@ func classifyProviderError(profile ProviderProfile, body []byte) (ProviderCapabi
 		var diagnosticCode ProviderDiagnosticCode
 		var diagnosticField ProviderDiagnosticField
 		for _, raw := range details {
-			detail, valid := decodeUniqueErrorObject(raw)
+			detail, valid := decodeUniqueJSONObject(raw)
 			if !valid {
 				return "", unreadableProviderDiagnostics()
 			}
@@ -195,7 +195,7 @@ func classifyProviderError(profile ProviderProfile, body []byte) (ProviderCapabi
 			parameter := ""
 			parameterPresent := false
 			if rawMetadata, present := detail["metadata"]; present {
-				metadata, metadataValid := decodeUniqueErrorObject(rawMetadata)
+				metadata, metadataValid := decodeUniqueJSONObject(rawMetadata)
 				if !metadataValid {
 					return "", unreadableProviderDiagnostics()
 				}
@@ -422,7 +422,7 @@ func capabilityRepresentationParameterClass(profile ProviderProfile, parameter s
 	return ""
 }
 
-func decodeUniqueErrorObject(raw []byte) (map[string]jsontext.Value, bool) {
+func decodeUniqueJSONObject(raw []byte) (map[string]jsontext.Value, bool) {
 	decoder := jsontext.NewDecoder(bytes.NewReader(raw))
 	start, err := decoder.ReadToken()
 	if err != nil || start.Kind() != '{' {
@@ -549,27 +549,4 @@ func disposeHTTPResponse(body io.ReadCloser) {
 func retryableProviderStatus(status int) bool {
 	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests ||
 		(status >= http.StatusInternalServerError && status <= 599)
-}
-
-func parseRetryAfter(value string, now time.Time) time.Duration {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0
-	}
-	seconds, err := strconv.ParseUint(value, 10, 64)
-	if err == nil {
-		if seconds > uint64(math.MaxInt64/int64(time.Second)) {
-			return 0
-		}
-		return time.Duration(seconds) * time.Second
-	}
-	when, err := http.ParseTime(value)
-	if err != nil {
-		return 0
-	}
-	delay := when.Sub(now)
-	if delay <= 0 {
-		return 0
-	}
-	return delay
 }

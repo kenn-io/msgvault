@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -98,16 +97,7 @@ func addBeeperMediaRoute(
 	logger *slog.Logger,
 ) error {
 	endpoint := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	lookupKey := func() (string, error) {
-		if cfg.APIKeyEnv == "" {
-			return "", errors.New("docbank API key environment name is missing")
-		}
-		key, ok := os.LookupEnv(cfg.APIKeyEnv)
-		if !ok || key == "" {
-			return "", errors.New("docbank API key is unavailable")
-		}
-		return key, nil
-	}
+	lookupKey := cfg.ResolveAPIKey
 	client, err := docbankmedia.NewClient(endpoint, lookupKey)
 	if err != nil {
 		return err

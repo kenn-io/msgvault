@@ -71,12 +71,13 @@ func (m *fakeMsg) toJSON() map[string]any {
 }
 
 type fakeConv struct {
-	ID      string
-	Name    string
-	Kind    string // "public" | "private" | "mpim" | "im"
-	IMUser  string // peer for im
-	Members []string
-	Msgs    []fakeMsg // top-level messages, oldest → newest
+	ID        string
+	Name      string
+	Kind      string // "public" | "private" | "mpim" | "im"
+	IMUser    string // peer for im
+	Members   []string
+	Msgs      []fakeMsg // top-level messages, oldest → newest
+	NotMember bool
 }
 
 func (c *fakeConv) toJSON() map[string]any {
@@ -135,6 +136,7 @@ func (c *fakeConv) findRoot(ts string) *fakeMsg {
 type fakeSlack struct {
 	t        *testing.T
 	pageSize int
+	scopes   string
 
 	mu    sync.Mutex
 	users []map[string]any
@@ -200,6 +202,7 @@ func newFakeSlack(t *testing.T) *fakeSlack {
 	t.Helper()
 	return &fakeSlack{
 		t: t, pageSize: 3,
+		scopes:      "channels:read,channels:history,groups:read,groups:history,im:read,im:history,mpim:read,mpim:history,users:read,users:read.email,files:read,search:read",
 		failHistory: map[string]bool{}, failReplies: map[string]bool{},
 		failMembers: map[string]bool{}, searchHidden: map[string]bool{},
 		searchTruncateDays:    map[string]bool{},
@@ -241,6 +244,7 @@ func (f *fakeSlack) serve() *httptest.Server {
 	})
 	mux.HandleFunc("/users.list", f.handleUsersList)
 	mux.HandleFunc("/users.conversations", f.handleUsersConversations)
+	mux.HandleFunc("/conversations.list", f.handleUsersConversations)
 	mux.HandleFunc("/conversations.members", f.handleMembers)
 	mux.HandleFunc("/conversations.history", f.handleHistory)
 	mux.HandleFunc("/conversations.replies", f.handleReplies)
@@ -249,6 +253,7 @@ func (f *fakeSlack) serve() *httptest.Server {
 	// the mutex held, so it must not lock).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
+		w.Header().Set("X-Oauth-Scopes", f.scopes)
 		limited := f.rateLimit429s > 0
 		if limited {
 			f.rateLimit429s--
@@ -322,6 +327,13 @@ func (f *fakeSlack) handleUsersConversations(w http.ResponseWriter, r *http.Requ
 	defer f.mu.Unlock()
 	channels := make([]map[string]any, 0, len(f.convs))
 	for _, c := range f.convs {
+		if r.URL.Path == "/users.conversations" && c.NotMember {
+			continue
+		}
+		kind := map[string]string{"": "public_channel", "public": "public_channel", "private": "private_channel", "im": "im", "mpim": "mpim"}[c.Kind]
+		if !slices.Contains(strings.Split(r.FormValue("types"), ","), kind) {
+			continue
+		}
 		channels = append(channels, c.toJSON())
 	}
 	from, to, next := f.page(r, len(channels))

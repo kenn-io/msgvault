@@ -168,6 +168,10 @@ type Dialect interface {
 	// free to use a column-update on messages.
 	FTSUpsert(q querier, doc FTSDoc) error
 
+	// FTSMatches reports whether the stored search document for
+	// doc.MessageID is exactly what FTSUpsert would write for doc.
+	FTSMatches(q querier, doc FTSDoc) (bool, error)
+
 	// FTSSearchClause returns SQL fragments for full-text search using ?
 	// placeholders. Returns: join clause, where clause, order-by clause,
 	// and the number of times the caller must re-bind the search term to

@@ -81,6 +81,11 @@ func (s *Syncer) incremental(
 		return nil, fmt.Errorf("get profile: %w", err)
 	}
 
+	if err := s.refreshProfileIdentity(ctx, source, profile); err != nil {
+		_ = s.store.FailSync(syncID, err.Error())
+		return nil, err
+	}
+
 	s.logger.Info("incremental sync", "email", source.Identifier, "start_history", startHistoryID, "current_history", profile.HistoryID)
 
 	// Settle any discovery debt a previous run parked, before the up-to-date

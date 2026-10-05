@@ -53,11 +53,11 @@ func Discover(ctx context.Context, client *Client, enteredURL string) (Discovery
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, client.operationTimeout)
 	defer cancel()
-	return discoverWithBudget(operationCtx, client, enteredURL, &operationBudget{remaining: client.operationBytes})
+	return discoverWithBudget(operationCtx, client, enteredURL, &Budget{remaining: client.operationBytes})
 }
 
 func discoverWithBudget(
-	operationCtx context.Context, client *Client, enteredURL string, budget *operationBudget,
+	operationCtx context.Context, client *Client, enteredURL string, budget *Budget,
 ) (Discovery, error) {
 	entered, err := url.Parse(enteredURL)
 	if err != nil {
@@ -115,19 +115,16 @@ func discoverWithBudget(
 
 // DiscoverConnection validates the configured connection without persisting it.
 func (s *Service) DiscoverConnection(ctx context.Context, baseURL string) (Discovery, error) {
-	if s == nil || s.client == nil {
+	if s == nil || s.remote == nil {
 		return Discovery{}, errors.New("CardDAV service is not configured")
 	}
-	if s.google {
-		return discoverGoogle(ctx, s.client, baseURL)
-	}
-	return Discover(ctx, s.client, baseURL)
+	return s.remote.Discover(ctx, baseURL)
 }
 
 // DiscoverAndPersist validates the configured connection and atomically
 // replaces the durable discovery snapshot through the shared service.
 func (s *Service) DiscoverAndPersist(ctx context.Context, baseURL, username string) (Discovery, error) {
-	if s == nil || s.store == nil || s.client == nil {
+	if s == nil || s.store == nil || s.remote == nil {
 		return Discovery{}, errors.New("CardDAV service is not configured")
 	}
 	discovery, err := s.DiscoverConnection(ctx, baseURL)
@@ -205,7 +202,7 @@ func urlString(value *url.URL) string {
 }
 
 func discoverHref(
-	ctx context.Context, client *Client, target *url.URL, property PropertyName, budget *operationBudget,
+	ctx context.Context, client *Client, target *url.URL, property PropertyName, budget *Budget,
 ) (*url.URL, error) {
 	hrefs, err := discoverHrefs(ctx, client, target, property, budget)
 	if err != nil {
@@ -221,7 +218,7 @@ func discoverHref(
 }
 
 func discoverHrefs(
-	ctx context.Context, client *Client, target *url.URL, property PropertyName, budget *operationBudget,
+	ctx context.Context, client *Client, target *url.URL, property PropertyName, budget *Budget,
 ) ([]*url.URL, error) {
 	body, err := PropfindBody([]PropertyName{property})
 	if err != nil {
@@ -286,7 +283,7 @@ func discoverHrefs(
 }
 
 func discoverBooks(
-	ctx context.Context, client *Client, home *url.URL, budget *operationBudget,
+	ctx context.Context, client *Client, home *url.URL, budget *Budget,
 ) ([]DiscoveredBook, error) {
 	body, err := PropfindBody([]PropertyName{
 		ResourceTypeProperty,

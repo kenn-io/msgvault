@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	pstlib "github.com/mooijtech/go-pst/v6/pkg"
+	"github.com/mooijtech/go-pst/v6/pkg/properties"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -77,4 +78,15 @@ func TestWalkFolders_MatchesLibraryTraversalWithoutSearchFolders(t *testing.T) {
 	require.NoError(err, "go-pst WalkFolders")
 	require.Less(len(want), len(all))
 	assert.Equal(want, got)
+}
+
+func TestExtractMessage_ThreadingProperties(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	id, parent, refs := "<message@example.test>", "<parent@example.test>", "<root@example.test> <parent@example.test>"
+	entry := ExtractMessage(&pstlib.Message{Identifier: 123, Properties: &properties.Message{InternetMessageId: &id, InReplyToId: &parent, InternetReferences: &refs}}, "Inbox")
+	require.NotNil(entry)
+	assert.Equal(id, entry.MessageID)
+	assert.Equal(parent, entry.InReplyTo)
+	assert.Equal(refs, entry.References)
 }

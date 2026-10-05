@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personenrichment"
+	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
@@ -118,11 +119,13 @@ type IntegrationsConfig struct {
 }
 
 // DocbankIntegrationConfig configures the optional stored-media destination.
-// The API key stays in the daemon environment and is read when a request runs.
+// The selected API key source is read when a request runs.
 type DocbankIntegrationConfig struct {
 	Enabled                 bool   `toml:"enabled"`
 	URL                     string `toml:"url"`
 	APIKeyEnv               string `toml:"api_key_env"`
+	APIKey                  string `toml:"api_key"`
+	APIKeyFile              string `toml:"api_key_file"`
 	AllSourcesUploadConsent bool   `toml:"all_sources_upload_consent"`
 	ASRProfile              string `toml:"asr_profile"`
 }
@@ -215,11 +218,13 @@ func (a *AnalyticsConfig) Validate() error {
 
 // ServerConfig holds HTTP API server configuration.
 type ServerConfig struct {
-	APIPort           int           `toml:"api_port"`            // HTTP server port; 0 (the default) auto-selects an open port at daemon startup and clients discover it via the daemon runtime record. Set api_port explicitly for a stable port (e.g. remote/NAS deployments).
-	BindAddr          string        `toml:"bind_addr"`           // Bind address (default: 127.0.0.1)
-	APIKey            string        `toml:"api_key"`             // API authentication key
+	APIPort           int           `toml:"api_port"`  // HTTP server port; 0 (the default) auto-selects an open port at daemon startup and clients discover it via the daemon runtime record. Set api_port explicitly for a stable port (e.g. remote/NAS deployments).
+	BindAddr          string        `toml:"bind_addr"` // Bind address (default: 127.0.0.1)
+	APIKey            string        `toml:"api_key"`   // API authentication key
+	APIKeyFile        string        `toml:"api_key_file"`
+	APIKeyEnv         string        `toml:"api_key_env"`
 	AllowInsecure     bool          `toml:"allow_insecure"`      // Allow unauthenticated non-loopback access
-	AgentAccess       bool          `toml:"agent_access"`        // Enable restricted agent grant tokens (requires api_key)
+	AgentAccess       bool          `toml:"agent_access"`        // Enable restricted agent grant tokens (requires an effective API key)
 	CORSOrigins       []string      `toml:"cors_origins"`        // Allowed CORS origins (empty = disabled)
 	CORSCredentials   bool          `toml:"cors_credentials"`    // Allow credentials in CORS
 	CORSMaxAge        int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
@@ -227,6 +232,8 @@ type ServerConfig struct {
 	DaemonIdleTimeout time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
 	DaemonAutoRestart string        `toml:"daemon_auto_restart"` // never, newer, or always
 	DaemonAutoStart   *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
+
+	credential runtimeCredential
 }
 
 func (s *ServerConfig) ApplyDefaults() {
@@ -246,9 +253,6 @@ func (s *ServerConfig) DaemonAutoStartEnabled() bool {
 func (s *ServerConfig) Validate() error {
 	if s.APIPort < 0 || s.APIPort > 65535 {
 		return fmt.Errorf("invalid [server] api_port %d: must be between 0 and 65535 (0 auto-selects an open port)", s.APIPort)
-	}
-	if s.AgentAccess && s.APIKey == "" {
-		return errors.New("invalid [server] agent_access: requires api_key to be set")
 	}
 	switch s.DaemonAutoRestart {
 	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
@@ -287,7 +291,7 @@ func (s *ServerConfig) IsLoopback() bool {
 // ValidateSecure returns an error if the server is configured insecurely
 // without an explicit opt-in via allow_insecure.
 func (s *ServerConfig) ValidateSecure() error {
-	if !s.IsLoopback() && s.APIKey == "" && !s.AllowInsecure {
+	if !s.IsLoopback() && s.AuthenticationKey() == "" && !s.AllowInsecure {
 		return fmt.Errorf("refusing to start: bind address %q is not loopback and no api_key is set\n\n"+
 			"Set [server] api_key in config.toml, or set allow_insecure = true to override", s.BindAddr)
 	}
@@ -361,11 +365,14 @@ type SynctechSMSSource struct {
 }
 
 // RemoteConfig holds configuration for a remote msgvault server.
-// Used by export-token to remember the NAS/server destination.
+// Remote-capable commands use this destination unless --local is selected.
 type RemoteConfig struct {
-	URL           string `toml:"url"`            // Remote server URL (e.g., http://nas:8080)
-	APIKey        string `toml:"api_key"`        // API key for authentication
-	AllowInsecure bool   `toml:"allow_insecure"` // Allow HTTP (insecure) for trusted networks
+	URL           string `toml:"url"`     // Remote server URL (e.g., http://nas:8080)
+	APIKey        string `toml:"api_key"` // API key for authentication
+	APIKeyFile    string `toml:"api_key_file"`
+	APIKeyEnv     string `toml:"api_key_env"`
+	credential    runtimeCredential
+	AllowInsecure bool `toml:"allow_insecure"` // Allow HTTP (insecure) for trusted networks
 }
 
 // IdentityConfig holds the user's curated identity addresses.
@@ -508,6 +515,7 @@ type Config struct {
 	Slack              SlackConfig                     `toml:"slack"`
 	Inline             InlineConfig                    `toml:"inline"`
 	Granola            []GranolaSource                 `toml:"granola"`
+	Plaud              []PlaudSource                   `toml:"plaud"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
 	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
 	Muesli             []MuesliSource                  `toml:"muesli"`
@@ -522,8 +530,10 @@ type Config struct {
 	Gmail              GmailConfig                     `toml:"gmail"`
 
 	// Computed paths (not from config file)
-	HomeDir    string `toml:"-"`
-	configPath string // resolved path to the loaded config file
+	HomeDir            string `toml:"-"`
+	bindSource         string
+	configPath         string // resolved path to the loaded config file
+	runtimeConfigState runtimeConfigState
 }
 
 // IMAPConfig contains operator-owned settings for IMAP mutations.
@@ -559,8 +569,9 @@ type DeletionConfig struct {
 // PeopleConfig keeps the existing archive sweep and external enrichment as
 // sibling, independently disabled subsystems.
 type PeopleConfig struct {
-	Sweep      peoplesweep.Config      `toml:"sweep"`
-	Enrichment personenrichment.Config `toml:"enrichment"`
+	Sweep           peoplesweep.Config      `toml:"sweep"`
+	Enrichment      personenrichment.Config `toml:"enrichment"`
+	IdentityScoring personmatch.Config      `toml:"identity_scoring"`
 }
 
 // ActivityConfig controls dated activity projection and contact-state
@@ -831,6 +842,7 @@ func NewDefaultConfig() *Config {
 	}
 	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()
+	cfg.resolveCredentialPaths()
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
 	cfg.Web.ApplyDefaults()
@@ -839,6 +851,7 @@ func NewDefaultConfig() *Config {
 	cfg.Activity.ApplyDefaults()
 	cfg.People.Sweep.ApplyDefaults()
 	cfg.People.Enrichment.ApplyDefaults()
+	cfg.People.IdentityScoring.ApplyDefaults()
 	return cfg
 }
 
@@ -849,7 +862,7 @@ func NewDefaultConfig() *Config {
 //
 // homeDir overrides the home directory (equivalent to MSGVAULT_HOME).
 // When set, config.toml is loaded from homeDir unless path is also set.
-func Load(path, homeDir string) (*Config, error) {
+func loadWithOverrides(path, homeDir string, overrides RuntimeOverrides) (*Config, error) {
 	explicit := path != ""
 
 	cfg := NewDefaultConfig()
@@ -873,23 +886,48 @@ func Load(path, homeDir string) (*Config, error) {
 		if explicit {
 			return nil, fmt.Errorf("config file not found: %s", path)
 		}
-		// Default config file is optional
+		// Default config file is optional; runtime controls still apply.
+		cfg.configPath = path
+		cfg.resolveCredentialPaths()
+		if err := cfg.applyRuntimeOverrides(overrides); err != nil {
+			return nil, err
+		}
+		if err := cfg.Server.Validate(); err != nil {
+			return nil, err
+		}
 		return cfg, nil
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	return decodeConfig(cfg, path, explicit, homeDir != "", content)
+	return decodeConfig(cfg, path, explicit, homeDir != "", content, &overrides)
 }
 
 // LoadConfigFile decodes the exact bytes captured by ReadConfigFile. Relative
 // paths resolve against the operator-specified logical path, matching daemon
 // startup even when that path is a symlink to a target in another directory.
 func LoadConfigFile(snapshot ConfigFile, homeDir string) (*Config, error) {
-	if !snapshot.Exists {
-		return NewDefaultConfig(), nil
-	}
+	return loadConfigFile(snapshot, homeDir, nil)
+}
+
+// LoadConfigFileWithOverrides decodes the captured TOML bytes and applies
+// runtime environment and explicit overrides before validating the result.
+func LoadConfigFileWithOverrides(
+	snapshot ConfigFile,
+	homeDir string,
+	overrides RuntimeOverrides,
+) (*Config, error) {
+	return loadConfigFile(snapshot, homeDir, &overrides)
+}
+
+// ReloadConfigFile returns the captured config with the original CLI overrides,
+// so a flag that masked an environment value at startup still takes precedence.
+func (c *Config) ReloadConfigFile(snapshot ConfigFile) (*Config, error) {
+	return LoadConfigFileWithOverrides(snapshot, c.HomeDir, c.runtimeConfigState.flags)
+}
+
+func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverrides) (*Config, error) {
 	cfg := NewDefaultConfig()
 	if homeDir != "" {
 		homeDir = expandPath(homeDir)
@@ -900,10 +938,27 @@ func LoadConfigFile(snapshot ConfigFile, homeDir string) (*Config, error) {
 	if decodePath == "" {
 		decodePath = snapshot.Path
 	}
-	return decodeConfig(cfg, decodePath, true, homeDir != "", snapshot.Content)
+	if !snapshot.Exists {
+		if homeDir == "" && decodePath != "" {
+			cfg.HomeDir = filepath.Dir(decodePath)
+			cfg.Data.DataDir = cfg.HomeDir
+		}
+		cfg.configPath = decodePath
+		cfg.resolveCredentialPaths()
+		if overrides != nil {
+			if err := cfg.applyRuntimeOverrides(*overrides); err != nil {
+				return nil, err
+			}
+			if err := cfg.Server.Validate(); err != nil {
+				return nil, err
+			}
+		}
+		return cfg, nil
+	}
+	return decodeConfig(cfg, decodePath, true, homeDir != "", snapshot.Content, overrides)
 }
 
-func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content []byte) (*Config, error) {
+func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content []byte, overrides *RuntimeOverrides) (*Config, error) {
 	cfg.configPath = path
 
 	// When --config points to a custom location without --home,
@@ -932,6 +987,17 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		}
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
+	if metadata.IsDefined("server", "bind_addr") {
+		cfg.bindSource = path
+	}
+	if metadata.IsDefined("people", "identity_scoring", "minimum_probability") &&
+		cfg.People.IdentityScoring.MinimumProbability == 0 {
+		return nil, errors.New("people.identity_scoring.minimum_probability must be at least 0.80 and less than 1.00")
+	}
+	if metadata.IsDefined("people", "identity_scoring", "batch_size") &&
+		cfg.People.IdentityScoring.BatchSize == 0 {
+		return nil, errors.New("people.identity_scoring.batch_size must be between 1 and 100")
+	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
 		if key.String() == "carddav.password" {
@@ -939,6 +1005,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		}
 		if len(key) >= 3 && key[0] == "carddav_connections" && key[2] == "password" {
 			return nil, errors.New("carddav_connections passwords are not allowed in config; store them in private connection token files")
+		}
+		if strings.HasPrefix(key.String(), "people.identity_scoring.") {
+			return nil, fmt.Errorf("unknown people.identity_scoring config key %q", key.String())
 		}
 		if strings.HasPrefix(key.String(), "imap.drafts.") {
 			return nil, fmt.Errorf("unknown IMAP draft config key %q", key.String())
@@ -1015,6 +1084,12 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 			return nil, fmt.Errorf("vector config: %w", err)
 		}
 	}
+	cfg.resolveCredentialPaths()
+	if overrides != nil {
+		if err := cfg.applyRuntimeOverrides(*overrides); err != nil {
+			return nil, err
+		}
+	}
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
 	if err := cfg.Server.Validate(); err != nil {
@@ -1057,6 +1132,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.Enrichment.ApplyDefaults()
 	if err := cfg.People.Enrichment.Validate(); err != nil {
+		return nil, err
+	}
+	cfg.People.IdentityScoring.ApplyDefaults()
+	if err := cfg.People.IdentityScoring.Validate(); err != nil {
 		return nil, err
 	}
 	if err := cfg.Backup.Validate(); err != nil {
@@ -1365,6 +1444,8 @@ func (c *Config) ConfigFilePath() string {
 // Save writes the current configuration to disk atomically.
 // Uses temp file + rename to prevent partial writes on crash.
 // Enforces 0600 permissions regardless of existing file mode.
+// Values still matching runtime overrides are not persisted. Use EditConfigFile
+// for explicit assignments, including values equal to an active override.
 func (c *Config) Save() error {
 	return c.saveWithHooks(configSaveHooks{})
 }
@@ -1408,7 +1489,9 @@ func (c *Config) saveWithHooks(hooks configSaveHooks) error {
 		return fmt.Errorf("set config file permissions: %w", err)
 	}
 
-	if err := toml.NewEncoder(tmp).Encode(c); err != nil {
+	persisted := *c
+	c.runtimeConfigState.restore(&persisted)
+	if err := toml.NewEncoder(tmp).Encode(&persisted); err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
 
@@ -1508,6 +1591,8 @@ type SlackConfig struct {
 	Channels []string `toml:"channels"`
 	// ExcludeChannels skips specific channel names.
 	ExcludeChannels []string `toml:"exclude_channels"`
+	// PrivateChannels toggles private-channel sync (nil/absent = enabled).
+	PrivateChannels *bool `toml:"private_channels"`
 	// DMs toggles one-to-one DM sync (nil/absent = enabled).
 	DMs *bool `toml:"dms"`
 	// GroupDMs toggles group DM sync (nil/absent = enabled).
@@ -1539,6 +1624,11 @@ type TeamsConfig struct {
 // MediaEnabled reports whether file download is on (default true).
 func (s SlackConfig) MediaEnabled() bool {
 	return s.Media == nil || *s.Media
+}
+
+// PrivateChannelsEnabled reports whether private channels sync (default true).
+func (s SlackConfig) PrivateChannelsEnabled() bool {
+	return s.PrivateChannels == nil || *s.PrivateChannels
 }
 
 // DMsEnabled reports whether one-to-one DMs sync (default true).
@@ -1709,12 +1799,15 @@ func (b BeeperConfig) AccountIncluded(accountID string) bool {
 // GCalSource is one configured Google Calendar sync target. Each entry is a
 // top-level [[gcal]] table.
 type GCalSource struct {
-	Name      string   `toml:"name"`      // identifier for sync-calendar <name>; defaults to Email
-	Email     string   `toml:"email"`     // the OAuth account = token key
-	OAuthApp  string   `toml:"oauth_app"` // optional named OAuth app
-	Calendars []string `toml:"calendars"` // optional calendarId filter; empty = owner+writer
-	Schedule  string   `toml:"schedule"`  // 5-field cron; empty = not daemon-scheduled
-	Enabled   bool     `toml:"enabled"`
+	Name            string            `toml:"name"`      // identifier for sync-calendar <name>; defaults to Email
+	Email           string            `toml:"email"`     // the OAuth account = token key
+	OAuthApp        string            `toml:"oauth_app"` // optional named OAuth app
+	Calendars       []string          `toml:"calendars"` // optional calendarId filter; empty = owner+writer
+	Schedule        string            `toml:"schedule"`  // 5-field cron; empty = not daemon-scheduled
+	Enabled         bool              `toml:"enabled"`
+	WriteCalendars  []string          `toml:"write_calendars"`  // explicit calendar IDs; empty denies writes
+	InviteCalendars []string          `toml:"invite_calendars"` // IDs allowed to change guests or notify them
+	CalendarAliases map[string]string `toml:"calendar_aliases"`
 }
 
 // applyGCalDefaults normalizes [[gcal]] entries: a source with no name takes its
@@ -1775,6 +1868,19 @@ type CirclebackSource struct {
 	Endpoint     string `toml:"endpoint"`      // MCP endpoint override; empty = production
 	Schedule     string `toml:"schedule"`      // 5-field cron; empty = not daemon-scheduled
 	Enabled      bool   `toml:"enabled"`
+}
+
+// PlaudSource configures one browser-authorized Plaud cloud account.
+type PlaudSource struct {
+	Identifier   string `toml:"identifier"`
+	AccountEmail string `toml:"account_email"`
+	Endpoint     string `toml:"endpoint"`
+	Schedule     string `toml:"schedule"`
+	Enabled      bool   `toml:"enabled"`
+}
+
+func (s PlaudSource) EffectiveAccountEmail() (string, error) {
+	return effectiveMeetingAccountEmail("plaud", s.Identifier, s.AccountEmail)
 }
 
 // NotionMeetingsSource is one configured Notion AI Meeting Notes identity.
@@ -1882,6 +1988,9 @@ func normalizedMeetingAccountEmail(value string) (string, bool) {
 // single entry with no identifier becomes "default" so the CLI argument can
 // be omitted in the common one-account case.
 func (c *Config) applyMeetingSourceDefaults() {
+	if len(c.Plaud) == 1 && c.Plaud[0].Identifier == "" {
+		c.Plaud[0].Identifier = "default"
+	}
 	if len(c.Granola) == 1 && c.Granola[0].Identifier == "" {
 		c.Granola[0].Identifier = "default"
 	}
@@ -1945,6 +2054,29 @@ func (c *Config) validateMeetingSources() error {
 		if strings.TrimSpace(c.Circleback[i].AccountEmail) != "" {
 			c.Circleback[i].AccountEmail = email
 		}
+	}
+	plaudIDs := make([]string, len(c.Plaud))
+	for i, src := range c.Plaud {
+		plaudIDs[i] = src.Identifier
+	}
+	if err := check("plaud", plaudIDs); err != nil {
+		return err
+	}
+	for i := range c.Plaud {
+		id := c.Plaud[i].Identifier
+		if strings.TrimSpace(id) != id {
+			return fmt.Errorf("[[plaud]]: unsafe identifier %q; use a label without surrounding whitespace", id)
+		}
+		for _, r := range id {
+			if r < 32 || r == 127 {
+				return fmt.Errorf("[[plaud]]: unsafe identifier %q", id)
+			}
+		}
+		email, err := c.Plaud[i].EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		c.Plaud[i].AccountEmail = email
 	}
 	notionIDs := make([]string, len(c.NotionMeetings))
 	for i, s := range c.NotionMeetings {
@@ -2192,4 +2324,26 @@ func expandPath(path string) string {
 		return filepath.Join(home, suffix)
 	}
 	return path
+}
+
+// GetPlaudSource resolves a configured source without changing its stable label.
+func (c *Config) GetPlaudSource(identifier string) *PlaudSource {
+	for _, src := range c.Plaud {
+		if strings.EqualFold(src.Identifier, identifier) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+// ScheduledPlaudSources returns enabled sources with a configured cron schedule.
+func (c *Config) ScheduledPlaudSources() []PlaudSource {
+	var out []PlaudSource
+	for _, src := range c.Plaud {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
 }

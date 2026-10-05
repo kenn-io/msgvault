@@ -218,6 +218,11 @@ func (s *Store) SetIdentityMatchAcceptBeforeDecisionHookForTest(fn func()) func(
 	return func() { s.identityMatchAcceptBeforeDecisionHook = nil }
 }
 
+func (s *Store) SetIdentityMatchReviewAfterDecisionHookForTest(fn func()) func() {
+	s.identityMatchReviewAfterDecisionHook = fn
+	return func() { s.identityMatchReviewAfterDecisionHook = nil }
+}
+
 // SetPersonOperationBeforeIdentityLockHookForTest installs a per-Store barrier
 // immediately before merge and split transactions acquire the identity lock.
 // Concurrency tests use it to prove every competing transaction is open and at
@@ -225,6 +230,13 @@ func (s *Store) SetIdentityMatchAcceptBeforeDecisionHookForTest(fn func()) func(
 func (s *Store) SetPersonOperationBeforeIdentityLockHookForTest(fn func()) func() {
 	s.personOperationBeforeIdentityLockHook = fn
 	return func() { s.personOperationBeforeIdentityLockHook = nil }
+}
+
+// SetPersonMatchBlockingBeforeLockHookForTest runs fn after scoring candidate
+// discovery has chosen its pairs and before each pair takes the identity lock.
+func (s *Store) SetPersonMatchBlockingBeforeLockHookForTest(fn func()) func() {
+	s.personMatchBlockingBeforeLockHook = fn
+	return func() { s.personMatchBlockingBeforeLockHook = nil }
 }
 
 // SetPersonMergeAfterSnapshotHookForTest installs a barrier after a merge has
@@ -327,3 +339,10 @@ func (s *Store) SetPersonNetworkSourceReadHookForTest(fn func(limit, count int))
 func (s *Store) SetCardDAVPublicationReviewBeforePersonLockHookForTest(fn func()) {
 	s.cardDAVReviewPersonLockHook = fn
 }
+
+// Owner-address SQL builders, exported for their isolation test.
+var (
+	OwnerEmailMatch      = ownerEmailMatch
+	OwnerIdentifierMatch = ownerIdentifierMatch
+	SenderOwnerFallback  = senderOwnerFallback
+)

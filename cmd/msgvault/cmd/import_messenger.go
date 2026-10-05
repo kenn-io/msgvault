@@ -1,12 +1,9 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -78,20 +75,8 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 	}
 	defer cleanup()
 
-	ctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigChan)
-	go func() {
-		select {
-		case <-sigChan:
-			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "\nInterrupted. Saving checkpoint...")
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
+	ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Saving checkpoint...")
+	defer stop()
 
 	opts := fbmessenger.ImportOptions{
 		Me:              importMessengerMe,

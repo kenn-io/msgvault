@@ -751,15 +751,20 @@ func TestBeeperMediaCandidateAttachmentStates(t *testing.T) {
 	zeroBytes := addBeeperAudio(t, f.Store, gmail.ID, gmailConversation, "gmail-zero-bytes", fmt.Sprintf("%064x", 9))
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET size = 0 WHERE id = ?`), zeroBytes.attachmentID)
 	require.NoError(err)
-	beeperAudio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "beeper-empty-state", strings.Repeat("a", 64))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`), beeperAudio.attachmentID)
+	// Legacy Beeper audio has a NULL state; only rows with archived bytes count.
+	legacyStored := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "beeper-legacy-stored", strings.Repeat("a", 64))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL WHERE id = ?`), legacyStored.attachmentID)
+	require.NoError(err)
+	want[legacyStored.attachmentID] = ""
+	legacyMissing := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "beeper-legacy-missing", strings.Repeat("c", 64))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = NULL, storage_path = '' WHERE id = ?`),
+		legacyMissing.attachmentID)
 	require.NoError(err)
 
 	candidates, err := f.Store.ListBeeperMediaCandidates(t.Context(), 0, 10)
 	require.NoError(err)
 	require.Len(candidates, len(want))
 	for _, candidate := range candidates {
-		assert.Equal("gmail", candidate.SourceType)
 		assert.Equal(want[candidate.AttachmentID], candidate.AttachmentState)
 		delete(want, candidate.AttachmentID)
 	}

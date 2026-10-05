@@ -127,7 +127,7 @@ func newDaemonCLISubprocessCommand(ctx context.Context, commandArgs []string, en
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
-	cmd.Env = daemonCLIChildEnv(os.Environ(), os.Getpid(), env)
+	cmd.Env = daemonRuntimeChildEnv(ctx, daemonCLIChildEnv(os.Environ(), os.Getpid(), env))
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return os.ErrProcessDone

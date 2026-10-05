@@ -94,3 +94,16 @@ Follow the [diagram guide](diagrams/README.md) and the scripts in
 `docs/screenshots/` when changing media. The public Enron screenshot fixture
 has a narrow provenance and privacy-review exception in [AGENTS.md](../AGENTS.md);
 it does not authorize reuse in ordinary tests.
+
+Refresh the Web UI images with `make docs-web-screenshots`. The script imports
+the pinned fixture into a temporary archive, builds and starts its own daemon,
+and captures Everything and Relationships at 1920 × 1080. It keeps the normal
+build toolchain and caches. Set `MSGVAULT_DOCS_SCREENSHOT_OUTPUT_DIR` to retain
+captures outside the hydrated asset directory while reviewing them.
+
+The Web UI PNGs belong on `docs-assets`; the TUI SVGs and concept images belong
+on `docs-generated-assets`. Inspect every changed image before updating its
+branch. Capture `*-linux.png` with a Linux browser and `*-darwin.png` with a
+macOS browser. `MSGVAULT_DOCS_SCREENSHOT_PLATFORM` chooses the filenames only;
+it does not change the browser platform. Keep the fixture's provenance and
+review record on `docs-fixtures` unchanged unless the fixture itself changes.

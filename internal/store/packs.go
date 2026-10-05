@@ -154,22 +154,24 @@ type PackRecord struct {
 // canonical pack ID, and every entry must belong to that pack and carry a
 // canonical lowercase SHA-256 blob hash; any violation fails the whole call.
 func (s *Store) RecordPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
-	return s.recordPackedBlobs(rec, entries, false, nil)
+	return s.recordPackedBlobs(context.Background(), rec, entries, false, nil)
 }
 
-// RecordPackedBlobsWithAliases inserts a newly sealed pack while
+// RecordPackedBlobsWithAliasesContext inserts a newly sealed pack while
 // transactionally canonicalizing every local attachment hash spelling that
 // produced each entry. Unlike orphan adoption, existing index rows are not
 // replaced: ordinary packing must not overwrite a concurrently published
 // mapping.
-func (s *Store) RecordPackedBlobsWithAliases(rec PackRecord, packed []PackIndexAdoption) error {
+func (s *Store) RecordPackedBlobsWithAliasesContext(
+	ctx context.Context, rec PackRecord, packed []PackIndexAdoption,
+) error {
 	entries := make([]PackIndexEntry, len(packed))
 	originalHashes := make([][]string, len(packed))
 	for i, blob := range packed {
 		entries[i] = blob.Entry
 		originalHashes[i] = blob.OriginalHashes
 	}
-	return s.recordPackedBlobs(rec, entries, false, originalHashes)
+	return s.recordPackedBlobs(ctx, rec, entries, false, originalHashes)
 }
 
 // AdoptPackedBlobs records a reconciled orphan pack and transactionally
@@ -178,27 +180,30 @@ func (s *Store) RecordPackedBlobsWithAliases(rec PackRecord, packed []PackIndexA
 // copy failed verification. Repointing instead of deleting stale rows before
 // adoption avoids a crash window with no readable packed index.
 func (s *Store) AdoptPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
-	return s.recordPackedBlobs(rec, entries, true, nil)
+	return s.recordPackedBlobs(context.Background(), rec, entries, true, nil)
 }
 
-// AdoptPackedBlobsWithAliases records a reconciled orphan pack and repoints
+// AdoptPackedBlobsWithAliasesContext records a reconciled orphan pack and repoints
 // each canonical index entry while transactionally canonicalizing the local
 // attachment rows that reference it through the supplied original spellings.
 // URL-backed and empty paths remain unchanged; their case-equivalent hash
 // spelling may be exchanged with a local alias so the local hash and path stay
 // canonical. Validation of any entry or alias fails the entire call before
 // the transaction begins.
-func (s *Store) AdoptPackedBlobsWithAliases(rec PackRecord, adoptions []PackIndexAdoption) error {
+func (s *Store) AdoptPackedBlobsWithAliasesContext(
+	ctx context.Context, rec PackRecord, adoptions []PackIndexAdoption,
+) error {
 	entries := make([]PackIndexEntry, len(adoptions))
 	originalHashes := make([][]string, len(adoptions))
 	for i, adoption := range adoptions {
 		entries[i] = adoption.Entry
 		originalHashes[i] = adoption.OriginalHashes
 	}
-	return s.recordPackedBlobs(rec, entries, true, originalHashes)
+	return s.recordPackedBlobs(ctx, rec, entries, true, originalHashes)
 }
 
 func (s *Store) recordPackedBlobs(
+	ctx context.Context,
 	rec PackRecord,
 	entries []PackIndexEntry,
 	replaceExisting bool,
@@ -254,8 +259,8 @@ func (s *Store) recordPackedBlobs(
 		}
 		aliasesByEntry[i] = aliases
 	}
-	return s.withTx(func(tx *loggedTx) error {
-		if _, err := tx.Exec(s.dialect.InsertOrIgnore(`
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`
 			INSERT OR IGNORE INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
 			VALUES (?, ?, ?, ?)`),
 			rec.PackID, rec.EntryCount, rec.StoredBytes,
@@ -264,12 +269,12 @@ func (s *Store) recordPackedBlobs(
 		}
 		for _, e := range entries {
 			if replaceExisting {
-				if _, err := tx.Exec(`
+				if _, err := tx.ExecContext(ctx, `
 					DELETE FROM attachment_pack_index WHERE blob_hash = ?`, e.BlobHash); err != nil {
 					return fmt.Errorf("replace pack index row for %s: %w", e.BlobHash, err)
 				}
 			}
-			if _, err := tx.Exec(s.dialect.InsertOrIgnore(`
+			if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`
 				INSERT OR IGNORE INTO attachment_pack_index
 				    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
 				VALUES (?, ?, ?, ?, ?, ?, ?)`),
@@ -280,7 +285,7 @@ func (s *Store) recordPackedBlobs(
 		}
 		for i, e := range entries {
 			for _, alias := range aliasesByEntry[i] {
-				if err := canonicalizeAttachmentBlobPathsTx(tx, e.BlobHash, alias); err != nil {
+				if err := canonicalizeAttachmentBlobPathsTx(ctx, tx, e.BlobHash, alias); err != nil {
 					return err
 				}
 			}
@@ -303,6 +308,7 @@ func (s *Store) CanonicalizeAttachmentBlobPaths(blobHash string) error {
 // canonical per-message unique key, its hash spelling is exchanged with the
 // local row's alias so loose reads remain consistent with the local path.
 func (s *Store) CanonicalizeAttachmentBlobAliases(blobHash string, originalHashes []string) error {
+	ctx := context.Background()
 	normalized, err := normalizeBlobHash(blobHash)
 	if err != nil {
 		return err
@@ -320,9 +326,9 @@ func (s *Store) CanonicalizeAttachmentBlobAliases(blobHash string, originalHashe
 				normalized, original, alias)
 		}
 	}
-	return s.withTx(func(tx *loggedTx) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		for _, original := range originalHashes {
-			if err := canonicalizeAttachmentBlobPathsTx(tx, normalized, original); err != nil {
+			if err := canonicalizeAttachmentBlobPathsTx(ctx, tx, normalized, original); err != nil {
 				return err
 			}
 		}
@@ -330,7 +336,7 @@ func (s *Store) CanonicalizeAttachmentBlobAliases(blobHash string, originalHashe
 	})
 }
 
-func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash, lookupHash string) error {
+func canonicalizeAttachmentBlobPathsTx(ctx context.Context, tx *loggedTx, blobHash, lookupHash string) error {
 	canonical := blobHash[:2] + "/" + blobHash
 	// The legacy unique attachment key is case-sensitive, so unkeyed local rows
 	// for one message can contain case-equivalent hashes. Collapse only those
@@ -338,7 +344,7 @@ func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash, lookupHash string
 	// occurrences and may legitimately share a hash. Retaining MIN(id) matches
 	// the one-shot legacy duplicate migration. URL and empty-path rows are
 	// outside this repair because this API preserves them.
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM attachments
 		WHERE source_part_key IS NULL
 		  AND LOWER(content_hash) = ?
@@ -356,10 +362,10 @@ func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash, lookupHash string
 		  )`, blobHash, blobHash); err != nil {
 		return fmt.Errorf("deduplicate case-equivalent attachment rows for %s: %w", blobHash, err)
 	}
-	if err := swapPreservedCanonicalHashOwnersTx(tx, blobHash, lookupHash); err != nil {
+	if err := swapPreservedCanonicalHashOwnersTx(ctx, tx, blobHash, lookupHash); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE attachments SET storage_path = ?, content_hash = ?
 		WHERE (content_hash = ? OR content_hash = ?)
 		  AND (storage_path != ? OR content_hash != ?)
@@ -369,7 +375,7 @@ func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash, lookupHash string
 		canonical, blobHash, blobHash, lookupHash, canonical, blobHash); err != nil {
 		return fmt.Errorf("canonicalize storage_path for %s: %w", blobHash, err)
 	}
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE attachments SET thumbnail_path = ?, thumbnail_hash = ?
 		WHERE (thumbnail_hash = ? OR thumbnail_hash = ?)
 		  AND (thumbnail_path != ? OR thumbnail_hash != ?)
@@ -392,8 +398,8 @@ type attachmentHashOwnerSwap struct {
 // each local row without changing a URL/empty row's path. A temporary NULL,
 // excluded from the partial unique index, prevents immediate unique-index
 // checks from rejecting the two-row hash exchange.
-func swapPreservedCanonicalHashOwnersTx(tx *loggedTx, blobHash, lookupHash string) error {
-	rows, err := tx.Query(`
+func swapPreservedCanonicalHashOwnersTx(ctx context.Context, tx *loggedTx, blobHash, lookupHash string) error {
+	rows, err := tx.QueryContext(ctx, `
 		SELECT local.id, local.content_hash, canonical_owner.id
 		FROM attachments AS local
 		JOIN attachments AS canonical_owner
@@ -433,17 +439,17 @@ func swapPreservedCanonicalHashOwnersTx(tx *loggedTx, blobHash, lookupHash strin
 	}
 
 	for _, swap := range swaps {
-		if _, err := tx.Exec(`
+		if _, err := tx.ExecContext(ctx, `
 			UPDATE attachments SET content_hash = NULL
 			WHERE id = ? AND content_hash = ?`, swap.ownerID, blobHash); err != nil {
 			return fmt.Errorf("temporarily release canonical attachment hash %s: %w", blobHash, err)
 		}
-		if _, err := tx.Exec(`
+		if _, err := tx.ExecContext(ctx, `
 			UPDATE attachments SET content_hash = ?
 			WHERE id = ? AND content_hash = ?`, blobHash, swap.localID, swap.localHash); err != nil {
 			return fmt.Errorf("assign canonical attachment hash %s to local row: %w", blobHash, err)
 		}
-		if _, err := tx.Exec(`
+		if _, err := tx.ExecContext(ctx, `
 			UPDATE attachments SET content_hash = ?
 			WHERE id = ? AND content_hash IS NULL`, swap.localHash, swap.ownerID); err != nil {
 			return fmt.Errorf("preserve nonlocal attachment hash alias for %s: %w", blobHash, err)
@@ -487,18 +493,18 @@ const resolveAttachmentBlobSQL = `
 	FROM requested
 	LEFT JOIN attachment_pack_index p ON p.blob_hash = requested.blob_hash`
 
-// ResolveAttachmentBlob determines attachment liveness and the optional pack
+// ResolveAttachmentBlobContext determines attachment liveness and the optional pack
 // location in one query. Attachment rows, rather than storage metadata, are
 // the liveness authority, so stale unreferenced index rows are never exposed
 // to the production read path.
-func (s *Store) ResolveAttachmentBlob(blobHash string) (AttachmentBlobLocation, error) {
+func (s *Store) ResolveAttachmentBlobContext(ctx context.Context, blobHash string) (AttachmentBlobLocation, error) {
 	canonicalHash, err := normalizeBlobHash(blobHash)
 	if err != nil {
 		return AttachmentBlobLocation{}, err
 	}
 	if canonicalHash != blobHash {
 		var legacyIndexRows int
-		err = s.db.QueryRow(s.dialect.Rebind(`
+		err = s.db.QueryRowContext(ctx, s.dialect.Rebind(`
 			SELECT COUNT(*) FROM attachment_pack_index WHERE blob_hash = ?`), blobHash).
 			Scan(&legacyIndexRows)
 		if err != nil {
@@ -514,7 +520,7 @@ func (s *Store) ResolveAttachmentBlob(blobHash string) (AttachmentBlobLocation, 
 	var referenced int
 	var hash, packID sql.NullString
 	var offset, storedLen, rawLen, flags, crc sql.NullInt64
-	err = s.db.QueryRow(s.dialect.Rebind(resolveAttachmentBlobSQL),
+	err = s.db.QueryRowContext(ctx, s.dialect.Rebind(resolveAttachmentBlobSQL),
 		canonicalHash, canonicalHash, canonicalHash).
 		Scan(&referenced, &hash, &packID, &offset, &storedLen, &rawLen, &flags, &crc)
 	if err != nil {
@@ -543,10 +549,10 @@ func (s *Store) ResolveAttachmentBlob(blobHash string) (AttachmentBlobLocation, 
 	return loc, nil
 }
 
-// ListReferencedBlobHashes returns every non-empty content or thumbnail hash
+// ListReferencedBlobHashesContext returns every non-empty content or thumbnail hash
 // named by an attachment row. A hash shared across columns appears once.
-func (s *Store) ListReferencedBlobHashes() (map[string]struct{}, error) {
-	rows, err := s.db.Query(`
+func (s *Store) ListReferencedBlobHashesContext(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT content_hash FROM attachments
 		WHERE content_hash IS NOT NULL AND content_hash != ''
 		UNION
@@ -596,11 +602,11 @@ const pruneUnreferencedPackIndexSQL = `
 	WHERE blob_hash NOT IN (` + attachmentReferencedHashesSQL + `
 	)`
 
-// ListAttachmentPackEntries returns the live blob index rows owned by one
+// ListAttachmentPackEntriesContext returns the live blob index rows owned by one
 // pack, ordered by their position in the pack. Footer entries without a live
 // index row are dead and must not be served or restored by unpack.
-func (s *Store) ListAttachmentPackEntries(packID string) ([]PackIndexEntry, error) {
-	rows, err := s.db.Query(`
+func (s *Store) ListAttachmentPackEntriesContext(ctx context.Context, packID string) ([]PackIndexEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
 		FROM attachment_pack_index
 		WHERE pack_id = ?
@@ -626,19 +632,19 @@ type UnpackedBlob struct {
 	Size           int64
 }
 
-// ListUnpackedBlobs returns every distinct local (non-URL) content and
+// ListUnpackedBlobsContext returns every distinct local (non-URL) content and
 // thumbnail blob that has no attachment_pack_index row, preserving all of its
 // DB-recorded relative candidate paths. Content blobs come first, then blobs
 // seen only as thumbnails (Size -1); a hash appearing as both is listed once
 // with content and thumbnail paths combined.
-func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
+func (s *Store) ListUnpackedBlobsContext(ctx context.Context) ([]UnpackedBlob, error) {
 	var blobs []UnpackedBlob
 	byHash := make(map[string]int)
 	seenPaths := make(map[string]map[string]struct{})
 	seenAliases := make(map[string]map[string]struct{})
 
 	collect := func(query string, scanSize bool) error {
-		rows, err := s.db.Query(query)
+		rows, err := s.db.QueryContext(ctx, query)
 		if err != nil {
 			return fmt.Errorf("list unpacked blobs: %w", err)
 		}
@@ -738,11 +744,11 @@ func (s *Store) ListIndexedBlobHashes() (map[string]struct{}, error) {
 	return hashes, nil
 }
 
-// ListIndexedBlobEntries returns every packed blob mapping keyed by blob hash.
+// ListIndexedBlobEntriesContext returns every packed blob mapping keyed by blob hash.
 // It includes stale mappings so filesystem sweep can account for every index
 // row before reference pruning.
-func (s *Store) ListIndexedBlobEntries() (map[string]PackIndexEntry, error) {
-	rows, err := s.db.Query(`
+func (s *Store) ListIndexedBlobEntriesContext(ctx context.Context) (map[string]PackIndexEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
 		FROM attachment_pack_index`)
 	if err != nil {
@@ -763,9 +769,9 @@ func (s *Store) ListIndexedBlobEntries() (map[string]PackIndexEntry, error) {
 	return byHash, nil
 }
 
-// ListPackRecords returns all attachment pack records ordered by pack_id.
-func (s *Store) ListPackRecords() ([]PackRecord, error) {
-	rows, err := s.db.Query(`
+// ListPackRecordsContext returns all attachment pack records ordered by pack_id.
+func (s *Store) ListPackRecordsContext(ctx context.Context) ([]PackRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT pack_id, entry_count, stored_bytes, created_at
 		FROM attachment_packs ORDER BY pack_id`)
 	if err != nil {
@@ -791,10 +797,10 @@ func (s *Store) ListPackRecords() ([]PackRecord, error) {
 	return recs, nil
 }
 
-// HasPackRecord reports whether the pack has an attachment_packs row.
-func (s *Store) HasPackRecord(packID string) (bool, error) {
+// HasPackRecordContext reports whether the pack has an attachment_packs row.
+func (s *Store) HasPackRecordContext(ctx context.Context, packID string) (bool, error) {
 	var one int
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT 1 FROM attachment_packs WHERE pack_id = ?`, packID).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -816,7 +822,7 @@ func (s *Store) CountPackIndexEntries(packID string) (int64, error) {
 	return n, nil
 }
 
-// ClearAttachmentPackMetadata deletes every attachment_pack_index and
+// ClearAttachmentPackMetadataContext deletes every attachment_pack_index and
 // attachment_packs row in one transaction. Missing tables are a no-op so
 // restoring a snapshot from before packed storage does not have to initialize
 // or migrate the rest of the database merely to perform this cleanup.
@@ -825,26 +831,26 @@ func (s *Store) CountPackIndexEntries(packID string) (int64, error) {
 // attachment files only — never production pack files — so any pack metadata
 // carried in the restored database points at packs that do not exist and must
 // be dropped before the vault is used.
-func (s *Store) ClearAttachmentPackMetadata() error {
-	indexExists, err := s.tableExists("attachment_pack_index")
+func (s *Store) ClearAttachmentPackMetadataContext(ctx context.Context) error {
+	indexExists, err := s.tableExistsContext(ctx, "attachment_pack_index")
 	if err != nil {
 		return fmt.Errorf("check attachment_pack_index table: %w", err)
 	}
-	packsExists, err := s.tableExists("attachment_packs")
+	packsExists, err := s.tableExistsContext(ctx, "attachment_packs")
 	if err != nil {
 		return fmt.Errorf("check attachment_packs table: %w", err)
 	}
 	if !indexExists && !packsExists {
 		return nil
 	}
-	return s.withTx(func(tx *loggedTx) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if indexExists {
-			if _, err := tx.Exec(`DELETE FROM attachment_pack_index`); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM attachment_pack_index`); err != nil {
 				return fmt.Errorf("clear attachment_pack_index: %w", err)
 			}
 		}
 		if packsExists {
-			if _, err := tx.Exec(`DELETE FROM attachment_packs`); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM attachment_packs`); err != nil {
 				return fmt.Errorf("clear attachment_packs: %w", err)
 			}
 		}
@@ -852,28 +858,28 @@ func (s *Store) ClearAttachmentPackMetadata() error {
 	})
 }
 
-func (s *Store) tableExists(name string) (bool, error) {
+func (s *Store) tableExistsContext(ctx context.Context, name string) (bool, error) {
 	query := `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`
 	if s.dialect.DriverName() == postgresDriverName {
 		query = `SELECT COUNT(*) FROM information_schema.tables
 		         WHERE table_schema = current_schema() AND table_name = ?`
 	}
 	var count int
-	if err := s.db.QueryRow(query, name).Scan(&count); err != nil {
+	if err := s.db.QueryRowContext(ctx, query, name).Scan(&count); err != nil {
 		return false, err
 	}
 	return count > 0, nil
 }
 
-// DeletePackRecord removes a pack's index rows and its attachment_packs
+// DeletePackRecordContext removes a pack's index rows and its attachment_packs
 // row in one transaction (used by unpack).
-func (s *Store) DeletePackRecord(packID string) error {
-	return s.withTx(func(tx *loggedTx) error {
-		if _, err := tx.Exec(`
+func (s *Store) DeletePackRecordContext(ctx context.Context, packID string) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM attachment_pack_index WHERE pack_id = ?`, packID); err != nil {
 			return fmt.Errorf("delete pack index rows for %s: %w", packID, err)
 		}
-		if _, err := tx.Exec(`
+		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM attachment_packs WHERE pack_id = ?`, packID); err != nil {
 			return fmt.Errorf("delete pack record %s: %w", packID, err)
 		}
@@ -881,12 +887,12 @@ func (s *Store) DeletePackRecord(packID string) error {
 	})
 }
 
-// DeletePackIndexEntry removes one unreadable packed-blob mapping while
+// DeletePackIndexEntryContext removes one unreadable packed-blob mapping while
 // retaining the pack record and all other live entries. The packer calls this
 // only after a loose copy has been hash-verified and materialized canonically;
 // the old pack entry then becomes dead bytes for GC/repack accounting.
-func (s *Store) DeletePackIndexEntry(blobHash string) error {
-	if _, err := s.db.Exec(`
+func (s *Store) DeletePackIndexEntryContext(ctx context.Context, blobHash string) error {
+	if _, err := s.db.ExecContext(ctx, `
 		DELETE FROM attachment_pack_index WHERE blob_hash = ?`, blobHash); err != nil {
 		return fmt.Errorf("delete pack index entry for %s: %w", blobHash, err)
 	}

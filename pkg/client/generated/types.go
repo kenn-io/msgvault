@@ -717,6 +717,7 @@ type CLIAddCalendarPlanRequest struct {
 	Headless         *bool   `json:"headless,omitempty"`
 	OauthApp         *string `json:"oauth_app,omitzero"`
 	OauthAppExplicit *bool   `json:"oauth_app_explicit,omitempty"`
+	Write            *bool   `json:"write,omitempty"`
 }
 
 func (c CLIAddCalendarPlanRequest) Validate() error {
@@ -1065,6 +1066,241 @@ type CacheStats struct {
 
 func (c CacheStats) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CalendarConflict struct {
+	CalendarIds []string  `json:"calendar_ids" validate:"required"`
+	End         time.Time `json:"end" validate:"required"`
+	Start       time.Time `json:"start" validate:"required"`
+}
+
+func (c CalendarConflict) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CalendarEventTarget struct {
+	Start   GCalEventDateTime `json:"start"`
+	Summary *string           `json:"summary,omitzero"`
+}
+
+func (c CalendarEventTarget) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.Start).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Start", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CalendarPlannedWrite struct {
+	Action      string               `json:"action" validate:"required"`
+	CalendarID  string               `json:"calendar_id" validate:"required"`
+	Destination *string              `json:"destination,omitzero"`
+	Event       *GCalEventInput      `json:"event,omitempty"`
+	EventID     *string              `json:"event_id,omitzero"`
+	Target      *CalendarEventTarget `json:"target,omitempty"`
+}
+
+func (c CalendarPlannedWrite) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Action, "required"); err != nil {
+		errors = errors.Append("Action", err)
+	}
+	if err := typesValidator.Var(c.CalendarID, "required"); err != nil {
+		errors = errors.Append("CalendarID", err)
+	}
+	if c.Event != nil {
+		if v, ok := any(c.Event).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Event", err)
+			}
+		}
+	}
+	if c.Target != nil {
+		if v, ok := any(c.Target).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Target", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CalendarRequest struct {
+	Account      string                `json:"account" validate:"required"`
+	Action       CalendarRequestAction `json:"action" validate:"required"`
+	AddAttendees []string              `json:"add_attendees,omitempty"`
+
+	// CalendarID Required for event mutations. For freebusy or conflicts, use this as the target or omit it and provide calendar_ids.
+	CalendarID *string `json:"calendar_id,omitzero"`
+
+	// CalendarIds Availability target IDs. When nonempty, only these calendars are checked; calendar_id may be omitted.
+	CalendarIds []string        `json:"calendar_ids,omitempty"`
+	Destination *string         `json:"destination,omitzero"`
+	DryRun      *bool           `json:"dry_run,omitempty"`
+	Event       *GCalEventInput `json:"event,omitempty"`
+	EventID     *string         `json:"event_id,omitzero"`
+
+	// ExpectedPlanFingerprint Optional precondition from a prior dry run; rejects the mutation if the OAuth account, planned writes, or normalized notification mode differs.
+	ExpectedPlanFingerprint *string                     `json:"expected_plan_fingerprint,omitzero"`
+	OriginalStart           *string                     `json:"original_start,omitzero"`
+	ReadOnly                *bool                       `json:"read_only,omitempty"`
+	Response                *CalendarRequestResponse    `json:"response,omitempty"`
+	Scope                   *CalendarRequestScope       `json:"scope,omitempty"`
+	SendUpdates             *CalendarRequestSendUpdates `json:"send_updates,omitempty"`
+	TimeMax                 *time.Time                  `json:"time_max,omitempty"`
+	TimeMin                 *time.Time                  `json:"time_min,omitempty"`
+	TimeZone                *string                     `json:"time_zone,omitzero"`
+}
+
+func (c CalendarRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Account, "required"); err != nil {
+		errors = errors.Append("Account", err)
+	}
+	if v, ok := any(c.Action).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Action", err)
+		}
+	}
+	if c.Event != nil {
+		if v, ok := any(c.Event).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Event", err)
+			}
+		}
+	}
+	if c.Response != nil {
+		if v, ok := any(c.Response).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Response", err)
+			}
+		}
+	}
+	if c.Scope != nil {
+		if v, ok := any(c.Scope).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Scope", err)
+			}
+		}
+	}
+	if c.SendUpdates != nil {
+		if v, ok := any(c.SendUpdates).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SendUpdates", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CalendarResult struct {
+	Account    string                `json:"account" validate:"required"`
+	CalendarID string                `json:"calendar_id" validate:"required"`
+	Conflicts  []CalendarConflict    `json:"conflicts,omitempty"`
+	DryRun     bool                  `json:"dry_run"`
+	ErrorData  *string               `json:"error,omitzero"`
+	Freebusy   *GCalFreeBusyResponse `json:"freebusy,omitempty"`
+
+	// OutcomeCode Machine-readable classification for a partial provider write
+	OutcomeCode    *CalendarResultOutcomeCode `json:"outcome_code,omitempty"`
+	OutcomeUnknown *bool                      `json:"outcome_unknown,omitempty"`
+	Plan           []CalendarPlannedWrite     `json:"plan" validate:"required"`
+
+	// PlanFingerprint Opaque comparison token bound to the OAuth account, planned writes, and normalized send_updates; valid within one daemon process
+	PlanFingerprint *string                `json:"plan_fingerprint,omitzero"`
+	SendUpdates     string                 `json:"send_updates" validate:"required"`
+	Writes          []CalendarWriteReceipt `json:"writes" validate:"required"`
+}
+
+func (c CalendarResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Account, "required"); err != nil {
+		errors = errors.Append("Account", err)
+	}
+	if err := typesValidator.Var(c.CalendarID, "required"); err != nil {
+		errors = errors.Append("CalendarID", err)
+	}
+	for i, item := range c.Conflicts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Conflicts[%d]", i), err)
+			}
+		}
+	}
+	if c.Freebusy != nil {
+		if v, ok := any(c.Freebusy).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Freebusy", err)
+			}
+		}
+	}
+	if c.OutcomeCode != nil {
+		if v, ok := any(c.OutcomeCode).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OutcomeCode", err)
+			}
+		}
+	}
+	for i, item := range c.Plan {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Plan[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.SendUpdates, "required"); err != nil {
+		errors = errors.Append("SendUpdates", err)
+	}
+	for i, item := range c.Writes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Writes[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CalendarWriteReceipt struct {
+	Action       string    `json:"action" validate:"required"`
+	ArchiveError *string   `json:"archive_error,omitzero"`
+	Archived     bool      `json:"archived"`
+	CalendarID   string    `json:"calendar_id" validate:"required"`
+	Event        GCalEvent `json:"event"`
+	MessageID    *int64    `json:"message_id,omitempty"`
+}
+
+func (c CalendarWriteReceipt) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Action, "required"); err != nil {
+		errors = errors.Append("Action", err)
+	}
+	if err := typesValidator.Var(c.CalendarID, "required"); err != nil {
+		errors = errors.Append("CalendarID", err)
+	}
+	if v, ok := any(c.Event).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Event", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type CancelDeletionResponse struct {
@@ -2677,8 +2913,13 @@ func (d DayPerson) Validate() error {
 	return errors
 }
 
-type DecideIdentityMatchRequest struct {
-	Notes *string `json:"notes,omitzero"`
+type DecideIdentityMatchReviewedRequest struct {
+	Notes       *string `json:"notes,omitzero"`
+	ReviewToken string  `json:"review_token" validate:"required"`
+}
+
+func (d DecideIdentityMatchReviewedRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
 type DecidePersonMergeCandidateRequest struct {
@@ -2858,6 +3099,19 @@ type DirectoryPersonSummary struct {
 }
 
 func (d DirectoryPersonSummary) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type Disclosure struct {
+	Endpoint             string `json:"endpoint" validate:"required"`
+	ModelID              string `json:"model_id" validate:"required"`
+	PacketSchema         string `json:"packet_schema" validate:"required"`
+	PolicyVersion        string `json:"policy_version" validate:"required"`
+	QuestionVersion      string `json:"question_version" validate:"required"`
+	RetentionDeclaration string `json:"retention_declaration" validate:"required"`
+}
+
+func (d Disclosure) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
@@ -4632,6 +4886,275 @@ func (f FormatCoverage) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(f))
 }
 
+type GCalAttendee struct {
+	AdditionalGuests *int64  `json:"additionalGuests,omitempty"`
+	Comment          *string `json:"comment,omitzero"`
+	DisplayName      *string `json:"displayName,omitzero"`
+	Email            *string `json:"email,omitzero"`
+	Optional         *bool   `json:"optional,omitempty"`
+
+	// Organizer Provider-controlled attendee role; do not send in event input.
+	Organizer *bool `json:"organizer,omitempty"`
+	Resource  *bool `json:"resource,omitempty"`
+
+	// ResponseStatus Provider-controlled RSVP state; use the self RSVP operation to change your response.
+	ResponseStatus *string `json:"responseStatus,omitzero"`
+
+	// Self Provider-controlled marker for the authenticated attendee; do not send in event input.
+	Self *bool `json:"self,omitempty"`
+}
+
+type GCalBusyPeriod struct {
+	End   time.Time `json:"end" validate:"required"`
+	Start time.Time `json:"start" validate:"required"`
+}
+
+func (g GCalBusyPeriod) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GCalCalendarBusy struct {
+	Busy   []GCalBusyPeriod    `json:"busy" validate:"required"`
+	Errors []GCalCalendarError `json:"errors,omitempty"`
+}
+
+func (g GCalCalendarBusy) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range g.Busy {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Busy[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range g.Errors {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Errors[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GCalCalendarError struct {
+	Domain *string `json:"domain,omitzero"`
+	Reason string  `json:"reason" validate:"required"`
+}
+
+func (g GCalCalendarError) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GCalEvent struct {
+	Attendees         []GCalAttendee     `json:"attendees,omitempty"`
+	Created           *time.Time         `json:"created,omitempty"`
+	Creator           *GCalPerson        `json:"creator,omitempty"`
+	Description       *string            `json:"description,omitzero"`
+	End               *GCalEventDateTime `json:"end,omitempty"`
+	Etag              *string            `json:"etag,omitzero"`
+	EventType         *string            `json:"eventType,omitzero"`
+	HangoutLink       *string            `json:"hangoutLink,omitzero"`
+	HTMLLink          *string            `json:"htmlLink,omitzero"`
+	ICalUID           *string            `json:"iCalUID,omitzero"`
+	ID                *string            `json:"id,omitzero"`
+	Location          *string            `json:"location,omitzero"`
+	Organizer         *GCalPerson        `json:"organizer,omitempty"`
+	OriginalStartTime *GCalEventDateTime `json:"originalStartTime,omitempty"`
+	Recurrence        []string           `json:"recurrence,omitempty"`
+	RecurringEventID  *string            `json:"recurringEventId,omitzero"`
+	Reminders         *GCalReminders     `json:"reminders,omitempty"`
+	Sequence          *int64             `json:"sequence,omitempty"`
+	Start             *GCalEventDateTime `json:"start,omitempty"`
+	Status            *string            `json:"status,omitzero"`
+	Summary           *string            `json:"summary,omitzero"`
+	Transparency      *string            `json:"transparency,omitzero"`
+	Updated           *time.Time         `json:"updated,omitempty"`
+	Visibility        *string            `json:"visibility,omitzero"`
+}
+
+func (g GCalEvent) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range g.Attendees {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Attendees[%d]", i), err)
+			}
+		}
+	}
+	if g.Creator != nil {
+		if v, ok := any(g.Creator).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Creator", err)
+			}
+		}
+	}
+	if g.End != nil {
+		if v, ok := any(g.End).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("End", err)
+			}
+		}
+	}
+	if g.Organizer != nil {
+		if v, ok := any(g.Organizer).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Organizer", err)
+			}
+		}
+	}
+	if g.OriginalStartTime != nil {
+		if v, ok := any(g.OriginalStartTime).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OriginalStartTime", err)
+			}
+		}
+	}
+	if g.Reminders != nil {
+		if v, ok := any(g.Reminders).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Reminders", err)
+			}
+		}
+	}
+	if g.Start != nil {
+		if v, ok := any(g.Start).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Start", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GCalEventDateTime struct {
+	Date     *string    `json:"date,omitzero"`
+	DateTime *time.Time `json:"dateTime,omitempty"`
+	TimeZone *string    `json:"timeZone,omitzero"`
+}
+
+type GCalEventInput struct {
+	Attendees *[]GCalAttendee `json:"attendees,omitempty"`
+
+	// AttendeesOmitted Internal self-RSVP marker returned in plans. Do not send this field in a control request.
+	AttendeesOmitted *bool `json:"attendeesOmitted,omitempty"`
+
+	// Description Omit to preserve the existing value; use an empty string to clear it on update. JSON null is not accepted.
+	Description *string            `json:"description,omitzero"`
+	End         *GCalEventDateTime `json:"end,omitempty"`
+
+	// ID Server-assigned event ID returned in plans. Do not send this field in a control request.
+	ID *string `json:"id,omitzero"`
+
+	// Location Omit to preserve the existing value; use an empty string to clear it on update. JSON null is not accepted.
+	Location   *string            `json:"location,omitzero"`
+	Recurrence *[]string          `json:"recurrence,omitempty"`
+	Reminders  *GCalReminders     `json:"reminders,omitempty"`
+	Start      *GCalEventDateTime `json:"start,omitempty"`
+
+	// Summary Omit to preserve the existing value; use an empty string to clear it on update. JSON null is not accepted.
+	Summary *string `json:"summary,omitzero"`
+}
+
+func (g GCalEventInput) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(g.Attendees).(runtime.Validator); ok && v != nil {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Attendees", err)
+		}
+	}
+	if g.End != nil {
+		if v, ok := any(g.End).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("End", err)
+			}
+		}
+	}
+	if v, ok := any(g.Recurrence).(runtime.Validator); ok && v != nil {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Recurrence", err)
+		}
+	}
+	if g.Reminders != nil {
+		if v, ok := any(g.Reminders).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Reminders", err)
+			}
+		}
+	}
+	if g.Start != nil {
+		if v, ok := any(g.Start).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Start", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GCalFreeBusyResponse struct {
+	Calendars map[string]GCalCalendarBusy `json:"calendars"`
+}
+
+func (g GCalFreeBusyResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for k, v := range g.Calendars {
+		if validator, ok := any(v).(runtime.Validator); ok {
+			if err := validator.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Calendars[%s]", k), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GCalPerson struct {
+	DisplayName *string `json:"displayName,omitzero"`
+	Email       *string `json:"email,omitzero"`
+	Self        *bool   `json:"self,omitempty"`
+}
+
+type GCalReminder struct {
+	Method  string `json:"method" validate:"required"`
+	Minutes int64  `json:"minutes"`
+}
+
+func (g GCalReminder) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GCalReminders struct {
+	Overrides  []GCalReminder `json:"overrides" validate:"required"`
+	UseDefault bool           `json:"useDefault"`
+}
+
+func (g GCalReminders) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range g.Overrides {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Overrides[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type GenerationSummary struct {
 	ActivatedAt  *string `json:"activated_at,omitzero"`
 	Dimension    int64   `json:"dimension"`
@@ -4903,26 +5426,33 @@ func (i IdentityMatchAcceptResponse) Validate() error {
 }
 
 type IdentityMatchCandidate struct {
-	Basis           string                  `json:"basis" validate:"required"`
-	Confidence      *float64                `json:"confidence,omitempty"`
-	CreatedAt       time.Time               `json:"created_at" validate:"required"`
-	DecidedAt       *time.Time              `json:"decided_at,omitempty"`
-	DecidedBy       *string                 `json:"decided_by,omitzero"`
-	Evidence        []IdentityMatchEvidence `json:"evidence" validate:"required"`
-	ID              int64                   `json:"id"`
-	LeftID          int64                   `json:"left_id"`
-	LeftKind        string                  `json:"left_kind" validate:"required"`
-	NormalizedValue *string                 `json:"normalized_value,omitzero"`
-	Notes           *string                 `json:"notes,omitzero"`
-	RightID         int64                   `json:"right_id"`
-	RightKind       string                  `json:"right_kind" validate:"required"`
-	ScopeKind       *string                 `json:"scope_kind,omitzero"`
-	ScopeValue      *string                 `json:"scope_value,omitzero"`
-	ServiceSlug     *string                 `json:"service_slug,omitzero"`
-	Source          string                  `json:"source" validate:"required"`
-	SourceRef       *string                 `json:"source_ref,omitzero"`
-	State           string                  `json:"state" validate:"required"`
-	UpdatedAt       time.Time               `json:"updated_at" validate:"required"`
+	Actionable         bool                         `json:"actionable"`
+	ApplicationPending bool                         `json:"application_pending"`
+	Basis              string                       `json:"basis" validate:"required"`
+	Blocker            *string                      `json:"blocker,omitzero"`
+	Confidence         *float64                     `json:"confidence,omitempty"`
+	CreatedAt          time.Time                    `json:"created_at" validate:"required"`
+	DecidedAt          *time.Time                   `json:"decided_at,omitempty"`
+	DecidedBy          *string                      `json:"decided_by,omitzero"`
+	Evidence           []IdentityMatchEvidence      `json:"evidence" validate:"required"`
+	ID                 int64                        `json:"id"`
+	LeftID             int64                        `json:"left_id"`
+	LeftKind           string                       `json:"left_kind" validate:"required"`
+	LeftPerson         *IdentityMatchPersonBinding  `json:"left_person,omitempty"`
+	NormalizedValue    *string                      `json:"normalized_value,omitzero"`
+	Notes              *string                      `json:"notes,omitzero"`
+	ReviewToken        *string                      `json:"review_token,omitzero"`
+	RightID            int64                        `json:"right_id"`
+	RightKind          string                       `json:"right_kind" validate:"required"`
+	RightPerson        *IdentityMatchPersonBinding  `json:"right_person,omitempty"`
+	ScopeKind          *string                      `json:"scope_kind,omitzero"`
+	ScopeValue         *string                      `json:"scope_value,omitzero"`
+	ServiceSlug        *string                      `json:"service_slug,omitzero"`
+	Source             string                       `json:"source" validate:"required"`
+	SourceRef          *string                      `json:"source_ref,omitzero"`
+	SourceSupport      []IdentityMatchSourceSupport `json:"source_support,omitempty"`
+	State              string                       `json:"state" validate:"required"`
+	UpdatedAt          time.Time                    `json:"updated_at" validate:"required"`
 }
 
 func (i IdentityMatchCandidate) Validate() error {
@@ -4943,11 +5473,32 @@ func (i IdentityMatchCandidate) Validate() error {
 	if err := typesValidator.Var(i.LeftKind, "required"); err != nil {
 		errors = errors.Append("LeftKind", err)
 	}
+	if i.LeftPerson != nil {
+		if v, ok := any(i.LeftPerson).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("LeftPerson", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(i.RightKind, "required"); err != nil {
 		errors = errors.Append("RightKind", err)
 	}
+	if i.RightPerson != nil {
+		if v, ok := any(i.RightPerson).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("RightPerson", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(i.Source, "required"); err != nil {
 		errors = errors.Append("Source", err)
+	}
+	for i, item := range i.SourceSupport {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("SourceSupport[%d]", i), err)
+			}
+		}
 	}
 	if err := typesValidator.Var(i.State, "required"); err != nil {
 		errors = errors.Append("State", err)
@@ -4983,17 +5534,63 @@ func (i IdentityMatchCandidatesResponse) Validate() error {
 }
 
 type IdentityMatchEvidence struct {
-	CandidateID  int64     `json:"candidate_id"`
-	CreatedAt    time.Time `json:"created_at" validate:"required"`
-	Detail       *string   `json:"detail,omitzero"`
-	EvidenceKind string    `json:"evidence_kind" validate:"required"`
-	EvidenceRef  *string   `json:"evidence_ref,omitzero"`
-	ID           int64     `json:"id"`
-	Source       string    `json:"source" validate:"required"`
+	CandidateID   int64                        `json:"candidate_id"`
+	CreatedAt     time.Time                    `json:"created_at" validate:"required"`
+	Detail        *string                      `json:"detail,omitzero"`
+	EvidenceKind  string                       `json:"evidence_kind" validate:"required"`
+	EvidenceRef   *string                      `json:"evidence_ref,omitzero"`
+	ID            int64                        `json:"id"`
+	Source        string                       `json:"source" validate:"required"`
+	SourceSupport []IdentityMatchSourceSupport `json:"source_support,omitempty"`
 }
 
 func (i IdentityMatchEvidence) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(i.EvidenceKind, "required"); err != nil {
+		errors = errors.Append("EvidenceKind", err)
+	}
+	if err := typesValidator.Var(i.Source, "required"); err != nil {
+		errors = errors.Append("Source", err)
+	}
+	for i, item := range i.SourceSupport {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("SourceSupport[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type IdentityMatchJudgment struct {
+	Blockers        []string   `json:"blockers" validate:"required"`
+	CandidateID     int64      `json:"candidate_id"`
+	CreatedAt       time.Time  `json:"created_at" validate:"required"`
+	ErrorClass      *string    `json:"error_class,omitzero"`
+	Fingerprint     string     `json:"fingerprint" validate:"required"`
+	ID              int64      `json:"id"`
+	ModelID         string     `json:"model_id" validate:"required"`
+	Outcome         string     `json:"outcome" validate:"required"`
+	PolicyVersion   string     `json:"policy_version" validate:"required"`
+	Probability     *float64   `json:"probability,omitempty"`
+	QuestionVersion string     `json:"question_version" validate:"required"`
+	RetryAfter      *time.Time `json:"retry_after,omitempty"`
+	Status          string     `json:"status" validate:"required"`
+}
+
+func (i IdentityMatchJudgment) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
+type IdentityMatchPersonBinding struct {
+	PersonID int64 `json:"person_id"`
+	Revision int64 `json:"revision"`
 }
 
 type IdentityMatchRejectResponse struct {
@@ -5018,6 +5615,11 @@ func (i IdentityMatchRejectResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type IdentityMatchSourceSupport struct {
+	IsConservative bool  `json:"is_conservative"`
+	SourceID       int64 `json:"source_id"`
 }
 
 type IdentitySearchHTTPRequest struct {
@@ -9239,6 +9841,122 @@ func (p PersonInboxRow) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PersonMatchBatchError struct {
+	Code    string `json:"code" validate:"required"`
+	Message string `json:"message" validate:"required"`
+}
+
+func (p PersonMatchBatchError) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMatchConsentDecisionRequest struct {
+	DisclosureFingerprint string `json:"disclosure_fingerprint" validate:"required"`
+}
+
+func (p PersonMatchConsentDecisionRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMatchConsentDecisionResponse struct {
+	Changed               bool   `json:"changed"`
+	ConsentActive         bool   `json:"consent_active"`
+	DisclosureFingerprint string `json:"disclosure_fingerprint" validate:"required"`
+}
+
+func (p PersonMatchConsentDecisionResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMatchJudgmentHistoryResponse struct {
+	CandidateID  int64                   `json:"candidate_id"`
+	Judgments    []IdentityMatchJudgment `json:"judgments" validate:"required"`
+	Limit        int64                   `json:"limit"`
+	NextBeforeID *int64                  `json:"next_before_id,omitempty"`
+}
+
+func (p PersonMatchJudgmentHistoryResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Judgments {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Judgments[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMatchScoringRequest struct {
+	Limit *int64 `json:"limit,omitempty"`
+}
+
+type PersonMatchScoringResponse struct {
+	ErrorData *PersonMatchBatchError `json:"error,omitempty"`
+	Processed int64                  `json:"processed"`
+	Results   []Result               `json:"results" validate:"required"`
+}
+
+func (p PersonMatchScoringResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.ErrorData != nil {
+		if v, ok := any(p.ErrorData).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ErrorData", err)
+			}
+		}
+	}
+	for i, item := range p.Results {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMatchScoringStatus struct {
+	BatchSize             int64       `json:"batch_size"`
+	Blocker               *string     `json:"blocker,omitzero"`
+	ConsentActive         bool        `json:"consent_active"`
+	CredentialAvailable   bool        `json:"credential_available"`
+	DataFields            string      `json:"data_fields" validate:"required"`
+	Disclosure            *Disclosure `json:"disclosure,omitempty"`
+	DisclosureFingerprint *string     `json:"disclosure_fingerprint,omitzero"`
+	Enabled               bool        `json:"enabled"`
+	MinimumProbability    float64     `json:"minimum_probability"`
+	ModelID               string      `json:"model_id" validate:"required"`
+	Ready                 bool        `json:"ready"`
+}
+
+func (p PersonMatchScoringStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.DataFields, "required"); err != nil {
+		errors = errors.Append("DataFields", err)
+	}
+	if p.Disclosure != nil {
+		if v, ok := any(p.Disclosure).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Disclosure", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.ModelID, "required"); err != nil {
+		errors = errors.Append("ModelID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonMedia struct {
 	ByteSize      *int64        `json:"byte_size,omitempty"`
 	ContentHash   *string       `json:"content_hash,omitzero"`
@@ -10766,6 +11484,23 @@ func (r RemoveResult) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type Result struct {
+	Blockers        []string `json:"blockers" validate:"required"`
+	CandidateID     int64    `json:"candidate_id"`
+	EvidenceClasses []string `json:"evidence_classes" validate:"required"`
+	ModelID         string   `json:"model_id" validate:"required"`
+	PacketSchema    string   `json:"packet_schema" validate:"required"`
+	PolicyVersion   string   `json:"policy_version" validate:"required"`
+	Probability     *float64 `json:"probability,omitempty"`
+	ProposedAction  string   `json:"proposed_action" validate:"required"`
+	ReviewToken     string   `json:"review_token" validate:"required"`
+	Status          string   `json:"status" validate:"required"`
+}
+
+func (r Result) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
 type RunSavedViewRequest struct {

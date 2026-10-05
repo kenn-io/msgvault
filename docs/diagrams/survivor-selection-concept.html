@@ -376,7 +376,7 @@
             <div class="tier-num">01</div>
             <div>
               <div class="tier-name">Source preference</div>
-              <div class="tier-hint">default order gmail, imap, mbox, emlx, hey; override with --prefer</div>
+              <div class="tier-hint">default order gmail, imap, msmail, mbox, emlx, hey; override with --prefer</div>
             </div>
             <div class="tier-side"><span class="tier-tag">policy</span></div>
           </div>
@@ -420,6 +420,15 @@
           <div class="tier">
             <div class="tier-num">06</div>
             <div>
+              <div class="tier-name">Source metadata quality</div>
+              <div class="tier-hint">one point each: native message ID, threading evidence, RFC822 Message-ID</div>
+            </div>
+            <div class="tier-side"><span class="tier-tag">provenance</span></div>
+          </div>
+          <div class="tier-arrow">↓</div>
+          <div class="tier">
+            <div class="tier-num">07</div>
+            <div>
               <div class="tier-name">Richer label or folder metadata</div>
               <div class="tier-hint">Gmail labels, IMAP folders, Apple Mail mailboxes</div>
             </div>
@@ -427,7 +436,7 @@
           </div>
           <div class="tier-arrow">↓</div>
           <div class="tier">
-            <div class="tier-num">07</div>
+            <div class="tier-num">08</div>
             <div>
               <div class="tier-name">Earlier archived timestamp (when meaningful)</div>
               <div class="tier-hint">older archive entry, all else equal</div>
@@ -436,7 +445,7 @@
           </div>
           <div class="tier-arrow">↓</div>
           <div class="tier">
-            <div class="tier-num">08</div>
+            <div class="tier-num">09</div>
             <div>
               <div class="tier-name">Stable row ID</div>
               <div class="tier-hint">final tie-breaker — guarantees deterministic output</div>

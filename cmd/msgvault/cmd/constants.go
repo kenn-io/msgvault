@@ -17,6 +17,7 @@ const (
 	sourceTypeSlackdump      = "slackdump"
 	sourceTypeGranola        = "granola"
 	sourceTypeCircleback     = "circleback"
+	sourceTypePlaud          = "plaud"
 	sourceTypeNotionMeetings = "notion_meetings"
 	sourceTypeMuesli         = "muesli"
 )

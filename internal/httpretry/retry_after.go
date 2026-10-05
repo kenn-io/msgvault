@@ -34,7 +34,7 @@ func RetryAfterAt(header string, attempt int, maximum time.Duration, now time.Ti
 	if maximum <= 0 {
 		maximum = DefaultMaxRetryAfter
 	}
-	if delay, ok := parsedRetryAfterAt(header, maximum, now); ok {
+	if delay, ok := ParseRetryAfter(header, maximum, now); ok {
 		return delay
 	}
 
@@ -53,13 +53,16 @@ func RetryAfterAtWithBase(
 	if maximum <= 0 {
 		maximum = DefaultMaxRetryAfter
 	}
-	if delay, ok := parsedRetryAfterAt(header, maximum, now); ok {
+	if delay, ok := ParseRetryAfter(header, maximum, now); ok {
 		return delay
 	}
 	return exponentialBackoffWithBase(attempt, base, maximum)
 }
 
-func parsedRetryAfterAt(header string, maximum time.Duration, now time.Time) (time.Duration, bool) {
+// ParseRetryAfter reads a Retry-After header as delay-seconds or an HTTP-date.
+// It reports false for an empty or unparseable header; a zero or negative
+// maximum leaves the delay uncapped.
+func ParseRetryAfter(header string, maximum time.Duration, now time.Time) (time.Duration, bool) {
 	if header == "" {
 		return 0, false
 	}

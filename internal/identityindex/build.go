@@ -19,8 +19,8 @@ const (
 	ModeFull Mode = iota
 	ModeIncremental
 	ModeIndexOnly
-	// ModeAppendRepair rebuilds activity after old recipients change while
-	// reading committed and staged message shards together.
+	// ModeAppendRepair rebuilds activity after recipients or canonical links
+	// change while reading committed and staged message shards together.
 	ModeAppendRepair
 )
 

@@ -257,7 +257,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	// Preserve the existing keyless mode: secure startup confines the daemon to
 	// loopback unless the operator explicitly opts into unauthenticated remote
 	// access, and every request remains authorized when no key is configured.
-	if s.cfg.Server.APIKey == "" {
+	if s.cfg.Server.AuthenticationKey() == "" {
 		return requestAuthentication{
 			Mode:                  AuthModeLoopback,
 			trustedForCLIDuration: isLoopbackRequest(r),
@@ -271,7 +271,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
 		authHeader = authHeader[7:]
 	}
-	if constantTimeAPIKeyEqual(authHeader, s.cfg.Server.APIKey) {
+	if constantTimeAPIKeyEqual(authHeader, s.cfg.Server.AuthenticationKey()) {
 		return requestAuthentication{
 			Mode:                  AuthModeAPIKey,
 			trustedForCLIDuration: true,
@@ -334,17 +334,16 @@ func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 
 // requestGateEligible reports whether the request should participate in the
 // operation gate. Owner, session, and loopback requests register as waiters or
-// holders on any gated route. Delegated callers reach this predicate only on
-// /api/v1/cli/run; cliRunGateDecision admits only permission-approved draft
-// commands. Other delegated commands skip the gate and the handler rejects
-// them. All other gated routes reject delegated callers without touching gate
-// state.
+// holders on any gated route. Delegated callers reach this predicate on
+// /api/v1/cli/run and /api/v1/calendar/control. CLI requests use
+// cliRunGateDecision; calendar control acquires the gate only for actual writes. Other
+// delegated routes skip the gate and their handlers reject them.
 // Unauthenticated requests (AuthModeRequired) pass straight through so they
 // reach the API auth layer without touching gate state.
 func (s *Server) requestGateEligible(r *http.Request) bool {
 	auth := s.requestAuthentication(r)
 	if auth.Mode == AuthModeDelegated {
-		return r.URL.Path == "/api/v1/cli/run"
+		return r.URL.Path == "/api/v1/cli/run" || r.URL.Path == "/api/v1/calendar/control"
 	}
 	return auth.Mode != AuthModeRequired
 }

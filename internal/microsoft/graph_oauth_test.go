@@ -3,9 +3,13 @@ package microsoft
 import (
 	"context"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -254,4 +258,69 @@ func TestGraphMailWriteManager_Scopes(t *testing.T) {
 	require.NoError(err)
 	_, err = readMgr.TokenSource(t.Context(), "user@company.com")
 	require.NoError(err)
+}
+
+func TestRefreshingAccessTokenPersistsToEachManagerFileAndNamesProduct(t *testing.T) {
+	release := make(chan struct{})
+	var stall atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if stall.Load() {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"fresh","token_type":"Bearer","expires_in":3600,"refresh_token":"r2"}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+
+	imap := &Manager{clientID: "client", tenantID: DefaultTenant, tokensDir: t.TempDir(), logger: slog.Default(), authorityURL: srv.URL}
+	graph := NewGraphManager("client", "common", "", t.TempDir(), slog.Default())
+	graph.authorityURL = srv.URL
+	expired := &oauth2.Token{AccessToken: "stale", RefreshToken: "r1", TokenType: "Bearer", Expiry: time.Now().Add(-time.Hour)}
+	managers := []struct {
+		product string
+		path    string
+		save    func() error
+		source  func() (func(context.Context) (string, error), error)
+	}{
+		{"microsoft", imap.TokenPath("user@example.com"),
+			func() error { return imap.saveToken("user@example.com", expired, nil, "") },
+			func() (func(context.Context) (string, error), error) {
+				return imap.TokenSource(t.Context(), "user@example.com")
+			}},
+		{"microsoft graph", graph.TokenPath("user@example.com"),
+			func() error { return graph.saveToken("user@example.com", expired, GraphScopes(), "") },
+			func() (func(context.Context) (string, error), error) {
+				return graph.TokenSource(t.Context(), "user@example.com")
+			}},
+	}
+	for _, manager := range managers {
+		t.Run(manager.product, func(t *testing.T) {
+			require := require.New(t)
+			stall.Store(false)
+			require.NoError(manager.save())
+			tokenFn, err := manager.source()
+			require.NoError(err)
+			token, err := tokenFn(t.Context())
+			require.NoError(err)
+			assert.Equal(t, "fresh", token)
+			saved, err := readTokenFile(manager.path)
+			require.NoError(err)
+			assert.Equal(t, "fresh", saved.AccessToken)
+
+			stall.Store(true)
+			previous := tokenRefreshTimeout
+			tokenRefreshTimeout = 50 * time.Millisecond
+			t.Cleanup(func() { tokenRefreshTimeout = previous })
+			require.NoError(manager.save())
+			tokenFn, err = manager.source()
+			require.NoError(err)
+			_, err = tokenFn(t.Context())
+			require.ErrorContains(err, manager.product+" token refresh timed out")
+		})
+	}
 }

@@ -8840,3 +8840,33 @@ func TestDaemonTextSearchScopesBeforePagination(t *testing.T) {
 	require.Len(messages, 1)
 	assert.Equal(t, int64(2), messages[0].ID)
 }
+
+func TestHandleSourceStatusDisablesSyncForQueuedJobs(t *testing.T) {
+	for _, sourceType := range []string{"gmail", "granola"} {
+		t.Run(sourceType, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			sched := newMockScheduler()
+			identifier := "queued@example.com"
+			_, err := st.GetOrCreateSource(sourceType, identifier)
+			require.NoError(err)
+			if sourceType == "gmail" {
+				sched.scheduled[identifier] = true
+				sched.statuses = []AccountStatus{{Email: identifier, Queued: true}}
+			} else {
+				sched.jobStatuses = []JobStatus{{Name: "granola:" + identifier, Queued: true}}
+			}
+			srv := NewServer(&config.Config{}, st, sched, testLogger())
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil))
+			require.Equal(http.StatusOK, w.Code)
+			var response SourceStatusResponse
+			require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			require.Len(response.Sources, 1)
+			assert.True(response.Sources[0].SchedulerQueued)
+			assert.False(response.Sources[0].CanSync)
+			assert.Equal("sync_already_running", response.Sources[0].SyncUnavailableReason)
+		})
+	}
+}

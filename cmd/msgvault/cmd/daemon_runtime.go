@@ -35,7 +35,7 @@ const (
 	runtimeCreateTime               = "create_time"
 	runtimeShutdownToken            = "shutdown_token"
 	runtimeStartupPhase             = "startup_phase"
-	minimumDaemonAPISchemaVersion   = "2.14.0"
+	minimumDaemonAPISchemaVersion   = "3.0.0"
 	runtimeStartupCacheBuildOutcome = "startup_cache_build_outcome"
 	daemonProbeTick                 = 250 * time.Millisecond
 )

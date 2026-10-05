@@ -202,7 +202,7 @@ type settingDefinition struct {
 	// daemon-side resources (such as environment variable names) which a
 	// remote session must never control.
 	localOnly             bool
-	secret                func(*config.Config) string
+	secret                func(*Server, *config.Config) string
 	serverSecret          func(context.Context, *Server, *config.Config) bool
 	credentialID          string
 	credentialEndpoint    func(*config.Config) string
@@ -217,7 +217,7 @@ var settingsCatalog = []settingDefinition{
 	liveStringSetting("web.density", "browser", []string{"compact", "comfortable"}, func(c *config.Config) string { return c.Web.Density }),
 	readOnlyStringSetting("server.bind_addr", "server", func(c *config.Config) string { return c.Server.BindAddr }),
 	readOnlyIntSetting("server.api_port", "server", func(c *config.Config) int { return c.Server.APIPort }),
-	readOnlySecretSetting("server.api_key", "server", func(c *config.Config) string { return c.Server.APIKey }),
+	readOnlySecretSetting("server.api_key", "server", func(s *Server, _ *config.Config) string { return s.cfg.Server.AuthenticationKey() }),
 	readOnlyBoolSetting("server.allow_insecure", "server", func(c *config.Config) bool { return c.Server.AllowInsecure }),
 	readOnlyStringArraySetting("server.trusted_proxies", "server", func(c *config.Config) []string { return c.Server.TrustedProxies }),
 	stringSetting("server.daemon_idle_timeout", "server", nil, func(c *config.Config) string { return c.Server.DaemonIdleTimeout.String() }),
@@ -354,11 +354,11 @@ var settingsCatalog = []settingDefinition{
 	readOnlyCardDAVSecretSetting(),
 	boolSetting("integrations.tasks.enabled", "integrations", func(c *config.Config) bool { return c.Integrations.Tasks.Enabled }),
 	stringSetting("integrations.tasks.endpoint", "integrations", nil, func(c *config.Config) string { return c.Integrations.Tasks.Endpoint }),
-	secretSetting("integrations.tasks.api_key", "integrations", func(c *config.Config) string { return c.Integrations.Tasks.APIKey }),
+	secretSetting("integrations.tasks.api_key", "integrations", func(_ *Server, c *config.Config) string { return c.Integrations.Tasks.APIKey }),
 	stringSetting("integrations.tasks.default_project", "integrations", nil, func(c *config.Config) string { return c.Integrations.Tasks.DefaultProject }),
 	boolSetting("integrations.kata.enabled", "integrations", func(c *config.Config) bool { return c.Integrations.Kata.Enabled }),
 	stringSetting("integrations.kata.endpoint", "integrations", nil, func(c *config.Config) string { return c.Integrations.Kata.Endpoint }),
-	secretSetting("integrations.kata.api_key", "integrations", func(c *config.Config) string { return c.Integrations.Kata.APIKey }),
+	secretSetting("integrations.kata.api_key", "integrations", func(_ *Server, c *config.Config) string { return c.Integrations.Kata.APIKey }),
 	stringSetting("integrations.kata.default_project", "integrations", nil, func(c *config.Config) string { return c.Integrations.Kata.DefaultProject }),
 }
 
@@ -459,7 +459,7 @@ func readOnlyStringArraySetting(key, group string, read func(*config.Config) []s
 	return definition
 }
 
-func readOnlySecretSetting(key, group string, value func(*config.Config) string) settingDefinition {
+func readOnlySecretSetting(key, group string, value func(*Server, *config.Config) string) settingDefinition {
 	definition := secretSetting(key, group, value)
 	definition.localOnly = true
 	return definition
@@ -505,7 +505,7 @@ func stringArraySetting(key, group string, read func(*config.Config) []string) s
 	return settingDefinition{key: key, group: group, kind: "string_array", restartRequired: true, read: func(c *config.Config) any { return read(c) }}
 }
 
-func secretSetting(key, group string, value func(*config.Config) string) settingDefinition {
+func secretSetting(key, group string, value func(*Server, *config.Config) string) settingDefinition {
 	return settingDefinition{key: key, group: group, kind: "secret", restartRequired: true, secret: value}
 }
 
@@ -623,7 +623,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	if restartRequired {
 		s.settingsPendingRestart.Store(true)
 	}
-	loaded, err := config.LoadConfigFile(snapshot, "")
+	loaded, err := s.cfg.ReloadConfigFile(snapshot)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "settings_read_failed", "Could not read settings")
 		return
@@ -708,10 +708,7 @@ func (s *Server) readPersistedSettings() (config.ConfigFile, *config.Config, err
 	if err != nil {
 		return config.ConfigFile{}, nil, err
 	}
-	if !snapshot.Exists {
-		return snapshot, config.NewDefaultConfig(), nil
-	}
-	loaded, err := config.LoadConfigFile(snapshot, "")
+	loaded, err := s.cfg.ReloadConfigFile(snapshot)
 	if err != nil {
 		return config.ConfigFile{}, nil, err
 	}
@@ -756,7 +753,7 @@ func (s *Server) buildSettingsResponse(
 		} else if definition.serverSecret != nil {
 			setting.Secret = &SecretSettingState{Configured: definition.serverSecret(ctx, s, cfg)}
 		} else if definition.secret != nil {
-			value := definition.secret(cfg)
+			value := definition.secret(s, cfg)
 			setting.Secret = &SecretSettingState{Configured: value != "", Hint: secretHint(value)}
 		} else {
 			setting.Value = settingValue(definition.kind, definition.read(cfg))

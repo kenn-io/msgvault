@@ -60,23 +60,8 @@ func (s *Server) handleExploreFiles(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var cursor exploreCursor
-	if request.Cursor != "" {
-		cursor, _ = s.decodeExploreCursor(request.Cursor)
-		if predicate.request.SearchMode == exploreSearchModeSemantic || predicate.request.SearchMode == exploreSearchModeHybrid {
-			if cursor.Snapshot == "" {
-				writeError(w, http.StatusBadRequest, "invalid_cursor", "semantic cursor is missing its candidate snapshot")
-				return
-			}
-			predicate.request.CandidateSnapshotID = cursor.Snapshot
-		}
-	}
-	searchSpec, snapshotID, ok := s.resolveExploreSearch(r.Context(), w, predicate.request)
-	if !ok || !requireCompleteCandidatePool(w, searchSpec) {
-		return
-	}
-	if request.Cursor != "" && cursor.SearchRevision != exploreResolvedSearchRevision(searchSpec) {
-		writeError(w, http.StatusConflict, "search_revision_changed", "The resolved search index revision changed; restart pagination")
+	_, searchSpec, snapshotID, ok := s.resolvePagedExploreSearch(r.Context(), w, request.Cursor, predicate.request)
+	if !ok {
 		return
 	}
 	predicate.query.Search = searchSpec

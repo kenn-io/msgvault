@@ -145,6 +145,7 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 	configureHuma()
 
 	config := huma.DefaultConfig("msgvault API", APISchemaVersion)
+	config.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", calendarSchemaName)
 	jsonFormat := huma.Format{
 		Marshal: marshalAPIJSON,
 		Unmarshal: func(data []byte, value any) error {
@@ -304,6 +305,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerPersonRelationshipRoutes(apiV1)
 	s.registerIdentityLinkRoutes(apiV1)
 	s.registerIdentityMatchRoutes(apiV1)
+	s.registerPersonMatchScoringRoutes(apiV1)
 	s.registerTaskIntegrationRoutes(apiV1)
 	s.registerTaskLinkRoutes(apiV1)
 	s.registerSearchCoverageRoute(apiV1)
@@ -411,6 +413,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[MessageDetail](apiV1, "getMessage", http.MethodGet, "/messages/{id}", "Get one message", s.handleGetMessage)
 	s.registerMeetingImportRoute(apiV1)
 	s.registerMeetingRoutes(apiV1)
+	s.registerCalendarControlRoute(apiV1)
 	registerAPIV1RawHumaJSONRoute[ConversationResponse](apiV1, "getConversation", http.MethodGet, "/conversations/{id}", "Get a bounded containing conversation", s.handleGetConversation)
 	registerAPIV1RawHumaJSONRoute[AttachmentInfo](apiV1, "getAttachment", http.MethodGet, "/attachments/{id}", "Get attachment metadata", s.handleGetAttachment)
 	registerAPIV1RawHumaBinaryRoute(
@@ -882,7 +885,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryIntegerParam(limitParam, "Maximum candidates to return (default 100, max 500)"),
 			queryIntegerParam("offset", "Zero-based candidate offset"),
 		}
-	case "acceptIdentityMatchCandidate", "rejectIdentityMatchCandidate":
+	case "getIdentityMatchCandidate", "reviewAcceptIdentityMatchCandidate",
+		"reviewRejectIdentityMatchCandidate":
 		return []*huma.Param{pathIntegerParam("Identity match candidate ID")}
 	case "searchIntegrationTasks":
 		return []*huma.Param{queryStringParam("q", "Task title search within the configured project", true)}

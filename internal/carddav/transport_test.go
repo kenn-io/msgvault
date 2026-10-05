@@ -230,14 +230,14 @@ func TestClientReusesDigestAcrossBudgetedAndConcurrentRequests(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := newFixtureClient(t, server.URL, "alice", "app-password")
 	request := Request{Method: "PROPFIND", URL: server.URL + "/dav"}
-	_, err := client.doWithBudget(t.Context(), request, &operationBudget{remaining: 1024})
+	_, err := client.doWithBudget(t.Context(), request, &Budget{remaining: 1024})
 	require.NoError(err)
 	_, err = client.Do(t.Context(), request)
 	require.NoError(err)
 	var calls sync.WaitGroup
 	for range 4 {
 		calls.Go(func() {
-			_, err := client.doWithBudget(t.Context(), request, &operationBudget{remaining: 1024})
+			_, err := client.doWithBudget(t.Context(), request, &Budget{remaining: 1024})
 			assert.NoError(err)
 		})
 	}
@@ -478,6 +478,21 @@ func TestClientSetsDAVPreconditionsAndTypedStatusErrors(t *testing.T) {
 	require.ErrorAs(t, err, &statusErr)
 	assert.Equal(t, http.StatusTooManyRequests, statusErr.StatusCode)
 	assert.Equal(t, 90, int(statusErr.RetryAfter.Seconds()))
+}
+
+func TestClientReadsPastRetryAfterDateAsNoDelay(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", time.Now().Add(-time.Second).UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newFixtureClient(t, server.URL, "alice", "app-password")
+	_, err := client.Do(t.Context(), Request{Method: "PROPFIND", URL: server.URL})
+	var statusErr *StatusError
+	require.ErrorAs(t, err, &statusErr)
+	assert.Equal(t, http.StatusServiceUnavailable, statusErr.StatusCode)
+	assert.Equal(t, time.Duration(0), statusErr.RetryAfter)
 }
 
 func TestClientValidateChildHrefRejectsOriginAndCollectionEscapes(t *testing.T) {

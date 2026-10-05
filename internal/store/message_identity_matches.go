@@ -61,33 +61,17 @@ func (s *Store) ResolveAccountIdentityContext(
 			"source %d identity %q: %w", sourceID, identifier, ErrAccountIdentityNotFound)
 	}
 
-	// Mirrors messageIdentityAttributionMatch (messages.go) exactly: the
-	// email column compares case-insensitively and only when non-blank,
-	// participant_identifiers rows compare per their own identifier_type
-	// (case-insensitive only when type = 'email', and email identifiers are
-	// consulted only when the participant carries no primary email — the
-	// attribution fallback's primary-email guard), and
-	// participants.phone_number is never consulted —
-	// EnsureParticipantByPhone always backs a phone identity with a
-	// participant_identifiers row, so that row is the parity-correct match
-	// surface. Do not reintroduce identifierMatch/EqualIdentifier here: their
-	// global, shape-based case rule is what this query replaces.
-	const query = `
+	// Shares messageIdentityAttributionMatch's owner builders: the primary
+	// email matches only when nonblank, email identifiers only when the
+	// participant has no primary email, other identifiers byte-exact, and
+	// participants.phone_number is never consulted because
+	// EnsureParticipantByPhone always backs a phone with an identifier row.
+	query := `
 		SELECT p.id FROM participants p
-		WHERE p.email_address IS NOT NULL
-		  AND TRIM(p.email_address) <> ''
-		  AND LOWER(p.email_address) = LOWER(?)
+		WHERE ` + ownerEmailMatch("p.email_address", "?") + `
 		UNION
 		SELECT pi.participant_id FROM participant_identifiers pi
-		WHERE (pi.identifier_type = 'email'
-		       AND NOT EXISTS (
-		         SELECT 1 FROM participants pp
-		         WHERE pp.id = pi.participant_id
-		           AND pp.email_address IS NOT NULL
-		           AND TRIM(pp.email_address) <> ''
-		       )
-		       AND LOWER(pi.identifier_value) = LOWER(?))
-		   OR (pi.identifier_type <> 'email' AND pi.identifier_value = ?)
+		WHERE ` + ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "?", identifierWithoutPrimaryEmail) + `
 		ORDER BY 1
 	`
 	rows, err := s.db.QueryContext(

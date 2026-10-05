@@ -59,14 +59,6 @@ func plainText(s string) string {
 	return textutil.SanitizeTerminalMultiline(text)
 }
 
-func snippet(text string) string {
-	r := []rune(text)
-	if len(r) > 100 {
-		return string(r[:100])
-	}
-	return text
-}
-
 // typeImage is the Beeper message type for a photo — including the link
 // previews that arrive typed as images rather than as the media they preview.
 const typeImage = "IMAGE"
@@ -162,7 +154,7 @@ func mapMessage(m *Message, conversationID, sourceID int64) (store.Message, stri
 		SentAt:          sql.NullTime{Time: m.Timestamp, Valid: !m.Timestamp.IsZero()},
 		ReceivedAt:      sql.NullTime{Time: m.Timestamp, Valid: !m.Timestamp.IsZero()},
 		IsFromMe:        m.IsSender,
-		Snippet:         sql.NullString{String: snippet(text), Valid: text != ""},
+		Snippet:         sql.NullString{String: textutil.PrefixRunes(text, 100), Valid: text != ""},
 		SizeEstimate:    messageSizeEstimate(m, text),
 		HasAttachments:  len(m.Attachments) > 0,
 		AttachmentCount: len(m.Attachments),

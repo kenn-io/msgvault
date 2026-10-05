@@ -9,6 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
+	"go.kenn.io/msgvault/internal/plaud"
 	"go.kenn.io/msgvault/internal/synctechsms"
 )
 
@@ -109,6 +110,8 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		// Store identifier == config Identifier (see
 		// internal/granola/importer.go GetOrCreateSource call).
 		return "granola:" + identifier, true
+	case plaud.SourceType:
+		return "plaud:" + identifier, true
 	case circleback.SourceType:
 		// Store identifier == config Identifier (see
 		// internal/circleback/importer.go GetOrCreateSource call).

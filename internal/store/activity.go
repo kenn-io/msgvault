@@ -1055,7 +1055,8 @@ func validateActivityProjectionBatch(
 				"%w: projection source id must be positive", ErrInvalidActivity)
 		case token.LastModified.IsZero():
 			return nil, ContactRevisions{}, fmt.Errorf(
-				"%w: projection last modified is required", ErrInvalidActivity)
+				"%w: projection last modified is required for message %d",
+				ErrInvalidActivity, token.MessageID)
 		case token.IdentityRevision < 0 || token.AccountIdentityRevision < 0:
 			return nil, ContactRevisions{}, fmt.Errorf(
 				"%w: projection revisions must be non-negative", ErrInvalidActivity)

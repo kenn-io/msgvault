@@ -227,7 +227,7 @@ func TestImportAppleTextMessages(t *testing.T) {
 
 	secondSummary, err := importer.Import(context.Background(), chatDBPath, opts)
 	require.NoError(err)
-	assert.Equal(int64(4), secondSummary.MessagesAdded)
+	assert.Equal(int64(0), secondSummary.MessagesAdded)
 	assertStoreCount(t, st.DB(), "messages", 4)
 	assertStoreCount(t, st.DB(), "conversations", 3)
 	assertStoreCount(t, st.DB(), "message_bodies", 4)

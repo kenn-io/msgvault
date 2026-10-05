@@ -390,6 +390,30 @@ func TestConfigRequiresUniqueEnabledProviderNames(t *testing.T) {
 	require.ErrorContains(t, cfg.Validate(), "duplicate provider name")
 }
 
+func TestConfigReservesSuppressionProviderName(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		laneOn     bool
+		providerOn bool
+	}{
+		{name: "enabled provider", laneOn: true, providerOn: true},
+		{name: "disabled provider", laneOn: false, providerOn: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := validProviderConfig(personenrichment.ProviderExa)
+			provider.Name = "suppression"
+			provider.Enabled = test.providerOn
+			cfg := personenrichment.Config{
+				Enabled:           test.laneOn,
+				SuppressionKeyEnv: "SUPPRESSION_KEY",
+				Providers:         []personenrichment.ProviderConfig{provider},
+			}
+			cfg.ApplyDefaults()
+			require.ErrorContains(t, cfg.Validate(), "reserved provider name")
+		})
+	}
+}
+
 func validProviderConfig(kind string) personenrichment.ProviderConfig {
 	provider := personenrichment.ProviderConfig{
 		Name:               kind,

@@ -218,24 +218,8 @@ func (s *Server) prepareIdentitySearch(w http.ResponseWriter, r *http.Request, r
 	if !ok {
 		return identitySearchPrepared{}, false
 	}
-	var cursor exploreCursor
-	searchRequest := prepared.request
-	if request.Cursor != "" {
-		cursor, _ = s.decodeExploreCursor(request.Cursor)
-		if searchRequest.SearchMode == exploreSearchModeSemantic || searchRequest.SearchMode == exploreSearchModeHybrid {
-			if cursor.Snapshot == "" {
-				writeError(w, http.StatusBadRequest, "invalid_cursor", "semantic cursor is missing its candidate snapshot")
-				return identitySearchPrepared{}, false
-			}
-			searchRequest.CandidateSnapshotID = cursor.Snapshot
-		}
-	}
-	searchSpec, snapshotID, ok := s.resolveExploreSearch(r.Context(), w, searchRequest)
-	if !ok || !requireCompleteCandidatePool(w, searchSpec) {
-		return identitySearchPrepared{}, false
-	}
-	if request.Cursor != "" && cursor.SearchRevision != exploreResolvedSearchRevision(searchSpec) {
-		writeError(w, http.StatusConflict, "search_revision_changed", "The resolved search index revision changed; restart pagination")
+	cursor, searchSpec, snapshotID, ok := s.resolvePagedExploreSearch(r.Context(), w, request.Cursor, prepared.request)
+	if !ok {
 		return identitySearchPrepared{}, false
 	}
 	return identitySearchPrepared{predicate: prepared, sort: query.SortSpec{Field: request.Sort.Field, Direction: request.Sort.Direction},

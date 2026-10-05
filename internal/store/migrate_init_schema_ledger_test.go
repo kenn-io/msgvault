@@ -38,6 +38,7 @@ func TestInitSchema_OneShotMigrationsGatedOnLedger(t *testing.T) {
 		migrationAttachmentOccurrenceUnique,
 		migrationMessageAttributionProvenance,
 		migrationMessagesLastModifiedBackfill,
+		migrationMessagesLastModifiedNullRepair,
 		migrationMessagesContentChangedAtBackfill,
 	} {
 		applied, err := st.IsMigrationApplied(name)

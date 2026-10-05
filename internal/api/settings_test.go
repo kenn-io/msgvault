@@ -587,6 +587,72 @@ max_requests_per_day = 100
 	assertions.Greater(len(credentialBytes), 64)
 }
 
+func TestPatchSettingsFirstEnrichmentEnableUsesStoredSuppressionFirst(t *testing.T) { //nolint:paralleltest // process environment
+	const storedKey = "stored-suppression-key-32bytes-123"
+	const environmentKey = "environment-suppression-key-32bytes"
+	for _, tc := range []struct {
+		name, stored, environment string
+		wantStatus                int
+	}{
+		{"stored with missing environment", storedKey, "", http.StatusOK},
+		{"stored with short environment", storedKey, "short", http.StatusOK},
+		{"environment fallback", "", environmentKey, http.StatusOK},
+		{"missing environment without stored key", "", "", http.StatusUnprocessableEntity},
+		{"short environment without stored key", "", "short", http.StatusUnprocessableEntity},
+		{"invalid stored key with valid environment", "short", environmentKey, http.StatusUnprocessableEntity},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			const environmentName = "MSGVAULT_TEST_SETTINGS_SUPPRESSION_KEY"
+			t.Setenv(environmentName, tc.environment)
+			if tc.environment == "" {
+				require.NoError(os.Unsetenv(environmentName))
+			}
+			srv, path := newSettingsTestServer(t, `[people.enrichment]
+enabled = false
+suppression_key_env = "MSGVAULT_TEST_SETTINGS_SUPPRESSION_KEY"
+
+[[people.enrichment.providers]]
+name = "exa-primary"
+kind = "exa"
+enabled = true
+api_key_env = "EXA_KEY"
+allowed_identifiers = ["name", "email"]
+target_keys = ["attribute:bio"]
+retention_posture = "zero_retention"
+training_posture = "no_training"
+refresh_interval = "24h"
+max_requests_per_run = 10
+max_requests_per_day = 100
+`)
+			credentials, err := providercredentials.Read(srv.cfg.TokensDir())
+			require.NoError(err)
+			if tc.stored != "" {
+				credentials, err = providercredentials.PutSuppression(srv.cfg.TokensDir(), credentials.ETag, tc.stored)
+				require.NoError(err)
+			}
+
+			resp := patchSettings(t, srv,
+				`{"updates":[{"key":"people.enrichment.enabled","value":{"boolean":true}}]}`)
+			require.Equal(tc.wantStatus, resp.Code, resp.Body.String())
+			loaded, err := config.Load(path, "")
+			require.NoError(err)
+			assert.Equal(tc.wantStatus == http.StatusOK, loaded.People.Enrichment.Enabled)
+			if tc.wantStatus == http.StatusOK {
+				wantEnvironment := environmentName
+				if tc.stored != "" {
+					wantEnvironment = providercredentials.StoredSuppressionEnvironment
+				}
+				assert.Equal(wantEnvironment, loaded.People.Enrichment.SuppressionKeyEnv)
+			}
+			after, err := providercredentials.Read(srv.cfg.TokensDir())
+			require.NoError(err)
+			assert.Equal(credentials.ETag, after.ETag, "enabling must not replace an existing key or store the environment fallback")
+		})
+	}
+}
+
 func TestPatchSettingsRejectedFirstEnrichmentEnableLeavesCredentialStoreUnchanged(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

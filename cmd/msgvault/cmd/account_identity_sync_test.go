@@ -99,6 +99,17 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 		} else {
 			require.Len(ids, 1)
 			assert.Equal("user@example.com", ids[0].Address)
+			if flag == "--no-default-identity=false" {
+				removed, err := st.RemoveAccountIdentity(src.ID, "user@example.com")
+				require.NoError(err)
+				require.EqualValues(1, removed)
+				summary, err = runScheduledGmailSync(ctx, "user@example.com", src, st, nil, invocationFromContext(ctx))
+				require.NoError(err)
+				assert.Zero(summary.Errors)
+				ids, err = st.ListAccountIdentities(src.ID)
+				require.NoError(err)
+				assert.Empty(ids, "scheduled Gmail sync must not restore an explicitly removed last identity")
+			}
 		}
 	}
 }
@@ -137,8 +148,8 @@ func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 		require.NoError(err)
 		require.Len(sources, 1)
 		src := sources[0]
-		// Removing the last identity on an account that did not opt out must
-		// still allow the next scheduled sync to restore it.
+		// Re-enabling defaults creates the identity before this explicit removal.
+		// The next scheduled sync must preserve the removal.
 		if !optOut {
 			removed, err := st.RemoveAccountIdentity(src.ID, testutil.IMAPTestUsername)
 			require.NoError(err)
@@ -149,12 +160,7 @@ func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 		assert.Zero(summary.Errors)
 		ids, err := st.ListAccountIdentities(src.ID)
 		require.NoError(err)
-		if optOut {
-			assert.Empty(ids, "scheduled sync must preserve the opt-out")
-		} else {
-			require.Len(ids, 1)
-			assert.Equal(testutil.IMAPTestUsername, ids[0].Address)
-		}
+		assert.Empty(ids, "scheduled sync must preserve the saved opt-out or last-identity removal")
 	}
 }
 

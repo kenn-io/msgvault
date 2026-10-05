@@ -262,10 +262,13 @@ func openHTTPStoreWithStartupCacheIntent(
 	if err != nil {
 		return nil, HTTPStoreInfo{}, err
 	}
+	if err := currentCfg.ResolveServerKey(); err != nil {
+		return nil, HTTPStoreInfo{}, fmt.Errorf("resolve server API key after local daemon startup: %w", err)
+	}
 	url := urlFromDaemonRuntime(rt)
 	st, err := newDaemonCLIClient(ctx, daemonclient.Config{
 		URL:              url,
-		APIKey:           currentCfg.Server.APIKey,
+		APIKey:           currentCfg.Server.AuthenticationKey(),
 		LocalDaemonToken: rt.Record.Metadata[runtimeShutdownToken],
 		AllowInsecure:    true,
 	})
@@ -300,9 +303,12 @@ func openRemoteStore(ctx context.Context, state *invocation) (*daemonclient.Clie
 		return nil, errors.New("invocation state is required")
 	}
 	currentCfg := state.cfg
+	if err := currentCfg.ResolveRemoteKey(); err != nil {
+		return nil, err
+	}
 	st, err := newDaemonCLIClient(ctx, daemonclient.Config{
 		URL:           currentCfg.Remote.URL,
-		APIKey:        currentCfg.Remote.APIKey,
+		APIKey:        currentCfg.Remote.AuthenticationKey(),
 		AllowInsecure: currentCfg.Remote.AllowInsecure,
 	})
 	if err != nil {
@@ -371,6 +377,9 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 ) (*DaemonRuntime, localDaemonStartupInfo, error) {
 	if c == nil {
 		return nil, localDaemonStartupInfo{}, errors.New("nil config")
+	}
+	if err := c.ResolveServerKey(); err != nil {
+		return nil, localDaemonStartupInfo{}, err
 	}
 	// With auto-start disabled a supervisor owns the daemon lifecycle, and
 	// replacing a daemon means starting its successor, so reuse any compatible
@@ -1009,13 +1018,13 @@ func probeLocalDaemonAuth(ctx context.Context, rt *DaemonRuntime, c *config.Conf
 	if err := localDaemonAuthIdentityError(url, rt, c); err != nil {
 		return err
 	}
-	if c.Server.APIKey == "" && daemonRuntimeAuthFingerprint(rt) == daemonAPIKeyFingerprint("") {
+	if c.Server.AuthenticationKey() == "" && daemonRuntimeAuthFingerprint(rt) == daemonAPIKeyFingerprint("") {
 		return nil
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, localDaemonAuthProbeTimeout)
 	defer cancel()
 
-	client, err := localDaemonAPIClient(url, c.Server.APIKey)
+	client, err := localDaemonAPIClient(url, c.Server.AuthenticationKey())
 	if err != nil {
 		return fmt.Errorf("create local daemon auth probe: %w", err)
 	}
@@ -1052,9 +1061,12 @@ func localDaemonAuthIdentityError(url string, rt *DaemonRuntime, c *config.Confi
 	if rt == nil || c == nil {
 		return nil
 	}
-	want := daemonAPIKeyFingerprint(c.Server.APIKey)
+	if err := c.ResolveServerKey(); err != nil {
+		return err
+	}
+	want := daemonAPIKeyFingerprint(c.Server.AuthenticationKey())
 	got := daemonRuntimeAuthFingerprint(rt)
-	if got == "" && c.Server.APIKey == "" {
+	if got == "" && c.Server.AuthenticationKey() == "" {
 		return nil
 	}
 	if got != want {

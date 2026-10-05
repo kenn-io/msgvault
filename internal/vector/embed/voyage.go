@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -226,7 +227,7 @@ func (c *VoyageClient) doVoyageOnce(ctx context.Context, body []byte, inputs [][
 		return nil, ErrEmbeddingProviderRedirect
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
-		retryAfter, ok := parseRetryAfter(resp.Header.Get("Retry-After"))
+		retryAfter, ok := httpretry.ParseRetryAfter(resp.Header.Get("Retry-After"), time.Hour, time.Now())
 		return nil, &retryError{
 			err:           errors.New("embed: Voyage HTTP 429 (rate limited)"),
 			retryAfter:    retryAfter,

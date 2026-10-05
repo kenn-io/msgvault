@@ -27,7 +27,7 @@ const (
 	defaultMaxResults = 2500
 )
 
-// Client is the concrete read-only Calendar API client.
+// Client implements Calendar reads and explicitly requested event writes.
 type Client struct {
 	httpClient  *http.Client
 	rateLimiter *gmail.RateLimiter
@@ -77,11 +77,29 @@ func WithHTTPClient(h *http.Client) ClientOption {
 	}
 }
 
+type tokenSourceFailureError struct{ err error }
+
+func (e *tokenSourceFailureError) Error() string { return e.err.Error() }
+func (e *tokenSourceFailureError) Unwrap() error { return e.err }
+
+type classifiedTokenSource struct{ source oauth2.TokenSource }
+
+func (s classifiedTokenSource) Token() (*oauth2.Token, error) {
+	token, err := s.source.Token()
+	if err != nil {
+		return nil, &tokenSourceFailureError{err: err}
+	}
+	return token, nil
+}
+
 // NewClient creates a Calendar client. The token source is wrapped with
 // oauth2.NewClient so the bearer token auto-attaches and auto-refreshes; the
 // client never touches token internals. The default rate limiter is sized for
 // the Calendar API's per-user budget (600 req/min/user ≈ 10 req/s), not Gmail's.
 func NewClient(tokenSource oauth2.TokenSource, opts ...ClientOption) *Client {
+	if tokenSource != nil {
+		tokenSource = classifiedTokenSource{source: tokenSource}
+	}
 	c := &Client{
 		httpClient:  oauth2.NewClient(context.Background(), tokenSource),
 		logger:      slog.Default(),
@@ -116,7 +134,7 @@ func (e *GoneError) Error() string { return "gone (410, sync token expired): " +
 // Gmail client's loop. It retries network errors, 429, quota-403, and 5xx with
 // full-jitter exponential backoff; it does not retry permission-403, 401, 404,
 // 410, or other 4xx. The op selects the quota cost on the shared limiter.
-func (c *Client) request(ctx context.Context, op gmail.Operation, method, path string) ([]byte, error) {
+func (c *Client) request(ctx context.Context, op gmail.Operation, path string) ([]byte, error) {
 	if err := c.rateLimiter.Acquire(ctx, op); err != nil {
 		return nil, fmt.Errorf("rate limit: %w", err)
 	}
@@ -133,7 +151,7 @@ func (c *Client) request(ctx context.Context, op gmail.Operation, method, path s
 	body, err := backoff.Retry(ctx, func() ([]byte, error) {
 		attempt++
 
-		req, err := http.NewRequestWithContext(ctx, method, reqURL, io.Reader(nil))
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, io.Reader(nil))
 		if err != nil {
 			return nil, backoff.Permanent(fmt.Errorf("create request: %w", err))
 		}
@@ -265,7 +283,7 @@ func (c *Client) ListCalendars(ctx context.Context, pageToken string) (*Calendar
 	if pageToken != "" {
 		v.Set("pageToken", pageToken)
 	}
-	body, err := c.request(ctx, gmail.OpCalendarListList, http.MethodGet, "/users/me/calendarList?"+v.Encode())
+	body, err := c.request(ctx, gmail.OpCalendarListList, "/users/me/calendarList?"+v.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("calendarList.list: %w", err)
 	}
@@ -309,11 +327,15 @@ func (c *Client) ListEvents(ctx context.Context, calendarID string, p EventsList
 	}
 
 	path := "/calendars/" + url.PathEscape(calendarID) + "/events?" + v.Encode()
-	body, err := c.request(ctx, gmail.OpEventsList, http.MethodGet, path)
+	body, err := c.request(ctx, gmail.OpEventsList, path)
 	if err != nil {
 		return nil, fmt.Errorf("events.list: %w", err)
 	}
 
+	return decodeEventsPage(body)
+}
+
+func decodeEventsPage(body []byte) (*EventsPage, error) {
 	var wire wireEvents
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return nil, fmt.Errorf("decode events: %w", err)
@@ -336,7 +358,7 @@ func (c *Client) ListEvents(ctx context.Context, calendarID string, p EventsList
 // GetEvent fetches a single event by id.
 func (c *Client) GetEvent(ctx context.Context, calendarID, eventID string) (*Event, error) {
 	path := "/calendars/" + url.PathEscape(calendarID) + "/events/" + url.PathEscape(eventID)
-	body, err := c.request(ctx, gmail.OpEventsGet, http.MethodGet, path)
+	body, err := c.request(ctx, gmail.OpEventsGet, path)
 	if err != nil {
 		return nil, fmt.Errorf("events.get: %w", err)
 	}

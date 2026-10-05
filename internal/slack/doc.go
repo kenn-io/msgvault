@@ -1,7 +1,6 @@
-// Package slack archives a Slack workspace user's own conversations —
-// public/private channels they are a member of, group DMs, and 1:1 DMs —
-// via the Slack Web API using a user token from a user-created internal
-// (non-distributed) Slack app.
+// Package slack archives public channels or a user's channel memberships
+// and DMs via the Slack Web API. It uses a user token from a user-created
+// internal (non-distributed) app and selects conversation types by its scopes.
 //
 // Design: docs/internal/slack-ingestion-design.md. The package follows the
 // beeper/teams importer anatomy: a read-only rate-limited client, a
@@ -13,7 +12,7 @@
 //     clampdown: conversations.history serves 999-message pages at Tier 3
 //     rates.
 //   - Thread replies never appear in oldest-filtered conversations.history
-//     (unless broadcast), so incremental sync discovers them through
-//     search.messages and periodically re-walks canonical thread history as
-//     a completeness backstop for unbounded search-index lag.
+//     (unless broadcast). Tokens with search:read discover them through
+//     search.messages plus periodic history audits. Tokens without search
+//     access revisit conversation history on every sync.
 package slack

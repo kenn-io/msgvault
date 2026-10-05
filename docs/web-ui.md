@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-01"
+last_edited: "2026-10-02"
 title: Web UI
 description: Browse messages and files, maintain people, and monitor archive work from your browser.
 ---
@@ -36,8 +36,9 @@ The Display menu sets a temporary density (**Auto**, **Compact**, or
 Both overrides last for this tab only. [Settings](#settings-and-restart-behavior)
 holds the saved defaults.
 
-Global search works from every workspace. In Everything and Files, results
-follow your query as you type, and `Enter` moves focus to the results. In any
+Global search works from every workspace. Press `/` outside a text field to
+focus it. In Everything and Files, results follow your query as you type, and
+`Enter` moves focus to the results. In any
 other workspace, `Enter` opens Everything with your query and search mode.
 
 ## Start and discover the URL
@@ -97,7 +98,7 @@ warns that its session cookie travels without TLS. `HttpOnly` and
 ## Explore and search
 
 <figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Everything workspace showing archived email in light theme with compact rows" loading="lazy">
+  <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Everything workspace with the grouped sidebar, global search, Save view button, and compact email rows in light theme" loading="lazy">
   <figcaption>Browse archived email in Everything. Select the image to view it at full size.</figcaption>
 </figure>
 

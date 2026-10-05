@@ -25,12 +25,12 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
+	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/granola"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/meetingimport"
-	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -39,6 +39,9 @@ import (
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personfacts"
+	"go.kenn.io/msgvault/internal/personmatch"
+	"go.kenn.io/msgvault/internal/plaud"
+	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -173,6 +176,7 @@ type serveRuntimeOperationGate interface {
 }
 
 func init() {
+	addServeConfigFlags(serveCmd)
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(daemonCmd)
 	addServeLifecycleCommands(serveCmd)
@@ -185,12 +189,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	cfg := state.cfg
 	logger := state.logger
-	// Validate security posture before doing any work
-	if err := cfg.Server.ValidateSecure(); err != nil {
+	// Resolve the interface before reserving a listener. Credential creation
+	// waits until this process owns the daemon lock.
+	if _, err := cfg.ResolveServerBindAddress(); err != nil {
 		return err
-	}
-	if cfg.Server.APIKey != "" && len(cfg.Server.APIKey) < 16 {
-		logger.Warn("api_key is very short — use a randomly generated key of at least 32 characters")
 	}
 
 	// Missing provider credentials should not prevent the daemon from serving
@@ -214,6 +216,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	logger.Info("Server listener bound", "address", apiListener.Addr().String(), "bind_source", cfg.BindAddressSource())
 	listenerReserved := true
 	defer func() {
 		if listenerReserved {
@@ -232,6 +235,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	ownership, err := claimServeOwnership(cmd.Context(), cfg, bindAddr, boundPort, Version)
 	if err != nil {
 		return fmt.Errorf("claim daemon ownership: %w", err)
+	}
+	if !cfg.Server.HasCredentialSource() && !cfg.Server.AllowInsecure && cfg.Server.AuthenticationKey() != "" {
+		logger.Info("Server API credential is persisted", "path", cfg.ServerKeyFilePath())
+	}
+	if cfg.Server.AuthenticationKey() != "" && len(cfg.Server.AuthenticationKey()) < 16 {
+		logger.Warn("api_key is very short — use a randomly generated key of at least 32 characters")
 	}
 	heartbeatCtx, stopHeartbeat := context.WithCancel(cmd.Context())
 	heartbeatDone := make(chan struct{})
@@ -580,7 +589,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Meeting sources (Granola/Circleback) mirror the gcal treatment: warn
+	// Meeting sources mirror the gcal treatment: warn
 	// when enabled but unscheduled, then register the scheduled ones.
 	for _, src := range cfg.Granola {
 		if src.Enabled && src.Schedule == "" {
@@ -638,6 +647,32 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule circleback source", "source", source.Identifier, "error", err)
 		} else {
 			logger.Info("scheduled circleback source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+	for _, src := range cfg.Plaud {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("plaud source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "30 */6 * * *") on the [[plaud]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledPlaudSources() {
+		source := src
+		jobName, ok := api.SchedulerJobNameForSource(plaud.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for plaud source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredPlaudSync(ctx, s, source)
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule plaud source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled plaud source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
 	for _, src := range cfg.NotionMeetings {
@@ -761,6 +796,24 @@ func runServe(cmd *cobra.Command, args []string) error {
 		OperationGate:                 operationGate,
 		OperationHistoryReader:        storeAdapter,
 		BlobStore:                     blobStore,
+	}
+	apiOpts.GmailProfileAddress = func(ctx context.Context, source *store.Source) (string, error) {
+		client, serviceAccount, err := newDaemonGmailClient(
+			ctx, source.Identifier, source, getOAuthMgr, state,
+		)
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = client.Close() }()
+		profile, err := client.GetProfile(ctx)
+		if err != nil {
+			classified := provideridentity.ClassifyGmailProfileError(err, serviceAccount)
+			return "", fmt.Errorf("read authenticated Gmail profile: %w", classified)
+		}
+		if profile == nil {
+			return "", errors.New("authenticated Gmail profile is missing")
+		}
+		return profile.EmailAddress, nil
 	}
 	applyServerRuntimeConfig(&apiOpts, cfg)
 	if cfg.Vector.AnyLaneEnabled() {
@@ -1030,6 +1083,11 @@ func applyServerRuntimeConfig(options *api.ServerOptions, cfg *config.Config) {
 }
 
 func listenServeAPI(bindAddr string, port int) (net.Listener, error) {
+	resolved, err := resolveServeBind(bindAddr)
+	if err != nil {
+		return nil, err
+	}
+	bindAddr = resolved
 	if bindAddr == "" {
 		bindAddr = defaultDaemonBindAddr
 	}
@@ -1557,6 +1615,7 @@ type storeAPIAdapter struct {
 	gmailDraftPolicy        []config.GmailDraftSource
 	beeperDraftPolicy       []config.GmailDraftSource
 	gmailDraftClientFactory func(context.Context, *store.Source) (gmail.DraftAPI, error)
+	calendarClientFactory   func(context.Context, config.GCalSource, bool) (gcal.ControlAPI, error)
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
 	// the same best-effort hook the meeting importer uses.
 	draftCacheRefresh     func(context.Context, string) error
@@ -1581,6 +1640,40 @@ func (a *storeAPIAdapter) invocationContext(ctx context.Context) context.Context
 		state.logger = a.logger
 	}
 	return withInvocation(ctx, state)
+}
+
+func (a *storeAPIAdapter) GrantPersonMatchConsentContext(ctx context.Context, disclosure personmatch.Disclosure, actor string, mutationGate func(context.Context) (func(), error)) (*store.PersonMatchConsent, bool, error) {
+	return a.store.GrantPersonMatchConsentContext(ctx, disclosure, actor, mutationGate)
+}
+
+func (a *storeAPIAdapter) RevokePersonMatchConsentContext(ctx context.Context, fingerprint, actor string, mutationGate func(context.Context) (func(), error)) (bool, error) {
+	return a.store.RevokePersonMatchConsentContext(ctx, fingerprint, actor, mutationGate)
+}
+
+func (a *storeAPIAdapter) HasPersonMatchConsentContext(ctx context.Context, fingerprint string) (bool, error) {
+	return a.store.HasPersonMatchConsentContext(ctx, fingerprint)
+}
+
+func (a *storeAPIAdapter) PersonMatchConsentEgressContext(
+	ctx context.Context, fingerprint string, dispatch func() error,
+) (bool, error) {
+	return a.store.PersonMatchConsentEgressContext(ctx, fingerprint, dispatch)
+}
+
+func (a *storeAPIAdapter) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, limit int) (int, error) {
+	return a.store.EnsurePersonMatchScoringCandidatesContext(ctx, limit)
+}
+
+func (a *storeAPIAdapter) ClaimNextIdentityMatchJudgmentContext(ctx context.Context, owner string, leaseDuration time.Duration, scoringVersion ...string) (*store.IdentityMatchJudgmentLease, error) {
+	return a.store.ClaimNextIdentityMatchJudgmentContext(ctx, owner, leaseDuration, scoringVersion...)
+}
+
+func (a *storeAPIAdapter) RecordIdentityMatchJudgmentContext(ctx context.Context, lease store.IdentityMatchJudgmentLease, input store.IdentityMatchJudgmentInput) (*store.IdentityMatchJudgment, error) {
+	return a.store.RecordIdentityMatchJudgmentContext(ctx, lease, input)
+}
+
+func (a *storeAPIAdapter) ListIdentityMatchJudgmentsContext(ctx context.Context, candidateID int64, limit int, beforeID ...int64) ([]store.IdentityMatchJudgment, error) {
+	return a.store.ListIdentityMatchJudgmentsContext(ctx, candidateID, limit, beforeID...)
 }
 
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
@@ -2734,23 +2827,29 @@ func (a *storeAPIAdapter) ListIdentityMatchCandidatesContext(
 	return a.store.ListIdentityMatchCandidatesContext(ctx, states, limit, offset)
 }
 
+func (a *storeAPIAdapter) ListIdentityMatchReviewsContext(
+	ctx context.Context, states []store.IdentityMatchState, limit, offset int,
+) ([]store.IdentityMatchCandidate, error) {
+	return a.store.ListIdentityMatchReviewsContext(ctx, states, limit, offset)
+}
+
+func (a *storeAPIAdapter) GetIdentityMatchReviewContext(
+	ctx context.Context, candidateID int64,
+) (*store.IdentityMatchCandidate, error) {
+	return a.store.GetIdentityMatchReviewContext(ctx, candidateID)
+}
+
+func (a *storeAPIAdapter) DecideIdentityMatchReviewedContext(
+	ctx context.Context, candidateID int64, token string,
+	decision store.IdentityMatchState, notes *string,
+) (*store.IdentityMatchCandidate, int64, error) {
+	return a.store.DecideIdentityMatchReviewedContext(ctx, candidateID, token, decision, notes)
+}
+
 func (a *storeAPIAdapter) GetIdentityMatchCandidateContext(
 	ctx context.Context, candidateID int64,
 ) (*store.IdentityMatchCandidate, error) {
 	return a.store.GetIdentityMatchCandidateContext(ctx, candidateID)
-}
-
-func (a *storeAPIAdapter) AcceptIdentityMatchCandidateContext(
-	ctx context.Context, candidateID int64, decidedBy string, notes *string,
-) (*store.IdentityMatchCandidate, int64, error) {
-	return a.store.AcceptIdentityMatchCandidateContext(ctx, candidateID, decidedBy, notes)
-}
-
-func (a *storeAPIAdapter) DecideIdentityMatchCandidateContext(
-	ctx context.Context, candidateID int64, state store.IdentityMatchState,
-	decidedBy string, notes *string,
-) (*store.IdentityMatchCandidate, error) {
-	return a.store.DecideIdentityMatchCandidateContext(ctx, candidateID, state, decidedBy, notes)
 }
 
 func (a *storeAPIAdapter) CreatePersonFromParticipantWithDisplayNameContext(
@@ -3969,6 +4068,86 @@ func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Lo
 	return true
 }
 
+// newDaemonGmailClient reuses source-bound credentials without interactive reauth.
+// serviceAccount reports which credentials the returned client uses.
+func newDaemonGmailClient(
+	ctx context.Context, email string, src *store.Source,
+	getOAuthMgr func(string) (*oauth.Manager, error), state *invocation,
+) (client gmail.API, serviceAccount bool, err error) {
+	if state == nil {
+		state = invocationFromContext(ctx)
+	}
+	if state == nil || state.cfg == nil || state.logger == nil {
+		return nil, false, errors.New("configuration is unavailable")
+	}
+	cfg := state.cfg
+	logger := state.logger
+	appName := ""
+	if src != nil {
+		appName = sourceOAuthApp(src)
+	}
+
+	var tokenSource oauth2.TokenSource
+	var tsErr error
+
+	saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName)
+	if saKeyPath != "" {
+		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
+		if saErr != nil {
+			return nil, false, provideridentity.NewGmailCredentialError(
+				provideridentity.GmailServiceAccountConfiguration,
+				fmt.Errorf("service account for %s: %w", email, saErr),
+			)
+		}
+		tokenSource, tsErr = saMgr.TokenSource(ctx, email)
+		if tsErr != nil {
+			return nil, false, provideridentity.NewGmailCredentialError(
+				provideridentity.GmailServiceAccountConfiguration,
+				fmt.Errorf("service account token for %s: %w", email, tsErr),
+			)
+		}
+	} else {
+		oauthMgr, oaErr := getOAuthMgr(appName)
+		if oaErr != nil {
+			return nil, false, provideridentity.NewGmailCredentialError(
+				provideridentity.GmailOAuthConfiguration,
+				fmt.Errorf("resolve OAuth credentials for %s: %w", email, oaErr),
+			)
+		}
+		tokenSource, tsErr = oauthMgr.TokenSource(ctx, email)
+		if tsErr != nil {
+			// Distinguish transient network failures (DNS lookup timeout,
+			// dial timeout after laptop sleep/wake, Wi-Fi flap) from real
+			// auth errors. Suggesting reauth on every network blip sends
+			// the user down the wrong path.
+			if syncerr.IsTransientNetwork(tsErr) {
+				return nil, false, fmt.Errorf(
+					"get token source: %w (transient network error; will retry on next schedule)", tsErr,
+				)
+			}
+			if oauthMgr.HasToken(email) {
+				return nil, false, provideridentity.ClassifyGmailProfileError(fmt.Errorf(
+					"get token source: %w (token may be expired; %s)",
+					tsErr, gmailReauthHint(email, accountIsNarrowed(oauthMgr, email)),
+				), false)
+			}
+			missing := fmt.Errorf("get token source: %w (run 'msgvault add-account %s' first)", tsErr, email)
+			if errors.Is(tsErr, os.ErrNotExist) {
+				return nil, false, provideridentity.NewGmailCredentialError(
+					provideridentity.GmailTokenMissing, missing,
+				)
+			}
+			return nil, false, missing
+		}
+	}
+
+	rateLimiter := gmail.NewRateLimiter(float64(cfg.Sync.RateLimitQPS))
+	return gmail.NewClient(tokenSource,
+		gmail.WithLogger(logger),
+		gmail.WithRateLimiter(rateLimiter),
+	), saKeyPath != "", nil
+}
+
 // runScheduledGmailSync runs an incremental Gmail sync for the daemon.
 // Token-source lookup uses oauthMgr.TokenSource directly (not
 // getTokenSourceWithReauth) because serve runs as a daemon and cannot
@@ -3983,49 +4162,10 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	}
 	cfg := state.cfg
 	logger := state.logger
-	appName := ""
-	if src != nil {
-		appName = sourceOAuthApp(src)
+	client, _, err := newDaemonGmailClient(ctx, email, src, getOAuthMgr, state)
+	if err != nil {
+		return nil, err
 	}
-
-	var tokenSource oauth2.TokenSource
-	var tsErr error
-
-	if saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName); saKeyPath != "" {
-		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
-		if saErr != nil {
-			return nil, fmt.Errorf("service account for %s: %w", email, saErr)
-		}
-		tokenSource, tsErr = saMgr.TokenSource(ctx, email)
-		if tsErr != nil {
-			return nil, fmt.Errorf("service account token for %s: %w", email, tsErr)
-		}
-	} else {
-		oauthMgr, oaErr := getOAuthMgr(appName)
-		if oaErr != nil {
-			return nil, fmt.Errorf("resolve OAuth credentials for %s: %w", email, oaErr)
-		}
-		tokenSource, tsErr = oauthMgr.TokenSource(ctx, email)
-		if tsErr != nil {
-			// Distinguish transient network failures (DNS lookup timeout,
-			// dial timeout after laptop sleep/wake, Wi-Fi flap) from real
-			// auth errors. Suggesting reauth on every network blip sends
-			// the user down the wrong path.
-			if syncerr.IsTransientNetwork(tsErr) {
-				return nil, fmt.Errorf("get token source: %w (transient network error; will retry on next schedule)", tsErr)
-			}
-			if oauthMgr.HasToken(email) {
-				return nil, fmt.Errorf("get token source: %w (token may be expired; %s)", tsErr, gmailReauthHint(email, accountIsNarrowed(oauthMgr, email)))
-			}
-			return nil, fmt.Errorf("get token source: %w (run 'msgvault add-account %s' first)", tsErr, email)
-		}
-	}
-
-	rateLimiter := gmail.NewRateLimiter(float64(cfg.Sync.RateLimitQPS))
-	client := gmail.NewClient(tokenSource,
-		gmail.WithLogger(logger),
-		gmail.WithRateLimiter(rateLimiter),
-	)
 	defer func() { _ = client.Close() }()
 
 	opts := sync.DefaultOptions()
@@ -4146,16 +4286,10 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
-	mgr := microsoft.NewGraphManager(cfg.Microsoft.ClientID, cfg.Microsoft.EffectiveTenantID(), cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), logger)
-	tokenFn, err := mgr.TokenSource(ctx, email)
+	client, err := newTeamsClient(ctx, cfg, logger, email)
 	if err != nil {
 		return err
 	}
-	qps := float64(cfg.Sync.RateLimitQPS)
-	if qps <= 0 {
-		qps = 5
-	}
-	client := teams.NewClient("https://graph.microsoft.com/v1.0", tokenFn, qps)
 	opts := scheduledTeamsImportOptions(email, cfg)
 	_, err = teams.NewImporter(s, client).Import(ctx, opts)
 	return err

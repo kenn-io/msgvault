@@ -85,6 +85,25 @@ func openStoreFile(path string) (*os.File, error) {
 	return os.NewFile(uintptr(fd), path), nil
 }
 
+func openSecretFile(path string) (*os.File, error) {
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open provider secret file: %w", err)
+	}
+	return os.NewFile(uintptr(fd), path), nil
+}
+
+func verifySecretFile(file *os.File) error {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm() != 0o400 && info.Mode().Perm() != 0o600 {
+		return errors.New("credential file permissions must be 0400 or 0600")
+	}
+	return verifyCurrentOwner(info)
+}
+
 func withStoreLock(tokenDir string, fn func() error) error {
 	path := filepath.Join(tokenDir, ".provider-credentials.lock")
 	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CLOEXEC|unix.O_CREAT|unix.O_NOFOLLOW, 0o600)

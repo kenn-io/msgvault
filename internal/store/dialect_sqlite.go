@@ -407,6 +407,24 @@ func (d *SQLiteDialect) FTSUpsert(q querier, doc FTSDoc) error {
 	return err
 }
 
+// FTSMatches compares the stored FTS5 columns with doc.
+func (d *SQLiteDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
+	var subject, body, fromAddr, toAddrs, ccAddrs sql.NullString
+	err := q.QueryRow(
+		`SELECT subject, body, from_addr, to_addr, cc_addr FROM messages_fts WHERE rowid = ?`,
+		doc.MessageID,
+	).Scan(&subject, &body, &fromAddr, &toAddrs, &ccAddrs)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return subject.String == doc.Subject && body.String == doc.Body &&
+		fromAddr.String == doc.FromAddr && toAddrs.String == doc.ToAddrs &&
+		ccAddrs.String == doc.CcAddrs, nil
+}
+
 // FTSSearchClause returns SQL fragments for FTS5 full-text search.
 //
 // The bm25 weights approximate PostgreSQL's setweight field-priority
@@ -1924,6 +1942,7 @@ func (d *SQLiteDialect) contentChangedAtDefaultStamps(q querier) (bool, error) {
 // silences these when the column already exists (idempotent migrations).
 func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
 		{`ALTER TABLE carddav_publications ADD COLUMN outgoing_envelope_metadata BLOB`, "carddav_publications.outgoing_envelope_metadata"},
 		{`ALTER TABLE carddav_publications ADD COLUMN approved_body_sha256 TEXT`, "carddav_publications.approved_body_sha256"},
 		{`ALTER TABLE carddav_publications ADD COLUMN approved_inference_revision INTEGER`, "carddav_publications.approved_inference_revision"},

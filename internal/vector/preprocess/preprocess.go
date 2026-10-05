@@ -115,30 +115,6 @@ var (
 	// is greedy to remove the whole payload. (?i) for the case-insensitive
 	// `data:` / `base64` tokens per RFC 2397.
 	reDataURI = regexp.MustCompile(`(?i)data:[a-zA-Z0-9./+\-]{0,128};base64,[A-Za-z0-9+/]+={0,2}`)
-	// reBase64Blob and reBase64BlobWithSlash together catch bare base64
-	// payloads (no `data:` prefix) that leaked into body_text. The
-	// split exists because '/' is in both the base64 alphabet AND in
-	// every URL path, so a single regex cannot use one length threshold
-	// for both cases without either eating URL paths or missing real
-	// base64 with slashes:
-	//
-	//   - reBase64Blob (no '/', 200+ chars). Catches dense letter+digit
-	//     runs that prose never produces. Stays slash-free so URL paths
-	//     between '/' separators (which are individually short — every
-	//     '/' resets the run) are never matched as a whole.
-	//   - reBase64BlobWithSlash (with '/', 300+ chars). Catches real
-	//     base64 binary residue where '/' appears at the alphabet's
-	//     natural ~1/64 frequency. The higher threshold is the lever
-	//     that keeps URL paths safe: even long signed S3 / CloudFront
-	//     URLs and GitHub blob paths rarely reach 300 unbroken
-	//     base64-alphabet chars without a `.`, `?`, `&`, `_`, `-`, or
-	//     `~` breaking the run, while embedded images or PDFs encoded
-	//     inline routinely produce thousands of chars.
-	//
-	// Padding `={0,2}` mops up the standard base64 tail. Both patterns
-	// are unbounded on the upper side; RE2 keeps the scan linear.
-	reBase64Blob          = regexp.MustCompile(`[A-Za-z0-9+]{200,}={0,2}`)
-	reBase64BlobWithSlash = regexp.MustCompile(`[A-Za-z0-9+/]{300,}={0,2}`)
 
 	// reURL matches an http(s) URL up to the next whitespace, quote, or
 	// angle bracket. Used as the seed for tracking-param stripping; the
@@ -200,9 +176,14 @@ func Preprocess(subject, body string, maxChars int, cfg Config) (string, bool) {
 	// body whose noise dominates the first megabyte gets its prose
 	// tail preserved instead of chopped off with the blob.
 	if cfg.StripBase64 {
-		s = reDataURI.ReplaceAllString(s, " ")
-		s = reBase64Blob.ReplaceAllString(s, " ")
-		s = reBase64BlobWithSlash.ReplaceAllString(s, " ")
+		// Avoid the regex scan and its output copies on ordinary text.
+		// Keep the full matcher for candidates: its case folding includes
+		// non-ASCII MIME/payload characters such as Kelvin sign and long s.
+		if containsDataScheme(s) {
+			s = reDataURI.ReplaceAllString(s, " ")
+		}
+		s = stripBase64Runs(s, minBase64Run, false)
+		s = stripBase64Runs(s, minBase64RunWithSlash, true)
 	}
 	bodyTruncated := false
 	if cfg.MaxBodyRunes > 0 {

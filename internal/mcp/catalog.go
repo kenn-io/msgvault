@@ -19,6 +19,7 @@ import (
 )
 
 const (
+	schemaTypeArray    = "array"
 	schema202012       = "https://json-schema.org/draft/2020-12/schema"
 	maxJSONSafeInteger = float64(9007199254740991)
 )
@@ -29,6 +30,11 @@ const (
 	toolSecurityRead toolSecurityClass = iota
 	toolSecurityWrite
 	toolSecurityProfileWrite
+	toolSecurityIdentityDecision
+	toolSecurityIdentityScoring
+	toolSecurityPersonMerge
+	toolSecurityCardDAVWrite
+	toolSecurityCalendarWrite
 )
 
 type catalogCapabilities struct {
@@ -43,6 +49,8 @@ type catalogCapabilities struct {
 	savedViews      bool
 	meetings        bool
 	personAgenda    bool
+	identityReview  bool
+	personCardDAV   bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -63,7 +71,7 @@ func searchVisualAttachmentsDefinition() toolDefinition {
 			toolArgPersonID:      safeIDSchema("Only attachments related to this durable person ID"),
 			toolArgParticipantID: safeIDSchema("Only attachments related to this observed participant, translated through its durable person when bound"),
 			"directions": {
-				Type: "array", Description: "Optional union of from_person, to_person, and group; requires a person reference",
+				Type: schemaTypeArray, Description: "Optional union of from_person, to_person, and group; requires a person reference",
 				Items: direction,
 			},
 			"source_id":      safeIDSchema("Only attachments from this source ID"),
@@ -123,42 +131,48 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		savedViews:      opts.SavedViews != nil,
 		meetings:        opts.Meetings != nil,
 		personAgenda:    opts.PersonAgendaBackend != nil,
+		identityReview:  opts.IdentityReview != nil,
+		personCardDAV:   opts.PersonCardDAV != nil,
 	}
 }
 
 // stableOperationCatalogs owns the immutable schemas registered with the SDK.
-// The SDK v1.7 schema cache keys explicit schemas by pointer identity, so a
-// stateless server must reuse these roots instead of rebuilding them per HTTP
-// request. There are only 2048 possible capability keys, which also keeps
-// the shared SDK cache boundary fixed. Build each catalog only when used;
-// eagerly constructing every combination delays startup for all CLI commands.
-var stableOperationCatalogs = buildOperationCatalogs()
+// The SDK schema cache keys explicit schemas by pointer identity, so reuse the
+// catalog roots for capabilities that are actually served. Build each catalog
+// only when used so unused combinations do not delay startup or retain schemas.
+var stableOperationCatalogs operationCatalogCache
 
-func buildOperationCatalogs() map[catalogCapabilities]func() []toolDefinition {
-	catalogs := make(map[catalogCapabilities]func() []toolDefinition, 2048)
-	for mask := range 2048 {
-		capabilities := catalogCapabilities{
-			personAgenda:    mask&0b1000000000 != 0,
-			sqlQuery:        mask&0b10000000000 != 0,
-			meetings:        mask&0b100000000 != 0,
-			directoryPeople: mask&0b010000000 != 0,
-			semanticSearch:  mask&0b001000000 != 0,
-			vectorInMessage: mask&0b000100000 != 0,
-			similarMessages: mask&0b000010000 != 0,
-			documentSearch:  mask&0b000001000 != 0,
-			people:          mask&0b000000100 != 0,
-			visualSearch:    mask&0b000000010 != 0,
-			savedViews:      mask&0b000000001 != 0,
+type operationCatalogCache struct {
+	catalogs sync.Map // map[catalogCapabilities][]toolDefinition
+}
+
+func (c *operationCatalogCache) get(capabilities catalogCapabilities) []toolDefinition {
+	if definitions, ok := c.catalogs.Load(capabilities); ok {
+		if cached, ok := definitions.([]toolDefinition); ok {
+			return cached
 		}
-		catalogs[capabilities] = sync.OnceValue(func() []toolDefinition {
-			return buildOperationCatalog(capabilities)
-		})
 	}
-	return catalogs
+	definitions := buildOperationCatalog(capabilities)
+	actual, _ := c.catalogs.LoadOrStore(capabilities, definitions)
+	if cached, ok := actual.([]toolDefinition); ok {
+		return cached
+	}
+	return definitions
 }
 
 func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
-	return slices.Clone(stableOperationCatalogs[capabilitiesFor(opts)]())
+	definitions := []toolDefinition{}
+	if !opts.CalendarOnly {
+		definitions = slices.Clone(stableOperationCatalogs.get(capabilitiesFor(opts)))
+		if opts.IdentityScoring != nil {
+			definitions = append(definitions, stableIdentityScoringDefinitions...)
+		}
+	}
+	if opts.Calendar != nil {
+		definitions = append(definitions, stableCalendarTools()...)
+	}
+	sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
+	return definitions
 }
 
 func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
@@ -171,6 +185,11 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		findSimilarMessagesDefinition(nil),
 		getAttachmentDefinition(nil),
 		getMessageDefinition(nil),
+		getIdentityMatchDefinition(),
+		getPersonMergeContextDefinition(),
+		getCardDAVPublicationDefinition(),
+		previewCardDAVPublicationDefinition(),
+		getCardDAVSyncStatusDefinition(),
 		getMeetingContextDefinition(nil),
 		getMeetingMetricsDefinition(nil),
 		getPersonNotesDefinition(nil),
@@ -181,6 +200,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),
 		listThreadDefinition(),
+		listIdentityMatchesDefinition(),
 		listMeetingActionItemsDefinition(nil),
 		listDirectoryPeopleDefinition(nil),
 		listSavedViewsDefinition(nil),
@@ -198,6 +218,11 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		semanticSearchMessagesDefinition(nil, capabilities.semanticSearch),
 		stageDeletionDefinition(nil),
 		promotePersonDefinition(nil),
+		acceptIdentityMatchDefinition(),
+		mergePersonDefinition(),
+		approveCardDAVPublicationDefinition(),
+		syncCardDAVDefinition(),
+		rejectIdentityMatchDefinition(),
 		updatePersonNotesDefinition(nil),
 		updateSavedViewDefinition(nil),
 	}
@@ -226,7 +251,7 @@ func querySQLDefinition() toolDefinition {
 			"sql":   stringSchema("One read-only SQL statement"),
 			"fresh": booleanSchema("Request a background cache check including writes committed before this request"),
 		}, "sql"),
-		&jsonschema.Schema{Schema: schema202012, OneOf: []*jsonschema.Schema{result, accepted}},
+		&jsonschema.Schema{Schema: schema202012, Type: "object", OneOf: []*jsonschema.Schema{result, accepted}},
 		(*handlers).querySQL,
 	)
 	definition.availability = func(capabilities catalogCapabilities) bool { return capabilities.sqlQuery }
@@ -285,6 +310,17 @@ func destructiveWriteDefinition(
 	definition := writeDefinition(name, description, inputSchema, outputSchema, handler)
 	trueValue := true
 	definition.annotations.DestructiveHint = &trueValue
+	return definition
+}
+
+func explicitlyConfirmedWriteDefinition(
+	name, description string,
+	inputSchema, outputSchema *jsonschema.Schema,
+	handler catalogToolHandler,
+	security toolSecurityClass,
+) toolDefinition {
+	definition := destructiveWriteDefinition(name, description, inputSchema, outputSchema, handler)
+	definition.security = security
 	return definition
 }
 
@@ -834,11 +870,11 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery: stringSchema("Document content or filename query; terms are ANDed"),
 			"source_ids": {
-				Type: "array", Description: "Optional source ID scope",
+				Type: schemaTypeArray, Description: "Optional source ID scope",
 				Items: safeIDSchema("Source ID"),
 			},
 			"message_types": {
-				Type: "array", Description: "Optional containing message type scope",
+				Type: schemaTypeArray, Description: "Optional containing message type scope",
 				Items: stringSchema("Containing message type"),
 			},
 			toolArgAttachmentID:  safeIDSchema("Optional exact attachment occurrence ID"),
@@ -846,7 +882,7 @@ func searchDocumentsDefinition(_ *handlers) toolDefinition {
 			toolArgPersonID:      safeIDSchema("Optional durable person ID"),
 			toolArgParticipantID: safeIDSchema("Optional observed participant ID; translated through its durable person when bound"),
 			"directions": {
-				Type: "array", Description: "Optional union of from_person, to_person, and group; requires a person reference",
+				Type: schemaTypeArray, Description: "Optional union of from_person, to_person, and group; requires a person reference",
 				Items: direction,
 			},
 			toolArgAfter:      stringSchema("Only messages on or after YYYY-MM-DD"),
@@ -876,14 +912,14 @@ func searchPersonFilesDefinition(_ *handlers) toolDefinition {
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgPersonID: safeIDSchema("Durable person ID"),
 			"directions": {
-				Type: "array", Description: "Optional union of from_person, to_person, and group",
+				Type: schemaTypeArray, Description: "Optional union of from_person, to_person, and group",
 				Items: direction,
 			},
 			toolArgAfter:  stringSchema("Only messages on or after YYYY-MM-DD"),
 			toolArgBefore: stringSchema("Only messages before YYYY-MM-DD"),
 			"filename":    stringSchema("Case-insensitive filename substring filter"),
 			"mime_families": {
-				Type: "array", Description: "Optional stable MIME-family filter",
+				Type: schemaTypeArray, Description: "Optional stable MIME-family filter",
 				Items: mimeFamily,
 			},
 			toolArgLimit:  limit,

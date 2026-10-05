@@ -91,7 +91,7 @@ func TestRecordPackedBlobsRejectsInvalidPackID(t *testing.T) {
 	err := st.RecordPackedBlobs(rec, entries)
 	require.ErrorContains(err, "malformed pack id")
 
-	has, err := st.HasPackRecord(invalidPackID)
+	has, err := st.HasPackRecordContext(t.Context(), invalidPackID)
 	require.NoError(err)
 	require.False(has, "invalid metadata must not be persisted")
 	entry, err := st.GetAttachmentPackEntry(hash)
@@ -177,7 +177,7 @@ func TestRecordAndAdoptPackedBlobsRejectInvalidMetadataAtomically(t *testing.T) 
 				}
 				require.Error(err)
 
-				has, getErr := st.HasPackRecord(newPackID)
+				has, getErr := st.HasPackRecordContext(t.Context(), newPackID)
 				require.NoError(getErr)
 				assert.False(has, "invalid input must not create a pack record")
 				entry, getErr := st.GetAttachmentPackEntry(hash)
@@ -257,7 +257,7 @@ func TestAdoptPackedBlobsWithAliasesCanonicalizesLocalReferences(t *testing.T) {
 	fx.setThumbnail(carrierEmpty, uppercase, "")
 
 	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5a6", hash)
-	require.NoError(st.AdoptPackedBlobsWithAliases(rec, []store.PackIndexAdoption{{
+	require.NoError(st.AdoptPackedBlobsWithAliasesContext(t.Context(), rec, []store.PackIndexAdoption{{
 		Entry:          entries[0],
 		OriginalHashes: []string{uppercase},
 	}}))
@@ -303,7 +303,7 @@ func TestAdoptPackedBlobsWithAliasesPreservesKeyedDuplicateOccurrences(t *testin
 	}))
 
 	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5a7", hash)
-	require.NoError(st.AdoptPackedBlobsWithAliases(rec, []store.PackIndexAdoption{{
+	require.NoError(st.AdoptPackedBlobsWithAliasesContext(t.Context(), rec, []store.PackIndexAdoption{{
 		Entry: entries[0], OriginalHashes: []string{uppercase},
 	}}))
 
@@ -420,13 +420,13 @@ func TestAdoptPackedBlobsWithAliasesRejectsInvalidAliasesAtomically(t *testing.T
 			fx.addAttachmentOnNewMessage(uppercaseB, legacyB, 100)
 			rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5a7", hashA, hashB)
 
-			err := st.AdoptPackedBlobsWithAliases(rec, []store.PackIndexAdoption{
+			err := st.AdoptPackedBlobsWithAliasesContext(t.Context(), rec, []store.PackIndexAdoption{
 				{Entry: entries[0], OriginalHashes: []string{uppercaseA}},
 				{Entry: entries[1], OriginalHashes: []string{tc.alias}},
 			})
 
 			require.Error(err)
-			has, getErr := st.HasPackRecord(rec.PackID)
+			has, getErr := st.HasPackRecordContext(t.Context(), rec.PackID)
 			require.NoError(getErr)
 			assert.False(has)
 			for _, hash := range []string{hashA, hashB} {
@@ -561,24 +561,24 @@ func TestResolveAttachmentBlob(t *testing.T) {
 	require.NoError(st.RecordPackedBlobs(rec, entries))
 
 	for _, hash := range []string{contentHash, thumbnailHash} {
-		loc, err := st.ResolveAttachmentBlob(hash)
+		loc, err := st.ResolveAttachmentBlobContext(t.Context(), hash)
 		require.NoError(err)
 		assert.True(loc.Referenced, "%s is referenced through content or thumbnail", hash)
 		require.NotNil(loc.Pack)
 		assert.Equal(hash, loc.Pack.BlobHash)
 	}
 
-	loc, err := st.ResolveAttachmentBlob(unindexedHash)
+	loc, err := st.ResolveAttachmentBlobContext(t.Context(), unindexedHash)
 	require.NoError(err)
 	assert.True(loc.Referenced)
 	assert.Nil(loc.Pack, "referenced loose hash has no pack location")
 
-	loc, err = st.ResolveAttachmentBlob(staleHash)
+	loc, err = st.ResolveAttachmentBlobContext(t.Context(), staleHash)
 	require.NoError(err)
 	assert.False(loc.Referenced, "a stale mapping is not a live attachment reference")
 	assert.Nil(loc.Pack, "unreferenced mappings must not be exposed by production resolution")
 
-	loc, err = st.ResolveAttachmentBlob(packTestHash("e105"))
+	loc, err = st.ResolveAttachmentBlobContext(t.Context(), packTestHash("e105"))
 	require.NoError(err)
 	assert.False(loc.Referenced)
 	assert.Nil(loc.Pack)
@@ -609,7 +609,7 @@ func TestResolveAttachmentBlobNormalizesPreservedCaseAliases(t *testing.T) {
 			require.NoError(st.RecordPackedBlobs(rec, entries))
 
 			for _, requested := range []string{hash, uppercase} {
-				loc, err := st.ResolveAttachmentBlob(requested)
+				loc, err := st.ResolveAttachmentBlobContext(t.Context(), requested)
 				require.NoError(err)
 				assert.True(loc.Referenced)
 				require.NotNil(loc.Pack)
@@ -621,7 +621,7 @@ func TestResolveAttachmentBlobNormalizesPreservedCaseAliases(t *testing.T) {
 	}
 
 	st := testutil.NewTestStore(t)
-	_, err := st.ResolveAttachmentBlob("not-a-content-hash")
+	_, err := st.ResolveAttachmentBlobContext(t.Context(), "not-a-content-hash")
 	require.ErrorContains(t, err, "malformed blob hash")
 }
 
@@ -649,11 +649,11 @@ func TestPackIndexReadsRejectOutOfRangeScalars(t *testing.T) {
 			return err
 		}},
 		{name: "resolve", read: func(st *store.Store, hash, _ string) error {
-			_, err := st.ResolveAttachmentBlob(hash)
+			_, err := st.ResolveAttachmentBlobContext(t.Context(), hash)
 			return err
 		}},
 		{name: "list pack", read: func(st *store.Store, _, packID string) error {
-			_, err := st.ListAttachmentPackEntries(packID)
+			_, err := st.ListAttachmentPackEntriesContext(t.Context(), packID)
 			return err
 		}},
 		{name: "list referenced pack", read: func(st *store.Store, _, packID string) error {
@@ -661,7 +661,7 @@ func TestPackIndexReadsRejectOutOfRangeScalars(t *testing.T) {
 			return err
 		}},
 		{name: "list indexed", read: func(st *store.Store, _, _ string) error {
-			_, err := st.ListIndexedBlobEntries()
+			_, err := st.ListIndexedBlobEntriesContext(t.Context())
 			return err
 		}},
 	}
@@ -708,11 +708,11 @@ func TestPackIndexReadsRejectMalformedHashes(t *testing.T) {
 			return err
 		}},
 		{name: "resolve", read: func(st *store.Store, hash, _ string) error {
-			_, err := st.ResolveAttachmentBlob(hash)
+			_, err := st.ResolveAttachmentBlobContext(t.Context(), hash)
 			return err
 		}},
 		{name: "list pack", read: func(st *store.Store, _, packID string) error {
-			_, err := st.ListAttachmentPackEntries(packID)
+			_, err := st.ListAttachmentPackEntriesContext(t.Context(), packID)
 			return err
 		}},
 		{name: "list referenced pack", read: func(st *store.Store, _, packID string) error {
@@ -720,7 +720,7 @@ func TestPackIndexReadsRejectMalformedHashes(t *testing.T) {
 			return err
 		}},
 		{name: "list indexed", read: func(st *store.Store, _, _ string) error {
-			_, err := st.ListIndexedBlobEntries()
+			_, err := st.ListIndexedBlobEntriesContext(t.Context())
 			return err
 		}},
 	}
@@ -764,7 +764,7 @@ func TestListReferencedBlobHashes(t *testing.T) {
 	fx.addAttachment(sharedAcrossColumns, sharedAcrossColumns[:2]+"/"+sharedAcrossColumns, 100)
 	fx.setThumbnail(sharedAcrossColumns, sharedAcrossColumns, sharedAcrossColumns[:2]+"/"+sharedAcrossColumns)
 
-	hashes, err := st.ListReferencedBlobHashes()
+	hashes, err := st.ListReferencedBlobHashesContext(t.Context())
 	require.NoError(err)
 	assert.Equal(t, map[string]struct{}{
 		contentHash: {}, thumbnailHash: {}, sharedAcrossColumns: {},
@@ -1111,7 +1111,7 @@ func TestRecordPackedBlobsRejectsMalformedHash(t *testing.T) {
 	assert.Contains(err.Error(), "malformed blob hash")
 
 	// Nothing was written: no pack record, no index rows, no path rewrite.
-	has, err := st.HasPackRecord(rec.PackID)
+	has, err := st.HasPackRecordContext(t.Context(), rec.PackID)
 	require.NoError(err)
 	assert.False(has, "pack record must not exist")
 	got, err := st.GetAttachmentPackEntry(hashGood)
@@ -1147,7 +1147,7 @@ func TestListUnpackedBlobs(t *testing.T) {
 	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z3", hashPacked)
 	require.NoError(st.RecordPackedBlobs(rec, entries))
 
-	blobs, err := st.ListUnpackedBlobs()
+	blobs, err := st.ListUnpackedBlobsContext(t.Context())
 	require.NoError(err)
 
 	byHash := make(map[string]store.UnpackedBlob, len(blobs))
@@ -1199,7 +1199,7 @@ func TestListUnpackedBlobsCoalescesCaseAliasesDeterministically(t *testing.T) {
 	fx.addAttachmentOnNewMessage("bad-hash", "malformed/bad-hash", 60)
 	fx.setThumbnail(unrelated, uppercase, "thumbs/"+uppercase)
 
-	blobs, err := st.ListUnpackedBlobs()
+	blobs, err := st.ListUnpackedBlobsContext(t.Context())
 
 	require.NoError(err)
 	require.Len(blobs, 4, "valid case aliases coalesce while malformed spellings remain distinct")
@@ -1238,7 +1238,7 @@ func TestListUnpackedBlobsExcludesPackedCaseAliases(t *testing.T) {
 	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z6", contentHash, thumbnailHash)
 	require.NoError(st.RecordPackedBlobs(rec, entries))
 
-	blobs, err := st.ListUnpackedBlobs()
+	blobs, err := st.ListUnpackedBlobsContext(t.Context())
 
 	require.NoError(err)
 	byHash := make(map[string]store.UnpackedBlob, len(blobs))
@@ -1266,7 +1266,7 @@ func TestListUnpackedBlobsExcludesURLsWithCaseSensitiveLike(t *testing.T) {
 	fx.addAttachment(carrierHash, carrierHash[:2]+"/"+carrierHash, 100)
 	fx.setThumbnail(carrierHash, thumbnailURLHash, "Http://cdn.example.com/"+thumbnailURLHash)
 
-	blobs, err := st.ListUnpackedBlobs()
+	blobs, err := st.ListUnpackedBlobsContext(t.Context())
 	require.NoError(err)
 	byHash := make(map[string]store.UnpackedBlob, len(blobs))
 	for _, blob := range blobs {
@@ -1290,7 +1290,7 @@ func TestPackRecordLifecycle(t *testing.T) {
 	require.NoError(st.RecordPackedBlobs(recA, entriesA))
 	require.NoError(st.RecordPackedBlobs(recB, entriesB))
 
-	recs, err := st.ListPackRecords()
+	recs, err := st.ListPackRecordsContext(t.Context())
 	require.NoError(err)
 	assert.Equal([]store.PackRecord{recA, recB}, recs, "ordered by pack_id")
 
@@ -1300,10 +1300,10 @@ func TestPackRecordLifecycle(t *testing.T) {
 		hashA: {}, hashB: {}, hashC: {},
 	}, hashes)
 
-	has, err := st.HasPackRecord(recA.PackID)
+	has, err := st.HasPackRecordContext(t.Context(), recA.PackID)
 	require.NoError(err)
 	assert.True(has)
-	has, err = st.HasPackRecord("01hzy3v7q8r9s0t1a2v3w4x5z9")
+	has, err = st.HasPackRecordContext(t.Context(), "01hzy3v7q8r9s0t1a2v3w4x5z9")
 	require.NoError(err)
 	assert.False(has)
 
@@ -1314,9 +1314,9 @@ func TestPackRecordLifecycle(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(n)
 
-	require.NoError(st.DeletePackRecord(recA.PackID))
+	require.NoError(st.DeletePackRecordContext(t.Context(), recA.PackID))
 
-	has, err = st.HasPackRecord(recA.PackID)
+	has, err = st.HasPackRecordContext(t.Context(), recA.PackID)
 	require.NoError(err)
 	assert.False(has, "attachment_packs row removed")
 	n, err = st.CountPackIndexEntries(recA.PackID)
@@ -1327,12 +1327,12 @@ func TestPackRecordLifecycle(t *testing.T) {
 	assert.Nil(got)
 
 	// The other pack is untouched.
-	recs, err = st.ListPackRecords()
+	recs, err = st.ListPackRecordsContext(t.Context())
 	require.NoError(err)
 	assert.Equal([]store.PackRecord{recB}, recs)
 
 	// Deleting an absent pack is not an error (idempotent cleanup).
-	require.NoError(st.DeletePackRecord(recA.PackID))
+	require.NoError(st.DeletePackRecordContext(t.Context(), recA.PackID))
 }
 
 func TestListIndexedBlobEntries(t *testing.T) {
@@ -1347,7 +1347,7 @@ func TestListIndexedBlobEntries(t *testing.T) {
 	entries[0].CRC32C = 4022250974
 	require.NoError(st.RecordPackedBlobs(rec, entries))
 
-	indexed, err := st.ListIndexedBlobEntries()
+	indexed, err := st.ListIndexedBlobEntriesContext(t.Context())
 	require.NoError(err)
 	assert.Equal(map[string]store.PackIndexEntry{
 		hashA: entries[0],
@@ -1367,9 +1367,9 @@ func TestClearAttachmentPackMetadata(t *testing.T) {
 	require.NoError(st.RecordPackedBlobs(recA, entriesA))
 	require.NoError(st.RecordPackedBlobs(recB, entriesB))
 
-	require.NoError(st.ClearAttachmentPackMetadata())
+	require.NoError(st.ClearAttachmentPackMetadataContext(t.Context()))
 
-	recs, err := st.ListPackRecords()
+	recs, err := st.ListPackRecordsContext(t.Context())
 	require.NoError(err)
 	assert.Empty(recs, "attachment_packs cleared")
 	hashes, err := st.ListIndexedBlobHashes()
@@ -1380,5 +1380,5 @@ func TestClearAttachmentPackMetadata(t *testing.T) {
 	assert.Nil(entry, "cleared blob reads as unpacked")
 
 	// Idempotent on an already-empty state (restore of an unpacked vault).
-	require.NoError(st.ClearAttachmentPackMetadata())
+	require.NoError(st.ClearAttachmentPackMetadataContext(t.Context()))
 }

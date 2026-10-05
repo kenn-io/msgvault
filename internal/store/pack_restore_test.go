@@ -36,7 +36,7 @@ func TestLooseMetadataClearDoesNotCreatePackSchema(t *testing.T) {
 	db := openHistoricalRestoreDB(t)
 	st := &Store{db: newLoggedDB(db, nil), dialect: &SQLiteDialect{}}
 
-	require.NoError(t, st.ClearAttachmentPackMetadata())
+	require.NoError(t, st.ClearAttachmentPackMetadataContext(t.Context()))
 
 	assert.Equal(t, []string{"attachments"}, listSQLiteObjects(t, db, "table"))
 	assert.Empty(t, listSQLiteObjects(t, db, "index", "sqlite_autoindex_%"))

@@ -73,6 +73,10 @@ type Store struct {
 	cardDAVPersonOperationsMu sync.Mutex
 	cardDAVPersonOperations   map[int64]*cardDAVPersonOperation
 
+	// The daemon owns one Store. Consent changes wait for in-flight provider
+	// requests, without holding an archive transaction during network I/O.
+	personMatchConsentMu sync.RWMutex
+
 	sqliteOptimizeMu sync.Mutex
 	// syncOptimizeMu guards lastSyncOptimize, which throttles the planner
 	// maintenance a successful sync triggers (see optimizeAfterSync).
@@ -108,9 +112,11 @@ type Store struct {
 	cardDAVCollisionIdentityLockHook      func()
 	cardDAVPublicationStateReadHook       func()
 	identityMatchAcceptBeforeDecisionHook func()
+	identityMatchReviewAfterDecisionHook  func()
 	senderRepairMessageLockHook           func()
 	personOperationBeforeIdentityLockHook func()
 	personMergeAfterSnapshotHook          func()
+	personMatchBlockingBeforeLockHook     func()
 	personEnrichmentClock                 func() time.Time
 	personEnrichmentBudgetBarrier         func()
 	personEnrichmentRunBarrier            func(phase string)
@@ -1060,6 +1066,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{rfc822CanonicalIndexName, s.dialect.RFC822CanonicalIDIndexDefinition()},
 		{"idx_participants_email_lower", "ON participants(LOWER(email_address))"},
 		{"idx_participant_identifiers_value_lower", "ON participant_identifiers(LOWER(identifier_value))"},
+		{"idx_person_match_scoring_contact_lookup", "ON participant_contact_observations(address_kind, normalized_value, participant_id) WHERE active_until IS NULL AND superseded_at IS NULL"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -2013,6 +2020,27 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 				return fmt.Errorf("backfill last_modified: %w", err)
 			}
 			return nil
+		},
+	); err != nil {
+		return err
+	}
+
+	// Upgraded SQLite tables have no last_modified DEFAULT. Bodyless imports
+	// could therefore create new NULLs after the original backfill completed.
+	// The shared message upsert now stamps inserts and updates explicitly;
+	// repair existing NULLs once, without changing valid concurrency tokens.
+	if err := s.runOnceMigration(
+		ctx, migrationMessagesLastModifiedNullRepair, 1, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				_, err := tx.ExecContext(ctx,
+					`UPDATE messages SET last_modified = `+s.dialect.Now()+
+						` WHERE last_modified IS NULL`)
+				if err != nil {
+					return fmt.Errorf("repair NULL last_modified: %w", err)
+				}
+				return nil
+			})
 		},
 	); err != nil {
 		return err

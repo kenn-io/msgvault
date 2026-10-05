@@ -551,50 +551,7 @@ func (e *DuckDBEngine) TextSearch(
 	if match == "" {
 		return nil, nil
 	}
-	if limit == 0 {
-		limit = 50
-	}
-
-	// Use FTS5 MATCH on messages_fts, filtered to text message types.
-	conditions, args := appendSourceFilter(
-		[]string{"messages_fts MATCH ?", textMsgTypeFilter(), store.LiveMessagesWhere("m", true)},
-		[]any{match}, "m.", sourceID, nil,
-	)
-
-	sqlQuery := fmt.Sprintf(`
-		SELECT
-			m.id,
-			COALESCE(m.source_message_id, '') AS source_message_id,
-			COALESCE(m.conversation_id, 0) AS conversation_id,
-			'' AS source_conversation_id,
-			COALESCE(m.subject, '') AS subject,
-			COALESCE(m.snippet, '') AS snippet,
-			COALESCE(p.email_address, '') AS from_email,
-			COALESCE(p.display_name, '') AS from_name,
-			COALESCE(p.phone_number, '') AS from_phone,
-			m.sent_at,
-			COALESCE(m.size_estimate, 0) AS size_estimate,
-			COALESCE(m.has_attachments, 0) AS has_attachments,
-			0 AS attachment_count,
-			m.deleted_from_source_at,
-			COALESCE(m.message_type, '') AS message_type,
-			COALESCE(c.title, '') AS conv_title
-		FROM messages_fts fts
-		JOIN messages m ON m.id = fts.rowid
-		LEFT JOIN participants p ON p.id = m.sender_id
-		LEFT JOIN conversations c ON c.id = m.conversation_id
-		WHERE %s
-		ORDER BY m.sent_at DESC
-		LIMIT ? OFFSET ?
-	`, strings.Join(conditions, " AND "))
-
-	rows, err := e.sqliteDB.QueryContext(ctx, sqlQuery, append(args, limit, offset)...)
-	if err != nil {
-		return nil, fmt.Errorf("text search: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	return scanMessageSummaries(rows)
+	return sqliteFTSTextSearch(ctx, e.sqliteDB, match, sourceID, limit, offset)
 }
 
 // GetTextStats returns aggregate stats for text messages.

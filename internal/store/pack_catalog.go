@@ -35,7 +35,7 @@ func (c *PackCatalog) Resolve(ctx context.Context, hash packstore.Hash) (packsto
 	if err := ctx.Err(); err != nil {
 		return packstore.Location{}, err
 	}
-	location, err := c.store.ResolveAttachmentBlob(hash.String())
+	location, err := c.store.ResolveAttachmentBlobContext(ctx, hash.String())
 	if err != nil {
 		return packstore.Location{}, err
 	}
@@ -54,13 +54,16 @@ func (c *PackCatalog) ListReferences(ctx context.Context) (packstore.ReferenceIn
 	if err := ctx.Err(); err != nil {
 		return packstore.ReferenceInventory{}, err
 	}
-	raw, err := c.store.ListReferencedBlobHashes()
+	raw, err := c.store.ListReferencedBlobHashesContext(ctx)
 	if err != nil {
 		return packstore.ReferenceInventory{}, err
 	}
 	byHash := make(map[packstore.Hash][]string)
 	complete := true
 	for original := range raw {
+		if err := ctx.Err(); err != nil {
+			return packstore.ReferenceInventory{}, err
+		}
 		hash, err := packstore.ParseHash(strings.ToLower(original))
 		if err != nil {
 			complete = false
@@ -83,12 +86,15 @@ func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	raw, err := c.store.ListUnpackedBlobs()
+	raw, err := c.store.ListUnpackedBlobsContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]packstore.Candidate, 0, len(raw))
 	for _, blob := range raw {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		hash, err := packstore.ParseHash(strings.ToLower(blob.Hash))
 		if err != nil {
 			slog.Error("malformed unpacked attachment hash; preserving recorded candidates",
@@ -120,12 +126,22 @@ func (c *PackCatalog) ListIndexed(ctx context.Context) ([]packstore.IndexEntry, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	raw, err := c.store.ListIndexedBlobEntries()
+	if pass, ok := ctx.Value(packVerificationKey{}).(*PackVerificationPass); ok {
+		entries, err := c.store.listPackVerificationWindow(ctx, pass)
+		if err != nil {
+			return nil, err
+		}
+		return fromStorePackEntries(entries)
+	}
+	raw, err := c.store.ListIndexedBlobEntriesContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]packstore.IndexEntry, 0, len(raw))
 	for _, entry := range raw {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		converted, err := fromStorePackEntry(entry)
 		if err != nil {
 			return nil, err
@@ -140,12 +156,15 @@ func (c *PackCatalog) ListPackRecords(ctx context.Context) ([]packstore.PackReco
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	raw, err := c.store.ListPackRecords()
+	raw, err := c.store.ListPackRecordsContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]packstore.PackRecord, len(raw))
 	for i, record := range raw {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		result[i] = fromStorePackRecord(record)
 	}
 	return result, nil
@@ -155,7 +174,7 @@ func (c *PackCatalog) ListPackEntries(ctx context.Context, packID string) ([]pac
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	raw, err := c.store.ListAttachmentPackEntries(packID)
+	raw, err := c.store.ListAttachmentPackEntriesContext(ctx, packID)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +185,7 @@ func (c *PackCatalog) HasPackRecord(ctx context.Context, packID string) (bool, e
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	return c.store.HasPackRecord(packID)
+	return c.store.HasPackRecordContext(ctx, packID)
 }
 
 func (c *PackCatalog) PruneUnreferenced(ctx context.Context) (int64, error) {
@@ -177,28 +196,30 @@ func (c *PackCatalog) RecordPack(ctx context.Context, record packstore.PackRecor
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return c.store.RecordPackedBlobsWithAliases(toStorePackRecord(record), toStoreAdoptions(adoptions))
+	return c.store.RecordPackedBlobsWithAliasesContext(
+		ctx, toStorePackRecord(record), toStoreAdoptions(adoptions))
 }
 
 func (c *PackCatalog) AdoptPack(ctx context.Context, record packstore.PackRecord, adoptions []packstore.Adoption) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return c.store.AdoptPackedBlobsWithAliases(toStorePackRecord(record), toStoreAdoptions(adoptions))
+	return c.store.AdoptPackedBlobsWithAliasesContext(
+		ctx, toStorePackRecord(record), toStoreAdoptions(adoptions))
 }
 
 func (c *PackCatalog) DeletePackRecord(ctx context.Context, packID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return c.store.DeletePackRecord(packID)
+	return c.store.DeletePackRecordContext(ctx, packID)
 }
 
 func (c *PackCatalog) DeleteIndexEntry(ctx context.Context, hash packstore.Hash) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return c.store.DeletePackIndexEntry(hash.String())
+	return c.store.DeletePackIndexEntryContext(ctx, hash.String())
 }
 
 func (c *PackCatalog) ListPackUsage(ctx context.Context) ([]packstore.PackUsage, error) {
@@ -244,7 +265,7 @@ func (c *PackCatalog) ClearPackMetadata(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return c.store.ClearAttachmentPackMetadata()
+	return c.store.ClearAttachmentPackMetadataContext(ctx)
 }
 
 func fromStorePackEntry(entry PackIndexEntry) (packstore.IndexEntry, error) {

@@ -283,12 +283,17 @@ type GetFileContentPath struct {
 	ID int64 `json:"id"`
 }
 
-type AcceptIdentityMatchCandidatePath struct {
+type GetIdentityMatchCandidatePath struct {
 	// ID Identity match candidate ID
 	ID int64 `json:"id"`
 }
 
-type RejectIdentityMatchCandidatePath struct {
+type ReviewAcceptIdentityMatchCandidatePath struct {
+	// ID Identity match candidate ID
+	ID int64 `json:"id"`
+}
+
+type ReviewRejectIdentityMatchCandidatePath struct {
 	// ID Identity match candidate ID
 	ID int64 `json:"id"`
 }

@@ -212,6 +212,38 @@ func TestDraftPermissionsRemainIndependent(t *testing.T) {
 	assertions.Equal(PermissionDraftDelete, mustKnownPermission(t, "draft.delete"))
 }
 
+func TestCalendarEventReadPermissionCanBeIssued(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	permission := PermissionCalendarEventRead
+	assertions.Equal(permission, mustKnownPermission(t, string(permission)))
+
+	source := SourceRef{ID: 1, Type: "gcal", Identifier: "person@example.com/team@example.com"}
+	_, _, grant, err := NewRegistry().Issue("calendar-details", []Permission{permission}, []SourceRef{source})
+	requirements.NoError(err)
+	assertions.True(grant.Allows(permission, source))
+}
+
+func TestCalendarPermissionsRemainIndependent(t *testing.T) {
+	assertions := assert.New(t)
+	source := SourceRef{ID: 1, Type: "gcal", Identifier: "person@example.com/team@example.com"}
+	permissions := []Permission{
+		PermissionCalendarRead,
+		PermissionCalendarEventRead,
+		PermissionCalendarWrite,
+		PermissionCalendarInvite,
+	}
+	for _, permission := range permissions {
+		grant := Grant{Permissions: []Permission{permission}, Sources: []SourceRef{source}}
+		assertions.True(grant.Allows(permission, source))
+		for _, other := range permissions {
+			if other != permission {
+				assertions.False(grant.Allows(other, source), "%s must not imply %s", permission, other)
+			}
+		}
+	}
+}
+
 func mustKnownPermission(t *testing.T, name string) Permission {
 	t.Helper()
 	permission, ok := KnownPermission(name)

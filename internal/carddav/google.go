@@ -15,13 +15,13 @@ const GoogleDiscoveryURL = "https://www.googleapis.com/.well-known/carddav"
 // NewGoogleService uses Google's discovery entry point with the shared sync
 // engine. Google can redirect directly to its single contacts collection.
 func NewGoogleService(st *store.Store, client *Client) *Service {
-	return &Service{store: st, client: client, google: true}
+	return NewRemoteService(st, &davRemote{client: client, google: true})
 }
 
 func discoverGoogle(ctx context.Context, client *Client, baseURL string) (Discovery, error) {
 	ctx, cancel := context.WithTimeout(ctx, client.operationTimeout)
 	defer cancel()
-	budget := &operationBudget{remaining: client.operationBytes}
+	budget := &Budget{remaining: client.operationBytes}
 	body, err := PropfindBody([]PropertyName{CurrentUserPrincipalProperty, SyncTokenProperty, DisplayNameProperty, CurrentUserPrivilegesProperty})
 	if err != nil {
 		return Discovery{}, err

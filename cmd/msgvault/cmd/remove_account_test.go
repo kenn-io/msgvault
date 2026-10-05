@@ -541,7 +541,7 @@ func TestRemoveAccountCmd_DeletesUniquePackedMappings(t *testing.T) {
 	require.ErrorIs(err, fs.ErrNotExist, "removed blob is no longer addressable by hash")
 	_, _, err = bs.Open(thumbnailHash)
 	require.ErrorIs(err, fs.ErrNotExist, "removed thumbnail is no longer addressable by hash")
-	recs, err := removed.ListPackRecords()
+	recs, err := removed.ListPackRecordsContext(t.Context())
 	require.NoError(err)
 	assert.Len(t, recs, 1, "logical deletion leaves immutable pack reclamation to repack")
 }

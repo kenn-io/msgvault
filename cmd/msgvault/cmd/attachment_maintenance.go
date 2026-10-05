@@ -13,14 +13,18 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 const (
-	automaticAttachmentBytes  = int64(256 << 20)
-	attachmentMaintenanceJob  = "attachment-maintenance"
-	attachmentMaintenanceCron = "17 3 * * *"
+	automaticAttachmentBytes = int64(256 << 20)
+	// Kit's Pack and Repack cannot stop at a checkpoint on request, so the
+	// scheduled jobs are not preemptible. This limit alone returns the gate.
+	automaticAttachmentMaxRuntime = time.Minute
+	attachmentMaintenanceJob      = "attachment-maintenance"
+	attachmentMaintenanceCron     = "17 3 * * *"
 	// attachmentPackJob packs blobs that scheduled syncs left loose. A pass
 	// re-reads the whole pack catalog, so it runs a few times a day rather
 	// than after every sync. Bounded follow-ups drain any remaining backlog.
@@ -132,9 +136,17 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 	}
 	start := time.Now()
 	stats, err := m.pack(ctx, automaticAttachmentBytes)
+	// Each counter is a committed change a later pass need not repeat.
+	// PacksQuarantined is not: a damaged pack stays in place and is counted
+	// again on every pass.
+	if stats.BlobsPacked > 0 || stats.PacksAdopted > 0 || stats.PacksRemoved > 0 ||
+		stats.MappingsPruned > 0 || stats.RecordsDropped > 0 || stats.LooseSwept > 0 ||
+		stats.LooseOrphansRemoved > 0 {
+		jobctx.RecordProgress(ctx)
+	}
 	duration := time.Since(start)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			m.log().Info("automatic attachment maintenance canceled")
 			return err
 		}
@@ -190,9 +202,12 @@ func (m *attachmentMaintenance) runAutomaticRepack(ctx context.Context, emitWarn
 	}
 	start := time.Now()
 	stats, err := m.repack(ctx, automaticAttachmentBytes)
+	if stats.PacksRewritten > 0 || stats.PacksRemoved > 0 || stats.MappingsPruned > 0 {
+		jobctx.RecordProgress(ctx)
+	}
 	duration := time.Since(start)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			m.log().Info("automatic attachment repack canceled")
 			return err
 		}
@@ -226,12 +241,37 @@ func (m *attachmentMaintenance) logAutomaticRepackSummary(message string, stats 
 		"budget_exhausted", stats.BudgetExhausted)
 }
 
+// runScheduledPack bounds existing-blob verification as well as new pack bytes.
+func (m *attachmentMaintenance) runScheduledPack(ctx context.Context) error {
+	if !m.packCreationEnabled {
+		return nil
+	}
+	packCtx, pass, err := m.store.BeginPackVerification(ctx, 128, 32<<20)
+	if err != nil {
+		return err
+	}
+	if err := m.runAutomaticPack(packCtx, nil); err != nil {
+		return err
+	}
+	more, err := m.store.FinishPackVerification(ctx, pass)
+	if err != nil {
+		return err
+	}
+	if more {
+		// A completed verification cycle restarts on the next request. Only an
+		// unfinished window provides a resume point for a budgeted follow-up.
+		jobctx.RecordProgress(ctx)
+		m.markPackPending()
+	}
+	return nil
+}
+
 // daily runs the two bounded phases in order. A failed pack phase stops the
 // job so the scheduler records the failure instead of obscuring it with a
 // second maintenance result.
 func (m *attachmentMaintenance) daily(ctx context.Context) error {
 	m.packPending.Store(false)
-	if err := m.runAutomaticPack(ctx, nil); err != nil {
+	if err := m.runScheduledPack(ctx); err != nil {
 		m.markPackPending()
 		return err
 	}
@@ -255,7 +295,7 @@ func (m *attachmentMaintenance) runPendingPack(ctx context.Context) error {
 	if m == nil || !m.packPending.Swap(false) {
 		return nil
 	}
-	if err := m.runAutomaticPack(ctx, nil); err != nil {
+	if err := m.runScheduledPack(ctx); err != nil {
 		m.packPending.Store(true)
 		return err
 	}
@@ -356,8 +396,9 @@ func runScheduledSource(
 
 func registerAttachmentMaintenanceJob(sched *scheduler.Scheduler, maintenance *attachmentMaintenance) error {
 	return sched.AddJob(scheduler.Job{
-		Name:     attachmentMaintenanceJob,
-		Schedule: attachmentMaintenanceCron,
+		Name:       attachmentMaintenanceJob,
+		MaxRuntime: automaticAttachmentMaxRuntime,
+		Schedule:   attachmentMaintenanceCron,
 		Run: func(ctx context.Context) error {
 			return maintenance.daily(ctx)
 		},
@@ -369,9 +410,10 @@ func registerAttachmentPackJob(sched *scheduler.Scheduler, maintenance *attachme
 	// counts cannot tell us what a previous daemon left loose.
 	maintenance.markPackPending()
 	return sched.AddJob(scheduler.Job{
-		Name:     attachmentPackJob,
-		Schedule: attachmentPackCron,
-		Run:      maintenance.runPendingPack,
+		Name:       attachmentPackJob,
+		MaxRuntime: automaticAttachmentMaxRuntime,
+		Schedule:   attachmentPackCron,
+		Run:        maintenance.runPendingPack,
 	})
 }
 

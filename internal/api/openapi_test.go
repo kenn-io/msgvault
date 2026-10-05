@@ -37,11 +37,194 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	assert.NotEmpty(t, doc.Paths, "paths")
 }
 
+func TestCalendarEventInputSchemaMatchesControlRequests(t *testing.T) {
+	t.Parallel()
+	for name, build := range map[string]func() *huma.OpenAPI{
+		"public": OpenAPIDocument,
+		"client": openAPIClientDocument,
+	} {
+		t.Run(name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			input := build().Components.Schemas.Map()["GCalEventInput"]
+			requirements.NotNil(input)
+			for _, name := range []string{"summary", "description", "location"} {
+				field := input.Properties[name]
+				requirements.NotNil(field, name)
+				assertions.Equal("string", field.Type, name)
+				assertions.False(field.Nullable, "%s clears with an empty string, not null", name)
+				assertions.Contains(field.Description, "empty string", name)
+			}
+			for _, name := range []string{"id", "attendeesOmitted"} {
+				field := input.Properties[name]
+				requirements.NotNil(field, name)
+				assertions.True(field.ReadOnly, "%s is returned in plans, not accepted in requests", name)
+				assertions.False(field.Nullable, name)
+			}
+			attendee := build().Components.Schemas.Map()["GCalAttendee"]
+			requirements.NotNil(attendee)
+			for _, name := range []string{"organizer", "responseStatus", "self"} {
+				field := attendee.Properties[name]
+				requirements.NotNil(field, name)
+				assertions.True(field.ReadOnly, "%s is provider-controlled and cannot be sent in event input", name)
+			}
+			request := build().Components.Schemas.Map()["CalendarRequest"]
+			requirements.NotNil(request)
+			fingerprint := request.Properties["expected_plan_fingerprint"]
+			requirements.NotNil(fingerprint)
+			assertions.Contains(fingerprint.Description, "prior dry run")
+			assertions.Contains(fingerprint.Description, "OAuth account")
+			assertions.Contains(fingerprint.Description, "notification mode")
+			result := build().Components.Schemas.Map()["CalendarResult"]
+			requirements.NotNil(result)
+			planFingerprint := result.Properties["plan_fingerprint"]
+			requirements.NotNil(planFingerprint)
+			assertions.Contains(planFingerprint.Description, "OAuth account")
+			assertions.Contains(planFingerprint.Description, "send_updates")
+			outcomeCode := result.Properties["outcome_code"]
+			requirements.NotNil(outcomeCode)
+			assertions.Contains(outcomeCode.Enum, "calendar_partial")
+			assertions.Contains(outcomeCode.Enum, "calendar_outcome_unknown")
+		})
+	}
+}
+
+func TestCalendarRequestOpenAPIAllowsListOnlyAvailability(t *testing.T) {
+	for name, build := range map[string]func() *huma.OpenAPI{
+		"public": OpenAPIDocument,
+		"client": openAPIClientDocument,
+	} {
+		t.Run(name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			request := build().Components.Schemas.Map()["CalendarRequest"]
+			requirements.NotNil(request)
+			assertions.NotContains(request.Required, "calendar_id")
+			assertions.Contains(request.Required, "action")
+			assertions.Contains(request.Required, "account")
+			calendarID := request.Properties["calendar_id"]
+			requirements.NotNil(calendarID)
+			assertions.Contains(calendarID.Description, "Required for event mutations")
+			assertions.Contains(calendarID.Description, "omit it")
+			calendarIDs := request.Properties["calendar_ids"]
+			requirements.NotNil(calendarIDs)
+			assertions.Contains(calendarIDs.Description, "When nonempty")
+			assertions.Contains(calendarIDs.Description, "calendar_id may be omitted")
+
+			restriction := request.Not
+			requirements.NotNil(restriction)
+			assertions.Contains(restriction.Required, "action")
+			assertions.Contains(restriction.Required, "scope")
+			containsEnum := func(name, want string) bool {
+				field := restriction.Properties[name]
+				if field == nil {
+					return false
+				}
+				for _, value := range field.Enum {
+					if value == want {
+						return true
+					}
+				}
+				return false
+			}
+			assertions.True(containsEnum("action", "move"))
+			assertions.True(containsEnum("action", "respond"))
+			assertions.True(containsEnum("scope", "future"))
+		})
+	}
+}
+
+func TestCalendarRequestEnumNamesPreserveGeneratedClientExports(t *testing.T) {
+	t.Parallel()
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	doc := openAPIClientDocument()
+	schemas := doc.Components.Schemas.Map()
+	request := schemas["CalendarRequest"]
+	requirements.NotNil(request)
+	for property, want := range map[string][]any{
+		"response": {
+			"CalendarRequestResponseAccepted", "CalendarRequestResponseDeclined", "CalendarRequestResponseTentative",
+		},
+		"scope": {
+			"CalendarRequestScopeSingle", "CalendarRequestScopeFuture", "CalendarRequestScopeAll",
+		},
+		"send_updates": {
+			"CalendarRequestSendUpdatesNone", "CalendarRequestSendUpdatesAll", "CalendarRequestSendUpdatesExternalOnly",
+		},
+	} {
+		field := request.Properties[property]
+		requirements.NotNil(field, property)
+		assertions.Equal(want, field.Extensions["x-enum-names"], property)
+	}
+	for schemaName, properties := range map[string]map[string][]any{
+		"CreateAttributeDefinitionRequest": {
+			"cardinality": {"Single", "Multi"},
+		},
+		"SecretSettingState": {
+			"source": {"Stored", "Environment", "None"},
+		},
+	} {
+		schema := schemas[schemaName]
+		requirements.NotNil(schema, schemaName)
+		for property, want := range properties {
+			field := schema.Properties[property]
+			requirements.NotNil(field, property)
+			assertions.Equal(want, field.Extensions["x-enum-names"], schemaName+"."+property)
+		}
+	}
+
+	path := doc.Paths["/api/v1/person-relationship-reviews"]
+	requirements.NotNil(path)
+	requirements.NotNil(path.Get)
+	var relationshipStatus *huma.Schema
+	for _, parameter := range path.Get.Parameters {
+		if parameter.Name == "status" {
+			relationshipStatus = parameter.Schema
+			break
+		}
+	}
+	requirements.NotNil(relationshipStatus)
+	assertions.Equal(
+		[]any{"Pending", "Accepted", "Rejected"},
+		relationshipStatus.Extensions["x-enum-names"],
+	)
+
+	assertLegacyEnumValues := func(
+		cardinality generated.CreateAttributeDefinitionRequestCardinality,
+		secretSource generated.SecretSettingStateSource,
+		relationshipStatus generated.ListPersonRelationshipReviewsQueryStatus,
+	) []string {
+		return []string{string(cardinality), string(secretSource), string(relationshipStatus)}
+	}
+	assertions.Equal([]string{"single", "none", "accepted"}, assertLegacyEnumValues(
+		generated.Single,
+		generated.None,
+		generated.Accepted,
+	))
+}
+
+func TestGeneratedCalendarClientMarshalsListOnlyAvailability(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	encoded, err := json.Marshal(generated.CalendarRequest{
+		Action:      generated.Freebusy,
+		Account:     "person@example.com",
+		CalendarIds: []string{"team@example.com"},
+	})
+	requirements.NoError(err)
+	var request map[string]any
+	requirements.NoError(json.Unmarshal(encoded, &request))
+	assertions.Equal("freebusy", request["action"])
+	assertions.Equal([]any{"team@example.com"}, request["calendar_ids"])
+	assertions.NotContains(request, "calendar_id")
+}
+
 func TestMeetingIntelligenceOpenAPIContract(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	assertions.Equal("2.35.0", APISchemaVersion)
+	assertions.Equal("3.1.0", APISchemaVersion)
 	doc := OpenAPIDocument()
 	for path, operationID := range map[string]string{
 		"/api/v1/meetings/context": "getMeetingContext",
@@ -187,7 +370,7 @@ func TestOpenAPISchemaVersionSavedViewRun(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	assertions.Equal("2.35.0", APISchemaVersion)
+	assertions.Equal("3.1.0", APISchemaVersion)
 	doc := OpenAPIDocument()
 	run := doc.Paths["/api/v1/saved-views/{id}/run"]
 	requirements.NotNil(run, "Saved View run path")
@@ -206,13 +389,13 @@ func TestOpenAPISchemaVersionSavedViewRun(t *testing.T) {
 
 func TestDeletionSubsetSchemaVersion(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "2.35.0", APISchemaVersion)
+	assert.Equal(t, "3.1.0", APISchemaVersion)
 }
 
 func TestOperationsWorkspaceSchemaVersion(t *testing.T) {
 	t.Parallel()
 	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
-		assert.Equal(t, "2.35.0", doc.Info.Version)
+		assert.Equal(t, "3.1.0", doc.Info.Version)
 	}
 }
 
@@ -220,7 +403,7 @@ func TestSearchTimingFieldsUseAdditiveSchemaVersion(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	assertions.Equal("2.35.0", APISchemaVersion)
+	assertions.Equal("3.1.0", APISchemaVersion)
 
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
 		schemas := document.Components.Schemas.Map()
@@ -240,7 +423,7 @@ func TestSearchTimingFieldsUseAdditiveSchemaVersion(t *testing.T) {
 
 func TestOpenAPISchemaVersionPersonBrief(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "2.35.0", APISchemaVersion)
+	assert.Equal(t, "3.1.0", APISchemaVersion)
 }
 
 func TestOpenAPIImportJobContract(t *testing.T) {
@@ -405,7 +588,7 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 	assertions := assert.New(t)
 	doc := OpenAPIDocument()
 
-	assertions.Equal("2.35.0", APISchemaVersion)
+	assertions.Equal("3.1.0", APISchemaVersion)
 	for _, path := range []string{
 		"/api/v1/participants/search",
 		"/api/v1/participants/{id}",
@@ -428,12 +611,12 @@ func TestOpenAPISeparatesParticipantAnalyticsFromDurablePeople(t *testing.T) {
 
 func TestAnalyticsCacheReadinessUsesAdditiveSchemaVersion(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "2.35.0", APISchemaVersion)
+	assert.Equal(t, "3.1.0", APISchemaVersion)
 }
 
 func TestPersonFilesUseAdditiveSchemaVersion(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "2.35.0", APISchemaVersion)
+	assert.Equal(t, "3.1.0", APISchemaVersion)
 }
 
 func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
@@ -459,7 +642,7 @@ func TestPersonFileRoutesPublishTypedPathIDs(t *testing.T) {
 func TestOrganizationCreateOpenAPIDocumentsLocationHeader(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)
-	assert.Equal(t, "2.35.0", APISchemaVersion,
+	assert.Equal(t, "3.1.0", APISchemaVersion,
 		"document and person-file search preserve the organization and employment contract")
 	for _, document := range []*huma.OpenAPI{
 		OpenAPIDocument(),
@@ -798,7 +981,7 @@ func TestOpenAPIPersonAttributeContract(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	assertions.Equal("2.35.0", APISchemaVersion,
+	assertions.Equal("3.1.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the structured profile contract")
 
 	doc := OpenAPIDocument()
@@ -915,7 +1098,7 @@ func TestOpenAPIOrganizationProfilePutDocumentsLimits(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	assertions.Equal("2.35.0", APISchemaVersion,
+	assertions.Equal("3.1.0", APISchemaVersion,
 		"organization profile write limits advance the published contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/organizations/{id}/profile"]
@@ -936,7 +1119,7 @@ func TestOpenAPIPersonProfileMediaContentContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	assertions.Equal("2.35.0", APISchemaVersion,
+	assertions.Equal("3.1.0", APISchemaVersion,
 		"activity, identity match review, document search, and person files preserve the raw profile media contract")
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/people/{id}/profile/media/{media_id}/content"]
@@ -965,7 +1148,7 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	assertions.Equal("2.35.0", APISchemaVersion,
+	assertions.Equal("3.1.0", APISchemaVersion,
 		"document and person-file search preserve the identity match review contract")
 
 	doc := OpenAPIDocument()
@@ -974,20 +1157,23 @@ func TestOpenAPIIdentityMatchReviewContract(t *testing.T) {
 	requirements.NotNil(list.Get, "identity match candidate list operation")
 	assertions.Equal("listIdentityMatchCandidates", list.Get.OperationID)
 
+	get := doc.Paths["/api/v1/identity/match-candidates/{id}"]
+	requirements.NotNil(get)
+	requirements.NotNil(get.Get)
+	assertions.Equal("getIdentityMatchCandidate", get.Get.OperationID)
 	for path, operationID := range map[string]string{
-		"/api/v1/identity/match-candidates/{id}/accept": "acceptIdentityMatchCandidate",
-		"/api/v1/identity/match-candidates/{id}/reject": "rejectIdentityMatchCandidate",
+		"/api/v1/identity/match-candidates/{id}/review/accept": "reviewAcceptIdentityMatchCandidate",
+		"/api/v1/identity/match-candidates/{id}/review/reject": "reviewRejectIdentityMatchCandidate",
 	} {
 		item := doc.Paths[path]
 		requirements.NotNil(item, path)
 		requirements.NotNil(item.Post, path)
 		assertions.Equal(operationID, item.Post.OperationID, path)
 		requirements.NotNil(item.Post.RequestBody, path)
-		assertions.False(item.Post.RequestBody.Required,
-			path+" decision notes are optional and the runtime accepts an empty request body")
+		assertions.True(item.Post.RequestBody.Required, path)
 	}
 
-	// The release is additive. Keep the source-identity route that shipped
+	// Keep the source-identity route that shipped
 	// before identity match review.
 	sourceIdentities := doc.Paths["/api/v1/sources/{source_id}/identities"]
 	requirements.NotNil(sourceIdentities, "source identity path")
@@ -1019,7 +1205,7 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	// historical import jobs in 2.16.0, collection source scopes in 2.17.0,
 	// deletion subset counts in 2.18.0, Operations in 2.19.0, person briefs
 	// in 2.20.0, and Saved View execution in 2.21.0 did not touch it.
-	assertions.Equal("2.35.0", APISchemaVersion, "meeting import is an additive schema release")
+	assertions.Equal("3.1.0", APISchemaVersion, "meeting import remains in the current schema")
 
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/textimport"
+	"go.kenn.io/msgvault/internal/textutil"
 	"golang.org/x/net/html"
 )
 
@@ -396,12 +397,7 @@ const snippetMaxLen = 100
 // snippet returns the first snippetMaxLen characters of s, suitable for
 // message preview.
 func snippet(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	runes := []rune(s)
-	if len(runes) > snippetMaxLen {
-		return string(runes[:snippetMaxLen])
-	}
-	return s
+	return textutil.PrefixRunes(strings.Join(strings.Fields(s), " "), snippetMaxLen)
 }
 
 // computeMessageID computes a deterministic 16-char hex ID from the given parts.

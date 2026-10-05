@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 var (
@@ -197,6 +198,10 @@ func (e *tokenExporter) addAccount(baseURL, apiKey, email string) {
 }
 
 func runExportToken(cmd *cobra.Command, args []string) error {
+	return runExportTokenWithClient(cmd, args, &http.Client{Timeout: 30 * time.Second})
+}
+
+func runExportTokenWithClient(cmd *cobra.Command, args []string, client *http.Client) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -206,7 +211,17 @@ func runExportToken(cmd *cobra.Command, args []string) error {
 
 	// Resolution order: flag > env var > config file
 	remoteURL := resolveParam(exportTokenTo, "MSGVAULT_REMOTE_URL", cfg.Remote.URL)
-	apiKey := resolveParam(exportTokenAPIKey, "MSGVAULT_REMOTE_API_KEY", cfg.Remote.APIKey)
+	apiKey := exportTokenAPIKey
+	persistInlineKey := apiKey != ""
+	if !persistInlineKey {
+		if cmd.Flags().Changed("api-key") {
+			return errors.New("--api-key must not be empty")
+		}
+		if err := cfg.ResolveRemoteKey(); err != nil {
+			return err
+		}
+		apiKey = cfg.Remote.AuthenticationKey()
+	}
 
 	if remoteURL == "" {
 		return errors.New("remote URL required: use --to flag, MSGVAULT_REMOTE_URL env var, or [remote] url in config.toml")
@@ -216,31 +231,43 @@ func runExportToken(cmd *cobra.Command, args []string) error {
 	}
 
 	exporter := &tokenExporter{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: client,
 		tokensDir:  cfg.TokensDir(),
 		stdout:     os.Stdout,
 		stderr:     os.Stderr,
 	}
 
-	allowInsecure := exportAllowInsecure || cfg.Remote.AllowInsecure
+	allowInsecure := cfg.Remote.AllowInsecure
+	if cmd.Flags().Changed("allow-insecure") {
+		allowInsecure = exportAllowInsecure
+	}
 	result, err := exporter.export(email, remoteURL, apiKey, allowInsecure)
 	if err != nil {
 		return err
 	}
 
-	// Save remote config for future use
-	if cfg.Remote.URL != result.remoteURL ||
-		cfg.Remote.APIKey != result.apiKey ||
-		(result.allowInsecure && !cfg.Remote.AllowInsecure) {
-		cfg.Remote.URL = result.remoteURL
-		cfg.Remote.APIKey = result.apiKey
-		if result.allowInsecure {
-			cfg.Remote.AllowInsecure = true
+	// Persist explicit choices even when they equal runtime overrides. Editing
+	// the file preserves unrelated configuration and leaves environment-only
+	// values and mounted credentials out of saved configuration.
+	var edits []config.Edit
+	if exportTokenTo != "" {
+		edits = append(edits, config.Edit{Key: "remote.url", Value: result.remoteURL})
+	}
+	if persistInlineKey {
+		edits = append(edits, config.Edit{Key: "remote.api_key", Value: result.apiKey})
+	}
+	if cmd.Flags().Changed("allow-insecure") {
+		edits = append(edits, config.Edit{Key: "remote.allow_insecure", Value: result.allowInsecure})
+	}
+	if len(edits) > 0 {
+		snapshot, err := config.ReadConfigFile(cfg.ConfigFilePath())
+		if err == nil {
+			_, err = config.EditConfigFilePrivate(cfg.ConfigFilePath(), snapshot.ETag, edits)
 		}
-		if err := cfg.Save(); err != nil {
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Note: Could not save remote config: %v\n", err)
 		} else {
-			fmt.Printf("Remote server saved to %s (future exports won't need --to/--api-key)\n",
+			fmt.Printf("Remote settings saved to %s\n",
 				cfg.ConfigFilePath())
 		}
 	}

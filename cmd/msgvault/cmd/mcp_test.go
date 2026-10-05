@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
@@ -23,18 +25,28 @@ import (
 
 func TestMCPWriteHelpDisclosesMutationClassesAndProfileOptIn(t *testing.T) {
 	assert := assert.New(t)
-	require.NotNil(t, mcpCmd.Flags().Lookup("allow-profile-writes"))
+	require := require.New(t)
+	require.NotNil(mcpCmd.Flags().Lookup("allow-profile-writes"))
+	for _, name := range []string{"allow-identity-decisions", "allow-identity-scoring", "allow-person-merges", "allow-carddav-writes"} {
+		require.NotNil(mcpCmd.Flags().Lookup(name))
+	}
+	require.NotNil(mcpCmd.Flags().Lookup("allow-calendar-writes"))
 	var output bytes.Buffer
 	previousOutput := mcpCmd.OutOrStdout()
 	mcpCmd.SetOut(&output)
 	t.Cleanup(func() { mcpCmd.SetOut(previousOutput) })
 
-	require.NoError(t, mcpCmd.Help())
+	require.NoError(mcpCmd.Help())
 	help := output.String()
 	assert.Contains(help, "attachment exports")
 	assert.Contains(help, "deletion manifests")
 	assert.Contains(help, "person promotion")
 	assert.Contains(help, "private Notes writes")
+	assert.Contains(help, "allow-identity-decisions")
+	assert.Contains(help, "allow-identity-scoring")
+	assert.Contains(help, "allow-person-merges")
+	assert.Contains(help, "allow-carddav-writes")
+	assert.Contains(help, "calendar event mutation tools")
 }
 
 func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
@@ -108,18 +120,36 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	savedHTTPAddr := mcpHTTPAddr
 	savedAllowInsecure := mcpHTTPAllowInsecure
 	savedAllowProfileWrites := mcpAllowProfileWrites
+	savedAllowIdentityDecisions := mcpAllowIdentityDecisions
+	savedAllowIdentityScoring := mcpAllowIdentityScoring
+	savedAllowPersonMerges := mcpAllowPersonMerges
+	savedAllowCardDAVWrites := mcpAllowCardDAVWrites
+	savedAllowCalendarWrites := mcpAllowCalendarWrites
 	savedServeHTTP := serveMCPHTTPWithOptions
 	allowWritesFlag := mcpCmd.Flags().Lookup("http-allow-writes")
 	require.NotNil(allowWritesFlag, "mcp command must define --http-allow-writes")
 	require.NoError(allowWritesFlag.Value.Set("true"))
+	allowCalendarWritesFlag := mcpCmd.Flags().Lookup("allow-calendar-writes")
+	require.NotNil(allowCalendarWritesFlag, "mcp command must define --allow-calendar-writes")
+	require.NoError(allowCalendarWritesFlag.Value.Set("true"))
 	mcpHTTPAddr = "0.0.0.0:8081"
 	mcpHTTPAllowInsecure = true
 	mcpAllowProfileWrites = true
+	mcpAllowIdentityDecisions = true
+	mcpAllowIdentityScoring = true
+	mcpAllowPersonMerges = true
+	mcpAllowCardDAVWrites = true
 	t.Cleanup(func() {
 		assert.NoError(allowWritesFlag.Value.Set("false"))
+		assert.NoError(allowCalendarWritesFlag.Value.Set("false"))
 		mcpHTTPAddr = savedHTTPAddr
 		mcpHTTPAllowInsecure = savedAllowInsecure
 		mcpAllowProfileWrites = savedAllowProfileWrites
+		mcpAllowIdentityDecisions = savedAllowIdentityDecisions
+		mcpAllowIdentityScoring = savedAllowIdentityScoring
+		mcpAllowPersonMerges = savedAllowPersonMerges
+		mcpAllowCardDAVWrites = savedAllowCardDAVWrites
+		mcpAllowCalendarWrites = savedAllowCalendarWrites
 		serveMCPHTTPWithOptions = savedServeHTTP
 	})
 
@@ -137,6 +167,11 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 
 	require.ErrorIs(err, wantErr)
 	assert.True(gotServeOpts.AllowProfileWrites)
+	assert.True(gotServeOpts.AllowIdentityDecisions)
+	assert.True(gotServeOpts.AllowIdentityScoring)
+	assert.True(gotServeOpts.AllowPersonMerges)
+	assert.True(gotServeOpts.AllowCardDAVWrites)
+	assert.True(gotServeOpts.AllowCalendarWrites)
 	assert.Equal(mcpserver.HTTPOptions{
 		Addr:               "0.0.0.0:8081",
 		DiscoveryDirectory: filepath.Join(home, "mcp"),
@@ -144,6 +179,58 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 		APIKey:             "mcp-http-key",
 		AllowWrites:        true,
 	}, gotHTTPOpts)
+}
+
+func TestMCPDelegatedModeRejectsDaemonWithoutCalendarAPI(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	previousHTTPAddr := mcpHTTPAddr
+	previousServe := serveMCPStdioWithOptions
+	previousSchemaCheck := remoteAPISchemaCheckEnabled
+	mcpHTTPAddr = ""
+	remoteAPISchemaCheckEnabled = true
+	var serveCalled bool
+	serveMCPStdioWithOptions = func(_ context.Context, options mcpserver.ServeOptions) error {
+		serveCalled = true
+		assertions.True(options.CalendarOnly)
+		assertions.Nil(options.Calendar)
+		return errors.New("stdio serving started without calendar tools")
+	}
+	t.Cleanup(func() {
+		mcpHTTPAddr = previousHTTPAddr
+		serveMCPStdioWithOptions = previousServe
+		remoteAPISchemaCheckEnabled = previousSchemaCheck
+	})
+
+	var healthRequests atomic.Int32
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			healthRequests.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.0.0"})
+		case "/api/session":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"auth_mode": "delegated"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(daemon.Close)
+	tokenFile := filepath.Join(t.TempDir(), "agent-token")
+	requirements.NoError(os.WriteFile(tokenFile, []byte("mva1_test-token"), 0o600))
+	ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
+		agentURL: daemon.URL, agentTokenFile: tokenFile, agentAllowInsecure: true,
+		agentURLChanged: true, agentTokenChanged: true,
+	})
+	cmd := &cobra.Command{}
+	cmd.SetContext(ctx)
+
+	err := mcpCmd.RunE(cmd, nil)
+
+	requirements.ErrorContains(err, "calendar delegation requires a daemon with API schema 3.1.0 or later")
+	assertions.False(serveCalled)
+	assertions.Equal(int32(2), healthRequests.Load())
 }
 
 func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
@@ -279,6 +366,9 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		wantMeetings   bool
 		wantAgenda     bool
 		wantArchiveSQL bool
+		wantReview     bool
+		wantScoring    bool
+		wantCardDAV    bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -293,6 +383,9 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "person agenda predecessor", schemaVersion: "2.29.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true},
 		{name: "person agenda schema", schemaVersion: "2.30.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true},
 		{name: "archive SQL schema", schemaVersion: "2.31.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true},
+		{name: "person CardDAV schema", schemaVersion: "2.32.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
+		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
+		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "older same-major schema", schemaVersion: "2.9.9"},
 		{name: "malformed schema", schemaVersion: "not-a-version"},
 		{name: "missing schema"},
@@ -328,6 +421,9 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
 			assert.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
 			assert.Equal(tt.wantArchiveSQL, opts.ArchiveSQLQuerier != nil)
+			assert.Equal(tt.wantReview, opts.IdentityReview != nil)
+			assert.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
+			assert.Equal(tt.wantScoring, opts.IdentityScoring != nil)
 		})
 	}
 }

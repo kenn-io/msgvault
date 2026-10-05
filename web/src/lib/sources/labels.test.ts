@@ -11,7 +11,7 @@ describe('source labels', () => {
     ['gmail', 'Gmail'], ['imap', 'IMAP'], ['msmail', 'Microsoft mail'], ['teams', 'Teams'],
     ['discord', 'Discord'], ['meeting_import', 'Meeting import'], ['synctech_sms', 'SMS backup'],
     ['imazing_csv', 'iMazing CSV'], ['circleback', 'Circleback'], ['gcal', 'Google Calendar'],
-    ['muesli', 'Muesli'], ['granola', 'Granola'], ['notion_meetings', 'Notion meetings'],
+    ['plaud', 'Plaud'], ['muesli', 'Muesli'], ['granola', 'Granola'], ['notion_meetings', 'Notion meetings'],
     ['pst', 'PST import'], ['apple-mail', 'Apple Mail'], ['mbox', 'Mbox import'],
     ['beeper', 'Beeper'], ['slack', 'Slack'], ['inline', 'Inline'], ['eml', 'EML import'], ['maildir', 'Maildir import'],
     ['whatsapp', 'WhatsApp'], ['apple_messages', 'Apple Messages'],

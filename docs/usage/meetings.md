@@ -1,7 +1,7 @@
 ---
-last_edited: "2026-09-28"
+last_edited: "2026-10-02"
 title: Meeting Transcripts
-description: Archive AI meeting notes and transcripts from Granola, Circleback, Notion, and Muesli into your searchable local archive.
+description: Archive AI meeting notes and transcripts from Granola, Plaud, Circleback, Notion, and Muesli into your searchable local archive.
 ---
 
 Find meeting decisions and transcripts in the same archive as your email and
@@ -15,12 +15,13 @@ emails connect meetings to the people you already know in msgvault.
 |---|---|---|
 | [Granola](#granola) | API key | Requires access to Granola's public API |
 | [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Notion integration token | At most 50 attendee-visible meetings per discovery query |
+| [Plaud](#plaud) | Browser authorization to its hosted MCP server | Requires Cloud Sync and existing Plaud transcription |
 | [Circleback](#circleback) | Browser authorization to its MCP server | Older note edits require a full refresh |
 | [Muesli](#muesli) | Local database on the same Mac | msgvault must run on the Mac where Muesli records |
 | [Another meeting source](#import-from-any-meeting-source) | Authenticated JSON import | Your integration supplies each meeting and its updates |
 
 Provider sync reads meeting data without changing the source service. Recording
-media is not downloaded by the Notion, Circleback, or Muesli integrations.
+media is not downloaded by the Notion, Plaud, Circleback, or Muesli integrations.
 
 ## Browse and search
 
@@ -123,17 +124,18 @@ meeting operations need daemon API schema 2.27.0 or newer.
 Each meeting source has two distinct values:
 
 - `identifier` is a stable label used in commands, source metadata, schedules,
-  and (for Circleback) the token filename. It can be an arbitrary name such as
+  and (for Circleback and Plaud) the token filename. It can be an arbitrary name such as
   `work`.
 - `account_email` is the normalized primary email used to determine whether
   the meeting organizer is you (`is_from_me`).
 
 `account_email` is required independently of `identifier`. Config loading
 rejects a missing or invalid value with guidance to preserve the source label
-and add the account email separately.
+and add the account email separately. Plaud validates this against the live
+account; it does not assume the account owner organized every recording.
 
-`add-granola`, `add-circleback`, `add-notion-meetings`, and `add-muesli` always confirm the primary email for their
-source. Add other confirmed aliases with the identity command:
+`add-granola`, `add-plaud`, `add-circleback`, `add-notion-meetings`, and
+`add-muesli` always confirm the primary email for their source. Add other confirmed aliases with the identity command:
 
 ```bash
 msgvault identity add work you+meetings@example.com
@@ -158,6 +160,7 @@ has never used with you:
 | Source | Identities per attendee | Linked through |
 |---|---|---|
 | Granola, Circleback | One email | Not needed |
+| Plaud | Speaker display labels only | Names do not create identities |
 | Notion AI Meeting Notes | The user's verified email | The Notion user ID, so a user whose email changes keeps one person |
 | Muesli | Email, or the emails and phones on the attendee's Apple Contacts card | The Contacts card, excluding addresses shared by unlinked cards |
 | Import API | `email` and `phone` | The person's `id` within the import source |
@@ -182,8 +185,8 @@ participant is promoted or linked to it; see [people](/docs/usage/people/).
 ## Import from any meeting source
 
 The provider-neutral import API archives one meeting at a time and requires no
-`[[granola]]`, `[[circleback]]`, or other provider configuration. Configure an
-API key, start `msgvault serve`, then send authenticated JSON to
+`[[granola]]`, `[[plaud]]`, `[[circleback]]`, or other provider configuration.
+Configure an API key, start `msgvault serve`, then send authenticated JSON to
 `POST /api/v1/import/meeting`:
 
 ```bash
@@ -418,6 +421,77 @@ msgvault remove-account notion-personal --type notion_meetings --yes
 
 A configured schedule will then refuse to recreate it until
 `add-notion-meetings` is run again.
+
+## Plaud
+
+Archive cloud recordings from an ordinary active Plaud account as searchable
+meetings. Enable Cloud Sync and transcribe recordings in Plaud first. msgvault
+reads the full transcripts, speaker labels, recording dates, duration, and every
+note tab through Plaud's hosted MCP service. It does not download audio or
+change recordings in Plaud.
+
+### Authorize your account
+
+Add an entry to `config.toml` on the daemon host:
+
+```toml
+[[plaud]]
+identifier = "work"
+account_email = "you@example.com"
+enabled = true
+schedule = "30 */6 * * *"
+```
+
+Run `msgvault add-plaud work` on that host and approve the browser request.
+Plaud redirects to `localhost:8091/callback/plaud`. For a headless host,
+forward that port with SSH and open the authorization URL in your local
+browser. A configured remote refuses `add-plaud` before proxying; run
+`msgvault --local add-plaud work` in the remote shell instead.
+
+msgvault checks the live account email before registration and on every sync.
+It must match `account_email`. The identifier is a stable label, not an email
+or organizer identity. A registered source retains its confirmed owner. Use a
+new identifier for another account. Credentials are stored in
+`tokens/plaud_<identifier>.json`; changing the MCP endpoint requires fresh
+authorization before those credentials can be used there.
+
+### Sync recordings
+
+```bash
+msgvault sync-plaud work
+msgvault sync-plaud work --limit 20
+msgvault sync-plaud work --full --after 2025-01-01
+msgvault sync-plaud work --probe
+```
+
+Every normal run enumerates the recording inventory and checks complete
+transcripts and notes for edits, including speaker corrections and later
+transcript pages. Unchanged content skips archive writes. `--full` repairs
+existing records while preserving stable file IDs. `--after` filters by
+recording date locally and implies `--full`.
+
+`--limit` bounds the recordings hydrated per run. New recordings come first;
+then runs rotate through the least recently attempted recordings. Failed and
+date-scoped runs save this rotation state too. A failed recording remains
+eligible on its next turn, so it cannot block later recordings in limited runs.
+Rotation state is stored once per source; run history retains outcomes and counts.
+Plaud pagination is eventually consistent, so changes during a run may be
+reconciled on a later run.
+
+A recording awaiting transcription can still archive its metadata and notes.
+Later runs retry pending content. Temporarily missing transcripts or note tabs
+preserve the previously archived content. Recordings deleted from Plaud remain
+in the archive. A failed or canceled run remains marked failed and refreshes
+search and cache for additions or updates already committed.
+
+`--probe` prints tool names, input schemas, and a first-page recording count.
+It prints no meeting titles, file IDs, transcripts, or note bodies. It helps
+diagnose provider contract changes without modifying the archive.
+
+`msgvault serve` runs enabled entries with a schedule. Removing the registered
+source stops sync from recreating it; run `add-plaud` to register it again.
+See the [configuration reference](../configuration.md#plaud-sources) and
+[CLI reference](../cli-reference.md#sync-plaud) for exact fields and flags.
 
 ## Circleback
 

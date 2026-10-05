@@ -257,6 +257,22 @@ func (s Snapshot) Stored(id string) bool {
 	return ok
 }
 
+// Metadata describes a stored destination without exposing its credential.
+type Metadata struct {
+	ID     string `json:"id"`
+	Origin string `json:"origin,omitempty"`
+}
+
+// Metadata returns credential IDs and bound origins in stable order.
+func (s Snapshot) Metadata() []Metadata {
+	entries := make([]Metadata, 0, len(s.credentials))
+	for id, record := range s.credentials {
+		entries = append(entries, Metadata{ID: id, Origin: record.Origin})
+	}
+	slices.SortFunc(entries, func(a, b Metadata) int { return strings.Compare(a.ID, b.ID) })
+	return entries
+}
+
 // StoredPersonEnrichmentIDs returns the named enrichment credential IDs in a
 // stable order without exposing their values.
 func (s Snapshot) StoredPersonEnrichmentIDs() []string {

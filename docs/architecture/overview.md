@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-10-01"
 title: Architecture Overview
 description: How msgvault captures communications, preserves the archive, and serves people, search, and automation.
 ---
@@ -68,6 +68,13 @@ message text for keyword search. Semantic search stores vectors in a separate
 SQLite index; PostgreSQL uses its own full-text search and optional pgvector.
 See [storage](storage.md) and [search ranking](search-ranking.md).
 
+Opt-in [calendar control](../usage/calendar.md#control-events-unreleased) runs
+through the daemon's serialized mutation gate. The daemon verifies source policy,
+delegated grants, OAuth scope, and live calendar access before sending a provider
+write. Successful changes use calendar sync's Store persistence path immediately,
+without advancing sync cursors. Remote completion and archive completion are
+reported separately so clients can reconcile a partial failure.
+
 ## Responsibilities
 
 | Component | Owns | Main source locations |
@@ -113,6 +120,16 @@ A durable person is a profile the user chooses to maintain. Identity bindings
 connect them; matching display names alone do not merge people. Profile facts
 retain evidence and resolution history. User pins and explicit merge or split
 actions have their own contracts. See [people and profiles](../usage/people.md).
+
+Identity review decisions bind to the inspected evidence and endpoint snapshot.
+Changed evidence or a candidate collapse requires a new review. Optional manual
+identity scoring creates suggestions and journals proposals; it does not
+accept them. The daemon checks local blockers before sending eligible pairs
+to the fixed provider and checks consent at each provider attempt. Consent
+changes wait for requests already admitted by that daemon. Provider I/O holds
+no archive writer gate or database write transaction; local mutations retain
+the daemon's normal coordination. See the
+[review and scoring contract](../api-server.md#identity-match-review-and-scoring).
 
 ### Each external operation has its own scope
 

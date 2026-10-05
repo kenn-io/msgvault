@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -40,6 +41,7 @@ var methodTiers = map[string]int{
 	"auth.test":             4,
 	"users.list":            2,
 	"users.conversations":   3,
+	"conversations.list":    2,
 	"conversations.history": 3,
 	"conversations.replies": 3,
 	"conversations.members": 4,
@@ -93,6 +95,8 @@ type Client struct {
 	baseURL string
 	token   string
 	http    *http.Client
+	// scopes is refreshed from Slack's X-OAuth-Scopes response header.
+	scopes []string
 	// limiters holds one token bucket per rate tier (see methodTiers).
 	limiters map[int]*rate.Limiter
 	// mediaTransport overrides the file-download transport (tests only; the
@@ -191,6 +195,9 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, out
 		if !envelope.OK {
 			return apiError(method, &envelope)
 		}
+		c.scopes = strings.FieldsFunc(resp.Header.Get("X-Oauth-Scopes"), func(r rune) bool {
+			return r == ',' || r == ' '
+		})
 		if out != nil {
 			if err := json.Unmarshal(data, out); err != nil {
 				return fmt.Errorf("slack %s: decode response: %w", method, err)
@@ -239,13 +246,30 @@ func (c *Client) AuthTest(ctx context.Context) (*AuthTestResult, error) {
 	return &out.AuthTestResult, nil
 }
 
-// AllConversations pages through the user's conversation memberships of all
-// four types, invoking fn per conversation.
+// AllConversations enumerates the conversation types the token can read.
+// A public-channel-only token lists all public channels, including unjoined
+// ones; broader tokens retain the user's membership-based archive scope.
 func (c *Client) AllConversations(ctx context.Context, fn func(Conversation) error) error {
+	var types []string
+	for _, scope := range []struct{ read, kind string }{
+		{"channels:read", "public_channel"}, {"groups:read", "private_channel"},
+		{"mpim:read", "mpim"}, {"im:read", "im"},
+	} {
+		if slices.Contains(c.scopes, scope.read) {
+			types = append(types, scope.kind)
+		}
+	}
+	if len(types) == 0 {
+		return fmt.Errorf("slack token has no conversation read scopes: %w", ErrAuth)
+	}
+	method := "users.conversations"
+	if len(types) == 1 && types[0] == "public_channel" {
+		method = "conversations.list"
+	}
 	cursor := ""
 	for {
 		params := url.Values{
-			"types":            {"public_channel,private_channel,mpim,im"},
+			"types":            {strings.Join(types, ",")},
 			"limit":            {strconv.Itoa(listPageLimit)},
 			"exclude_archived": {"false"},
 		}
@@ -257,7 +281,7 @@ func (c *Client) AllConversations(ctx context.Context, fn func(Conversation) err
 
 			Channels []Conversation `json:"channels"`
 		}
-		if err := c.call(ctx, "users.conversations", params, &out); err != nil {
+		if err := c.call(ctx, method, params, &out); err != nil {
 			return err
 		}
 		for i := range out.Channels {
@@ -487,20 +511,6 @@ func (c *Client) SearchMessagesPage(ctx context.Context, query string, page int)
 		})
 	}
 	return sp, nil
-}
-
-// ValidateSearchScope verifies the token can call search.messages (user
-// scope search:read), which the reply sweep depends on. Run at add-slack
-// time so an under-scoped token fails setup with instructions instead of
-// failing every future sync's sweep.
-func (c *Client) ValidateSearchScope(ctx context.Context) error {
-	if _, err := c.SearchMessagesPage(ctx, "msgvault scope check", 1); err != nil {
-		if errors.Is(err, ErrAuth) {
-			return fmt.Errorf("token cannot use search.messages, which reply archiving requires — add the search:read user scope, reinstall the app, and retry with the new token: %w", err)
-		}
-		return fmt.Errorf("verify search.messages access: %w", err)
-	}
-	return nil
 }
 
 // permalinkThreadTS extracts the thread_ts query parameter from a message

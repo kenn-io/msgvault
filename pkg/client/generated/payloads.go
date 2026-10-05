@@ -16,6 +16,8 @@ type UploadTokenBody = TokenUploadRequest
 
 type EndBackupFreezeBody = BackupFreezeEndRequest
 
+type ControlCalendarBody = CalendarRequest
+
 type SaveCardDAVAccountBody = CardDAVAccountRequest
 
 type TestCardDAVAccountBody = CardDAVAccountRequest
@@ -102,9 +104,15 @@ type SearchFilesBody = FileSearchHTTPRequest
 
 type LinkIdentityParticipantsBody = IdentityLinkRequest
 
-type AcceptIdentityMatchCandidateBody = DecideIdentityMatchRequest
+type ReviewAcceptIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
 
-type RejectIdentityMatchCandidateBody = DecideIdentityMatchRequest
+type ReviewRejectIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
+
+type PersonMatchScoringConsentBody = PersonMatchConsentDecisionRequest
+
+type PersonMatchScoringRevokeBody = PersonMatchConsentDecisionRequest
+
+type RunPersonMatchScoringBody = PersonMatchScoringRequest
 
 type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 

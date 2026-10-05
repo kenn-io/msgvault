@@ -72,6 +72,13 @@ msgvault import-whatsapp --phone +447700900000 \
 Reading the native store may require Full Disk Access for your terminal in
 **System Settings → Privacy & Security**.
 
+Run the same command again to pick up new messages. Each run reads the whole
+Apple database and writes only messages that are new or changed: edited text, a
+sender or chat that `LID.sqlite` now resolves to a phone number, or a message
+that moved to another chat. `--limit` counts those writes, so unchanged
+messages don't use it up. After an interrupted run, rerun the command to finish.
+Messages deleted in WhatsApp stay in your archive.
+
 ### Format limits
 
 | Format                     | Imported today                                                                                                            | Not included                  |

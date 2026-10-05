@@ -160,6 +160,10 @@
         <p class="status" role="status" aria-live="polite">{controller.status}</p>
       {/if}
 
+      {#if controller.decisionError && !activeDecision}
+        <p class="message" role="alert">{controller.decisionError}</p>
+      {/if}
+
       {#if controller.loading && controller.rows.length === 0}
         <p class="loading">
           <Spinner size={12} label="Loading identity matches" /> Loading identity matches…

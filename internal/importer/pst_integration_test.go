@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	pstlib "github.com/mooijtech/go-pst/v6/pkg"
 	"github.com/stretchr/testify/assert"
@@ -220,6 +221,57 @@ func TestImportPst_SupportPST_Idempotent(t *testing.T) {
 	assert.Equal(int64(0), second.MessagesAdded, "second import: added")
 }
 
+func TestImportPst_DoesNotCheckpointPastHeaderRepairFailure(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := openIntegrationStore(t)
+	pstPath := filepath.Join(pstTestdataDir, "support.pst")
+	first, err := ImportPst(t.Context(), st, pstPath, PstImportOptions{
+		Identifier: "owner@example.test",
+		NoResume:   true,
+	})
+	require.NoError(err)
+	require.Zero(first.Errors)
+
+	var failedID int64
+	require.NoError(st.DB().QueryRow(`
+		SELECT id FROM messages
+		WHERE source_id = ? AND rfc822_message_id IS NOT NULL AND rfc822_message_id <> ''
+		ORDER BY id LIMIT 1
+	`, first.SourceID).Scan(&failedID))
+	var laterMessages int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE source_id = ? AND id > ?`, first.SourceID, failedID,
+	).Scan(&laterMessages))
+	require.GreaterOrEqual(laterMessages, 2, "the failed repair must have a later batch")
+	_, err = st.DB().Exec(`UPDATE messages SET metadata = '{' WHERE id = ?`, failedID)
+	require.NoError(err)
+
+	failed, err := importPstWithBatchSize(t.Context(), st, pstPath, PstImportOptions{
+		Identifier:         "owner@example.test",
+		NoResume:           true,
+		CheckpointInterval: 1,
+	}, 2)
+	require.NoError(err)
+	require.True(failed.HardErrors)
+	require.Equal(int64(1), failed.Errors)
+
+	_, err = st.DB().Exec(`UPDATE messages SET metadata = NULL WHERE id = ?`, failedID)
+	require.NoError(err)
+	resumed, err := ImportPst(t.Context(), st, pstPath, PstImportOptions{
+		Identifier:         "owner@example.test",
+		CheckpointInterval: 1,
+	})
+	require.NoError(err)
+	require.True(resumed.WasResumed)
+
+	var metadata string
+	require.NoError(st.DB().QueryRow(
+		`SELECT COALESCE(metadata, '') FROM messages WHERE id = ?`, failedID,
+	).Scan(&metadata))
+	assert.Contains(metadata, `"pst_thread_key"`)
+}
+
 // TestImportPst_SupportPST_CrossFolderLabels verifies that duplicate messages
 // (same content in Drafts and Sent Messages) get both folder labels applied
 // rather than being ingested twice.
@@ -283,6 +335,59 @@ func TestImportPst_SupportPST_ContextCancelled(t *testing.T) {
 
 	// Must not panic and must return a (possibly zero) summary.
 	require.NotNil(t, summary, "ImportPst returned nil summary")
+}
+
+func TestImportPst_ContextCancellationResumesWithoutSkippingMessages(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		batchSize int
+	}{
+		{"inside a batch", 2},
+		{"between batches", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := openIntegrationStore(t)
+			pstPath := filepath.Join(pstTestdataDir, "support.pst")
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			var ingestCalls int
+			interrupted, err := importPstWithBatchSize(ctx, st, pstPath, PstImportOptions{
+				Identifier:         "owner@example.test",
+				CheckpointInterval: 200,
+				IngestFunc: func(
+					ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string,
+					labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time,
+					log *slog.Logger,
+				) error {
+					ingestCalls++
+					err := IngestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs,
+						sourceMsgID, rawHash, raw, fallbackDate, log)
+					if err == nil && ingestCalls == 1 {
+						cancel()
+					}
+					return err
+				},
+			}, tc.batchSize)
+			require.NoError(err, "an interrupted import reports through the summary, not an error")
+			require.Equal(1, ingestCalls)
+			require.Equal(int64(1), interrupted.MessagesAdded)
+
+			resumed, err := ImportPst(t.Context(), st, pstPath, PstImportOptions{
+				Identifier: "owner@example.test",
+			})
+			require.NoError(err)
+			assert.True(resumed.WasResumed)
+
+			var messageCount int64
+			require.NoError(st.DB().QueryRow(
+				`SELECT COUNT(*) FROM messages WHERE source_id = ?`, interrupted.SourceID,
+			).Scan(&messageCount))
+			assert.Equal(int64(17), messageCount)
+		})
+	}
 }
 
 // TestImportPst_32BitPST verifies that a 32-bit format PST is handled

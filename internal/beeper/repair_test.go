@@ -193,6 +193,9 @@ func TestRepairSourceResumesFromLastSuccessfulRowAfterFailure(t *testing.T) {
 	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	sourceID := beeperSourceID(t, st)
+	require.NoError(st.AddAccountIdentity(sourceID, "owner@example.test", "manual"))
+	_, err = st.RemoveAccountIdentity(sourceID, "owner@example.test")
+	require.NoError(err)
 
 	rows, err := st.DB().Query(st.Rebind(
 		`SELECT id FROM messages WHERE source_id = ? ORDER BY id`), sourceID)
@@ -220,7 +223,7 @@ func TestRepairSourceResumesFromLastSuccessfulRowAfterFailure(t *testing.T) {
 	assert.Equal(int64(1), sum.Errors)
 	source, err := st.GetSourceByID(sourceID)
 	require.NoError(err)
-	assert.JSONEq(fmt.Sprintf(`{"repair_version":"%s","repair_after_id":%d}`,
+	assert.JSONEq(fmt.Sprintf(`{"repair_version":"%s","repair_after_id":%d,"no_default_identity":true}`,
 		rederiveVersion, messageIDs[0]), source.SyncConfig.String,
 		"checkpoint stays on the last row whose repair committed")
 
@@ -232,7 +235,8 @@ func TestRepairSourceResumesFromLastSuccessfulRowAfterFailure(t *testing.T) {
 	assert.Zero(sum.Errors)
 	source, err = st.GetSourceByID(sourceID)
 	require.NoError(err)
-	assert.Equal("{}", source.SyncConfig.String, "only a completed repair clears its checkpoint")
+	assert.JSONEq(`{"no_default_identity":true}`, source.SyncConfig.String,
+		"completed repair clears only its checkpoint and preserves the ownership opt-out")
 }
 
 func TestRepairArchiveRefreshesSnippetAndFTSWhenBodyIsCurrent(t *testing.T) {

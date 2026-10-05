@@ -63,6 +63,24 @@ msgvault import-pst you@outlook.com backup.pst --no-resume
 
 PST imports are resumable. msgvault records a content-based archive fingerprint so an interrupted import resumes only when the file still matches the checkpointed archive.
 
+On `main`, the importer keeps existing transport threading headers and fills
+missing `Message-ID`, `In-Reply-To`, and `References` fields from the PST's
+stored email metadata (MAPI properties). It groups replies by archived email
+identifiers after importing all folders, so replies can precede their parents
+in the file. Messages with no usable threading identifiers keep the existing
+fallback grouping.
+
+To repair missing identifiers from an earlier import, rerun the same PST with
+the same identifier and `--no-resume`:
+
+```bash
+msgvault import-pst owner@example.com /path/to/archive.pst --no-resume
+```
+
+The rerun fills missing header metadata and reconciles conversations. It keeps
+existing raw messages, bodies, attachments, and conflicting stored identifiers.
+Existing messages count as skipped and receive their folder labels as usual.
+
 ## import-mbox
 
 Import a standard [MBOX](https://en.wikipedia.org/wiki/Mbox) file (any extension) or a `.zip` archive containing one or more MBOX files.

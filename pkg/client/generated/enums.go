@@ -63,6 +63,100 @@ func (c CLIDeduplicatePlanRequestPlanProtocol) Validate() error {
 	}
 }
 
+type CalendarRequestAction string
+
+const (
+	Conflicts CalendarRequestAction = "conflicts"
+	Create    CalendarRequestAction = "create"
+	Delete    CalendarRequestAction = "delete"
+	Freebusy  CalendarRequestAction = "freebusy"
+	Move      CalendarRequestAction = "move"
+	Respond   CalendarRequestAction = "respond"
+	Update    CalendarRequestAction = "update"
+)
+
+// Validate checks if the CalendarRequestAction value is valid
+func (c CalendarRequestAction) Validate() error {
+	switch c {
+	case Conflicts, Create, Delete, Freebusy, Move, Respond, Update:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CalendarRequestAction value, got: %v", c))
+	}
+}
+
+type CalendarRequestResponse string
+
+const (
+	CalendarRequestResponseAccepted  CalendarRequestResponse = "accepted"
+	CalendarRequestResponseDeclined  CalendarRequestResponse = "declined"
+	CalendarRequestResponseTentative CalendarRequestResponse = "tentative"
+)
+
+// Validate checks if the CalendarRequestResponse value is valid
+func (c CalendarRequestResponse) Validate() error {
+	switch c {
+	case CalendarRequestResponseAccepted, CalendarRequestResponseDeclined, CalendarRequestResponseTentative:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CalendarRequestResponse value, got: %v", c))
+	}
+}
+
+type CalendarRequestScope string
+
+const (
+	CalendarRequestScopeAll    CalendarRequestScope = "all"
+	CalendarRequestScopeFuture CalendarRequestScope = "future"
+	CalendarRequestScopeSingle CalendarRequestScope = "single"
+)
+
+// Validate checks if the CalendarRequestScope value is valid
+func (c CalendarRequestScope) Validate() error {
+	switch c {
+	case CalendarRequestScopeAll, CalendarRequestScopeFuture, CalendarRequestScopeSingle:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CalendarRequestScope value, got: %v", c))
+	}
+}
+
+type CalendarRequestSendUpdates string
+
+const (
+	CalendarRequestSendUpdatesAll          CalendarRequestSendUpdates = "all"
+	CalendarRequestSendUpdatesExternalOnly CalendarRequestSendUpdates = "externalOnly"
+	CalendarRequestSendUpdatesNone         CalendarRequestSendUpdates = "none"
+)
+
+// Validate checks if the CalendarRequestSendUpdates value is valid
+func (c CalendarRequestSendUpdates) Validate() error {
+	switch c {
+	case CalendarRequestSendUpdatesAll, CalendarRequestSendUpdatesExternalOnly, CalendarRequestSendUpdatesNone:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CalendarRequestSendUpdates value, got: %v", c))
+	}
+}
+
+// CalendarResultOutcomeCode Machine-readable classification for a partial provider write
+type CalendarResultOutcomeCode string
+
+const (
+	CalendarOutcomeUnknown CalendarResultOutcomeCode = "calendar_outcome_unknown"
+	CalendarPartial        CalendarResultOutcomeCode = "calendar_partial"
+)
+
+// Validate checks if the CalendarResultOutcomeCode value is valid
+func (c CalendarResultOutcomeCode) Validate() error {
+	switch c {
+	case CalendarOutcomeUnknown, CalendarPartial:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CalendarResultOutcomeCode value, got: %v", c))
+	}
+}
+
 type CandidateClassification string
 
 const (
@@ -536,14 +630,14 @@ type DiscoverEventType string
 
 const (
 	DiscoverEventTypeProgress DiscoverEventType = "progress"
+	DiscoverEventTypeResult   DiscoverEventType = "result"
 	Error                     DiscoverEventType = "error"
-	Result                    DiscoverEventType = "result"
 )
 
 // Validate checks if the DiscoverEventType value is valid
 func (d DiscoverEventType) Validate() error {
 	switch d {
-	case DiscoverEventTypeProgress, Error, Result:
+	case DiscoverEventTypeProgress, DiscoverEventTypeResult, Error:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid DiscoverEventType value, got: %v", d))

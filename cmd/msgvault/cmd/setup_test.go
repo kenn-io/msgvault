@@ -126,6 +126,57 @@ func TestSetupWithoutGoogleCredentials(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "no NAS bundle without a remote")
 }
 
+func TestSetupDoesNotPersistHTTPForRuntimeRemoteURL(t *testing.T) { //nolint:paralleltest // process environment
+	require := require.New(t)
+	assert := assert.New(t)
+	home := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = home
+	cfg.Data.DataDir = home
+	cfg.Remote.URL = "https://configured.example.test:8080"
+	require.NoError(cfg.Save())
+
+	t.Setenv("MSGVAULT_REMOTE_URL", "http://runtime.example.test:8080")
+	runtimeConfig, err := config.Load("", home)
+	require.NoError(err)
+	cmd := &cobra.Command{}
+	cmd.SetContext(withTestConfig(t, runtimeConfig))
+	cmd.SetIn(strings.NewReader("\ny\n"))
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	require.NoError(runSetup(cmd, nil))
+
+	persisted, err := os.ReadFile(runtimeConfig.ConfigFilePath())
+	require.NoError(err)
+	assert.Contains(string(persisted), "https://configured.example.test:8080")
+	assert.NotContains(string(persisted), "http://runtime.example.test:8080")
+	assert.NotContains(string(persisted), "allow_insecure = true")
+}
+
+func TestSetupPersistsExplicitRemoteMatchingEnvironment(t *testing.T) { //nolint:paralleltest // process environment
+	require := require.New(t)
+	assert := assert.New(t)
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[remote]\nurl = 'https://old.example.test'\n"), 0o600))
+	t.Setenv("MSGVAULT_REMOTE_URL", "http://archive.example.test:8080")
+	t.Setenv("MSGVAULT_REMOTE_ALLOW_INSECURE", "true")
+	cfg, err := config.Load(path, home)
+	require.NoError(err)
+	cmd := &cobra.Command{}
+	cmd.SetContext(withTestConfig(t, cfg))
+	cmd.SetIn(strings.NewReader("\nn\ny\narchive.example.test\n8080\n"))
+	cmd.SetOut(&bytes.Buffer{})
+	require.NoError(runSetup(cmd, nil))
+	snapshot, err := config.ReadConfigFile(path)
+	require.NoError(err)
+	saved, err := config.LoadConfigFile(snapshot, home)
+	require.NoError(err)
+	assert.Equal("http://archive.example.test:8080", saved.Remote.URL)
+	assert.True(saved.Remote.AllowInsecure)
+	assert.NotEmpty(saved.Remote.APIKey)
+}
+
 func TestSetupWithGoogleCredentialsPrintsGmailSteps(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

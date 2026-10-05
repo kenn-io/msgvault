@@ -99,6 +99,12 @@ func coveredRelatedChangesSQL() string {
 		WHERE seq > ? AND message_id <= ?`
 }
 
+// Pending rows can become exportable below the committed ID boundary. A child
+// journal alone cannot repair those missing message facts.
+func coveredCacheMessageCountSQL() string {
+	return "SELECT COUNT(*) FROM messages WHERE id <= ? AND " + exportableMessageWhere("")
+}
+
 // hiddenSinceBuildCountSQL counts exportable messages dedup-hidden since the
 // last cache build. Same cold-start constraint as deletedSinceBuildCountSQL:
 // it must be served by idx_messages_deleted_at.
@@ -337,6 +343,7 @@ func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir 
 	}
 
 	var hasSyncRunsTable int
+	var coveredAdditionReason string
 	if ctx.Err() != nil {
 		return cacheStaleness{}
 	}
@@ -385,17 +392,21 @@ func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir 
 			// boundary for ordinary append-only syncs. If the ID boundary did not
 			// move (or history moved backwards), the changed addition counter may
 			// describe related rows for a parent already present in Parquet, so a
-			// full rebuild is the only safe repair.
-			if counters.additions < state.LastCacheAdditionCount || maxLiveID <= state.LastMessageID {
+			// full rebuild is needed unless the child-row journal covers the
+			// pending repair. Classify that case after inspecting the journal.
+			if counters.additions < state.LastCacheAdditionCount {
 				result.HasUpdated = true
 				result.FullRebuild = true
 				reasons = append(reasons, fmt.Sprintf(
 					"cache addition watermark changed from %d to %d within message boundary %d",
 					state.LastCacheAdditionCount, counters.additions, state.LastMessageID))
+			} else if maxLiveID <= state.LastMessageID {
+				coveredAdditionReason = fmt.Sprintf(
+					"cache addition watermark changed from %d to %d within message boundary %d",
+					state.LastCacheAdditionCount, counters.additions, state.LastMessageID)
 			}
 		}
 	}
-
 	if ctx.Err() != nil {
 		return cacheStaleness{}
 	}
@@ -443,6 +454,22 @@ func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir 
 
 	if ctx.Err() != nil {
 		return cacheStaleness{}
+	}
+	if coveredAdditionReason != "" {
+		reasons = append(reasons, coveredAdditionReason)
+		var coveredCount int64
+		// Serving stays on indexed staleness signals. The builder verifies
+		// population from its read snapshot before repairing child rows.
+		if result.HasRelatedRowDrift && !markerOnly {
+			if err := db.DB().QueryRowContext(ctx, coveredCacheMessageCountSQL(), state.LastMessageID).
+				Scan(&coveredCount); err != nil {
+				return cacheStalenessFailure(ctx, "cannot verify cached message population")
+			}
+		}
+		if !result.HasRelatedRowDrift || (!markerOnly && coveredCount != state.Stats.TotalMessages) {
+			result.HasUpdated = true
+			result.FullRebuild = true
+		}
 	}
 	derivedDataRevision, err := db.DerivedDataRevisionContext(ctx)
 	if err != nil {
@@ -574,13 +601,11 @@ func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir 
 		}
 	}
 
-	// An incremental build can append only new activity rows. If canonical
-	// links, conversation membership, or conversation types also changed,
-	// existing rows need to be rewritten under the new relationship
-	// dimensions, so rebuild the base generation and relationship index
-	// together.
+	// Membership and conversation types still require a full build on append.
+	// Canonical links can instead rebuild the relationship index from retained
+	// message facts plus the appended shards, without re-exporting old messages.
 	if result.HasNew &&
-		(result.HasIdentityDrift || result.HasConversationParticipantDrift ||
+		(result.HasConversationParticipantDrift ||
 			result.HasConversationTypeDrift) {
 		result.FullRebuild = true
 	}

@@ -161,8 +161,10 @@ Fastmail alias inventory, person promotion, and typed attributes.
 
 New Gmail, IMAP, Microsoft 365, MBOX, EML, EMLX, WhatsApp, and Google Voice sources auto-confirm the source identifier by default. Use `--no-default-identity` on supported add/import commands when that is not correct. (iMessage imports are exempt, because iMessage contacts are not self-identifying.)
 
-For accounts added with older versions, run the add command again with
-`--no-default-identity` to save the choice, then remove any unwanted identity.
+For older accounts, run the add command with `--no-default-identity` to save
+the choice. Removing the last confirmed identity also saves this choice, so
+later syncs will not restore the source identifier. To re-enable automatic
+confirmation, use `--no-default-identity=false` on the source's add command.
 See the CLI reference for [saved identity choices](../cli-reference.md#saved-default-identity-choice),
 including re-authorization and re-enabling defaults.
 
@@ -178,7 +180,23 @@ msgvault identity add work@company.com alias@company.com
 msgvault identity remove work@company.com old-alias@company.com
 ```
 
-Each confirmed identifier records the signals that confirmed it: `account-identifier` (the address matches the account's own identifier, such as the Gmail address itself), `phone-e164` (a phone number from an SMS or chat source), `manual` (an entry you added via `identity add`), or `config_migration` (carried over from a legacy `[identity]` config block). An identifier accumulates signals over time as new evidence appears; it is removed only by `identity remove`.
+Each confirmed identifier records the signals that confirmed it:
+`account-identifier` (the account's own address), `phone-e164` (a phone number
+from an SMS or chat source), `manual` (an entry added via `identity add`), or
+`config_migration` (carried over from a legacy `[identity]` config block).
+Observed sent mail can also add `is_from_me`, `sent-folder`, or `sent-label`
+evidence to confirmed identities.
+
+Gmail sync adds `oauth` when the authenticated profile matches an
+already-confirmed address, including Gmail's equivalent address spellings.
+These refreshes preserve identity removal and `--no-default-identity`; they do
+not confirm new addresses. If the profile address differs from the source
+address, sync logs a warning and continues without adding identity evidence.
+Use the [identity discovery workflow](people.md)
+to review and confirm new identities, including authenticated Gmail profile
+evidence with `--provider`.
+
+An identifier accumulates signals over time as new evidence appears; it is removed only by `identity remove`.
 
 `identity list` can be scoped to one account or one collection. A collection's identity is the union of its member accounts' confirmed identifiers:
 
@@ -283,8 +301,8 @@ collection; selections spanning sources are rejected. Deduplication remains
 available through the collection-scoped CLI commands, not through the TUI.
 
 Meetings mode uses the same key for a separate source selector. It lists
-Granola, Circleback, Notion, and Muesli meeting sources. Changing it does not replace
-the Email account filter.
+Granola, Plaud, Circleback, Notion, and Muesli meeting sources. Changing it does
+not replace the Email account filter.
 
 ## Command Reference
 

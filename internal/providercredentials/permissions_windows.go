@@ -34,7 +34,7 @@ func (nativePermissions) verifyDirectory(path string) error {
 		return err
 	}
 	defer windows.CloseHandle(handle) //nolint:errcheck // read-only handle
-	return verifyOwnerOnlyHandle(handle)
+	return verifyOwnerOnlyHandle(handle, false)
 }
 
 func (nativePermissions) secureFile(file *os.File) error {
@@ -53,7 +53,7 @@ func (nativePermissions) secureFile(file *os.File) error {
 }
 
 func (nativePermissions) verifyFile(file *os.File) error {
-	return verifyOwnerOnlyHandle(windows.Handle(file.Fd()))
+	return verifyOwnerOnlyHandle(windows.Handle(file.Fd()), false)
 }
 
 func openSecurityHandle(path string, directory bool, access uint32) (windows.Handle, error) {
@@ -106,18 +106,18 @@ func secureOwnerOnlyHandle(handle windows.Handle) error {
 		windows.SECURITY_INFORMATION(securityInfo), nil, nil, acl, nil); err != nil {
 		return fmt.Errorf("set owner-only provider credential DACL: %w", err)
 	}
-	return verifyOwnerOnlyHandleForUser(handle, user.User.Sid)
+	return verifyOwnerOnlyHandleForUser(handle, user.User.Sid, false)
 }
 
-func verifyOwnerOnlyHandle(handle windows.Handle) error {
+func verifyOwnerOnlyHandle(handle windows.Handle, allowReadOnly bool) error {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		return fmt.Errorf("get current user SID: %w", err)
 	}
-	return verifyOwnerOnlyHandleForUser(handle, user.User.Sid)
+	return verifyOwnerOnlyHandleForUser(handle, user.User.Sid, allowReadOnly)
 }
 
-func verifyOwnerOnlyHandleForUser(handle windows.Handle, user *windows.SID) error {
+func verifyOwnerOnlyHandleForUser(handle windows.Handle, user *windows.SID, allowReadOnly bool) error {
 	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
@@ -148,10 +148,11 @@ func verifyOwnerOnlyHandleForUser(handle windows.Handle, user *windows.SID) erro
 	if err := windows.GetAce(dacl, 0, &ace); err != nil {
 		return fmt.Errorf("read provider credential ACE: %w", err)
 	}
-	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
-		(ace.Mask != windows.GENERIC_ALL && ace.Mask != providerCredentialFileAllAccess) ||
+	fullControl := ace.Mask == windows.GENERIC_ALL || ace.Mask == providerCredentialFileAllAccess
+	readOnly := allowReadOnly && (ace.Mask == windows.GENERIC_READ || ace.Mask == windows.FILE_GENERIC_READ)
+	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || (!fullControl && !readOnly) ||
 		ace.Header.AceFlags&windows.INHERITED_ACE != 0 {
-		return errors.New("provider credential DACL does not grant exactly owner full control")
+		return errors.New("provider credential DACL does not grant the required owner access")
 	}
 	// #nosec G103 -- GetAce supplies an access-allowed ACE whose SidStart is the first word of its contiguous SID.
 	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
@@ -183,6 +184,12 @@ func openStoreFile(path string) (*os.File, error) {
 		return nil, err
 	}
 	return os.NewFile(uintptr(handle), path), nil
+}
+
+func openSecretFile(path string) (*os.File, error) { return openStoreFile(path) }
+
+func verifySecretFile(file *os.File) error {
+	return verifyOwnerOnlyHandle(windows.Handle(file.Fd()), true)
 }
 
 func withStoreLock(tokenDir string, fn func() error) error {

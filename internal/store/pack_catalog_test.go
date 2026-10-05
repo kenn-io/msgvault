@@ -173,21 +173,21 @@ func (h *msgvaultPackHarness) Snapshot() packstoretest.CatalogState {
 		Members: make(map[packstore.Hash]bool), Entries: make(map[packstore.Hash]packstore.IndexEntry),
 		Packs: make(map[string]packstore.PackRecord),
 	}
-	references, err := h.store.ListReferencedBlobHashes()
+	references, err := h.store.ListReferencedBlobHashesContext(h.t.Context())
 	require.NoError(h.t, err)
 	for raw := range references {
 		hash, parseErr := packstore.ParseHash(raw)
 		require.NoError(h.t, parseErr)
 		state.Members[hash] = true
 	}
-	entries, err := h.store.ListIndexedBlobEntries()
+	entries, err := h.store.ListIndexedBlobEntriesContext(h.t.Context())
 	require.NoError(h.t, err)
 	for _, entry := range entries {
 		converted, convertErr := fromStoreEntryTest(entry)
 		require.NoError(h.t, convertErr)
 		state.Entries[converted.Hash] = converted
 	}
-	records, err := h.store.ListPackRecords()
+	records, err := h.store.ListPackRecordsContext(h.t.Context())
 	require.NoError(h.t, err)
 	for _, record := range records {
 		converted := fromStoreRecordTest(record)
@@ -223,4 +223,126 @@ func fromStoreEntryTest(entry store.PackIndexEntry) (packstore.IndexEntry, error
 	}
 	return packstore.IndexEntry{Hash: hash, PackID: entry.PackID, Offset: entry.Offset,
 		StoredLen: entry.StoredLen, RawLen: entry.RawLen, Flags: entry.Flags, CRC32C: entry.CRC32C}, nil
+}
+
+func TestPackCatalogCancellationWhileWaitingForDatabase(t *testing.T) {
+	// Catalog discovery must pass cancellation into SQL, not only check it
+	// before starting. A held connection models contention without a large fixture.
+	for _, method := range []string{
+		"references", "unpacked", "indexed", "packs", "entries", "resolve", "has-record",
+		"record", "adopt", "delete-record", "delete-entry", "clear-metadata",
+	} {
+		t.Run(method, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			hash, err := packstore.ParseHash(pack.ComputeBlobID([]byte("catalog cancellation")).String())
+			require.NoError(err)
+			st.DB().SetMaxOpenConns(1)
+			conn, err := st.DB().Conn(t.Context())
+			require.NoError(err)
+			defer func() { _ = conn.Close() }()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			initial := st.DB().Stats().WaitCount
+			done := make(chan error, 1)
+			catalog := store.NewPackCatalog(st)
+			go func() {
+				var err error
+				switch method {
+				case "references":
+					_, err = catalog.ListReferences(ctx)
+				case "unpacked":
+					_, err = catalog.ListUnpacked(ctx)
+				case "indexed":
+					_, err = catalog.ListIndexed(ctx)
+				case "packs":
+					_, err = catalog.ListPackRecords(ctx)
+				case "entries":
+					_, err = catalog.ListPackEntries(ctx, "synthetic-pack")
+				case "resolve":
+					_, err = catalog.Resolve(ctx, hash)
+				case "has-record":
+					_, err = catalog.HasPackRecord(ctx, pack.NewPackID())
+				case "record":
+					err = catalog.RecordPack(ctx, packstore.PackRecord{
+						PackID: pack.NewPackID(), CreatedAt: time.Now(),
+					}, nil)
+				case "adopt":
+					err = catalog.AdoptPack(ctx, packstore.PackRecord{
+						PackID: pack.NewPackID(), CreatedAt: time.Now(),
+					}, nil)
+				case "delete-record":
+					err = catalog.DeletePackRecord(ctx, pack.NewPackID())
+				case "delete-entry":
+					err = catalog.DeleteIndexEntry(ctx, hash)
+				case "clear-metadata":
+					err = catalog.ClearPackMetadata(ctx)
+				}
+				done <- err
+			}()
+			require.Eventually(func() bool { return st.DB().Stats().WaitCount > initial }, 5*time.Second, 10*time.Millisecond)
+			cancel()
+			select {
+			case err := <-done:
+				require.ErrorIs(err, context.Canceled)
+			case <-time.After(5 * time.Second):
+				require.NoError(conn.Close())
+				<-done
+				require.FailNow("catalog discovery ignored cancellation while waiting for SQL")
+			}
+		})
+	}
+}
+
+func TestPackVerificationWindowListsRowsAsKitReadsThem(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	hash := "aa11223344556677889900aabbccddeeff00112233445566778899aabbccddee"
+	oldPack, newPack := pack.NewPackID(), pack.NewPackID()
+	created := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	require.NoError(st.RecordPackedBlobs(store.PackRecord{PackID: oldPack, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
+		[]store.PackIndexEntry{{BlobHash: hash, PackID: oldPack, Offset: 6, StoredLen: 64, RawLen: 64}}))
+	ctx, pass, err := st.BeginPackVerification(t.Context(), 128, 32<<20)
+	require.NoError(err)
+	// A repack that commits before Pack takes the maintenance lease moves the
+	// row; repair must see the new location, or it deletes a live mapping.
+	require.NoError(st.AdoptPackedBlobs(store.PackRecord{PackID: newPack, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
+		[]store.PackIndexEntry{{BlobHash: hash, PackID: newPack, Offset: 6, StoredLen: 64, RawLen: 64}}))
+	indexed, err := store.NewPackCatalog(st).ListIndexed(ctx)
+	require.NoError(err)
+	require.Len(indexed, 1)
+	assert.Equal(newPack, indexed[0].PackID)
+	more, err := st.FinishPackVerification(t.Context(), pass)
+	require.NoError(err)
+	assert.False(more)
+}
+
+func TestPackVerificationWindowKeepsItsRangeAcrossListings(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	created := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	record := func(hash string) {
+		packID := pack.NewPackID()
+		require.NoError(st.RecordPackedBlobs(store.PackRecord{PackID: packID, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
+			[]store.PackIndexEntry{{BlobHash: hash, PackID: packID, Offset: 6, StoredLen: 64, RawLen: 64}}))
+	}
+	inWindow := "aa11223344556677889900aabbccddeeff00112233445566778899aabbccddee"
+	record(inWindow)
+	ctx, pass, err := st.BeginPackVerification(t.Context(), 128, 32<<20)
+	require.NoError(err)
+	catalog := store.NewPackCatalog(st)
+	repair, err := catalog.ListIndexed(ctx)
+	require.NoError(err)
+	require.Len(repair, 1)
+	// Pack records newly packed blobs between its repair and sweep listings.
+	record("bb11223344556677889900aabbccddeeff00112233445566778899aabbccddee")
+	sweep, err := catalog.ListIndexed(ctx)
+	require.NoError(err)
+	require.Len(sweep, 1, "the sweep covers the window repair verified, not rows added after it")
+	assert.Equal(inWindow, sweep[0].Hash.String())
+	more, err := st.FinishPackVerification(t.Context(), pass)
+	require.NoError(err)
+	assert.False(more)
 }

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -21,6 +22,8 @@ const (
 )
 
 var (
+	// ErrWorkRemaining reports a completed bounded pass with more work to drain.
+	ErrWorkRemaining                = errors.New("activity projection has more work")
 	errProjectionEpochChanged       = errors.New("activity projection epoch changed")
 	errProjectionTimezoneChanged    = errors.New("activity projection timezone changed")
 	errProjectionDirectLimitChanged = errors.New(
@@ -32,6 +35,8 @@ var (
 )
 
 type projectorStore interface {
+	ActivityProjectionCursorContext(ctx context.Context, pass, target string) (int64, error)
+	SetActivityProjectionCursorContext(ctx context.Context, pass, target string, afterID int64) error
 	LoadQueuedActivityCandidatesContext(ctx context.Context, limit int) ([]store.ActivityCandidate, error)
 	ScanForActivityProjectionContext(ctx context.Context, afterID int64, limit int) ([]store.ActivityCandidate, error)
 	ScanAllActivityCandidatesContext(ctx context.Context, afterID int64, limit int) ([]store.ActivityCandidate, error)
@@ -56,7 +61,9 @@ type Options struct {
 	Timezone              string
 	MaxDirectCounterparts int
 	BatchSize             int
-	Log                   *slog.Logger
+	// MaxBatches bounds a RunOnce pass. Zero preserves unbounded manual builds.
+	MaxBatches int
+	Log        *slog.Logger
 }
 
 type RunResult struct {
@@ -90,6 +97,7 @@ type Projector struct {
 	location              *time.Location
 	maxDirectCounterparts int
 	batchSize             int
+	maxBatches            int
 	log                   *slog.Logger
 }
 
@@ -113,6 +121,9 @@ func NewProjector(st projectorStore, options Options) (*Projector, error) {
 	if maxDirect == 0 {
 		maxDirect = DefaultMaxDirectCounterparts
 	}
+	if options.MaxBatches < 0 {
+		return nil, errors.New("activity: max batches must be non-negative")
+	}
 	if batchSize < 0 || batchSize > MaxProjectionBatchSize {
 		return nil, fmt.Errorf("activity: batch size must be between 1 and %d",
 			MaxProjectionBatchSize)
@@ -132,11 +143,38 @@ func NewProjector(st projectorStore, options Options) (*Projector, error) {
 		location:              location,
 		maxDirectCounterparts: maxDirect,
 		batchSize:             batchSize,
+		maxBatches:            options.MaxBatches,
 		log:                   log,
 	}, nil
 }
 
+type projectionBudgetKey struct{}
+type projectionBudget struct{ remaining int }
+
+func projectionCheckpoint(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if jobctx.PreemptionRequested(ctx) {
+		return ErrWorkRemaining
+	}
+	if budget, ok := ctx.Value(projectionBudgetKey{}).(*projectionBudget); ok && budget.remaining <= 0 {
+		return ErrWorkRemaining
+	}
+	return nil
+}
+
+func useProjectionBatch(ctx context.Context) {
+	jobctx.RecordProgress(ctx)
+	if budget, ok := ctx.Value(projectionBudgetKey{}).(*projectionBudget); ok {
+		budget.remaining--
+	}
+}
+
 func (p *Projector) RunOnce(ctx context.Context) (RunResult, error) {
+	if p.maxBatches > 0 {
+		ctx = context.WithValue(ctx, projectionBudgetKey{}, &projectionBudget{remaining: p.maxBatches})
+	}
 	var result RunResult
 	if err := p.convergeTimezone(ctx, &result); err != nil {
 		return result, err
@@ -320,6 +358,9 @@ func (p *Projector) RecomputeStale(ctx context.Context) (RunResult, error) {
 		if len(personIDs) == 0 {
 			return result, nil
 		}
+		if err := projectionCheckpoint(ctx); err != nil {
+			return result, err
+		}
 		if err := p.store.RecomputeContactStateContext(
 			ctx, personIDs, current); err != nil {
 			if _, ok := errors.AsType[*store.ErrActivityProjectionStale](err); ok {
@@ -328,6 +369,7 @@ func (p *Projector) RecomputeStale(ctx context.Context) (RunResult, error) {
 			return result, err
 		}
 		result.PersonsRecomputed += len(personIDs)
+		useProjectionBatch(ctx)
 		result.Batches++
 	}
 }
@@ -511,7 +553,11 @@ func (p *Projector) reconcileRevisions(
 			}
 			return err
 		}
-		afterID := int64(0)
+		token := fmt.Sprintf("%d/%d", target.IdentityRevision, target.AccountIdentityRevision)
+		afterID, err := p.store.ActivityProjectionCursorContext(ctx, "revisions", token)
+		if err != nil {
+			return err
+		}
 		restart := false
 		for {
 			candidates, loadErr := p.store.ScanForActivityProjectionContext(
@@ -532,6 +578,9 @@ func (p *Projector) reconcileRevisions(
 				return err
 			}
 			afterID = candidates[len(candidates)-1].MessageID
+			if err := p.store.SetActivityProjectionCursorContext(ctx, "revisions", token, afterID); err != nil {
+				return err
+			}
 		}
 		if restart {
 			continue
@@ -550,6 +599,9 @@ func (p *Projector) reconcileRevisions(
 			return err
 		}
 		if len(remaining) != 0 {
+			if err := p.store.SetActivityProjectionCursorContext(ctx, "revisions", token, 0); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := p.store.CompareAndSetActivityReconciledRevisionsContext(
@@ -583,6 +635,33 @@ func (p *Projector) forceScan(
 	result *RunResult,
 ) error {
 	afterID := int64(0)
+	pass, token := "", ""
+	if expectedTimezone != nil && expectedTimezone.Active {
+		pass = "timezone"
+	} else if expectedDirectLimit != nil && expectedDirectLimit.Active {
+		pass = "direct_limit"
+	}
+	if pass != "" {
+		// The token names only the configuration transition. Rows projected
+		// before an identity change keep their old revision stamp, and
+		// reconcileRevisions re-projects them afterward, so an identity change
+		// must not restart this full-archive scan.
+		var timezone store.ActivityTimezoneTransition
+		if expectedTimezone != nil {
+			timezone = *expectedTimezone
+		}
+		var directLimit store.ActivityDirectLimitTransition
+		if expectedDirectLimit != nil {
+			directLimit = *expectedDirectLimit
+		}
+		token = fmt.Sprintf("%t/%q/%d/%t/%d/%d", timezone.Active, timezone.Target, timezone.Generation,
+			directLimit.Active, directLimit.Target, directLimit.Generation)
+		var err error
+		afterID, err = p.store.ActivityProjectionCursorContext(ctx, pass, token)
+		if err != nil {
+			return err
+		}
+	}
 	for {
 		candidates, err := p.store.ScanAllActivityCandidatesContext(
 			ctx, afterID, p.batchSize)
@@ -598,6 +677,11 @@ func (p *Projector) forceScan(
 			return err
 		}
 		afterID = candidates[len(candidates)-1].MessageID
+		if pass != "" {
+			if err := p.store.SetActivityProjectionCursorContext(ctx, pass, token, afterID); err != nil {
+				return err
+			}
+		}
 	}
 }
 
@@ -640,6 +724,9 @@ func (p *Projector) projectCandidates(
 	if len(candidates) == 0 {
 		return nil
 	}
+	if err := projectionCheckpoint(ctx); err != nil {
+		return err
+	}
 	current := candidates
 	for attempt := range projectorStaleRetries {
 		if expected != nil && !candidatesAtRevision(current, *expected) {
@@ -661,6 +748,7 @@ func (p *Projector) projectCandidates(
 		batch, err := p.store.ProjectActivityBatchContext(ctx, projections)
 		if err == nil {
 			result.add(batch)
+			useProjectionBatch(ctx)
 			p.advanceWatermark(ctx, current, result)
 			return nil
 		}

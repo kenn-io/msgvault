@@ -806,6 +806,8 @@ components:
           type: string
         oauth_app_explicit:
           type: boolean
+        write:
+          type: boolean
       required:
         - email
       type: object
@@ -1264,6 +1266,208 @@ components:
           type: array
       required:
         - status
+      type: object
+    CalendarConflict:
+      additionalProperties: true
+      properties:
+        calendar_ids:
+          items:
+            type: string
+          type: array
+        end:
+          format: date-time
+          type: string
+        start:
+          format: date-time
+          type: string
+      required:
+        - calendar_ids
+        - start
+        - end
+      type: object
+    CalendarEventTarget:
+      additionalProperties: true
+      properties:
+        start:
+          $ref: "#/components/schemas/GCalEventDateTime"
+        summary:
+          type: string
+      required:
+        - start
+      type: object
+    CalendarPlannedWrite:
+      additionalProperties: true
+      properties:
+        action:
+          type: string
+        calendar_id:
+          type: string
+        destination:
+          type: string
+        event:
+          $ref: "#/components/schemas/GCalEventInput"
+        event_id:
+          type: string
+        target:
+          $ref: "#/components/schemas/CalendarEventTarget"
+      required:
+        - action
+        - calendar_id
+      type: object
+    CalendarRequest:
+      additionalProperties: false
+      not:
+        properties:
+          action:
+            enum:
+              - move
+              - respond
+            type: string
+          scope:
+            enum:
+              - future
+            type: string
+        required:
+          - action
+          - scope
+        type: object
+      properties:
+        account:
+          type: string
+        action:
+          enum:
+            - create
+            - update
+            - delete
+            - move
+            - respond
+            - freebusy
+            - conflicts
+          type: string
+        add_attendees:
+          items:
+            type: string
+          type: array
+        calendar_id:
+          description: Required for event mutations. For freebusy or conflicts, use this as the target or omit it and provide calendar_ids.
+          type: string
+        calendar_ids:
+          description: Availability target IDs. When nonempty, only these calendars are checked; calendar_id may be omitted.
+          items:
+            type: string
+          type: array
+        destination:
+          type: string
+        dry_run:
+          type: boolean
+        event:
+          $ref: "#/components/schemas/GCalEventInput"
+        event_id:
+          type: string
+        expected_plan_fingerprint:
+          description: Optional precondition from a prior dry run; rejects the mutation if the OAuth account, planned writes, or normalized notification mode differs.
+          type: string
+        original_start:
+          type: string
+        read_only:
+          type: boolean
+        response:
+          enum:
+            - accepted
+            - declined
+            - tentative
+          type: string
+        scope:
+          enum:
+            - single
+            - future
+            - all
+          type: string
+        send_updates:
+          enum:
+            - none
+            - all
+            - externalOnly
+          type: string
+        time_max:
+          format: date-time
+          type: string
+        time_min:
+          format: date-time
+          type: string
+        time_zone:
+          type: string
+      required:
+        - action
+        - account
+      type: object
+    CalendarResult:
+      additionalProperties: true
+      properties:
+        account:
+          type: string
+        calendar_id:
+          type: string
+        conflicts:
+          items:
+            $ref: "#/components/schemas/CalendarConflict"
+          type: array
+        dry_run:
+          type: boolean
+        error:
+          type: string
+        freebusy:
+          $ref: "#/components/schemas/GCalFreeBusyResponse"
+        outcome_code:
+          description: Machine-readable classification for a partial provider write
+          enum:
+            - calendar_partial
+            - calendar_outcome_unknown
+          type: string
+        outcome_unknown:
+          type: boolean
+        plan:
+          items:
+            $ref: "#/components/schemas/CalendarPlannedWrite"
+          type: array
+        plan_fingerprint:
+          description: Opaque comparison token bound to the OAuth account, planned writes, and normalized send_updates; valid within one daemon process
+          type: string
+        send_updates:
+          type: string
+        writes:
+          items:
+            $ref: "#/components/schemas/CalendarWriteReceipt"
+          type: array
+      required:
+        - account
+        - calendar_id
+        - send_updates
+        - dry_run
+        - plan
+        - writes
+      type: object
+    CalendarWriteReceipt:
+      additionalProperties: true
+      properties:
+        action:
+          type: string
+        archive_error:
+          type: string
+        archived:
+          type: boolean
+        calendar_id:
+          type: string
+        event:
+          $ref: "#/components/schemas/GCalEvent"
+        message_id:
+          format: int64
+          type: integer
+      required:
+        - action
+        - calendar_id
+        - event
+        - archived
       type: object
     CancelDeletionResponse:
       additionalProperties: true
@@ -2976,11 +3180,15 @@ components:
         - activity
         - activity_truncated
       type: object
-    DecideIdentityMatchRequest:
+    DecideIdentityMatchReviewedRequest:
       additionalProperties: false
       properties:
         notes:
           type: string
+        review_token:
+          type: string
+      required:
+        - review_token
       type: object
     DecidePersonMergeCandidateRequest:
       additionalProperties: false
@@ -3161,6 +3369,29 @@ components:
         - contact_state
         - categories
         - organizations
+      type: object
+    Disclosure:
+      additionalProperties: true
+      properties:
+        endpoint:
+          type: string
+        model_id:
+          type: string
+        packet_schema:
+          type: string
+        policy_version:
+          type: string
+        question_version:
+          type: string
+        retention_declaration:
+          type: string
+      required:
+        - endpoint
+        - model_id
+        - packet_schema
+        - retention_declaration
+        - policy_version
+        - question_version
       type: object
     DiscoverError:
       additionalProperties: true
@@ -5105,6 +5336,222 @@ components:
         - retryable
         - bytes
       type: object
+    GCalAttendee:
+      additionalProperties: false
+      properties:
+        additionalGuests:
+          format: int64
+          type: integer
+        comment:
+          type: string
+        displayName:
+          type: string
+        email:
+          type: string
+        optional:
+          type: boolean
+        organizer:
+          description: Provider-controlled attendee role; do not send in event input.
+          readOnly: true
+          type: boolean
+        resource:
+          type: boolean
+        responseStatus:
+          description: Provider-controlled RSVP state; use the self RSVP operation to change your response.
+          readOnly: true
+          type: string
+        self:
+          description: Provider-controlled marker for the authenticated attendee; do not send in event input.
+          readOnly: true
+          type: boolean
+      type: object
+    GCalBusyPeriod:
+      additionalProperties: true
+      properties:
+        end:
+          format: date-time
+          type: string
+        start:
+          format: date-time
+          type: string
+      required:
+        - start
+        - end
+      type: object
+    GCalCalendarBusy:
+      additionalProperties: true
+      properties:
+        busy:
+          items:
+            $ref: "#/components/schemas/GCalBusyPeriod"
+          type: array
+        errors:
+          items:
+            $ref: "#/components/schemas/GCalCalendarError"
+          type: array
+      required:
+        - busy
+      type: object
+    GCalCalendarError:
+      additionalProperties: true
+      properties:
+        domain:
+          type: string
+        reason:
+          type: string
+      required:
+        - reason
+      type: object
+    GCalEvent:
+      additionalProperties: true
+      properties:
+        attendees:
+          items:
+            $ref: "#/components/schemas/GCalAttendee"
+          type: array
+        created:
+          format: date-time
+          type: string
+        creator:
+          $ref: "#/components/schemas/GCalPerson"
+        description:
+          type: string
+        end:
+          $ref: "#/components/schemas/GCalEventDateTime"
+        etag:
+          type: string
+        eventType:
+          type: string
+        hangoutLink:
+          type: string
+        htmlLink:
+          type: string
+        iCalUID:
+          type: string
+        id:
+          type: string
+        location:
+          type: string
+        organizer:
+          $ref: "#/components/schemas/GCalPerson"
+        originalStartTime:
+          $ref: "#/components/schemas/GCalEventDateTime"
+        recurrence:
+          items:
+            type: string
+          type: array
+        recurringEventId:
+          type: string
+        reminders:
+          $ref: "#/components/schemas/GCalReminders"
+        sequence:
+          format: int64
+          type: integer
+        start:
+          $ref: "#/components/schemas/GCalEventDateTime"
+        status:
+          type: string
+        summary:
+          type: string
+        transparency:
+          type: string
+        updated:
+          format: date-time
+          type: string
+        visibility:
+          type: string
+      type: object
+    GCalEventDateTime:
+      additionalProperties: false
+      properties:
+        date:
+          type: string
+        dateTime:
+          format: date-time
+          type: string
+        timeZone:
+          type: string
+      type: object
+    GCalEventInput:
+      additionalProperties: false
+      properties:
+        attendees:
+          items:
+            $ref: "#/components/schemas/GCalAttendee"
+          type: array
+        attendeesOmitted:
+          description: Internal self-RSVP marker returned in plans. Do not send this field in a control request.
+          readOnly: true
+          type: boolean
+        description:
+          description: Omit to preserve the existing value; use an empty string to clear it on update. JSON null is not accepted.
+          type: string
+        end:
+          $ref: "#/components/schemas/GCalEventDateTime"
+        id:
+          description: Server-assigned event ID returned in plans. Do not send this field in a control request.
+          readOnly: true
+          type: string
+        location:
+          description: Omit to preserve the existing value; use an empty string to clear it on update. JSON null is not accepted.
+          type: string
+        recurrence:
+          items:
+            type: string
+          type: array
+        reminders:
+          $ref: "#/components/schemas/GCalReminders"
+        start:
+          $ref: "#/components/schemas/GCalEventDateTime"
+        summary:
+          description: Omit to preserve the existing value; use an empty string to clear it on update. JSON null is not accepted.
+          type: string
+      type: object
+    GCalFreeBusyResponse:
+      additionalProperties: true
+      properties:
+        calendars:
+          additionalProperties:
+            $ref: "#/components/schemas/GCalCalendarBusy"
+          type: object
+      required:
+        - calendars
+      type: object
+    GCalPerson:
+      additionalProperties: true
+      properties:
+        displayName:
+          type: string
+        email:
+          type: string
+        self:
+          type: boolean
+      type: object
+    GCalReminder:
+      additionalProperties: false
+      properties:
+        method:
+          type: string
+        minutes:
+          format: int64
+          type: integer
+      required:
+        - method
+        - minutes
+      type: object
+    GCalReminders:
+      additionalProperties: false
+      properties:
+        overrides:
+          items:
+            $ref: "#/components/schemas/GCalReminder"
+          type: array
+        useDefault:
+          type: boolean
+      required:
+        - useDefault
+        - overrides
+      type: object
     GenerationSummary:
       additionalProperties: true
       properties:
@@ -5409,7 +5856,13 @@ components:
     IdentityMatchCandidate:
       additionalProperties: true
       properties:
+        actionable:
+          type: boolean
+        application_pending:
+          type: boolean
         basis:
+          type: string
+        blocker:
           type: string
         confidence:
           format: double
@@ -5434,15 +5887,21 @@ components:
           type: integer
         left_kind:
           type: string
+        left_person:
+          $ref: "#/components/schemas/IdentityMatchPersonBinding"
         normalized_value:
           type: string
         notes:
+          type: string
+        review_token:
           type: string
         right_id:
           format: int64
           type: integer
         right_kind:
           type: string
+        right_person:
+          $ref: "#/components/schemas/IdentityMatchPersonBinding"
         scope_kind:
           type: string
         scope_value:
@@ -5453,6 +5912,10 @@ components:
           type: string
         source_ref:
           type: string
+        source_support:
+          items:
+            $ref: "#/components/schemas/IdentityMatchSourceSupport"
+          type: array
         state:
           type: string
         updated_at:
@@ -5468,6 +5931,8 @@ components:
         - state
         - source
         - evidence
+        - actionable
+        - application_pending
         - created_at
         - updated_at
       type: object
@@ -5509,12 +5974,77 @@ components:
           type: integer
         source:
           type: string
+        source_support:
+          items:
+            $ref: "#/components/schemas/IdentityMatchSourceSupport"
+          type: array
       required:
         - id
         - candidate_id
         - evidence_kind
         - source
         - created_at
+      type: object
+    IdentityMatchJudgment:
+      additionalProperties: true
+      properties:
+        blockers:
+          items:
+            type: string
+          type: array
+        candidate_id:
+          format: int64
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        error_class:
+          type: string
+        fingerprint:
+          type: string
+        id:
+          format: int64
+          type: integer
+        model_id:
+          type: string
+        outcome:
+          type: string
+        policy_version:
+          type: string
+        probability:
+          format: double
+          type: number
+        question_version:
+          type: string
+        retry_after:
+          format: date-time
+          type: string
+        status:
+          type: string
+      required:
+        - id
+        - candidate_id
+        - fingerprint
+        - model_id
+        - question_version
+        - policy_version
+        - blockers
+        - outcome
+        - status
+        - created_at
+      type: object
+    IdentityMatchPersonBinding:
+      additionalProperties: true
+      properties:
+        person_id:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - revision
       type: object
     IdentityMatchRejectResponse:
       additionalProperties: true
@@ -5533,6 +6063,18 @@ components:
         - candidate
         - identity_revision
         - cache_state
+      type: object
+    IdentityMatchSourceSupport:
+      additionalProperties: true
+      properties:
+        is_conservative:
+          type: boolean
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - source_id
+        - is_conservative
       type: object
     IdentitySearchHTTPRequest:
       additionalProperties: false
@@ -10004,6 +10546,120 @@ components:
         - sent_count
         - latest_at
       type: object
+    PersonMatchBatchError:
+      additionalProperties: true
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+      required:
+        - code
+        - message
+      type: object
+    PersonMatchConsentDecisionRequest:
+      additionalProperties: false
+      properties:
+        disclosure_fingerprint:
+          type: string
+      required:
+        - disclosure_fingerprint
+      type: object
+    PersonMatchConsentDecisionResponse:
+      additionalProperties: true
+      properties:
+        changed:
+          type: boolean
+        consent_active:
+          type: boolean
+        disclosure_fingerprint:
+          type: string
+      required:
+        - disclosure_fingerprint
+        - consent_active
+        - changed
+      type: object
+    PersonMatchJudgmentHistoryResponse:
+      additionalProperties: true
+      properties:
+        candidate_id:
+          format: int64
+          type: integer
+        judgments:
+          items:
+            $ref: "#/components/schemas/IdentityMatchJudgment"
+          type: array
+        limit:
+          format: int64
+          type: integer
+        next_before_id:
+          format: int64
+          type: integer
+      required:
+        - judgments
+        - limit
+        - candidate_id
+      type: object
+    PersonMatchScoringRequest:
+      additionalProperties: false
+      properties:
+        limit:
+          format: int64
+          type: integer
+      type: object
+    PersonMatchScoringResponse:
+      additionalProperties: true
+      properties:
+        error:
+          $ref: "#/components/schemas/PersonMatchBatchError"
+        processed:
+          format: int64
+          type: integer
+        results:
+          items:
+            $ref: "#/components/schemas/Result"
+          type: array
+      required:
+        - results
+        - processed
+      type: object
+    PersonMatchScoringStatus:
+      additionalProperties: true
+      properties:
+        batch_size:
+          format: int64
+          type: integer
+        blocker:
+          type: string
+        consent_active:
+          type: boolean
+        credential_available:
+          type: boolean
+        data_fields:
+          type: string
+        disclosure:
+          $ref: "#/components/schemas/Disclosure"
+        disclosure_fingerprint:
+          type: string
+        enabled:
+          type: boolean
+        minimum_probability:
+          format: double
+          type: number
+        model_id:
+          type: string
+        ready:
+          type: boolean
+      required:
+        - data_fields
+        - enabled
+        - model_id
+        - minimum_probability
+        - batch_size
+        - credential_available
+        - consent_active
+        - ready
+      type: object
     PersonMedia:
       additionalProperties: true
       properties:
@@ -11528,6 +12184,46 @@ components:
         - account
         - identifier
         - removed
+      type: object
+    Result:
+      additionalProperties: true
+      properties:
+        blockers:
+          items:
+            type: string
+          type: array
+        candidate_id:
+          format: int64
+          type: integer
+        evidence_classes:
+          items:
+            type: string
+          type: array
+        model_id:
+          type: string
+        packet_schema:
+          type: string
+        policy_version:
+          type: string
+        probability:
+          format: double
+          type: number
+        proposed_action:
+          type: string
+        review_token:
+          type: string
+        status:
+          type: string
+      required:
+        - candidate_id
+        - review_token
+        - model_id
+        - packet_schema
+        - policy_version
+        - evidence_classes
+        - proposed_action
+        - blockers
+        - status
       type: object
     RunSavedViewRequest:
       additionalProperties: false
@@ -13789,7 +14485,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 2.35.0
+  version: 3.1.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -14699,6 +15395,93 @@ paths:
       summary: Get analytics cache build status
       tags:
         - API
+  /api/v1/calendar/control:
+    post:
+      operationId: controlCalendar
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CalendarRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CalendarResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Control a live calendar event or query availability
+      tags:
+        - Calendar
   /api/v1/carddav/account:
     put:
       operationId: saveCardDAVAccount
@@ -19489,10 +20272,51 @@ paths:
       summary: List reviewable identity match candidates
       tags:
         - API
-  /api/v1/identity/match-candidates/{id}/accept:
+  /api/v1/identity/match-candidates/{id}:
+    get:
+      operationId: getIdentityMatchCandidate
+      parameters:
+        - description: Identity match candidate ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityMatchCandidate"
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get an identity match candidate for review
+      tags:
+        - API
+  /api/v1/identity/match-candidates/{id}/review/accept:
     post:
-      description: Accepting is the explicit user confirmation the matching policy requires. The participant link is applied through the normal identity link path, so a match spanning two curated people is refused rather than merged.
-      operationId: acceptIdentityMatchCandidate
+      description: Requires the exact review token from a fresh list or get response. Changed evidence returns a conflict without making a new decision.
+      operationId: reviewAcceptIdentityMatchCandidate
       parameters:
         - description: Identity match candidate ID
           in: path
@@ -19505,7 +20329,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DecideIdentityMatchRequest"
+              $ref: "#/components/schemas/DecideIdentityMatchReviewedRequest"
+        required: true
       responses:
         "200":
           content:
@@ -19513,6 +20338,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/IdentityMatchAcceptResponse"
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -19541,13 +20372,13 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Accept an identity match candidate
+      summary: Review and accept an identity match candidate
       tags:
         - API
-  /api/v1/identity/match-candidates/{id}/reject:
+  /api/v1/identity/match-candidates/{id}/review/reject:
     post:
-      description: A rejected suggestion is retained rather than deleted, so the same low-quality inference is not proposed again on the next import.
-      operationId: rejectIdentityMatchCandidate
+      description: Requires the exact review token from a fresh list or get response. Changed evidence returns a conflict without making a new decision.
+      operationId: reviewRejectIdentityMatchCandidate
       parameters:
         - description: Identity match candidate ID
           in: path
@@ -19560,7 +20391,8 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DecideIdentityMatchRequest"
+              $ref: "#/components/schemas/DecideIdentityMatchReviewedRequest"
+        required: true
       responses:
         "200":
           content:
@@ -19568,6 +20400,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/IdentityMatchRejectResponse"
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -19594,7 +20432,221 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Reject an identity match candidate
+      summary: Review and reject an identity match candidate
+      tags:
+        - API
+  /api/v1/identity/scoring/consent:
+    post:
+      operationId: personMatchScoringConsent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonMatchConsentDecisionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMatchConsentDecisionResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Grant identity scoring consent
+      tags:
+        - API
+  /api/v1/identity/scoring/history:
+    get:
+      operationId: listPersonMatchJudgments
+      parameters:
+        - description: Optional candidate ID; zero lists all
+          in: query
+          name: candidate_id
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum judgments
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Older judgments with ID below this cursor
+          in: query
+          name: before_id
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMatchJudgmentHistoryResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List redacted identity scoring judgments
+      tags:
+        - API
+  /api/v1/identity/scoring/revoke:
+    post:
+      operationId: personMatchScoringRevoke
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonMatchConsentDecisionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMatchConsentDecisionResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Withdraw identity scoring consent
+      tags:
+        - API
+  /api/v1/identity/scoring/run:
+    post:
+      operationId: runPersonMatchScoring
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonMatchScoringRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMatchScoringResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Score and journal a bounded batch of identity suggestions
+      tags:
+        - API
+  /api/v1/identity/scoring/status:
+    get:
+      operationId: getPersonMatchScoringStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMatchScoringStatus"
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get identity scoring configuration and consent status
       tags:
         - API
   /api/v1/identity/unlinks:
