@@ -2,7 +2,7 @@ package inline
 
 import (
 	"context"
-	stdjson "encoding/json"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -232,7 +232,7 @@ func inlineToolJSON(result *mcp.CallToolResult) ([]byte, error) {
 		}
 	}
 	data := []byte(text.String())
-	if !stdjson.Valid(data) {
+	if !jsontext.Value(data).IsValid() {
 		return nil, fmt.Errorf("%w: missing or malformed JSON tool result", ErrContract)
 	}
 	return data, nil
@@ -281,7 +281,7 @@ type mcpChat struct {
 	Title  string `json:"title"`
 	Kind   string `json:"kind"`
 	Peer   *struct {
-		UserID stdjson.RawMessage `json:"userId"`
+		UserID jsontext.Value `json:"userId"`
 	} `json:"peer"`
 }
 
@@ -301,9 +301,9 @@ func (c *MCPClient) Discover(ctx context.Context) ([]Conversation, error) {
 			return nil, err
 		}
 		var v struct {
-			Items []stdjson.RawMessage `json:"items"`
-			Sort  string               `json:"sort"`
-			Next  stdjson.RawMessage   `json:"nextAfterChatId"`
+			Items []jsontext.Value `json:"items"`
+			Sort  string           `json:"sort"`
+			Next  jsontext.Value   `json:"nextAfterChatId"`
 		}
 		if err := json.Unmarshal(raw, &v); err != nil {
 			return nil, fmt.Errorf("%w: malformed conversation catalog", ErrContract)
@@ -429,7 +429,7 @@ type mcpMessage struct {
 	Media      *mcpMedia `json:"media"`
 }
 
-func decodeMCPMessage(raw stdjson.RawMessage, chatID int64) (Message, error) {
+func decodeMCPMessage(raw jsontext.Value, chatID int64) (Message, error) {
 	var v mcpMessage
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return Message{}, fmt.Errorf("%w: malformed message", ErrContract)
@@ -487,9 +487,9 @@ func (c *MCPClient) Messages(ctx context.Context, chatID, beforeID int64) (Page,
 		return Page{}, err
 	}
 	var v struct {
-		Chat       mcpChat              `json:"chat"`
-		NextOffset stdjson.RawMessage   `json:"nextOffsetId"`
-		Messages   []stdjson.RawMessage `json:"messages"`
+		Chat       mcpChat          `json:"chat"`
+		NextOffset jsontext.Value   `json:"nextOffsetId"`
+		Messages   []jsontext.Value `json:"messages"`
 	}
 	if err := json.Unmarshal(raw, &v); err != nil || v.NextOffset == nil || v.Messages == nil {
 		return Page{}, fmt.Errorf("%w: malformed history page", ErrContract)
@@ -563,7 +563,7 @@ func (c *MCPClient) Files(ctx context.Context, chatID int64, messageIDs []int64)
 	var v struct {
 		Chat  mcpChat `json:"chat"`
 		Items []struct {
-			Message stdjson.RawMessage `json:"message"`
+			Message jsontext.Value `json:"message"`
 			Files   []struct {
 				mcpMedia
 

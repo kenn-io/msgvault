@@ -3,7 +3,8 @@ package inline
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -109,7 +110,7 @@ func (c *fakeClient) Files(ctx context.Context, id int64, ids []int64) ([]Media,
 }
 
 func syntheticMessage(chatID, id int64, text string) Message {
-	return Message{ID: id, ChatID: chatID, SenderID: 101, Text: text, SentAt: time.Unix(1700000000+id, 0).UTC(), Raw: json.RawMessage(fmt.Sprintf(`{"id":%d,"chat_id":%d,"text":%q}`, id, chatID, text)), RawFormat: RawCLIFormat}
+	return Message{ID: id, ChatID: chatID, SenderID: 101, Text: text, SentAt: time.Unix(1700000000+id, 0).UTC(), Raw: jsontext.Value(fmt.Sprintf(`{"id":%d,"chat_id":%d,"text":%q}`, id, chatID, text)), RawFormat: RawCLIFormat}
 }
 
 func importerFixture(t *testing.T) (*Importer, *fakeClient, ImportOptions) {
@@ -477,7 +478,7 @@ func TestAlternateProjectionPreservesRawAndPendingMediaEvidence(t *testing.T) {
 	originalRaw, err := imp.store.GetMessageRaw(id)
 	requires.NoError(err)
 	client.messages[1][0].Text = "new projection"
-	client.messages[1][0].Raw = json.RawMessage(`{"id":"1","text":"new projection"}`)
+	client.messages[1][0].Raw = jsontext.Value(`{"id":"1","text":"new projection"}`)
 	client.messages[1][0].RawFormat = RawMCPFormat
 	client.messages[1][0].Media = nil
 	opts.Full = true

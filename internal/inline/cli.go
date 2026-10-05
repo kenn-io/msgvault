@@ -3,7 +3,7 @@ package inline
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
@@ -158,7 +158,7 @@ func (c *CLIClient) Discover(ctx context.Context) ([]Conversation, error) {
 
 func cliDecodeCatalog(raw []byte, accountUserID int64) ([]Conversation, error) {
 	var wire struct {
-		Chats *[]json.RawMessage `json:"chats"`
+		Chats *[]jsontext.Value `json:"chats"`
 	}
 	if jsonv2.Unmarshal(raw, &wire) != nil || wire.Chats == nil {
 		return nil, errors.New("unsupported Inline CLI chat catalog response")
@@ -195,7 +195,7 @@ func (c *CLIClient) Conversation(ctx context.Context, chatID int64) (Conversatio
 		return Conversation{}, err
 	}
 	var result struct {
-		Chat json.RawMessage `json:"chat"`
+		Chat jsontext.Value `json:"chat"`
 	}
 	if jsonv2.Unmarshal(raw, &result) != nil {
 		return Conversation{}, errors.New("unsupported Inline CLI chat response")
@@ -203,7 +203,7 @@ func (c *CLIClient) Conversation(ctx context.Context, chatID int64) (Conversatio
 	return cliDecodeConversation(result.Chat, chatID, c.accountUserID)
 }
 
-func cliDecodeConversation(raw json.RawMessage, chatID, accountUserID int64) (Conversation, error) {
+func cliDecodeConversation(raw jsontext.Value, chatID, accountUserID int64) (Conversation, error) {
 	var chat struct {
 		ID              *int64 `json:"id"`
 		Title           string `json:"title"`
@@ -211,7 +211,7 @@ func cliDecodeConversation(raw json.RawMessage, chatID, accountUserID int64) (Co
 		ParentChatID    *int64 `json:"parent_chat_id"`
 		ParentMessageID *int64 `json:"parent_message_id"`
 		Peer            struct {
-			Type map[string]json.RawMessage `json:"type"`
+			Type map[string]jsontext.Value `json:"type"`
 		} `json:"peer_id"`
 	}
 	if jsonv2.Unmarshal(raw, &chat) != nil || chat.ID == nil || *chat.ID != chatID || !cliValidID(chatID) || len(chat.Peer.Type) != 1 {
@@ -282,7 +282,7 @@ func (c *CLIClient) Messages(ctx context.Context, chatID, beforeID int64) (Page,
 
 func cliDecodePage(raw []byte, chatID, beforeID int64) (Page, error) {
 	var wire struct {
-		Messages *[]json.RawMessage `json:"messages"`
+		Messages *[]jsontext.Value `json:"messages"`
 		Page     *struct {
 			FetchedCount  *int   `json:"fetchedCount"`
 			ReturnedCount *int   `json:"returnedCount"`
@@ -346,13 +346,13 @@ func (c *CLIClient) Files(ctx context.Context, chatID int64, messageIDs []int64)
 	if err != nil {
 		return nil, err
 	}
-	var messages []json.RawMessage
+	var messages []jsontext.Value
 	if len(ids) == 1 {
-		messages = []json.RawMessage{raw}
+		messages = []jsontext.Value{raw}
 	} else {
 		var wire struct {
-			Messages *[]json.RawMessage `json:"messages"`
-			Missing  []int64            `json:"missingMessageIds"`
+			Messages *[]jsontext.Value `json:"messages"`
+			Missing  []int64           `json:"missingMessageIds"`
 		}
 		if jsonv2.Unmarshal(raw, &wire) != nil || wire.Messages == nil || len(wire.Missing) != 0 {
 			return nil, errors.New("inline CLI file lookup did not return all requested messages")
@@ -377,7 +377,7 @@ func (c *CLIClient) Files(ctx context.Context, chatID int64, messageIDs []int64)
 	return media, nil
 }
 
-func cliDecodeMessage(raw json.RawMessage, chatID int64) (Message, error) {
+func cliDecodeMessage(raw jsontext.Value, chatID int64) (Message, error) {
 	var wire struct {
 		ID       *int64  `json:"id"`
 		ChatID   *int64  `json:"chat_id"`
@@ -388,7 +388,7 @@ func cliDecodeMessage(raw json.RawMessage, chatID int64) (Message, error) {
 		Out      bool    `json:"out"`
 		ReplyID  *int64  `json:"reply_to_msg_id"`
 		Media    struct {
-			Media map[string]json.RawMessage `json:"media"`
+			Media map[string]jsontext.Value `json:"media"`
 		} `json:"media"`
 		Reactions struct {
 			Reactions []struct {
@@ -435,7 +435,7 @@ func cliDecodeMessage(raw json.RawMessage, chatID int64) (Message, error) {
 	return message, nil
 }
 
-func cliDecodeMedia(variants map[string]json.RawMessage, chatID, messageID int64) ([]Media, error) {
+func cliDecodeMedia(variants map[string]jsontext.Value, chatID, messageID int64) ([]Media, error) {
 	if len(variants) == 0 {
 		return nil, nil
 	}
@@ -446,7 +446,7 @@ func cliDecodeMedia(variants map[string]json.RawMessage, chatID, messageID int64
 		if kind == "Nudge" {
 			return nil, nil
 		}
-		var wrapper map[string]json.RawMessage
+		var wrapper map[string]jsontext.Value
 		if jsonv2.Unmarshal(raw, &wrapper) != nil {
 			return nil, errors.New("unsupported Inline CLI media wrapper")
 		}

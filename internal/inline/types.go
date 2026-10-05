@@ -3,7 +3,7 @@ package inline
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"time"
 
@@ -31,7 +31,7 @@ type Conversation struct {
 	ParentChatID, RootMessageID int64
 	MemberCount                 int
 	MemberCountKnown            bool
-	Raw                         json.RawMessage
+	Raw                         jsontext.Value
 }
 
 type Message struct {
@@ -42,7 +42,7 @@ type Message struct {
 	ReplyToMessageID     int64
 	Media                []Media
 	Reactions            []Reaction
-	Raw                  json.RawMessage
+	Raw                  jsontext.Value
 	RawFormat            string
 }
 

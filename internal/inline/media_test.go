@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 type mediaRoundTripper func(*http.Request) (*http.Response, error)
@@ -84,6 +86,9 @@ func TestDeferredMediaBackfillRefreshesURLAndPreservesDuplicateOccurrences(t *te
 	assertions.Equal(2, first.AttachmentsPending)
 	assertions.Zero(client.filesCalls)
 	id := archivedMessage(t, imp.store, first.SourceID, 1, 1)
+	hasAttachments, attachmentCount := storedMediaMessageStats(t, imp, id)
+	assertions.True(hasAttachments)
+	assertions.Equal(2, attachmentCount)
 	refs, err := imp.store.MessageInlineProviderAttachments(id)
 	requires.NoError(err)
 	requires.Len(refs, 2)
@@ -113,6 +118,9 @@ func TestDeferredMediaBackfillRefreshesURLAndPreservesDuplicateOccurrences(t *te
 	backfill, err := imp.BackfillMedia(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Equal(2, backfill.AttachmentsDownloaded)
+	hasAttachments, attachmentCount = storedMediaMessageStats(t, imp, id)
+	assertions.True(hasAttachments)
+	assertions.Equal(2, attachmentCount)
 	assertions.Equal(2, calls)
 	refs, err = imp.store.MessageInlineProviderAttachments(id)
 	requires.NoError(err)
@@ -125,6 +133,16 @@ func TestDeferredMediaBackfillRefreshesURLAndPreservesDuplicateOccurrences(t *te
 	_, err = imp.BackfillMedia(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Equal(2, calls, "stored occurrences never re-download")
+	hasAttachments, attachmentCount = storedMediaMessageStats(t, imp, id)
+	assertions.True(hasAttachments)
+	assertions.Equal(2, attachmentCount)
+	opts.Full = true
+	client.messages[1][0].Media = nil
+	_, err = imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	hasAttachments, attachmentCount = storedMediaMessageStats(t, imp, id)
+	assertions.True(hasAttachments)
+	assertions.Equal(2, attachmentCount)
 }
 
 func TestMediaFailureLeavesDurableMarkerAndPolicyCanRetry(t *testing.T) {
@@ -265,4 +283,59 @@ func TestCrossProjectionMetadataKeepsUnsignedOccurrenceIdentity(t *testing.T) {
 	var stored Media
 	requires.NoError(json.Unmarshal([]byte(ref.Metadata), &stored))
 	assertions.Equal(media.ID, stored.ID)
+}
+
+func storedMediaMessageStats(t *testing.T, imp *Importer, messageID int64) (hasAttachments bool, attachmentCount int) {
+	t.Helper()
+	require.NoError(t, imp.store.DB().QueryRow(
+		`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`, messageID,
+	).Scan(&hasAttachments, &attachmentCount))
+	return hasAttachments, attachmentCount
+}
+
+func TestMediaImportPersistsAttachmentStatsForListingsAndSearch(t *testing.T) {
+	for _, state := range []attachmentpolicy.DownloadState{
+		attachmentpolicy.StatePending, attachmentpolicy.StateSkipped,
+		attachmentpolicy.StateFailed, attachmentpolicy.StateStored,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			imp, client, opts := importerFixture(t)
+			message := syntheticMessage(1, 1, "media")
+			message.Media = []Media{{ID: "document:1", ChatID: 1, MessageID: 1, Role: "document", Size: 6, URL: "https://api.inline.chat/file"}}
+			client.messages[1] = []Message{message, syntheticMessage(1, 2, "text only")}
+			switch state {
+			case attachmentpolicy.StatePending:
+				opts.NoMedia = true
+			case attachmentpolicy.StateSkipped:
+				opts.MediaPolicy.MaxBytes = 1
+			case attachmentpolicy.StateFailed:
+				client.files = func(context.Context, int64, []int64) ([]Media, error) {
+					return nil, errors.New("temporary refresh failure")
+				}
+			case attachmentpolicy.StateStored:
+				imp.mediaTransport = mediaRoundTripper(func(request *http.Request) (*http.Response, error) {
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("bytes!")), ContentLength: 6, Request: request}, nil
+				})
+			}
+			summary, err := imp.Import(t.Context(), opts)
+			require.NoError(t, err)
+			id := archivedMessage(t, imp.store, summary.SourceID, 1, 1)
+			hasAttachments, attachmentCount := storedMediaMessageStats(t, imp, id)
+			assert.True(t, hasAttachments)
+			assert.Equal(t, 1, attachmentCount)
+			hasAttachments, attachmentCount = storedMediaMessageStats(t, imp, archivedMessage(t, imp.store, summary.SourceID, 1, 2))
+			assert.False(t, hasAttachments)
+			assert.Zero(t, attachmentCount)
+			refs, err := imp.store.MessageInlineProviderAttachments(id)
+			require.NoError(t, err)
+			assert.Equal(t, state, refs["inline:document:1"].State)
+			engine := query.NewSQLiteEngine(imp.store.DB())
+			results, err := engine.Search(t.Context(), search.Parse("has:attachment"), 10, 0)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			assert.Equal(t, id, results[0].ID)
+			assert.True(t, results[0].HasAttachments)
+			assert.Equal(t, 1, results[0].AttachmentCount)
+		})
+	}
 }

@@ -2,7 +2,8 @@ package inline
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,7 +29,7 @@ func TestCLIConversationPreservesSharedMediaScope(t *testing.T) {
 		{"direct chat", `{"id":7,"peer_id":{"type":{"User":{"user_id":2}}}}`, "direct_chat", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			conversation, err := cliDecodeConversation(json.RawMessage(test.body), 7, 1)
+			conversation, err := cliDecodeConversation(jsontext.Value(test.body), 7, 1)
 			require.NoError(t, err)
 			assert.Equal(t, test.kind, conversation.Type)
 			assert.Equal(t, test.allowed, policy.Allows(attachmentpolicy.Conversation{
@@ -37,7 +38,7 @@ func TestCLIConversationPreservesSharedMediaScope(t *testing.T) {
 		})
 	}
 	for _, spaceID := range []string{"0", "-1", "9007199254740992", "1.5", `"9"`} {
-		_, err := cliDecodeConversation(json.RawMessage(`{"id":7,"space_id":`+spaceID+`,"peer_id":{"type":{"Chat":{"chat_id":7}}}}`), 7, 1)
+		_, err := cliDecodeConversation(jsontext.Value(`{"id":7,"space_id":`+spaceID+`,"peer_id":{"type":{"Chat":{"chat_id":7}}}}`), 7, 1)
 		require.Error(t, err)
 	}
 }
@@ -70,9 +71,9 @@ func TestCLILegacyUnfilteredPageDerivesStrictCursor(t *testing.T) {
 	assertions := assert.New(t)
 	requires := require.New(t)
 
-	messages := make([]json.RawMessage, cliPageSize)
+	messages := make([]jsontext.Value, cliPageSize)
 	for i := range messages {
-		messages[i] = json.RawMessage(cliMessageFixture(int64(i + 1)))
+		messages[i] = jsontext.Value(cliMessageFixture(int64(i + 1)))
 	}
 	raw, err := json.Marshal(map[string]any{"messages": messages})
 	requires.NoError(err)
@@ -113,27 +114,27 @@ func TestCLIConversationDistinguishesCanonicalChatAndPeer(t *testing.T) {
 	assertions := assert.New(t)
 	requires := require.New(t)
 
-	direct, err := cliDecodeConversation(json.RawMessage(`{"id":123,"title":"","peer_id":{"type":{"User":{"user_id":999}}}}`), 123, 42)
+	direct, err := cliDecodeConversation(jsontext.Value(`{"id":123,"title":"","peer_id":{"type":{"User":{"user_id":999}}}}`), 123, 42)
 	requires.NoError(err)
 	assertions.Equal(int64(123), direct.ID)
 	assertions.Equal("direct_chat", direct.Type)
 	assertions.True(direct.MemberCountKnown)
 	assertions.Equal(2, direct.MemberCount)
-	self, err := cliDecodeConversation(json.RawMessage(`{"id":123,"peer_id":{"type":{"User":{"user_id":42}}}}`), 123, 42)
+	self, err := cliDecodeConversation(jsontext.Value(`{"id":123,"peer_id":{"type":{"User":{"user_id":42}}}}`), 123, 42)
 	requires.NoError(err)
 	assertions.True(self.MemberCountKnown)
 	assertions.Equal(1, self.MemberCount)
-	unverified, err := cliDecodeConversation(json.RawMessage(`{"id":123,"peer_id":{"type":{"User":{"user_id":42}}}}`), 123, 0)
+	unverified, err := cliDecodeConversation(jsontext.Value(`{"id":123,"peer_id":{"type":{"User":{"user_id":42}}}}`), 123, 0)
 	requires.NoError(err)
 	assertions.False(unverified.MemberCountKnown)
-	child, err := cliDecodeConversation(json.RawMessage(`{"id":123,"title":"Reply","peer_id":{"type":{"Chat":{"chat_id":123}}},"parent_chat_id":100,"parent_message_id":7}`), 123, 42)
+	child, err := cliDecodeConversation(jsontext.Value(`{"id":123,"title":"Reply","peer_id":{"type":{"Chat":{"chat_id":123}}},"parent_chat_id":100,"parent_message_id":7}`), 123, 42)
 	requires.NoError(err)
 	assertions.Equal(int64(100), child.ParentChatID)
 	assertions.Equal(int64(7), child.RootMessageID)
 	assertions.False(child.MemberCountKnown)
-	_, err = cliDecodeConversation(json.RawMessage(`{"id":123,"peer_id":{"type":{"Chat":{"chat_id":456}}}}`), 123, 42)
+	_, err = cliDecodeConversation(jsontext.Value(`{"id":123,"peer_id":{"type":{"Chat":{"chat_id":456}}}}`), 123, 42)
 	requires.Error(err)
-	_, err = cliDecodeConversation(json.RawMessage(`{"id":123,"peerId":{"chatId":123}}`), 123, 42)
+	_, err = cliDecodeConversation(jsontext.Value(`{"id":123,"peerId":{"chatId":123}}`), 123, 42)
 	requires.Error(err)
 }
 
@@ -152,9 +153,9 @@ func TestCLICatalogDecodesAllCanonicalChatsAndPreservesRaw(t *testing.T) {
 	assertions.Equal(int64(123), conversations[1].ParentChatID)
 	assertions.Equal(int64(7), conversations[1].RootMessageID)
 
-	chats := make([]json.RawMessage, cliPageSize+1)
+	chats := make([]jsontext.Value, cliPageSize+1)
 	for i := range chats {
-		chats[i] = json.RawMessage(fmt.Sprintf(`{"id":%d,"title":"Fixture","peer_id":{"type":{"Chat":{"chat_id":%d}}}}`, i+1, i+1))
+		chats[i] = jsontext.Value(fmt.Sprintf(`{"id":%d,"title":"Fixture","peer_id":{"type":{"Chat":{"chat_id":%d}}}}`, i+1, i+1))
 	}
 	raw, err := json.Marshal(map[string]any{"chats": chats})
 	requires.NoError(err)
@@ -191,7 +192,7 @@ func TestCLIDiscoverReportsUnsupportedCatalogCommand(t *testing.T) {
 
 func TestCLIReactionSnapshotIncludesAuthoritativeEmptySet(t *testing.T) {
 	for _, suffix := range []string{"", `,"reactions":null`, `,"reactions":{"reactions":[]}`} {
-		message, err := cliDecodeMessage(json.RawMessage(`{"id":7,"chat_id":123,"from_id":42,"date":0`+suffix+`}`), 123)
+		message, err := cliDecodeMessage(jsontext.Value(`{"id":7,"chat_id":123,"from_id":42,"date":0`+suffix+`}`), 123)
 		require.NoError(t, err)
 		require.NotNil(t, message.Reactions, "empty native snapshots must remove old reactions on re-import")
 		assert.Empty(t, message.Reactions)
@@ -202,13 +203,13 @@ func TestCLIReactionUsesSourceDateAndPreservesUnknownDate(t *testing.T) {
 	assertions := assert.New(t)
 	requires := require.New(t)
 
-	message, err := cliDecodeMessage(json.RawMessage(`{"id":7,"chat_id":123,"from_id":42,"date":1700000000,"reactions":{"reactions":[{"user_id":77,"emoji":"👍","date":1700000200},{"user_id":78,"emoji":"🎉"}]}}`), 123)
+	message, err := cliDecodeMessage(jsontext.Value(`{"id":7,"chat_id":123,"from_id":42,"date":1700000000,"reactions":{"reactions":[{"user_id":77,"emoji":"👍","date":1700000200},{"user_id":78,"emoji":"🎉"}]}}`), 123)
 	requires.NoError(err)
 	requires.Len(message.Reactions, 2)
 	assertions.Equal(time.Unix(1700000200, 0).UTC(), message.Reactions[0].CreatedAt)
 	assertions.True(message.Reactions[1].CreatedAt.IsZero(), "missing dates must not adopt the message timestamp")
 	for _, invalid := range []string{"-1", "253402300800", "1.5", `"1700000200"`} {
-		_, err := cliDecodeMessage(json.RawMessage(`{"id":7,"chat_id":123,"from_id":42,"date":0,"reactions":{"reactions":[{"user_id":77,"emoji":"👍","date":`+invalid+`}]}}`), 123)
+		_, err := cliDecodeMessage(jsontext.Value(`{"id":7,"chat_id":123,"from_id":42,"date":0,"reactions":{"reactions":[{"user_id":77,"emoji":"👍","date":`+invalid+`}]}}`), 123)
 		requires.Error(err)
 	}
 }
@@ -217,13 +218,13 @@ func TestCLIMediaUsesLargestAvailablePhotoAndSeconds(t *testing.T) {
 	assertions := assert.New(t)
 	requires := require.New(t)
 
-	photo, err := cliDecodeMedia(map[string]json.RawMessage{"Photo": json.RawMessage(`{"photo":{"id":55,"format":2,"sizes":[{"w":200,"h":200,"size":200,"cdn_url":null},{"w":20,"h":20,"size":20,"cdn_url":"https://cdn.example.test/small"},{"w":100,"h":100,"size":100,"cdn_url":"https://cdn.example.test/big"}]}}`)}, 123, 7)
+	photo, err := cliDecodeMedia(map[string]jsontext.Value{"Photo": jsontext.Value(`{"photo":{"id":55,"format":2,"sizes":[{"w":200,"h":200,"size":200,"cdn_url":null},{"w":20,"h":20,"size":20,"cdn_url":"https://cdn.example.test/small"},{"w":100,"h":100,"size":100,"cdn_url":"https://cdn.example.test/big"}]}}`)}, 123, 7)
 	requires.NoError(err)
 	requires.Len(photo, 1)
 	assertions.Equal("https://cdn.example.test/big", photo[0].URL)
 	assertions.Equal("image/png", photo[0].MIMEType)
 	assertions.Equal(int64(100), photo[0].Size)
-	voice, err := cliDecodeMedia(map[string]json.RawMessage{"Voice": json.RawMessage(`{"voice":{"id":56,"duration":3,"size":20,"mime_type":"audio/ogg","cdn_url":"https://cdn.example.test/voice"}}`)}, 123, 8)
+	voice, err := cliDecodeMedia(map[string]jsontext.Value{"Voice": jsontext.Value(`{"voice":{"id":56,"duration":3,"size":20,"mime_type":"audio/ogg","cdn_url":"https://cdn.example.test/voice"}}`)}, 123, 8)
 	requires.NoError(err)
 	assertions.Equal(3000, voice[0].DurationMS)
 	assertions.Equal("voice", voice[0].Role)

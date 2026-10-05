@@ -1,7 +1,6 @@
 package inline
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -39,7 +38,7 @@ func validatePage(page Page, chatID, beforeID int64) error {
 		if (index > 0 || beforeID > 0) && message.ID >= previous {
 			return fmt.Errorf("inline history does not decrease strictly before %d", previous)
 		}
-		if message.SentAt.IsZero() || len(message.Raw) == 0 || !json.Valid(message.Raw) {
+		if message.SentAt.IsZero() || len(message.Raw) == 0 || !message.Raw.IsValid() {
 			return fmt.Errorf("inline message %d lacks timestamp or valid source evidence", message.ID)
 		}
 		if raw := strings.TrimSpace(string(message.Raw)); len(raw) == 0 || raw[0] != '{' {

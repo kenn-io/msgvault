@@ -145,7 +145,15 @@ func (s *Store) listRetryableAttachmentMessages(
 
 // ReplaceMessageInlineProviderAttachments replaces Inline-managed attachment occurrences.
 func (s *Store) ReplaceMessageInlineProviderAttachments(messageID int64, refs []AttachmentRef) error {
-	return s.replaceMessageProviderAttachments(messageID, "inline:", refs)
+	return s.withTx(func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			return err
+		}
+		if err := s.replaceMessageAttachmentsWhereTx(tx, messageID, `source_attachment_id LIKE ?`, false, refs, "inline:%"); err != nil {
+			return err
+		}
+		return recomputeMessageAttachmentStatsWith(tx, messageID)
+	})
 }
 
 // MessageInlineProviderAttachments returns Inline-managed rows keyed by stable source ID.
