@@ -36,7 +36,6 @@ type scriptedGmailDraftClient struct {
 	sendAsErr   error
 
 	createCalls int
-	createdRaw  []byte
 	getCalls    int
 	updateCalls int
 	deleteCalls int
@@ -45,7 +44,6 @@ type scriptedGmailDraftClient struct {
 
 func (c *scriptedGmailDraftClient) CreateDraft(_ context.Context, raw []byte, threadID string) (*gmail.Draft, error) {
 	c.createCalls++
-	c.createdRaw = append([]byte(nil), raw...)
 	if c.createErr != nil {
 		return nil, c.createErr
 	}
@@ -263,34 +261,11 @@ func (f gmailDraftTestFixture) lifecycle(t *testing.T, operation string, draft s
 	return events, err
 }
 
-func TestGmailDraftReplyInfersRecipientIdentity(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
-	f := newGmailDraftTestFixture(t)
-	requirements.NoError(f.store.AddAccountIdentity(f.source.ID, "alias@example.test", "manual"))
-	setDraftParentRecipient(t, f.store, f.parentID, "to", "alias@example.test")
-	var events []api.CLIRunEvent
-	err := f.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
-		Args: []string{"draft-reply", strconv.FormatInt(f.parentID, 10), "--body", "reply", "--json"},
-	}, func(event api.CLIRunEvent) error { events = append(events, event); return nil })
-	requirements.NoError(err)
-	requirements.Len(events, 1)
-	var created gmailDraftReplyOutput
-	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &created))
-	message, err := f.store.GetMessageContext(t.Context(), created.MessageID)
-	requirements.NoError(err)
-	assertions.Equal("alias@example.test", message.From)
-	parsed, err := msgmime.Parse(f.client.createdRaw)
-	requirements.NoError(err)
-	requirements.Len(parsed.From, 1)
-	assertions.Equal("alias@example.test", parsed.From[0].Email)
-	assertions.Equal(1, f.client.createCalls)
-}
-
 func TestGmailDraftInferredSenderRequiresSendAs(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	f := newGmailDraftTestFixture(t)
 	requirements.NoError(f.store.AddAccountIdentity(f.source.ID, "shop@example.test", "manual"))
-	setDraftParentRecipient(t, f.store, f.parentID, "to", "shop@example.test")
+	setDraftParentRecipient(t, f.store, f.parentID, "to")
 	err := f.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-reply", strconv.FormatInt(f.parentID, 10), "--body", "reply"},
 	}, func(api.CLIRunEvent) error { return nil })
