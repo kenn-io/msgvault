@@ -141,7 +141,7 @@ func TestMCPDelegatedDraftToolsUseAgentGrant(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{"draft.create"}), t)
-		assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_get", "draft_recover", "draft_reply"}, mcpDraftToolNames(t, session))
+		assert.Equal([]string{"calendar_conflicts", "calendar_freebusy", "draft_compose", "draft_delete", "draft_edit", "draft_get", "draft_recover", "draft_reply"}, mcpDraftToolNames(t, session))
 		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
 		require.NoError(err)
 		assert.False(result.IsError)
@@ -234,10 +234,10 @@ func TestMCPDelegatedRejectsHTTPTransport(t *testing.T) {
 	cmd := &cobra.Command{Use: "mcp"}
 	cmd.SetContext(ctx)
 	err := mcpCmd.RunE(cmd, nil)
-	require.ErrorContains(err, "--http is not available in agent-delegated mode")
+	require.ErrorContains(err, "delegated MCP supports stdio only")
 	assert.False(called)
 	assert.Equal(before, requests.Load())
-	t.Log("--http is not available in agent-delegated mode; zero daemon requests")
+	t.Log("delegated MCP supports stdio only; zero daemon requests")
 }
 
 func TestMCPOwnerDraftGetMatchesCLI(t *testing.T) {

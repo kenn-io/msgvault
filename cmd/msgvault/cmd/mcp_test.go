@@ -181,7 +181,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	}, gotHTTPOpts)
 }
 
-func TestMCPDelegatedModeRejectsDaemonWithoutCalendarAPI(t *testing.T) {
+func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	previousHTTPAddr := mcpHTTPAddr
@@ -194,7 +194,8 @@ func TestMCPDelegatedModeRejectsDaemonWithoutCalendarAPI(t *testing.T) {
 		serveCalled = true
 		assertions.True(options.DelegatedOnly)
 		assertions.Nil(options.Calendar)
-		return errors.New("stdio serving started without calendar tools")
+		assertions.NotEmpty(options.DraftCommands)
+		return errors.New("stop after capture")
 	}
 	t.Cleanup(func() {
 		mcpHTTPAddr = previousHTTPAddr
@@ -228,8 +229,8 @@ func TestMCPDelegatedModeRejectsDaemonWithoutCalendarAPI(t *testing.T) {
 
 	err := mcpCmd.RunE(cmd, nil)
 
-	requirements.ErrorContains(err, "calendar delegation requires a daemon with API schema 3.1.0 or later")
-	assertions.False(serveCalled)
+	requirements.ErrorContains(err, "stop after capture")
+	assertions.True(serveCalled)
 	assertions.Equal(int32(2), healthRequests.Load())
 }
 
