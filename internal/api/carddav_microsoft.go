@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"golang.org/x/oauth2"
 
 	"go.kenn.io/msgvault/internal/carddav"
+	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/mscontacts"
 )
@@ -60,11 +62,19 @@ func (c *CardDAVController) microsoftService(credential carddav.Credential) (car
 }
 
 // microsoftContactsTokenError marks a revoked or expired refresh token as a
-// 401, so sync asks the user to sign in again.
+// 401, so sync asks the user to sign in again, and a throttled refresh as a
+// 429, so sync pauses the connection.
 func microsoftContactsTokenError(err error) error {
 	err = fmt.Errorf("obtain Microsoft contacts token: %w", err)
-	if retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok && retrieveErr.ErrorCode == "invalid_grant" {
+	retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err)
+	switch {
+	case !ok:
+		return err
+	case retrieveErr.ErrorCode == "invalid_grant":
 		return errors.Join(err, carddav.ErrMicrosoftAuthorizationRequired, &carddav.StatusError{StatusCode: http.StatusUnauthorized})
+	case retrieveErr.Response != nil && retrieveErr.Response.StatusCode == http.StatusTooManyRequests:
+		retryAfter := httpretry.RetryAfter(retrieveErr.Response.Header.Get("Retry-After"), 0, time.Hour)
+		return errors.Join(err, &carddav.StatusError{StatusCode: http.StatusTooManyRequests, RetryAfter: retryAfter})
 	}
 	return err
 }

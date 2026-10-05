@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,6 +59,16 @@ func TestMicrosoftContactsTokenErrorMarksRevokedTokenUnauthorized(t *testing.T) 
 	status, ok := errors.AsType[*carddav.StatusError](revoked)
 	require.True(ok)
 	require.Equal(http.StatusUnauthorized, status.StatusCode)
+
+	throttled := microsoftContactsTokenError(&oauth2.RetrieveError{Response: &http.Response{
+		StatusCode: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"30"}},
+	}})
+	status, ok = errors.AsType[*carddav.StatusError](throttled)
+	require.True(ok)
+	require.Equal(http.StatusTooManyRequests, status.StatusCode)
+	require.Equal(30*time.Second, status.RetryAfter)
+	code, _ := carddav.SyncFailure(throttled)
+	require.Equal("retry_after", code)
 
 	unavailable := microsoftContactsTokenError(&oauth2.RetrieveError{ErrorCode: "temporarily_unavailable"})
 	require.NotErrorIs(unavailable, carddav.ErrMicrosoftAuthorizationRequired)

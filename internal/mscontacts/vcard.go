@@ -125,7 +125,7 @@ func (c contact) body(uid string) ([]byte, error) {
 	}
 	var extra []vcard.Property
 	for _, property := range document.Cards[0].Properties {
-		if !slices.Contains(mappedProperties, strings.ToUpper(property.Name)) {
+		if !slices.Contains(mappedProperties, strings.ToUpper(property.Name)) || (strings.EqualFold(property.Name, "BDAY") && c.Birthday == nil && !fullDate(property)) {
 			extra = append(extra, property)
 		}
 	}
@@ -415,8 +415,8 @@ func contactFromVCard(body []byte) (contact, error) {
 		case "NOTE":
 			c.PersonalNotes = text(property)
 		case "BDAY":
-			date, err := vcard.ParsePartialDate(strings.TrimSpace(property.RawValue))
-			if err == nil && date.Year != nil && date.Month != nil && date.Day != nil {
+			if fullDate(property) {
+				date, _ := vcard.ParsePartialDate(strings.TrimSpace(property.RawValue))
 				birthday := fmt.Sprintf("%04d-%02d-%02dT00:00:00Z", *date.Year, *date.Month, *date.Day)
 				c.Birthday = &birthday
 			}
@@ -435,4 +435,11 @@ func contactFromVCard(body []byte) (contact, error) {
 		}
 	}
 	return c, nil
+}
+
+// fullDate reports whether a BDAY has a year, month and day, the only form
+// that Graph can hold.
+func fullDate(property vcard.Property) bool {
+	date, err := vcard.ParsePartialDate(strings.TrimSpace(property.RawValue))
+	return err == nil && date.Year != nil && date.Month != nil && date.Day != nil
 }
