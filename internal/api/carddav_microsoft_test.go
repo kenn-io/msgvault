@@ -75,3 +75,21 @@ func TestMicrosoftContactsTokenErrorMarksRevokedTokenUnauthorized(t *testing.T) 
 	_, ok = errors.AsType[*carddav.StatusError](unavailable)
 	require.False(ok)
 }
+
+// A Microsoft connection keeps its schedule without a token, because carddav
+// authorize-microsoft signs in outside the daemon.
+func TestCardDAVMicrosoftScheduleSurvivesMissingToken(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	cfg := &config.Config{Microsoft: config.MicrosoftConfig{ClientID: "synthetic-client"}}
+	cfg.Data.DataDir = t.TempDir()
+	cfg.CardDAV = config.CardDAVConfig{Provider: "microsoft", BaseURL: mscontacts.GraphBaseURL, Username: "person@example.com", Schedule: "0 3 * * *"}
+	controller := &CardDAVController{cfg: cfg, service: cardDAVListFixture{}}
+	var scheduled CardDAVOperations
+	controller.SetScheduleReconciler(func(_ config.CardDAVConfig, service CardDAVOperations) error {
+		scheduled = service
+		return nil
+	})
+	require.NoError(controller.ReconcileSchedule())
+	require.NotNil(scheduled)
+}

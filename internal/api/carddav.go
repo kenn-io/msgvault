@@ -128,11 +128,10 @@ func (c *CardDAVController) reconcileCurrentSchedule() error {
 			service = nil
 		}
 	}
-	if service != nil && configured.Provider == cardDAVProviderMicrosoft {
-		if _, err := c.microsoftContactsManager(configured.Username); err != nil {
-			service = nil
-		}
-	}
+	// A Microsoft connection keeps its schedule without a token. The service
+	// reads the token on each request, so a sign-in through carddav
+	// authorize-microsoft takes effect without the daemon, and a run before
+	// it reports microsoft_authorization_required.
 	if reconcileConnection != nil {
 		return reconcileConnection(c.connection(), configured, service)
 	}
