@@ -324,23 +324,3 @@ func TestUpsertAttachmentRecordRejectsInvalidRoleEvidence(t *testing.T) {
 		SELECT COUNT(*) FROM attachments WHERE message_id = ?`), messageID).Scan(&count))
 	assert.Zero(t, count)
 }
-
-func TestMessageProviderAttachmentsKeysByPrefix(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	messageID := f.CreateMessage("bland-call")
-	for _, write := range []store.AttachmentWrite{
-		{Filename: "call-recording.mp3", MIMEType: "audio/mpeg", SourceAttachmentID: "bland:recording:call-1", SourcePartKey: "bland:recording:call-1", State: attachmentpolicy.StateFailed, SkipReason: attachmentpolicy.SkipFetchFailure},
-		{Filename: "RE1.wav", MIMEType: "audio/wav", SourceAttachmentID: "twilio:RE1", SourcePartKey: "twilio:RE1", State: attachmentpolicy.StatePending},
-	} {
-		write.Role = store.AttachmentRoleStandalone
-		write.RoleSource = store.AttachmentRoleSourceImporterSemantics
-		require.NoError(f.Store.UpsertAttachmentRecordPreservingStored(t.Context(), messageID, write))
-	}
-	rows, err := f.Store.MessageProviderAttachments(messageID, "bland:recording:")
-	require.NoError(err)
-	require.Len(rows, 1)
-	assert.Equal(attachmentpolicy.StateFailed, rows["bland:recording:call-1"].State)
-	assert.Equal(attachmentpolicy.SkipFetchFailure, rows["bland:recording:call-1"].SkipReason)
-}

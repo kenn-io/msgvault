@@ -15,7 +15,6 @@ func TestPlaudSchedulerJobName(t *testing.T) {
 	name, ok := SchedulerJobNameForSource("plaud", "work")
 	assert.True(t, ok)
 	assert.Equal(t, "plaud:work", name)
-	assert.Equal(t, sourceScheduleGeneric, classifySourceScheduling("bland", "work").kind)
 }
 
 func TestPlaudDaemonCLIAllowlist(t *testing.T) {

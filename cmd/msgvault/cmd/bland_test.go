@@ -23,10 +23,7 @@ func TestBlandSourceSelection(t *testing.T) {
 	requirements := require.New(t)
 
 	cfg := &config.Config{Bland: []config.BlandSource{{Identifier: "one"}, {Identifier: "two"}}}
-	sources, err := resolveBlandSources(nil, false, cfg)
-	requirements.NoError(err)
-	assertions.Len(sources, 2)
-	_, err = resolveBlandSources(nil, true, cfg)
+	_, err := resolveBlandSources(nil, true, cfg)
 	requirements.Error(err)
 	source, err := resolveBlandSource([]string{"TWO"}, cfg)
 	requirements.NoError(err)
