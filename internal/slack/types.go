@@ -307,6 +307,8 @@ type ImportOptions struct {
 	// DMs or group DMs; ExcludeDMs/ExcludeGroupDMs select those.
 	IncludeChannels []string
 	ExcludeChannels []string
+	// ExcludePrivateChannels skips private channels without affecting DMs.
+	ExcludePrivateChannels bool
 	// ExcludeDMs skips one-to-one DMs and ExcludeGroupDMs skips group DMs.
 	// A skipped conversation keeps its resume state and thread debt until it
 	// is selected again. The zero value syncs both.

@@ -27,15 +27,16 @@ var (
 )
 
 func newSyncSlackCmd() *cobra.Command {
-	var syncDMs, syncGroupDMs bool
+	var syncPrivateChannels, syncDMs, syncGroupDMs bool
 	cmd := &cobra.Command{
 		Use:   "sync-slack [team-id]",
 		Short: "Sync Slack conversations (channels, group DMs, DMs)",
 		Long: `Sync Slack conversations for registered workspaces.
 
 The first run backfills each conversation's full history; later runs are
-incremental, fetching new messages and discovering late thread replies with
-search plus periodic canonical audits. Backfills and audits are resumable:
+incremental. Tokens with search:read use search plus periodic history audits
+to discover late thread replies. Without it, each sync revisits conversation
+history for replies on old threads. Backfills and audits are resumable:
 re-run after an interruption and the sync continues where it stopped.
 
 Requires a workspace added with 'add-slack'. Use --full to start a repair
@@ -93,7 +94,7 @@ Examples:
 				}
 				imp := slack.NewImporter(s, slack.NewClient("", token), teamID)
 				opts := slackImportOptions(teamID, userID, cfg)
-				applySlackConversationOverrides(cmd, &opts, syncDMs, syncGroupDMs)
+				applySlackConversationOverrides(cmd, &opts, syncPrivateChannels, syncDMs, syncGroupDMs)
 				opts.Limit = syncSlackLimit
 				opts.Full = syncSlackFull
 				opts.NoThreads = syncSlackNoThreads
@@ -133,11 +134,15 @@ Examples:
 	cmd.Flags().BoolVar(&syncSlackMaintenance, "maintenance", false, "run the maintenance rescan: repair edits and reaction changes on recent messages (archives ignore post-capture mutations by default)")
 	cmd.Flags().BoolVar(&syncSlackNoMedia, "no-media", false, "skip file downloads for this run (files are recorded as pending; backfill-slack-media fetches them later)")
 	cmd.Flags().BoolVar(&syncDMs, "dms", true, "include one-to-one DMs for this run, overriding config (true or false)")
+	cmd.Flags().BoolVar(&syncPrivateChannels, "private-channels", true, "include private channels for this run, overriding config (true or false)")
 	cmd.Flags().BoolVar(&syncGroupDMs, "group-dms", true, "include group DMs for this run, overriding config (true or false)")
 	return cmd
 }
 
-func applySlackConversationOverrides(cmd *cobra.Command, opts *slack.ImportOptions, dms, groupDMs bool) {
+func applySlackConversationOverrides(cmd *cobra.Command, opts *slack.ImportOptions, privateChannels, dms, groupDMs bool) {
+	if cmd.Flags().Changed("private-channels") {
+		opts.ExcludePrivateChannels = !privateChannels
+	}
 	if cmd.Flags().Changed("dms") {
 		opts.ExcludeDMs = !dms
 	}
@@ -224,15 +229,16 @@ func slackSyncExit(ctxErr error, syncErrors []string, cacheErr error) error {
 func slackImportOptions(teamID, userID string, cfg *config.Config) slack.ImportOptions {
 	policy := cfg.Slack.MediaPolicy(teamID)
 	return slack.ImportOptions{
-		TeamID:          teamID,
-		UserID:          userID,
-		AttachmentsDir:  cfg.AttachmentsDir(),
-		MaxMediaBytes:   policy.MaxBytes,
-		MediaPolicy:     policy,
-		IncludeChannels: cfg.Slack.Channels,
-		ExcludeChannels: cfg.Slack.ExcludeChannels,
-		ExcludeDMs:      !cfg.Slack.DMsEnabled(),
-		ExcludeGroupDMs: !cfg.Slack.GroupDMsEnabled(),
+		TeamID:                 teamID,
+		UserID:                 userID,
+		AttachmentsDir:         cfg.AttachmentsDir(),
+		MaxMediaBytes:          policy.MaxBytes,
+		MediaPolicy:            policy,
+		IncludeChannels:        cfg.Slack.Channels,
+		ExcludeChannels:        cfg.Slack.ExcludeChannels,
+		ExcludePrivateChannels: !cfg.Slack.PrivateChannelsEnabled(),
+		ExcludeDMs:             !cfg.Slack.DMsEnabled(),
+		ExcludeGroupDMs:        !cfg.Slack.GroupDMsEnabled(),
 	}
 }
 

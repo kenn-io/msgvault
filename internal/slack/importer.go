@@ -251,6 +251,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	if err = imp.res.loadUsers(ctx, imp.client); err != nil {
 		return sum, fmt.Errorf("refresh slack users: %w", err)
 	}
+	searchReplies := slices.Contains(imp.client.scopes, "search:read")
+	// File metadata still arrives with channel messages. Without files:read,
+	// keep it pending rather than attempting downloads the token cannot make.
+	if !slices.Contains(imp.client.scopes, "files:read") {
+		opts.NoMedia = true
+		imp.opts.NoMedia = true
+	}
 
 	var convs []Conversation
 	err = imp.client.AllConversations(ctx, func(c Conversation) error {
@@ -271,6 +278,18 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 			return sum, err
 		}
 		before := sum.MessagesProcessed
+		if !searchReplies && !opts.NoThreads {
+			cs := state.EnsureConv(c.ID)
+			// Without search, revisit old roots for new replies on every
+			// sync. Resume an existing walk intact. Finish the incremental
+			// window after each audit before starting another, so limited
+			// runs cannot starve new top-level messages.
+			if cs.Done && !cs.ThreadsPending && len(cs.PendingThreads) == 0 &&
+				cs.BackfillLatest == "" && !tsLess(cs.Cursor, cs.AuditedThrough) {
+				cs.ThreadsPending = true
+				cs.AuditPending = true
+			}
+		}
 		var cc *convScope
 		if cc, err = imp.syncConversation(ctx, syncID, src.ID, c, opts, state, sum); err != nil {
 			return sum, err
@@ -294,7 +313,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	// budget — certification parks safely when it runs out, so standing
 	// --limit schedules still converge on reply discovery. --no-threads
 	// skips it explicitly.
-	if !opts.NoThreads {
+	if !opts.NoThreads && searchReplies {
 		if err = imp.sweepReplies(ctx, syncID, targets, state, sum); err != nil {
 			return sum, err
 		}
@@ -340,14 +359,17 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 
 // includeConversation applies the conversation selection policy. DMs and
 // group DMs are selected only by ExcludeDMs/ExcludeGroupDMs (the name
-// filters exist to skip noisy channels, not people); channels only by the
-// include/exclude name filters.
+// filters exist to skip noisy channels, not people). Private channels also
+// honor ExcludePrivateChannels; all channels honor the name filters.
 func includeConversation(c *Conversation, opts *ImportOptions) bool {
 	if c.IsIM {
 		return !opts.ExcludeDMs
 	}
 	if c.IsMpim {
 		return !opts.ExcludeGroupDMs
+	}
+	if c.IsPrivate && opts.ExcludePrivateChannels {
+		return false
 	}
 	if slices.Contains(opts.ExcludeChannels, c.Name) {
 		return false

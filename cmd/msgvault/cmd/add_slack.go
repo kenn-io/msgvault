@@ -27,18 +27,19 @@ func newAddSlackCmd() *cobra.Command {
 		Short: "Add a Slack workspace as an archive source",
 		Long: `Add a Slack workspace as an archive source.
 
-Archives your own view of the workspace — public/private channels you are a
-member of, group DMs, and 1:1 DMs — via the Slack Web API.
+Archives conversations allowed by your Slack user token. A token limited to
+public-channel scopes archives all public channels, including ones you have
+not joined. Broader tokens archive your channel memberships and DMs.
 
 Requires a user token (xoxp-...) from an internal Slack app you create:
 
   1. https://api.slack.com/apps > Create New App > From scratch, in your
      workspace.
-  2. OAuth & Permissions > User Token Scopes, add:
-       channels:history groups:history im:history mpim:history
-       channels:read groups:read im:read mpim:read
-       users:read users:read.email files:read reactions:read team:read
-       search:read
+  2. OAuth & Permissions > User Token Scopes, for public channels only:
+       channels:history channels:read users:read users:read.email
+     To also archive private channels and DMs you belong to, add:
+       groups:history groups:read im:history im:read mpim:history mpim:read
+     Optional: files:read for downloads; search:read for faster reply discovery.
   3. Install to Workspace, then copy the "User OAuth Token".
 
 Internal apps you create yourself are not subject to Slack's non-Marketplace
@@ -46,6 +47,12 @@ rate limits, so backfills run at full speed.
 
 Provide the token via --token-file, the MSGVAULT_SLACK_TOKEN environment
 variable, or the interactive prompt.
+
+Without search:read, each sync revisits channel history to find replies on old
+threads. search:read can read private conversations through search; files:read
+and reactions:read also grant access beyond public-channel messages. Omit them
+for a public-channel-only token. Use a fresh app when reducing permissions;
+reinstalling an existing app can retain previously granted scopes.
 
 Examples:
   msgvault add-slack
@@ -75,11 +82,6 @@ Examples:
 			client := slack.NewClient("", token)
 			auth, err := client.AuthTest(cmd.Context())
 			if err != nil {
-				return err
-			}
-			// The reply sweep needs search:read; catch an under-scoped token
-			// here, where the fix is cheap, not on every future sync.
-			if err := client.ValidateSearchScope(cmd.Context()); err != nil {
 				return err
 			}
 			teamDomain := strings.TrimSuffix(strings.TrimPrefix(auth.URL, "https://"), ".slack.com/")

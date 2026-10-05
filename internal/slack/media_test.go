@@ -113,6 +113,28 @@ func TestDownloadFileSizeCap(t *testing.T) {
 	assert.ErrorIs(t, err, ErrAssetTooLarge)
 }
 
+func TestImportWithoutFileScopeDefersDownloads(t *testing.T) {
+	assertions := assert.New(t)
+	f := testWorkspace(t)
+	f.convs = f.convs[:1]
+	f.scopes = "channels:read,channels:history,users:read,users:read.email"
+	f.convs[0].Msgs[0].Files = []map[string]any{{
+		"id": "F01", "name": "example.txt", "mimetype": "text/plain", "size": 5,
+		"url_private": "https://files.slack.com/files-pri/T01-F01/example.txt",
+	}}
+	imp, opts := testImporter(t, f)
+	transport := &recordingTransport{body: "hello"}
+	imp.client.mediaTransport = transport
+	opts.NoMedia = false
+	opts.NoThreads = true
+	opts.AttachmentsDir = t.TempDir()
+	sum, err := imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	assertions.Empty(transport.requests)
+	assertions.Equal(1, sum.AttachmentsPending)
+	assertions.Zero(sum.AttachmentsDownloaded)
+}
+
 func TestPersistFilesRecordsStreamedOversizeForRetryPolicy(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

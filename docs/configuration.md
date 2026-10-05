@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-05"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1145,8 +1145,9 @@ workspace first with `msgvault add-slack`.
 [slack]
 enabled = true                    # gate for the daemon schedule
 schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
-channels = []                     # channel-name include filter (empty = all memberships)
+channels = []                     # channel-name include filter (empty = all available)
 exclude_channels = []             # channel names to skip, e.g. ["noise"]
+private_channels = true           # sync private channels
 dms = true                        # sync one-to-one direct messages
 group_dms = true                  # sync group direct messages
 media = true                      # download shared-file bytes
@@ -1164,6 +1165,7 @@ max_media_mb = 250                # per-file download cap (MiB)
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `channels` | all | Channel names to sync (include filter; never applies to DMs or group DMs) |
 | `exclude_channels` | — | Channel names to skip (wins over `channels`) |
+| `private_channels` | `true` | Sync private channels; `false` pauses them without removing archived messages or affecting DMs |
 | `dms` | `true` | Sync one-to-one DMs; `false` pauses them without removing archived messages |
 | `group_dms` | `true` | Sync group DMs; `false` pauses them without removing archived messages |
 | `media` | `true` | Download shared-file bytes (failed downloads retry via `backfill-slack-media`) |
@@ -1171,6 +1173,12 @@ max_media_mb = 250                # per-file download cap (MiB)
 | `media_max_participants` | `20` | Skip files from conversations above this many members; `0` = no cap |
 | `max_media_mb` | `250` | Per-file download cap in MiB (over-cap files are recorded as a `size_cap` skip and retried only after the cap changes) |
 | `accounts_config` | — | Per-team-ID `media` and `max_media_mb` overrides |
+
+For public channels only, set `private_channels`, `dms`, and `group_dms` to
+`false`. These settings select what sync archives; the Slack token determines
+what it can access. See [Slack permissions](/docs/usage/slack/#prerequisites)
+for a token restricted to public channels. A restricted token lists all public
+channels, including unjoined ones; broader tokens list your memberships.
 
 ### `[teams]`
 

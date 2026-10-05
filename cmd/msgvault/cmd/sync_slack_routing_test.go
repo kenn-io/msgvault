@@ -139,6 +139,7 @@ func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
 	cfg = &config.Config{
 		HomeDir: t.TempDir(),
 		Slack: config.SlackConfig{
+			PrivateChannels: new(false),
 			Channels:        []string{"eng"},
 			ExcludeChannels: []string{"noise"},
 			DMs:             &dms,
@@ -159,6 +160,7 @@ func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {
 	assert.Equal([]string{"eng"}, opts.IncludeChannels)
 	assert.Equal([]string{"noise"}, opts.ExcludeChannels)
 	assert.True(opts.ExcludeDMs)
+	assert.True(opts.ExcludePrivateChannels)
 	assert.False(opts.ExcludeGroupDMs)
 }
 
@@ -168,8 +170,10 @@ func TestApplySlackConversationOverrides(t *testing.T) {
 	configured := &cobra.Command{}
 	configured.Flags().Bool("dms", true, "")
 	configured.Flags().Bool("group-dms", true, "")
-	configuredOpts := slack.ImportOptions{ExcludeDMs: true}
-	applySlackConversationOverrides(configured, &configuredOpts, false, false)
+	configured.Flags().Bool("private-channels", true, "")
+	configuredOpts := slack.ImportOptions{ExcludeDMs: true, ExcludePrivateChannels: true}
+	applySlackConversationOverrides(configured, &configuredOpts, false, false, false)
+	assert.True(configuredOpts.ExcludePrivateChannels)
 	assert.True(configuredOpts.ExcludeDMs)
 	assert.False(configuredOpts.ExcludeGroupDMs)
 
@@ -178,11 +182,14 @@ func TestApplySlackConversationOverrides(t *testing.T) {
 	groupDMs := false
 	cmd.Flags().Bool("dms", true, "")
 	cmd.Flags().Bool("group-dms", true, "")
+	cmd.Flags().Bool("private-channels", true, "")
 	require.NoError(cmd.Flags().Set("dms", "true"))
 	require.NoError(cmd.Flags().Set("group-dms", "false"))
+	require.NoError(cmd.Flags().Set("private-channels", "true"))
 
-	opts := slack.ImportOptions{ExcludeDMs: true}
-	applySlackConversationOverrides(cmd, &opts, dms, groupDMs)
+	opts := slack.ImportOptions{ExcludeDMs: true, ExcludePrivateChannels: true}
+	applySlackConversationOverrides(cmd, &opts, true, dms, groupDMs)
+	assert.False(opts.ExcludePrivateChannels)
 
 	assert.False(opts.ExcludeDMs)
 	assert.True(opts.ExcludeGroupDMs)
@@ -237,6 +244,7 @@ func TestSyncSlackCommandUsesDaemonRunner(t *testing.T) {
 			"--group-dms=false",
 			"--limit=25",
 			"--no-threads",
+			"--private-channels=false",
 			"T0123456789",
 		}, req.Args, "args")
 	}, `{"type":"stdout","data":"Syncing Slack workspace T0123456789\n"}`, `{"type":"complete"}`)
@@ -255,6 +263,7 @@ func TestSyncSlackCommandUsesDaemonRunner(t *testing.T) {
 		"--group-dms=false",
 		"--limit", "25",
 		"--no-threads",
+		"--private-channels=false",
 	})
 
 	require.NoError(t, cmd.Execute(), "sync-slack")

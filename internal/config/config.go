@@ -1586,6 +1586,8 @@ type SlackConfig struct {
 	Channels []string `toml:"channels"`
 	// ExcludeChannels skips specific channel names.
 	ExcludeChannels []string `toml:"exclude_channels"`
+	// PrivateChannels toggles private-channel sync (nil/absent = enabled).
+	PrivateChannels *bool `toml:"private_channels"`
 	// DMs toggles one-to-one DM sync (nil/absent = enabled).
 	DMs *bool `toml:"dms"`
 	// GroupDMs toggles group DM sync (nil/absent = enabled).
@@ -1617,6 +1619,11 @@ type TeamsConfig struct {
 // MediaEnabled reports whether file download is on (default true).
 func (s SlackConfig) MediaEnabled() bool {
 	return s.Media == nil || *s.Media
+}
+
+// PrivateChannelsEnabled reports whether private channels sync (default true).
+func (s SlackConfig) PrivateChannelsEnabled() bool {
+	return s.PrivateChannels == nil || *s.PrivateChannels
 }
 
 // DMsEnabled reports whether one-to-one DMs sync (default true).

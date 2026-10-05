@@ -1,14 +1,14 @@
 ---
-last_edited: "2026-09-23"
+last_edited: "2026-10-05"
 title: Slack
 description: Archive Slack workspaces through the Web API or a Slackdump export.
 ---
 
-msgvault archives your own view of a Slack workspace: every public and
-private channel you are a member of, group DMs, and 1:1 DMs, with threads,
-reactions, @mentions, edits, and shared files. Each workspace becomes its own
-msgvault source; all Slack-archived messages share `message_type = slack` for
-search.
+msgvault can archive all public channels with a restricted user token, or
+your channel memberships and DMs with broader permissions. It captures threads,
+reactions, @mentions, edits, and shared-file metadata. Downloading files requires
+an additional permission. Each workspace becomes its own msgvault source; all
+Slack-archived messages share `message_type = slack` for search.
 
 Choose a [local Slackdump import](#import-a-slackdump-export) for an existing
 export, or [connect a workspace](#prerequisites) for continuing sync. Live sync
@@ -60,11 +60,8 @@ Create an internal Slack app in each workspace and obtain a **user token**:
 
 1. Open [api.slack.com/apps](https://api.slack.com/apps) → **Create New
    App** → **From scratch**, in your workspace.
-2. Under **OAuth & Permissions → Scopes → User Token Scopes**, add:
-   `channels:history`, `groups:history`, `im:history`, `mpim:history`,
-   `channels:read`, `groups:read`, `im:read`, `mpim:read`,
-   `users:read`, `users:read.email`, `files:read`, `reactions:read`,
-   `team:read`, `search:read`.
+2. Under **OAuth & Permissions → Scopes → User Token Scopes**, choose the
+   permissions below.
 3. Click **Install to Workspace** and copy the **User OAuth Token**
    (`xoxp-…`).
 
@@ -75,15 +72,68 @@ Slack's non-Marketplace rate limits — history backfills run at full page size
 Some workspaces restrict app creation to admins; if that applies to yours,
 ask an admin to approve the app.
 
+### Public channels only
+
+Grant only these four user scopes:
+
+```text
+channels:read channels:history users:read users:read.email
+```
+
+This token can read public-channel messages and threads plus member profiles.
+msgvault lists all public channels, including ones you have not joined, and
+applies any configured channel-name filters. Each sync revisits their history
+to discover replies on old messages. This takes more API requests than search;
+`--limit` bounds each run and resumes the history walk on subsequent runs.
+
+Do not add `search:read`, `files:read`, or `reactions:read` to this token:
+those permissions can expose content from private conversations accessible to
+the authorizing user. Reactions already included in public message payloads
+remain archived. Files remain metadata-only pending entries without downloads.
+Conversation settings control what msgvault archives; they do not reduce the
+token's permissions.
+
+For a public-only archive, also set these options in `config.toml`:
+
+```toml
+[slack]
+private_channels = false
+dms = false
+group_dms = false
+```
+
+All three default to `true`. They select private channels, one-to-one DMs, and
+group DMs independently, within the token's permissions. Disabling a type
+preserves messages already archived and its sync progress. The settings apply
+to every registered workspace.
+
+When replacing a broader token, create a fresh Slack app with just these
+scopes. [Slack's OAuth grants are additive](https://docs.slack.dev/authentication/installing-with-oauth/),
+so reinstalling an existing app can retain previously granted access.
+
+### Your channel memberships and DMs
+
+Start with the four scopes above, then add the pairs for each conversation type
+you want to archive:
+
+| Conversations | Additional user scopes |
+|---|---|
+| Private channels | `groups:read`, `groups:history` |
+| One-to-one DMs | `im:read`, `im:history` |
+| Group DMs | `mpim:read`, `mpim:history` |
+
+Tokens with any of these additional read scopes archive your memberships,
+rather than every public channel. Optionally add `files:read` for file downloads
+and `search:read` for faster discovery of replies. `reactions:read` and
+`team:read` are not needed by the importer.
+
 ## Add a workspace
 
 ```bash
 msgvault add-slack
 ```
 
-The command validates the token (`auth.test`, plus a `search.messages` probe
-— thread-reply archiving requires `search:read`, and a missing scope should
-fail setup, not every future sync), stores it at
+The command validates the token with `auth.test`, stores it at
 `tokens/slack_<team-id>_<user-id>.json` (0600), and registers the workspace
 as a `slack` source identified by `<team-id>:<user-id>`. Tokens are keyed by
 workspace *and* user, so two accounts in the same workspace coexist.
@@ -111,8 +161,8 @@ msgvault sync-slack T0123456789
 # Repair path: re-fetch everything, upserting in place.
 msgvault sync-slack --full
 
-# Override DM selection for this run, for example in a frequent channel-only job.
-msgvault sync-slack --dms=false --group-dms=false
+# Override conversation selection for a public-only run.
+msgvault sync-slack --private-channels=false --dms=false --group-dms=false
 ```
 
 | Flag | Description |
@@ -121,6 +171,7 @@ msgvault sync-slack --dms=false --group-dms=false
 | `--dms BOOL` | Override one-to-one DM selection for this run |
 | `--full` | Re-fetch all messages and update the existing archive rows |
 | `--group-dms BOOL` | Override group DM selection for this run |
+| `--private-channels BOOL` | Override private-channel selection for this run |
 | `--no-threads` | Skip thread-reply fetching this run (a later threaded run pays the debt automatically) |
 | `--maintenance` | Refresh recent messages and replies for edits and reaction changes |
 | `--no-media` | Skip file downloads this run (files stay pending for `backfill-slack-media`) |
@@ -142,6 +193,16 @@ checkpoints, so repeated limited runs continue making progress. The maintenance
 rescan is skipped while a limit is set.
 
 ### How thread replies are found
+
+The importer reads the token's granted scopes from Slack's `X-OAuth-Scopes`
+response header. Without `search:read`, it revisits each selected conversation's
+history and fetches its threads directly. A message that gains its first reply
+long after the initial sync is discovered by that history walk. Interrupted and
+limited walks retain their cursors, and new channel messages get an incremental
+pass between completed walks. Without `files:read`, sync defers file downloads.
+
+With `search:read`, the importer uses the search sweep described below, with
+periodic history audits to cover replies missing from search.
 
 Slack's history API never returns thread replies in the main channel stream
 (unless "also sent to channel"), and offers no change feed. The importer
@@ -191,8 +252,8 @@ retries them (idempotent; already-downloaded files are never re-fetched).
 The command always downloads, even while `[slack].media = false` keeps the
 scheduled syncs deferring files — that setting's documented workflow (defer
 now, backfill later) depends on it.
-Conversation selection settings (`channels`, `exclude_channels`, `dms`, and
-`group_dms`) do not apply to this command: it can download pending files from
+Conversation selection settings (`channels`, `exclude_channels`,
+`private_channels`, `dms`, and `group_dms`) do not apply to this command: it can download pending files from
 excluded conversations already in the archive. Media scope, participant and
 size limits, and per-account opt-outs still apply.
 If Slack removes a file before it is downloaded, msgvault keeps the last
@@ -210,7 +271,7 @@ media_max_participants = 20   # default; 0 = collect files from every channel
 
 The daemon then syncs every registered workspace on the schedule. See
 [Configuration](/docs/configuration/#slack) for the full option list
-(channel include/exclude filters, DM and group DM selection, media scope,
+(channel include/exclude filters, private-channel and DM selection, media scope,
 participant and size caps,
 per-workspace `accounts_config` overrides).
 

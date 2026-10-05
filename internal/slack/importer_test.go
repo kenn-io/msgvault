@@ -101,6 +101,71 @@ func testWorkspace(t *testing.T) *fakeSlack {
 // replies (the root re-upserts in place).
 const totalWorkspaceMessages = 13
 
+func TestImportPublicChannelsWithoutSearch(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := testWorkspace(t)
+	f.scopes = "channels:read,channels:history,users:read,users:read.email"
+	f.searchMissingScope = true
+	f.onSearch = func(string, int) { assertions.Fail("token without search scope must not search") }
+	f.convs = append(f.convs, &fakeConv{
+		ID: "C03", Name: "announcements", Kind: "public", NotMember: true,
+		Members: []string{"UALICE"},
+		Msgs:    []fakeMsg{{TS: ts(40), User: "UALICE", Text: "public announcement"}},
+	})
+	imp, opts := testImporter(t, f)
+	now := tsBase.Add(24 * time.Hour)
+	imp.now = func() time.Time { return now }
+
+	sum, err := imp.Import(context.Background(), opts)
+	requirements.NoError(err)
+	assertions.Equal(2, sum.ConversationsProcessed)
+	var count int
+	requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	assertions.Equal(11, count, "public messages and replies, including an unjoined channel")
+	requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM conversations WHERE source_conversation_id IN ('C02', 'G01', 'D01')`).Scan(&count))
+	assertions.Zero(count, "private conversations must not enter the archive")
+
+	// The first reply to an old, previously unthreaded message cannot be
+	// found through an incremental history window. It requires a new walk.
+	f.convs[0].Msgs[0].Replies = []fakeMsg{{TS: ts(1500), ThreadTS: ts(0), User: "UALICE", Text: "late public reply"}}
+	now = now.Add(2 * time.Hour)
+	sum, err = imp.Import(context.Background(), opts)
+	requirements.NoError(err)
+	assertions.Positive(sum.RepliesFetched)
+	requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	assertions.Equal(12, count)
+
+	_, err = imp.Import(context.Background(), opts)
+	requirements.NoError(err)
+	requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	assertions.Equal(12, count, "re-reading threads must not duplicate messages")
+}
+
+func TestImportWithoutSearchResumesLimitedThreadWalk(t *testing.T) {
+	requirements := require.New(t)
+	f := testWorkspace(t)
+	f.convs = f.convs[:1]
+	f.scopes = "channels:read,channels:history,users:read,users:read.email"
+	f.searchMissingScope = true
+	imp, opts := testImporter(t, f)
+	now := tsBase.Add(24 * time.Hour)
+	imp.now = func() time.Time { return now }
+	_, err := imp.Import(context.Background(), opts)
+	requirements.NoError(err)
+	f.convs[0].Msgs[0].Replies = []fakeMsg{{TS: ts(1500), ThreadTS: ts(0), User: "UALICE", Text: "late reply"}}
+	f.convs[0].Msgs = append(f.convs[0].Msgs, fakeMsg{TS: ts(1501), User: "UALICE", Text: "new root"})
+	now = now.Add(2 * time.Hour)
+	opts.Limit = 3
+	for range 20 {
+		_, err = imp.Import(context.Background(), opts)
+		requirements.NoError(err)
+	}
+	var count int
+	requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	assert.Equal(t, 12, count, "resumed thread walks must leave room for new channel messages")
+}
+
 func testImporter(t *testing.T, f *fakeSlack) (*Importer, ImportOptions) {
 	t.Helper()
 	prevInterval := checkpointMinInterval
@@ -159,6 +224,39 @@ func TestImportSkipsExcludedDMsAndGroupDMs(t *testing.T) {
 		`SELECT COUNT(*) FROM conversations WHERE source_conversation_id IN (?, ?)`),
 		"D01", "G01").Scan(&conversations))
 	assertions.Zero(conversations)
+}
+
+func TestImportPrivateChannelsAndDMsAreIndependent(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		excludeDMs bool
+		want       []string
+	}{
+		{name: "keep DMs", want: []string{"C01", "D01", "G01"}},
+		{name: "public only", excludeDMs: true, want: []string{"C01"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			requirements := require.New(t)
+			f := testWorkspace(t)
+			imp, opts := testImporter(t, f)
+			opts.ExcludePrivateChannels = true
+			opts.ExcludeDMs = tt.excludeDMs
+			opts.ExcludeGroupDMs = tt.excludeDMs
+			_, err := imp.Import(t.Context(), opts)
+			requirements.NoError(err)
+			var ids []string
+			rows, err := imp.store.DB().Query(`SELECT source_conversation_id FROM conversations ORDER BY source_conversation_id`)
+			requirements.NoError(err)
+			defer func() { requirements.NoError(rows.Close()) }()
+			for rows.Next() {
+				var id string
+				requirements.NoError(rows.Scan(&id))
+				ids = append(ids, id)
+			}
+			requirements.NoError(rows.Err())
+			assert.Equal(t, tt.want, ids)
+		})
+	}
 }
 
 func TestExcludedDMRetainsResumeStateAndThreadDebt(t *testing.T) {

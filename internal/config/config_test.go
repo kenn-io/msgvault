@@ -1173,6 +1173,7 @@ func TestLoadSlackConversationSelection(t *testing.T) {
 	requirements := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
 	requirements.NoError(os.WriteFile(path, []byte(`[slack]
+private_channels = false
 dms = false
 group_dms = true
 `), 0o600))
@@ -1185,12 +1186,14 @@ group_dms = true
 	assertions.True(*cfg.Slack.GroupDMs)
 	assertions.False(cfg.Slack.DMsEnabled())
 	assertions.True(cfg.Slack.GroupDMsEnabled())
+	assertions.False(cfg.Slack.PrivateChannelsEnabled())
 
 	defaults := NewDefaultConfig().Slack
 	assertions.Nil(defaults.DMs)
 	assertions.Nil(defaults.GroupDMs)
 	assertions.True(defaults.DMsEnabled())
 	assertions.True(defaults.GroupDMsEnabled())
+	assertions.True(defaults.PrivateChannelsEnabled())
 }
 
 func TestLoadExplicitPathNotFound(t *testing.T) {
