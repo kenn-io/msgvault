@@ -238,6 +238,7 @@ func (a *storeAPIAdapter) selectDraftSender(
 	source *store.Source,
 ) (string, []string, error) {
 	eligible, selfAddresses := confirmedDraftIdentities(identities)
+	ref := draftSourceRef(source)
 	if requested == "" {
 		matches := make(map[string]string)
 		for _, recipient := range parentRecipients {
@@ -250,7 +251,6 @@ func (a *storeAPIAdapter) selectDraftSender(
 			}
 		}
 		if len(matches) > 1 && grant != nil {
-			ref := draftSourceRef(source)
 			for key := range matches {
 				if !grant.AllowsSender(agentgrant.PermissionDraftCreate, ref, key) {
 					delete(matches, key)
@@ -267,7 +267,6 @@ func (a *storeAPIAdapter) selectDraftSender(
 			requested = value
 		}
 	}
-	ref := draftSourceRef(source)
 	if requested != "" {
 		address, key, err := parseDraftSender(requested)
 		if err != nil {
@@ -301,7 +300,9 @@ func (a *storeAPIAdapter) selectDraftSender(
 	return candidates[0], selfAddresses, nil
 }
 
-// Source authorization precedes recipient and original MIME reads; sender and provider checks precede remote writes.
+// resolveDraftTarget authorizes the parent and destination sources before it
+// reads parent recipients or original MIME, and it completes sender, policy,
+// and provider configuration checks before any IMAP or Gmail write.
 func (a *storeAPIAdapter) resolveDraftTarget(
 	ctx context.Context,
 	parentID *int64,
