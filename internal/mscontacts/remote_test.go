@@ -671,7 +671,8 @@ func TestOutlookEditKeepsParametersOfUnchangedValues(t *testing.T) {
 	require := require.New(t)
 	saved := "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:alice\r\nFN:Alice\r\n" +
 		"EMAIL;TYPE=work;PREF=1:alice@work.test\r\nEMAIL;TYPE=home:alice@old.test\r\n" +
-		"TEL;VALUE=uri;TYPE=voice,home:tel:+15550100\r\nTITLE:Engineer\r\nEND:VCARD\r\n"
+		"TEL;VALUE=uri;TYPE=voice,home:tel:+15550100\r\nTITLE:Engineer\r\n" +
+		"RELATED;VALUE=text;X-LABEL=friend:Bob\r\nEND:VCARD\r\n"
 	c, err := contactFromVCard([]byte(saved))
 	require.NoError(err)
 	c.Properties = []singleValueExtendedProperty{{ID: vcardProperty, Value: saved}}
@@ -693,4 +694,5 @@ func TestOutlookEditKeepsParametersOfUnchangedValues(t *testing.T) {
 	require.Len(phones, 1)
 	assert.Equal([]string{"work", "voice"}, typeValues(phones[0]))
 	assert.Empty(phones[0].ParametersNamed("VALUE"))
+	assert.Contains(string(body), "RELATED;VALUE=text;X-LABEL=friend:Bob\r\n", "an unmapped property stays as saved")
 }

@@ -133,7 +133,8 @@ func (c contact) body(uid string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	keepParameters(card.Properties, document.Cards[0].Properties)
+	// Only the properties rendered from Graph fields; extra is kept as saved.
+	keepParameters(card.Properties[:len(card.Properties)-len(extra)], document.Cards[0].Properties)
 	return vcard.Marshal(vcard.Document{Cards: []vcard.Card{card}})
 }
 
