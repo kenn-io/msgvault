@@ -130,9 +130,12 @@ func (c contact) body(uid string) ([]byte, error) {
 	}
 	// A saved line that the mapping of the saved vCard renders again was held
 	// by Outlook. Any other saved line never reached Outlook.
-	held := map[string]int{}
+	held, outlook := map[string]int{}, map[string]int{}
 	for _, property := range sentCard.Properties {
 		held[lineKey(property)]++
+	}
+	for _, property := range card.Properties {
+		outlook[lineKey(property)]++
 	}
 	var restore, extra []vcard.Property
 	for _, property := range document.Cards[0].Properties {
@@ -141,6 +144,10 @@ func (c contact) body(uid string) ([]byte, error) {
 		case name == "VERSION" || name == "UID":
 		case held[key] > 0:
 			held[key]--
+			restore = append(restore, property)
+		case outlook[key] > 0:
+			// Outlook now holds this value, so it is not added twice.
+			outlook[key]--
 			restore = append(restore, property)
 		case (name == "BDAY" || name == "N") && len(card.PropertiesNamed(name)) > 0:
 			// A card holds at most one, and Outlook now has its own.
@@ -228,7 +235,8 @@ func lineKey(property vcard.Property) string {
 	case "N":
 		value = components(0, 5)
 	case "ORG":
-		value = components(0, 2)
+		company, department := organization(raw)
+		value = company + "\x1f" + department
 	case "BDAY":
 		if fullDate(property) {
 			date, _ := vcard.ParsePartialDate(strings.TrimSpace(raw))
@@ -236,6 +244,25 @@ func lineKey(property vcard.Property) string {
 		}
 	}
 	return name + "\x00" + value
+}
+
+// organization returns the company and the department of an ORG value. The
+// units after the company form one department joined by "/", the inverse of
+// vcard.OrganizationComponents, so a department reads back as written.
+func organization(raw string) (string, string) {
+	values, err := vcard.SplitStructuredText(raw)
+	if err != nil || len(values) == 0 {
+		return "", ""
+	}
+	var units []string
+	for _, value := range values[1:] {
+		for unit := range strings.FieldsFuncSeq(value, func(r rune) bool { return strings.ContainsRune("/>", r) }) {
+			if unit = strings.TrimSpace(unit); unit != "" {
+				units = append(units, unit)
+			}
+		}
+	}
+	return strings.TrimSpace(values[0]), strings.Join(units, "/")
 }
 
 // digits returns only the digits of a phone number.
@@ -443,8 +470,7 @@ func contactFromVCard(body []byte) (contact, error) {
 				c.untypedPhones = append(c.untypedPhones, number)
 			}
 		case "ORG":
-			org := parts(property, 2)
-			c.CompanyName, c.Department = org[0], org[1]
+			c.CompanyName, c.Department = organization(property.RawValue)
 		case "TITLE":
 			c.JobTitle = text(property)
 		case "NOTE":

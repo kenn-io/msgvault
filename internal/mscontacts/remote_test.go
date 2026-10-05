@@ -756,3 +756,30 @@ func TestPublishBeyondGraphLimitsKeepsTheRest(t *testing.T) {
 func overLimit(c contact) bool {
 	return len(c.EmailAddresses) > 3 || len(c.BusinessPhones) > 2 || len(c.HomePhones) > 2
 }
+
+// A saved value that Outlook now holds is not added twice, and a department
+// with several units reads back as one ORG.
+func TestOutlookEditDoesNotDuplicateSavedLines(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	saved := "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:alice\r\nFN:Alice\r\n" +
+		"EMAIL:a1@example.test\r\nEMAIL:a2@example.test\r\nEMAIL:a3@example.test\r\nEMAIL:a4@example.test\r\n" +
+		"ORG:Acme;R/D;East\r\nEND:VCARD\r\n"
+	c, err := contactFromVCard([]byte(saved))
+	require.NoError(err)
+	placePhones(&c, nil)
+	assert.Equal("R/D/East", c.Department)
+	c.Properties = []singleValueExtendedProperty{{ID: vcardProperty, Value: saved}}
+	c.EmailAddresses[2].Address = "a4@example.test"
+
+	body, err := c.body("alice")
+	require.NoError(err)
+	document, err := vcard.Decode(strings.NewReader(string(body)))
+	require.NoError(err)
+	card := document.Cards[0]
+	assert.Equal(1, strings.Count(string(body), "a4@example.test"), string(body))
+	assert.Len(card.PropertiesNamed("EMAIL"), 3)
+	orgs := card.PropertiesNamed("ORG")
+	require.Len(orgs, 1, string(body))
+	assert.Equal("Acme;R/D;East", orgs[0].RawValue)
+}
