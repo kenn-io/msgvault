@@ -66,6 +66,10 @@ type Service struct {
 	Resolve        func(context.Context, Request) (Provider, error)
 	AcquireSource  func(context.Context, int64) (func(), error)
 	ReconcileState func(context.Context, State, State) error
+
+	// beforeClaim is a batch-local guard installed only by ApplyTriage while the
+	// daemon gate and exact source lease are held. It runs after native preview.
+	beforeClaim func(context.Context, Request) error
 }
 
 func (s *Service) now() time.Time {
@@ -250,6 +254,14 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 	}
 	if err := s.authorize(ctx, principal, request); err != nil {
 		return nil, err
+	}
+	if s.beforeClaim != nil {
+		if err := s.beforeClaim(ctx, request); err != nil {
+			return nil, err
+		}
+		if err := s.authorize(ctx, principal, request); err != nil {
+			return nil, err
+		}
 	}
 	intent := request
 	intent.DryRun, intent.Expected, intent.PreviewToken, intent.IdempotencyKey = true, nil, "", ""
