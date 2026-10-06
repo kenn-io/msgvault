@@ -752,4 +752,17 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 		assert.Equal(created.Issue.UID, issues[0].UID)
 		assert.False(truncated)
 	}
+
+	second, err := service.Create(t.Context(), "key-citing-second", kataissues.CreateInput{Title: "Review the revised budget", Evidence: []kataevidence.Reference{message}})
+	require.NoError(err)
+	for _, limit := range []int{1, 2} {
+		issues, truncated, err := service.Citing(t.Context(), kataevidence.SourceKeys(message)[0], limit)
+		require.NoError(err)
+		require.Len(issues, limit)
+		assert.Equal(created.Issue.UID, issues[0].UID)
+		assert.Equal(limit == 1, truncated)
+		if limit == 2 {
+			assert.Equal(second.Issue.UID, issues[1].UID)
+		}
+	}
 }

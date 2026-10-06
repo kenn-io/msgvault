@@ -128,7 +128,7 @@ func newKataCmd() *cobra.Command {
 				}
 			}
 			if result.Truncated {
-				if _, err := fmt.Fprintln(out, "More issues cite this source; see them in Kata."); err != nil {
+				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "More issues cite this source; see them in Kata."); err != nil {
 					return fmt.Errorf("write Kata issues: %w", err)
 				}
 			}
@@ -136,6 +136,7 @@ func newKataCmd() *cobra.Command {
 		},
 	}
 	issues.Flags().Int64Var(&messageID, "message", 0, "Message ID the issues cite (required)")
+	_ = issues.MarkFlagRequired("message")
 	issues.Flags().Int64Var(&attachmentID, "attachment", 0, "Only issues citing this attachment of the message")
 
 	root.AddCommand(evidence, create, link, issues)

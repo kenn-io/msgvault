@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 type fakeKataIssueOperations struct {
@@ -135,5 +136,53 @@ func TestKataIssueHTTP(t *testing.T) {
 		failed := serveKataIssue(server, "/api/v1/integrations/kata/issues", createBody, map[string]string{"Idempotency-Key": "key-2"})
 		assert.Equal(tc.status, failed.Code)
 		assert.Contains(failed.Body.String(), tc.code)
+	}
+}
+
+func TestKataIssueLookupArchiveErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		setup  func(*testing.T, *storetest.Fixture) int64
+		status int
+		code   string
+	}{
+		{"archive identity missing", func(t *testing.T, f *storetest.Fixture) int64 {
+			t.Helper()
+			_, err := f.Store.DB().Exec("DELETE FROM archive_metadata WHERE key='archive_uid'")
+			require.NoError(t, err)
+			return 1
+		}, http.StatusServiceUnavailable, "archive_unavailable"},
+		{"database closed", func(t *testing.T, f *storetest.Fixture) int64 {
+			t.Helper()
+			require.NoError(t, f.Store.DB().Close())
+			return 1
+		}, http.StatusServiceUnavailable, "archive_unavailable"},
+		{"message missing", func(_ *testing.T, _ *storetest.Fixture) int64 {
+			return 1
+		}, http.StatusNotFound, "evidence_unavailable"},
+		{"source message ID missing", func(t *testing.T, f *storetest.Fixture) int64 {
+			t.Helper()
+			id := f.CreateMessage("lookup-message")
+			_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET source_message_id='' WHERE id=?"), id)
+			require.NoError(t, err)
+			return id
+		}, http.StatusUnprocessableEntity, "evidence_unsupported"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := storetest.New(t)
+			id := tc.setup(t, f)
+			server := NewServerWithOptions(ServerOptions{
+				Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger(),
+				KataIssueOperations: &kataIssueBackend{store: f.Store},
+			})
+			response := httptest.NewRecorder()
+			server.router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/integrations/kata/issues?message_id=%d", id), nil))
+			assert.Equal(t, tc.status, response.Code)
+			var body struct {
+				Error string `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			assert.Equal(t, tc.code, body.Error)
+		})
 	}
 }

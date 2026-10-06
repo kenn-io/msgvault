@@ -43,7 +43,7 @@ func (s *Service) Prepare(ctx context.Context, selectors []Selector) ([]Evidence
 		}
 		record, err := s.reader.LoadKataEvidenceSource(ctx, sel)
 		if err != nil {
-			return nil, archiveError(err)
+			return nil, ArchiveError(err)
 		}
 		if !utf8.ValidString(record.Text) {
 			return nil, ErrChanged
@@ -92,7 +92,7 @@ func (s *Service) Resolve(ctx context.Context, ref Reference) (Resolution, error
 		case errors.Is(err, ErrUnsupported):
 			result.State = Unsupported
 		default:
-			return Resolution{}, archiveError(err)
+			return Resolution{}, ArchiveError(err)
 		}
 		return result, nil
 	}
@@ -179,9 +179,9 @@ func setRange(ref Reference, start, end int) Reference {
 	return ref
 }
 
-// archiveError keeps evidence outcomes recognizable and marks anything else
+// ArchiveError keeps evidence outcomes recognizable and marks anything else
 // as a failure to read the archive.
-func archiveError(err error) error {
+func ArchiveError(err error) error {
 	for _, known := range []error{ErrInvalidReference, ErrUnavailable, ErrChanged, ErrUnprocessed, ErrUnsupported, context.Canceled, context.DeadlineExceeded} {
 		if errors.Is(err, known) {
 			return err

@@ -299,7 +299,7 @@ func (b *kataIssueBackend) Link(ctx context.Context, ref string, evidence []kata
 func (b *kataIssueBackend) Find(ctx context.Context, messageID, attachmentID int64) ([]taskclient.KataTask, bool, error) {
 	ref, err := b.store.KataCitationSource(ctx, messageID, attachmentID)
 	if err != nil {
-		return nil, false, err
+		return nil, false, kataevidence.ArchiveError(err)
 	}
 	service, err := b.service(ctx)
 	if err != nil {

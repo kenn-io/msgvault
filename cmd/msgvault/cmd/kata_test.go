@@ -110,6 +110,31 @@ func TestKataCreateThroughDaemonAdapter(t *testing.T) {
 	conflict, ok := errors.AsType[*daemonclient.KataIssueConflictError](err)
 	require.True(ok, "%v", err)
 	assert.Equal(created.Issue.QualifiedRef, conflict.Issue.QualifiedRef)
+
+	// Truncation must not add a non-tabular row to stdout.
+	for i := range 10 {
+		runKataCommand(ctx, t, string(request), "create", "--idempotency-key", fmt.Sprintf("cli-extra-%d", i), "--json")
+	}
+	command = newKataCmd()
+	command.SetArgs([]string{"issues", "--message", strconv.FormatInt(id, 10)})
+	var stdout, stderr bytes.Buffer
+	command.SetOut(&stdout)
+	command.SetErr(&stderr)
+	require.NoError(command.ExecuteContext(ctx))
+	rows := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	assert.Len(rows, 10)
+	for _, row := range rows {
+		assert.Len(strings.Split(row, "\t"), 3, row)
+	}
+	assert.Contains(stderr.String(), "More issues cite this source")
+}
+
+func TestKataIssuesRequiresMessage(t *testing.T) {
+	command := newKataCmd()
+	command.SetArgs([]string{"issues"})
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	require.ErrorContains(t, command.ExecuteContext(t.Context()), `required flag(s) "message" not set`)
 }
 
 func runKataCommand(ctx context.Context, t *testing.T, input string, args ...string) []byte {

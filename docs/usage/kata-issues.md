@@ -113,6 +113,9 @@ oldest first, and says when more cite the source. HTTP clients call
 `GET /api/v1/integrations/kata/issues?message_id=42&attachment_id=7`; MCP
 clients call `find_kata_issues`, which needs no write flag.
 
+The CLI writes result rows to stdout and the truncation notice to stderr.
+Use `--json` for a response with `issues` and `truncated` fields.
+
 ## Limits
 
 - Each citation covers at most 1,000 characters. A longer range is rejected.
@@ -121,6 +124,9 @@ clients call `find_kata_issues`, which needs no write flag.
   counting re-synced copies of passages it already quotes. File a new issue
   past either limit.
 - A message without a source message ID can't be cited (`evidence_unsupported`).
+- If deduplication hides a cited message, looking up its ID returns
+  `evidence_unavailable`. Looking up the surviving message does not find issues
+  that cite only the hidden copy. The citations remain on the issues in Kata.
 - If the source text changed or was deleted since you prepared it, msgvault
   refuses to create the issue. Prepare it again.
 
