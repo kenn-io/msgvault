@@ -42,11 +42,11 @@ func listHTTPAccounts(cmd *cobra.Command) error {
 	}
 	defer func() { _ = s.Close() }()
 
-	accounts, err := s.GetCLIAccounts(cmd.Context())
+	accounts, countsPending, err := s.GetCLIAccounts(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("list accounts: %w", err)
 	}
-	return outputAccountStats(daemonAccountsToStats(accounts))
+	return outputAccountStats(daemonAccountsToStats(accounts, countsPending))
 }
 
 func outputAccountStats(stats []accountStats) error {
@@ -63,7 +63,7 @@ func outputAccountStats(stats []accountStats) error {
 	return nil
 }
 
-func daemonAccountsToStats(accounts []daemonclient.CLIAccount) []accountStats {
+func daemonAccountsToStats(accounts []daemonclient.CLIAccount, countsPending bool) []accountStats {
 	stats := make([]accountStats, len(accounts))
 	for i, account := range accounts {
 		stats[i] = accountStats{
@@ -72,6 +72,7 @@ func daemonAccountsToStats(accounts []daemonclient.CLIAccount) []accountStats {
 			Type:               account.Type,
 			DisplayName:        account.DisplayName,
 			MessageCount:       account.MessageCount,
+			CountsPending:      countsPending,
 			SourceDeletedCount: account.SourceDeletedCount,
 			LastSync:           account.LastSync,
 		}
@@ -103,6 +104,9 @@ func outputAccountsTable(stats []accountStats) {
 // deleted count so the primary column keeps its active-only meaning while
 // still surfacing the retained-but-source-deleted population.
 func formatMessagesCell(s accountStats) string {
+	if s.CountsPending {
+		return "pending"
+	}
 	if s.SourceDeletedCount > 0 {
 		return fmt.Sprintf("%s (+%s deleted from source)",
 			formatCount(s.MessageCount), formatCount(s.SourceDeletedCount))
@@ -114,12 +118,16 @@ func outputAccountsJSON(stats []accountStats) error {
 	output := make([]map[string]any, len(stats))
 	for i, s := range stats {
 		entry := map[string]any{
-			"id":                   s.ID,
-			keyEmail:               s.Email,
-			"type":                 s.Type,
-			"display_name":         s.DisplayName,
-			"message_count":        s.MessageCount,
-			"source_deleted_count": s.SourceDeletedCount,
+			"id":           s.ID,
+			keyEmail:       s.Email,
+			"type":         s.Type,
+			"display_name": s.DisplayName,
+		}
+		if s.CountsPending {
+			entry["counts_pending"] = true
+		} else {
+			entry["message_count"] = s.MessageCount
+			entry["source_deleted_count"] = s.SourceDeletedCount
 		}
 		if s.LastSync != nil && !s.LastSync.IsZero() {
 			entry["last_sync"] = s.LastSync.Format(time.RFC3339)
@@ -153,6 +161,7 @@ func formatCount(n int64) string {
 }
 
 type accountStats struct {
+	CountsPending      bool
 	ID                 int64
 	Email              string
 	Type               string

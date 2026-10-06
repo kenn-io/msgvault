@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -12,6 +13,9 @@ import (
 // snapshotComputeTimeout bounds one background snapshot computation, which
 // runs on the server's lifetime context rather than a request's.
 const snapshotComputeTimeout = 2 * time.Minute
+
+// errSnapshotWaitTimeout distinguishes a caller wait budget from a failed computation.
+var errSnapshotWaitTimeout = fmt.Errorf("snapshot wait budget exceeded: %w", context.DeadlineExceeded)
 
 // snapshotCache serves an expensive read with bounded latency. Each get
 // starts (or joins) a fresh computation and waits up to a budget; when the
@@ -77,7 +81,10 @@ func (c *snapshotCache[T]) get(
 		case <-flight.done:
 			return flight.value, flight.asOf, false, flight.err
 		case <-timer.C:
-			return zero, time.Time{}, false, context.DeadlineExceeded
+			if err := reqCtx.Err(); err != nil {
+				return zero, time.Time{}, false, err
+			}
+			return zero, time.Time{}, false, errSnapshotWaitTimeout
 		case <-reqCtx.Done():
 			return zero, time.Time{}, false, reqCtx.Err()
 		}

@@ -706,6 +706,10 @@ type cliAccountsResponse struct {
 	// fresh counts did not finish in time; AsOf says when it was taken.
 	Stale bool      `json:"stale,omitempty"`
 	AsOf  time.Time `json:"as_of,omitzero"`
+	// CountsPending reports that the first count refresh is still running, so
+	// every count is a zero placeholder. Only callers sending
+	// apiprotocol.AllowPendingCountsHeader get it.
+	CountsPending bool `json:"counts_pending,omitempty"`
 }
 
 // sourceMessageCounter is implemented by stores that count every source's
@@ -2584,7 +2588,10 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.get(
 			r.Context(), s.importContext, "", s.statsSnapshotWait, counter.CountMessagesBySourceContext,
 		)
-		if err != nil {
+		// Older clients can't tell placeholder zeros from real counts, so only opted-in callers get them.
+		allowPending := r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true"
+		response.CountsPending = allowPending && errors.Is(err, errSnapshotWaitTimeout)
+		if err != nil && !response.CountsPending {
 			if s.writeIfContextError(w, err) {
 				return
 			}
@@ -2596,6 +2603,10 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 
 	accounts := make([]cliAccountResponse, 0, len(sources))
 	for _, src := range sources {
+		if response.CountsPending {
+			accounts = append(accounts, newCLIAccountResponse(src, 0, 0))
+			continue
+		}
 		if grouped != nil {
 			accounts = append(accounts, newCLIAccountResponse(src, grouped[src.ID].Live, grouped[src.ID].SourceDeleted))
 			continue

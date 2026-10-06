@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -346,7 +347,9 @@ func TestEngineListAccountsUsesSourceBackedCLIAccounts(t *testing.T) {
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/accounts", r.URL.Path, "path")
+		assert.Equal("true", r.Header.Get(apiprotocol.AllowPendingCountsHeader), "allow pending counts")
 		writeJSONResponse(t, w, map[string]any{
+			"counts_pending": true,
 			"accounts": []map[string]any{
 				{
 					"id":            42,

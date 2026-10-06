@@ -32,16 +32,17 @@ func Available() bool { return false }
 // can reference sqlitevec.Options without a compile error; the struct is
 // never populated at runtime when the PG code path is taken.
 type Options struct {
-	Path            string
-	MainPath        string
-	Dimension       int
-	MainDB          *sql.DB
-	BuildScope      vector.BuildScope
-	ReadOnly        bool
-	ANNWorkCeiling  int
-	ANNOversample   int
-	ANNNProbe       int
-	AcceleratorMode string
+	Path             string
+	MainPath         string
+	Dimension        int
+	MainDB           *sql.DB
+	BuildScope       vector.BuildScope
+	ReadOnly         bool
+	MetadataReadOnly bool
+	ANNWorkCeiling   int
+	ANNOversample    int
+	ANNNProbe        int
+	AcceleratorMode  string
 }
 
 // Backend is the stub backend type for builds without sqlite_vec.

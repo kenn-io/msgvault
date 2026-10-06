@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -123,9 +124,10 @@ func (s *slowCountsStore) CountMessagesBySourceContext(ctx context.Context) (map
 	return s.Store.CountMessagesBySourceContext(ctx)
 }
 
-func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
+// newSlowAccountsServer serves one account with one message behind slowCountsStore.
+func newSlowAccountsServer(t *testing.T) (*Server, *slowCountsStore, int64) {
+	t.Helper()
 	require := require.New(t)
-	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
@@ -136,12 +138,19 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 	})
 	require.NoError(err)
 	slow := &slowCountsStore{Store: st, release: make(chan struct{})}
-	t.Cleanup(func() { close(slow.release) })
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Store:  slow,
 		Logger: testLogger(),
 	})
+	return srv, slow, src.ID
+}
+
+func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv, slow, _ := newSlowAccountsServer(t)
+	t.Cleanup(func() { close(slow.release) })
 	srv.statsSnapshotWait = 50 * time.Millisecond
 
 	getAccounts := func() cliAccountsResponse {
@@ -163,4 +172,43 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 	assert.True(second.Stale, "slow counts serve the previous snapshot")
 	assert.EqualValues(1, second.Accounts[0].MessageCount)
 	assert.False(second.AsOf.IsZero())
+}
+
+func TestHandleCLIAccountsColdCountsPending(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv, slow, sourceID := newSlowAccountsServer(t)
+	slow.calls.Store(1)
+	srv.statsSnapshotWait = 20 * time.Millisecond
+	get := func(optIn bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+		if optIn {
+			req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
+		}
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		return w
+	}
+
+	legacy := get(false)
+	assert.Equal(http.StatusServiceUnavailable, legacy.Code, "older clients never get placeholder zeros")
+	assert.Contains(legacy.Body.String(), "query_timeout")
+
+	pending := get(true)
+	require.Equal(http.StatusOK, pending.Code, pending.Body.String())
+	var resp cliAccountsResponse
+	require.NoError(json.Unmarshal(pending.Body.Bytes(), &resp))
+	assert.True(resp.CountsPending)
+	require.Len(resp.Accounts, 1)
+	assert.Equal(sourceID, resp.Accounts[0].ID)
+	assert.Zero(resp.Accounts[0].MessageCount)
+
+	close(slow.release)
+	require.Eventually(func() bool {
+		resp = cliAccountsResponse{}
+		return json.Unmarshal(get(true).Body.Bytes(), &resp) == nil && !resp.CountsPending
+	}, 10*time.Second, 10*time.Millisecond)
+	assert.EqualValues(1, resp.Accounts[0].MessageCount)
+	legacy = get(false)
+	require.Equal(http.StatusOK, legacy.Code, "older clients get real counts once they exist")
 }

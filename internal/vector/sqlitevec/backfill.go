@@ -12,10 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
-// embedGenBackfillMigration is the applied_migrations ledger key that
-// guards the one-time embed_gen upgrade backfill. Stable string — never
-// change it, or the backfill would re-run on every Open.
-const embedGenBackfillMigration = "embed_gen_backfill_active_v1"
+const embedGenBackfillMigration = vector.EmbedGenBackfillMigration
 
 // backfillStampChunk caps how many message ids go into one stamping
 // UPDATE so the bind-parameter count stays well under SQLite's limit.

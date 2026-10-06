@@ -2086,9 +2086,10 @@ func (c CliAccountResponse) Validate() error {
 }
 
 type CliAccountsResponse struct {
-	Accounts []CliAccountResponse `json:"accounts" validate:"required"`
-	AsOf     *time.Time           `json:"as_of,omitempty"`
-	Stale    *bool                `json:"stale,omitempty"`
+	Accounts      []CliAccountResponse `json:"accounts" validate:"required"`
+	AsOf          *time.Time           `json:"as_of,omitempty"`
+	CountsPending *bool                `json:"counts_pending,omitempty"`
+	Stale         *bool                `json:"stale,omitempty"`
 }
 
 func (c CliAccountsResponse) Validate() error {

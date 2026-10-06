@@ -417,10 +417,34 @@ type MetadataSearchingBackend interface {
 }
 
 // FilteredCoverageBackend is the optional exact-coverage capability used by
-// analytical search. The caller resolves the canonical filtered population in
-// DuckDB; the vector backend intersects that population with one generation.
+// callers that resolve a canonical message-ID population in another database.
+// The vector backend intersects that population with one generation.
 type FilteredCoverageBackend interface {
 	EmbeddedMessageCountForIDs(ctx context.Context, gen GenerationID, messageIDs []int64) (int64, error)
+}
+
+// CoverageSnapshotBackend intersects a generation with live, stamped message
+// IDs captured from one main-database read snapshot. Implementations count only
+// the supplied population and do not re-read mutable message lifecycle state.
+// Callers page at FilteredCoverageBatchSize.
+type CoverageSnapshotBackend interface {
+	EmbeddedMessageCountForSnapshot(ctx context.Context, gen GenerationID, stampedMessageIDs []int64) (int64, error)
+}
+
+// EmbeddingCoverage partitions the in-scope live messages for one generation:
+// Stamped messages carry the generation's embed_gen, and Embedded counts the
+// stamped messages that also have at least one vector.
+type EmbeddingCoverage struct {
+	Live     int64
+	Stamped  int64
+	Embedded int64
+}
+
+// CoverageCountingBackend is implemented by backends whose vectors share the
+// main database. It reads every coverage count from one statement, so the
+// counts describe one snapshot without moving message IDs to the client.
+type CoverageCountingBackend interface {
+	EmbeddingCoverage(ctx context.Context, gen GenerationID, scope BuildScope) (EmbeddingCoverage, error)
 }
 
 // OrphanEmbeddingPruner removes message embeddings whose authoritative

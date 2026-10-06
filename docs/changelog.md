@@ -8,6 +8,9 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- `list-accounts` and `embeddings list` keep working while a sync, import, or
+  embedding build runs. Accounts whose counts aren't ready yet show `pending`.
+
 - Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` reads only the
   chats that changed since the last successful import and writes only new and
   changed messages, instead of rewriting the whole archive. It picks up edits

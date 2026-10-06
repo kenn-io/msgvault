@@ -3116,6 +3116,11 @@ Print one row per index generation: ID, generation state, model, dimension,
 coverage, accelerator state and row count, accelerator timestamps and last
 error, fingerprint, and generation timestamps.
 
+Listing only reads existing metadata, so it works while other jobs hold the
+archive. If the metadata still needs an upgrade, it fails and asks you to run
+`msgvault daemon restart`, which applies the upgrade when vector search is
+enabled.
+
 ### embeddings optimize
 
 ```bash
@@ -3644,7 +3649,11 @@ link for the message.
 
 ## list-accounts
 
-List synced email accounts.
+List archived accounts. While the daemon's first message-count refresh is
+still running, the table shows `pending` in the messages column, and JSON
+entries carry `"counts_pending": true` in place of `message_count` and
+`source_deleted_count`. Later calls show the finished counts or a cached
+snapshot.
 
 ```bash
 msgvault list-accounts [flags]

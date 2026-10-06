@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -48,9 +49,11 @@ type Options struct {
 	// set, Open SKIPS BackfillEmbedGenForUpgrade, which would otherwise
 	// WRITE messages.embed_gen + applied_migrations through the read-only
 	// main handle and fail. This mirrors pgvector.Options.SkipMigrate's
-	// read-only guard. Migrate still runs because it only writes vectors.db,
-	// which is opened read-write regardless.
+	// read-only guard. Migrate still runs unless MetadataReadOnly also requests
+	// a query-only vectors.db handle.
 	ReadOnly bool
+	// MetadataReadOnly opens existing vectors.db with query-only SQL and skips all writes.
+	MetadataReadOnly bool
 	// ANNWorkCeiling bounds rows considered by one accelerated search. Zero
 	// selects the production default. Requests above the ceiling use exact
 	// search so it does not cap the number of requested results.
@@ -94,13 +97,31 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 	if err := RegisterExtension(); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open(DriverName(), opts.Path)
+	dsn := opts.Path
+	if opts.MetadataReadOnly {
+		var path string
+		var err error
+		dsn, path, err = sqliteutil.QueryOnlyDSN(opts.Path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve vectors.db: %w", err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			return nil, fmt.Errorf("existing vectors.db required: %w", err)
+		}
+		opts.ReadOnly = true
+	}
+	db, err := sql.Open(DriverName(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open vectors.db: %w", err)
 	}
-	if err := Migrate(ctx, db, opts.Dimension); err != nil {
+	if !opts.MetadataReadOnly {
+		if err := Migrate(ctx, db, opts.Dimension); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate vectors.db: %w", err)
+		}
+	} else if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("migrate vectors.db: %w", err)
+		return nil, fmt.Errorf("read vectors.db: %w", err)
 	}
 	vec1Version, err := installedVec1Version(ctx, db)
 	if err != nil {
@@ -2100,6 +2121,34 @@ func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.Gen
 		  AND message_id IN (SELECT value FROM json_each(?))`,
 		int64(gen), string(encoded)).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count filtered embedded messages: %w", err)
+	}
+	return count, nil
+}
+
+// EmbeddedMessageCountForSnapshot counts generation vectors among the
+// live, stamped message IDs captured by a main-database read snapshot.
+func (b *Backend) EmbeddedMessageCountForSnapshot(
+	ctx context.Context, gen vector.GenerationID, stampedMessageIDs []int64,
+) (int64, error) {
+	if len(stampedMessageIDs) == 0 {
+		return 0, nil
+	}
+	if len(stampedMessageIDs) > vector.FilteredCoverageBatchSize {
+		return 0, fmt.Errorf("%w: got %d, maximum %d",
+			vector.ErrCoverageBatchTooLarge, len(stampedMessageIDs), vector.FilteredCoverageBatchSize)
+	}
+	encoded, err := json.Marshal(stampedMessageIDs, json.Deterministic(true))
+	if err != nil {
+		return 0, fmt.Errorf("encode coverage snapshot message ids: %w", err)
+	}
+	var count int64
+	if err := b.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT message_id)
+		FROM embeddings
+		WHERE generation_id = ?
+		  AND message_id IN (SELECT value FROM json_each(?))`,
+		int64(gen), string(encoded)).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count snapshot embedded messages: %w", err)
 	}
 	return count, nil
 }
