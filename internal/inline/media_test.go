@@ -320,6 +320,12 @@ func TestMediaImportPersistsAttachmentStatsForListingsAndSearch(t *testing.T) {
 					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("bytes!")), ContentLength: 6, Request: request}, nil
 				})
 			case attachmentpolicy.StateUnavailable:
+				client.files = func(context.Context, int64, []int64) ([]Media, error) {
+					return nil, errors.New("unexpected terminal media retry")
+				}
+				imp.mediaTransport = mediaRoundTripper(func(*http.Request) (*http.Response, error) {
+					return nil, errors.New("unexpected terminal media download")
+				})
 				// Preserve a terminal marker from an existing archive without
 				// claiming a new permanent-unavailability source response.
 				opts.NoMedia = true
