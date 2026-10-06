@@ -22,9 +22,7 @@ func ValidateTriageMappingEntries(source SourceIdentity, entries map[string]stri
 		return err
 	}
 	for category, tag := range entries {
-		switch category {
-		case "todo", "reply-needed", "watch", "delegated", "finished", "uncertain":
-		default:
+		if !validTriageCategory(category) {
 			return ErrInvalid
 		}
 		if _, err := emailtags.Normalize(emailtags.Change{Add: []string{tag}}, source.SourceType == "imap"); err != nil {
@@ -32,6 +30,15 @@ func ValidateTriageMappingEntries(source SourceIdentity, entries map[string]stri
 		}
 	}
 	return nil
+}
+
+func validTriageCategory(category string) bool {
+	switch category {
+	case "todo", "reply-needed", "watch", "delegated", "finished", "uncertain":
+		return true
+	default:
+		return false
+	}
 }
 
 // ValidateTriageMappingUpdate takes the authenticated principal, never an
