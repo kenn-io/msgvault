@@ -501,11 +501,14 @@ func TestImporterFailedCallDoesNotHoldWatermark(t *testing.T) {
 		{"malformed call details fail the call", func(t *testing.T, st *store.Store, f *importSource, imp *Importer, opts ImportOptions) {
 			t.Helper()
 			f.callErr = errors.New("twilio voice: invalid JSON payload")
-			_, err := imp.Import(t.Context(), opts)
+			sum, err := imp.Import(t.Context(), opts)
 			require.ErrorContains(t, err, testCA)
-			messages, _, err := st.ListMessages(0, 10)
+			archive, err := loadArchive(t.Context(), st, sum.SourceID, testCA)
 			require.NoError(t, err)
-			assert.Empty(t, messages)
+			assert.Empty(t, archive.Call.Raw, "retain no malformed call response")
+			require.Len(t, archive.Recordings, 1, "retain validated recording evidence for retry")
+			assert.Equal(t, testRE, archive.Recordings[0].SID)
+			assert.Zero(t, f.audioCalls)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -694,6 +697,74 @@ func TestImporterOldCallRecoversAfterProviderFailure(t *testing.T) {
 	}
 }
 
+func TestImporterRetryRetainsDiscoveredRecording(t *testing.T) {
+	for _, failure := range []string{"call", "recordings"} {
+		t.Run(failure, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			var retrying atomic.Bool
+			client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/2010-04-01/Accounts/" + testAC + "/Recordings.json":
+					recordings := []Recording{testRecording(testRE, testCA)}
+					if retrying.Load() {
+						assert.Equal("2026-11-26", r.URL.Query().Get("DateCreated>"))
+						recordings = []Recording{} // The old recording is outside the incremental window.
+					}
+					writeJSON(t, w, map[string]any{"recordings": recordings})
+				case "/2010-04-01/Accounts/" + testAC + "/Calls/" + testCA + ".json":
+					if !retrying.Load() && failure == "call" {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					w.WriteHeader(http.StatusNotFound)
+				case "/2010-04-01/Accounts/" + testAC + "/Calls/" + testCA + "/Recordings.json":
+					if !retrying.Load() && failure == "recordings" {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					w.WriteHeader(http.StatusNotFound)
+				case "/2010-04-01/Accounts/" + testAC + "/Recordings/" + testRE + "/Transcriptions.json":
+					writeJSON(t, w, map[string]any{"transcriptions": []any{map[string]any{
+						"sid": sid("TR", 'a'), "account_sid": testAC, "recording_sid": testRE,
+						"status": "completed", "transcription_text": "Recovered speech",
+					}}})
+				case "/v2/Transcripts":
+					writeJSON(t, w, map[string]any{"transcripts": []any{}})
+				case "/2010-04-01/Accounts/" + testAC + "/Recordings/" + testRE + ".wav":
+					_, err := w.Write(testWAV)
+					assert.NoError(err)
+				default:
+					assert.Fail("unexpected endpoint", r.URL.Path)
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			}, nil)
+			st, _, imp, opts := fixtureImporter(t)
+			imp.client = client
+			imp.now = func() time.Time { return time.Date(2026, 12, 3, 12, 0, 0, 0, time.UTC) }
+			_, err := imp.Import(t.Context(), opts)
+			require.Error(err)
+			require.Equal([]string{testCA}, loadState(t, st).RetryIDs)
+
+			// Both per-call endpoints are now gone, but recording-scoped media
+			// and transcripts remain available. A restart must retain their IDs.
+			retrying.Store(true)
+			restarted := NewImporter(st, client)
+			restarted.now = imp.now
+			_, err = restarted.Import(t.Context(), opts)
+			require.NoError(err)
+			row := onlyAttachment(t, st)
+			assert.Equal(attachmentpolicy.StateStored, row.State)
+			data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, row.StoragePath))
+			require.NoError(err)
+			assert.Equal(testWAV, data)
+			msg, err := st.GetMessage(onlyMessageID(t, st))
+			require.NoError(err)
+			assert.Contains(msg.Body, "Recovered speech")
+			assert.Empty(loadState(t, st).RetryIDs)
+		})
+	}
+}
+
 func TestImporterBoundedFullSyncPreservesIncrementalCoverage(t *testing.T) {
 	for _, after := range []time.Time{
 		time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC),  // Covers the old incremental window.
@@ -842,8 +913,12 @@ func TestImporterLimitedDiscoveryProgressesWithPersistentRetry(t *testing.T) {
 	assert.EqualValues(1, sum.MeetingsAdded)
 	assert.EqualValues(1, sum.MeetingsProcessed)
 	assert.True(sum.DiscoveryPending, "the failed first call still needs a retry")
-	msg, err := st.GetMessage(onlyMessageID(t, st))
+	messages, err := st.MessageMetadataBatch(sum.SourceID, []string{second})
+	require.NoError(err)
+	require.Contains(messages, second, "discovery reaches the next call despite the queued retry")
+	msg, err := st.GetMessage(messages[second].ID)
 	require.NoError(err)
 	assert.Equal(second, msg.SourceMessageID)
+	assert.True(msg.HasAttachments)
 	assert.Equal([]string{testCA}, loadState(t, st).RetryIDs)
 }

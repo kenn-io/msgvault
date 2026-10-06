@@ -123,22 +123,25 @@ func (r *importRun) archiveCall(ctx context.Context, id string, discovered []Rec
 	recordings := mergeRecordings(prior.Recordings, discovered)
 	var diagnostics []string
 	call, callErr := r.imp.client.GetCall(ctx, id)
-	if refused(callErr) {
+	if callErr != nil {
 		// Calls expire independently of retained recordings and transcripts.
 		call = prior.Call
 		call.SID = id
-		if call.AccountSID == "" && len(discovered) > 0 {
-			call.AccountSID = discovered[0].AccountSID
+		if call.AccountSID == "" && len(recordings) > 0 {
+			call.AccountSID = recordings[0].AccountSID
 		}
-		diagnostics = append(diagnostics, "call_metadata_unavailable")
-	} else if callErr != nil {
-		return callErr, nil
+		if refused(callErr) {
+			diagnostics = append(diagnostics, "call_metadata_unavailable")
+			callErr = nil
+		}
 	}
-	fresh, callErr := r.imp.client.CallRecordings(ctx, id)
-	if refused(callErr) {
-		diagnostics = append(diagnostics, "call_recordings_unavailable")
-	} else if callErr != nil {
-		return callErr, nil
+	var fresh []Recording
+	if callErr == nil {
+		fresh, callErr = r.imp.client.CallRecordings(ctx, id)
+		if refused(callErr) {
+			diagnostics = append(diagnostics, "call_recordings_unavailable")
+			callErr = nil
+		}
 	}
 	if !r.Opts.CreatedAfter.IsZero() {
 		// --after bounds new evidence; recordings already archived stay.
@@ -147,7 +150,11 @@ func (r *importRun) archiveCall(ctx context.Context, id string, discovered []Rec
 		})
 	}
 	recordings = mergeRecordings(recordings, fresh)
-	evidence, transcriptErr := r.imp.client.Transcripts(ctx, recordings)
+	var evidence Evidence
+	var transcriptErr error
+	if callErr == nil {
+		evidence, transcriptErr = r.imp.client.Transcripts(ctx, recordings)
+	}
 	evidence.Diagnostics = append(evidence.Diagnostics, diagnostics...)
 	archive := mergeArchive(prior, call, recordings, evidence)
 	snapshot, err := archive.snapshot(r.SourceID, r.Opts.AccountEmail)
@@ -164,6 +171,11 @@ func (r *importRun) archiveCall(ctx context.Context, id string, discovered []Rec
 	}
 	if err != nil {
 		return nil, err
+	}
+	if callErr != nil {
+		// Retain discovered recordings before queuing a retry: the next run
+		// may no longer be able to list them through either discovery path.
+		return callErr, nil
 	}
 	r.Sum.Diagnostics = append(r.Sum.Diagnostics, evidence.Diagnostics...)
 	mediaErr, err := r.persistRecordings(ctx, result.MessageID, archive.Recordings, result.Changed)
