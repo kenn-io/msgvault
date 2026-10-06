@@ -285,8 +285,10 @@ type mockScheduler struct {
 	triggerJobFn  func(name string) error
 	startedJobs   []string // generic job names passed to StartJob
 	startJobFn    func(name string) (scheduler.JobDisposition, error)
-	triggerFn     func(email string) error
-	addedAccts    []string // emails added via AddAccount
+	// waitTicketFn answers WaitTicket; nil reports an unknown ticket.
+	waitTicketFn func(ctx context.Context, name string, ticket scheduler.Ticket) (scheduler.TicketStatus, error)
+	triggerFn    func(email string) error
+	addedAccts   []string // emails added via AddAccount
 }
 
 func newMockScheduler() *mockScheduler {
@@ -343,6 +345,24 @@ func (m *mockScheduler) StartJob(name string) (scheduler.JobDisposition, error) 
 		return m.startJobFn(name)
 	}
 	return scheduler.JobStarted, nil
+}
+
+func (m *mockScheduler) RequestJob(name string) (scheduler.JobRequest, error) {
+	disp, err := m.StartJob(name)
+	if err != nil {
+		return scheduler.JobRequest{}, err
+	}
+	return scheduler.JobRequest{
+		Disposition: disp,
+		Ticket:      scheduler.Ticket{Epoch: "mock", Seq: uint64(len(m.startedJobs))},
+	}, nil
+}
+
+func (m *mockScheduler) WaitTicket(ctx context.Context, name string, ticket scheduler.Ticket) (scheduler.TicketStatus, error) {
+	if m.waitTicketFn != nil {
+		return m.waitTicketFn(ctx, name, ticket)
+	}
+	return scheduler.TicketStatus{}, scheduler.ErrUnknownTicket
 }
 
 // mockStore implements MessageStore for tests.

@@ -1995,7 +1995,39 @@ For sources scheduled as generic jobs (`source_type` set), the body also carries
 | `queued` | The job was already running; one follow-up run is queued. |
 | `coalesced` | The request was merged into a run still waiting to start or into a follow-up already pending; no additional run was added. |
 
-Repeated triggers never run the job concurrently. A generic-job trigger does not wait on the daemon's operation gate, so it is answered even while a long import of the same job holds it.
+Repeated triggers never run the job concurrently. A generic-job trigger does not wait on the daemon's operation gate, so it is answered even while a long import of the same job holds it. The body also carries a `ticket` for the request; see [Wait for a sync ticket](#get-apiv1syncaccountticketsticket).
+
+---
+
+### Wait for a sync ticket {#get-apiv1syncaccountticketsticket}
+
+**Endpoint:** `GET /api/v1/sync/{account}/tickets/{ticket}?source_type=<type>&wait=30s`
+
+Report the ticket returned by a generic-source trigger. This request never waits on the operation gate, with or without `wait`. With `wait`, the daemon holds the request until the ticket reaches a terminal state or the wait ends, then answers with the current state. `wait` is capped at five minutes and by the request timeout; a client that needs longer asks again.
+
+A ticket is answered by the first run that takes the archive gate after the request and then finishes. A run already executing when the request arrived may have read its source before the request, so it never answers it.
+
+| State | Meaning |
+|---|---|
+| `queued` | No run covering the request has started yet. |
+| `running` | A run that started after the request is executing. |
+| `completed` | That run finished without error. |
+| `failed` | That run returned an error; `error` carries it. |
+| `abandoned` | No run will answer the request: the daemon stopped or restarted, the job was removed, or the follow-up run was dropped. `error` says which. |
+
+**Response (200 OK):**
+
+```json
+{
+  "ticket": "9f2c41d07ab3e815-3",
+  "job": "imessage",
+  "state": "completed",
+  "run_started_at": "2026-10-06T14:02:11Z",
+  "run_finished_at": "2026-10-06T14:02:13Z"
+}
+```
+
+Tickets live in daemon memory. An unknown ticket returns 404, a ticket whose result is no longer retained returns 410, and an account sync (no `source_type`) has no tickets. The scheduled WhatsApp for Mac and iMessage imports keep at least one minute between runs: a request made sooner is delayed, never answered by the earlier run.
 
 ---
 

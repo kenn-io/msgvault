@@ -1386,6 +1386,18 @@ type TriggerSyncQuery struct {
 	SourceType *string `json:"source_type,omitempty"`
 }
 
+type GetSyncTicketQuery struct {
+	// SourceType Source type the ticket was issued for
+	SourceType string `json:"source_type" validate:"required"`
+
+	// Wait Longest time to wait for a terminal state, as a duration such as 30s; capped by the request timeout
+	Wait *string `json:"wait,omitempty"`
+}
+
+func (g GetSyncTicketQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type GetTextAggregatesQuery struct {
 	// ViewType Text aggregate view type
 	ViewType *string `json:"view_type,omitempty"`

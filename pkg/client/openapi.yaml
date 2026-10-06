@@ -13772,6 +13772,27 @@ components:
         - account
         - source_type
       type: object
+    TicketStatus:
+      properties:
+        error:
+          type: string
+        job:
+          type: string
+        run_finished_at:
+          format: date-time
+          type: string
+        run_started_at:
+          format: date-time
+          type: string
+        state:
+          type: string
+        ticket:
+          type: string
+      required:
+        - ticket
+        - job
+        - state
+      type: object
     TimelineRow:
       properties:
         anchor_message_id:
@@ -13912,6 +13933,8 @@ components:
         message:
           type: string
         status:
+          type: string
+        ticket:
           type: string
       required:
         - status
@@ -29426,6 +29449,69 @@ paths:
       security:
         - apiKey: []
       summary: Trigger account sync
+      tags:
+        - API
+  /api/v1/sync/{account}/tickets/{ticket}:
+    get:
+      operationId: getSyncTicket
+      parameters:
+        - description: Configured source identifier the ticket was issued for
+          in: path
+          name: account
+          required: true
+          schema:
+            type: string
+        - description: Ticket returned by the sync trigger
+          in: path
+          name: ticket
+          required: true
+          schema:
+            type: string
+        - description: Source type the ticket was issued for
+          in: query
+          name: source_type
+          required: true
+          schema:
+            type: string
+        - description: Longest time to wait for a terminal state, as a duration such as 30s; capped by the request timeout
+          in: query
+          name: wait
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketStatus"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "410":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get or wait for a sync ticket
       tags:
         - API
   /api/v1/text/aggregates:

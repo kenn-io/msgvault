@@ -13389,6 +13389,19 @@ func (t ThreadPage) Validate() error {
 	return errors
 }
 
+type TicketStatus struct {
+	ErrorData     *string    `json:"error,omitzero"`
+	Job           string     `json:"job" validate:"required"`
+	RunFinishedAt *time.Time `json:"run_finished_at,omitempty"`
+	RunStartedAt  *time.Time `json:"run_started_at,omitempty"`
+	State         string     `json:"state" validate:"required"`
+	Ticket        string     `json:"ticket" validate:"required"`
+}
+
+func (t TicketStatus) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
 type TimelineRow struct {
 	AnchorMessageID *int64     `json:"anchor_message_id,omitempty"`
 	ConversationID  *int64     `json:"conversation_id,omitempty"`
@@ -13453,6 +13466,7 @@ type TriggerSyncResponse struct {
 	Disposition *string `json:"disposition,omitzero"`
 	Message     string  `json:"message" validate:"required"`
 	Status      string  `json:"status" validate:"required"`
+	Ticket      *string `json:"ticket,omitzero"`
 }
 
 func (t TriggerSyncResponse) Validate() error {

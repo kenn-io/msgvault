@@ -476,6 +476,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if err := sched.AddJob(scheduler.Job{
 			Name:     api.WhatsAppAppleJobName(source.Phone),
 			Schedule: source.Schedule,
+			// Sync now may be called in a loop; each run holds the archive
+			// gate for a fixed cost, so reruns are spaced, never skipped.
+			MinSpacing: time.Minute,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
 					return runScheduledWhatsAppApple(ctx, s, source)
@@ -493,8 +496,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if cfg.IMessage.Enabled && cfg.IMessage.Schedule != "" {
 		if err := sched.AddJob(scheduler.Job{
-			Name:     api.IMessageJobName,
-			Schedule: cfg.IMessage.Schedule,
+			Name:       api.IMessageJobName,
+			Schedule:   cfg.IMessage.Schedule,
+			MinSpacing: time.Minute,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
 					return runScheduledIMessage(ctx, s, cfg.IMessage)
@@ -3889,8 +3893,12 @@ func (a *schedulerAdapter) TriggerJob(name string) error {
 	return a.jobScheduler(name).TriggerJob(name)
 }
 
-func (a *schedulerAdapter) StartJob(name string) (scheduler.JobDisposition, error) {
-	return a.jobScheduler(name).StartJob(name)
+func (a *schedulerAdapter) RequestJob(name string) (scheduler.JobRequest, error) {
+	return a.jobScheduler(name).RequestJob(name)
+}
+
+func (a *schedulerAdapter) WaitTicket(ctx context.Context, name string, ticket scheduler.Ticket) (scheduler.TicketStatus, error) {
+	return a.jobScheduler(name).WaitTicket(ctx, name, ticket)
 }
 
 // runScheduledSync performs a sync for a scheduled account. It resolves

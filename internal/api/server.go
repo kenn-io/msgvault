@@ -213,14 +213,16 @@ type SyncScheduler interface {
 	// sourceStatus can surface their scheduled/running/error state via
 	// SchedulerJobNameForSource. See scheduler_jobs.go.
 	JobStatus() []JobStatus
-	// IsJobScheduled and StartJob manually run a generic (non-account)
+	// IsJobScheduled and RequestJob manually run a generic (non-account)
 	// scheduler job by name, the trigger counterpart to JobStatus used by
-	// handleTriggerSync for generic sources. StartJob runs asynchronously
+	// handleTriggerSync for generic sources. RequestJob runs asynchronously
 	// (like TriggerSync) so the HTTP handler can return before the job
 	// acquires the daemon's operation gate, avoiding a self-deadlock when
-	// the request itself is holding that gate.
+	// the request itself is holding that gate. It returns a ticket that
+	// WaitTicket resolves once a run started after the request finishes.
 	IsJobScheduled(name string) bool
-	StartJob(name string) (scheduler.JobDisposition, error)
+	RequestJob(name string) (scheduler.JobRequest, error)
+	WaitTicket(ctx context.Context, name string, ticket scheduler.Ticket) (scheduler.TicketStatus, error)
 	TriggerJob(name string) error
 }
 

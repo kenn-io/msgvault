@@ -6,5 +6,6 @@ export interface TriggerSyncResponse {
   disposition?: string;
   message: string;
   status: string;
+  ticket?: string;
   [key: string]: unknown;
 }
