@@ -310,6 +310,40 @@ context also requires `inbox.content.read`. These commands make no provider
 calls and do not change read state. The [API reference](api-server.md#archived-inbox-candidates-and-context)
 owns exact identity, bounds, and error behavior.
 
+### inbox triage
+
+Preview a bounded tag-only proposal, review the saved JSON, then apply it:
+
+```bash
+msgvault inbox triage preview --request triage.json > proposal.json
+msgvault inbox triage apply --request proposal.json --apply > receipts.json
+```
+
+The preview request contains one exact `source` and 1–100 `items`. Each item
+contains a candidate `target`, `categories`, and `evidence_message_ids` belonging
+to that archived message. Empty categories classify as `uncertain`. The daemon
+uses the owner's existing native tag mappings. Optional `idempotency_key` values
+must be unique and at most 128 UTF-8 bytes; omitted keys are generated in the
+proposal. Both `inbox.read` and `inbox.tag` must cover the source.
+
+Apply requires the complete proposal and `--apply`. Preserve its signed token,
+revisions, evidence, expected/projected states, and item keys. The daemon checks
+current authority and state before each write. It adds mapped tags while
+preserving Inbox, read state, and unrelated tags. Unknown or conflicting
+classification retains Inbox.
+
+Apply prints results in proposal order, including available receipts when an
+error stops the batch. Keep that output even when the command exits with an
+error. Unknown outcomes require receipt inspection or reconciliation. Reusing
+the same proposal recovers authorized receipts without retrying completed or
+uncertain writes, including after expiry. Unexecuted items may need a new
+preview after the archive changes. See [inbox control](api-server.md#native-gmail-inbox-control)
+for the whole-proposal checks and provider limits.
+
+Both commands accept `--request -` for standard input and limit request files to
+1 MiB. They use current daemon discovery and do not follow redirects or retry
+triage POSTs.
+
 ```bash
 msgvault inbox get-state --request target.json
 msgvault inbox archive --request target.json > preview.json

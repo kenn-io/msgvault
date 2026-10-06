@@ -65,7 +65,7 @@ func newInboxCmd() *cobra.Command {
 		_ = command.MarkFlagRequired("request")
 		parent.AddCommand(command)
 	}
-	parent.AddCommand(newInboxCandidatesCmd(), newInboxContextCmd())
+	parent.AddCommand(newInboxCandidatesCmd(), newInboxContextCmd(), newInboxTriageCmd())
 	return parent
 }
 func readInboxCLIRequest(cmd *cobra.Command, path string) (inboxcontrol.Request, error) {

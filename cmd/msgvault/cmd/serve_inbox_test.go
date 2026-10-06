@@ -308,7 +308,8 @@ func TestDaemonInboxUnknownGmailWritePermissionFailsBeforeClientCreation(t *test
 type tagGmailTransport func(*http.Request) (*http.Response, error)
 
 func (f tagGmailTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-func TestDaemonInboxTriageUsesNativeRuntimeAuthorizationAndReceipts(t *testing.T) {
+func nativeInboxTriageFixture(t *testing.T) (*storeAPIAdapter, inboxcontrol.Target, *atomic.Int64, *atomic.Bool) {
+	t.Helper()
 	a, target, _, _ := inboxBindingFixture(t, "gmail")
 	a.inboxProviderFactory = nil
 	// Native scope probes read a real saved synthetic token in this fixture home.
@@ -323,15 +324,11 @@ func TestDaemonInboxTriageUsesNativeRuntimeAuthorizationAndReceipts(t *testing.T
 	tokenData := []byte(fmt.Sprintf(`{"access_token":"synthetic-token","expiry":"2099-01-01T00:00:00Z","scopes":[%q]}`, oauth.ScopeGmailModify))
 	require.NoError(t, os.WriteFile(tokenPath, tokenData, 0600))
 
-	backend, ok := any(a).(interface {
-		PreviewInboxTriage(context.Context, inboxcontrol.TriageInput, inboxcontrol.Principal, func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) (*inboxcontrol.TriageProposal, error)
-		ApplyInboxTriage(context.Context, inboxcontrol.TriageProposal, inboxcontrol.Principal, func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, func(context.Context) (func(), error)) ([]inboxcontrol.Result, error)
-	})
-	require.True(t, ok, "daemon must expose native triage preview/apply")
 	source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
 	labels := []string{"INBOX", "UNREAD", "Unrelated"}
 	var nativeMu sync.Mutex
 	var writes atomic.Int64
+	var lost atomic.Bool
 	native := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nativeMu.Lock()
 		defer nativeMu.Unlock()
@@ -362,13 +359,17 @@ func TestDaemonInboxTriageUsesNativeRuntimeAuthorizationAndReceipts(t *testing.T
 			assert.Equal(t, []string{"Label_1"}, change.Add)
 			assert.Empty(t, change.Remove)
 			labels = append(labels, change.Add...)
+			if lost.Load() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": target.ProviderID, "labelIds": labels, "historyId": "8"}))
 		default:
 			assert.Fail(t, "unexpected native request", r.URL.Path)
 			http.NotFound(w, r)
 		}
 	}))
-	defer native.Close()
+	t.Cleanup(native.Close)
 	endpoint, err := url.Parse(native.URL)
 	require.NoError(t, err)
 	a.emailTagClientFactory = func(context.Context, *store.Source) (gmail.API, error) {
@@ -389,6 +390,22 @@ func TestDaemonInboxTriageUsesNativeRuntimeAuthorizationAndReceipts(t *testing.T
 	require.NoError(t, err)
 	_, err = a.store.ObserveInboxState(t.Context(), inboxcontrol.State{Target: target, Inbox: new(true), Read: new(false), Tags: slices.Clone(labels), Revision: "8", ObservedAt: time.Now().UTC()})
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		saved, err := os.ReadFile(tokenPath)
+		require.NoError(t, err)
+		assert.Equal(t, tokenData, saved, "triage must preserve synthetic scope metadata")
+	})
+	return a, target, &writes, &lost
+}
+
+func TestDaemonInboxTriageUsesNativeRuntimeAuthorizationAndReceipts(t *testing.T) {
+	a, target, writes, _ := nativeInboxTriageFixture(t)
+	backend, ok := any(a).(interface {
+		PreviewInboxTriage(context.Context, inboxcontrol.TriageInput, inboxcontrol.Principal, func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) (*inboxcontrol.TriageProposal, error)
+		ApplyInboxTriage(context.Context, inboxcontrol.TriageProposal, inboxcontrol.Principal, func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, func(context.Context) (func(), error)) ([]inboxcontrol.Result, error)
+	})
+	require.True(t, ok, "daemon must expose native triage preview/apply")
+	source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
 	principal := inboxcontrol.Principal{ID: "triage-delegate"}
 	allowed := true
 	authorize := func(_ context.Context, p inboxcontrol.Principal, r inboxcontrol.Request) error {
@@ -429,7 +446,4 @@ func TestDaemonInboxTriageUsesNativeRuntimeAuthorizationAndReceipts(t *testing.T
 	require.NotNil(t, again[0].Receipt)
 	assert.Equal(t, results[0].Receipt.ID, again[0].Receipt.ID)
 	assert.Equal(t, int64(1), writes.Load())
-	saved, err := os.ReadFile(tokenPath)
-	require.NoError(t, err)
-	assert.Equal(t, tokenData, saved, "preview/apply must preserve synthetic scope metadata")
 }
