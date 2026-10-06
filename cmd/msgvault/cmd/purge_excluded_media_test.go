@@ -225,6 +225,48 @@ func TestPurgeExcludedMediaRetriesAndContinuesLooseBlobCleanup(t *testing.T) {
 	assert.NoFileExists(f.fullPath, "a later run sweeps dead blobs even with no new exclusions")
 }
 
+func TestPurgeExcludedMediaCandidateCleanup(t *testing.T) {
+	f := newPurgeMediaFixture(t)
+	dir := f.config.AttachmentsDir()
+	removed := seedAttachmentFile(t, dir, "aa/orphan", "orphan")
+	failed := seedAttachmentFile(t, dir, "aa/failed", "failed")
+	outside := seedAttachmentFile(t, filepath.Dir(dir), "outside", "outside")
+	counts, err := sweepAttachmentCandidates(t.Context(), f.store, dir, []attachmentFileCandidate{
+		{path: f.contentPath},
+		{path: "../outside"},
+		{path: "aa/failed"},
+		{path: "aa/missing"},
+		{path: "aa/orphan"},
+	}, func(path string) error {
+		if path == failed {
+			return errors.New("synthetic removal failure")
+		}
+		return os.Remove(path)
+	})
+	require.Error(t, err)
+	assert.Equal(t, attachmentSweepCounts{removed: 1, missing: 1, preserved: 1}, counts)
+	assert.FileExists(t, f.fullPath, "path-only references preserve content")
+	assert.FileExists(t, outside, "paths outside the attachment directory survive")
+	assert.FileExists(t, failed)
+	assert.NoFileExists(t, removed, "cleanup continues after a failed unlink")
+}
+
+func TestPurgeExcludedMediaCountsOnlyRemovedFiles(t *testing.T) {
+	f := newPurgeMediaFixture(t)
+	f.config.Beeper.MediaScope = string(attachmentpolicy.ScopeNone)
+	deps := f.deps()
+	deps.removeFile = func(path string) error {
+		require.NoError(t, os.Remove(path))
+		return os.ErrNotExist // Another cleanup removed the file before this unlink.
+	}
+	cmd := newPurgeExcludedMediaLocalCmd(deps)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--yes"})
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), "Removed 0 unreferenced loose blob file(s)")
+}
+
 // TestPurgeExcludedMediaRetainsUnresolvedRostersUnderParticipantLimit keeps
 // the purge from deleting media on the strength of a roster nobody has
 // archived — one a sync could not read, or one recorded before rosters were —

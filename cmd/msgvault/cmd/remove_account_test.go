@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -563,6 +564,8 @@ func TestRemoveAccountCmd_DeletesUniqueAttachmentFiles(t *testing.T) {
 	_ = s.Close()
 
 	filePath := seedAttachmentFile(t, attachmentsDir, "aa/hashA", "content-a")
+	orphanHash := strings.Repeat("cd", 32)
+	orphanPath := seedAttachmentFile(t, attachmentsDir, "cd/"+orphanHash, "unrelated orphan")
 
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
@@ -581,6 +584,7 @@ func TestRemoveAccountCmd_DeletesUniqueAttachmentFiles(t *testing.T) {
 
 	_, err = os.Stat(filePath)
 	assert.True(t, os.IsNotExist(err), "expected attachment file deleted, err = %v", err)
+	assert.FileExists(t, orphanPath, "account removal keeps unrelated orphan files")
 }
 
 func TestRemoveAccountCmd_PreservesSharedAttachments(t *testing.T) {

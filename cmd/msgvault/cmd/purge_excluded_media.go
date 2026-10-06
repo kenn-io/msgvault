@@ -299,6 +299,52 @@ func writeExcludedMediaPlan(out io.Writer, plan excludedMediaPlan, dryRun bool) 
 	}
 }
 
+type attachmentFileCandidate struct {
+	path string
+	hash string
+}
+
+type attachmentSweepCounts struct {
+	removed, missing, preserved int
+}
+
+func sweepAttachmentCandidates(ctx context.Context, st *store.Store, attachmentsDir string, candidates []attachmentFileCandidate, removeFile func(string) error) (counts attachmentSweepCounts, err error) {
+	cleanDir, err := filepath.Abs(attachmentsDir)
+	if err != nil {
+		return counts, fmt.Errorf("resolve attachments directory: %w", err)
+	}
+	var cleanupErrors []error
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return counts, errors.Join(append(cleanupErrors, err)...)
+		}
+		absPath := filepath.Join(cleanDir, candidate.path)
+		rel, err := filepath.Rel(cleanDir, absPath)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("attachment path %q escapes attachments directory", candidate.path))
+			continue
+		}
+		referenced, err := st.AttachmentBlobReferenced(ctx, candidate.hash, candidate.path)
+		if err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("check attachment %s: %w", candidate.path, err))
+			continue
+		}
+		if referenced {
+			counts.preserved++
+			continue
+		}
+		switch err := removeFile(absPath); {
+		case err == nil:
+			counts.removed++
+		case errors.Is(err, os.ErrNotExist):
+			counts.missing++
+		default:
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("remove unreferenced attachment %s: %w", candidate.path, err))
+		}
+	}
+	return counts, errors.Join(cleanupErrors...)
+}
+
 func sweepUnreferencedLooseMedia(
 	ctx context.Context, st *store.Store, attachmentsDir string, removeFile func(string) error,
 ) (int, error) {
@@ -325,6 +371,7 @@ func sweepUnreferencedLooseMedia(
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("scan attachment directory %s: %w", prefix, err))
 			continue
 		}
+		var candidates []attachmentFileCandidate
 		for _, blobEntry := range blobEntries {
 			if err := ctx.Err(); err != nil {
 				return removed, errors.Join(append(cleanupErrors, err)...)
@@ -334,22 +381,12 @@ func sweepUnreferencedLooseMedia(
 			if !blobEntry.Type().IsRegular() || !isCanonicalAttachmentPath(storagePath, hash) {
 				continue
 			}
-			referenced, err := st.AttachmentBlobReferenced(ctx, hash, storagePath)
-			if err != nil {
-				cleanupErrors = append(cleanupErrors, fmt.Errorf("check attachment %s: %w", storagePath, err))
-				continue
-			}
-			if referenced {
-				continue
-			}
-			err = removeFile(filepath.Join(dirPath, hash))
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				cleanupErrors = append(cleanupErrors, fmt.Errorf("remove unreferenced attachment %s: %w", storagePath, err))
-				continue
-			}
-			if err == nil {
-				removed++
-			}
+			candidates = append(candidates, attachmentFileCandidate{path: storagePath, hash: hash})
+		}
+		counts, err := sweepAttachmentCandidates(ctx, st, attachmentsDir, candidates, removeFile)
+		removed += counts.removed
+		if err != nil {
+			cleanupErrors = append(cleanupErrors, err)
 		}
 	}
 	return removed, errors.Join(cleanupErrors...)

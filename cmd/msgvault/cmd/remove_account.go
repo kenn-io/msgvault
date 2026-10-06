@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -581,18 +580,7 @@ func logoutMatrixDevice(ctx context.Context, creds matrixsource.Credentials) err
 	return nil
 }
 
-// deleteOrphanedAttachmentFiles removes files in paths that are no longer
-// referenced by any attachment row. Returns the count of files actually
-// deleted and the count preserved because a concurrent reference appeared
-// after the candidate list was collected.
-//
-// The work runs under an exclusive DB write lock so that no new sync can
-// insert an attachment row (and place a file on disk) between the
-// IsAttachmentPathReferenced check and os.Remove. The inside-lock
-// HasAnyActiveSync recheck catches any sync on a different source that
-// started between RemoveSourceSerialized releasing its lock and this
-// helper acquiring its own; the per-file reference check handles the
-// narrower race where a sync inserts a row for one of our candidate hashes.
+// Account cleanup holds the write lock so a sync cannot reference a candidate during removal.
 func deleteOrphanedAttachmentFiles(
 	ctx context.Context,
 	s *store.Store,
@@ -600,17 +588,6 @@ func deleteOrphanedAttachmentFiles(
 	attachmentsDir string,
 ) (deleted, preserved int) {
 	if len(paths) == 0 {
-		return 0, 0
-	}
-
-	cleanDir, err := filepath.Abs(attachmentsDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr,
-			"Warning: could not resolve attachments dir; "+
-				"skipping file deletion: %v\n"+
-				"Orphaned files may remain in %s\n",
-			err, attachmentsDir,
-		)
 		return 0, 0
 	}
 
@@ -635,22 +612,15 @@ func deleteOrphanedAttachmentFiles(
 			return nil
 		}
 
-		var failed int
-		for _, relPath := range paths {
-			d, p, ok := deleteOneAttachmentFile(s, cleanDir, relPath)
-			if !ok {
-				failed++
-				continue
-			}
-			deleted += d
-			preserved += p
+		candidates := make([]attachmentFileCandidate, 0, len(paths))
+		for _, path := range paths {
+			candidates = append(candidates, attachmentFileCandidate{path: path})
 		}
-		if failed > 0 {
-			fmt.Fprintf(os.Stderr,
-				"Warning: could not remove %d attachment file(s) "+
-					"from disk.\n",
-				failed,
-			)
+		counts, cleanupErr := sweepAttachmentCandidates(ctx, s, attachmentsDir, candidates, os.Remove)
+		deleted, preserved = counts.removed+counts.missing, counts.preserved
+		if cleanupErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove %d attachment file(s) from disk: %v\n",
+				len(paths)-deleted-preserved, cleanupErr)
 		}
 		return nil
 	})
@@ -663,41 +633,6 @@ func deleteOrphanedAttachmentFiles(
 		)
 	}
 	return deleted, preserved
-}
-
-// deleteOneAttachmentFile checks that relPath is safe to delete and either
-// removes it, preserves it (still referenced), or reports a failure via ok=false.
-func deleteOneAttachmentFile(
-	s *store.Store, cleanDir, relPath string,
-) (deleted, preserved int, ok bool) {
-	absPath := filepath.Join(cleanDir, relPath)
-
-	rel, err := filepath.Rel(cleanDir, absPath)
-	if err != nil || rel == ".." ||
-		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		fmt.Fprintf(os.Stderr,
-			"Warning: attachment path %q escapes attachments "+
-				"directory, skipping\n",
-			relPath,
-		)
-		return 0, 0, false
-	}
-
-	referenced, err := s.IsAttachmentPathReferenced(relPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr,
-			"Warning: could not verify attachment %s is unreferenced: %v\n",
-			relPath, err,
-		)
-		return 0, 0, false
-	}
-	if referenced {
-		return 0, 1, true
-	}
-	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
-		return 0, 0, false
-	}
-	return 1, 0, true
 }
 
 // resolveSource finds the unique source for the given identifier.
