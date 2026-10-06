@@ -279,7 +279,7 @@ func newInlineReadCommand(backfill bool) *cobra.Command {
 		cmd.Flags().BoolVar(&noMedia, "no-media", false, "archive attachment metadata without downloading bytes")
 		cmd.Flags().IntVar(&limit, "limit", 0, "messages of work per account this run across selected chats (0 = unlimited; interrupted work resumes)")
 	}
-	return cmd
+	return addManualSyncCacheFlags(cmd)
 }
 
 func inlineImportOptions(cfg *config.Config, account config.InlineAccount) (inline.ImportOptions, error) {

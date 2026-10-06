@@ -94,19 +94,36 @@ func TestInlineCLISetupUsesDaemonExecutable(t *testing.T) {
 
 func TestInlineSyncCommandsRouteToDaemon(t *testing.T) {
 	for _, backfill := range []bool{false, true} {
-		t.Run(map[bool]string{false: "sync", true: "media"}[backfill], func(t *testing.T) {
-			name := "sync-inline"
-			if backfill {
-				name = "backfill-inline-media"
-			}
-			server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
-				assert.Equal(t, []string{name, "api.inline.chat:user:42"}, req.Args)
-			}, `{"type":"complete"}`)
+		name := "sync-inline"
+		if backfill {
+			name = "backfill-inline-media"
+		}
+		for _, flag := range []string{"", "--build-cache", "--no-build-cache", "--build-cache=false", "--no-build-cache=false"} {
+			t.Run(name+flag, func(t *testing.T) {
+				want := []string{name}
+				args := []string{"api.inline.chat:user:42"}
+				if flag != "" {
+					want = append(want, flag)
+					args = append(args, flag)
+				}
+				want = append(want, args[0])
+				server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
+					assert.Equal(t, want, req.Args)
+				}, `{"type":"complete"}`)
+				cmd := newInlineReadCommand(backfill)
+				cmd.SetContext(configureRemoteDaemonForTest(t, server.URL))
+				cmd.SetArgs(args)
+				require.NoError(t, cmd.Execute())
+				assert.Equal(t, 1, int(requests.Load()))
+			})
+		}
+		t.Run(name+" conflicting cache flags", func(t *testing.T) {
+			server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
 			cmd := newInlineReadCommand(backfill)
 			cmd.SetContext(configureRemoteDaemonForTest(t, server.URL))
-			cmd.SetArgs([]string{"api.inline.chat:user:42"})
-			require.NoError(t, cmd.Execute())
-			assert.Equal(t, 1, int(requests.Load()))
+			cmd.SetArgs([]string{"--build-cache", "--no-build-cache"})
+			require.ErrorContains(t, cmd.Execute(), "[build-cache no-build-cache]")
+			assert.Zero(t, requests.Load())
 		})
 	}
 }

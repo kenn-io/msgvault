@@ -1230,8 +1230,12 @@ msgvault sync-inline --probe
 | `--probe` | `false` | Check identity and read contracts, reporting catalog shape and counts without importing or printing sampled message text |
 | `--no-media` | `false` | Defer attachment downloads while keeping message and media metadata |
 | `--limit` | `0` | Total messages of work per account this run; `0` is unlimited, and unfinished history or refresh work resumes later |
+| `--build-cache` | `false` | Force the normal analytics cache refresh after this sync |
+| `--no-build-cache` | `false` | Skip analytics cache refresh after this sync |
 
 `--probe` cannot be combined with `--full`, `--no-media`, or a nonzero `--limit`.
+Cache overrides are mutually exclusive. Limited runs resume with the next chat
+in the current selection so a busy earlier chat cannot starve later chats.
 
 Older edits require `--full`. A source deletion does not erase captured text
 or downloaded media. Content removed before capture and historical edit
@@ -1251,6 +1255,9 @@ participant policies still apply.
 msgvault backfill-inline-media
 msgvault backfill-inline-media 'api.inline.chat:user:42'
 ```
+
+Media backfill also accepts the mutually exclusive `--build-cache` and
+`--no-build-cache` overrides described for `sync-inline`.
 
 An unknown group participant count fails a positive participant cap. Message
 and attachment metadata remain archived when media is skipped. See

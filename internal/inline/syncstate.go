@@ -24,6 +24,7 @@ type ChatState struct {
 
 type SyncState struct {
 	Account       string                `json:"account"`
+	NextChatID    int64                 `json:"next_chat_id,omitempty"`
 	RepairPending bool                  `json:"repair_pending,omitempty"`
 	RepairScope   []int64               `json:"repair_scope,omitempty"`
 	Chats         map[string]*ChatState `json:"chats"`
@@ -39,6 +40,9 @@ func LoadSyncState(blob, account string) (*SyncState, error) {
 	}
 	if state.Account != account || state.Chats == nil {
 		return nil, errors.New("inline checkpoint belongs to another account or is incomplete")
+	}
+	if state.NextChatID < 0 || state.NextChatID > MaxID {
+		return nil, errors.New("invalid Inline next chat cursor")
 	}
 	seen := map[int64]bool{}
 	for _, id := range state.RepairScope {

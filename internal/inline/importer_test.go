@@ -557,10 +557,120 @@ func TestValidatePageRejectsIdentityAndCursorMismatch(t *testing.T) {
 }
 
 func TestLoadSyncStateRejectsForeignAccountAndMalformedCursor(t *testing.T) {
-	_, err := LoadSyncState(`{"account":"api.inline.chat:user:100","chats":{}}`, "api.inline.chat:user:99")
+	legacy, err := LoadSyncState(`{"account":"api.inline.chat:user:99","chats":{}}`, "api.inline.chat:user:99")
+	require.NoError(t, err)
+	assert.Zero(t, legacy.NextChatID)
+	for _, id := range []int64{-1, MaxID + 1} {
+		_, err = LoadSyncState(fmt.Sprintf(`{"account":"api.inline.chat:user:99","next_chat_id":%d,"chats":{}}`, id), "api.inline.chat:user:99")
+		require.Error(t, err)
+	}
+
+	_, err = LoadSyncState(`{"account":"api.inline.chat:user:100","chats":{}}`, "api.inline.chat:user:99")
 	require.Error(t, err)
 	_, err = LoadSyncState(`{"account":"api.inline.chat:user:99","chats":{"chat:1":{"history_before":-1}}}`, "api.inline.chat:user:99")
 	require.Error(t, err)
 	_, err = LoadSyncState(`{"account":"api.inline.chat:user:99","chats":{"chat:1":null}}`, "api.inline.chat:user:99")
 	require.Error(t, err)
+}
+
+func TestLimitedImportsRotateChatsAcrossRestartsAndFullRepair(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+	imp, client, opts := importerFixture(t)
+	opts.ChatIDs, opts.Limit = nil, 1
+	client.chats[2] = Conversation{ID: 2, Type: "dm"}
+	client.messages[1] = []Message{syntheticMessage(1, 1, "busy chat")}
+	for id := int64(1); id <= 3; id++ {
+		client.messages[2] = append(client.messages[2], syntheticMessage(2, id, "later chat"))
+	}
+	var sourceID int64
+	for run := int64(0); run < 8; run++ {
+		client.messages[1] = append(client.messages[1], syntheticMessage(1, run+2, "arrival"))
+		// A new importer must use the stored cursor, not process-local state.
+		imp = NewImporter(imp.store, client)
+		sum, err := imp.Import(t.Context(), opts)
+		requires.NoError(err)
+		assertions.LessOrEqual(sum.MessagesProcessed, 1)
+		sourceID = sum.SourceID
+	}
+	assertions.True(storedState(t, imp, sourceID, opts.Account.Identifier()).chat(2).HistoryDone)
+	for id := int64(1); id <= 3; id++ {
+		archivedMessage(t, imp.store, sourceID, 2, id)
+		client.messages[2][id-1].Text = "refreshed"
+	}
+	opts.Full = true
+	var previousRepairBefore int64
+	for run := int64(0); run < 8; run++ {
+		client.messages[1] = append(client.messages[1], syntheticMessage(1, run+10, "arrival during repair"))
+		imp = NewImporter(imp.store, client)
+		sum, err := imp.Import(t.Context(), opts)
+		requires.NoError(err)
+		assertions.LessOrEqual(sum.MessagesProcessed, 1)
+		chat := storedState(t, imp, sourceID, opts.Account.Identifier()).chat(2)
+		if chat.RepairBefore > 0 {
+			if previousRepairBefore > 0 {
+				assertions.LessOrEqual(chat.RepairBefore, previousRepairBefore, "active repair never restarts its cursor")
+			}
+			previousRepairBefore = chat.RepairBefore
+		}
+	}
+	assertions.False(storedState(t, imp, sourceID, opts.Account.Identifier()).chat(2).RepairActive)
+	for id := int64(1); id <= 3; id++ {
+		body, err := imp.store.GetMessageBodyText(archivedMessage(t, imp.store, sourceID, 2, id))
+		requires.NoError(err)
+		assertions.Equal("refreshed", body)
+	}
+}
+
+func TestInterruptedImportPreservesRotationAndPausedSelection(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+	imp, client, opts := importerFixture(t)
+	opts.ChatIDs = []int64{1, 2}
+	client.pageSize = 1
+	client.chats[2] = Conversation{ID: 2, Type: "dm"}
+	client.messages[1] = []Message{syntheticMessage(1, 1, "older"), syntheticMessage(1, 2, "newer")}
+	client.messages[2] = []Message{syntheticMessage(2, 1, "later chat")}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client.beforePage = func(_ context.Context, chatID, beforeID int64) error {
+		if chatID == 1 && beforeID > 0 {
+			cancel()
+			return ctx.Err()
+		}
+		return nil
+	}
+	sum, err := imp.Import(ctx, opts)
+	requires.ErrorIs(err, context.Canceled)
+	assertions.Equal(1, sum.MessagesAdded)
+	state := storedState(t, imp, sum.SourceID, opts.Account.Identifier())
+	assertions.Equal(int64(2), state.NextChatID)
+	assertions.Equal(int64(2), state.chat(1).HistoryBefore)
+	client.beforePage, client.requests = nil, nil
+	imp = NewImporter(imp.store, client)
+	_, err = imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	requires.NotEmpty(client.requests)
+	assertions.Equal(int64(2), client.requests[0].ChatID)
+	archivedMessage(t, imp.store, sum.SourceID, 1, 1)
+	archivedMessage(t, imp.store, sum.SourceID, 2, 1)
+	_, err = imp.BackfillMedia(t.Context(), opts)
+	requires.NoError(err)
+	assertions.Equal(int64(2), storedState(t, imp, sum.SourceID, opts.Account.Identifier()).NextChatID, "backfill preserves sync rotation")
+	empty := opts
+	empty.ChatIDs = nil
+	client.discover = func(context.Context) ([]Conversation, error) { return nil, nil }
+	emptySum, err := imp.Import(t.Context(), empty)
+	requires.NoError(err)
+	assertions.Zero(emptySum.MessagesProcessed)
+	client.discover = nil
+	// A paused next-chat cursor never broadens the newly selected scope.
+	opts.ChatIDs, opts.Limit = []int64{1}, 1
+	client.requests = nil
+	client.messages[1] = append(client.messages[1], syntheticMessage(1, 3, "selected arrival"))
+	_, err = imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	for _, request := range client.requests {
+		assertions.Equal(int64(1), request.ChatID)
+	}
 }

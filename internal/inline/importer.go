@@ -193,13 +193,22 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err = scoped.checkpoint(ctx, runID, state, sum); err != nil {
 		return sum, err
 	}
-	for _, chatID := range opts.ChatIDs {
+	// Rotate the selected scope using the existing durable checkpoint. A busy
+	// first chat must not consume every limited run's account-wide budget.
+	chatIDs := opts.ChatIDs
+	if next := slices.Index(chatIDs, state.NextChatID); next > 0 {
+		chatIDs = append(slices.Clone(chatIDs[next:]), chatIDs[:next]...)
+	}
+	for index, chatID := range chatIDs {
 		if err = ctx.Err(); err != nil {
 			return sum, err
 		}
 		if opts.Limit > 0 && sum.MessagesProcessed >= opts.Limit {
 			break
 		}
+		// Per-message and failure checkpoints retain this rotation while each
+		// chat's existing history, scan and repair cursors retain its debt.
+		state.NextChatID = chatIDs[(index+1)%len(chatIDs)]
 		var conversation Conversation
 		conversation, err = scoped.client.Conversation(ctx, chatID)
 		if err != nil {

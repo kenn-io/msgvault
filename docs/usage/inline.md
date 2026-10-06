@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-05"
+last_edited: "2026-10-06"
 title: Inline
 description: Archive all accessible Inline chats through OAuth MCP or the authenticated Inline CLI, with optional chat filters.
 ---
@@ -117,6 +117,8 @@ The first sync walks the history currently readable in every discovered chat,
 or in the chats selected by an explicit filter. All-chat mode discovers the
 current catalog on later runs, so newly accessible chats are included.
 Progress is saved after messages are stored, so an interrupted run resumes.
+Limited runs rotate through the current chat selection using that checkpoint,
+so arrivals in an earlier chat do not prevent later chats from being archived.
 Later runs capture new messages without repeating the completed history.
 
 ```bash
@@ -131,6 +133,10 @@ msgvault sync-inline --full
 
 # Archive messages now and defer their media.
 msgvault sync-inline --no-media
+
+# Force or skip the normal analytics cache refresh.
+msgvault sync-inline --build-cache
+msgvault backfill-inline-media --no-build-cache
 ```
 
 Incremental sync does not continuously revisit older messages for edits or
