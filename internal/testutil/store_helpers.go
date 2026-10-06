@@ -216,3 +216,33 @@ func assignFreshArchiveUID(t *testing.T, st *store.Store) {
 	require.NoError(t, err, "assigned archive UID rows")
 	require.Equal(t, int64(1), updated, "the template carried exactly one archive UID to replace")
 }
+
+// RejectMessageInserts makes every insert into messages whose
+// source_message_id is listed fail, on SQLite and PostgreSQL alike. Tests use
+// it to simulate messages the archive refuses to store.
+func RejectMessageInserts(t *testing.T, st *store.Store, sourceMessageIDs ...string) {
+	t.Helper()
+	quoted := make([]string, len(sourceMessageIDs))
+	for i, id := range sourceMessageIDs {
+		quoted[i] = "'" + strings.ReplaceAll(id, "'", "''") + "'"
+	}
+	cond := "NEW.source_message_id IN (" + strings.Join(quoted, ",") + ")"
+	var stmt string
+	if st.IsPostgreSQL() {
+		stmt = `CREATE OR REPLACE FUNCTION reject_message_insert() RETURNS trigger AS $$
+BEGIN
+	IF ` + cond + ` THEN
+		RAISE EXCEPTION 'synthetic rejection';
+	END IF;
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER reject_message_insert BEFORE INSERT ON messages
+FOR EACH ROW EXECUTE FUNCTION reject_message_insert();`
+	} else {
+		stmt = `CREATE TRIGGER reject_message_insert BEFORE INSERT ON messages
+WHEN ` + cond + ` BEGIN SELECT RAISE(ABORT, 'synthetic rejection'); END`
+	}
+	_, err := st.DB().Exec(stmt)
+	require.NoError(t, err)
+}
