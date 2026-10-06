@@ -24,28 +24,36 @@ func (s *Store) InboxTriageMappings(ctx context.Context, source inboxcontrol.Sou
 		if err := validateInboxCandidateSource(ctx, tx, source); err != nil {
 			return err
 		}
-		var sourceJSON, mappingJSON string
-		err := tx.QueryRowContext(ctx, `SELECT source_json,mapping_json,revision FROM inbox_triage_mappings WHERE source_id=?`, source.SourceID).Scan(&sourceJSON, &mappingJSON, &revision)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("read inbox triage mappings: %w", err)
-		}
-		var bound inboxcontrol.SourceIdentity
-		if json.Unmarshal([]byte(sourceJSON), &bound, json.RejectUnknownMembers(true)) != nil || bound.Validate() != nil || revision <= 0 {
-			return inboxcontrol.ErrUnavailable
-		}
-		if bound != source {
-			return inboxcontrol.ErrPlanChanged
-		}
-		if json.Unmarshal([]byte(mappingJSON), &entries) != nil || entries == nil || inboxcontrol.ValidateTriageMappingEntries(source, entries) != nil {
-			return inboxcontrol.ErrUnavailable
-		}
-		return nil
+		var err error
+		entries, revision, err = readInboxTriageMappings(ctx, tx, source)
+		return err
 	})
 	if err != nil {
 		return nil, revision, err
+	}
+	return entries, revision, nil
+}
+
+func readInboxTriageMappings(ctx context.Context, tx *loggedTx, source inboxcontrol.SourceIdentity) (map[string]string, int64, error) {
+	entries := map[string]string{}
+	var revision int64
+	var sourceJSON, mappingJSON string
+	err := tx.QueryRowContext(ctx, `SELECT source_json,mapping_json,revision FROM inbox_triage_mappings WHERE source_id=?`, source.SourceID).Scan(&sourceJSON, &mappingJSON, &revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return entries, 0, nil
+	}
+	if err != nil {
+		return nil, revision, fmt.Errorf("read inbox triage mappings: %w", err)
+	}
+	var bound inboxcontrol.SourceIdentity
+	if json.Unmarshal([]byte(sourceJSON), &bound, json.RejectUnknownMembers(true)) != nil || bound.Validate() != nil || revision <= 0 {
+		return nil, revision, inboxcontrol.ErrUnavailable
+	}
+	if bound != source {
+		return nil, revision, inboxcontrol.ErrPlanChanged
+	}
+	if json.Unmarshal([]byte(mappingJSON), &entries) != nil || entries == nil || inboxcontrol.ValidateTriageMappingEntries(source, entries) != nil {
+		return nil, revision, inboxcontrol.ErrUnavailable
 	}
 	return entries, revision, nil
 }

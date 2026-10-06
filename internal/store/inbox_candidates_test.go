@@ -289,6 +289,11 @@ func TestInboxCandidatesNativeSourceBindings(t *testing.T) {
 			assertions.Equal(target, page.Candidates[0].State.Target)
 			assertions.True(page.Candidates[0].Available)
 			assertions.False(page.Unavailable)
+			selected, err := st.InboxTriageSnapshot(t.Context(), source, []inboxcontrol.Target{target})
+			requirements.NoError(err)
+			requirements.Len(selected.Candidates, 1)
+			assertions.Equal(target, selected.Candidates[0].State.Target)
+			assertions.True(selected.Candidates[0].Available)
 		})
 	}
 }

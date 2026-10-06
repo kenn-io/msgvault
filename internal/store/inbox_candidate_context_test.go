@@ -68,6 +68,11 @@ func TestInboxChatCandidatesSelectScopedContextMessage(t *testing.T) {
 	assertions.Equal(want, *wire.MessageID)
 	assertions.Equal(target, page.Candidates[0].State.Target)
 	assertions.True(page.Candidates[0].Available)
+	selected, err := st.InboxTriageSnapshot(t.Context(), identity, []inboxcontrol.Target{target})
+	requirements.NoError(err)
+	requirements.Len(selected.Candidates, 1)
+	assertions.Equal(want, selected.Candidates[0].ContextMessageID)
+	assertions.Equal(target, selected.Candidates[0].State.Target)
 }
 
 func TestInboxCandidatesAndContextRetainCallerSnapshot(t *testing.T) {
