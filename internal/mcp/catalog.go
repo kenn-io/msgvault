@@ -220,6 +220,13 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 	if opts.InboxContext != nil && readable && (!opts.DelegatedOnly || slices.Contains(opts.GrantPermissions, "inbox.content.read")) {
 		definitions = append(definitions, inboxContextDefinition())
 	}
+	triageAllowed := !opts.DelegatedOnly || readable && slices.Contains(opts.GrantPermissions, "inbox.tag")
+	if opts.InboxTriagePreview != nil && triageAllowed {
+		definitions = append(definitions, inboxTriagePreviewDefinition())
+	}
+	if opts.InboxTriageApply != nil && triageAllowed {
+		definitions = append(definitions, inboxTriageApplyDefinition())
+	}
 	sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
 	return definitions
 }

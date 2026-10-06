@@ -118,6 +118,30 @@ A delegated session needs `inbox.read` for candidates and both `inbox.read` and
 are checked again on each call. Missing or incompatible routes omit the related
 tool. A metadata-only grant does not disclose archived text.
 
+## Inbox batch triage
+
+`inbox_triage_preview` prepares a read-only proposal for 1–100 explicit mail
+targets from one exact source. Delegates need both `inbox.read` and `inbox.tag`
+for that source. Supply category keys and archived evidence message IDs. The
+daemon uses existing owner-configured tags; missing categories use `uncertain`,
+and conflicting or retained categories keep Inbox. Preview does not create tags
+or change read state.
+
+Pass the complete returned proposal unchanged to `inbox_triage_apply`, including
+its revisions, evidence, token, and item keys. The client must confirm those
+exact arguments before the MCP server calls apply. HTTP also requires
+`--http-allow-writes`. Apply adds mapped tags while retaining Inbox, read state,
+and unrelated tags. The daemon rechecks current grants, incoming messages,
+mappings, native state, and expiry before each new write.
+
+Keep the ordered per-item results and receipts even on error. A separately
+confirmed retry of the same proposal recovers existing receipts, including
+after preview expiry, without repeating completed or uncertain writes. Inspect
+or reconcile an `unknown` receipt before creating a new intent. Triage supports
+mail providers with native tags; use the separate flag tools for Beeper chats.
+See the [HTTP inbox contract](../api-server.md#native-gmail-inbox-control) for
+provider limits and partial-batch recovery.
+
 Candidate `limit` defaults to 25 (1–100). Continue with `next_cursor` unchanged
 for the same source/scope; changed archive evidence requires a new listing.
 Context `max_bytes` defaults to 16384 (maximum 65536). Chat context also requires

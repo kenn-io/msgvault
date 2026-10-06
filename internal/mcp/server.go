@@ -180,7 +180,10 @@ type ServeOptions struct {
 	InboxOperations []inboxcontrol.Operation
 	InboxCandidates InboxCandidateBackend
 	InboxContext    InboxContextBackend
-	MessageTags     MessageTagBackend
+	// Triage routes are independently admitted by current daemon discovery.
+	InboxTriagePreview InboxTriagePreviewBackend
+	InboxTriageApply   InboxTriageApplyBackend
+	MessageTags        MessageTagBackend
 	// IdentityScoring exposes consented manual scoring. Consent is
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
@@ -391,6 +394,8 @@ func newMCPServerWithPolicy(
 		inbox:               opts.Inbox,
 		inboxCandidates:     opts.InboxCandidates,
 		inboxContext:        opts.InboxContext,
+		inboxTriagePreview:  opts.InboxTriagePreview,
+		inboxTriageApply:    opts.InboxTriageApply,
 		identityScoring:     opts.IdentityScoring,
 		drafts:              opts.Drafts,
 	}

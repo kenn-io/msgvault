@@ -156,6 +156,8 @@ type handlers struct {
 	inbox               InboxBackend
 	inboxCandidates     InboxCandidateBackend
 	inboxContext        InboxContextBackend
+	inboxTriagePreview  InboxTriagePreviewBackend
+	inboxTriageApply    InboxTriageApplyBackend
 	messageTags         MessageTagBackend
 	identityScoring     IdentityScoringBackend
 	drafts              DraftRunner
