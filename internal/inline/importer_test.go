@@ -557,20 +557,23 @@ func TestValidatePageRejectsIdentityAndCursorMismatch(t *testing.T) {
 }
 
 func TestLoadSyncStateRejectsForeignAccountAndMalformedCursor(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+
 	legacy, err := LoadSyncState(`{"account":"api.inline.chat:user:99","chats":{}}`, "api.inline.chat:user:99")
-	require.NoError(t, err)
-	assert.Zero(t, legacy.NextChatID)
+	requires.NoError(err)
+	assertions.Zero(legacy.NextChatID)
 	for _, id := range []int64{-1, MaxID + 1} {
 		_, err = LoadSyncState(fmt.Sprintf(`{"account":"api.inline.chat:user:99","next_chat_id":%d,"chats":{}}`, id), "api.inline.chat:user:99")
-		require.Error(t, err)
+		requires.Error(err)
 	}
 
 	_, err = LoadSyncState(`{"account":"api.inline.chat:user:100","chats":{}}`, "api.inline.chat:user:99")
-	require.Error(t, err)
+	requires.Error(err)
 	_, err = LoadSyncState(`{"account":"api.inline.chat:user:99","chats":{"chat:1":{"history_before":-1}}}`, "api.inline.chat:user:99")
-	require.Error(t, err)
+	requires.Error(err)
 	_, err = LoadSyncState(`{"account":"api.inline.chat:user:99","chats":{"chat:1":null}}`, "api.inline.chat:user:99")
-	require.Error(t, err)
+	requires.Error(err)
 }
 
 func TestLimitedImportsRotateChatsAcrossRestartsAndFullRepair(t *testing.T) {
