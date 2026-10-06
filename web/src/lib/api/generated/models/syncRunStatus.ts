@@ -14,9 +14,14 @@ export interface SyncRunStatus {
   messages_added: number;
   messages_processed: number;
   messages_updated: number;
+  outcome?: string;
+  read_started_at?: string;
+  reason?: string;
   skipped_count?: number;
   source_id: number;
+  source_mtime?: string;
   started_at: string;
   status: string;
+  writer_alive?: boolean;
   [key: string]: unknown;
 }

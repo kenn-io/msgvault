@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -39,9 +42,12 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 		}
 		path = filepath.Join(home, defaultWhatsAppAppleStorePath)
 	}
-	if _, err := os.Stat(path); err != nil {
+	readStartedAt := time.Now()
+	if err := checkAppleSourceReadable(path); err != nil {
+		recordUnreadableSource(ctx, s, "whatsapp", src.Phone, "whatsapp_apple_import", readStartedAt, err)
 		return fmt.Errorf("whatsapp_apple source %q: %w", src.Name, err)
 	}
+	writerAlive := whatsAppWriterAlive()
 
 	opts := whatsapp.DefaultOptions()
 	opts.Phone = src.Phone
@@ -52,6 +58,11 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 		return fmt.Errorf("whatsapp_apple source %q: %w", src.Name, err)
 	}
 	if summary.SourceID != 0 {
+		recordRunMeasurement(ctx, s, summary.SourceID, store.SyncMeasurement{
+			ReadStartedAt: &readStartedAt,
+			SourceMtime:   appleSourceMtime(path),
+			WriterAlive:   &writerAlive,
+		}, state.logger)
 		confirmDefaultIdentity(io.Discard, s, summary.SourceID, src.Phone, src.Phone, "phone-e164", state.logger)
 	}
 	state.logger.Info("whatsapp apple import finished", "source", src.Name,
@@ -86,16 +97,17 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 	if cfg.Me != "" {
 		opts = append(opts, imessage.WithOwnerHandle(cfg.Me))
 	}
-	client, err := imessage.NewClient(path, opts...)
-	if err != nil {
-		return fmt.Errorf("open iMessage database: %w", err)
-	}
-	defer func() { _ = client.Close() }()
-
 	src, err := resolveImessageSource(s)
 	if err != nil {
 		return fmt.Errorf("get or create source: %w", err)
 	}
+	readStartedAt := time.Now()
+	client, err := openImessageClientRecorded(ctx, s, src, path, opts, readStartedAt)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
+
 	summary, err := importImessageRecorded(ctx, s, client, src.ID)
 	// A failed or cancelled import may already have cleared dates, so the
 	// invalidation depends on the partial summary, not on success.
@@ -118,12 +130,35 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 	if err != nil {
 		return fmt.Errorf("imessage import: %w", err)
 	}
+	recordRunMeasurement(ctx, s, src.ID, store.SyncMeasurement{
+		ReadStartedAt: &readStartedAt,
+		SourceMtime:   appleSourceMtime(path),
+	}, state.logger)
 	state.logger.Info("imessage import finished", "imported", summary.MessagesImported,
 		"dates_cleared", summary.DatesCleared)
 	if _, err := s.RetitleImessageChats(); err != nil {
 		state.logger.Warn("could not refresh iMessage chat titles", "error", err)
 	}
 	return rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "imessage")
+}
+
+// openImessageClientRecorded opens chat.db. When the source cannot be read
+// (missing, or denied by Full Disk Access) it also records an unmeasured run,
+// so every caller reports the gap the same way.
+func openImessageClientRecorded(
+	ctx context.Context, s *store.Store, src *store.Source, path string,
+	opts []imessage.ClientOption, readStartedAt time.Time,
+) (*imessage.Client, error) {
+	err := checkAppleSourceReadable(path)
+	var client *imessage.Client
+	if err == nil {
+		client, err = imessage.NewClient(path, opts...)
+	}
+	if err != nil {
+		recordUnreadableSource(ctx, s, src.SourceType, src.Identifier, "imessage_import", readStartedAt, err)
+		return nil, fmt.Errorf("open iMessage database: %w", err)
+	}
+	return client, nil
 }
 
 // invalidateCacheForDateClear makes the committed analytics cache unusable
@@ -140,4 +175,77 @@ func invalidateCacheForDateClear(cfg *config.Config) error {
 	}
 	invalidateErr := invalidateSyncStateFile(query.CacheStatePath(analyticsDir))
 	return errors.Join(invalidateErr, wrapError(buildLock.Unlock(), "unlock cache builder lock"))
+}
+
+// whatsAppWriterAlive reports whether WhatsApp for Mac is running. While it is
+// closed, ChatStorage stays readable but nothing new reaches it, so a run
+// that adds nothing proves nothing. Tests replace it.
+var whatsAppWriterAlive = func() bool {
+	return exec.Command("pgrep", "-qx", "WhatsApp").Run() == nil
+}
+
+// checkAppleSourceReadable opens path read-only to separate a missing source
+// from a denied one. Tests replace it to inject a denial without relying on
+// file modes, which not every OS enforces.
+var checkAppleSourceReadable = func(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// unmeasuredReason names why an Apple source could not be read.
+func unmeasuredReason(err error) string {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return store.SyncReasonSourceMissing
+	case errors.Is(err, fs.ErrPermission),
+		strings.Contains(err.Error(), "operation not permitted"),
+		strings.Contains(err.Error(), "permission denied"):
+		return store.SyncReasonFDADenied
+	default:
+		return ""
+	}
+}
+
+// recordUnreadableSource records an unmeasured run when the source could not
+// be read, so status shows the gap rather than the previous run's result.
+func recordUnreadableSource(
+	ctx context.Context, s *store.Store, sourceType, identifier, syncType string, readStartedAt time.Time, cause error,
+) {
+	reason := unmeasuredReason(cause)
+	if reason == "" {
+		return
+	}
+	src, err := s.GetOrCreateSource(sourceType, identifier)
+	if err != nil {
+		return
+	}
+	_ = s.RecordUnmeasuredSync(context.WithoutCancel(ctx), src.ID, syncType, reason, cause.Error(),
+		store.SyncMeasurement{ReadStartedAt: &readStartedAt})
+}
+
+// appleSourceMtime returns the newest mtime of the SQLite file and its WAL:
+// writers append to the WAL long before the main file changes.
+func appleSourceMtime(path string) *time.Time {
+	var newest time.Time
+	for _, p := range []string{path, path + "-wal"} {
+		if info, err := os.Stat(p); err == nil && info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+	}
+	if newest.IsZero() {
+		return nil
+	}
+	return &newest
+}
+
+// recordRunMeasurement stores the measurement on the run that just finished.
+func recordRunMeasurement(
+	ctx context.Context, s *store.Store, sourceID int64, m store.SyncMeasurement, logger *slog.Logger,
+) {
+	if err := s.SetLatestSyncMeasurement(context.WithoutCancel(ctx), sourceID, m.ClassifyOutcome()); err != nil {
+		logger.Warn("could not record sync measurement", "error", err)
+	}
 }

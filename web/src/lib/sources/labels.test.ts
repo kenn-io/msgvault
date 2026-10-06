@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { sourceTypeLabel, syncStatusChip, syncUnavailableLabel } from './labels';
+import { sourceTypeLabel, syncStatusChip, syncUnavailableLabel, unmeasuredReasonLabel } from './labels';
 
-const run = (status: string, errors = 0) => ({
+const run = (status: string, errors = 0, extra: Record<string, unknown> = {}) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
-  messages_processed: 1, messages_added: 1, messages_updated: 0, errors_count: errors, error_message: null
+  messages_processed: 1, messages_added: 1, messages_updated: 0, errors_count: errors, error_message: null,
+  ...extra
 });
 
 describe('source labels', () => {
@@ -40,5 +41,29 @@ describe('source labels', () => {
       .toEqual({ label: 'Failed', tone: 'danger' });
     expect(syncStatusChip({ active_sync: null, latest_sync: null }))
       .toEqual({ label: 'Never synced', tone: 'muted' });
+  });
+
+  it('never shows an unmeasured run as completed', () => {
+    const unmeasured = run('completed', 0, { outcome: 'unmeasured', reason: 'writer_not_running' });
+    expect(syncStatusChip({ active_sync: null, latest_sync: unmeasured }))
+      .toEqual({ label: 'Not measured', tone: 'warning' });
+    expect(syncStatusChip({ active_sync: null, latest_sync: { ...unmeasured, status: 'failed' } }))
+      .toEqual({ label: 'Not measured', tone: 'warning' });
+    expect(syncStatusChip({ active_sync: null, latest_sync: run('completed', 0, { outcome: 'completed' }) }))
+      .toEqual({ label: 'Completed', tone: 'success' });
+  });
+
+  it.each([
+    ['writer_not_running', 'The app that writes this source was not running, so nothing new could have arrived'],
+    ['fda_denied', 'Full Disk Access is denied, so the source could not be read'],
+    ['future_reason', 'Not measured: future reason'],
+    [undefined, 'The source was not measured']
+  ])('explains unmeasured reason %j', (reason, want) =>
+    expect(unmeasuredReasonLabel(run('completed', 0, { outcome: 'unmeasured', reason }))).toBe(want));
+
+  it('explains nothing for a measured run', () => {
+    expect(unmeasuredReasonLabel(run('completed', 0, { outcome: 'completed' }))).toBeUndefined();
+    expect(unmeasuredReasonLabel(run('failed', 0, { outcome: 'failed', reason: 'x' }))).toBeUndefined();
+    expect(unmeasuredReasonLabel(null)).toBeUndefined();
   });
 });

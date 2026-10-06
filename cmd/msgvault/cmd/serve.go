@@ -3607,6 +3607,10 @@ func (a *storeAPIAdapter) GetLastSuccessfulSyncContext(ctx context.Context, sour
 	return a.store.GetLastSuccessfulSyncContext(ctx, sourceID)
 }
 
+func (a *storeAPIAdapter) GetSyncMeasurement(ctx context.Context, syncID int64) (*store.SyncMeasurement, error) {
+	return a.store.GetSyncMeasurement(ctx, syncID)
+}
+
 func (a *storeAPIAdapter) CountSyncRunItemsContext(ctx context.Context, syncRunID int64, status string) (int64, error) {
 	return a.store.CountSyncRunItemsContext(ctx, syncRunID, status)
 }

@@ -13596,16 +13596,26 @@ components:
         messages_updated:
           format: int64
           type: integer
+        outcome:
+          type: string
+        read_started_at:
+          type: string
+        reason:
+          type: string
         skipped_count:
           format: int64
           type: integer
         source_id:
           format: int64
           type: integer
+        source_mtime:
+          type: string
         started_at:
           type: string
         status:
           type: string
+        writer_alive:
+          type: boolean
       required:
         - id
         - source_id
