@@ -297,6 +297,7 @@ func TestMediaImportPersistsAttachmentStatsForListingsAndSearch(t *testing.T) {
 	for _, state := range []attachmentpolicy.DownloadState{
 		attachmentpolicy.StatePending, attachmentpolicy.StateSkipped,
 		attachmentpolicy.StateFailed, attachmentpolicy.StateStored,
+		attachmentpolicy.StateUnavailable,
 	} {
 		t.Run(string(state), func(t *testing.T) {
 			assertions := assert.New(t)
@@ -318,6 +319,27 @@ func TestMediaImportPersistsAttachmentStatsForListingsAndSearch(t *testing.T) {
 				imp.mediaTransport = mediaRoundTripper(func(request *http.Request) (*http.Response, error) {
 					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("bytes!")), ContentLength: 6, Request: request}, nil
 				})
+			case attachmentpolicy.StateUnavailable:
+				// Preserve a terminal marker from an existing archive without
+				// claiming a new permanent-unavailability source response.
+				opts.NoMedia = true
+				seed, err := imp.Import(t.Context(), opts)
+				requires.NoError(err)
+				id := archivedMessage(t, imp.store, seed.SourceID, 1, 1)
+				refs, err := imp.store.MessageInlineProviderAttachments(id)
+				requires.NoError(err)
+				requires.Contains(refs, "inline:document:1")
+				ref := refs["inline:document:1"]
+				ref.State = attachmentpolicy.StateUnavailable
+				ref.SkipReason = attachmentpolicy.SkipSourceUnavailable
+				refs[ref.SourceAttachmentID] = ref
+				requires.NoError(imp.store.ReplaceMessageInlineProviderAttachments(id, refsSlice(refs)))
+				// Older archives can retain incorrect statistics from before
+				// Inline replacement recomputed them; full replay repairs them.
+				_, err = imp.store.DB().Exec(`UPDATE messages SET has_attachments = 0, attachment_count = 0 WHERE id = ?`, id)
+				requires.NoError(err)
+				opts.NoMedia = false
+				opts.Full = true
 			}
 			summary, err := imp.Import(t.Context(), opts)
 			requires.NoError(err)
@@ -338,6 +360,11 @@ func TestMediaImportPersistsAttachmentStatsForListingsAndSearch(t *testing.T) {
 			assertions.Equal(id, results[0].ID)
 			assertions.True(results[0].HasAttachments)
 			assertions.Equal(1, results[0].AttachmentCount)
+			if state == attachmentpolicy.StateUnavailable {
+				_, err = imp.BackfillMedia(t.Context(), opts)
+				requires.NoError(err)
+				assertions.Zero(client.filesCalls, "terminal unavailable occurrences must not retry")
+			}
 		})
 	}
 }
