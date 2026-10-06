@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -23,32 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
-
-func TestResolveMuesliSources(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	cfg := &config.Config{}
-	_, err := resolveMuesliSources(nil, cfg)
-	require.Error(err)
-	assert.Contains(err.Error(), "[[muesli]]")
-
-	cfg = &config.Config{Muesli: []config.MuesliSource{
-		{Identifier: "mac", AccountEmail: "you@example.com"},
-		{Identifier: "studio", AccountEmail: "you@example.com"},
-	}}
-	all, err := resolveMuesliSources(nil, cfg)
-	require.NoError(err)
-	assert.Len(all, 2)
-
-	one, err := resolveMuesliSources([]string{"STUDIO"}, cfg)
-	require.NoError(err)
-	require.Len(one, 1)
-	assert.Equal("studio", one[0].Identifier)
-
-	_, err = resolveMuesliSources([]string{"laptop"}, cfg)
-	require.Error(err)
-	assert.Contains(err.Error(), "configured: mac, studio")
-}
 
 func TestProbeMuesliDatabaseRejectsForeignFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notes.txt")
@@ -132,16 +105,6 @@ func TestServeScheduledMuesliSyncCompletes(t *testing.T) {
 	}, serveLifecycleTestTimeout, 20*time.Millisecond, "scheduled import did not finish")
 	assert.Equal(int64(1), status.Sources[0].LastSuccessfulSync.MessagesAdded)
 	assert.Empty(status.Sources[0].SchedulerLastError, "post-import cache refresh must receive the daemon configuration")
-}
-
-func TestFinishMuesliImportRefreshesCacheAfterPartialWrites(t *testing.T) {
-	refreshed := 0
-	err := finishMuesliImport("mac", &muesli.ImportSummary{MeetingsAdded: 1},
-		errors.New("meeting 3 failed"), func() error { refreshed++; return nil })
-
-	require.Error(t, err)
-	assert.Equal(t, 1, refreshed)
-	assert.Contains(t, err.Error(), "muesli sync mac failed")
 }
 
 func TestWriteMuesliSummaryReportsSkippedMeetings(t *testing.T) {

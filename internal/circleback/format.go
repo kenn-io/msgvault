@@ -1,17 +1,19 @@
 package circleback
 
 import (
-	"fmt"
+	"cmp"
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/meetingarchive"
 )
 
 // buildBody renders the single body_text shared by FTS and embeddings:
 // title, time line, attendee DISPLAY NAMES, the notes markdown, action
 // items, and the transcript. Attendee email addresses stay out of the body
-// (they reach FTS via the toAddrs column only) — same contract as the
-// granola importer, including the "[mm:ss] Speaker: text" transcript lines.
+// (they reach FTS via the toAddrs column only). Transcript lines use
+// meetingarchive.FormatTranscriptLine, with "Unknown" for an unnamed speaker.
 func buildBody(m *Meeting, tr *Transcript) string {
 	var b strings.Builder
 	writeLine := func(s string) {
@@ -116,7 +118,8 @@ func writeTranscript(b *strings.Builder, tr *Transcript) {
 	base := entryOffsetBase(entries)
 	for _, e := range entries {
 		offset := entryOffset(e, base)
-		b.WriteString(formatTranscriptLine(offset, e.SpeakerLabel(), e.Utterance()))
+		speaker := cmp.Or(e.SpeakerLabel(), "Unknown")
+		b.WriteString(meetingarchive.FormatTranscriptLine(offset, speaker, e.Utterance()))
 		b.WriteString("\n")
 	}
 }
@@ -171,33 +174,4 @@ func meetingTitle(m *Meeting) string {
 		return "Meeting on " + t.UTC().Format("2006-01-02")
 	}
 	return "Meeting"
-}
-
-// formatTranscriptLine renders "[mm:ss] Speaker: text" (or "[h:mm:ss]" past
-// the first hour) — the shared rendering contract with the granola importer.
-func formatTranscriptLine(offset time.Duration, speaker, text string) string {
-	if offset < 0 {
-		offset = 0
-	}
-	if speaker == "" {
-		speaker = "Unknown"
-	}
-	total := int(offset.Seconds())
-	h, m, s := total/3600, (total%3600)/60, total%60
-	stamp := fmt.Sprintf("[%02d:%02d]", m, s)
-	if h > 0 {
-		stamp = fmt.Sprintf("[%d:%02d:%02d]", h, m, s)
-	}
-	return stamp + " " + speaker + ": " + text
-}
-
-// snippet is a short preview derived from the body.
-func snippet(body string) string {
-	const maxSnippetLength = 200
-	body = strings.TrimSpace(body)
-	runes := []rune(body)
-	if len(runes) <= maxSnippetLength {
-		return body
-	}
-	return string(runes[:maxSnippetLength])
 }

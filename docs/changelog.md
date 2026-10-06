@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-05"
+last_edited: "2026-10-06"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -10,6 +10,14 @@ All notable changes to msgvault, grouped by release.
 
 - `list-accounts` and `embeddings list` keep working while a sync, import, or
   embedding build runs. Accounts whose counts aren't ready yet show `pending`.
+
+- Granola and Circleback save meetings through the same path as Muesli, Notion,
+  and meeting file import. Organizer and attendee names are trimmed, a value
+  without `@` is no longer saved as a participant, a repeated attendee appears
+  once in search, and recipient rows record the address. Existing meetings keep
+  their earlier form until they change; run `sync-granola --full` or
+  `sync-circleback --full` to rewrite them. Granola now skips unchanged notes
+  instead of rewriting them.
 
 - Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` reads only the
   chats that changed since the last successful import and writes only new and
