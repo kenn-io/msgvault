@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"os"
@@ -225,13 +226,15 @@ func TestPurgeExcludedMediaRetriesAndContinuesLooseBlobCleanup(t *testing.T) {
 	assert.NoFileExists(f.fullPath, "a later run sweeps dead blobs even with no new exclusions")
 }
 
-func TestPurgeExcludedMediaCandidateCleanup(t *testing.T) {
+func TestSweepAttachmentCandidates(t *testing.T) {
 	f := newPurgeMediaFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	dir := f.config.AttachmentsDir()
 	removed := seedAttachmentFile(t, dir, "aa/orphan", "orphan")
 	failed := seedAttachmentFile(t, dir, "aa/failed", "failed")
 	outside := seedAttachmentFile(t, filepath.Dir(dir), "outside", "outside")
-	counts, err := sweepAttachmentCandidates(t.Context(), f.store, dir, []attachmentFileCandidate{
+	counts, err := sweepAttachmentCandidates(context.WithoutCancel(ctx), f.store, dir, []attachmentFileCandidate{
 		{path: f.contentPath},
 		{path: "../outside"},
 		{path: "aa/failed"},
@@ -239,6 +242,7 @@ func TestPurgeExcludedMediaCandidateCleanup(t *testing.T) {
 		{path: "aa/orphan"},
 	}, func(path string) error {
 		if path == failed {
+			cancel()
 			return errors.New("synthetic removal failure")
 		}
 		return os.Remove(path)
@@ -248,7 +252,7 @@ func TestPurgeExcludedMediaCandidateCleanup(t *testing.T) {
 	assert.FileExists(t, f.fullPath, "path-only references preserve content")
 	assert.FileExists(t, outside, "paths outside the attachment directory survive")
 	assert.FileExists(t, failed)
-	assert.NoFileExists(t, removed, "cleanup continues after a failed unlink")
+	assert.NoFileExists(t, removed, "account cleanup continues after cancellation and a failed unlink")
 }
 
 func TestPurgeExcludedMediaCountsOnlyRemovedFiles(t *testing.T) {

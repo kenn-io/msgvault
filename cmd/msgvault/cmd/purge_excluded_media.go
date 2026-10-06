@@ -373,9 +373,6 @@ func sweepUnreferencedLooseMedia(
 		}
 		var candidates []attachmentFileCandidate
 		for _, blobEntry := range blobEntries {
-			if err := ctx.Err(); err != nil {
-				return removed, errors.Join(append(cleanupErrors, err)...)
-			}
 			hash := blobEntry.Name()
 			storagePath := prefix + "/" + hash
 			if !blobEntry.Type().IsRegular() || !isCanonicalAttachmentPath(storagePath, hash) {

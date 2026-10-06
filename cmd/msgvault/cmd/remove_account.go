@@ -616,7 +616,7 @@ func deleteOrphanedAttachmentFiles(
 		for _, path := range paths {
 			candidates = append(candidates, attachmentFileCandidate{path: path})
 		}
-		counts, cleanupErr := sweepAttachmentCandidates(ctx, s, attachmentsDir, candidates, os.Remove)
+		counts, cleanupErr := sweepAttachmentCandidates(context.WithoutCancel(ctx), s, attachmentsDir, candidates, os.Remove)
 		deleted, preserved = counts.removed+counts.missing, counts.preserved
 		if cleanupErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not remove %d attachment file(s) from disk: %v\n",
