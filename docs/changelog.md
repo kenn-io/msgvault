@@ -18,6 +18,8 @@ All notable changes to msgvault, grouped by release.
   and MCP interfaces. Write consent and exact source permissions are opt-in;
   guest notifications default to `none`. The daemon verifies calendar access
   and archives successful changes immediately.
+- [Twilio calls](usage/meetings.md#twilio) archive as searchable meetings with
+  their recordings saved locally.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
 - Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Msgvault never sends.

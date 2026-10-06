@@ -53,6 +53,35 @@ describe('MessageCard', () => {
     expect(screen.queryByRole('button', { name: /HTML/ })).toBeNull();
   });
 
+  it('links each stored recording of a meeting for download', () => {
+    const { unmount } = render(MessageCard, {
+      props: {
+        message: detail({ attachments: [{ id: 1, stored: true, filename: 'RE1.wav', mimeType: 'audio/wav', sizeBytes: 10 }] }),
+        expanded: true
+      }
+    });
+    expect(screen.queryByRole('list', { name: 'Attachments' }), 'other messages list none').toBeNull();
+    unmount();
+
+    render(MessageCard, {
+      props: {
+        message: detail({
+          messageType: 'meeting_transcript',
+          attachments: [
+            { id: 1, stored: true, filename: 'RE1.wav', mimeType: 'audio/wav', sizeBytes: 10 },
+            { id: 2, filename: 'RE2.wav', mimeType: 'audio/wav', sizeBytes: 0 }
+          ]
+        }),
+        expanded: true
+      }
+    });
+
+    const link = screen.getByRole('link', { name: 'RE1.wav' });
+    expect(link.getAttribute('href')).toBe('/api/v1/files/1/content');
+    expect(screen.queryByRole('link', { name: 'RE2.wav' })).toBeNull();
+    expect(screen.getByText('RE2.wav (not downloaded)')).toBeTruthy();
+  });
+
   it('collapses again from the expanded header', async () => {
     const onToggle = vi.fn();
     render(MessageCard, {

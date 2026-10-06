@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/twilio"
 )
 
 const (
@@ -223,6 +224,12 @@ func mediaPolicyForSource(cfg *config.Config, sourceType, identifier string) (at
 		return cfg.Discord.MediaPolicy(identifier), true
 	case sourceTypeTeams:
 		return cfg.Teams.MediaPolicy(identifier), true
+	case twilio.SourceType:
+		source := cfg.GetTwilioSource(identifier)
+		if source == nil {
+			return attachmentpolicy.Policy{}, false
+		}
+		return source.MediaPolicy(), true
 	default:
 		return attachmentpolicy.Policy{}, false
 	}

@@ -333,3 +333,66 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 	recordLooseBlobCreated(baseDir, result.Created)
 	return path.Join(contentHash[:2], contentHash), contentHash, size, nil
 }
+
+// SourceReader remembers a failed read from the source, so a caller of
+// StoreAttachmentStream can tell a dropped download from a local write failure.
+type SourceReader struct {
+	R   io.Reader
+	Err error
+}
+
+func (s *SourceReader) Read(p []byte) (int, error) {
+	n, err := s.R.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		s.Err = err
+	}
+	return n, err
+}
+
+// ErrAttachmentTooLarge reports a stream that exceeded its size cap; nothing was published.
+var ErrAttachmentTooLarge = errors.New("attachment exceeds size limit")
+
+// StoreAttachmentStream streams r into content-addressed storage under
+// attachmentsDir without buffering it in memory. maxSize > 0 caps the stream.
+// Returns the storage path relative to attachmentsDir, the content hash, and the size.
+func StoreAttachmentStream(ctx context.Context, attachmentsDir string, r io.Reader, maxSize int64) (string, string, int64, error) {
+	if attachmentsDir == "" || r == nil {
+		return "", "", 0, errors.New("attachments dir and reader are required")
+	}
+	baseDir, err := prepareStorageDir(attachmentsDir)
+	if err != nil {
+		return "", "", 0, err
+	}
+	loose, err := attachmentLooseStore(baseDir, packstore.StagingStoreDirectory)
+	if err != nil {
+		return "", "", 0, err
+	}
+	counted := &countingReader{r: r}
+	result, err := loose.Write(ctx, counted, packstore.WriteOptions{
+		Durability: packstore.AtomicPublication,
+		Dedup:      packstore.VerifyFullHash,
+		MaxBytes:   maxSize,
+	})
+	if err != nil {
+		// packstore reports the cap and a corrupt existing blob alike, so the
+		// bytes read decide: only a stream past the cap is too large.
+		if maxSize > 0 && counted.n > maxSize && errors.Is(err, packstore.ErrContentMismatch) {
+			return "", "", 0, ErrAttachmentTooLarge
+		}
+		return "", "", 0, fmt.Errorf("store attachment stream: %w", err)
+	}
+	recordLooseBlobCreated(baseDir, result.Created)
+	contentHash := result.Hash.String()
+	return path.Join(contentHash[:2], contentHash), contentHash, result.Size, nil
+}
+
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}

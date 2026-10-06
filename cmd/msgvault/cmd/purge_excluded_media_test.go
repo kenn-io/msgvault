@@ -140,6 +140,7 @@ func TestPurgeExcludedMediaDryRunAndApplyPreservesSharedBlob(t *testing.T) {
 }
 
 func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	current := &config.Config{Slack: config.SlackConfig{
 		MaxMediaMB: 7,
 		AccountsConfig: map[string]config.MediaAccountConfig{
@@ -148,8 +149,13 @@ func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
 	}}
 
 	policy, ok := mediaPolicyForSource(current, "slackdump", "T_TEST:UALICE")
-	require.True(t, ok)
-	assert.Equal(t, int64(11)<<20, policy.MaxBytes)
+	require.True(ok)
+	assert.Equal(int64(11)<<20, policy.MaxBytes)
+
+	current.Twilio = []config.TwilioSource{{Identifier: "work", MaxMediaMB: 1}}
+	policy, ok = mediaPolicyForSource(current, "twilio", "work")
+	require.True(ok)
+	assert.Equal(int64(1)<<20, policy.MaxBytes)
 }
 
 func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {

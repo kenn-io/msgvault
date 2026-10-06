@@ -19,6 +19,7 @@ const (
 	sourceTypeCircleback     = "circleback"
 	sourceTypePlaud          = "plaud"
 	sourceTypeNotionMeetings = "notion_meetings"
+	sourceTypeTwilio         = "twilio"
 	sourceTypeMuesli         = "muesli"
 )
 

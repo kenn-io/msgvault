@@ -1350,6 +1350,37 @@ scheduler from recreating it. See [Meeting Transcripts](/docs/usage/meetings/) f
 the 50-result discovery limit, attendee visibility, transcript retries, and
 stored data.
 
+### Twilio Sources
+
+Unreleased: configure one `[[twilio]]` entry per Twilio account or subaccount.
+See the [Twilio meeting guide](usage/meetings.md#twilio) for what sync stores.
+
+```toml
+[[twilio]]
+identifier = "work"
+account_email = "you@example.com"
+account_sid = "AC00000000000000000000000000000001"
+api_key_sid = "SK00000000000000000000000000000001"
+api_key_secret = "your-key-secret"
+region = "us1"
+enabled = true
+schedule = "15 */6 * * *"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | `default` (single entry) | Stable source label; required with several entries |
+| `account_email` | Required | Your primary identity; not treated as a caller |
+| `account_sid` | Required | Account or subaccount SID |
+| `api_key_sid`, `api_key_secret` | — | API key credentials, set together |
+| `auth_token` | — | Account auth token instead of an API key |
+| `region` | `us1` | `us1`, `ie1` or `au1`; credentials must belong to that region |
+| `intelligence_service_sid` | — | Only read Conversation Intelligence transcripts from this service; without it, transcripts from every service are read |
+| `enabled` | `false` | Allow daemon scheduling |
+| `schedule` | — | Five-field cron expression |
+| `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-twilio --full` to fetch the skipped recordings |
+| `max_media_mb` | `250` | Per-recording size cap in MiB; `0` uses the default |
+
 ### Muesli Sources
 
 Muesli meeting sync uses one top-level `[[muesli]]` entry per Muesli database.

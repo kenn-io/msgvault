@@ -6,6 +6,7 @@ import (
 	"compress/zlib"
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -6123,6 +6124,59 @@ func (s *Store) beeperAttachmentMetadataChangedTx(
 // can keep already-downloaded media without re-fetching it.
 func (s *Store) MessageBeeperAttachments(messageID int64) (map[string]AttachmentRef, error) {
 	return s.messageProviderAttachments(messageID, "beeper:")
+}
+
+// MessageProviderAttachments returns the message's rows whose
+// source_attachment_id starts with prefix, keyed by that ID.
+func (s *Store) MessageProviderAttachments(messageID int64, prefix string) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachments(messageID, prefix)
+}
+
+// EndWaitingProviderAttachments ends a source's provider rows, keyed with
+// prefix, still waiting for bytes on messages dated before before: unavailable
+// when the provider never produced the recording, failed otherwise. It
+// returns how many rows it ended. Calls queued for retry are excluded.
+func (s *Store) EndWaitingProviderAttachments(ctx context.Context, sourceID int64, prefix string, before time.Time, retryIDs []string) (int64, error) {
+	retries, err := json.Marshal(retryIDs)
+	if err != nil {
+		return 0, err
+	}
+	// A single JSON parameter also handles large first-sync retry queues.
+	retryQuery := `SELECT value FROM json_each(?)`
+	if s.IsPostgreSQL() {
+		retryQuery = `SELECT value FROM jsonb_array_elements_text(CAST(? AS jsonb)) AS retry_id(value)`
+	}
+	var ended int64
+	err = s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
+		result, err := q.Exec(s.Rebind(`
+		UPDATE attachments
+		SET attachment_state = CASE WHEN attachment_skip_reason = ? THEN ? ELSE ? END,
+		    attachment_skip_reason = CASE WHEN attachment_skip_reason = ? THEN ? ELSE ? END
+		WHERE source_attachment_id LIKE ?
+		  AND COALESCE(content_hash, '') = ''
+		  AND (COALESCE(attachment_state, '') IN ('', ?) OR attachment_state = ? AND COALESCE(attachment_skip_reason, '') <> ?)
+		  AND message_id IN (
+		    SELECT id FROM messages
+		    WHERE source_id = ? AND COALESCE(sent_at, received_at, internal_date) < ?
+		      AND source_message_id NOT IN (`+retryQuery+`)
+		  )
+	`),
+			attachmentpolicy.SkipSourceUnavailable, attachmentpolicy.StateUnavailable, attachmentpolicy.StateFailed,
+			attachmentpolicy.SkipSourceUnavailable, attachmentpolicy.SkipSourceUnavailable, attachmentpolicy.SkipFetchFailure,
+			prefix+"%",
+			attachmentpolicy.StatePending, attachmentpolicy.StateFailed, attachmentpolicy.SkipFetchFailure,
+			sourceID, before, string(retries),
+		)
+		if err != nil {
+			return err
+		}
+		ended, err = result.RowsAffected()
+		return err
+	})
+	if err != nil {
+		return 0, fmt.Errorf("end waiting provider attachments: %w", err)
+	}
+	return ended, nil
 }
 
 // ArchivedRawMessage is one archived message paired with the verbatim provider

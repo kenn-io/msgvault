@@ -50,6 +50,7 @@ import (
 	"go.kenn.io/msgvault/internal/syncerr"
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/teams"
+	"go.kenn.io/msgvault/internal/twilio"
 	"golang.org/x/oauth2"
 )
 
@@ -702,6 +703,34 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule notion meeting source", "source", source.Identifier, "error", err)
 		} else {
 			logger.Info("scheduled notion meeting source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+	for _, src := range cfg.Twilio {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("twilio source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "15 */6 * * *") on the [[twilio]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledTwilioSources() {
+		source := src
+		jobName, ok := api.SchedulerJobNameForSource(twilio.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for twilio source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+					return runConfiguredTwilioSync(ctx, s, source)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule twilio source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled twilio source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
 	for _, src := range cfg.Muesli {
