@@ -1236,6 +1236,8 @@ msgvault sync-inline --probe
 `--probe` cannot be combined with `--full`, `--no-media`, or a nonzero `--limit`.
 Cache overrides are mutually exclusive. Limited runs resume with the next chat
 in the current selection so a busy earlier chat cannot starve later chats.
+Unfinished older history has priority during limited capture; new arrivals are
+scanned after that backlog finishes.
 
 Older edits require `--full`. A source deletion does not erase captured text
 or downloaded media. Content removed before capture and historical edit

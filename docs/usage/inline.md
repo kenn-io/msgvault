@@ -119,6 +119,8 @@ current catalog on later runs, so newly accessible chats are included.
 Progress is saved after messages are stored, so an interrupted run resumes.
 Limited runs rotate through the current chat selection using that checkpoint,
 so arrivals in an earlier chat do not prevent later chats from being archived.
+Within a limited run, unfinished older history takes priority over new arrivals.
+After that backlog finishes, incremental scans capture newer messages.
 Later runs capture new messages without repeating the completed history.
 
 ```bash

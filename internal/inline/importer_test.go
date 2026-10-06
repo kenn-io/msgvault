@@ -587,7 +587,7 @@ func TestLimitedImportsRotateChatsAcrossRestartsAndFullRepair(t *testing.T) {
 		client.messages[2] = append(client.messages[2], syntheticMessage(2, id, "later chat"))
 	}
 	var sourceID int64
-	for run := int64(0); run < 8; run++ {
+	for run := range int64(8) {
 		client.messages[1] = append(client.messages[1], syntheticMessage(1, run+2, "arrival"))
 		// A new importer must use the stored cursor, not process-local state.
 		imp = NewImporter(imp.store, client)
@@ -603,7 +603,7 @@ func TestLimitedImportsRotateChatsAcrossRestartsAndFullRepair(t *testing.T) {
 	}
 	opts.Full = true
 	var previousRepairBefore int64
-	for run := int64(0); run < 8; run++ {
+	for run := range int64(8) {
 		client.messages[1] = append(client.messages[1], syntheticMessage(1, run+10, "arrival during repair"))
 		imp = NewImporter(imp.store, client)
 		sum, err := imp.Import(t.Context(), opts)
@@ -676,4 +676,65 @@ func TestInterruptedImportPreservesRotationAndPausedSelection(t *testing.T) {
 	for _, request := range client.requests {
 		assertions.Equal(int64(1), request.ChatID)
 	}
+}
+
+func TestLimitedImportFinishesHistoryDespiteOngoingArrivals(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+	imp, client, opts := importerFixture(t)
+	client.pageSize, opts.Limit = 1, 1
+	for id := int64(1); id <= 5; id++ {
+		client.messages[1] = append(client.messages[1], syntheticMessage(1, id, "initial history"))
+	}
+	first, err := imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	client.messages[1] = append(client.messages[1], syntheticMessage(1, 6, "arrival before interruption"))
+	// The unlimited path still starts a scan. Interrupt it after a durable
+	// message to exercise a checkpoint saved before history-first capture.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client.beforePage = func(_ context.Context, _ int64, beforeID int64) error {
+		if beforeID == 6 {
+			cancel()
+			return ctx.Err()
+		}
+		return nil
+	}
+	opts.Limit = 0
+	_, err = imp.Import(ctx, opts)
+	requires.ErrorIs(err, context.Canceled)
+	prior := storedState(t, imp, first.SourceID, opts.Account.Identifier()).chat(1)
+	assertions.True(prior.ScanActive)
+	assertions.Equal(int64(6), prior.ScanBefore)
+	assertions.Equal(int64(5), prior.HistoryBefore)
+	client.beforePage, opts.Limit = nil, 1
+	for run := range int64(4) {
+		client.messages[1] = append(client.messages[1], syntheticMessage(1, run+7, "ongoing arrival"))
+		imp = NewImporter(imp.store, client)
+		sum, err := imp.Import(t.Context(), opts)
+		requires.NoError(err)
+		assertions.Equal(1, sum.MessagesProcessed)
+		chat := storedState(t, imp, first.SourceID, opts.Account.Identifier()).chat(1)
+		assertions.True(chat.ScanActive, "history progress retains the pinned interrupted scan")
+		assertions.Equal(prior.ScanBefore, chat.ScanBefore)
+		assertions.Equal(prior.ScanHead, chat.ScanHead)
+		assertions.Equal(prior.ScanFloor, chat.ScanFloor)
+	}
+	assertions.True(storedState(t, imp, first.SourceID, opts.Account.Identifier()).chat(1).HistoryDone)
+	for id := int64(1); id <= 5; id++ {
+		archivedMessage(t, imp.store, first.SourceID, 1, id)
+	}
+	// Once arrivals stop, the retained scan and newer messages converge too.
+	for range 6 {
+		imp = NewImporter(imp.store, client)
+		sum, err := imp.Import(t.Context(), opts)
+		requires.NoError(err)
+		assertions.LessOrEqual(sum.MessagesProcessed, 1)
+	}
+	for id := int64(6); id <= 10; id++ {
+		archivedMessage(t, imp.store, first.SourceID, 1, id)
+	}
+	chat := storedState(t, imp, first.SourceID, opts.Account.Identifier()).chat(1)
+	assertions.False(chat.ScanActive)
+	assertions.Equal(int64(10), chat.Head)
 }

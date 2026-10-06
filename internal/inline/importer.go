@@ -226,7 +226,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if chat.RepairActive {
 			err = scoped.walk(ctx, source.ID, runID, conversationID, conversation, chat, state, sum, opts, "repair")
 		} else {
-			if chat.Initialized {
+			// Limited capture pays its finite, pinned history debt before newer
+			// arrivals. Otherwise a busy chat can starve its own older messages.
+			historyFirst := opts.Limit > 0 && !chat.HistoryDone
+			if historyFirst {
+				err = scoped.walk(ctx, source.ID, runID, conversationID, conversation, chat, state, sum, opts, "history")
+			}
+			canScan := opts.Limit == 0 || (chat.HistoryDone && sum.MessagesProcessed < opts.Limit)
+			if err == nil && chat.Initialized && canScan {
 				if !chat.ScanActive {
 					chat.ScanActive = true
 					chat.ScanFloor = chat.Head
@@ -238,7 +245,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				}
 				err = scoped.walk(ctx, source.ID, runID, conversationID, conversation, chat, state, sum, opts, "scan")
 			}
-			if err == nil && !chat.ScanActive && !chat.HistoryDone {
+			if err == nil && !historyFirst && !chat.ScanActive && !chat.HistoryDone {
 				err = scoped.walk(ctx, source.ID, runID, conversationID, conversation, chat, state, sum, opts, "history")
 			}
 		}
