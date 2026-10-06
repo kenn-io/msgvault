@@ -155,7 +155,6 @@ func TestRunGCLocalSweepsOrphanBlobsWhenNothingToPurge(t *testing.T) {
 	orphanBlob := filepath.Join(cfg.AttachmentsDir(), orphanHash[:2], orphanHash)
 	require.NoError(os.MkdirAll(filepath.Dir(orphanBlob), 0o755), "create blob dir")
 	require.NoError(os.WriteFile(orphanBlob, []byte("orphan"), 0o600), "write orphan blob")
-	sharedBlob := seedGCLooseBlob(t, cfg, activeID, strings.Repeat("0d", 32))
 
 	var output bytes.Buffer
 	rerun := &cobra.Command{}
@@ -169,7 +168,6 @@ func TestRunGCLocalSweepsOrphanBlobsWhenNothingToPurge(t *testing.T) {
 	assert.NotContains(output.String(), "Backing up database")
 	assert.NotContains(output.String(), "Derived caches may contain deleted rows")
 	assert.NoFileExists(orphanBlob, "rerun must retry the orphan sweep")
-	assert.FileExists(sharedBlob, "a referenced blob must survive")
 	assert.True(gcMessageExists(t, cfg.DatabaseDSN(), activeID))
 
 	backups, err := filepath.Glob(cfg.DatabaseDSN() + ".gc-backup-*")

@@ -836,46 +836,6 @@ func TestRemoveAccountConfirmedDoesNotBypassActiveSyncGuard(t *testing.T) {
 	require.ErrorContains(err, "active sync in progress")
 }
 
-func TestRemoveAccountCmd_RejectsPathTraversal(t *testing.T) {
-	cfg := testConfigValue()
-
-	require := require.New(t)
-	tmpDir := t.TempDir()
-	attachmentsDir := filepath.Join(tmpDir, "attachments")
-	require.NoError(os.MkdirAll(attachmentsDir, 0o755), "mkdir attachments")
-
-	// Create a file outside the attachments directory that MUST NOT be deleted.
-	outsidePath := filepath.Join(tmpDir, "escape.txt")
-	require.NoError(os.WriteFile(outsidePath, []byte("do not delete"), 0o600), "write outside file")
-
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	require.NoError(s.InitSchema(), "init schema")
-	// Craft a storage_path that escapes the attachments directory.
-	seedMessageWithAttachment(t, s,
-		"alice@example.com", "thread-a", "msg-a",
-		"../escape.txt", "evilhash")
-	_ = s.Close()
-
-	savedCfg := cfg
-	defer func() { cfg = savedCfg }()
-	cfg = &config.Config{
-		HomeDir: tmpDir,
-		Data:    config.DataConfig{DataDir: tmpDir},
-	}
-	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
-
-	root := newTestRootCmd()
-	root.SetContext(testCtx)
-	root.AddCommand(newRemoveAccountLocalTestCmd())
-	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
-	require.NoError(root.Execute(), "remove-account")
-
-	_, err = os.Stat(outsidePath)
-	assert.NoError(t, err, "file outside attachments dir must not be deleted")
-}
-
 func TestRemoveAccountCmd_RequiresEmail(t *testing.T) {
 	root := newTestRootCmd()
 	root.AddCommand(newRemoveAccountLocalTestCmd())

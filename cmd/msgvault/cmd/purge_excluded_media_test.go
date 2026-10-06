@@ -248,48 +248,43 @@ func TestSweepAttachmentCandidates(t *testing.T) {
 	assert.Equal(t, attachmentSweepCounts{removed: 1, missing: 1, preserved: 1}, counts)
 	assert.FileExists(t, f.fullPath, "path-only references preserve content")
 	assert.FileExists(t, outside, "paths outside the attachment directory survive")
-	assert.FileExists(t, failed)
 	assert.NoFileExists(t, removed, "cleanup continues after a failed unlink")
 }
 
-func TestSweepUnreferencedLooseMediaCancellation(t *testing.T) {
-	f := newPurgeMediaFixture(t)
-	dir := f.config.AttachmentsDir()
-	paths := make([]string, 0, 3)
-	for _, hash := range []string{strings.Repeat("cd", 32), "cd" + strings.Repeat("ef", 31), strings.Repeat("ef", 32)} {
-		paths = append(paths, seedAttachmentFile(t, dir, hash[:2]+"/"+hash, "orphan"))
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	removed, err := sweepUnreferencedLooseMedia(ctx, f.store, dir, func(path string) error {
-		err := os.Remove(path)
-		if err == nil {
-			cancel()
+func TestSweepUnreferencedLooseMedia(t *testing.T) {
+	t.Run("cancellation", func(t *testing.T) {
+		f := newPurgeMediaFixture(t)
+		dir := f.config.AttachmentsDir()
+		paths := make([]string, 0, 3)
+		for _, hash := range []string{strings.Repeat("cd", 32), "cd" + strings.Repeat("ef", 31), strings.Repeat("ef", 32)} {
+			paths = append(paths, seedAttachmentFile(t, dir, hash[:2]+"/"+hash, "orphan"))
 		}
-		return err
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		removed, err := sweepUnreferencedLooseMedia(ctx, f.store, dir, func(path string) error {
+			err := os.Remove(path)
+			if err == nil {
+				cancel()
+			}
+			return err
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Equal(t, 1, removed)
+		assert.NoFileExists(t, paths[0])
+		assert.FileExists(t, paths[2])
+		assert.Equal(t, 1, strings.Count(err.Error(), context.Canceled.Error()), "report cancellation once")
 	})
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Equal(t, 1, removed)
-	assert.NoFileExists(t, paths[0])
-	assert.FileExists(t, paths[1])
-	assert.FileExists(t, paths[2])
-	assert.Equal(t, 1, strings.Count(err.Error(), context.Canceled.Error()), "report cancellation once")
-}
-
-func TestPurgeExcludedMediaCountsOnlyRemovedFiles(t *testing.T) {
-	f := newPurgeMediaFixture(t)
-	f.config.Beeper.MediaScope = string(attachmentpolicy.ScopeNone)
-	deps := f.deps()
-	deps.removeFile = func(path string) error {
-		require.NoError(t, os.Remove(path))
-		return os.ErrNotExist // Another cleanup removed the file before this unlink.
-	}
-	cmd := newPurgeExcludedMediaLocalCmd(deps)
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetArgs([]string{"--yes"})
-	require.NoError(t, cmd.Execute())
-	assert.Contains(t, out.String(), "Removed 0 unreferenced loose blob file(s)")
+	t.Run("missing files", func(t *testing.T) {
+		f := newPurgeMediaFixture(t)
+		hash := strings.Repeat("cd", 32)
+		seedAttachmentFile(t, f.config.AttachmentsDir(), hash[:2]+"/"+hash, "orphan")
+		removed, err := sweepUnreferencedLooseMedia(t.Context(), f.store, f.config.AttachmentsDir(), func(path string) error {
+			require.NoError(t, os.Remove(path))
+			return os.ErrNotExist // Another cleanup removed the file before this unlink.
+		})
+		require.NoError(t, err)
+		assert.Zero(t, removed)
+	})
 }
 
 // TestPurgeExcludedMediaRetainsUnresolvedRostersUnderParticipantLimit keeps

@@ -592,6 +592,7 @@ func deleteOrphanedAttachmentFiles(
 	}
 
 	lockErr := s.WithExclusiveLock(ctx, func() error {
+		// Catch a sync started after source deletion released its lock.
 		running, err := s.HasAnyActiveSync()
 		if err != nil {
 			fmt.Fprintf(os.Stderr,
