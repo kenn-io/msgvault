@@ -227,6 +227,7 @@ func TestPurgeExcludedMediaRetriesAndContinuesLooseBlobCleanup(t *testing.T) {
 }
 
 func TestSweepAttachmentCandidates(t *testing.T) {
+	assert := assert.New(t)
 	f := newPurgeMediaFixture(t)
 	dir := f.config.AttachmentsDir()
 	removed := seedAttachmentFile(t, dir, "aa/orphan", "orphan")
@@ -245,14 +246,15 @@ func TestSweepAttachmentCandidates(t *testing.T) {
 		return os.Remove(path)
 	})
 	require.Error(t, err)
-	assert.Equal(t, attachmentSweepCounts{removed: 1, missing: 1, preserved: 1}, counts)
-	assert.FileExists(t, f.fullPath, "path-only references preserve content")
-	assert.FileExists(t, outside, "paths outside the attachment directory survive")
-	assert.NoFileExists(t, removed, "cleanup continues after a failed unlink")
+	assert.Equal(attachmentSweepCounts{removed: 1, missing: 1, preserved: 1}, counts)
+	assert.FileExists(f.fullPath, "path-only references preserve content")
+	assert.FileExists(outside, "paths outside the attachment directory survive")
+	assert.NoFileExists(removed, "cleanup continues after a failed unlink")
 }
 
 func TestSweepUnreferencedLooseMedia(t *testing.T) {
 	t.Run("cancellation", func(t *testing.T) {
+		assert := assert.New(t)
 		f := newPurgeMediaFixture(t)
 		dir := f.config.AttachmentsDir()
 		paths := make([]string, 0, 3)
@@ -269,10 +271,10 @@ func TestSweepUnreferencedLooseMedia(t *testing.T) {
 			return err
 		})
 		require.ErrorIs(t, err, context.Canceled)
-		assert.Equal(t, 1, removed)
-		assert.NoFileExists(t, paths[0])
-		assert.FileExists(t, paths[2])
-		assert.Equal(t, 1, strings.Count(err.Error(), context.Canceled.Error()), "report cancellation once")
+		assert.Equal(1, removed)
+		assert.NoFileExists(paths[0])
+		assert.FileExists(paths[2])
+		assert.Equal(1, strings.Count(err.Error(), context.Canceled.Error()), "report cancellation once")
 	})
 	t.Run("missing files", func(t *testing.T) {
 		f := newPurgeMediaFixture(t)
