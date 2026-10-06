@@ -1341,6 +1341,9 @@ CREATE TABLE IF NOT EXISTS messages (
     is_from_me BOOLEAN DEFAULT FALSE,
     source_is_from_me BOOLEAN,
     identity_is_from_me BOOLEAN NOT NULL DEFAULT FALSE,
+    account_address TEXT,
+    account_path TEXT,
+    draft_authored BOOLEAN NOT NULL DEFAULT FALSE,
 
     subject TEXT,
     snippet TEXT,
@@ -4077,3 +4080,15 @@ CREATE INDEX IF NOT EXISTS idx_meeting_actions_status
     ON meeting_action_items(status, message_id, ordinal);
 CREATE INDEX IF NOT EXISTS idx_meeting_actions_assignee
     ON meeting_action_items(assignee_email, message_id, ordinal);
+
+-- Delivery-header addresses read from each email's stored MIME. Account
+-- attribution derives messages.account_address from them; they are hints
+-- about routing, not proof of ownership.
+CREATE TABLE IF NOT EXISTS message_delivery_addresses (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,      -- 'original' or 'delivered'
+    address TEXT NOT NULL,   -- lowercased mailbox
+    PRIMARY KEY (message_id, kind, address)
+);
+CREATE INDEX IF NOT EXISTS idx_message_delivery_addresses_address
+    ON message_delivery_addresses(address, message_id);

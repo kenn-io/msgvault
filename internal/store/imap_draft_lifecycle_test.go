@@ -2,38 +2,86 @@ package store_test
 
 import (
 	"database/sql"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 	requirements := require.New(t)
+	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "imap://alice@example.com:143")
 	requirements.NoError(err)
+	// Both ends are confirmed, so a retired draft that lost its written
+	// status would be attributed to its recipient.
+	requirements.NoError(st.AddAccountIdentity(source.ID, "alice@example.com", "manual"))
+	requirements.NoError(st.AddAccountIdentity(source.ID, "bob@example.com", "manual"))
 	conversationID, err := st.EnsureConversation(source.ID, "draft-lifecycle", "Draft lifecycle")
 	requirements.NoError(err)
-	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
-	draft, err := st.PersistIMAPDraftContext(t.Context(), receipt, nil, func(_ []int64) *store.MessagePersistData {
-		return &store.MessagePersistData{
-			Message: &store.Message{
-				SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
-				MessageType: store.MessageTypeEmail, ConversationID: conversationID,
-			},
-			BodyText: sql.NullString{String: "old", Valid: true},
-			RawMIME:  []byte("From: alice@example.com\r\nTo: bob@example.com\r\nContent-Type: text/plain\r\n\r\nold\r\n"),
+	people := []store.ParticipantPersistData{
+		{EmailAddress: "alice@example.com", Domain: "example.com"},
+		{EmailAddress: "bob@example.com", Domain: "example.com"},
+	}
+	build := func(receipt store.IMAPDraftReceipt, body string, raw []byte) func([]int64) *store.MessagePersistData {
+		return func(ids []int64) *store.MessagePersistData {
+			return &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
+					MessageType: store.MessageTypeEmail, ConversationID: conversationID,
+					SenderID: sql.NullInt64{Int64: ids[0], Valid: true},
+				},
+				Recipients: []store.RecipientSet{
+					{Type: "from", ParticipantIDs: ids[:1], DisplayNames: []string{""}, EmailAddresses: []string{"alice@example.com"}},
+					{Type: "to", ParticipantIDs: ids[1:], DisplayNames: []string{""}, EmailAddresses: []string{"bob@example.com"}},
+				},
+				BodyText: sql.NullString{String: body, Valid: true},
+				RawMIME:  raw,
+			}
 		}
-	})
+	}
+	// Every snapshot, live or retired, stays the author's written mail.
+	allSnapshots := func(query string) []int64 {
+		q := search.Parse(query)
+		requirements.NoError(q.Err())
+		q.DeletionScope = search.DeletionScopeAny
+		results, _, err := st.SearchMessagesQuery(q, 0, 100)
+		requirements.NoError(err)
+		ids := make([]int64, 0, len(results))
+		for _, r := range results {
+			ids = append(ids, r.ID)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+	assertWritten := func(want ...int64) {
+		t.Helper()
+		slices.Sort(want)
+		assertions.Empty(allSnapshots("received:bob@example.com"))
+		assertions.Empty(allSnapshots("received:alice@example.com"))
+		assertions.Equal(want, allSnapshots("account:alice@example.com"))
+		_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET account_address = NULL, account_path = NULL WHERE source_id = ?`), source.ID)
+		requirements.NoError(err)
+		_, err = st.RepairAccountAttributionContext(t.Context(), source.ID, nil)
+		requirements.NoError(err)
+		assertions.Empty(allSnapshots("received:bob@example.com"), "after re-derivation")
+		assertions.Equal(want, allSnapshots("account:alice@example.com"), "after re-derivation")
+	}
+	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
+	draft, err := st.PersistIMAPDraftContext(t.Context(), receipt, people, build(receipt, "old",
+		[]byte("From: alice@example.com\r\nTo: bob@example.com\r\nContent-Type: text/plain\r\n\r\nold\r\n")))
 	requirements.NoError(err)
 	requirements.NotEmpty(draft.DraftID)
 	requirements.Equal(int64(1), draft.Revision)
+	assertWritten(draft.CurrentMessageID)
 
-	candidateRaw := []byte("candidate")
+	candidateRaw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nContent-Type: text/plain\r\n\r\ncandidate\r\n")
 	claimed, err := st.ClaimIMAPDraftContext(t.Context(), draft.DraftID, 1, store.IMAPDraftOperationEdit, candidateRaw)
 	requirements.NoError(err)
 	requirements.Equal(candidateRaw, claimed.Pending.Raw)
@@ -42,20 +90,12 @@ func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 
 	replacement := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 2}
 	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, 1, "append_uidplus", &replacement))
-	published, err := st.PublishIMAPDraftReplacementContext(t.Context(), draft.DraftID, 1, nil, func(_ []int64) *store.MessagePersistData {
-		return &store.MessagePersistData{
-			Message: &store.Message{
-				SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(replacement),
-				MessageType: store.MessageTypeEmail, ConversationID: conversationID,
-			},
-			BodyText: sql.NullString{String: "candidate", Valid: true},
-			RawMIME:  candidateRaw,
-		}
-	})
+	published, err := st.PublishIMAPDraftReplacementContext(t.Context(), draft.DraftID, 1, people, build(replacement, "candidate", candidateRaw))
 	requirements.NoError(err)
 	requirements.Equal(int64(2), published.Revision)
 	requirements.Equal(replacement.UID, published.CurrentReceipt.UID)
 	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, 2, "survivor", nil))
+	assertWritten(draft.CurrentMessageID, published.CurrentMessageID)
 
 	_, err = st.FinishIMAPDraftRemovalContext(t.Context(), draft.DraftID, 2)
 	requirements.ErrorIs(err, store.ErrIMAPDraftState)
@@ -70,6 +110,7 @@ func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 		SELECT deleted_from_source_at FROM messages WHERE id = ?
 	`), draft.CurrentMessageID).Scan(&oldDeleted))
 	requirements.True(oldDeleted.Valid)
+	assertWritten(draft.CurrentMessageID, published.CurrentMessageID)
 }
 
 func TestManagedIMAPDraftAttachmentReplacement(t *testing.T) {

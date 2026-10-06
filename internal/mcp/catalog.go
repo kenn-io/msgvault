@@ -476,8 +476,10 @@ func offsetProperty() *jsonschema.Schema {
 
 const (
 	searchMetadataOperatorDoc = "Supported operators: from:, to:, cc:, bcc:, subject:, label: (or l:), has:attachment, " +
-		"before:/after: (YYYY-MM-DD), older_than:/newer_than: (e.g. 7d, 2w, 1m, 1y), larger:/smaller: (e.g. 5M). " +
-		"Bare domains on from:/to: match any address at that domain. Multiple terms are ANDed. " +
+		"before:/after: (YYYY-MM-DD), older_than:/newer_than: (e.g. 7d, 2w, 1m, 1y), larger:/smaller: (e.g. 5M), " +
+		"account:, received: (exact addresses; received: excludes sent mail and calendar events). " +
+		"Bare domains on from:/to: match any address at that domain. Different operators are ANDed; " +
+		"repeated account: or received: values are ORed. " +
 		"Not supported: negation (-), OR, or parentheses grouping."
 	searchMetadataFreeTextDoc = "Free text matches subject, snippet, and sender/recipient metadata only (not bodies). " +
 		"Use search_message_bodies for body keywords or semantic_search_messages for vector/hybrid search."

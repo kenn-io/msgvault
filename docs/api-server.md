@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.4.0**.
+it is separate from the binary release version. The current schema is **3.5.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -124,6 +124,8 @@ resolution and a sync of one selected connection return with 413 when a card
 exceeds Outlook's 4 MB write limit. A sync of all connections returns 200 and
 reports the code as that connection's failure, and run history records it as
 the failure code.
+
+Schema 3.5.0 adds the `account:` and `received:` search operators.
 
 Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.

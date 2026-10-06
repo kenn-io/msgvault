@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-07"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -27,6 +27,12 @@ All notable changes to msgvault, grouped by release.
   `sync-circleback --full` to rewrite them. Granola now skips unchanged notes
   instead of rewriting them.
 
+- Find mail by the address that received it: `received:work@example.org` finds
+  forwarded and Bcc'd mail delivered to a confirmed alias, and
+  `account:work@example.org` adds sent mail and calendar events. Older mail
+  fills in on each source's next sync or import, or with
+  `msgvault repair-derived`. API schema 3.5.0; older daemons refuse these
+  operators.
 - Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` reads only the
   chats that changed since the last successful import and writes only new and
   changed messages, instead of rewriting the whole archive. It picks up edits

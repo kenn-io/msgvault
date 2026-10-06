@@ -638,6 +638,7 @@ func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribu
 	return fmt.Sprintf(`
 			m.id,
 			m.source_id,
+			`+source.accountColumnsSQL("m")+`,
 			COALESCE(%s, '') AS source_message_id,
 			%s AS rfc822_message_id,
 			m.conversation_id,
@@ -1347,6 +1348,14 @@ func buildCacheLockedAttempt(
 		messageSourceAttribution = "COALESCE(m.source_is_from_me, FALSE)"
 	}
 	sourceSnapshot.hasMessageSourceAttribution = messageSourceAttributionColumnCount > 0
+	var accountAttributionColumnCount int
+	if err := sourceSnapshot.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('messages')
+		WHERE name IN ('account_address', 'account_path')
+	`).Scan(&accountAttributionColumnCount); err != nil {
+		return nil, fmt.Errorf("inspect message account attribution schema: %w", err)
+	}
+	sourceSnapshot.hasAccountAttribution = accountAttributionColumnCount == 2
 	var recipientEnvelopeColumnCount int
 	if err := sourceSnapshot.QueryRow(`
 		SELECT COUNT(*) FROM pragma_table_info('message_recipients')
@@ -1863,6 +1872,7 @@ type cacheSourceSnapshot struct {
 	hasAttachmentMIME           bool
 	hasAttachmentMetadata       bool
 	hasMessageSourceAttribution bool
+	hasAccountAttribution       bool
 	hasRecipientEnvelope        bool
 	// csvSnapshot records that the sqlite_db tables are CSV views exported
 	// from SQLite, not the attached database itself. It is set once at
@@ -2044,6 +2054,10 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 	if s.hasMessageSourceAttribution {
 		messageColumns += ", source_is_from_me"
 		messageTypes += ", 'source_is_from_me': 'BOOLEAN'"
+	}
+	if s.hasAccountAttribution {
+		messageColumns += ", account_address, account_path"
+		messageTypes += ", 'account_address': 'VARCHAR', 'account_path': 'VARCHAR'"
 	}
 	messageTypes += "}"
 
@@ -2710,4 +2724,13 @@ func init() {
 		"Internal: scheduled staleness-derived build with lock-held interval recheck",
 	)
 	_ = buildCacheCmd.Flags().MarkHidden("scheduled-auto")
+}
+
+// accountColumnsSQL selects the message account projection, or typed NULLs
+// when the archive predates it.
+func (s *cacheSourceSnapshot) accountColumnsSQL(alias string) string {
+	if !s.hasAccountAttribution {
+		return "CAST(NULL AS VARCHAR) AS account_address, CAST(NULL AS VARCHAR) AS account_path"
+	}
+	return alias + ".account_address, " + alias + ".account_path"
 }

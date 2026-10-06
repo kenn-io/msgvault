@@ -17,7 +17,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -1928,17 +1927,15 @@ func TestWaitForDaemonExitWithProgressExplainsLongStops(t *testing.T) {
 }
 
 func TestWaitForDaemonExitWithProgressGivesUpAtGrace(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		restoreStopWaitPacing(t, 5*time.Millisecond, 10*time.Millisecond)
-		out := &bytes.Buffer{}
+	restoreStopWaitPacing(t, 5*time.Millisecond, 10*time.Millisecond)
+	out := &bytes.Buffer{}
 
-		exited := waitForDaemonExitWithProgress(out, daemon.RuntimeRecord{PID: 4242}, nil,
-			50*time.Millisecond, time.Millisecond,
-			func(daemon.RuntimeRecord) bool { return true })
+	exited := waitForDaemonExitWithProgress(out, daemon.RuntimeRecord{PID: 4242}, nil,
+		50*time.Millisecond, time.Millisecond,
+		func(daemon.RuntimeRecord) bool { return true })
 
-		assert.False(t, exited, "wait must give up at the grace deadline")
-		assert.Contains(t, out.String(), "Waiting up to")
-	})
+	assert.False(t, exited, "wait must give up at the grace deadline")
+	assert.Contains(t, out.String(), "Waiting up to")
 }
 
 func TestWaitForDaemonExitWithProgressQuietOnFastExit(t *testing.T) {

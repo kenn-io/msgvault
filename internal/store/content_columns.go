@@ -76,6 +76,11 @@ var MessagesNonContentColumns = []string{
 	// attribution provenance migration for no reader-visible difference.
 	"source_is_from_me",
 	"identity_is_from_me",
+	// Account attribution is a derived routing projection, absent from
+	// ChangedMessage. The cache journal invalidates account filters.
+	"account_address",
+	"account_path",
+	"draft_authored",      // attribution input: the row was once filed as a draft
 	"reply_to_message_id", // threading pointer; conversation_id is the routing key
 	"thread_position",     // ordering within a thread, derived
 	"is_read",             // local read state

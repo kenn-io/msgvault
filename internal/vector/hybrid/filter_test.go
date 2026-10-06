@@ -496,3 +496,10 @@ func TestBuildFilter_LabelsMatchCaseInsensitiveSubstring(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildFilterRejectsAccountOperators(t *testing.T) {
+	for _, query := range []string{"received:work@example.org", "account:work@example.org"} {
+		_, err := BuildFilter(context.Background(), nil, nil, search.Parse(query))
+		assert.ErrorIs(t, err, ErrAccountFiltersUnsupported, query)
+	}
+}

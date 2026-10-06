@@ -138,7 +138,8 @@ func (s *Store) PersistGmailDraftContext(
 		}
 		return nil
 	}
-	if _, err := s.persistMessageWithParticipantsTransaction(ctx, before, participants, build, prepare, after); err != nil {
+	lock := attributionLock{Sources: []int64{receipt.SourceID}}
+	if _, err := s.persistMessageWithParticipantsTransaction(ctx, lock, before, participants, build, prepare, after); err != nil {
 		return GmailDraft{}, err
 	}
 	return draft, nil
@@ -357,7 +358,7 @@ func (s *Store) PublishGmailDraftReplacementContext(
 		return GmailDraft{}, errors.New("invalid Gmail draft publication")
 	}
 	var published GmailDraft
-	err := gmailDrafts.inTx(ctx, s, draftID, func(tx *loggedTx, draft GmailDraft) error {
+	err := gmailDrafts.inAttributionTx(ctx, s, draftID, func(tx *loggedTx, draft GmailDraft) error {
 		if draft.Revision != revision {
 			return ErrGmailDraftRevision
 		}
@@ -439,7 +440,7 @@ func (s *Store) AdoptGmailDraftObservationContext(
 		return GmailDraft{}, errors.New("invalid Gmail draft observation")
 	}
 	var adopted GmailDraft
-	err := gmailDrafts.inTx(ctx, s, draftID, func(tx *loggedTx, draft GmailDraft) error {
+	err := gmailDrafts.inAttributionTx(ctx, s, draftID, func(tx *loggedTx, draft GmailDraft) error {
 		if draft.Revision != revision {
 			return ErrGmailDraftRevision
 		}
@@ -595,7 +596,7 @@ func prepareGmailDraftMessage(
 			Info:          LabelInfo{Name: "DRAFT", Type: "system"},
 		})
 	}
-	labelIDs, err := ensureMessageLabelRefsWith(boundQuerier{ctx: ctx, q: tx}, sourceID, refs)
+	labelIDs, err := ensureMessageLabelRefsWith(boundQuerier{ctx: ctx, q: tx}, sourceID, refs, labelFlipsTx(ctx, tx, sourceID))
 	if err != nil {
 		return nil, fmt.Errorf("resolve Gmail draft labels: %w", err)
 	}

@@ -105,7 +105,9 @@ func TestAddAccountIdentityUpdatesOnlyChangedMessageAttribution(t *testing.T) {
 		`SELECT COUNT(*) FROM message_update_audit WHERE message_id = ?`,
 		otherMessageID,
 	).Scan(&otherUpdates))
-	assert.Equal(1, ownerUpdates, "matching attribution must be updated")
+	// The identity flag, then the account attribution: returned to pending
+	// in the identity transaction and derived after it commits.
+	assert.Equal(3, ownerUpdates, "matching attribution must be updated")
 	assert.Zero(otherUpdates, "unchanged attribution must not rewrite the message")
 }
 

@@ -38,6 +38,7 @@ import (
 // incremental builds can update them without rescanning expanded activity.
 // Version 30 stores direct activity edges and expands conversation membership
 // from the current roster when queried.
+// Version 31 adds the message account_address and account_path projection.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
 const CacheSchemaVersion = 31

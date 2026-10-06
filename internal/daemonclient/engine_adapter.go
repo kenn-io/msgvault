@@ -30,6 +30,10 @@ const (
 	// listIDMinAPISchemaVersion is the first daemon contract that guarantees
 	// exact List-ID filtering on every MessageFilter endpoint.
 	listIDMinAPISchemaVersion = "2.14.0"
+
+	// accountAttributionMinAPISchemaVersion is the first daemon contract that
+	// understands account: and received:; older daemons read them as text.
+	accountAttributionMinAPISchemaVersion = "3.5.0"
 )
 
 // Engine implements query.Engine by making HTTP calls to a msgvault daemon.
@@ -1208,6 +1212,9 @@ func (e *Engine) GetDeletionTargetsBySearch(
 	if queryString == "" {
 		return e.GetDeletionTargetsByFilter(ctx, filter)
 	}
+	if err := e.requireListIDCapability(ctx, searchQuery, query.MessageFilter{}); err != nil {
+		return nil, err
+	}
 	compatible, err := e.store.SupportsAPISchemaVersion(ctx, tuiSearchContractMinAPISchemaVersion)
 	if err != nil {
 		return nil, fmt.Errorf("check daemon search-aware deletion capability: %w", err)
@@ -1251,6 +1258,9 @@ func (e *Engine) GetDeletionTargetsByAggregateSearch(
 	queryString := search.Format(parsed)
 	if queryString == "" {
 		return e.GetDeletionTargetsByFilter(ctx, filter)
+	}
+	if err := e.requireListIDCapability(ctx, parsed, query.MessageFilter{}); err != nil {
+		return nil, err
 	}
 	compatible, err := e.store.SupportsAPISchemaVersion(ctx, tuiSearchContractMinAPISchemaVersion)
 	if err != nil {
@@ -1306,6 +1316,16 @@ func (e *Engine) requireListIDCapability(
 func (c *Client) requireListIDCapability(
 	ctx context.Context, q *search.Query, filter query.MessageFilter, groupBy ...query.ViewType,
 ) error {
+	if q != nil && (len(q.AccountAddrs) > 0 || len(q.ReceivedAddrs) > 0) {
+		supported, err := c.SupportsAPISchemaVersion(ctx, accountAttributionMinAPISchemaVersion)
+		if err != nil {
+			return fmt.Errorf("check daemon account filter capability: %w", err)
+		}
+		if !supported {
+			return fmt.Errorf("account: and received: filters require daemon API schema %s or newer",
+				accountAttributionMinAPISchemaVersion)
+		}
+	}
 	if filter.ListID == "" && (q == nil || len(q.ListIDs) == 0) &&
 		!slices.Contains(groupBy, query.ViewLists) {
 		return nil

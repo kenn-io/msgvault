@@ -160,7 +160,8 @@ func (s *Store) PersistIMAPRelocationWithParticipantsContext(
 	}
 
 	return s.persistMessageWithParticipantsTransaction(
-		ctx, beforeParticipants, participants, build, prepare, afterPersist,
+		ctx, attributionLock{Sources: []int64{expected.SourceID}},
+		beforeParticipants, participants, build, prepare, afterPersist,
 	)
 }
 

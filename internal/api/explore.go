@@ -1609,6 +1609,10 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		return s.resolveEmptyVectorCandidates(ctx, w, request, state, requestHash, lexicalSpec)
 	}
 	filter, err := hybridEngine.BuildFilter(ctx, parsed)
+	if errors.Is(err, hybrid.ErrAccountFiltersUnsupported) {
+		writeError(w, http.StatusBadRequest, "unsupported_filter_mode", err.Error())
+		return query.SearchSpec{}, "", false
+	}
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "search_filter_unavailable", "The semantic search filter could not be resolved")
 		return query.SearchSpec{}, "", false

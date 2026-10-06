@@ -72,6 +72,7 @@ func (s *Store) ScopedToSync(sourceID, syncRunID int64) *Store {
 		identityMatchReviewAfterDecisionHook:  base.identityMatchReviewAfterDecisionHook,
 		personOperationBeforeIdentityLockHook: base.personOperationBeforeIdentityLockHook,
 		personMergeAfterSnapshotHook:          base.personMergeAfterSnapshotHook,
+		attributionAfterLockHook:              base.attributionAfterLockHook,
 
 		contentChangedBackfillBatchSizeOverride: base.contentChangedBackfillBatchSizeOverride,
 	}
@@ -1708,25 +1709,78 @@ func (s *Store) UpdateSourceDisplayNameContext(
 // UpdateSourceSyncConfig updates the JSON sync configuration for an IMAP source.
 // The sync_config column is JSONB on PG; the dialect supplies the
 // appropriate placeholder cast (?::JSONB on PG, bare ? on SQLite).
+//
+// A calendar source's config names the mailbox its events belong to, so a
+// change to that mailbox re-derives the source's events in the same
+// transaction.
 func (s *Store) UpdateSourceSyncConfig(sourceID int64, configJSON string) error {
-	_, err := s.db.Exec(fmt.Sprintf(`
-		UPDATE sources
-		SET sync_config = %s, updated_at = %s
-		WHERE id = ?
-	`, s.dialect.JSONBindExpr(), s.dialect.Now()), configJSON, sourceID)
-	return err
+	ctx := context.Background()
+	newConfig := sql.NullString{String: configJSON, Valid: true}
+	// The source lock orders this write against every derivation of the
+	// source's events, so the comparison below sees the config they used.
+	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
+		var current sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT sync_config FROM sources WHERE id = ?`, sourceID).Scan(&current)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read source %d sync config: %w", sourceID, err)
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			UPDATE sources
+			SET sync_config = %s, updated_at = %s
+			WHERE id = ?
+		`, s.dialect.JSONBindExpr(), s.dialect.Now()), configJSON, sourceID); err != nil {
+			return err
+		}
+		if calendarMailbox(current) == calendarMailbox(newConfig) {
+			return nil
+		}
+		return s.refreshCalendarAccountAttributionTx(ctx, tx, sourceID)
+	})
 }
 
 // UpdateSourceIdentifier updates the identifier column for an existing source.
 // Used by add-o365 to fix up the IMAP host when re-authorizing an account
 // whose host classification changed (e.g. personal vs org scope correction).
+//
+// A changed mailbox changes which rows fall back to the source default, so
+// those rows return to pending in the same transaction and re-derive after it.
 func (s *Store) UpdateSourceIdentifier(sourceID int64, identifier string) error {
-	_, err := s.db.Exec(fmt.Sprintf(`
-		UPDATE sources
-		SET identifier = ?, updated_at = %s
-		WHERE id = ?
-	`, s.dialect.Now()), identifier, sourceID)
-	return err
+	ctx := context.Background()
+	var pending []int64
+	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+		pending = nil
+		var sourceType, oldIdentifier string
+		err := tx.QueryRowContext(ctx,
+			`SELECT source_type, COALESCE(identifier, '') FROM sources WHERE id = ?`, sourceID,
+		).Scan(&sourceType, &oldIdentifier)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read source %d identifier: %w", sourceID, err)
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			UPDATE sources
+			SET identifier = ?, updated_at = %s
+			WHERE id = ?
+		`, s.dialect.Now()), identifier, sourceID); err != nil {
+			return err
+		}
+		oldSink, newSink := accountSink(sourceType, oldIdentifier), accountSink(sourceType, identifier)
+		if oldSink == newSink {
+			return nil
+		}
+		pending, err = s.markAccountAttributionPendingForAddressesTx(ctx, tx, sourceID, []string{oldSink, newSink})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	s.deriveAccountAttributionAfterCommit(ctx, sourceID, pending)
+	return nil
 }
 
 // GetSourceByIdentifier returns a source by its identifier (email address).
