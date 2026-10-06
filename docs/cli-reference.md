@@ -3853,12 +3853,6 @@ snapshot has been committed; re-audit to check that snapshot. If a message
 remains flagged after a successful repair, retain the new audit result and the
 repair's error output for diagnosis.
 
-Through the daemon, HTTP 200 starts an NDJSON event stream; a terminal `error`
-event means the operation failed. `stderr` events contain the command's error
-output. The `msgvault: cli subprocess exited non-zero` marker reports the failed
-exit, not its cause. API callers should retain the `stderr` events as well as the
-terminal error.
-
 ## repair-derived
 
 Recompute derived text and metadata from retained provider payloads without

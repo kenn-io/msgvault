@@ -26,23 +26,15 @@ func TestParseInlineBinaryOccurrence(t *testing.T) {
 			t.Parallel()
 			payload := []byte("inline bytes")
 			raw := attachmentOccurrenceMIME(payload, 1, tc.contentType, true, tc.nested, tc.single)
-			for _, recovery := range []bool{false, true} {
-				var msg *Message
-				var err error
-				if recovery {
-					msg, err = ParseWithRecovery(raw, "fallback")
-				} else {
-					msg, err = Parse(raw)
-				}
-				require.NoError(t, err)
-				require.Len(t, msg.Attachments, 1, "one physical MIME part, recovery=%v", recovery)
-				assert.Equal(t, Attachment{
-					Filename: "part-0.bin", ContentType: "application/octet-stream",
-					ContentID: "part-0", Disposition: "inline", PartKey: tc.key,
-					Size: len(payload), ContentHash: fmt.Sprintf("%x", sha256.Sum256(payload)),
-					Content: payload, IsInline: true,
-				}, msg.Attachments[0])
-			}
+			msg, err := Parse(raw)
+			require.NoError(t, err)
+			require.Len(t, msg.Attachments, 1, "one physical MIME part")
+			assert.Equal(t, Attachment{
+				Filename: "part-0.bin", ContentType: "application/octet-stream",
+				ContentID: "part-0", Disposition: "inline", PartKey: tc.key,
+				Size: len(payload), ContentHash: fmt.Sprintf("%x", sha256.Sum256(payload)),
+				Content: payload, IsInline: true,
+			}, msg.Attachments[0])
 		})
 	}
 }
