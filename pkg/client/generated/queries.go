@@ -596,6 +596,24 @@ type GetKataIssueContextQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type GetInboxTriageMappingsQuery struct {
+	// SourceID Exact archive source ID
+	SourceID int64 `json:"source_id"`
+
+	// SourceType Exact provider type
+	SourceType string `json:"source_type" validate:"required"`
+
+	// SourceIdentifier Exact source identifier
+	SourceIdentifier string `json:"source_identifier" validate:"required"`
+
+	// AccountID Exact provider account
+	AccountID string `json:"account_id" validate:"required"`
+}
+
+func (g GetInboxTriageMappingsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type SearchIntegrationTasksQuery struct {
 	// Q Task title search within the configured project
 	Q string `json:"q" validate:"required"`

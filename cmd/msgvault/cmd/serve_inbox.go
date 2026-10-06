@@ -87,6 +87,14 @@ func (a *storeAPIAdapter) inboxControlService(authorize func(context.Context, in
 	}
 }
 
+func (a *storeAPIAdapter) InboxTriageMappings(ctx context.Context, source inboxcontrol.SourceIdentity) (map[string]string, int64, error) {
+	return a.store.InboxTriageMappings(a.invocationContext(ctx), source)
+}
+
+func (a *storeAPIAdapter) UpdateInboxTriageMappings(ctx context.Context, source inboxcontrol.SourceIdentity, entries map[string]string, expectedRevision int64, principal inboxcontrol.Principal, authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, acquireWrite func(context.Context) (func(), error)) (int64, error) {
+	return a.inboxControlService(authorize).UpdateTriageMappings(a.invocationContext(ctx), source, entries, expectedRevision, principal, acquireWrite)
+}
+
 // inboxBinding rechecks live archive authority even for cached receipt reads and replay.
 func (a *storeAPIAdapter) inboxBinding(ctx context.Context, request inboxcontrol.Request) (*store.Source, inboxcontrol.SourceIdentity, error) {
 	var binding inboxcontrol.SourceIdentity

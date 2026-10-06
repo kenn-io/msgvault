@@ -486,6 +486,20 @@ differently. Lost MOVE mapping or CREATE generation evidence remains unknown;
 reconciliation never repeats the mutation or recovers identity from a name.
 See [IMAP usage](usage/imap.md#control-an-exact-server-copy-unreleased) for the
 command workflow.
+`GET /api/v1/inbox/triage/mappings` reads configured category mappings for an
+exact source. Supply `source_id`, `source_type`, `source_identifier`, and
+`account_id`. Delegates need `inbox.read` for that source. The response contains
+`source`, `entries`, and `revision`; revision zero means no mapping has been
+configured.
+
+Owners replace mappings with `PUT /api/v1/inbox/triage/mappings`, sending
+`source`, `entries`, and `expected_revision`. Supported category keys are
+`todo`, `reply-needed`, `watch`, `delegated`, `finished`, and `uncertain`.
+Values must identify existing native labels or categories. The daemon checks
+the catalog under its write gate and source lease, then compares the saved
+revision. A stale revision returns 409. Clearing entries never creates tags or
+changes provider location or read state. Mapping responses use
+`Cache-Control: no-store`.
 
 ### Native email tags
 

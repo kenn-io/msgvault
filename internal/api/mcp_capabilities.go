@@ -46,6 +46,12 @@ func (s *Server) registerMCPCapabilitiesRoute(api huma.API) {
 		if _, ok := s.store.(InboxContextReader); ok {
 			allowed["getInboxContext"] = !response.Delegated || inboxReadDiscoveryAllowed(auth.Grant, agentgrant.PermissionInboxContentRead)
 		}
+		if _, ok := s.store.(InboxTriageMappingReader); ok {
+			allowed["getInboxTriageMappings"] = !response.Delegated || inboxReadDiscoveryAllowed(auth.Grant, agentgrant.PermissionInboxRead)
+		}
+		if _, ok := s.store.(InboxTriageMappingUpdater); ok {
+			allowed["updateInboxTriageMappings"] = !response.Delegated
+		}
 		for _, operation := range documentOperations(api.OpenAPI()) {
 			if allowed[operation.OperationID] {
 				response.Routes = append(response.Routes, mcpRouteDescriptor(api.OpenAPI(), operation))
