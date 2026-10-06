@@ -492,3 +492,46 @@ func TestUnusableAttachmentStoreStopsRun(t *testing.T) {
 	assertions.NotContains(err.Error(), "bland call call-1")
 	assertions.Zero(f.detailRequests["call-2"], "the run stops before the next call")
 }
+
+// The archive keeps the postcall payload but not the webhook URL, which is
+// often a secret on its own, or the org ID and delivery history beside it.
+func TestPostcallArchiveOmitsWebhookDelivery(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := &fixture{
+		calls: map[string]string{"call-1": `{"call_id":"call-1","completed":true,"created_at":"2026-10-01T11:00:00Z"}`},
+		ids:   []string{"call-1"},
+		hook:  `{"data":{"call_id":"call-1","url":"https://hooks.example.invalid/catch/secret-token","user_id":"org-1","created_at":"2026-10-01T11:05:00Z","metadata":[{"sent_at":"2026-10-01T11:05:00Z","response_code":200,"send_type":"spawn"}],"payload":{"call_id":"call-1","summary":"postcall summary"}}}`,
+	}
+	st, imp, o := setupImport(t, f)
+	_, err := imp.Import(t.Context(), o)
+	requirements.NoError(err)
+
+	raw, err := st.GetMessageRaw(messageID(t, st, "call-1"))
+	requirements.NoError(err)
+	assertions.NotContains(string(raw), "secret-token")
+	assertions.NotContains(string(raw), "org-1")
+	ev := loadEvidence(t, st, "call-1")
+	assertions.JSONEq(`{"data":{"call_id":"call-1","payload":{"call_id":"call-1","summary":"postcall summary"}}}`, string(ev.PostCall))
+	assertions.Equal("postcall summary", ev.Content.Summary.Text)
+}
+
+// A read Bland refuses for every call in the window is one summary note per
+// read and status, counting the calls, not one note per call.
+func TestRefusedReadsShareOneNote(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	record := `{"call_id":%q,"completed":true,"created_at":"2026-10-01T11:00:00Z"}`
+	f := &fixture{
+		calls:        map[string]string{"call-1": fmt.Sprintf(record, "call-1"), "call-2": fmt.Sprintf(record, "call-2")},
+		ids:          []string{"call-1", "call-2"},
+		detailStatus: http.StatusForbidden,
+		hookStatus:   http.StatusForbidden,
+	}
+	_, imp, o := setupImport(t, f)
+	sum, err := imp.Import(t.Context(), o)
+	requirements.NoError(err)
+	assertions.Equal(int64(2), sum.MeetingsAdded)
+	assertions.Equal([]string{
+		"call details refused (HTTP 403) for 2 call(s)",
+		"postcall data refused (HTTP 403) for 2 call(s)",
+	}, sum.Diagnostics)
+}

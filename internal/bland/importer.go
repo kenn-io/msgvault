@@ -42,14 +42,20 @@ type importRun struct {
 	*callsync.Run
 
 	imp *Importer
+	// refusals holds one summary note per refused read kind and status.
+	refusals map[string]*refusalNote
 }
+
+// refusalNote is where a refusal's note sits in the summary diagnostics and
+// how many calls it covers.
+type refusalNote struct{ index, calls int }
 
 func (imp *Importer) Import(ctx context.Context, o ImportOptions) (*ImportSummary, error) {
 	if imp == nil || imp.store == nil || imp.client == nil {
 		return nil, errors.New("bland importer unavailable")
 	}
 	return callsync.Import(ctx, imp.store, spec, imp.now(), o, func(run *callsync.Run) callsync.Provider[*Call] {
-		return &importRun{Run: run, imp: imp}
+		return &importRun{Run: run, imp: imp, refusals: map[string]*refusalNote{}}
 	})
 }
 
@@ -109,28 +115,29 @@ func (r *importRun) archivedEvidence(ctx context.Context, messageID int64) (*Evi
 // skipped.
 func (r *importRun) archiveCall(ctx context.Context, id string, listed *Call) (callErr, err error) {
 	c, callErr := r.imp.client.GetCall(ctx, id)
+	detailsRefusal := refusal(callErr)
 	switch {
 	case errors.Is(callErr, ErrNotFound):
 		return nil, nil
-	case refused(callErr):
-		r.Sum.Diagnostics = append(r.Sum.Diagnostics, fmt.Sprintf("call %s: details unavailable: %v", id, callErr))
+	case detailsRefusal != nil:
+		r.noteRefused("call details", detailsRefusal)
 	case callErr != nil:
 		return callErr, nil
 	}
-	detailsRefused := callErr != nil
 	// unread names why a transcript-bearing read failed: provider_refused when
 	// Bland refused it, fetch_failed when it may succeed later.
 	unread := ""
-	if detailsRefused {
+	if detailsRefusal != nil {
 		unread = "provider_refused"
 	}
 	// A failed postcall read still archives the call and its recording.
 	hook, hookErr := r.imp.client.GetPostCall(ctx, id)
+	hookRefusal := refusal(hookErr)
 	switch {
 	case errors.Is(hookErr, ErrNotFound):
 		hook, hookErr = nil, nil
-	case refused(hookErr):
-		r.Sum.Diagnostics = append(r.Sum.Diagnostics, fmt.Sprintf("call %s: postcall data unavailable: %v", id, hookErr))
+	case hookRefusal != nil:
+		r.noteRefused("postcall data", hookRefusal)
 		hook, hookErr, unread = nil, nil, cmp.Or(unread, "provider_refused")
 	case hookErr != nil:
 		hook, unread = nil, "fetch_failed"
@@ -145,7 +152,7 @@ func (r *importRun) archiveCall(ctx context.Context, id string, listed *Call) (c
 			return nil, err
 		}
 	}
-	if detailsRefused {
+	if detailsRefusal != nil {
 		// The listed row stands in for the details, on top of those archived.
 		if c, err = fallbackCall(listed, previous); err != nil {
 			return err, nil
@@ -206,11 +213,28 @@ func (r *importRun) archiveCall(ctx context.Context, id string, listed *Call) (c
 	return errors.Join(hookErr, mediaErr), nil
 }
 
-// refused reports an answer Bland would give again, such as an auth failure or
-// a rejected request, so the call archives without what failed.
-func refused(err error) bool {
+// refusal returns an answer Bland would give again, such as an auth failure or
+// a rejected request, so the call archives without what failed; nil otherwise.
+func refusal(err error) *HTTPError {
 	httpErr, ok := errors.AsType[*HTTPError](err)
-	return ok && !httpErr.Retryable()
+	if !ok || httpErr.Retryable() {
+		return nil
+	}
+	return httpErr
+}
+
+// noteRefused counts a refused read in one summary note per read kind and
+// status, so a refusal repeated across the relist window reads as one line.
+func (r *importRun) noteRefused(what string, refused *HTTPError) {
+	key := fmt.Sprintf("%s refused (HTTP %d)", what, refused.StatusCode)
+	note, ok := r.refusals[key]
+	if !ok {
+		note = &refusalNote{index: len(r.Sum.Diagnostics)}
+		r.refusals[key] = note
+		r.Sum.Diagnostics = append(r.Sum.Diagnostics, "")
+	}
+	note.calls++
+	r.Sum.Diagnostics[note.index] = fmt.Sprintf("%s for %d call(s)", key, note.calls)
 }
 
 func snippet(c meetingcontent.Content) string {

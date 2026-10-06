@@ -209,8 +209,9 @@ func (c *Client) GetPostCall(ctx context.Context, id string) (*PostCall, error) 
 	return parsePostCall(b, id)
 }
 
-// PostCall is a postcall webhook response, read once: the raw response the
-// archive keeps and its decoded payload.
+// PostCall is a postcall webhook response, read once: the call ID and payload
+// the archive keeps, and the decoded payload. The webhook URL and delivery
+// history are dropped, since a webhook URL is often a secret on its own.
 type PostCall struct {
 	Raw  jsontext.Value
 	Call *Call
@@ -259,7 +260,18 @@ func parsePostCall(b []byte, id string) (*PostCall, error) {
 	if id != "" && payload.ID != "" && payload.ID != id {
 		return nil, malformed("payload.call_id", errors.New("names another call"))
 	}
-	return &PostCall{Raw: append(jsontext.Value(nil), b...), Call: payload}, nil
+	var kept struct {
+		Data struct {
+			ID      string         `json:"call_id,omitempty"`
+			Payload jsontext.Value `json:"payload"`
+		} `json:"data"`
+	}
+	kept.Data.ID, kept.Data.Payload = w.Data.ID, w.Data.Payload
+	raw, err := json.Marshal(kept, json.Deterministic(true))
+	if err != nil {
+		return nil, fmt.Errorf("encode retained postcall: %w", err)
+	}
+	return &PostCall{Raw: raw, Call: payload}, nil
 }
 
 // recordingNotFound is Bland's error code for a recording it doesn't have yet.

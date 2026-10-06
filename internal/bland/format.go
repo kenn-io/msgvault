@@ -112,14 +112,12 @@ const (
 	transferred
 )
 
-// rendition is one decoded transcript version; adopt makes a prior version
-// current.
+// rendition is one decoded transcript version.
 type rendition struct {
 	raw      jsontext.Value
 	offset   *float64
 	segments []meetingcontent.Segment
 	text     string
-	adopt    func()
 }
 
 func (r *rendition) speaks() bool { return r != nil && (len(r.segments) > 0 || r.text != "") }
@@ -214,9 +212,9 @@ func decodeRendition(raw jsontext.Value, kind renditionKind, offset *float64) (*
 	return r, nil
 }
 
-// archived decodes a rendition from earlier evidence; one that no longer
-// decodes is skipped.
-func archived(raw jsontext.Value, kind renditionKind, offset *float64, adopt func()) *rendition {
+// archived decodes a rendition kept in evidence; one that no longer decodes is
+// skipped.
+func archived(raw jsontext.Value, kind renditionKind, offset *float64) *rendition {
 	if len(raw) == 0 || raw.Kind() == 'n' {
 		return nil
 	}
@@ -224,20 +222,15 @@ func archived(raw jsontext.Value, kind renditionKind, offset *float64, adopt fun
 	if err != nil {
 		return nil
 	}
-	r.adopt = adopt
 	return r
 }
 
 // firstSpeech returns the first rendition with spoken content.
 func firstSpeech(renditions ...*rendition) ([]meetingcontent.Segment, string) {
 	for _, r := range renditions {
-		if !r.speaks() {
-			continue
+		if r.speaks() {
+			return r.segments, r.text
 		}
-		if r.adopt != nil {
-			r.adopt()
-		}
-		return r.segments, r.text
 	}
 	return nil, ""
 }
@@ -306,25 +299,10 @@ func buildEvidence(detail *Call, hook *PostCall, previous *Evidence, unread stri
 		content.DurationSeconds = previous.Content.DurationSeconds
 		content.DurationBasis = previous.Content.DurationBasis
 	}
-	// Current speech wins; otherwise keep the speech archived before.
-	var speech, transferSpeech []*rendition
-	if len(e.Corrected) > 0 {
-		speech = append(speech, cmp.Or(corrected, archived(e.Corrected, enhanced, nil, nil)))
-		if previous != nil {
-			raw := previous.Corrected
-			speech = append(speech, archived(raw, enhanced, nil, func() { e.Corrected = raw }))
-		}
-	}
-	speech = append(speech, cmp.Or(original, archived(e.Original, ordinary, nil, nil)))
-	transferSpeech = append(transferSpeech, cmp.Or(transfer, archived(e.PostTransfer, transferred, e.TransferOffset, nil)))
-	if previous != nil {
-		raw := previous.Original
-		speech = append(speech, archived(raw, ordinary, nil, func() { e.Original = raw }))
-		rawTransfer, offset := previous.PostTransfer, previous.TransferOffset
-		transferSpeech = append(transferSpeech, archived(rawTransfer, transferred, offset, func() { e.PostTransfer, e.TransferOffset = rawTransfer, offset }))
-	}
-	segments, text := firstSpeech(speech...)
-	transferredSegments, transferText := firstSpeech(transferSpeech...)
+	// e holds each rendition's current speech, or the speech archived before
+	// when Bland omits it now.
+	segments, text := firstSpeech(archived(e.Corrected, enhanced, nil), archived(e.Original, ordinary, nil))
+	transferredSegments, transferText := firstSpeech(archived(e.PostTransfer, transferred, e.TransferOffset))
 	segments = append(segments, transferredSegments...)
 	text = strings.TrimSpace(strings.Join([]string{text, transferText}, "\n"))
 	switch {
