@@ -26,6 +26,11 @@ All notable changes to msgvault, grouped by release.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
 - Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Msgvault never sends.
+- `person identities` and `GET /api/v1/people/{id}/identities` list the email
+  addresses, phone numbers, and chat IDs your archive holds for a person, so
+  you can pick an email address for `draft-compose --to`. Phone numbers and
+  chat IDs show as unsupported. See
+  [Draft to a person](cli-reference.md#draft-to-a-person).
 
 ## 0.21.0
 <small>2026-10-02</small>

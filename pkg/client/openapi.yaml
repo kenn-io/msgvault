@@ -10239,6 +10239,35 @@ components:
         - provenance
         - participant_id
       type: object
+    PersonIdentitiesResponse:
+      properties:
+        identities:
+          items:
+            $ref: "#/components/schemas/PersonIdentity"
+          type: array
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - identities
+      type: object
+    PersonIdentity:
+      properties:
+        kind:
+          description: Identity kind, such as email, phone, or a chat service
+          type: string
+        supported:
+          description: Whether the value can be a draft recipient
+          type: boolean
+        value:
+          description: Archived value; a supported email is ready to pass as a draft recipient
+          type: string
+      required:
+        - kind
+        - value
+        - supported
+      type: object
     PersonInboxResponse:
       properties:
         cache_revision:
@@ -24964,6 +24993,54 @@ paths:
       summary: Search one durable person's analytical files
       tags:
         - Exploration
+  /api/v1/people/{id}/identities:
+    get:
+      description: Lists the identities of the person's current participants. Email addresses are supported draft recipients; phone numbers and chat identifiers are not. Curated contact points and postal addresses are not listed.
+      operationId: listPersonIdentities
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonIdentitiesResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a durable person's archived identities
+      tags:
+        - API
   /api/v1/people/{id}/merge:
     post:
       operationId: mergePersons

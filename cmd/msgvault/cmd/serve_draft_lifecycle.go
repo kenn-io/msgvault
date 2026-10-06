@@ -945,7 +945,7 @@ func managedDraftSenderKey(raw []byte) (string, error) {
 	if len(parsed.From) != 1 {
 		return "", errors.New("managed draft must have exactly one From address")
 	}
-	_, senderKey, err := parseDraftSender(parsed.From[0].Email)
+	_, senderKey, err := parseStoredMailbox(parsed.From[0].Email)
 	return senderKey, err
 }
 

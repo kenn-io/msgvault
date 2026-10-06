@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jhillyerd/enmime/v2"
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -208,6 +209,21 @@ func parseDraftSender(value string) (*mail.Address, string, error) {
 		return nil, "", errors.New("mailbox identity is malformed")
 	}
 	return address, store.NormalizeIdentifierForCompare(address.Address), nil
+}
+
+// parseStoredMailbox parses an address stored in bare addr-spec form, where
+// a local part such as "first last" has lost the quotes header syntax needs.
+func parseStoredMailbox(value string) (*mail.Address, string, error) {
+	// Tabs and controls can't go in a draft header and vanish from terminal output.
+	if strings.IndexFunc(value, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+		return nil, "", errors.New("mailbox identity is malformed")
+	}
+	address, key, err := parseDraftSender((&mail.Address{Address: value}).String())
+	// String rewrites invalid UTF-8, which would name a different mailbox.
+	if err == nil && address.Address != value {
+		return nil, "", errors.New("mailbox identity is malformed")
+	}
+	return address, key, err
 }
 
 func confirmedDraftIdentities(identities []store.AccountIdentity) (map[string]string, []string) {

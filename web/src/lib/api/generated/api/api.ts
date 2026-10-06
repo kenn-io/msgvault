@@ -239,6 +239,7 @@ import type {
   ListPersonFactEvidenceStatusEventsPathParameters,
   ListPersonFactPinsPathParameters,
   ListPersonFactTargetsParams,
+  ListPersonIdentitiesPathParameters,
   ListPersonMatchJudgmentsParams,
   ListPersonMergesParams,
   ListPersonMergesPathParameters,
@@ -318,6 +319,7 @@ import type {
   PersonFactEvidenceStatusEventsResponse,
   PersonFactPinWrite,
   PersonFactPinsResponse,
+  PersonIdentitiesResponse,
   PersonInboxResponse,
   PersonMatchConsentDecisionRequest,
   PersonMatchConsentDecisionResponse,
@@ -2980,6 +2982,22 @@ export const setPersonFactPin = (
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       data: setPersonFactPinRequest,
+    },
+    options,
+  );
+};
+/**
+ * Lists the identities of the person's current participants. Email addresses are supported draft recipients; phone numbers and chat identifiers are not. Curated contact points and postal addresses are not listed.
+ * @summary List a durable person's archived identities
+ */
+export const listPersonIdentities = (
+  { id }: ListPersonIdentitiesPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonIdentitiesResponse>>,
+) => {
+  return orvalFetch<PersonIdentitiesResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/identities`,
+      method: "GET",
     },
     options,
   );
