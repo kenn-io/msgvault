@@ -73,8 +73,8 @@ func TestPersonSweepPostgreSQLApplyConsentLinearizesWithRevoke(t *testing.T) {
 		requirements.NoError(err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 		_, err = tx.ExecContext(t.Context(), f.store.Rebind(`
-			UPDATE person_inference_consents SET revoked_by = ?, revoked_at = CURRENT_TIMESTAMP
-			WHERE profile_fingerprint = ? AND revoked_at IS NULL`), "reviewer-test",
+			UPDATE provider_consents SET revoked_by = ?, revoked_at = CURRENT_TIMESTAMP
+			WHERE purpose = 'people_inference' AND fingerprint = ? AND revoked_at IS NULL`), "reviewer-test",
 			f.request.Generation.Policy.ProviderPolicyFingerprint)
 		requirements.NoError(err)
 		applyResult := make(chan error, 1)

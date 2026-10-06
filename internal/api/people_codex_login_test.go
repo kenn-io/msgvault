@@ -82,7 +82,7 @@ func TestPeopleCodexCheckRejectsOverlappingSignIn(t *testing.T) {
 			request.SetPathValue("name", "subscription")
 			_, configured, _, profile, ok := srv.peopleInferenceProfileForRequest(httptest.NewRecorder(), request, created.ETag)
 			require.True(ok)
-			credentials := peoplesweep.NewFileCredentialStore(configured.TokensDir())
+			credentials := peoplesweep.NewStoredCredentials(configured.TokensDir())
 			loginFinish := make(chan struct{}, 1)
 			defer close(loginFinish)
 			srv.peopleCodexLogins = newPeopleCodexLogins(finishingCodexLoginClient{finish: loginFinish}, time.Now)

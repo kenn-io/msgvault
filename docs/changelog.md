@@ -18,6 +18,15 @@ All notable changes to msgvault, grouped by release.
 - `import-whatsapp` accepts `--after` and `--before` for Apple databases, so a
   first import can fetch recent messages before the full run. Android imports
   reject both flags.
+- People provider keys stored with `msgvault person provider add --api-key-stdin`
+  or the Web UI now work on Windows. Every stored people provider key lives in
+  `tokens/provider-credentials.json` with the other provider keys, and keys an
+  older release kept under `tokens/people-providers/` move there the first time
+  msgvault uses the profile. After a people key is stored this way, an older
+  release rejects the credential file, so downgrading makes every stored
+  provider key unavailable. Before downgrading, run
+  `msgvault person provider remove <name>` for each profile with a stored key.
+  `remove` also deletes a stored key whose profile is no longer in the config.
 - [Calendar event control](usage/calendar.md#control-events-unreleased) adds
   create, update, delete, move, self RSVP, and availability commands, plus HTTP
   and MCP interfaces. Write consent and exact source permissions are opt-in;

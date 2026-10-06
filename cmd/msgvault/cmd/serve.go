@@ -2881,7 +2881,7 @@ func (a *storeAPIAdapter) InvalidatePersonInferenceCheck(ctx context.Context, fi
 	return a.store.InvalidatePersonInferenceCheck(ctx, fingerprint)
 }
 
-func (a *storeAPIAdapter) GrantPersonInferenceConsent(ctx context.Context, fingerprint, actor string) (*store.PersonInferenceConsent, bool, error) {
+func (a *storeAPIAdapter) GrantPersonInferenceConsent(ctx context.Context, fingerprint, actor string) (*store.ProviderConsent, bool, error) {
 	return a.store.GrantPersonInferenceConsent(ctx, fingerprint, actor)
 }
 

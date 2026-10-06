@@ -161,14 +161,15 @@ subscription-backed endpoints, including local gateways, must be used within
 their provider terms.
 
 Credentials are not stored in this TOML. `credential = "stored"` keeps a
-profile-specific secret under the private tokens directory and is supported
-on Linux and macOS only; `credential = "env"` stores only the selected
-environment-variable name and works everywhere. Environment-variable names are
-host-only settings: configure them through the CLI or TOML, not the Web UI.
-On hosts without stored-key support, the Web UI hides profile enrollment and
-key fields. Run [`msgvault person provider add`](cli-reference.md#person-provider-add)
-with `--credential-env` on the daemon host, then reload the Web settings to
-check and select the profile.
+profile-specific secret in `tokens/provider-credentials.json` on every
+platform, sent only to the endpoint origin of the profile it was saved for.
+If you edit a profile's endpoint to a different origin, its stored key stops
+working; remove the profile and add it again with the new endpoint.
+Keys that an older release stored under `tokens/people-providers/` on Linux or
+macOS move into that file the first time msgvault uses the profile.
+`credential = "env"` stores only the selected environment-variable name.
+Environment-variable names are host-only settings: configure them through the
+CLI or TOML, not the Web UI.
 `credential = "none"` is restricted to credentialless local or Codex paths.
 Changing a credential value does not change the profile fingerprint, but
 changing its source or reference does.

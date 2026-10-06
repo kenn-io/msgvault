@@ -10,7 +10,7 @@ test('People sweep keeps removal unavailable until another profile exists', asyn
   };
   const status = {
     profiles: [profile], configured_name: 'router', configured_enabled: true,
-    running_enabled: false, pending_restart: false, stored_credentials_supported: true,
+    running_enabled: false, pending_restart: false,
   };
   let removals = 0;
   await page.route('**/api/v1/settings/people-inference', (route) => route.fulfill({
@@ -61,7 +61,6 @@ for (const width of [390, 320]) {
     };
     await page.route('**/api/v1/settings/people-inference', (route) => route.fulfill({
       headers: { ETag: '"config-a"' }, json: {
-        stored_credentials_supported: true,
         profiles: [profile, { ...profile, name: 'spare-profile', fingerprint: 'spare-fingerprint' }],
         configured_name: name, running_name: 'previous-profile',
         configured_enabled: true, running_enabled: true, pending_restart: true,

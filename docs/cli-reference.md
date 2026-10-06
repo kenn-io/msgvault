@@ -2359,7 +2359,7 @@ grant consent to a provider or enroll a person in briefs.
 | `person provider check [name]` | Run fixed synthetic input without granting consent |
 | `person provider consent [name] --yes` | Grant consent to the exact checked policy |
 | `person provider revoke [name]` | Revoke that policy's consent; `--all` revokes all stored sweep policies |
-| `person provider remove <name>` | Remove a configured profile |
+| `person provider remove <name>` | Remove a configured profile and its stored key, or delete the stored key left by a profile no longer in the config |
 | `person provider history [name] [--person <id>]` | Inspect redacted runs and attempts |
 | `person sweep run [--person <id>] [--limit 25]` | Run a bounded maintenance pass for tracked people |
 | `person sweep status` | Read redacted progress and usage |

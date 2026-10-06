@@ -8935,10 +8935,7 @@ components:
           type: string
         running_name:
           type: string
-        stored_credentials_supported:
-          type: boolean
       required:
-        - stored_credentials_supported
         - profiles
         - configured_enabled
         - running_enabled

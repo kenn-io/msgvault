@@ -133,8 +133,8 @@ func credentialsCommandConfig(cmd *cobra.Command) (*config.Config, error) {
 }
 
 func validateHeadlessCredentialID(id string) error {
-	if id == providercredentials.PeopleSweepID {
-		return errors.New("people.sweep uses named profile credentials; use msgvault person provider add --api-key-stdin or --credential-env")
+	if strings.HasPrefix(id, providercredentials.PeopleProviderID("")) {
+		return errors.New("people provider keys belong to named profiles; use msgvault person provider add --api-key-stdin or --credential-env")
 	}
 	if id == providercredentials.PersonEnrichmentSuppressionID {
 		return nil

@@ -207,7 +207,6 @@ func TestPersonEnrichmentGateLoadsStableStoredCredentialOnlyAfterSuppression(t *
 }
 
 func TestDefaultCLIProxyLookupsNeverForwardStoredCredentials(t *testing.T) {
-	requireStoredCredentialStorePlatform(t)
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	t.Setenv("TEST_PROVIDER_KEY", "")
@@ -222,8 +221,8 @@ func TestDefaultCLIProxyLookupsNeverForwardStoredCredentials(t *testing.T) {
 	sweepProvider.Credential = peoplesweep.CredentialStored
 	sweepProvider.CredentialEnv = ""
 	cfg.People.Sweep.Providers[sweepName] = sweepProvider
-	requirements.NoError(peoplesweep.NewFileCredentialStore(cfg.TokensDir()).Save(
-		sweepName, peoplesweep.NewCredential(sweepProvider.Auth, "stored-sweep-secret")))
+	savePeopleCredentialForTest(t, peoplesweep.NewStoredCredentials(cfg.TokensDir()),
+		sweepName, sweepProvider.Endpoint, "stored-sweep-secret")
 	empty, err := providercredentials.Read(cfg.TokensDir())
 	requirements.NoError(err)
 	stored, err := providercredentials.PutSuppression(cfg.TokensDir(), empty.ETag, "stored-suppression-secret-0123456789")
