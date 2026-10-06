@@ -4557,6 +4557,13 @@ CREATE TABLE IF NOT EXISTS inbox_source_revisions (
     source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
     revision BIGINT NOT NULL CHECK (revision > 0)
 );
+-- Owner triage mappings are versioned separately from provider observations.
+CREATE TABLE IF NOT EXISTS inbox_triage_mappings (
+    source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    source_json TEXT NOT NULL,
+    mapping_json TEXT NOT NULL,
+    revision BIGINT NOT NULL CHECK (revision > 0)
+);
 CREATE TABLE IF NOT EXISTS inbox_provider_states (
     target_key TEXT PRIMARY KEY,
     source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
