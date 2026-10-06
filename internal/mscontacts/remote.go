@@ -29,6 +29,11 @@ const uidProperty = "String {6f3a1c52-8d4e-4b7a-9c1f-2e5d7a9b0c3d} Name msgvault
 // such as a phone TYPE. Every create and update sets it.
 const vcardProperty = "String {6f3a1c52-8d4e-4b7a-9c1f-2e5d7a9b0c3d} Name msgvaultVCard"
 
+// sentProperty holds the Graph fields that msgvault last wrote, as JSON.
+// Outlook moves fields around, so only this record tells which vCard lines
+// Graph held. Every create and update sets it.
+const sentProperty = "String {6f3a1c52-8d4e-4b7a-9c1f-2e5d7a9b0c3d} Name msgvaultSent"
+
 const (
 	operationTimeout = 5 * time.Minute
 	operationBytes   = 256 << 20
@@ -187,7 +192,7 @@ func pages(ctx context.Context, r *Remote, start string, budget *carddav.Budget,
 }
 
 func expandUID() string {
-	return url.QueryEscape("singleValueExtendedProperties($filter=id eq '" + uidProperty + "' or id eq '" + vcardProperty + "')")
+	return url.QueryEscape("singleValueExtendedProperties($filter=id eq '" + uidProperty + "' or id eq '" + vcardProperty + "' or id eq '" + sentProperty + "')")
 }
 
 // resource renders a Graph contact in book as a stored CardDAV resource.
@@ -293,7 +298,7 @@ func (r *Remote) Put(ctx context.Context, href string, body []byte, etag string,
 		if found {
 			return &carddav.StatusError{StatusCode: http.StatusPreconditionFailed}
 		}
-		fields.Properties = []singleValueExtendedProperty{{ID: uidProperty, Value: uid}, {ID: vcardProperty, Value: string(body)}}
+		fields.Properties = append([]singleValueExtendedProperty{{ID: uidProperty, Value: uid}}, fields.saved(body)...)
 		return r.call(ctx, func(ctx context.Context) error {
 			_, err := r.graph.SendOnce(ctx, http.MethodPost, book, fields, "")
 			return err
@@ -305,7 +310,7 @@ func (r *Remote) Put(ctx context.Context, href string, body []byte, etag string,
 	if current.ETag != etag {
 		return &carddav.StatusError{StatusCode: http.StatusPreconditionFailed}
 	}
-	fields.Properties = []singleValueExtendedProperty{{ID: vcardProperty, Value: string(body)}}
+	fields.Properties = fields.saved(body)
 	patch := func(ctx context.Context) error {
 		_, err := r.graph.SendOnce(ctx, http.MethodPatch, r.base+"/me/contacts/"+url.PathEscape(current.ID), fields, etag)
 		return err

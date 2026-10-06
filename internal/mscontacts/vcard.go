@@ -1,6 +1,7 @@
 package mscontacts
 
 import (
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
@@ -111,8 +112,7 @@ func (c contact) body(uid string) ([]byte, error) {
 	if saved == "" {
 		return c.toVCard(uid)
 	}
-	sent, err := contactFromVCard([]byte(saved))
-	placePhones(&sent, &c)
+	sent, err := c.sent(saved)
 	if err == nil && reflect.DeepEqual(sent.fields(), c.fields()) {
 		return []byte(saved), nil
 	}
@@ -159,6 +159,31 @@ func (c contact) body(uid string) ([]byte, error) {
 	restoreSaved(card.Properties, restore)
 	card.Properties = append(card.Properties, extra...)
 	return vcard.Marshal(vcard.Document{Cards: []vcard.Card{card}})
+}
+
+// saved returns the extended properties that every write sets: the vCard
+// as sent and the Graph fields as sent.
+func (c contact) saved(body []byte) []singleValueExtendedProperty {
+	properties := []singleValueExtendedProperty{{ID: vcardProperty, Value: string(body)}}
+	if sent, err := json.Marshal(c.fields()); err == nil {
+		properties = append(properties, singleValueExtendedProperty{ID: sentProperty, Value: string(sent)})
+	}
+	return properties
+}
+
+// sent returns the Graph fields of the last write. A contact written without
+// that record maps the saved vCard again, with phones placed by the current
+// Outlook fields.
+func (c contact) sent(saved string) (contact, error) {
+	if value := c.property(sentProperty); value != "" {
+		var sent contact
+		if err := json.Unmarshal([]byte(value), &sent); err == nil {
+			return sent, nil
+		}
+	}
+	sent, err := contactFromVCard([]byte(saved))
+	placePhones(&sent, &c)
+	return sent, err
 }
 
 // restoreSaved replaces each rendered property that still holds the value of

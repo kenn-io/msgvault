@@ -117,10 +117,16 @@ func stored(c *contact) {
 	}
 }
 
-func (f *fakeGraph) view(c contact, expand bool) contact {
-	if !expand {
-		c.Properties = nil
+// view applies $expand as Graph does: only the extended properties that the
+// filter names are returned.
+func (f *fakeGraph) view(c contact, expand string) contact {
+	var kept []singleValueExtendedProperty
+	for _, property := range c.Properties {
+		if strings.Contains(expand, "id eq '"+property.ID+"'") {
+			kept = append(kept, property)
+		}
 	}
+	c.Properties = kept
 	return c
 }
 
@@ -129,7 +135,7 @@ func (f *fakeGraph) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	path := strings.TrimPrefix(r.URL.EscapedPath(), "/v1.0")
 	query := r.URL.Query()
-	expand := query.Has("$expand")
+	expand := query.Get("$expand")
 	reply := func(code int, value any) {
 		w.WriteHeader(code)
 		if value != nil {
@@ -160,7 +166,7 @@ func (f *fakeGraph) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		reply(http.StatusOK, map[string]any{"value": children})
 	case len(segments) == 5 && segments[4] == "delta":
-		if expand {
+		if query.Has("$expand") {
 			fail(http.StatusBadRequest, "BadRequest")
 			return
 		}
@@ -688,7 +694,7 @@ func TestOutlookEditKeepsSavedLines(t *testing.T) {
 	placePhones(&c, nil)
 	require.Len(c.EmailAddresses, 3, "Graph holds three emails")
 	require.Len(c.HomePhones, 2, "Graph holds two home phones")
-	c.Properties = []singleValueExtendedProperty{{ID: vcardProperty, Value: saved}}
+	c.Properties = c.saved([]byte(saved))
 	c.JobTitle = "Edited in Outlook"
 	c.EmailAddresses[1].Address = "alice@new.test"
 	c.BusinessPhones, c.HomePhones = c.HomePhones[:1], c.HomePhones[1:]
@@ -769,7 +775,7 @@ func TestOutlookEditDoesNotDuplicateSavedLines(t *testing.T) {
 	require.NoError(err)
 	placePhones(&c, nil)
 	assert.Equal("R/D/East", c.Department)
-	c.Properties = []singleValueExtendedProperty{{ID: vcardProperty, Value: saved}}
+	c.Properties = c.saved([]byte(saved))
 	c.EmailAddresses[2].Address = "a4@example.test"
 
 	body, err := c.body("alice")
@@ -794,11 +800,31 @@ func TestOutlookEditKeepsRepeatedSavedLine(t *testing.T) {
 	c, err := contactFromVCard([]byte(saved))
 	require.NoError(err)
 	placePhones(&c, nil)
-	c.Properties = []singleValueExtendedProperty{{ID: vcardProperty, Value: saved}}
+	c.Properties = c.saved([]byte(saved))
 	c.JobTitle = "Edited in Outlook"
 
 	body, err := c.body("alice")
 	require.NoError(err)
 	require.Contains(string(body), "EMAIL;TYPE=home:a3@example.test\r\n")
 	require.Equal(4, strings.Count(string(body), "EMAIL"))
+}
+
+// Graph holds two of three untyped phones. Moving a held phone to another
+// Outlook field must not change which phone the saved vCard alone holds.
+func TestOutlookPhoneMoveKeepsOverflowPhone(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	saved := "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:alice\r\nFN:Alice\r\n" +
+		"TEL:+15550101\r\nTEL:+15550102\r\nTEL:+15550103\r\nEND:VCARD\r\n"
+	c, err := contactFromVCard([]byte(saved))
+	require.NoError(err)
+	placePhones(&c, nil)
+	require.Equal([]string{"+15550101", "+15550102"}, c.BusinessPhones)
+	c.Properties = c.saved([]byte(saved))
+	c.HomePhones, c.BusinessPhones = c.BusinessPhones[1:], c.BusinessPhones[:1]
+
+	body, err := c.body("alice")
+	require.NoError(err)
+	assert.Contains(string(body), "+15550103", "the phone that Graph never held survives")
+	assert.Equal(3, strings.Count(string(body), "TEL"), string(body))
 }
