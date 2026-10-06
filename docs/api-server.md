@@ -501,6 +501,33 @@ revision. A stale revision returns 409. Clearing entries never creates tags or
 changes provider location or read state. Mapping responses use
 `Cache-Control: no-store`.
 
+`POST /api/v1/inbox/triage/preview` prepares a proposal for one exact `source`
+and 1–100 explicit `items`. Each item supplies its `target`, category keys, and
+up to 100 `evidence_message_ids`. Evidence references must belong to that
+archived message or chat; they do not authorize content access. Delegates need
+both `inbox.read` and `inbox.tag` for the source. Preview reads provider state
+and configured mappings without taking the mutation gate or writing a receipt.
+
+The proposal includes the reviewed classification, evidence references, exact
+native before/projected states, mapping and archive revisions, arrival
+watermark, per-item keys, expiry, and a caller-bound `preview_token`. Unknown
+classification uses `uncertain`; retained categories override `finished`.
+Conflicting categories retain Inbox. Apply adds existing mapped tags and
+preserves Inbox, read markers, and unrelated tags. Gmail labels, persistent
+IMAP keywords, and Microsoft categories support this workflow. Beeper has no
+native tag mapping.
+
+Submit the complete proposal to `POST /api/v1/inbox/triage/apply`. The daemon
+authenticates the proposal and rechecks grants, revisions, arrivals, evidence,
+native catalog, state, and expiry inside one write gate and source lease.
+Success returns results in proposal order. Errors keep the ordered per-item
+results; an empty entry has not been dispatched. Preserve returned receipts and
+item keys. Unknown outcomes require receipt inspection or reconciliation before
+a new intent. A changed archive may require a new preview for unexecuted items
+in a partial batch. Both routes reject unknown fields, null values, extra JSON
+objects, and request bodies larger than 1 MiB. Responses use
+`Cache-Control: no-store`.
+
 ### Native email tags
 
 Read or update one archived message's live Gmail labels, IMAP keywords, or

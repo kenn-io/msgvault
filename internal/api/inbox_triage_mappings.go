@@ -150,7 +150,7 @@ func (s *Server) handleUpdateInboxTriageMappings(w http.ResponseWriter, r *http.
 		return
 	}
 	revision, err := updater.UpdateInboxTriageMappings(r.Context(), request.Source, request.Entries, *request.ExpectedRevision, principal, authorize, s.beginInboxMutation)
-	if errors.Is(err, errCalendarGateBusy) {
+	if errors.Is(err, errMutationGateBusy) {
 		writeOperationGateBusy(w, r, s.operationGate)
 		return
 	}

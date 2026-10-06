@@ -8,9 +8,11 @@ import type {
   InboxContextRequest,
   InboxRequest,
   InboxResult,
+  InboxTriageInput,
   InboxTriageMappingConfiguration,
   InboxTriageMappingRevision,
   InboxTriageMappingUpdate,
+  InboxTriageProposal,
   ListInboxCandidatesParams,
 } from "../models";
 
@@ -65,6 +67,23 @@ export const controlInbox = (
   );
 };
 /**
+ * @summary Apply one authenticated triage proposal with per-item durable receipts
+ */
+export const applyInboxTriage = (
+  inboxTriageProposal: InboxTriageProposal,
+  options?: SecondParameter<typeof orvalFetch<InboxResult[]>>,
+) => {
+  return orvalFetch<InboxResult[]>(
+    {
+      url: `/api/v1/inbox/triage/apply`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: inboxTriageProposal,
+    },
+    options,
+  );
+};
+/**
  * @summary Read configured category mappings for one exact source
  */
 export const getInboxTriageMappings = (
@@ -89,6 +108,23 @@ export const updateInboxTriageMappings = (
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       data: inboxTriageMappingUpdate,
+    },
+    options,
+  );
+};
+/**
+ * @summary Preview a bounded tag-only triage proposal for explicit inbox targets
+ */
+export const previewInboxTriage = (
+  inboxTriageInput: InboxTriageInput,
+  options?: SecondParameter<typeof orvalFetch<InboxTriageProposal>>,
+) => {
+  return orvalFetch<InboxTriageProposal>(
+    {
+      url: `/api/v1/inbox/triage/preview`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: inboxTriageInput,
     },
     options,
   );

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"golang.org/x/oauth2"
@@ -20,6 +22,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -304,3 +308,128 @@ func TestDaemonInboxUnknownGmailWritePermissionFailsBeforeClientCreation(t *test
 type tagGmailTransport func(*http.Request) (*http.Response, error)
 
 func (f tagGmailTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func TestDaemonInboxTriageUsesNativeRuntimeAuthorizationAndReceipts(t *testing.T) {
+	a, target, _, _ := inboxBindingFixture(t, "gmail")
+	a.inboxProviderFactory = nil
+	// Native scope probes read a real saved synthetic token in this fixture home.
+	home := t.TempDir()
+	a.config = config.NewDefaultConfig()
+	a.config.HomeDir, a.config.Data.DataDir = home, home
+	a.config.OAuth.ClientSecrets = filepath.Join(home, "client_secret.json")
+	a.logger = testDiscardLogger()
+	require.NoError(t, os.WriteFile(a.config.OAuth.ClientSecrets, []byte(fakeClientSecrets), 0600))
+	require.NoError(t, os.MkdirAll(a.config.TokensDir(), 0700))
+	tokenPath := filepath.Join(a.config.TokensDir(), target.AccountID+".json")
+	tokenData := []byte(fmt.Sprintf(`{"access_token":"synthetic-token","expiry":"2099-01-01T00:00:00Z","scopes":[%q]}`, oauth.ScopeGmailModify))
+	require.NoError(t, os.WriteFile(tokenPath, tokenData, 0600))
+
+	backend, ok := any(a).(interface {
+		PreviewInboxTriage(context.Context, inboxcontrol.TriageInput, inboxcontrol.Principal, func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) (*inboxcontrol.TriageProposal, error)
+		ApplyInboxTriage(context.Context, inboxcontrol.TriageProposal, inboxcontrol.Principal, func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, func(context.Context) (func(), error)) ([]inboxcontrol.Result, error)
+	})
+	require.True(t, ok, "daemon must expose native triage preview/apply")
+	source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
+	labels := []string{"INBOX", "UNREAD", "Unrelated"}
+	var nativeMu sync.Mutex
+	var writes atomic.Int64
+	native := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nativeMu.Lock()
+		defer nativeMu.Unlock()
+		switch r.URL.Path {
+		case "/gmail/v1/users/me/profile":
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]string{"emailAddress": source.AccountID}))
+		case "/gmail/v1/users/me/labels":
+			assert.Equal(t, http.MethodGet, r.Method)
+			_, err := fmt.Fprint(w, `{"labels":[{"id":"Label_1","name":"Todo","type":"user"}]}`)
+			assert.NoError(t, err)
+		case "/gmail/v1/users/me/messages/mail-fixture":
+			assert.Equal(t, http.MethodGet, r.Method)
+			assert.Equal(t, "metadata", r.URL.Query().Get("format"))
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": target.ProviderID, "labelIds": labels, "historyId": "8"}))
+		case "/gmail/v1/users/me/messages/mail-fixture/modify":
+			assert.Equal(t, http.MethodPost, r.Method)
+			writes.Add(1)
+			lease, err := a.store.AcquireSyncExecutionContext(r.Context(), source.SourceID)
+			assert.Error(t, err)
+			if lease != nil {
+				assert.NoError(t, lease.Release())
+			}
+			var change struct {
+				Add    []string `json:"addLabelIds"`
+				Remove []string `json:"removeLabelIds"`
+			}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&change))
+			assert.Equal(t, []string{"Label_1"}, change.Add)
+			assert.Empty(t, change.Remove)
+			labels = append(labels, change.Add...)
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": target.ProviderID, "labelIds": labels, "historyId": "8"}))
+		default:
+			assert.Fail(t, "unexpected native request", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer native.Close()
+	endpoint, err := url.Parse(native.URL)
+	require.NoError(t, err)
+	a.emailTagClientFactory = func(context.Context, *store.Source) (gmail.API, error) {
+		return gmail.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic-token"}), gmail.WithTransport(tagGmailTransport(func(r *http.Request) (*http.Response, error) {
+			copied := r.Clone(r.Context())
+			u := *r.URL
+			u.Scheme = endpoint.Scheme
+			u.Host = endpoint.Host
+			copied.URL = &u
+			return http.DefaultTransport.RoundTrip(copied)
+		})), gmail.WithRateLimiter(gmail.NewRateLimiter(10000))), nil
+	}
+	for _, id := range []string{"Label_1", "Unrelated"} {
+		_, err := a.store.EnsureLabel(source.SourceID, id, id, "user")
+		require.NoError(t, err)
+	}
+	_, err = a.store.ReplaceInboxTriageMappings(t.Context(), source, map[string]string{"todo": "Label_1"}, 0, inboxcontrol.Principal{ID: "owner", Owner: true})
+	require.NoError(t, err)
+	_, err = a.store.ObserveInboxState(t.Context(), inboxcontrol.State{Target: target, Inbox: new(true), Read: new(false), Tags: slices.Clone(labels), Revision: "8", ObservedAt: time.Now().UTC()})
+	require.NoError(t, err)
+	principal := inboxcontrol.Principal{ID: "triage-delegate"}
+	allowed := true
+	authorize := func(_ context.Context, p inboxcontrol.Principal, r inboxcontrol.Request) error {
+		if !allowed || p != principal {
+			return inboxcontrol.ErrDenied
+		}
+		if r.Target != nil {
+			if *r.Target != target {
+				return inboxcontrol.ErrDenied
+			}
+		} else if r.Source == nil || *r.Source != source {
+			return inboxcontrol.ErrDenied
+		}
+		return nil
+	}
+	input := inboxcontrol.TriageInput{Source: source, Items: []inboxcontrol.TriageItemInput{{Target: target, Categories: []string{"todo"}, EvidenceMessageIDs: []int64{target.ItemID}, IdempotencyKey: "daemon-triage-1"}}}
+	proposal, err := backend.PreviewInboxTriage(t.Context(), input, principal, authorize)
+	require.NoError(t, err)
+	assert.Zero(t, writes.Load())
+	allowed = false
+	_, err = backend.ApplyInboxTriage(t.Context(), *proposal, principal, authorize, nil)
+	assert.ErrorIs(t, err, inboxcontrol.ErrDenied)
+	assert.Zero(t, writes.Load())
+	allowed = true
+	gateCalls := 0
+	results, err := backend.ApplyInboxTriage(t.Context(), *proposal, principal, authorize, func(context.Context) (func(), error) { gateCalls++; return func() {}, nil })
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.NotNil(t, results[0].Receipt)
+	assert.Equal(t, inboxcontrol.StatusVerified, results[0].Receipt.Status)
+	assert.True(t, *results[0].After.Inbox)
+	assert.False(t, *results[0].After.Read)
+	assert.Equal(t, int64(1), writes.Load())
+	assert.Equal(t, 1, gateCalls)
+	again, err := backend.ApplyInboxTriage(t.Context(), *proposal, principal, authorize, nil)
+	require.NoError(t, err)
+	require.Len(t, again, 1)
+	require.NotNil(t, again[0].Receipt)
+	assert.Equal(t, results[0].Receipt.ID, again[0].Receipt.ID)
+	assert.Equal(t, int64(1), writes.Load())
+	saved, err := os.ReadFile(tokenPath)
+	require.NoError(t, err)
+	assert.Equal(t, tokenData, saved, "preview/apply must preserve synthetic scope metadata")
+}

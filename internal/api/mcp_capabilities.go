@@ -49,6 +49,11 @@ func (s *Server) registerMCPCapabilitiesRoute(api huma.API) {
 		if _, ok := s.store.(InboxTriageMappingReader); ok {
 			allowed["getInboxTriageMappings"] = !response.Delegated || inboxReadDiscoveryAllowed(auth.Grant, agentgrant.PermissionInboxRead)
 		}
+		if _, ok := s.store.(InboxTriageController); ok {
+			triageAllowed := !response.Delegated || inboxTriageDiscoveryAllowed(auth.Grant)
+			allowed["previewInboxTriage"] = triageAllowed
+			allowed["applyInboxTriage"] = triageAllowed
+		}
 		if _, ok := s.store.(InboxTriageMappingUpdater); ok {
 			allowed["updateInboxTriageMappings"] = !response.Delegated
 		}
@@ -98,4 +103,13 @@ func mcpRouteDescriptor(doc *huma.OpenAPI, operation *huma.Operation) apiprotoco
 	sort.Strings(result.QueryParameters)
 	sort.Strings(result.RequestProperties)
 	return result
+}
+
+func inboxTriageDiscoveryAllowed(grant *agentgrant.Grant) bool {
+	if grant == nil || !grant.HasPermission(agentgrant.PermissionInboxRead) || !grant.HasPermission(agentgrant.PermissionInboxTag) {
+		return false
+	}
+	return slices.ContainsFunc(grant.Sources, func(source agentgrant.SourceRef) bool {
+		return source.ID > 0 && source.Identifier != "" && (source.Type == "gmail" || source.Type == "imap" || source.Type == "msmail")
+	})
 }

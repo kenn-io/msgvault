@@ -260,3 +260,12 @@ func (a *storeAPIAdapter) ResolveMessageTagTarget(ctx context.Context, id int64,
 	}
 	return target, nil
 }
+
+var _ api.InboxTriageController = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) PreviewInboxTriage(ctx context.Context, input inboxcontrol.TriageInput, p inboxcontrol.Principal, authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) (*inboxcontrol.TriageProposal, error) {
+	return a.inboxControlService(authorize).PreviewTriage(a.invocationContext(ctx), input, p)
+}
+func (a *storeAPIAdapter) ApplyInboxTriage(ctx context.Context, proposal inboxcontrol.TriageProposal, p inboxcontrol.Principal, authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, gate func(context.Context) (func(), error)) ([]inboxcontrol.Result, error) {
+	return a.inboxControlService(authorize).ApplyTriage(a.invocationContext(ctx), proposal, p, gate)
+}

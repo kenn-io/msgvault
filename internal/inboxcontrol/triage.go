@@ -15,19 +15,19 @@ import (
 // Idempotency keys are bound at preview so apply cannot change replay identity.
 type TriageInput struct {
 	Source SourceIdentity    `json:"source"`
-	Items  []TriageItemInput `json:"items"`
+	Items  []TriageItemInput `json:"items" minItems:"1" maxItems:"100"`
 }
 
 type TriageItemInput struct {
 	Target             Target   `json:"target"`
-	Categories         []string `json:"categories"`
-	EvidenceMessageIDs []int64  `json:"evidence_message_ids"`
-	IdempotencyKey     string   `json:"idempotency_key,omitempty"`
+	Categories         []string `json:"categories" maxItems:"6"`
+	EvidenceMessageIDs []int64  `json:"evidence_message_ids" maxItems:"100"`
+	IdempotencyKey     string   `json:"idempotency_key,omitempty" maxLength:"128"`
 }
 
 type TriageProposalItem struct {
-	Categories         []string `json:"categories"`
-	EvidenceMessageIDs []int64  `json:"evidence_message_ids"`
+	Categories         []string `json:"categories" maxItems:"6"`
+	EvidenceMessageIDs []int64  `json:"evidence_message_ids" maxItems:"100"`
 	Classification     string   `json:"classification"`
 	RetainInbox        bool     `json:"retain_inbox"`
 	Request            Request  `json:"request"`
@@ -39,7 +39,7 @@ type TriageProposal struct {
 	MappingRevision   int64                `json:"mapping_revision"`
 	ArchiveRevision   string               `json:"archive_revision"`
 	IncomingWatermark string               `json:"incoming_watermark"`
-	Items             []TriageProposalItem `json:"items"`
+	Items             []TriageProposalItem `json:"items" minItems:"1" maxItems:"100"`
 	IssuedAt          time.Time            `json:"issued_at"`
 	ExpiresAt         time.Time            `json:"expires_at"`
 	PreviewToken      string               `json:"preview_token"`
