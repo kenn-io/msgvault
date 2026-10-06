@@ -385,6 +385,9 @@ func sweepUnreferencedLooseMedia(
 		if err != nil {
 			cleanupErrors = append(cleanupErrors, err)
 		}
+		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+			return removed, errors.Join(cleanupErrors...)
+		}
 	}
 	return removed, errors.Join(cleanupErrors...)
 }

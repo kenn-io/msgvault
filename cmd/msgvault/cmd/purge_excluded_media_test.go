@@ -228,13 +228,11 @@ func TestPurgeExcludedMediaRetriesAndContinuesLooseBlobCleanup(t *testing.T) {
 
 func TestSweepAttachmentCandidates(t *testing.T) {
 	f := newPurgeMediaFixture(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
 	dir := f.config.AttachmentsDir()
 	removed := seedAttachmentFile(t, dir, "aa/orphan", "orphan")
 	failed := seedAttachmentFile(t, dir, "aa/failed", "failed")
 	outside := seedAttachmentFile(t, filepath.Dir(dir), "outside", "outside")
-	counts, err := sweepAttachmentCandidates(context.WithoutCancel(ctx), f.store, dir, []attachmentFileCandidate{
+	counts, err := sweepAttachmentCandidates(t.Context(), f.store, dir, []attachmentFileCandidate{
 		{path: f.contentPath},
 		{path: "../outside"},
 		{path: "aa/failed"},
@@ -242,7 +240,6 @@ func TestSweepAttachmentCandidates(t *testing.T) {
 		{path: "aa/orphan"},
 	}, func(path string) error {
 		if path == failed {
-			cancel()
 			return errors.New("synthetic removal failure")
 		}
 		return os.Remove(path)
@@ -252,7 +249,31 @@ func TestSweepAttachmentCandidates(t *testing.T) {
 	assert.FileExists(t, f.fullPath, "path-only references preserve content")
 	assert.FileExists(t, outside, "paths outside the attachment directory survive")
 	assert.FileExists(t, failed)
-	assert.NoFileExists(t, removed, "account cleanup continues after cancellation and a failed unlink")
+	assert.NoFileExists(t, removed, "cleanup continues after a failed unlink")
+}
+
+func TestSweepUnreferencedLooseMediaCancellation(t *testing.T) {
+	f := newPurgeMediaFixture(t)
+	dir := f.config.AttachmentsDir()
+	paths := make([]string, 0, 3)
+	for _, hash := range []string{strings.Repeat("cd", 32), "cd" + strings.Repeat("ef", 31), strings.Repeat("ef", 32)} {
+		paths = append(paths, seedAttachmentFile(t, dir, hash[:2]+"/"+hash, "orphan"))
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	removed, err := sweepUnreferencedLooseMedia(ctx, f.store, dir, func(path string) error {
+		err := os.Remove(path)
+		if err == nil {
+			cancel()
+		}
+		return err
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, removed)
+	assert.NoFileExists(t, paths[0])
+	assert.FileExists(t, paths[1])
+	assert.FileExists(t, paths[2])
+	assert.Equal(t, 1, strings.Count(err.Error(), context.Canceled.Error()), "report cancellation once")
 }
 
 func TestPurgeExcludedMediaCountsOnlyRemovedFiles(t *testing.T) {
