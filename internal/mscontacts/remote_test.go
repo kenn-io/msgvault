@@ -25,18 +25,20 @@ import (
 // fakeGraph applies contact writes the way Graph does: PATCH checks If-Match,
 // DELETE ignores it, and delta rejects $expand.
 type fakeGraph struct {
-	mu       sync.Mutex
-	parents  map[string]string // folder ID -> parent folder ID
-	names    map[string]string
-	contacts map[string]*contact
-	changes  []fakeChange
-	version  int
-	next     int
-	posts    int
-	patches  int
-	deletes  int
-	lists    int
-	dropPost bool
+	// patchStatus, when set, answers every PATCH with that status.
+	patchStatus int
+	mu          sync.Mutex
+	parents     map[string]string // folder ID -> parent folder ID
+	names       map[string]string
+	contacts    map[string]*contact
+	changes     []fakeChange
+	version     int
+	next        int
+	posts       int
+	patches     int
+	deletes     int
+	lists       int
+	dropPost    bool
 	// dropPatch applies the next PATCH and then answers 503.
 	dropPatch bool
 	// rejectPatch answers the next PATCH with 503 without applying it.
@@ -241,6 +243,10 @@ func (f *fakeGraph) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if f.rejectPatch {
 				f.rejectPatch = false
 				reply(http.StatusServiceUnavailable, nil)
+				return
+			}
+			if f.patchStatus != 0 {
+				fail(f.patchStatus, "ErrorInvalidProperty")
 				return
 			}
 			if r.Header.Get("If-Match") != c.ETag {
@@ -827,4 +833,35 @@ func TestOutlookPhoneMoveKeepsOverflowPhone(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(string(body), "+15550103", "the phone that Graph never held survives")
 	assert.Equal(3, strings.Count(string(body), "TEL"), string(body))
+}
+
+// Graph rejects an update with 400. The rejection is definitive: the pending
+// update is cleared, and no conflict follows.
+func TestRejectedUpdateClearsPendingIntent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFixture(t)
+	personID := f.alice(t)
+	require.NoError(f.service.PublishPerson(t.Context(), personID))
+	f.sync(t)
+
+	_, err := f.store.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "alice@example.test",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+	f.fake.patchStatus = http.StatusBadRequest
+	err = f.service.PublishPerson(t.Context(), personID)
+	status, ok := errors.AsType[*carddav.StatusError](err)
+	require.True(ok, "%v", err)
+	assert.Equal(http.StatusBadRequest, status.StatusCode)
+	publication, err := f.store.GetCardDAVPublicationContext(t.Context(), personID)
+	require.NoError(err)
+	assert.Empty(publication.PendingOperation)
+
+	f.fake.patchStatus = 0
+	f.sync(t)
+	conflicts, err := f.store.ListCardDAVConflictsContext(t.Context(), true, store.DefaultCardDAVAccountID)
+	require.NoError(err)
+	assert.Empty(conflicts)
 }

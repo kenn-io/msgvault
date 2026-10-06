@@ -44,6 +44,16 @@ func (e *ThrottledError) Error() string {
 	return fmt.Sprintf("graph throttled the request; retry after %s", e.RetryAfter)
 }
 
+// StatusError carries the HTTP status of a response that no other error
+// classifies, for example a 400 validation failure.
+type StatusError struct {
+	StatusCode int
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("graph status %d", e.StatusCode)
+}
+
 // ErrPreconditionFailed classifies a write that failed its If-Match check: a
 // 412, or a 400 ErrorInvalidChangeKey for a malformed change key.
 var ErrPreconditionFailed = errors.New("graph precondition failed")
@@ -229,7 +239,7 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 			}
 			continue
 		default:
-			return nil, fmt.Errorf("graph %s %s: status %d: %s", method, reqURL, resp.StatusCode, string(body))
+			return nil, fmt.Errorf("graph %s %s: status %d: %s: %w", method, reqURL, resp.StatusCode, string(body), &StatusError{StatusCode: resp.StatusCode})
 		}
 	}
 	return nil, fmt.Errorf("graph %s %s: exhausted %d retries: %w", method, reqURL, maxRetries, lastErr)

@@ -386,5 +386,10 @@ func statusError(err error) error {
 			return errors.Join(err, &carddav.StatusError{StatusCode: code})
 		}
 	}
+	// Any other 4xx is a definitive rejection, for example a 400 for an
+	// invalid property: Graph applied nothing.
+	if status, ok := errors.AsType[*msgraph.StatusError](err); ok && status.StatusCode < http.StatusInternalServerError {
+		return errors.Join(err, &carddav.StatusError{StatusCode: status.StatusCode})
+	}
 	return err
 }
