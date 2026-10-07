@@ -2,13 +2,14 @@ package notionmeetings
 
 import (
 	"context"
-	"encoding/json/jsontext"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -138,7 +139,12 @@ func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
 	for _, budget := range []string{"requests", "bytes"} {
 		t.Run(budget, func(t *testing.T) {
 			source := completeHydrationSource()
+			var content hydrationSource = source
 			users := &fakeUserSource{users: map[string]*User{"user-1": {Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}}}
+			var userSource UserSource = users
+			var large atomic.Bool
+			large.Store(true)
+			var userRequests atomic.Int32
 			meeting := hydrationMeeting()
 			meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1"}
 			if budget == "requests" {
@@ -152,10 +158,44 @@ func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
 				}
 				source.children["notes-1"] = pages
 			} else {
-				source.markdown.Raw = make(jsontext.Value, maxHydrationBytes-(1<<20))
-				users.users["user-1"].Raw = make(jsontext.Value, 2<<20)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var response map[string]any
+					padding := 0
+					switch r.URL.Path {
+					case "/v1/blocks/meeting-1":
+						response = map[string]any{"object": "block", "id": "meeting-1", "type": "meeting_notes", "has_children": false, "meeting_notes": map[string]any{}}
+					case "/v1/pages/page-1/markdown":
+						response = map[string]any{"object": "page_markdown", "id": "page-1", "markdown": "# Transcript\nTest Speaker: Ready to ship.", "truncated": false, "unknown_block_ids": []string{}}
+					case "/v1/users/user-1":
+						userRequests.Add(1)
+						padding = 2 << 20
+						response = map[string]any{"object": "user", "id": "user-1", "type": "person", "person": map[string]any{"email": "guest@example.com", "email_verified": true}}
+					default:
+						id := strings.TrimPrefix(r.URL.Path, "/v1/blocks/")
+						text := "Meeting notes."
+						if large.Load() {
+							padding = 12 << 20
+						}
+						if id == "transcript-1" {
+							text = "Test Speaker: Ready to ship."
+							if large.Load() {
+								padding = 7 << 20
+							}
+						}
+						response = map[string]any{"object": "block", "id": id, "type": "paragraph", "has_children": false, "paragraph": map[string]any{"rich_text": []map[string]string{{"plain_text": text}}}}
+					}
+					response["padding"] = strings.Repeat("x", padding)
+					raw, err := json.Marshal(response)
+					assert.NoError(t, err)
+					assert.Less(t, int64(len(raw)), maxResponseSize)
+					_, err = w.Write(raw)
+					assert.NoError(t, err)
+				}))
+				t.Cleanup(server.Close)
+				content = NewClient(server.URL, "meeting-example")
+				userSource = NewClient(server.URL, "users-example")
 			}
-			h := NewHydrator(source).WithUserSource(users)
+			h := NewHydrator(content).WithUserSource(userSource)
 			first, err := h.Hydrate(t.Context(), meeting)
 			require.NoError(t, err)
 			assert.Equal(t, "Test Speaker: Ready to ship.", first.Transcript)
@@ -163,21 +203,31 @@ func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
 			assert.Empty(t, h.users)
 			assert.False(t, h.usersUnavailable)
 			source.children["notes-1"] = map[string]*BlockPage{"": {}}
-			source.markdown.Raw, users.users["user-1"].Raw = nil, nil
+			large.Store(false)
+			if budget == "bytes" {
+				assert.Equal(t, int32(1), userRequests.Load())
+				assert.Greater(t, h.bytes, maxHydrationBytes)
+			}
 			second, err := h.Hydrate(t.Context(), meeting)
 			require.NoError(t, err)
 			require.Len(t, second.Attendees, 1)
 			assert.Equal(t, "guest@example.com", second.Attendees[0].Email)
+			if budget == "bytes" {
+				assert.Equal(t, int32(2), userRequests.Load())
+			}
 
 		})
 	}
 }
 
-type usersRetryTransport struct{}
+type usersRetryTransport struct{ requested []string }
 
-func (usersRetryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r.URL.Path == "/v1/users/user-1" {
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"object":"user","id":"user-1","person":{"email":"guest@example.com","email_verified":true}}`))}, nil
+func (f *usersRetryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	f.requested = append(f.requested, r.URL.Path)
+	if r.URL.Path != "/v1/users/timeout" {
+		time.Sleep(30 * time.Second)
+		id := strings.TrimPrefix(r.URL.Path, "/v1/users/")
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"object":"user","id":"` + id + `","person":{"email":"guest@example.com","email_verified":true}}`))}, nil
 	}
 	return &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(`{"object":"error","code":"service_unavailable"}`))}, nil
 }
@@ -185,22 +235,34 @@ func (usersRetryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 func TestHydratorOptionalDeadlineAndParentCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		client := NewClient("https://notion.example", "users-example")
-		client.http.Transport = usersRetryTransport{}
+		transport := &usersRetryTransport{}
+		client.http.Transport = transport
 		h := NewHydrator(completeHydrationSource()).WithUserSource(client)
 		meeting := hydrationMeeting()
-		meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1"}
-		_, err := h.Hydrate(t.Context(), meeting)
+		meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "user-2", "user-3"}
+		start := time.Now()
+		first, err := h.Hydrate(t.Context(), meeting)
 		require.NoError(t, err)
-		remaining := h.userLookupRemaining
-		time.Sleep(time.Hour)
-		assert.Equal(t, remaining, h.userLookupRemaining)
-		meeting.MeetingNotes.CalendarEvent.Attendees = append(meeting.MeetingNotes.CalendarEvent.Attendees, "user-2")
+		require.Len(t, first.Attendees, 3)
+		assert.Equal(t, 90*time.Second, time.Since(start))
+		meeting.MeetingNotes.CalendarEvent.Attendees = append(meeting.MeetingNotes.CalendarEvent.Attendees, "timeout")
+		start = time.Now()
 		second, err := h.Hydrate(t.Context(), meeting)
 		require.NoError(t, err)
 		assert.Equal(t, "Test Speaker: Ready to ship.", second.Transcript)
-		require.Len(t, second.Attendees, 1)
+		require.Len(t, second.Attendees, 3)
 		assert.ErrorIs(t, h.usersFailure, context.DeadlineExceeded)
-		assert.LessOrEqual(t, h.userLookupRemaining, time.Duration(0))
+		assert.Equal(t, UserLookupTimeout, time.Since(start))
+		requestsAfterTimeout := len(transport.requested)
+		meeting.MeetingNotes.CalendarEvent.Attendees = append(meeting.MeetingNotes.CalendarEvent.Attendees, "new-user")
+		for range 2 {
+			later, err := h.Hydrate(t.Context(), meeting)
+			require.NoError(t, err)
+			require.Len(t, later.Attendees, 3)
+		}
+		assert.Equal(t, requestsAfterTimeout, len(transport.requested))
+		assert.Equal(t, []string{"/v1/users/user-1", "/v1/users/user-2", "/v1/users/user-3"}, transport.requested[:3])
+		assert.Contains(t, transport.requested, "/v1/users/timeout")
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		_, err = h.Hydrate(ctx, hydrationMeeting())

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	UserLookupBudget     = time.Minute
+	UserLookupTimeout    = time.Minute
 	maxHydrationDepth    = 32
 	maxHydrationRequests = 256
 	maxHydrationBytes    = 32 << 20
@@ -69,21 +69,20 @@ type UserSource interface {
 }
 
 type Hydrator struct {
-	userSource          UserSource
-	userLookupRemaining time.Duration
-	source              hydrationSource
-	users               map[string]*User
-	usersRead           bool
-	usersUnavailable    bool
-	usersIncomplete     bool
-	usersFailure        error
-	requests            int
-	bytes               int
-	blocks              int
+	userSource       UserSource
+	source           hydrationSource
+	users            map[string]*User
+	usersRead        bool
+	usersUnavailable bool
+	usersIncomplete  bool
+	usersFailure     error
+	requests         int
+	bytes            int
+	blocks           int
 }
 
 func NewHydrator(source hydrationSource) *Hydrator {
-	return &Hydrator{source: source, users: map[string]*User{}, userLookupRemaining: UserLookupBudget}
+	return &Hydrator{source: source, users: map[string]*User{}}
 }
 
 // WithUserSource routes user requests to a separate credential.
@@ -250,7 +249,6 @@ func (h *Hydrator) readChildren(ctx context.Context, blockID string, depth int, 
 
 func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting) error {
 	if h.userSource == nil && !h.usersRead {
-		h.users = map[string]*User{}
 		cursor := ""
 		seen := map[string]struct{}{}
 		for {
@@ -363,10 +361,8 @@ func (h *Hydrator) lookupUser(ctx context.Context, id string) (*User, error) {
 	if err := h.reserveRequest(); err != nil {
 		return nil, err
 	}
-	lookupCtx, cancel := context.WithTimeout(ctx, h.userLookupRemaining)
-	start := time.Now()
+	lookupCtx, cancel := context.WithTimeout(ctx, UserLookupTimeout)
 	user, err := h.userSource.RetrieveUser(lookupCtx, id)
-	h.userLookupRemaining -= time.Since(start)
 	cancel()
 	if err != nil {
 		var apiErr *APIError

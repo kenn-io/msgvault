@@ -465,8 +465,9 @@ The users token retrieves known attendee IDs directly, including workspace
 members and guests. Only users with `person.email_verified = true` and a usable
 email become anchored participants. Healthy unverified users stay display-only.
 
-Each sync spends at most 60 seconds on optional user requests. Content hydration
-time is separate. Successful responses and missing IDs are cached for the run.
+Each optional user lookup has a 60-second timeout, including retries. Healthy
+lookups can continue throughout the sync. Successful responses and missing IDs
+are cached for the run.
 Invalid credentials, missing User Information capability, provider retry
 exhaustion, and transport failures stop further uncached lookups for that sync.
 Previously verified attendees survive failed or skipped lookups. The next sync

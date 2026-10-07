@@ -133,7 +133,7 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 		_, _ = fmt.Fprintln(out, "  Users token: untested (no visible attendee ID)")
 		return nil
 	}
-	lookupCtx, cancel := context.WithTimeout(ctx, notionmeetings.UserLookupBudget)
+	lookupCtx, cancel := context.WithTimeout(ctx, notionmeetings.UserLookupTimeout)
 	defer cancel()
 	user, err := users.RetrieveUser(lookupCtx, attendeeID)
 	if ctx.Err() != nil {

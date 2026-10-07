@@ -20,6 +20,7 @@ type fakeNotionProbe struct {
 	err      error
 	blockErr error
 	usersErr error
+	markdown string
 }
 
 func (f fakeNotionProbe) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
@@ -31,7 +32,14 @@ func (f fakeNotionProbe) RetrieveBlock(context.Context, string) (*notionmeetings
 }
 
 func (f fakeNotionProbe) RetrievePageMarkdown(context.Context, string, bool) (*notionmeetings.MarkdownPage, error) {
+	if f.markdown != "" {
+		return &notionmeetings.MarkdownPage{Markdown: f.markdown}, nil
+	}
 	return &notionmeetings.MarkdownPage{Markdown: "private transcript"}, nil
+}
+
+func (f fakeNotionProbe) RetrieveBlockChildren(context.Context, string, string) (*notionmeetings.BlockPage, error) {
+	return &notionmeetings.BlockPage{}, nil
 }
 
 func (f fakeNotionProbe) ListUsers(context.Context, string) (*notionmeetings.UserPage, error) {
@@ -233,30 +241,6 @@ func TestConfiguredNotionClientsKeepCredentialsSeparate(t *testing.T) {
 	assert.Nil(users)
 }
 
-type scheduledNotionSource struct {
-	notionmeetings.Source
-}
-
-func (s scheduledNotionSource) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
-	return &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{
-		Object: "block", ID: "meeting-1", Type: "meeting_notes", Parent: notionmeetings.Parent{PageID: "page-1"},
-		CreatedTime:  "2026-08-29T10:00:00Z",
-		MeetingNotes: notionmeetings.MeetingNotesData{Status: "notes_ready", CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}},
-	}}}, nil
-}
-
-func (s scheduledNotionSource) RetrieveBlock(context.Context, string) (*notionmeetings.Block, error) {
-	return &notionmeetings.Block{Object: "block", ID: "meeting-1", Type: "meeting_notes"}, nil
-}
-
-func (s scheduledNotionSource) RetrievePageMarkdown(context.Context, string, bool) (*notionmeetings.MarkdownPage, error) {
-	return &notionmeetings.MarkdownPage{Markdown: "# Transcript\nSpeaker: Scheduled meeting."}, nil
-}
-
-func (s scheduledNotionSource) ListUsers(context.Context, string) (*notionmeetings.UserPage, error) {
-	return nil, notionmeetings.ErrUnauthorized
-}
-
 func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrCreateSource(notionmeetings.SourceType, "work")
@@ -267,7 +251,11 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 	})
 	newNotionMeetingsClient = func(_ string, token string) notionmeetings.Source {
 		assert.Equal(t, "pat-example", token)
-		return scheduledNotionSource{}
+		return fakeNotionProbe{
+			result:   &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{Object: "block", ID: "meeting-1", Type: "meeting_notes", Parent: notionmeetings.Parent{PageID: "page-1"}, CreatedTime: "2026-08-29T10:00:00Z", MeetingNotes: notionmeetings.MeetingNotesData{Status: "notes_ready", CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}}}}},
+			block:    &notionmeetings.Block{Object: "block", ID: "meeting-1", Type: "meeting_notes"},
+			markdown: "# Transcript\nSpeaker: Scheduled meeting.", usersErr: notionmeetings.ErrUnauthorized,
+		}
 	}
 	users := &fakeNotionUsersProbe{user: &notionmeetings.User{ID: "member", Person: notionmeetings.UserPerson{Email: "member@example.com", EmailVerified: true}}}
 	newNotionUsersClient = func(_ string, token string) notionmeetings.UserSource {
