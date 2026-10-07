@@ -3,6 +3,7 @@ package taskclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -21,7 +22,7 @@ func (c *KataClient) AddComment(ctx context.Context, project, taskID, idempotenc
 		return ErrIdempotencyKeyRequired
 	}
 	if err := validatePathSegment(taskID); err != nil {
-		return err
+		return fmt.Errorf("%w: invalid path identity", ErrInvalidRef)
 	}
 	path, err := c.issuePath(ctx, project, "/"+taskID+"/comments")
 	if err != nil {

@@ -2841,6 +2841,26 @@ components:
         - stale
         - computed_at
       type: object
+    ContextPassage:
+      additionalProperties: true
+      properties:
+        after:
+          description: Up to 500 characters of source text after the excerpt, when available
+          type: string
+        before:
+          description: Up to 500 characters of source text before the excerpt, when available
+          type: string
+        evidence:
+          $ref: "#/components/schemas/Evidence"
+        saved_quote:
+          description: Quoted words recovered from the issue body or comments when archive evidence is not available
+          type: string
+        state:
+          type: string
+      required:
+        - state
+        - evidence
+      type: object
     ConversationResponse:
       additionalProperties: true
       properties:
@@ -6384,6 +6404,23 @@ components:
           type: string
       required:
         - error
+      type: object
+    KataIssueContextResponse:
+      additionalProperties: true
+      properties:
+        issue:
+          $ref: "#/components/schemas/KataIssueReceipt"
+        next_offset:
+          description: Offset of the next page of passages; absent on the last page
+          format: int64
+          type: integer
+        passages:
+          items:
+            $ref: "#/components/schemas/ContextPassage"
+          type: array
+      required:
+        - issue
+        - passages
       type: object
     KataIssueCreateRequest:
       additionalProperties: false
@@ -14779,7 +14816,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.4.0
+  version: 3.5.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -21328,6 +21365,76 @@ paths:
       security:
         - apiKey: []
       summary: Create a Kata issue that quotes exact archive evidence
+      tags:
+        - API
+  /api/v1/integrations/kata/issues/{ref}/context:
+    get:
+      operationId: getKataIssueContext
+      parameters:
+        - description: Kata issue ref, qualified ref or UID
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+        - description: Index of the first passage to return; pass next_offset from the previous page
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssueContextResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read each passage a Kata issue cites with its state in the archive today
       tags:
         - API
   /api/v1/integrations/kata/issues/{ref}/evidence:

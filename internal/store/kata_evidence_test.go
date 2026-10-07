@@ -25,14 +25,14 @@ func TestKataEvidenceMessage(t *testing.T) {
 	prepared, err := svc.Prepare(t.Context(), []kataevidence.Selector{selector})
 	require.NoError(err)
 	assert.Equal("send the revised budget", prepared[0].Excerpt)
-	got, err := svc.Resolve(t.Context(), prepared[0].Reference)
+	got, err := svc.ResolveAround(t.Context(), prepared[0].Reference, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Available, got.State)
 	assert.Equal(prepared[0].Excerpt, got.Evidence.Excerpt)
 
 	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE message_bodies SET body_text=? WHERE message_id=?"), "Please send the final budget by Friday.", id)
 	require.NoError(err)
-	got, err = svc.Resolve(t.Context(), prepared[0].Reference)
+	got, err = svc.ResolveAround(t.Context(), prepared[0].Reference, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Changed, got.State)
 
@@ -49,7 +49,7 @@ func TestKataEvidenceMessage(t *testing.T) {
 	prepared, err = svc.Prepare(t.Context(), []kataevidence.Selector{selector})
 	require.NoError(err)
 	assert.Equal("send the revised budget", prepared[0].Excerpt)
-	got, err = svc.Resolve(t.Context(), prepared[0].Reference)
+	got, err = svc.ResolveAround(t.Context(), prepared[0].Reference, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Available, got.State)
 	assert.Equal(prepared[0].Excerpt, got.Evidence.Excerpt)
@@ -78,7 +78,7 @@ func TestKataEvidenceDocumentChunk(t *testing.T) {
 	assert.Contains(prepared[0].Excerpt, "quasar")
 
 	publishSearchDocument(t, f, profile, hash, "new unrelated evidence", "evidence-new")
-	got, err := svc.Resolve(t.Context(), prepared[0].Reference)
+	got, err := svc.ResolveAround(t.Context(), prepared[0].Reference, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Available, got.State, "a citation keeps reading its own extraction after reprocessing")
 	assert.Equal(prepared[0].Excerpt, got.Evidence.Excerpt)
@@ -99,14 +99,14 @@ func TestKataEvidenceDocumentChunk(t *testing.T) {
 	payload := *tampered.DocumentChunk
 	payload.ChunkChecksum = strings.Repeat("f", 64)
 	tampered.DocumentChunk = &payload
-	got, err = svc.Resolve(t.Context(), tampered)
+	got, err = svc.ResolveAround(t.Context(), tampered, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Changed, got.State)
 	assert.Empty(got.Evidence.Excerpt)
 
 	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET normalization_version=NULL WHERE id=?"), "evidence-old")
 	require.NoError(err)
-	got, err = svc.Resolve(t.Context(), prepared[0].Reference)
+	got, err = svc.ResolveAround(t.Context(), prepared[0].Reference, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Unprocessed, got.State)
 
@@ -116,7 +116,7 @@ func TestKataEvidenceDocumentChunk(t *testing.T) {
 	require.NoError(err)
 	_, err = svc.Prepare(t.Context(), []kataevidence.Selector{selector})
 	require.ErrorIs(err, kataevidence.ErrUnavailable)
-	got, err = svc.Resolve(t.Context(), prepared[0].Reference)
+	got, err = svc.ResolveAround(t.Context(), prepared[0].Reference, 0)
 	require.NoError(err)
 	assert.Equal(kataevidence.Unavailable, got.State)
 }

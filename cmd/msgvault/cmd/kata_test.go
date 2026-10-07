@@ -94,6 +94,10 @@ func TestKataCreateThroughDaemonAdapter(t *testing.T) {
 	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "issues", "--message", strconv.FormatInt(id, 10), "--json"), &citing))
 	require.Len(citing.Issues, 1)
 	assert.Equal(created.Issue.UID, citing.Issues[0].UID)
+	var issueContext generated.KataIssueContextResponse
+	require.NoError(json.Unmarshal(runKataCommand(ctx, t, "", "context", created.Issue.QualifiedRef, "--json"), &issueContext))
+	assert.Equal(created.Issue.QualifiedRef, issueContext.Issue.QualifiedRef)
+	assert.Len(issueContext.Passages, 1)
 
 	// The exported generated client decodes a replay like a create, and the
 	// daemon client names the filed issue when a retry changes the request.
@@ -162,11 +166,14 @@ func TestKataCommandsRefuseAnOlderDaemon(t *testing.T) {
 	}))
 	t.Cleanup(daemon.Close)
 	ctx := configureRemoteDaemonForTest(t, daemon.URL)
-	for _, args := range [][]string{{"evidence", "prepare"}, {"create", "--idempotency-key", "key-1"}, {"link", "example#abcd"}, {"issues", "--message", "1"}} {
-		// The lookup needs a newer daemon than the other commands.
+	for _, args := range [][]string{{"evidence", "prepare"}, {"create", "--idempotency-key", "key-1"}, {"link", "example#abcd"}, {"issues", "--message", "1"}, {"context", "example#abcd"}} {
+		// The lookup and the context read need newer daemons than the other commands.
 		version.Store(new("3.2.0"))
-		if args[0] == "issues" {
+		switch args[0] {
+		case "issues":
 			version.Store(new("3.3.0"))
+		case "context":
+			version.Store(new("3.4.0"))
 		}
 		command := newKataCmd()
 		command.SetArgs(args)
@@ -186,4 +193,19 @@ func kataInputFor(command string) string {
 		return `{"title":"Send the budget","evidence":[]}`
 	}
 	return `{"evidence":[]}`
+}
+
+// A passage names its source from its reference, then its subject or
+// filename, and drops IDs that may belong to another archive.
+func TestKataContextLabelsPassagesWithoutDisplay(t *testing.T) {
+	chunk := generated.Reference{MessageID: 4, AttachmentID: new(int64(9)), DocumentChunk: &generated.DocumentReference{}}
+	var out strings.Builder
+	require.NoError(t, writeKataIssueContext(&out, generated.KataIssueContextResponse{Passages: []generated.ContextPassage{
+		{State: "available", Evidence: generated.Evidence{Reference: generated.Reference{MessageID: 4}, Excerpt: "é界🙂 send the revised budget"}},
+		{State: "changed", Evidence: generated.Evidence{Reference: chunk}, SavedQuote: new("Send the budget")},
+		{State: "changed", Evidence: generated.Evidence{Reference: generated.Reference{MessageID: 4}, Display: generated.Display{ContainingTitle: new("Budget")}}},
+		{State: "unavailable", Evidence: generated.Evidence{Reference: chunk}},
+		{State: "unavailable", Evidence: generated.Evidence{Reference: generated.Reference{MessageID: 4}}},
+	}}))
+	assert.Equal(t, "\t\t\n\navailable\tmessage 4\n  [é界🙂 send the revised budget]\n\nchanged\tattachment 9 of message 4\n  saved quote: Send the budget\n\nchanged\tmessage 4: Budget\n\nunavailable\tattachment in this or another archive\n\nunavailable\tmessage in this or another archive\n", out.String())
 }

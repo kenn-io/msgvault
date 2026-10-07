@@ -151,7 +151,7 @@ func SafeMCPError(err error) error {
 			"identity_match_failed", "person_binding_conflict",
 			"archive_unavailable", "authentication_required", "evidence_changed", "evidence_limit",
 			"evidence_unavailable", "evidence_unprocessed", "evidence_unsupported", "idempotency_conflict",
-			"invalid_evidence", "issue_evidence_full", "kata_conflict", "kata_issue_changed", "kata_issue_deleted",
+			"invalid_evidence", "invalid_offset", "invalid_ref", "issue_evidence_full", "kata_conflict", "kata_issue_changed", "kata_issue_deleted",
 			"kata_issue_not_found", "kata_request_rejected", "kata_unavailable", "person_identity_required",
 			"person_identity_unavailable", "quote_ambiguous", "quote_not_found", "ref_required",
 			"unsupported_issue_evidence", "wrong_project":

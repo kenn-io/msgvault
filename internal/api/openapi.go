@@ -346,7 +346,8 @@ import (
 // header while the first count refresh runs.
 // 3.3.0 adds Kata issues that quote exact message and file evidence.
 // 3.4.0 adds finding the Kata issues that cite a message or file.
-const APISchemaVersion = "3.4.0"
+// 3.5.0 adds reading back each passage a Kata issue cites, with the text around it.
+const APISchemaVersion = "3.5.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1015,6 +1016,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 			displayName.Extensions["x-omitempty"] = false
 			displayName.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
+				"validate": "omitempty",
+			}
+		}
+	}
+	// A changed or unavailable passage carries an empty excerpt.
+	if evidence := schemas["Evidence"]; evidence != nil {
+		if excerpt := evidence.Properties["excerpt"]; excerpt != nil {
+			if excerpt.Extensions == nil {
+				excerpt.Extensions = map[string]any{}
+			}
+			excerpt.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
 				"validate": "omitempty",
 			}
 		}

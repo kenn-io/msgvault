@@ -36,6 +36,10 @@ func (f *fakeKataBackend) FindKataIssues(_ context.Context, query generated.Find
 	return generated.KataIssueListResponse{}, nil
 }
 
+func (f *fakeKataBackend) GetKataIssueContext(context.Context, string, generated.GetKataIssueContextQuery) (generated.KataIssueContextResponse, error) {
+	return generated.KataIssueContextResponse{}, nil
+}
+
 func (f *fakeKataBackend) LinkKataEvidence(context.Context, string, generated.KataEvidenceLinkRequest) (generated.KataIssueResponse, error) {
 	return generated.KataIssueResponse{}, nil
 }
@@ -44,9 +48,10 @@ func TestKataWriteToolsRequireOptIn(t *testing.T) {
 	assert := assert.New(t)
 	for _, optIn := range []bool{false, true} {
 		for _, writes := range []bool{false, true} {
-			listed := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}, KataLookup: true, AllowKataWrites: optIn}, writes))
+			listed := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}, KataLookup: true, KataContext: true, AllowKataWrites: optIn}, writes))
 			assert.Contains(listed, "prepare_kata_evidence")
 			assert.Contains(listed, "find_kata_issues")
+			assert.Contains(listed, "get_kata_issue_context")
 			for _, name := range []string{"create_kata_issue", "link_kata_evidence"} {
 				if optIn && writes {
 					assert.Contains(listed, name)
@@ -61,6 +66,10 @@ func TestKataWriteToolsRequireOptIn(t *testing.T) {
 	older := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}}, false))
 	assert.Contains(older, "prepare_kata_evidence")
 	assert.NotContains(older, "find_kata_issues")
+	// A 3.4.0 daemon adds the lookup only.
+	lookup := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}, KataLookup: true}, false))
+	assert.Contains(lookup, "find_kata_issues")
+	assert.NotContains(lookup, "get_kata_issue_context")
 }
 
 func TestKataToolsQuarantineArchiveText(t *testing.T) {

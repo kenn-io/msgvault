@@ -43,7 +43,7 @@ type Kata interface {
 }
 
 type Evidence interface {
-	Resolve(ctx context.Context, ref kataevidence.Reference) (kataevidence.Resolution, error)
+	ResolveAround(ctx context.Context, ref kataevidence.Reference, around int) (kataevidence.Resolution, error)
 }
 
 type Service struct {
@@ -169,11 +169,9 @@ func (s *Service) Link(ctx context.Context, issueRef string, evidence []kataevid
 	if err != nil {
 		return taskclient.KataTask{}, err
 	}
-	// A qualified ref names its project, such as an issue moved after filing;
-	// Kata decides whether the caller may reach it.
-	project := s.Project
-	if named, short, qualified := strings.Cut(strings.TrimSpace(issueRef), "#"); qualified {
-		project, issueRef = named, short
+	project, issueRef, err := s.splitRef(issueRef)
+	if err != nil {
+		return taskclient.KataTask{}, err
 	}
 	resolved := map[string]quotation{}
 	for range maxLinkAttempts {
@@ -259,6 +257,19 @@ func (s *Service) Citing(ctx context.Context, key string, limit int) ([]taskclie
 		return issues[:limit], true, nil
 	}
 	return issues, false, nil
+}
+
+// splitRef returns the project and issue a ref names. A qualified ref names
+// its project, such as an issue moved after filing; Kata decides whether the
+// caller may reach it.
+func (s *Service) splitRef(issueRef string) (string, string, error) {
+	if named, short, qualified := strings.Cut(strings.TrimSpace(issueRef), "#"); qualified {
+		if named == "" {
+			return "", "", taskclient.ErrInvalidRef
+		}
+		return named, short, nil
+	}
+	return s.Project, issueRef, nil
 }
 
 // issueEvidence reads an issue and the evidence it records.
@@ -382,7 +393,7 @@ func (s *Service) archiveUID(ctx context.Context) (string, error) {
 func (s *Service) resolve(ctx context.Context, refs []kataevidence.Reference) ([]quotation, error) {
 	quotes := make([]quotation, 0, len(refs))
 	for _, ref := range refs {
-		resolved, err := s.Evidence.Resolve(ctx, ref)
+		resolved, err := s.Evidence.ResolveAround(ctx, ref, 0)
 		if err != nil {
 			return nil, err
 		}

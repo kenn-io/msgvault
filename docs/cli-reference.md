@@ -2686,6 +2686,7 @@ msgvault kata evidence prepare [--input FILE]
 msgvault kata create --idempotency-key KEY [--input FILE] [--json]
 msgvault kata link <ref> [--input FILE] [--json]
 msgvault kata issues --message ID [--attachment ID] [--json]
+msgvault kata context <ref> [--offset N] [--json]
 ```
 
 `prepare`, `create`, and `link` each read one JSON request from `--input`, or
@@ -2695,7 +2696,9 @@ issue; running it again with the same key and input returns the issue it filed
 instead of a duplicate.
 `link` adds evidence to an existing issue, given as `project#ref` or a bare
 ref. `issues` lists the issues, open or closed, that already cite a message
-or one of its files, one `ref<TAB>status<TAB>title` line each. See
+or one of its files, one `ref<TAB>status<TAB>title` line each. `context`
+shows each passage an issue cites, its state in the archive today, and the
+text around it, 10 passages at a time; `--offset` reads the next page. See
 [Kata issues](usage/kata-issues.md) for request shapes and limits.
 
 ---

@@ -198,7 +198,7 @@ func TestCreateSavesPreparedQuotation(t *testing.T) {
 // resolvedAs reports every citation in one unavailable state.
 type resolvedAs kataevidence.State
 
-func (state resolvedAs) Resolve(context.Context, kataevidence.Reference) (kataevidence.Resolution, error) {
+func (state resolvedAs) ResolveAround(context.Context, kataevidence.Reference, int) (kataevidence.Resolution, error) {
 	return kataevidence.Resolution{State: kataevidence.State(state)}, nil
 }
 
@@ -529,7 +529,7 @@ func TestLinkCapsWhatAnIssueHolds(t *testing.T) {
 // file whose re-extraction produced identical chunk text.
 type fixedText string
 
-func (text fixedText) Resolve(_ context.Context, ref kataevidence.Reference) (kataevidence.Resolution, error) {
+func (text fixedText) ResolveAround(_ context.Context, ref kataevidence.Reference, _ int) (kataevidence.Resolution, error) {
 	ref, err := kataevidence.Canonicalize(ref)
 	return kataevidence.Resolution{State: kataevidence.Available, Evidence: kataevidence.Evidence{ID: kataevidence.ID(ref), Passage: kataevidence.PassageID(ref, string(text)), Reference: ref, Excerpt: string(text)}}, err
 }

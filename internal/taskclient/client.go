@@ -35,6 +35,7 @@ var (
 	ErrIncompatible                = errors.New("task integration incompatible")
 	ErrInsecureDescriptor          = errors.New("task integration descriptor is insecure")
 	ErrInsecureEndpoint            = errors.New("task integration endpoint is insecure")
+	ErrInvalidRef                  = errors.New("task integration ref is malformed")
 	ErrInvalidResponse             = errors.New("task integration response is invalid")
 	ErrNotFound                    = errors.New("task integration not found")
 	ErrPlatformSecurityLimit       = errors.New("task integration platform security limitation")

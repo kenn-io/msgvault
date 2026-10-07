@@ -36,6 +36,7 @@ type KataTask struct {
 	Project       string
 	Title         string
 	Body          string
+	CommentBodies []string
 	Revision      string
 	Status        string
 	Owner         string
@@ -209,7 +210,7 @@ func (c *KataClient) CreateTaskReused(ctx context.Context, project, idempotencyK
 
 func (c *KataClient) GetTask(ctx context.Context, project, taskID string) (KataTask, error) {
 	if err := validatePathSegment(taskID); err != nil {
-		return KataTask{}, err
+		return KataTask{}, fmt.Errorf("%w: invalid path identity", ErrInvalidRef)
 	}
 	path, err := c.issuePath(ctx, project, "/"+taskID)
 	if err != nil {
@@ -223,7 +224,11 @@ func (c *KataClient) GetTask(ctx context.Context, project, taskID string) (KataT
 	for _, label := range response.Labels {
 		labels = append(labels, label.Label)
 	}
-	return taskFromKataIssue(project, response.Issue, labels, response.WebURL), nil
+	task := taskFromKataIssue(project, response.Issue, labels, response.WebURL)
+	for _, comment := range response.Comments {
+		task.CommentBodies = append(task.CommentBodies, comment.Body)
+	}
+	return task, nil
 }
 
 // MutateMetadata binds compound edits to the revision read by the caller.
@@ -261,7 +266,7 @@ func (c *KataClient) MutateMetadataKeys(ctx context.Context, project, taskID, gu
 
 func (c *KataClient) patchMetadata(ctx context.Context, project, taskID string, request kata.PatchIssueMetadataRequestBody, headers http.Header) (KataTask, error) {
 	if err := validatePathSegment(taskID); err != nil {
-		return KataTask{}, err
+		return KataTask{}, fmt.Errorf("%w: invalid path identity", ErrInvalidRef)
 	}
 	path, err := c.issuePath(ctx, project, "/"+taskID+"/metadata")
 	if err != nil {

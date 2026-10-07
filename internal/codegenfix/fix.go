@@ -105,42 +105,45 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 			return nil, fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
 		}
 	}
-	const cacheUnavailableType = "ExploreCacheUnavailableResponse"
-	cacheValidatorStart := []byte("func (e " + cacheUnavailableType + ") Validate() error {")
-	start := bytes.Index(result, cacheValidatorStart)
-	if start < 0 {
-		return nil, errors.New("generated ExploreCacheUnavailableResponse.RecoveryAction validator shape changed")
-	}
-	endOffset := bytes.Index(result[start:], []byte("\n}\n"))
-	if endOffset < 0 {
-		return nil, errors.New("generated ExploreCacheUnavailableResponse.RecoveryAction validator shape changed")
-	}
-	end := start + endOffset
-	validator := result[start:end]
-	requiredRecoveryAction := []byte("\tif err := typesValidator.Var(e.RecoveryAction, \"required\"); err != nil {\n\t\terrors = errors.Append(\"RecoveryAction\", err)\n\t}\n")
-	switch bytes.Count(validator, requiredRecoveryAction) {
-	case 1:
-		rewritten := bytes.Replace(validator, requiredRecoveryAction, nil, 1)
-		result = append(append(append([]byte(nil), result[:start]...), rewritten...), result[end:]...)
-	case 0:
-		if !bytes.Contains(result, []byte("RecoveryAction string")) {
-			return nil, errors.New("generated ExploreCacheUnavailableResponse.RecoveryAction validator shape changed")
+	// Required strings a response may send empty keep presence but lose their non-empty check.
+	for _, target := range [][3]string{{"ExploreCacheUnavailableResponse", "RecoveryAction", "e"}, {"Evidence", "Excerpt", "e"}} {
+		typeName, field, receiver := target[0], target[1], target[2]
+		shapeErr := fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
+		start := bytes.Index(result, []byte("func ("+receiver+" "+typeName+") Validate() error {"))
+		if start < 0 {
+			return nil, shapeErr
 		}
-	default:
-		return nil, errors.New("generated ExploreCacheUnavailableResponse.RecoveryAction validator shape changed")
+		endOffset := bytes.Index(result[start:], []byte("\n}\n"))
+		if endOffset < 0 {
+			return nil, shapeErr
+		}
+		end := start + endOffset
+		validator := result[start:end]
+		required := []byte("\tif err := typesValidator.Var(" + receiver + "." + field + ", \"required\"); err != nil {\n\t\terrors = errors.Append(\"" + field + "\", err)\n\t}\n")
+		switch bytes.Count(validator, required) {
+		case 1:
+			rewritten := bytes.Replace(validator, required, nil, 1)
+			result = append(append(append([]byte(nil), result[:start]...), rewritten...), result[end:]...)
+		case 0:
+			if !bytes.Contains(result, []byte(field+" string")) {
+				return nil, shapeErr
+			}
+		default:
+			return nil, shapeErr
+		}
 	}
 	const dailyNoteRequest = "CreateDailyNoteEntryRequest"
 	startMarker := []byte("func (c " + dailyNoteRequest + ") Validate() error {")
-	start = bytes.Index(result, startMarker)
+	start := bytes.Index(result, startMarker)
 	if start < 0 {
 		return nil, errors.New("generated CreateDailyNoteEntryRequest.PersonIds validator shape changed")
 	}
-	endOffset = bytes.Index(result[start:], []byte("\n}\n"))
+	endOffset := bytes.Index(result[start:], []byte("\n}\n"))
 	if endOffset < 0 {
 		return nil, errors.New("generated CreateDailyNoteEntryRequest.PersonIds validator shape changed")
 	}
-	end = start + endOffset
-	validator = result[start:end]
+	end := start + endOffset
+	validator := result[start:end]
 	generatedPersonIDValidation := []byte(`	for i, item := range c.PersonIds {
 		if err := typesValidator.Var(item, "omitempty,gte=1"); err != nil {
 			errors = errors.Append(fmt.Sprintf("PersonIds[%d]", i), err)

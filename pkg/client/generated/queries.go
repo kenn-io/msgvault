@@ -524,6 +524,11 @@ type FindKataIssuesQuery struct {
 	AttachmentID *int64 `json:"attachment_id,omitempty"`
 }
 
+type GetKataIssueContextQuery struct {
+	// Offset Index of the first passage to return; pass next_offset from the previous page
+	Offset *int64 `json:"offset,omitempty"`
+}
+
 type SearchIntegrationTasksQuery struct {
 	// Q Task title search within the configured project
 	Q string `json:"q" validate:"required"`

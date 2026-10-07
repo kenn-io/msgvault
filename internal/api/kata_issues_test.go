@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
+	"go.kenn.io/msgvault/internal/testutil/katatest"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -27,12 +29,19 @@ type fakeKataIssueOperations struct {
 	created   kataissues.CreateInput
 	linkedRef string
 	found     [2]int64
+	read      string
+	offset    int
 	err       error
 }
 
 func (f *fakeKataIssueOperations) Find(_ context.Context, messageID, attachmentID int64) ([]taskclient.KataTask, bool, error) {
 	f.found = [2]int64{messageID, attachmentID}
 	return []taskclient.KataTask{{UID: "01ISSUE", Ref: "abcd", QualifiedRef: "example#abcd", Project: "example", Title: "Send the budget", Status: "closed", Revision: "3"}}, true, f.err
+}
+
+func (f *fakeKataIssueOperations) Context(_ context.Context, ref string, offset int) (kataissues.Context, error) {
+	f.read, f.offset = ref, offset
+	return kataissues.Context{Issue: taskclient.KataTask{UID: "01ISSUE", QualifiedRef: "example#abcd"}, Passages: []kataissues.ContextPassage{{State: kataevidence.Changed, SavedQuote: "Send the budget"}}, NextOffset: 20}, f.err
 }
 
 func (f *fakeKataIssueOperations) Prepare(_ context.Context, selectors []kataevidence.Selector) ([]kataevidence.Evidence, error) {
@@ -119,6 +128,48 @@ func TestKataIssueHTTP(t *testing.T) {
 	missing := httptest.NewRecorder()
 	server.router.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/kata/issues?attachment_id=3", nil))
 	assert.Equal(http.StatusBadRequest, missing.Code)
+
+	read := httptest.NewRecorder()
+	server.router.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/kata/issues/example%23abcd/context?offset=10", nil))
+	require.Equal(http.StatusOK, read.Code, read.Body.String())
+	assert.Equal("no-store", read.Header().Get("Cache-Control"))
+	var issueContext KataIssueContextResponse
+	require.NoError(json.Unmarshal(read.Body.Bytes(), &issueContext))
+	assert.Equal("example#abcd", operations.read)
+	assert.Equal(10, operations.offset)
+	require.Len(issueContext.Passages, 1)
+	assert.Equal("Send the budget", issueContext.Passages[0].SavedQuote)
+	assert.Equal(20, issueContext.NextOffset)
+	negative := httptest.NewRecorder()
+	server.router.ServeHTTP(negative, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/kata/issues/example%23abcd/context?offset=-1", nil))
+	assert.Equal(http.StatusBadRequest, negative.Code)
+
+	kataServer := httptest.NewServer(katatest.New(t).Service.Handler())
+	t.Cleanup(kataServer.Close)
+	cfg := &config.Config{}
+	cfg.Integrations.Kata = config.TaskIntegrationConfig{Enabled: true, Endpoint: kataServer.URL, APIKey: katatest.Token, DefaultProject: "example"}
+	f := storetest.New(t)
+	backendServer := NewServerWithOptions(ServerOptions{Config: cfg, Store: &mockStore{}, Logger: testLogger(), KataIssueOperations: &kataIssueBackend{store: f.Store, config: cfg.Integrations.Kata}})
+	var createRequest KataIssueCreateRequest
+	require.NoError(json.Unmarshal([]byte(createBody), &createRequest))
+	linkBody, err := json.Marshal(KataEvidenceLinkRequest{Evidence: createRequest.Evidence})
+	require.NoError(err)
+	for _, ref := range []string{"example#", "example#a#b", "#abcd", "example#abcd/efgh", `example#abcd\efgh`, "example#abcd?efgh", "example#.", "example#.."} {
+		for _, route := range []string{"context", "evidence"} {
+			path := "/api/v1/integrations/kata/issues/" + url.PathEscape(ref) + "/" + route
+			malformed := httptest.NewRecorder()
+			if route == "context" {
+				backendServer.router.ServeHTTP(malformed, httptest.NewRequest(http.MethodGet, path, nil))
+			} else {
+				malformed = serveKataIssue(backendServer, path, string(linkBody), nil)
+			}
+			assert.Equal(http.StatusBadRequest, malformed.Code, "%s %s: %s", route, ref, malformed.Body.String())
+			var body ErrorResponse
+			require.NoError(json.Unmarshal(malformed.Body.Bytes(), &body))
+			assert.Equal("invalid_ref", body.Error)
+			assert.Equal("Kata issue ref is malformed", body.Message)
+		}
+	}
 
 	for _, tc := range []struct {
 		err    error

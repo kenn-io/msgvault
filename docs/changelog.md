@@ -27,7 +27,8 @@ All notable changes to msgvault, grouped by release.
   message, transcript, or file, from the Web UI, `msgvault kata`, HTTP, or MCP
   (`--allow-kata-writes`). Retrying a create returns the original issue, and
   `msgvault kata issues` finds the issues, open or closed, that already cite
-  a message or file.
+  a message or file. `msgvault kata context` reads back each passage an issue
+  cites, with its state in the archive today and the text around it.
   Person agenda writes now work with a static Kata token.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.

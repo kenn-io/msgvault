@@ -3,6 +3,7 @@ package taskclient
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,6 +21,7 @@ func TestConnectKataChecksNativeSchemaAndProject(t *testing.T) {
 		wantState             State
 	}{
 		{"ready", "0.21.0", "msgvault", 200, nil, StateReady},
+		{"project with slash", "0.21.0", "team/docs", 200, nil, StateReady},
 		{"newer schema", "0.22.0", "msgvault", 200, nil, StateReady},
 		{"old schema", "0.20.0", "msgvault", 200, ErrIncompatible, StateIncompatible},
 		{"malformed schema", "not-a-version", "msgvault", 200, ErrIncompatible, StateIncompatible},
@@ -41,7 +43,9 @@ func TestConnectKataChecksNativeSchemaAndProject(t *testing.T) {
 						writeTestJSON(t, w, map[string]any{"api_schema_version": tt.schema})
 					}
 				case "/api/v1/projects":
-					writeTestJSON(t, w, map[string]any{"projects": []any{map[string]any{"id": 1, "uid": "project-uid", "name": "msgvault", "active": true}}})
+					writeTestJSON(t, w, map[string]any{"projects": []any{map[string]any{"id": 1, "uid": "project-uid", "name": "msgvault", "active": true}, map[string]any{"id": 2, "uid": "docs-project-uid", "name": "team/docs", "active": true}}})
+				case "/api/v1/projects/2/issues/abcd":
+					http.NotFound(w, r)
 				default:
 					assert.Fail("unexpected native request", r.URL.Path)
 					http.NotFound(w, r)
@@ -57,9 +61,35 @@ func TestConnectKataChecksNativeSchemaAndProject(t *testing.T) {
 				require.ErrorIs(err, tt.wantErr)
 				assert.Nil(client)
 			}
+			if tt.project == "team/docs" {
+				_, err = client.GetTask(t.Context(), tt.project, "abcd")
+				require.ErrorIs(err, ErrNotFound)
+				_, err = client.GetTask(t.Context(), "", "abcd")
+				require.ErrorIs(err, ErrWrongProject)
+			}
 			assert.Equal(tt.wantState, EvaluateKata(t.Context(), cfg).State)
 		})
 	}
+}
+
+func TestKataRejectsIssueIdentifiersWithPathDelimiters(t *testing.T) {
+	require := require.New(t)
+	var requestCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	client := &KataClient{transport: newLoopbackClient(t, server.URL, "rejection-test-key", nil), project: "test-project", projectID: 1}
+	for _, invalid := range []string{"", ".", "..", "a/b", `a\b`, "a?b", "a#b"} {
+		_, err := client.GetTask(t.Context(), "test-project", invalid)
+		require.ErrorIs(err, ErrInvalidRef, "task %q", invalid)
+		_, err = client.MutateMetadata(t.Context(), "test-project", invalid, "1", map[string]any{"example.key": "value"})
+		require.ErrorIs(err, ErrInvalidRef, "metadata task %q", invalid)
+		err = client.AddComment(t.Context(), "test-project", invalid, "comment-key", "Example comment")
+		require.ErrorIs(err, ErrInvalidRef, "comment task %q", invalid)
+	}
+	assert.Zero(t, requestCount.Load())
 }
 
 func TestKataRequiresExplicitEndpoint(t *testing.T) {

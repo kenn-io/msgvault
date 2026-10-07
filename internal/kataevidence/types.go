@@ -18,6 +18,8 @@ const (
 	// every rune is JSON-escaped, up to 12 bytes for a surrogate pair, plus the
 	// rest of the request.
 	MaxRequestBytes = 512 << 10
+	// ContextRunes is how much text a read shows on each side of a citation.
+	ContextRunes = 500
 )
 
 var (
@@ -119,6 +121,10 @@ type Evidence struct {
 type Resolution struct {
 	State    State    `json:"state"`
 	Evidence Evidence `json:"evidence"`
+	// Before and After hold up to ContextRunes of the text around an
+	// available excerpt when the caller asks for them.
+	Before string `json:"before,omitzero" doc:"Up to 500 characters of source text before the excerpt, when available"`
+	After  string `json:"after,omitzero" doc:"Up to 500 characters of source text after the excerpt, when available"`
 }
 
 // Range returns the half-open rune range of a validated reference.

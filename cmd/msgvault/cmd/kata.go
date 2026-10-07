@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"cmp"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -139,7 +140,30 @@ func newKataCmd() *cobra.Command {
 	_ = issues.MarkFlagRequired("message")
 	issues.Flags().Int64Var(&attachmentID, "attachment", 0, "Only issues citing this attachment of the message")
 
-	root.AddCommand(evidence, create, link, issues)
+	var offset int64
+	issueContext := &cobra.Command{
+		Use:   "context <ref>",
+		Short: "Show each passage a Kata issue cites, with its state in the archive and the text around it",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, closeClient, err := openKataClient(cmd, kataContextMinAPISchemaVersion)
+			if err != nil {
+				return err
+			}
+			defer closeClient()
+			result, err := client.GetKataIssueContext(cmd.Context(), args[0], generated.GetKataIssueContextQuery{Offset: &offset})
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return writePersonAgendaJSON(cmd, result)
+			}
+			return writeKataIssueContext(cmd.OutOrStdout(), result)
+		},
+	}
+	issueContext.Flags().Int64Var(&offset, "offset", 0, "Index of the first passage to show")
+
+	root.AddCommand(evidence, create, link, issues, issueContext)
 	return root
 }
 
@@ -196,6 +220,44 @@ func writeKataIssue(cmd *cobra.Command, result generated.KataIssueResponse, json
 	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s%s\n", textutil.SanitizeTerminal(result.Issue.QualifiedRef), textutil.SanitizeTerminal(result.Issue.Title), replayed); err != nil {
 		return fmt.Errorf("write Kata issue: %w", err)
+	}
+	return nil
+}
+
+// writeKataIssueContext prints the issue, then each passage's state and
+// source with the cited words in brackets inside the text around them.
+func writeKataIssueContext(out io.Writer, result generated.KataIssueContextResponse) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\t%s\t%s\n", textutil.SanitizeTerminal(result.Issue.QualifiedRef), textutil.SanitizeTerminal(result.Issue.Status), textutil.SanitizeTerminal(result.Issue.Title))
+	for _, passage := range result.Passages {
+		display := passage.Evidence.Display
+		// An unavailable reference may name another archive, where its IDs mean nothing here.
+		ref := passage.Evidence.Reference
+		source := fmt.Sprintf("message %d", ref.MessageID)
+		switch {
+		case passage.State == "unavailable" && ref.DocumentChunk != nil:
+			source = "attachment in this or another archive"
+		case passage.State == "unavailable":
+			source = "message in this or another archive"
+		case ref.DocumentChunk != nil && ref.AttachmentID != nil:
+			source = fmt.Sprintf("attachment %d of message %d", *ref.AttachmentID, ref.MessageID)
+		}
+		if name := cmp.Or(stringOrEmpty(display.Filename), stringOrEmpty(display.ContainingTitle)); name != "" {
+			source += ": " + name
+		}
+		fmt.Fprintf(&b, "\n%s\t%s\n", textutil.SanitizeTerminal(passage.State), textutil.SanitizeTerminal(source))
+		if passage.Evidence.Excerpt != "" {
+			fmt.Fprintf(&b, "  %s[%s]%s\n", textutil.SanitizeTerminal(stringOrEmpty(passage.Before)), textutil.SanitizeTerminal(passage.Evidence.Excerpt), textutil.SanitizeTerminal(stringOrEmpty(passage.After)))
+		}
+		if quote := stringOrEmpty(passage.SavedQuote); quote != "" {
+			fmt.Fprintf(&b, "  saved quote: %s\n", textutil.SanitizeTerminal(quote))
+		}
+	}
+	if result.NextOffset != nil {
+		fmt.Fprintf(&b, "\nmore passages: --offset %d\n", *result.NextOffset)
+	}
+	if _, err := io.WriteString(out, b.String()); err != nil {
+		return fmt.Errorf("write Kata issue context: %w", err)
 	}
 	return nil
 }

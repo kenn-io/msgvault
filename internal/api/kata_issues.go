@@ -25,6 +25,8 @@ type KataIssueOperations interface {
 	// Find lists issues citing a message, or one of its attachments when
 	// attachmentID is set, and whether more do.
 	Find(ctx context.Context, messageID, attachmentID int64) ([]taskclient.KataTask, bool, error)
+	// Context reads one page of the passages an issue cites.
+	Context(ctx context.Context, ref string, offset int) (kataissues.Context, error)
 }
 
 // kataIssueFindLimit bounds the issues one lookup returns.
@@ -74,6 +76,12 @@ type KataIssueListResponse struct {
 	Truncated bool               `json:"truncated" doc:"More issues cite this source than were returned"`
 }
 
+type KataIssueContextResponse struct {
+	Issue      KataIssueReceipt            `json:"issue"`
+	Passages   []kataissues.ContextPassage `json:"passages"`
+	NextOffset int                         `json:"next_offset,omitzero" doc:"Offset of the next page of passages; absent on the last page"`
+}
+
 type KataIssueResponse struct {
 	Issue    KataIssueReceipt `json:"issue"`
 	Replayed bool             `json:"replayed" doc:"An earlier request with this Idempotency-Key already created the issue"`
@@ -109,6 +117,13 @@ func (s *Server) registerKataIssueRoutes(api huma.API) {
 	link.Responses = jsonResponsesFor[KataIssueResponse](api)
 	addErrorResponses(api, link.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, link, s.handleLinkKataEvidence)
+
+	issueContext := rawAPIV1Operation("getKataIssueContext", http.MethodGet, "/integrations/kata/issues/{ref}/context", "Read each passage a Kata issue cites with its state in the archive today")
+	issueContext.Parameters = append(issueContext.Parameters, &huma.Param{Name: "ref", In: pathKey, Required: true, Description: "Kata issue ref, qualified ref or UID", Schema: &huma.Schema{Type: huma.TypeString}},
+		queryIntegerParam("offset", "Index of the first passage to return; pass next_offset from the previous page"))
+	issueContext.Responses = jsonResponsesFor[KataIssueContextResponse](api)
+	addErrorResponses(api, issueContext.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, issueContext, s.handleKataIssueContext)
 }
 
 func (s *Server) handlePrepareKataEvidence(w http.ResponseWriter, r *http.Request) {
@@ -168,6 +183,29 @@ func (s *Server) handleLinkKataEvidence(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, KataIssueResponse{Issue: kataIssueReceipt(issue)})
 }
 
+func (s *Server) handleKataIssueContext(w http.ResponseWriter, r *http.Request) {
+	if !s.requireKataIssues(w) {
+		return
+	}
+	ref := strings.TrimSpace(r.PathValue("ref"))
+	if ref == "" {
+		writeError(w, http.StatusBadRequest, "ref_required", "Kata issue ref is required")
+		return
+	}
+	offset, _, err := queryInt(r, "offset")
+	if err != nil || offset < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_offset", "offset must be a non-negative integer")
+		return
+	}
+	result, err := s.kataIssueOperations.Context(r.Context(), ref, offset)
+	if err != nil {
+		s.writeKataIssueError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, KataIssueContextResponse{Issue: kataIssueReceipt(result.Issue), Passages: result.Passages, NextOffset: result.NextOffset})
+}
+
 func (s *Server) handleFindKataIssues(w http.ResponseWriter, r *http.Request) {
 	if !s.requireKataIssues(w) {
 		return
@@ -215,6 +253,7 @@ func (s *Server) writeKataIssueError(w http.ResponseWriter, err error) {
 		code, message string
 	}{
 		{kataevidence.ErrInvalidReference, http.StatusBadRequest, "invalid_evidence", "Evidence identity or range is invalid"},
+		{taskclient.ErrInvalidRef, http.StatusBadRequest, "invalid_ref", "Kata issue ref is malformed"},
 		{kataissues.ErrInvalidRequest, http.StatusUnprocessableEntity, "invalid_request", "Title, brief, list or person is invalid"},
 		{kataevidence.ErrArchiveUnavailable, http.StatusServiceUnavailable, "archive_unavailable", "The archive could not be read"},
 		{kataevidence.ErrUnavailable, http.StatusNotFound, "evidence_unavailable", "The cited source is unavailable"},
@@ -226,7 +265,7 @@ func (s *Server) writeKataIssueError(w http.ResponseWriter, err error) {
 		{kataissues.ErrEvidenceLimit, http.StatusUnprocessableEntity, "evidence_limit", "A request can cite at most 32 passages"},
 		{kataissues.ErrIssueDeleted, http.StatusConflict, "kata_issue_deleted", "The issue this key filed was deleted in Kata or is not visible to this credential; use a new idempotency key, or restore the issue in Kata"},
 		{kataissues.ErrIdempotencyConflict, http.StatusConflict, "idempotency_conflict", "This Idempotency-Key was used with a different request"},
-		{kataissues.ErrUnsupportedEvidence, http.StatusConflict, "unsupported_issue_evidence", "The issue's evidence metadata cannot be updated safely"},
+		{kataissues.ErrUnsupportedEvidence, http.StatusConflict, "unsupported_issue_evidence", "msgvault can't read this issue's evidence metadata"},
 		{kataissues.ErrIssueFull, http.StatusUnprocessableEntity, "issue_evidence_full", "This issue already holds as much evidence as it can; file a new issue"},
 		{kataissues.ErrIssueChanged, http.StatusConflict, "kata_issue_changed", "The issue kept changing; try again"},
 		{store.ErrPersonNotFound, http.StatusNotFound, "person_profile_not_found", "Person profile not found"},
@@ -294,6 +333,14 @@ func (b *kataIssueBackend) Link(ctx context.Context, ref string, evidence []kata
 		return taskclient.KataTask{}, err
 	}
 	return service.Link(ctx, ref, evidence)
+}
+
+func (b *kataIssueBackend) Context(ctx context.Context, ref string, offset int) (kataissues.Context, error) {
+	service, err := b.service(ctx)
+	if err != nil {
+		return kataissues.Context{}, err
+	}
+	return service.Context(ctx, ref, offset)
 }
 
 func (b *kataIssueBackend) Find(ctx context.Context, messageID, attachmentID int64) ([]taskclient.KataTask, bool, error) {

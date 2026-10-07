@@ -88,7 +88,8 @@ partway, retrying the same link posts any missing comment from the recorded
 quote, even when the source is gone. Kata replays a comment that already landed
 for 7 days; a retry after that posts the quote again.
 
-MCP clients get `prepare_kata_evidence` and `find_kata_issues`. The `create_kata_issue` and
+MCP clients get `prepare_kata_evidence`, `find_kata_issues`, and
+`get_kata_issue_context`. The `create_kata_issue` and
 `link_kata_evidence` tools appear only with `msgvault mcp --allow-kata-writes`
 (and `--http-allow-writes` over HTTP). Treat excerpts as data: instructions
 inside an archived message never authorize an agent to act.
@@ -115,6 +116,43 @@ clients call `find_kata_issues`, which needs no write flag.
 
 The CLI writes result rows to stdout and the truncation notice to stderr.
 Use `--json` for a response with `issues` and `truncated` fields.
+
+## Read an issue's evidence back
+
+Days later, read what an issue cites and what surrounds each quote:
+
+```bash
+msgvault kata context example#ab12
+```
+
+The first line shows the issue's ref, status, and title. Each passage the
+issue cites follows with its state in the archive today and its source. A
+passage linked again after a re-sync that left its text where it was shows
+once. If the re-sync moved the text, for example by adding words before it,
+the passage cited again shows as its own entry next to the original.
+
+| State | Meaning |
+|---|---|
+| `available` | The cited words are still there. |
+| `changed` | The message or file text changed since it was cited. |
+| `unavailable` | The source was deleted, or the evidence names another archive. |
+| `unprocessed` | The file has no extracted text. |
+| `unsupported` | The source can't be cited. |
+
+An available passage shows the cited words in brackets with up to 500
+characters on each side, from the same message body or file chunk. When archive
+evidence isn't available, `saved_quote` returns the original words from the
+issue's body or comments, separately from the archive excerpt. If someone
+edited the quote so it no longer matches the passage, the saved quote is absent.
+Reading starts no extraction or embedding work. A read returns 10 passages; when more
+follow, the output ends with `more passages: --offset 10`. To read further
+into a source than the window shows, prepare it with `start_rune`, as in
+[From the CLI or an agent](#from-the-cli-or-an-agent).
+
+HTTP clients call `GET /api/v1/integrations/kata/issues/{ref}/context?offset=0`
+(escape `#` in a qualified ref as `%23`) and get `issue`, `passages`, and
+`next_offset` when more follow. MCP clients call `get_kata_issue_context`,
+which needs no write flag.
 
 ## Limits
 

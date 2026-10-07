@@ -119,6 +119,8 @@ type ServeOptions struct {
 	Kata                KataBackend
 	// KataLookup lists find_kata_issues, which needs a newer daemon than the other Kata tools.
 	KataLookup bool
+	// KataContext lists get_kata_issue_context, which needs a newer daemon still.
+	KataContext bool
 	// AllowProfileWrites exposes person promotion and Notes mutation tools.
 	// It remains false unless the operator explicitly opts in.
 	AllowProfileWrites bool

@@ -75,10 +75,11 @@ func (s *Service) Prepare(ctx context.Context, selectors []Selector) ([]Evidence
 	return result, nil
 }
 
-// Resolve re-reads a canonical citation; callers canonicalize at the request
-// boundary. A source that moved or disappeared is reported as a state rather
-// than an error.
-func (s *Service) Resolve(ctx context.Context, ref Reference) (Resolution, error) {
+// ResolveAround re-reads a canonical citation; callers canonicalize at the
+// request boundary. A source that moved or disappeared is reported as a state
+// rather than an error. When it is available, up to around runes of the cited
+// representation's text are added on each side of the excerpt.
+func (s *Service) ResolveAround(ctx context.Context, ref Reference, around int) (Resolution, error) {
 	result := Resolution{Evidence: Evidence{ID: ID(ref), Reference: ref, ContentTrust: "untrusted"}}
 	record, err := s.reader.ReadKataEvidenceSource(ctx, ref)
 	if err != nil {
@@ -106,6 +107,10 @@ func (s *Service) Resolve(ctx context.Context, ref Reference) (Resolution, error
 	result.State = Available
 	result.Evidence.Excerpt, result.Evidence.Passage = excerpt, PassageID(ref, excerpt)
 	result.Evidence.Display = record.Display
+	if around > 0 {
+		result.Before, _ = textutil.RuneSlice(record.Text, max(0, start-around), start)
+		result.After, _ = textutil.RuneSlice(record.Text, end, min(utf8.RuneCountInString(record.Text), end+around))
+	}
 	return result, nil
 }
 

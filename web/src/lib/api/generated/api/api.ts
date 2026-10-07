@@ -158,6 +158,8 @@ import type {
   GetGmailIDsByFilterParams,
   GetIdentityMatchCandidatePathParameters,
   GetImportJobPathParameters,
+  GetKataIssueContextParams,
+  GetKataIssueContextPathParameters,
   GetMessageInlinePartParams,
   GetMessageInlinePartPathParameters,
   GetMessagePathParameters,
@@ -203,6 +205,7 @@ import type {
   KataEvidenceLinkRequest,
   KataEvidencePrepareRequest,
   KataEvidencePrepareResponse,
+  KataIssueContextResponse,
   KataIssueCreateRequest,
   KataIssueListResponse,
   KataIssueResponse,
@@ -1990,6 +1993,23 @@ export const createKataIssue = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: kataIssueCreateRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Read each passage a Kata issue cites with its state in the archive today
+ */
+export const getKataIssueContext = (
+  { ref }: GetKataIssueContextPathParameters,
+  params?: GetKataIssueContextParams,
+  options?: SecondParameter<typeof orvalFetch<KataIssueContextResponse>>,
+) => {
+  return orvalFetch<KataIssueContextResponse>(
+    {
+      url: `/api/v1/integrations/kata/issues/${encodeURIComponent(String(ref))}/context`,
+      method: "GET",
+      params,
     },
     options,
   );
