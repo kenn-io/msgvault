@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"maps"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -249,7 +250,7 @@ func TestImportContractRangesPreserveDisorderedIDs(t *testing.T) {
 		t.Run(fmt.Sprintf("cap_%d", pageCap), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			want := []int64{1, 2, 7, 9, 15, 33, 41, 70, 111, 901, 904, 1301, 2100}
+			want := []int64{1, 2, 7, 9, 15, 33, 41, 70, 111, 901, 904, 1301, 2100, math.MaxInt32}
 			messages := make([]map[string]any, 0, len(want))
 			for i, id := range want {
 				messages = append(messages, contractMessage(id, 1767225600+int64((i*7)%5), nil))
@@ -263,6 +264,75 @@ func TestImportContractRangesPreserveDisorderedIDs(t *testing.T) {
 			_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
 			require.NoError(err)
 			assert.Equal(want, contractMessageIDs(t, st), "restart must not create duplicates")
+		})
+	}
+}
+
+func TestImportContractMaximumIDMediaAndCall(t *testing.T) {
+	for _, mode := range []string{"initial", "limited", "legacy"} {
+		t.Run(mode, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			media := newMediaRefreshServer(t)
+			router := newChatwootMediaRouter(t, media.server)
+			attachment := map[string]any{"id": int64(2001), "file_type": "audio"}
+			message := contractMessage(math.MaxInt32, now().Unix(), map[string]any{"id": int64(8), "type": "user"})
+			message["content_type"], message["message_type"] = "voice_call", 1
+			message["call"] = map[string]any{"id": 601, "direction": "outgoing", "status": "completed"}
+			message["attachments"] = []any{attachment}
+			api := newContractAPI(t, 1, []map[string]any{contractMessage(math.MaxInt32-1, now().Add(-time.Second).Unix(), nil), message})
+			api.mediaRouter = router
+			st := testutil.NewTestStore(t)
+			imp, source := contractRegister(t, st, api)
+			opts := mediaRefreshOptions(t)
+			if mode == "limited" {
+				opts.Limit = 1
+			}
+			if mode == "legacy" {
+				api.conversations[42] = api.conversations[42][:1]
+				_, err := imp.Import(t.Context(), opts)
+				require.NoError(err)
+				legacy := savedState(t, st, source)
+				legacy.Conversations["42"] = &conversationState{Pending: []idRange{{math.MaxInt32 - 1, math.MaxInt32}}}
+				blob, err := legacy.marshal()
+				require.NoError(err)
+				parsed, err := parseSyncState(blob, legacy.Scope)
+				require.NoError(err)
+				assert.Equal(legacy.Conversations["42"].Pending, parsed.Conversations["42"].Pending)
+				syncID, err := st.StartSyncContext(t.Context(), source.ID, SourceType)
+				require.NoError(err)
+				require.NoError(st.CompleteSyncAndUpdateSourceCursorContext(t.Context(), syncID, source.ID, blob))
+				api.conversations[42] = append(api.conversations[42], message)
+			}
+			sum, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+			for tries := 0; sum.Partial && tries < 10; tries++ {
+				sum, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+			}
+			require.False(sum.Partial)
+			if mode == "legacy" {
+				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+				require.NoError(err)
+			}
+			chatID := contractArchivedMessageID(t, st, "2147483647")
+			meetingID := contractArchivedMessageID(t, st, "call:2147483647")
+			require.Contains(savedState(t, st, source).Conversations["42"].Artifacts, "2147483647")
+			attachment["data_url"] = router.url(t, media.server, "/recording-a.ogg")
+			attachment["transcribed_text"] = "maximumquartz transcript"
+			_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+			require.NoError(err)
+			for _, id := range []int64{chatID, meetingID} {
+				body, err := st.GetMessageBodyText(id)
+				require.NoError(err)
+				assert.Contains(body, "maximumquartz")
+				_, payloads := readMediaRefreshBytes(t, st, id, opts.AttachmentsDir)
+				assert.Equal([]string{"synthetic recording A bytes"}, payloads)
+			}
+			opts.Limit, opts.Full = 0, true
+			_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+			require.NoError(err)
+			assert.Equal(chatID, contractArchivedMessageID(t, st, "2147483647"))
+			assert.Equal(meetingID, contractArchivedMessageID(t, st, "call:2147483647"))
 		})
 	}
 }

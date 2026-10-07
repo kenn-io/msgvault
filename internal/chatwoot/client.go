@@ -286,14 +286,7 @@ func mediaEffectivePort(u *url.URL) string {
 }
 
 func mediaTargetPort(u *url.URL) (uint16, error) {
-	rawPort := u.Port()
-	if rawPort == "" {
-		if strings.EqualFold(u.Scheme, "https") {
-			return 443, nil
-		}
-		return 80, nil
-	}
-	port, err := strconv.ParseUint(rawPort, 10, 16)
+	port, err := strconv.ParseUint(mediaEffectivePort(u), 10, 16)
 	if err != nil || port == 0 {
 		return 0, errors.New("invalid Chatwoot media URL port")
 	}

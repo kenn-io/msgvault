@@ -52,9 +52,8 @@ const (
 	// activityOverlap rereads conversations near the watermark, because
 	// Chatwoot orders equal activity times arbitrarily between pages.
 	activityOverlap = 10 * time.Minute
-	// openBound ends an open message range. Chatwoot message IDs are 32-bit, and
-	// releases before 4.17 reject larger bounds.
-	openBound = math.MaxInt32
+	// Rails numeric bounds allow the exclusive endpoint above Chatwoot's largest ID.
+	openBound = math.MaxInt32 + 1
 	// artifactWindow bounds how long a recording, transcript or failed
 	// download is rechecked. Chatwoot updates them without new activity.
 	artifactWindow = callsync.LateArtifactWindow
@@ -559,9 +558,6 @@ func (imp *Importer) processConversation(ctx context.Context, sourceID, syncID i
 					sum.MessagesProcessed++
 				}
 				cs.LastArtifact = id
-				if err = imp.checkpoint(ctx, syncID, state, sum); err != nil {
-					return err
-				}
 			}
 			artifactIDs = above
 		}
