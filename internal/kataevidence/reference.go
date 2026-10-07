@@ -3,7 +3,8 @@ package kataevidence
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json/v2"
+	"io"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -48,17 +49,34 @@ func Canonicalize(r Reference) (Reference, error) {
 }
 
 // ID binds content, occurrence and range together, excluding presentation.
-// r must already be canonical.
+// r must already be canonical. A field added to Reference joins the ID only
+// under a new domain tag.
 func ID(r Reference) string {
-	return Digest(r)
+	fields := []string{strconv.Itoa(r.Version), r.Kind, r.ArchiveUID, strconv.FormatInt(r.MessageID, 10),
+		r.SourceType, r.SourceIdentifier, r.SourceMessageID, strconv.FormatInt(r.AttachmentID, 10), r.OccurrenceKey}
+	switch {
+	case r.Message != nil:
+		p := r.Message
+		fields = append(fields, p.BodySHA256, strconv.Itoa(p.StartRune), strconv.Itoa(p.EndRune))
+	case r.DocumentChunk != nil:
+		p := r.DocumentChunk
+		fields = append(fields, p.CanonicalBlobHash, p.ExtractionID, p.ManifestChecksum, p.ChunkKey, p.ChunkChecksum,
+			strconv.Itoa(p.StartRune), strconv.Itoa(p.EndRune))
+	}
+	return Digest("msgvault.kata.evidence.v1", fields...)
 }
 
-// Digest is the hex SHA-256 of value's deterministic JSON, a stable identity
-// for references and the requests that cite them.
-func Digest(value any) string {
-	data, _ := json.Marshal(value, json.Deterministic(true))
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+// Digest is the hex SHA-256 of a domain tag and fields, each written as its
+// byte length, a colon and its bytes, so no two field lists share an
+// encoding. Kata issues store these digests, so the bytes for a domain never
+// change: hashing different fields needs a new domain tag.
+func Digest(domain string, fields ...string) string {
+	hash := sha256.New()
+	for _, field := range append([]string{domain}, fields...) {
+		// A hash never fails to write.
+		_, _ = io.WriteString(hash, strconv.Itoa(len(field))+":"+field)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func validIdentity(s string) bool {
@@ -76,31 +94,22 @@ func normalizeDigest(s *string) bool {
 	return true
 }
 
-// passage names where a citation sits, leaving out the content and
-// extraction hashes that change when the source is synced or reprocessed, and
-// the attachment row ID, which message repair can reassign; the occurrence
-// key names the file instead.
-type passage struct {
-	Kind, ArchiveUID                              string
-	MessageID                                     int64
-	SourceType, SourceIdentifier, SourceMessageID string
-	OccurrenceKey, ChunkKey                       string
-	Start, End                                    int
-}
-
 // PassageID is the one identity msgvault uses to decide whether two
 // citations quote the same thing: where the text sits plus its words.
 func PassageID(ref Reference, words string) string {
-	return Digest([]string{PassageLocation(ref), words})
+	return Digest("msgvault.kata.passage.v1", PassageLocation(ref), words)
 }
 
-// PassageLocation identifies where ref sits, whatever text is there now.
+// PassageLocation identifies where ref sits, whatever text is there now. It
+// leaves out the content and extraction hashes that change when the source is
+// synced or reprocessed, and the attachment row ID, which message repair can
+// reassign; the occurrence key names the file instead.
 func PassageLocation(ref Reference) string {
-	p := passage{Kind: ref.Kind, ArchiveUID: ref.ArchiveUID, MessageID: ref.MessageID, SourceType: ref.SourceType, SourceIdentifier: ref.SourceIdentifier,
-		SourceMessageID: ref.SourceMessageID, OccurrenceKey: ref.OccurrenceKey}
+	chunkKey := ""
 	if ref.DocumentChunk != nil {
-		p.ChunkKey = ref.DocumentChunk.ChunkKey
+		chunkKey = ref.DocumentChunk.ChunkKey
 	}
-	p.Start, p.End = ref.Range()
-	return Digest(p)
+	start, end := ref.Range()
+	return Digest("msgvault.kata.passage-location.v1", ref.Kind, ref.ArchiveUID, strconv.FormatInt(ref.MessageID, 10),
+		ref.SourceType, ref.SourceIdentifier, ref.SourceMessageID, ref.OccurrenceKey, chunkKey, strconv.Itoa(start), strconv.Itoa(end))
 }

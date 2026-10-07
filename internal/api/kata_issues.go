@@ -185,6 +185,7 @@ func (s *Server) writeKataIssueError(w http.ResponseWriter, err error) {
 		{kataissues.ErrUnsupportedEvidence, http.StatusConflict, "unsupported_issue_evidence", "The issue's evidence metadata cannot be updated safely"},
 		{kataissues.ErrIssueFull, http.StatusUnprocessableEntity, "issue_evidence_full", "This issue already holds as much evidence as it can; file a new issue"},
 		{kataissues.ErrIssueChanged, http.StatusConflict, "kata_issue_changed", "The issue kept changing; try again"},
+		{kataissues.ErrOutsideProject, http.StatusUnprocessableEntity, "kata_issue_outside_project", "msgvault adds evidence only to issues in the configured Kata project"},
 		{store.ErrPersonNotFound, http.StatusNotFound, "person_profile_not_found", "Person profile not found"},
 		{personagenda.ErrPersonIdentity, http.StatusConflict, "person_identity_required", "Person has no stable vCard UID for agenda linking"},
 		{personagenda.ErrIdentityLookup, http.StatusServiceUnavailable, "person_identity_unavailable", "Person identity lookup failed"},

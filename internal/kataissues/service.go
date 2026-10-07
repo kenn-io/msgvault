@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/kataevidence"
@@ -22,6 +23,7 @@ var (
 	ErrUnsupportedEvidence = errors.New("issue evidence metadata is not supported")
 	ErrIssueChanged        = errors.New("kata issue kept changing")
 	ErrIssueFull           = errors.New("kata issue quotes too many passages")
+	ErrOutsideProject      = errors.New("kata issue is outside the configured project")
 )
 
 // RequestMetadataKey records the hash of the request that created an issue,
@@ -93,7 +95,7 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 	}
 	// The marker doubles as Kata's Idempotency-Key, so concurrent identical
 	// creates also collapse into one issue inside Kata.
-	marker := kataevidence.Digest([]string{archive, key})
+	marker := kataevidence.Digest("msgvault.kata.create-marker.v1", archive, key)
 	existing, found, err := s.Kata.FindActionTask(ctx, s.Project, marker)
 	if err != nil {
 		return Result{}, err
@@ -164,11 +166,15 @@ func (s *Service) Link(ctx context.Context, issueRef string, evidence []kataevid
 	if err != nil {
 		return taskclient.KataTask{}, err
 	}
-	// A qualified ref names its project, such as an issue moved after filing;
-	// Kata decides whether the caller may reach it.
+	// Writes stay in the configured project, the scope --allow-kata-writes
+	// grants, even when the credential reaches others. An issue moved to
+	// another project takes new evidence there through Kata itself.
 	project := s.Project
 	if named, short, qualified := strings.Cut(strings.TrimSpace(issueRef), "#"); qualified {
-		project, issueRef = named, short
+		if named != s.Project {
+			return taskclient.KataTask{}, ErrOutsideProject
+		}
+		issueRef = short
 	}
 	resolved := map[string]quotation{}
 	for range maxLinkAttempts {
@@ -242,9 +248,6 @@ func (s *Service) Link(ctx context.Context, issueRef string, evidence []kataevid
 // issueEvidence reads an issue and the evidence it records.
 func (s *Service) issueEvidence(ctx context.Context, project, issueRef string) (taskclient.KataTask, Envelope, error) {
 	current, err := s.Kata.GetTask(ctx, project, issueRef)
-	if errors.Is(err, taskclient.ErrWrongProject) && project != s.Project {
-		return taskclient.KataTask{}, Envelope{}, taskclient.ErrNotFound
-	}
 	if err != nil {
 		return taskclient.KataTask{}, Envelope{}, err
 	}
@@ -283,7 +286,7 @@ func (s *Service) postPending(ctx context.Context, project string, current taskc
 				body := renderQuote(quotation{Entry: entry, Snapshot: entry.Pending.Quote, Label: entry.Pending.Label})
 				// Kata refuses a used key whose request changed, such as under a
 				// new actor, so a mismatch means this comment already landed.
-				err := s.Kata.AddComment(ctx, project, current.UID, kataevidence.Digest([]string{current.UID, entry.Passage, body}), body)
+				err := s.Kata.AddComment(ctx, project, current.UID, kataevidence.Digest("msgvault.kata.comment.v1", current.UID, entry.Passage, body), body)
 				if err != nil && taskclient.ErrorCode(err) != "idempotency_mismatch" {
 					return taskclient.KataTask{}, err
 				}
@@ -430,5 +433,9 @@ func requestHash(input CreateInput) string {
 		passages[i] = kataevidence.PassageLocation(ref)
 	}
 	slices.Sort(passages)
-	return kataevidence.Digest([]any{input.Title, input.Brief, input.List, input.PersonID, passages})
+	person := ""
+	if input.PersonID != nil {
+		person = strconv.FormatInt(*input.PersonID, 10)
+	}
+	return kataevidence.Digest("msgvault.kata.create-request.v1", append([]string{input.Title, input.Brief, input.List, person}, passages...)...)
 }

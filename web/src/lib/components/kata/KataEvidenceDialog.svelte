@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { appShortcuts, Button, Modal, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, escapeCloses, Modal, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { createKataIssue, linkKataEvidence, prepareKataEvidence } from '../../api/generated/api/api';
   import type { APIClient } from '../../api/client';
@@ -129,6 +129,9 @@
   }
 </script>
 
+<!-- Claim Escape during capture so a modal underneath, such as the file
+     viewer, stays open; a save in flight keeps the dialog open too. -->
+<svelte:window onkeydowncapture={escapeCloses(() => { if (!busy) onclose(); })} />
 <Modal title="Kata issue" onclose={() => { if (!busy) onclose(); }}>
   <div class="kata-dialog">
     {#if receipt}

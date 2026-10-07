@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Modal, TextInput } from '@kenn-io/kit-ui';
+  import { Button, escapeCloses, Modal, TextInput } from '@kenn-io/kit-ui';
   import { searchDocuments } from '../../api/generated/api/api';
   import type { APIClient } from '../../api/client';
   import type { DocumentSearchResult } from '../../api/generated/models';
@@ -43,7 +43,13 @@
   }
 
   function close(): void { open = false; selected = undefined; }
+
+  // Every kit-ui Modal hears Escape on the window, and the file viewer's was
+  // registered first; claiming it during capture closes only this picker.
+  const pickerEscape = escapeCloses(close);
 </script>
+
+<svelte:window onkeydowncapture={(event) => { if (open && !selected) pickerEscape(event); }} />
 
 {#if kata?.ready}<Button label="Create Kata issue from file" size="sm" surface="soft" onclick={() => open = true} />{/if}
 {#if open && !selected}

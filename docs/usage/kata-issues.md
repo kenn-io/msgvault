@@ -79,8 +79,9 @@ msgvault kata link example#abcd --input evidence-refs.json
 `create` accepts an optional `person_id`, which adds the issue to that
 person's [agenda](people.md), and a `list` within it; `list` requires
 `person_id`. `link` takes `{"evidence":[...]}` and adds
-each new passage to an existing issue as a comment quoting it, leaving the
-description untouched. Repeating it changes nothing, even after the source is
+each new passage to an existing issue in the configured project as a comment
+quoting it, leaving the description untouched. An issue moved to another
+project returns `kata_issue_outside_project`. Repeating it changes nothing, even after the source is
 synced again, as long as the passage's words and the text before it are the
 same. A link records
 each new passage on the issue before posting its comment, so if it fails

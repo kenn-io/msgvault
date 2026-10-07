@@ -2756,8 +2756,8 @@ Each command reads one JSON request from `--input`, or stdin by default.
 accept. `create` requires `--idempotency-key`, a key you choose to name the
 issue; running it again with the same key and input returns the issue it filed
 instead of a duplicate.
-`link` adds evidence to an existing issue, given as `project#ref` or a bare
-ref. See [Kata issues](usage/kata-issues.md) for request shapes and limits.
+`link` adds evidence to an existing issue in the configured project, given
+as `project#ref` or a bare ref. See [Kata issues](usage/kata-issues.md) for request shapes and limits.
 
 ---
 

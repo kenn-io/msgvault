@@ -52,7 +52,10 @@ type quotation struct {
 	Snapshot, Label string
 }
 
-// parseEnvelope validates issue metadata before anything edits it.
+// parseEnvelope validates issue metadata before anything edits it. Every
+// caller rewrites the whole envelope, so an unknown version or field is
+// refused rather than dropped: data a newer msgvault wrote survives an older
+// one. A caller that only reads may accept what it does not understand.
 func parseEnvelope(value any) (Envelope, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {

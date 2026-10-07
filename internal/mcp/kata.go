@@ -64,6 +64,9 @@ func kataDefinition[I, O any](name, description string, write bool, call func(co
 	definition.availability = func(c catalogCapabilities) bool { return c.kata }
 	definition.annotations.OpenWorldHint = new(true)
 	if write {
+		// The --allow-kata-writes flag is the consent, with no per-call prompt:
+		// stdio clients such as Claude Desktop cannot answer one, and a review
+		// files several issues in a row. Writes stay in the configured project.
 		definition.security = toolSecurityKataWrite
 		definition.annotations.ReadOnlyHint = false
 		definition.annotations.IdempotentHint = true
@@ -83,7 +86,7 @@ func kataDefinitions() []toolDefinition {
 			return b.PrepareKataEvidence(ctx, in)
 		}),
 		create,
-		kataDefinition("link_kata_evidence", "Add prepared evidence to an existing Kata issue. Repeating a link adds nothing.", true, func(ctx context.Context, b KataBackend, in kataLinkArgs) (generated.KataIssueResponse, error) {
+		kataDefinition("link_kata_evidence", "Add prepared evidence to an existing Kata issue in the configured project. Repeating a link adds nothing.", true, func(ctx context.Context, b KataBackend, in kataLinkArgs) (generated.KataIssueResponse, error) {
 			return b.LinkKataEvidence(ctx, in.Ref, in.KataEvidenceLinkRequest)
 		}),
 	}

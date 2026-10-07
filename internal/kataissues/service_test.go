@@ -265,12 +265,15 @@ func TestCreateRetryUnderTheSameKey(t *testing.T) {
 		require.Equal(created.Issue.UID, again.Issue.UID)
 		require.Equal("other", again.Issue.Project)
 
-		// The replayed ref names the issue's new project, and Link follows it there.
-		linked, err := f.service.Link(t.Context(), again.Issue.QualifiedRef, []kataevidence.Reference{f.evidence(t, f.evidence(t, 0).NextRune).Reference})
+		// Link writes only to the configured project, so the moved issue and
+		// any other project are out of reach, and Kata sees no write.
+		for _, ref := range []string{again.Issue.QualifiedRef, "missing#abcd"} {
+			_, err = f.service.Link(t.Context(), ref, []kataevidence.Reference{f.evidence(t, f.evidence(t, 0).NextRune).Reference})
+			require.ErrorIs(err, kataissues.ErrOutsideProject, ref)
+		}
+		still, err := f.service.Create(t.Context(), "key-moved", input)
 		require.NoError(err)
-		require.Equal(2, passagesOf(t, linked))
-		_, err = f.service.Link(t.Context(), "missing#abcd", []kataevidence.Reference{f.evidence(t, 0).Reference})
-		require.ErrorIs(err, taskclient.ErrNotFound)
+		require.Equal(again.Issue.Revision, still.Issue.Revision)
 	})
 	t.Run("issue deleted in Kata", func(t *testing.T) {
 		require := require.New(t)

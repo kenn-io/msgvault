@@ -9,6 +9,9 @@ import (
 )
 
 const (
+	// Version is the reference format. Kata issues keep references for good,
+	// so a later format must go on accepting version 1 references and hashing
+	// them exactly as ID does today, alongside its own.
 	Version = 1
 	// MaxChars bounds every citation: the prepared window, a valid reference
 	// and the saved quotation. Longer references are rejected, never shortened.
