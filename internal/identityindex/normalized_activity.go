@@ -110,7 +110,6 @@ func expandedActivityRelation(sparse, roster, participants, clusters, owners str
 ), roster_facts AS NOT MATERIALIZED (
 	SELECT f.*, (
 		NOT f.is_chat OR lower(f.conversation_type) = 'direct_chat'
-		OR f.entry_kind IN ('event', 'meeting')
 		OR EXISTS (SELECT 1 FROM chat_anchors a
 		           WHERE a.source_id = f.source_id AND a.conversation_id = f.conversation_id
 		             AND a.message_id = f.message_id)

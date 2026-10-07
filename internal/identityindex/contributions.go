@@ -14,7 +14,15 @@ func (b builder) materializeContributions(ctx context.Context, activity string, 
 	reuseContributions := b.opts.Mode == ModeIncremental &&
 		datasetContainsParquet(b.opts.CommittedRoot, DatasetLogicalContributions) &&
 		datasetContainsParquet(b.opts.CommittedRoot, DatasetTemperatureContributions)
-	if b.opts.Mode == ModeIncremental && !reuseContributions {
+	reuseTemperature := false
+	if reuseContributions {
+		var err error
+		reuseTemperature, err = b.canReuseTemperatureContributions(ctx, effectiveAt)
+		if err != nil {
+			return err
+		}
+	}
+	if b.opts.Mode == ModeIncremental && !reuseTemperature {
 		if err := b.materializeBuildTable(ctx, activityBuildRelation,
 			activity, "relationship_activity_edges"); err != nil {
 			return err
@@ -25,23 +33,11 @@ func (b builder) materializeContributions(ctx context.Context, activity string, 
 	logicalSQL := buildLogicalActivityMaterializationSQL(activity)
 	if reuseContributions {
 		delta := "(SELECT * FROM " + deltaActivityBuildRelation + ")"
-		reuseTemperature, err := b.canReuseTemperatureContributions(ctx, effectiveAt)
-		if err != nil {
-			return err
-		}
 		if reuseTemperature {
 			temperatureSQL = mergeTemperatureContributionsSQL(
 				b.committed(DatasetTemperatureContributions),
 				buildRelationshipTemperatureDailySQL(delta, effectiveAt),
 			)
-		} else {
-			// The bounded full relation is needed only when old messages enter
-			// the score window. Reuse it instead of expanding its SQL repeatedly.
-			if err := b.materializeBuildTable(ctx, activityBuildRelation,
-				activity, "relationship_activity_edges"); err != nil {
-				return err
-			}
-			temperatureSQL = buildRelationshipTemperatureDailySQL(activityBuildRelation, effectiveAt)
 		}
 		logicalSQL = mergeLogicalContributionsSQL(
 			b.committed(DatasetLogicalContributions),

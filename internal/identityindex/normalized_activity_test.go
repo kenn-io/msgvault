@@ -22,8 +22,11 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 		{name: "small group", messageType: "beeper", conversationType: "group_chat", members: 3},
 		{name: "large group", messageType: "whatsapp", conversationType: "group_chat", members: 200, unknown: true},
 		{name: "direct chat", messageType: "imessage", conversationType: "direct_chat", members: 3},
-		{name: "nonchat", messageType: "email", conversationType: "group_chat", members: 20},
-		{name: "meeting", messageType: "meeting", conversationType: "group_chat", members: 20},
+		{name: "nonchat", messageType: "email", conversationType: "email_thread", members: 20},
+		{name: "meeting", messageType: "meeting_transcript", conversationType: "meeting", members: 20},
+		{name: "event", messageType: "calendar_event", conversationType: "calendar", members: 20},
+		{name: "mixed case meeting", messageType: "Meeting_Transcript", conversationType: "meeting", members: 20},
+		{name: "mixed case event", messageType: "Calendar_Event", conversationType: "calendar", members: 20},
 		{name: "owner absent", messageType: "beeper", conversationType: "group_chat", members: 20, missingOwner: true},
 		{name: "owner alias", messageType: "beeper", conversationType: "group_chat", members: 20, ownerAlias: true},
 		{name: "mixed modalities", messageType: "beeper", conversationType: "group_chat", members: 20, mixed: true, unknown: true},
@@ -37,7 +40,7 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 			})
 			messageType := "message_type"
 			if tc.mixed {
-				messageType = "CASE WHEN id % 5 = 0 THEN 'email' WHEN id % 7 = 0 THEN 'meeting' ELSE message_type END"
+				messageType = "CASE WHEN id % 5 = 0 THEN 'email' WHEN id % 7 = 0 THEN 'meeting_transcript' WHEN id % 6 = 0 THEN 'calendar_event' ELSE message_type END"
 			}
 			_, err := db.Exec(`CREATE TEMP TABLE equivalence_messages AS
 				SELECT * REPLACE (
@@ -88,6 +91,15 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 				base("participants"), base("participant_clusters"), base("owner_participants"))
 			bounded := buildActivityRelation("sparse", base("conversation_participants"),
 				base("participants"), base("participant_clusters"), base("owner_participants"))
+			if tc.mixed || strings.EqualFold(tc.messageType, "meeting_transcript") || strings.EqualFold(tc.messageType, "calendar_event") {
+				var meetingFacts, earlierRosterAttendeeFacts int64
+				facts := RelationshipTemperatureFactsSQL(bounded, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+				requirements.NoError(db.QueryRow(`SELECT count(*) FILTER (WHERE meeting),
+					count(*) FILTER (WHERE meeting AND canonical_id = 4 AND message_id < 19)
+					FROM (`+facts+`)`).Scan(&meetingFacts, &earlierRosterAttendeeFacts))
+				assert.Positive(t, meetingFacts)
+				assert.Positive(t, earlierRosterAttendeeFacts, "roster-only attendees receive credit before the chat anchor")
+			}
 			for _, reduction := range []struct {
 				name string
 				sql  func(string) string
