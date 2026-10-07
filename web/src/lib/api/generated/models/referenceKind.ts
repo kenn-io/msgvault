@@ -7,4 +7,5 @@ export type ReferenceKind = (typeof ReferenceKind)[keyof typeof ReferenceKind];
 export const ReferenceKind = {
   message: "message",
   document_chunk: "document_chunk",
+  docbank_rendition: "docbank_rendition",
 } as const;

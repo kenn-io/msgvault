@@ -83,7 +83,7 @@ func (c *KataClient) listAllIssues(ctx context.Context, query string) ([]KataTas
 			return nil, ErrInvalidResponse
 		}
 		task := taskFromKataIssue(issue.ProjectName, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, issue.Labels, issue.WebURL)
-		task.QualifiedRef = issue.QualifiedID
+		task.QualifiedRef, task.CreatedAt, task.IssueID = issue.QualifiedID, issue.CreatedAt, issue.ID
 		tasks = append(tasks, task)
 	}
 	return tasks, nil

@@ -31,11 +31,25 @@ var (
 	ErrInvalidRequest        = errors.New("docbank request is invalid")
 )
 
-// HTTPError preserves only the response status class and a stable local code.
-// Response bodies are deliberately discarded because Docbank may echo input.
+// HTTPError preserves only the response status class, a stable local code, and
+// Docbank's own error code when it is a plain token. The rest of the body is
+// discarded because Docbank may echo input.
 type HTTPError struct {
 	Status int
 	Code   string
+	// Reason is Docbank's error code, such as content_missing.
+	Reason string
+}
+
+func newHTTPError(status int, body []byte) *HTTPError {
+	var problem struct {
+		Code string `json:"code"`
+	}
+	_ = json.Unmarshal(body, &problem)
+	if len(problem.Code) > 64 || strings.Trim(problem.Code, "abcdefghijklmnopqrstuvwxyz_") != "" {
+		problem.Code = ""
+	}
+	return &HTTPError{Status: status, Code: statusCode(status), Reason: problem.Code}
 }
 
 func (e *HTTPError) Error() string {
@@ -352,26 +366,34 @@ func writeMultipart(
 	return err
 }
 
-func (c *Client) jsonRequest(ctx context.Context, method, endpoint string, body any, out any) error {
+func (c *Client) newJSONRequest(ctx context.Context, method, endpoint string, body any) (*http.Request, error) {
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("%w: encode request", ErrInvalidRequest)
+			return nil, fmt.Errorf("%w: encode request", ErrInvalidRequest)
 		}
 		if len(encoded) > maxMetadataBytes {
-			return fmt.Errorf("%w: request exceeds the size limit", ErrInvalidRequest)
+			return nil, fmt.Errorf("%w: request exceeds the size limit", ErrInvalidRequest)
 		}
 		reader = strings.NewReader(string(encoded))
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+endpoint, reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if err := c.setAPIKey(req); err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
+func (c *Client) jsonRequest(ctx context.Context, method, endpoint string, body any, out any) error {
+	req, err := c.newJSONRequest(ctx, method, endpoint, body)
+	if err != nil {
 		return err
 	}
 	resp, err := c.http.Do(req)
@@ -384,7 +406,7 @@ func (c *Client) jsonRequest(ctx context.Context, method, endpoint string, body 
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &HTTPError{Status: resp.StatusCode, Code: statusCode(resp.StatusCode)}
+		return newHTTPError(resp.StatusCode, data)
 	}
 	if out == nil {
 		return nil

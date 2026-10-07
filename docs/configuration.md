@@ -1157,6 +1157,9 @@ may run. The route inspects stored CAS bytes, so MIME claims do not expand
 Docbank's WAV and MP3 capability. Capture gaps and unsupported formats remain
 typed local states.
 
+Agents can quote the transcripts of delivered files in
+[Kata issues](usage/kata-issues.md#cite-a-docbank-transcript).
+
 ### `[slack]`
 
 Archive [Slack workspaces](/docs/usage/slack/). A single block covers every

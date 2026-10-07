@@ -451,6 +451,7 @@ func canonicalReferences(refs []kataevidence.Reference) ([]kataevidence.Referenc
 	}
 	seen := make(map[string]bool, len(refs))
 	result := make([]kataevidence.Reference, 0, len(refs))
+	var docbankIDs []string
 	for _, ref := range refs {
 		canonical, err := kataevidence.Canonicalize(ref)
 		if err != nil {
@@ -459,7 +460,13 @@ func canonicalReferences(refs []kataevidence.Reference) ([]kataevidence.Referenc
 		if id := kataevidence.ID(canonical); !seen[id] {
 			seen[id] = true
 			result = append(result, canonical)
+			if canonical.Kind == "docbank_rendition" {
+				docbankIDs = append(docbankIDs, id)
+			}
 		}
+	}
+	if err := kataevidence.CheckDocbankLimit(docbankIDs); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

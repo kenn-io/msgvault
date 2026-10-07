@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.5.0**.
+it is separate from the binary release version. The current schema is **3.6.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -111,6 +111,9 @@ review token. Upgrade the CLI and daemon together; clients with an incompatible
 schema fail before issuing archive requests. The HTTP prefix remains `/api/v1`.
 This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
+
+Schema 3.6.0 adds the `docbank_rendition` evidence kind, which
+[cites a Docbank transcript](usage/kata-issues.md#cite-a-docbank-transcript).
 
 Schema 3.5.0 adds `GET /api/v1/integrations/kata/issues/{ref}/context`, which
 [reads an issue's evidence back](usage/kata-issues.md#read-an-issues-evidence-back),

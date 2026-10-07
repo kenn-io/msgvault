@@ -29,6 +29,7 @@ All notable changes to msgvault, grouped by release.
   `msgvault kata issues` finds the issues, open or closed, that already cite
   a message or file. `msgvault kata context` reads back each passage an issue
   cites, with its state in the archive today and the text around it.
+  Agents can also cite the Docbank transcript of a delivered voice note.
   Person agenda writes now work with a static Kata token.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.

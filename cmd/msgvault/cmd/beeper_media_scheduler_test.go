@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -167,7 +168,7 @@ func TestBeeperMediaConfig(t *testing.T) {
 	server, httpServer := newRetentionServer(t)
 	archiveUID, err := st.ArchiveUIDContext(t.Context())
 	require.NoError(err)
-	destination := beeperMediaDestinationKey(httpServer.URL, archiveUID)
+	destination := docbankmedia.DestinationKey(httpServer.URL, archiveUID)
 	sched := scheduler.New(nil)
 	defer func() { <-sched.Stop().Done() }()
 
@@ -284,7 +285,7 @@ func TestBeeperMediaScheduledRoute(t *testing.T) {
 	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), cfg, nil))
 	archiveUID, err := st.ArchiveUIDContext(t.Context())
 	require.NoError(err)
-	destination := beeperMediaDestinationKey(httpServer.URL, archiveUID)
+	destination := docbankmedia.DestinationKey(httpServer.URL, archiveUID)
 
 	// A waiting operation interrupts the upload; the saved request survives.
 	server.hang.Store(true)
@@ -327,7 +328,7 @@ func TestBeeperMediaScheduledRoute(t *testing.T) {
 	otherServer, otherHTTP := newRetentionServer(t)
 	cfg.URL = otherHTTP.URL
 	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), cfg, nil))
-	otherDestination := beeperMediaDestinationKey(otherHTTP.URL, archiveUID)
+	otherDestination := docbankmedia.DestinationKey(otherHTTP.URL, archiveUID)
 	otherServer.hang.Store(true)
 	stopped := make(chan error, 1)
 	go func() { stopped <- sched.TriggerJob(beeperMediaSubmitJob) }()
@@ -378,7 +379,7 @@ func TestStoredMediaSchedulerUsesOtherSourceProfile(t *testing.T) {
 	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
 	archiveUID, err := st.ArchiveUIDContext(t.Context())
 	require.NoError(err)
-	destination := beeperMediaDestinationKey(httpServer.URL, archiveUID)
+	destination := docbankmedia.DestinationKey(httpServer.URL, archiveUID)
 	var provider, profile string
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT provider, profile FROM beeper_media_deliveries
 		WHERE destination_key = ?`), destination).Scan(&provider, &profile))
@@ -421,7 +422,7 @@ upload_consent = true
 			assert.Equal(1, server.requestCount(), "new consent must allow the stored audio upload")
 			archiveUID, err := st.ArchiveUIDContext(t.Context())
 			require.NoError(err)
-			assert.Equal(map[string]string{beeperMediaDestinationKey(httpServer.URL, archiveUID): "retained::source"}, retentionRows(t, st))
+			assert.Equal(map[string]string{docbankmedia.DestinationKey(httpServer.URL, archiveUID): "retained::source"}, retentionRows(t, st))
 		})
 	}
 }
@@ -448,7 +449,7 @@ func TestBeeperMediaGatedStoreWrites(t *testing.T) {
 	require.NoError(configureBeeperMediaJob(t.Context(), media, gate, st, blobs, t.TempDir(), cfg, logger))
 	archiveUID, err := st.ArchiveUIDContext(t.Context())
 	require.NoError(err)
-	destination := beeperMediaDestinationKey(httpServer.URL, archiveUID)
+	destination := docbankmedia.DestinationKey(httpServer.URL, archiveUID)
 	waitCtx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 
@@ -509,7 +510,7 @@ func TestBeeperMediaGatedStoreWrites(t *testing.T) {
 		require.FailNow("shutdown returned before the upload stopped")
 	}
 	assert.Equal(map[string]string{
-		destination: "retained::source", beeperMediaDestinationKey(otherHTTP.URL, archiveUID): "pending::",
+		destination: "retained::source", docbankmedia.DestinationKey(otherHTTP.URL, archiveUID): "pending::",
 	}, retentionRows(t, st))
 	assert.True(gate.Draining())
 	require.Error(media.TriggerJob(beeperMediaSubmitJob))
@@ -548,7 +549,7 @@ func TestBeeperMediaJobStatus(t *testing.T) {
 	assert.Empty(jobs[beeperMediaSubmitJob].LastError)
 	archiveUID, err := st.ArchiveUIDContext(t.Context())
 	require.NoError(err)
-	assert.Equal(map[string]string{beeperMediaDestinationKey(httpServer.URL, archiveUID): "pending::"},
+	assert.Equal(map[string]string{docbankmedia.DestinationKey(httpServer.URL, archiveUID): "pending::"},
 		retentionRows(t, st))
 }
 

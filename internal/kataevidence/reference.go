@@ -19,7 +19,7 @@ func Canonicalize(r Reference) (Reference, error) {
 	}
 	switch r.Kind {
 	case "message":
-		if r.Message == nil || r.DocumentChunk != nil || r.AttachmentID != 0 || r.OccurrenceKey != "" {
+		if r.Message == nil || r.DocumentChunk != nil || r.DocbankRendition != nil || r.AttachmentID != 0 || r.OccurrenceKey != "" {
 			return invalid()
 		}
 		p := *r.Message
@@ -28,13 +28,23 @@ func Canonicalize(r Reference) (Reference, error) {
 			return invalid()
 		}
 	case "document_chunk":
-		if r.DocumentChunk == nil || r.Message != nil || r.AttachmentID < 1 || !validIdentity(r.OccurrenceKey) {
+		if r.DocumentChunk == nil || r.Message != nil || r.DocbankRendition != nil || r.AttachmentID < 1 || !validIdentity(r.OccurrenceKey) {
 			return invalid()
 		}
 		p := *r.DocumentChunk
 		r.DocumentChunk = &p
 		if !validIdentity(p.ExtractionID) || !validIdentity(p.ChunkKey) ||
 			!normalizeDigest(&p.CanonicalBlobHash) || !normalizeDigest(&p.ManifestChecksum) || !normalizeDigest(&p.ChunkChecksum) {
+			return invalid()
+		}
+	case "docbank_rendition":
+		if r.DocbankRendition == nil || r.Message != nil || r.DocumentChunk != nil || r.AttachmentID < 1 || !validIdentity(r.OccurrenceKey) {
+			return invalid()
+		}
+		p := *r.DocbankRendition
+		r.DocbankRendition = &p
+		if p.NodeID < 1 || !validIdentity(p.VaultUID) || !validIdentity(p.ContentVersionID) ||
+			!normalizeDigest(&p.ContentSHA256) || !normalizeDigest(&p.RenditionAttachmentID) || !normalizeDigest(&p.BuildID) || !normalizeDigest(&p.RenditionSHA256) {
 			return invalid()
 		}
 	default:

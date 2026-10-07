@@ -3526,6 +3526,41 @@ components:
           format: date-time
           type: string
       type: object
+    DocbankReference:
+      additionalProperties: false
+      properties:
+        build_id:
+          type: string
+        content_sha256:
+          type: string
+        content_version_id:
+          type: string
+        end_rune:
+          format: int64
+          type: integer
+        node_id:
+          format: int64
+          type: integer
+        rendition_attachment_id:
+          type: string
+        rendition_sha256:
+          type: string
+        start_rune:
+          format: int64
+          type: integer
+        vault_uid:
+          type: string
+      required:
+        - vault_uid
+        - node_id
+        - content_version_id
+        - content_sha256
+        - rendition_attachment_id
+        - build_id
+        - rendition_sha256
+        - start_rune
+        - end_rune
+      type: object
     DocumentFailureDiagnostic:
       additionalProperties: true
       properties:
@@ -11988,12 +12023,15 @@ components:
         attachment_id:
           format: int64
           type: integer
+        docbank_rendition:
+          $ref: "#/components/schemas/DocbankReference"
         document_chunk:
           $ref: "#/components/schemas/DocumentReference"
         kind:
           enum:
             - message
             - document_chunk
+            - docbank_rendition
           type: string
         message:
           $ref: "#/components/schemas/MessageReference"
@@ -12947,6 +12985,7 @@ components:
           enum:
             - message
             - document_chunk
+            - docbank_rendition
           type: string
         max_chars:
           format: int64
@@ -14816,7 +14855,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.5.0
+  version: 3.6.0
 openapi: 3.1.0
 paths:
   /api/ping:

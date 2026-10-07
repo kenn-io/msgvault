@@ -90,26 +90,102 @@ func (s *Store) loadKataEvidenceSource(ctx context.Context, uid string, selector
 	return result, nil
 }
 
-// KataCitationSource names the source a message, or one of its attachments,
-// would be cited by, without reading bodies or extracted text. Messages
-// deleted at their source stay findable.
-func (s *Store) KataCitationSource(ctx context.Context, messageID, attachmentID int64) (kataevidence.Reference, error) {
+// KataCitationSource names the sources a message, or one of its attachments,
+// would be cited by, without reading bodies or extracted text: the message, or
+// the attachment as an extracted file and as each Docbank delivery of it.
+// Messages deleted at their source and revoked deliveries stay findable.
+func (s *Store) KataCitationSource(ctx context.Context, messageID, attachmentID int64) ([]kataevidence.Reference, error) {
 	uid, err := s.ArchiveUIDContext(ctx)
 	if err != nil {
-		return kataevidence.Reference{}, err
+		return nil, err
 	}
 	ref := kataevidence.Reference{Version: kataevidence.Version, Kind: "message", ArchiveUID: uid, MessageID: messageID}
 	var display kataevidence.Display
 	if err := s.kataMessageSource(ctx, &ref, &display, false); err != nil {
-		return kataevidence.Reference{}, err
+		return nil, err
 	}
-	if attachmentID != 0 {
-		ref.Kind, ref.AttachmentID = "document_chunk", attachmentID
-		if _, err := s.kataOccurrence(ctx, &ref, &display); err != nil {
-			return kataevidence.Reference{}, err
+	if attachmentID == 0 {
+		return []kataevidence.Reference{ref}, nil
+	}
+	ref.AttachmentID = attachmentID
+	var refs []kataevidence.Reference
+	file := ref
+	file.Kind = "document_chunk"
+	if _, err := s.kataOccurrence(ctx, &file, &display); err == nil {
+		refs = append(refs, file)
+	} else if !errors.Is(err, kataevidence.ErrUnavailable) {
+		return nil, err
+	}
+	// Historical deliveries follow the source tuple regardless of current bytes or eligibility.
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`
+		SELECT o.occurrence_ref FROM beeper_media_occurrences o
+		JOIN sources src ON src.source_type=o.source_type AND src.identifier=o.source_identifier
+		JOIN messages m ON m.source_id=src.id AND m.source_message_id=o.source_message_id
+		JOIN conversations c ON c.id=m.conversation_id AND COALESCE(c.source_conversation_id,'')=o.source_conversation_id
+		JOIN attachments a ON a.message_id=m.id AND COALESCE(a.source_attachment_id,'')=o.source_attachment_id
+		  AND COALESCE(NULLIF(a.source_part_key,''),NULLIF(a.source_attachment_id,''),src.source_type || ':unknown')=o.source_part_key
+		WHERE a.id=? AND m.id=? ORDER BY o.occurrence_ref`), attachmentID, messageID)
+	if err != nil {
+		return nil, fmt.Errorf("read Kata Docbank occurrences: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		delivered := ref
+		delivered.Kind = "docbank_rendition"
+		if err := rows.Scan(&delivered.OccurrenceKey); err != nil {
+			return nil, fmt.Errorf("scan Kata Docbank occurrence: %w", err)
+		}
+		// Each destination keeps its own row for the same occurrence.
+		if last := len(refs) - 1; last < 0 || refs[last].OccurrenceKey != delivered.OccurrenceKey {
+			refs = append(refs, delivered)
 		}
 	}
-	return ref, nil
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read Kata Docbank occurrences: %w", err)
+	}
+	if len(refs) == 0 {
+		return nil, kataevidence.ErrUnavailable
+	}
+	return refs, nil
+}
+
+// KataDocbankBinding reads the one retained delivery of an attachment to
+// destination, without reconciling delivery state or starting processing.
+func (s *Store) KataDocbankBinding(ctx context.Context, destination string, attachmentID int64) (kataevidence.DocbankBinding, error) {
+	var result kataevidence.DocbankBinding
+	uid, err := s.ArchiveUIDContext(ctx)
+	if err != nil {
+		return kataevidence.DocbankBinding{}, err
+	}
+	var occurred nullableTimestamp
+	ref := &result.Reference
+	ref.Version, ref.Kind, ref.ArchiveUID, ref.AttachmentID = kataevidence.Version, "docbank_rendition", uid, attachmentID
+	// The producer hashes the source tuple; reconciliation revokes its older revisions.
+	err = s.db.QueryRowContext(ctx, s.Rebind(`
+		SELECT o.vault_uid, o.content_version_id, o.source_sha256,
+		       COALESCE(NULLIF(d.profile,''),'supplied-transcript'),
+		       m.id, src.source_type, src.identifier, m.source_message_id, o.occurrence_ref,
+		       COALESCE(a.filename,''), COALESCE(m.subject,''), COALESCE(m.sent_at,m.received_at,m.internal_date)
+		FROM beeper_media_occurrences o
+		LEFT JOIN beeper_media_deliveries d ON d.destination_key=o.destination_key AND d.processing_key=o.processing_key
+		`+beeperMediaCurrentJoin+`
+		  AND o.destination_key=? AND a.id=? AND o.retention_state='retained'
+		`), destination, attachmentID).Scan(&result.VaultUID, &result.ContentVersionID, &result.ContentSHA256, &result.Profile,
+		&ref.MessageID, &ref.SourceType, &ref.SourceIdentifier, &ref.SourceMessageID, &ref.OccurrenceKey,
+		&result.Display.Filename, &result.Display.ContainingTitle, &occurred)
+	if errors.Is(err, sql.ErrNoRows) {
+		return kataevidence.DocbankBinding{}, kataevidence.ErrUnavailable
+	}
+	if err != nil {
+		return kataevidence.DocbankBinding{}, fmt.Errorf("read Kata Docbank binding: %w", err)
+	}
+	if occurred.Valid {
+		result.Display.Timestamp = occurred.Time
+	}
+	if result.VaultUID == "" || result.ContentVersionID == "" {
+		return kataevidence.DocbankBinding{}, kataevidence.ErrUnavailable
+	}
+	return result, nil
 }
 
 // kataMessageSource fills ref's source tuple and display from its message.

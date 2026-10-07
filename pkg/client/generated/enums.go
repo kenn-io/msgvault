@@ -2067,14 +2067,15 @@ func (p ProvenanceRoles) Validate() error {
 type ReferenceKind string
 
 const (
-	DocumentChunk ReferenceKind = "document_chunk"
-	Message       ReferenceKind = "message"
+	DocbankRendition ReferenceKind = "docbank_rendition"
+	DocumentChunk    ReferenceKind = "document_chunk"
+	Message          ReferenceKind = "message"
 )
 
 // Validate checks if the ReferenceKind value is valid
 func (r ReferenceKind) Validate() error {
 	switch r {
-	case DocumentChunk, Message:
+	case DocbankRendition, DocumentChunk, Message:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ReferenceKind value, got: %v", r))
@@ -2368,14 +2369,15 @@ func (s SecretSettingUpdateAction) Validate() error {
 type SelectorKind string
 
 const (
-	SelectorKindDocumentChunk SelectorKind = "document_chunk"
-	SelectorKindMessage       SelectorKind = "message"
+	SelectorKindDocbankRendition SelectorKind = "docbank_rendition"
+	SelectorKindDocumentChunk    SelectorKind = "document_chunk"
+	SelectorKindMessage          SelectorKind = "message"
 )
 
 // Validate checks if the SelectorKind value is valid
 func (s SelectorKind) Validate() error {
 	switch s {
-	case SelectorKindDocumentChunk, SelectorKindMessage:
+	case SelectorKindDocbankRendition, SelectorKindDocumentChunk, SelectorKindMessage:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SelectorKind value, got: %v", s))

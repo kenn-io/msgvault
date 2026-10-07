@@ -220,6 +220,7 @@ export * from "./discoverProgress";
 export * from "./discoverRequest";
 export * from "./discoverResult";
 export * from "./display";
+export * from "./docbankReference";
 export * from "./documentFailureDiagnostic";
 export * from "./documentIndexRebuildStatus";
 export * from "./documentIndexStatus";

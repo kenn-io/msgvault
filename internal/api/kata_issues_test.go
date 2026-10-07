@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -178,6 +179,7 @@ func TestKataIssueHTTP(t *testing.T) {
 	}{
 		{kataevidence.ErrChanged, http.StatusConflict, "evidence_changed"},
 		{kataevidence.ErrInvalidReference, http.StatusBadRequest, "invalid_evidence"},
+		{fmt.Errorf("prepare: %w", kataevidence.ErrDocbankLimit), http.StatusBadRequest, "invalid_evidence"},
 		{kataissues.ErrInvalidRequest, http.StatusUnprocessableEntity, "invalid_request"},
 		{fmt.Errorf("%w: person 404: %w", personagenda.ErrIdentityLookup, fmt.Errorf("get person: %w", store.ErrPersonNotFound)), http.StatusNotFound, "person_profile_not_found"},
 		{kataevidence.ErrUnprocessed, http.StatusUnprocessableEntity, "evidence_unprocessed"},
@@ -187,6 +189,15 @@ func TestKataIssueHTTP(t *testing.T) {
 		failed := serveKataIssue(server, "/api/v1/integrations/kata/issues", createBody, map[string]string{"Idempotency-Key": "key-2"})
 		assert.Equal(tc.status, failed.Code)
 		assert.Contains(failed.Body.String(), tc.code)
+		if tc.code == "invalid_evidence" {
+			var body ErrorResponse
+			require.NoError(json.Unmarshal(failed.Body.Bytes(), &body))
+			if errors.Is(tc.err, kataevidence.ErrDocbankLimit) {
+				assert.Equal("a request can cite at most 4 Docbank transcript references", body.Message)
+			} else {
+				assert.Equal("Evidence identity or range is invalid", body.Message)
+			}
+		}
 	}
 }
 

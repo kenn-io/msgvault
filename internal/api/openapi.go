@@ -347,7 +347,8 @@ import (
 // 3.3.0 adds Kata issues that quote exact message and file evidence.
 // 3.4.0 adds finding the Kata issues that cite a message or file.
 // 3.5.0 adds reading back each passage a Kata issue cites, with the text around it.
-const APISchemaVersion = "3.5.0"
+// 3.6.0 adds Docbank transcript evidence.
+const APISchemaVersion = "3.6.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

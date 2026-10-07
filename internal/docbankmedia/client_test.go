@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -238,6 +239,10 @@ func TestClientMediaTrust(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/media/sources/redirect":
 			http.Redirect(w, r, "/next", http.StatusFound)
+		case "/api/v1/nodes/10":
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"title":"Service Unavailable","status":503,"code":"content_missing","detail":"echoed input"}`))
 		case "/api/v1/media/sources/huge":
 			_, _ = w.Write(bytes.Repeat([]byte(" "), (1<<20)+1))
 		default:
@@ -259,6 +264,12 @@ func TestClientMediaTrust(t *testing.T) {
 	assert.NotContains(err.Error(), testKey)
 	assert.Equal("server_error", docbankmedia.ErrorCode(err))
 	assert.True(docbankmedia.Retryable(err))
+
+	// Docbank's own error code survives, and nothing else from the body.
+	_, err = client.CurrentVersion(t.Context(), 10)
+	httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err)
+	require.True(ok, "%v", err)
+	assert.Equal(docbankmedia.HTTPError{Status: http.StatusServiceUnavailable, Code: "server_error", Reason: "content_missing"}, *httpErr)
 
 	missing, err := docbankmedia.NewClient(server.URL, func() (string, error) {
 		return "", errors.New("environment variable holds " + testKey)
@@ -363,13 +374,24 @@ func TestDocbankMediaLiveContract(t *testing.T) {
 		processed, err := client.Process(t.Context(), first.SourceID, uuid.NewString(), docbankmedia.Processing{
 			Profile: "supplied-transcript", SuppliedInputID: artifact.SuppliedInputID,
 		})
-		if err != nil {
-			t.Logf("%s processing refused with %s", sample.name, docbankmedia.ErrorCode(err))
-			continue
-		}
+		// The window check below needs a processed transcript, so a refusal fails here.
+		require.NoError(err, "%s processing refused with %s", sample.name, docbankmedia.ErrorCode(err))
 		job, err := client.JobStatus(t.Context(), processed.JobID)
 		require.NoError(err)
 		t.Logf("%s job state %s", sample.name, job.State)
+
+		// The mirrored evidence structs read the processed transcript back.
+		var identity docbankmedia.EvidenceWindowRequest
+		require.Eventually(func() bool {
+			identity, err = client.EvidenceIdentity(t.Context(), first.ContentVersionID, metadata.SHA256, "supplied-transcript")
+			httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err)
+			return !ok || httpErr.Status != http.StatusNotFound
+		}, 2*time.Minute, time.Second, sample.name)
+		require.NoError(err, sample.name)
+		identity.VaultUID, identity.MaxChars = first.VaultUID, 1000
+		window, err := client.ReadEvidenceWindow(t.Context(), identity)
+		require.NoError(err, sample.name)
+		assert.Contains(window.Text, "synthetic provider transcript", sample.name)
 	}
 }
 

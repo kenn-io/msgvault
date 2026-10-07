@@ -79,7 +79,7 @@ func kataDefinition[I, O any](name, description string, write bool, call func(co
 	return definition
 }
 
-func kataDefinitions() []toolDefinition {
+func kataDefinitions(docbankAvailable bool) []toolDefinition {
 	create := kataDefinition("create_kata_issue", "Create a Kata issue in the configured project that quotes prepared evidence verbatim. Use a short idempotency_key derived from the commitment (for example a hash of the message ID plus the commitment text), so reviewing the same evidence again replays the issue rather than duplicating it; reuse the same key and payload when retrying an uncertain outcome.", true, func(ctx context.Context, b KataBackend, in kataCreateArgs) (generated.KataIssueResponse, error) {
 		return b.CreateKataIssue(ctx, in.IdempotencyKey, in.KataIssueCreateRequest)
 	})
@@ -90,14 +90,20 @@ func kataDefinitions() []toolDefinition {
 		return b.FindKataIssues(ctx, in)
 	})
 	find.availability = func(c catalogCapabilities) bool { return c.kataLookup }
-	issueContext := kataDefinition("get_kata_issue_context", "Read each passage a Kata issue cites, once, with its state in the archive today (available, changed, unavailable, unprocessed or unsupported) and, when available, up to 500 characters before and after the cited words. When archive evidence is not available, saved_quote holds the matching quoted words from the issue body or comments, if still present. Returns 10 passages per call; pass next_offset as offset for more.", false, func(ctx context.Context, b KataBackend, in kataContextArgs) (generated.KataIssueContextResponse, error) {
+	issueContext := kataDefinition("get_kata_issue_context", "Read each passage a Kata issue cites, once, with its state in the archive today (available, changed, unavailable, unprocessed, unsupported, or unreachable when Docbank is down; retry later) and, when available, up to 500 characters before and after the cited words. When archive evidence is not available, saved_quote holds the matching quoted words from the issue body or comments, if still present. Returns up to 10 passages per call; pass next_offset as offset for more.", false, func(ctx context.Context, b KataBackend, in kataContextArgs) (generated.KataIssueContextResponse, error) {
 		return b.GetKataIssueContext(ctx, in.Ref, in.GetKataIssueContextQuery)
 	})
 	issueContext.availability = func(c catalogCapabilities) bool { return c.kataContext }
+	// Only a daemon that reads Docbank transcripts is told about them.
+	description := "Prepare exact citations of a message body or an extracted file chunk, up to 1000 characters each. Page through a long source with start_rune and the returned next_rune, or pass quote (instead of start_rune, end_rune and max_chars) to cite the one place that exact text appears."
+	if docbankAvailable {
+		description = "Prepare exact citations of a message body, an extracted file chunk, or the Docbank transcript of a delivered file (kind docbank_rendition, with message_id and attachment_id), up to 1000 characters each. Prepare, create, and link accept at most 4 Docbank transcript references per request. Page through a long source with start_rune and the returned next_rune. For a message or file chunk, quote (instead of start_rune, end_rune and max_chars) cites the one place that exact text appears; Docbank transcripts don't take quote."
+	}
+	prepare := kataDefinition("prepare_kata_evidence", description, false, func(ctx context.Context, b KataBackend, in generated.KataEvidencePrepareRequest) (generated.KataEvidencePrepareResponse, error) {
+		return b.PrepareKataEvidence(ctx, in)
+	})
 	return []toolDefinition{
-		kataDefinition("prepare_kata_evidence", "Prepare exact citations of a message body or an extracted file chunk, up to 1000 characters each. Page through a long source with start_rune and the returned next_rune, or pass quote (instead of start_rune, end_rune and max_chars) to cite the one place that exact text appears.", false, func(ctx context.Context, b KataBackend, in generated.KataEvidencePrepareRequest) (generated.KataEvidencePrepareResponse, error) {
-			return b.PrepareKataEvidence(ctx, in)
-		}),
+		prepare,
 		create,
 		find,
 		issueContext,

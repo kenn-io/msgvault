@@ -70,6 +70,12 @@ func TestKataWriteToolsRequireOptIn(t *testing.T) {
 	lookup := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}, KataLookup: true}, false))
 	assert.Contains(lookup, "find_kata_issues")
 	assert.NotContains(lookup, "get_kata_issue_context")
+	// Only a 3.6.0 daemon is described as citing Docbank transcripts.
+	for _, docbank := range []bool{false, true} {
+		listed := rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Kata: &fakeKataBackend{}, KataDocbank: docbank}, false)
+		description, _ := toolsByName(t, listed)["prepare_kata_evidence"]["description"].(string)
+		assert.Equal(docbank, strings.Contains(description, "docbank_rendition"))
+	}
 }
 
 func TestKataToolsQuarantineArchiveText(t *testing.T) {

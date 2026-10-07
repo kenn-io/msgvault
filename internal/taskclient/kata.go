@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	kata "go.kenn.io/kata/pkg/client/generated"
 	"golang.org/x/mod/semver"
@@ -44,6 +45,10 @@ type KataTask struct {
 	PriorityValue *int64
 	Labels        []string
 	Metadata      map[string]any
+	// CreatedAt and IssueID, Kata's numeric issue ID, are set on issues from a
+	// list; Kata lists oldest first by both.
+	CreatedAt time.Time
+	IssueID   int64
 }
 
 type KataCreate struct {

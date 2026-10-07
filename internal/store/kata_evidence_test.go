@@ -143,10 +143,12 @@ func TestKataCitationSourceMatchesPreparedEvidence(t *testing.T) {
 	require.NoError(err)
 	message, err := f.Store.KataCitationSource(t.Context(), hit.MessageID, 0)
 	require.NoError(err)
-	assert.Equal(kataevidence.SourceKeys(prepared[0].Reference), kataevidence.SourceKeys(message))
+	require.Len(message, 1)
+	assert.Equal(kataevidence.SourceKeys(prepared[0].Reference), kataevidence.SourceKeys(message[0]))
 	file, err := f.Store.KataCitationSource(t.Context(), hit.MessageID, hit.AttachmentID)
 	require.NoError(err)
-	assert.Equal(kataevidence.SourceKeys(prepared[1].Reference), kataevidence.SourceKeys(file))
+	require.Len(file, 1)
+	assert.Equal(kataevidence.SourceKeys(prepared[1].Reference), kataevidence.SourceKeys(file[0]))
 
 	other := f.CreateMessage("other-message")
 	_, err = f.Store.KataCitationSource(t.Context(), other, hit.AttachmentID)
@@ -157,5 +159,82 @@ func TestKataCitationSourceMatchesPreparedEvidence(t *testing.T) {
 	require.NoError(err)
 	file, err = f.Store.KataCitationSource(t.Context(), hit.MessageID, hit.AttachmentID)
 	require.NoError(err)
-	assert.Equal(kataevidence.SourceKeys(prepared[1].Reference), kataevidence.SourceKeys(file))
+	assert.Equal(kataevidence.SourceKeys(prepared[1].Reference), kataevidence.SourceKeys(file[0]))
+}
+
+func TestKataDocbankBindingDeliverySelection(t *testing.T) {
+	for _, name := range []string{"retained", "replaced revision", "pending", "revoked", "different destination", "deleted at source", "content refresh", "reused attachment", "document and Docbank sources"} {
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			f := newBeeperMediaFixture(t)
+			audio := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "voice1", strings.Repeat("a", 64))
+			mapping := audio.mapping("destination", "revision", "processing")
+			destination := mapping.DestinationKey
+			if name == "pending" || name == "revoked" {
+				require.NoError(f.Store.ReconcileBeeperMediaMapping(t.Context(), mapping))
+				prepared, err := f.Store.PrepareBeeperMediaOperation(t.Context(), retainOperation(mapping))
+				require.NoError(err)
+				if name == "revoked" {
+					applied, err := f.Store.FinishBeeperMediaOperation(t.Context(), prepared, store.BeeperMediaResult{ErrorCode: "revoked", Revoked: true})
+					require.NoError(err)
+					require.True(applied)
+				}
+			} else {
+				retainAudio(t, f.Store, mapping, "occurrence")
+			}
+			uid, err := f.Store.ArchiveUIDContext(t.Context())
+			require.NoError(err)
+			ref := kataevidence.Reference{Version: kataevidence.Version, Kind: "docbank_rendition", ArchiveUID: uid,
+				MessageID: audio.messageID, AttachmentID: audio.attachmentID, SourceType: "beeper", SourceIdentifier: "signal",
+				SourceMessageID: "voice1", OccurrenceKey: mapping.OccurrenceRef}
+			switch name {
+			case "replaced revision":
+				mapping.Revision = "new-revision"
+				mapping.OccurrenceJSON = `{"ref":"msgvault:voice1","revision":"new-revision"}`
+				retainAudio(t, f.Store, mapping, "new-occurrence")
+			case "different destination":
+				destination = "other-destination"
+			case "deleted at source":
+				_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?"), audio.messageID)
+				require.NoError(err)
+			case "content refresh":
+				changed := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "voice1", strings.Repeat("b", 64))
+				require.Equal(audio.attachmentID, changed.attachmentID)
+			case "reused attachment":
+				_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE attachments SET content_hash=?, source_attachment_id=?, source_part_key=? WHERE id=?"),
+					strings.Repeat("c", 64), "beeper:mxc://audio/other", "beeper:mxc://audio/other", audio.attachmentID)
+				require.NoError(err)
+			case "document and Docbank sources":
+				_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO document_occurrences(occurrence_key,attachment_id,message_id,source_id,canonical_blob_hash,attachment_role,role_source)
+					SELECT 'doc-occurrence',a.id,a.message_id,m.source_id,a.content_hash,a.attachment_role,'test' FROM attachments a JOIN messages m ON m.id=a.message_id WHERE a.id=?`), audio.attachmentID)
+				require.NoError(err)
+			}
+			binding, err := f.Store.KataDocbankBinding(t.Context(), destination, audio.attachmentID)
+			if name != "retained" && name != "replaced revision" && name != "document and Docbank sources" {
+				require.ErrorIs(err, kataevidence.ErrUnavailable)
+			} else {
+				require.NoError(err)
+				assert.Equal(t, kataevidence.DocbankBinding{
+					Reference: ref,
+					VaultUID:  "vault", ContentVersionID: "content", ContentSHA256: audio.hash, Profile: "supplied-transcript",
+					Display: kataevidence.Display{Filename: "voice.wav"},
+				}, binding)
+			}
+			switch name {
+			case "content refresh", "revoked":
+				sources, err := f.Store.KataCitationSource(t.Context(), audio.messageID, audio.attachmentID)
+				require.NoError(err)
+				require.Len(sources, 1)
+				assert.Equal(t, "docbank_rendition", sources[0].Kind)
+				assert.Equal(t, kataevidence.SourceKeys(ref), kataevidence.SourceKeys(sources[0]))
+			case "reused attachment":
+				_, err := f.Store.KataCitationSource(t.Context(), audio.messageID, audio.attachmentID)
+				require.ErrorIs(err, kataevidence.ErrUnavailable)
+			case "document and Docbank sources":
+				sources, err := f.Store.KataCitationSource(t.Context(), audio.messageID, audio.attachmentID)
+				require.NoError(err)
+				require.Len(sources, 2)
+			}
+		})
+	}
 }

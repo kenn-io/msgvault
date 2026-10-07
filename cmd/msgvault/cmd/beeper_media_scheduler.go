@@ -2,11 +2,8 @@ package cmd
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"log/slog"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/api"
@@ -96,9 +93,7 @@ func addBeeperMediaRoute(
 	cfg config.DocbankIntegrationConfig,
 	logger *slog.Logger,
 ) error {
-	endpoint := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	lookupKey := cfg.ResolveAPIKey
-	client, err := docbankmedia.NewClient(endpoint, lookupKey)
+	client, err := docbankmedia.NewClient(cfg.URL, cfg.ResolveAPIKey)
 	if err != nil {
 		return err
 	}
@@ -106,7 +101,7 @@ func addBeeperMediaRoute(
 	if err != nil {
 		return err
 	}
-	destination := beeperMediaDestinationKey(endpoint, archiveUID)
+	destination := docbankmedia.DestinationKey(cfg.URL, archiveUID)
 	// Without upload consent the job only records local discovery.
 	var submitClient *docbankmedia.Client
 	if cfg.AllSourcesUploadConsent {
@@ -135,9 +130,4 @@ func addBeeperMediaRoute(
 			return nil
 		},
 	})
-}
-
-func beeperMediaDestinationKey(endpoint, archiveUID string) string {
-	digest := sha256.Sum256([]byte("beeper-media/v1\x00" + endpoint + "\x00" + archiveUID))
-	return "beeper:" + hex.EncodeToString(digest[:])
 }

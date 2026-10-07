@@ -53,6 +53,7 @@ type catalogCapabilities struct {
 	kata            bool
 	kataLookup      bool
 	kataContext     bool
+	kataDocbank     bool
 	identityReview  bool
 	personCardDAV   bool
 }
@@ -138,6 +139,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		kata:            opts.Kata != nil,
 		kataLookup:      opts.Kata != nil && opts.KataLookup,
 		kataContext:     opts.Kata != nil && opts.KataContext,
+		kataDocbank:     opts.Kata != nil && opts.KataDocbank,
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
 	}
@@ -240,7 +242,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		updatePersonNotesDefinition(nil),
 		updateSavedViewDefinition(nil),
 	}
-	definitions = append(definitions, kataDefinitions()...)
+	definitions = append(definitions, kataDefinitions(capabilities.kataDocbank)...)
 
 	available := definitions[:0]
 	for _, definition := range definitions {
