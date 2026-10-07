@@ -249,6 +249,25 @@ type StatusMessageResponse struct {
 	Message string `json:"message"`
 }
 
+// TriggerSyncResponse is the 202 body of a sync trigger. For a generic
+// source, Disposition says what the request did: "started", "queued" (one
+// follow-up run recorded behind the active run) or "coalesced" (merged into a
+// run that is still waiting to start or a follow-up already pending; no
+// additional run), and Ticket names the request for
+// GET /api/v1/sync/{account}/tickets/{ticket}. Account syncs set neither.
+type TriggerSyncResponse struct {
+	Status      string `json:"status"`
+	Message     string `json:"message"`
+	Disposition string `json:"disposition,omitempty"`
+	Ticket      string `json:"ticket,omitempty"`
+}
+
+// SyncTicketResponse reports a sync ticket. State is "queued" or "running"
+// until a run that started after the request finishes, then "completed",
+// "failed" or "abandoned" (no run will answer it, for example because the
+// daemon stopped or restarted).
+type SyncTicketResponse = scheduler.TicketStatus
+
 type FilteredMessagesResponse struct {
 	Count            int              `json:"count"`
 	HasMore          bool             `json:"has_more"`
@@ -1716,16 +1735,30 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
 			return
 		}
-		if err := s.scheduler.StartJob(scheduling.jobName); err != nil {
+		req, err := s.scheduler.RequestJob(scheduling.jobName)
+		disp := req.Disposition
+		if err != nil {
 			s.logger.Error("failed to trigger generic sync job",
 				"job", scheduling.jobName, "identifier", account, "error", err)
 			writeError(w, http.StatusConflict, "sync_error", err.Error())
 			return
 		}
-		s.logger.Info("generic sync triggered via API", "job", scheduling.jobName, "identifier", account)
-		writeJSON(w, http.StatusAccepted, StatusMessageResponse{
-			Status:  "accepted",
-			Message: "Sync started for " + account,
+		s.logger.Info("generic sync triggered via API",
+			"job", scheduling.jobName, "identifier", account, "disposition", disp, "ticket", req.Ticket)
+		var message string
+		switch disp {
+		case scheduler.JobStarted:
+			message = "Sync started for " + account
+		case scheduler.JobQueued:
+			message = "Sync already running for " + account + "; one follow-up run queued"
+		default:
+			message = "Sync for " + account + " is already queued or has a follow-up pending; request merged, no additional run"
+		}
+		writeJSON(w, http.StatusAccepted, TriggerSyncResponse{
+			Status:      "accepted",
+			Message:     message,
+			Disposition: string(disp),
+			Ticket:      req.Ticket.String(),
 		})
 		return
 	case sourceScheduleAccount:
@@ -1739,11 +1772,66 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.logger.Info("sync triggered via API", "account", account)
-		writeJSON(w, http.StatusAccepted, StatusMessageResponse{
+		writeJSON(w, http.StatusAccepted, TriggerSyncResponse{
 			Status:  "accepted",
 			Message: "Sync started for " + account,
 		})
 	}
+}
+
+// maxSyncTicketWait caps the wait parameter of handleSyncTicket. The request
+// deadline caps it further; a client that needs longer asks again.
+const maxSyncTicketWait = 5 * time.Minute
+
+// handleSyncTicket reports a ticket returned by handleTriggerSync. With
+// wait, it blocks server-side until the ticket is terminal or the wait ends,
+// then answers with the current state.
+func (s *Server) handleSyncTicket(w http.ResponseWriter, r *http.Request) {
+	if s.scheduler == nil {
+		writeError(w, http.StatusServiceUnavailable, "scheduler_unavailable", "Scheduler not available")
+		return
+	}
+	account := r.PathValue("account")
+	sourceType := r.URL.Query().Get("source_type")
+	scheduling := classifySourceScheduling(sourceType, account)
+	if scheduling.kind != sourceScheduleGeneric {
+		writeError(w, http.StatusBadRequest, "tickets_unsupported",
+			"Sync tickets are issued only for sources with source_type set to a scheduled source type")
+		return
+	}
+	ticket, err := scheduler.ParseTicket(r.PathValue("ticket"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_ticket", err.Error())
+		return
+	}
+	var wait time.Duration
+	if raw := r.URL.Query().Get("wait"); raw != "" {
+		wait, err = time.ParseDuration(raw)
+		if err != nil || wait < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_wait", "wait must be a non-negative duration such as 30s")
+			return
+		}
+	}
+	wait = min(wait, maxSyncTicketWait)
+	if deadline, ok := r.Context().Deadline(); ok {
+		// Leave time to write the answer before the request deadline.
+		wait = min(wait, time.Until(deadline)-time.Second)
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), max(wait, 0))
+	defer cancel()
+	status, err := s.scheduler.WaitTicket(ctx, scheduling.jobName, ticket)
+	switch {
+	case errors.Is(err, scheduler.ErrUnknownTicket):
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	case errors.Is(err, scheduler.ErrExpiredTicket):
+		writeError(w, http.StatusGone, "ticket_expired", err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 // handleSchedulerStatus returns the scheduler status.

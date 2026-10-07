@@ -123,7 +123,7 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	summary, err := client.Import(ctx, s, src.ID)
+	summary, err := importImessageRecorded(ctx, s, client, src.ID)
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted.")
@@ -135,6 +135,60 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 
 	printImessageSummary(summary, startTime)
 	return finishImessageImport(s, state, summary)
+}
+
+// importImessageRecorded runs client.Import inside a sync_runs row, like the
+// WhatsApp Apple import, so every iMessage import is visible to source status
+// and holds the per-source sync lock regardless of what triggered it.
+func importImessageRecorded(
+	ctx context.Context,
+	s *store.Store,
+	client *imessage.Client,
+	sourceID int64,
+) (summary *imessage.ImportSummary, retErr error) {
+	syncID, err := s.StartSync(sourceID, "imessage_import")
+	if err != nil {
+		return nil, fmt.Errorf("start sync: %w", err)
+	}
+	scoped := s.ScopedToSync(sourceID, syncID)
+	record := func(sum imessage.ImportSummary) error {
+		return scoped.UpdateSyncCheckpoint(syncID, imessageCheckpoint(sum))
+	}
+	defer func() {
+		// Persist the final or partial counters before the terminal write, so a
+		// failed or interrupted run still reports what it processed.
+		var recordErr error
+		if summary != nil {
+			recordErr = record(*summary)
+		}
+		if retErr != nil {
+			_ = scoped.FailSync(syncID, retErr.Error())
+			return
+		}
+		if recordErr != nil {
+			_ = scoped.FailSync(syncID, recordErr.Error())
+			retErr = fmt.Errorf("record sync progress: %w", recordErr)
+			return
+		}
+		if err := scoped.CompleteSync(syncID, ""); err != nil {
+			retErr = fmt.Errorf("complete sync: %w", err)
+		}
+	}()
+	// Mid-run checkpoints are best effort; the final write above is checked.
+	return client.ImportWithProgress(ctx, scoped, sourceID, func(sum imessage.ImportSummary) {
+		_ = record(sum)
+	})
+}
+
+// imessageCheckpoint maps import totals onto sync_runs counters. Skipped
+// messages are the run's errors; they still count as processed.
+func imessageCheckpoint(sum imessage.ImportSummary) *store.Checkpoint {
+	return &store.Checkpoint{
+		MessagesProcessed: int64(sum.MessagesImported + sum.Skipped),
+		MessagesAdded:     int64(sum.MessagesImported - sum.MessagesUpdated - sum.MessagesUnchanged),
+		MessagesUpdated:   int64(sum.MessagesUpdated),
+		ErrorsCount:       int64(sum.Skipped),
+	}
 }
 
 // finishImessageImport runs the post-import name backfill, refreshes

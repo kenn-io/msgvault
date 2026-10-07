@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -283,9 +284,11 @@ type mockScheduler struct {
 	triggeredJobs []string        // generic job names passed to TriggerJob
 	triggerJobFn  func(name string) error
 	startedJobs   []string // generic job names passed to StartJob
-	startJobFn    func(name string) error
-	triggerFn     func(email string) error
-	addedAccts    []string // emails added via AddAccount
+	startJobFn    func(name string) (scheduler.JobDisposition, error)
+	// waitTicketFn answers WaitTicket; nil reports an unknown ticket.
+	waitTicketFn func(ctx context.Context, name string, ticket scheduler.Ticket) (scheduler.TicketStatus, error)
+	triggerFn    func(email string) error
+	addedAccts   []string // emails added via AddAccount
 }
 
 func newMockScheduler() *mockScheduler {
@@ -336,12 +339,30 @@ func (m *mockScheduler) TriggerJob(name string) error {
 	return nil
 }
 
-func (m *mockScheduler) StartJob(name string) error {
+func (m *mockScheduler) StartJob(name string) (scheduler.JobDisposition, error) {
 	m.startedJobs = append(m.startedJobs, name)
 	if m.startJobFn != nil {
 		return m.startJobFn(name)
 	}
-	return nil
+	return scheduler.JobStarted, nil
+}
+
+func (m *mockScheduler) RequestJob(name string) (scheduler.JobRequest, error) {
+	disp, err := m.StartJob(name)
+	if err != nil {
+		return scheduler.JobRequest{}, err
+	}
+	return scheduler.JobRequest{
+		Disposition: disp,
+		Ticket:      scheduler.Ticket{Epoch: "mock", Seq: uint64(len(m.startedJobs))},
+	}, nil
+}
+
+func (m *mockScheduler) WaitTicket(ctx context.Context, name string, ticket scheduler.Ticket) (scheduler.TicketStatus, error) {
+	if m.waitTicketFn != nil {
+		return m.waitTicketFn(ctx, name, ticket)
+	}
+	return scheduler.TicketStatus{}, scheduler.ErrUnknownTicket
 }
 
 // mockStore implements MessageStore for tests.

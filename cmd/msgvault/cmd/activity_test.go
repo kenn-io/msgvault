@@ -269,7 +269,8 @@ func TestScheduledProjectionYieldsToSyncBetweenPasses(t *testing.T) {
 	require.NoError(registerActivityProjectionJob(sched, f.Store, config.ActivityConfig{
 		Timezone: "UTC", BatchSize: 1, MaxDirectCounterparts: 25, Schedule: "0 0 1 1 *",
 	}, testDiscardLogger()))
-	require.NoError(sched.StartJob(activityProjectionJob))
+	_, startErr := sched.StartJob(activityProjectionJob)
+	require.NoError(startErr)
 	select {
 	case <-gate.acquired:
 	case <-time.After(10 * time.Second):

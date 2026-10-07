@@ -1019,6 +1019,34 @@ Scheduled SMS Backup & Restore sources are configured with `[[synctech_sms.sourc
 | `stable_after` | `10m` | How long Drive files must remain unchanged before import |
 | `oauth_app` | — | Named Google OAuth app to use |
 
+### Apple WhatsApp and iMessage Schedules
+
+On macOS, `msgvault serve` can import the native WhatsApp and Messages stores on a schedule. The imports show up in source status and can be started with Sync now, like any other scheduled source. The daemon needs Full Disk Access to read both stores.
+
+```toml
+[[whatsapp_apple]]
+name = "main"
+enabled = true
+phone = "+15551234567"       # your number, E.164
+schedule = "*/10 * * * *"
+
+[imessage]
+enabled = true
+schedule = "*/10 * * * *"
+window = "48h"               # only messages from the last 48 hours
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `[[whatsapp_apple]].phone` | (required) | Your number in E.164 format; identifies the WhatsApp source |
+| `[[whatsapp_apple]].path` | the WhatsApp group container `ChatStorage.sqlite` | Store to import |
+| `[[whatsapp_apple]].display_name` | — | Optional name for the source |
+| `[[whatsapp_apple]].schedule` | — | Cron expression; entries without one are not imported |
+| `[imessage].db_path` | `~/Library/Messages/chat.db` | Store to import |
+| `[imessage].window` | whole store | Go duration; each run reads only messages newer than this |
+| `[imessage].me` | — | Your phone or email, for sender attribution |
+| `[imessage].schedule` | — | Cron expression |
+
 ### Google Calendar Sources
 
 Scheduled Google Calendar sync is configured with top-level `[[gcal]]` entries. Each entry is one OAuth account; `msgvault serve` runs it on the given cron schedule (first run full-syncs and registers calendars, later runs are incremental). Authorize the account first with `msgvault add-calendar`.

@@ -919,6 +919,18 @@ func (t TriggerSyncPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
 }
 
+type GetSyncTicketPath struct {
+	// Account Configured source identifier the ticket was issued for
+	Account string `json:"account" validate:"required"`
+
+	// Ticket Ticket returned by the sync trigger
+	Ticket string `json:"ticket" validate:"required"`
+}
+
+func (g GetSyncTicketPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type ListTextConversationMessagesPath struct {
 	// ID Conversation ID
 	ID int64 `json:"id"`

@@ -897,12 +897,16 @@ func validateEditableCandidate(cfg *Config) error {
 		"beeper.schedule":                 cfg.Beeper.Schedule,
 		"matrix.schedule":                 cfg.Matrix.Schedule,
 		"slack.schedule":                  cfg.Slack.Schedule,
+		"imessage.schedule":               cfg.IMessage.Schedule,
 	}
 	for index, account := range cfg.Accounts {
 		schedules[fmt.Sprintf("accounts[%d].schedule", index)] = account.Schedule
 	}
 	for index, source := range cfg.SynctechSMS.Sources {
 		schedules[fmt.Sprintf("synctech_sms.sources[%d].schedule", index)] = source.Schedule
+	}
+	for index, source := range cfg.WhatsAppApple {
+		schedules[fmt.Sprintf("whatsapp_apple[%d].schedule", index)] = source.Schedule
 	}
 	for index, source := range cfg.GCal {
 		schedules[fmt.Sprintf("gcal[%d].schedule", index)] = source.Schedule

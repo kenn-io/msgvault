@@ -80,6 +80,11 @@ type Job struct {
 	// Expiry without progress reports an error and waits for the next trigger.
 	// Enable only for jobs that can resume committed progress. Zero disables it.
 	MaxRuntime time.Duration
+	// MinSpacing is the least time between two runs taking the work gate.
+	// A run requested sooner is delayed, never skipped or answered by the
+	// earlier run. Continuations of a yielded or bounded pass are not
+	// delayed. Zero disables it.
+	MinSpacing time.Duration
 }
 
 type JobStatus struct {
@@ -123,6 +128,16 @@ type Scheduler struct {
 	genericQueued      map[string]bool
 	genericPending     map[string]bool
 	genericStartedAt   map[string]time.Time
+	genericMinSpacing  map[string]time.Duration
+	genericLastGate    map[string]time.Time // when the last run took the gate
+	// genericContinuation marks a pending follow-up that resumes a yielded or
+	// bounded pass; it is exempt from MinSpacing.
+	genericContinuation map[string]bool
+
+	// Manual-trigger tickets, see tickets.go.
+	genericTickets map[string]*jobTickets
+	ticketEpoch    string
+	ticketsChanged chan struct{}
 
 	// queuedRuns counts runs blocked waiting for the work gate.
 	queuedRuns int
@@ -184,8 +199,15 @@ func New(syncFunc SyncFunc) *Scheduler {
 		genericQueued:      make(map[string]bool),
 		genericPending:     make(map[string]bool),
 		genericStartedAt:   make(map[string]time.Time),
-		ctx:                ctx,
-		cancel:             cancel,
+		genericMinSpacing:  make(map[string]time.Duration),
+		genericLastGate:    make(map[string]time.Time),
+
+		genericContinuation: make(map[string]bool),
+		genericTickets:      make(map[string]*jobTickets),
+		ticketEpoch:         newTicketEpoch(),
+		ticketsChanged:      make(chan struct{}),
+		ctx:                 ctx,
+		cancel:              cancel,
 	}
 }
 
@@ -266,16 +288,19 @@ func (s *Scheduler) onAccountTick(email string) {
 
 // coalesceTickLocked records a tick that arrived while its job was active.
 // The caller holds s.mu.
-func (s *Scheduler) coalesceTickLocked(kind, name string, queued, pending map[string]bool) {
+// It reports whether a new follow-up run was recorded; false means an
+// existing run or follow-up already covers the request.
+func (s *Scheduler) coalesceTickLocked(kind, name string, queued, pending map[string]bool) bool {
 	if queued[name] {
 		s.logger.Debug("scheduled tick dropped: previous run is still waiting to start", kind, name)
-		return
+		return false
 	}
 	if pending[name] {
-		return
+		return false
 	}
 	pending[name] = true
 	s.logger.Info("scheduled sync skipped: previous run still active; queued one follow-up run", kind, name)
+	return true
 }
 
 // AddAccountsFromConfig adds all enabled accounts from the config.
@@ -299,6 +324,9 @@ func (s *Scheduler) AddJob(job Job) error {
 	if job.MaxRuntime < 0 {
 		return errors.New("job runtime budget must be non-negative")
 	}
+	if job.MinSpacing < 0 {
+		return errors.New("job minimum spacing must be non-negative")
+	}
 	if job.Name == "" || job.Run == nil {
 		return errors.New("job name and run function are required")
 	}
@@ -321,6 +349,7 @@ func (s *Scheduler) AddJob(job Job) error {
 	s.genericFuncs[job.Name] = job.Run
 	s.genericPreemptible[job.Name] = job.Preemptible
 	s.genericMaxRuntime[job.Name] = job.MaxRuntime
+	s.genericMinSpacing[job.Name] = job.MinSpacing
 	s.logger.Info("scheduled job", "job", job.Name, "schedule", job.Schedule, "next_run", s.nextRun(entryID))
 	return nil
 }
@@ -339,9 +368,18 @@ func (s *Scheduler) RemoveJob(name string) {
 	delete(s.genericFuncs, name)
 	delete(s.genericPreemptible, name)
 	delete(s.genericMaxRuntime, name)
+	delete(s.genericMinSpacing, name)
 	delete(s.genericLastRun, name)
 	delete(s.genericLastErr, name)
-	delete(s.genericPending, name)
+	if s.genericPending[name] {
+		s.logger.Warn("scheduled job follow-up dropped without running",
+			"job", name, "reason", "job removed")
+		delete(s.genericPending, name)
+		delete(s.genericContinuation, name)
+	}
+	if !s.genericRunning[name] {
+		s.abandonTicketsLocked(name, "job removed")
+	}
 	s.logger.Info("removed scheduled job", "job", name)
 }
 
@@ -500,6 +538,9 @@ func (s *Scheduler) Stop() context.Context {
 
 	s.mu.Lock()
 	s.stopped = true
+	for name := range s.genericTickets {
+		s.abandonTicketsLocked(name, "scheduler stopped")
+	}
 	s.mu.Unlock()
 
 	cronCtx := s.cron.Stop()
@@ -801,76 +842,116 @@ func (s *Scheduler) IsJobScheduled(name string) bool {
 // no gate held) and relies on running to completion before returning so
 // lastRun/lastErr are recorded synchronously.
 func (s *Scheduler) TriggerJob(name string) error {
-	run, ok, err := s.reserveGenericJob(name, false)
+	run, disp, _, err := s.reserveGenericJob(name, false, false)
 	if err != nil {
 		return err
 	}
-	if !ok {
+	if disp != JobStarted {
 		return nil
 	}
-	return s.runJob(name, run)
+	return s.runJob(name, run, true)
 }
+
+// JobDisposition says what a manual trigger of a generic job did.
+type JobDisposition string
+
+const (
+	// JobStarted: the job was idle and a run was started.
+	JobStarted JobDisposition = "started"
+	// JobQueued: the job was running; one follow-up run was recorded.
+	JobQueued JobDisposition = "queued"
+	// JobCoalesced: the job is waiting to start (its initial run is queued
+	// behind the operation gate) or a follow-up is already recorded, so this
+	// request added no run.
+	JobCoalesced JobDisposition = "coalesced"
+)
 
 // StartJob asynchronously reserves and runs the named generic job in a new
 // goroutine, returning as soon as the reservation succeeds. This is used by
 // callers (e.g. an HTTP handler) that may already hold the daemon's
 // operation gate, so the job's gate acquisition must happen after the
 // caller has had a chance to return and release it.
-func (s *Scheduler) StartJob(name string) error {
-	run, ok, err := s.reserveGenericJob(name, false)
+//
+// A request that arrives while the job is active coalesces like a cron tick:
+// at most one follow-up run is kept, and the returned disposition says
+// whether a run started, a follow-up was queued, or the request was merged
+// into one already pending.
+func (s *Scheduler) StartJob(name string) (JobDisposition, error) {
+	req, err := s.RequestJob(name)
+	return req.Disposition, err
+}
+
+// RequestJob is StartJob that also issues a ticket for the request. The
+// ticket is answered by the first run that takes the work gate after the
+// request and then finishes; see WaitTicket.
+func (s *Scheduler) RequestJob(name string) (JobRequest, error) {
+	run, disp, ticket, err := s.reserveGenericJob(name, true, true)
 	if err != nil {
-		return err
+		return JobRequest{}, err
 	}
-	if !ok {
-		return nil
+	if disp == JobStarted {
+		go func() {
+			_ = s.runJob(name, run, true)
+		}()
 	}
-	go func() {
-		_ = s.runJob(name, run)
-	}()
-	return nil
+	return JobRequest{Disposition: disp, Ticket: ticket}, nil
 }
 
 // onJobTick handles one cron firing for a generic job, coalescing a tick
 // that arrives while the job is active like onAccountTick does.
 func (s *Scheduler) onJobTick(name string) {
-	run, ok, err := s.reserveGenericJob(name, true)
-	if err != nil || !ok {
+	run, disp, _, err := s.reserveGenericJob(name, true, false)
+	if err != nil || disp != JobStarted {
 		return
 	}
-	_ = s.runJob(name, run)
+	_ = s.runJob(name, run, true)
 }
 
 // reserveGenericJob validates and reserves the named generic job under the
-// lock, mirroring TriggerSync's reservation of an account sync. ok is false
-// when the job is already running (a no-op, not an error); a cron tick
-// (coalesce) is then remembered as one follow-up run.
-func (s *Scheduler) reserveGenericJob(name string, coalesce bool) (run func(context.Context) error, ok bool, err error) {
+// lock, mirroring TriggerSync's reservation of an account sync. The
+// disposition is JobStarted when the caller now owns a run. When the job is
+// already running it is JobQueued or JobCoalesced if coalesce is set (one
+// follow-up run is remembered), and empty otherwise (a no-op, not an error).
+// With issueTicket, an accepted request also gets the next ticket; issuing it
+// under the same lock as the reservation keeps the ticket ordered against the
+// moment a run takes the gate.
+func (s *Scheduler) reserveGenericJob(name string, coalesce, issueTicket bool) (run func(context.Context) error, disp JobDisposition, ticket Ticket, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	run = s.genericFuncs[name]
 	if run == nil {
-		return nil, false, fmt.Errorf("job %q is not scheduled", name)
+		return nil, "", Ticket{}, fmt.Errorf("job %q is not scheduled", name)
 	}
 	if s.stopped {
-		return nil, false, errors.New("scheduler is stopped")
+		return nil, "", Ticket{}, errors.New("scheduler is stopped")
 	}
 	if s.genericRunning[name] {
-		if coalesce {
-			s.coalesceTickLocked("job", name, s.genericQueued, s.genericPending)
+		if !coalesce {
+			return nil, "", Ticket{}, nil
 		}
-		return nil, false, nil
+		disp = JobCoalesced
+		if s.coalesceTickLocked("job", name, s.genericQueued, s.genericPending) {
+			disp = JobQueued
+		}
+		if issueTicket {
+			ticket = s.issueTicketLocked(name)
+		}
+		return nil, disp, ticket, nil
 	}
 	s.genericRunning[name] = true
 	s.genericQueued[name] = true
 	s.wg.Add(1)
-	return run, true, nil
+	if issueTicket {
+		ticket = s.issueTicketLocked(name)
+	}
+	return run, JobStarted, ticket, nil
 }
 
 // runJob executes an already-reserved generic job and records the result.
 // The caller must have set genericRunning[name] = true and called
-// s.wg.Add(1) before invoking runJob.
-func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
+// s.wg.Add(1) before invoking runJob. spaced applies the job's MinSpacing.
+func (s *Scheduler) runJob(name string, run func(context.Context) error, spaced bool) error {
 	defer s.wg.Done()
 	defer s.finishGenericRun(name)
 
@@ -878,12 +959,31 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	s.genericQueued[name] = true
 	preemptible := s.genericPreemptible[name]
 	maxRuntime := s.genericMaxRuntime[name]
+	var delay time.Duration
+	if last := s.genericLastGate[name]; spaced && !last.IsZero() {
+		delay = time.Until(last.Add(s.genericMinSpacing[name]))
+	}
 	s.mu.Unlock()
+	if delay > 0 {
+		s.logger.Info("scheduled job delayed to keep its minimum spacing", "job", name, "delay", delay.Round(time.Millisecond))
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-s.ctx.Done():
+			timer.Stop()
+			return nil
+		}
+	}
 	done, ok := s.beginWork(name)
 	s.mu.Lock()
 	delete(s.genericQueued, name)
 	if ok {
-		s.genericStartedAt[name] = time.Now()
+		now := time.Now()
+		s.genericStartedAt[name] = now
+		s.genericLastGate[name] = now
+		// Requests issued until now reached the scheduler before this run
+		// read anything, so this run answers them.
+		s.coverTicketsLocked(name, now)
 	}
 	s.mu.Unlock()
 	if !ok {
@@ -899,9 +999,11 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	budgetExpired := errors.Is(context.Cause(runCtx), jobctx.ErrRunBudgetExceeded)
 	if budgetExpired && !jobctx.HasProgress(runCtx) {
 		delete(s.genericPending, name)
+		delete(s.genericContinuation, name)
 		err = errors.Join(fmt.Errorf("%w before committing progress", jobctx.ErrRunBudgetExceeded),
 			callbackErrorAfterYield(runCtx, err))
 		s.genericLastErr[name] = err
+		s.answerTicketsLocked(name, TicketFailed, err)
 		s.logger.Warn("scheduled job reached its runtime limit before committing progress; waiting for the next trigger",
 			"job", name,
 			"max_runtime", maxRuntime,
@@ -911,12 +1013,16 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	yielded := budgetExpired || yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
 	if errors.Is(err, ErrReschedule) {
 		s.genericPending[name] = true
+		s.genericContinuation[name] = true
+		s.uncoverTicketsLocked(name)
 		s.logger.Info("scheduled job has remaining work; queued follow-up",
 			"job", name)
 		return nil
 	}
 	if yielded {
 		s.genericPending[name] = true
+		s.genericContinuation[name] = true
+		s.uncoverTicketsLocked(name)
 		if callbackErr := callbackErrorAfterYield(runCtx, err); callbackErr != nil {
 			s.genericLastErr[name] = callbackErr
 			s.logger.Error("scheduled job yielded after callback error; queued follow-up",
@@ -930,10 +1036,12 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	}
 	if err != nil {
 		s.genericLastErr[name] = err
+		s.answerTicketsLocked(name, TicketFailed, err)
 		return err
 	}
 	s.genericLastRun[name] = time.Now()
 	delete(s.genericLastErr, name)
+	s.answerTicketsLocked(name, TicketCompleted, nil)
 	return nil
 }
 
@@ -947,13 +1055,29 @@ func (s *Scheduler) finishGenericRun(name string) {
 	// this run executed, and RemoveJob drops the follow-up.
 	current := s.genericFuncs[name]
 	if s.genericPending[name] && !s.stopped && current != nil {
+		spaced := !s.genericContinuation[name]
 		delete(s.genericPending, name)
+		delete(s.genericContinuation, name)
 		s.genericQueued[name] = true
 		s.wg.Add(1)
-		go func() { _ = s.runJob(name, current) }()
+		go func() { _ = s.runJob(name, current, spaced) }()
 		return
 	}
-	delete(s.genericPending, name)
+	if s.genericPending[name] {
+		s.logger.Warn("scheduled job follow-up dropped without running",
+			"job", name, "stopped", s.stopped, "job_registered", current != nil)
+		delete(s.genericPending, name)
+		delete(s.genericContinuation, name)
+	}
+	// No further run will take the gate, so no run can answer what is left.
+	reason := "no run will follow"
+	switch {
+	case s.stopped:
+		reason = "scheduler stopped"
+	case current == nil:
+		reason = "job removed"
+	}
+	s.abandonTicketsLocked(name, reason)
 	s.genericRunning[name] = false
 }
 

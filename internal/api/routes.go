@@ -553,7 +553,8 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRouteWithRequest[AddAccountRequest, StatusMessageResponse](apiV1, "addAccount", http.MethodPost, "/accounts", "Add an account", s.handleAddAccount, http.StatusOK, http.StatusCreated)
 	registerAPIV1RawHumaJSONRoute[SourceStatusResponse](apiV1, "listSourceStatus", http.MethodGet, "/sources/status", "List source sync status", s.handleSourceStatus)
 	registerAPIV1RawHumaJSONRoute[SourceIdentitiesResponse](apiV1, "listSourceIdentities", http.MethodGet, "/sources/{source_id}/identities", "List confirmed identities for one source", s.handleSourceIdentities)
-	registerAPIV1RawHumaJSONRoute[StatusMessageResponse](apiV1, "triggerSync", http.MethodPost, "/sync/{account}", "Trigger account sync", s.handleTriggerSync, http.StatusAccepted)
+	registerAPIV1RawHumaJSONRoute[TriggerSyncResponse](apiV1, "triggerSync", http.MethodPost, "/sync/{account}", "Trigger account sync", s.handleTriggerSync, http.StatusAccepted)
+	registerAPIV1RawHumaJSONRouteWithErrors[SyncTicketResponse](apiV1, "getSyncTicket", http.MethodGet, "/sync/{account}/tickets/{ticket}", "Get or wait for a sync ticket", s.handleSyncTicket, http.StatusBadRequest, http.StatusNotFound, http.StatusGone)
 	registerAPIV1RawHumaJSONRoute[SchedulerStatusResponse](apiV1, "getSchedulerStatus", http.MethodGet, "/scheduler/status", "Get scheduler status", s.handleSchedulerStatus)
 	registerAPIV1RawHumaJSONRouteWithRequest[TokenUploadRequest, StatusMessageResponse](apiV1, "uploadToken", http.MethodPost, "/auth/token/{email}", "Upload an OAuth token", s.handleUploadToken, http.StatusCreated)
 
@@ -1051,6 +1052,13 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{
 			pathStringParam("account", "Account email or configured source identifier"),
 			queryStringParam("source_type", "Source type; required to trigger a generic (non-account) source", false),
+		}
+	case "getSyncTicket":
+		return []*huma.Param{
+			pathStringParam("account", "Configured source identifier the ticket was issued for"),
+			pathStringParam("ticket", "Ticket returned by the sync trigger"),
+			queryStringParam("source_type", "Source type the ticket was issued for", true),
+			queryStringParam("wait", "Longest time to wait for a terminal state, as a duration such as 30s; capped by the request timeout", false),
 		}
 	case "uploadToken":
 		return []*huma.Param{pathStringParam("email", "Account email address")}

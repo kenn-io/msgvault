@@ -465,6 +465,52 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, src := range cfg.WhatsAppApple {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("whatsapp_apple source is enabled but has no schedule — the daemon will not import it",
+				"source", src.Name, "hint", `set a cron schedule (e.g. "*/10 * * * *")`)
+		}
+	}
+	for _, src := range cfg.ScheduledWhatsAppAppleSources() {
+		source := src
+		if err := sched.AddJob(scheduler.Job{
+			Name:     api.WhatsAppAppleJobName(source.Phone),
+			Schedule: source.Schedule,
+			// Sync now may be called in a loop; each run holds the archive
+			// gate for a fixed cost, so reruns are spaced, never skipped.
+			MinSpacing: time.Minute,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+					return runScheduledWhatsAppApple(ctx, s, source)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule whatsapp apple import", "source", source.Name, "error", err)
+		} else {
+			logger.Info("scheduled whatsapp apple import", "source", source.Name, "schedule", source.Schedule)
+		}
+	}
+	if cfg.IMessage.Enabled && cfg.IMessage.Schedule == "" {
+		logger.Warn("imessage is enabled but has no schedule — the daemon will not import it",
+			"hint", `set a cron schedule (e.g. "*/10 * * * *") on the [imessage] entry`)
+	}
+	if cfg.IMessage.Enabled && cfg.IMessage.Schedule != "" {
+		if err := sched.AddJob(scheduler.Job{
+			Name:       api.IMessageJobName,
+			Schedule:   cfg.IMessage.Schedule,
+			MinSpacing: time.Minute,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
+					return runScheduledIMessage(ctx, s, cfg.IMessage)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule imessage import", "error", err)
+		} else {
+			logger.Info("scheduled imessage import", "schedule", cfg.IMessage.Schedule)
+		}
+	}
+
 	// Warn about enabled calendar sources with no schedule: they are never
 	// daemon-synced, so once a manual sync seeds the source row its freshness
 	// drifts stale and the freshness monitor eventually alarms RED.
@@ -3847,8 +3893,12 @@ func (a *schedulerAdapter) TriggerJob(name string) error {
 	return a.jobScheduler(name).TriggerJob(name)
 }
 
-func (a *schedulerAdapter) StartJob(name string) error {
-	return a.jobScheduler(name).StartJob(name)
+func (a *schedulerAdapter) RequestJob(name string) (scheduler.JobRequest, error) {
+	return a.jobScheduler(name).RequestJob(name)
+}
+
+func (a *schedulerAdapter) WaitTicket(ctx context.Context, name string, ticket scheduler.Ticket) (scheduler.TicketStatus, error) {
+	return a.jobScheduler(name).WaitTicket(ctx, name, ticket)
 }
 
 // runScheduledSync performs a sync for a scheduled account. It resolves
