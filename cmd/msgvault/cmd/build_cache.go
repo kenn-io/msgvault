@@ -324,10 +324,8 @@ This command exports normalized tables to Parquet files for fast aggregate queri
 DuckDB joins the Parquet files at query time, which is much faster than joining
 during export (especially for incremental updates).
 
-Relationship builds join group-chat members once per logical conversation entry.
-Each message retains its direct sender/recipient edges and owner presence for scores,
-so large groups keep their searchable members without expanding every message by
-the full roster. Direct chats and meetings keep per-message participant attribution.
+Large group chats use less temporary disk while keeping every member searchable.
+Relationship build and resource details: https://msgvault.io/docs/configuration/#analytics
 
 The cache files are stored in ~/.msgvault/analytics/:
   - messages/year=*/     Core message data, partitioned by year
@@ -1679,7 +1677,7 @@ func reportIdentityBuildProgress(dataset string, elapsed time.Duration) {
 func reportRelationshipActivityStats(stats identityindex.ActivityStats) {
 	fmt.Printf(
 		"  %-25s direct=%d conversation=%d final=%d expansion=%.2fx\n",
-		"Relationship fan-out:",
+		"Relationship build rows:",
 		stats.DirectRows,
 		stats.ConversationExpandedRows,
 		stats.FinalRows,

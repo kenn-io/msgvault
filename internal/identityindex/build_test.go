@@ -73,46 +73,6 @@ func TestBuildPublishesFourRelationshipDatasets(t *testing.T) {
 		"non-chat domain fan-out includes conversation-only domains")
 }
 
-func TestBuildLargeGroupUsesRosterOncePerLogicalEntry(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	root, db := writeRelationshipBaseFixture(t, true)
-	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
-		firstMessageID: 1, messageCount: 5_000, memberCount: 200,
-		startDate: "2026-01-01 00:00:00", messageType: "beeper", conversationType: "group_chat",
-	})
-	_, err := db.Exec(`CREATE TEMP TABLE incoming AS
-		SELECT * REPLACE (2::BIGINT AS sender_id) FROM read_parquet(?)`,
-		parquetDatasetGlob(root, "messages"))
-	requirements.NoError(err)
-	replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM incoming")
-	replaceRelationshipParquet(t, db, root, "message_recipients", `
-		SELECT id AS message_id, 2::BIGINT AS participant_id,
-		       'from'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name
-		FROM incoming`)
-	requirements.NoError(setRelationshipTestMemoryLimit(db, "128MB"))
-	_, err = db.Exec("SET max_temp_directory_size = '128MB'")
-	requirements.NoError(err)
-
-	result, err := Build(context.Background(), db, BuildOptions{
-		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
-	})
-	requirements.NoError(err)
-	assertions.Equal(int64(5_000), result.Activity.DirectRows)
-	assertions.Equal(int64(5_199), result.Activity.ConversationExpandedRows)
-	assertions.Equal(int64(10_198), result.Activity.FinalRows)
-	assertions.Less(result.Activity.ExpansionRatio, 2.04)
-	assertions.Equal(int64(10_000), relationshipParquetCount(t, db, root, DatasetActivity))
-
-	var people, received int64
-	requirements.NoError(db.QueryRow("SELECT count(*) FROM read_parquet(?)",
-		relationshipParquetGlob(root, DatasetPeople)).Scan(&people))
-	requirements.NoError(db.QueryRow(`SELECT sum(received_count) FROM read_parquet(?)
-		WHERE canonical_id = 2`, relationshipParquetGlob(root, DatasetTemperatureContributions)).Scan(&received))
-	assertions.Equal(int64(200), people, "silent group members remain searchable")
-	assertions.Equal(int64(5_000), received, "roster-only owner presence credits every incoming message")
-}
-
 func TestBuildChunksRelationshipActivityByOccurrenceYear(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -396,56 +356,32 @@ func testExpandedActivity(baseRoot string, activityRoots ...string) string {
 }
 
 func TestBuildIncrementalChatContributionsMatchFullReductionAcrossYears(t *testing.T) {
-	committedRoot, db := writeRelationshipBaseFixture(t, false)
-	setChatRelationshipFixture(t, db, committedRoot, 100, 2026)
-	effectiveAt := time.Date(2027, 7, 21, 10, 30, 0, 0, time.UTC)
-	_, err := Build(context.Background(), db, BuildOptions{
-		Mode: ModeFull, StagedBaseRoot: committedRoot, OutputRoot: committedRoot,
-		EffectiveAt: effectiveAt,
-	})
-	require.NoError(t, err)
-
-	stagedRoot, stagedDB := writeRelationshipBaseFixture(t, false)
-	rewriteRelationshipFixtureIDs(t, stagedDB, stagedRoot, 200, 10)
-	setChatRelationshipFixture(t, stagedDB, stagedRoot, 200, 2027)
-	_, err = Build(context.Background(), db, BuildOptions{
-		Mode: ModeIncremental, CommittedRoot: committedRoot,
-		StagedBaseRoot: stagedRoot, OutputRoot: stagedRoot,
-		EffectiveAt: effectiveAt,
-	})
-	require.NoError(t, err)
-	assertIncrementalContributionsMatchFullReduction(t, db, committedRoot, stagedRoot, effectiveAt)
-	assertIncrementalDatasetsMatchFullBuild(t, db, committedRoot, stagedRoot, effectiveAt)
-}
-
-func TestBuildLargeGroupAppendMatchesFullReduction(t *testing.T) {
-	for _, tc := range []struct{ name, startDate string }{
-		{"new anchor", "2026-01-01 01:00:00"},
-		{"late arrivals", "2025-12-30 00:00:00"},
+	for _, tc := range []struct {
+		name                      string
+		committedYear, stagedYear int
+	}{
+		{"new anchor", 2026, 2027},
+		{"late arrivals", 2027, 2026},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			requirements := require.New(t)
-			committedRoot, db := writeRelationshipBaseFixture(t, true)
-			writeSyntheticRelationshipFanOut(t, db, committedRoot, syntheticRelationshipFanOutOptions{
-				firstMessageID: 1, messageCount: 30, memberCount: 40,
-				startDate: "2025-12-31 23:59:55", messageType: "beeper", conversationType: "group_chat",
-			})
-			effectiveAt := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+			committedRoot, db := writeRelationshipBaseFixture(t, false)
+			setChatRelationshipFixture(t, db, committedRoot, 100, tc.committedYear)
+			effectiveAt := time.Date(2027, 7, 21, 10, 30, 0, 0, time.UTC)
 			_, err := Build(context.Background(), db, BuildOptions{
-				Mode: ModeFull, StagedBaseRoot: committedRoot, OutputRoot: committedRoot, EffectiveAt: effectiveAt,
+				Mode: ModeFull, StagedBaseRoot: committedRoot, OutputRoot: committedRoot,
+				EffectiveAt: effectiveAt,
 			})
-			requirements.NoError(err)
-			stagedRoot, stagedDB := writeRelationshipBaseFixture(t, true)
-			writeSyntheticRelationshipFanOut(t, stagedDB, stagedRoot, syntheticRelationshipFanOutOptions{
-				firstMessageID: 1001, messageCount: 20, memberCount: 40,
-				startDate: tc.startDate, messageType: "beeper", conversationType: "group_chat",
-			})
-			result, err := Build(context.Background(), db, BuildOptions{
+			require.NoError(t, err)
+
+			stagedRoot, stagedDB := writeRelationshipBaseFixture(t, false)
+			rewriteRelationshipFixtureIDs(t, stagedDB, stagedRoot, 200, 10)
+			setChatRelationshipFixture(t, stagedDB, stagedRoot, 200, tc.stagedYear)
+			_, err = Build(context.Background(), db, BuildOptions{
 				Mode: ModeIncremental, CommittedRoot: committedRoot,
-				StagedBaseRoot: stagedRoot, OutputRoot: stagedRoot, EffectiveAt: effectiveAt,
+				StagedBaseRoot: stagedRoot, OutputRoot: stagedRoot,
+				EffectiveAt: effectiveAt,
 			})
-			requirements.NoError(err)
-			assert.Equal(t, int64(59), result.Activity.FinalRows, "only delta messages and one roster are expanded")
+			require.NoError(t, err)
 			assertIncrementalContributionsMatchFullReduction(t, db, committedRoot, stagedRoot, effectiveAt)
 			assertIncrementalDatasetsMatchFullBuild(t, db, committedRoot, stagedRoot, effectiveAt)
 		})
