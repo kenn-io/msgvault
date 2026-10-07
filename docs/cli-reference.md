@@ -2251,7 +2251,8 @@ MSGVAULT_HOME=./subset-vault msgvault tui
 | `--include-vcard-resources` | Copy complete native vCards and retired UID aliases; requires `--include-profiles` |
 
 The command is SQLite-only. Without `--include-identity`, it copies only the
-confirmed addresses that included messages use, so each message keeps its
+confirmed addresses each account's included messages use, including addresses
+in the stored headers of mail not yet attributed, so each message keeps its
 account. The optional identity, attribute, profile, and vCard flags can copy
 personal records that have no message in the subset; read the command's
 warning before sharing its output.

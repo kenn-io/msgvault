@@ -1,6 +1,8 @@
 package store
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
 	"database/sql"
 	"fmt"
@@ -4985,11 +4987,31 @@ func TestCopySubsetKeepsAccountAttributionConsistent(t *testing.T) {
 	srcDB := createTestSourceDB(t, t.TempDir(), 3)
 	db, err := sql.Open("sqlite3", srcDB)
 	require.NoError(err)
-	_, err = db.Exec(`INSERT INTO account_identities (source_id, address, address_key, source_signal)
-		VALUES (1, 'work@example.org', 'work@example.org', 'manual'),
-		       (1, 'unused@example.org', 'unused@example.org', 'manual')`)
+	for _, stmt := range []string{
+		// Message 1 (alice to bob) stays in source 1; messages 2 and 3 (bob
+		// to charlie) move to source 2, so only source 2 uses charlie.
+		`INSERT INTO sources (id, source_type, identifier) VALUES (2, 'gmail', 'other@example.com')`,
+		`UPDATE messages SET source_id = 2 WHERE id IN (2, 3)`,
+		`UPDATE messages SET account_address = 'work@example.org', account_path = 'inbound'`,
+		// Message 1 predates attribution: pending, with an alias named only
+		// in its stored delivery headers.
+		`UPDATE messages SET account_address = NULL, account_path = NULL WHERE id = 1`,
+		`INSERT INTO account_identities (source_id, address, address_key, source_signal) VALUES
+			(1, 'hidden@example.org', 'hidden@example.org', 'manual'),
+			(1, 'charlie@example.com', 'charlie@example.com', 'manual'),
+			(1, 'unused@example.org', 'unused@example.org', 'manual'),
+			(2, 'work@example.org', 'work@example.org', 'manual')`,
+	} {
+		_, err = db.Exec(stmt)
+		require.NoError(err, stmt)
+	}
+	var raw bytes.Buffer
+	zw := zlib.NewWriter(&raw)
+	_, err = zw.Write([]byte("X-Delivered-To: hidden@example.org\r\n\r\nbody"))
 	require.NoError(err)
-	_, err = db.Exec(`UPDATE messages SET account_address = 'work@example.org', account_path = 'inbound'`)
+	require.NoError(zw.Close())
+	_, err = db.Exec(`INSERT INTO message_raw (message_id, raw_data, raw_format, compression)
+		VALUES (1, ?, 'mime', 'zlib')`, raw.Bytes())
 	require.NoError(err)
 	require.NoError(db.Close())
 
@@ -5001,7 +5023,8 @@ func TestCopySubsetKeepsAccountAttributionConsistent(t *testing.T) {
 		require.NoError(err)
 		t.Cleanup(func() { _ = dst.Close() })
 		require.NoError(dst.InitSchema())
-		rows, err := dst.DB().Query(`SELECT address_key FROM account_identities ORDER BY address_key`)
+		rows, err := dst.DB().Query(`SELECT source_id || ':' || address_key FROM account_identities
+			ORDER BY source_id, address_key`)
 		require.NoError(err)
 		defer func() { _ = rows.Close() }()
 		var keys []string
@@ -5013,8 +5036,9 @@ func TestCopySubsetKeepsAccountAttributionConsistent(t *testing.T) {
 		require.NoError(rows.Err())
 		return keys
 	}
-	assert.Equal([]string{"work@example.org"}, copiedIdentities(false),
-		"an attributed copy keeps the identity it was attributed to, and an unused alias stays out")
-	assert.Equal([]string{"unused@example.org", "work@example.org"}, copiedIdentities(true),
-		"--include-identity copies every confirmed address of an included source")
+	assert.Equal([]string{"1:hidden@example.org", "2:work@example.org"}, copiedIdentities(false),
+		"each source keeps only the addresses its own messages use, including a pending message's headers")
+	assert.Equal([]string{
+		"1:charlie@example.com", "1:hidden@example.org", "1:unused@example.org", "2:work@example.org",
+	}, copiedIdentities(true), "--include-identity copies every confirmed address of an included source")
 }
