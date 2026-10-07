@@ -225,7 +225,8 @@ func (d *loggedDB) BeginTx(
 type loggedTx struct {
 	*sql.Tx
 
-	rebind func(string) string
+	rebind           func(string) string
+	mcpEventsWritten bool
 }
 
 // Exec rebinds before delegating. Transaction-scoped queries are

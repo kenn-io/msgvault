@@ -170,6 +170,7 @@ type ServeOptions struct {
 	// IdentityScoring exposes consented manual scoring. Consent is
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
+	Events          EventsBackend
 	// Drafts runs managed draft commands with the caller's credential.
 	Drafts        DraftRunner
 	DraftCommands []string
@@ -181,6 +182,8 @@ type HTTPOptions struct {
 	Addr               string
 	APIKey             string
 	AllowWrites        bool
+	// IndependentCredential suppresses owner-only Events even when its bytes match the owner key.
+	IndependentCredential bool
 }
 
 func officialToolHandler(
@@ -212,6 +215,9 @@ func officialToolHandler(
 			requireConfirmationSessionKey: confirmation.requireSessionKey,
 		})
 		if err != nil {
+			if eventErr, ok := errors.AsType[*eventReadError](err); ok {
+				return nil, nil, eventRPCError(eventErr.cause)
+			}
 			if required, ok := errors.AsType[*confirmationRequiredError](err); ok {
 				state, issueErr := confirmation.manager.issue(session, confirmation.sessionKey, toolName, arguments, required.params.Message)
 				if issueErr != nil {
@@ -309,6 +315,7 @@ var mcpSchemaCache = sdkmcp.NewSchemaCache()
 
 // newMCPServer builds an official MCP server from the operation catalog.
 func newMCPServer(opts ServeOptions, allowWrites bool) *sdkmcp.Server {
+	opts.Events = nil
 	return newMCPServerWithPolicy(opts, allowWrites, newStdioInvocationPolicy())
 }
 
@@ -369,6 +376,7 @@ func newMCPServerWithPolicy(
 		identityReview:      opts.IdentityReview,
 		personCardDAV:       opts.PersonCardDAV,
 		identityScoring:     opts.IdentityScoring,
+		events:              opts.Events,
 		drafts:              opts.Drafts,
 	}
 
@@ -409,6 +417,10 @@ func newMCPServerWithPolicy(
 	if !opts.DelegatedOnly {
 		registerAttachmentResources(s, h)
 	}
+	if opts.Events != nil {
+		s.AddReceivingMiddleware(eventsCapabilityMiddleware)
+		registerEvents(s, opts.Events)
+	}
 
 	return s
 }
@@ -424,6 +436,7 @@ func Serve(ctx context.Context, engine query.Engine, attachmentsDir, dataDir str
 
 // ServeWithOptions creates an MCP server from opts and serves over stdio.
 func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
+	opts.Events = nil
 	if err := ServeTransport(ctx, opts, &sdkmcp.StdioTransport{}); err != nil {
 		return fmt.Errorf("serve MCP over stdio: %w", err)
 	}
@@ -432,6 +445,7 @@ func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
 
 // ServeTransport creates an MCP server from opts and serves it on transport.
 func ServeTransport(ctx context.Context, opts ServeOptions, transport sdkmcp.Transport) error {
+	opts.Events = nil
 	opts.downloads = &downloadCache{}
 	defer opts.downloads.close()
 	return newMCPServerWithPolicy(opts, true, newStdioInvocationPolicy()).Run(ctx, transport) //nolint:wrapcheck // ServeWithOptions adds transport-specific context.
@@ -506,6 +520,9 @@ func newMCPHTTPServerWithPolicy(
 	httpServer := sdkmcp.NewStreamableHTTPHandler(
 		func(r *http.Request) *sdkmcp.Server {
 			requestOpts := opts
+			if r.Header.Get("Mcp-Protocol-Version") != "2026-07-28" || httpOpts.APIKey == "" || httpOpts.IndependentCredential || opts.DelegatedOnly {
+				requestOpts.Events = nil
+			}
 			if r.Header.Get("Mcp-Protocol-Version") < "2026-07-28" {
 				// Stateless HTTP cannot initiate form elicitation on older protocols.
 				requestOpts.AllowIdentityDecisions = false

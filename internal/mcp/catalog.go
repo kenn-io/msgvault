@@ -622,9 +622,10 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 			"To jump to a known match location: use center_at=<byte offset> to center the window on that location. "+
 			"Note: snippet is pre-stored source metadata (may be empty for non-Gmail sources).",
 		closedObject(map[string]*jsonschema.Schema{
-			"id":            safeIDSchema("Message ID"),
+			"id":            &jsonschema.Schema{AnyOf: []*jsonschema.Schema{safeIDSchema("Message ID"), {Type: "string", Pattern: "^[1-9][0-9]*$"}}, Description: "Archive message ID as a decimal string or integer"},
 			toolArgOffset:   nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
 			"center_at":     signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
+			"event_id":      stringSchema("Retained Events occurrence authorizing this message read; unavailable receipts deny the read."),
 			toolArgMaxChars: signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
 			"body_format":   bodyFormat,
 			"full_body":     booleanSchema("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),

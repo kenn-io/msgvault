@@ -249,6 +249,17 @@ func (s *Store) RemoveSourceSerialized(
 			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
+	if s.captureMCPEnabled() {
+		if err := s.mcpIdentityFence(ctx, conn); err != nil {
+			return false, 0, mcpSafeError(err)
+		}
+		if _, err := s.mcpClockLock(ctx, conn); err != nil {
+			return false, 0, mcpSafeError(err)
+		}
+	}
+	if err := s.removeMCPEventSource(ctx, conn, sourceID); err != nil {
+		return false, 0, err
+	}
 
 	var count int
 	if err := conn.QueryRowContext(ctx,
@@ -385,6 +396,16 @@ func (s *Store) removeSourceExec(
 	// prevents a candidate from being inserted after cleanup but before the
 	// source cascade removes its observation endpoint.
 	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return err
+	}
+	if s.captureMCPEnabled() {
+		if _, err := s.mcpClockLock(ctx, tx.Tx); err != nil {
+			return mcpSafeError(err)
+		}
+	}
+	// Retained data is removed within the existing source transaction even
+	// after capture is disabled, without taking an Events clock lock then.
+	if err := s.removeMCPEventSource(ctx, tx.Tx, sourceID); err != nil {
 		return err
 	}
 	if err := s.lockProfileIdentityKeyTxContext(

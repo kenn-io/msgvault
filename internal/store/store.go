@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -58,6 +59,14 @@ type Store struct {
 	// the projection tables and dirty-marking triggers. Every writable Store
 	// transaction then refreshes its affected Directory rows before commit.
 	directoryProjectionReady bool
+
+	// Events configuration and wake callbacks belong to the root Store.
+	// Immutable ingestion and sync views point back to that shared state.
+	mcpConfig   atomic.Pointer[mcpRuntime]
+	mcpWake     atomic.Pointer[mcpWakeCallback]
+	mcpConfigMu sync.Mutex
+	mcpBase     *Store
+	mcpIngest   IngestContext
 
 	// syncGeneration is immutable metadata on a per-run Store view.
 	// Mutating transactions on that view fence the exact running source
@@ -886,10 +895,26 @@ func (s *Store) withTxOptionsContext(
 		slog.Warn("sql tx begin failed", "error", err.Error())
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	captureEvents := (opts == nil || !opts.ReadOnly) && s.captureMCPEnabled()
+	if captureEvents {
+		// Match the native writers' outer identity fence. Taking the clock
+		// before identity or the source generation can deadlock with source
+		// removal and providers that write their attributed message state.
+		if err := s.mcpIdentityFence(ctx, tx.Tx); err != nil {
+			_ = tx.Rollback()
+			return mcpSafeError(err)
+		}
+	}
 	if s.syncGeneration != nil && (opts == nil || !opts.ReadOnly) {
 		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
 			_ = tx.Rollback()
 			return err
+		}
+	}
+	if captureEvents {
+		if _, err := s.mcpClockLock(ctx, tx.Tx); err != nil {
+			_ = tx.Rollback()
+			return mcpSafeError(err)
 		}
 	}
 	if err := fn(tx); err != nil {
@@ -916,15 +941,26 @@ func (s *Store) withTxOptionsContext(
 		return err
 	}
 	if err := tx.Commit(); err != nil {
+		commitErr := err
+		if tx.mcpEventsWritten {
+			// Deferred Events constraints can fail only at commit. Keep their
+			// driver diagnostics out of both generic logs and caller errors.
+			commitErr = mcpSafeError(err)
+		}
 		slog.Warn("sql tx commit failed",
-			"error", err.Error(),
+			"error", commitErr.Error(),
 			"duration_ms", time.Since(start).Milliseconds())
 		if errors.Is(err, sql.ErrTxDone) {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
 		}
-		return err
+		return commitErr
+	}
+	if tx.mcpEventsWritten {
+		// Only a committed occurrence can make delivery ready or preempt a
+		// resumable scheduled operation; ordinary archive writes stay quiet.
+		s.wakeMCPEvents()
 	}
 	// A tx crossing the slow threshold is a diagnostic, not a problem —
 	// bulk syncs routinely commit 100ms+ batches — so it logs at Info and
@@ -1548,6 +1584,18 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			}
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
+		}
+	}
+	for _, table := range []string{"gmail_drafts", "imap_drafts", "beeper_drafts", "chat_drafts"} {
+		addColumn := "ADD COLUMN "
+		if s.IsPostgreSQL() {
+			addColumn += "IF NOT EXISTS "
+		}
+		// Existing drafts have no trustworthy creator attribution. Leave the
+		// added column NULL instead of inferring an actor from their contents.
+		query := "ALTER TABLE " + table + " " + addColumn + "created_by_principal TEXT"
+		if _, err := s.db.ExecContext(ctx, query); err != nil && !s.dialect.IsDuplicateColumnError(err) {
+			return fmt.Errorf("migrate draft creator (%s): %w", table, err)
 		}
 	}
 	if err := s.runOnceMigration(ctx, migrationCardDAVMultipleAccounts, 1, false, s.ensureCardDAVMultiAccountSchema); err != nil {

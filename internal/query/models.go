@@ -7,6 +7,8 @@ package query
 import (
 	"maps"
 	"time"
+
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // AggregateRow represents a single row in an aggregate view.
@@ -86,6 +88,8 @@ type MessageDetail struct {
 	To   []Address `json:"to"`
 	Cc   []Address `json:"cc"`
 	Bcc  []Address `json:"bcc"`
+
+	Calendar *store.CalendarProjection `json:"calendar,omitempty"`
 
 	// Content
 	BodyText string `json:"body_text"`

@@ -57,7 +57,7 @@ func (s *Syncer) incremental(
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
 	scoped := *s
-	scoped.store = s.store.ScopedToSync(source.ID, syncID)
+	scoped.store = s.store.ScopedToSync(source.ID, syncID).WithIngestContext(store.IngestContext{Mode: store.IngestUnknown, ObservedAt: time.Now().UTC()})
 	s = &scoped
 	summary.SyncRunID = syncID
 
@@ -247,7 +247,7 @@ func (s *Syncer) incremental(
 							continue
 						}
 						threadID := newMsgThreads[newMsgIDs[i]]
-						if _, err := s.ingestMessage(
+						if _, err := s.ingestLiveMessage(
 							ctx, source.ID, raw, threadID, labelMap,
 						); err != nil {
 							s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
@@ -492,7 +492,7 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 				checkpoint.ErrorsCount++
 				return false, false, err
 			}
-			if _, err := s.ingestMessage(
+			if _, err := s.ingestLiveMessage(
 				ctx, sourceID, raw, threadID, labelMap,
 			); err != nil {
 				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
@@ -542,4 +542,12 @@ func (s *Syncer) logLabelChangeError(action, messageID string, err error) {
 	} else {
 		s.logger.Warn("failed to handle label "+action, "id", messageID, "error", err)
 	}
+}
+
+// ingestLiveMessage is restricted to messages obtained from the current
+// history delta. Recovery of earlier fetch failures keeps unknown provenance.
+func (s *Syncer) ingestLiveMessage(ctx context.Context, sourceID int64, raw *gmail.RawMessage, threadID string, labelMap map[string]int64) (bool, error) {
+	scoped := *s
+	scoped.store = s.store.WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: time.Now().UTC()})
+	return scoped.ingestMessage(ctx, sourceID, raw, threadID, labelMap)
 }

@@ -50,12 +50,15 @@ type syncGeneration struct {
 func (s *Store) ScopedToSync(sourceID, syncRunID int64) *Store {
 	base := s.withoutSyncScope()
 	return &Store{
-		db:                   base.db,
-		dbPath:               base.dbPath,
-		sqliteFilesystemPath: base.sqliteFilesystemPath,
-		dialect:              base.dialect,
-		readOnly:             base.readOnly,
-		fts5Available:        base.fts5Available,
+		db:                       base.db,
+		dbPath:                   base.dbPath,
+		sqliteFilesystemPath:     base.sqliteFilesystemPath,
+		dialect:                  base.dialect,
+		readOnly:                 base.readOnly,
+		fts5Available:            base.fts5Available,
+		directoryProjectionReady: base.directoryProjectionReady,
+		mcpBase:                  base.mcpRoot(),
+		mcpIngest:                s.mcpIngest,
 
 		syncGeneration:     &syncGeneration{sourceID: sourceID, runID: syncRunID},
 		syncBase:           base,

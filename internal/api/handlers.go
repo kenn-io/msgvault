@@ -231,6 +231,16 @@ type HealthResponse struct {
 	// /api/v1/health so remote CLI clients can refuse a major-version mismatch
 	// before issuing commands. Omitted on the public unauthenticated /health.
 	APISchemaVersion string `json:"api_schema_version,omitempty"`
+	// Events discovery is available only to the daemon's owner API key.
+	MCPEvents            *bool                `json:"mcp_events,omitzero" nullable:"false"`
+	MCPEventCapabilities []MCPEventCapability `json:"mcp_event_capabilities,omitempty"`
+}
+
+type MCPEventCapability struct {
+	Family     string   `json:"family"`
+	SourceType string   `json:"source_type"`
+	Kinds      []string `json:"kinds"`
+	ReadTools  []string `json:"read_tools"`
 }
 
 type MessageListResponse struct {
@@ -327,6 +337,8 @@ type MessageSummary struct {
 // MessageDetail represents a full message response.
 type MessageDetail struct {
 	MessageSummary
+
+	Calendar *store.CalendarProjection `json:"calendar,omitempty"`
 
 	Body     string `json:"body"`
 	BodyHTML string `json:"body_html,omitempty"`
@@ -569,6 +581,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 		HasAttach:       qMsg.HasAttachments,
 		SizeBytes:       qMsg.SizeEstimate,
 		IsFromMe:        qMsg.IsFromMe,
+		Calendar:        qMsg.Calendar,
 		Body:            body,
 		BodyHTML:        qMsg.BodyHTML,
 		Attachments:     attachments,
@@ -779,6 +792,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		Body:           msg.Body,
 		BodyHTML:       msg.BodyHTML,
 		IsFromMe:       msg.IsFromMe,
+		Calendar:       msg.Calendar,
 	}
 
 	attachments := make([]AttachmentInfo, 0, len(msg.Attachments))

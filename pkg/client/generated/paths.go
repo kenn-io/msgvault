@@ -316,6 +316,14 @@ func (l LinkKataEvidencePath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
+type GetMCPEventMessagePath struct {
+	ID string `json:"id" validate:"required"`
+}
+
+func (g GetMCPEventMessagePath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type GetMessagePath struct {
 	// ID Message ID
 	ID int64 `json:"id"`

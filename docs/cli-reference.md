@@ -3481,6 +3481,15 @@ for input security, runtime precedence, and sweep-provider commands.
 
 ## mcp
 
+### Inspect Events delivery
+
+On unreleased `main`, `msgvault mcp events status --json` reads the selected
+local or remote daemon's owner-only delivery state. It reports subscription
+state, stop reason, refresh deadline, settled cursor and epoch, pending attempts,
+last outcome, and dead-letter and loop-guard counts. Callback URLs, secrets,
+and encrypted secret values are omitted. A disabled daemon reports Events
+unavailable. See [MCP Events](usage/chat.md#events) for setup and protocol limits.
+
 ### Discover running HTTP listeners
 
 Run `msgvault mcp status --json` to list HTTP MCP listeners started by this

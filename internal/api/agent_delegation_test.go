@@ -238,7 +238,8 @@ func TestAgentTokenNeverFallsBack(t *testing.T) {
 // TestDelegatedOperationAllowlistIsClosed tests proof matrix row 8.
 // It enumerates all operations registered in the live route registry via the
 // OpenAPI spec and verifies that exactly the two allowed operations pass the
-// delegated auth middleware; every other /api/v1/* operation returns 401.
+// delegated auth middleware. Other /api/v1/* operations return 401, except
+// owner-only MCP Events operations, which return 403 with owner_required.
 func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
@@ -300,8 +301,19 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 					"allowed op %q (%s %s) must not return 401; got %d", op.OperationID, strings.ToUpper(method), rawPath, w.Code)
 				testedAllowed++
 			} else {
-				assert.Equal(http.StatusUnauthorized, w.Code,
-					"non-allowed op %q (%s %s) must return 401; got %d", op.OperationID, strings.ToUpper(method), rawPath, w.Code)
+				wantStatus := http.StatusUnauthorized
+				if strings.HasPrefix(rawPath, "/api/v1/mcp/events/") {
+					wantStatus = http.StatusForbidden
+					var denial struct {
+						Code   int    `json:"code"`
+						Reason string `json:"reason"`
+					}
+					require.NoError(json.Unmarshal(w.Body.Bytes(), &denial))
+					assert.Equal(-32012, denial.Code)
+					assert.Equal("owner_required", denial.Reason)
+				}
+				assert.Equal(wantStatus, w.Code,
+					"non-allowed op %q (%s %s) must return %d; got %d", op.OperationID, strings.ToUpper(method), rawPath, wantStatus, w.Code)
 				testedDenied++
 			}
 		}

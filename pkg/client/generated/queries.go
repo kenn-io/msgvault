@@ -525,6 +525,22 @@ func (s SearchIntegrationTasksQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type GetMCPEventQuery struct {
+	EventID string `json:"event_id" validate:"required"`
+}
+
+func (g GetMCPEventQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GetMCPEventMessageQuery struct {
+	EventID string `json:"event_id" validate:"required"`
+}
+
+func (g GetMCPEventMessageQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type ListMessagesQuery struct {
 	// Page One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
 	Page *int64 `json:"page,omitempty"`

@@ -176,7 +176,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 		Addr:               "0.0.0.0:8081",
 		DiscoveryDirectory: filepath.Join(home, "mcp"),
 		BackendURL:         daemon.URL,
-		APIKey:             "mcp-http-key",
+		APIKey:             "daemon-key",
 		AllowWrites:        true,
 	}, gotHTTPOpts)
 }

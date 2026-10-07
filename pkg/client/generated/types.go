@@ -1133,6 +1133,59 @@ func (c CalendarPlannedWrite) Validate() error {
 	return errors
 }
 
+type CalendarProjection struct {
+	AllDay   *bool   `json:"all_day" validate:"omitempty"`
+	End      *string `json:"end" validate:"omitempty"`
+	IcalUID  *string `json:"ical_uid" validate:"omitempty"`
+	Sequence *int64  `json:"sequence" validate:"omitempty"`
+	Start    *string `json:"start" validate:"omitempty"`
+	Status   *string `json:"status" validate:"omitempty"`
+	TimeZone *string `json:"time_zone" validate:"omitempty"`
+}
+
+func (c CalendarProjection) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.AllDay).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("AllDay", err)
+		}
+	}
+	if c.End != nil {
+		if err := typesValidator.Var(c.End, "required"); err != nil {
+			errors = errors.Append("End", err)
+		}
+	}
+	if c.IcalUID != nil {
+		if err := typesValidator.Var(c.IcalUID, "required"); err != nil {
+			errors = errors.Append("IcalUID", err)
+		}
+	}
+	if v, ok := any(c.Sequence).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Sequence", err)
+		}
+	}
+	if c.Start != nil {
+		if err := typesValidator.Var(c.Start, "required"); err != nil {
+			errors = errors.Append("Start", err)
+		}
+	}
+	if c.Status != nil {
+		if err := typesValidator.Var(c.Status, "required"); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if c.TimeZone != nil {
+		if err := typesValidator.Var(c.TimeZone, "required"); err != nil {
+			errors = errors.Append("TimeZone", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CalendarRequest struct {
 	Account      string                `json:"account" validate:"required"`
 	Action       CalendarRequestAction `json:"action" validate:"required"`
@@ -1273,6 +1326,16 @@ func (c CalendarResult) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type CalendarSource struct {
+	Account  string `json:"account" validate:"required"`
+	SourceID string `json:"source_id" validate:"required"`
+	Summary  string `json:"summary" validate:"required"`
+}
+
+func (c CalendarSource) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
 type CalendarWriteReceipt struct {
@@ -2331,12 +2394,14 @@ type CliMessageResponse struct {
 	Bcc                  []CliMessageAddress    `json:"bcc" validate:"required"`
 	BodyHTML             string                 `json:"body_html" validate:"required"`
 	BodyText             string                 `json:"body_text" validate:"required"`
+	Calendar             *CalendarProjection    `json:"calendar,omitempty"`
 	Cc                   []CliMessageAddress    `json:"cc" validate:"required"`
 	ConversationID       int64                  `json:"conversation_id"`
 	DeletedAt            *time.Time             `json:"deleted_at,omitempty" validate:"required"`
 	From                 []CliMessageAddress    `json:"from" validate:"required"`
 	HasAttachments       bool                   `json:"has_attachments"`
 	ID                   int64                  `json:"id"`
+	IsFromMe             bool                   `json:"is_from_me"`
 	Labels               []string               `json:"labels" validate:"required"`
 	MessageType          *string                `json:"message_type,omitzero"`
 	ReceivedAt           *time.Time             `json:"received_at,omitempty" validate:"required"`
@@ -2345,6 +2410,7 @@ type CliMessageResponse struct {
 	SizeEstimate         int64                  `json:"size_estimate"`
 	Snippet              string                 `json:"snippet" validate:"required"`
 	SourceConversationID string                 `json:"source_conversation_id" validate:"required"`
+	SourceID             int64                  `json:"source_id"`
 	SourceMessageID      string                 `json:"source_message_id" validate:"required"`
 	Subject              string                 `json:"subject" validate:"required"`
 	To                   []CliMessageAddress    `json:"to" validate:"required"`
@@ -2371,6 +2437,13 @@ func (c CliMessageResponse) Validate() error {
 	}
 	if err := typesValidator.Var(c.BodyText, "required"); err != nil {
 		errors = errors.Append("BodyText", err)
+	}
+	if c.Calendar != nil {
+		if v, ok := any(c.Calendar).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Calendar", err)
+			}
+		}
 	}
 	for i, item := range c.Cc {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -2986,6 +3059,18 @@ func (d DeepSearchResponse) Validate() error {
 	return errors
 }
 
+type Definition struct {
+	Delivery      []string       `json:"delivery" validate:"required"`
+	Description   string         `json:"description" validate:"required"`
+	InputSchema   map[string]any `json:"inputSchema"`
+	Name          string         `json:"name" validate:"required"`
+	PayloadSchema map[string]any `json:"payloadSchema"`
+}
+
+func (d Definition) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
 type DeletionManifestDetail struct {
 	Account      *string          `json:"account,omitzero"`
 	CreatedAt    time.Time        `json:"created_at" validate:"required"`
@@ -3065,6 +3150,16 @@ type DeletionTarget struct {
 }
 
 func (d DeletionTarget) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type Delivery struct {
+	Mode   string  `json:"mode" validate:"required"`
+	Secret *string `json:"secret,omitzero"`
+	URL    string  `json:"url" validate:"required"`
+}
+
+func (d Delivery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
@@ -3996,6 +4091,39 @@ func (e EntryRow) Validate() error {
 	}
 	if err := typesValidator.Var(e.Title, "required"); err != nil {
 		errors = errors.Append("Title", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type Envelope struct {
+	Cursor    string         `json:"cursor" validate:"required"`
+	Data      jsontext.Value `json:"data"`
+	EventID   string         `json:"eventId" validate:"required"`
+	Name      string         `json:"name" validate:"required"`
+	Timestamp string         `json:"timestamp" validate:"required"`
+}
+
+func (e Envelope) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Cursor, "required"); err != nil {
+		errors = errors.Append("Cursor", err)
+	}
+	if v, ok := any(e.Data).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Data", err)
+		}
+	}
+	if err := typesValidator.Var(e.EventID, "required"); err != nil {
+		errors = errors.Append("EventID", err)
+	}
+	if err := typesValidator.Var(e.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if err := typesValidator.Var(e.Timestamp, "required"); err != nil {
+		errors = errors.Append("Timestamp", err)
 	}
 	if len(errors) == 0 {
 		return nil
@@ -5258,15 +5386,24 @@ func (g GmailIDsResponse) Validate() error {
 }
 
 type HealthResponse struct {
-	AnalyticsEngine  *string          `json:"analytics_engine,omitzero"`
-	APISchemaVersion *string          `json:"api_schema_version,omitzero"`
-	Operation        *OperationHealth `json:"operation,omitempty"`
-	Status           string           `json:"status" validate:"required"`
-	Vector           *VectorHealth    `json:"vector,omitempty"`
+	AnalyticsEngine      *string              `json:"analytics_engine,omitzero"`
+	APISchemaVersion     *string              `json:"api_schema_version,omitzero"`
+	McpEventCapabilities []MCPEventCapability `json:"mcp_event_capabilities,omitempty"`
+	McpEvents            *bool                `json:"mcp_events,omitempty"`
+	Operation            *OperationHealth     `json:"operation,omitempty"`
+	Status               string               `json:"status" validate:"required"`
+	Vector               *VectorHealth        `json:"vector,omitempty"`
 }
 
 func (h HealthResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range h.McpEventCapabilities {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("McpEventCapabilities[%d]", i), err)
+			}
+		}
+	}
 	if h.Operation != nil {
 		if v, ok := any(h.Operation).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6058,6 +6195,53 @@ func (l ListDeletionsResponse) Validate() error {
 	return errors
 }
 
+type ListResult struct {
+	Events []Definition `json:"events" validate:"required"`
+}
+
+func (l ListResult) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range l.Events {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Events[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MCPEventCapability struct {
+	Family     string   `json:"family" validate:"required"`
+	Kinds      []string `json:"kinds" validate:"required"`
+	ReadTools  []string `json:"read_tools" validate:"required"`
+	SourceType string   `json:"source_type" validate:"required"`
+}
+
+func (m MCPEventCapability) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MCPEventsErrorResponse struct {
+	Code      *int64  `json:"code,omitempty"`
+	ErrorData string  `json:"error" validate:"required"`
+	Message   string  `json:"message" validate:"required"`
+	Reason    *string `json:"reason,omitzero"`
+}
+
+func (m MCPEventsErrorResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+func (s MCPEventsErrorResponse) Error() string {
+	return "unmapped client error"
+}
+
+type MCPEventsListRequest = map[string]any
+
 type Manifest struct {
 	CreatedAt   time.Time        `json:"created_at" validate:"required"`
 	CreatedBy   string           `json:"created_by" validate:"required"`
@@ -6534,30 +6718,31 @@ type MergePersonRequest struct {
 }
 
 type MessageDetail struct {
-	Attachments     []AttachmentInfo `json:"attachments" validate:"required"`
-	Bcc             []string         `json:"bcc,omitempty"`
-	Body            string           `json:"body" validate:"required"`
-	BodyHTML        *string          `json:"body_html,omitzero"`
-	BodyOmitted     *bool            `json:"body_omitted,omitempty"`
-	Cc              []string         `json:"cc,omitempty"`
-	ConversationID  *int64           `json:"conversation_id,omitempty"`
-	DeletedAt       *string          `json:"deleted_at,omitzero"`
-	From            string           `json:"from" validate:"required"`
-	FromEmail       *string          `json:"from_email,omitzero"`
-	FromName        *string          `json:"from_name,omitzero"`
-	FromPhone       *string          `json:"from_phone,omitzero"`
-	HasAttachments  bool             `json:"has_attachments"`
-	ID              int64            `json:"id"`
-	IsFromMe        *bool            `json:"is_from_me,omitempty"`
-	Labels          []string         `json:"labels" validate:"required"`
-	MessageType     *string          `json:"message_type,omitzero"`
-	SentAt          string           `json:"sent_at" validate:"required"`
-	SizeBytes       int64            `json:"size_bytes"`
-	Snippet         string           `json:"snippet" validate:"required"`
-	SourceID        *int64           `json:"source_id,omitempty"`
-	SourceMessageID *string          `json:"source_message_id,omitzero"`
-	Subject         string           `json:"subject" validate:"required"`
-	To              []string         `json:"to" validate:"required"`
+	Attachments     []AttachmentInfo    `json:"attachments" validate:"required"`
+	Bcc             []string            `json:"bcc,omitempty"`
+	Body            string              `json:"body" validate:"required"`
+	BodyHTML        *string             `json:"body_html,omitzero"`
+	BodyOmitted     *bool               `json:"body_omitted,omitempty"`
+	Calendar        *CalendarProjection `json:"calendar,omitempty"`
+	Cc              []string            `json:"cc,omitempty"`
+	ConversationID  *int64              `json:"conversation_id,omitempty"`
+	DeletedAt       *string             `json:"deleted_at,omitzero"`
+	From            string              `json:"from" validate:"required"`
+	FromEmail       *string             `json:"from_email,omitzero"`
+	FromName        *string             `json:"from_name,omitzero"`
+	FromPhone       *string             `json:"from_phone,omitzero"`
+	HasAttachments  bool                `json:"has_attachments"`
+	ID              int64               `json:"id"`
+	IsFromMe        *bool               `json:"is_from_me,omitempty"`
+	Labels          []string            `json:"labels" validate:"required"`
+	MessageType     *string             `json:"message_type,omitzero"`
+	SentAt          string              `json:"sent_at" validate:"required"`
+	SizeBytes       int64               `json:"size_bytes"`
+	Snippet         string              `json:"snippet" validate:"required"`
+	SourceID        *int64              `json:"source_id,omitempty"`
+	SourceMessageID *string             `json:"source_message_id,omitzero"`
+	Subject         string              `json:"subject" validate:"required"`
+	To              []string            `json:"to" validate:"required"`
 }
 
 func (m MessageDetail) Validate() error {
@@ -6571,6 +6756,13 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.Body, "required"); err != nil {
 		errors = errors.Append("Body", err)
+	}
+	if m.Calendar != nil {
+		if v, ok := any(m.Calendar).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Calendar", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(m.From, "required"); err != nil {
 		errors = errors.Append("From", err)
@@ -13182,6 +13374,62 @@ func (s StructuredPersonProfile) Validate() error {
 	return errors
 }
 
+type SubscribeRequest struct {
+	Arguments map[string]any `json:"arguments"`
+	Cursor    *string        `json:"cursor,omitzero"`
+	Delivery  Delivery       `json:"delivery"`
+	Name      string         `json:"name" validate:"required"`
+	TTLMs     *int64         `json:"ttlMs,omitempty"`
+}
+
+func (s SubscribeRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(s.Delivery).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Delivery", err)
+		}
+	}
+	if err := typesValidator.Var(s.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SubscribeResult struct {
+	Cursor        string `json:"cursor" validate:"required"`
+	ID            string `json:"id" validate:"required"`
+	RefreshBefore int64  `json:"refreshBefore"`
+	Truncated     bool   `json:"truncated"`
+}
+
+func (s SubscribeResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type SubscriptionStatus struct {
+	Cursor              string  `json:"cursor" validate:"required"`
+	CursorEpoch         int64   `json:"cursor_epoch"`
+	CursorSeq           int64   `json:"cursor_seq"`
+	DeadLetterCount     int64   `json:"dead_letter_count"`
+	ID                  string  `json:"id" validate:"required"`
+	LastDeliveryOutcome string  `json:"last_delivery_outcome" validate:"required"`
+	LoopGuardSkips      int64   `json:"loop_guard_skips"`
+	Name                string  `json:"name" validate:"required"`
+	PendingAttempt      int64   `json:"pending_attempt"`
+	RefreshBefore       int64   `json:"refreshBefore"`
+	ScopeID             string  `json:"scope_id" validate:"required"`
+	ScopeKind           string  `json:"scope_kind" validate:"required"`
+	State               string  `json:"state" validate:"required"`
+	StopReason          *string `json:"stop_reason,omitzero"`
+}
+
+func (s SubscriptionStatus) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type Summary struct {
 	Accounts       []string      `json:"accounts" validate:"required"`
 	DateRange      []string      `json:"date_range" validate:"required"`
@@ -13832,6 +14080,28 @@ type TriggerSyncResponse struct {
 
 func (t TriggerSyncResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type UnsubscribeRequest struct {
+	Arguments map[string]any `json:"arguments"`
+	Delivery  Delivery       `json:"delivery"`
+	Name      string         `json:"name" validate:"required"`
+}
+
+func (u UnsubscribeRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(u.Delivery).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Delivery", err)
+		}
+	}
+	if err := typesValidator.Var(u.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type UpdateRequest struct {

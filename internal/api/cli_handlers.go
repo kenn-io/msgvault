@@ -843,27 +843,30 @@ type cliAccountResponse struct {
 }
 
 type cliMessageResponse struct {
-	ID                   int64                  `json:"id"`
-	SourceMessageID      string                 `json:"source_message_id"`
-	RFC822MessageID      string                 `json:"rfc822_message_id,omitempty"`
-	ConversationID       int64                  `json:"conversation_id"`
-	SourceConversationID string                 `json:"source_conversation_id"`
-	Subject              string                 `json:"subject"`
-	MessageType          string                 `json:"message_type,omitempty"`
-	Snippet              string                 `json:"snippet"`
-	SentAt               time.Time              `json:"sent_at"`
-	ReceivedAt           *time.Time             `json:"received_at"`
-	DeletedAt            *time.Time             `json:"deleted_at"`
-	SizeEstimate         int64                  `json:"size_estimate"`
-	HasAttachments       bool                   `json:"has_attachments"`
-	From                 []cliMessageAddress    `json:"from"`
-	To                   []cliMessageAddress    `json:"to"`
-	Cc                   []cliMessageAddress    `json:"cc"`
-	Bcc                  []cliMessageAddress    `json:"bcc"`
-	Labels               []string               `json:"labels"`
-	Attachments          []cliMessageAttachment `json:"attachments"`
-	BodyText             string                 `json:"body_text"`
-	BodyHTML             string                 `json:"body_html"`
+	SourceID             int64                     `json:"source_id"`
+	IsFromMe             bool                      `json:"is_from_me"`
+	Calendar             *store.CalendarProjection `json:"calendar,omitempty"`
+	ID                   int64                     `json:"id"`
+	SourceMessageID      string                    `json:"source_message_id"`
+	RFC822MessageID      string                    `json:"rfc822_message_id,omitempty"`
+	ConversationID       int64                     `json:"conversation_id"`
+	SourceConversationID string                    `json:"source_conversation_id"`
+	Subject              string                    `json:"subject"`
+	MessageType          string                    `json:"message_type,omitempty"`
+	Snippet              string                    `json:"snippet"`
+	SentAt               time.Time                 `json:"sent_at"`
+	ReceivedAt           *time.Time                `json:"received_at"`
+	DeletedAt            *time.Time                `json:"deleted_at"`
+	SizeEstimate         int64                     `json:"size_estimate"`
+	HasAttachments       bool                      `json:"has_attachments"`
+	From                 []cliMessageAddress       `json:"from"`
+	To                   []cliMessageAddress       `json:"to"`
+	Cc                   []cliMessageAddress       `json:"cc"`
+	Bcc                  []cliMessageAddress       `json:"bcc"`
+	Labels               []string                  `json:"labels"`
+	Attachments          []cliMessageAttachment    `json:"attachments"`
+	BodyText             string                    `json:"body_text"`
+	BodyHTML             string                    `json:"body_html"`
 }
 
 type cliMessageAddress struct {
@@ -1374,7 +1377,19 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
-	if err := runner.RunCLICommand(r.Context(), req, writeEvent); err != nil {
+	creator := "unknown"
+	switch auth.Mode {
+	case AuthModeRequired:
+		// Authentication has not established a creator identity.
+	case AuthModeAPIKey, AuthModeLoopback:
+		creator = "owner"
+	case AuthModeSession:
+		creator = "session"
+	case AuthModeDelegated:
+		creator = "agent:" + auth.Grant.ID
+	}
+	ctx := store.WithDraftCreator(r.Context(), creator)
+	if err := runner.RunCLICommand(ctx, req, writeEvent); err != nil {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
 		} else {
@@ -3413,6 +3428,9 @@ func (s *Server) resolveCLIMessage(r *http.Request, idStr string) (*query.Messag
 
 func cliMessageResponseFromQuery(msg *query.MessageDetail) cliMessageResponse {
 	return cliMessageResponse{
+		SourceID:             msg.SourceID,
+		IsFromMe:             msg.IsFromMe,
+		Calendar:             msg.Calendar,
 		ID:                   msg.ID,
 		SourceMessageID:      msg.SourceMessageID,
 		RFC822MessageID:      msg.RFC822MessageID,

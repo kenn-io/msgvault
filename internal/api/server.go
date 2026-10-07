@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
+	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/providercredentials"
@@ -250,6 +251,9 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
+	mcpEvents            *mcpevents.Service
+	mcpEventsPrincipal   string
+	mcpEventsUnavailable *mcpevents.Error
 	// statsSnapshots and accountCountSnapshots bound /stats and
 	// /cli/accounts latency under load (see snapshotCache). Background
 	// computations run on importContext, the server-lifetime context that
@@ -514,8 +518,9 @@ const (
 
 // ServerOptions configures the API server.
 type ServerOptions struct {
-	Config *config.Config
-	Store  MessageStore
+	MCPEvents *mcpevents.Service
+	Config    *config.Config
+	Store     MessageStore
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
@@ -617,6 +622,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	}
 	importContext, cancelImports := context.WithCancel(context.Background())
 	s := &Server{
+		mcpEvents:              opts.MCPEvents,
 		cfg:                    opts.Config,
 		store:                  opts.Store,
 		savedViewStore:         opts.SavedViewStore,
@@ -676,6 +682,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		engine: opts.Engine, mode: opts.AnalyticsMode,
 		analyticsInitializationActive: opts.AnalyticsInitializationActive,
 	})
+	if key := opts.Config.Server.AuthenticationKey(); key != "" {
+		s.mcpEventsPrincipal = mcpevents.Principal(key)
+	}
 	if s.telemetryCapture == nil {
 		// kit's nil-reporter handler admits no event.
 		s.telemetryCapture = posthog.NewCaptureHandler(nil)
@@ -1537,13 +1546,33 @@ func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Reques
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, HealthResponse{
+	response := HealthResponse{
 		Status:           "ok",
 		Vector:           s.vectorHealth(),
 		Operation:        s.operationHealth(),
 		AnalyticsEngine:  s.analyticsModeForContext(r.Context()),
 		APISchemaVersion: APISchemaVersion,
-	})
+	}
+	if auth.Mode == AuthModeAPIKey && s.mcpEventsPrincipal != "" {
+		enabled := s.mcpEvents != nil && len(s.mcpEvents.Catalog().Events) > 0
+		response.MCPEvents = &enabled
+		if enabled {
+			for _, capability := range s.mcpEvents.Capabilities() {
+				tools := []string{"get_message"}
+				switch capability.Family {
+				case "msgvault.message_archived":
+					tools = append(tools, "list_thread", "get_attachment")
+				case "msgvault.draft_changed":
+					tools = []string{"draft_get"}
+					if capability.SourceType == "gmail" || capability.SourceType == "imap" {
+						tools = append(tools, "get_message")
+					}
+				}
+				response.MCPEventCapabilities = append(response.MCPEventCapabilities, MCPEventCapability{Family: capability.Family, SourceType: capability.SourceType, Kinds: capability.Kinds, ReadTools: tools})
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // operationBusyHealth reports only whether the operation gate is currently

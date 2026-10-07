@@ -798,6 +798,8 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 	}
 	detail := &query.MessageDetail{
 		ID:                   msg.ID,
+		IsFromMe:             msg.IsFromMe,
+		Calendar:             msg.Calendar,
 		SourceID:             msg.SourceID,
 		SourceMessageID:      msg.SourceMessageID,
 		ConversationID:       msg.ConversationID,
