@@ -120,7 +120,6 @@ func TestClientReadEndpointsPreserveRawResponses(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("guest@example.com", guest.Person.Email)
 	assert.Contains(string(guest.Raw), `"guest"`)
-
 }
 
 func TestBlockPlainTextExtractsContentBearingPayloads(t *testing.T) {

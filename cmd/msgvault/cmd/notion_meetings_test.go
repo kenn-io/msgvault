@@ -219,15 +219,17 @@ func TestNotionProbeUsersToken(t *testing.T) {
 }
 
 func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrCreateSource(notionmeetings.SourceType, "work")
-	require.NoError(t, err)
+	require.NoError(err)
 	meetingFactory, usersFactory, rebuild := newNotionMeetingsClient, newNotionUsersClient, rebuildNotionMeetingsCacheAfterScheduledSync
 	t.Cleanup(func() {
 		newNotionMeetingsClient, newNotionUsersClient, rebuildNotionMeetingsCacheAfterScheduledSync = meetingFactory, usersFactory, rebuild
 	})
 	newNotionMeetingsClient = func(_ string, token string) notionmeetings.Source {
-		assert.Equal(t, "pat-example", token)
+		assert.Equal("pat-example", token)
 		return fakeNotionProbe{
 			result:   &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{Object: "block", ID: "meeting-1", Type: "meeting_notes", Parent: notionmeetings.Parent{PageID: "page-1"}, CreatedTime: "2026-08-29T10:00:00Z", MeetingNotes: notionmeetings.MeetingNotesData{Status: "notes_ready", CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}}}}},
 			block:    &notionmeetings.Block{Object: "block", ID: "meeting-1", Type: "meeting_notes"},
@@ -236,13 +238,13 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 	}
 	users := &fakeNotionUsersProbe{user: &notionmeetings.User{ID: "member", Person: notionmeetings.UserPerson{Email: "member@example.com", EmailVerified: true}}}
 	newNotionUsersClient = func(_ string, token string) notionmeetings.UserSource {
-		assert.Equal(t, "ntn-example", token)
+		assert.Equal("ntn-example", token)
 		return users
 	}
 	rebuildNotionMeetingsCacheAfterScheduledSync = func(context.Context, string) error { return nil }
 	err = runConfiguredNotionMeetingsSync(t.Context(), st, config.NotionMeetingsSource{Identifier: "work", AccountEmail: "owner@example.com", Token: "pat-example", UsersToken: "ntn-example"})
-	require.NoError(t, err)
-	assert.Equal(t, 1, users.retrieved)
+	require.NoError(err)
+	assert.Equal(1, users.retrieved)
 	_, absent := configuredNotionClients(config.NotionMeetingsSource{Token: "pat-example"})
-	assert.Nil(t, absent)
+	assert.Nil(absent)
 }

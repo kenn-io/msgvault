@@ -3,10 +3,10 @@ package notionmeetings
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -29,11 +29,13 @@ func (f *fakeUserSource) RetrieveUser(_ context.Context, id string) (*User, erro
 }
 
 func TestImporterOrdinarySyncUpdatesAndPreservesOnlyFailedAttendees(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st, source, imp := newImporterFixture(t)
 	source.users[""].Results[1].Person.EmailVerified = true
 	opts := ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"}
 	_, err := imp.Import(t.Context(), opts)
-	require.NoError(t, err)
+	require.NoError(err)
 	meeting := hydrationMeeting()
 	meeting.ID = "meeting-2"
 	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "new-user"}
@@ -42,52 +44,55 @@ func TestImporterOrdinarySyncUpdatesAndPreservesOnlyFailedAttendees(t *testing.T
 	source.blocks[meeting.ID] = &block
 	source.query.Results = append(source.query.Results, meeting)
 
-	users := &fakeUserSource{users: map[string]*User{"user-2": {Person: UserPerson{Email: "unverified@example.com"}}, "guest": {Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}}, errs: map[string]error{"user-1": &APIError{Kind: ErrProvider, Status: 404}, "malformed": ErrMalformedResponse, "new-user": ErrMalformedResponse}}
+	users := &fakeUserSource{users: map[string]*User{"user-2": {Person: UserPerson{Email: "unverified@example.com"}}, "guest": {Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}}, errs: map[string]error{"user-1": &APIError{Kind: ErrProvider, Status: http.StatusNotFound}, "malformed": ErrMalformedResponse, "new-user": ErrMalformedResponse}}
 	source.query.Results[0].MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "user-2", "guest", "malformed"}
 	second, err := imp.WithUserSource(users).Import(t.Context(), opts)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), second.MeetingsUpdated)
+	require.NoError(err)
+	assert.Equal(int64(1), second.MeetingsUpdated)
 	var messageID int64
-	require.NoError(t, st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'meeting-1'`).Scan(&messageID))
+	require.NoError(st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'meeting-1'`).Scan(&messageID))
 	recipients, err := st.GetMessageRecipientsContext(t.Context(), messageID, "to")
-	require.NoError(t, err)
-	require.Len(t, recipients, 2)
-	assert.ElementsMatch(t, []string{"attendee@example.com", "guest@example.com"}, []string{recipients[0].EmailAddress, recipients[1].EmailAddress})
+	require.NoError(err)
+	require.Len(recipients, 2)
+	assert.ElementsMatch([]string{"attendee@example.com", "guest@example.com"}, []string{recipients[0].EmailAddress, recipients[1].EmailAddress})
 	users = &fakeUserSource{errs: map[string]error{"user-1": ErrUserInformation}}
 	summary, err := imp.WithUserSource(users).Import(t.Context(), opts)
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), summary.MeetingsProcessed)
-	assert.Equal(t, []string{"user-1"}, users.retrieved)
+	require.NoError(err)
+	assert.Equal(int64(2), summary.MeetingsProcessed)
+	assert.Equal([]string{"user-1"}, users.retrieved)
 	users.errs = map[string]error{"malformed": ErrMalformedResponse, "new-user": ErrMalformedResponse}
 	users.users = map[string]*User{"user-1": {Person: UserPerson{Email: "recovered@example.com", EmailVerified: true}}, "user-2": {Person: UserPerson{Email: "unverified@example.com"}}, "guest": {Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}}
 	summary, err = imp.Import(t.Context(), opts)
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), summary.MeetingsUpdated)
-	assert.Equal(t, []string{"user-1", "user-1", "user-2", "guest", "malformed", "new-user"}, users.retrieved)
-
+	require.NoError(err)
+	assert.Equal(int64(2), summary.MeetingsUpdated)
+	assert.Equal([]string{"user-1", "user-1", "user-2", "guest", "malformed", "new-user"}, users.retrieved)
 }
 
 func TestHydratorCachesSuccessfulAndMissingUsersAcrossServiceFailure(t *testing.T) {
-	users := &fakeUserSource{users: map[string]*User{"user-1": {Person: UserPerson{Email: "member@example.com", EmailVerified: true}}, "unverified": {}}, errs: map[string]error{"missing": &APIError{Kind: ErrProvider, Status: 404}, "malformed": ErrMalformedResponse, "blocked": ErrUserInformation}}
+	assert := assert.New(t)
+	require := require.New(t)
+	users := &fakeUserSource{users: map[string]*User{"user-1": {Person: UserPerson{Email: "member@example.com", EmailVerified: true}}, "unverified": {}}, errs: map[string]error{"missing": &APIError{Kind: ErrProvider, Status: http.StatusNotFound}, "malformed": ErrMalformedResponse, "blocked": ErrUserInformation}}
 	source := completeHydrationSource()
 	h := NewHydrator(source).WithUserSource(users)
 	meeting := hydrationMeeting()
 	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"missing", "malformed", "user-1", "unverified", "blocked", "new-user"}
 	for range 2 {
 		result, err := h.Hydrate(t.Context(), meeting)
-		require.NoError(t, err)
-		require.Len(t, result.Attendees, 1)
-		assert.Equal(t, "member@example.com", result.Attendees[0].Email)
-		assert.Equal(t, map[string]bool{"missing": true, "malformed": true, "blocked": true, "new-user": true}, result.failedAttendeeIDs)
-		assert.Len(t, result.Warnings, 1)
+		require.NoError(err)
+		require.Len(result.Attendees, 1)
+		assert.Equal("member@example.com", result.Attendees[0].Email)
+		assert.Equal(map[string]bool{"missing": true, "malformed": true, "blocked": true, "new-user": true}, result.failedAttendeeIDs)
+		assert.Len(result.Warnings, 1)
 	}
-	assert.Zero(t, source.usersCalls)
-	assert.Equal(t, []string{"missing", "malformed", "user-1", "unverified", "blocked"}, users.retrieved)
+	assert.Zero(source.usersCalls)
+	assert.Equal([]string{"missing", "malformed", "user-1", "unverified", "blocked"}, users.retrieved)
 }
 
 func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
 	for _, budget := range []string{"requests", "bytes"} {
 		t.Run(budget, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			source := completeHydrationSource()
 			var content hydrationSource = source
 			users := &fakeUserSource{users: map[string]*User{"user-1": {Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}}}
@@ -99,12 +104,12 @@ func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
 			meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1"}
 			if budget == "requests" {
 				pages := map[string]*BlockPage{}
-				for i := 0; i < maxHydrationRequests-5; i++ {
+				for i := range maxHydrationRequests - 5 {
 					cursor := ""
 					if i > 0 {
-						cursor = fmt.Sprint(i)
+						cursor = strconv.Itoa(i)
 					}
-					pages[cursor] = &BlockPage{HasMore: i < maxHydrationRequests-6, NextCursor: fmt.Sprint(i + 1)}
+					pages[cursor] = &BlockPage{HasMore: i < maxHydrationRequests-6, NextCursor: strconv.Itoa(i + 1)}
 				}
 				source.children["notes-1"] = pages
 			} else {
@@ -136,10 +141,10 @@ func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
 					}
 					response["padding"] = strings.Repeat("x", padding)
 					raw, err := json.Marshal(response)
-					assert.NoError(t, err)
-					assert.Less(t, int64(len(raw)), maxResponseSize)
+					assert.NoError(err)
+					assert.Less(int64(len(raw)), maxResponseSize)
 					_, err = w.Write(raw)
-					assert.NoError(t, err)
+					assert.NoError(err)
 				}))
 				t.Cleanup(server.Close)
 				content = NewClient(server.URL, "meeting-example")
@@ -147,65 +152,69 @@ func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
 			}
 			h := NewHydrator(content).WithUserSource(userSource)
 			first, err := h.Hydrate(t.Context(), meeting)
-			require.NoError(t, err)
-			assert.Equal(t, "Test Speaker: Ready to ship.", first.Transcript)
-			assert.True(t, first.failedAttendeeIDs["user-1"])
-			assert.Empty(t, h.users)
-			assert.False(t, h.usersUnavailable)
+			require.NoError(err)
+			assert.Equal("Test Speaker: Ready to ship.", first.Transcript)
+			assert.True(first.failedAttendeeIDs["user-1"])
+			assert.Empty(h.users)
+			assert.False(h.usersUnavailable)
 			source.children["notes-1"] = map[string]*BlockPage{"": {}}
 			large.Store(false)
 			if budget == "bytes" {
-				assert.Equal(t, int32(1), userRequests.Load())
-				assert.Greater(t, h.bytes, maxHydrationBytes)
+				assert.Equal(int32(1), userRequests.Load())
+				assert.Greater(h.bytes, maxHydrationBytes)
 			}
 			second, err := h.Hydrate(t.Context(), meeting)
-			require.NoError(t, err)
-			require.Len(t, second.Attendees, 1)
-			assert.Equal(t, "guest@example.com", second.Attendees[0].Email)
+			require.NoError(err)
+			require.Len(second.Attendees, 1)
+			assert.Equal("guest@example.com", second.Attendees[0].Email)
 			if budget == "bytes" {
-				assert.Equal(t, int32(2), userRequests.Load())
+				assert.Equal(int32(2), userRequests.Load())
 			}
-
 		})
 	}
 }
 
-type usersRetryTransport struct{ requested []string }
+type usersRetryTransport struct {
+	requested []string
+	delay     func()
+}
 
 func (f *usersRetryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	f.requested = append(f.requested, r.URL.Path)
 	if r.URL.Path != "/v1/users/timeout" {
-		time.Sleep(30 * time.Second)
+		f.delay()
 		id := strings.TrimPrefix(r.URL.Path, "/v1/users/")
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"object":"user","id":"` + id + `","person":{"email":"guest@example.com","email_verified":true}}`))}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"object":"user","id":"` + id + `","person":{"email":"guest@example.com","email_verified":true}}`))}, nil
 	}
-	return &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(`{"object":"error","code":"service_unavailable"}`))}, nil
+	return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(`{"object":"error","code":"service_unavailable"}`))}, nil
 }
 
 func TestHydratorOptionalDeadlineAndParentCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		client := NewClient("https://notion.example", "users-example")
-		transport := &usersRetryTransport{}
+		transport := &usersRetryTransport{delay: func() { time.Sleep(30 * time.Second) }}
 		client.http.Transport = transport
 		h := NewHydrator(completeHydrationSource()).WithUserSource(client)
 		meeting := hydrationMeeting()
 		meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "user-2", "user-3"}
 		start := time.Now()
 		first, err := h.Hydrate(t.Context(), meeting)
-		require.NoError(t, err)
-		require.Len(t, first.Attendees, 3)
-		assert.Equal(t, 90*time.Second, time.Since(start))
+		require.NoError(err)
+		require.Len(first.Attendees, 3)
+		assert.Equal(90*time.Second, time.Since(start))
 		meeting.MeetingNotes.CalendarEvent.Attendees = append(meeting.MeetingNotes.CalendarEvent.Attendees, "timeout")
 		start = time.Now()
 		second, err := h.Hydrate(t.Context(), meeting)
-		require.NoError(t, err)
-		assert.Equal(t, "Test Speaker: Ready to ship.", second.Transcript)
-		require.Len(t, second.Attendees, 3)
-		assert.ErrorIs(t, h.usersFailure, context.DeadlineExceeded)
-		assert.Equal(t, UserLookupTimeout, time.Since(start))
+		require.NoError(err)
+		assert.Equal("Test Speaker: Ready to ship.", second.Transcript)
+		require.Len(second.Attendees, 3)
+		require.ErrorIs(h.usersFailure, context.DeadlineExceeded)
+		assert.Equal(UserLookupTimeout, time.Since(start))
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		_, err = h.Hydrate(ctx, hydrationMeeting())
-		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(err, context.Canceled)
 	})
 }
