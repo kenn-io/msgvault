@@ -942,6 +942,8 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 	sharedThumbnailThumbnail := hash("dd04")
 	sharedContentThumbnail := hash("ee05")
 	sharedThumbnailContent := hash("ff06")
+	sharedAttachmentCache := hash("aa07")
+	uniqueCache := hash("bb08")
 
 	add := func(msgID int64, filename, contentHash string) {
 		require.NoError(f.Store.UpsertAttachment(msgID, filename, "application/octet-stream",
@@ -963,6 +965,7 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 	add(msgA, "carrier-att.bin", carrierATT)
 	setThumbnail(msgA, carrierATT, sharedThumbnailThumbnail)
 	add(msgA, "shared-ct.bin", sharedContentThumbnail)
+	add(msgA, "shared-cache.bin", sharedAttachmentCache)
 	carrierATC := hash("1108")
 	add(msgA, "carrier-atc.bin", carrierATC)
 	setThumbnail(msgA, carrierATC, sharedThumbnailContent)
@@ -975,11 +978,22 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 	add(otherMsg, "carrier-bct.bin", carrierBCT)
 	setThumbnail(otherMsg, carrierBCT, sharedContentThumbnail)
 	add(otherMsg, "shared-tc.bin", sharedThumbnailContent)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO matrix_media_cache
+		(message_id, source_attachment_id, storage_path, content_hash, size)
+		VALUES (?, ?, ?, ?, ?)`), otherMsg, "matrix:mxc://example.org/shared-packed",
+		sharedAttachmentCache[:2]+"/"+sharedAttachmentCache, sharedAttachmentCache, 10)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO matrix_media_cache
+		(message_id, source_attachment_id, storage_path, content_hash, size)
+		VALUES (?, ?, ?, ?, ?)`), msgA, "matrix:mxc://example.org/unique-packed",
+		uniqueCache[:2]+"/"+uniqueCache, uniqueCache, 10)
+	require.NoError(err)
 
 	const packID = "01hzy3v7q8r9s0t1a2v3w4x5r1"
 	packedHashes := []string{
 		uniqueContent, uniqueThumbnail, sharedContentContent,
 		sharedThumbnailThumbnail, sharedContentThumbnail, sharedThumbnailContent,
+		sharedAttachmentCache, uniqueCache,
 	}
 	entries := make([]store.PackIndexEntry, 0, len(packedHashes))
 	for i, packedHash := range packedHashes {
@@ -1001,20 +1015,20 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 	had, removed, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
 	require.NoError(err)
 	assert.False(had)
-	assert.Equal(int64(2), removed, "unique content and thumbnail mappings are deleted")
+	assert.Equal(int64(3), removed, "unique current and cached mappings are deleted")
 
 	src, err := f.Store.GetSourceByIdentifier(f.Source.Identifier)
 	require.ErrorIs(err, store.ErrSourceNotFound)
 	assert.Nil(src)
 
-	for _, removedHash := range []string{uniqueContent, uniqueThumbnail} {
+	for _, removedHash := range []string{uniqueContent, uniqueThumbnail, uniqueCache} {
 		entry, err := f.Store.GetAttachmentPackEntry(removedHash)
 		require.NoError(err)
 		assert.Nil(entry, "%s is logically deleted", removedHash)
 	}
 	for _, sharedHash := range []string{
 		sharedContentContent, sharedThumbnailThumbnail,
-		sharedContentThumbnail, sharedThumbnailContent,
+		sharedContentThumbnail, sharedThumbnailContent, sharedAttachmentCache,
 	} {
 		entry, err := f.Store.GetAttachmentPackEntry(sharedHash)
 		require.NoError(err)
@@ -1203,6 +1217,7 @@ func TestStore_RemoveSourceSerialized_NotFound(t *testing.T) {
 
 func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Create a second source with its own conversation.
@@ -1248,6 +1263,24 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 		"ee/crosshash", "crosshash", 20)
 	require.NoError(err, "share default-source thumbnail as other-source content")
 
+	// A retained Matrix version is a live reference even when it is not the
+	// currently selected attachment row.
+	cacheSharedMsg := f.CreateMessage("msg-cache-shared")
+	err = f.Store.UpsertAttachment(cacheSharedMsg, "cached.bin", "application/octet-stream",
+		"ff/cache-shared", "cache-shared", 30)
+	require.NoError(err, "upsert attachment shared with another source's Matrix cache")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO matrix_media_cache
+		(message_id, source_attachment_id, storage_path, content_hash, size)
+		VALUES (?, ?, ?, ?, ?)`), otherMsgID, "matrix:mxc://example.org/shared",
+		"ff/cache-shared", "cache-shared", 30)
+	require.NoError(err, "insert cross-source Matrix cache reference")
+	cacheUniqueMsg := f.CreateMessage("msg-cache-unique")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO matrix_media_cache
+		(message_id, source_attachment_id, storage_path, content_hash, size)
+		VALUES (?, ?, ?, ?, ?)`), cacheUniqueMsg, "matrix:mxc://example.org/unique",
+		"ab/cache-unique", "cache-unique", 40)
+	require.NoError(err, "insert source-unique Matrix cache reference")
+
 	// Attachment with NULL content_hash (must be excluded).
 	nullHashMsg := f.CreateMessage("msg-null-hash")
 	_, err = f.Store.DB().Exec(
@@ -1282,11 +1315,13 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 	paths, err := f.Store.AttachmentPathsUniqueToSource(f.Source.ID)
 	require.NoError(err, "AttachmentPathsUniqueToSource")
 
-	require.Len(paths, 2, "paths: %v", paths)
+	require.Len(paths, 3, "paths: %v", paths)
 	got := testutil.MakeSet(paths...)
-	assert.True(t, got["aa/uniquehash"], "unique content path missing: %v", paths)
-	assert.True(t, got["dd/uniquethumbhash"], "unique thumbnail path missing: %v", paths)
-	assert.False(t, got["ee/crosshash"], "cross-type shared thumbnail must be preserved: %v", paths)
+	assert.True(got["aa/uniquehash"], "unique content path missing: %v", paths)
+	assert.True(got["dd/uniquethumbhash"], "unique thumbnail path missing: %v", paths)
+	assert.True(got["ab/cache-unique"], "unique Matrix cache path missing: %v", paths)
+	assert.False(got["ee/crosshash"], "cross-type shared thumbnail must be preserved: %v", paths)
+	assert.False(got["ff/cache-shared"], "cross-source Matrix cache reference must be preserved: %v", paths)
 }
 
 func TestStore_GetSourceByID(t *testing.T) {
@@ -1333,6 +1368,14 @@ func TestStore_IsAttachmentPathReferenced(t *testing.T) {
 	referenced, err = f.Store.IsAttachmentPathReferenced("zz/nothere")
 	require.NoError(err, "IsAttachmentPathReferenced (miss)")
 	assert.False(referenced, "expected false for unreferenced path")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO matrix_media_cache
+		(message_id, source_attachment_id, storage_path, content_hash, size)
+		VALUES (?, ?, ?, ?, ?)`), msgID, "matrix:mxc://example.org/cached",
+		"matrix/cache-only", "cache-only", 12)
+	require.NoError(err, "insert Matrix cache path")
+	referenced, err = f.Store.IsAttachmentPathReferenced("matrix/cache-only")
+	require.NoError(err, "IsAttachmentPathReferenced (Matrix cache hit)")
+	assert.True(referenced, "expected retained Matrix version path to count as referenced")
 }
 
 func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {

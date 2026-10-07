@@ -54,10 +54,11 @@ adds reviewed identity tools for agents and reduces repeated sync and search wor
   Send `{"connection":"default"}` for the former single-account behavior,
   including manual sync of a disabled default account. See
 - **Native Matrix sync.** Add a dedicated read-only Matrix device on any
-  homeserver and archive joined-room history with incremental `/sync`
-  checkpoints. Messages, edits, redactions, reactions, replies, and
-  participants enter the normal chat archive. Encrypted events remain as raw
-  placeholders. See [Matrix](usage/matrix.md).
+  homeserver, restore its encrypted room-key backup, and archive joined-room
+  history with incremental `/sync` checkpoints. Messages, edits, redactions,
+  reactions, replies, participants, and policy-eligible media enter the normal
+  chat archive. Undecryptable events remain as retryable placeholders. See
+  [Matrix](usage/matrix.md).
 
 - **CardDAV sync API breaking change:** omitting `connection` from
   `POST /api/v1/carddav/sync` now syncs all enabled connections. With at least one

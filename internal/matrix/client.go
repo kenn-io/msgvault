@@ -3,6 +3,8 @@ package matrix
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -30,11 +32,6 @@ func validateHomeserverURL(raw string) error {
 		return nil
 	}
 	return fmt.Errorf("matrix homeserver URL must use HTTPS unless its host is loopback: %q", raw)
-}
-
-// Runtime owns the mautrix client for an account.
-type Runtime struct {
-	Client *mautrix.Client
 }
 
 // Login creates a dedicated Matrix device using a password or m.login.token.
@@ -65,7 +62,11 @@ func Login(ctx context.Context, homeserver, userID, secret string, tokenLogin bo
 				Type                     mautrix.AuthType `json:"type"`
 				Token                    string           `json:"token"`
 				InitialDeviceDisplayName string           `json:"initial_device_display_name"`
-			}{Type: mautrix.AuthTypeToken, Token: secret, InitialDeviceDisplayName: DeviceDisplayName},
+			}{
+				Type:                     mautrix.AuthTypeToken,
+				Token:                    secret,
+				InitialDeviceDisplayName: DeviceDisplayName,
+			},
 			ResponseJSON:     resp,
 			SensitiveContent: true,
 		})
@@ -87,22 +88,22 @@ func Login(ctx context.Context, homeserver, userID, secret string, tokenLogin bo
 		})
 		return Credentials{}, errors.Join(mismatchErr, cleanupErr)
 	}
+	pickleKey, err := generatePickleKey()
+	if err != nil {
+		return Credentials{}, err
+	}
 	return Credentials{
-		Homeserver: homeserver, UserID: resp.UserID.String(), DeviceID: resp.DeviceID.String(), AccessToken: resp.AccessToken,
+		Homeserver: homeserver, UserID: resp.UserID.String(), DeviceID: resp.DeviceID.String(),
+		AccessToken: resp.AccessToken, PickleKey: pickleKey,
 	}, nil
 }
 
-// Open initializes a Matrix client for an account.
-func Open(creds Credentials) (*Runtime, error) {
-	if err := validateHomeserverURL(creds.Homeserver); err != nil {
-		return nil, err
+func generatePickleKey() (string, error) {
+	pickle := make([]byte, 32)
+	if _, err := rand.Read(pickle); err != nil {
+		return "", fmt.Errorf("generate Matrix crypto key: %w", err)
 	}
-	cli, err := mautrix.NewClient(creds.Homeserver, id.UserID(creds.UserID), creds.AccessToken)
-	if err != nil {
-		return nil, fmt.Errorf("create Matrix client: %w", err)
-	}
-	cli.DeviceID = id.DeviceID(creds.DeviceID)
-	return &Runtime{Client: cli}, nil
+	return base64.RawStdEncoding.EncodeToString(pickle), nil
 }
 
 // Logout deletes the dedicated Matrix device represented by creds.
@@ -123,11 +124,15 @@ func Logout(ctx context.Context, creds Credentials) error {
 
 // CheckLogin confirms that creds still authenticate as their user and device.
 func CheckLogin(ctx context.Context, creds Credentials) error {
-	rt, err := Open(creds)
-	if err != nil {
+	if err := validateHomeserverURL(creds.Homeserver); err != nil {
 		return err
 	}
-	resp, err := rt.Client.Whoami(ctx)
+	cli, err := mautrix.NewClient(creds.Homeserver, id.UserID(creds.UserID), creds.AccessToken)
+	if err != nil {
+		return fmt.Errorf("create Matrix client: %w", err)
+	}
+	cli.DeviceID = id.DeviceID(creds.DeviceID)
+	resp, err := cli.Whoami(ctx)
 	if err != nil {
 		return fmt.Errorf("check Matrix device %s: %w", creds.DeviceID, err)
 	}

@@ -1118,14 +1118,16 @@ After adding, sync with `msgvault sync-beeper`.
 ## add-matrix
 
 Register a Matrix account as a native `matrix` source. The command logs in a
-dedicated device named `msgvault (read-only)`. See
-[Matrix](/docs/usage/matrix/).
+dedicated device named `msgvault (read-only)`, initializes its persistent
+encryption store, and optionally restores the account's server-side room-key
+backup. See [Matrix](/docs/usage/matrix/).
 
 ```bash
 msgvault add-matrix \
   --homeserver https://matrix.example.org \
   --user-id @archive:example.org \
-  --password-file /path/to/password
+  --password-file /path/to/password \
+  --recovery-file /path/to/recovery-key
 ```
 
 | Flag | Default | Description |
@@ -1134,10 +1136,21 @@ msgvault add-matrix \
 | `--user-id` | required | Full Matrix user ID |
 | `--password-file` | prompt or stdin | Read the account password from a file |
 | `--login-token-file` | — | Read a single-use `m.login.token` obtained from an SSO/login flow; mutually exclusive with `--password-file` |
+| `--recovery-file` | prompt | Read the key-backup recovery key or passphrase from a file |
+| `--recovery-passphrase` | `false` | Interpret the recovery secret as a passphrase |
+| `--skip-key-backup` | `false` | Do not restore server-side room keys |
 | `--no-default-identity` | `false` | Do not auto-confirm the Matrix user ID as this source's "me" identity |
 
-The access token is written to an owner-only file under `tokens/`. Running it
-again for a registered user renews the login in place and keeps its history.
+The access token and local crypto-store key are written to an owner-only file
+under `tokens/`. Running it again for a registered user renews the login in
+place and keeps its history; the new device gets its own crypto store. The
+recovery secret is not retained; the backup decryption key
+it unlocks is kept in the encrypted crypto store so later syncs can fetch room
+keys that other devices add to the backup. Without `--skip-key-backup`, a
+missing recovery secret is an error. The dedicated device
+remains unverified because msgvault cannot complete Element's interactive SAS
+or QR verification. Encrypted history comes from the configured server-side
+key backup; senders that block unverified devices may leave placeholders.
 
 ---
 
@@ -1157,9 +1170,11 @@ msgvault sync-matrix --full
 |---|---|---|
 | `--account` | all registered | Sync only this exact Matrix user ID |
 | `--full` | `false` | Ignore stored cursors and re-fetch complete joined-room history |
+| `--no-media` | `false` | Record media metadata without downloading bytes this run |
 
-Room selection and scheduled sync are controlled by `[matrix]`. Encrypted
-events are kept as raw placeholders.
+Room selection and scheduled sync are controlled by `[matrix]`. A message is
+kept even when decryption or media retrieval fails; later syncs retry encrypted
+placeholders, and a full sync retries media.
 
 ---
 

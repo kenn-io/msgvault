@@ -24,7 +24,7 @@ func TestAttachmentPackLivenessQueriesUseExpressionIndexes(t *testing.T) {
 		indexPrefix string
 	}{
 		"resolve": {
-			plan:        explainPlan(t, st, resolveAttachmentBlobSQL, hash, hash, hash),
+			plan:        explainPlan(t, st, resolveAttachmentBlobSQL, hash, hash, hash, hash),
 			indexPrefix: "SEARCH a USING COVERING INDEX ",
 		},
 		"prune": {
@@ -43,6 +43,8 @@ func TestAttachmentPackLivenessQueriesUseExpressionIndexes(t *testing.T) {
 				"content liveness must use its expression index:\n%s", tc.plan)
 			assert.Contains(tc.plan, tc.indexPrefix+"idx_attachments_thumbnail_hash_lower",
 				"thumbnail liveness must use its expression index:\n%s", tc.plan)
+			assert.Contains(tc.plan, "idx_matrix_media_cache_content_hash_lower",
+				"Matrix cache liveness must use its expression index:\n%s", tc.plan)
 			assert.NotContains(tc.plan, "CORRELATED", "liveness must not rescan attachments per mapping:\n%s", tc.plan)
 		})
 	}

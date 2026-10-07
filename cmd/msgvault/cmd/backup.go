@@ -882,7 +882,7 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 
 // backupExtrasSpec builds the msgvault extras selection for the generic
 // backup engine: the deletions directory always rides along; config.toml and
-// the tokens directory plus client-secret files are opt-in and marked
+// the tokens and Matrix crypto directories plus client-secret files are opt-in and marked
 // sensitive. The flag-named plaintext guard lives here so users see their
 // CLI flags in the error; the engine's own sensitive-source guard is the
 // backstop.
@@ -909,7 +909,10 @@ func backupExtrasSpec(cfg *config.Config) (backup.ExtrasSpec, error) {
 		}
 	}
 	if backupCreateIncludeTokens {
-		spec.Dirs = append(spec.Dirs, backup.ExtrasDirSpec{Name: "tokens", Sensitive: true})
+		spec.Dirs = append(spec.Dirs,
+			backup.ExtrasDirSpec{Name: "tokens", Sensitive: true},
+			backup.ExtrasDirSpec{Name: "matrix", Sensitive: true},
+		)
 		spec.Globs = append(spec.Globs, backup.ExtrasGlobSpec{Pattern: "client_secret*.json", Sensitive: true})
 	}
 	return spec, nil

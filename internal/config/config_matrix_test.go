@@ -20,10 +20,12 @@ enabled = true
 schedule = "*/30 * * * *"
 rooms = ["!included:example.org"]
 exclude_rooms = ["!excluded:example.org"]
+max_media_mb = 12
 `), 0o600))
 	cfg, err := Load(path, "")
 	require.NoError(err)
 	assert.True(cfg.Matrix.Enabled)
 	assert.Equal([]string{"!included:example.org"}, cfg.Matrix.Rooms)
 	assert.Equal([]string{"!excluded:example.org"}, cfg.Matrix.ExcludeRooms)
+	assert.Equal(int64(12<<20), cfg.Matrix.MediaPolicy("").MaxBytes)
 }

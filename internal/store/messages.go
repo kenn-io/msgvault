@@ -3134,21 +3134,39 @@ func (s *Store) ClearMessageRepliesContext(ctx context.Context, sourceID int64, 
 
 // MarkMessageDeleted marks a message as deleted from the source.
 func (s *Store) MarkMessageDeleted(sourceID int64, sourceMessageID string) error {
+	_, err := s.MarkMessageDeletedIfActive(sourceID, sourceMessageID)
+	return err
+}
+
+// MarkMessageDeletedIfActive marks a message as deleted from the source and
+// reports whether this call changed an active message.
+func (s *Store) MarkMessageDeletedIfActive(sourceID int64, sourceMessageID string) (bool, error) {
 	if err := s.requireSyncSource(sourceID); err != nil {
-		return err
+		return false, err
 	}
+	changed := false
 	write := func(q chunkQuerier) error {
-		_, err := q.Exec(fmt.Sprintf(`
+		result, err := q.Exec(fmt.Sprintf(`
 			UPDATE messages
 			SET deleted_from_source_at = %s
 			WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NULL
 		`, s.dialect.Now()), sourceID, sourceMessageID)
-		return err
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		changed = rows > 0
+		return nil
 	}
 	if s.syncGeneration == nil {
-		return write(s.db)
+		err := write(s.db)
+		return changed, err
 	}
-	return s.withTx(func(tx *loggedTx) error { return write(tx) })
+	err := s.withTx(func(tx *loggedTx) error { return write(tx) })
+	return changed, err
 }
 
 // ClearMessageDeletedFromSource clears the upstream tombstone when a message
@@ -5765,32 +5783,35 @@ func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, form
 // has not run yet.
 func (s *Store) AttachmentPathsUniqueToSource(sourceID int64) ([]string, error) {
 	rows, err := s.db.Query(`
-		WITH source_blob_paths(blob_hash, blob_path) AS (
-		    SELECT a.content_hash, a.storage_path
+		WITH all_blob_paths(source_id, blob_hash, blob_path) AS (
+		    SELECT m.source_id, a.content_hash, a.storage_path
 		    FROM attachments a
 		    JOIN messages m ON m.id = a.message_id
-		    WHERE m.source_id = ?
-		      AND a.content_hash IS NOT NULL AND a.content_hash != ''
+		    WHERE a.content_hash IS NOT NULL AND a.content_hash != ''
 		    UNION
-		    SELECT a.thumbnail_hash, a.thumbnail_path
+		    SELECT m.source_id, a.thumbnail_hash, a.thumbnail_path
 		    FROM attachments a
 		    JOIN messages m ON m.id = a.message_id
-		    WHERE m.source_id = ?
-		      AND a.thumbnail_hash IS NOT NULL AND a.thumbnail_hash != ''
+		    WHERE a.thumbnail_hash IS NOT NULL AND a.thumbnail_hash != ''
+		    UNION
+		    SELECT m.source_id, c.content_hash, c.storage_path
+		    FROM matrix_media_cache c
+		    JOIN messages m ON m.id = c.message_id
+		    WHERE c.content_hash != ''
 		)
 		SELECT DISTINCT sb.blob_path
-		FROM source_blob_paths sb
-		WHERE sb.blob_path IS NOT NULL
+		FROM all_blob_paths sb
+		WHERE sb.source_id = ?
+		  AND sb.blob_path IS NOT NULL
 		  AND sb.blob_path != ''
 		  AND sb.blob_path NOT LIKE 'http://%'
 		  AND sb.blob_path NOT LIKE 'https://%'
 		  AND NOT EXISTS (
-		      SELECT 1 FROM attachments a2
-		      JOIN messages m2 ON m2.id = a2.message_id
-		      WHERE m2.source_id != ?
-		        AND (a2.content_hash = sb.blob_hash OR a2.thumbnail_hash = sb.blob_hash)
+		      SELECT 1 FROM all_blob_paths other
+		      WHERE other.source_id != sb.source_id
+		        AND other.blob_hash = sb.blob_hash
 		  )
-	`, sourceID, sourceID, sourceID)
+	`, sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -5807,20 +5828,24 @@ func (s *Store) AttachmentPathsUniqueToSource(sourceID int64) ([]string, error) 
 	return paths, rows.Err()
 }
 
-// IsAttachmentPathReferenced returns true if any attachment record still
-// points to the given content or thumbnail path. Use this immediately before
+// IsAttachmentPathReferenced returns true if any current attachment or cached
+// Matrix media still points to the given content or thumbnail path. Use this immediately before
 // deleting a file to guard against a concurrent sync that added a new
 // reference after the candidate list was collected.
 func (s *Store) IsAttachmentPathReferenced(storagePath string) (bool, error) {
-	var count int
+	var referenced bool
 	err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM attachments WHERE storage_path = ? OR thumbnail_path = ?`,
-		storagePath, storagePath,
-	).Scan(&count)
+		`SELECT EXISTS(
+			SELECT 1 FROM attachments WHERE storage_path = ? OR thumbnail_path = ?
+			UNION ALL
+			SELECT 1 FROM matrix_media_cache WHERE storage_path = ?
+		)`,
+		storagePath, storagePath, storagePath,
+	).Scan(&referenced)
 	if err != nil {
 		return true, err // fail safe: treat error as referenced
 	}
-	return count > 0, nil
+	return referenced, nil
 }
 
 // UpsertAttachment is the compatibility write path for callers without stable
@@ -5855,6 +5880,30 @@ func (s *Store) RecomputeMessageAttachmentStats(messageID int64) error {
 			return err
 		}
 		return recomputeMessageAttachmentStatsWith(q, messageID)
+	}
+	if s.syncGeneration == nil {
+		return write(s.db)
+	}
+	return s.withTx(func(tx *loggedTx) error { return write(tx) })
+}
+
+// RecomputeMessageSizeEstimate refreshes one message's body-plus-stored-media
+// byte estimate after attachment reconciliation.
+func (s *Store) RecomputeMessageSizeEstimate(messageID int64) error {
+	write := func(q querier) error {
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		var body sql.NullString
+		err := q.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read message body for size estimate: %w", err)
+		}
+		_, err = q.Exec(`UPDATE messages SET size_estimate = ? + (
+			SELECT COALESCE(SUM(size), 0) FROM attachments
+			WHERE message_id = ? AND content_hash IS NOT NULL AND content_hash != ''
+		) WHERE id = ?`, len(body.String), messageID, messageID)
+		return err
 	}
 	if s.syncGeneration == nil {
 		return write(s.db)
@@ -6125,12 +6174,23 @@ func (s *Store) MessageBeeperAttachments(messageID int64) (map[string]Attachment
 	return s.messageProviderAttachments(messageID, "beeper:")
 }
 
+// ReplaceMessageMatrixAttachments replaces Matrix-managed media occurrences.
+func (s *Store) ReplaceMessageMatrixAttachments(messageID int64, refs []AttachmentRef) error {
+	return s.replaceMessageProviderAttachments(messageID, "matrix:", refs)
+}
+
+// MessageMatrixAttachments returns Matrix-managed media keyed by MXC identity.
+func (s *Store) MessageMatrixAttachments(messageID int64) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachments(messageID, "matrix:")
+}
+
 // ArchivedRawMessage is one archived message paired with the verbatim provider
 // payload stored for it, decompressed.
 type ArchivedRawMessage struct {
 	MessageID      int64
 	ConversationID int64
 	RawData        []byte
+	Deleted        bool
 	// BodyText is the currently stored plain-text body, so a caller
 	// re-deriving it can skip rows that would not change.
 	BodyText string
@@ -6142,7 +6202,8 @@ type ArchivedRawMessage struct {
 // callers loop until an empty batch comes back.
 func (s *Store) ScanArchivedRawMessages(sourceID int64, format string, afterID int64, limit int) ([]ArchivedRawMessage, error) {
 	rows, err := s.db.Query(s.Rebind(`
-		SELECT m.id, m.conversation_id, r.raw_data, r.compression, COALESCE(b.body_text, '')
+		SELECT m.id, m.conversation_id, r.raw_data, r.compression, COALESCE(b.body_text, ''),
+		       CASE WHEN m.deleted_from_source_at IS NULL THEN 0 ELSE 1 END
 		FROM messages m
 		JOIN message_raw r ON r.message_id = m.id
 		LEFT JOIN message_bodies b ON b.message_id = m.id
@@ -6159,7 +6220,7 @@ func (s *Store) ScanArchivedRawMessages(sourceID int64, format string, afterID i
 		var item ArchivedRawMessage
 		var raw []byte
 		var compression sql.NullString
-		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText); err != nil {
+		if err := rows.Scan(&item.MessageID, &item.ConversationID, &raw, &compression, &item.BodyText, &item.Deleted); err != nil {
 			return nil, err
 		}
 		if compression.Valid && compression.String == "zlib" {

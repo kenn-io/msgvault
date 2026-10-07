@@ -1574,6 +1574,43 @@ CREATE TABLE IF NOT EXISTS reaction_source_events (
 CREATE INDEX IF NOT EXISTS idx_reaction_source_events_reaction
     ON reaction_source_events(reaction_id);
 
+-- Original encrypted Matrix events remain durable after decryption replaces
+-- the message raw with the decrypted event.
+CREATE TABLE IF NOT EXISTS matrix_encrypted_events (
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    event_id TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    raw_event BLOB NOT NULL,
+    PRIMARY KEY(source_id, event_id)
+);
+
+-- Encrypted Matrix events still waiting for a decryption key. Keeping them
+-- here instead of in the sync checkpoint keeps checkpoints small. An empty
+-- raw_event marks a pending entry whose ciphertext is not yet recorded.
+CREATE TABLE IF NOT EXISTS matrix_undecryptable_events (
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    event_id TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    raw_event BLOB NOT NULL,
+    PRIMARY KEY(source_id, event_id)
+);
+
+CREATE TABLE IF NOT EXISTS matrix_media_cache (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    source_attachment_id TEXT NOT NULL,
+    filename TEXT,
+    mime_type TEXT,
+    storage_path TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    media_type TEXT,
+    PRIMARY KEY(message_id, source_attachment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_matrix_media_cache_content_hash_lower
+    ON matrix_media_cache(LOWER(content_hash));
+CREATE INDEX IF NOT EXISTS idx_matrix_media_cache_storage_path
+    ON matrix_media_cache(storage_path);
+
 -- ============================================================================
 -- ATTACHMENTS & MEDIA
 -- ============================================================================

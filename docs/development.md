@@ -113,8 +113,9 @@ make test-v
 
 ### Build tags and assertions
 
-All Go test runs need `-tags "fts5 sqlite_vec"`; the Make targets supply these
-automatically. Use `assert` and `require` from testify, with expected values
+All Go test runs need `-tags "fts5 sqlite_vec goolm"`; the Make targets supply these
+automatically. A build without `goolm` still compiles, but its Matrix support
+reports that end-to-end encryption is unavailable and does not sync. Use `assert` and `require` from testify, with expected values
 first. See [AGENTS.md](https://github.com/kenn-io/msgvault/blob/main/AGENTS.md)
 for repository testing rules.
 
@@ -213,7 +214,7 @@ make fmt
 make lint
 
 # Check for issues
-go vet ./...
+go vet -tags "fts5 sqlite_vec goolm" ./...
 ```
 
 ## Profile Web UI search

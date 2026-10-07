@@ -15,6 +15,7 @@ import (
 
 var (
 	syncMatrixFull    bool
+	syncMatrixNoMedia bool
 	syncMatrixAccount string
 )
 
@@ -38,18 +39,28 @@ func newSyncMatrixCmd() *cobra.Command {
 			defer cleanup()
 			ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Saving Matrix checkpoint...")
 			defer stop()
-			err = runMatrixSync(ctx, s, state.cfg, syncMatrixAccount, syncMatrixFull,
+			err = runMatrixSync(ctx, s, state.cfg, syncMatrixAccount, syncMatrixFull, syncMatrixNoMedia, nil,
 				func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) }, cmd.OutOrStdout())
 			cacheErr := rebuildCacheAfterManualSync(state.cfg.DatabaseDSN(), state)
 			return errors.Join(err, cacheErr)
 		},
 	}
 	cmd.Flags().BoolVar(&syncMatrixFull, "full", false, "ignore stored cursors and re-fetch complete room history")
+	cmd.Flags().BoolVar(&syncMatrixNoMedia, "no-media", false, "record media as pending without downloading it")
 	cmd.Flags().StringVar(&syncMatrixAccount, "account", "", "sync only this Matrix user ID")
 	return addManualSyncCacheFlags(cmd)
 }
 
-func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, account string, full bool, progress func(string), out io.Writer) error {
+func runMatrixSync(
+	ctx context.Context,
+	s *store.Store,
+	cfg *config.Config,
+	account string,
+	full, noMedia bool,
+	mediaMutation func(context.Context, func() error) error,
+	progress func(string),
+	out io.Writer,
+) error {
 	sources, err := s.ListSources(sourceTypeMatrix)
 	if err != nil {
 		return fmt.Errorf("list Matrix sources: %w", err)
@@ -75,16 +86,18 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 			if loadErr != nil {
 				return loadErr
 			}
-			runtime, openErr := matrixsource.Open(creds)
+			runtime, openErr := openMatrixRuntime(ctx, creds, matrixsource.CryptoStorePath(cfg.Data.DataDir, current.Identifier, creds.DeviceID))
 			if openErr != nil {
 				return openErr
 			}
+			defer func() { _ = runtime.Close() }()
 			imp := matrixsource.NewImporter(s, runtime)
 			var importErr error
 			summary, importErr = imp.Import(ctx, matrixsource.ImportOptions{
-				UserID: current.Identifier, Full: full,
+				UserID: current.Identifier, Full: full, NoMedia: noMedia,
 				Rooms: cfg.Matrix.Rooms, ExcludeRooms: cfg.Matrix.ExcludeRooms,
-				Progress: progress,
+				AttachmentsDir: cfg.AttachmentsDir(), MediaPolicy: cfg.Matrix.MediaPolicy(current.Identifier),
+				MediaMutation: mediaMutation, Progress: progress,
 			})
 			return importErr
 		})
@@ -92,8 +105,9 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 			failures = append(failures, fmt.Sprintf("%s: %v", source.Identifier, syncErr))
 			continue
 		}
-		_, _ = fmt.Fprintf(out, "Matrix %s: %d rooms, %d messages, %d encrypted placeholders, %d unsupported events skipped\n",
-			source.Identifier, summary.RoomsProcessed, summary.MessagesProcessed, summary.Undecryptable, summary.EventsSkipped)
+		_, _ = fmt.Fprintf(out, "Matrix %s: %d rooms, %d messages, %d media, %d encrypted placeholders (%d recovered), %d unsupported events skipped\n",
+			source.Identifier, summary.RoomsProcessed, summary.MessagesProcessed, summary.AttachmentsDownloaded,
+			summary.Undecryptable, summary.UndecryptableRecovered, summary.EventsSkipped)
 	}
 	if account != "" {
 		found := false
@@ -110,17 +124,20 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 	return nil
 }
 
-func runConfiguredMatrixSync(ctx context.Context, s *store.Store) error {
+func runConfiguredMatrixSync(ctx context.Context, s *store.Store, mediaMutation func(context.Context, func() error) error) error {
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
-	syncErr := runMatrixSync(ctx, s, state.cfg, "", false, nil, io.Discard)
+	syncErr := runMatrixSync(ctx, s, state.cfg, "", false, false, mediaMutation, nil, io.Discard)
 	// A failed attempt can still have committed room pages, so refresh after
 	// every scheduled run and do not let cancellation hide durable changes.
 	cacheErr := rebuildMatrixCacheAfterScheduledSync(context.WithoutCancel(ctx), "matrix")
 	return errors.Join(syncErr, cacheErr)
 }
+
+// openMatrixRuntime is replaced in tests to observe the runtime's lifetime.
+var openMatrixRuntime = matrixsource.Open
 
 var rebuildMatrixCacheAfterScheduledSync = rebuildCacheAfterScheduledSync
 
