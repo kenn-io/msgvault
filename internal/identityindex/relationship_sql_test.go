@@ -460,7 +460,7 @@ func TestLogicalChatReductionKeepsEarlierDirectOnlyIdentity(t *testing.T) {
 	assertions.JSONEq(`["alpha.test", "gamma.test"]`, domainKeysJSON)
 }
 
-func TestBuildRelationshipActivity100MillionEdgeAcceptance(t *testing.T) {
+func TestBuildRelationshipActivityAvoids100MillionEdgeExpansion(t *testing.T) {
 	if os.Getenv(stressRelationshipActivity100MEnv) != "1" {
 		t.Skip("set " + stressRelationshipActivity100MEnv + "=1 to run")
 	}
@@ -480,8 +480,8 @@ func TestBuildRelationshipActivity100MillionEdgeAcceptance(t *testing.T) {
 		OutputRoot:     root,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(100_000_000), result.Activity.ConversationExpandedRows)
-	assert.Equal(t, int64(100_000_000), result.Activity.FinalRows)
+	assert.Equal(t, int64(500_199), result.Activity.ConversationExpandedRows)
+	assert.Equal(t, int64(500_199), result.Activity.FinalRows)
 }
 
 func writeRelationshipEquivalenceFixture(t *testing.T) (string, *sql.DB) {

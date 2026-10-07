@@ -11,12 +11,20 @@ import (
 // across append builds. Only new activity edges are reduced on an append;
 // global rankings still read the small daily contribution table.
 func (b builder) materializeContributions(ctx context.Context, activity string, effectiveAt time.Time) error {
+	reuseContributions := b.opts.Mode == ModeIncremental &&
+		datasetContainsParquet(b.opts.CommittedRoot, DatasetLogicalContributions) &&
+		datasetContainsParquet(b.opts.CommittedRoot, DatasetTemperatureContributions)
+	if b.opts.Mode == ModeIncremental && !reuseContributions {
+		if err := b.materializeBuildTable(ctx, activityBuildRelation,
+			activity, "relationship_activity_edges"); err != nil {
+			return err
+		}
+		activity = "(SELECT * FROM " + activityBuildRelation + ")"
+	}
 	temperatureSQL := buildRelationshipTemperatureDailySQL(activity, effectiveAt)
 	logicalSQL := buildLogicalActivityMaterializationSQL(activity)
-	if b.opts.Mode == ModeIncremental &&
-		datasetContainsParquet(b.opts.CommittedRoot, DatasetLogicalContributions) &&
-		datasetContainsParquet(b.opts.CommittedRoot, DatasetTemperatureContributions) {
-		delta := b.deltaActivityRelation()
+	if reuseContributions {
+		delta := "(SELECT * FROM " + deltaActivityBuildRelation + ")"
 		reuseTemperature, err := b.canReuseTemperatureContributions(ctx, effectiveAt)
 		if err != nil {
 			return err
@@ -26,6 +34,14 @@ func (b builder) materializeContributions(ctx context.Context, activity string, 
 				b.committed(DatasetTemperatureContributions),
 				buildRelationshipTemperatureDailySQL(delta, effectiveAt),
 			)
+		} else {
+			// The bounded full relation is needed only when old messages enter
+			// the score window. Reuse it instead of expanding its SQL repeatedly.
+			if err := b.materializeBuildTable(ctx, activityBuildRelation,
+				activity, "relationship_activity_edges"); err != nil {
+				return err
+			}
+			temperatureSQL = buildRelationshipTemperatureDailySQL(activityBuildRelation, effectiveAt)
 		}
 		logicalSQL = mergeLogicalContributionsSQL(
 			b.committed(DatasetLogicalContributions),
