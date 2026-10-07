@@ -5,17 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/notionmeetings"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -205,9 +200,9 @@ func TestNotionProbeUsersToken(t *testing.T) {
 			assert := assert.New(t)
 			users := &fakeNotionUsersProbe{users: tc.users, listErr: tc.err}
 			var out bytes.Buffer
-			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{}, usersErr: notionmeetings.ErrUserInformation}, users)
+			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{}, usersErr: notionmeetings.ErrUnauthorized}, users)
 			require.NoError(t, err)
-			assert.Contains(out.String(), "unless a users token is configured")
+			assert.NotContains(out.String(), "unless a users token is configured")
 			assert.Contains(out.String(), tc.want)
 			assert.NotContains(out.String(), "member@example.com")
 			assert.Equal(1, users.listed)
@@ -220,79 +215,74 @@ func TestConfiguredNotionClientsKeepCredentialsSeparate(t *testing.T) {
 	require := require.New(t)
 	meetingFactory, usersFactory := newNotionMeetingsClient, newNotionUsersClient
 	t.Cleanup(func() { newNotionMeetingsClient, newNotionUsersClient = meetingFactory, usersFactory })
-	t.Setenv("MSGVAULT_TEST_NOTION_USERS_TOKEN", "internal-example")
 	var meetingToken, usersToken string
 	newNotionMeetingsClient = func(_ string, token string) notionmeetings.Source { meetingToken = token; return nil }
 	newNotionUsersClient = func(_ string, token string) notionmeetings.UserSource {
 		usersToken = token
 		return &fakeNotionUsersProbe{}
 	}
-	_, users, err := configuredNotionClients(config.NotionMeetingsSource{Token: "pat-example", UsersTokenEnv: "MSGVAULT_TEST_NOTION_USERS_TOKEN"})
-	require.NoError(err)
+	_, users := configuredNotionClients(config.NotionMeetingsSource{Token: "pat-example", UsersToken: "internal-example"})
 	require.NotNil(users)
 	assert.Equal("pat-example", meetingToken)
 	assert.Equal("internal-example", usersToken)
-	_, users, err = configuredNotionClients(config.NotionMeetingsSource{Token: "pat-example"})
-	require.NoError(err)
+	_, users = configuredNotionClients(config.NotionMeetingsSource{Token: "pat-example"})
 	assert.Nil(users)
 }
 
-type countingNotionSyncSource struct {
+type scheduledNotionSource struct {
 	notionmeetings.Source
-
-	queries int
 }
 
-func (s *countingNotionSyncSource) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
-	s.queries++
-	return &notionmeetings.QueryResult{}, nil
+func (s scheduledNotionSource) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
+	return &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{
+		Object: "block", ID: "meeting-1", Type: "meeting_notes", Parent: notionmeetings.Parent{PageID: "page-1"},
+		CreatedTime:  "2026-08-29T10:00:00Z",
+		MeetingNotes: notionmeetings.MeetingNotesData{Status: "notes_ready", CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}},
+	}}}, nil
 }
 
-func TestNotionSyncValidatesAllUserCredentialsBeforeRequests(t *testing.T) {
-	for _, credential := range []string{"missing env", "missing file", "both references"} {
-		t.Run(credential, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			home := t.TempDir()
-			cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, NotionMeetings: []config.NotionMeetingsSource{
-				{Identifier: "first", Token: "example-meeting-token", AccountEmail: "user@example.com"},
-				{Identifier: "later", Token: "example-meeting-token", AccountEmail: "user@example.com"},
-			}}
-			t.Setenv("MSGVAULT_TEST_NOTION_MISSING_USERS_TOKEN", "")
-			switch credential {
-			case "missing env":
-				cfg.NotionMeetings[1].UsersTokenEnv = "MSGVAULT_TEST_NOTION_MISSING_USERS_TOKEN"
-			case "missing file":
-				cfg.NotionMeetings[1].UsersTokenFile = filepath.Join(home, "missing-users-token")
-			case "both references":
-				cfg.NotionMeetings[1].UsersTokenEnv = "MSGVAULT_TEST_NOTION_MISSING_USERS_TOKEN"
-				cfg.NotionMeetings[1].UsersTokenFile = filepath.Join(home, "missing-users-token")
-			}
-			st, err := store.Open(cfg.DatabaseDSN())
-			require.NoError(err)
-			t.Cleanup(func() { _ = st.Close() })
-			require.NoError(st.InitSchema())
-			_, err = st.GetOrCreateSource(notionmeetings.SourceType, "first")
-			require.NoError(err)
+func (s scheduledNotionSource) RetrieveBlock(context.Context, string) (*notionmeetings.Block, error) {
+	return &notionmeetings.Block{Object: "block", ID: "meeting-1", Type: "meeting_notes"}, nil
+}
 
-			t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
-			factory, rebuild := newNotionMeetingsClient, rebuildNotionMeetingsCacheAfterWrite
-			probe, full, limit, after := syncNotionMeetingsProbe, syncNotionMeetingsFull, syncNotionMeetingsLimit, syncNotionMeetingsAfter
-			t.Cleanup(func() {
-				newNotionMeetingsClient, rebuildNotionMeetingsCacheAfterWrite = factory, rebuild
-				syncNotionMeetingsProbe, syncNotionMeetingsFull, syncNotionMeetingsLimit, syncNotionMeetingsAfter = probe, full, limit, after
-			})
-			syncNotionMeetingsProbe, syncNotionMeetingsFull, syncNotionMeetingsLimit, syncNotionMeetingsAfter = false, false, 0, ""
-			client := &countingNotionSyncSource{}
-			newNotionMeetingsClient = func(string, string) notionmeetings.Source { return client }
-			var out bytes.Buffer
-			cmd := &cobra.Command{Use: syncNotionMeetingsCmd.Use, RunE: syncNotionMeetingsCmd.RunE}
-			cmd.SetOut(&out)
-			cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-			err = cmd.RunE(cmd, nil)
-			require.Error(err)
-			assert.Contains(err.Error(), "users_token_")
-			assert.Zero(client.queries, "a later invalid credential must prevent all Notion requests")
-			assert.Empty(out.String(), "no source should start syncing before credential validation completes")
-		})
+func (s scheduledNotionSource) RetrievePageMarkdown(context.Context, string, bool) (*notionmeetings.MarkdownPage, error) {
+	return &notionmeetings.MarkdownPage{Markdown: "# Transcript\nSpeaker: Scheduled meeting."}, nil
+}
+
+func (s scheduledNotionSource) ListUsers(context.Context, string) (*notionmeetings.UserPage, error) {
+	return nil, notionmeetings.ErrUnauthorized
+}
+
+func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource(notionmeetings.SourceType, "work")
+	require.NoError(t, err)
+	meetingFactory, usersFactory, rebuild := newNotionMeetingsClient, newNotionUsersClient, rebuildNotionMeetingsCacheAfterScheduledSync
+	t.Cleanup(func() {
+		newNotionMeetingsClient, newNotionUsersClient, rebuildNotionMeetingsCacheAfterScheduledSync = meetingFactory, usersFactory, rebuild
+	})
+	newNotionMeetingsClient = func(_ string, token string) notionmeetings.Source {
+		assert.Equal(t, "pat-example", token)
+		return scheduledNotionSource{}
 	}
+	users := &fakeNotionUsersProbe{users: []notionmeetings.User{{ID: "member", Person: notionmeetings.UserPerson{Email: "member@example.com", EmailVerified: true}}}}
+	newNotionUsersClient = func(_ string, token string) notionmeetings.UserSource {
+		assert.Equal(t, "ntn-example", token)
+		return users
+	}
+	var refreshes int
+	rebuildNotionMeetingsCacheAfterScheduledSync = func(context.Context, string) error { refreshes++; return nil }
+	err = runConfiguredNotionMeetingsSync(t.Context(), st, config.NotionMeetingsSource{Identifier: "work", AccountEmail: "owner@example.com", Token: "pat-example", UsersToken: "ntn-example"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, users.listed)
+	assert.Equal(t, 1, refreshes)
+	var messageID int64
+	require.NoError(t, st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'meeting-1'`).Scan(&messageID))
+	recipients, err := st.GetMessageRecipientsContext(t.Context(), messageID, "to")
+	require.NoError(t, err)
+	require.Len(t, recipients, 1)
+	assert.Equal(t, "member@example.com", recipients[0].EmailAddress)
+	body, err := st.GetMessageBodyText(messageID)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Speaker: Scheduled meeting.")
 }

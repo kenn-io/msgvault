@@ -183,14 +183,13 @@ func (c *Client) RetrieveUser(ctx context.Context, id string) (*User, error) {
 		return nil, fmt.Errorf("%w: blank user ID", ErrMalformedResponse)
 	}
 	var result User
-	raw, err := c.doJSON(ctx, http.MethodGet, "/v1/users/"+url.PathEscape(id), nil, &result, operationUsers)
+	_, err := c.doJSON(ctx, http.MethodGet, "/v1/users/"+url.PathEscape(id), nil, &result, operationUsers)
 	if err != nil {
 		return nil, err
 	}
 	if result.Object != "user" || result.ID != id {
 		return nil, fmt.Errorf("%w: retrieved user has unexpected identity or object", ErrMalformedResponse)
 	}
-	result.Raw = raw
 	return &result, nil
 }
 

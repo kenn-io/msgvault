@@ -105,16 +105,16 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 		}
 		_, _ = fmt.Fprintln(out, "  Read Content: available")
 	}
-	if _, err := client.ListUsers(ctx, ""); errors.Is(err, notionmeetings.ErrUserInformation) {
-		_, _ = fmt.Fprintln(out, "  User Information: unavailable (attendees remain display-only unless a users token is configured)")
-	} else if errors.Is(err, notionmeetings.ErrRateLimited) {
-		_, _ = fmt.Fprintf(out, "  User Information: unavailable (error: %v; attendees remain display-only)\n", err)
-	} else if err != nil {
-		return fmt.Errorf("probe Notion User Information access: %w", err)
-	} else {
-		_, _ = fmt.Fprintln(out, "  User Information: available")
-	}
 	if users == nil {
+		if _, err := client.ListUsers(ctx, ""); errors.Is(err, notionmeetings.ErrUserInformation) {
+			_, _ = fmt.Fprintln(out, "  User Information: unavailable (attendees remain display-only unless a users token is configured)")
+		} else if errors.Is(err, notionmeetings.ErrRateLimited) {
+			_, _ = fmt.Fprintf(out, "  User Information: unavailable (error: %v; attendees remain display-only)\n", err)
+		} else if err != nil {
+			return fmt.Errorf("probe Notion User Information access: %w", err)
+		} else {
+			_, _ = fmt.Fprintln(out, "  User Information: available")
+		}
 		return nil
 	}
 	page, err := users.ListUsers(ctx, "")
@@ -135,18 +135,12 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	return nil
 }
 
-// Resolve secret references only on the daemon host and keep the user client
-// out of meeting-content requests.
-func configuredNotionClients(source config.NotionMeetingsSource) (notionmeetings.Source, notionmeetings.UserSource, error) {
-	token, err := source.ResolveUsersToken()
-	if err != nil {
-		return nil, nil, err
-	}
+func configuredNotionClients(source config.NotionMeetingsSource) (notionmeetings.Source, notionmeetings.UserSource) {
 	var users notionmeetings.UserSource
-	if token != "" {
+	if token := strings.TrimSpace(source.UsersToken); token != "" {
 		users = newNotionUsersClient(notionmeetings.DefaultBaseURL, token)
 	}
-	return newNotionMeetingsClient(notionmeetings.DefaultBaseURL, source.Token), users, nil
+	return newNotionMeetingsClient(notionmeetings.DefaultBaseURL, source.Token), users
 }
 
 var addNotionMeetingsCmd = &cobra.Command{
@@ -173,10 +167,7 @@ var addNotionMeetingsCmd = &cobra.Command{
 		if strings.TrimSpace(source.Token) == "" {
 			return fmt.Errorf("[[notion_meetings]] entry %q has no token\n\n%s", source.Identifier, notionMeetingsConfigHint)
 		}
-		client, users, err := configuredNotionClients(*source)
-		if err != nil {
-			return err
-		}
+		client, users := configuredNotionClients(*source)
 		if err := runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), client, users); err != nil {
 			return err
 		}
@@ -230,25 +221,17 @@ maintenance. --probe validates access without printing meeting content.`,
 			}
 			after = parsed.UTC()
 		}
-		type sourceClients struct {
-			meeting notionmeetings.Source
-			users   notionmeetings.UserSource
-		}
-		clients := make([]sourceClients, len(sources))
-		for i, source := range sources {
+		for _, source := range sources {
 			if strings.TrimSpace(source.Token) == "" {
 				return fmt.Errorf("[[notion_meetings]] entry %q has no token", source.Identifier)
 			}
 			if _, err := source.EffectiveAccountEmail(); err != nil {
 				return err
 			}
-			clients[i].meeting, clients[i].users, err = configuredNotionClients(source)
-			if err != nil {
-				return err
-			}
 		}
 		if syncNotionMeetingsProbe {
-			return runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), clients[0].meeting, clients[0].users)
+			client, users := configuredNotionClients(sources[0])
+			return runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), client, users)
 		}
 
 		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
@@ -258,10 +241,11 @@ maintenance. --probe validates access without printing meeting content.`,
 		defer cleanup()
 		dbPath := cfg.DatabaseDSN()
 		var pendingWrites int64
-		for i, source := range sources {
+		for _, source := range sources {
 			accountEmail, _ := source.EffectiveAccountEmail()
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Notion meetings for %s\n\n", source.Identifier)
-			importer := notionmeetings.NewImporter(st, clients[i].meeting).WithUserSource(clients[i].users)
+			client, users := configuredNotionClients(source)
+			importer := notionmeetings.NewImporter(st, client).WithUserSource(users)
 			summary, importErr := importer.Import(cmd.Context(), notionmeetings.ImportOptions{
 				Identifier: source.Identifier, AccountEmail: accountEmail,
 				Full: syncNotionMeetingsFull || !after.IsZero(), Limit: syncNotionMeetingsLimit,
@@ -315,10 +299,7 @@ func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, sourc
 	if err != nil {
 		return err
 	}
-	client, users, err := configuredNotionClients(source)
-	if err != nil {
-		return err
-	}
+	client, users := configuredNotionClients(source)
 	importer := notionmeetings.NewImporter(st, client).WithUserSource(users)
 	summary, importErr := importer.Import(ctx, notionmeetings.ImportOptions{
 		Identifier: source.Identifier, AccountEmail: accountEmail,

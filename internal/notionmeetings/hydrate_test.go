@@ -403,7 +403,7 @@ func TestHydratorDegradesWhenUserInformationIsUnavailable(t *testing.T) {
 	assert.Empty(hydrated.Attendees)
 	assert.True(hydrated.AttendeeResolutionDegraded)
 	assert.Equal([]string{"user-1", "user-2"}, hydrated.UnresolvedAttendeeIDs)
-	assert.Contains(hydrated.Warnings, "Notion User Information access unavailable; attendee emails were not resolved")
+	assert.Contains(hydrated.Warnings, "Notion User Information access unavailable; some attendee emails remain unresolved")
 
 	snapshot, err := hydrated.ArchiveSnapshot(17, "work", "user@example.com")
 	require.NoError(err)
@@ -493,13 +493,13 @@ func TestHydratorDegradesAndCachesTransientUserListingFailure(t *testing.T) {
 	assert.Empty(first.Attendees)
 	assert.True(first.AttendeeResolutionDegraded)
 	assert.Equal([]string{"user-1", "user-2"}, first.AttendeeLabels)
-	assert.Contains(first.Warnings, "Notion User Information lookup failed: rate limit exceeded; attendee emails were not resolved")
+	assert.Contains(first.Warnings, "Notion User Information lookup failed: rate limit exceeded; some attendee emails remain unresolved")
 
 	second, err := hydrator.Hydrate(context.Background(), hydrationMeeting())
 	require.NoError(err)
 	assert.Empty(second.Attendees)
 	assert.True(second.AttendeeResolutionDegraded)
-	assert.Contains(second.Warnings, "Notion User Information lookup failed: rate limit exceeded; attendee emails were not resolved")
+	assert.Contains(second.Warnings, "Notion User Information lookup failed: rate limit exceeded; some attendee emails remain unresolved")
 	assert.Equal(1, source.usersCalls)
 }
 

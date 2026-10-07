@@ -1335,8 +1335,7 @@ The integration must belong to the same workspace.
 identifier = "notion-personal"      # stable source label; defaults to "default" for one entry
 account_email = "you@example.com"   # required primary account identity
 token = "ntn_..."                   # meeting token; keep this file private
-users_token_env = "NOTION_USERS_TOKEN" # optional internal integration token reference
-# users_token_file = "secrets/notion-users-token" # alternative to users_token_env
+users_token = "ntn_..."             # optional workspace users integration token
 schedule = "15 */6 * * *"           # optional 5-field cron, no seconds
 enabled = true
 ```
@@ -1346,17 +1345,15 @@ enabled = true
 | `identifier` | `default` (single entry) | Source name used by commands and scheduler logs |
 | `account_email` | (required) | Normalized primary identity for relationships; it is not assumed to be the meeting organizer |
 | `token` | (required) | Meeting token; PAT or integration with Meeting Notes and Read Content access |
-| `users_token_env` | — | Name of a daemon-host environment variable containing the workspace user-resolution token |
-| `users_token_file` | — | File containing the user-resolution token, resolved relative to `MSGVAULT_HOME`; mutually exclusive with `users_token_env` |
+| `users_token` | — | Optional workspace integration token with Read user information including email addresses |
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |
 
-The daemon reads the optional users token at each invocation. An unset or
-empty environment variable, an unreadable or empty file, or both references set
-fails the command before any Notion request. Token values stay out of
-diagnostics and archived evidence. Without a users token, the meeting token
-lists users and guests stay unresolved. A failed user lookup leaves that
-attendee unresolved; meeting content still syncs.
+Manual and scheduled sync use the same optional users token from config.
+Token values stay out of diagnostics and archived evidence. Without a users
+token, the meeting token lists users and guests stay unresolved. Optional user
+request failures and directory work limits leave meeting content available.
+Previously verified attendees survive failed lookups.
 
 Run `msgvault add-notion-meetings <identifier>` to validate access and register
 the source before enabling a schedule. Removing the source prevents the

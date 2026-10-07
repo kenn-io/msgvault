@@ -433,7 +433,7 @@ Read Content access for meeting content. PATs cannot list workspace users or
 retrieve other users, and have no User Information capability toggle.
 For attendee emails, create an internal integration in the same workspace
 with **Read user information including email addresses**, then supply its token
-through `users_token_env` or `users_token_file`. Keep the meeting PAT so discovery
+as `users_token`. Keep the meeting PAT so discovery
 continues to use the meeting owner's attendee visibility.
 
 ```toml
@@ -441,8 +441,7 @@ continues to use the meeting owner's attendee visibility.
 identifier = "notion-personal"
 account_email = "you@example.com"
 token = "ntn_..."
-users_token_env = "NOTION_USERS_TOKEN" # optional workspace integration
-# users_token_file = "secrets/notion-users-token" # use instead of users_token_env
+users_token = "ntn_..."          # optional workspace users integration
 schedule = "15 */6 * * *"         # optional daemon schedule
 enabled = true
 ```
@@ -465,13 +464,14 @@ whether it returns email addresses.
 The users token lists workspace members and retrieves any attendee missing from
 that list one at a time, which covers guests. Only Notion users with
 `person.email_verified = true` and a usable email become anchored participants.
-Lookups are cached for each run. A 403 for one guest leaves that attendee
-unresolved without stopping other attendees or meeting content from syncing.
+Successful lookups are cached for each run. Failed lookups can retry on a later
+meeting. Optional lookup failures and directory work limits leave meeting content
+available and preserve previously verified attendees for failed lookups.
 People without a Notion account can't be resolved this way.
 
-After adding a users token, run `msgvault sync-notion-meetings <identifier> --full`
-to update participants on existing visible meetings. This does not expand the
-50-meeting discovery window.
+After adding a users token, run `msgvault sync-notion-meetings <identifier>`
+to update participants on existing visible meetings. The 50-meeting discovery
+window still applies.
 
 ### Sync and discovery limit
 
