@@ -50,6 +50,9 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 	if kind == databaseKindApple {
 		return imp.importApple(ctx, waDB, waDBPath, opts)
 	}
+	if !opts.After.IsZero() || !opts.Before.IsZero() {
+		return nil, errors.New("--after and --before are only supported for Apple ChatStorage.sqlite imports")
+	}
 
 	// Keep the detailed Android schema checks for compatibility with the
 	// existing importer error handling.

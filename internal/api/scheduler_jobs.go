@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/plaud"
 	"go.kenn.io/msgvault/internal/synctechsms"
+	"go.kenn.io/msgvault/internal/twilio"
 )
 
 type sourceScheduleKind uint8
@@ -35,6 +36,7 @@ type sourceScheduleClassification struct {
 const (
 	sourceTypeBeeper = "beeper"
 	sourceTypeGmail  = "gmail"
+	sourceTypeMatrix = "matrix"
 	sourceTypeSlack  = "slack"
 )
 
@@ -42,6 +44,9 @@ const (
 // store source. cmd/msgvault/cmd/attachment_maintenance.go registers the
 // beeper sync job under this exact name.
 const BeeperJobName = sourceTypeBeeper
+
+// MatrixJobName is the singleton scheduler job for all Matrix accounts.
+const MatrixJobName = sourceTypeMatrix
 
 // SlackJobName is the single generic-job name that drives the configured
 // Slack workspace source.
@@ -140,6 +145,8 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return "circleback:" + identifier, true
 	case notionmeetings.SourceType:
 		return "notion-meetings:" + identifier, true
+	case twilio.SourceType:
+		return "twilio:" + identifier, true
 	case muesli.SourceType:
 		// Store identifier == config Identifier (see
 		// internal/muesli/importer.go GetSourceByTypeAndIdentifier call).
@@ -149,6 +156,8 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		// internal/beeper/importer.go GetOrCreateSource, one store source
 		// per beeper AccountID, all driven by the singleton "beeper" job).
 		return BeeperJobName, true
+	case sourceTypeMatrix:
+		return MatrixJobName, true
 	case sourceTypeSlack:
 		// One configured Slack workspace maps to one store source and one
 		// singleton daemon job.

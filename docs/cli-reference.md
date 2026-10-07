@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-05"
+last_edited: "2026-10-06"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -108,7 +108,7 @@ Commands that access archive state keep their usual stdout/stderr output while u
 3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
 4. With both `--agent-url` and `--agent-token-file`, the CLI connects to a
    remote daemon as a restricted caller. `draft-reply`, `draft-compose`,
-   `draft-get`, `draft-edit`, `draft-delete`, and `draft-recover` are
+   `draft-get`, `draft-edit`, `draft-delete`, `draft-recover`, and `mcp` are
    available in this mode. The CLI rejects owner
    configuration (`--config`, `--home`, `--local`) and never writes the token
    to logs or argv. It sends the token in the `X-Msgvault-Agent-Token` header;
@@ -211,8 +211,9 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 Create one reply draft from an archived message to an authorized IMAP
 destination, or reply within its original Gmail account. The daemon requires
-the matching operator grant. `--from` is optional when exactly one confirmed
-identity is eligible.
+the matching operator grant. Without `--from`, the reply uses the confirmed
+identity the parent was addressed to, or the source's only eligible identity.
+See [IMAP drafts](/docs/usage/imap/#drafts) for the full sender rules.
 
 ```bash
 msgvault draft-reply <message-id> --body <text>
@@ -301,6 +302,18 @@ confirmed identity check, delegated sender grant, UIDPLUS requirement, and
 structured provider outcomes as `draft-reply`. It stores the Bcc envelope in
 the draft so the mail application can use it. It never sends the message or
 validates provider send-as rights.
+
+### Draft to a person
+
+To draft to a person rather than an address, list the person's archived
+identities with [`person identities`](#person), then pass a `supported` email
+address to `--to`.
+
+```bash
+msgvault person identities 7
+msgvault draft-compose --account you@example.com \
+  --to alice@example.com --subject 'Hi' --body 'Draft text'
+```
 
 ### Beeper chat drafts
 
@@ -794,12 +807,15 @@ msgvault sync-granola --full --after 2024-01-01
 
 Incremental by default: only notes updated since the last successful run are
 fetched. With no identifier, every configured `[[granola]]` source is synced.
-Re-fetched notes are upserted in place, so `--full` repairs existing rows
-without creating duplicates. A partial run with one or more failed notes is
-recorded and returned as an error without advancing the successful cursor. If
-other notes were added or updated first, the cache is refreshed before the
-error is returned. Scheduled sync refuses a configured source that has been
-removed from the archive and directs you to run `add-granola` again.
+Re-fetched notes are updated in place; a note whose stored copy, metadata, and
+`is_from_me` attribution are unchanged is skipped without invalidating the
+search cache and is not counted as updated. `--full` rewrites every fetched
+note, which repairs existing rows without creating duplicates. A partial run
+with one or more failed notes is recorded and returned as an error without
+advancing the successful cursor. If other notes were added or updated first,
+the cache is refreshed before the error is returned. Scheduled sync refuses a
+configured source that has been removed from the archive and directs you to run
+`add-granola` again.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -854,6 +870,44 @@ See [Meeting Transcripts](/docs/usage/meetings/#notion-ai-meeting-notes) for set
 privacy, retry behavior, and stored evidence.
 
 ---
+
+## add-twilio
+
+Unreleased: check a configured Twilio account's access and register it as a
+meeting source. Nothing about individual calls is printed.
+
+```bash
+msgvault add-twilio [identifier]
+```
+
+With one `[[twilio]]` entry, omit the identifier. See
+[Twilio configuration](configuration.md#twilio-sources).
+
+## sync-twilio
+
+Unreleased: archive Twilio calls, their recordings and retained transcripts as
+meetings. Without an identifier, sync every configured source. Run
+`add-twilio` first.
+
+```bash
+msgvault sync-twilio [identifier]
+msgvault sync-twilio work --limit 20
+msgvault sync-twilio work --full --after 2026-01-01
+msgvault sync-twilio work --probe
+```
+
+| Flag | Description |
+|---|---|
+| `--limit n` | Process at most n calls. 0 is unlimited |
+| `--full` | Revisit every call Twilio still lists, not only those from the last seven days, including recordings that were skipped or unavailable |
+| `--after YYYY-MM-DD` | Only recordings created on or after this UTC date; implies `--full` |
+| `--probe` | Read one page of recordings and print a count; requires an identifier when several accounts are configured |
+| `--build-cache` | Refresh analytics cache after sync |
+| `--no-build-cache` | Skip analytics cache refresh; mutually exclusive with `--build-cache` |
+
+When `--limit` stops before the end of the call list, the summary says the sync
+paused and prints the command that continues it. See the
+[meeting guide](usage/meetings.md#twilio) for retries and coverage.
 
 ## add-plaud
 
@@ -1150,6 +1204,54 @@ via chats*. Re-run the command after connecting a network in Beeper Desktop.
 | `--no-default-identity` | `false` | Do not auto-confirm each account's own identity as that source's "me" identity |
 
 After adding, sync with `msgvault sync-beeper`.
+
+---
+
+## add-matrix
+
+Register a Matrix account as a native `matrix` source. The command logs in a
+dedicated device named `msgvault (read-only)`. See
+[Matrix](/docs/usage/matrix/).
+
+```bash
+msgvault add-matrix \
+  --homeserver https://matrix.example.org \
+  --user-id @archive:example.org \
+  --password-file /path/to/password
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--homeserver` | required | Base URL of the Matrix homeserver |
+| `--user-id` | required | Full Matrix user ID |
+| `--password-file` | prompt or stdin | Read the account password from a file |
+| `--login-token-file` | — | Read a single-use `m.login.token` obtained from an SSO/login flow; mutually exclusive with `--password-file` |
+| `--no-default-identity` | `false` | Do not auto-confirm the Matrix user ID as this source's "me" identity |
+
+The access token is written to an owner-only file under `tokens/`. Running it
+again for a registered user renews the login in place and keeps its history.
+
+---
+
+## sync-matrix
+
+Sync joined rooms for every registered Matrix account. The first run backfills
+history per room through `/messages`; later runs use a persisted `/sync`
+`next_batch` token. Per-account failures do not stop other accounts.
+
+```bash
+msgvault sync-matrix
+msgvault sync-matrix --account @archive:example.org
+msgvault sync-matrix --full
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--account` | all registered | Sync only this exact Matrix user ID |
+| `--full` | `false` | Ignore stored cursors and re-fetch complete joined-room history |
+
+Room selection and scheduled sync are controlled by `[matrix]`. Encrypted
+events are kept as raw placeholders.
 
 ---
 
@@ -1553,8 +1655,13 @@ The `--phone` flag is required and must be in E.164 format (e.g., `+447700900000
 | `--contacts` | No | Path to contacts `.vcf` file for name resolution |
 | `--media-dir` | No | Path to decrypted Media folder for attachments |
 | `--limit` | No | Limit number of messages (for testing) |
+| `--after` | No | Apple only: import messages on or after this date (`YYYY-MM-DD`, local time) |
+| `--before` | No | Apple only: import messages before this date (`YYYY-MM-DD`, local time) |
 | `--display-name` | No | Display name for the phone owner |
+| `--full` | No | Apple only: compare every message, including chats unchanged since the last import |
 | `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
+
+Android `msgstore.db` imports fail with an error when `--after` or `--before` is set.
 
 See [Text Messages](/docs/usage/text-messages/) for usage examples.
 
@@ -2546,6 +2653,7 @@ msgvault person promote <participant-id>
 msgvault person list [--json]
 msgvault person directory [flags]
 msgvault person get <person-id> [--json]
+msgvault person identities <person-id> [--json]
 msgvault person set-display-name <person-id> <display-name> [--json]
 msgvault person set-display-name <person-id> --clear [--json]
 msgvault person delete <person-id>
@@ -2567,6 +2675,16 @@ including an edited or cleared value. `set-display-name` preserves the
 profile's stable ID and vCard UID. `delete` permanently retires that UID and
 removes the profile's participant bindings. A person with active merge lineage
 cannot be deleted until that lineage is fully split.
+
+`identities` lists the email addresses, phone numbers, and chat identifiers
+that the person's current participants have used in your archive, so a merge or
+split shows up on the next call. Email addresses are `supported` draft
+recipients: pass one to [`draft-compose --to`](#draft-to-a-person). A listed
+value keeps the quotes that a local part such as `"first last"` needs. Phone
+numbers and chat identifiers are `unsupported`. Curated contact points and
+postal addresses are not listed. An unknown or merged-away person fails with
+`Person profile not found`. Only the owner can list identities; delegated agent
+tokens are refused. The listing does not wait for a running sync or import.
 
 `merge` keeps the survivor's ID and vCard UID, moves the absorbed profile into
 it, and records a reversible merge packet. Profiles with active CardDAV
@@ -2658,6 +2776,27 @@ UID and aliases. JSON includes `truncated` when more items remain; use Kata to
 view the rest. Oversized Kata responses produce an explicit error. See the
 [Kata configuration](configuration.md#integrationskata) for metadata and
 response limits.
+
+---
+
+## kata
+
+Create Kata issues that quote exact message or file text. Configure
+[`[integrations.kata]`](configuration.md#integrationskata) on the daemon first.
+
+```bash
+msgvault kata evidence prepare [--input FILE]
+msgvault kata create --idempotency-key KEY [--input FILE] [--json]
+msgvault kata link <ref> [--input FILE] [--json]
+```
+
+Each command reads one JSON request from `--input`, or stdin by default.
+`prepare` prints exact excerpts and the references that `create` and `link`
+accept. `create` requires `--idempotency-key`, a key you choose to name the
+issue; running it again with the same key and input returns the issue it filed
+instead of a duplicate.
+`link` adds evidence to an existing issue in the configured project, given
+as `project#ref` or a bare ref. See [Kata issues](usage/kata-issues.md) for request shapes and limits.
 
 ---
 
@@ -3105,6 +3244,11 @@ Print one row per index generation: ID, generation state, model, dimension,
 coverage, accelerator state and row count, accelerator timestamps and last
 error, fingerprint, and generation timestamps.
 
+Listing only reads existing metadata, so it works while other jobs hold the
+archive. If the metadata still needs an upgrade, it fails and asks you to run
+`msgvault daemon restart`, which applies the upgrade when vector search is
+enabled.
+
 ### embeddings optimize
 
 ```bash
@@ -3391,6 +3535,10 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
+Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
+
+With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes only the six delegated draft tools and, on daemons with API schema 3.1.0 or newer, the calendar tools over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
+
 ```bash
 msgvault mcp [flags]
 ```
@@ -3403,8 +3551,9 @@ msgvault mcp [flags]
 | `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
 | `--http-token-env` | — | On unreleased `main`, name the environment variable holding an independent inbound bearer key. Requires `--http`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
-| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, and deletion staging tools over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`. Enable only for trusted, authenticated clients. |
+| `--http-allow-writes` | `false` | Expose Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Calendar event mutations also require `--allow-calendar-writes`, and Kata issue writes `--allow-kata-writes`. Enable only for trusted, authenticated clients. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
+| `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
 
 See [MCP Server](/docs/usage/chat/) for configuration and tool reference.
 
@@ -3629,7 +3778,11 @@ link for the message.
 
 ## list-accounts
 
-List synced email accounts.
+List archived accounts. While the daemon's first message-count refresh is
+still running, the table shows `pending` in the messages column, and JSON
+entries carry `"counts_pending": true` in place of `message_count` and
+`source_deleted_count`. Later calls show the finished counts or a cached
+snapshot.
 
 ```bash
 msgvault list-accounts [flags]
@@ -4145,6 +4298,7 @@ calendar tools.
 
 The response includes the daemon address, the secret, and the granted source references.
 Pass `--agent-url <address>` and the file path to `--agent-token-file` when invoking delegated commands.
+Delegated commands include `msgvault mcp`, which offers the admitted draft tools over stdio using that grant.
 The address comes from the issuing request. On a default local install it is an
 HTTP loopback URL, which works only on that machine and requires
 `--agent-allow-insecure`. For an agent on another machine, use a reachable HTTPS

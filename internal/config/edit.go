@@ -895,6 +895,7 @@ func validateEditableCandidate(cfg *Config) error {
 		"vector.embed.schedule.cron":      cfg.Vector.Embed.Schedule.Cron,
 		"vector.multimodal.schedule.cron": cfg.Vector.Multimodal.Schedule.Cron,
 		"beeper.schedule":                 cfg.Beeper.Schedule,
+		"matrix.schedule":                 cfg.Matrix.Schedule,
 		"slack.schedule":                  cfg.Slack.Schedule,
 	}
 	for index, account := range cfg.Accounts {
@@ -917,6 +918,9 @@ func validateEditableCandidate(cfg *Config) error {
 	}
 	for index, source := range cfg.NotionMeetings {
 		schedules[fmt.Sprintf("notion_meetings[%d].schedule", index)] = source.Schedule
+	}
+	for index, source := range cfg.Twilio {
+		schedules[fmt.Sprintf("twilio[%d].schedule", index)] = source.Schedule
 	}
 	for index, source := range cfg.Muesli {
 		schedules[fmt.Sprintf("muesli[%d].schedule", index)] = source.Schedule

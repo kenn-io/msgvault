@@ -261,6 +261,19 @@ func (f gmailDraftTestFixture) lifecycle(t *testing.T, operation string, draft s
 	return events, err
 }
 
+func TestGmailDraftInferredSenderRequiresSendAs(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	f := newGmailDraftTestFixture(t)
+	requirements.NoError(f.store.AddAccountIdentity(f.source.ID, "shop@example.test", "manual"))
+	setDraftParentRecipient(t, f.store, f.parentID, "to")
+	err := f.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft-reply", strconv.FormatInt(f.parentID, 10), "--body", "reply"},
+	}, func(api.CLIRunEvent) error { return nil })
+	requirements.Error(err)
+	assertions.Zero(f.client.createCalls)
+	assertions.Equal(1, f.client.listCalls)
+}
+
 func TestGmailDraftCreateAndSendAsUseLocalBehavior(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

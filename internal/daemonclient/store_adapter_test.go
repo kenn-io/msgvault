@@ -1466,6 +1466,7 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/accounts", r.URL.Path, "path")
+		assert.Equal("true", r.Header.Get(apiprotocol.AllowPendingCountsHeader))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"accounts": [{
@@ -1481,7 +1482,7 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 	defer srv.Close()
 
 	s := newTestStore(srv, "key")
-	accounts, err := s.GetCLIAccounts(context.Background())
+	accounts, _, err := s.GetCLIAccounts(context.Background())
 	require.NoError(
 		err, "GetCLIAccounts")
 

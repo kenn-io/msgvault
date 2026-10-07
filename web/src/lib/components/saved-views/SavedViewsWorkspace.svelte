@@ -10,6 +10,8 @@
   import type { APIClient } from '../../api/client';
   import type { SavedView } from '../../api/generated/models';
   import type { ExploreURLState } from '../../explore/models';
+  import { ExploreSelectionState } from '../../explore/state.svelte';
+  import SelectionCheckbox from '../common/SelectionCheckbox.svelte';
   import {
     CURRENT_SCHEMA_VERSION,
     exploreStateFromSavedView,
@@ -30,7 +32,12 @@
   let editing = $state<SavedView>();
   let editName = $state('');
   let editDescription = $state('');
-  let deleting = $state<SavedView>();
+  let deleting = $state<SavedView[]>([]);
+  const selection = new ExploreSelectionState();
+  const orderedKeys = $derived(views.map((view) => String(view.id)));
+  const selectedViews = $derived(views.filter((view) => selection.isSelected(String(view.id))));
+  const allSelected = $derived(orderedKeys.length > 0 && orderedKeys.every((key) => selection.isSelected(key)));
+  const someSelected = $derived(orderedKeys.some((key) => selection.isSelected(key)));
   onMount(() => void load());
   async function load(): Promise<void> {
     loading = true;
@@ -39,6 +46,7 @@
       const { data, error: responseError } = await generatedListSavedViews(client);
       if (!data) throw new Error(messageFor(responseError, 'Unable to load saved views.'));
       views = data.saved_views ?? [];
+      selection.clear();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Unable to load saved views.';
     } finally {
@@ -84,26 +92,47 @@
       saving = false;
     }
   }
+  function toggleSelection(view: SavedView, index: number, range: boolean): void {
+    selection.toggle(String(view.id), index, orderedKeys, range);
+  }
+  function toggleAll(): void {
+    if (allSelected) selection.clear();
+    else selection.selectVisible(orderedKeys);
+  }
+  function beginBulkDelete(): void {
+    if (selectedViews.length === 0 || saving) return;
+    deleting = [...selectedViews];
+  }
   async function confirmDelete(): Promise<void> {
-    if (!deleting) return;
-    const target = deleting;
+    if (deleting.length === 0) return;
+    const targets = [...deleting];
     saving = true;
     error = '';
-    try {
-      const { response, error: responseError } = await generatedDeleteSavedView(
-        { id: target.id },
-        {
-          ...client,
-          headers: { 'If-Match': `"saved-view-${target.id}-r${target.revision}"` },
-        },
-      );
-      if (!response.ok) throw new Error(messageFor(responseError, 'Unable to delete this view.'));
-      views = views.filter((view) => view.id !== target.id);
-      deleting = undefined;
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Unable to delete this view.';
-    } finally {
-      saving = false;
+    const deletedIDs = new Set<number>();
+    const failures: string[] = [];
+    for (const target of targets) {
+      try {
+        const { response, error: responseError } = await generatedDeleteSavedView(
+          { id: target.id },
+          {
+            ...client,
+            headers: { 'If-Match': `"saved-view-${target.id}-r${target.revision}"` },
+          },
+        );
+        if (!response.ok) throw new Error(messageFor(responseError, `Unable to delete ${target.name}.`));
+        deletedIDs.add(target.id);
+      } catch (cause) {
+        failures.push(cause instanceof Error ? cause.message : `Unable to delete ${target.name}.`);
+      }
+    }
+    views = views.filter((view) => !deletedIDs.has(view.id));
+    for (const id of deletedIDs) selection.explicitKeys.delete(String(id));
+    deleting = [];
+    saving = false;
+    if (failures.length > 0) {
+      error = `${deletedIDs.size.toLocaleString()} deleted; ${failures.length.toLocaleString()} could not be deleted. ${failures[0]}`;
+    } else {
+      selection.clear();
     }
   }
   function open(view: SavedView): void {
@@ -137,10 +166,39 @@
       description="Use Save view… in Everything or Files to keep a search and layout you want to return to."
     />
   {:else}
+    <div class="selection-toolbar" aria-label="Saved view selection">
+      <SelectionCheckbox
+        checked={allSelected}
+        mixed={!allSelected && someSelected}
+        label={allSelected ? 'Unselect all saved views' : 'Select all saved views'}
+        disabled={saving}
+        onToggle={toggleAll}
+      />
+      <span class="selection-count">{selection.count > 0 ? `${selection.count.toLocaleString()} selected` : 'Select all'}</span>
+      {#if selection.count > 0}
+        <Button
+          size="sm"
+          tone="danger"
+          surface="soft"
+          label="Delete selected…"
+          disabled={saving}
+          onclick={beginBulkDelete}
+        />
+        <Button size="sm" surface="soft" label="Clear" disabled={saving} onclick={() => selection.clear()} />
+      {/if}
+    </div>
     <section class="view-list" aria-label="Saved view library">
-      {#each views as view (view.id)}
+      {#each views as view, index (view.id)}
         {@const incompatibility = incompatibilityFor(view)}
-        <article>
+        <article class:selected={selection.isSelected(String(view.id))}>
+          <span class="row-checkbox">
+            <SelectionCheckbox
+              checked={selection.isSelected(String(view.id))}
+              label={`${selection.isSelected(String(view.id)) ? 'Unselect' : 'Select'} ${view.name}`}
+              disabled={saving}
+              onToggle={(range) => toggleSelection(view, index, range)}
+            />
+          </span>
           {#if editing?.id === view.id}
             <label>Edit name<TextInput ariaLabel="Edit name" bind:value={editName} /></label>
             <label>Edit description<TextInput ariaLabel="Edit description" bind:value={editDescription} /></label>
@@ -194,7 +252,7 @@
                   surface="soft"
                   label={`Delete ${view.name}`}
                   onclick={() => {
-                    deleting = view;
+                    deleting = [view];
                   }}
                 />
               {:else}
@@ -204,7 +262,7 @@
                   surface="soft"
                   label={`Remove incompatible ${view.name}`}
                   onclick={() => {
-                    deleting = view;
+                    deleting = [view];
                   }}
                 />
               {/if}
@@ -216,27 +274,32 @@
   {/if}
 </main>
 
-{#if deleting}
+{#if deleting.length > 0}
   <Modal
-    title="Delete saved view?"
+    title={deleting.length === 1 ? 'Delete saved view?' : `Delete ${deleting.length.toLocaleString()} saved views?`}
     tone="danger"
     onclose={() => {
-      deleting = undefined;
+      if (!saving) deleting = [];
     }}
   >
-    <p>Delete “{deleting.name}” from every authenticated browser session?</p>
+    <p>
+      {deleting.length === 1
+        ? `Delete “${deleting[0]!.name}” from every authenticated browser session?`
+        : `Delete these ${deleting.length.toLocaleString()} saved views from every authenticated browser session?`}
+    </p>
     {#snippet footer()}
       <Button
         surface="soft"
         label="Cancel"
+        disabled={saving}
         onclick={() => {
-          deleting = undefined;
+          deleting = [];
         }}
       />
       <Button
         tone="danger"
         surface="solid"
-        label="Confirm delete"
+        label={saving ? 'Deleting…' : 'Confirm delete'}
         disabled={saving}
         onclick={() => void confirmDelete()}
       />
@@ -253,10 +316,7 @@
     flex-direction: column;
     gap: var(--space-4);
     padding: var(--space-5) var(--page-gutter) var(--space-4);
-  }
-  .saved-views > :global(:not(header)) {
-    width: 100%;
-    max-width: 960px;
+    background: var(--bg-primary);
   }
   article,
   .actions {
@@ -264,6 +324,19 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-3);
+  }
+  .selection-toolbar {
+    display: flex;
+    min-height: 28px;
+    align-items: center;
+    gap: var(--space-2);
+    padding-inline: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .selection-count {
+    min-width: 0;
+    flex: 1;
   }
   h2,
   article p {
@@ -281,16 +354,39 @@
   }
   .view-list {
     display: grid;
-    gap: var(--space-2);
+    width: 100%;
+    overflow: hidden;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-sm);
   }
   article {
     justify-content: space-between;
-    padding: var(--space-3);
+    min-height: 64px;
+    padding: var(--space-3) var(--space-4);
     border-bottom: 1px solid var(--border-muted);
+  }
+  article:last-child {
+    border-bottom: 0;
+  }
+  article:hover {
+    background: var(--bg-surface-hover);
+  }
+  article.selected {
+    background: var(--selected-bg);
+  }
+  .row-checkbox {
+    display: grid;
+    width: 24px;
+    height: 24px;
+    flex: none;
+    place-items: center;
   }
   .view-copy {
     display: grid;
-    min-width: 12rem;
+    min-width: min(12rem, 100%);
+    flex: 1;
     gap: var(--space-1);
   }
   .summary {
@@ -321,8 +417,11 @@
   }
   @media (max-width: 760px) {
     article {
-      align-items: stretch;
-      flex-direction: column;
+      align-items: flex-start;
+    }
+    article .actions {
+      flex-basis: 100%;
+      padding-left: calc(24px + var(--space-3));
     }
   }
 </style>

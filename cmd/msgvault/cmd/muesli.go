@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -36,25 +35,15 @@ const muesliConfigHint = `Add to your config.toml:
   # phone_country_code = "1"          # convert national-format Contacts phones
   # contacts = false                  # skip Apple Contacts attendee lookup`
 
-// resolveMuesliSources picks [[muesli]] entries: an explicit identifier must
-// match one entry; with no argument every configured entry is returned.
-func resolveMuesliSources(args []string, cfg *config.Config) ([]config.MuesliSource, error) {
-	if len(cfg.Muesli) == 0 {
-		return nil, errors.New("no [[muesli]] sources configured\n\n" + muesliConfigHint)
+func muesliSources(cfg *config.Config) meetingSources[config.MuesliSource] {
+	sources := meetingSources[config.MuesliSource]{
+		table: "muesli", hint: muesliConfigHint,
 	}
-	if len(args) == 0 {
-		return cfg.Muesli, nil
+	if cfg != nil {
+		sources.configured, sources.lookup = cfg.Muesli, cfg.GetMuesliSource
+		sources.identifier = func(s config.MuesliSource) string { return s.Identifier }
 	}
-	source := cfg.GetMuesliSource(args[0])
-	if source == nil {
-		identifiers := make([]string, 0, len(cfg.Muesli))
-		for _, candidate := range cfg.Muesli {
-			identifiers = append(identifiers, candidate.Identifier)
-		}
-		return nil, fmt.Errorf("no [[muesli]] entry with identifier %q (configured: %s)",
-			args[0], strings.Join(identifiers, ", "))
-	}
-	return []config.MuesliSource{*source}, nil
+	return sources
 }
 
 // probeMuesliDatabase proves the configured database opens read-only and
@@ -91,14 +80,10 @@ Examples:
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		sources, err := resolveMuesliSources(args, cfg)
+		source, err := muesliSources(cfg).one(args)
 		if err != nil {
 			return err
 		}
-		if len(sources) > 1 {
-			return errors.New("multiple [[muesli]] sources configured; pass an identifier")
-		}
-		source := sources[0]
 		accountEmail, err := source.EffectiveAccountEmail()
 		if err != nil {
 			return err
@@ -161,7 +146,7 @@ Examples:
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		sources, err := resolveMuesliSources(args, cfg)
+		sources, err := muesliSources(cfg).selected(args)
 		if err != nil {
 			return err
 		}
@@ -189,7 +174,7 @@ Examples:
 		ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Finishing current meeting...")
 		defer stop()
 
-		pendingWrites := &muesli.ImportSummary{}
+		var pendingWrites int64
 		for _, source := range sources {
 			accountEmail, _ := source.EffectiveAccountEmail()
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Muesli for %s\n\n", source.Identifier)
@@ -199,30 +184,20 @@ Examples:
 			options.Progress = func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) }
 			summary, importErr := muesli.NewImporter(st).Import(ctx, options)
 			if summary != nil {
-				pendingWrites.MeetingsAdded += summary.MeetingsAdded
-				pendingWrites.MeetingsUpdated += summary.MeetingsUpdated
+				pendingWrites += summary.MeetingsAdded + summary.MeetingsUpdated
 			}
-			if err := finishMuesliImport(source.Identifier, pendingWrites, importErr,
-				func() error { return rebuildMuesliCacheAfterWrite(dbPath, state) }); err != nil {
+			run := meetingSyncRun{
+				provider: "muesli", identifier: source.Identifier,
+				writes: pendingWrites, err: importErr,
+			}
+			refresh := func() error { return rebuildMuesliCacheAfterWrite(dbPath, state) }
+			if err := run.finish(refresh); err != nil {
 				return err
 			}
 			writeMuesliSummary(cmd.OutOrStdout(), summary)
 		}
 		return rebuildMuesliCacheAfterWrite(dbPath, state)
 	},
-}
-
-// finishMuesliImport reports a failed sync, first refreshing the cache when
-// the run still archived meetings.
-func finishMuesliImport(identifier string, summary *muesli.ImportSummary, importErr error, refresh func() error) error {
-	if importErr == nil {
-		return nil
-	}
-	var refreshErr error
-	if summary != nil && summary.MeetingsAdded+summary.MeetingsUpdated > 0 && refresh != nil {
-		refreshErr = refresh()
-	}
-	return errors.Join(fmt.Errorf("muesli sync %s failed: %w", identifier, importErr), refreshErr)
 }
 
 func writeMuesliSummary(out io.Writer, summary *muesli.ImportSummary) {
@@ -262,11 +237,11 @@ func muesliImportOptions(source config.MuesliSource) muesli.ImportOptions {
 // runConfiguredMuesliSync is the daemon-scheduler entry point for one
 // [[muesli]] source.
 func runConfiguredMuesliSync(ctx context.Context, st *store.Store, source config.MuesliSource) error {
-	if _, err := st.GetSourceByTypeAndIdentifier(muesli.SourceType, source.Identifier); err != nil {
-		if errors.Is(err, store.ErrSourceNotFound) {
-			return fmt.Errorf("muesli source %q is not registered; run msgvault add-muesli %s first",
-				source.Identifier, source.Identifier)
-		}
+	notRegistered := fmt.Errorf(
+		"muesli source %q is not registered; run msgvault add-muesli %s first",
+		source.Identifier, source.Identifier)
+	err := requireRegisteredMeetingSource(st, muesli.SourceType, source.Identifier, notRegistered)
+	if err != nil {
 		return err
 	}
 	accountEmail, err := source.EffectiveAccountEmail()
@@ -276,14 +251,15 @@ func runConfiguredMuesliSync(ctx context.Context, st *store.Store, source config
 	options := muesliImportOptions(source)
 	options.AccountEmail = accountEmail
 	summary, importErr := muesli.NewImporter(st).Import(ctx, options)
-	refreshCtx := context.WithoutCancel(ctx)
-	refresh := func() error {
-		return rebuildMuesliCacheAfterScheduledSync(refreshCtx, "muesli:"+source.Identifier)
+	var writes int64
+	if summary != nil {
+		writes = summary.MeetingsAdded + summary.MeetingsUpdated
 	}
-	if err := finishMuesliImport(source.Identifier, summary, importErr, refresh); err != nil {
-		return err
+	run := meetingSyncRun{
+		provider: "muesli", identifier: source.Identifier, writes: writes, err: importErr,
 	}
-	return refresh()
+	return run.finishScheduled(ctx, "muesli:"+source.Identifier,
+		rebuildMuesliCacheAfterScheduledSync)
 }
 
 func init() {

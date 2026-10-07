@@ -170,12 +170,14 @@ func TestSnapshotCacheWithoutPreviousValueTimesOut(t *testing.T) {
 		select {
 		case got := <-returned:
 			require.ErrorIs(got.err, context.DeadlineExceeded, "the first request waits only for its budget")
+			require.ErrorIs(got.err, errSnapshotWaitTimeout, "a wait budget has its own identity")
 			assert.Zero(got.value, "there is no stale value to serve before the first snapshot")
 			assert.False(got.stale)
 		default:
 			releaseCompute()
 			got := <-returned
 			require.ErrorIs(got.err, context.DeadlineExceeded, "the first request waits only for its budget")
+			require.ErrorIs(got.err, errSnapshotWaitTimeout, "a wait budget has its own identity")
 		}
 	})
 }
@@ -231,5 +233,16 @@ func TestSnapshotCacheLogsFailedRefreshBehindStaleValue(t *testing.T) {
 		assert.Contains(logs.String(), "snapshot refresh failed")
 		assert.Contains(logs.String(), "key=stats")
 		assert.Contains(logs.String(), "database is locked")
+	})
+}
+
+func TestSnapshotCacheComputeDeadlineIsNotWaitTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		var cache snapshotCache[int]
+		_, _, _, err := cache.get(t.Context(), t.Context(), "k", time.Second, func(context.Context) (int, error) { return 0, context.DeadlineExceeded })
+		require.ErrorIs(err, context.DeadlineExceeded)
+		assert.NotErrorIs(err, errSnapshotWaitTimeout, "a computation timeout must remain an error")
 	})
 }

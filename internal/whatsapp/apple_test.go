@@ -511,12 +511,8 @@ func TestImportApplePushNameErrors(t *testing.T) {
 	})
 }
 
-func createAppleChatFixture(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "ChatStorage.sqlite")
-	db, err := sql.Open("sqlite3", path)
-	require.NoError(t, err)
-	_, err = db.Exec(`
+// appleFixtureSchema is the ChatStorage.sqlite subset the Apple importer reads.
+const appleFixtureSchema = `
 		CREATE TABLE ZWACHATSESSION (
 			Z_PK INTEGER PRIMARY KEY,
 			ZCONTACTJID TEXT,
@@ -543,7 +539,12 @@ func createAppleChatFixture(t *testing.T) string {
 			ZMESSAGETYPE INTEGER,
 			ZFROMJID TEXT
 		);
+`
 
+func createAppleChatFixture(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ChatStorage.sqlite")
+	execAppleFixture(t, path, appleFixtureSchema+`
 		INSERT INTO ZWACHATSESSION VALUES
 			(1, '15555550101@s.whatsapp.net', 'Alice Test', 0, 700000002),
 			(2, '120363000000000000@g.us', 'Test Group', 1, 700000010),
@@ -565,8 +566,6 @@ func createAppleChatFixture(t *testing.T) string {
 			(9, 1, NULL, '   ', 0, 700000008, 'missing stanza', 0, '15555550101@s.whatsapp.net'),
 			(10, 1, NULL, 'empty-text', 0, 700000009, '   ', 0, '15555550101@s.whatsapp.net');
 	`)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
 	return path
 }
 

@@ -9,12 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/discord"
 	imaplib "go.kenn.io/msgvault/internal/imap"
+	matrixsource "go.kenn.io/msgvault/internal/matrix"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/plaud"
@@ -123,6 +125,10 @@ func confirmRemoveAccount(r io.Reader, w io.Writer) (bool, error) {
 }
 
 func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
+	return runRemoveAccountLocalWithMatrixLock(cmd, args, false)
+}
+
+func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matrixLockHeld bool) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -146,12 +152,19 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer cleanup()
 
 	source, err := sourceops.ResolveExactOne(s, selector)
 	if err != nil {
+		cleanup()
 		return err
 	}
+	if source.SourceType == sourceTypeMatrix && !matrixLockHeld {
+		cleanup()
+		return matrixsource.WithCredentialLifecycleLock(cfg.TokensDir(), func() error {
+			return runRemoveAccountLocalWithMatrixLock(cmd, args, true)
+		})
+	}
+	defer cleanup()
 	email := source.Identifier
 
 	activeSync, err := s.GetActiveSync(source.ID)
@@ -186,6 +199,17 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 		if !isYesAnswer(answer) {
 			fmt.Println("Aborted.")
 			return nil
+		}
+	}
+
+	// Keep the source row until the dedicated Matrix device is revoked. A
+	// transient homeserver failure must leave both the source and credentials
+	// available so remove-account can be retried. If a previous attempt revoked
+	// the device but failed later in the local cascade, the missing credential
+	// is treated as an already-completed revocation.
+	if source.SourceType == sourceTypeMatrix {
+		if err := revokeMatrixCredentials(cmd.Context(), cfg.TokensDir(), source.Identifier); err != nil {
+			return fmt.Errorf("revoke Matrix device (account was not removed): %w", err)
 		}
 	}
 
@@ -376,6 +400,9 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 				)
 			}
 		}
+	case sourceTypeMatrix:
+		// The dedicated device and local credential were revoked before the
+		// source cascade so a remote failure could abort removal safely.
 	case sourceTypeSlack:
 		if teamID, userID, ok := splitSlackIdentifier(source.Identifier); ok {
 			if err := slack.DeleteToken(cfg.TokensDir(), teamID, userID); err != nil {
@@ -509,6 +536,49 @@ func removeDiscordCredentialAfterCascade(
 		fmt.Fprintf(os.Stderr,
 			"Warning: could not remove Discord credential: %v\n", err)
 	}
+}
+
+func revokeMatrixCredentials(ctx context.Context, tokensDir, userID string) error {
+	// An unfinished add-matrix renewal holds a second live device.
+	pending, hasPending, err := matrixsource.LoadPendingCredentials(tokensDir, userID)
+	if err != nil {
+		return err
+	}
+	if hasPending {
+		if err := logoutMatrixDevice(ctx, pending); err != nil {
+			return err
+		}
+		if err := matrixsource.DeletePendingCredentials(tokensDir, userID); err != nil {
+			return fmt.Errorf("remove pending Matrix credentials: %w", err)
+		}
+	}
+	exists, err := matrixsource.CredentialsExist(tokensDir, userID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	creds, err := matrixsource.LoadCredentials(tokensDir, userID)
+	if err != nil {
+		return fmt.Errorf("load Matrix credentials: %w", err)
+	}
+	if err := logoutMatrixDevice(ctx, creds); err != nil {
+		return err
+	}
+	if err := matrixsource.DeleteCredentials(tokensDir, userID); err != nil {
+		return fmt.Errorf("remove Matrix credentials: %w", err)
+	}
+	return nil
+}
+
+func logoutMatrixDevice(ctx context.Context, creds matrixsource.Credentials) error {
+	logoutCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := matrixsource.Logout(logoutCtx, creds); err != nil && !matrixsource.IsUnknownToken(err) {
+		return fmt.Errorf("log out Matrix device %s: %w", creds.DeviceID, err)
+	}
+	return nil
 }
 
 // deleteOrphanedAttachmentFiles removes files in paths that are no longer

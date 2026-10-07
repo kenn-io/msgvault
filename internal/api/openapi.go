@@ -342,7 +342,11 @@ import (
 // CLI clients can authorize Microsoft Graph mail before starting the worker.
 // 3.0.0 replaces unguarded identity decisions with review-token routes and adds consented identity scoring.
 // 3.1.0 adds opt-in calendar event control and availability queries.
-const APISchemaVersion = "3.1.0"
+// 3.2.0 adds counts_pending to CLI account listing for callers that opt in by
+// header while the first count refresh runs.
+// 3.3.0 adds POST /api/v1/telemetry/events for web UI usage events. Additive (minor bump).
+// 3.4.0 adds Kata issues that quote exact message and file evidence.
+const APISchemaVersion = "3.4.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1296,6 +1300,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schemaName + "AllowedResolutionsKeepLocal",
 			schemaName + "AllowedResolutionsKeepRemote",
 		})
+	}
+	// Without the override, empty-schema map values generate struct{}, which cannot carry surface="web".
+	if telemetry := schemas["TelemetryEventRequest"]; telemetry != nil && telemetry.Properties["properties"] != nil {
+		if values, ok := telemetry.Properties["properties"].AdditionalProperties.(*huma.Schema); ok {
+			setCodegenGoType(values, "any")
+		}
 	}
 	meeting := schemas["Meeting"]
 	if meeting == nil || meeting.Properties == nil {

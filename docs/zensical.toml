@@ -40,6 +40,7 @@ nav = [
     {"Discord" = "usage/discord.md"},
     {"Beeper" = "usage/beeper.md"},
     {"Chatwoot" = "guides/chatwoot.md"},
+    {"Matrix" = "usage/matrix.md"},
     {"Slack" = "usage/slack.md"},
     {"Meeting Notes and Transcripts" = "usage/meetings.md"},
   ]},
@@ -49,6 +50,7 @@ nav = [
     {"Profile Automation" = "usage/people-automation.md"},
     {"External Enrichment" = "usage/people-enrichment.md"},
     {"CardDAV Contacts" = "usage/people-carddav.md"},
+    {"Kata Issues" = "usage/kata-issues.md"},
     {"Accounts and Collections" = "usage/multi-account.md"},
   ]},
   {"Maintain and Operate" = [

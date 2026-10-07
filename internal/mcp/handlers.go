@@ -148,9 +148,11 @@ type handlers struct {
 	meetings            MeetingBackend
 	calendar            CalendarBackend
 	personAgendaBackend PersonAgendaBackend
+	kata                KataBackend
 	identityReview      IdentityReviewBackend
 	personCardDAV       PersonCardDAVBackend
 	identityScoring     IdentityScoringBackend
+	drafts              DraftRunner
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with

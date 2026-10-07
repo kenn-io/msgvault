@@ -263,3 +263,35 @@ func sanitizeTerminal(s string, multiline bool) string {
 	}
 	return b.String()
 }
+
+// RuneSlice returns s from rune startRune up to endRune, and false when that
+// range is empty or falls outside s.
+func RuneSlice(s string, startRune, endRune int) (string, bool) {
+	startByte, endByte, ok := RuneByteRange(s, startRune, endRune)
+	if !ok {
+		return "", false
+	}
+	return s[startByte:endByte], true
+}
+
+// RuneByteRange converts a rune range of s to byte offsets.
+func RuneByteRange(s string, startRune, endRune int) (int, int, bool) {
+	if s == "" || startRune < 0 || endRune <= startRune {
+		return 0, 0, false
+	}
+	startByte := -1
+	runeIndex := 0
+	for byteOffset := range s {
+		if runeIndex == startRune {
+			startByte = byteOffset
+		}
+		if runeIndex == endRune {
+			return startByte, byteOffset, startByte >= 0
+		}
+		runeIndex++
+	}
+	if runeIndex == endRune && startByte >= 0 {
+		return startByte, len(s), true
+	}
+	return 0, 0, false
+}

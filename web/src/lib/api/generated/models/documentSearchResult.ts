@@ -11,6 +11,7 @@ export interface DocumentSearchResult {
   containing_title?: string;
   conversation_id: number;
   excerpt: string;
+  excerpt_start_rune: number;
   extraction_id: string;
   filename?: string;
   first_unit_index: number;

@@ -5,109 +5,267 @@ description: Create OAuth credentials for Gmail (Google Cloud) or Microsoft 365 
 
 ## Google (Gmail and Calendar)
 
-msgvault requires OAuth credentials to access the Gmail API. This section walks through the complete setup.
+Create a Google OAuth client for your own copy of msgvault, then authorize each
+Gmail account you want to archive. OAuth lets Google grant msgvault access
+without giving it your Google password.
+
+You need [msgvault installed](../setup.md) and a Google account with Gmail.
+Use a browser on the computer where you will run `add-account`; for a server,
+see [Headless Server Setup](#headless-server-setup).
+
+There are three pieces to keep straight:
+
+| Piece | What it does | Where it lives |
+| --- | --- | --- |
+| Google Cloud project | Holds enabled APIs and your OAuth app settings | Google Cloud Console |
+| OAuth client JSON | Identifies your copy of msgvault to Google | A file you download and point msgvault at |
+| Account token | Records one account's authorization | `~/.msgvault/tokens/`, created by msgvault |
+
+The client JSON alone does not grant access to a mailbox. The browser sign-in
+in Step 6 creates that account's token. You can reuse one client for your own
+personal Gmail accounts.
+
+Google changes its console layout. The steps below use **Google Auth Platform**;
+older tutorials call it **OAuth consent screen**. Check the project picker at
+the top of the console whenever you open a link: every step must use the same
+project. Google's [Gmail quickstart](https://developers.google.com/workspace/gmail/api/quickstart/go)
+and [consent setup guide](https://developers.google.com/workspace/guides/configure-oauth-consent)
+are the references for current button names.
 
 ### Step 1: Create a Google Cloud Project
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. If it's your first time using Google Cloud Console, select your country and agree to the Terms of Service
-3. Click **Select a Project** and click **New project** (recommended) or select an existing one
-4. Name your project `msgvault`. Parent resource can be left as the default of "No organization"
-5. Click **Create**
-6. The Notifications will spin for a few seconds and then allow you to click Select Project for the new `msgvault` project
+1. Open [Google Cloud Console](https://console.cloud.google.com/). Sign in with
+   the account that will own the project.
+2. On your first visit, complete Google's country and terms prompts.
+3. Open the project picker at the top, then click **New project**. An existing
+   project also works if you can manage its APIs and OAuth clients.
+4. Enter `msgvault` as the project name. For personal Gmail, leave the organization
+   as **No organization** if that option is available.
+5. Click **Create**, wait for the notification to finish, then **Select project**.
+6. Check that the picker now shows `msgvault`.
+
+You are creating a place for API and authentication settings. This Gmail setup
+does not require creating a VM or enabling unrelated paid cloud services.
 
 ### Step 2: Enable Google APIs
 
-1. On the left bar/under the hamburger menu, navigate to **APIs & Services > Library**
-2. In the search bar, search for "Gmail API" and click the **Gmail API** box
-3. Click **Enable**
-4. If you wish to sync Google Calendar too, click **Library**, search for "Google Calendar API", click the **Google Calendar API** box and click **Enable**
-5. If you wish to sync Google Contacts over CardDAV, click **Library**, search for "CardDAV", click the **Google Contacts CardDAV API** box and click **Enable**. Without it, saving the CardDAV account fails during discovery because Google rejects every request with `SERVICE_DISABLED`
+1. Open the [Gmail API library page](https://console.cloud.google.com/apis/library/gmail.googleapis.com).
+2. Confirm the selected project, then click **Enable**. If you see **Manage**,
+   Gmail is already enabled for that project.
+3. For Calendar archiving too, open the
+   [Google Calendar API library page](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com)
+   in the same project and click **Enable**.
+4. For Google Contacts over CardDAV, open the API library, search for
+   "CardDAV", open **Google Contacts CardDAV API**, and click **Enable**.
+   The Gmail and Calendar APIs do not cover contacts. Without this API,
+   saving the CardDAV account fails during discovery because Google rejects
+   every request with `SERVICE_DISABLED`.
+
+**Checkpoint:** Gmail API appears under **APIs & Services > Enabled APIs & services**.
 
 ### Step 3: Configure OAuth Consent Screen
 
-1. Go to **APIs & Services > OAuth consent screen** (Google may call this **Google Auth Platform**)
-2. Click **Get started**
-3. Fill in required fields as you click through:
-   - App name: `msgvault`
-   - User support email: your email
-   - Audience: **External** for regular Gmail, **Internal** for Google Workspace
-   - Contact Information: your email
-   - Agree to the "Google API Services: User Data Policy" checkbox
-4. Click **Create**
-5. Click **Data Access** on the left bar and click **Add or Remove Scopes**
-6. At the bottom of the page under "Manually add scopes", enter the scopes you intend to use, one per line, then click **Add to table**:
-    - `https://www.googleapis.com/auth/gmail.readonly` — always
-    - `https://www.googleapis.com/auth/gmail.modify` — unless you will only ever run read-only (see below)
-    - `https://www.googleapis.com/auth/calendar.readonly` — if you will sync Google Calendar
-7. Click **Update** then **Save**
-8. Go to **Audience** on the left bar and in the **Test users** section, click the **Add users** button and add your Gmail email address
+1. Open [Google Auth Platform > Branding](https://console.cloud.google.com/auth/branding).
+   If Google says the platform is not configured, click **Get started**.
+2. Under **App Information**, enter `msgvault` for **App name** and select your
+   email for **User support email**. Click **Next**.
+3. Under **Audience**, choose **External** for personal Gmail. Choose **Internal**
+   only when the project belongs to a Google Workspace or Cloud Identity
+   organization and every account you will authorize belongs to that organization.
+   Click **Next**.
+4. Under **Contact Information**, enter an email you monitor. Click **Next**.
+5. Review Google's user data policy, select its agreement checkbox if you agree,
+   then click **Continue** and **Create**.
+
+If the app is already configured, its settings are split across **Branding**,
+**Audience**, and **Data Access**; you do not need to create it again.
+
+#### Add test users
+
+For an External app, open
+[Audience](https://console.cloud.google.com/auth/audience) and check **Publishing status**.
+While it says **Testing**:
+
+1. Scroll to **Test users** and click **Add users**.
+2. Enter the exact Gmail address you will pass to `msgvault add-account`.
+3. Click **Save**. Add every additional account you intend to authorize.
+
+The project owner's address is not automatically a test user. A Google account
+can own the project but still fail to authorize until you add it here.
+
+#### Choose Testing or In production
+
+Start in **Testing** to check the setup. Google's
+[Audience rules](https://support.google.com/cloud/answer/15549945)
+limit Testing to 100 listed test users and expire Gmail authorizations, including
+refresh tokens, seven days after consent. Automatic token refresh does not extend
+that seven-day limit.
+
+For ongoing personal archiving, you can use **Audience > Publish app** to change
+an External app to **In production**. Publishing status and verification are
+separate. Google provides a
+[personal-use verification exemption](https://support.google.com/cloud/answer/13464323)
+for apps used by fewer than 100 users. An unverified personal app still shows
+warnings and has a user cap; it must comply with Google's user data policy.
+**In production** removes Testing's seven-day expiry, but tokens can still be
+revoked or expire for other reasons. See
+[Google's token-expiration rules](https://developers.google.com/identity/protocols/oauth2#expiration).
+
+After changing the status, get a fresh authorization if your existing token was
+issued in Testing; see [Google setup troubleshooting](#google-setup-troubleshooting).
+For an organization-managed account or an app distributed to others, follow
+Google's verification requirements and your administrator's policy.
+
+#### Declare the scopes you will use
+
+A scope names a permission. Open
+[Data Access](https://console.cloud.google.com/auth/scopes), then **Add or Remove Scopes**.
+Under **Manually add scopes**, enter the URLs for your intended workflow, one per
+line. Click **Add to table**, **Update**, then **Save**.
+
+| Workflow | Scopes to declare | msgvault command |
+| --- | --- | --- |
+| Gmail archiving with later trash-based deletion | `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.modify` | `msgvault add-account you@gmail.com` |
+| Gmail archiving with read access only | `https://www.googleapis.com/auth/gmail.readonly` | `msgvault add-account you@gmail.com --readonly` |
+| Optional Calendar archiving | Also add `https://www.googleapis.com/auth/calendar.readonly` | Authorize separately with `msgvault add-calendar you@gmail.com` |
 
 !!! warning "This page does not restrict what gets granted"
-    The scopes listed here are a declaration used for Google's verification review. They do not limit what the authorization server grants at request time, that is determined solely by what msgvault requests. Removing `gmail.modify` here will **not** give you a read-only setup; use `--readonly` when adding the account instead.
+    Console scope declarations describe your app for Google's review. The scopes
+    msgvault requests determine the grant. Removing `gmail.modify` here does not
+    make msgvault read-only; choose `--readonly` when adding the account.
 
 !!! note
-    By default msgvault requests `gmail.readonly` and `gmail.modify`. Sync itself only ever reads, `gmail.modify` is what later enables trash-based deletion. When you first run `delete-staged --permanent`, msgvault prompts you to upgrade to full `mail.google.com` access for batch deletion.
-
-    If you never intend to delete mail from Gmail, add the account with `--readonly` (see [Read-Only Access](#read-only-access)) and you can leave `gmail.modify` off this page entirely.
+    By default msgvault requests `gmail.readonly` and `gmail.modify`. Sync reads
+    mail; `gmail.modify` enables later trash-based deletion. The first
+    `delete-staged --permanent` run prompts for full `https://mail.google.com/`
+    access for batch deletion. See [Read-Only Access](#read-only-access) before
+    changing an account that already has write access.
 
 ### Step 4: Create OAuth Client Credentials
 
-1. Through the hamburger menu, go to **APIs & Services > Credentials**
-2. Click **Create Credentials > OAuth client ID**
-3. Choose **Desktop app** as the application type. Not "TVs and Limited Input devices" — Google's device-code flow does not support Gmail scopes
-4. Name it `msgvault` (or similar)
-5. Click **Create**
-6. Click **Download JSON** to download the JSON file
-7. Save it as `client_secret.json` in a secure location
-8. Click OK
+1. Open [Google Auth Platform > Clients](https://console.cloud.google.com/auth/clients).
+2. Click **Create client**.
+3. For **Application type**, choose **Desktop app**. This supports msgvault's
+   browser sign-in and local callback. **TVs and Limited Input devices** does not
+   support Gmail scopes.
+4. Enter `msgvault` for the client **Name**, then click **Create**.
+5. In the **OAuth client created** dialog, click **Download JSON** immediately,
+   before closing it. Save the downloaded file as `client_secret.json`.
+6. Check that your browser downloaded a JSON file, then close the dialog.
 
-Terminal authorization uses `http://localhost:8089/callback`. If you use a
-**Web application** client instead of a Desktop app, register that exact URL
-as an additional authorized redirect URI and download the updated JSON.
-The Web UI's callback URL can remain registered alongside it.
+<figure data-lightbox style="margin: 1.5rem 0;">
+  <img src="/docs/assets/static/google-oauth/client-created.png" alt="Google's Desktop app client creation screen beside the OAuth client created dialog, showing Download JSON and a warning to save the secret before closing." loading="lazy" style="width: 100%; max-width: 705px; display: block;" />
+  <figcaption>Download JSON before closing this dialog. This <a href="https://codelabs.developers.google.com/vertexai-gws-agents?hl=en">Google codelab screenshot</a> uses an Internal organization app; choose External for personal Gmail as described above. Project and credential values are redacted. <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>, modified.</figcaption>
+</figure>
+
+Download the complete JSON file. An API key, service-account key, or copied
+client ID is not a substitute. Google's
+[client-management guide](https://support.google.com/cloud/answer/15549257)
+explains that a newly created secret is shown only at creation. If you missed
+the download, check your Downloads folder first; a masked secret cannot recreate
+the original file. For a new setup, create another **Desktop app** client and
+save its JSON before closing the dialog. Do not delete a client used by an
+existing account.
+
+Terminal authorization uses `http://localhost:8089/callback`. A Desktop app
+client needs no manually registered redirect URI. If you already use a
+**Web application** client, register that exact URL as an additional authorized
+redirect URI and download credentials for the updated configuration. The Web
+UI's callback can remain registered alongside it. For new CLI setups, use the
+Desktop app path above.
 
 !!! warning
-    Never commit `client_secret.json` to version control.
+    Keep the client JSON and account tokens private. Never commit them to version
+    control or include their contents in screenshots or support requests.
 
 ### Step 5: Configure msgvault
 
-Create a file called `config.toml` in your msgvault directory.
+Put `client_secret.json` in a permanent location before configuring its path.
+On macOS/Linux, you can use `~/.msgvault/client_secret.json`. Restrict the
+directory and credential file to your account:
+
+```bash
+mkdir -p ~/.msgvault
+chmod 700 ~/.msgvault
+# Move the downloaded client_secret.json into ~/.msgvault, then:
+chmod 600 ~/.msgvault/client_secret.json
+```
+
+For a fresh installation, run:
+
+```bash
+msgvault setup
+```
+
+At **Path to client_secret.json**, enter the file's path, for example
+`~/.msgvault/client_secret.json`. For a local archive, answer **No** to configuring
+a remote NAS server. Check the terminal's saved configuration path.
+
+If you already have a configuration, edit only the `client_secrets` setting in
+its existing `[oauth]` section. Preserve the other settings; do not replace the
+whole file with this example. The setup wizard rewrites TOML and does not
+preserve comments.
+
+Default configuration paths:
 
 - **macOS / Linux:** `~/.msgvault/config.toml`
 - **Windows:** `C:\Users\<you>\.msgvault\config.toml`
 
-!!! tip
-    The `.msgvault` directory is created automatically the first time you run any msgvault command. If you're unsure of the exact path, run `msgvault add-account you@gmail.com`; the error message may show you where to create the config file.
+```toml
+[oauth]
+client_secrets = "~/.msgvault/client_secret.json"
+```
+
+On Windows, use an absolute path with forward slashes or escaped backslashes:
 
 ```toml
 [oauth]
-client_secrets = "/path/to/your/client_secret.json"
+client_secrets = "C:/Users/you/.msgvault/client_secret.json"
 ```
 
-On Windows, use forward slashes or escaped backslashes for the path:
-```toml
-[oauth]
-client_secrets = "C:/Users/you/Downloads/client_secret.json"
-```
-
-!!! tip
-    These commands will do what's needed on macOS/Linux/WSL assuming you're putting the client_secret.json file in ~/.msgvault/:
-    ```
-    mkdir -m 700 -p ~/.msgvault
-    printf '[oauth]\nclient_secrets = "~/.msgvault/client_secret.json"\n' > ~/.msgvault/config.toml
-    echo client_secret.json >> ~/.msgvault/.gitignore
-    ```
-
-Copy your `client_secret.json` file to `~/.msgvault/` or wherever you've referenced it in the configuration file and set permissions to limit access (`chmod 600 ~/.msgvault/client_secret.json` on macOS/Linux).
+Replace `you` with your Windows username. See
+[configuration paths](../configuration.md) if you use a custom msgvault directory.
 
 ### Step 6: Add Your Account
 
+Replace `you@gmail.com` in the commands below with the Gmail account you will
+archive. Use the same address you added under **Test users** if the app is in
+Testing. Choose one grant:
+
 ```bash
+# Default: read mail and allow later trash-based deletion
 msgvault add-account you@gmail.com
+
+# Alternatively, for a new account that should only be read:
+msgvault add-account you@gmail.com --readonly
 ```
 
-This opens your browser to Google's OAuth consent page. Sign in, grant access, and tokens are stored locally in `~/.msgvault/tokens/`.
+1. In the browser, select the Google account matching the address in the command.
+2. An unverified app warning is expected for your own unverified OAuth app.
+   Check the app/project is yours. Depending on Google's screen, use **Continue**
+   or **Advanced > Go to msgvault (unsafe)** to proceed with your own app.
+   An administrator's **app blocked** message is a different problem; see
+   [troubleshooting](#google-setup-troubleshooting).
+3. Review and grant the requested Gmail permissions, then click **Continue**.
+4. Return to the terminal. Wait for `Account you@gmail.com authorized successfully!`
+   (or `Account you@gmail.com is already authorized.` when reusing a token). The browser's
+   success page appears before msgvault finishes verifying and saving the token.
+
+<figure data-lightbox style="margin: 1.5rem 0;">
+  <img src="/docs/assets/static/google-oauth/unverified-app.png" alt="Google hasn't verified this app warning with Continue and Back to safety buttons." loading="lazy" style="width: 100%; max-width: 500px; display: block;" />
+  <figcaption>One version of Google's unverified-app warning. Proceed only for your own app. Screenshot from <a href="https://developers.google.com/health/codelabs/make-your-first-api-call">Google's OAuth codelab</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>, unchanged.</figcaption>
+</figure>
+
+Tokens are stored locally under `~/.msgvault/tokens/`. Once the terminal confirms
+success, start the first archive:
+
+```bash
+msgvault sync-full you@gmail.com
+```
+
+For Calendar, enabling the API and declaring its scope do not authorize it.
+Follow [Calendar setup](../usage/calendar.md) to run `msgvault add-calendar` and
+configure Calendar syncing separately.
 
 #### Read-Only Access
 
@@ -142,17 +300,61 @@ python3 -c "import json,os;print(*json.load(open(os.path.expanduser('~/.msgvault
 msgvault binds `localhost:8089` before printing the sign-in URL. If that port is
 busy, close the application using it and retry.
 
-```
-Starting browser authorization...
-Opening browser for authorization...
-If browser doesn't open, visit:
-https://accounts.google.com/o/oauth2/auth?access_type=offline&LONG_STRING_HERE
+For browser authorization over SSH, forward the callback port from the computer
+running the browser to the server:
+
+```bash
+ssh -L 8089:localhost:8089 user@server
 ```
 
-msgvault will be unable to open a browser but will give a URL `https://accounts.google.com/o/oauth2/auth?access_type=offline&LONG_STRING_HERE`. Copy this to your browser
-- Click **Continue** at the "Google hasn't verified this app" prompt
-- Confirm the Gmail and Calendar access if chosen by clicking the **Select all** checkbox and then **Continue**
-- The browser will try open a connection to localhost:8089 with the authorization code. Copy this URL from your browser and on the headless host run: `curl -s 'http://localhost:8089/callback?DIFFERENT_LONG_STRING'` with the full URL from your browser. (Another option is to forward the port from the computer running the browser to the headless host with `ssh -L 8089:localhost:8089 user@headlessserver`)
+In that SSH session, run `msgvault add-account you@gmail.com`. Open the printed
+Google authorization URL in your local browser and complete Step 6. Keep the
+SSH connection open until the terminal confirms success. The browser's callback
+then reaches msgvault on the server.
+
+If you cannot forward the port, open the printed URL in any browser and complete
+Step 6. The browser then fails to load a `http://localhost:8089/callback?...`
+page. Copy that full URL from the address bar and, while `add-account` is still
+waiting, request it on the server:
+
+```bash
+curl -s 'http://localhost:8089/callback?PASTE_THE_REST_HERE'
+```
+
+An alternative is to authorize locally and copy the token as described in
+[Headless Server Setup](#headless-server-setup).
+
+### Google setup troubleshooting
+
+| What you see | What to check or do |
+| --- | --- |
+| `403 access_denied`, or the app is available only to approved testers | In the same project's **Audience > Test users**, add the exact account you selected in the browser, save, and retry. |
+| `org_internal` | The app is Internal but the selected account is outside its organization. Personal Gmail needs an External app; an organization app needs an account in that organization. |
+| Gmail API disabled or never used in this project | Enable **Gmail API** in the project that owns the OAuth client. Wait for Google's change to take effect, then retry. |
+| `invalid_grant` after about a week | Check **Audience > Publishing status**. Testing expires Gmail refresh tokens after seven days. Reauthorize; for ongoing personal use, consider In production under the rules in Step 3. |
+| `redirect_uri_mismatch` | For a new setup, download a **Desktop app** client. For a Web application client, register exactly `http://localhost:8089/callback`. |
+| `OAuth client secrets not configured`, `OAuth client secrets file not accessible`, `read client secrets`, `parse client secrets`, or `file not found` from `msgvault setup` | Check `[oauth] client_secrets` points to the actual downloaded JSON, not a client ID or another credential type. Use the Windows path spelling in Step 5. |
+| `token mismatch: expected ... but authorized as ...` | Run the command for the intended address and select that same Google account in the browser. |
+| `authorized token missing required OAuth scopes` | Retry and grant every permission msgvault requested. Console scope declarations alone do not grant access. |
+| An administrator blocks the app, or Google says the app is blocked | Ask your Workspace administrator about OAuth restrictions. Adding test users does not bypass organization policy; see [Google Workspace Accounts](#google-workspace-accounts). |
+
+To replace an expired token or obtain a fresh grant after leaving Testing:
+
+```bash
+msgvault add-account you@gmail.com --force
+```
+
+For an account already using a read-only grant, keep it read-only:
+
+```bash
+msgvault add-account you@gmail.com --force --readonly
+```
+
+`--force` deletes the local token and starts browser authorization. It does not
+revoke Google's existing grant or narrow write access; follow the
+[revoke-and-re-add procedure](#read-only-access) for that. Reauthorize Calendar
+or other integrations separately if their scopes need restoring. For a named
+OAuth app, keep the appropriate `--oauth-app` binding.
 
 ### Multiple Accounts
 
@@ -166,7 +368,7 @@ msgvault sync   # syncs all accounts
 ```
 
 !!! tip
-    Make sure all Gmail addresses you want to sync are listed as **Test users** in your Google Cloud OAuth consent screen (Step 3 above). This is the most common reason a second account fails to authorize.
+    While the app is in Testing, list every Gmail address you want to sync under **Google Auth Platform > Audience > Test users** ([Add test users](#add-test-users)). This is the most common reason a second account fails to authorize.
 
 #### Google Workspace Accounts
 
@@ -319,7 +521,10 @@ The token will be detected and the account registered. No browser needed.
    msgvault sync-full you@gmail.com
    ```
 
-The token file contains OAuth refresh tokens that are automatically renewed. You only need to copy it once unless you revoke access.
+The token file contains a refresh token that msgvault uses to renew short-lived
+access tokens. You need to copy a replacement if that refresh token expires or
+access is revoked. In an External app still in Testing, Gmail refresh tokens
+expire after seven days; see [Choose Testing or In production](#choose-testing-or-in-production).
 
 !!! note
     Both machines must use the same OAuth client credentials. The token is tied to the OAuth client that created it. If the account uses a named OAuth app (`--oauth-app`), configure the same `[oauth.apps.<name>]` section on both machines.

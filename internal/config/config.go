@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/mail"
 	"net/netip"
@@ -248,6 +249,16 @@ func (s *ServerConfig) ApplyDefaults() {
 // the default of true.
 func (s *ServerConfig) DaemonAutoStartEnabled() bool {
 	return s.DaemonAutoStart == nil || *s.DaemonAutoStart
+}
+
+// TelemetryConfig controls the daemon's anonymous usage telemetry.
+type TelemetryConfig struct {
+	Enabled *bool `toml:"enabled"` // unset means true; MSGVAULT_TELEMETRY_ENABLED overrides it
+}
+
+// EnabledOrDefault reports the configured telemetry setting, true when unset.
+func (t TelemetryConfig) EnabledOrDefault() bool {
+	return t.Enabled == nil || *t.Enabled
 }
 
 func (s *ServerConfig) Validate() error {
@@ -513,11 +524,13 @@ type Config struct {
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
+	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Granola            []GranolaSource                 `toml:"granola"`
 	Plaud              []PlaudSource                   `toml:"plaud"`
 	Circleback         []CirclebackSource              `toml:"circleback"`
 	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
+	Twilio             []TwilioSource                  `toml:"twilio"`
 	Muesli             []MuesliSource                  `toml:"muesli"`
 	Backup             BackupConfig                    `toml:"backup"`
 	Discord            DiscordConfig                   `toml:"discord"`
@@ -528,6 +541,7 @@ type Config struct {
 	Deletion           DeletionConfig                  `toml:"deletion"`
 	IMAP               IMAPConfig                      `toml:"imap"`
 	Gmail              GmailConfig                     `toml:"gmail"`
+	Telemetry          TelemetryConfig                 `toml:"telemetry"`
 
 	// Computed paths (not from config file)
 	HomeDir            string `toml:"-"`
@@ -1576,6 +1590,15 @@ type BeeperConfig struct {
 	Drafts []GmailDraftSource `toml:"drafts"`
 }
 
+// MatrixConfig configures native Matrix archive sources ([matrix] table).
+// Credentials live under the data directory, never here.
+type MatrixConfig struct {
+	Enabled      bool     `toml:"enabled"`
+	Schedule     string   `toml:"schedule"`
+	Rooms        []string `toml:"rooms"`
+	ExcludeRooms []string `toml:"exclude_rooms"`
+}
+
 // SlackConfig configures Slack workspace archive sources ([slack] table).
 // One block covers every registered workspace: tokens are per-workspace
 // files, so no per-workspace config entries are needed.
@@ -2000,6 +2023,9 @@ func (c *Config) applyMeetingSourceDefaults() {
 	if len(c.Muesli) == 1 && c.Muesli[0].Identifier == "" {
 		c.Muesli[0].Identifier = "default"
 	}
+	if len(c.Twilio) == 1 && c.Twilio[0].Identifier == "" {
+		c.Twilio[0].Identifier = "default"
+	}
 }
 
 // validateMeetingSources rejects native meeting-source lists with empty
@@ -2110,6 +2136,29 @@ func (c *Config) validateMeetingSources() error {
 				c.Muesli[i].Identifier, c.Muesli[i].PhoneCountryCode)
 		}
 		c.Muesli[i].PhoneCountryCode = code
+	}
+	twilioIDs := make([]string, len(c.Twilio))
+	for i, s := range c.Twilio {
+		twilioIDs[i] = s.Identifier
+	}
+	if err := check("twilio", twilioIDs); err != nil {
+		return err
+	}
+	// Twilio credentials are checked when the source is used, so a half-filled
+	// entry never breaks other commands.
+	for i := range c.Twilio {
+		src := &c.Twilio[i]
+		email, err := src.EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		src.AccountEmail = email
+		if src.Region == "" {
+			src.Region = "us1"
+		}
+		if src.MaxMediaMB < 0 || int64(src.MaxMediaMB) > math.MaxInt64>>20 {
+			return fmt.Errorf("[[twilio]] identifier %q: max_media_mb must be zero or a positive representable MiB limit", src.Identifier)
+		}
 	}
 	return nil
 }

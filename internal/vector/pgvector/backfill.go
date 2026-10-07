@@ -11,10 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
-// embedGenBackfillMigration is the applied_migrations ledger key that
-// guards the one-time embed_gen upgrade backfill. Stable string — never
-// change it, or the backfill would re-run on every Open.
-const embedGenBackfillMigration = "embed_gen_backfill_active_v1"
+const embedGenBackfillMigration = vector.EmbedGenBackfillMigration
 
 // BackfillEmbedGenForUpgrade performs the ONE-TIME upgrade backfill
 // (Package A): when an active generation exists, it stamps embed_gen=active

@@ -53,6 +53,35 @@ describe('MessageCard', () => {
     expect(screen.queryByRole('button', { name: /HTML/ })).toBeNull();
   });
 
+  it('links each stored recording of a meeting for download', () => {
+    const { unmount } = render(MessageCard, {
+      props: {
+        message: detail({ attachments: [{ id: 1, stored: true, filename: 'RE1.wav', mimeType: 'audio/wav', sizeBytes: 10 }] }),
+        expanded: true
+      }
+    });
+    expect(screen.queryByRole('list', { name: 'Attachments' }), 'other messages list none').toBeNull();
+    unmount();
+
+    render(MessageCard, {
+      props: {
+        message: detail({
+          messageType: 'meeting_transcript',
+          attachments: [
+            { id: 1, stored: true, filename: 'RE1.wav', mimeType: 'audio/wav', sizeBytes: 10 },
+            { id: 2, filename: 'RE2.wav', mimeType: 'audio/wav', sizeBytes: 0 }
+          ]
+        }),
+        expanded: true
+      }
+    });
+
+    const link = screen.getByRole('link', { name: 'RE1.wav' });
+    expect(link.getAttribute('href')).toBe('/api/v1/files/1/content');
+    expect(screen.queryByRole('link', { name: 'RE2.wav' })).toBeNull();
+    expect(screen.getByText('RE2.wav (not downloaded)')).toBeTruthy();
+  });
+
   it('collapses again from the expanded header', async () => {
     const onToggle = vi.fn();
     render(MessageCard, {
@@ -192,4 +221,49 @@ describe('MessageCard', () => {
     expect(container.querySelector('iframe')).toBeNull();
     expect(screen.queryByText('⋯')).toBeNull();
   });
+});
+
+it.each([
+  { state: 'ready', shown: true },
+  { state: 'unavailable', shown: false },
+])('shows the Kata action only when the integration is $state, asking once per page', async ({ state, shown }) => {
+  const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ state, project: 'example', message: 'Kata is unavailable' }));
+  const { createAPIClient } = await import('../../api/client');
+  const { KataReadiness, kataReadinessKey } = await import('../../kata/kata-ready.svelte');
+  const client = createAPIClient(fetchFn);
+  const context = new Map([[kataReadinessKey, new KataReadiness(client)]]);
+  render(MessageCard, { props: { message: detail(), expanded: true, client }, context });
+  render(MessageCard, { props: { message: detail(), expanded: true, client }, context });
+  await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(screen.queryAllByRole('button', { name: 'Create Kata issue' })).toHaveLength(shown ? 2 : 0);
+  expect(screen.queryByText('Kata is unavailable')).toBeNull();
+  expect(fetchFn).toHaveBeenCalledOnce();
+});
+
+it.each([
+  { name: 'a failed check', first: () => Promise.reject(new TypeError('network down')) },
+  { name: 'Kata out of reach', first: async () => Response.json({ state: 'unreachable', project: 'example' }) },
+])('asks Kata again shortly after $name, so the mounted card shows the action', async ({ first }) => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const fetchFn = vi.fn<typeof fetch>()
+      .mockImplementationOnce(first)
+      .mockImplementation(async () => Response.json({ state: 'ready', project: 'example' }));
+    const { createAPIClient } = await import('../../api/client');
+    const { KATA_RETRY_MS, KataReadiness, kataReadinessKey } = await import('../../kata/kata-ready.svelte');
+    const client = createAPIClient(fetchFn);
+    const readiness = new KataReadiness(client);
+    render(MessageCard, { props: { message: detail(), expanded: true, client }, context: new Map([[kataReadinessKey, readiness]]) });
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(KATA_RETRY_MS - 1000);
+    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'Create Kata issue' })).toBeNull();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await screen.findByRole('button', { name: 'Create Kata issue' })).toBeTruthy();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    readiness.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
 });

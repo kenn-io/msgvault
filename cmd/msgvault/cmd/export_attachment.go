@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/export"
 )
 
@@ -225,7 +226,7 @@ func replaceOutputFile(tmpPath, outputPath string) error {
 	info, err := os.Lstat(outputPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return os.Rename(tmpPath, outputPath)
+			return atomicfile.Replace(tmpPath, outputPath)
 		}
 		return err
 	}
@@ -247,11 +248,11 @@ func replaceOutputFile(tmpPath, outputPath string) error {
 		return fmt.Errorf("prepare output backup: %w", err)
 	}
 
-	if err := os.Rename(outputPath, backupPath); err != nil {
+	if err := atomicfile.Replace(outputPath, backupPath); err != nil {
 		return fmt.Errorf("backup existing output: %w", err)
 	}
-	if err := os.Rename(tmpPath, outputPath); err != nil {
-		if restoreErr := os.Rename(backupPath, outputPath); restoreErr != nil {
+	if err := atomicfile.Replace(tmpPath, outputPath); err != nil {
+		if restoreErr := atomicfile.Replace(backupPath, outputPath); restoreErr != nil {
 			return fmt.Errorf("%w; restore existing output: %w", err, restoreErr)
 		}
 		return err

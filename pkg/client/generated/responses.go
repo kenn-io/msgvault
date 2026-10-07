@@ -1533,6 +1533,50 @@ type GetImportJobErrorResponse = ErrorResponse
 
 type GetImportJobErrorResponseJSON = ErrorResponse
 
+type PrepareKataEvidenceResponse = KataEvidencePrepareResponse
+
+type PrepareKataEvidenceErrorResponse = ErrorResponse
+
+type PrepareKataEvidenceErrorResponseJSON = ErrorResponse
+
+type PrepareKataEvidenceErrorResponseJSON404 = ErrorResponse
+
+type PrepareKataEvidenceErrorResponseJSON409 = ErrorResponse
+
+type PrepareKataEvidenceErrorResponseJSON422 = ErrorResponse
+
+type PrepareKataEvidenceErrorResponseJSON503 = ErrorResponse
+
+type CreateKataIssueResponse = KataIssueResponse
+
+type CreateKataIssueErrorResponse = ErrorResponse
+
+type CreateKataIssueErrorResponseJSON = ErrorResponse
+
+type CreateKataIssueErrorResponseJSON404 = ErrorResponse
+
+type CreateKataIssueErrorResponseJSON409 = KataIssueConflictResponse
+
+type CreateKataIssueErrorResponseJSON422 = ErrorResponse
+
+type CreateKataIssueErrorResponseJSON428 = ErrorResponse
+
+type CreateKataIssueErrorResponseJSON503 = ErrorResponse
+
+type LinkKataEvidenceResponse = KataIssueResponse
+
+type LinkKataEvidenceErrorResponse = ErrorResponse
+
+type LinkKataEvidenceErrorResponseJSON = ErrorResponse
+
+type LinkKataEvidenceErrorResponseJSON404 = ErrorResponse
+
+type LinkKataEvidenceErrorResponseJSON409 = ErrorResponse
+
+type LinkKataEvidenceErrorResponseJSON422 = ErrorResponse
+
+type LinkKataEvidenceErrorResponseJSON503 = ErrorResponse
+
 type GetKataIntegrationStatusResponse = TaskIntegrationStatusResponse
 
 type GetKataIntegrationStatusErrorResponse = ErrorResponse
@@ -2445,6 +2489,14 @@ func (s *SearchPersonFilesErrorResponseJSON503) UnmarshalJSON(data []byte) error
 	return nil
 }
 
+type ListPersonIdentitiesResponse = PersonIdentitiesResponse
+
+type ListPersonIdentitiesErrorResponse = ErrorResponse
+
+type ListPersonIdentitiesErrorResponseJSON = ErrorResponse
+
+type ListPersonIdentitiesErrorResponseJSON503 = ErrorResponse
+
 type MergePersonsResponse = PersonMergeResult
 
 type MergePersonsErrorResponse = ErrorResponse
@@ -3318,6 +3370,8 @@ type GetTotalStatsErrorResponse = ErrorResponse
 type TriggerSyncResponse = StatusMessageResponse
 
 type TriggerSyncErrorResponse = ErrorResponse
+
+type CaptureTelemetryEventResponse = TelemetryEventResponse
 
 type GetTextAggregatesResponse = AggregateResponse
 
@@ -4702,6 +4756,46 @@ type GetImportJobResp struct {
 	JSON404      *GetImportJobErrorResponseJSON
 }
 
+type PrepareKataEvidenceResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PrepareKataEvidenceResponse
+	JSON400      *PrepareKataEvidenceErrorResponse
+	JSON401      *PrepareKataEvidenceErrorResponseJSON
+	JSON404      *PrepareKataEvidenceErrorResponseJSON404
+	JSON409      *PrepareKataEvidenceErrorResponseJSON409
+	JSON422      *PrepareKataEvidenceErrorResponseJSON422
+	JSON503      *PrepareKataEvidenceErrorResponseJSON503
+}
+
+type CreateKataIssueResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateKataIssueResponse
+	JSON400      *CreateKataIssueErrorResponse
+	JSON401      *CreateKataIssueErrorResponseJSON
+	JSON404      *CreateKataIssueErrorResponseJSON404
+	JSON409      *CreateKataIssueErrorResponseJSON409
+	JSON422      *CreateKataIssueErrorResponseJSON422
+	JSON428      *CreateKataIssueErrorResponseJSON428
+	JSON503      *CreateKataIssueErrorResponseJSON503
+}
+
+type LinkKataEvidenceResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *LinkKataEvidenceResponse
+	JSON400      *LinkKataEvidenceErrorResponse
+	JSON401      *LinkKataEvidenceErrorResponseJSON
+	JSON404      *LinkKataEvidenceErrorResponseJSON404
+	JSON409      *LinkKataEvidenceErrorResponseJSON409
+	JSON422      *LinkKataEvidenceErrorResponseJSON422
+	JSON503      *LinkKataEvidenceErrorResponseJSON503
+}
+
 type GetKataIntegrationStatusResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5515,6 +5609,16 @@ type SearchPersonFilesResp struct {
 	JSON409      *SearchPersonFilesErrorResponseJSON409
 	JSON422      *SearchPersonFilesErrorResponseJSON422
 	JSON503      *SearchPersonFilesErrorResponseJSON503
+}
+
+type ListPersonIdentitiesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonIdentitiesResponse
+	JSON400      *ListPersonIdentitiesErrorResponse
+	JSON404      *ListPersonIdentitiesErrorResponseJSON
+	JSON503      *ListPersonIdentitiesErrorResponseJSON503
 }
 
 type MergePersonsResp200Headers struct {
@@ -6402,6 +6506,13 @@ type TriggerSyncResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON202      *TriggerSyncResponse
+}
+
+type CaptureTelemetryEventResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON202      *CaptureTelemetryEventResponse
 }
 
 type GetTextAggregatesResp struct {

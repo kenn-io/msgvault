@@ -92,7 +92,7 @@
   .table-scroll { min-width: 0; overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-md); }
   .table-scroll:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
   .table-scroll :global(.run-table) { overflow: visible; flex: none; }
-  :global(.run-table .kit-table) { min-width: 900px; }
+  :global(.run-table .kit-table) { min-width: 900px; background: var(--bg-surface); }
   :global(.run-table td) { vertical-align: middle; font-size: var(--font-size-xs); }
   .run-link {
     padding: 0;

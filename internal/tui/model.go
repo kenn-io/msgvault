@@ -43,9 +43,11 @@ const defaultThreadMessageLimit = 1000
 
 // Options configuration for TUI.
 type Options struct {
-	DataDir   string
-	ExportDir string
-	Version   string
+	// ReportScreen posts a fixed screen name through the selected daemon.
+	ReportScreen func(context.Context, string) error
+	DataDir      string
+	ExportDir    string
+	Version      string
 
 	// AggregateLimit overrides the maximum number of aggregate rows to load.
 	// Zero uses the default (50,000).
@@ -274,6 +276,11 @@ type selectionState struct {
 type Model struct {
 	viewState // Embedded state
 
+	reportScreen   func(context.Context, string) error
+	reportedScreen string
+	reportedDay    string
+	contentScreen  string
+
 	// Top-level mode: Email or Texts
 	mode tuiMode
 
@@ -466,6 +473,8 @@ func New(engine query.Engine, opts Options) Model {
 	}
 
 	return Model{
+		reportScreen:          opts.ReportScreen,
+		contentScreen:         "email",
 		engine:                engine,
 		textEngine:            textEngine,
 		collectionScopeLister: opts.CollectionScopeLister,
@@ -1230,7 +1239,33 @@ func (m *Model) startSpinner() tea.Cmd {
 }
 
 // Update implements tea.Model.
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
+	defer func() {
+		updated, ok := result.(Model)
+		if !ok || updated.reportScreen == nil || updated.width == 0 || updated.quitting {
+			return
+		}
+		if updated.transitionBuffer == "" {
+			updated.contentScreen = map[tuiMode]string{modeEmail: "email", modeTexts: "texts", modeMeetings: "meetings", modePeople: "directory"}[updated.mode]
+		}
+		screen := updated.contentScreen
+		if updated.settings.active {
+			screen = "settings"
+		}
+		day := time.Now().UTC().Format(time.DateOnly)
+		_, interaction := msg.(tea.KeyPressMsg)
+		if screen != updated.reportedScreen || interaction && day != updated.reportedDay {
+			updated.reportedScreen, updated.reportedDay = screen, day
+			report := updated.reportScreen
+			command = tea.Batch(command, func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				_ = report(ctx, screen)
+				return nil
+			})
+		}
+		result = updated
+	}()
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)

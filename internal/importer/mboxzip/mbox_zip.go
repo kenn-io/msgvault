@@ -329,16 +329,16 @@ func ExtractMboxFromZipWithLimits(zipPath, destDir string, limits ExtractLimits,
 			return nil, fmt.Errorf("remove temp file: %w", err)
 		}
 
-		if err := os.Rename(destDir, oldDir); err != nil {
+		if err := os.Rename(destDir, oldDir); err != nil { //nolint:forbidigo // directory move
 			return nil, fmt.Errorf("move old extract dir out of the way: %w", err)
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("lstat extract dir: %w", err)
 	}
 
-	if err := os.Rename(tmpDir, destDir); err != nil {
+	if err := os.Rename(tmpDir, destDir); err != nil { //nolint:forbidigo // directory move
 		if oldDir != "" {
-			_ = os.Rename(oldDir, destDir)
+			_ = os.Rename(oldDir, destDir) //nolint:forbidigo // directory move
 		}
 		return nil, fmt.Errorf("rename extracted dir into place: %w", err)
 	}

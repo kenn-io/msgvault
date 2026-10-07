@@ -383,6 +383,8 @@ var operationGateExemptPaths = map[string]bool{
 	"/api/v1/cli/deduplicate/plan":     true,
 	backupFreezeBeginPath:              true,
 	backupFreezeEndPath:                true,
+	// Telemetry changes no archive state; gating it would make opening the app yield a running sync.
+	telemetryEventsPath: true,
 }
 
 // readOnlyPostRoutePatterns lists the analytical POST routes whose handlers
@@ -404,13 +406,15 @@ var operationGateExemptPaths = map[string]bool{
 // The remote-image proxy and CardDAV account test are the non-Exploration
 // entries. Both perform SSRF-validated outbound reads without changing
 // archive or persistent configuration state, so they must stay available
-// while a long archive operation holds the gate.
+// while a long archive operation holds the gate. Kata evidence preparation
+// only reads message bodies and extracted document text.
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
 
 var readOnlyPostRoutePatterns = []string{
 	"/api/v1/saved-views/{id}/run",
 	remoteImagePath,
 	cardDAVAccountTestPath,
+	kataEvidencePreparePath,
 	"/api/v1/explore",
 	"/api/v1/explore/groups",
 	"/api/v1/explore/preflight",

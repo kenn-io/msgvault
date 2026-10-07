@@ -3,17 +3,14 @@ package personagenda
 import (
 	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kata "go.kenn.io/kata"
 	"go.kenn.io/msgvault/internal/taskclient"
+	"go.kenn.io/msgvault/internal/testutil/katatest"
 )
 
 type integrationPeople map[int64][]string
@@ -22,23 +19,10 @@ func (p integrationPeople) ListPersonUIDsContext(_ context.Context, id int64) ([
 	return append([]string(nil), p[id]...), nil
 }
 
-type allowKataAccess struct{}
-
-func (allowKataAccess) Authorize(context.Context, kata.AccessRequest) (kata.AccessDecision, error) {
-	return kata.AccessDecision{TransactionFence: func(context.Context, kata.Transaction) error { return nil }}, nil
-}
-
 func TestPersonAgendaAgainstPinnedKataService(t *testing.T) {
 	t.Parallel()
-	service, err := kata.New(t.Context(), kata.Config{DSN: filepath.Join(t.TempDir(), "kata.db"), Access: allowKataAccess{}})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	project, err := service.EnsureProject(t.Context(), kata.ProjectSpec{UID: "01HZNQ7VFPK1XGD8R5MABCD4EX", Name: "msgvault"})
-	require.NoError(t, err)
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		principal := kata.Principal{Subject: "msgvault-integration", Actor: "Msgvault integration"}
-		service.Handler().ServeHTTP(w, r.WithContext(kata.WithPrincipal(r.Context(), principal)))
-	}))
+	native := katatest.NewHosted(t, "msgvault")
+	server := httptest.NewTLSServer(native.Handler())
 	t.Cleanup(server.Close)
 	client, err := taskclient.ConnectKata(t.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: server.URL, HTTPClient: server.Client(), DefaultProject: "msgvault"})
 	require.NoError(t, err)
@@ -124,15 +108,7 @@ func TestPersonAgendaAgainstPinnedKataService(t *testing.T) {
 		require.NoError(err)
 		closed, err := agenda.Create(t.Context(), 1, "closed", CreateInput{Title: "Cancelled task"})
 		require.NoError(err)
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, fmt.Sprintf("%s/api/v1/projects/%d/issues/%s/actions/close", server.URL, project.Project.ID, closed.UID), strings.NewReader(`{"reason":"wontfix","message":"Cancelled this synthetic task because it is no longer needed for the example agenda."}`))
-		require.NoError(err)
-		request.Header.Set("Content-Type", "application/json")
-		response, err := server.Client().Do(request)
-		require.NoError(err)
-		body, err := io.ReadAll(response.Body)
-		require.NoError(err)
-		require.NoError(response.Body.Close())
-		require.Equal(http.StatusOK, response.StatusCode, "%s", body)
+		native.Endpoint(server).CloseIssue(t, closed.UID)
 
 		listed, err := agenda.List(t.Context(), 1)
 		require.NoError(err)

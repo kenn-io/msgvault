@@ -110,7 +110,7 @@ func TestCalendarConfirmationIdentifiesExistingEvent(t *testing.T) {
 				return service.Execute(ctx, request, grant)
 			})
 			clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-			server, err := newMCPServer(ServeOptions{Calendar: backend, CalendarOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
+			server, err := newMCPServer(ServeOptions{Calendar: backend, DelegatedOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
 			requirements.NoError(err)
 			t.Cleanup(func() { assertions.NoError(server.Close()) })
 			var message string
@@ -223,7 +223,7 @@ func TestWriteOnlyCalendarConfirmation(t *testing.T) {
 				})
 			})
 			clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-			server, err := newMCPServer(ServeOptions{Calendar: backend, CalendarOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
+			server, err := newMCPServer(ServeOptions{Calendar: backend, DelegatedOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
 			requirements.NoError(err)
 			t.Cleanup(func() { assert.NoError(t, server.Close()) })
 			var message string
@@ -380,7 +380,7 @@ func TestCalendarMutationRequiresOutOfBandConfirmation(t *testing.T) {
 			assertions := assert.New(t)
 			backend := &calendarMCPFake{changePlanBeforeMutation: tc.changePlan, omitFingerprint: tc.omitFingerprint}
 			clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-			server, err := newMCPServer(ServeOptions{Calendar: backend, CalendarOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
+			server, err := newMCPServer(ServeOptions{Calendar: backend, DelegatedOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
 			requirements.NoError(err)
 			t.Cleanup(func() { assert.NoError(t, server.Close()) })
 			clientOptions := &sdkmcp.ClientOptions{}
@@ -443,7 +443,7 @@ func TestCalendarApprovalCannotAuthorizeChangedArguments(t *testing.T) {
 	assertions := assert.New(t)
 	backend := &calendarMCPFake{}
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-	server, err := newMCPServer(ServeOptions{Calendar: backend, CalendarOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
+	server, err := newMCPServer(ServeOptions{Calendar: backend, DelegatedOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
 	requirements.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, server.Close()) })
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "calendar-changed-arguments-test", Version: "1"}, &sdkmcp.ClientOptions{
@@ -491,7 +491,7 @@ func TestCalendarToolsDelegatedBridgeExcludesArchiveAccess(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-	server, err := newMCPServer(ServeOptions{Calendar: &calendarMCPFake{}, CalendarOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
+	server, err := newMCPServer(ServeOptions{Calendar: &calendarMCPFake{}, DelegatedOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
 	requirements.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, server.Close()) })
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "delegated-calendar-test", Version: "1"}, nil)
@@ -550,7 +550,7 @@ func TestCalendarAvailabilityAcceptsExplicitCalendarIDsWithoutCalendarID(t *test
 	assertions := assert.New(t)
 	backend := &calendarMCPFake{}
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-	server, err := newMCPServer(ServeOptions{Calendar: backend, CalendarOnly: true}, false).Connect(t.Context(), serverTransport, nil)
+	server, err := newMCPServer(ServeOptions{Calendar: backend, DelegatedOnly: true}, false).Connect(t.Context(), serverTransport, nil)
 	requirements.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, server.Close()) })
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "calendar-availability-test", Version: "1"}, nil)
@@ -578,7 +578,7 @@ func TestCalendarAvailabilityAcceptsExplicitCalendarIDsWithoutCalendarID(t *test
 func TestCalendarRespondScopeSchemaOmitsUnsupportedFutureScope(t *testing.T) {
 	requirements := require.New(t)
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-	server, err := newMCPServer(ServeOptions{Calendar: &calendarMCPFake{}, CalendarOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
+	server, err := newMCPServer(ServeOptions{Calendar: &calendarMCPFake{}, DelegatedOnly: true, AllowCalendarWrites: true}, true).Connect(t.Context(), serverTransport, nil)
 	requirements.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, server.Close()) })
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "calendar-scope-test", Version: "1"}, nil)

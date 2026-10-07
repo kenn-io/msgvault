@@ -475,6 +475,7 @@
   }
   :global(.source-table .kit-table) {
     min-width: 980px;
+    background: var(--bg-surface);
   }
   :global(.source-table tbody td) {
     vertical-align: middle;

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-03"
+last_edited: "2026-10-06"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,17 +8,51 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` writes only new
-  and changed messages instead of rewriting the whole archive, and picks up
-  edits and senders that `LID.sqlite` resolves later.
+- msgvault sends anonymous usage telemetry: a daemon ping at startup and once
+  each later UTC day, and an `app_opened` event the web UI reports through the
+  daemon when it opens and on its first focus on a later UTC day. Events carry
+  the version, commit, OS, architecture and a random install ID, never archive
+  content. `[telemetry] enabled = false` in `config.toml` or
+  `MSGVAULT_TELEMETRY_ENABLED=0` turns it off, and `serve` says so at startup
+  while it's on. See [telemetry](configuration.md#telemetry).
 
+- `list-accounts` and `embeddings list` keep working while a sync, import, or
+  embedding build runs. Accounts whose counts aren't ready yet show `pending`.
+
+- Granola and Circleback save meetings through the same path as Muesli, Notion,
+  and meeting file import. Organizer and attendee names are trimmed, a value
+  without `@` is no longer saved as a participant, a repeated attendee appears
+  once in search, and recipient rows record the address. Existing meetings keep
+  their earlier form until they change; run `sync-granola --full` or
+  `sync-circleback --full` to rewrite them. Granola now skips unchanged notes
+  instead of rewriting them.
+
+- Rerunning `import-whatsapp` on an Apple `ChatStorage.sqlite` reads only the
+  chats that changed since the last successful import and writes only new and
+  changed messages, instead of rewriting the whole archive. It picks up edits
+  and senders that `LID.sqlite` resolves later. `--full` compares every message.
+- `import-whatsapp` accepts `--after` and `--before` for Apple databases, so a
+  first import can fetch recent messages before the full run. Android imports
+  reject both flags.
 - [Calendar event control](usage/calendar.md#control-events-unreleased) adds
   create, update, delete, move, self RSVP, and availability commands, plus HTTP
   and MCP interfaces. Write consent and exact source permissions are opt-in;
   guest notifications default to `none`. The daemon verifies calendar access
   and archives successful changes immediately.
+- [Twilio calls](usage/meetings.md#twilio) archive as searchable meetings with
+  their recordings saved locally.
+- [Kata issues](usage/kata-issues.md) can quote an exact passage from a
+  message, transcript, or file, from the Web UI, `msgvault kata`, HTTP, or MCP
+  (`--allow-kata-writes`). Retrying a create returns the original issue.
+  Person agenda writes now work with a static Kata token.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
+- Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Msgvault never sends.
+- `person identities` and `GET /api/v1/people/{id}/identities` list the email
+  addresses, phone numbers, and chat IDs your archive holds for a person, so
+  you can pick an email address for `draft-compose --to`. Phone numbers and
+  chat IDs show as unsupported. See
+  [Draft to a person](cli-reference.md#draft-to-a-person).
 
 ## 0.21.0
 <small>2026-10-02</small>
@@ -46,6 +80,18 @@ adds reviewed identity tools for agents and reduces repeated sync and search wor
   enabled, HTTP 200 can include failures; inspect `status` and each result.
   Send `{"connection":"default"}` for the former single-account behavior,
   including manual sync of a disabled default account. See
+- **Native Matrix sync.** Add a dedicated read-only Matrix device on any
+  homeserver and archive joined-room history with incremental `/sync`
+  checkpoints. Messages, edits, redactions, reactions, replies, and
+  participants enter the normal chat archive. Encrypted events remain as raw
+  placeholders. See [Matrix](usage/matrix.md).
+
+- **CardDAV sync API breaking change:** omitting `connection` from
+  `POST /api/v1/carddav/sync` now syncs all enabled connections. With at least one
+  enabled connection, it returns HTTP 200 even if every sync fails; API and
+  `pkg/client` callers must inspect `status` and each connection's outcome.
+  Send `{"connection":"default"}` for the previous single-account HTTP error
+  behavior or to sync a disabled default account manually. See
   [connection selection](usage/people-carddav.md#select-connections-through-the-api).
 - **Renew audio upload consent.** Docbank audio processing now covers captured
   sources beyond Beeper. Set `all_sources_upload_consent = true` after reviewing

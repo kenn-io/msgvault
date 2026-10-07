@@ -1,13 +1,16 @@
 <script lang="ts">
   import { getSettings as generatedGetSettings } from './lib/api/generated/api/api';
   import { Button } from '@kenn-io/kit-ui';
+  import { startAppOpenedReporting } from '@kenn-io/kit-ui/utils/app-opened';
   import { onMount } from 'svelte';
   import { receiveGoogleContactsCallback } from './lib/settings/google-authorization';
   import { createSessionController, type SessionController } from './lib/api/session.svelte';
+  import { provideKataReadiness } from './lib/kata/kata-ready.svelte';
   import Login from './lib/components/auth/Login.svelte';
   import SettingsWorkspace from './lib/components/settings/SettingsWorkspace.svelte';
   import AppShell from './lib/components/shell/AppShell.svelte';
   import MessagePage from './lib/components/reader/MessagePage.svelte';
+  import { startScreenViewReporting } from './lib/telemetry/screen-views';
   import type { ExploreSearchMode } from './lib/explore/models';
   import { availableSearchModeStorage, parseSearchMode, rememberSearchMode } from './lib/search/modes';
   import {
@@ -21,6 +24,9 @@
   }: {
     session?: SessionController;
   } = $props();
+  // The session, and so its client, lives as long as the page.
+  // svelte-ignore state_referenced_locally
+  provideKataReadiness(session.client);
   let oauthCallback = $state(false);
   let pathname = $state(window.location.pathname);
   const messageID = $derived(Number(/^\/messages\/([1-9]\d*)\/?$/.exec(pathname)?.[1]) || undefined);
@@ -56,6 +62,26 @@
     const generation = ++browserDefaultsRequestGeneration;
     savedSinceDefaultsLoad = {};
     void loadBrowserDefaults(generation);
+  });
+  // Reporting needs the session, so it runs only while authenticated; kit-ui dedupes by UTC day.
+  $effect(() => {
+    if (session.authMode === undefined || session.authMode === 'required') return;
+    const client = session.client;
+    return startAppOpenedReporting({
+      route: '/api/v1/telemetry/events',
+      surface: 'web',
+      storageKey: 'msgvault.app-opened.web',
+      post: (route, event) =>
+        client.fetch(route, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(event),
+        }),
+    });
+  });
+  $effect(() => {
+    if (oauthCallback || !shellMounted || messageID === undefined) return;
+    return startScreenViewReporting(session.client, 'message');
   });
   async function loadBrowserDefaults(generation: number): Promise<void> {
     try {

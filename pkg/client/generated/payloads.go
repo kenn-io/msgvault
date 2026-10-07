@@ -120,6 +120,12 @@ type ImportMeetingBody = MeetingImportRequest
 
 type CreateImportJobBody = ImportJobRequest
 
+type PrepareKataEvidenceBody = KataEvidencePrepareRequest
+
+type CreateKataIssueBody = KataIssueCreateRequest
+
+type LinkKataEvidenceBody = KataEvidenceLinkRequest
+
 type ListMeetingActionItemsBody = MeetingActionsRequest
 
 type GetMeetingContextBody = MeetingContextRequest
@@ -229,3 +235,5 @@ type SelectSettingsPeopleInferenceBody = PeopleInferenceSelectionRequest
 type PutSettingsPersonEnrichmentProviderBody = PersonEnrichmentProviderUpdate
 
 type PutSettingsProviderCredentialBody = ProviderCredentialWriteRequest
+
+type CaptureTelemetryEventBody = TelemetryEventRequest

@@ -6,6 +6,11 @@ import (
 	"fmt"
 )
 
+// EmbedGenBackfillMigration is the applied_migrations ledger key that guards
+// the one-time embed_gen upgrade backfill. Never change it, or the backfill
+// would re-run on every Open.
+const EmbedGenBackfillMigration = "embed_gen_backfill_active_v1"
+
 // ResolveActiveForFingerprint returns the active generation if its
 // fingerprint matches the supplied one. Production callers pass
 // Config.GenerationFingerprint() so the preprocessing policy is part

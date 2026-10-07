@@ -272,7 +272,7 @@ func TestEmbeddingsPruneFailsFastWhenArchiveOwned(t *testing.T) {
 	assert.Contains(err.Error(), "msgvault daemon stop", "points at the remedy")
 }
 
-func TestEmbeddingsListFailsFastWhenArchiveOwned(t *testing.T) {
+func TestEmbeddingsListReadsMetadataWhenArchiveOwned(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(
 		t)
@@ -301,9 +301,9 @@ func TestEmbeddingsListFailsFastWhenArchiveOwned(t *testing.T) {
 	cmd.SetContext(testCtx)
 	cmd.SetContext(testCtx)
 	err = runEmbeddingsList(cmd, nil)
-	require.Error(err, "embeddings list must fail while the archive is owned")
-	assert.Contains(err.Error(), "owned", "actionable ownership error")
-	assert.Contains(err.Error(), "msgvault daemon stop", "points at the remedy")
+	require.Error(err, "uninitialized vector metadata is reported without waiting for the owner")
+	assert.Contains(err.Error(), "vectors.db not found")
+	assert.NotContains(err.Error(), "owned")
 }
 
 func TestInitDBFailsFastWhenArchiveOwned(t *testing.T) {

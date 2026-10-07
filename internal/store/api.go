@@ -78,13 +78,13 @@ type APIMessage struct {
 }
 
 // MessageRecipient is one archived message-recipient relationship.
-// EmailAddress comes from the immutable message envelope when available,
-// rather than from a participant that may be merged. ParticipantID groups
-// historical envelope aliases that now resolve to the same participant.
+// EmailAddress falls back to the current participant when the snapshot is absent.
+// EnvelopeAddress contains only the per-message snapshot, empty when absent.
 type MessageRecipient struct {
-	ParticipantID int64
-	EmailAddress  string
-	DisplayName   string
+	ParticipantID   int64
+	EmailAddress    string
+	EnvelopeAddress string
+	DisplayName     string
 }
 
 // APIAttachment represents attachment metadata for API responses.
@@ -1269,6 +1269,7 @@ func (s *Store) GetMessageRecipientsContext(
 		SELECT
 			mr.participant_id,
 			COALESCE(NULLIF(mr.email_address, ''), NULLIF(p.email_address, ''), ''),
+			COALESCE(mr.email_address, ''),
 			COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), '')
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
@@ -1284,7 +1285,7 @@ func (s *Store) GetMessageRecipientsContext(
 	for rows.Next() {
 		var recipient MessageRecipient
 		if err := rows.Scan(
-			&recipient.ParticipantID, &recipient.EmailAddress, &recipient.DisplayName,
+			&recipient.ParticipantID, &recipient.EmailAddress, &recipient.EnvelopeAddress, &recipient.DisplayName,
 		); err != nil {
 			return nil, fmt.Errorf("scan structured recipient: %w", err)
 		}

@@ -861,7 +861,7 @@ func (c *Client) openCLIStream(
 		if resp.StatusCode == http.StatusOK {
 			return resp, nil
 		}
-		err = HandleCLIErrorResponse(resp)
+		err = handleRawErrorResponse(resp, handleCLIRunErrorBody)
 		_ = resp.Body.Close()
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, backoff.Permanent(ctxErr)
@@ -907,9 +907,9 @@ func (c *Client) runCLIStream(
 			return true, nil
 		case "error":
 			if event.Error != "" {
-				return false, errors.New(event.Error)
+				return false, &CLIRunError{err: errors.New(event.Error)}
 			}
-			return false, fmt.Errorf("%s failed", operation)
+			return false, &CLIRunError{err: fmt.Errorf("%s failed", operation)}
 		default:
 			return false, nil
 		}
@@ -1071,14 +1071,20 @@ func (c *Client) FindSimilarMessages(
 	}, nil
 }
 
-func (c *Client) GetCLIAccounts(ctx context.Context) ([]CLIAccount, error) {
+// GetCLIAccounts lists archived accounts. countsPending reports that the
+// daemon's first count refresh is still running, so every count is zero.
+func (c *Client) GetCLIAccounts(ctx context.Context) (accounts []CLIAccount, countsPending bool, err error) {
+	allowPending := func(_ context.Context, req *http.Request) error {
+		req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
+		return nil
+	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ListCLIAccountsResp, error) {
-		return client.ListCLIAccountsWithResponse(ctx)
+		return client.ListCLIAccountsWithResponse(ctx, allowPending)
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return cliAccountsFromGenerated(resp.JSON200), nil
+	return cliAccountsFromGenerated(resp.JSON200), resp.JSON200 != nil && boolValue(resp.JSON200.CountsPending), nil
 }
 
 func (c *Client) UpdateCLIAccount(

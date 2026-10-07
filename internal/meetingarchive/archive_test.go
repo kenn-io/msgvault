@@ -3,11 +3,13 @@ package meetingarchive
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -160,4 +162,29 @@ func TestArchiverWithoutOrganizerDoesNotInventSender(t *testing.T) {
 		`SELECT COUNT(*) FROM participants`,
 	).Scan(&participantCount))
 	assert.Zero(participantCount)
+}
+
+func TestTranscriptEnrichmentPreservesRecordingAttachmentCounts(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("twilio", "work")
+	require.NoError(err)
+	snapshot := testSnapshot(source.ID)
+	snapshot.Organizer = nil
+	result, err := New(st).Upsert(t.Context(), snapshot, UpsertOptions{})
+	require.NoError(err)
+	require.NoError(st.UpsertAttachmentRecordWithStats(t.Context(), result.MessageID, store.AttachmentWrite{
+		Filename: "recording.wav", MIMEType: "audio/wav", ContentHash: strings.Repeat("a", 64), StoragePath: "aa/" + strings.Repeat("a", 64), Size: 100,
+		SourcePartKey: "recording:synthetic", Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
+	}, true))
+	snapshot.Raw = []byte(`{"transcript":"New retained speech"}`)
+	snapshot.Body = "New retained speech"
+	enriched, err := New(st).Upsert(t.Context(), snapshot, UpsertOptions{})
+	require.NoError(err)
+	assert.Equal(result.MessageID, enriched.MessageID)
+	var attached bool
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind("SELECT has_attachments, attachment_count FROM messages WHERE id = ?"), result.MessageID).Scan(&attached, &count))
+	assert.True(attached)
+	assert.Equal(1, count)
 }

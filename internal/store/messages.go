@@ -6,6 +6,7 @@ import (
 	"compress/zlib"
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -447,6 +448,27 @@ type MessageMetadataRecord struct {
 type MessageWithRawMetadata struct {
 	ID              int64
 	RFC822MessageID sql.NullString
+}
+
+// MessageRelationTarget is the identity needed to authorize a provider-side
+// relation such as an edit without loading the target body.
+type MessageRelationTarget struct {
+	ConversationID int64
+	SenderID       sql.NullInt64
+}
+
+// GetMessageRelationTarget reads relation authorization fields by primary key.
+func (s *Store) GetMessageRelationTarget(messageID int64) (MessageRelationTarget, error) {
+	var target MessageRelationTarget
+	err := s.db.QueryRow(`
+		SELECT conversation_id, sender_id
+		FROM messages
+		WHERE id = ?
+	`, messageID).Scan(&target.ConversationID, &target.SenderID)
+	if err != nil {
+		return MessageRelationTarget{}, fmt.Errorf("get message relation target %d: %w", messageID, err)
+	}
+	return target, nil
 }
 
 // UnresolvedMessageReply is a message whose provider metadata may contain a
@@ -3064,8 +3086,23 @@ func (s *Store) SetReplyTo(sourceID int64, childSourceMessageID, parentSourceMes
 // does not write is_edited, so importers that observe an edit flag call this
 // after upserting.
 func (s *Store) SetMessageEdited(messageID int64) error {
+	return s.SetMessageEditedState(messageID, true)
+}
+
+// SetMessageSizeEstimate replaces a message's size estimate after an importer
+// changes its displayed text, such as when applying a provider edit.
+func (s *Store) SetMessageSizeEstimate(messageID, sizeEstimate int64) error {
 	return s.withSyncMessageWriteContext(context.Background(), messageID, func(q querier) error {
-		_, err := q.Exec(`UPDATE messages SET is_edited = TRUE WHERE id = ?`, messageID)
+		_, err := q.Exec(`UPDATE messages SET size_estimate = ? WHERE id = ?`, sizeEstimate, messageID)
+		return err
+	})
+}
+
+// SetMessageEditedState records whether the source's currently selected
+// message version is an edit.
+func (s *Store) SetMessageEditedState(messageID int64, edited bool) error {
+	return s.withSyncMessageWriteContext(context.Background(), messageID, func(q querier) error {
+		_, err := q.Exec(`UPDATE messages SET is_edited = ? WHERE id = ?`, edited, messageID)
 		return err
 	})
 }
@@ -4070,6 +4107,23 @@ func (s *Store) EnsureConversationWithType(sourceID int64, sourceConversationID,
 	return ensureConversationWithType(s.db, s.dialect, sourceID, sourceConversationID, conversationType, title)
 }
 
+// SetConversationTitle applies an explicit provider title, including removal.
+func (s *Store) SetConversationTitle(sourceID, conversationID int64, title string) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	write := func(q querier) error {
+		_, err := q.Exec(fmt.Sprintf(`UPDATE conversations SET title = ?, updated_at = %s
+			WHERE id = ? AND source_id = ? AND COALESCE(title, '') <> ?`, s.dialect.Now()),
+			title, conversationID, sourceID, title)
+		return err
+	}
+	if s.syncGeneration != nil {
+		return s.withTx(func(tx *loggedTx) error { return write(tx) })
+	}
+	return write(s.db)
+}
+
 func ensureConversationWithType(q querier, dialect Dialect, sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
 	return ensureConversationWithTypePolicy(q, dialect, sourceID, sourceConversationID, conversationType, title, false)
 }
@@ -4434,6 +4488,9 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		}
 		// Drop old rows that would collide with an existing row of the new
 		// participant, then repoint the remainder.
+		if err := repointReactionSourceEvents(context.Background(), tx, oldID, newID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(`
 			DELETE FROM reactions WHERE participant_id = ? AND EXISTS (
 				SELECT 1 FROM reactions r2 WHERE r2.message_id = reactions.message_id
@@ -5562,6 +5619,102 @@ func (s *Store) UpsertReaction(messageID, participantID int64, reactionType, rea
 	return write(s.db)
 }
 
+// UpsertReactionWithSourceID inserts a reaction and records the provider event
+// that produced it, so a later provider redaction can remove it by event ID.
+func (s *Store) UpsertReactionWithSourceID(messageID, participantID int64, reactionType, reactionValue, sourceReactionID string, createdAt time.Time) error {
+	write := func(q querier) error {
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		if _, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions
+			(message_id, participant_id, reaction_type, reaction_value, created_at)
+			VALUES (?, ?, ?, ?, ?)`), messageID, participantID, reactionType, reactionValue, createdAt); err != nil {
+			return err
+		}
+		_, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reaction_source_events
+			(source_id, source_reaction_id, reaction_id)
+			SELECT m.source_id, ?, r.id
+			FROM reactions r
+			JOIN messages m ON m.id = r.message_id
+			WHERE r.message_id = ? AND r.participant_id = ?
+			  AND r.reaction_type = ? AND r.reaction_value = ?`),
+			sourceReactionID, messageID, participantID, reactionType, reactionValue)
+		return err
+	}
+	return s.withTx(func(tx *loggedTx) error { return write(tx) })
+}
+
+// DeleteReactionBySourceID forgets one provider reaction event in a
+// conversation and removes the visible reaction once no event backs it.
+func (s *Store) DeleteReactionBySourceID(sourceID, conversationID int64, sourceReactionID string) (bool, error) {
+	deleted := false
+	err := s.withSyncSourceWriteContext(context.Background(), sourceID, func(q querier) error {
+		var reactionID int64
+		err := q.QueryRow(`SELECT rse.reaction_id FROM reaction_source_events rse
+			JOIN reactions r ON r.id = rse.reaction_id
+			JOIN messages m ON m.id = r.message_id
+			WHERE rse.source_id = ? AND rse.source_reaction_id = ? AND m.conversation_id = ?`,
+			sourceID, sourceReactionID, conversationID).Scan(&reactionID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := q.Exec(`DELETE FROM reaction_source_events
+			WHERE source_id = ? AND source_reaction_id = ?`, sourceID, sourceReactionID); err != nil {
+			return err
+		}
+		deleted = true
+		_, err = q.Exec(`DELETE FROM reactions
+			WHERE id = ? AND NOT EXISTS (
+				SELECT 1 FROM reaction_source_events WHERE reaction_id = ?
+			)`, reactionID, reactionID)
+		return err
+	})
+	return deleted, err
+}
+
+// repointReactionSourceEvents moves provider reaction event IDs from the
+// absorbed participant's duplicate reactions to the surviving ones, before a
+// participant merge deletes the duplicates.
+func repointReactionSourceEvents(ctx context.Context, tx *loggedTx, loser, winner int64) error {
+	_, err := tx.ExecContext(ctx, `UPDATE reaction_source_events SET reaction_id = (
+			SELECT r2.id FROM reactions r1 JOIN reactions r2
+			  ON r2.message_id = r1.message_id AND r2.participant_id = ?
+			 AND r2.reaction_type = r1.reaction_type AND r2.reaction_value = r1.reaction_value
+			WHERE r1.id = reaction_source_events.reaction_id)
+		WHERE reaction_id IN (
+			SELECT r1.id FROM reactions r1 JOIN reactions r2
+			  ON r2.message_id = r1.message_id AND r2.participant_id = ?
+			 AND r2.reaction_type = r1.reaction_type AND r2.reaction_value = r1.reaction_value
+			WHERE r1.participant_id = ?)`, winner, winner, loser)
+	if err != nil {
+		return fmt.Errorf("repoint reaction source events (loser=%d, winner=%d): %w", loser, winner, err)
+	}
+	return nil
+}
+
+// MessageIDByMetadataValue finds a message in a conversation whose top-level
+// metadata key holds value, or returns 0.
+func (s *Store) MessageIDByMetadataValue(conversationID int64, key, value string) (int64, error) {
+	field := "json_extract(metadata, '$.' || ?)"
+	if s.IsPostgreSQL() {
+		field = "metadata ->> CAST(? AS TEXT)"
+	}
+	var messageID int64
+	err := s.db.QueryRow(`SELECT id FROM messages
+		WHERE conversation_id = ? AND `+field+` = ?
+		ORDER BY id LIMIT 1`, conversationID, key, value).Scan(&messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find message by metadata %s: %w", key, err)
+	}
+	return messageID, nil
+}
+
 type ReactionRef struct {
 	ParticipantID int64
 	Type          string
@@ -5971,6 +6124,59 @@ func (s *Store) beeperAttachmentMetadataChangedTx(
 // can keep already-downloaded media without re-fetching it.
 func (s *Store) MessageBeeperAttachments(messageID int64) (map[string]AttachmentRef, error) {
 	return s.messageProviderAttachments(messageID, "beeper:")
+}
+
+// MessageProviderAttachments returns the message's rows whose
+// source_attachment_id starts with prefix, keyed by that ID.
+func (s *Store) MessageProviderAttachments(messageID int64, prefix string) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachments(messageID, prefix)
+}
+
+// EndWaitingProviderAttachments ends a source's provider rows, keyed with
+// prefix, still waiting for bytes on messages dated before before: unavailable
+// when the provider never produced the recording, failed otherwise. It
+// returns how many rows it ended. Calls queued for retry are excluded.
+func (s *Store) EndWaitingProviderAttachments(ctx context.Context, sourceID int64, prefix string, before time.Time, retryIDs []string) (int64, error) {
+	retries, err := json.Marshal(retryIDs)
+	if err != nil {
+		return 0, err
+	}
+	// A single JSON parameter also handles large first-sync retry queues.
+	retryQuery := `SELECT value FROM json_each(?)`
+	if s.IsPostgreSQL() {
+		retryQuery = `SELECT value FROM jsonb_array_elements_text(CAST(? AS jsonb)) AS retry_id(value)`
+	}
+	var ended int64
+	err = s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
+		result, err := q.Exec(s.Rebind(`
+		UPDATE attachments
+		SET attachment_state = CASE WHEN attachment_skip_reason = ? THEN ? ELSE ? END,
+		    attachment_skip_reason = CASE WHEN attachment_skip_reason = ? THEN ? ELSE ? END
+		WHERE source_attachment_id LIKE ?
+		  AND COALESCE(content_hash, '') = ''
+		  AND (COALESCE(attachment_state, '') IN ('', ?) OR attachment_state = ? AND COALESCE(attachment_skip_reason, '') <> ?)
+		  AND message_id IN (
+		    SELECT id FROM messages
+		    WHERE source_id = ? AND COALESCE(sent_at, received_at, internal_date) < ?
+		      AND source_message_id NOT IN (`+retryQuery+`)
+		  )
+	`),
+			attachmentpolicy.SkipSourceUnavailable, attachmentpolicy.StateUnavailable, attachmentpolicy.StateFailed,
+			attachmentpolicy.SkipSourceUnavailable, attachmentpolicy.SkipSourceUnavailable, attachmentpolicy.SkipFetchFailure,
+			prefix+"%",
+			attachmentpolicy.StatePending, attachmentpolicy.StateFailed, attachmentpolicy.SkipFetchFailure,
+			sourceID, before, string(retries),
+		)
+		if err != nil {
+			return err
+		}
+		ended, err = result.RowsAffected()
+		return err
+	})
+	if err != nil {
+		return 0, fmt.Errorf("end waiting provider attachments: %w", err)
+	}
+	return ended, nil
 }
 
 // ArchivedRawMessage is one archived message paired with the verbatim provider

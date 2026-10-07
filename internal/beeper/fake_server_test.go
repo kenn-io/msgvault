@@ -269,7 +269,11 @@ func (f *fakeBeeper) cancelMessageListFor(chatID string, cancelFn func()) {
 }
 
 func (f *fakeBeeper) server() *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httptest.NewServer(f.handler())
+}
+
+func (f *fakeBeeper) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		entry := r.URL.Path
 		if r.URL.RawQuery != "" {
@@ -314,7 +318,7 @@ func (f *fakeBeeper) server() *httptest.Server {
 		default:
 			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 		}
-	}))
+	}
 }
 
 func (f *fakeBeeper) writeAsset(w http.ResponseWriter, r *http.Request) {

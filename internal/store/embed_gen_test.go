@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -120,4 +121,51 @@ func TestScopedFiltersComposeMessageTypesAndSources(t *testing.T) {
 	require.NoError(t, err, "ScanForEmbeddingScoped type+source")
 	assert.Equal(t, fx.msgsA[1:], emailA,
 		"the sms-typed message drops out of the email×A intersection")
+}
+
+func TestScanEmbeddingCoverageStreamsStampedLiveIDsInBatches(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := seedEmbedScopeFixture(t, st)
+	ctx := context.Background()
+	require.NoError(st.SetEmbedGen(ctx, append([]int64{fx.deletedA}, fx.msgsA...), 7), "stamp A, including its deleted row")
+	require.NoError(st.SetEmbedGen(ctx, fx.msgsB, 7), "stamp B outside the scope")
+
+	var batches [][]int64
+	live, stamped, err := st.ScanEmbeddingCoverage(ctx, 7, store.EmbeddingCoverageScan{
+		SourceIDs: []int64{fx.srcA.ID},
+		BatchSize: 2,
+		VisitStamped: func(messageIDs []int64) error {
+			batches = append(batches, append([]int64(nil), messageIDs...))
+			return nil
+		},
+	})
+	require.NoError(err)
+	assert.Equal(int64(3), live)
+	assert.Equal(int64(3), stamped)
+	assert.Equal([][]int64{fx.msgsA[:2], fx.msgsA[2:]}, batches,
+		"only live in-scope IDs arrive, at most BatchSize at a time")
+}
+
+func TestScanEmbeddingCoverageStopsOnVisitError(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	fx := seedEmbedScopeFixture(t, st)
+	ctx := context.Background()
+	require.NoError(t, st.SetEmbedGen(ctx, fx.msgsA, 7))
+	visitErr := errors.New("vector database unavailable")
+
+	_, _, err := st.ScanEmbeddingCoverage(ctx, 7, store.EmbeddingCoverageScan{
+		BatchSize:    10,
+		VisitStamped: func([]int64) error { return visitErr },
+	})
+	require.ErrorIs(t, err, visitErr)
+}
+
+func TestScanEmbeddingCoverageRejectsNonPositiveBatchSize(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	_, _, err := st.ScanEmbeddingCoverage(context.Background(), 7, store.EmbeddingCoverageScan{
+		VisitStamped: func([]int64) error { return nil },
+	})
+	require.ErrorContains(t, err, "batch size must be positive")
 }

@@ -35,6 +35,7 @@ const (
 	toolSecurityPersonMerge
 	toolSecurityCardDAVWrite
 	toolSecurityCalendarWrite
+	toolSecurityKataWrite
 )
 
 type catalogCapabilities struct {
@@ -49,6 +50,7 @@ type catalogCapabilities struct {
 	savedViews      bool
 	meetings        bool
 	personAgenda    bool
+	kata            bool
 	identityReview  bool
 	personCardDAV   bool
 }
@@ -131,6 +133,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		savedViews:      opts.SavedViews != nil,
 		meetings:        opts.Meetings != nil,
 		personAgenda:    opts.PersonAgendaBackend != nil,
+		kata:            opts.Kata != nil,
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
 	}
@@ -162,7 +165,7 @@ func (c *operationCatalogCache) get(capabilities catalogCapabilities) []toolDefi
 
 func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 	definitions := []toolDefinition{}
-	if !opts.CalendarOnly {
+	if !opts.DelegatedOnly {
 		definitions = slices.Clone(stableOperationCatalogs.get(capabilitiesFor(opts)))
 		if opts.IdentityScoring != nil {
 			definitions = append(definitions, stableIdentityScoringDefinitions...)
@@ -170,6 +173,13 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 	}
 	if opts.Calendar != nil {
 		definitions = append(definitions, stableCalendarTools()...)
+	}
+	if opts.Drafts != nil {
+		for _, command := range opts.DraftCommands {
+			if definition, ok := stableDraftDefinitions[command]; ok {
+				definitions = append(definitions, definition)
+			}
+		}
 	}
 	sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
 	return definitions
@@ -226,6 +236,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		updatePersonNotesDefinition(nil),
 		updateSavedViewDefinition(nil),
 	}
+	definitions = append(definitions, kataDefinitions()...)
 
 	available := definitions[:0]
 	for _, definition := range definitions {

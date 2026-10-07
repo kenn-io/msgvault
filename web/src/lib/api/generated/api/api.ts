@@ -199,6 +199,12 @@ import type {
   IdentityMatchRejectResponse,
   ImportJobRequest,
   ImportJobResponse,
+  KataEvidenceLinkRequest,
+  KataEvidencePrepareRequest,
+  KataEvidencePrepareResponse,
+  KataIssueCreateRequest,
+  KataIssueResponse,
+  LinkKataEvidencePathParameters,
   LinkPersonAgendaItemPathParameters,
   ListAttributeDefinitionsParams,
   ListCardDAVBooksParams,
@@ -239,6 +245,7 @@ import type {
   ListPersonFactEvidenceStatusEventsPathParameters,
   ListPersonFactPinsPathParameters,
   ListPersonFactTargetsParams,
+  ListPersonIdentitiesPathParameters,
   ListPersonMatchJudgmentsParams,
   ListPersonMergesParams,
   ListPersonMergesPathParameters,
@@ -318,6 +325,7 @@ import type {
   PersonFactEvidenceStatusEventsResponse,
   PersonFactPinWrite,
   PersonFactPinsResponse,
+  PersonIdentitiesResponse,
   PersonInboxResponse,
   PersonMatchConsentDecisionRequest,
   PersonMatchConsentDecisionResponse,
@@ -412,6 +420,8 @@ import type {
   TaskLinkMutationRequest,
   TaskLinkMutationResponse,
   TaskSearchResponse,
+  TelemetryEventRequest,
+  TelemetryEventResponse,
   TextConversationsResponse,
   TextMessagesResponse,
   TextSearchResponse,
@@ -1940,6 +1950,59 @@ export const getImportJob = (
   );
 };
 /**
+ * @summary Prepare exact message and file evidence for a Kata issue
+ */
+export const prepareKataEvidence = (
+  kataEvidencePrepareRequest: KataEvidencePrepareRequest,
+  options?: SecondParameter<typeof orvalFetch<KataEvidencePrepareResponse>>,
+) => {
+  return orvalFetch<KataEvidencePrepareResponse>(
+    {
+      url: `/api/v1/integrations/kata/evidence/prepare`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: kataEvidencePrepareRequest,
+    },
+    options,
+  );
+};
+/**
+ * Returns 201 both when it files the issue and when an earlier request under the same Idempotency-Key already did; `replayed` tells them apart.
+ * @summary Create a Kata issue that quotes exact archive evidence
+ */
+export const createKataIssue = (
+  kataIssueCreateRequest: KataIssueCreateRequest,
+  options?: SecondParameter<typeof orvalFetch<KataIssueResponse>>,
+) => {
+  return orvalFetch<KataIssueResponse>(
+    {
+      url: `/api/v1/integrations/kata/issues`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: kataIssueCreateRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Add exact archive evidence to an existing Kata issue
+ */
+export const linkKataEvidence = (
+  { ref }: LinkKataEvidencePathParameters,
+  kataEvidenceLinkRequest: KataEvidenceLinkRequest,
+  options?: SecondParameter<typeof orvalFetch<KataIssueResponse>>,
+) => {
+  return orvalFetch<KataIssueResponse>(
+    {
+      url: `/api/v1/integrations/kata/issues/${encodeURIComponent(String(ref))}/evidence`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: kataEvidenceLinkRequest,
+    },
+    options,
+  );
+};
+/**
  * @summary Get Kata person agenda availability
  */
 export const getKataIntegrationStatus = (
@@ -2985,6 +3048,22 @@ export const setPersonFactPin = (
   );
 };
 /**
+ * Lists the identities of the person's current participants. Email addresses are supported draft recipients; phone numbers and chat identifiers are not. Curated contact points and postal addresses are not listed.
+ * @summary List a durable person's archived identities
+ */
+export const listPersonIdentities = (
+  { id }: ListPersonIdentitiesPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonIdentitiesResponse>>,
+) => {
+  return orvalFetch<PersonIdentitiesResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/identities`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
  * @summary Merge one durable person profile into another
  */
 export const mergePersons = (
@@ -3990,6 +4069,23 @@ export const triggerSync = (
       url: `/api/v1/sync/${encodeURIComponent(String(account))}`,
       method: "POST",
       params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Report a web or terminal UI usage event
+ */
+export const captureTelemetryEvent = (
+  telemetryEventRequest: TelemetryEventRequest,
+  options?: SecondParameter<typeof orvalFetch<TelemetryEventResponse>>,
+) => {
+  return orvalFetch<TelemetryEventResponse>(
+    {
+      url: `/api/v1/telemetry/events`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: telemetryEventRequest,
     },
     options,
   );

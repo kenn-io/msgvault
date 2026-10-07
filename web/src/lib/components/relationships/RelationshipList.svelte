@@ -2,9 +2,11 @@
   import { Button, EmptyState, SearchInput, SegmentedControl, Tooltip } from '@kenn-io/kit-ui';
 
   import type { DomainSummary, ExploreCacheUnavailable, PersonSummary } from '../../explore/models';
+  import { ExploreSelectionState } from '../../explore/state.svelte';
   import type { RelationshipFacet, RelationshipRow } from '../../relationships/models';
   import { compactDate } from '../../util/dates';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
+  import SelectionCheckbox from '../common/SelectionCheckbox.svelte';
 
   interface Props {
     rows: RelationshipRow[] | PersonSummary[] | DomainSummary[];
@@ -17,12 +19,18 @@
     facet: RelationshipFacet;
     query: string;
     showAll: boolean;
+    selection?: ExploreSelectionState;
+    bulkPending?: boolean;
+    bulkMessage?: string | null;
+    bulkError?: boolean;
     autofocusSearch?: boolean;
     activeTarget?: string | null;
     onQueryChange: (value: string) => void;
     onFacetChange: (facet: RelationshipFacet) => void;
     onShowAllChange: (value: boolean) => void;
     onSelect: (target: string) => void;
+    onBulkSamePerson?: () => void;
+    onBulkRetry?: () => void;
     onLoadMore?: () => void;
     onOpenEverything?: () => void;
   }
@@ -46,12 +54,18 @@
     facet,
     query,
     showAll,
+    selection = new ExploreSelectionState(),
+    bulkPending = false,
+    bulkMessage = null,
+    bulkError = false,
     autofocusSearch = false,
     activeTarget = null,
     onQueryChange,
     onFacetChange,
     onShowAllChange,
     onSelect,
+    onBulkSamePerson = undefined,
+    onBulkRetry = undefined,
     onLoadMore = undefined,
     onOpenEverything = undefined
   }: Props = $props();
@@ -66,6 +80,13 @@
 
   const views = $derived(rows.map(describeRow));
   const activeIndex = $derived(activeKey ? views.findIndex((view) => view.key === activeKey) : -1);
+  const orderedTargets = $derived(views.map((view) => view.target));
+  const allLoadedSelected = $derived(
+    orderedTargets.length > 0 && orderedTargets.every((target) => selection.isSelected(target))
+  );
+  const someLoadedSelected = $derived(
+    orderedTargets.some((target) => selection.isSelected(target))
+  );
 
   $effect(() => {
     const keys = views.map((view) => view.key);
@@ -145,6 +166,8 @@
     if (event.key === 'j' || event.key === 'ArrowDown') moveTo(activeIndex + 1);
     else if (event.key === 'k' || event.key === 'ArrowUp') moveTo(activeIndex - 1);
     else if (event.key === 'Enter' && activeIndex >= 0) onSelect(views[activeIndex]!.target);
+    else if (event.key === ' ' && activeIndex >= 0 && facet === 'people' && !bulkPending)
+      toggleRowSelection(views[activeIndex]!, activeIndex, event.shiftKey);
     else return;
     event.preventDefault();
   }
@@ -152,6 +175,16 @@
   function selectRow(view: ListRowView): void {
     activeKey = view.key;
     onSelect(view.target);
+  }
+
+  function toggleRowSelection(view: ListRowView, index: number, range: boolean): void {
+    activeKey = view.key;
+    selection.toggle(view.target, index, orderedTargets, range);
+  }
+
+  function toggleLoadedSelection(): void {
+    if (allLoadedSelected) selection.clear();
+    else selection.selectVisible(orderedTargets);
   }
 
   // Fires on user scrolling and on the scrollIntoView calls moveTo makes, so
@@ -166,22 +199,67 @@
 <aside class="relationship-list" aria-label="Relationship search and results">
   <div class="toolbar">
     <SearchInput value={query} ariaLabel="Search people and domains" placeholder="Filter people and domains"
-      block autofocus={autofocusSearch} oninput={(value) => onQueryChange(value)} />
+      block autofocus={autofocusSearch} disabled={bulkPending} oninput={(value) => onQueryChange(value)} />
     <div class="toolbar-row">
       <SegmentedControl ariaLabel="Relationship facet" value={facet}
         options={[{ value: 'people', label: 'People' }, { value: 'domains', label: 'Domains' }]}
+        disabled={bulkPending}
         onchange={(value) => onFacetChange(value as RelationshipFacet)} />
       {#if facet === 'people'}
         <button
           type="button"
           class="show-all-chip"
           aria-pressed={showAll}
+          disabled={bulkPending}
           onclick={() => onShowAllChange(!showAll)}
         >
           All senders
         </button>
       {/if}
     </div>
+    {#if facet === 'people' && views.length > 0}
+      <div class="selection-toolbar" aria-label="Relationship selection">
+        <span class="header-checkbox">
+          <SelectionCheckbox
+            checked={allLoadedSelected}
+            mixed={!allLoadedSelected && someLoadedSelected}
+            label={allLoadedSelected ? 'Unselect all loaded people' : 'Select all loaded people'}
+            disabled={bulkPending}
+            onToggle={toggleLoadedSelection}
+          />
+        </span>
+        <span class="selection-label">
+          {selection.count > 0 ? `${selection.count.toLocaleString()} selected` : 'Select all'}
+        </span>
+        {#if selection.count > 0}
+          <Button
+            size="sm"
+            tone="info"
+            surface="soft"
+            label={bulkPending ? 'Linking…' : 'Same person'}
+            disabled={selection.count < 2 || bulkPending}
+            onclick={() => onBulkSamePerson?.()}
+          />
+          <Button
+            size="sm"
+            surface="soft"
+            label="Clear"
+            disabled={bulkPending}
+            onclick={() => selection.clear()}
+          />
+        {/if}
+      </div>
+    {/if}
+    <!-- Outside the rows check: a failed reload empties the list, and Retry is
+         how the user recovers from a stale cache. -->
+    {#if facet === 'people' && bulkMessage}
+      <div class="bulk-status">
+        <p class="bulk-message" class:error={bulkError} role={bulkError ? 'alert' : 'status'}>{bulkMessage}</p>
+        {#if onBulkRetry}
+          <Button size="sm" surface="outline" label="Retry" disabled={bulkPending} onclick={onBulkRetry} />
+        {/if}
+      </div>
+    {/if}
   </div>
 
   {#if degraded?.readiness === 'building'}
@@ -212,6 +290,7 @@
     {/if}
     <div
       class="results-grid"
+      class:selection-mode={selection.count > 0}
       role="grid"
       aria-label="Relationship results"
       aria-busy={loading || loadingMore}
@@ -250,12 +329,25 @@
             onclick={(event) => { if (event.button === 0) selectRow(view); }}
           >
             <div role="gridcell">
-              <IdentityAvatar
-                label={view.label}
-                seed={view.key}
-                shape={view.key.startsWith('domain:') ? 'domain' : 'person'}
-                size={24}
-              />
+              <span class="avatar-slot">
+                <span class="row-avatar">
+                  <IdentityAvatar
+                    label={view.label}
+                    seed={view.key}
+                    shape={view.key.startsWith('domain:') ? 'domain' : 'person'}
+                    size={24}
+                  />
+                </span>
+                {#if facet === 'people'}
+                  <SelectionCheckbox
+                    checked={selection.isSelected(view.target)}
+                    label={`${selection.isSelected(view.target) ? 'Unselect' : 'Select'} ${view.label}`}
+                    disabled={bulkPending}
+                    inGrid
+                    onToggle={(range) => toggleRowSelection(view, index, range)}
+                  />
+                {/if}
+              </span>
               <div class="row-body">
                 <div class="row-main">
                   <Tooltip text={view.label}><span class="label" title={view.label}>{view.label}</span></Tooltip>
@@ -302,6 +394,47 @@
     gap: var(--space-4);
   }
 
+  .selection-toolbar {
+    display: flex;
+    min-height: 28px;
+    align-items: center;
+    gap: var(--space-2);
+    padding-inline: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .header-checkbox {
+    display: grid;
+    width: 24px;
+    height: 24px;
+    flex: none;
+    place-items: center;
+  }
+
+  .selection-label {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .bulk-status {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .bulk-message {
+    flex: 1;
+    margin: 0;
+    padding-inline: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .bulk-message.error {
+    color: var(--text-danger);
+  }
+
   .show-all-chip {
     flex: none;
     border: 1px solid var(--border-muted);
@@ -324,6 +457,11 @@
     border-color: color-mix(in srgb, var(--accent-blue) 45%, transparent);
     background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
     color: var(--text-primary);
+  }
+
+  .show-all-chip:disabled {
+    cursor: not-allowed;
+    opacity: var(--opacity-disabled);
   }
 
   .list-empty {
@@ -395,6 +533,40 @@
     align-items: center;
     gap: var(--space-4);
     padding: var(--space-3) var(--space-4);
+  }
+
+  .avatar-slot {
+    position: relative;
+    display: grid;
+    width: 24px;
+    height: 24px;
+    flex: none;
+    place-items: center;
+  }
+
+  .row-avatar,
+  .avatar-slot :global(.selection-checkbox) {
+    position: absolute;
+    transition: opacity 80ms ease-out, transform 80ms ease-out;
+  }
+
+  .avatar-slot :global(.selection-checkbox) {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+
+  .result-row:hover .row-avatar,
+  .result-row:focus-within .row-avatar,
+  .results-grid.selection-mode .row-avatar {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+
+  .result-row:hover .avatar-slot :global(.selection-checkbox),
+  .result-row:focus-within .avatar-slot :global(.selection-checkbox),
+  .results-grid.selection-mode .avatar-slot :global(.selection-checkbox) {
+    opacity: 1;
+    transform: scale(1);
   }
 
   .row-body {

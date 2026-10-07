@@ -198,6 +198,57 @@ func openEmbedManagePGDB(t *testing.T) (*pgvector.Backend, func(string) string, 
 	return pgb, (&store.PostgreSQLDialect{}).Rebind, dsn
 }
 
+func TestFillFullCoveragePartitionsScopedLiveMessagesPG(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	pgb, _, dsn := openEmbedManagePGDB(t)
+	ctx := t.Context()
+	gen, err := pgb.CreateGeneration(ctx, "example-model", 4, "example-fingerprint")
+	require.NoError(err)
+
+	main, err := store.Open(dsn)
+	require.NoError(err)
+	t.Cleanup(func() { _ = main.Close() })
+	inScope, err := main.GetOrCreateSource("gmail", "coverage@example.test")
+	require.NoError(err)
+	outOfScope, err := main.GetOrCreateSource("gmail", "other@example.test")
+	require.NoError(err)
+	addMessage := func(sourceID int64, sourceMessageID string, stamped, embedded bool) int64 {
+		conversationID, err := main.EnsureConversation(sourceID, "thread-"+sourceMessageID, "Coverage")
+		require.NoError(err)
+		id, err := main.UpsertMessage(&store.Message{
+			SourceID: sourceID, ConversationID: conversationID,
+			SourceMessageID: sourceMessageID, MessageType: "email",
+		})
+		require.NoError(err)
+		if stamped {
+			_, err = main.DB().ExecContext(ctx, `UPDATE messages SET embed_gen = $1 WHERE id = $2`, int64(gen), id)
+			require.NoError(err)
+		}
+		if embedded {
+			require.NoError(pgb.Upsert(ctx, gen, []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}))
+		}
+		return id
+	}
+	addMessage(inScope.ID, "embedded", true, true)
+	addMessage(inScope.ID, "blank", true, false)
+	addMessage(inScope.ID, "vector-before-stamp", false, true)
+	addMessage(inScope.ID, "missing", false, false)
+	deleted := addMessage(inScope.ID, "deleted-from-source", true, true)
+	_, err = main.DB().ExecContext(ctx, `UPDATE messages SET deleted_from_source_at = NOW() WHERE id = $1`, deleted)
+	require.NoError(err)
+	addMessage(outOfScope.ID, "out-of-scope", true, true)
+
+	row := embeddingGenerationRow{ID: gen}
+	scope := vector.BuildScope{SourceIDs: []int64{inScope.ID}}
+	require.NoError(fillFullCoverage(ctx, pgb, scope, &row))
+	assert.Equal(int64(4), row.LiveCount)
+	assert.Equal(int64(1), row.EmbeddedCount, "a vector without a stamp is not embedded coverage")
+	assert.Equal(int64(1), row.BlankCount)
+	assert.Equal(int64(2), row.MissingCount)
+	assert.Equal(row.LiveCount, row.EmbeddedCount+row.BlankCount+row.MissingCount)
+}
+
 // TestListEmbeddingGenerations_PG exercises listEmbeddingGenerations through
 // the PG rebind path against a live PostgreSQL database. Validates that the
 // PG placeholder rebind and boolean-placeholder behaviour work correctly.
@@ -340,4 +391,38 @@ func openEmptyPGSchemaSolo(t *testing.T) string {
 		sep = "&"
 	}
 	return url + sep + "search_path=" + schemaName
+}
+
+func TestEmbeddingsListUsesQueryOnlyPostgresHandles(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	pgb, _, dsn := openEmbedManagePGDB(t)
+	ctx := t.Context()
+	_, err := pgb.CreateGeneration(ctx, "example-model", 4, "example-fingerprint")
+	require.NoError(err)
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DatabaseURL = dsn
+	cfg.Vector.Embeddings.Dimension = 4
+	ctx = testInvocationContext(ctx, cfg, invocationOptions{})
+	metadata, _, closeMetadata, err := openEmbeddingsMetadataDBWithMode(ctx, true)
+	require.NoError(err)
+	defer closeMetadata()
+	var readOnly string
+	require.NoError(metadata.QueryRowContext(ctx, "SHOW transaction_read_only").Scan(&readOnly))
+	assert.Equal("on", readOnly)
+	_, err = metadata.ExecContext(ctx, "UPDATE index_generations SET message_count=99")
+	require.Error(err)
+	backend, closeBackend, err := openEmbeddingsBackendWithMode(ctx, true)
+	require.NoError(err)
+	defer closeBackend()
+	pgBackend, ok := backend.(*pgvector.Backend)
+	require.True(ok)
+	_, err = pgBackend.DB().ExecContext(ctx, "UPDATE index_generations SET message_count=99")
+	require.Error(err)
+	cmd := &cobra.Command{Use: "list"}
+	cmd.SetContext(ctx)
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	require.NoError(runEmbeddingsList(cmd, nil))
+	assert.Contains(output.String(), "example-model")
 }

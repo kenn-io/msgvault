@@ -12,12 +12,14 @@ const (
 	sourceTypeMSMail         = msmail.SourceType
 	sourceTypeCalendar       = "gcal"
 	sourceTypeBeeper         = "beeper"
+	sourceTypeMatrix         = "matrix"
 	sourceTypeSlack          = "slack"
 	sourceTypeSlackdump      = "slackdump"
 	sourceTypeGranola        = "granola"
 	sourceTypeCircleback     = "circleback"
 	sourceTypePlaud          = "plaud"
 	sourceTypeNotionMeetings = "notion_meetings"
+	sourceTypeTwilio         = "twilio"
 	sourceTypeMuesli         = "muesli"
 )
 

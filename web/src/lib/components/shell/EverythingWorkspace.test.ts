@@ -8,6 +8,8 @@ import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
 import AppShell from './AppShell.svelte';
 
+vi.mock('../../telemetry/screen-views', () => ({ startScreenViewReporting: () => () => {} }));
+
 function exploreResponse(overrides: Record<string, unknown> = {}) {
   return {
     rows: [],

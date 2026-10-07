@@ -2,12 +2,16 @@
 
 package config
 
-import "os"
+import (
+	"os"
+
+	"go.kenn.io/kit/atomicfile"
+)
 
 type configSaveHooks struct{}
 
 func publishSavedConfig(candidatePath, targetPath string, _ *os.File, _ configSaveHooks) (bool, error) {
-	if err := os.Rename(candidatePath, targetPath); err != nil {
+	if err := atomicfile.Replace(candidatePath, targetPath); err != nil {
 		return false, err
 	}
 	return true, nil

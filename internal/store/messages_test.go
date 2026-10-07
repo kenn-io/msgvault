@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"sort"
@@ -23,6 +24,152 @@ type failingMessageIDReader struct{}
 
 func (failingMessageIDReader) Read([]byte) (int, error) {
 	return 0, errors.New("synthetic staged-ID read failure")
+}
+
+func TestReactionSourceIdentityIsScopedBySource(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	participantID := f.EnsureParticipant("member@example.test", "Member", "example.test")
+
+	type archivedReaction struct {
+		sourceID       int64
+		conversationID int64
+		messageID      int64
+	}
+	reactions := make([]archivedReaction, 0, 2)
+	for _, userID := range []string{"@archive-one:example.test", "@archive-two:example.test"} {
+		source, err := f.Store.GetOrCreateSource("matrix", userID)
+		require.NoError(err)
+		conversationID, err := f.Store.EnsureConversation(source.ID, "!shared:example.test", "Shared room")
+		require.NoError(err)
+		messageID, err := f.Store.UpsertMessage(&store.Message{
+			ConversationID: conversationID,
+			SourceID:       source.ID, SourceMessageID: "$message", MessageType: "matrix",
+		})
+		require.NoError(err)
+		require.NoError(f.Store.UpsertReactionWithSourceID(
+			messageID, participantID, "emoji", "👍", "$shared-reaction", time.Now().UTC(),
+		))
+		reactions = append(reactions, archivedReaction{sourceID: source.ID, conversationID: conversationID, messageID: messageID})
+	}
+
+	var count int
+	require.NoError(f.Store.DB().QueryRow(
+		`SELECT COUNT(*) FROM reaction_source_events WHERE source_reaction_id = '$shared-reaction'`,
+	).Scan(&count))
+	assert.Equal(2, count)
+	deleted, err := f.Store.DeleteReactionBySourceID(reactions[0].sourceID, reactions[1].conversationID, "$shared-reaction")
+	require.NoError(err)
+	assert.False(deleted, "another conversation's reaction must not match")
+	deleted, err = f.Store.DeleteReactionBySourceID(reactions[0].sourceID, reactions[0].conversationID, "$shared-reaction")
+	require.NoError(err)
+	assert.True(deleted)
+	require.NoError(f.Store.DB().QueryRow(
+		`SELECT COUNT(*) FROM reaction_source_events WHERE source_reaction_id = '$shared-reaction'`,
+	).Scan(&count))
+	assert.Equal(1, count)
+	var remainingMessageID int64
+	require.NoError(f.Store.DB().QueryRow(`
+		SELECT r.message_id
+		FROM reaction_source_events rse
+		JOIN reactions r ON r.id = rse.reaction_id
+		WHERE rse.source_reaction_id = '$shared-reaction'`,
+	).Scan(&remainingMessageID))
+	assert.Equal(reactions[1].messageID, remainingMessageID)
+}
+
+func TestMessageIDByMetadataValueMatchesOneConversation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	otherConv, err := f.Store.EnsureConversation(f.Source.ID, "!other:example.test", "Other")
+	require.NoError(err)
+	ids := map[int64]int64{}
+	for i, convID := range []int64{f.ConvID, otherConv} {
+		messageID, err := f.Store.UpsertMessage(&store.Message{
+			ConversationID: convID, SourceID: f.Source.ID,
+			SourceMessageID: fmt.Sprintf("$message-%d", i), MessageType: "matrix",
+		})
+		require.NoError(err)
+		require.NoError(f.Store.SetMessageMetadata(messageID, sql.NullString{String: `{"matrix_edit_event_id":"$edit"}`, Valid: true}))
+		ids[convID] = messageID
+	}
+
+	got, err := f.Store.MessageIDByMetadataValue(otherConv, "matrix_edit_event_id", "$edit")
+	require.NoError(err)
+	assert.Equal(ids[otherConv], got)
+	got, err = f.Store.MessageIDByMetadataValue(f.ConvID, "matrix_edit_event_id", "$missing")
+	require.NoError(err)
+	assert.Zero(got)
+}
+
+func TestMergeParticipantsKeepsReactionSourceEvents(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	kept := f.EnsureParticipant("kept@example.test", "Kept", "example.test")
+	absorbed := f.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
+	messageID, err := f.Store.UpsertMessage(&store.Message{
+		ConversationID: f.ConvID, SourceID: f.Source.ID,
+		SourceMessageID: "$message", MessageType: "matrix",
+	})
+	require.NoError(err)
+	require.NoError(f.Store.UpsertReactionWithSourceID(messageID, kept, "emoji", "👍", "$kept-reaction", time.Now().UTC()))
+	require.NoError(f.Store.UpsertReactionWithSourceID(messageID, absorbed, "emoji", "👍", "$absorbed-reaction", time.Now().UTC()))
+
+	require.NoError(f.Store.MergeParticipants(absorbed, kept))
+	deleted, err := f.Store.DeleteReactionBySourceID(f.Source.ID, f.ConvID, "$kept-reaction")
+	require.NoError(err)
+	assert.True(deleted)
+	var visible int
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
+	assert.Equal(1, visible, "the absorbed participant's event still backs the reaction")
+	deleted, err = f.Store.DeleteReactionBySourceID(f.Source.ID, f.ConvID, "$absorbed-reaction")
+	require.NoError(err)
+	assert.True(deleted)
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
+	assert.Zero(visible)
+}
+
+func TestEquivalentProviderReactionsRemainUntilEveryEventIsRedacted(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	participantID := f.EnsureParticipant("member@example.test", "Member", "example.test")
+	messageID, err := f.Store.UpsertMessage(&store.Message{
+		ConversationID: f.ConvID, SourceID: f.Source.ID,
+		SourceMessageID: "$message", MessageType: "matrix",
+	})
+	require.NoError(err)
+
+	require.NoError(f.Store.UpsertReactionWithSourceID(
+		messageID, participantID, "emoji", "👍", "$reaction-one", time.Now().UTC(),
+	))
+	require.NoError(f.Store.UpsertReactionWithSourceID(
+		messageID, participantID, "emoji", "👍", "$reaction-two", time.Now().UTC(),
+	))
+
+	var visible, identities int
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reaction_source_events WHERE source_id = ?`), f.Source.ID).Scan(&identities))
+	assert.Equal(1, visible)
+	assert.Equal(2, identities)
+
+	deleted, err := f.Store.DeleteReactionBySourceID(f.Source.ID, f.ConvID, "$reaction-one")
+	require.NoError(err)
+	assert.True(deleted)
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
+	assert.Equal(1, visible)
+	deleted, err = f.Store.DeleteReactionBySourceID(f.Source.ID, f.ConvID, "$reaction-one")
+	require.NoError(err)
+	assert.False(deleted)
+
+	deleted, err = f.Store.DeleteReactionBySourceID(f.Source.ID, f.ConvID, "$reaction-two")
+	require.NoError(err)
+	assert.True(deleted)
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
+	assert.Equal(0, visible)
 }
 
 func TestPersistMessageDeliveryEvidenceEnrichesWithoutChangingLocalReadState(t *testing.T) {

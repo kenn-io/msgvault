@@ -754,8 +754,6 @@ func TestPersonBriefOpenAPIContract(t *testing.T) {
 	assertions.Equal("getPersonBriefEnrollment", enrollment.Get.OperationID)
 	assertions.Equal("setPersonBriefEnrollment", enrollment.Put.OperationID)
 
-	assertions.Equal("3.1.0", APISchemaVersion)
-
 	// The handlers accept an absent reason and an absent track, so the schema
 	// generated clients are built from must not demand either.
 	schemas := document.Components.Schemas.Map()

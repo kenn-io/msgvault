@@ -3,6 +3,7 @@ package export
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,5 +42,34 @@ func TestLooseBlobWritesCountsCreatedOnly(t *testing.T) {
 	assert.NotEmpty(rel)
 	assert.Equal(int64(3), LooseBlobWrites(dir), "existing path import does not count")
 
+	rel, hash, size, err := StoreAttachmentStream(t.Context(), dir, strings.NewReader("streamed blob"), 64)
+	require.NoError(err)
+	assert.Equal(hash[:2]+"/"+hash, rel)
+	assert.Equal(int64(len("streamed blob")), size)
+	assert.Equal(int64(4), LooseBlobWrites(dir), "stream counts")
+	rel, _, _, err = StoreAttachmentStream(t.Context(), dir, strings.NewReader("streamed blob"), 64)
+	require.NoError(err)
+	assert.NotEmpty(rel)
+	assert.Equal(int64(4), LooseBlobWrites(dir), "deduplicated stream does not count")
+	rel, _, _, err = StoreAttachmentStream(t.Context(), dir, strings.NewReader("too large"), 4)
+	require.ErrorIs(err, ErrAttachmentTooLarge)
+	assert.Empty(rel)
+	assert.Equal(int64(4), LooseBlobWrites(dir), "over-cap stream publishes nothing")
+
 	assert.Equal(int64(0), LooseBlobWrites(other), "counters are per attachments directory")
+}
+
+// A corrupt existing blob is a store failure, never a size-cap skip.
+func TestStoreAttachmentStreamCorruptExistingBlobIsNotTooLarge(t *testing.T) {
+	require := require.New(t)
+	dir := t.TempDir()
+	rel, _, _, err := StoreAttachmentStream(t.Context(), dir, strings.NewReader("recording bytes"), 64)
+	require.NoError(err)
+	stored := filepath.Join(dir, filepath.FromSlash(rel))
+	require.NoError(os.Chmod(stored, 0o600))
+	require.NoError(os.WriteFile(stored, []byte("corrupt  bytes!"), 0o600))
+	rel, _, _, err = StoreAttachmentStream(t.Context(), dir, strings.NewReader("recording bytes"), 64)
+	require.Error(err)
+	require.NotErrorIs(err, ErrAttachmentTooLarge)
+	require.Empty(rel)
 }

@@ -25,12 +25,29 @@
 
 <style>
   .page-header {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+    margin-bottom: var(--space-5);
+  }
+
+  .page-header::before {
+    position: absolute;
+    z-index: 0;
+    top: calc(-1 * var(--space-5));
+    right: calc(-1 * var(--page-gutter));
+    bottom: calc(-1 * var(--space-6));
+    left: calc(-1 * var(--page-gutter));
+    border-bottom: 1px solid var(--border-muted);
+    background: var(--bg-surface);
+    content: '';
+    pointer-events: none;
   }
 
   .page-header__row {
+    position: relative;
+    z-index: 1;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -61,5 +78,10 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
+  }
+
+  .page-header__view {
+    position: relative;
+    z-index: 1;
   }
 </style>

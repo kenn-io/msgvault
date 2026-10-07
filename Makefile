@@ -413,7 +413,7 @@ vulncheck: vuln-tools
 testify-helper-check:
 	go run ./cmd/testify-helper-check -tags="$(BUILD_TAGS)" ./...
 
-# Install pre-commit hook via prek
+# Install pre-commit and pre-push hooks via prek
 install-hooks:
 	@if ! command -v prek >/dev/null 2>&1; then \
 		echo "prek not found. Install with: brew install prek" >&2; \
@@ -540,7 +540,7 @@ help:
 	@echo "  web-embed      - Build, stage, and validate browser assets for Go embedding"
 	@echo "  web-assets-check - Validate the release asset graph and run the validator's tests"
 	@echo "  smoke-web-release - Build and exercise an isolated release-style daemon"
-	@echo "  install-hooks  - Install pre-commit hook via prek"
+	@echo "  install-hooks  - Install pre-commit and pre-push hooks via prek"
 	@echo "  clean          - Remove build artifacts"
 	@echo ""
 	@echo "  docs-install   - Install docs dependencies"
