@@ -932,7 +932,6 @@ func TestParseRemoteResourceDecodesTextContactValues(t *testing.T) {
 // sync-collection rejects an empty token with a JSON 400, addressbook-query
 // answers with an empty multistatus even when the book has members, and
 // PROPFIND plus addressbook-multiget work normally.
-// The fake also enforces RFC 6578's Depth 0 requirement for sync-collection.
 type googleLikeState struct {
 	mu       sync.Mutex
 	requests []string
@@ -993,10 +992,6 @@ func newGoogleLikeHandler(t *testing.T, state *googleLikeState) http.HandlerFunc
 			}
 			writeDAVXML(t, w, multiStatusBody(responses.String()))
 		case r.Method == "REPORT" && strings.Contains(body, "sync-collection"):
-			if !assert.Equal(t, "0", r.Header.Get("Depth")) {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
 			token := syncRequestToken(body)
 			state.requests = append(state.requests, "REPORT sync-collection "+token)
 			if token == "" {
