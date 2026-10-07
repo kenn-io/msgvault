@@ -336,39 +336,54 @@ func TestCappedArtifactReadStillReachesSkippedIDs(t *testing.T) {
 }
 
 func TestReconcileRereadsMessagesCommittedOutOfOrder(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	api := newContractAPI(t, 1000, nil)
-	// Written after the first sync's reconcile, so the next one covers them.
-	at := now().Add(time.Minute)
-	api.addMessage(1, 200, at.Add(2*time.Second))
-	// A backdated higher ID, archived first, must not hide a recent lower one.
-	api.addMessage(1, 300, at.Add(-48*time.Hour))
-	st := testutil.NewTestStore(t)
-	imp, source := contractRegister(t, st, api)
-	opts := ImportOptions{InboxID: 7}
-	_, err := imp.Import(t.Context(), opts)
-	require.NoError(err)
-
-	// Concurrent writes commit late: a lower ID, and a higher ID created earlier.
-	// Neither changes the listing's newest message or activity time.
-	api.addMessage(1, 150, at.Add(2*time.Second))
-	api.addMessage(1, 201, at.Add(time.Second))
-	api.addMessage(1, 160, at.Add(3*time.Second))
-	_, err = imp.Import(t.Context(), opts)
-	require.NoError(err)
-	archived, err := st.MessageExistsBatch(source.ID, []string{"150", "160", "201"})
-	require.NoError(err)
-	assert.Empty(archived, "an incremental sync trusts the listing")
-
-	fixed := now
-	t.Cleanup(func() { now = fixed })
-	now = func() time.Time { return fixed().Add(48 * time.Hour) }
-	_, err = imp.Import(t.Context(), opts)
-	require.NoError(err)
-	archived, err = st.MessageExistsBatch(source.ID, []string{"150", "160", "201", "300"})
-	require.NoError(err)
-	assert.Len(archived, 4, "reconcile rereads each conversation active since the last one")
+	for _, evidence := range []string{"commit_time", "missing", "invalid"} {
+		t.Run(evidence, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			fixed := now
+			clock := fixed()
+			now = func() time.Time { return clock }
+			t.Cleanup(func() { now = fixed })
+			api := newContractAPI(t, 1000, nil)
+			api.addMessage(1, 101, clock.Add(-time.Minute))
+			st := testutil.NewTestStore(t)
+			imp, source := contractRegister(t, st, api)
+			opts := ImportOptions{InboxID: 7}
+			_, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+			clock = clock.Add(20 * time.Hour)
+			api.addMessage(1, 100, clock.Add(-20*time.Hour-20*time.Minute))
+			api.activityAt[1] = clock.Add(-20*time.Hour - 20*time.Minute).Unix()
+			switch evidence {
+			case "missing":
+				delete(api.updatedAt, 1)
+			case "invalid":
+				api.updatedAt[1] = -1
+			}
+			_, err = imp.Import(t.Context(), opts)
+			require.NoError(err)
+			archived, err := st.MessageExistsBatch(source.ID, []string{"100"})
+			require.NoError(err)
+			assert.Empty(archived)
+			clock = clock.Add(5 * time.Hour)
+			opts.Limit = 1
+			partial, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+			require.True(partial.Partial)
+			start := savedState(t, st, source).WalkStartedAt
+			clock = clock.Add(time.Hour)
+			api.addMessage(1, 99, clock.Add(-26*time.Hour-30*time.Minute))
+			opts.Limit = 0
+			_, err = imp.Import(t.Context(), opts)
+			require.NoError(err)
+			assert.Equal(start, savedState(t, st, source).ReconciledAt)
+			clock = clock.Add(24 * time.Hour)
+			_, err = imp.Import(t.Context(), opts)
+			require.NoError(err)
+			archived, err = st.MessageExistsBatch(source.ID, []string{"99", "100"})
+			require.NoError(err)
+			assert.Len(archived, 2, "commit-time updates cover late lower IDs and resumed walks")
+		})
+	}
 }
 
 func TestLimitedRunSavesOnlyTheUnreadTail(t *testing.T) {

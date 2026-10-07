@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -46,6 +47,11 @@ func newMediaRefreshServer(t *testing.T) *mediaRefreshServer {
 			return
 		}
 		w.Header().Set("Content-Type", "audio/ogg")
+		flusher, ok := w.(http.Flusher)
+		if !assert.True(t, ok) {
+			return
+		}
+		flusher.Flush()
 		_, err := w.Write([]byte(payload))
 		assert.NoError(t, err)
 	}))
@@ -77,7 +83,7 @@ func mediaRefreshCall(recordingURL, audioURL string) map[string]any {
 
 func mediaRefreshOptions(t *testing.T) ImportOptions {
 	t.Helper()
-	return ImportOptions{InboxID: 7, IncludePrivate: true, Media: true, MaxMediaBytes: 4096, AttachmentsDir: t.TempDir()}
+	return ImportOptions{InboxID: 7, IncludePrivate: true, Policy: attachmentpolicy.Policy{MaxBytes: 4096}, AttachmentsDir: t.TempDir()}
 }
 
 func readMediaRefreshBytes(t *testing.T, st *store.Store, messageID int64, dir string) (map[string]store.AttachmentRef, []string) {
@@ -226,7 +232,7 @@ func TestMediaRefreshRecordingRepresentationMigration(t *testing.T) {
 			media.mu.Lock()
 			media.failures["/recording-a.ogg"] = true
 			media.mu.Unlock()
-			opts.Media = opts.Media && !tc.noMedia
+			opts.NoMedia = tc.noMedia
 			summary, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
 			require.NoError(err)
 			// The chat message gains its first attachment and may need one fetch.
@@ -260,4 +266,85 @@ func TestMediaRefreshRecordingRepresentationMigration(t *testing.T) {
 			assert.Equal("Synthetic newly exposed transcript", metadata.SourceTranscript.Text)
 		})
 	}
+}
+
+func TestDeferredMediaRetriesAndLocalWritesFail(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		t.Run(strconv.FormatBool(disabled), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			media := newMediaRefreshServer(t)
+			router := newChatwootMediaRouter(t, media.server)
+			message := contractMessage(901, now().Unix(), nil)
+			message["attachments"] = []any{map[string]any{"id": int64(2001), "file_type": "image", "data_url": router.url(t, media.server, "/recording-a.ogg")}}
+			api := newContractAPI(t, 1000, []map[string]any{message})
+			api.mediaRouter = router
+			st := testutil.NewTestStore(t)
+			imp, source := contractRegister(t, st, api)
+			opts := mediaRefreshOptions(t)
+			opts.NoMedia = true
+			if disabled {
+				opts.Policy.DisabledReason = attachmentpolicy.SkipAccountPolicy
+			}
+			_, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+			refs, err := st.MessageChatwootAttachments(contractArchivedMessageID(t, st, "901"))
+			require.NoError(err)
+			for _, ref := range refs {
+				if disabled {
+					assert.Equal(attachmentpolicy.SkipAccountPolicy, ref.SkipReason)
+				} else {
+					assert.Equal(attachmentpolicy.StatePending, ref.State)
+				}
+			}
+			assert.Zero(media.requestCount("/recording-a.ogg"))
+			opts.NoMedia = false
+			if disabled {
+				assert.Empty(savedState(t, st, source).Conversations)
+				return
+			}
+			require.NoError(os.WriteFile(filepath.Join(opts.AttachmentsDir, "blocked"), []byte("file"), 0600))
+			dir := opts.AttachmentsDir
+			opts.AttachmentsDir = filepath.Join(dir, "blocked")
+			_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+			require.Error(err, "local storage failures stop the sync")
+			opts.AttachmentsDir = dir
+			_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
+			require.NoError(err)
+			_, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), dir)
+			assert.Equal([]string{"synthetic recording A bytes"}, payloads)
+			assert.Empty(savedState(t, st, source).Conversations)
+		})
+	}
+}
+
+func TestStreamOversizeRetainsMimeAndSizeEvidence(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	media := newMediaRefreshServer(t)
+	router := newChatwootMediaRouter(t, media.server)
+	message := contractMessage(901, now().Unix(), nil)
+	message["attachments"] = []any{map[string]any{"id": int64(2001), "file_type": "image", "file_size": int64(1), "data_url": router.url(t, media.server, "/recording-a.ogg")}}
+	api := newContractAPI(t, 1000, []map[string]any{message})
+	api.mediaRouter = router
+	st := testutil.NewTestStore(t)
+	imp, _ := contractRegister(t, st, api)
+	opts := mediaRefreshOptions(t)
+	opts.Policy.MaxBytes = 8
+	for range 2 {
+		_, err := imp.Import(t.Context(), opts)
+		require.NoError(err)
+		refs, err := st.MessageChatwootAttachments(contractArchivedMessageID(t, st, "901"))
+		require.NoError(err)
+		for _, ref := range refs {
+			assert.Equal(attachmentpolicy.SkipSizeCap, ref.SkipReason)
+			assert.Equal("audio/ogg", ref.MimeType)
+			assert.Greater(ref.Size, 8)
+		}
+		opts.Full = true
+	}
+	assert.Equal(1, media.requestCount("/recording-a.ogg"))
+	opts.Policy.MaxBytes = 4096
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	_, payloads := readMediaRefreshBytes(t, st, contractArchivedMessageID(t, st, "901"), opts.AttachmentsDir)
+	assert.Equal([]string{"synthetic recording A bytes"}, payloads)
 }

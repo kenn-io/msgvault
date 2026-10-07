@@ -70,8 +70,9 @@ Contacts without an email address retain their phone or provider identity.
 
 Media downloads are enabled by default, with a 250 MiB cap per attachment.
 Set `media = false` for metadata and existing transcripts only, or use
-`sync-chatwoot --no-media` for one run; files it skipped are fetched by a later
-`--full`. Location and fallback attachments can
+`sync-chatwoot --no-media` to defer downloads for one run. Eligible recent files
+retry during normal syncs for seven days; older files need `--full`.
+Location and fallback attachments can
 contain metadata without downloadable files. Source access, unavailable files,
 size limits, and download failures can leave metadata without stored bytes.
 Failed downloads retry during later syncs for seven days.
@@ -85,7 +86,8 @@ msgvault sync-chatwoot support --inbox 7 --limit 100
 msgvault sync-chatwoot support --full
 ```
 
-`--limit` bounds messages handled per conversation in this run. Unfinished
+`--limit` bounds history messages per conversation in this run. Pending media
+and call refreshes run additionally. Unfinished
 history resumes on the next run, including a full reconciliation interrupted
 by the limit. `--full` rereads every conversation's history in place, which
 also picks up edits to messages that are already archived; later full runs
@@ -119,11 +121,13 @@ new conversations take turns, so a long history can't hold up newer ones.
 A recording or transcript can arrive after a call or voice note without
 updating the conversation's activity. msgvault rechecks every call, and audio
 still waiting for a transcript, for seven days after the message, then stops.
-Files that are stored or skipped are not rechecked.
+Stored files and account-policy skips leave the file refresh list.
 
 Every 24 hours by default, a reconcile lists every conversation. It rereads the
-whole history of each conversation active since the previous reconcile, which
-catches messages that were saved out of order, and reads any other
+whole history of each conversation updated since the previous reconcile began.
+Chatwoot's commit-time `updated_at` catches messages saved out of order even
+when their creation times move activity backward. Missing update evidence causes
+a conservative reread. Reconcile also reads any other
 conversation whose newest message is missing from the archive. History of
 quiet conversations that is already archived is reread only by `--full`.
 

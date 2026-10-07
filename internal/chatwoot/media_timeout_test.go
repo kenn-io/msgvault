@@ -55,7 +55,7 @@ func TestClientMediaReadSpansSeveralSyntheticTimeoutIntervals(t *testing.T) {
 		var receivedLimit int64
 		client.mediaTransferTimeout = func(size int64) time.Duration {
 			receivedLimit = size
-			return mediaTimeoutForRate(size, 1, 75*time.Millisecond)
+			return time.Duration(size) * time.Second
 		}
 
 		body, _, _, err := client.OpenMedia(t.Context(), "http://media.chatwoot.example/slow-audio", maxBytes)

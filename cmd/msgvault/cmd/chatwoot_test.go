@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -51,8 +52,8 @@ func TestChatwootOptionsPreserveSourcePolicies(t *testing.T) {
 	assert.Equal(int64(7), opts.InboxID)
 	assert.Equal([]int64{201}, opts.SelfAgentIDs)
 	assert.False(opts.IncludePrivate)
-	assert.False(opts.Media)
-	assert.Equal(int64(3<<20), opts.MaxMediaBytes)
+	assert.Equal(attachmentpolicy.SkipAccountPolicy, opts.Policy.DisabledReason)
+	assert.Equal(int64(3<<20), opts.Policy.MaxBytes)
 	assert.Equal(2*time.Hour, opts.ReconcileInterval)
 	assert.Equal(cfg.AttachmentsDir(), opts.AttachmentsDir)
 }

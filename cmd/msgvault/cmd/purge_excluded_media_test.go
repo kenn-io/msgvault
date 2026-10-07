@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -323,4 +324,42 @@ func TestPurgeExcludedMediaRetainsUnresolvedRostersUnderParticipantLimit(t *test
 	assert.Contains(output, "Would exclude 3 stored attachment occurrence(s)")
 	assert.Contains(output, "participant_threshold: 3")
 	assert.NotContains(output, "left in place")
+}
+
+func TestChatwootPurgeResolvesExcludedInboxesAndSharedMeetings(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newPurgeMediaFixture(t)
+	disabled := false
+	f.config.Chatwoot = []config.ChatwootSource{
+		{Identifier: "renamed", URL: "https://chatwoot.example.com/", AccountID: 9, ExcludeInboxes: []int64{8}, Media: &disabled},
+		{Identifier: "other", URL: "https://chatwoot.example.com", AccountID: 10},
+	}
+	for _, item := range []struct {
+		attachment, account int64
+		kind                string
+	}{{f.excludedID, 9, "chatwoot"}, {f.retainedID, 10, "meeting_transcript"}} {
+		source, err := f.store.GetOrCreateSource(chatwoot.SourceType, chatwoot.SourceIdentifier("https://chatwoot.example.com", item.account, 8))
+		require.NoError(err)
+		_, err = f.store.DB().Exec(f.store.Rebind(`UPDATE messages SET source_id = ?, message_type = ? WHERE id = (SELECT message_id FROM attachments WHERE id = ?)`), source.ID, item.kind, item.attachment)
+		require.NoError(err)
+	}
+	for _, invalid := range []string{"https://chatwoot.example.com/accounts/9/inboxes/08", "https://chatwoot.example.com/accounts/99/inboxes/8"} {
+		_, ok := mediaPolicyForSource(f.config, chatwoot.SourceType, invalid)
+		assert.False(ok)
+	}
+	run := func() {
+		command := newPurgeExcludedMediaLocalCmd(f.deps())
+		command.SetOut(&bytes.Buffer{})
+		command.SetErr(&bytes.Buffer{})
+		command.SetArgs([]string{"--yes"})
+		require.NoError(command.Execute())
+	}
+	run()
+	assert.Equal(attachmentpolicy.StateSkipped, f.state(t, f.excludedID))
+	assert.Equal(attachmentpolicy.StateStored, f.state(t, f.retainedID))
+	assert.FileExists(f.fullPath)
+	f.config.Chatwoot[1].Media = &disabled
+	run()
+	assert.Equal(attachmentpolicy.StateSkipped, f.state(t, f.retainedID))
+	assert.NoFileExists(f.fullPath)
 }

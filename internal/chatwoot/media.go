@@ -5,11 +5,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
-	"math"
 	"net/url"
-	"os"
 	"path"
 	"slices"
 	"strconv"
@@ -20,7 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-var errMediaTooLarge = errors.New("chatwoot media exceeds configured size cap")
+var errMediaFetch = errors.New("read Chatwoot media failed")
 
 func attachmentKey(a Attachment, index int) string {
 	if a.ID < 0 {
@@ -103,6 +100,12 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 		maxInt := int64(^uint(0) >> 1)
 		ref := store.AttachmentRef{Filename: filename, MimeType: a.ContentType, SourceAttachmentID: key, SourcePartKey: key, StoragePath: key, Size: int(min(max(a.FileSize, 0), maxInt)), MediaType: a.FileType, Width: int64(a.Width), Height: int64(a.Height), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, State: attachmentpolicy.StatePending}
 		previous, hadPrevious := existing[key]
+		if previous.SkipReason == attachmentpolicy.SkipSizeCap && storedMediaIdentity(previous) == currentURL {
+			ref.Size = max(ref.Size, previous.Size)
+			if ref.MimeType == "" {
+				ref.MimeType = previous.MimeType
+			}
+		}
 		// A live call recording can later appear as a provider attachment. Keep
 		// its stored bytes across occurrence IDs while retaining current metadata.
 		if currentURL != "" && (previous.ContentHash == "" || storedMediaIdentity(previous) != currentURL) {
@@ -128,46 +131,48 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 			storedURL = storedMediaIdentity(previous)
 		}
 		unchanged := stored && (remote == "" || currentURL == storedURL)
-		maxBytes := opts.MaxMediaBytes
+		maxBytes := opts.Policy.MaxBytes
 		if maxBytes <= 0 {
 			maxBytes = attachmentpolicy.DefaultChatMaxBytes
 		}
+		reason := opts.Policy.Evaluate(attachmentpolicy.Conversation{}, int64(ref.Size))
 		switch {
 		case unchanged:
 			ref.State = attachmentpolicy.StateStored
-		case !opts.Media:
+		case reason != "":
 			ref.State = attachmentpolicy.StateSkipped
-			ref.SkipReason = attachmentpolicy.SkipAccountPolicy
-		case a.FileSize > maxBytes:
-			ref.State = attachmentpolicy.StateSkipped
-			ref.SkipReason = attachmentpolicy.SkipSizeCap
+			ref.SkipReason = reason
+		case opts.NoMedia && a.FileType != "location":
+			waiting = true
 		case a.FileType != "location" && remote == "":
 			waiting = true
 		case a.FileType == "location" || opts.AttachmentsDir == "":
 		default:
 			storage, hash, size, mimeType, fetchErr := imp.downloadMedia(ctx, remote, opts.AttachmentsDir, maxBytes, ref.MimeType)
+			ref.MimeType = mimeType
 			if fetchErr == nil {
 				ref.StoragePath = storage
 				ref.ContentHash = hash
 				ref.Size = size
-				ref.MimeType = mimeType
 				ref.State = attachmentpolicy.StateStored
 				storedURL = currentURL
 			} else {
 				if ctx.Err() != nil {
 					return false, false, ctx.Err()
 				}
-				if errors.Is(fetchErr, errMediaTooLarge) {
+				if errors.Is(fetchErr, export.ErrAttachmentTooLarge) {
 					ref.State = attachmentpolicy.StateSkipped
 					ref.SkipReason = attachmentpolicy.SkipSizeCap
 					if !stored {
 						ref.Size = attachmentpolicy.OversizeMarkerSize(maxBytes, int64(ref.Size))
 					}
-				} else {
+				} else if errors.Is(fetchErr, errMediaFetch) {
 					ref.State = attachmentpolicy.StateFailed
 					ref.SkipReason = attachmentpolicy.SkipFetchFailure
 					sum.MediaFailures++
 					failed = true
+				} else {
+					return false, false, fetchErr
 				}
 				// Retain the successful URL separately from current evidence. Otherwise a
 				// failed replacement would falsely appear downloaded on the next sync.
@@ -202,38 +207,21 @@ func (imp *Importer) persistMedia(ctx context.Context, messageID int64, attachme
 }
 
 func (imp *Importer) downloadMedia(ctx context.Context, remote, dir string, maxBytes int64, mimeType string) (string, string, int, string, error) {
-	if maxBytes == math.MaxInt64 {
-		maxBytes--
-	}
 	body, length, reportedType, err := imp.client.OpenMedia(ctx, remote, maxBytes)
 	if err != nil {
-		return "", "", 0, mimeType, err
+		return "", "", 0, mimeType, errMediaFetch
 	}
 	defer func() { _ = body.Close() }()
-	if length > maxBytes {
-		return "", "", 0, mimeType, errMediaTooLarge
-	}
-	file, err := os.CreateTemp("", "msgvault-chatwoot-media-*")
-	if err != nil {
-		return "", "", 0, mimeType, err
-	}
-	defer func() { _ = file.Close(); _ = os.Remove(file.Name()) }()
-	n, err := io.Copy(file, io.LimitReader(body, maxBytes+1))
-	if err != nil {
-		return "", "", 0, mimeType, errors.New("read Chatwoot media failed")
-	}
-	if n > maxBytes {
-		return "", "", 0, mimeType, errMediaTooLarge
-	}
-	if err = ctx.Err(); err != nil {
-		return "", "", 0, mimeType, err
-	}
-	if err = file.Close(); err != nil {
-		return "", "", 0, mimeType, err
-	}
-	storage, hash, size, err := export.StoreAttachmentFromPath(dir, file.Name(), maxBytes)
 	if mimeType == "" {
 		mimeType = strings.Split(reportedType, ";")[0]
+	}
+	if length > maxBytes {
+		return "", "", 0, mimeType, export.ErrAttachmentTooLarge
+	}
+	source := &export.SourceReader{R: body}
+	storage, hash, size, err := export.StoreAttachmentStream(ctx, dir, source, maxBytes)
+	if err != nil && source.Err != nil {
+		err = errMediaFetch
 	}
 	return storage, hash, int(size), mimeType, err
 }

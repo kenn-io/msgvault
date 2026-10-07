@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -312,7 +313,7 @@ func TestImportContractLateAudioTranscriptAndCredentialFreeCAS(t *testing.T) {
 	api.mediaRouter = router
 	st := testutil.NewTestStore(t)
 	importer, _ := contractRegister(t, st, api)
-	opts := ImportOptions{InboxID: 7, IncludePrivate: true, Media: true, MaxMediaBytes: 1024, AttachmentsDir: t.TempDir()}
+	opts := ImportOptions{InboxID: 7, IncludePrivate: true, Policy: attachmentpolicy.Policy{MaxBytes: 1024}, AttachmentsDir: t.TempDir()}
 	_, err := importer.Import(t.Context(), opts)
 	require.NoError(err)
 	id := contractArchivedMessageID(t, st, "301")
@@ -393,7 +394,7 @@ func TestImportContractMetadataOnlyAndUnknownAttachmentTypes(t *testing.T) {
 	api := newContractAPI(t, 2, []map[string]any{message})
 	st := testutil.NewTestStore(t)
 	importer, _ := contractRegister(t, st, api)
-	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true, Media: true, AttachmentsDir: t.TempDir()})
+	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true, AttachmentsDir: t.TempDir()})
 	require.NoError(err)
 	id := contractArchivedMessageID(t, st, "601")
 	rows, err := st.DB().Query(st.Rebind(`SELECT COALESCE(mime_type, ''), COALESCE(content_hash, ''), attachment_metadata FROM attachments WHERE message_id = ? ORDER BY source_attachment_id`), id)

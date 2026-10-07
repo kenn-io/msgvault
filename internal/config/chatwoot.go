@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/chatwoot"
 )
 
@@ -31,12 +32,8 @@ type ChatwootSource struct {
 }
 
 func (s ChatwootSource) PrivateIncluded() bool { return s.IncludePrivate == nil || *s.IncludePrivate }
-func (s ChatwootSource) MediaEnabled() bool    { return s.Media == nil || *s.Media }
-func (s ChatwootSource) MaxMediaBytes() int64 {
-	if s.MaxMediaMB == 0 {
-		return DefaultChatMaxMediaBytes
-	}
-	return s.MaxMediaMB << 20
+func (s ChatwootSource) MediaPolicy() attachmentpolicy.Policy {
+	return resolveMediaPolicy(nil, "", 0, int(s.MaxMediaMB), attachmentpolicy.DefaultChatMaxBytes, MediaAccountConfig{Media: s.Media}, true)
 }
 func (s ChatwootSource) ReconcileInterval() time.Duration {
 	if s.ReconcileIntervalHours == 0 {

@@ -130,7 +130,7 @@ func resolveChatwootSyncInboxes(st *store.Store, src config.ChatwootSource, requ
 func chatwootImportOptions(src config.ChatwootSource, inboxID int64, cfg *config.Config) chatwoot.ImportOptions {
 	return chatwoot.ImportOptions{
 		InboxID: inboxID, SelfAgentIDs: src.SelfAgentIDs, IncludePrivate: src.PrivateIncluded(),
-		ReconcileInterval: src.ReconcileInterval(), Media: src.MediaEnabled(), MaxMediaBytes: src.MaxMediaBytes(),
+		ReconcileInterval: src.ReconcileInterval(), Policy: src.MediaPolicy(),
 		AttachmentsDir: cfg.AttachmentsDir(),
 	}
 }
@@ -153,7 +153,7 @@ func importChatwootProfile(ctx context.Context, st *store.Store, src config.Chat
 			break
 		}
 		opts := chatwootImportOptions(src, id, cfg)
-		opts.Limit, opts.Full, opts.Media = run.Limit, run.Full, opts.Media && !run.NoMedia
+		opts.Limit, opts.Full, opts.NoMedia = run.Limit, run.Full, run.NoMedia
 		got, err := imp.Import(ctx, opts)
 		if got != nil {
 			sum.Sources += got.Sources
@@ -299,9 +299,9 @@ func newSyncChatwootCmd() *cobra.Command {
 			return errors.Join(errs...)
 		}}
 	cmd.Flags().Int64SliceVar(&run.Inboxes, "inbox", nil, "inbox ID to sync (repeatable; default: included registered inboxes)")
-	cmd.Flags().IntVar(&run.Limit, "limit", 0, "max messages per conversation this run (0 = no limit)")
+	cmd.Flags().IntVar(&run.Limit, "limit", 0, "max history messages per conversation this run; artifact refreshes are additional (0 = no limit)")
 	cmd.Flags().BoolVar(&run.Full, "full", false, "reread all history and update existing rows in place")
-	cmd.Flags().BoolVar(&run.NoMedia, "no-media", false, "skip attachment downloads this run")
+	cmd.Flags().BoolVar(&run.NoMedia, "no-media", false, "defer attachment downloads this run; recent files retry on later syncs")
 	return cmd
 }
 

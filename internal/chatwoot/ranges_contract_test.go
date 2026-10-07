@@ -37,6 +37,8 @@ type contractAPI struct {
 	contact             map[string]any
 	assignee            map[string]any
 	requests            []string
+	updatedAt           map[int64]float64
+	activityAt          map[int64]int64
 	mediaRouter         *chatwootMediaRouter
 }
 
@@ -44,12 +46,13 @@ type contractAPI struct {
 func newContractAPI(t *testing.T, pageCap int, messages []map[string]any) *contractAPI {
 	t.Helper()
 	api := &contractAPI{
-		conversations: map[int64][]map[string]any{}, pageSize: 25, cap: pageCap,
+		conversations: map[int64][]map[string]any{}, updatedAt: map[int64]float64{}, activityAt: map[int64]int64{}, pageSize: 25, cap: pageCap,
 		contact:  map[string]any{"id": int64(7), "type": "contact", "name": "Example Contact", "phone_number": "+12025550101"},
 		assignee: map[string]any{"id": int64(99), "type": "user", "name": "Example Assignee"},
 	}
 	if messages != nil {
 		api.conversations[42] = messages
+		api.updatedAt[42] = float64(now().Unix())
 	}
 	api.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		api.mu.Lock()
@@ -128,6 +131,9 @@ func fixtureInt(message map[string]any, key string) int64 {
 }
 
 func (api *contractAPI) activity(id int64) int64 {
+	if value, ok := api.activityAt[id]; ok {
+		return value
+	}
 	activity := int64(1767225500)
 	for _, message := range api.conversations[id] {
 		activity = max(activity, fixtureInt(message, "created_at"))
@@ -153,11 +159,15 @@ func (api *contractAPI) conversation(id int64) map[string]any {
 	if newest != nil {
 		private["id"] = newest["id"]
 	}
-	return map[string]any{
-		"id": id, "account_id": 3, "inbox_id": inboxID, "status": "resolved", "created_at": int64(1767225500), "updated_at": float64(1767225600), "last_activity_at": api.activity(id),
+	result := map[string]any{
+		"id": id, "account_id": 3, "inbox_id": inboxID, "status": "resolved", "created_at": int64(1767225500), "updated_at": api.updatedAt[id], "last_activity_at": api.activity(id),
 		"meta":     map[string]any{"sender": api.contact, "assignee": api.assignee},
 		"messages": []any{private}, "last_non_activity_message": private,
 	}
+	if _, ok := api.updatedAt[id]; !ok {
+		delete(result, "updated_at")
+	}
+	return result
 }
 
 func (api *contractAPI) addMessage(conversationID, messageID int64, at time.Time, attachments ...map[string]any) {
@@ -168,6 +178,7 @@ func (api *contractAPI) addMessage(conversationID, messageID int64, at time.Time
 	if len(attachments) > 0 {
 		message["attachments"] = attachments
 	}
+	api.updatedAt[conversationID] = float64(now().Unix())
 	api.conversations[conversationID] = append(api.conversations[conversationID], message)
 }
 
@@ -306,4 +317,57 @@ func TestImportContractRejectsIgnoredRangeBoundsWithoutPoisoningResume(t *testin
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
 	require.NoError(err)
 	assert.Equal([]int64{101, 102}, contractMessageIDs(t, st))
+}
+
+func TestOversizedResponsesSplitAndResume(t *testing.T) {
+	for _, artifact := range []bool{false, true} {
+		t.Run(strconv.FormatBool(artifact), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			api := newContractAPI(t, 1000, nil)
+			for id := int64(100); id < 360; id++ {
+				api.addMessage(1, id, now())
+			}
+			st := testutil.NewTestStore(t)
+			imp, source := contractRegister(t, st, api)
+			opts := ImportOptions{InboxID: 7}
+			if artifact {
+				for _, m := range api.conversations[1] {
+					m["attachments"] = []any{map[string]any{"id": m["id"], "file_type": "audio"}}
+				}
+				_, err := imp.Import(t.Context(), opts)
+				require.NoError(err)
+			}
+			for _, m := range api.conversations[1] {
+				m["content"] = strings.Repeat("x", 150000)
+				delete(m, "attachments")
+			}
+			imp.requestBudget = 8
+			sum, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+			require.True(sum.Partial)
+			require.NotEmpty(savedState(t, st, source).Conversations)
+			for range 60 {
+				restarted := NewImporter(st, api.client(t))
+				restarted.requestBudget = 20
+				sum, err = restarted.Import(t.Context(), opts)
+				require.NoError(err)
+				if !sum.Partial {
+					break
+				}
+			}
+			assert.False(sum.Partial)
+			assert.Len(contractMessageIDs(t, st), 260)
+		})
+	}
+}
+
+func TestOversizedSingleMessageFailsClearly(t *testing.T) {
+	api := newContractAPI(t, 1000, nil)
+	api.addMessage(1, 101, now())
+	api.conversations[1][0]["content"] = strings.Repeat("x", maxAPIBytes)
+	st := testutil.NewTestStore(t)
+	imp, _ := contractRegister(t, st, api)
+	_, err := imp.Import(t.Context(), ImportOptions{InboxID: 7})
+	require.ErrorIs(t, err, ErrResponseTooLarge)
+	assert.Contains(t, err.Error(), "single message")
 }

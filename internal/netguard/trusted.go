@@ -53,10 +53,7 @@ func ValidateTrustedDestination(origin *url.URL, addresses []netip.Addr) (*url.U
 		if address.Zone() != "" {
 			return nil, nil, fmt.Errorf("trusted_addresses: address %s must not include a zone", address)
 		}
-		allowed := slices.ContainsFunc(explicitPrivatePrefixes, func(prefix netip.Prefix) bool {
-			return prefix.Contains(address)
-		})
-		if !allowed {
+		if !ExplicitPrivateAddress(address) {
 			return nil, nil, fmt.Errorf("trusted_addresses: address %s is not in an allowed private range", address)
 		}
 		if slices.Contains(validated, address) {

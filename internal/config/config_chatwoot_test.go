@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"math"
 	"os"
 	"path/filepath"
@@ -51,8 +52,8 @@ api_key_env="EXAMPLE_CHATWOOT_TOKEN"
 	assert.Equal("https://chatwoot.example.com/support", first.URL)
 	assert.Equal("MSGVAULT_CHATWOOT_TOKEN", first.APIKeyEnv)
 	assert.True(first.PrivateIncluded())
-	assert.True(first.MediaEnabled())
-	assert.Equal(int64(250<<20), first.MaxMediaBytes())
+	assert.Empty(first.MediaPolicy().DisabledReason)
+	assert.Equal(int64(250<<20), first.MediaPolicy().MaxBytes)
 	assert.Equal(24*time.Hour, first.ReconcileInterval())
 	assert.True(first.InboxIncluded(7))
 	assert.False(first.InboxIncluded(8))
@@ -63,8 +64,8 @@ api_key_env="EXAMPLE_CHATWOOT_TOKEN"
 	assert.Equal([]ChatwootSource{first}, got.ScheduledChatwootSources())
 	second := got.Chatwoot[1]
 	assert.False(second.PrivateIncluded())
-	assert.False(second.MediaEnabled())
-	assert.Equal(int64(3<<20), second.MaxMediaBytes())
+	assert.Equal(attachmentpolicy.SkipAccountPolicy, second.MediaPolicy().DisabledReason)
+	assert.Equal(int64(3<<20), second.MediaPolicy().MaxBytes)
 	assert.Equal(2*time.Hour, second.ReconcileInterval())
 	assert.True(second.InboxIncluded(99))
 }

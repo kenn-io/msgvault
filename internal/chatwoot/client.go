@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/netguard"
 	"golang.org/x/time/rate"
@@ -23,13 +23,12 @@ import (
 const maxAPIBytes = 32 << 20
 
 const (
-	maxMediaRedirects         = 10
-	maxMediaURLBytes          = 4096
-	mediaBytesPerSecond int64 = 128 << 10
-	minimumMediaTimeout       = 10 * time.Minute
+	maxMediaRedirects = 10
+	maxMediaURLBytes  = 4096
 )
 
 var ErrNotFound = errors.New("chatwoot object not found")
+var ErrResponseTooLarge = errors.New("chatwoot API response exceeds 32 MiB; a single message must fit within this limit")
 
 // Client has separate authenticated API and credential-free media transports.
 type Client struct {
@@ -45,29 +44,6 @@ type Client struct {
 	// messageRangeCap is the most messages Chatwoot returns for one bounded
 	// range (MessageFinder#messages_between).
 	messageRangeCap int
-}
-
-// mediaTimeout scales one attachment's deadline with its configured size cap.
-// The minimum avoids starving small files; the transfer-rate floor gives large
-// recordings room on slow links while keeping scheduled syncs bounded.
-func mediaTimeout(maxBytes int64) time.Duration {
-	return mediaTimeoutForRate(maxBytes, mediaBytesPerSecond, minimumMediaTimeout)
-}
-
-func mediaTimeoutForRate(maxBytes, bytesPerSecond int64, minimum time.Duration) time.Duration {
-	if maxBytes <= 0 || bytesPerSecond <= 0 {
-		return minimum
-	}
-	seconds := maxBytes / bytesPerSecond
-	maxSeconds := int64(math.MaxInt64) / int64(time.Second)
-	if seconds > maxSeconds {
-		return time.Duration(math.MaxInt64)
-	}
-	scaled := time.Duration(seconds) * time.Second
-	if scaled < minimum {
-		return minimum
-	}
-	return scaled
 }
 
 func CanonicalURL(raw string) (string, error) {
@@ -148,7 +124,7 @@ func NewClient(baseURL string, accountID int64, token string) (*Client, error) {
 		lookupMediaIP: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		},
-		dialMedia: dialer.DialContext, mediaTransferTimeout: mediaTimeout, messageRangeCap: 1000,
+		dialMedia: dialer.DialContext, mediaTransferTimeout: attachmentpolicy.DownloadTimeout, messageRangeCap: 1000,
 	}, nil
 }
 
@@ -180,7 +156,7 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 			return safeHTTPError(ctx, "close Chatwoot API response", closeErr)
 		}
 		if len(body) > maxAPIBytes {
-			return errors.New("chatwoot API response exceeds 32 MiB")
+			return ErrResponseTooLarge
 		}
 		if resp.StatusCode == http.StatusOK {
 			if err := json.Unmarshal(body, out); err != nil {
@@ -434,7 +410,7 @@ func (body *cancelReadCloser) Close() error {
 }
 
 func (c *Client) OpenMedia(ctx context.Context, rawURL string, maxBytes int64) (io.ReadCloser, int64, string, error) {
-	timeout := mediaTimeout
+	timeout := attachmentpolicy.DownloadTimeout
 	if c.mediaTransferTimeout != nil {
 		timeout = c.mediaTransferTimeout
 	}

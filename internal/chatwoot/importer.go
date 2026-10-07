@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/callsync"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -18,8 +20,8 @@ type ImportOptions struct {
 	Limit             int
 	Full              bool
 	ReconcileInterval time.Duration
-	Media             bool
-	MaxMediaBytes     int64
+	Policy            attachmentpolicy.Policy
+	NoMedia           bool
 	AttachmentsDir    string
 }
 
@@ -56,7 +58,7 @@ const (
 	openBound = math.MaxInt32
 	// artifactWindow bounds how long a recording, transcript or failed
 	// download is rechecked. Chatwoot updates them without new activity.
-	artifactWindow = 7 * 24 * time.Hour
+	artifactWindow = callsync.LateArtifactWindow
 	// walkQueueLimit is how many conversations a listing queues before they are
 	// processed, which keeps the checkpoint small.
 	walkQueueLimit  = 100
@@ -134,7 +136,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if imp == nil || imp.store == nil || imp.client == nil {
 		return nil, errors.New("chatwoot importer unavailable")
 	}
-	if opts.InboxID <= 0 || opts.Limit < 0 || opts.MaxMediaBytes < 0 {
+	if opts.InboxID <= 0 || opts.Limit < 0 || opts.Policy.Validate() != nil {
 		return nil, errors.New("invalid Chatwoot import options")
 	}
 	for _, id := range opts.SelfAgentIDs {
@@ -387,9 +389,9 @@ func (imp *Importer) enqueue(ctx context.Context, sourceID int64, state *syncSta
 	}
 	// Messages written concurrently can commit out of ID order, so a read can
 	// miss one on either side of the archived head. Reconcile rereads the whole
-	// history of each conversation active since the last one.
+	// history of each conversation updated since the last one.
 	switch {
-	case walk == walkFull || (walk == walkReconcile && c.LastActivityAt >= state.ReconciledAt.Add(-activityOverlap).Unix()):
+	case walk == walkFull || (walk == walkReconcile && (c.UpdatedAt <= 0 || math.IsNaN(c.UpdatedAt) || math.IsInf(c.UpdatedAt, 0) || c.UpdatedAt >= float64(state.ReconciledAt.Add(-activityOverlap).Unix()))):
 		cs.Pending = []idRange{{1, openBound}}
 	case len(cs.Pending) > 0:
 	default:
@@ -517,6 +519,21 @@ func (imp *Importer) processConversation(ctx context.Context, sourceID, syncID i
 			clear(cs.Artifacts)
 			return nil
 		}
+		if errors.Is(err, ErrResponseTooLarge) && !single {
+			for _, id := range artifactIDs {
+				if *requests >= budget {
+					sum.Partial = true
+					return nil
+				}
+				if err = imp.refreshArtifact(ctx, sourceID, c, cs, id, opts, sum, requests); err != nil {
+					return err
+				}
+				if err = imp.checkpoint(ctx, syncID, state, sum); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -631,6 +648,17 @@ func (imp *Importer) walkConversation(ctx context.Context, sourceID, syncID int6
 		r := cs.Pending[0]
 		*requests++
 		messages, err := imp.client.ListMessages(ctx, c.ID, r.After, r.Before)
+		if errors.Is(err, ErrResponseTooLarge) && r.Before-r.After > 1 {
+			middle := r.After + (r.Before-r.After)/2
+			if c.LastMessageID >= r.After && c.LastMessageID < r.Before-1 {
+				middle = c.LastMessageID + 1
+			}
+			cs.Pending = append([]idRange{{r.After, middle}, {middle, r.Before}}, cs.Pending[1:]...)
+			if err = imp.checkpoint(ctx, syncID, state, sum); err != nil {
+				return err
+			}
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -645,6 +673,9 @@ func (imp *Importer) walkConversation(ctx context.Context, sourceID, syncID int6
 			continue
 		}
 		if !imp.boundsProbed {
+			if *requests+2 > budget {
+				return nil
+			}
 			id := messages[0].ID
 			exact, probeErr := imp.client.ListMessages(ctx, c.ID, id, id+1)
 			*requests++
