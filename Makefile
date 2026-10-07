@@ -372,10 +372,12 @@ lint-tools:
 
 # Build golangci-lint with the plugins in .custom-gcl.yml into the
 # repository-owned tool path. Strip repo-local Git variables so a build run
-# from the commit hook does not inherit GIT_DIR.
+# from the commit hook does not inherit GIT_DIR. An existing binary is reused
+# while it is newer than .custom-gcl.yml and reports GOLANGCI_LINT_VERSION.
 custom-gcl: lint-tools
-	@mkdir -p "$(CI_TOOLS_BIN)"
-	@unset_args=$$(git rev-parse --local-env-vars 2>/dev/null | sed 's/^/-u /' | tr '\n' ' '); \
+	@if [ -x "$(CUSTOM_GCL_BIN)" ] && [ "$(CUSTOM_GCL_BIN)" -nt .custom-gcl.yml ]; then case "$$("$(CUSTOM_GCL_BIN)" version --short 2>/dev/null)" in "$(GOLANGCI_LINT_VERSION)"-custom-gcl-*) exit 0;; esac; fi; \
+	mkdir -p "$(CI_TOOLS_BIN)"; \
+	unset_args=$$(git rev-parse --local-env-vars 2>/dev/null | sed 's/^/-u /' | tr '\n' ' '); \
 	env $$unset_args GOFLAGS=-buildvcs=false "$(GOLANGCI_LINT_BIN)" custom \
 		--destination "$(CI_TOOLS_BIN)" --name custom-gcl \
 		--version "$(GOLANGCI_LINT_VERSION)"
