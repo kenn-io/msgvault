@@ -364,6 +364,29 @@ type SynctechSMSSource struct {
 	OAuthApp           string `toml:"oauth_app"`
 }
 
+// WhatsAppAppleSource schedules the import of the native macOS WhatsApp
+// store (ChatStorage.sqlite) by the daemon ([[whatsapp_apple]] entries).
+type WhatsAppAppleSource struct {
+	Name        string `toml:"name"`
+	Enabled     bool   `toml:"enabled"`
+	Path        string `toml:"path"`  // ChatStorage.sqlite; default: the macOS group container
+	Phone       string `toml:"phone"` // own number, E.164
+	DisplayName string `toml:"display_name"`
+	Schedule    string `toml:"schedule"`
+}
+
+// IMessageConfig schedules the import of the local macOS Messages store
+// (chat.db) by the daemon ([imessage] table).
+type IMessageConfig struct {
+	Enabled  bool   `toml:"enabled"`
+	Schedule string `toml:"schedule"`
+	DBPath   string `toml:"db_path"` // default: ~/Library/Messages/chat.db
+	// Window limits each scheduled run to messages newer than this duration
+	// (Go duration, e.g. "48h"). Empty reads the whole store.
+	Window string `toml:"window"`
+	Me     string `toml:"me"` // own phone/email for sender attribution
+}
+
 // RemoteConfig holds configuration for a remote msgvault server.
 // Remote-capable commands use this destination unless --local is selected.
 type RemoteConfig struct {
@@ -510,6 +533,8 @@ type Config struct {
 	CardDAVConnections map[string]CardDAVConfig        `toml:"carddav_connections,omitempty"`
 	Accounts           []AccountSchedule               `toml:"accounts"`
 	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
+	WhatsAppApple      []WhatsAppAppleSource           `toml:"whatsapp_apple"`
+	IMessage           IMessageConfig                  `toml:"imessage"`
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
@@ -2221,6 +2246,18 @@ func (c *Config) GetSynctechSMSSource(name string) *SynctechSMSSource {
 		}
 	}
 	return nil
+}
+
+// ScheduledWhatsAppAppleSources returns the enabled [[whatsapp_apple]]
+// entries that have a schedule.
+func (c *Config) ScheduledWhatsAppAppleSources() []WhatsAppAppleSource {
+	var out []WhatsAppAppleSource
+	for _, src := range c.WhatsAppApple {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
 }
 
 func (c *Config) ScheduledSynctechSMSSources() []SynctechSMSSource {

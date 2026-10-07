@@ -1987,6 +1987,16 @@ Trigger a manual sync for an account. Returns immediately with a 202 status whil
 }
 ```
 
+For sources scheduled as generic jobs (`source_type` set), the body also carries `disposition`:
+
+| Disposition | Meaning |
+|---|---|
+| `started` | The job was idle and a run started. |
+| `queued` | The job was already running; one follow-up run is queued. |
+| `coalesced` | The request was merged into a run still waiting to start or into a follow-up already pending; no additional run was added. |
+
+Repeated triggers never run the job concurrently. A generic-job trigger does not wait on the daemon's operation gate, so it is answered even while a long import of the same job holds it.
+
 ---
 
 ### Scheduler status {#get-apiv1schedulerstatus}
@@ -2034,6 +2044,16 @@ state for every scheduled source as `scheduler_queued`, `scheduler_pending`,
 and `scheduler_started_at`. Compare queued state and the last successful sync
 to detect a source that is waiting too long. Health's `operation.label` names
 the job holding the gate, such as `activity-projection` or `attachment-pack`.
+
+Each sync run also reports `outcome`: `completed`, `unmeasured`, or `failed`.
+A run is `unmeasured` when it could not show that it read a live source, so
+"0 new messages" must not be read as "nothing happened". `reason` names the
+cause: `fda_denied` (macOS Full Disk Access missing), `source_missing`, or
+`writer_not_running` (WhatsApp for Mac was closed during the read).
+`read_started_at` is when the run began reading, and `source_mtime` is the
+newest modification time of the source database or its write-ahead log, so
+it shows how old the data was. `writer_alive` is set for the WhatsApp Mac
+source only.
 
 ---
 

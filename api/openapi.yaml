@@ -13596,16 +13596,26 @@ components:
         messages_updated:
           format: int64
           type: integer
+        outcome:
+          type: string
+        read_started_at:
+          type: string
+        reason:
+          type: string
         skipped_count:
           format: int64
           type: integer
         source_id:
           format: int64
           type: integer
+        source_mtime:
+          type: string
         started_at:
           type: string
         status:
           type: string
+        writer_alive:
+          type: boolean
       required:
         - id
         - source_id
@@ -14223,6 +14233,19 @@ components:
       required:
         - speaker
         - text
+      type: object
+    TriggerSyncResponse:
+      additionalProperties: true
+      properties:
+        disposition:
+          type: string
+        message:
+          type: string
+        status:
+          type: string
+      required:
+        - status
+        - message
       type: object
     UpdateRequest:
       additionalProperties: false
@@ -29701,7 +29724,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StatusMessageResponse"
+                $ref: "#/components/schemas/TriggerSyncResponse"
           description: Accepted
         default:
           content:

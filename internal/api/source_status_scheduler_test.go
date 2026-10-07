@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -66,4 +67,50 @@ func TestHandleSourceStatusReportsQueuedAccountSync(t *testing.T) {
 	assert.True(status.SchedulerQueued, "a sync waiting for another job is visible")
 	assert.False(status.SchedulerPending)
 	assert.Nil(status.SchedulerStartedAt)
+}
+
+func TestHandleSourceStatusReportsRunOutcome(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("whatsapp", "+15555550100")
+	require.NoError(err)
+	readStarted := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	mtime := readStarted.Add(-3 * time.Hour)
+	alive := false
+
+	syncID, err := st.StartSync(src.ID, "whatsapp_apple_import")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(syncID, ""))
+	require.NoError(st.SetSyncMeasurement(t.Context(), syncID, store.SyncMeasurement{
+		ReadStartedAt: &readStarted, SourceMtime: &mtime, WriterAlive: &alive,
+	}.ClassifyOutcome()))
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, newMockScheduler(), testLogger())
+
+	run := sourceStatusFor(t, srv).LatestSync
+	require.NotNil(run)
+	assert.Equal("completed", run.Status)
+	assert.Equal("unmeasured", run.Outcome, "a completed run with a stopped writer is not a zero")
+	assert.Equal("writer_not_running", run.Reason)
+	assert.Equal(readStarted.Format(time.RFC3339), *run.ReadStartedAt)
+	assert.Equal(mtime.Format(time.RFC3339), *run.SourceMtime)
+	require.NotNil(run.WriterAlive)
+	assert.False(*run.WriterAlive)
+}
+
+func TestHandleSourceStatusOutcomeDefaultsToRunStatus(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("gmail", "plain@example.com")
+	require.NoError(err)
+	syncID, err := st.StartSync(src.ID, "")
+	require.NoError(err)
+	require.NoError(st.FailSync(syncID, "boom"))
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, newMockScheduler(), testLogger())
+
+	run := sourceStatusFor(t, srv).LatestSync
+	require.NotNil(run)
+	assert.Equal(t, "failed", run.Outcome)
 }

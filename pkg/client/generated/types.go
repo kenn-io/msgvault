@@ -12918,10 +12918,15 @@ type SyncRunStatus struct {
 	MessagesAdded     int64               `json:"messages_added"`
 	MessagesProcessed int64               `json:"messages_processed"`
 	MessagesUpdated   int64               `json:"messages_updated"`
+	Outcome           *string             `json:"outcome,omitzero"`
+	ReadStartedAt     *string             `json:"read_started_at,omitzero"`
+	Reason            *string             `json:"reason,omitzero"`
 	SkippedCount      *int64              `json:"skipped_count,omitempty"`
 	SourceID          int64               `json:"source_id"`
+	SourceMtime       *string             `json:"source_mtime,omitzero"`
 	StartedAt         string              `json:"started_at" validate:"required"`
 	Status            string              `json:"status" validate:"required"`
+	WriterAlive       *bool               `json:"writer_alive,omitempty"`
 }
 
 func (s SyncRunStatus) Validate() error {
@@ -13446,6 +13451,16 @@ type TranscriptSegment struct {
 }
 
 func (t TranscriptSegment) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TriggerSyncResponse struct {
+	Disposition *string `json:"disposition,omitzero"`
+	Message     string  `json:"message" validate:"required"`
+	Status      string  `json:"status" validate:"required"`
+}
+
+func (t TriggerSyncResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
 }
 

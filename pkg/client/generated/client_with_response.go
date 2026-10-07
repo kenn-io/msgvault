@@ -26146,7 +26146,7 @@ func (c *Client) TriggerSyncWithResponse(ctx context.Context, options *TriggerSy
 
 	switch resp.StatusCode {
 	case 202:
-		out.JSON202 = new(TriggerSyncResponse)
+		out.JSON202 = new(TriggerSyncResponseJSON)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON202); err != nil {
@@ -26154,7 +26154,7 @@ func (c *Client) TriggerSyncWithResponse(ctx context.Context, options *TriggerSy
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "TriggerSyncResponse",
+					TargetType:    "TriggerSyncResponseJSON",
 					Body:          bodyBytes,
 					Err:           err,
 				}

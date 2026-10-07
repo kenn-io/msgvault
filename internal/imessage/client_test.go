@@ -179,3 +179,161 @@ func TestTimestampDetectionWithoutRealPositiveDates(t *testing.T) {
 		require.NoError(c.Close())
 	}
 }
+
+// TestImportFullPageOfRejectedMessagesTerminates guards the importer against
+// refetching a page it could not archive: when every message of a full page
+// fails, the next page must still start after it, each failure is counted as
+// one skip, and the later message is imported.
+func TestImportFullPageOfRejectedMessagesTerminates(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	path, db := newChatDB(t)
+	for i := range 4 {
+		_, err := db.Exec(`INSERT INTO message (date,text) VALUES (?,?)`, int64(1_000_000_000+i), "Synthetic message")
+		require.NoError(err)
+	}
+	c, err := NewClient(path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = c.Close() })
+	c.pageSize = 3
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("apple_messages", "local")
+	require.NoError(err)
+	testutil.RejectMessageInserts(t, st, "1", "2", "3")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	summary, err := c.Import(ctx, st, src.ID)
+
+	require.NoError(err, "a page of rejected messages must not loop until the context ends")
+	assert.Equal(3, summary.Skipped, "each rejected message is one skip")
+	assert.Equal(1, summary.MessagesImported)
+}
+
+// TestReimportCountsOnlyChangedMessagesAsUpdated proves a reimport of an
+// archived message that came out identical is counted as unchanged, and one
+// whose chat.db text changed is counted as updated.
+func TestReimportCountsOnlyChangedMessagesAsUpdated(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	path, db := newChatDB(t)
+	_, err := db.Exec(`INSERT INTO chat (guid, chat_identifier) VALUES ('any;-;synthetic', 'peer@example.test');
+ INSERT INTO message (date, text) VALUES (1000000000, 'first'), (2000000000, 'second');
+ INSERT INTO chat_message_join VALUES (1,1), (1,2);`)
+	require.NoError(err)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("apple_messages", "local")
+	require.NoError(err)
+
+	run := func() *ImportSummary {
+		c, err := NewClient(path)
+		require.NoError(err)
+		defer func() { _ = c.Close() }()
+		summary, err := c.Import(context.Background(), st, src.ID)
+		require.NoError(err)
+		return summary
+	}
+
+	first := run()
+	assert.Equal(2, first.MessagesImported)
+	assert.Zero(first.MessagesUpdated)
+	assert.Zero(first.MessagesUnchanged)
+
+	again := run()
+	assert.Equal(2, again.MessagesImported)
+	assert.Zero(again.MessagesUpdated, "identical rewrites are not updates")
+	assert.Equal(2, again.MessagesUnchanged)
+
+	_, err = db.Exec(`UPDATE message SET text = 'second, edited' WHERE ROWID = 2`)
+	require.NoError(err)
+	edited := run()
+	assert.Equal(1, edited.MessagesUpdated)
+	assert.Equal(1, edited.MessagesUnchanged)
+}
+
+// TestReimportClearsBodyOfMessageThatLostItsText proves a message whose
+// chat.db text and attributed body are both gone has its stored body and its
+// search entry cleared, instead of keeping the old content.
+func TestReimportClearsBodyOfMessageThatLostItsText(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	path, db := newChatDB(t)
+	_, err := db.Exec(`INSERT INTO chat (guid, chat_identifier) VALUES ('any;-;synthetic', 'peer@example.test');
+ INSERT INTO message (date, text) VALUES (1000000000, 'unsendable pangolin');
+ INSERT INTO chat_message_join VALUES (1,1);`)
+	require.NoError(err)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("apple_messages", "local")
+	require.NoError(err)
+
+	run := func() *ImportSummary {
+		c, err := NewClient(path)
+		require.NoError(err)
+		defer func() { _ = c.Close() }()
+		summary, err := c.Import(context.Background(), st, src.ID)
+		require.NoError(err)
+		return summary
+	}
+
+	run()
+	var id int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM messages WHERE source_id = ? AND source_message_id = '1'`), src.ID).Scan(&id))
+	body, err := st.GetMessageBodyText(id)
+	require.NoError(err)
+	require.Equal("unsendable pangolin", body)
+	_, err = st.BackfillFTS(nil)
+	require.NoError(err)
+	hits, _, err := st.SearchMessages("pangolin", 0, 10)
+	require.NoError(err)
+	require.Len(hits, 1)
+
+	_, err = db.Exec(`UPDATE message SET text = NULL, attributedBody = NULL WHERE ROWID = 1`)
+	require.NoError(err)
+	again := run()
+
+	assert.Equal(1, again.MessagesUpdated)
+	body, err = st.GetMessageBodyText(id)
+	require.NoError(err)
+	assert.Empty(body, "the old body must not survive the reimport")
+	hits, _, err = st.SearchMessages("pangolin", 0, 10)
+	require.NoError(err)
+	assert.Empty(hits, "the old body must leave the search index")
+}
+
+// TestReimportCountsUpdateWhenLaterWriteFails proves a message row that was
+// updated before a later write failed is still counted as updated, so the
+// caches that key off the counters are invalidated.
+func TestReimportCountsUpdateWhenLaterWriteFails(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	path, db := newChatDB(t)
+	_, err := db.Exec(`INSERT INTO chat (guid, chat_identifier) VALUES ('any;-;synthetic', 'peer@example.test');
+ INSERT INTO message (date, text) VALUES (1000000000, 'first'), (2000000000, 'second');
+ INSERT INTO chat_message_join VALUES (1,1), (1,2);`)
+	require.NoError(err)
+	st := testutil.NewTestStore(t)
+	if st.IsPostgreSQL() {
+		t.Skip("the failure is injected with a SQLite trigger")
+	}
+	src, err := st.GetOrCreateSource("apple_messages", "local")
+	require.NoError(err)
+
+	run := func() *ImportSummary {
+		c, err := NewClient(path)
+		require.NoError(err)
+		defer func() { _ = c.Close() }()
+		summary, err := c.Import(context.Background(), st, src.ID)
+		require.NoError(err)
+		return summary
+	}
+
+	run()
+	_, err = db.Exec(`UPDATE message SET text = 'second, edited' WHERE ROWID = 2`)
+	require.NoError(err)
+	// Fail the raw-data write that follows the message row update.
+	_, err = st.DB().Exec(`CREATE TRIGGER reject_raw_write BEFORE INSERT ON message_raw
+BEGIN SELECT RAISE(ABORT, 'synthetic rejection'); END`)
+	require.NoError(err)
+
+	again := run()
+
+	assert.Equal(2, again.Skipped, "both messages fail their raw-data write")
+	assert.Equal(1, again.MessagesUpdated, "the edited message row was committed before the failure")
+}

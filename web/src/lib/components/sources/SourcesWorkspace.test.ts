@@ -115,6 +115,26 @@ describe('SourcesWorkspace', () => {
     expect(screen.queryByText('Malformed MIME header')).toBeNull();
   });
 
+  it('shows an unmeasured completed run as not measured and explains why', async () => {
+    const unmeasured = run('completed', 0, {
+      completed_at: '2026-07-19T11:30:00Z', outcome: 'unmeasured', reason: 'writer_not_running'
+    });
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
+      source({ display_name: 'WhatsApp', latest_sync: unmeasured })
+    ] }));
+    render(SourcesWorkspace, {
+      client: createAPIClient(fetchFn), now: () => new Date('2026-07-19T12:00:00Z')
+    });
+
+    expect(await screen.findByText('Not measured')).toBeDefined();
+    expect(screen.queryByText('Completed')).toBeNull();
+    const toggle = screen.getByRole('button', { name: 'Show details for WhatsApp' });
+    await fireEvent.click(toggle);
+    expect(screen.getByText(
+      'The app that writes this source was not running, so nothing new could have arrived'
+    )).toBeDefined();
+  });
+
   it('drops an open detail row when a refresh clears the errors', async () => {
     const failed = run('failed', 1, { completed_at: '2026-07-19T11:30:00Z', error_message: 'Mailbox unavailable' });
     let current = source({ latest_sync: failed });

@@ -2015,7 +2015,8 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     cursor_before TEXT,
     cursor_after TEXT,
     request_fingerprint TEXT,
-    operation_id TEXT
+    operation_id TEXT,
+    measurement TEXT
 );
 
 -- Exact journal cut owned by one source sync publication. The lower bound is

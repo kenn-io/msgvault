@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -86,16 +87,25 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 		)
 	}
 
-	client, err := imessage.NewClient(chatDBPath, clientOpts...)
-	if err != nil {
-		return fmt.Errorf("open iMessage database: %w", err)
-	}
-	defer func() { _ = client.Close() }()
-
 	src, err := resolveImessageSource(s)
 	if err != nil {
 		return fmt.Errorf("get or create source: %w", err)
 	}
+	// A missing chat.db is opened, not pre-checked, so the unmeasured run is
+	// recorded for it like for a denied one.
+	client, err := openImessageClientRecorded(cmd.Context(), s, src, chatDBPath, clientOpts, time.Now())
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf(
+				"iMessage database not found at %s\n\n"+
+					"Make sure you're running on macOS with Messages enabled: %w",
+				chatDBPath, err,
+			)
+		}
+		return err
+	}
+	defer func() { _ = client.Close() }()
+
 	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
@@ -123,7 +133,7 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	summary, err := client.Import(ctx, s, src.ID)
+	summary, err := importImessageRecorded(ctx, s, client, src.ID)
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted.")
@@ -135,6 +145,77 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 
 	printImessageSummary(summary, startTime)
 	return finishImessageImport(s, state, summary)
+}
+
+// importImessageRecorded runs client.Import inside a sync_runs row, like the
+// WhatsApp Apple import, so every iMessage import is visible to source status
+// and holds the per-source sync lock regardless of what triggered it.
+func importImessageRecorded(
+	ctx context.Context,
+	s *store.Store,
+	client *imessage.Client,
+	sourceID int64,
+) (summary *imessage.ImportSummary, retErr error) {
+	syncID, err := s.StartSync(sourceID, "imessage_import")
+	if err != nil {
+		return nil, fmt.Errorf("start sync: %w", err)
+	}
+	scoped := s.ScopedToSync(sourceID, syncID)
+	readStartedAt := time.Now()
+	record := func(sum imessage.ImportSummary) error {
+		return scoped.UpdateSyncCheckpoint(syncID, imessageCheckpoint(sum))
+	}
+	defer func() {
+		// Persist the final or partial counters before the terminal write, so a
+		// failed or interrupted run still reports what it processed.
+		var recordErr error
+		if summary != nil {
+			recordErr = record(*summary)
+		}
+		if retErr != nil {
+			failImessageRun(ctx, s, scoped, syncID, readStartedAt, retErr)
+			return
+		}
+		if recordErr != nil {
+			_ = scoped.FailSync(syncID, recordErr.Error())
+			retErr = fmt.Errorf("record sync progress: %w", recordErr)
+			return
+		}
+		if err := scoped.CompleteSync(syncID, ""); err != nil {
+			retErr = fmt.Errorf("complete sync: %w", err)
+		}
+	}()
+	// Mid-run checkpoints are best effort; the final write above is checked.
+	return client.ImportWithProgress(ctx, scoped, sourceID, func(sum imessage.ImportSummary) {
+		_ = record(sum)
+	})
+}
+
+// failImessageRun ends a run with err. A source that became unreadable during
+// the run (Full Disk Access revoked, file removed) is unmeasured, like one that
+// could not be opened, not a plain failure.
+func failImessageRun(
+	ctx context.Context, s *store.Store, scoped *store.Store, syncID int64, readStartedAt time.Time, err error,
+) {
+	reason := unmeasuredReason(err)
+	if reason == "" {
+		_ = scoped.FailSync(syncID, err.Error())
+		return
+	}
+	m := store.SyncMeasurement{Outcome: store.SyncOutcomeUnmeasured, Reason: reason, ReadStartedAt: &readStartedAt}
+	_ = s.SetSyncMeasurement(context.WithoutCancel(ctx), syncID, m)
+	_ = scoped.FailSync(syncID, store.UnmeasuredSyncError(reason, err.Error()))
+}
+
+// imessageCheckpoint maps import totals onto sync_runs counters. Skipped
+// messages are the run's errors; they still count as processed.
+func imessageCheckpoint(sum imessage.ImportSummary) *store.Checkpoint {
+	return &store.Checkpoint{
+		MessagesProcessed: int64(sum.MessagesImported + sum.Skipped),
+		MessagesAdded:     int64(sum.MessagesImported - sum.MessagesUpdated - sum.MessagesUnchanged),
+		MessagesUpdated:   int64(sum.MessagesUpdated),
+		ErrorsCount:       int64(sum.Skipped),
+	}
 }
 
 // finishImessageImport runs the post-import name backfill, refreshes
@@ -261,12 +342,6 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 
 func resolveChatDBPath() (string, error) {
 	if importImessageDBPath != "" {
-		if _, err := os.Stat(importImessageDBPath); os.IsNotExist(err) {
-			return "", fmt.Errorf(
-				"iMessage database not found at %s",
-				importImessageDBPath,
-			)
-		}
 		return importImessageDBPath, nil
 	}
 
@@ -274,15 +349,7 @@ func resolveChatDBPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("get home directory: %w", err)
 	}
-	path := filepath.Join(home, "Library", "Messages", "chat.db")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return "", fmt.Errorf(
-			"iMessage database not found at %s\n\n"+
-				"Make sure you're running on macOS with Messages enabled",
-			path,
-		)
-	}
-	return path, nil
+	return filepath.Join(home, "Library", "Messages", "chat.db"), nil
 }
 
 func buildImessageOpts(logger *slog.Logger) ([]imessage.ClientOption, error) {
