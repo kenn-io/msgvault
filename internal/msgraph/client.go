@@ -108,7 +108,7 @@ func (c *Client) get(ctx context.Context, rawURL string) ([]byte, error) {
 }
 
 func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
-	return c.do(ctx, http.MethodGet, rawURL, nil, maxBytes, "", retryAll)
+	return c.do(ctx, http.MethodGet, rawURL, nil, maxBytes, "", retryAll, nil)
 }
 
 // do sends one request with retries. A GET succeeds on 200 only. Any other
@@ -116,8 +116,10 @@ func (c *Client) getLimited(ctx context.Context, rawURL string, maxBytes int64) 
 // permanentDelete with 204. A non-nil body is sent as JSON. A non-empty ifMatch
 // is sent as If-Match. With retryThrottle, only a 429 is retried, because
 // Graph applied nothing; a network error or a 5xx can follow an applied
-// write. With retryNone, nothing is retried.
-func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, maxBytes int64, ifMatch string, mode retryMode) ([]byte, error) {
+// write. With retryNone, nothing is retried. A non-nil charge is given the
+// bytes read from every response, failed and retried ones included, and its
+// error ends the request.
+func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, maxBytes int64, ifMatch string, mode retryMode, charge func(int64) error) ([]byte, error) {
 	once := mode != retryAll
 	reqURL, err := c.resolveRequestURL(rawURL)
 	if err != nil {
@@ -197,6 +199,11 @@ func (c *Client) do(ctx context.Context, method, rawURL string, reqBody []byte, 
 		}
 		body, readErr := io.ReadAll(reader)
 		closeErr := resp.Body.Close()
+		if charge != nil {
+			if err := charge(int64(len(body))); err != nil {
+				return nil, err
+			}
+		}
 		if readErr != nil {
 			// A connection that breaks mid-body is transient, like a 5xx.
 			lastErr = fmt.Errorf("graph %s %s: read body: %w", method, reqURL, readErr)
@@ -315,6 +322,12 @@ func (c *Client) GetRawLimited(ctx context.Context, url string, maxBytes int64) 
 	return c.getLimited(ctx, url, maxBytes)
 }
 
+// GetRawMetered is GetRawLimited that passes the bytes read from every
+// response, retries included, to charge. An error from charge ends the request.
+func (c *Client) GetRawMetered(ctx context.Context, url string, maxBytes int64, charge func(int64) error) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, url, nil, maxBytes, "", retryAll, charge)
+}
+
 // BaseURL returns the client's configured base URL (scheme + host, no trailing slash).
 // Importers use this to rewrite absolute graph.microsoft.com URLs to the configured
 // host (supporting both production and httptest servers).
@@ -366,7 +379,7 @@ func (c *Client) send(ctx context.Context, method, url string, body any, ifMatch
 			return nil, fmt.Errorf("graph %s %s: encode body: %w", method, url, err)
 		}
 	}
-	return c.do(ctx, method, url, reqBody, 0, ifMatch, mode)
+	return c.do(ctx, method, url, reqBody, 0, ifMatch, mode, nil)
 }
 
 // GetJSON fetches url and unmarshals the JSON body into out.

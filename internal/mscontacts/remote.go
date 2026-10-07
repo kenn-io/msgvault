@@ -249,19 +249,25 @@ func (r *Remote) Pull(
 	return plan, nil
 }
 
-// pages follows nextLink behind the retry gate and charges each page to the
-// budget, if any. It returns the final deltaLink, if any.
+// pages follows nextLink behind the retry gate and charges every response,
+// retries included, to the budget, if any. It returns the final deltaLink, if
+// any.
 func pages[T any](ctx context.Context, r *Remote, start string, budget *carddav.Budget, fn func([]T)) (string, error) {
 	return msgraph.PageThroughFunc(ctx, start, func(ctx context.Context, link string) (body []byte, err error) {
 		err = r.call(ctx, func(ctx context.Context) (err error) {
-			body, err = r.graph.GetRawLimited(ctx, link, pageBytes)
+			body, err = r.graph.GetRawMetered(ctx, link, pageBytes, charge(budget))
 			return err
 		})
-		if err == nil && budget != nil {
-			err = budget.Consume(int64(len(body)))
-		}
 		return body, err
 	}, fn)
+}
+
+// charge returns the budget's meter, or nil when there is no budget.
+func charge(budget *carddav.Budget) func(int64) error {
+	if budget == nil {
+		return nil
+	}
+	return budget.Consume
 }
 
 func expandUID() string {
@@ -372,16 +378,13 @@ func (r *Remote) complete(ctx context.Context, contacts []contact, budget *cardd
 }
 
 // read gets one contact by its Graph ID with its extended properties, and
-// charges the response to the budget, if any.
+// charges every response, retries included, to the budget, if any.
 func (r *Remote) read(ctx context.Context, id string, budget *carddav.Budget) (c contact, err error) {
 	var body []byte
 	err = r.call(ctx, func(ctx context.Context) (err error) {
-		body, err = r.graph.GetRawLimited(ctx, r.base+"/me/contacts/"+url.PathEscape(id)+"?$expand="+expandUID(), pageBytes)
+		body, err = r.graph.GetRawMetered(ctx, r.base+"/me/contacts/"+url.PathEscape(id)+"?$expand="+expandUID(), pageBytes, charge(budget))
 		return err
 	})
-	if err == nil && budget != nil {
-		err = budget.Consume(int64(len(body)))
-	}
 	if err == nil {
 		err = json.Unmarshal(body, &c)
 	}

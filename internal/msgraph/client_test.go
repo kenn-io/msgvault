@@ -38,6 +38,50 @@ func TestGetRetriesTruncatedBody(t *testing.T) {
 	assert.EqualValues(t, 2, calls.Load())
 }
 
+// GetRawMetered charges every response it reads, failed and broken ones
+// included, and an error from charge ends the request.
+func TestGetRawMeteredChargesEveryAttempt(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	errBody := `{"error":{"code":"serviceUnavailable"}}`
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		switch calls.Add(1) {
+		case 1:
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(errBody))
+		case 2:
+			w.Header().Set("Content-Length", "100")
+			_, _ = w.Write([]byte("partial"))
+		default:
+			_, _ = w.Write([]byte("full body"))
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 1000)
+
+	var charged []int64
+	body, err := c.GetRawMetered(t.Context(), "/x", 1<<20, func(n int64) error {
+		charged = append(charged, n)
+		return nil
+	})
+	require.NoError(err)
+	assert.Equal("full body", string(body))
+	assert.Equal([]int64{int64(len(errBody)), int64(len("partial")), int64(len("full body"))}, charged)
+
+	calls.Store(0)
+	limit := errors.New("limit")
+	charges := 0
+	_, err = c.GetRawMetered(t.Context(), "/x", 1<<20, func(int64) error {
+		charges++
+		return limit
+	})
+	require.ErrorIs(err, limit)
+	assert.Equal(1, charges)
+	assert.EqualValues(1, calls.Load())
+}
+
 // A request cancelled while it waits out a 429 stops. A write was never
 // applied, so it is marked not sent.
 func TestClientContextCancelDuringRetry(t *testing.T) {
