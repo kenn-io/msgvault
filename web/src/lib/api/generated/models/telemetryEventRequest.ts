@@ -4,7 +4,7 @@
 import type { TelemetryEventRequestProperties } from "./telemetryEventRequestProperties";
 
 export interface TelemetryEventRequest {
-  /** Allowlisted event name, such as app_opened */
+  /** Allowlisted event name, such as app_opened or screen_viewed */
   event: string;
   /** Event properties; the daemon drops any its allowlist omits */
   properties?: TelemetryEventRequestProperties;

@@ -4015,7 +4015,7 @@ export const triggerSync = (
   );
 };
 /**
- * @summary Report a web UI usage event
+ * @summary Report a web or terminal UI usage event
  */
 export const captureTelemetryEvent = (
   telemetryEventRequest: TelemetryEventRequest,

@@ -1722,8 +1722,11 @@ features once published. No startup hook or entrypoint wrapper is required.
   while it runs.
 - `app_opened` when the web UI opens, then on its first window focus on a later
   UTC day. The browser reports it to the daemon, never to PostHog.
+- `screen_viewed` when a web or terminal screen opens, counted once per installation
+  per UTC day across both interfaces and daemon restarts. The daemon keeps the
+  current day's screens in `telemetry-screen-views.json` beside its install ID.
 
-The web UI records the day it last reported in browser storage, which the
+For `app_opened`, the web UI records the day it last reported in browser storage, which the
 browser keeps separately for each daemon address. With the default
 `api_port = 0`, the daemon picks a new port each time it starts, so the web UI
 reports again after a daemon restart. Tabs that open together, or a browser
@@ -1731,6 +1734,10 @@ that blocks storage, can also each send one. Each event carries only:
 
 - the product name and source (`msgvault`, `daemon`)
 - on `app_opened`, the surface (`web`)
+- on `screen_viewed`, the first surface (`web` or `tui`) and a fixed screen name:
+  `everything`, `directory`, `directory_review`, `files`, `operations`,
+  `relationships`, `saved_views`, `sources`, `deletions`, `settings`, `message`,
+  `email`, `texts`, or `meetings`. Unknown names are dropped.
 - the msgvault version and commit
 - the operating system and CPU architecture
 - a random install ID kept in `telemetry-install.json` in the data directory, and
@@ -1739,8 +1746,8 @@ that blocks storage, can also each send one. Each event carries only:
   `$lib_version`), OS name, Go version, and where available the OS version and
   distribution
 
-Events never include messages, contacts, accounts, sources, file names or search
-queries. They ask PostHog not to build person profiles or look up location. The
+Events exclude message content, contact records, account or source identifiers,
+filenames, and search text. They ask PostHog to skip person profiles and location lookup. The
 daemon queues each event and sends it in the background, so an event can be lost
 if the network is down or the daemon stops first.
 
@@ -1776,6 +1783,7 @@ home; `[log].dir` can override the log location.
 | `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
 | `telemetry-install.json` | Random anonymous install ID for [telemetry](#telemetry); created only while telemetry is on |
+| `telemetry-screen-views.json` | Current UTC day's screen claims shared by web and terminal UIs; created only while telemetry is on |
 
 ## Example configuration
 

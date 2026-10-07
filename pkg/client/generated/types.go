@@ -13218,7 +13218,7 @@ func (t TaskSummary) Validate() error {
 }
 
 type TelemetryEventRequest struct {
-	// Event Allowlisted event name, such as app_opened
+	// Event Allowlisted event name, such as app_opened or screen_viewed
 	Event string `json:"event" validate:"required"`
 
 	// Properties Event properties; the daemon drops any its allowlist omits
@@ -13230,7 +13230,7 @@ func (t TelemetryEventRequest) Validate() error {
 }
 
 type TelemetryEventResponse struct {
-	// Status queued when the daemon queued the event to send; disabled when telemetry is off
+	// Status queued when accepted, including suppressed daily screen duplicates or invalid screen names; disabled when telemetry is off
 	Status TelemetryEventResponseStatus `json:"status" validate:"required"`
 }
 

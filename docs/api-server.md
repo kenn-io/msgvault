@@ -104,7 +104,7 @@ it is separate from the binary release version. The current schema is **3.3.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
-Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web UI uses to
+Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web and terminal UIs use to
 report anonymous usage events through the daemon. See
 [Telemetry](configuration.md#telemetry).
 

@@ -52,6 +52,11 @@ func TestEnabledReporterWireHelper(t *testing.T) {
 	require := require.New(t)
 	reporter := newReporterOrDisabled(opts, stub, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	require.True(reporter.EventAllowed(EventAppOpened), "an opted-out reporter keeps the allowlist")
+	if os.Getenv("MSGVAULT_SCREEN_VIEWS_TEST") != "" {
+		exerciseScreenViews(t, reporter, opts)
+		require.NoError(reporter.Close())
+		return
+	}
 	require.NoError(reporter.Capture(EventAppOpened, map[string]any{"query": "q", "account": "a", propertySurface: "web"}))
 	require.NoError(reporter.Capture(posthog.EventDaemonActive, nil))
 	require.NoError(reporter.Close())
@@ -178,7 +183,7 @@ func TestOptedOutReporterSendsNothing(t *testing.T) {
 		env  []string
 	}{
 		{"config off", []string{wireConfigOffEnv + "=1"}},
-		{"prefixed variable", []string{EnabledEnv + "=0"}},
+		{"prefixed variable", []string{EnabledEnv + "=0", "MSGVAULT_SCREEN_VIEWS_TEST=1"}},
 		{"generic variable", []string{EnabledEnv + "=1", posthog.GenericEnabledEnv + "=0"}},
 	}
 	for _, tc := range cases {

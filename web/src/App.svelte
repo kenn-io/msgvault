@@ -9,6 +9,7 @@
   import SettingsWorkspace from './lib/components/settings/SettingsWorkspace.svelte';
   import AppShell from './lib/components/shell/AppShell.svelte';
   import MessagePage from './lib/components/reader/MessagePage.svelte';
+  import { startScreenViewReporting } from './lib/telemetry/screen-views';
   import type { ExploreSearchMode } from './lib/explore/models';
   import { availableSearchModeStorage, parseSearchMode, rememberSearchMode } from './lib/search/modes';
   import {
@@ -73,6 +74,10 @@
           body: JSON.stringify(event),
         }),
     });
+  });
+  $effect(() => {
+    if (oauthCallback || !shellMounted || messageID === undefined) return;
+    return startScreenViewReporting(session.client, 'message');
   });
   async function loadBrowserDefaults(generation: number): Promise<void> {
     try {

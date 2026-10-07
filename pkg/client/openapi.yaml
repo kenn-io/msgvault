@@ -13564,7 +13564,7 @@ components:
       additionalProperties: false
       properties:
         event:
-          description: Allowlisted event name, such as app_opened
+          description: Allowlisted event name, such as app_opened or screen_viewed
           type: string
         properties:
           additionalProperties:
@@ -13577,7 +13577,7 @@ components:
     TelemetryEventResponse:
       properties:
         status:
-          description: queued when the daemon queued the event to send; disabled when telemetry is off
+          description: queued when accepted, including suppressed daily screen duplicates or invalid screen names; disabled when telemetry is off
           enum:
             - queued
             - disabled
@@ -29538,7 +29538,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Report a web UI usage event
+      summary: Report a web or terminal UI usage event
       tags:
         - API
   /api/v1/text/aggregates:

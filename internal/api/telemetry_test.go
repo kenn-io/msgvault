@@ -35,7 +35,7 @@ func newTelemetryTestServer(t *testing.T, apiKey string) (*Server, *countingHand
 	t.Helper()
 	// TestMain opts out: allowlisted events answer "disabled" and nothing is sent.
 	reporter := telemetry.NewReporterOrDisabled(telemetry.Options{DataDir: t.TempDir()}, testLogger())
-	capture := &countingHandler{next: telemetry.CaptureHandler(reporter)}
+	capture := &countingHandler{next: telemetry.CaptureHandler(reporter, t.TempDir())}
 	srv := NewServerWithOptions(ServerOptions{
 		Config:           &config.Config{Server: config.ServerConfig{APIKey: apiKey}},
 		Logger:           testLogger(),
@@ -118,7 +118,7 @@ func TestTelemetryEventRouteBypassesHeldOperationGate(t *testing.T) { //nolint:p
 		Store:            &gateFilesStore{mockStore: &mockStore{}},
 		Logger:           testLogger(),
 		OperationGate:    gate,
-		TelemetryCapture: telemetry.CaptureHandler(reporter),
+		TelemetryCapture: telemetry.CaptureHandler(reporter, t.TempDir()),
 	})
 
 	resp := serveTelemetry(srv, telemetryRequest("application/json"))

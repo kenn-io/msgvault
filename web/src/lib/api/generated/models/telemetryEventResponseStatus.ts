@@ -3,7 +3,7 @@
  */
 
 /**
- * queued when the daemon queued the event to send; disabled when telemetry is off
+ * queued when accepted, including suppressed daily screen duplicates or invalid screen names; disabled when telemetry is off
  */
 export type TelemetryEventResponseStatus =
   (typeof TelemetryEventResponseStatus)[keyof typeof TelemetryEventResponseStatus];
