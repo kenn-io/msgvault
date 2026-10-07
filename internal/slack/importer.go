@@ -270,6 +270,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		return sum, fmt.Errorf("enumerate slack conversations: %w", err)
 	}
 
+	// Spend interrupted runs on the oldest uncovered history first. In
+	// enumeration order, already-refreshed channels can consume every run's
+	// budget auditing old threads while later channels never get a turn.
+	// Persisted cursors also keep this ordering fair across daemon restarts.
+	slices.SortStableFunc(convs, func(a, b Conversation) int {
+		return tsTime(state.EnsureConv(a.ID).Cursor).Compare(tsTime(state.EnsureConv(b.ID).Cursor))
+	})
+
 	total := len(convs)
 	targets := map[string]sweepTarget{}
 	for idx := range convs {
