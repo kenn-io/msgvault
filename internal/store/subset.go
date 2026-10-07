@@ -833,7 +833,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	}
 
 	// Derived account attribution copies with its delivery evidence and the
-	// confirmed identities it was derived from, so a copied row stays
+	// confirmed identities its derivation reads, so a copied row stays
 	// consistent with the rows its next refresh reads.
 	hasDeliveryAddresses, err := sourceTableExists(tx, "message_delivery_addresses")
 	if err != nil {
@@ -845,15 +845,8 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			return nil, fmt.Errorf("copy message_delivery_addresses: %w", err)
 		}
 	}
-	hasAccountIdentities, err := sourceTableExists(tx, "account_identities")
-	if err != nil {
+	if err := copySubsetAccountIdentities(tx, options.IncludeIdentity, hasDeliveryAddresses); err != nil {
 		return nil, err
-	}
-	if hasAccountIdentities {
-		if _, err := copyByName(tx, "account_identities",
-			`source_id IN (SELECT source_id FROM selected_message_sources)`); err != nil {
-			return nil, fmt.Errorf("copy account_identities: %w", err)
-		}
 	}
 
 	if _, err := tx.Exec(`
@@ -2706,4 +2699,109 @@ func populateFTS(db *sql.DB) error {
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id`)
 	return err
+}
+
+// copySubsetAccountIdentities copies the confirmed identities of the subset's
+// sources. By default it copies only addresses an included message's
+// attribution reads: its account, delivery addresses, From/To/Cc addresses,
+// and the source's own mailbox or calendar. An alias that appears in no
+// included message stays out unless includeAll asks for every identity.
+func copySubsetAccountIdentities(tx *sql.Tx, includeAll, hasDeliveryAddresses bool) error {
+	present, err := sourceTableExists(tx, "account_identities")
+	if err != nil || !present {
+		return err
+	}
+	where := `source_id IN (SELECT source_id FROM selected_message_sources)`
+	if !includeAll {
+		if err := selectSubsetIdentityKeys(tx, hasDeliveryAddresses); err != nil {
+			return err
+		}
+		where += ` AND address_key IN (SELECT k.address_key FROM selected_identity_keys k)`
+	}
+	if _, err := copyByName(tx, "account_identities", where); err != nil {
+		return fmt.Errorf("copy account_identities: %w", err)
+	}
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS selected_identity_keys`); err != nil {
+		return fmt.Errorf("drop selected identity keys: %w", err)
+	}
+	return nil
+}
+
+// selectSubsetIdentityKeys fills selected_identity_keys with every address
+// the attribution of an included message can read.
+func selectSubsetIdentityKeys(tx *sql.Tx, hasDeliveryAddresses bool) error {
+	selectors := []string{
+		`SELECT LOWER(TRIM(p.email_address)) AS address_key FROM src.participants p
+		 WHERE p.email_address IS NOT NULL AND p.id IN (` + subsetAttributionParticipantsSQL + `)`,
+		`SELECT LOWER(TRIM(pi.identifier_value)) AS address_key FROM src.participant_identifiers pi
+		 WHERE pi.participant_id IN (` + subsetAttributionParticipantsSQL + `)`,
+	}
+	optional := []struct{ table, column, selector string }{
+		{"message_recipients", "email_address", `SELECT LOWER(TRIM(email_address)) AS address_key
+			FROM src.message_recipients
+			WHERE message_id IN (SELECT id FROM selected_messages)
+			  AND recipient_type IN ('from', 'to', 'cc') AND email_address IS NOT NULL`},
+		{"messages", "account_address", `SELECT account_address AS address_key FROM src.messages
+			WHERE id IN (SELECT id FROM selected_messages) AND account_address IS NOT NULL`},
+	}
+	for _, o := range optional {
+		present, err := sourceColumnExists(tx, o.table, o.column)
+		if err != nil {
+			return err
+		}
+		if present {
+			selectors = append(selectors, o.selector)
+		}
+	}
+	if hasDeliveryAddresses {
+		selectors = append(selectors, `SELECT address AS address_key FROM src.message_delivery_addresses
+			WHERE message_id IN (SELECT id FROM selected_messages)`)
+	}
+	if _, err := tx.Exec(`CREATE TEMP TABLE selected_identity_keys AS ` +
+		strings.Join(selectors, " UNION ")); err != nil {
+		return fmt.Errorf("select subset identity addresses: %w", err)
+	}
+	mailboxes, err := subsetSourceMailboxes(tx)
+	if err != nil {
+		return err
+	}
+	for _, mailbox := range mailboxes {
+		if _, err := tx.Exec(`INSERT INTO selected_identity_keys (address_key) VALUES (?)`, mailbox); err != nil {
+			return fmt.Errorf("select subset source mailbox: %w", err)
+		}
+	}
+	return nil
+}
+
+// subsetAttributionParticipantsSQL lists the participants an included
+// message's sender or From/To/Cc rows name.
+const subsetAttributionParticipantsSQL = `
+	SELECT participant_id FROM src.message_recipients
+	WHERE message_id IN (SELECT id FROM selected_messages) AND recipient_type IN ('from', 'to', 'cc')
+	UNION SELECT sender_id FROM src.messages
+	WHERE id IN (SELECT id FROM selected_messages) AND sender_id IS NOT NULL`
+
+// subsetSourceMailboxes returns each included source's own mailbox and
+// calendar mailbox, which attribution falls back to.
+func subsetSourceMailboxes(tx *sql.Tx) ([]string, error) {
+	rows, err := tx.Query(`SELECT source_type, COALESCE(identifier, ''), sync_config FROM src.sources
+		WHERE id IN (SELECT source_id FROM selected_message_sources)`)
+	if err != nil {
+		return nil, fmt.Errorf("read subset sources: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var sourceType, identifier string
+		var syncConfig sql.NullString
+		if err := rows.Scan(&sourceType, &identifier, &syncConfig); err != nil {
+			return nil, fmt.Errorf("scan subset source: %w", err)
+		}
+		for _, mailbox := range []string{accountSink(sourceType, identifier), calendarMailbox(syncConfig)} {
+			if mailbox != "" {
+				out = append(out, mailbox)
+			}
+		}
+	}
+	return out, rows.Err()
 }

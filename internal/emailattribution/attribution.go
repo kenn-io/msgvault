@@ -66,8 +66,11 @@ func ParseHeaders(block []byte) (Headers, bool, error) {
 
 // Evidence is everything Attribute compares against confirmed candidates.
 // Visible holds confirmed To/Cc matches; Sender holds confirmed sender matches.
+// NoSentFolder marks a source without Sent folders, such as an mbox import,
+// whose sent copies carry no provider direction.
 type Evidence struct {
 	Original, Delivered, Visible, Sender []string
+	NoSentFolder                         bool
 }
 
 // Result is the attributed account address, or "" when no single confirmed
@@ -80,9 +83,9 @@ type Result struct {
 // Attribute returns the unique confirmed match at the strongest tier. A sent
 // copy takes its unique confirmed sender and never the source default. Inbound
 // mail tries the original recipient, then upstream delivery addresses, then
-// visible recipients, then the final inbox. Mail without any of that evidence
-// and with a confirmed sender is a sent copy from a source that has no Sent
-// folder; anything else takes the source default. More than one match at a
+// visible recipients, then the final inbox. In a source without Sent folders,
+// mail without any of that evidence and with a confirmed sender is a sent
+// copy; anything else takes the source default. More than one match at a
 // tier returns "" without trying lower tiers.
 func Attribute(e Evidence, candidates []string, sink string, sent bool) Result {
 	allowed := make(map[string]bool, len(candidates))
@@ -121,7 +124,7 @@ func Attribute(e Evidence, candidates []string, sink string, sent bool) Result {
 	if match(original) || match(upstream) || match(e.Visible) || match(append(finalOriginal, finalDelivered...)) {
 		return result
 	}
-	if match(e.Sender) {
+	if e.NoSentFolder && match(e.Sender) {
 		result.Sent = true
 		return result
 	}

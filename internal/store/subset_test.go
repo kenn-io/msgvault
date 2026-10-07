@@ -4986,21 +4986,35 @@ func TestCopySubsetKeepsAccountAttributionConsistent(t *testing.T) {
 	db, err := sql.Open("sqlite3", srcDB)
 	require.NoError(err)
 	_, err = db.Exec(`INSERT INTO account_identities (source_id, address, address_key, source_signal)
-		VALUES (1, 'work@example.org', 'work@example.org', 'manual')`)
+		VALUES (1, 'work@example.org', 'work@example.org', 'manual'),
+		       (1, 'unused@example.org', 'unused@example.org', 'manual')`)
 	require.NoError(err)
 	_, err = db.Exec(`UPDATE messages SET account_address = 'work@example.org', account_path = 'inbound'`)
 	require.NoError(err)
 	require.NoError(db.Close())
 
-	dstDir := filepath.Join(t.TempDir(), "dst")
-	_, err = CopySubset(srcDB, dstDir, 3, false)
-	require.NoError(err)
-	dst, err := Open(filepath.Join(dstDir, "msgvault.db"))
-	require.NoError(err)
-	t.Cleanup(func() { _ = dst.Close() })
-	require.NoError(dst.InitSchema())
-
-	var identities int
-	require.NoError(dst.DB().QueryRow(`SELECT COUNT(*) FROM account_identities WHERE address_key = 'work@example.org'`).Scan(&identities))
-	assert.Equal(1, identities, "an attributed copy keeps the identity it was attributed to")
+	copiedIdentities := func(includeIdentity bool) []string {
+		dstDir := filepath.Join(t.TempDir(), "dst")
+		_, err := CopySubset(srcDB, dstDir, 3, includeIdentity)
+		require.NoError(err)
+		dst, err := Open(filepath.Join(dstDir, "msgvault.db"))
+		require.NoError(err)
+		t.Cleanup(func() { _ = dst.Close() })
+		require.NoError(dst.InitSchema())
+		rows, err := dst.DB().Query(`SELECT address_key FROM account_identities ORDER BY address_key`)
+		require.NoError(err)
+		defer func() { _ = rows.Close() }()
+		var keys []string
+		for rows.Next() {
+			var key string
+			require.NoError(rows.Scan(&key))
+			keys = append(keys, key)
+		}
+		require.NoError(rows.Err())
+		return keys
+	}
+	assert.Equal([]string{"work@example.org"}, copiedIdentities(false),
+		"an attributed copy keeps the identity it was attributed to, and an unused alias stays out")
+	assert.Equal([]string{"unused@example.org", "work@example.org"}, copiedIdentities(true),
+		"--include-identity copies every confirmed address of an included source")
 }

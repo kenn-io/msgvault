@@ -298,6 +298,13 @@ func draftEvidenceSQL(m, src string) string {
 		OR EXISTS (SELECT 1 FROM gmail_drafts d WHERE d.pending_original_message_id = ` + m + `.id))`
 }
 
+// sourceHasSentFolderSQL is true when source src has a Sent folder, so
+// provider metadata decides the direction of its mail. Gmail always does.
+func sourceHasSentFolderSQL(src string) string {
+	return `(` + src + `.source_type = 'gmail' OR EXISTS (SELECT 1 FROM labels sl
+		WHERE sl.source_id = ` + src + `.id AND sl.system_role = '` + LabelSystemRoleSent + `'))`
+}
+
 // outboundEvidenceExistsSQL is true when message m is mail the account wrote:
 // it carries a Sent or Drafts label of its own source, the IMAP \Draft flag,
 // or messages.draft_authored, which keeps a draft snapshot written after its
@@ -490,12 +497,13 @@ func (s *Store) refreshAccountAttributionTx(
 	// Drafts take the sent path: the account wrote them, so received: skips
 	// them. Draft evidence also sets draft_authored, which keeps the row
 	// written after an edit or delete retires the draft and its evidence.
-	var sent, draft, authored bool
+	var sent, draft, authored, hasSentFolder bool
 	if err := tx.QueryRowContext(ctx, `
-		SELECT `+outboundEvidenceExistsSQL("m", "src")+`, `+draftEvidenceSQL("m", "src")+`, m.draft_authored
+		SELECT `+outboundEvidenceExistsSQL("m", "src")+`, `+draftEvidenceSQL("m", "src")+`, m.draft_authored,
+		       `+sourceHasSentFolderSQL("src")+`
 		FROM messages m JOIN sources src ON src.id = m.source_id
 		WHERE m.id = ?`, id,
-	).Scan(&sent, &draft, &authored); err != nil {
+	).Scan(&sent, &draft, &authored, &hasSentFolder); err != nil {
 		return malformed, fmt.Errorf("read outbound evidence for message %d: %w", id, err)
 	}
 	if draft && !authored {
@@ -509,10 +517,11 @@ func (s *Store) refreshAccountAttributionTx(
 		return malformed, err
 	}
 	result := emailattribution.Attribute(emailattribution.Evidence{
-		Original:  headers.Original,
-		Delivered: headers.Delivered,
-		Visible:   match.Visible,
-		Sender:    match.Sender,
+		Original:     headers.Original,
+		Delivered:    headers.Delivered,
+		Visible:      match.Visible,
+		Sender:       match.Sender,
+		NoSentFolder: !hasSentFolder,
 	}, candidates, accountSink(sourceType, identifier), sent)
 	path := accountPathInbound
 	if result.Sent {
@@ -815,6 +824,9 @@ type labelOutboundFlips struct {
 	tx       *loggedTx
 	sourceID int64
 	before   map[int64]string
+	// sentFolderBefore records whether the source had a Sent folder before
+	// the write; nil until the first capture.
+	sentFolderBefore *bool
 }
 
 func newLabelOutboundFlips(ctx context.Context, tx *loggedTx, sourceID int64) *labelOutboundFlips {
@@ -840,6 +852,13 @@ func outboundEvidenceByLabelQuery(where string) string {
 func (f *labelOutboundFlips) captureLabels(sourceLabelIDs, names []string) error {
 	if f == nil || (len(sourceLabelIDs) == 0 && len(names) == 0) {
 		return nil
+	}
+	if f.sentFolderBefore == nil {
+		has, err := sourceHasSentFolderTx(f.ctx, f.tx, f.sourceID)
+		if err != nil {
+			return err
+		}
+		f.sentFolderBefore = &has
 	}
 	if f.before == nil {
 		f.before = make(map[int64]string)
@@ -885,7 +904,13 @@ func (f *labelOutboundFlips) captureLabels(sourceLabelIDs, names []string) error
 // captured label, so a vanished label with different evidence refreshes the
 // members of every survivor whose evidence differs from it.
 func (s *Store) applyLabelOutboundFlipsTx(f *labelOutboundFlips) error {
-	if f == nil || len(f.before) == 0 {
+	if f == nil {
+		return nil
+	}
+	if err := markPendingIfSentFolderChangedTx(f); err != nil {
+		return err
+	}
+	if len(f.before) == 0 {
 		return nil
 	}
 	ctx, tx := f.ctx, f.tx
@@ -949,6 +974,42 @@ func (s *Store) applyLabelOutboundFlipsTx(f *labelOutboundFlips) error {
 		return fmt.Errorf("read members of changed labels: %w", err)
 	}
 	return s.refreshAccountAttributionForMessagesTx(ctx, tx, messageIDs)
+}
+
+func sourceHasSentFolderTx(ctx context.Context, tx *loggedTx, sourceID int64) (bool, error) {
+	var has bool
+	err := tx.QueryRowContext(ctx,
+		`SELECT `+sourceHasSentFolderSQL("src")+` FROM sources src WHERE src.id = ?`, sourceID).Scan(&has)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read Sent folder of source %d: %w", sourceID, err)
+	}
+	return has, nil
+}
+
+// markPendingIfSentFolderChangedTx returns every email row of the source to
+// pending when the write gave the source its first Sent folder or removed its
+// last one. Whether a confirmed sender alone marks a sent copy depends on
+// that, and the next sync derives the rows again.
+func markPendingIfSentFolderChangedTx(f *labelOutboundFlips) error {
+	if f.sentFolderBefore == nil {
+		return nil
+	}
+	before := *f.sentFolderBefore
+	f.sentFolderBefore = nil
+	after, err := sourceHasSentFolderTx(f.ctx, f.tx, f.sourceID)
+	if err != nil || after == before {
+		return err
+	}
+	if _, err := f.tx.ExecContext(f.ctx, `
+		UPDATE messages SET account_address = NULL, account_path = NULL
+		WHERE source_id = ? AND COALESCE(message_type, '') IN ('', 'email') AND account_path IS NOT NULL`,
+		f.sourceID); err != nil {
+		return fmt.Errorf("mark source %d account attribution pending: %w", f.sourceID, err)
+	}
+	return nil
 }
 
 // markAccountAttributionPendingForAddressesTx returns to pending the rows of

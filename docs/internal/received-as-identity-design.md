@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-07"
 ---
 
 # Received-account attribution design
@@ -82,9 +82,12 @@ to send.
   stamps its address into original-recipient headers too (Fastmail's
   `X-Delivered-To`, Postfix's `X-Original-To`), so a match there only counts
   as the final inbox.
-- A message with no match in any inbound tier and a unique confirmed sender is
-  a sent copy from a source without Sent folders, such as an mbox or PST
-  import. It takes that sender rather than the source mailbox.
+- In a source without Sent folders, such as an mbox or PST import, a message
+  with no match in any inbound tier and a unique confirmed sender is a sent
+  copy. It takes that sender rather than the source mailbox. A source with a
+  Sent folder keeps such a message inbound, because the provider already
+  decided its direction. A source that gains its first Sent folder or loses
+  its last returns its mail to pending.
 - More than one confirmed match at a tier leaves the row unattributed, and no
   lower tier runs.
 - The source mailbox is the source identifier, or the IMAP username in the

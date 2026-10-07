@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-07"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -2245,14 +2245,16 @@ MSGVAULT_HOME=./subset-vault msgvault tui
 |---|---|
 | `-o`, `--output <directory>` | Destination directory (required) |
 | `--rows <count>` | Number of most recent messages to copy; must be positive (required) |
-| `--include-identity` | Copy complete identity clusters for included participants |
+| `--include-identity` | Copy complete identity clusters for included participants and every confirmed address of each included account |
 | `--include-attributes` | Copy current and historical person and organization attribute values |
 | `--include-profiles` | Copy profiles, profile history and media, relationships, employment history, and referenced organizations |
 | `--include-vcard-resources` | Copy complete native vCards and retired UID aliases; requires `--include-profiles` |
 
-The command is SQLite-only. The optional identity, attribute, profile, and
-vCard flags can copy personal records that have no message in the subset; read
-the command's warning before sharing its output.
+The command is SQLite-only. Without `--include-identity`, it copies only the
+confirmed addresses that included messages use, so each message keeps its
+account. The optional identity, attribute, profile, and vCard flags can copy
+personal records that have no message in the subset; read the command's
+warning before sharing its output.
 
 ---
 

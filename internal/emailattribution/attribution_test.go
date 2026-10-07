@@ -92,15 +92,19 @@ func TestSinkInOriginalHeadersWaitsBehindUpstream(t *testing.T) {
 func TestConfirmedSenderWithoutInboundEvidenceIsSent(t *testing.T) {
 	assert := assert.New(t)
 	candidates := []string{sink, "work@example.com"}
-	got := Attribute(Evidence{Sender: []string{sink}}, candidates, sink, false)
+	got := Attribute(Evidence{Sender: []string{sink}, NoSentFolder: true}, candidates, sink, false)
 	assert.Equal(Result{Address: sink, Sent: true}, got, "a sent copy never falls back to received")
 
-	got = Attribute(Evidence{Sender: []string{sink}, Delivered: []string{sink}}, candidates, sink, false)
+	got = Attribute(Evidence{Sender: []string{sink}}, candidates, sink, false)
+	assert.Equal(Result{Address: sink}, got, "a source with a Sent folder already decided direction")
+
+	got = Attribute(Evidence{Sender: []string{sink}, Delivered: []string{sink}, NoSentFolder: true}, candidates, sink, false)
 	assert.Equal(Result{Address: sink}, got, "delivery evidence means the account received its own mail")
 
-	got = Attribute(Evidence{Sender: []string{"work@example.com"}, Visible: []string{sink}}, candidates, sink, false)
+	got = Attribute(Evidence{Sender: []string{"work@example.com"}, Visible: []string{sink}, NoSentFolder: true},
+		candidates, sink, false)
 	assert.Equal(Result{Address: sink}, got, "mail one identity sent to another was received")
 
-	got = Attribute(Evidence{Sender: []string{"someone@example.org"}}, candidates, sink, false)
+	got = Attribute(Evidence{Sender: []string{"someone@example.org"}, NoSentFolder: true}, candidates, sink, false)
 	assert.Equal(Result{Address: sink}, got, "an unconfirmed sender keeps the source default")
 }

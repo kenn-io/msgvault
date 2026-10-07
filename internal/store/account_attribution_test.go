@@ -1001,3 +1001,61 @@ func TestDraftAuthorshipRecordedWithoutDirectionChange(t *testing.T) {
 	assert.Equal("sent", path.String)
 	assert.NotContains(searchIDs(t, f.st, "received:friend@example.com"), mid)
 }
+
+func TestAccountAttributionFollowsLegacyIdentityMigration(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	// A first file import stores its messages before the legacy [identity]
+	// addresses migrate onto the new source.
+	f := newAttrFixture(t, "mbox", "archive@example.net")
+	id := f.persist(attrMail{raw: "X-Delivered-To: work@example.org\r\nTo: list@example.test\r\n\r\nbody",
+		to: []string{"list@example.test"}})
+	require.Empty(searchIDs(t, f.st, "received:work@example.org"))
+
+	applied, deferred, _, _, err := f.st.MigrateLegacyIdentityConfig([]string{"work@example.org"})
+	require.NoError(err)
+	require.True(applied)
+	require.False(deferred)
+	assert.Equal([]int64{id}, searchIDs(t, f.st, "received:work@example.org"))
+}
+
+func TestAccountAttributionInboxCopyOfOwnPostWithSentFolder(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttrFixture(t, "imap", "imaps://"+strings.Replace(attrSink, "@", "%40", 1)+"@mail.example.net:993")
+	f.confirm(attrSink, "alias@example.org")
+	labels, err := f.st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+		"Sent":  {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+		"INBOX": {Name: "INBOX", Type: "system"},
+	})
+	require.NoError(err)
+	id := f.persist(attrMail{raw: "From: alias@example.org\r\nTo: list@example.test\r\n\r\nbody",
+		from: []string{"alias@example.org"}, to: []string{"list@example.test"}, labels: []int64{labels["INBOX"]}})
+	assert.Equal([]int64{id}, searchIDs(t, f.st, "received:"+attrSink),
+		"a source with a Sent folder keeps its inbox copy of the user's own post received")
+}
+
+func TestAccountAttributionFirstSentFolderReturnsSourceToPending(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttrFixture(t, "imap", "imaps://"+strings.Replace(attrSink, "@", "%40", 1)+"@mail.example.net:993")
+	f.confirm(attrSink)
+	inbox, err := f.st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+		"INBOX": {Name: "INBOX", Type: "system"},
+	})
+	require.NoError(err)
+	id := f.persist(attrMail{raw: "From: " + attrSink + "\r\nTo: list@example.test\r\n\r\nbody",
+		from: []string{attrSink}, to: []string{"list@example.test"}, labels: []int64{inbox["INBOX"]}})
+	_, path := attribution(t, f.st, id)
+	require.Equal("sent", path.String, "without a Sent folder, the user's own mail counts as sent")
+
+	_, err = f.st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+		"Sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+	})
+	require.NoError(err)
+	_, path = attribution(t, f.st, id)
+	assert.False(path.Valid, "the first Sent folder returns the source's mail to pending")
+	_, err = f.st.RepairAccountAttributionContext(t.Context(), f.source.ID, nil)
+	require.NoError(err)
+	assert.Equal([]int64{id}, searchIDs(t, f.st, "received:"+attrSink))
+}
