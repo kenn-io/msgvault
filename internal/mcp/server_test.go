@@ -1450,6 +1450,48 @@ func TestSearchMessageBodies_HybridUsesDaemonSearcher(t *testing.T) {
 	}, resp.Timings, "phase timings")
 }
 
+func TestSemanticSearchRerankPassesThroughDaemonSearcher(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	score := 0.93
+	engine := &querytest.MockEngine{
+		GetMessageSummariesByIDsFunc: func(_ context.Context, ids []int64) ([]query.MessageSummary, error) {
+			return []query.MessageSummary{testutil.NewMessageSummary(ids[0]).WithSubject("Parcel").Build()}, nil
+		},
+	}
+	var requests []HybridSearchRequest
+	h := &handlers{
+		engine: engine,
+		hybridSearcher: hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
+			requests = append(requests, req)
+			return &HybridSearchResult{
+				Hits:    []HybridSearchHit{{ID: 7, RerankScore: &score}},
+				Timings: HybridSearchTimings{RerankMS: 310},
+				Rerank:  &HybridRerank{Applied: true, Model: "cohere/rerank-4-pro", Candidates: 50},
+			}, nil
+		}),
+	}
+
+	resp := runTool[searchMessageBodiesResponse](t, "semantic_search_messages", h.semanticSearchMessages, map[string]any{
+		"query": "when does the parcel arrive", "mode": searchModeHybrid, "rerank": true, "explain": true,
+	})
+	require.Len(requests, 1)
+	require.NotNil(requests[0].Rerank)
+	assert.True(*requests[0].Rerank)
+	require.NotNil(resp.Rerank)
+	assert.Equal(HybridRerank{Applied: true, Model: "cohere/rerank-4-pro", Candidates: 50}, *resp.Rerank)
+	assert.Equal(int64(310), resp.Timings.RerankMS)
+	require.Len(resp.Data, 1)
+	require.NotNil(resp.Data[0].Score)
+	assert.Equal(&score, resp.Data[0].Score.Rerank)
+
+	runTool[searchMessageBodiesResponse](t, "semantic_search_messages", h.semanticSearchMessages, map[string]any{
+		"query": "when does the parcel arrive", "mode": searchModeHybrid,
+	})
+	require.Len(requests, 2)
+	assert.Nil(requests[1].Rerank, "an omitted rerank leaves the choice to the server default")
+}
+
 func TestSearchMessageBodies_HybridDaemonFilterOnlyGuidance(t *testing.T) {
 	searcherCalled := false
 	h := &handlers{

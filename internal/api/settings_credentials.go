@@ -174,7 +174,8 @@ func (s *Server) handleDeleteProviderCredential(w http.ResponseWriter, r *http.R
 }
 
 func providerCredentialRestartRequired(id string) bool {
-	return id == providercredentials.VectorEmbeddingsID || id == providercredentials.VectorMultimodalID
+	return id == providercredentials.VectorEmbeddingsID || id == providercredentials.VectorMultimodalID ||
+		id == providercredentials.VectorRerankID
 }
 
 func providerCredentialBindingForID(cfg *config.Config, id string) (providerCredentialBinding, bool) {
@@ -185,6 +186,9 @@ func providerCredentialBindingForID(cfg *config.Config, id string) (providerCred
 	case providercredentials.VectorMultimodalID:
 		return providerCredentialBinding{id: id, endpoint: cfg.Vector.Multimodal.Endpoint,
 			environment: cfg.Vector.Multimodal.APIKeyEnv}, true
+	case providercredentials.VectorRerankID:
+		return providerCredentialBinding{id: id, endpoint: cfg.Vector.Rerank.Endpoint,
+			environment: cfg.Vector.Rerank.APIKeyEnv}, true
 	}
 	if !strings.HasPrefix(id, "people.enrichment/") {
 		return providerCredentialBinding{}, false

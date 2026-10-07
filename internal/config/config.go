@@ -971,10 +971,11 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.Data.DataDir = cfg.HomeDir
 	}
 
-	// Multimodal defaults depend on the decoded credential destination. Reset
-	// the pre-filled section so changing endpoint cannot silently carry the
-	// default Voyage key environment name to another origin.
+	// Multimodal and reranker credential defaults depend on the decoded endpoint.
+	// Reset these sections so custom endpoints do not inherit a hosted
+	// provider's default key environment variable.
 	cfg.Vector.Multimodal = vector.MultimodalConfig{}
+	cfg.Vector.Rerank = vector.RerankConfig{}
 	// People-sweep provider defaults include a generated profile. Decode into
 	// an empty section so ApplyDefaults only fills it when the file defines
 	// no profiles of its own.
@@ -1080,10 +1081,8 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if cfg.Attachments.Documents.Index.Embeddings.Enabled && !cfg.Vector.Enabled {
 		return nil, errors.New("attachments.documents.index.embeddings.enabled: requires [vector] enabled = true")
 	}
-	if cfg.Vector.AnyLaneEnabled() {
-		if err := cfg.Vector.Validate(); err != nil {
-			return nil, fmt.Errorf("vector config: %w", err)
-		}
+	if err := cfg.Vector.Validate(); err != nil {
+		return nil, fmt.Errorf("vector config: %w", err)
 	}
 	cfg.resolveCredentialPaths()
 	if overrides != nil {

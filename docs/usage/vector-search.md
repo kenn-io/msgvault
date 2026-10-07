@@ -645,7 +645,7 @@ filtering.
 - `search_metadata` searches subject, sender/recipient, label, date, and other
   metadata fields.
 - `semantic_search_messages` accepts explicit `vector` or `hybrid` modes plus
-  `explain` and `min_score` arguments. It
+  `explain`, `min_score`, and `rerank` arguments (see [Reranking](#reranking)). It
   paginates with `offset` and `limit`; for vector/hybrid modes, pagination
   is limited to the configured
   `[vector.search].max_page_size_hybrid` ranking window when that cap
@@ -662,6 +662,74 @@ filtering.
 - `search_messages` is a deprecated compatibility wrapper that dispatches to
   `search_metadata` when mode is omitted and `semantic_search_messages` for
   vector/hybrid modes.
+
+## Reranking
+
+A reranker reads the query and a candidate message together and scores how
+well the message answers the query. Retrieval scores the query and the message
+separately, so it often ranks a related message above the one you want.
+Reranking helps most with natural-language questions such as "when does the
+parcel arrive". It can only reorder what retrieval found, so it needs vector or
+hybrid search.
+
+msgvault sends each reranked search to a hosted model through the Cohere-style
+`/rerank` contract. The default is `cohere/rerank-4-pro` through OpenRouter.
+Any rerank model that OpenRouter lists works through the same endpoint, such
+as `cohere/rerank-4-fast`, `voyageai/rerank-2.5`, or `qwen/qwen3-reranker-8b`.
+
+1. Get an OpenRouter API key and export it where the daemon runs:
+
+   ```bash
+   export OPENROUTER_API_KEY=sk-or-...
+   ```
+
+2. Enable the stage in `config.toml` and restart the daemon:
+
+   ```toml
+   [vector.rerank]
+   enabled = true
+   # model = "cohere/rerank-4-pro"
+   # candidates = 50
+   ```
+
+3. Ask for reranking per search:
+
+   ```bash
+   msgvault search "when does the parcel arrive" --mode hybrid --rerank
+   msgvault search "when does the parcel arrive" --mode hybrid --rerank --explain
+   curl "http://localhost:8080/api/v1/search?q=when+does+the+parcel+arrive&mode=hybrid&rerank=true"
+   ```
+
+   In MCP, pass `rerank: true` to `semantic_search_messages`.
+
+**What leaves the daemon.** Each reranked search sends the query and the
+preprocessed subject and body of its top `candidates` hits, each capped at
+`max_candidate_chars`, to the provider. It uses the same quote, signature,
+and HTML stripping as embedding. Searches that do not ask for reranking send
+nothing. Set `default = true` only if you want every vector and hybrid search
+reranked.
+
+**How results change.** The daemon retrieves at least `candidates` hits,
+rescores them, and returns the requested page from the new order. Hits outside
+the window keep their retrieval order after the reranked ones. With `explain`,
+each reranked hit reports its `rerank` score (0–1) beside the retrieval
+signals, and `timings.rerank_ms` reports the provider time.
+
+**When the provider fails.** A timeout, provider error, or malformed reply
+does not fail the search. The response returns the retrieval order and a
+`rerank.fallback` category: `timeout`, `provider_status`, `invalid_response`,
+`transport`, or `candidate_text`. The daemon log has the provider's own error
+message. A request that asks for reranking when the stage is not configured
+returns `rerank_unavailable`.
+
+**Cost and latency.** Cohere models on OpenRouter bill per search: one query
+with up to 100 candidates is one search unit, $0.0025 for `rerank-4-pro` and
+$0.002 for `rerank-4-fast` at the time of writing. Other models bill per token.
+A reranked search usually adds a few hundred milliseconds.
+
+A local server that speaks the same contract, such as vLLM's `/v1/rerank`,
+also works. Set `endpoint` to its API root; `api_key_env` then defaults to
+empty.
 
 ## Model Rotation
 

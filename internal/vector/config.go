@@ -90,6 +90,7 @@ type Config struct {
 	Embed      EmbedConfig      `toml:"embed"`
 	Multimodal MultimodalConfig `toml:"multimodal"`
 	People     PeopleConfig     `toml:"people"`
+	Rerank     RerankConfig     `toml:"rerank"`
 
 	// SkipExtensionCreate skips the `CREATE EXTENSION IF NOT EXISTS
 	// vector` step on the pgvector backend while still letting Migrate
@@ -172,6 +173,75 @@ func (m MultimodalConfig) VideoEnabled() bool {
 // ImageQueriesEnabled reports effective runtime consent for image queries.
 func (m MultimodalConfig) ImageQueriesEnabled() bool {
 	return m.Enabled && m.configuredImageQueries()
+}
+
+// Rerank defaults. The default endpoint is OpenRouter, which serves every
+// rerank model it lists through one Cohere-style /rerank contract.
+const (
+	DefaultRerankEndpoint          = "https://openrouter.ai/api/v1"
+	DefaultRerankAPIKeyEnv         = "OPENROUTER_API_KEY" // #nosec G101 -- environment variable name, not a credential.
+	DefaultRerankModel             = "cohere/rerank-4-pro"
+	DefaultRerankCandidates        = 50
+	MaxRerankCandidates            = 100
+	DefaultRerankMaxCandidateChars = 4000
+	MaxRerankCandidateChars        = 32000
+	DefaultRerankTimeout           = 10 * time.Second
+	RerankAPIFormatCohere          = "cohere"
+)
+
+// RerankConfig is the optional hosted reranking stage for vector and hybrid
+// search, loaded from [vector.rerank]. Enabling it is the operator's consent
+// to send each reranked query and the text of its top candidates to the
+// configured provider.
+type RerankConfig struct {
+	Enabled bool `toml:"enabled"`
+	// APIFormat selects the wire contract. Only "cohere" (POST /rerank with
+	// model, query, and documents) exists today.
+	APIFormat string `toml:"api_format"`
+	Endpoint  string `toml:"endpoint"`
+	APIKeyEnv string `toml:"api_key_env"`
+	Model     string `toml:"model"`
+	// Candidates is how many top retrieval hits each request rescores.
+	Candidates int `toml:"candidates"`
+	// MaxCandidateChars caps the preprocessed subject and body sent per
+	// candidate, in characters.
+	MaxCandidateChars int           `toml:"max_candidate_chars"`
+	Timeout           time.Duration `toml:"timeout"`
+	// Default reranks every vector or hybrid search that does not say
+	// otherwise. When false, a request must ask with rerank=true.
+	Default bool `toml:"default"`
+}
+
+// Validate checks rerank settings without requiring the stage to be
+// enabled.
+func (r RerankConfig) Validate() error {
+	if r.APIFormat != RerankAPIFormatCohere {
+		return fmt.Errorf("vector.rerank.api_format: must be %q, got %q", RerankAPIFormatCohere, r.APIFormat)
+	}
+	u, err := url.Parse(r.Endpoint)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return errors.New("vector.rerank.endpoint: must be an http or https URL with a host")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("vector.rerank.endpoint: must not contain credentials, a query, or a fragment")
+	}
+	if r.APIKeyEnv != "" && !environmentVariableName.MatchString(r.APIKeyEnv) {
+		return fmt.Errorf("vector.rerank.api_key_env: must be a valid environment variable name, got %q", r.APIKeyEnv)
+	}
+	if strings.TrimSpace(r.Model) == "" {
+		return errors.New("vector.rerank.model: required")
+	}
+	if r.Candidates < 1 || r.Candidates > MaxRerankCandidates {
+		return fmt.Errorf("vector.rerank.candidates: must be between 1 and %d, got %d", MaxRerankCandidates, r.Candidates)
+	}
+	if r.MaxCandidateChars < 1 || r.MaxCandidateChars > MaxRerankCandidateChars {
+		return fmt.Errorf("vector.rerank.max_candidate_chars: must be between 1 and %d, got %d",
+			MaxRerankCandidateChars, r.MaxCandidateChars)
+	}
+	if r.Timeout <= 0 {
+		return fmt.Errorf("vector.rerank.timeout: must be positive, got %s", r.Timeout)
+	}
+	return nil
 }
 
 // EmbeddingsConfig configures the external embedding endpoint used to convert
@@ -549,6 +619,16 @@ func (c *Config) MultimodalGenerationFingerprint() string {
 // Disabled lane-specific settings are retained without activating or
 // validating hosted work.
 func (c *Config) Validate() error {
+	if c.Rerank.Enabled {
+		// The stage reorders vector and hybrid hits, so it has nothing to
+		// rerank without the text-vector lane.
+		if !c.Enabled {
+			return errors.New("vector.rerank.enabled: requires vector.enabled = true")
+		}
+		if err := c.Rerank.Validate(); err != nil {
+			return err
+		}
+	}
 	if !c.AnyLaneEnabled() {
 		return nil
 	}
@@ -726,6 +806,33 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.Multimodal.MaxContextChars == 0 {
 		c.Multimodal.MaxContextChars = 4000
+	}
+	c.Rerank.APIFormat = strings.ToLower(strings.TrimSpace(c.Rerank.APIFormat))
+	if c.Rerank.APIFormat == "" {
+		c.Rerank.APIFormat = RerankAPIFormatCohere
+	}
+	c.Rerank.Endpoint = strings.TrimRight(strings.TrimSpace(c.Rerank.Endpoint), "/")
+	if c.Rerank.Endpoint == "" {
+		c.Rerank.Endpoint = DefaultRerankEndpoint
+	}
+	c.Rerank.APIKeyEnv = strings.TrimSpace(c.Rerank.APIKeyEnv)
+	if c.Rerank.APIKeyEnv == "" && c.Rerank.Endpoint == DefaultRerankEndpoint {
+		// Only the default origin gets a default variable, so a local
+		// reranker never inherits a hosted credential by accident.
+		c.Rerank.APIKeyEnv = DefaultRerankAPIKeyEnv
+	}
+	c.Rerank.Model = strings.TrimSpace(c.Rerank.Model)
+	if c.Rerank.Model == "" {
+		c.Rerank.Model = DefaultRerankModel
+	}
+	if c.Rerank.Candidates == 0 {
+		c.Rerank.Candidates = DefaultRerankCandidates
+	}
+	if c.Rerank.MaxCandidateChars == 0 {
+		c.Rerank.MaxCandidateChars = DefaultRerankMaxCandidateChars
+	}
+	if c.Rerank.Timeout == 0 {
+		c.Rerank.Timeout = DefaultRerankTimeout
 	}
 	// Preprocess booleans are *bool so unset (nil) means "default true"
 	// without overwriting an explicit false from the config file. The

@@ -58,6 +58,7 @@ const (
 	toolArgSourceMsgID   = "source_message_id"
 	toolArgThreadID      = "thread_id"
 	toolArgMinScore      = "min_score"
+	toolArgRerank        = "rerank"
 	toolArgMaxChars      = "max_chars"
 	toolArgAttachmentID  = "attachment_id"
 	toolArgDestination   = "destination"
@@ -445,6 +446,9 @@ type HybridSearchRequest struct {
 	Offset         int
 	IncludeMatches bool
 	MinScore       float64
+	// Rerank is nil when the caller left the choice to
+	// [vector.rerank].default.
+	Rerank *bool
 }
 
 type HybridSearchMatch struct {
@@ -459,6 +463,7 @@ type HybridSearchHit struct {
 	RRFScore         *float64
 	BM25Score        *float64
 	VectorScore      *float64
+	RerankScore      *float64
 	SubjectBoosted   bool
 	Matches          []HybridSearchMatch
 	MatchesTruncated bool
@@ -472,12 +477,24 @@ type HybridSearchResult struct {
 	HasMore       bool
 	TookMS        int64
 	Timings       HybridSearchTimings
+	Rerank        *HybridRerank
 }
 
 type HybridSearchTimings struct {
 	QueryEmbeddingMS int64 `json:"query_embedding_ms"`
 	RetrievalMS      int64 `json:"retrieval_ms"`
 	HydrationMS      int64 `json:"hydration_ms"`
+	RerankMS         int64 `json:"rerank_ms,omitzero"`
+}
+
+// HybridRerank reports the rerank stage of one search. Fallback names the
+// failure category when the provider failed and the retrieval order was
+// kept.
+type HybridRerank struct {
+	Applied    bool   `json:"applied"`
+	Model      string `json:"model"`
+	Candidates int    `json:"candidates"`
+	Fallback   string `json:"fallback,omitempty"`
 }
 
 type SimilarSearcher interface {
@@ -524,6 +541,8 @@ func translateDaemonRequestError(err error) *toolResult {
 		message = "vector_initializing: vector search is still initializing"
 	case "vector_init_failed":
 		message = "vector_init_failed: vector search failed to initialize"
+	case "rerank_unavailable":
+		message = rerankUnavailableMessage
 	case "invalid_query":
 		message = "invalid_query: search query is invalid"
 	case "invalid_account":
@@ -994,6 +1013,7 @@ type hybridScoreBreakdown struct {
 	RRF            *float64 `json:"rrf,omitzero"`
 	BM25           *float64 `json:"bm25,omitzero"`
 	Vector         *float64 `json:"vector,omitzero"`
+	Rerank         *float64 `json:"rerank,omitzero"`
 	SubjectBoosted bool     `json:"subject_boosted,omitzero"`
 }
 
@@ -1021,6 +1041,7 @@ type searchMessageBodiesResponse struct {
 	Generation    hybridGenerationSummary `json:"generation"`
 	TookMS        int64                   `json:"took_ms"`
 	Timings       HybridSearchTimings     `json:"timings"`
+	Rerank        *HybridRerank           `json:"rerank,omitempty"`
 }
 
 // searchMessageBodiesHybrid runs vector or hybrid search via the configured
@@ -1097,6 +1118,10 @@ func (h *handlers) searchMessageBodiesHybrid(
 		}
 	}
 
+	useRerank, explicit := rerankArg(args)
+	if !explicit {
+		useRerank = h.vectorCfg.Rerank.Enabled && h.vectorCfg.Rerank.Default && h.hybridEngine.RerankAvailable()
+	}
 	req := hybrid.SearchRequest{
 		Mode:         hybrid.Mode(mode),
 		FreeText:     freeText,
@@ -1104,9 +1129,13 @@ func (h *handlers) searchMessageBodiesHybrid(
 		Limit:        fetchLimit,
 		SubjectTerms: subjectTerms,
 		Explain:      explain,
+		Rerank:       useRerank,
 	}
 
 	hits, meta, err := h.hybridEngine.Search(ctx, req)
+	if errors.Is(err, hybrid.ErrRerankNotConfigured) {
+		return toolErrorResult(rerankUnavailableMessage), nil
+	}
 	if err != nil {
 		return dependencyError("search semantic index", err)
 	}
@@ -1149,6 +1178,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 				v := hit.VectorScore
 				sb.Vector = &v
 			}
+			sb.Rerank = hit.RerankScore
 			item.Score = sb
 		}
 		items = append(items, item)
@@ -1193,8 +1223,32 @@ func (h *handlers) searchMessageBodiesHybrid(
 			QueryEmbeddingMS: meta.QueryEmbeddingDuration.Milliseconds(),
 			RetrievalMS:      meta.RetrievalDuration.Milliseconds(),
 			HydrationMS:      hydrationDuration.Milliseconds(),
+			RerankMS:         meta.Rerank.Duration.Milliseconds(),
 		},
+		Rerank: hybridRerankFromMeta(meta.Rerank),
 	})
+}
+
+const rerankUnavailableMessage = "rerank_unavailable: search reranking is not configured on this server; " +
+	"enable [vector.rerank] and configure its API key, or omit rerank"
+
+// rerankArg returns the rerank argument and whether the caller set it. An
+// unset argument leaves the choice to [vector.rerank].default.
+func rerankArg(args map[string]any) (value, explicit bool) {
+	value, explicit = args[toolArgRerank].(bool)
+	return value, explicit
+}
+
+func hybridRerankFromMeta(meta hybrid.RerankMeta) *HybridRerank {
+	if !meta.Requested {
+		return nil
+	}
+	return &HybridRerank{
+		Applied:    meta.Applied,
+		Model:      meta.Model,
+		Candidates: meta.Candidates,
+		Fallback:   meta.Fallback,
+	}
 }
 
 func (h *handlers) searchMessageBodiesHybridViaSearcher(
@@ -1213,6 +1267,10 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 	}
 
 	account, _ := args[toolArgAccount].(string)
+	var rerank *bool
+	if value, explicit := rerankArg(args); explicit {
+		rerank = &value
+	}
 	result, err := h.hybridSearcher.SearchHybrid(ctx, HybridSearchRequest{
 		Query:          queryStr,
 		Mode:           mode,
@@ -1221,6 +1279,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 		Offset:         offset,
 		IncludeMatches: true,
 		MinScore:       floatArg(args, toolArgMinScore, 0),
+		Rerank:         rerank,
 	})
 	if err != nil {
 		return dependencyError("search daemon semantic index", err)
@@ -1258,6 +1317,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 				RRF:            hit.RRFScore,
 				BM25:           hit.BM25Score,
 				Vector:         hit.VectorScore,
+				Rerank:         hit.RerankScore,
 				SubjectBoosted: hit.SubjectBoosted,
 			}
 		}
@@ -1285,6 +1345,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 		Generation:        result.Generation,
 		TookMS:            result.TookMS,
 		Timings:           result.Timings,
+		Rerank:            result.Rerank,
 	})
 }
 
