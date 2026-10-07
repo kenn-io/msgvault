@@ -190,7 +190,7 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 	fromMe := imp.personalActor(organizer)
 	result, err := meetingarchive.New(imp.store).Upsert(ctx, meetingarchive.Snapshot{
 		SourceID: sourceID, SourceMessageID: "call:" + strconv.FormatInt(m.ID, 10), SourceConversationID: "call:" + strconv.FormatInt(c.ID, 10) + ":" + strconv.FormatInt(m.ID, 10),
-		Title: title, StartedAt: occurred, Body: strings.TrimSpace(transcript), Snippet: snippet(transcript), Raw: raw, RawFormat: "meeting_json", Metadata: metadata, Organizer: owner, Attendees: attendees, OwnerAttribution: &fromMe,
+		Title: title, StartedAt: occurred, Body: strings.TrimSpace(transcript), Snippet: meetingarchive.Snippet(transcript), Raw: raw, RawFormat: "meeting_json", Metadata: metadata, Organizer: owner, Attendees: attendees, OwnerAttribution: &fromMe,
 	}, meetingarchive.UpsertOptions{})
 	if err != nil {
 		return result.MessageID, 0, err

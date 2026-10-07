@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -24,20 +24,9 @@ func messageBody(m Message) string {
 	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
-func snippet(body string) string {
-	if len(body) <= 500 {
-		return body
-	}
-	n := 500
-	for n > 0 && !utf8.RuneStart(body[n]) {
-		n--
-	}
-	return body[:n]
-}
-
 // persistMessage returns when the message's refresh window starts, or zero
 // once nothing about it can change without new conversation activity. A failed
-// download counts from now; a pending recording or transcript from the message.
+// download counts from its first failure; a pending recording or transcript from the message.
 func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conversation, m Message, opts ImportOptions, sum *ImportSummary) (int64, error) {
 	var sender Actor
 	if m.Sender != nil {
@@ -133,7 +122,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 		Message: &store.Message{SourceID: sourceID, SourceMessageID: sourceMessageID, MessageType: SourceType,
 			SentAt:   sql.NullTime{Time: time.Unix(m.CreatedAt, 0).UTC(), Valid: m.CreatedAt > 0},
 			SenderID: sql.NullInt64{Int64: senderID, Valid: senderID > 0}, IsFromMe: imp.personalActor(sender), IdentityDerivedIsFromMe: true,
-			Subject: sql.NullString{String: title, Valid: true}, Snippet: sql.NullString{String: snippet(body), Valid: body != ""}, SizeEstimate: int64(len(body)), PreserveAttachmentStats: true},
+			Subject: sql.NullString{String: title, Valid: true}, Snippet: sql.NullString{String: meetingarchive.Snippet(body), Valid: body != ""}, SizeEstimate: int64(len(body)), PreserveAttachmentStats: true},
 		Conversation: &store.ConversationPersistData{SourceConversationID: strconv.FormatInt(c.ID, 10), ConversationType: "direct_chat", Title: title, Participants: members, PreserveExistingParticipants: true},
 		Metadata:     &meta, BodyText: sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: "chatwoot_json", Recipients: recipients, PreserveLabels: true,
 		FTS: &store.FTSDoc{Subject: title, Body: body, FromAddr: sender.Email, ToAddrs: strings.Join(toEmails, " ")},

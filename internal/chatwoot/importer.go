@@ -192,7 +192,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	if agentErr == nil {
 		for _, a := range agents {
-			a.Type = actorUser
 			imp.agents[a.ID] = a
 		}
 	}

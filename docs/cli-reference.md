@@ -1173,7 +1173,7 @@ msgvault sync-chatwoot [identifier] [--inbox 7] [--limit 100] [--full] [--no-med
 | `--full` | `false` | Reread all available history and update existing rows in place |
 | `--no-media` | `false` | Defer attachment downloads while retaining metadata and available transcripts; recent files retry on later syncs |
 
-Sync discovers the first conversation of a previously empty inbox immediately. Activity scans use a bounded ten-minute overlap, then a quiet inbox needs one listing. Pending artifacts add conversation detail and message-range reads within the request budget; saved traversal progress gives every artifact a turn. Calls remain eligible for seven days, and failed files retry for seven days from their first failure. `--full` permits expired files to retry without extending automatic retries.
+Sync discovers the first conversation of a previously empty inbox on the next sync. Activity scans use a bounded ten-minute overlap, then a quiet inbox needs one listing. Pending artifacts add conversation detail and message-range reads within the request budget; saved traversal progress gives every artifact a turn. Calls remain eligible for seven days, and failed files retry for seven days from their first failure. `--full` permits expired files to retry without extending automatic retries.
 See [Chatwoot](guides/chatwoot.md) for attribution, privacy, and API compatibility.
 
 ---
