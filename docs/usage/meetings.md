@@ -15,7 +15,7 @@ emails connect meetings to the people you already know in msgvault.
 |---|---|---|
 | [Twilio](#twilio) (unreleased) | Account auth token or API key | Recordings and transcripts Twilio still retains |
 | [Granola](#granola) | API key | Requires access to Granola's public API |
-| [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Notion integration token | At most 50 attendee-visible meetings per discovery query |
+| [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Meeting PAT or integration, optional users integration | At most 50 attendee-visible meetings per discovery query |
 | [Plaud](#plaud) | Browser authorization to its hosted MCP server | Requires Cloud Sync and existing Plaud transcription |
 | [Circleback](#circleback) | Browser authorization to its MCP server | Older note edits require a full refresh |
 | [Muesli](#muesli) | Local database on the same Mac | msgvault must run on the Mac where Muesli records |
@@ -461,13 +461,16 @@ whether it returns email addresses.
 
 ### Notion attendee emails
 
-The users token lists workspace members and retrieves any attendee missing from
-that list one at a time, which covers guests. Only Notion users with
-`person.email_verified = true` and a usable email become anchored participants.
-Successful lookups are cached for each run. Failed lookups can retry on a later
-meeting. Optional lookup failures and directory work limits leave meeting content
-available and preserve previously verified attendees for failed lookups.
-People without a Notion account can't be resolved this way.
+The users token retrieves known attendee IDs directly, including workspace
+members and guests. Only users with `person.email_verified = true` and a usable
+email become anchored participants. Healthy unverified users stay display-only.
+
+Each sync spends at most 60 seconds on optional user requests. Content hydration
+time is separate. Successful responses and missing IDs are cached for the run.
+Invalid credentials, missing User Information capability, provider retry
+exhaustion, and transport failures stop further uncached lookups for that sync.
+Previously verified attendees survive failed or skipped lookups. The next sync
+retries with fresh state. People without a Notion account can't be resolved.
 
 After adding a users token, run `msgvault sync-notion-meetings <identifier>`
 to update participants on existing visible meetings. The 50-meeting discovery
@@ -520,7 +523,9 @@ become participant rows. Unknown IDs and names remain display-only evidence.
 
 If registration reports invalid token, Meeting Notes access, or Read Content
 errors, correct that integration capability and rerun `add-notion-meetings`.
-User Information errors are non-fatal. Remove the archive source with:
+For attendee emails, correct the separate users integration and its Read user
+information including email addresses capability. A PAT cannot resolve other
+users. Optional lookup failures preserve meeting content. Remove the source with:
 
 ```bash
 msgvault remove-account notion-personal --type notion_meetings --yes

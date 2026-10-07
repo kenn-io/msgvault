@@ -166,48 +166,52 @@ func TestRunConfiguredNotionMeetingsSyncRefusesRemovedSource(t *testing.T) {
 }
 
 type fakeNotionUsersProbe struct {
-	users   []notionmeetings.User
-	listErr error
-	listed  int
+	user      *notionmeetings.User
+	err       error
+	retrieved int
 }
 
-func (f *fakeNotionUsersProbe) ListUsers(context.Context, string) (*notionmeetings.UserPage, error) {
-	f.listed++
-	if f.listErr != nil {
-		return nil, f.listErr
+func (f *fakeNotionUsersProbe) RetrieveUser(ctx context.Context, id string) (*notionmeetings.User, error) {
+	f.retrieved++
+	if _, ok := ctx.Deadline(); !ok {
+		return nil, errors.New("missing optional lookup deadline")
 	}
-	return &notionmeetings.UserPage{Results: f.users}, nil
-}
-
-func (f *fakeNotionUsersProbe) RetrieveUser(context.Context, string) (*notionmeetings.User, error) {
-	return nil, notionmeetings.ErrUserInformation
+	return f.user, f.err
 }
 
 func TestNotionProbeUsersToken(t *testing.T) {
 	verified := notionmeetings.User{Object: "user", ID: "member", Person: notionmeetings.UserPerson{Email: "member@example.com", EmailVerified: true}}
 	for _, tc := range []struct {
-		name  string
-		users []notionmeetings.User
-		err   error
-		want  string
+		name string
+		user *notionmeetings.User
+		err  error
+		want string
 	}{
-		{"available", []notionmeetings.User{verified}, nil, "Users token: available"},
-		{"no emails", []notionmeetings.User{{Object: "user", ID: "member"}}, nil, "Users token: no verified emails"},
+		{"available", &verified, nil, "Users token: available"},
+		{"no emails", &notionmeetings.User{Object: "user", ID: "member"}, nil, "Users token: no verified email"},
 		{"missing capability", nil, notionmeetings.ErrUserInformation, "Users token: unavailable"},
 		{"request timeout", nil, fmt.Errorf("perform Notion request: %w", context.DeadlineExceeded), "Users token: unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
-			users := &fakeNotionUsersProbe{users: tc.users, listErr: tc.err}
+			users := &fakeNotionUsersProbe{user: tc.user, err: tc.err}
 			var out bytes.Buffer
-			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{}, usersErr: notionmeetings.ErrUnauthorized}, users)
+			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", Parent: notionmeetings.Parent{PageID: "page-1"}, MeetingNotes: notionmeetings.MeetingNotesData{CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}}}}}, block: &notionmeetings.Block{}, usersErr: notionmeetings.ErrUnauthorized}, users)
 			require.NoError(t, err)
 			assert.NotContains(out.String(), "unless a users token is configured")
 			assert.Contains(out.String(), tc.want)
 			assert.NotContains(out.String(), "member@example.com")
-			assert.Equal(1, users.listed)
+			assert.Equal(1, users.retrieved)
 		})
 	}
+}
+
+func TestNotionProbeUsersTokenWithoutAttendees(t *testing.T) {
+	users := &fakeNotionUsersProbe{}
+	var out bytes.Buffer
+	require.NoError(t, runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{}}, users))
+	assert.Zero(t, users.retrieved)
+	assert.Contains(t, out.String(), "Users token: untested")
 }
 
 func TestConfiguredNotionClientsKeepCredentialsSeparate(t *testing.T) {
@@ -265,7 +269,7 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 		assert.Equal(t, "pat-example", token)
 		return scheduledNotionSource{}
 	}
-	users := &fakeNotionUsersProbe{users: []notionmeetings.User{{ID: "member", Person: notionmeetings.UserPerson{Email: "member@example.com", EmailVerified: true}}}}
+	users := &fakeNotionUsersProbe{user: &notionmeetings.User{ID: "member", Person: notionmeetings.UserPerson{Email: "member@example.com", EmailVerified: true}}}
 	newNotionUsersClient = func(_ string, token string) notionmeetings.UserSource {
 		assert.Equal(t, "ntn-example", token)
 		return users
@@ -274,7 +278,7 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 	rebuildNotionMeetingsCacheAfterScheduledSync = func(context.Context, string) error { refreshes++; return nil }
 	err = runConfiguredNotionMeetingsSync(t.Context(), st, config.NotionMeetingsSource{Identifier: "work", AccountEmail: "owner@example.com", Token: "pat-example", UsersToken: "ntn-example"})
 	require.NoError(t, err)
-	assert.Equal(t, 1, users.listed)
+	assert.Equal(t, 1, users.retrieved)
 	assert.Equal(t, 1, refreshes)
 	var messageID int64
 	require.NoError(t, st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'meeting-1'`).Scan(&messageID))

@@ -1352,8 +1352,10 @@ enabled = true
 Manual and scheduled sync use the same optional users token from config.
 Token values stay out of diagnostics and archived evidence. Without a users
 token, the meeting token lists users and guests stay unresolved. Optional user
-request failures and directory work limits leave meeting content available.
-Previously verified attendees survive failed lookups.
+requests resolve known attendee IDs directly, with a shared 60-second budget
+per sync that excludes content hydration. Credential and service failures stop
+further uncached lookups. Failed or skipped lookups preserve previously verified
+attendees and meeting content. The next sync retries.
 
 Run `msgvault add-notion-meetings <identifier>` to validate access and register
 the source before enabling a schedule. Removing the source prevents the

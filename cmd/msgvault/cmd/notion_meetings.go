@@ -117,21 +117,36 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 		}
 		return nil
 	}
-	page, err := users.ListUsers(ctx, "")
+	attendeeID := ""
+	for _, meeting := range result.Results {
+		for _, id := range meeting.MeetingNotes.CalendarEvent.Attendees {
+			if strings.TrimSpace(id) != "" {
+				attendeeID = id
+				break
+			}
+		}
+		if attendeeID != "" {
+			break
+		}
+	}
+	if attendeeID == "" {
+		_, _ = fmt.Fprintln(out, "  Users token: untested (no visible attendee ID)")
+		return nil
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, notionmeetings.UserLookupBudget)
+	defer cancel()
+	user, err := users.RetrieveUser(lookupCtx, attendeeID)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "  Users token: unavailable (%v)\n", err)
-		return nil
+	} else if user.Person.EmailVerified && strings.TrimSpace(user.Person.Email) != "" {
+		_, _ = fmt.Fprintln(out, "  Users token: available")
+	} else {
+		_, _ = fmt.Fprintln(out, "  Users token: no verified email (check Read user information including email addresses)")
 	}
-	for _, user := range page.Results {
-		if user.Person.EmailVerified && strings.TrimSpace(user.Person.Email) != "" {
-			_, _ = fmt.Fprintln(out, "  Users token: available")
-			return nil
-		}
-	}
-	_, _ = fmt.Fprintln(out, "  Users token: no verified emails on the first page (check Read user information including email addresses)")
+
 	return nil
 }
 

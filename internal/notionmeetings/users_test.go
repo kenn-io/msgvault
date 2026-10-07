@@ -3,90 +3,29 @@ package notionmeetings
 import (
 	"context"
 	"encoding/json/jsontext"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type fakeUserSource struct {
-	pages     map[string]*UserPage
 	users     map[string]*User
 	errs      map[string]error
-	listed    []string
 	retrieved []string
-}
-
-func (f *fakeUserSource) ListUsers(_ context.Context, cursor string) (*UserPage, error) {
-	f.listed = append(f.listed, cursor)
-	return f.pages[cursor], f.errs["list"]
 }
 
 func (f *fakeUserSource) RetrieveUser(_ context.Context, id string) (*User, error) {
 	f.retrieved = append(f.retrieved, id)
 	return f.users[id], f.errs[id]
-}
-
-func TestHydratorSeparateUsersCredentialAndGuestCache(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	source := completeHydrationSource()
-	source.usersErr = ErrUserInformation // PAT cannot list workspace users.
-	users := &fakeUserSource{
-		pages: map[string]*UserPage{
-			"":     {HasMore: true, NextCursor: "next"},
-			"next": {Results: []User{{ID: "user-1", Name: "Member", Type: "person", Person: UserPerson{Email: "member@example.com", EmailVerified: true}}}},
-		},
-		users: map[string]*User{"guest": {Object: "user", ID: "guest", Name: "Guest", Type: "person", Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}},
-		errs:  map[string]error{"blocked": ErrUserInformation},
-	}
-	meeting := hydrationMeeting()
-	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"blocked", "user-1", "guest"}
-	h := NewHydrator(source).WithUserSource(users)
-	for range 2 {
-		got, err := h.Hydrate(t.Context(), meeting)
-		require.NoError(err)
-		require.Len(got.Attendees, 2)
-		assert.Equal("member@example.com", got.Attendees[0].Email)
-		assert.Equal("guest@example.com", got.Attendees[1].Email)
-		assert.Equal(userAnchor("guest"), got.Attendees[1].Anchor)
-		assert.Equal([]string{"blocked"}, got.UnresolvedAttendeeIDs)
-		assert.True(got.AttendeeResolutionDegraded)
-	}
-	assert.Zero(source.usersCalls)
-	assert.Equal([]string{"", "next"}, users.listed)
-	assert.Equal([]string{"blocked", "guest", "blocked"}, users.retrieved)
-}
-
-func TestHydratorRetrievesUsersWhenListingIsUnavailable(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	users := &fakeUserSource{
-		users: map[string]*User{
-			"user-1": {Object: "user", ID: "user-1", Name: "Test Attendee", Type: "person", Person: UserPerson{
-				Email: "attendee@example.com", EmailVerified: true,
-			}},
-		},
-		errs: map[string]error{"list": ErrUserInformation, "user-2": ErrUserInformation},
-	}
-	result, err := NewHydrator(completeHydrationSource()).WithUserSource(users).Hydrate(
-		t.Context(), hydrationMeeting(),
-	)
-	require.NoError(err)
-	require.Len(result.Attendees, 1)
-	assert.Equal("attendee@example.com", result.Attendees[0].Email)
-	assert.Equal(userAnchor("user-1"), result.Attendees[0].Anchor)
-	assert.Equal([]string{"user-2"}, result.UnresolvedAttendeeIDs)
-	assert.Equal([]string{""}, users.listed)
-	assert.Equal([]string{"user-1", "user-2"}, users.retrieved)
-	assert.Equal(map[string]bool{"user-2": true}, result.failedAttendeeIDs)
-	assert.True(result.AttendeeResolutionDegraded)
-	assert.Contains(result.Warnings, "Notion User Information access unavailable; some attendee emails remain unresolved")
-	assert.Contains(result.Warnings, "Notion attendee lookup failed: notion integration lacks User Information access; kept display-only identity")
 }
 
 func TestRetrieveUserValidatesIdentity(t *testing.T) {
@@ -120,120 +59,25 @@ func TestRetrieveUserValidatesIdentity(t *testing.T) {
 	}
 }
 
-func TestImporterPerUserFailureDoesNotRestoreHealthyUnverifiedEmail(t *testing.T) {
-	require := require.New(t)
-	st, source, imp := newImporterFixture(t)
-	source.users[""].Results[1].Person.EmailVerified = true
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"})
-	require.NoError(err)
-	users := &fakeUserSource{pages: map[string]*UserPage{"": {Results: []User{{ID: "user-2", Name: "Unverified Attendee", Type: "person", Person: UserPerson{Email: "unverified@example.com"}}}}}, errs: map[string]error{"user-1": ErrUserInformation}}
-	imp.WithUserSource(users)
-	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", AccountEmail: "owner@example.com", Full: true})
-	require.NoError(err)
-	var messageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT id FROM messages WHERE source_id=? AND source_message_id=?"), first.SourceID, "meeting-1").Scan(&messageID))
-	recipients, err := st.GetMessageRecipientsContext(t.Context(), messageID, "to")
-	require.NoError(err)
-	require.Len(recipients, 1)
-	assert.Equal(t, "attendee@example.com", recipients[0].EmailAddress)
-}
-
-func TestHydratorGuestFailuresHaveOneWarningPerMeeting(t *testing.T) {
-	users := &fakeUserSource{pages: map[string]*UserPage{"": {}}, errs: map[string]error{"blocked-1": ErrUserInformation, "blocked-2": ErrUserInformation}}
-	meeting := hydrationMeeting()
-	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"blocked-1", "blocked-2"}
-	result, err := NewHydrator(completeHydrationSource()).WithUserSource(users).Hydrate(t.Context(), meeting)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"blocked-1", "blocked-2"}, result.UnresolvedAttendeeIDs)
-	assert.Equal(t, []string{"Notion attendee lookup failed: notion integration lacks User Information access; kept display-only identity"}, result.Warnings)
-}
-
-func TestHydratorGuestTimeoutKeepsContent(t *testing.T) {
-	assert := assert.New(t)
-	timeout := fmt.Errorf("perform Notion request: %w", context.DeadlineExceeded)
-	users := &fakeUserSource{pages: map[string]*UserPage{"": {}}, errs: map[string]error{"user-1": timeout}, users: map[string]*User{"user-2": {Object: "user", ID: "user-2", Person: UserPerson{Email: "second@example.com", EmailVerified: true}}}}
-	result, err := NewHydrator(completeHydrationSource()).WithUserSource(users).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
-	assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
-	assert.Equal([]string{"user-1"}, result.UnresolvedAttendeeIDs)
-	assert.Equal(map[string]bool{"user-1": true}, result.failedAttendeeIDs)
-}
-
-func TestHydratorUsersListTimeoutKeepsContent(t *testing.T) {
-	assert := assert.New(t)
-	timeout := fmt.Errorf("perform Notion request: %w", context.DeadlineExceeded)
-	users := &fakeUserSource{errs: map[string]error{"list": timeout, "user-1": timeout, "user-2": timeout}}
-	h := NewHydrator(completeHydrationSource()).WithUserSource(users)
-	for range 2 {
-		result, err := h.Hydrate(t.Context(), hydrationMeeting())
-		require.NoError(t, err)
-		assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
-		assert.True(result.AttendeeResolutionDegraded)
-	}
-	assert.Equal([]string{""}, users.listed)
-}
-
-func TestHydratorGuestRetryAndRecoveredListing(t *testing.T) {
-	users := &fakeUserSource{errs: map[string]error{"list": ErrUserInformation, "user-1": context.DeadlineExceeded}, users: map[string]*User{"user-1": {ID: "user-1", Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}}}
-	meeting := hydrationMeeting()
-	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1"}
-	h := NewHydrator(completeHydrationSource()).WithUserSource(users)
-	first, err := h.Hydrate(t.Context(), meeting)
-	require.NoError(t, err)
-	assert.True(t, first.AttendeeResolutionDegraded)
-	delete(users.errs, "user-1")
-	second, err := h.Hydrate(t.Context(), meeting)
-	require.NoError(t, err)
-	require.Len(t, second.Attendees, 1)
-	assert.Equal(t, "guest@example.com", second.Attendees[0].Email)
-	assert.False(t, second.AttendeeResolutionDegraded)
-	assert.Empty(t, second.Warnings)
-	third, err := h.Hydrate(t.Context(), meeting)
-	require.NoError(t, err)
-	assert.Equal(t, second.Attendees, third.Attendees)
-	assert.Equal(t, []string{"user-1", "user-1"}, users.retrieved)
-	users.users["user-1"].Person.EmailVerified = false
-	unverified, err := NewHydrator(completeHydrationSource()).WithUserSource(users).Hydrate(t.Context(), meeting)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"user-1"}, unverified.UnresolvedAttendeeIDs)
-	assert.Empty(t, unverified.failedAttendeeIDs)
-	assert.False(t, unverified.AttendeeResolutionDegraded)
-	assert.Empty(t, unverified.Warnings)
-}
-
-func TestHydratorGuestByteLimitDoesNotCacheResponse(t *testing.T) {
-	user := &User{ID: "user-1", Raw: make(jsontext.Value, maxHydrationBytes+1), Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}
-	users := &fakeUserSource{pages: map[string]*UserPage{"": {}}, users: map[string]*User{"user-1": user}}
-	meeting := hydrationMeeting()
-	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1"}
-	h := NewHydrator(completeHydrationSource()).WithUserSource(users)
-	first, err := h.Hydrate(t.Context(), meeting)
-	require.NoError(t, err)
-	assert.True(t, first.failedAttendeeIDs["user-1"])
-	assert.Empty(t, h.users)
-	user.Raw = nil
-	second, err := h.Hydrate(t.Context(), meeting)
-	require.NoError(t, err)
-	require.Len(t, second.Attendees, 1)
-	assert.False(t, second.AttendeeResolutionDegraded)
-	assert.Len(t, users.retrieved, 2)
-}
-
-func TestImporterDirectoryBudgetsKeepContentAndFetchedAttendees(t *testing.T) {
-	for _, budget := range []string{"requests", "bytes"} {
-		t.Run(budget, func(t *testing.T) {
-			st, _, imp := newImporterFixture(t)
-			users := &fakeUserSource{pages: map[string]*UserPage{"": {Results: []User{{ID: "user-1", Person: UserPerson{Email: "member@example.com", EmailVerified: true}}}, HasMore: true, NextCursor: "1"}}, errs: map[string]error{"user-2": ErrUserInformation}}
-			if budget == "bytes" {
-				users.pages["1"] = &UserPage{Raw: make(jsontext.Value, maxHydrationBytes+1)}
-			} else {
-				for i := 1; i <= maxHydrationRequests; i++ {
-					users.pages[fmt.Sprint(i)] = &UserPage{HasMore: true, NextCursor: fmt.Sprint(i + 1)}
-				}
-			}
-			summary, err := imp.WithUserSource(users).Import(t.Context(), ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"})
+func TestImporterOptionalServiceFailureStopsRunAndRetriesNextSync(t *testing.T) {
+	for _, failure := range []error{ErrUnauthorized, ErrUserInformation, &APIError{Kind: ErrRateLimited, Status: 429}, &APIError{Kind: ErrRateLimited, Status: 503}, errors.New("transport failed"), context.DeadlineExceeded} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			st, source, imp := newImporterFixture(t)
+			opts := ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"}
+			_, err := imp.Import(t.Context(), opts)
 			require.NoError(t, err)
-			assert.Equal(t, int64(1), summary.MeetingsAdded)
+			meeting := hydrationMeeting()
+			meeting.ID = "meeting-2"
+			meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "new-user"}
+			block := *source.blocks["meeting-1"]
+			block.ID = meeting.ID
+			source.blocks[meeting.ID] = &block
+			source.query.Results = append(source.query.Results, meeting)
+			users := &fakeUserSource{errs: map[string]error{"user-1": failure}}
+			summary, err := imp.WithUserSource(users).Import(t.Context(), opts)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), summary.MeetingsProcessed)
+			assert.Equal(t, []string{"user-1"}, users.retrieved)
 			var messageID int64
 			require.NoError(t, st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'meeting-1'`).Scan(&messageID))
 			body, err := st.GetMessageBodyText(messageID)
@@ -242,19 +86,25 @@ func TestImporterDirectoryBudgetsKeepContentAndFetchedAttendees(t *testing.T) {
 			recipients, err := st.GetMessageRecipientsContext(t.Context(), messageID, "to")
 			require.NoError(t, err)
 			require.Len(t, recipients, 1)
-			assert.Equal(t, "member@example.com", recipients[0].EmailAddress)
+			assert.Equal(t, "attendee@example.com", recipients[0].EmailAddress)
+			users.errs = map[string]error{"user-2": ErrMalformedResponse, "new-user": ErrMalformedResponse}
+			users.users = map[string]*User{"user-1": {Person: UserPerson{Email: "recovered@example.com", EmailVerified: true}}}
+			summary, err = imp.Import(t.Context(), opts)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), summary.MeetingsUpdated)
+			assert.Equal(t, []string{"user-1", "user-1", "user-2", "new-user"}, users.retrieved)
 		})
 	}
 }
 
-func TestImporterOrdinarySyncUpgradesAttendees(t *testing.T) {
+func TestImporterOrdinarySyncUpdatesAndPreservesOnlyFailedAttendees(t *testing.T) {
 	st, source, imp := newImporterFixture(t)
-	source.usersErr = ErrUserInformation
+	source.users[""].Results[1].Person.EmailVerified = true
 	opts := ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"}
-	first, err := imp.Import(t.Context(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), first.MeetingsAdded)
-	users := &fakeUserSource{pages: map[string]*UserPage{"": {Results: []User{{ID: "user-1", Person: UserPerson{Email: "member@example.com", EmailVerified: true}}}}}, errs: map[string]error{"user-2": ErrUserInformation}}
+	users := &fakeUserSource{users: map[string]*User{"user-2": {Person: UserPerson{Email: "unverified@example.com"}}, "guest": {Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}}, errs: map[string]error{"user-1": &APIError{Kind: ErrProvider, Status: 404}, "malformed": ErrMalformedResponse}}
+	source.query.Results[0].MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "user-2", "guest", "malformed"}
 	second, err := imp.WithUserSource(users).Import(t.Context(), opts)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), second.MeetingsUpdated)
@@ -262,14 +112,98 @@ func TestImporterOrdinarySyncUpgradesAttendees(t *testing.T) {
 	require.NoError(t, st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'meeting-1'`).Scan(&messageID))
 	recipients, err := st.GetMessageRecipientsContext(t.Context(), messageID, "to")
 	require.NoError(t, err)
-	require.Len(t, recipients, 1)
-	assert.Equal(t, "member@example.com", recipients[0].EmailAddress)
+	require.Len(t, recipients, 2)
+	assert.ElementsMatch(t, []string{"attendee@example.com", "guest@example.com"}, []string{recipients[0].EmailAddress, recipients[1].EmailAddress})
 }
 
-func TestHydratorParentCancellationRemainsFatal(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	users := &fakeUserSource{errs: map[string]error{"list": context.Canceled}}
-	_, err := NewHydrator(completeHydrationSource()).WithUserSource(users).Hydrate(ctx, hydrationMeeting())
-	require.ErrorIs(t, err, context.Canceled)
+func TestHydratorCachesSuccessfulAndMissingUsersAcrossServiceFailure(t *testing.T) {
+	users := &fakeUserSource{users: map[string]*User{"user-1": {Person: UserPerson{Email: "member@example.com", EmailVerified: true}}, "unverified": {}}, errs: map[string]error{"missing": &APIError{Kind: ErrProvider, Status: 404}, "malformed": ErrMalformedResponse, "blocked": ErrUserInformation}}
+	source := completeHydrationSource()
+	h := NewHydrator(source).WithUserSource(users)
+	meeting := hydrationMeeting()
+	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"missing", "malformed", "user-1", "unverified", "blocked", "new-user"}
+	for range 2 {
+		result, err := h.Hydrate(t.Context(), meeting)
+		require.NoError(t, err)
+		require.Len(t, result.Attendees, 1)
+		assert.Equal(t, "member@example.com", result.Attendees[0].Email)
+		assert.Equal(t, map[string]bool{"missing": true, "malformed": true, "blocked": true, "new-user": true}, result.failedAttendeeIDs)
+		assert.Len(t, result.Warnings, 1)
+	}
+	assert.Zero(t, source.usersCalls)
+	assert.Equal(t, []string{"missing", "malformed", "user-1", "unverified", "blocked"}, users.retrieved)
+}
+
+func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
+	for _, budget := range []string{"requests", "bytes"} {
+		t.Run(budget, func(t *testing.T) {
+			source := completeHydrationSource()
+			users := &fakeUserSource{users: map[string]*User{"user-1": {Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}}}
+			meeting := hydrationMeeting()
+			meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1"}
+			if budget == "requests" {
+				pages := map[string]*BlockPage{}
+				for i := 0; i < maxHydrationRequests-5; i++ {
+					cursor := ""
+					if i > 0 {
+						cursor = fmt.Sprint(i)
+					}
+					pages[cursor] = &BlockPage{HasMore: i < maxHydrationRequests-6, NextCursor: fmt.Sprint(i + 1)}
+				}
+				source.children["notes-1"] = pages
+			} else {
+				source.markdown.Raw = make(jsontext.Value, maxHydrationBytes-(1<<20))
+				users.users["user-1"].Raw = make(jsontext.Value, 2<<20)
+			}
+			h := NewHydrator(source).WithUserSource(users)
+			first, err := h.Hydrate(t.Context(), meeting)
+			require.NoError(t, err)
+			assert.Equal(t, "Test Speaker: Ready to ship.", first.Transcript)
+			assert.True(t, first.failedAttendeeIDs["user-1"])
+			assert.Empty(t, h.users)
+			assert.False(t, h.usersUnavailable)
+			source.children["notes-1"] = map[string]*BlockPage{"": {}}
+			source.markdown.Raw, users.users["user-1"].Raw = nil, nil
+			second, err := h.Hydrate(t.Context(), meeting)
+			require.NoError(t, err)
+			require.Len(t, second.Attendees, 1)
+			assert.Equal(t, "guest@example.com", second.Attendees[0].Email)
+
+		})
+	}
+}
+
+type usersRetryTransport struct{}
+
+func (usersRetryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Path == "/v1/users/user-1" {
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"object":"user","id":"user-1","person":{"email":"guest@example.com","email_verified":true}}`))}, nil
+	}
+	return &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(`{"object":"error","code":"service_unavailable"}`))}, nil
+}
+
+func TestHydratorOptionalDeadlineAndParentCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := NewClient("https://notion.example", "users-example")
+		client.http.Transport = usersRetryTransport{}
+		h := NewHydrator(completeHydrationSource()).WithUserSource(client)
+		meeting := hydrationMeeting()
+		meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1"}
+		_, err := h.Hydrate(t.Context(), meeting)
+		require.NoError(t, err)
+		remaining := h.userLookupRemaining
+		time.Sleep(time.Hour)
+		assert.Equal(t, remaining, h.userLookupRemaining)
+		meeting.MeetingNotes.CalendarEvent.Attendees = append(meeting.MeetingNotes.CalendarEvent.Attendees, "user-2")
+		second, err := h.Hydrate(t.Context(), meeting)
+		require.NoError(t, err)
+		assert.Equal(t, "Test Speaker: Ready to ship.", second.Transcript)
+		require.Len(t, second.Attendees, 1)
+		assert.ErrorIs(t, h.usersFailure, context.DeadlineExceeded)
+		assert.LessOrEqual(t, h.userLookupRemaining, time.Duration(0))
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err = h.Hydrate(ctx, hydrationMeeting())
+		require.ErrorIs(t, err, context.Canceled)
+	})
 }
