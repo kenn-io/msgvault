@@ -199,6 +199,12 @@ import type {
   IdentityMatchRejectResponse,
   ImportJobRequest,
   ImportJobResponse,
+  KataEvidenceLinkRequest,
+  KataEvidencePrepareRequest,
+  KataEvidencePrepareResponse,
+  KataIssueCreateRequest,
+  KataIssueResponse,
+  LinkKataEvidencePathParameters,
   LinkPersonAgendaItemPathParameters,
   ListAttributeDefinitionsParams,
   ListCardDAVBooksParams,
@@ -1939,6 +1945,59 @@ export const getImportJob = (
     {
       url: `/api/v1/imports/${encodeURIComponent(String(jobId))}`,
       method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Prepare exact message and file evidence for a Kata issue
+ */
+export const prepareKataEvidence = (
+  kataEvidencePrepareRequest: KataEvidencePrepareRequest,
+  options?: SecondParameter<typeof orvalFetch<KataEvidencePrepareResponse>>,
+) => {
+  return orvalFetch<KataEvidencePrepareResponse>(
+    {
+      url: `/api/v1/integrations/kata/evidence/prepare`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: kataEvidencePrepareRequest,
+    },
+    options,
+  );
+};
+/**
+ * Returns 201 both when it files the issue and when an earlier request under the same Idempotency-Key already did; `replayed` tells them apart.
+ * @summary Create a Kata issue that quotes exact archive evidence
+ */
+export const createKataIssue = (
+  kataIssueCreateRequest: KataIssueCreateRequest,
+  options?: SecondParameter<typeof orvalFetch<KataIssueResponse>>,
+) => {
+  return orvalFetch<KataIssueResponse>(
+    {
+      url: `/api/v1/integrations/kata/issues`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: kataIssueCreateRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Add exact archive evidence to an existing Kata issue
+ */
+export const linkKataEvidence = (
+  { ref }: LinkKataEvidencePathParameters,
+  kataEvidenceLinkRequest: KataEvidenceLinkRequest,
+  options?: SecondParameter<typeof orvalFetch<KataIssueResponse>>,
+) => {
+  return orvalFetch<KataIssueResponse>(
+    {
+      url: `/api/v1/integrations/kata/issues/${encodeURIComponent(String(ref))}/evidence`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: kataEvidenceLinkRequest,
     },
     options,
   );

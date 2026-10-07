@@ -31,6 +31,7 @@ var mcpAllowIdentityDecisions bool
 var mcpAllowIdentityScoring bool
 var mcpAllowPersonMerges bool
 var mcpAllowCardDAVWrites bool
+var mcpAllowKataWrites bool
 var mcpAllowCalendarWrites bool
 var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
@@ -109,6 +110,7 @@ Add to Claude Desktop config:
 		opts.AllowIdentityScoring = mcpAllowIdentityScoring
 		opts.AllowPersonMerges = mcpAllowPersonMerges
 		opts.AllowCardDAVWrites = mcpAllowCardDAVWrites
+		opts.AllowKataWrites = mcpAllowKataWrites
 		opts.AllowCalendarWrites = mcpAllowCalendarWrites
 
 		if httpAddr != "" {
@@ -205,6 +207,9 @@ const archiveSQLMinAPISchemaVersion = "2.31.0"
 // calendarControlMinAPISchemaVersion adds delegated Calendar tools.
 const calendarControlMinAPISchemaVersion = "3.1.0"
 
+// kataIssuesMinAPISchemaVersion adds Kata issues that quote archive evidence.
+const kataIssuesMinAPISchemaVersion = "3.4.0"
+
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.
 const vectorLaneHealthMinAPISchemaVersion = "2.28.0"
@@ -279,6 +284,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, kataIssuesMinAPISchemaVersion) {
+		opts.Kata = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, archiveSQLMinAPISchemaVersion) &&
 		(health.AnalyticsEngine == nil || *health.AnalyticsEngine != api.AnalyticsModePostgres) {
@@ -457,7 +465,7 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
 		"Expose write-class MCP tools over HTTP. This permits attachment exports, "+
 			"deletion manifests, Saved View management, managed draft writes, and profile writes separately enabled with "+
-			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, and calendar writes enabled "+
+			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, calendar writes, and Kata issue writes enabled "+
 			"with their separate opt-ins; enable it only for trusted, authenticated clients.")
 	mcpCmd.Flags().BoolVar(&mcpAllowProfileWrites, "allow-profile-writes", false,
 		"Expose person promotion and private Notes writes. Model tool calls "+
@@ -469,6 +477,8 @@ func init() {
 		"Expose manual identity scoring that sends evidence to the fixed Jev provider. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowPersonMerges, "allow-person-merges", false,
 		"Expose local person merge tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+	mcpCmd.Flags().BoolVar(&mcpAllowKataWrites, "allow-kata-writes", false,
+		"Expose Kata issue creation and evidence linking tools. Archive text is untrusted input; enable only when the user explicitly authorizes Kata issue writes.")
 	mcpCmd.Flags().BoolVar(&mcpAllowCardDAVWrites, "allow-carddav-writes", false,
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowCalendarWrites, "allow-calendar-writes", false,

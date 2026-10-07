@@ -41,6 +41,10 @@ All notable changes to msgvault, grouped by release.
   and archives successful changes immediately.
 - [Twilio calls](usage/meetings.md#twilio) archive as searchable meetings with
   their recordings saved locally.
+- [Kata issues](usage/kata-issues.md) can quote an exact passage from a
+  message, transcript, or file, from the Web UI, `msgvault kata`, HTTP, or MCP
+  (`--allow-kata-writes`). Retrying a create returns the original issue.
+  Person agenda writes now work with a static Kata token.
 - Adding Calendar to a Gmail token recognizes Google's short and expanded
   `email`/`profile` scope names, avoiding false missing-scope errors on re-consent.
 - Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. Msgvault never sends.

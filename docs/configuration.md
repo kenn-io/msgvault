@@ -819,16 +819,17 @@ and ready states.
 
 ### `[integrations.kata]`
 
-Optional live person agendas backed by Kata. Tasks stay in Kata; msgvault shows
-their current state when you open a person's agenda. This integration is built
+Optional live person agendas backed by Kata, and the connection that files
+[Kata issues from archive evidence](usage/kata-issues.md). Tasks stay in Kata;
+msgvault shows their current state when you open a person's agenda. This integration is built
 against Kata v0.18.0 and requires Kata API schema version 0.21.0 or later.
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `false` | Enable Kata person agendas |
+| `enabled` | `false` | Enable Kata person agendas and evidence issues |
 | `endpoint` | — | Required when enabled: an explicit HTTPS URL, loopback HTTP URL, or Unix socket URL |
 | `api_key` | — | Bearer credential sent by the daemon to Kata; Settings returns only its configured state and a masked hint |
-| `default_project` | `msgvault` | Existing active Kata project used for person agendas |
+| `default_project` | `msgvault` | Existing active Kata project used for person agendas and evidence issues |
 
 Create the project in Kata, then configure its endpoint and credential on the
 machine running the msgvault daemon:

@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/msgvault/internal/granola"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -1805,6 +1806,15 @@ func (a *storeAPIAdapter) PersonDayContext(
 	ctx context.Context, request store.PersonDayRequest,
 ) (*store.PersonDayPage, error) {
 	return a.store.PersonDayContext(ctx, request)
+}
+
+// Kata issue evidence reaches the API through the adapter.
+func (a *storeAPIAdapter) LoadKataEvidenceSource(ctx context.Context, selector kataevidence.Selector) (kataevidence.SourceRecord, error) {
+	return a.store.LoadKataEvidenceSource(ctx, selector)
+}
+
+func (a *storeAPIAdapter) ReadKataEvidenceSource(ctx context.Context, ref kataevidence.Reference) (kataevidence.SourceRecord, error) {
+	return a.store.ReadKataEvidenceSource(ctx, ref)
 }
 
 // ListPersonUIDsContext forwards to the store so the daemon's adapter, not a

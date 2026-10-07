@@ -24,6 +24,11 @@ type KataClient struct {
 	projectID int64
 }
 
+// writeActor names msgvault on every write. Kata attributes the write to the
+// credential's own actor when it has one; a static token has none, and Kata
+// rejects attributed writes that name no actor.
+const writeActor = "msgvault"
+
 type KataTask struct {
 	UID           string
 	Ref           string
@@ -138,6 +143,12 @@ func (c *KataClient) issuePath(ctx context.Context, project, suffix string) (str
 	return "/api/v1/projects/" + strconv.FormatInt(id, 10) + "/issues" + suffix, nil
 }
 
+// personListMaxResponseBytes bounds a person's agenda list, which Kata returns
+// as whole issues. An issue msgvault files stays under 800 KiB even with every
+// quoted rune escaped, so this reads at least 20 of the largest, and a bigger
+// reply fails as too large instead of growing without limit.
+const personListMaxResponseBytes = 16 << 20
+
 // ListPersonTasks filters before Kata serializes issues, so unrelated tasks do
 // not consume the bounded response. The caller requests one extra to detect truncation.
 func (c *KataClient) ListPersonTasks(ctx context.Context, project, personUID string, limit int) ([]KataTask, error) {
@@ -149,8 +160,10 @@ func (c *KataClient) ListPersonTasks(ctx context.Context, project, personUID str
 	if err != nil {
 		return nil, err
 	}
+	transport := *c.transport
+	transport.maxResponseBytes = max(transport.maxResponseBytes, personListMaxResponseBytes)
 	var response kata.ListIssuesResponseBody
-	if err := c.transport.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
+	if err := transport.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
 		return nil, err
 	}
 	result := make([]KataTask, 0, len(response.Issues))
@@ -163,27 +176,35 @@ func (c *KataClient) ListPersonTasks(ctx context.Context, project, personUID str
 }
 
 func (c *KataClient) CreateTask(ctx context.Context, project, idempotencyKey string, create KataCreate) (KataTask, error) {
+	task, _, err := c.CreateTaskReused(ctx, project, idempotencyKey, create)
+	return task, err
+}
+
+// CreateTaskReused also reports whether Kata answered with the issue an
+// earlier request under the same key created.
+func (c *KataClient) CreateTaskReused(ctx context.Context, project, idempotencyKey string, create KataCreate) (KataTask, bool, error) {
 	if strings.TrimSpace(idempotencyKey) == "" {
-		return KataTask{}, ErrIdempotencyKeyRequired
+		return KataTask{}, false, ErrIdempotencyKeyRequired
 	}
 	if strings.TrimSpace(create.Title) == "" {
-		return KataTask{}, fmt.Errorf("%w: task title is required", ErrRequestRejected)
+		return KataTask{}, false, fmt.Errorf("%w: task title is required", ErrRequestRejected)
 	}
 	if create.PriorityValue != nil && (*create.PriorityValue < 0 || *create.PriorityValue > 4) {
-		return KataTask{}, fmt.Errorf("%w: unsupported priority", ErrRequestRejected)
+		return KataTask{}, false, fmt.Errorf("%w: unsupported priority", ErrRequestRejected)
 	}
 	path, err := c.issuePath(ctx, project, "")
 	if err != nil {
-		return KataTask{}, err
+		return KataTask{}, false, err
 	}
 	// Different people can need identical todos. The retry key still prevents
 	// duplicate creation when the same request is sent again.
-	request := kata.CreateIssueRequestBody{Title: create.Title, Body: &create.Body, Labels: create.Labels, Metadata: create.Metadata, Priority: create.PriorityValue, ForceNew: new(true)}
+	request := kata.CreateIssueRequestBody{Actor: new(writeActor), Title: create.Title, Body: &create.Body, Labels: create.Labels, Metadata: create.Metadata, Priority: create.PriorityValue, ForceNew: new(true)}
 	var response kata.MutationResponseBody
 	if err := c.transport.doJSON(ctx, http.MethodPost, path, request, http.Header{"Idempotency-Key": {idempotencyKey}}, &response, http.StatusOK); err != nil {
-		return KataTask{}, err
+		return KataTask{}, false, err
 	}
-	return c.GetTask(ctx, project, response.Issue.UID)
+	task, err := c.GetTask(ctx, project, response.Issue.UID)
+	return task, response.Reused != nil && *response.Reused, err
 }
 
 func (c *KataClient) GetTask(ctx context.Context, project, taskID string) (KataTask, error) {
@@ -214,7 +235,7 @@ func (c *KataClient) MutateMetadata(ctx context.Context, project, taskID, revisi
 	if err != nil || number < 0 {
 		return KataTask{}, ErrInvalidResponse
 	}
-	return c.patchMetadata(ctx, project, taskID, kata.PatchIssueMetadataRequestBody{Patch: patch}, http.Header{"If-Match": {fmt.Sprintf(`"rev-%d"`, number)}})
+	return c.patchMetadata(ctx, project, taskID, kata.PatchIssueMetadataRequestBody{Actor: new(writeActor), Patch: patch}, http.Header{"If-Match": {fmt.Sprintf(`"rev-%d"`, number)}})
 }
 
 // MutateMetadataKey guards just the changed key, preserving unrelated concurrent
@@ -230,7 +251,7 @@ func (c *KataClient) MutateMetadataKey(ctx context.Context, project, taskID, key
 		}
 		guard.N, guard.A = 1, kata.MetadataPatchGuard_OneOf_0{Key: key, IfValue: string(encoded)}
 	}
-	return c.patchMetadata(ctx, project, taskID, kata.PatchIssueMetadataRequestBody{Patch: map[string]any{key: value}, Guard: &kata.MetadataPatchGuard{MetadataPatchGuard_OneOf: guard}}, nil)
+	return c.patchMetadata(ctx, project, taskID, kata.PatchIssueMetadataRequestBody{Actor: new(writeActor), Patch: map[string]any{key: value}, Guard: &kata.MetadataPatchGuard{MetadataPatchGuard_OneOf: guard}}, nil)
 }
 
 func (c *KataClient) patchMetadata(ctx context.Context, project, taskID string, request kata.PatchIssueMetadataRequestBody, headers http.Header) (KataTask, error) {

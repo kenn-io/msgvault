@@ -89,7 +89,7 @@ func documentSearchFromGenerated(response *generated.DocumentSearchResponse) sto
 			OtherLiveCopies: int(row.OtherLiveCopies), ChunkKey: row.ChunkKey,
 			ChunkOrdinal: int(row.ChunkOrdinal), HeadingPath: row.HeadingPath,
 			FirstUnitIndex: int(row.FirstUnitIndex), LastUnitIndex: int(row.LastUnitIndex),
-			Excerpt: row.Excerpt, HighlightStart: int(row.HighlightStart), HighlightEnd: int(row.HighlightEnd),
+			Excerpt: row.Excerpt, ExcerptStartRune: int(row.ExcerptStartRune), HighlightStart: int(row.HighlightStart), HighlightEnd: int(row.HighlightEnd),
 			ProfileID: row.ProfileID, ExtractionID: row.ExtractionID,
 			Provider: row.Provider, Model: row.Model, MatchedSignals: row.MatchedSignals,
 			Truncated: row.Truncated, Rank: int(row.Rank),

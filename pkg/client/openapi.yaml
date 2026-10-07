@@ -3451,6 +3451,16 @@ components:
         - rejected
         - applied
       type: object
+    Display:
+      properties:
+        containing_title:
+          type: string
+        filename:
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+      type: object
     DocumentFailureDiagnostic:
       properties:
         canonical_blob_hash:
@@ -3596,6 +3606,34 @@ components:
       required:
         - status
       type: object
+    DocumentReference:
+      additionalProperties: false
+      properties:
+        canonical_blob_hash:
+          type: string
+        chunk_checksum:
+          type: string
+        chunk_key:
+          type: string
+        end_rune:
+          format: int64
+          type: integer
+        extraction_id:
+          type: string
+        manifest_checksum:
+          type: string
+        start_rune:
+          format: int64
+          type: integer
+      required:
+        - canonical_blob_hash
+        - extraction_id
+        - manifest_checksum
+        - chunk_key
+        - chunk_checksum
+        - start_rune
+        - end_rune
+      type: object
     DocumentSearchResponse:
       properties:
         effective_mode:
@@ -3639,6 +3677,9 @@ components:
           type: integer
         excerpt:
           type: string
+        excerpt_start_rune:
+          format: int64
+          type: integer
         extraction_id:
           type: string
         filename:
@@ -3735,6 +3776,7 @@ components:
         - first_unit_index
         - last_unit_index
         - excerpt
+        - excerpt_start_rune
         - highlight_start
         - highlight_end
         - profile_id
@@ -4366,6 +4408,31 @@ components:
           type: string
       required:
         - error
+      type: object
+    Evidence:
+      properties:
+        content_trust:
+          type: string
+        display:
+          $ref: "#/components/schemas/Display"
+        excerpt:
+          type: string
+        id:
+          type: string
+        next_rune:
+          format: int64
+          type: integer
+        passage:
+          type: string
+        reference:
+          $ref: "#/components/schemas/Reference"
+      required:
+        - id
+        - passage
+        - reference
+        - excerpt
+        - display
+        - content_trust
       type: object
     Execution:
       additionalProperties: false
@@ -6221,6 +6288,115 @@ components:
         - candidates
         - applied
       type: object
+    KataEvidenceLinkRequest:
+      additionalProperties: false
+      properties:
+        evidence:
+          items:
+            $ref: "#/components/schemas/Reference"
+          maxItems: 32
+          minItems: 1
+          type: array
+      required:
+        - evidence
+      type: object
+    KataEvidencePrepareRequest:
+      additionalProperties: false
+      properties:
+        selectors:
+          items:
+            $ref: "#/components/schemas/Selector"
+          maxItems: 32
+          minItems: 1
+          type: array
+      required:
+        - selectors
+      type: object
+    KataEvidencePrepareResponse:
+      properties:
+        evidence:
+          items:
+            $ref: "#/components/schemas/Evidence"
+          type: array
+      required:
+        - evidence
+      type: object
+    KataIssueConflictResponse:
+      properties:
+        error:
+          type: string
+        issue:
+          $ref: "#/components/schemas/KataIssueReceipt"
+        message:
+          type: string
+      required:
+        - error
+      type: object
+    KataIssueCreateRequest:
+      additionalProperties: false
+      properties:
+        brief:
+          maxLength: 2000
+          type: string
+        evidence:
+          items:
+            $ref: "#/components/schemas/Reference"
+          maxItems: 32
+          minItems: 1
+          type: array
+        list:
+          maxLength: 80
+          type: string
+        person_id:
+          format: int64
+          minimum: 1
+          type: integer
+        title:
+          maxLength: 512
+          minLength: 1
+          type: string
+      required:
+        - title
+        - evidence
+      type: object
+    KataIssueReceipt:
+      properties:
+        project:
+          type: string
+        qualified_ref:
+          type: string
+        ref:
+          type: string
+        revision:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        uid:
+          type: string
+        web_url:
+          type: string
+      required:
+        - uid
+        - ref
+        - qualified_ref
+        - project
+        - title
+        - status
+        - revision
+      type: object
+    KataIssueResponse:
+      properties:
+        issue:
+          $ref: "#/components/schemas/KataIssueReceipt"
+        replayed:
+          description: An earlier request with this Idempotency-Key already created the issue
+          type: boolean
+      required:
+        - issue
+        - replayed
+      type: object
     ListDeletionsResponse:
       properties:
         manifests:
@@ -6776,6 +6952,22 @@ components:
         - source_id
         - account
         - source_type
+      type: object
+    MessageReference:
+      additionalProperties: false
+      properties:
+        body_sha256:
+          type: string
+        end_rune:
+          format: int64
+          type: integer
+        start_rune:
+          format: int64
+          type: integer
+      required:
+        - body_sha256
+        - start_rune
+        - end_rune
       type: object
     MessageSummary:
       properties:
@@ -11476,6 +11668,46 @@ components:
         - rows
         - row_count
       type: object
+    Reference:
+      additionalProperties: false
+      properties:
+        archive_uid:
+          type: string
+        attachment_id:
+          format: int64
+          type: integer
+        document_chunk:
+          $ref: "#/components/schemas/DocumentReference"
+        kind:
+          enum:
+            - message
+            - document_chunk
+          type: string
+        message:
+          $ref: "#/components/schemas/MessageReference"
+        message_id:
+          format: int64
+          type: integer
+        occurrence_key:
+          type: string
+        source_identifier:
+          type: string
+        source_message_id:
+          type: string
+        source_type:
+          type: string
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - kind
+        - archive_uid
+        - message_id
+        - source_type
+        - source_identifier
+        - source_message_id
+      type: object
     RejectPersonBriefRequest:
       additionalProperties: false
       properties:
@@ -12408,6 +12640,43 @@ components:
           type: string
       required:
         - action
+      type: object
+    Selector:
+      additionalProperties: false
+      properties:
+        attachment_id:
+          format: int64
+          type: integer
+        chunk_key:
+          type: string
+        end_rune:
+          format: int64
+          nullable: true
+          type: integer
+        extraction_id:
+          type: string
+        kind:
+          enum:
+            - message
+            - document_chunk
+          type: string
+        max_chars:
+          format: int64
+          nullable: true
+          type: integer
+        message_id:
+          format: int64
+          type: integer
+        quote:
+          maxLength: 1000
+          type: string
+        start_rune:
+          format: int64
+          nullable: true
+          type: integer
+      required:
+        - kind
+        - message_id
       type: object
     SenderCount:
       additionalProperties: false
@@ -14217,7 +14486,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.3.0
+  version: 3.4.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -20582,6 +20851,218 @@ paths:
       security:
         - apiKey: []
       summary: Get historical import status
+      tags:
+        - API
+  /api/v1/integrations/kata/evidence/prepare:
+    post:
+      operationId: prepareKataEvidence
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataEvidencePrepareRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataEvidencePrepareResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Prepare exact message and file evidence for a Kata issue
+      tags:
+        - API
+  /api/v1/integrations/kata/issues:
+    post:
+      description: Returns 201 both when it files the issue and when an earlier request under the same Idempotency-Key already did; `replayed` tells them apart.
+      operationId: createKataIssue
+      parameters:
+        - description: Opaque 1..128-byte retry key
+          in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            maxLength: 128
+            minLength: 1
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataIssueCreateRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssueResponse"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssueConflictResponse"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a Kata issue that quotes exact archive evidence
+      tags:
+        - API
+  /api/v1/integrations/kata/issues/{ref}/evidence:
+    post:
+      operationId: linkKataEvidence
+      parameters:
+        - description: Kata issue ref, qualified ref or UID
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataEvidenceLinkRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssueResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Add exact archive evidence to an existing Kata issue
       tags:
         - API
   /api/v1/integrations/kata/status:

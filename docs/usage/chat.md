@@ -646,6 +646,7 @@ msgvault mcp --http 8080
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-carddav-writes` | `false` | Expose CardDAV publication and sync tools. Each write needs client confirmation; HTTP also requires `--http-allow-writes`. |
+| `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`, which write quoted archive text to the configured Kata project. The flag is the consent for these writes; they ask for no per-call confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`. Treat event text as untrusted input and enable this only for sessions where the user has authorized calendar writes. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced. Without a key, use only behind your own network or authentication layer. |
 
